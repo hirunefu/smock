@@ -569,23 +569,33 @@ fn Parser::hex(self : Parser, n : Int) -> Int raise ParseError {
 }
 
 ///|
+/// What a block scalar does with the line breaks at its end (YAML 1.2,
+/// section 8.1.1.2).
+priv enum Chomping {
+  /// `-`: drops them all.
+  Strip
+  /// No indicator: keeps the first one.
+  Clip
+  /// `+`: keeps them all.
+  Keep
+}
+
+///|
 /// Parses a `|` (literal) or `>` (folded) block scalar from its header.
 /// Its lines must be indented more than `parent`.
 fn Parser::block_scalar(self : Parser, parent : Int) -> Json raise ParseError {
   let folded = self.peek() == '>'
   self.bump()
-  // Chomping: Some(false) strips the final line breaks, Some(true) keeps
-  // them all, None keeps one.
-  let keep = match self.peek() {
+  let chomping : Chomping = match self.peek() {
     '-' => {
       self.bump()
-      Some(false)
+      Strip
     }
     '+' => {
       self.bump()
-      Some(true)
+      Keep
     }
-    _ => None
+    _ => Clip
   }
   if self.peek() is ('0'..='9') {
     self.fail("block scalar indentation indicators are not supported")
@@ -684,10 +694,10 @@ fn Parser::block_scalar(self : Parser, parent : Int) -> Json raise ParseError {
     }
     terminated = self.peek() == '\n'
   }
-  let final_breaks = match keep {
-    Some(false) => 0
-    None => if read_content && terminated { 1 } else { 0 }
-    Some(true) => (if read_content && terminated { 1 } else { 0 }) + empty
+  let final_breaks = match chomping {
+    Strip => 0
+    Clip => if read_content && terminated { 1 } else { 0 }
+    Keep => (if read_content && terminated { 1 } else { 0 }) + empty
   }
   for _ in 0..<final_breaks {
     out.write_char('\n')
