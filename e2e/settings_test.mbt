@@ -13,6 +13,9 @@ async test "every serve setting is a flag with a matching SMOCK_ environment var
       #|  -h, --help                                 Show help information.
       #|  --dir <dir>                                The definitions directory. Without it, smock serves one empty Default Mock. [env: SMOCK_DIR]
       #|  --port <port>                              The plain HTTP port. 0 picks a free port. [env: SMOCK_PORT] [default: 8080]
+      #|  --tls-port <tls-port>                      The HTTPS port, served when --tls-cert-file and --tls-key-file are set. 0 picks a free port. [env: SMOCK_TLS_PORT] [default: 8443]
+      #|  --tls-cert-file <tls-cert-file>            The PEM certificate chain for the HTTPS port: the leaf certificate, then its intermediates. [env: SMOCK_TLS_CERT_FILE]
+      #|  --tls-key-file <tls-key-file>              The PEM private key of the leaf certificate in --tls-cert-file. [env: SMOCK_TLS_KEY_FILE]
       #|  --admin-port <admin-port>                  The Admin API port, separate from the plain port. 0 picks a free port. [env: SMOCK_ADMIN_PORT] [default: 9090]
       #|  --admin-auth <admin-auth>                  Whether the Admin API needs a bearer token: on or off. Turn it off only for local use. [env: SMOCK_ADMIN_AUTH] [default: on]
       #|  --admin-token-file <admin-token-file>      A file that holds the Admin API token. Without it, the token comes from the environment variable SMOCK_ADMIN_TOKEN. [env: SMOCK_ADMIN_TOKEN_FILE]
@@ -114,6 +117,8 @@ async test "an invalid value stops startup with a message that names the setting
     (["--port", "0x50"], Map([])),
     (["--port", "8_080"], Map([])),
     ([], { "SMOCK_PORT": "-1" }),
+    (["--tls-port", "65536"], Map([])),
+    ([], { "SMOCK_TLS_PORT": "https" }),
     (["--log-format", "text"], Map([])),
     ([], { "SMOCK_LOG_FORMAT": "" }),
     (["--dir", ""], Map([])),
@@ -150,6 +155,8 @@ async test "an invalid value stops startup with a message that names the setting
       #|status 2: smock serve: invalid value "0x50" for --port (SMOCK_PORT): must be an integer from 0 to 65535
       #|status 2: smock serve: invalid value "8_080" for --port (SMOCK_PORT): must be an integer from 0 to 65535
       #|status 2: smock serve: invalid value "-1" for --port (SMOCK_PORT): must be an integer from 0 to 65535
+      #|status 2: smock serve: invalid value "65536" for --tls-port (SMOCK_TLS_PORT): must be an integer from 0 to 65535
+      #|status 2: smock serve: invalid value "https" for --tls-port (SMOCK_TLS_PORT): must be an integer from 0 to 65535
       #|status 2: smock serve: invalid value "text" for --log-format (SMOCK_LOG_FORMAT): must be json
       #|status 2: smock serve: invalid value "" for --log-format (SMOCK_LOG_FORMAT): must be json
       #|status 2: smock serve: invalid value "" for --dir (SMOCK_DIR): must not be empty

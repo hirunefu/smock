@@ -172,10 +172,10 @@ pub fn Engine::handle(
         None => (NoMock, None)
       }
   }
-  let path = path_of(request.target)
+  let incoming = Incoming::new(request)
   let matched = match mock {
     Some(mock) =>
-      mock.stubs.iter().find_first(stub => matches(stub, request, path))
+      mock.stubs.iter().find_first(stub => incoming.meets(stub.request))
     None => None
   }
   let plan : ResponsePlan = match (mock, matched) {
@@ -188,8 +188,7 @@ pub fn Engine::handle(
         delay_ms: 0,
         fault: None,
       }
-    (Some(_), None) =>
-      { status: 404, headers: [], body: Bytes(b""), delay_ms: 0, fault: None, }
+    (Some(mock), None) => no_match(mock)
   }
   // A mistyped Host must not silently succeed.
   if resolution is ViaDefault(name) {
@@ -210,6 +209,18 @@ pub fn Engine::handle(
       received_at: now,
     },
     near_miss: None,
+  }
+}
+
+///|
+/// The response of `mock` when no Stub matches.
+fn no_match(mock : @definitions.Mock) -> ResponsePlan {
+  {
+    status: mock.no_match_status,
+    headers: [("Content-Type", "application/json")],
+    body: Bytes(b"{\"error\":\"no Stub matched\"}"),
+    delay_ms: 0,
+    fault: None,
   }
 }
 
@@ -309,14 +320,6 @@ fn scheme_end(target : String) -> Int? {
     }
   }
   Some(end)
-}
-
-///|
-/// Whether `request`, whose path is `path`, meets every condition of `stub`.
-fn matches(stub : @definitions.Stub, request : Request, path : String) -> Bool {
-  let conditions = stub.request
-  conditions.meth.map_or(true, meth => meth == request.meth) &&
-  conditions.path.map_or(true, expected => expected == path)
 }
 
 ///|

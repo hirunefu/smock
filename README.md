@@ -32,7 +32,15 @@ Packages of `smock/smock`:
 - `engine`: decides the response to each request from the snapshot.
 - `defdir`: reads the definitions directory and loads it, for both
   `smock serve` and `smock check` (native).
-- `server`: the listeners and the connection loop (native).
+- `server`: the listeners and the connection loop (native). On the TLS
+  port the same loop reads and writes through a TLS stream.
+- `openssl`: smock's own bindings to OpenSSL, the one C library ADR 0001
+  allows (native). A TLS connection there does no I/O: it takes the bytes
+  that arrive from the peer and hands out the bytes to send, and `server`
+  carries them over the socket. Its C is `openssl/openssl.c`.
+- `testcerts`: a test PKI (a root CA, an intermediate CA, RSA and ECDSA
+  leaf chains for `localhost` and `127.0.0.1`), used only by tests.
+  `scripts/gen-test-certificates.sh` regenerates it.
 - `log`: the JSON logger, one object per line.
 - `buildinfo`: the version, commit and toolchain the binary was built with.
 - `e2e`: tests that run the `smock` binary as a black box (native).
@@ -60,6 +68,9 @@ listens on the plain port. Logs go to stderr, one JSON object per line.
 |---|---|---|
 | `--dir` | `SMOCK_DIR` | none: one empty Default Mock |
 | `--port` | `SMOCK_PORT` | 8080 (0 picks a free port) |
+| `--tls-port` | `SMOCK_TLS_PORT` | 8443 (0 picks a free port) |
+| `--tls-cert-file` | `SMOCK_TLS_CERT_FILE` | none |
+| `--tls-key-file` | `SMOCK_TLS_KEY_FILE` | none |
 | `--log-format` | `SMOCK_LOG_FORMAT` | `json` |
 | `--body-file-dir` | `SMOCK_BODY_FILE_DIR` | `files` |
 | `--header-size-limit` | `SMOCK_HEADER_SIZE_LIMIT` | 16384 bytes (16 KiB): larger request heads get 431 |
@@ -71,6 +82,28 @@ listens on the plain port. Logs go to stderr, one JSON object per line.
 A request over a limit gets its status with `Connection: close`, then the
 connection closes; a timeout closes the connection without a response.
 Neither is logged.
+
+With a certificate and its key, smock also serves HTTPS on the TLS port, with
+the same Mocks as the plain port. Both are PEM files, for example the
+`tls.crt` and `tls.key` of a Kubernetes Secret:
+
+```sh
+smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /etc/smock/tls/tls.key
+```
+
+- The certificate file holds the leaf certificate, then its intermediate
+  certificates, as cert-manager writes it; smock sends the whole chain. The
+  key may be RSA or ECDSA, in PKCS#8, PKCS#1 or SEC1 PEM, and must not be
+  encrypted.
+- Setting only one of the two files, a file that cannot be read or holds no
+  usable PEM, or a key that does not belong to the certificate stops
+  `smock serve` with a log entry that says why, and exit status 1 (2 for a
+  missing partner setting).
+- ALPN offers only `http/1.1`. TLS 1.2 and 1.3 are accepted.
+- The Host header chooses the Mock, as on the plain port; SNI does not.
+- The `listening` log entry of the TLS port names the certificate and key
+  files.
+- Without certificate files, smock does not listen on the TLS port.
 
 A Definition file, such as `defs/users.json`:
 
@@ -102,9 +135,12 @@ describes Hosts and the Default Mock.
 `smock check defs` validates a definitions directory the way `smock serve`
 loads it: it prints every problem, one per line with the file and a JSON
 Pointer, and exits with status 1 if there is any.
-[docs/definition-files.md](docs/definition-files.md) describes the format,
-its JSON Schema, editor support and writing Definition files in another
-configuration language.
+[docs/definition-files.md](docs/definition-files.md) describes the format:
+how Stubs match requests (method, path, query parameters, headers and
+body, exactly or as JSON), the order they are tried in (priority, then
+file-name order), what a Mock answers when nothing matches, responses with
+inline bodies or body files, the JSON Schema, editor support and writing
+Definition files in another configuration language.
 
 Definition files can also be YAML (`.yaml` or `.yml`), mixed with JSON files
 in one directory. A YAML file means exactly what the equivalent JSON file
@@ -156,6 +192,7 @@ moon check --deny-warn --target all
 moon fmt --check
 scripts/check-protocol-modules.sh
 scripts/check-no-c.sh          # the C boundary of ADR 0001
+scripts/test-openssl-asan.sh   # the OpenSSL bindings under AddressSanitizer and LeakSanitizer
 scripts/build-release.sh       # dist/smock
 dist/smock --version
 scripts/check-schema.sh dist/smock   # the JSON Schema and smock agree
@@ -169,12 +206,20 @@ which directory a fixture belongs in.
 CI runs all of these on linux/amd64 and linux/arm64
 (`.github/workflows/build-test.yml`).
 
+The native build links OpenSSL 3 (on Debian and Ubuntu, `libssl-dev`).
+`prebuild.py`, which `moon` runs with `python3` before every native build,
+adds `-lssl -lcrypto` to every executable that uses the bindings, tests
+included, because link flags in a library's own `moon.pkg` do not reach the
+packages that import it.
+
 Most tests drive the engine through its public interface, with in-memory
 Definition files, a fixed clock and a seeded random source
 (`engine/harness_test.mbt`). The tests in `e2e/` run the binary itself: each
 one first runs `moon build --target native cmd/smock`, then starts smock with
 its own temporary definitions directory and port 0, so they run in parallel
-(`e2e/harness_test.mbt`). They need `moon` and `kill` on `PATH`.
+(`e2e/harness_test.mbt`). They need `moon`, `kill` and `openssl` on `PATH`.
+The HTTPS tests use clients that trust only the root CA of `testcerts`, and
+the HTTP/1.1 tests run on both the plain and the TLS port.
 
 `SMOCK_VERSION` and `SMOCK_COMMIT` set the version and the commit that
 `scripts/build-release.sh` records in the binary.

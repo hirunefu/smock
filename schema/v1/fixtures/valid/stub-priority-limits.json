@@ -1,0 +1,33 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "s0",
+      "mock": "users",
+      "priority": -2147483648,
+      "response": {
+        "status": 200
+      }
+    },
+    {
+      "id": "s1",
+      "mock": "users",
+      "priority": 2147483647,
+      "response": {
+        "status": 200
+      }
+    },
+    {
+      "id": "s2",
+      "mock": "users",
+      "priority": 0,
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

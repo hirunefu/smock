@@ -10,7 +10,7 @@
       "mock": "users",
       "response": {
         "status": 200,
-        "bodyFile": "x.json",
+        "bodyFile": "users/1.json",
         "events": [
           {
             "data": "x"

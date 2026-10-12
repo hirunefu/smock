@@ -1,10 +1,14 @@
 ///|
-/// Runs `smock serve`: loads the definitions, listens on the plain port and
-/// the admin port, and serves until the process is stopped.
+/// Runs `smock serve`: loads the definitions and the TLS certificate, if
+/// any, listens on the plain port, on the admin port and, with a
+/// certificate, on the TLS port, and serves until the process is stopped.
+/// The plain and TLS ports serve the same Mocks; the admin port serves the
+/// Admin API.
 ///
-/// Returns the exit status when it stops by itself: 1 when the definition
-/// set is invalid or a port cannot be listened on. Every problem is logged
-/// first.
+/// Returns the exit status when it stops by itself: 1 when Admin API
+/// authentication is on and no token is set, the definition set is invalid,
+/// the TLS certificate cannot be loaded or a port cannot be listened on.
+/// Every problem is logged first.
 pub async fn serve(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
@@ -31,6 +35,21 @@ pub async fn serve(
       return 1
     }
   }
+  let tls = match settings.tls {
+    None => None
+    Some(files) =>
+      match load_tls(files) {
+        Ok(config) => Some((files, config))
+        Err(message) => {
+          logger.error("cannot load the TLS certificate", fields={
+            "cert_file": Json::string(files.cert_file),
+            "key_file": Json::string(files.key_file),
+            "error": Json::string(message),
+          })
+          return 1
+        }
+      }
+  }
   let engine = @engine.Engine(snapshot)
   let rand = @random.Rand::new()
   let admin = Admin::new(
@@ -40,17 +59,60 @@ pub async fn serve(
     replica=replica_name(),
     replicas=settings.replicas,
   )
-  guard listen("plain", settings.port, logger) is Some(listener) else {
-    return 1
+  guard listen(logger, "plain", settings.port) is Some(plain) else { return 1 }
+  defer plain.close()
+  let tls_listener = match tls {
+    None => None
+    Some(_) => {
+      guard listen(logger, "tls", settings.tls_port) is Some(listener) else {
+        return 1
+      }
+      Some(listener)
+    }
   }
-  defer listener.close()
-  guard listen("admin", settings.admin_port, logger) is Some(admin_listener) else {
+  defer (if tls_listener is Some(listener) { listener.close() })
+  guard listen(logger, "admin", settings.admin_port) is Some(admin_listener) else {
     return 1
   }
   defer admin_listener.close()
+  logger.info("listening", fields={
+    "listener": "plain",
+    "address": Json::string("0.0.0.0:\{plain.addr.port()}"),
+  })
+  if tls is Some((files, _)) && tls_listener is Some(listener) {
+    logger.info("listening", fields={
+      "listener": "tls",
+      "address": Json::string("0.0.0.0:\{listener.addr.port()}"),
+      "cert_file": Json::string(files.cert_file),
+      "key_file": Json::string(files.key_file),
+    })
+  }
+  logger.info("listening", fields={
+    "listener": "admin",
+    "address": Json::string("0.0.0.0:\{admin_listener.addr.port()}"),
+  })
   @async.with_task_group(group => {
     group.spawn_bg(() => {
-      accept(admin_listener, conn => {
+      accept_loop(group, plain, conn => {
+        serve_mocks(conn, engine, rand, settings)
+      })
+    })
+    if tls is Some((_, config)) && tls_listener is Some(listener) {
+      group.spawn_bg(() => {
+        accept_loop(group, listener, conn => {
+          // A connection that is still in its handshake has sent no
+          // request bytes, so the idle timeout bounds the handshake too.
+          let stream = @async.with_timeout_opt(settings.idle_timeout_ms, () => {
+            TlsStream::accept(conn, config)
+          })
+          guard stream is Some(Some(stream)) else { return }
+          serve_mocks(stream, engine, rand, settings)
+          stream.shutdown()
+        })
+      })
+    }
+    group.spawn_bg(() => {
+      accept_loop(group, admin_listener, conn => {
         serve_connection(
           conn,
           settings,
@@ -59,71 +121,75 @@ pub async fn serve(
         )
       })
     })
-    accept(listener, conn => {
-      serve_connection(
-        conn,
-        settings,
-        respond=request => {
-          let outcome = engine.handle(
-            to_engine_request(request),
-            // Sessions come with the "Sessions and Ephemeral Stubs" ticket.
-            session=None,
-            now=@async.now(),
-            rand~,
-          )
-          encode(outcome.plan, request)
-        },
-        reject=status => @http1.encode_response(status, [], b"", close=true),
-      )
-    })
   })
-  // The listeners accept until the process is stopped.
+  // The listeners serve until the process is stopped.
   0
 }
 
 ///|
-/// Listens on `port` of every address for `listener`, such as `"plain"`,
-/// and logs the address it listens on. Logs why and returns `None` when it
-/// cannot.
+/// Listens on `port` of every IPv4 address, or logs why it cannot.
 async fn listen(
+  logger : @log.Logger,
   listener : String,
   port : Int,
-  logger : @log.Logger,
 ) -> @socket.TcpServer? {
   let address = "0.0.0.0:\{port}"
-  let server = @socket.TcpServer(@socket.Addr::parse(address), reuse_addr=true) catch {
+  try @socket.TcpServer(@socket.Addr::parse(address), reuse_addr=true) catch {
     err => {
       logger.error("cannot listen", fields={
         "listener": Json::string(listener),
         "address": Json::string(address),
         "error": Json::string(err.to_string()),
       })
-      return None
+      None
     }
+  } noraise {
+    server => Some(server)
   }
-  logger.info("listening", fields={
-    "listener": Json::string(listener),
-    "address": Json::string("0.0.0.0:\{server.addr.port()}"),
-  })
-  Some(server)
 }
 
 ///|
-/// Accepts connections on `listener` until the process is stopped, and
-/// serves each one with `serve`, then closes it.
-async fn accept(
+/// Accepts connections on `listener` and serves each one with `handle` in
+/// its own task of `group`. A connection that fails ends alone: the others
+/// carry on.
+async fn[X] accept_loop(
+  group : @async.TaskGroup[X],
   listener : @socket.TcpServer,
-  serve : async (@socket.Tcp) -> Unit,
+  handle : async (@socket.Tcp) -> Unit,
 ) -> Unit {
-  @async.with_task_group(group => {
-    for ;; {
-      let (conn, _) = listener.accept()
-      group.spawn_bg(allow_failure=true, () => {
-        defer conn.close()
-        serve(conn)
-      })
-    }
-  })
+  for ;; {
+    let (conn, _) = listener.accept()
+    group.spawn_bg(allow_failure=true, () => {
+      defer conn.close()
+      handle(conn)
+    })
+  }
+}
+
+///|
+/// Serves the requests for the Mocks that arrive on one connection of the
+/// plain or the TLS port.
+async fn[S : @io.Reader + @io.Writer] serve_mocks(
+  stream : S,
+  engine : @engine.Engine,
+  rand : @random.Rand,
+  settings : @settings.ServeSettings,
+) -> Unit {
+  serve_connection(
+    stream,
+    settings,
+    respond=request => {
+      let outcome = engine.handle(
+        to_engine_request(request),
+        // Sessions come with the "Sessions and Ephemeral Stubs" ticket.
+        session=None,
+        now=@async.now(),
+        rand~,
+      )
+      encode(outcome.plan, request)
+    },
+    reject=status => @http1.encode_response(status, [], b"", close=true),
+  )
 }
 
 ///|

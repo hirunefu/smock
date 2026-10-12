@@ -11,7 +11,7 @@
       "response": {
         "status": 200,
         "body": "x",
-        "bodyFile": "x.json"
+        "bodyFile": "users/1.json"
       }
     }
   ]

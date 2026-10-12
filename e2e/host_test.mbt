@@ -1,5 +1,7 @@
 // Host resolution and the Default Mock on the wire: requests with real
-// Host headers and request targets, sent over raw TCP connections.
+// Host headers and request targets, sent over raw connections on the plain
+// port and on the TLS port. The TLS client sends `localhost` by SNI, which
+// names neither Mock: the Host header chooses the Mock on both ports.
 
 ///|
 /// Two Mocks with Hosts, `users` marked default and `orders`, each with a
@@ -32,10 +34,14 @@ fn two_mocks(default~ : Bool) -> Array[(String, String)] {
 ///|
 /// Sends each request in `requests` on its own connection and renders the
 /// responses.
-async fn exchange(smock : Smock, requests : Array[String]) -> String {
+async fn exchange(
+  smock : Smock,
+  over : Over,
+  requests : Array[String],
+) -> String {
   let out = []
   for request in requests {
-    let conn = smock.connect()
+    let conn = smock.connect(over~)
     defer conn.close()
     conn.write(request)
     out.push(read_response(conn))
@@ -45,139 +51,133 @@ async fn exchange(smock : Smock, requests : Array[String]) -> String {
 
 ///|
 async test "requests reach the Mock whose Hosts include their Host, whatever its case, port or trailing dot" {
-  with_definitions(two_mocks(default=true), dir => {
-    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
-      inspect(
-        exchange(smock, [
-          "GET /x HTTP/1.1\r\nHost: users.example.com\r\n\r\n", "GET /x HTTP/1.1\r\nHost: ORDERS.Example.com.:8080\r\n\r\n",
-          "GET /x HTTP/1.1\r\nHost: [::1]:9999\r\n\r\n", "GET /x HTTP/1.1\r\nHost: orders.example.com.\r\n\r\n",
-        ]),
-        content=(
-          #|HTTP/1.1 200 OK
-          #|Content-Length: 10
-          #|
-          #|from users
-          #|---
-          #|HTTP/1.1 200 OK
-          #|Content-Length: 11
-          #|
-          #|from orders
-          #|---
-          #|HTTP/1.1 200 OK
-          #|Content-Length: 10
-          #|
-          #|from users
-          #|---
-          #|HTTP/1.1 200 OK
-          #|Content-Length: 11
-          #|
-          #|from orders
-        ),
-      )
-    })
+  let _ = on_both_ports(files=two_mocks(default=true), (smock, over) => {
+    inspect(
+      exchange(smock, over, [
+        "GET /x HTTP/1.1\r\nHost: users.example.com\r\n\r\n", "GET /x HTTP/1.1\r\nHost: ORDERS.Example.com.:8080\r\n\r\n",
+        "GET /x HTTP/1.1\r\nHost: [::1]:9999\r\n\r\n", "GET /x HTTP/1.1\r\nHost: orders.example.com.\r\n\r\n",
+      ]),
+      content=(
+        #|HTTP/1.1 200 OK
+        #|Content-Length: 10
+        #|
+        #|from users
+        #|---
+        #|HTTP/1.1 200 OK
+        #|Content-Length: 11
+        #|
+        #|from orders
+        #|---
+        #|HTTP/1.1 200 OK
+        #|Content-Length: 10
+        #|
+        #|from users
+        #|---
+        #|HTTP/1.1 200 OK
+        #|Content-Length: 11
+        #|
+        #|from orders
+      ),
+    )
   })
 }
 
 ///|
 async test "the authority of an absolute-form target wins over the Host header" {
-  with_definitions(two_mocks(default=true), dir => {
-    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
-      inspect(
-        exchange(smock, [
-          "GET http://orders.example.com/x HTTP/1.1\r\nHost: users.example.com\r\n\r\n",
-          "GET http://Orders.Example.com:8080/x?page=2 HTTP/1.1\r\nHost: users.example.com\r\n\r\n",
-          "GET http://unknown.example.com/x HTTP/1.1\r\nHost: orders.example.com\r\n\r\n",
-        ]),
-        content=(
-          #|HTTP/1.1 200 OK
-          #|Content-Length: 11
-          #|
-          #|from orders
-          #|---
-          #|HTTP/1.1 200 OK
-          #|Content-Length: 11
-          #|
-          #|from orders
-          #|---
-          #|HTTP/1.1 200 OK
-          #|Smock-Mock: users; via=default
-          #|Content-Length: 10
-          #|
-          #|from users
-        ),
-      )
-    })
+  let _ = on_both_ports(files=two_mocks(default=true), (smock, over) => {
+    inspect(
+      exchange(smock, over, [
+        "GET http://orders.example.com/x HTTP/1.1\r\nHost: users.example.com\r\n\r\n",
+        "GET http://Orders.Example.com:8080/x?page=2 HTTP/1.1\r\nHost: users.example.com\r\n\r\n",
+        "GET http://unknown.example.com/x HTTP/1.1\r\nHost: orders.example.com\r\n\r\n",
+      ]),
+      content=(
+        #|HTTP/1.1 200 OK
+        #|Content-Length: 11
+        #|
+        #|from orders
+        #|---
+        #|HTTP/1.1 200 OK
+        #|Content-Length: 11
+        #|
+        #|from orders
+        #|---
+        #|HTTP/1.1 200 OK
+        #|Smock-Mock: users; via=default
+        #|Content-Length: 10
+        #|
+        #|from users
+      ),
+    )
   })
 }
 
 ///|
 async test "the Default Mock answers an unknown Host or no Host, and says so in Smock-Mock" {
-  with_definitions(two_mocks(default=true), dir => {
-    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
-      inspect(
-        exchange(smock, [
-          "GET /x HTTP/1.1\r\nHost: usres.example.com\r\n\r\n",
-          // Its no-match response says so too.
-           "GET /y HTTP/1.1\r\nHost: usres.example.com\r\n\r\n",
-          // HTTP/1.0 requests may have no Host.
-           "GET /x HTTP/1.0\r\n\r\n",
-          // Its own Host reaches it without the header.
-           "GET /y HTTP/1.1\r\nHost: users.example.com\r\n\r\n",
-        ]),
-        content=(
-          #|HTTP/1.1 200 OK
-          #|Smock-Mock: users; via=default
-          #|Content-Length: 10
-          #|
-          #|from users
-          #|---
-          #|HTTP/1.1 404 Not Found
-          #|Smock-Mock: users; via=default
-          #|Content-Length: 0
-          #|
-          #|
-          #|---
-          #|HTTP/1.1 200 OK
-          #|Smock-Mock: users; via=default
-          #|Connection: close
-          #|Content-Length: 10
-          #|
-          #|from users
-          #|---
-          #|HTTP/1.1 404 Not Found
-          #|Content-Length: 0
-          #|
-          #|
-        ),
-      )
-    })
+  let _ = on_both_ports(files=two_mocks(default=true), (smock, over) => {
+    inspect(
+      exchange(smock, over, [
+        "GET /x HTTP/1.1\r\nHost: usres.example.com\r\n\r\n",
+        // Its no-match response says so too.
+         "GET /y HTTP/1.1\r\nHost: usres.example.com\r\n\r\n",
+        // HTTP/1.0 requests may have no Host.
+         "GET /x HTTP/1.0\r\n\r\n",
+        // Its own Host reaches it without the header.
+         "GET /y HTTP/1.1\r\nHost: users.example.com\r\n\r\n",
+      ]),
+      content=(
+        #|HTTP/1.1 200 OK
+        #|Smock-Mock: users; via=default
+        #|Content-Length: 10
+        #|
+        #|from users
+        #|---
+        #|HTTP/1.1 404 Not Found
+        #|Content-Type: application/json
+        #|Smock-Mock: users; via=default
+        #|Content-Length: 27
+        #|
+        #|{"error":"no Stub matched"}
+        #|---
+        #|HTTP/1.1 200 OK
+        #|Smock-Mock: users; via=default
+        #|Connection: close
+        #|Content-Length: 10
+        #|
+        #|from users
+        #|---
+        #|HTTP/1.1 404 Not Found
+        #|Content-Type: application/json
+        #|Content-Length: 27
+        #|
+        #|{"error":"no Stub matched"}
+      ),
+    )
   })
 }
 
 ///|
 async test "without a Default Mock, an unknown Host or no Host gets 404 with the accepted Hosts" {
-  with_definitions(two_mocks(default=false), dir => {
-    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
-      inspect(
-        exchange(smock, [
-          "GET /x HTTP/1.1\r\nHost: Usres.Example.com:8080\r\n\r\n", "GET /x HTTP/1.0\r\n\r\n",
-        ]),
-        content=(
-          #|HTTP/1.1 404 Not Found
-          #|Content-Type: application/json
-          #|Content-Length: 127
-          #|
-          #|{"error":"no Mock for this Host","host":"usres.example.com","acceptedHosts":["orders.example.com","users.example.com","[::1]"]}
-          #|---
-          #|HTTP/1.1 404 Not Found
-          #|Content-Type: application/json
-          #|Connection: close
-          #|Content-Length: 112
-          #|
-          #|{"error":"no Mock for this Host","host":null,"acceptedHosts":["orders.example.com","users.example.com","[::1]"]}
-        ),
-      )
-    })
+  let _ = on_both_ports(files=two_mocks(default=false), (smock, over) => {
+    inspect(
+      exchange(smock, over, [
+        "GET /x HTTP/1.1\r\nHost: Usres.Example.com:8080\r\n\r\n", "GET /x HTTP/1.0\r\n\r\n",
+      ]),
+      content=(
+        #|HTTP/1.1 404 Not Found
+        #|Content-Type: application/json
+        #|Content-Length: 127
+        #|
+        #|{"error":"no Mock for this Host","host":"usres.example.com","acceptedHosts":["orders.example.com","users.example.com","[::1]"]}
+        #|---
+        #|HTTP/1.1 404 Not Found
+        #|Content-Type: application/json
+        #|Connection: close
+        #|Content-Length: 112
+        #|
+        #|{"error":"no Mock for this Host","host":null,"acceptedHosts":["orders.example.com","users.example.com","[::1]"]}
+      ),
+    )
   })
 }
 

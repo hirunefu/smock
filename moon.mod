@@ -14,3 +14,7 @@ import {
   "smock/yaml@0.1.0",
   "moonbitlang/async@0.22.4",
 }
+
+options(
+  "--moonbit-unstable-prebuild": "prebuild.py",
+)

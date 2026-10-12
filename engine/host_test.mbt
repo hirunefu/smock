@@ -151,8 +151,9 @@ test "the Mock marked default answers a request whose Host no Mock lists, and it
       #|---
       #|ViaDefault("users")
       #|404
+      #|Content-Type: application/json
       #|Smock-Mock: users; via=default
-      #|
+      #|{"error":"no Stub matched"}
       #|---
       #|ByHost("users")
       #|200
@@ -160,7 +161,8 @@ test "the Mock marked default answers a request whose Host no Mock lists, and it
       #|---
       #|ByHost("users")
       #|404
-      #|
+      #|Content-Type: application/json
+      #|{"error":"no Stub matched"}
       #|---
       #|ByHost("orders")
       #|200
@@ -323,18 +325,21 @@ test "when no Definition file declares a Mock, one empty Default Mock named defa
     content=(
       #|ViaDefault("default")
       #|404
+      #|Content-Type: application/json
       #|Smock-Mock: default; via=default
-      #|
+      #|{"error":"no Stub matched"}
       #|---
       #|ViaDefault("default")
       #|404
+      #|Content-Type: application/json
       #|Smock-Mock: default; via=default
-      #|
+      #|{"error":"no Stub matched"}
       #|---
       #|ViaDefault("default")
       #|404
+      #|Content-Type: application/json
       #|Smock-Mock: default; via=default
-      #|
+      #|{"error":"no Stub matched"}
     ),
   )
 }
@@ -420,7 +425,10 @@ test "a Mock name that is not an HTTP token is percent-encoded in Smock-Mock, so
     .map(name => {
       let file = "{ \"mocks\": [{ \"name\": \{name.escape()} }] }"
       let outcome = harness([("m.json", file)]).send("GET", "/")
-      outcome.plan.headers.map(h => "\{h.0}: \{h.1}").join("\n")
+      outcome.plan.headers
+      .filter(h => h.0 == "Smock-Mock")
+      .map(h => "\{h.0}: \{h.1}")
+      .join("\n")
     })
     .join("\n"),
     content=(

@@ -4,7 +4,7 @@
 
 ///|
 /// Two Mocks with Hosts; `users` is the Default Mock.
-let users_and_orders : String =
+let status_mocks : String =
   #|mocks:
   #|  - name: users
   #|    hosts: [users.example.com, "Users.Example.com:8080"]
@@ -15,7 +15,7 @@ let users_and_orders : String =
 ///|
 async test "status shows the build smock --version prints, and the Mocks with their Hosts and the Default Mock" {
   let (_, version_line) = smock_stdout(["--version"])
-  with_definitions([("mocks.yaml", users_and_orders)], dir => {
+  with_definitions([("mocks.yaml", status_mocks)], dir => {
     let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
       let response = smock.admin("GET", "/v1/status")
       conforms("GET", "/v1/status", response)
