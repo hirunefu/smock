@@ -161,7 +161,7 @@ async fn run(
             settings,
             respond=(stream, request) => {
               @io.Writer::write(stream, admin.respond(request))
-              request.keep_alive
+              @http1.keeps_open(request~)
             },
             reject=status => admin.reject(status),
           )
@@ -613,7 +613,7 @@ async fn[S : @io.Writer] write_response(
       }
       before_last()
       @io.Writer::write(stream, response)
-      request.keep_alive && !close
+      @http1.keeps_open(request~, close~)
     }
     Events(events) => {
       let response = @http1.ResponseStream(

@@ -66,7 +66,7 @@ test "HTTP/1.1 keeps the connection open unless the request says Connection: clo
 }
 
 ///|
-test "a response after which the connection closes says Connection: close; a response to HTTP/1.0 that keeps it open says Connection: keep-alive" {
+test "a response after which the connection closes says Connection: close, and keeps_open says so; a response to HTTP/1.0 that keeps it open says Connection: keep-alive" {
   let cases = [
     ("GET / HTTP/1.1\r\nHost: a\r\n\r\n", false),
     ("GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n", false),
@@ -80,29 +80,35 @@ test "a response after which the connection closes says Connection: close; a res
     cases
     .map(case => {
       let (head, close) = case
+      let request = request_of(head)
       let response = @http1.encode_response(
         200,
         [("X-A", "1")],
         b"hello",
-        request=request_of(head),
+        request~,
         close~,
       )
-      "\{shown(head)} close=\{close}\n  -> \{one_line(response)}"
+      let after = if @http1.keeps_open(request~, close~) {
+        "open"
+      } else {
+        "closed"
+      }
+      "\{shown(head)} close=\{close}\n  -> \{one_line(response)} then \{after}"
     })
     .join("\n"),
     content=(
       #|"GET / HTTP/1.1\r\nHost: a\r\n\r\n" close=false
-      #|  -> HTTP/1.1 200 OK|X-A: 1|Content-Length: 5||hello
+      #|  -> HTTP/1.1 200 OK|X-A: 1|Content-Length: 5||hello then open
       #|"GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n" close=false
-      #|  -> HTTP/1.1 200 OK|X-A: 1|Connection: close|Content-Length: 5||hello
+      #|  -> HTTP/1.1 200 OK|X-A: 1|Connection: close|Content-Length: 5||hello then closed
       #|"GET / HTTP/1.0\r\n\r\n" close=false
-      #|  -> HTTP/1.1 200 OK|X-A: 1|Connection: close|Content-Length: 5||hello
+      #|  -> HTTP/1.1 200 OK|X-A: 1|Connection: close|Content-Length: 5||hello then closed
       #|"GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n" close=false
-      #|  -> HTTP/1.1 200 OK|X-A: 1|Connection: keep-alive|Content-Length: 5||hello
+      #|  -> HTTP/1.1 200 OK|X-A: 1|Connection: keep-alive|Content-Length: 5||hello then open
       #|"GET / HTTP/1.1\r\nHost: a\r\n\r\n" close=true
-      #|  -> HTTP/1.1 200 OK|X-A: 1|Connection: close|Content-Length: 5||hello
+      #|  -> HTTP/1.1 200 OK|X-A: 1|Connection: close|Content-Length: 5||hello then closed
       #|"GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n" close=true
-      #|  -> HTTP/1.1 200 OK|X-A: 1|Connection: close|Content-Length: 5||hello
+      #|  -> HTTP/1.1 200 OK|X-A: 1|Connection: close|Content-Length: 5||hello then closed
     ),
   )
 }
@@ -111,11 +117,12 @@ test "a response after which the connection closes says Connection: close; a res
 test "a response that answers no parsed request says Connection: close only when the connection closes" {
   inspect(
     one_line(@http1.encode_response(400, [], b"", close=true)) +
-    "\n" +
-    one_line(@http1.encode_response(404, [], b"")),
+    " \{@http1.keeps_open(close=true)}\n" +
+    one_line(@http1.encode_response(404, [], b"")) +
+    " \{@http1.keeps_open()}",
     content=(
-      #|HTTP/1.1 400 Bad Request|Connection: close|Content-Length: 0||
-      #|HTTP/1.1 404 Not Found|Content-Length: 0||
+      #|HTTP/1.1 400 Bad Request|Connection: close|Content-Length: 0|| false
+      #|HTTP/1.1 404 Not Found|Content-Length: 0|| true
     ),
   )
 }

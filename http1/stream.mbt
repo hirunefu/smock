@@ -50,10 +50,8 @@
 /// ```
 pub struct ResponseStream {
   priv head : Bytes
-  priv framing : BodyEnd
-  /// Whether the body is written: not in a response to HEAD, nor with a
-  /// status that allows no body.
-  priv body : Bool
+  /// How the parts of the body are written.
+  priv body : BodyEnd
   priv keep_open : Bool
 }
 
@@ -64,8 +62,9 @@ priv enum BodyEnd {
   Chunked
   /// By closing the connection.
   UntilClose
-  /// It has none: the status allows no body.
-  NoContent
+  /// No body is written: the status allows none, or the response answers
+  /// HEAD.
+  NoBody
 }
 
 ///|
@@ -79,31 +78,24 @@ pub fn ResponseStream::ResponseStream(
   request? : Request,
   close? : Bool = false,
 ) -> ResponseStream {
-  let http10 = request is Some({ version: Http10, .. })
-  let framing : BodyEnd = if status is (100..=199 | 204 | 304) {
-    NoContent
-  } else if http10 {
+  // The head says how the body is delimited, even in a response to HEAD.
+  let framing : BodyEnd = if !has_content(status) {
+    NoBody
+  } else if request is Some({ version: Http10, .. }) {
     UntilClose
   } else {
     Chunked
   }
-  let keep_open = !(framing is UntilClose) &&
-    !close &&
-    !(request is Some({ keep_alive: false, .. }))
+  let keep_open = keeps_open(request?, close=close || framing is UntilClose)
   let out = @buffer.Buffer(size_hint=128)
   write_status_and_headers(out, status, headers)
-  if !keep_open {
-    out.write_bytes(b"Connection: close\r\n")
-  } else if http10 {
-    // HTTP/1.0 closes the connection by default.
-    out.write_bytes(b"Connection: keep-alive\r\n")
-  }
+  write_connection(out, keep_open, request)
   if framing is Chunked {
     out.write_bytes(b"Transfer-Encoding: chunked\r\n")
   }
   out.write_bytes(b"\r\n")
-  let body = !(framing is NoContent) && !(request is Some({ meth: "HEAD", .. }))
-  { head: out.to_bytes(), framing, body, keep_open, }
+  let body = if writes_body(status, request) { framing } else { NoBody }
+  { head: out.to_bytes(), body, keep_open, }
 }
 
 ///|
@@ -117,8 +109,9 @@ pub fn ResponseStream::head(self : ResponseStream) -> Bytes {
 /// `data` itself when the body is not chunked. An empty `data` gives no
 /// bytes, so it cannot end a chunked body early.
 pub fn ResponseStream::part(self : ResponseStream, data : BytesView) -> Bytes {
-  match self.framing {
-    _ if !self.body || data.is_empty() => b""
+  match self.body {
+    _ if data.is_empty() => b""
+    NoBody => b""
     Chunked => {
       let out = @buffer.Buffer(size_hint=data.length() + 12)
       out.write_string_utf8(data.length().to_string(radix=16))
@@ -127,7 +120,7 @@ pub fn ResponseStream::part(self : ResponseStream, data : BytesView) -> Bytes {
       out.write_bytes(b"\r\n")
       out.to_bytes()
     }
-    UntilClose | NoContent => data.to_owned()
+    UntilClose => data.to_owned()
   }
 }
 
@@ -135,9 +128,9 @@ pub fn ResponseStream::part(self : ResponseStream, data : BytesView) -> Bytes {
 /// The bytes that end the body: the last chunk of a chunked body, and
 /// otherwise none.
 pub fn ResponseStream::end(self : ResponseStream) -> Bytes {
-  match self.framing {
-    Chunked if self.body => b"0\r\n\r\n"
-    _ => b""
+  match self.body {
+    Chunked => b"0\r\n\r\n"
+    UntilClose | NoBody => b""
   }
 }
 
