@@ -134,7 +134,7 @@ pub(all) struct Request {
 ///   keeps the body and not the framing around it, so neither the framing
 ///   nor the body can make it hold much more than the body limit.
 ///
-/// The defaults are smock's: 16 KiB, 100 header fields and 10 MiB.
+/// The defaults are 16 KiB, 100 header fields and 10 MiB.
 pub fn Parser::Parser(
   header_size_limit? : Int = 16 * 1024,
   header_count_limit? : Int = 100,
