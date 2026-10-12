@@ -1,0 +1,7 @@
+import {
+  "smock/smock/definitions",
+  "moonbitlang/async/fs",
+  "moonbitlang/core/encoding/utf8",
+}
+
+supported_targets = "native"
