@@ -135,6 +135,7 @@ async test "after malformed or ambiguous framing, smock answers what came before
       content=(
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
         #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
       ),
     )
   })

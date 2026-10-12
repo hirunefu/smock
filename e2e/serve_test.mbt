@@ -150,6 +150,7 @@ async test "logs start with the startup entry, then the listening address, and h
         #|status -15
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
         #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
       ),
     )
   })

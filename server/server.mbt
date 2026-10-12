@@ -1,10 +1,10 @@
 ///|
 /// Runs `smock serve`: loads the definitions, listens on the plain port and
-/// serves until the process is stopped.
+/// the admin port, and serves until the process is stopped.
 ///
 /// Returns the exit status when it stops by itself: 1 when the definition
-/// set is invalid or the port cannot be listened on. Every problem is
-/// logged first.
+/// set is invalid or a port cannot be listened on. Every problem is logged
+/// first.
 pub async fn serve(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
@@ -25,31 +25,93 @@ pub async fn serve(
   }
   let engine = @engine.Engine(snapshot)
   let rand = @random.Rand::new()
-  let address = "0.0.0.0:\{settings.port}"
-  let listener = @socket.TcpServer(
-    @socket.Addr::parse(address),
-    reuse_addr=true,
-  ) catch {
+  let admin = Admin::new(
+    engine,
+    @buildinfo.current(),
+    replica=replica_name(),
+    replicas=settings.replicas,
+  )
+  guard listen("plain", settings.port, logger) is Some(listener) else {
+    return 1
+  }
+  defer listener.close()
+  guard listen("admin", settings.admin_port, logger) is Some(admin_listener) else {
+    return 1
+  }
+  defer admin_listener.close()
+  @async.with_task_group(group => {
+    group.spawn_bg(() => {
+      accept(admin_listener, conn => {
+        serve_connection(
+          conn,
+          settings,
+          respond=request => admin.respond(request),
+          reject=status => admin.reject(status),
+        )
+      })
+    })
+    accept(listener, conn => {
+      serve_connection(
+        conn,
+        settings,
+        respond=request => {
+          let outcome = engine.handle(
+            to_engine_request(request),
+            // Sessions come with the "Sessions and Ephemeral Stubs" ticket.
+            session=None,
+            now=@async.now(),
+            rand~,
+          )
+          encode(outcome.plan, request)
+        },
+        reject=status => @http1.encode_response(status, [], b"", close=true),
+      )
+    })
+  })
+  // The listeners accept until the process is stopped.
+  0
+}
+
+///|
+/// Listens on `port` of every address for `listener`, such as `"plain"`,
+/// and logs the address it listens on. Logs why and returns `None` when it
+/// cannot.
+async fn listen(
+  listener : String,
+  port : Int,
+  logger : @log.Logger,
+) -> @socket.TcpServer? {
+  let address = "0.0.0.0:\{port}"
+  let server = @socket.TcpServer(@socket.Addr::parse(address), reuse_addr=true) catch {
     err => {
       logger.error("cannot listen", fields={
-        "listener": "plain",
+        "listener": Json::string(listener),
         "address": Json::string(address),
         "error": Json::string(err.to_string()),
       })
-      return 1
+      return None
     }
   }
-  defer listener.close()
   logger.info("listening", fields={
-    "listener": "plain",
-    "address": Json::string("0.0.0.0:\{listener.addr.port()}"),
+    "listener": Json::string(listener),
+    "address": Json::string("0.0.0.0:\{server.addr.port()}"),
   })
+  Some(server)
+}
+
+///|
+/// Accepts connections on `listener` until the process is stopped, and
+/// serves each one with `serve`, then closes it.
+async fn accept(
+  listener : @socket.TcpServer,
+  serve : async (@socket.Tcp) -> Unit,
+) -> Unit {
   @async.with_task_group(group => {
     for ;; {
       let (conn, _) = listener.accept()
       group.spawn_bg(allow_failure=true, () => {
         defer conn.close()
-        serve_connection(conn, engine, rand, settings)
+        serve(conn)
       })
     }
   })
@@ -68,11 +130,16 @@ pub async fn serve(
 /// It reads and writes only through `stream`, so the same loop serves any
 /// byte stream: a TCP connection, or a TLS session on top of one. Nothing is
 /// logged per request.
+///
+/// - `respond` gives the encoded response to each request.
+/// - `reject` gives the encoded response, with `Connection: close`, to
+///   bytes that are not a valid request or are over a limit, with the status
+///   the codec chose.
 async fn[S : @io.Reader + @io.Writer] serve_connection(
   stream : S,
-  engine : @engine.Engine,
-  rand : @random.Rand,
   settings : @settings.ServeSettings,
+  respond~ : (@http1.Request) -> Bytes,
+  reject~ : (Int) -> Bytes,
 ) -> Unit {
   let parser = @http1.Parser(
     header_size_limit=settings.header_size_limit,
@@ -88,14 +155,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
   for ;; {
     match parser.next() {
       Complete(request) => {
-        let outcome = engine.handle(
-          to_engine_request(request),
-          // Sessions come with the "Sessions and Ephemeral Stubs" ticket.
-          session=None,
-          now=@async.now(),
-          rand~,
-        )
-        @io.Writer::write(stream, encode(outcome.plan, request))
+        @io.Writer::write(stream, respond(request))
         if !request.keep_alive {
           return
         }
@@ -126,10 +186,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
         parser.feed(buf.unsafe_reinterpret_as_bytes()[:n])
       }
       Invalid(status~) => {
-        @io.Writer::write(
-          stream,
-          @http1.encode_response(status, [], b"", close=true),
-        )
+        @io.Writer::write(stream, reject(status))
         return
       }
     }
