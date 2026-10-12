@@ -69,7 +69,7 @@ async test "with an invalid definition set, smock logs every error with its file
           #|status 1
           #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
           #|{"level":"error","msg":"invalid definitions","file":"broken.json","pointer":"/stubs/0/id","error":"must be a non-empty string"}
-          #|{"level":"error","msg":"invalid definitions","file":"broken.json","pointer":"/stubs/0","error":"needs a response"}
+          #|{"level":"error","msg":"invalid definitions","file":"broken.json","pointer":"/stubs/0","error":"needs \"response\""}
           #|{"level":"error","msg":"invalid definitions","file":"orders.yaml","pointer":"","error":"YAML Definition files are not supported yet; write this file as JSON"}
           #|{"level":"error","msg":"invalid definitions","file":"payments.yml","pointer":"","error":"YAML Definition files are not supported yet; write this file as JSON"}
         ),
