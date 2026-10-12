@@ -16,6 +16,7 @@ async test "every serve setting is a flag with a matching SMOCK_ environment var
       #|  --tls-port <tls-port>                      The HTTPS port, served when --tls-cert-file and --tls-key-file are set. 0 picks a free port. [env: SMOCK_TLS_PORT] [default: 8443]
       #|  --tls-cert-file <tls-cert-file>            The PEM certificate chain for the HTTPS port: the leaf certificate, then its intermediates. [env: SMOCK_TLS_CERT_FILE]
       #|  --tls-key-file <tls-key-file>              The PEM private key of the leaf certificate in --tls-cert-file. [env: SMOCK_TLS_KEY_FILE]
+      #|  --tls-mock-certs <tls-mock-certs>          Certificates of single Mocks, chosen by SNI: a JSON object that maps each Mock name to its PEM files, such as {"users":{"certFile":"/certs/users/tls.crt","keyFile":"/certs/users/tls.key"}}. A handshake whose SNI is a Host of a listed Mock gets that Mock's certificate; any other gets --tls-cert-file, which must be set. Empty by default. [env: SMOCK_TLS_MOCK_CERTS]
       #|  --admin-port <admin-port>                  The Admin API port, separate from the plain and TLS ports. 0 picks a free port. [env: SMOCK_ADMIN_PORT] [default: 9090]
       #|  --admin-auth <admin-auth>                  Whether the Admin API needs a bearer token: on or off. Turn it off only for local use. [env: SMOCK_ADMIN_AUTH] [default: on]
       #|  --admin-token-file <admin-token-file>      A file that holds the Admin API token. Without it, the token comes from the environment variable SMOCK_ADMIN_TOKEN. [env: SMOCK_ADMIN_TOKEN_FILE]

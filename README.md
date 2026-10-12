@@ -41,7 +41,9 @@ Packages of `smock/smock`:
   `smock serve` and `smock check` (native).
 - `server`: the listeners, the connection loop and the Admin API (native).
   On the TLS port the same loop reads and writes through a TLS stream; on
-  the admin port it answers the Admin API.
+  the admin port it answers the Admin API. It reloads rotated certificates,
+  and reads the SNI name from the ClientHello before OpenSSL sees it, so that
+  the name chooses the certificate without a C callback.
 - `metrics`: the metrics registry: counters, gauges and histograms with
   fixed label names, rendered in the Prometheus text format. Features
   register their metrics in the one registry `smock serve` keeps.
@@ -50,8 +52,10 @@ Packages of `smock/smock`:
   that arrive from the peer and hands out the bytes to send, and `server`
   carries them over the socket. Its C is `openssl/openssl.c`.
 - `testcerts`: a test PKI (a root CA, an intermediate CA, RSA and ECDSA
-  leaf chains for `localhost` and `127.0.0.1`), used only by tests.
-  `scripts/gen-test-certificates.sh` regenerates it.
+  leaf chains for `localhost` and `127.0.0.1`, and ECDSA leaf chains for
+  `users.example.com` and `orders.example.com`, each leaf with its own fixed
+  expiry), used only by tests. `scripts/gen-test-certificates.sh`
+  regenerates it.
 - `log`: the JSON logger, one object per line.
 - `buildinfo`: the version, commit and toolchain the binary was built with.
 - `e2e`: tests that run the `smock` binary as a black box (native).
@@ -94,6 +98,7 @@ settings:
 | `--tls-port` | `SMOCK_TLS_PORT` | 8443 (0 picks a free port) |
 | `--tls-cert-file` | `SMOCK_TLS_CERT_FILE` | none |
 | `--tls-key-file` | `SMOCK_TLS_KEY_FILE` | none |
+| `--tls-mock-certs` | `SMOCK_TLS_MOCK_CERTS` | none: no Mock has a certificate of its own (see below) |
 | `--admin-port` | `SMOCK_ADMIN_PORT` | 9090 (0 picks a free port) |
 | `--admin-auth` | `SMOCK_ADMIN_AUTH` | `on`: the Admin API needs a bearer token; `off` for local use |
 | `--admin-token-file` | `SMOCK_ADMIN_TOKEN_FILE` | none: the token comes from `SMOCK_ADMIN_TOKEN` |
@@ -133,6 +138,56 @@ smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /et
   files.
 - Without certificate files, smock does not listen on the TLS port.
 
+smock watches the directories of the certificate and key files, as it
+watches the definitions directory: changes are coalesced for 250 ms, the
+directories are polled every 10 s as well, and a Secret update (which swaps
+the `..data` symlink) counts as a change. When a pair changes, smock loads
+it without a restart: new handshakes get the new certificate, and open
+connections carry on with the one they started with. A changed pair that
+cannot be used (a file that cannot be read or holds no usable PEM, or a key
+that does not belong to the certificate) is not swapped in, and smock keeps
+presenting the previous one. Either way one log entry names the pair
+(`"mock":""` for the default certificate) and the new certificate's expiry:
+
+```json
+{"time":"…","level":"info","msg":"TLS certificate reloaded","mock":"","cert_file":"/etc/smock/tls/tls.crt","key_file":"/etc/smock/tls/tls.key","expiry":"2027-01-01T00:00:00.000Z"}
+{"time":"…","level":"error","msg":"TLS certificate reload failed","mock":"","cert_file":"/etc/smock/tls/tls.crt","key_file":"/etc/smock/tls/tls.key","expiry":null,"error":"certificate file: no PEM certificate found"}
+```
+
+By default every handshake gets that one certificate, usually with a SAN for
+each Host. `--tls-mock-certs` (`SMOCK_TLS_MOCK_CERTS`) gives single Mocks
+their own certificates, as a JSON object that maps each Mock name to its
+certificate and key files:
+
+```sh
+smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /etc/smock/tls/tls.key \
+  --tls-mock-certs '{"users":{"certFile":"/etc/smock/users/tls.crt","keyFile":"/etc/smock/users/tls.key"}}'
+```
+
+- A handshake whose SNI is one of the Hosts of a listed Mock, compared as
+  Hosts are (case-insensitively, without a trailing dot), gets that Mock's
+  certificate. A handshake without SNI, or whose SNI is no Host of a listed
+  Mock, gets the default certificate, which must be configured.
+- SNI follows the Hosts of the definition set served, reloads included. It
+  only chooses the certificate: the Host header still chooses the Mock.
+  Definition files never refer to certificates.
+- A listed Mock that the Definition files do not declare is not an error,
+  since Mocks come and go on reload: its certificate is chosen for nothing
+  until a reload declares the Mock, and smock logs a warning
+  (`TLS certificate for a Mock that is not declared`) each time it goes
+  missing, at startup included.
+- Each pair is loaded at startup, and one that cannot be loaded stops
+  `smock serve` with exit status 1, as for the default pair. A value that is
+  not such a JSON object, an entry without both files, or the setting without
+  `--tls-cert-file` and `--tls-key-file` exits with status 2.
+- Each pair rotates as the default certificate does.
+
+The metric `smock_tls_certificate_expiry_timestamp_seconds` gives when each
+certificate the TLS port presents expires (its notAfter), in seconds since
+the Unix epoch: `mock=""` for the default certificate and `mock="<name>"` for
+a Mock's own. It follows rotations, so an alert on it notices a renewal that
+stopped working before clients fail.
+
 The Admin API is JSON over HTTP/1.1 on the admin port, as
 [openapi/admin.json](openapi/admin.json) describes it:
 
@@ -159,7 +214,9 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
 - `GET /metrics` serves the Prometheus metrics, without a token, also when
   authentication is on. `smock_build_info` carries the version, commit and
   toolchain as labels; `smock_definition_reloads_total` counts reloads of
-  the Definition files by result.
+  the Definition files by result; with HTTPS,
+  `smock_tls_certificate_expiry_timestamp_seconds` gives when each
+  certificate expires.
 - The other operations of the document answer 501 until their tickets
   build them.
 

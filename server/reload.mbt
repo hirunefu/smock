@@ -15,6 +15,9 @@ priv struct Reloader {
   /// The digest of the set read last, at startup or by the last reload,
   /// and the problems reading it.
   mut last_read : (String, Array[@definitions.Diagnostic])
+  /// What follows each reload that swaps in a new set, such as the TLS
+  /// port's warnings about Mocks it has certificates for.
+  after_swap : () -> Unit
 }
 
 ///|
@@ -74,12 +77,16 @@ async fn Reloader::check(self : Reloader, check : @watch.Check) -> Unit {
   let result = self.engine.reload(set, read_problems=problems, at=@async.now())
   self.reloads.labels([outcome_name(result.result)]).inc()
   match result.result {
-    Swapped | Unchanged =>
+    Swapped | Unchanged => {
       self.logger.info("definitions reloaded", fields={
         "result": Json::string(outcome_name(result.result)),
         "oldDigest": Json::string(result.old_digest),
         "newDigest": Json::string(result.new_digest),
       })
+      if result.result is Swapped {
+        (self.after_swap)()
+      }
+    }
     Failed =>
       self.logger.error("definitions reload failed", fields={
         "result": Json::string(outcome_name(result.result)),

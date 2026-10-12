@@ -442,3 +442,52 @@ test "a Mock name that is not an HTTP token is percent-encoded in Smock-Mock, so
     ),
   )
 }
+
+///|
+test "the Mock for a Host, as certificate selection by SNI asks for it: compared as Host resolution compares Hosts, never the Default Mock, and from the snapshot served" {
+  let h = harness([
+    mock_file("users", "\"hosts\": [\"users.example.com\"], \"default\": true"),
+    mock_file("orders", "\"hosts\": [\"orders.example.com\"]"),
+  ])
+  let names = [
+    "users.example.com", "USERS.Example.COM.", "orders.example.com", "unknown.example.com",
+    "",
+  ]
+  let lookup = () => {
+    names
+    .map(name => {
+      "\{name.escape()} -> \{@debug.to_string(h.engine.mock_for_host(name))}"
+    })
+    .join("\n")
+  }
+  let before = lookup()
+  let _ = h.reload([
+    mock_file("users", "\"hosts\": [\"people.example.com\"]"),
+    mock_file(
+      "orders", "\"hosts\": [\"orders.example.com\", \"users.example.com\"]",
+    ),
+  ])
+  let people = h.engine.mock_for_host("people.example.com")
+  inspect(
+    (
+      $|\{before}
+      $|after a reload:
+      $|\{lookup()}
+      $|"people.example.com" -> \{@debug.to_string(people)}
+    ),
+    content=(
+      #|"users.example.com" -> Some("users")
+      #|"USERS.Example.COM." -> Some("users")
+      #|"orders.example.com" -> Some("orders")
+      #|"unknown.example.com" -> None
+      #|"" -> None
+      #|after a reload:
+      #|"users.example.com" -> Some("orders")
+      #|"USERS.Example.COM." -> Some("orders")
+      #|"orders.example.com" -> Some("orders")
+      #|"unknown.example.com" -> None
+      #|"" -> None
+      #|"people.example.com" -> Some("users")
+    ),
+  )
+}
