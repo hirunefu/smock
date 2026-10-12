@@ -49,7 +49,7 @@ pub async fn serve(
       let (conn, _) = listener.accept()
       group.spawn_bg(allow_failure=true, () => {
         defer conn.close()
-        serve_connection(conn, engine, rand)
+        serve_connection(conn, engine, rand, settings)
       })
     }
   })
@@ -57,18 +57,34 @@ pub async fn serve(
 
 ///|
 /// Serves the requests that arrive on one connection, in turn, until the
-/// client closes it, a request asks to close it, or a request cannot be
-/// parsed.
+/// client closes it, a request asks to close it, a request cannot be parsed
+/// or is over a limit, or a timeout runs out:
+///
+/// - the idle timeout, while the connection waits for a request: from when
+///   it opens, then from each response;
+/// - the read timeout, while a request arrives: from its first byte until
+///   all of it, body included, has arrived.
 ///
 /// It reads and writes only through `stream`, so the same loop serves any
-/// byte stream: a TCP connection, or a TLS session on top of one.
+/// byte stream: a TCP connection, or a TLS session on top of one. Nothing is
+/// logged per request.
 async fn[S : @io.Reader + @io.Writer] serve_connection(
   stream : S,
   engine : @engine.Engine,
   rand : @random.Rand,
+  settings : @settings.ServeSettings,
 ) -> Unit {
-  let parser = @http1.Parser()
+  let parser = @http1.Parser(
+    header_size_limit=settings.header_size_limit,
+    header_count_limit=settings.header_count_limit,
+    body_limit=settings.body_limit,
+  )
   let buf = FixedArray::make(16 * 1024, b'\x00')
+  let idle_timeout = settings.idle_timeout_ms.to_int64()
+  let read_timeout = settings.read_timeout_ms.to_int64()
+  let mut idle_deadline = @async.now() + idle_timeout
+  let mut read_deadline : Int64? = None
+  let mut last_read = @async.now()
   for ;; {
     match parser.next() {
       Complete(request) => {
@@ -79,23 +95,40 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
           now=@async.now(),
           rand~,
         )
-        let close = !request.keep_alive
-        @io.Writer::write(stream, encode(outcome.plan, close~))
-        if close {
+        @io.Writer::write(stream, encode(outcome.plan, request))
+        if !request.keep_alive {
           return
         }
+        idle_deadline = @async.now() + idle_timeout
+        read_deadline = None
       }
+      Continue =>
+        @io.Writer::write(stream, @http1.encode_response(100, [], b""))
       NeedMore => {
-        let n = @io.Reader::read(stream, buf)
-        if n == 0 {
+        let deadline = if parser.in_request() {
+          // The request began with the bytes of the last read, or earlier.
+          let deadline = read_deadline.unwrap_or(last_read + read_timeout)
+          read_deadline = Some(deadline)
+          deadline
+        } else {
+          read_deadline = None
+          idle_deadline
+        }
+        let remaining = deadline - @async.now()
+        if remaining <= 0L {
           return
         }
+        let read = @async.with_timeout_opt(remaining.to_int(), () => {
+          @io.Reader::read(stream, buf)
+        })
+        guard read is Some(n) && n > 0 else { return }
+        last_read = @async.now()
         parser.feed(buf.unsafe_reinterpret_as_bytes()[:n])
       }
       Invalid(status~) => {
         @io.Writer::write(
           stream,
-          @http1.encode_response(status, [("Connection", "close")], b""),
+          @http1.encode_response(status, [], b"", close=true),
         )
         return
       }
@@ -118,18 +151,13 @@ fn to_engine_request(request : @http1.Request) -> @engine.Request {
 }
 
 ///|
-/// The bytes of the response `plan` describes. Delays, connection Faults
-/// and Server-Sent Events come with their own tickets; the engine does not
-/// plan them yet.
-fn encode(plan : @engine.ResponsePlan, close~ : Bool) -> Bytes {
+/// The bytes of the response `plan` describes, as the answer to `request`.
+/// Delays, connection Faults and Server-Sent Events come with their own
+/// tickets; the engine does not plan them yet.
+fn encode(plan : @engine.ResponsePlan, request : @http1.Request) -> Bytes {
   let body = match plan.body {
     Bytes(body) => body
     Events(_) => b""
   }
-  let headers = if close {
-    [..plan.headers, ("Connection", "close")]
-  } else {
-    plan.headers
-  }
-  @http1.encode_response(plan.status, headers, body)
+  @http1.encode_response(plan.status, plan.headers, body, request~)
 }
