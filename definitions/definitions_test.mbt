@@ -73,7 +73,7 @@ test "every problem is reported, each with its file and JSON Pointer" {
       #|d.json: /mocks: must be an array
       #|d.json: /stubs/0/id: must be a non-empty string
       #|d.json: /stubs/1/request/method: must be an HTTP token, such as GET
-      #|d.json: /stubs/1/request/path: must be a string
+      #|d.json: /stubs/1/request/path: must be a string or an object
       #|d.json: /stubs/1/response/status: must be an integer from 200 to 599
       #|d.json: /stubs/1/response/body: must be a string
       #|d.json: /stubs/1: needs "id"
@@ -299,23 +299,15 @@ test "a field the Schema defines but smock does not implement yet is rejected as
           #|{ "mocks": [{ "name": "m", "hosts": ["m.example"], "default": true,
           #|    "noMatch": { "status": 418 }, "journal": false }],
           #|  "stubs": [{ "id": "a", "mock": "m", "priority": 1,
-          #|    "request": { "method": "GET", "path": { "pattern": "/a.*" },
-          #|      "query": { "q": { "pattern": "1" } }, "headers": { "X-A": { "pattern": "1" } },
-          #|      "body": { "pattern": "{}" } },
-          #|    "response": { "status": 200,
-          #|      "template": true, "events": [{ "data": "x" }] },
+          #|    "request": { "method": "GET", "path": "/a" },
+          #|    "response": { "status": 200, "template": true },
           #|    "fault": { "seed": 1 } }] }
         ),
       ),
     ]),
     content=(
       #|a.json: /mocks/0/journal: is not supported yet
-      #|a.json: /stubs/0/request/path: pattern conditions are not supported yet
-      #|a.json: /stubs/0/request/query/q: pattern conditions are not supported yet
-      #|a.json: /stubs/0/request/headers/X-A: pattern conditions are not supported yet
-      #|a.json: /stubs/0/request/body: pattern conditions are not supported yet
       #|a.json: /stubs/0/response/template: is not supported yet
-      #|a.json: /stubs/0/response/events: is not supported yet
       #|a.json: /stubs/0/fault: is not supported yet
     ),
   )

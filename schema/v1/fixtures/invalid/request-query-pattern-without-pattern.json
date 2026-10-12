@@ -1,0 +1,21 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "get-user",
+      "mock": "users",
+      "request": {
+        "query": {
+          "page": {}
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

@@ -105,25 +105,68 @@ pub struct Stub {
 pub struct Conditions {
   /// The method, compared exactly.
   meth : String?
-  /// The path, compared exactly with the percent-decoded path of the
-  /// request, without its query.
-  path : String?
-  /// Query parameters as (name, value): each must be present, and one of
-  /// its decoded values must equal the given value.
-  query : ReadOnlyArray[(String, String)]
-  /// Headers as (name in lower case, value): each must be present, and one
-  /// of its values must equal the given value. Names are compared
+  /// The path: the percent-decoded path of the request, without its query,
+  /// meets it.
+  path : ValueCondition?
+  /// Query parameters as (name, condition): each must be present, and one
+  /// of its decoded values must meet the condition.
+  query : ReadOnlyArray[(String, ValueCondition)]
+  /// Headers as (name in lower case, condition): each must be present, and
+  /// one of its values must meet the condition. Names are compared
   /// case-insensitively.
-  headers : ReadOnlyArray[(String, String)]
+  headers : ReadOnlyArray[(String, ValueCondition)]
   /// The body.
   body : BodyCondition?
 } derive(Debug, Eq)
+
+///|
+/// A condition on a value of a request, such as its path or a header
+/// value.
+pub enum ValueCondition {
+  /// The value is exactly this text.
+  Exact(String)
+  /// The pattern matches the whole value.
+  Pattern(Pattern)
+} derive(Debug, Eq)
+
+///|
+/// A pattern condition: an RE2 pattern, in the subset the RE2 module
+/// supports, compiled when the definition set was loaded. Matching it
+/// never compiles anything, and takes time linear in the length of the
+/// value.
+pub struct Pattern {
+  /// The pattern as the Definition file gives it.
+  source : String
+  priv regex : @re2.Regex
+}
+
+///|
+/// Whether the pattern matches the whole of `value`, which is UTF-8. A
+/// byte that is not part of well-formed UTF-8 is not a character, so a
+/// value that contains one never matches.
+pub fn Pattern::matches(self : Pattern, value : BytesView) -> Bool {
+  self.regex.full_match(value)
+}
+
+///|
+/// Patterns are equal when they are written the same.
+pub impl Eq for Pattern with fn equal(self, other) {
+  self.source == other.source
+}
+
+///|
+/// Shows the pattern as it is written.
+pub impl Debug for Pattern with fn to_repr(self) {
+  Repr::ctor("Pattern", [(None, Repr::string(self.source))])
+}
 
 ///|
 /// A condition on the request body.
 pub enum BodyCondition {
   /// The body is exactly these bytes: the text of the condition in UTF-8.
   Exact(Bytes)
+  /// The pattern matches the whole body.
+  Pattern(Pattern)
   /// The body parses as JSON and contains this value: an object has each
   /// listed key, with a value that contains the listed one; an array has
   /// the same length, and each element contains the listed one; any other
@@ -132,13 +175,35 @@ pub enum BodyCondition {
 } derive(Debug, Eq)
 
 ///|
-/// A static response.
+/// A Stub's response.
 pub struct Response {
   status : Int
   headers : ReadOnlyArray[(String, String)]
-  /// The body: the inline body in UTF-8, or the bytes of the body file,
-  /// read when the snapshot was built.
-  body : Bytes
+  body : ResponseBody
+} derive(Debug, Eq)
+
+///|
+/// The body of a Stub's response.
+pub enum ResponseBody {
+  /// Bytes sent at once: the inline body in UTF-8, or the bytes of the body
+  /// file, read when the snapshot was built.
+  Bytes(Bytes)
+  /// Server-Sent Events, streamed one after another.
+  Events(ReadOnlyArray[SseEvent])
+} derive(Debug, Eq)
+
+///|
+/// One Server-Sent Event of a response.
+pub struct SseEvent {
+  /// How long to wait before writing the event, in milliseconds: after the
+  /// previous event, or after the head for the first one.
+  delay_ms : Int
+  /// The event type, one line.
+  event : String?
+  /// The event ID, one line without NUL characters.
+  id : String?
+  /// The data, which may span several lines.
+  data : String
 } derive(Debug, Eq)
 
 ///|

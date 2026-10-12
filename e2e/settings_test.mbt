@@ -16,6 +16,10 @@ async test "every serve setting is a flag with a matching SMOCK_ environment var
       #|  --tls-port <tls-port>                      The HTTPS port, served when --tls-cert-file and --tls-key-file are set. 0 picks a free port. [env: SMOCK_TLS_PORT] [default: 8443]
       #|  --tls-cert-file <tls-cert-file>            The PEM certificate chain for the HTTPS port: the leaf certificate, then its intermediates. [env: SMOCK_TLS_CERT_FILE]
       #|  --tls-key-file <tls-key-file>              The PEM private key of the leaf certificate in --tls-cert-file. [env: SMOCK_TLS_KEY_FILE]
+      #|  --admin-port <admin-port>                  The Admin API port, separate from the plain and TLS ports. 0 picks a free port. [env: SMOCK_ADMIN_PORT] [default: 9090]
+      #|  --admin-auth <admin-auth>                  Whether the Admin API needs a bearer token: on or off. Turn it off only for local use. [env: SMOCK_ADMIN_AUTH] [default: on]
+      #|  --admin-token-file <admin-token-file>      A file that holds the Admin API token. Without it, the token comes from the environment variable SMOCK_ADMIN_TOKEN. [env: SMOCK_ADMIN_TOKEN_FILE]
+      #|  --replicas <replicas>                      How many replicas the deployment runs. Above 1, every Admin API response warns that state is per replica. [env: SMOCK_REPLICAS] [default: 1]
       #|  --log-format <log-format>                  The log format: json. [env: SMOCK_LOG_FORMAT] [default: json]
       #|  --body-file-dir <body-file-dir>            The body-file subdirectory of the definitions directory. [env: SMOCK_BODY_FILE_DIR] [default: files]
       #|  --header-size-limit <header-size-limit>    The most bytes a request head (request line and header fields) may take. Larger heads get 431. [env: SMOCK_HEADER_SIZE_LIMIT] [default: 16384]
@@ -128,6 +132,21 @@ async test "an invalid value stops startup with a message that names the setting
     (["--read-timeout-ms", "30s"], Map([])),
     (["--read-timeout-ms", "2147483648"], Map([])),
     ([], { "SMOCK_IDLE_TIMEOUT_MS": "0" }),
+    (["--admin-port", "65536"], Map([])),
+    ([], { "SMOCK_ADMIN_PORT": "admin" }),
+    (["--port", "8080", "--admin-port", "8080"], Map([])),
+    (
+      [
+        "--tls-port", "8443", "--admin-port", "8443", "--tls-cert-file", "c.pem",
+        "--tls-key-file", "k.pem",
+      ],
+      Map([]),
+    ),
+    (["--admin-auth", "false"], Map([])),
+    ([], { "SMOCK_ADMIN_AUTH": "OFF" }),
+    (["--admin-token-file", ""], Map([])),
+    (["--replicas", "0"], Map([])),
+    ([], { "SMOCK_REPLICAS": "two" }),
   ]
   let out = []
   for run in runs {
@@ -158,6 +177,15 @@ async test "an invalid value stops startup with a message that names the setting
       #|status 2: smock serve: invalid value "30s" for --read-timeout-ms (SMOCK_READ_TIMEOUT_MS): must be an integer from 1 to 2147483647
       #|status 2: smock serve: invalid value "2147483648" for --read-timeout-ms (SMOCK_READ_TIMEOUT_MS): must be an integer from 1 to 2147483647
       #|status 2: smock serve: invalid value "0" for --idle-timeout-ms (SMOCK_IDLE_TIMEOUT_MS): must be an integer from 1 to 2147483647
+      #|status 2: smock serve: invalid value "65536" for --admin-port (SMOCK_ADMIN_PORT): must be an integer from 0 to 65535
+      #|status 2: smock serve: invalid value "admin" for --admin-port (SMOCK_ADMIN_PORT): must be an integer from 0 to 65535
+      #|status 2: smock serve: invalid value "8080" for --admin-port (SMOCK_ADMIN_PORT): must differ from --port (SMOCK_PORT)
+      #|status 2: smock serve: invalid value "8443" for --admin-port (SMOCK_ADMIN_PORT): must differ from --tls-port (SMOCK_TLS_PORT)
+      #|status 2: smock serve: invalid value "false" for --admin-auth (SMOCK_ADMIN_AUTH): must be on or off
+      #|status 2: smock serve: invalid value "OFF" for --admin-auth (SMOCK_ADMIN_AUTH): must be on or off
+      #|status 2: smock serve: invalid value "" for --admin-token-file (SMOCK_ADMIN_TOKEN_FILE): must not be empty
+      #|status 2: smock serve: invalid value "0" for --replicas (SMOCK_REPLICAS): must be an integer from 1 to 10000
+      #|status 2: smock serve: invalid value "two" for --replicas (SMOCK_REPLICAS): must be an integer from 1 to 10000
     ),
   )
 }

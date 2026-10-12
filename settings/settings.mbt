@@ -21,6 +21,17 @@ pub(all) struct ServeSettings {
   /// The certificate and key files for the TLS port, or `None` when none
   /// are configured.
   tls : TlsFiles?
+  /// The admin port, where the Admin API, the probes and the metrics are
+  /// served. 0 asks the system for a free port.
+  admin_port : Int
+  /// Whether the Admin API needs a bearer token.
+  admin_auth : Bool
+  /// The file that holds the Admin API token, if one is set. Without it, the
+  /// token comes from the environment variable `SMOCK_ADMIN_TOKEN`.
+  admin_token_file : String?
+  /// How many replicas the deployment runs, as the Admin API's replica
+  /// warning tells it.
+  replicas : Int
   log_format : LogFormat
   /// The body-file subdirectory of the definitions directory.
   body_file_dir : String
@@ -127,6 +138,26 @@ let serve_settings : Array[Setting] = [
     name: "tls-key-file",
     about: "The PEM private key of the leaf certificate in --tls-cert-file.",
     default: None,
+  },
+  {
+    name: "admin-port",
+    about: "The Admin API port, separate from the plain and TLS ports. 0 picks a free port.",
+    default: Some("9090"),
+  },
+  {
+    name: "admin-auth",
+    about: "Whether the Admin API needs a bearer token: on or off. Turn it off only for local use.",
+    default: Some("on"),
+  },
+  {
+    name: "admin-token-file",
+    about: "A file that holds the Admin API token. Without it, the token comes from the environment variable SMOCK_ADMIN_TOKEN.",
+    default: None,
+  },
+  {
+    name: "replicas",
+    about: "How many replicas the deployment runs. Above 1, every Admin API response warns that state is per replica.",
+    default: Some("1"),
   },
   { name: "log-format", about: "The log format: json.", default: Some("json"), },
   body_file_dir_setting,
@@ -245,6 +276,28 @@ pub fn ServeSettings::from_matches(
         "needs --tls-cert-file (\{env_name("tls-cert-file")}) as well",
       )
   }
+  let admin_port = int_value(matches, "admin-port", min=0, max=65535)
+  if admin_port != 0 && admin_port == port {
+    raise invalid(
+      "admin-port",
+      admin_port.to_string(),
+      "must differ from --port (SMOCK_PORT)",
+    )
+  }
+  if admin_port != 0 && tls is Some(_) && admin_port == tls_port {
+    raise invalid(
+      "admin-port",
+      admin_port.to_string(),
+      "must differ from --tls-port (SMOCK_TLS_PORT)",
+    )
+  }
+  let admin_auth = match value(matches, "admin-auth") {
+    Some("on") => true
+    Some("off") => false
+    other =>
+      raise invalid("admin-auth", other.unwrap_or(""), "must be on or off")
+  }
+  let admin_token_file = file_value(matches, "admin-token-file")
   let log_format = match value(matches, "log-format") {
     Some("json") => Json
     other => raise invalid("log-format", other.unwrap_or(""), "must be json")
@@ -255,6 +308,10 @@ pub fn ServeSettings::from_matches(
     port,
     tls_port,
     tls,
+    admin_port,
+    admin_auth,
+    admin_token_file,
+    replicas: int_value(matches, "replicas", min=1, max=max_replicas),
     log_format,
     body_file_dir,
     header_size_limit: int_value(
@@ -288,6 +345,10 @@ pub fn ServeSettings::from_matches(
 ///|
 /// The largest size limit: 1 GiB. A request is held in memory whole.
 let max_size : Int = 1024 * 1024 * 1024
+
+///|
+/// The most replicas a deployment can declare.
+let max_replicas : Int = 10000
 
 ///|
 /// The longest timeout, in milliseconds: the largest `Int`, about 24 days.

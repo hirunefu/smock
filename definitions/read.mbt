@@ -385,7 +385,7 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
   let mut response = Response::{
     status: 0,
     headers: ReadOnlyArray::from_array([]),
-    body: b"",
+    body: Bytes(b""),
   }
   for key, value in stub {
     let field = child(pointer, key)
@@ -456,11 +456,14 @@ fn File::read_conditions(
         }
       "path" =>
         match value {
-          String(value) if value.has_prefix("/") => path = Some(value)
+          String(value) if value.has_prefix("/") =>
+            path = Some(ValueCondition::Exact(value))
           String(_) => self.error(field, "must start with /")
-          Object(_) =>
-            self.error(field, "pattern conditions are not supported yet")
-          _ => self.error(field, "must be a string")
+          Object(condition) =>
+            path = self
+              .read_pattern(field, condition)
+              .map(pattern => ValueCondition::Pattern(pattern))
+          _ => self.error(field, "must be a string or an object")
         }
       "query" => query = self.read_value_conditions(field, value)
       "headers" =>
@@ -482,7 +485,7 @@ fn File::read_conditions(
 
 ///|
 /// Reads a condition on the request body: an exact text, or an object
-/// holding a `json` condition.
+/// holding a `json` condition or a pattern.
 fn File::read_body_condition(
   self : File,
   pointer : String,
@@ -498,33 +501,36 @@ fn File::read_body_condition(
   }
   let mut out = None
   for key, value in condition {
+    let field = child(pointer, key)
     match key {
       "json" => out = Some(Json(value))
-      "pattern" => ()
-      _ => self.unknown_field(child(pointer, key))
+      "pattern" =>
+        if self.string(field, value) is Some(source) &&
+          self.compile(field, source) is Some(pattern) {
+          out = Some(BodyCondition::Pattern(pattern))
+        }
+      _ => self.unknown_field(field)
     }
   }
   match (condition.contains("json"), condition.contains("pattern")) {
     (true, true) =>
       self.error(pointer, "needs \"json\" or \"pattern\", not both")
-    (false, true) =>
-      self.error(pointer, "pattern conditions are not supported yet")
     (false, false) => self.error(pointer, "needs \"json\" or \"pattern\"")
-    (true, false) => ()
+    _ => ()
   }
   out
 }
 
 ///|
 /// Reads conditions on named values, such as query parameters: an object
-/// whose members are names and exact values. With `header_names`, each
-/// name must be a valid header name.
+/// whose members are names and exact values or pattern conditions. With
+/// `header_names`, each name must be a valid header name.
 fn File::read_value_conditions(
   self : File,
   pointer : String,
   json : Json,
   header_names? : Bool = false,
-) -> Array[(String, String)] {
+) -> Array[(String, ValueCondition)] {
   let out = []
   guard json is Object(conditions) else {
     self.error(pointer, "must be an object")
@@ -537,19 +543,60 @@ fn File::read_value_conditions(
       continue
     }
     match value {
-      String(value) => out.push((name, value))
-      Object(_) => self.error(field, "pattern conditions are not supported yet")
-      _ => self.error(field, "must be a string")
+      String(value) => out.push((name, ValueCondition::Exact(value)))
+      Object(condition) =>
+        if self.read_pattern(field, condition) is Some(pattern) {
+          out.push((name, ValueCondition::Pattern(pattern)))
+        }
+      _ => self.error(field, "must be a string or an object")
     }
   }
   out
 }
 
 ///|
+/// Reads a pattern condition, the object at `pointer`, and compiles its
+/// pattern. It has none when the object is malformed or the pattern does
+/// not compile.
+fn File::read_pattern(
+  self : File,
+  pointer : String,
+  condition : Map[String, Json],
+) -> Pattern? {
+  let mut out = None
+  for key, value in condition {
+    let field = child(pointer, key)
+    match key {
+      "pattern" =>
+        if self.string(field, value) is Some(source) {
+          out = self.compile(field, source)
+        }
+      _ => self.unknown_field(field)
+    }
+  }
+  self.require(condition, pointer, "pattern")
+  out
+}
+
+///|
+/// Compiles the pattern `source`, the value at `pointer`, or reports why
+/// it does not compile, with the position of the problem in the pattern.
+fn File::compile(self : File, pointer : String, source : String) -> Pattern? {
+  try @re2.compile(source) catch {
+    error => {
+      self.error(pointer, "is not a valid pattern: \{error}")
+      None
+    }
+  } noraise {
+    regex => Some({ source, regex, })
+  }
+}
+
+///|
 fn File::read_response(self : File, pointer : String, json : Json) -> Response {
   let mut status = 0
   let mut headers = []
-  let mut body = b""
+  let mut body : ResponseBody = Bytes(b"")
   guard json is Object(response) else {
     self.error(pointer, "must be an object")
     return { status, headers: ReadOnlyArray::from_array(headers), body, }
@@ -559,9 +606,11 @@ fn File::read_response(self : File, pointer : String, json : Json) -> Response {
     match key {
       "status" => status = self.read_status(field, value)
       "headers" => headers = self.read_headers(field, value)
-      "body" => body = @utf8.encode(self.string(field, value).unwrap_or(""))
-      "bodyFile" => body = self.read_body_file(field, value)
-      "template" | "events" => self.not_supported(field)
+      "body" =>
+        body = Bytes(@utf8.encode(self.string(field, value).unwrap_or("")))
+      "bodyFile" => body = Bytes(self.read_body_file(field, value))
+      "events" => body = Events(self.read_events(field, value))
+      "template" => self.not_supported(field)
       _ => self.unknown_field(field)
     }
   }
@@ -577,6 +626,78 @@ fn File::read_response(self : File, pointer : String, json : Json) -> Response {
     )
   }
   { status, headers: ReadOnlyArray::from_array(headers), body, }
+}
+
+///|
+/// Reads the Server-Sent Events of a response.
+fn File::read_events(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> ReadOnlyArray[SseEvent] {
+  let events = []
+  for i, event in self.array(pointer, json) {
+    let event_pointer = child(pointer, i.to_string())
+    guard event is Object(fields) else {
+      self.error(event_pointer, "must be an object")
+      continue
+    }
+    let mut delay_ms = 0
+    let mut event_type = None
+    let mut id = None
+    let mut data = ""
+    for key, value in fields {
+      let field = child(event_pointer, key)
+      match key {
+        "delay" => delay_ms = self.read_milliseconds(field, value)
+        "event" =>
+          event_type = self.string_without(
+            field, value, "\r\n", "must be one line",
+          )
+        "id" =>
+          id = self.string_without(
+            field, value, "\u{0}\r\n", "must be one line without NUL characters",
+          )
+        "data" => data = self.string(field, value).unwrap_or("")
+        _ => self.unknown_field(field)
+      }
+    }
+    self.require(fields, event_pointer, "data")
+    events.push({ delay_ms, event: event_type, id, data, })
+  }
+  ReadOnlyArray::from_array(events)
+}
+
+///|
+/// Reads a string that contains none of the characters in `forbidden`, or
+/// reports `message`.
+fn File::string_without(
+  self : File,
+  pointer : String,
+  json : Json,
+  forbidden : String,
+  message : String,
+) -> String? {
+  guard self.string(pointer, json) is Some(value) else { return None }
+  if value.contains_any(chars=forbidden) {
+    self.error(pointer, message)
+    return None
+  }
+  Some(value)
+}
+
+///|
+/// Reads a duration in whole milliseconds: an integer from 0 to
+/// 2147483647.
+fn File::read_milliseconds(self : File, pointer : String, json : Json) -> Int {
+  match json {
+    Number(n, ..) if n == n.floor() && n >= 0.0 && n <= 2147483647.0 =>
+      n.to_int()
+    _ => {
+      self.error(pointer, "must be an integer from 0 to 2147483647")
+      0
+    }
+  }
 }
 
 ///|

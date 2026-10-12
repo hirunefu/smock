@@ -113,6 +113,40 @@ pub fn Engine::Engine(snapshot : @definitions.Snapshot) -> Engine {
 }
 
 ///|
+/// The engine's side of the Admin API status: what it serves.
+pub(all) struct Status {
+  /// The Mocks, in declaration order.
+  mocks : Array[MockStatus]
+} derive(Debug)
+
+///|
+/// A Mock as the Admin API status shows it.
+pub(all) struct MockStatus {
+  name : String
+  /// The Hosts the Mock answers to, as declared.
+  hosts : Array[String]
+  /// Whether the Mock is the Default Mock.
+  is_default : Bool
+} derive(Debug)
+
+///|
+/// What the engine serves: the Mocks with their Hosts, and which one is the
+/// Default Mock.
+pub fn Engine::status(self : Engine) -> Status {
+  let default_name = self.snapshot.default_mock().map(mock => mock.name)
+  {
+    mocks: self.snapshot.mocks
+    .iter()
+    .map(mock => MockStatus::{
+      name: mock.name,
+      hosts: mock.hosts.iter().collect(),
+      is_default: default_name == Some(mock.name),
+    })
+    .collect(),
+  }
+}
+
+///|
 /// Decides the response to `request`.
 ///
 /// - `session` is the request's Session key, or `None` without a Session.
@@ -146,14 +180,7 @@ pub fn Engine::handle(
   }
   let plan : ResponsePlan = match (mock, matched) {
     (None, _) => no_mock(host, self.snapshot.hosts())
-    (Some(_), Some(stub)) =>
-      {
-        status: stub.response.status,
-        headers: stub.response.headers.iter().collect(),
-        body: Bytes(stub.response.body),
-        delay_ms: 0,
-        fault: None,
-      }
+    (Some(_), Some(stub)) => stub_response(stub.response)
     (Some(mock), None) => no_match(mock)
   }
   // A mistyped Host must not silently succeed.
@@ -176,6 +203,35 @@ pub fn Engine::handle(
     },
     near_miss: None,
   }
+}
+
+///|
+/// The plan of a Stub's `response`. Server-Sent Events are sent with
+/// `Content-Type: text/event-stream`, unless the Stub gives its own
+/// Content-Type.
+fn stub_response(response : @definitions.Response) -> ResponsePlan {
+  let headers = []
+  let body : Body = match response.body {
+    Bytes(bytes) => Bytes(bytes)
+    Events(events) => {
+      if !response.headers.iter().any(h => h.0.to_lower() == "content-type") {
+        headers.push(("Content-Type", "text/event-stream"))
+      }
+      Events(
+        events
+        .iter()
+        .map(event => SseEvent::{
+          delay_ms: event.delay_ms,
+          event: event.event,
+          id: event.id,
+          data: event.data,
+        })
+        .collect(),
+      )
+    }
+  }
+  headers.push_iter(response.headers.iter())
+  { status: response.status, headers, body, delay_ms: 0, fault: None, }
 }
 
 ///|

@@ -21,11 +21,38 @@ pub fn BuildInfo::version_line(self : BuildInfo) -> String {
 }
 
 ///|
-/// Writes the startup entry, the first entry `smock serve` logs.
-pub fn BuildInfo::log_startup(self : BuildInfo, logger : @log.Logger) -> Unit {
-  logger.info("smock starting", fields={
+/// Writes the startup entry, the first entry `smock serve` logs: the
+/// version, the commit and the toolchain, then `fields`.
+pub fn BuildInfo::log_startup(
+  self : BuildInfo,
+  logger : @log.Logger,
+  fields? : Map[String, Json] = {},
+) -> Unit {
+  let entry : Map[String, Json] = {
     "version": Json::string(self.version),
     "commit": Json::string(self.commit),
     "toolchain": Json::string(self.toolchain),
-  })
+  }
+  for key, value in fields {
+    entry[key] = value
+  }
+  logger.info("smock starting", fields=entry)
+}
+
+///|
+/// Registers the build-info metric, `smock_build_info`, in `registry`: a
+/// gauge that is always 1 and carries the version, the commit and the
+/// toolchain as labels.
+pub fn BuildInfo::register_metric(
+  self : BuildInfo,
+  registry : @metrics.Registry,
+) -> Unit {
+  registry
+  .gauge(
+    "smock_build_info",
+    help="The smock build: its version, commit and MoonBit toolchain, as labels. Always 1.",
+    labels=["version", "commit", "toolchain"],
+  )
+  .labels([self.version, self.commit, self.toolchain])
+  .set(1)
 }

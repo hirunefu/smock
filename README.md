@@ -32,8 +32,12 @@ Packages of `smock/smock`:
 - `engine`: decides the response to each request from the snapshot.
 - `defdir`: reads the definitions directory and loads it, for both
   `smock serve` and `smock check` (native).
-- `server`: the listeners and the connection loop (native). On the TLS
-  port the same loop reads and writes through a TLS stream.
+- `server`: the listeners, the connection loop and the Admin API (native).
+  On the TLS port the same loop reads and writes through a TLS stream; on
+  the admin port it answers the Admin API.
+- `metrics`: the metrics registry: counters, gauges and histograms with
+  fixed label names, rendered in the Prometheus text format. Features
+  register their metrics in the one registry `smock serve` keeps.
 - `openssl`: smock's own bindings to OpenSSL, the one C library ADR 0001
   allows (native). A TLS connection there does no I/O: it takes the bytes
   that arrive from the peer and hands out the bytes to send, and `server`
@@ -48,6 +52,10 @@ Packages of `smock/smock`:
 A package that does I/O or uses FFI declares `supported_targets = "native"`.
 Every other package also builds for `wasm-gc`, and CI tests it there.
 
+`openapi/admin.json` is the OpenAPI 3.1 document of the Admin API, the
+contract for it as the JSON Schema is for Definition files; a client can be
+generated from it in any language.
+
 `Dockerfile` packs the release binary into the container image, and
 `.github/workflows/release.yml` publishes the image and the release binaries
 (see [Container image and release binaries](#container-image-and-release-binaries)).
@@ -61,12 +69,12 @@ CI checks with both the Schema and smock.
 
 ```sh
 moon build --target native
-_build/native/debug/build/smock/smock/cmd/smock/smock.exe serve --dir defs
+SMOCK_ADMIN_TOKEN=change-me _build/native/debug/build/smock/smock/cmd/smock/smock.exe serve --dir defs
 ```
 
 `smock serve` reads the Definition files in the definitions directory and
-listens on the plain port. Logs go to stderr, one JSON object per line.
-`smock serve --help` lists the settings:
+listens on the plain port and on the admin port. Logs go to stderr, one JSON
+object per line. `smock serve --help` lists the settings:
 
 | Flag | Variable | Default |
 |---|---|---|
@@ -75,6 +83,10 @@ listens on the plain port. Logs go to stderr, one JSON object per line.
 | `--tls-port` | `SMOCK_TLS_PORT` | 8443 (0 picks a free port) |
 | `--tls-cert-file` | `SMOCK_TLS_CERT_FILE` | none |
 | `--tls-key-file` | `SMOCK_TLS_KEY_FILE` | none |
+| `--admin-port` | `SMOCK_ADMIN_PORT` | 9090 (0 picks a free port) |
+| `--admin-auth` | `SMOCK_ADMIN_AUTH` | `on`: the Admin API needs a bearer token; `off` for local use |
+| `--admin-token-file` | `SMOCK_ADMIN_TOKEN_FILE` | none: the token comes from `SMOCK_ADMIN_TOKEN` |
+| `--replicas` | `SMOCK_REPLICAS` | 1: above 1, every Admin API response warns that state is per replica |
 | `--log-format` | `SMOCK_LOG_FORMAT` | `json` |
 | `--body-file-dir` | `SMOCK_BODY_FILE_DIR` | `files` |
 | `--header-size-limit` | `SMOCK_HEADER_SIZE_LIMIT` | 16384 bytes (16 KiB): larger request heads get 431 |
@@ -109,6 +121,40 @@ smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /et
   files.
 - Without certificate files, smock does not listen on the TLS port.
 
+The Admin API is JSON over HTTP/1.1 on the admin port, as
+[openapi/admin.json](openapi/admin.json) describes it:
+
+- Every operation needs `Authorization: Bearer <token>`. The token comes
+  from the file `--admin-token-file` names, or from the environment variable
+  `SMOCK_ADMIN_TOKEN` (it has no flag, so it never shows in the process
+  list), without the whitespace around it. With authentication on and no
+  token, or with both, `smock serve` logs why and exits with status 1. A
+  missing or wrong token gets 401 with `WWW-Authenticate: Bearer`; the token
+  is compared in constant time. `--admin-auth off` turns authentication off
+  for local use. The `smock starting` log entry says whether it is on
+  (`"adminAuth":"on"`).
+- Every response, errors included, names the replica that handled it in
+  `Smock-Replica`: the host name, which in Kubernetes is the Pod's hostname.
+  Every JSON response has a `warnings` array, which carries a
+  `per_replica_state` warning when `--replicas` is above 1.
+- Errors take the form `{"error": <code>, "message": ..., "warnings": [...]}`,
+  unknown operations (404), unsupported methods (405) and malformed JSON
+  (400) included.
+- `GET /v1/status` shows the version, commit and toolchain, as
+  `smock --version` prints them, and the Mocks with their Hosts and which
+  one is the Default Mock. The definition set digest and the last reload
+  result are `null` until reloading arrives.
+- `GET /metrics` serves the Prometheus metrics, without a token, also when
+  authentication is on. `smock_build_info` carries the version, commit and
+  toolchain as labels.
+- The other operations of the document answer 501 until their tickets
+  build them.
+
+```sh
+curl -H "Authorization: Bearer change-me" localhost:9090/v1/status
+curl localhost:9090/metrics
+```
+
 A Definition file, such as `defs/users.json`:
 
 ```json
@@ -141,10 +187,10 @@ loads it: it prints every problem, one per line with the file and a JSON
 Pointer, and exits with status 1 if there is any.
 [docs/definition-files.md](docs/definition-files.md) describes the format:
 how Stubs match requests (method, path, query parameters, headers and
-body, exactly or as JSON), the order they are tried in (priority, then
+body, exactly, by RE2 pattern or as JSON), the order they are tried in (priority, then
 file-name order), what a Mock answers when nothing matches, responses with
-inline bodies or body files, the JSON Schema, editor support and writing
-Definition files in another configuration language.
+inline bodies, body files or Server-Sent Events, the JSON Schema, editor
+support and writing Definition files in another configuration language.
 
 Definition files can also be YAML (`.yaml` or `.yml`), mixed with JSON files
 in one directory. A YAML file means exactly what the equivalent JSON file
@@ -289,13 +335,16 @@ scripts/test-openssl-asan.sh   # the OpenSSL bindings under AddressSanitizer and
 scripts/build-release.sh       # dist/smock
 dist/smock --version
 scripts/check-schema.sh dist/smock   # the JSON Schema and smock agree
+scripts/check-openapi.sh       # the Admin API document is valid OpenAPI 3.1
 docker build --tag smock:dev .
 scripts/smoke-test-image.sh smock:dev 0.0.0-dev <commit> "moonc <version>"   # the container image
 scripts/check-release-workflow.sh    # the release workflow publishes only for tags (needs yq)
 ```
 
 `scripts/check-schema.sh` runs the external validator check-jsonschema
-through `uvx` (or `pipx`) and needs `jq`. Adding a fixture file under
+through `uvx` (or `pipx`) and needs `jq`; `scripts/check-openapi.sh` runs
+openapi-spec-validator the same way. The Admin API tests in `e2e/` check
+every response against `openapi/admin.json` (`e2e/contract_test.mbt`). Adding a fixture file under
 `schema/v1/fixtures/` adds it to the cross-check; the README there says
 which directory a fixture belongs in.
 
