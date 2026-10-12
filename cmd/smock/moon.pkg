@@ -1,6 +1,11 @@
 import {
+  "moonbitlang/async",
   "moonbitlang/core/argparse",
+  "moonbitlang/core/env",
   "smock/smock/buildinfo",
+  "smock/smock/log",
+  "smock/smock/server",
+  "smock/smock/settings",
 }
 
 supported_targets = "native"

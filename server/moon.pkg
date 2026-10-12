@@ -1,0 +1,15 @@
+import {
+  "smock/http1",
+  "smock/smock/defdir",
+  "smock/smock/definitions",
+  "smock/smock/engine",
+  "smock/smock/log",
+  "smock/smock/settings",
+  "moonbitlang/async",
+  "moonbitlang/async/io",
+  "moonbitlang/async/socket",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/random",
+}
+
+supported_targets = "native"
