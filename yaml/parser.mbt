@@ -472,25 +472,48 @@ fn Parser::next_quoted_line(
 ) -> Int raise ParseError {
   let mut empty = 0
   for ;; {
+    match self.next_line(parent) {
+      Blank => empty += 1
+      Text(inside=true) => return empty
+      End | Text(inside=false) => self.fail("unterminated \{what} value")
+    }
+  }
+}
+
+///|
+/// What `next_line` finds on the line after a line break.
+priv enum NextLine {
+  /// Only white space: the parser is at the line break that ends it.
+  Blank
+  /// The end of the input.
+  End
+  /// Text, at the parser's position. It is `inside` the node being parsed,
+  /// whose enclosing block collection is indented by `parent`, when the
+  /// line is indented more than `parent` and does not start with a document
+  /// marker.
+  Text(inside~ : Bool)
+}
+
+///|
+/// Moves from a line break to the next line, past its leading white space,
+/// and says what is there. Indentation counts spaces only.
+fn Parser::next_line(self : Parser, parent : Int) -> NextLine {
+  self.bump()
+  let mut spaces = 0
+  while self.peek() == ' ' {
     self.bump()
-    let mut spaces = 0
-    while self.peek() == ' ' {
-      self.bump()
-      spaces += 1
-    }
-    let at_line_start = self.pos == self.line_start
-    self.skip_space()
-    match self.peek() {
-      '\n' => empty += 1
-      EOF => self.fail("unterminated \{what} value")
-      _ => {
-        if spaces <= parent ||
-          (at_line_start && self.document_marker_at(self.pos)) {
-          self.fail("unterminated \{what} value")
-        }
-        return empty
-      }
-    }
+    spaces += 1
+  }
+  let at_line_start = self.pos == self.line_start
+  self.skip_space()
+  match self.peek() {
+    '\n' => Blank
+    EOF => End
+    _ =>
+      Text(
+        inside=spaces > parent &&
+          !(at_line_start && self.document_marker_at(self.pos)),
+      )
   }
 }
 
@@ -852,21 +875,13 @@ fn Parser::plain(self : Parser, parent : Int, flow~ : Bool) -> (String, Bool) {
     let mut empty = 0
     let continues = self.peek() == '\n' &&
       (for ;; {
-        self.bump()
-        let mut spaces = 0
-        while self.peek() == ' ' {
-          self.bump()
-          spaces += 1
-        }
-        let at_line_start = self.pos == self.line_start
-        self.skip_space()
-        match self.peek() {
-          '\n' => empty += 1
-          EOF | '#' => break false
-          c =>
-            break spaces > parent &&
-              !(at_line_start && self.document_marker_at(self.pos)) &&
-              !(flow && is_flow_indicator(c))
+        match self.next_line(parent) {
+          Blank => empty += 1
+          End => break false
+          Text(inside~) => {
+            let c = self.peek()
+            break inside && c != '#' && !(flow && is_flow_indicator(c))
+          }
         }
       })
     if !continues {
@@ -964,24 +979,13 @@ fn Parser::skip_flow_space(
     self.skip_comment()
     match self.peek() {
       EOF => self.fail("unterminated \{what}")
-      '\n' => {
-        self.bump()
-        let mut spaces = 0
-        while self.peek() == ' ' {
-          self.bump()
-          spaces += 1
+      '\n' =>
+        // A comment, or a line that closes a collection, may be indented
+        // less.
+        if self.next_line(parent) is Text(inside=false) &&
+          !(self.peek() is ('#' | ']' | '}')) {
+          self.fail("unterminated \{what}")
         }
-        let at_line_start = self.pos == self.line_start
-        self.skip_space()
-        match self.peek() {
-          '\n' | '#' | EOF | ']' | '}' => ()
-          _ =>
-            if spaces <= parent ||
-              (at_line_start && self.document_marker_at(self.pos)) {
-              self.fail("unterminated \{what}")
-            }
-        }
-      }
       _ => return
     }
   }
