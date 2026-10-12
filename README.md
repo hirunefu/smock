@@ -28,8 +28,12 @@ Packages of `smock/smock`:
 - `definitions`: reads a definition set, given as (name, bytes) pairs of
   JSON and YAML files, into an immutable snapshot, or into diagnostics
   (file, JSON Pointer, message). Its validation is written by hand and
-  follows the JSON Schema.
+  follows the JSON Schema. The snapshot holds each Mock's Stubs in matching
+  order and their match index, which finds the Stubs a request can match
+  by its method and exact path.
 - `engine`: decides the response to each request from the snapshot.
+  `Engine(snapshot, match_index=false)` tries every Stub in matching order
+  instead of using the index; tests check the index against it.
 - `defdir`: reads the definitions directory and loads it, for both
   `smock serve` and `smock check` (native).
 - `server`: the listeners, the connection loop and the Admin API (native).
@@ -236,6 +240,7 @@ moon test --target native      # every module
 moon test --target wasm-gc     # every package that does no I/O
 moon check --deny-warn --target all
 moon fmt --check
+moon bench -p smock/smock/engine --release   # match index lookups: 100 vs 10,000 Stubs
 scripts/check-protocol-modules.sh
 scripts/check-no-c.sh          # the C boundary of ADR 0001
 scripts/test-openssl-asan.sh   # the OpenSSL bindings under AddressSanitizer and LeakSanitizer
