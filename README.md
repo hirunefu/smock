@@ -86,9 +86,12 @@ A Definition file, such as `defs/users.json`:
 `smock check defs` validates a definitions directory the way `smock serve`
 loads it: it prints every problem, one per line with the file and a JSON
 Pointer, and exits with status 1 if there is any.
-[docs/definition-files.md](docs/definition-files.md) describes the format,
-its JSON Schema, editor support and writing Definition files in another
-configuration language.
+[docs/definition-files.md](docs/definition-files.md) describes the format:
+how Stubs match requests (method, path, query parameters, headers and
+body, exactly or as JSON), the order they are tried in (priority, then
+file-name order), what a Mock answers when nothing matches, responses with
+inline bodies or body files, the JSON Schema, editor support and writing
+Definition files in another configuration language.
 
 Definition files can also be YAML (`.yaml` or `.yml`), mixed with JSON files
 in one directory. A YAML file means exactly what the equivalent JSON file

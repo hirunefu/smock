@@ -13,6 +13,103 @@ in a definitions directory, such as `defs/`, that `smock serve --dir` and
 - smock reads the files in byte-wise order of their names, and reads them
   together, as one definition set: a Stub can belong to a Mock that another
   file declares.
+- Body files live in the body-file subdirectory, `files/` by default
+  (`--body-file-dir`, `SMOCK_BODY_FILE_DIR`). smock reads them when it
+  loads the Definition files, and serves them from memory.
+
+## How a Stub matches a request
+
+A Stub's `request` lists the conditions a request must meet. Every condition
+given must hold, and a condition that is left out matches anything, so a
+Stub without `request` matches every request of its Mock.
+
+| Condition | A request meets it when |
+|---|---|
+| `method` | its method is exactly this, case and all, such as `GET`. |
+| `path` | its path, percent-decoded and without the query, is exactly this. `/users/a%20b` meets `"/users/a b"`. |
+| `query` | each listed parameter is present, and one of its values, decoded, is exactly the given value. Parameters that are not listed are ignored. |
+| `headers` | each listed header is present, its name compared case-insensitively, and one of its values is exactly the given value. Headers that are not listed are ignored. |
+| `body` | a string: the body is exactly this text in UTF-8. `{ "json": … }`: the body parses as JSON and contains the given value. |
+
+Query parameters are decoded as HTML forms encode them: `%20` and `+` both
+stand for a space, so `?q=a+b` meets `"query": { "q": "a b" }`. A parameter
+without `=` has the empty value. When a parameter or a header is repeated,
+the condition holds when any one of its values matches.
+
+A `json` condition is a subset match:
+
+- an object needs each listed key, with a value that matches in turn, and
+  may have other keys;
+- an array needs the same length, matched element by element;
+- any other value must be equal: strings exactly, numbers by their value
+  (`1` and `1.0` are equal), and `true`, `false` and `null` themselves.
+
+A body that does not parse as JSON never meets a `json` condition.
+
+```json
+{
+  "id": "create-user",
+  "mock": "users",
+  "request": {
+    "method": "POST",
+    "path": "/users",
+    "query": { "dryRun": "true" },
+    "headers": { "Content-Type": "application/json" },
+    "body": { "json": { "name": "Alice", "roles": ["admin"] } }
+  },
+  "response": { "status": 201 }
+}
+```
+
+### Which Stub answers
+
+The first Stub that matches answers. Within a Mock, Stubs are tried in this
+order:
+
+1. By `priority`: a lower number is tried first. A Stub without a priority
+   is tried after every Stub with one.
+2. Among equal priorities, in declaration order: files in byte-wise order
+   of their names, then Stubs by their position in the file.
+
+So a specific Stub can win over a general one wherever it is declared, by
+giving it a lower priority number.
+
+### When no Stub matches
+
+The Mock answers with its `noMatch.status`, 404 by default, and the body
+`{"error":"no Stub matched"}` with `Content-Type: application/json`. Give a
+Mock the status its real service returns for unknown requests:
+
+```json
+{ "mocks": [{ "name": "users", "noMatch": { "status": 501 } }] }
+```
+
+## Responses
+
+A Stub's `response` has a `status`, `headers`, and a body. smock sets
+`Content-Length` from the body; `Content-Length`, `Transfer-Encoding` and
+`Connection` cannot be given. The body is either inline, as text in UTF-8:
+
+```json
+"response": { "status": 200, "body": "{\"id\":1}" }
+```
+
+or read from a body file, by its path relative to the body-file
+subdirectory:
+
+```json
+"response": {
+  "status": 200,
+  "headers": { "Content-Type": "application/json" },
+  "bodyFile": "users/1.json"
+}
+```
+
+serves the bytes of `files/users/1.json` exactly as they are. The path
+cannot leave the body-file subdirectory, and none of its names may start
+with `.`. A path that breaks this rule, or names a file that does not
+exist, is reported with the file and JSON Pointer of the `bodyFile`, by
+`smock check` and when `smock serve` starts.
 
 ## The JSON Schema
 
