@@ -14,7 +14,7 @@ The repository is a MoonBit workspace (`moon.work`) of four modules:
 | `.` | `smock/smock` | smock itself. Its parts are packages of this module. |
 | `http1/` | `smock/http1` | The HTTP/1.1 codec. |
 | `re2/` | `smock/re2` | RE2-syntax regular expressions. |
-| `yaml/` | `smock/yaml` | Safe-subset YAML. |
+| `yaml/` | `smock/yaml` | Safe-subset YAML: `parse` turns a document into the tree `@json.parse` gives for the equivalent JSON (documented in `yaml/yaml.mbt`). |
 
 The three protocol modules do no I/O and do not depend on smock, so they can
 be published on mooncakes on their own. `scripts/check-protocol-modules.sh`
@@ -25,8 +25,9 @@ Packages of `smock/smock`:
 - `cmd/smock`: the `smock` binary.
 - `settings`: the settings of `smock serve`, each a flag with a matching
   `SMOCK_<NAME>` environment variable.
-- `definitions`: reads a definition set, given as (name, bytes) pairs, into
-  an immutable snapshot, or into diagnostics (file, JSON Pointer, message).
+- `definitions`: reads a definition set, given as (name, bytes) pairs of
+  JSON and YAML files, into an immutable snapshot, or into diagnostics
+  (file, JSON Pointer, message).
 - `engine`: decides the response to each request from the snapshot.
 - `defdir`: reads the definitions directory (native).
 - `server`: the listeners and the connection loop (native).
@@ -76,6 +77,41 @@ A Definition file, such as `defs/users.json`:
 ```
 
 The field names are provisional until the JSON Schema is published.
+
+Definition files can also be YAML (`.yaml` or `.yml`), mixed with JSON files
+in one directory. A YAML file means exactly what the equivalent JSON file
+means. `defs/users.yaml` is the same as `defs/users.json` above:
+
+```yaml
+mocks:
+  - name: users
+stubs:
+  - id: get-user
+    mock: users
+    request: { method: GET, path: /users/1 }
+    response:
+      status: 200
+      headers:
+        Content-Type: application/json
+      body: '{"id":1,"name":"Alice"}'
+```
+
+To keep that meaning the same in every YAML version and tool, smock accepts
+only a safe subset of YAML (`yaml/`):
+
+- Block and flow collections, plain and quoted scalars, `|` and `>` block
+  scalars with their chomping indicators, comments, and one document.
+- Plain `true`, `false`, `null` and JSON-syntax numbers are typed; quoted
+  scalars are always strings. Any other plain scalar that YAML 1.1 or 1.2
+  would type, such as `yes`, `on`, `~`, `True`, `0x1F`, `007`, `1_000`,
+  `.inf` or `2001-12-14`, is rejected with "quote this value". Every other
+  plain scalar is a string.
+- Anchors, aliases, tags, merge keys, duplicate keys and multiple documents
+  are rejected.
+
+Every problem is reported with the file and the JSON Pointer of the value,
+such as `users.yaml: /stubs/0/request/method: "on" may be read as a boolean;
+quote this value`.
 
 ## Toolchain
 
