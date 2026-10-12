@@ -39,7 +39,20 @@ pub(all) struct Outcome {
   journal : JournalEntry
   /// The Near miss, when no Stub matched.
   near_miss : NearMiss?
+  /// The Stub that matched, if any, and where it comes from.
+  matched : MatchedStub?
 } derive(Debug)
+
+///|
+/// The Stub that matched a request, by its ID, and where it comes from. A
+/// Stub from a Definition file may have an ID that looks like one smock
+/// assigns, so only this tells the two apart.
+pub(all) enum MatchedStub {
+  /// A Stub from a Definition file.
+  FromFile(String)
+  /// An Ephemeral Stub, added through the Admin API.
+  Ephemeral(String)
+} derive(Debug, Eq)
 
 ///|
 /// Which Mock answered a request, and how the engine chose it.
@@ -289,10 +302,11 @@ pub fn Engine::handle(
   let matched_ephemeral = ephemeral.bind(list => {
     list.iter().find_first(e => incoming.meets(e.stub.request))
   })
-  // The Stub that matched, with its own generator if it has one.
-  let matched : (@definitions.Stub, @prng.Generator?)? = match
+  // The Stub that matched, with its own generator if it has one, and
+  // whether it is an Ephemeral Stub.
+  let matched : (@definitions.Stub, @prng.Generator?, Bool)? = match
     (mock, matched_ephemeral) {
-    (_, Some(e)) => Some((e.stub, e.generator))
+    (_, Some(e)) => Some((e.stub, e.generator, true))
     (Some(mock), None) => {
       let candidates = if self.match_index {
         mock.candidates(request.meth, incoming.path)
@@ -301,13 +315,13 @@ pub fn Engine::handle(
       }
       candidates
       .find_first(stub => incoming.meets(stub.request))
-      .map(stub => (stub, self.generators.get(stub.id)))
+      .map(stub => (stub, self.generators.get(stub.id), false))
     }
     (None, None) => None
   }
   let (plan, near_miss) : (ResponsePlan, NearMiss?) = match (mock, matched) {
     (None, _) => (no_mock(host, self.snapshot.hosts()), None)
-    (Some(_), Some((stub, generator))) => {
+    (Some(_), Some((stub, generator, _))) => {
       let (delay_ms, fault) = decide_faults(stub, generator.unwrap_or(rand))
       ({ ..stub_response(stub.response), delay_ms, fault, }, None)
     }
@@ -340,6 +354,14 @@ pub fn Engine::handle(
       received_at: now,
     },
     near_miss,
+    matched: matched.map(matched => {
+      let (stub, _, ephemeral) = matched
+      if ephemeral {
+        Ephemeral(stub.id)
+      } else {
+        FromFile(stub.id)
+      }
+    }),
   }
 }
 

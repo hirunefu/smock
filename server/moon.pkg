@@ -16,6 +16,7 @@ import {
   "moonbitlang/async/os_error",
   "moonbitlang/async/process",
   "moonbitlang/async/socket",
+  "moonbitlang/core/bench",
   "moonbitlang/core/encoding/base64",
   "moonbitlang/core/encoding/percent",
   "moonbitlang/core/encoding/utf8",

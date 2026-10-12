@@ -59,6 +59,7 @@ pub async fn serve(
   let build = @buildinfo.current()
   build.register_metric(metrics)
   let reloads = register_reload_metric(metrics)
+  let traffic = Traffic::register(metrics)
   let tls = match settings.tls {
     None => None
     Some(files) =>
@@ -153,7 +154,7 @@ pub async fn serve(
     }
     group.spawn_bg(() => {
       accept_loop(group, plain, conn => {
-        serve_mocks(conn, engine, rand, settings)
+        serve_mocks(conn, engine, rand, settings, traffic)
       })
     })
     group.spawn_bg(() => {
@@ -166,7 +167,7 @@ pub async fn serve(
           TlsStream::accept(conn, name => certificate.select(name))
         })
         guard stream is Some(Some(stream)) else { return }
-        serve_mocks(stream, engine, rand, settings)
+        serve_mocks(stream, engine, rand, settings, traffic)
         stream.shutdown()
       })
     })
@@ -243,28 +244,38 @@ async fn[X] accept_loop(
 /// the status line is written once the delay is over, and meanwhile other
 /// connections are served as usual. A connection Fault in the plan ends the
 /// connection instead of the response, or part of the way through it.
+///
+/// Each request is counted in `traffic` once its response is written, or
+/// once the connection ends before it is, with the time from the request
+/// being read in full to then. Nothing is counted before the response, so
+/// counting never holds one back.
 async fn[S : @io.Reader + @io.Writer] serve_mocks(
   stream : S,
   engine : @engine.Engine,
   rand : @prng.Generator,
   settings : @settings.ServeSettings,
+  traffic : Traffic,
 ) -> Unit {
   serve_connection(
     stream,
     settings,
     respond=(stream, request) => {
+      // The request has just been read in full.
+      let read_at = @bench.monotonic_clock_start()
       let engine_request = to_engine_request(request)
       let session = @engine.session_of(
         engine_request.headers,
         header=settings.session_header,
         member_name=settings.session_member,
       )
-      let plan = engine.handle(
-          engine_request,
-          session~,
-          now=@async.now(),
-          rand~,
-        ).plan
+      let outcome = engine.handle(
+        engine_request,
+        session~,
+        now=@async.now(),
+        rand~,
+      )
+      defer traffic.record(outcome, @bench.monotonic_clock_end(read_at) / 1.0e6)
+      let plan = outcome.plan
       if plan.delay_ms > 0 {
         @async.sleep(plan.delay_ms)
       }
