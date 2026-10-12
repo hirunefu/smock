@@ -9,7 +9,8 @@ pub async fn serve(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
 ) -> Int {
-  let snapshot = match load(settings) {
+  let snapshot = match
+    @defdir.load(settings.dir, body_file_dir=settings.body_file_dir) {
     Ok(snapshot) => snapshot
     Err(diagnostics) => {
       for diagnostic in diagnostics {
@@ -52,22 +53,6 @@ pub async fn serve(
       })
     }
   })
-}
-
-///|
-/// Reads the definitions directory, if any, and builds the snapshot.
-async fn load(
-  settings : @settings.ServeSettings,
-) -> Result[@definitions.Snapshot, Array[@definitions.Diagnostic]] {
-  let (set, read_problems) = match settings.dir {
-    Some(dir) => @defdir.read(dir, body_file_dir=settings.body_file_dir)
-    None => ({ files: [], body_files: [], }, [])
-  }
-  match @definitions.load(set) {
-    Ok(snapshot) if read_problems.length() == 0 => Ok(snapshot)
-    Ok(_) => Err(read_problems)
-    Err(problems) => Err([..read_problems, ..problems])
-  }
 }
 
 ///|
