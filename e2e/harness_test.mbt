@@ -79,6 +79,8 @@ struct Smock {
   tls_port : Int?
   /// Its process ID.
   pid : Int
+  /// The log lines it has written so far: they keep coming while it runs.
+  logs : Array[String]
 }
 
 ///|
@@ -295,6 +297,7 @@ async fn with_smock(
       tls_port: ports.get("tls"),
       admin_port: ports.get("admin").unwrap(),
       pid: process.pid,
+      logs,
     })
     let _ = @process.run("kill", ["-TERM", process.pid.to_string()])
     let status = @async.with_timeout_opt(patience_ms, () => process.wait())

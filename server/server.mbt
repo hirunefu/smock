@@ -7,8 +7,8 @@
 ///
 /// Returns the exit status when it stops by itself: 1 when Admin API
 /// authentication is on and no token is set, the definition set is invalid,
-/// the TLS certificate cannot be loaded or a port cannot be listened on.
-/// Every problem is logged first.
+/// the default TLS certificate or a Mock's own cannot be loaded or a port
+/// cannot be listened on. Every problem is logged first.
 pub async fn serve(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
@@ -43,22 +43,36 @@ pub async fn serve(
       return 1
     }
   }
+  // The directories of the certificate and key files are watched too, also
+  // from before the first load.
+  let tls_watches = []
+  if settings.tls is Some(files) {
+    let pairs = [files, ..settings.tls_mock_certs.values()]
+    for dir in tls_dirs(pairs) {
+      tls_watches.push((dir, @watch.Watch(dir)))
+    }
+  }
+  defer tls_watches.each(watch => watch.1.close())
+  let engine = @engine.Engine(snapshot)
+  let metrics = @metrics.Registry()
+  let build = @buildinfo.current()
+  build.register_metric(metrics)
+  let reloads = register_reload_metric(metrics)
   let tls = match settings.tls {
     None => None
     Some(files) =>
-      match load_tls(files) {
-        Ok(config) => Some((files, config))
-        Err(message) => {
-          logger.error("cannot load the TLS certificate", fields={
-            "cert_file": Json::string(files.cert_file),
-            "key_file": Json::string(files.key_file),
-            "error": Json::string(message),
-          })
-          return 1
-        }
+      match
+        Certificates::load(
+          files,
+          settings.tls_mock_certs,
+          engine~,
+          logger~,
+          metrics~,
+        ) {
+        Some(certificates) => Some((files, certificates))
+        None => return 1
       }
   }
-  let engine = @engine.Engine(snapshot)
   // The process generator. Its seed is logged, so that a run can be
   // replayed with --seed.
   let seed = match settings.seed {
@@ -69,10 +83,6 @@ pub async fn serve(
   logger.info("random seed", fields={
     "seed": Json::number(seed.to_double(), repr=seed.to_string()),
   })
-  let build = @buildinfo.current()
-  let metrics = @metrics.Registry()
-  build.register_metric(metrics)
-  let reloads = register_reload_metric(metrics)
   let admin = Admin::new(
     engine,
     build,
@@ -125,21 +135,32 @@ pub async fn serve(
         logger,
         reloads,
         last_read: (snapshot.digest, []),
+        after_swap: () => {
+          if tls is Some((_, certificates)) {
+            certificates.warn_undeclared()
+          }
+        },
       }
       group.spawn_bg(() => reloader.run(watch))
+    }
+    if tls is Some((_, certificates)) {
+      for watch in tls_watches {
+        let (dir, watch) = watch
+        group.spawn_bg(() => certificates.run(dir, watch))
+      }
     }
     group.spawn_bg(() => {
       accept_loop(group, plain, conn => {
         serve_mocks(conn, engine, rand, settings)
       })
     })
-    if tls is Some((_, config)) && tls_listener is Some(listener) {
+    if tls is Some((_, certificates)) && tls_listener is Some(listener) {
       group.spawn_bg(() => {
         accept_loop(group, listener, conn => {
           // A connection that is still in its handshake has sent no
           // request bytes, so the idle timeout bounds the handshake too.
           let stream = @async.with_timeout_opt(settings.idle_timeout_ms, () => {
-            TlsStream::accept(conn, config)
+            TlsStream::accept(conn, name => certificates.select(name))
           })
           guard stream is Some(Some(stream)) else { return }
           serve_mocks(stream, engine, rand, settings)
