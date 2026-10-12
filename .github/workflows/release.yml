@@ -10,19 +10,23 @@
 #    it and each architecture with cosign (keyless, with the workflow's
 #    GitHub OIDC identity), attests an SPDX SBOM for each architecture, and
 #    verifies all of that as the README does (scripts/verify-image.sh).
-# 3. release: creates the GitHub release with the linux/amd64 and
+# 3. chart and publish-chart: packages the Helm chart with the version as its
+#    version and app version, so it runs the image published in step 2
+#    (scripts/package-helm-chart.sh), and pushes it as an OCI artifact to
+#    oci://ghcr.io/hirunefu/charts/smock.
+# 4. release: creates the GitHub release with the linux/amd64 and
 #    linux/arm64 binaries (the same binaries as in the image), the SBOMs, and
 #    notes that name the MoonBit toolchain (scripts/release-notes.sh).
 #
 # Run it by hand from the Actions tab to try it before a tag: it builds and
-# smoke-tests both architectures, keeps the binaries, images and notes as
-# workflow artifacts, and publishes nothing. Only the publishing jobs get
-# write permissions, and they run only for a pushed tag;
-# scripts/check-release-workflow.sh checks that in CI.
+# smoke-tests both architectures, packages the chart, keeps the binaries,
+# images, chart and notes as workflow artifacts, and publishes nothing. Only
+# the publishing jobs get write permissions, and they run only for a pushed
+# tag; scripts/check-release-workflow.sh checks that in CI.
 #
 # One-time maintainer step after the first release: in the package settings
-# of ghcr.io/hirunefu/smock, make the package public. GitHub creates it
-# private.
+# of ghcr.io/hirunefu/smock and of ghcr.io/hirunefu/charts/smock, make the
+# packages public. GitHub creates them private.
 name: Release
 
 on:
@@ -35,6 +39,7 @@ permissions:
 
 env:
   IMAGE: ghcr.io/hirunefu/smock
+  CHARTS: oci://ghcr.io/hirunefu/charts
 
 jobs:
   plan:
@@ -226,9 +231,73 @@ jobs:
           path: sbom/
           if-no-files-found: error
 
+  chart:
+    name: Package the Helm chart
+    needs: plan
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install helm
+        run: scripts/install-kubernetes-tools.sh "$RUNNER_TEMP/bin" helm
+
+      - name: Test the chart
+        run: scripts/test-helm-chart.sh
+
+      - name: Package the chart with the release's version
+        run: scripts/package-helm-chart.sh "$VERSION" chart
+
+      - name: Check that the package runs the release's image
+        run: |
+          helm show chart "chart/smock-$VERSION.tgz" | grep -qx "appVersion: $VERSION"
+          helm template smock "chart/smock-$VERSION.tgz" --set adminAuth.enabled=false |
+            grep -qF "image: $IMAGE:$VERSION"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: chart
+          path: chart/
+          if-no-files-found: error
+
+  # After publish-image, so that the image the chart runs exists.
+  publish-chart:
+    name: Publish the Helm chart
+    needs: [plan, chart, publish-image]
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install helm
+        run: scripts/install-kubernetes-tools.sh "$RUNNER_TEMP/bin" helm
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: chart
+          path: chart
+
+      - name: Log in to ghcr.io
+        env:
+          TOKEN: ${{ github.token }}
+        run: echo "$TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Push the chart
+        run: helm push "chart/smock-$VERSION.tgz" "$CHARTS"
+
+      - name: Check the published chart
+        run: |
+          helm show chart "$CHARTS/smock" --version "$VERSION" | grep -qx "appVersion: $VERSION"
+
   release:
     name: Publish the GitHub release
-    needs: [plan, publish-image]
+    needs: [plan, publish-image, publish-chart]
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     permissions:

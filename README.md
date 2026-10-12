@@ -79,6 +79,8 @@ generated from it in any language.
 `Dockerfile` packs the release binary into the container image, and
 `.github/workflows/release.yml` publishes the image and the release binaries
 (see [Container image and release binaries](#container-image-and-release-binaries)).
+`charts/smock/` is the Helm chart, which the release workflow publishes too
+(see [Helm chart](#helm-chart)).
 
 `schema/v1/definitions.json` is the JSON Schema of Definition files, the
 contract for their format. `.github/workflows/schema-pages.yml` publishes it
@@ -569,6 +571,27 @@ The image's command is `serve`; arguments replace it (`... smock:<version>
 port 8443 and the admin port 9090. Files mounted into the container must be
 readable by UID 65532.
 
+### Helm chart
+
+Each release also publishes the Helm chart `oci://ghcr.io/hirunefu/charts/smock`,
+with the release's version as its version and app version, so it runs the
+image of the same release:
+
+```sh
+kubectl create secret generic smock-admin-token --from-literal=token="$(openssl rand -hex 32)"
+helm install smock oci://ghcr.io/hirunefu/charts/smock --version <version> \
+  --set adminAuth.tokenSecret.name=smock-admin-token \
+  --set-file 'definitions.configMap.files.users\.yaml=mocks/users.yaml'
+```
+
+The Definition files come from a ConfigMap by default, and a ConfigMap
+update reaches the running smock through its reload, without a restart; a
+git-sync sidecar or an OCI image volume can deliver them instead. The Pods
+meet the Restricted Pod Security Standard, run one replica with about one
+CPU core by default, and get the Admin API token and the TLS certificate
+from Secrets. [charts/smock/README.md](charts/smock/README.md) describes the
+chart and lists every value with its default.
+
 ### Verify the image
 
 The image and the image of each architecture are signed with cosign, without
@@ -617,14 +640,15 @@ runs `.github/workflows/release.yml`. On an amd64 and an arm64 runner, each
 building for its own architecture without emulation, it builds smock with
 the toolchain in `.moonbit-version`, builds the image and runs
 `scripts/smoke-test-image.sh` on it. Only then does it push, combine, sign
-and attest the image, verify it with `scripts/verify-image.sh`, and create
-the GitHub release with notes from `scripts/release-notes.sh`. It never runs
+and attest the image, verify it with `scripts/verify-image.sh`, push the
+Helm chart packaged by `scripts/package-helm-chart.sh`, and create the
+GitHub release with notes from `scripts/release-notes.sh`. It never runs
 on pull requests. Started by hand from the Actions tab, it builds and
-smoke-tests everything and keeps the binaries, images and notes as workflow
-artifacts, but publishes nothing. `scripts/check-release-workflow.sh`, run in
+smoke-tests everything and keeps the binaries, images, chart and notes as
+workflow artifacts, but publishes nothing. `scripts/check-release-workflow.sh`, run in
 CI, checks those rules. After the first release, make the
-`ghcr.io/hirunefu/smock` package public in its settings; GitHub creates it
-private.
+`ghcr.io/hirunefu/smock` and `ghcr.io/hirunefu/charts/smock` packages public
+in their settings; GitHub creates them private.
 
 To smoke-test the image locally (needs docker, curl, openssl, readelf and jq):
 
@@ -668,7 +692,21 @@ scripts/check-openapi.sh       # the Admin API document is valid OpenAPI 3.1
 docker build --tag smock:dev .
 scripts/smoke-test-image.sh smock:dev 0.0.0-dev <commit> "moonc <version>"   # the container image
 scripts/check-release-workflow.sh    # the release workflow publishes only for tags (needs yq)
+scripts/test-helm-chart.sh           # rendering tests of the Helm chart (needs helm, yq and jq)
+scripts/test-helm-chart-on-kind.sh smock:dev   # the chart on a kind cluster (needs kind, kubectl and helm)
 ```
+
+`scripts/test-helm-chart.sh` renders `charts/smock` for each delivery mode
+of the Definition files and each Admin API authentication and TLS option,
+and checks the manifests, the Restricted Pod Security Standard included,
+and that the chart's README lists every value with its default.
+`scripts/test-helm-chart-on-kind.sh` creates a kind cluster, checks every
+delivery mode against Kubernetes' own Pod Security admission, installs the
+chart with the image into a namespace that enforces the Restricted
+standard, and checks that a Stub answers and that a ConfigMap update is
+served without a Pod restart; it deletes the cluster afterwards.
+`scripts/install-kubernetes-tools.sh` installs the pinned helm, kubectl and
+kind that CI uses.
 
 `scripts/check-schema.sh` runs the external validator check-jsonschema
 through `uvx` (or `pipx`) and needs `jq`; `scripts/check-openapi.sh` runs
