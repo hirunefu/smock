@@ -186,9 +186,15 @@ via=default` header that says no Host matched.
 [docs/definition-files.md](docs/definition-files.md#hosts-and-the-default-mock)
 describes Hosts and the Default Mock.
 
+A request that no Stub matches gets the Mock's no-match response, with a
+`Smock-Near-Miss` header naming the closest Stub and the conditions it
+failed, such as `Smock-Near-Miss: get-user; failed=method`.
+
 `smock check defs` validates a definitions directory the way `smock serve`
 loads it: it prints every problem, one per line with the file and a JSON
-Pointer, and exits with status 1 if there is any.
+Pointer, and exits with status 1 if there is any. It also warns about Stubs
+that can never match, because an earlier Stub always matches first;
+warnings do not change the exit status.
 [docs/definition-files.md](docs/definition-files.md) describes the format:
 how Stubs match requests (method, path, query parameters, headers and
 body, exactly, by RE2 pattern or as JSON), the order they are tried in (priority, then

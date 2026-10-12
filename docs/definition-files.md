@@ -199,6 +199,41 @@ Mock the status its real service returns for unknown requests:
 { "mocks": [{ "name": "users", "noMatch": { "status": 501 } }] }
 ```
 
+The response also names the *Near miss*: the Stub that came closest, and
+the conditions it failed, in a `Smock-Near-Miss` header. With this Stub:
+
+```json
+{
+  "id": "get-user",
+  "mock": "users",
+  "request": {
+    "method": "GET",
+    "path": "/users/1",
+    "headers": { "X-Api-Key": "secret" }
+  },
+  "response": { "status": 200 }
+}
+```
+
+`POST /users/1` without an `X-Api-Key` header gets
+
+```http
+Smock-Near-Miss: get-user; failed=method,header:x-api-key
+```
+
+The Near miss is the Stub of the Mock that failed the fewest conditions; on
+a tie, the one tried first. Each of these counts as one condition: the
+method, the path, each listed query parameter, each listed header, and the
+body. They are named `method`, `path`, `query:<name>`, `header:<name>` (in
+lower case) and `body`, in that order. The header is ASCII only and never
+carries what a condition expects or what the request sent: the Stub ID and
+query and header names are percent-encoded where they hold anything other
+than the characters of an HTTP token. A Mock without Stubs, and a request
+for a Host that no Mock answers, get no `Smock-Near-Miss` header.
+
+A request that matches pays nothing for this: smock counts failed
+conditions only once every Stub has failed to match.
+
 ## Responses
 
 A Stub's `response` has a `status`, `headers`, and a body. smock sets
@@ -363,7 +398,7 @@ smock also rejects any field the Schema does not define.
 does, so a directory that passes `smock check` loads in `smock serve`, and
 the reverse. It prints every problem on its own line, with the file and a
 JSON Pointer to the value, and exits with status 1. A valid directory
-prints nothing and exits with status 0.
+prints nothing, apart from [warnings](#warnings), and exits with status 0.
 
 ```console
 $ smock check defs
@@ -386,6 +421,36 @@ In CI, run it as a step that fails the build:
 ```yaml
 - run: smock check defs
 ```
+
+### Warnings
+
+For a valid directory, `smock check` also warns about Stubs that can never
+match, because an earlier Stub of the same Mock always matches first. Each
+warning is one line, marked `warning:`, with the file and JSON Pointer of
+the shadowed Stub, and names the Stub that shadows it. Warnings do not
+change the exit status:
+
+```console
+$ smock check defs
+users.json: /stubs/1: warning: the Stub "user-1" can never match: the Stub "any-user" at users.json: /stubs/0 is tried first and matches every request this one would
+$ echo $?
+0
+```
+
+"Earlier" means earlier in the order Stubs are [tried](#which-stub-answers).
+A Stub `s` is shadowed by an earlier Stub `t` when `t` has a subset of
+`s`'s conditions:
+
+- `t` has no method, or the same method as `s`;
+- `t` has no path, the same exact path as `s`, or a pattern that matches
+  `s`'s exact path;
+- each of `t`'s query, header and body conditions is also in `s`, written
+  the same way (header names in any case).
+
+smock does not compare two patterns, or a pattern or `json` condition with
+another condition: it warns only when the shadowing is certain, so a
+warning is never a false alarm, but some Stubs that can never match are
+not reported.
 
 ## Editor support
 

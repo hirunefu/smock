@@ -104,14 +104,6 @@ pub(all) struct JournalEntry {
 } derive(Debug)
 
 ///|
-/// The Stub that came closest to matching a request that matched nothing,
-/// and the conditions it failed.
-pub(all) struct NearMiss {
-  stub : String
-  failed : Array[String]
-} derive(Debug)
-
-///|
 /// Creates an engine that serves `snapshot`. Each Stub with a seed gets its
 /// own generator, created from its seed.
 ///
@@ -200,13 +192,17 @@ pub fn Engine::handle(
     }
     None => None
   }
-  let plan : ResponsePlan = match (mock, matched) {
-    (None, _) => no_mock(host, self.snapshot.hosts())
+  let (plan, near_miss) : (ResponsePlan, NearMiss?) = match (mock, matched) {
+    (None, _) => (no_mock(host, self.snapshot.hosts()), None)
     (Some(_), Some(stub)) => {
       let (delay_ms, fault) = self.decide_faults(stub, rand)
-      { ..stub_response(stub.response), delay_ms, fault, }
+      ({ ..stub_response(stub.response), delay_ms, fault, }, None)
     }
-    (Some(mock), None) => no_match(mock)
+    (Some(mock), None) => {
+      // Only now, when every candidate has failed, are conditions counted.
+      let near_miss = incoming.near_miss(mock.stubs)
+      (no_match(mock, near_miss), near_miss)
+    }
   }
   // A mistyped Host must not silently succeed.
   if resolution is ViaDefault(name) {
@@ -226,7 +222,7 @@ pub fn Engine::handle(
       status: plan.status,
       received_at: now,
     },
-    near_miss: None,
+    near_miss,
   }
 }
 
@@ -260,11 +256,16 @@ fn stub_response(response : @definitions.Response) -> ResponsePlan {
 }
 
 ///|
-/// The response of `mock` when no Stub matches.
-fn no_match(mock : @definitions.Mock) -> ResponsePlan {
+/// The response of `mock` when no Stub matches, with the Near miss, if
+/// any, in the `Smock-Near-Miss` header.
+fn no_match(mock : @definitions.Mock, near_miss : NearMiss?) -> ResponsePlan {
+  let headers = [("Content-Type", "application/json")]
+  if near_miss is Some(near_miss) {
+    headers.push(("Smock-Near-Miss", near_miss.header_value()))
+  }
   {
     status: mock.no_match_status,
-    headers: [("Content-Type", "application/json")],
+    headers,
     body: Bytes(b"{\"error\":\"no Stub matched\"}"),
     delay_ms: 0,
     fault: None,

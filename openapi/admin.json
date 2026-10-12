@@ -1360,9 +1360,9 @@
         "type": "object",
         "properties": {
           "condition": {
-            "description": "The condition, named as in the `Smock-Near-Miss` header: `method`, `path`, `query:<name>`, `header:<name>` (in lower case) or `body`.",
+            "description": "The condition: `method`, `path`, `query:<name>`, `header:<name>` (in lower case) or `body`. Names are as the Stub gives them; the `Smock-Near-Miss` header carries the same conditions with each name percent-encoded. A query parameter name can be any text, even empty.",
             "type": "string",
-            "pattern": "^(method|path|body|query:.+|header:.+)$"
+            "pattern": "^(method|path|body|query:[\\s\\S]*|header:.+)$"
           },
           "expected": {
             "description": "The condition as the Stub gives it: an exact string, a pattern, or a json condition.",

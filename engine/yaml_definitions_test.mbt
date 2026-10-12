@@ -103,21 +103,33 @@ fn json_stub(id : String) -> String {
 }
 
 ///|
-/// Loads one Definition file given as text: its snapshot, or its problems
-/// without the file name.
+/// Loads one Definition file given as text: what its snapshot serves (the
+/// Mocks with their Stubs, the Hosts and the Default Mock), or its problems
+/// without the file name. A snapshot also records the file each Stub comes
+/// from, which differs between twins.
 fn load_one(
   name : String,
   text : String,
-) -> Result[@definitions.Snapshot, Array[String]] {
+) -> Result[
+  (ReadOnlyArray[@definitions.Mock], Array[String], String?),
+  Array[String],
+] {
   match
     @definitions.load({ files: [(name, @utf8.encode(text))], body_files: [], }) {
-    Ok(snapshot) => Ok(snapshot)
+    Ok(snapshot) =>
+      Ok(
+        (
+          snapshot.mocks,
+          snapshot.hosts(),
+          snapshot.default_mock().map(mock => mock.name),
+        ),
+      )
     Err(diagnostics) => Err(diagnostics.map(d => "\{d.pointer}: \{d.message}"))
   }
 }
 
 ///|
-test "every YAML Definition file gives the same tree and the same snapshot as its JSON twin" {
+test "every YAML Definition file gives the same tree and serves the same as its JSON twin" {
   for fixture in yaml_fixtures {
     let (name, yaml, json) = fixture
     assert_eq(@yaml.parse(yaml), @json.parse(json), msg="tree of \{name}")
@@ -161,6 +173,7 @@ test "the engine answers a request with the response of a Stub declared in a YAM
       #|---
       #|404
       #|Content-Type: application/json
+      #|Smock-Near-Miss: list-orders; failed=method
       #|Smock-Mock: orders; via=default
       #|{"error":"no Stub matched"}
     ),
