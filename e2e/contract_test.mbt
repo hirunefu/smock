@@ -687,6 +687,66 @@ async test "the contract checker rejects responses that break the document" {
       },
     ),
     (
+      "a passing probe",
+      "GET",
+      "/startupz",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"status":"ok","warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a passing probe with another status",
+      "GET",
+      "/readyz",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"status":"ready","warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a failing probe",
+      "GET",
+      "/readyz",
+      {
+        status: 503,
+        headers: replica,
+        body: (
+          #|{"error":"not_ready","message":"m","warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a failing probe without its error code",
+      "GET",
+      "/startupz",
+      {
+        status: 503,
+        headers: replica,
+        body: (
+          #|{"message":"m","warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a passing probe with an undocumented field",
+      "GET",
+      "/livez",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"status":"ok","warnings":[],"uptime":1}
+        ),
+      },
+    ),
+    (
       "a reload with an undocumented field",
       "GET",
       "/v1/status",
@@ -721,6 +781,11 @@ async test "the contract checker rejects responses that break the document" {
       #|a reload result the document does not list: /lastReload: {"at":"2026-10-13T01:02:03.004Z","result":"reloaded","err... matches 0 of oneOf, not 1
       #|a reload without its errors: /lastReload: {"at":"2026-10-13T01:02:03.004Z","result":"swapped"} matches 0 of oneOf, not 1
       #|a reload error without its pointer: /lastReload: {"at":"2026-10-13T01:02:03.004Z","result":"failed","error... matches 0 of oneOf, not 1
+      #|a passing probe: conforms
+      #|a passing probe with another status: /status: "ready" is not "ok"
+      #|a failing probe: conforms
+      #|a failing probe without its error code: : error is missing
+      #|a passing probe with an undocumented field: /uptime: no value is allowed here
       #|a reload with an undocumented field: /lastReload: {"at":"2026-10-13T01:02:03.004Z","result":"unchanged","er... matches 0 of oneOf, not 1
     ),
   )

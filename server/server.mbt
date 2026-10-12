@@ -1,13 +1,14 @@
 ///|
-/// Runs `smock serve`: loads the definitions and the TLS certificate, if
-/// any, listens on the plain port, on the admin port and, with a
-/// certificate, on the TLS port, and serves until the process is stopped.
-/// The plain and TLS ports serve the same Mocks; the admin port serves the
-/// Admin API.
+/// Runs `smock serve`: listens on the admin port, loads the definitions,
+/// then listens on the plain port and, with a TLS certificate, on the TLS
+/// port, and serves until SIGTERM, then drains. The plain and TLS ports
+/// serve the same Mocks; the admin port serves the Admin API and the probes,
+/// from before the definitions load, so that the startup probe can tell
+/// that they have not loaded yet, until the drain ends.
 ///
-/// Returns the exit status when it stops by itself: 1 when Admin API
-/// authentication is on and no token is set, the definition set is invalid,
-/// the TLS certificate cannot be loaded or a port cannot be listened on.
+/// Returns the exit status: 0 after the drain, and 1 when Admin API
+/// authentication is on and no token is set, the TLS certificate cannot be
+/// loaded, the definition set is invalid or a port cannot be listened on.
 /// Every problem is logged first.
 pub async fn serve(
   settings : @settings.ServeSettings,
@@ -20,28 +21,6 @@ pub async fn serve(
     }
   } else {
     None
-  }
-  // Watching starts before the first load, so that no change made while it
-  // reads the files goes unnoticed. Without a definitions directory, there
-  // is nothing to watch and nothing to reload.
-  let watch = match settings.dir {
-    None => None
-    Some(dir) => Some(@watch.Watch(dir))
-  }
-  defer (if watch is Some(watch) { watch.close() })
-  let snapshot = match
-    @defdir.load(settings.dir, body_file_dir=settings.body_file_dir) {
-    Ok(snapshot) => snapshot
-    Err(diagnostics) => {
-      for diagnostic in diagnostics {
-        logger.error("invalid definitions", fields={
-          "file": Json::string(diagnostic.file),
-          "pointer": Json::string(diagnostic.pointer),
-          "error": Json::string(diagnostic.message),
-        })
-      }
-      return 1
-    }
   }
   let tls = match settings.tls {
     None => None
@@ -58,7 +37,14 @@ pub async fn serve(
         }
       }
   }
-  let engine = @engine.Engine(snapshot)
+  // Watching starts before the first load, so that no change made while it
+  // reads the files goes unnoticed. Without a definitions directory, there
+  // is nothing to watch and nothing to reload.
+  let watch = match settings.dir {
+    None => None
+    Some(dir) => Some(@watch.Watch(dir))
+  }
+  defer (if watch is Some(watch) { watch.close() })
   // The process generator. Its seed is logged, so that a run can be
   // replayed with --seed.
   let seed = match settings.seed {
@@ -73,47 +59,150 @@ pub async fn serve(
   let metrics = @metrics.Registry()
   build.register_metric(metrics)
   let reloads = register_reload_metric(metrics)
+  let lifecycle = Lifecycle::new()
   let admin = Admin::new(
-    engine,
+    lifecycle,
     build,
     metrics~,
     token~,
     replica=replica_name(),
     replicas=settings.replicas,
   )
-  guard listen(logger, "plain", settings.port) is Some(plain) else { return 1 }
-  defer plain.close()
-  let tls_listener = match tls {
-    None => None
-    Some(_) => {
-      guard listen(logger, "tls", settings.tls_port) is Some(listener) else {
-        return 1
-      }
-      Some(listener)
-    }
-  }
-  defer (if tls_listener is Some(listener) { listener.close() })
   guard listen(logger, "admin", settings.admin_port) is Some(admin_listener) else {
     return 1
   }
   defer admin_listener.close()
   logger.info("listening", fields={
-    "listener": "plain",
-    "address": Json::string("0.0.0.0:\{plain.addr.port()}"),
-  })
-  if tls is Some((files, _)) && tls_listener is Some(listener) {
-    logger.info("listening", fields={
-      "listener": "tls",
-      "address": Json::string("0.0.0.0:\{listener.addr.port()}"),
-      "cert_file": Json::string(files.cert_file),
-      "key_file": Json::string(files.key_file),
-    })
-  }
-  logger.info("listening", fields={
     "listener": "admin",
     "address": Json::string("0.0.0.0:\{admin_listener.addr.port()}"),
   })
+  // The runtime cancels the whole program on SIGTERM, as on SIGINT and
+  // SIGHUP. The watcher below notices that and starts the drain, while the
+  // server runs protected from the cancellation, so that it can drain and
+  // then return its exit status. Catching the cancellation keeps the runtime
+  // from ending the process with the signal, so that it exits with that
+  // status.
+  let status = Ref(0)
+  let _ = @async.handle_cancellation(() => {
+    @async.with_task_group(group => {
+      group.spawn_bg(no_wait=true, () => {
+        let _ = @async.handle_cancellation(sleep_forever)
+        lifecycle.drain()
+      })
+      group.spawn_bg(() => {
+        status.val = @async.protect_from_cancel(() => {
+          run(
+            settings,
+            logger,
+            lifecycle,
+            admin,
+            admin_listener,
+            tls~,
+            watch~,
+            rand~,
+            reloads~,
+          )
+        })
+      })
+    })
+  })
+  status.val
+}
+
+///|
+/// Sleeps until the task is cancelled.
+async fn sleep_forever() -> Unit {
+  for ;; {
+    @async.sleep(0x7fffffff)
+  }
+}
+
+///|
+/// Serves the Admin API on `admin_listener`, from now until it returns;
+/// loads the definitions; listens on the plain port and, with `tls`, on the
+/// TLS port; serves the Mocks there until the drain starts; and drains.
+/// Returns the exit status: 0 after the drain, or 1 when the definition set
+/// is invalid or a port cannot be listened on.
+///
+/// The drain closes the plain and TLS listeners and the idle connections at
+/// once. The responses in progress go on, and end with
+/// `Connection: close`; Server-Sent Event streams and delays go on too. When
+/// none is left, or when the drain timeout expires and cuts those still
+/// open, the drain ends. The admin port serves throughout, so the probes can
+/// be read during the drain.
+async fn run(
+  settings : @settings.ServeSettings,
+  logger : @log.Logger,
+  lifecycle : Lifecycle,
+  admin : Admin,
+  admin_listener : @socket.TcpServer,
+  tls~ : (@settings.TlsFiles, @openssl.ServerConfig)?,
+  watch~ : @watch.Watch?,
+  rand~ : @prng.Generator,
+  reloads~ : @metrics.Counter,
+) -> Int {
+  let connections = Connections::new()
   @async.with_task_group(group => {
+    // The admin port serves until the end, and neither it nor its
+    // connections keep smock from stopping.
+    group.spawn_bg(no_wait=true, () => {
+      accept_loop(admin_listener, conn => {
+        group.spawn_bg(no_wait=true, allow_failure=true, () => {
+          defer conn.close()
+          serve_connection(
+            conn,
+            settings,
+            respond=(stream, request) => {
+              @io.Writer::write(stream, admin.respond(request))
+              request.keep_alive
+            },
+            reject=status => admin.reject(status),
+          )
+        })
+      })
+    })
+    let snapshot = match
+      @defdir.load(settings.dir, body_file_dir=settings.body_file_dir) {
+      Ok(snapshot) => snapshot
+      Err(diagnostics) => {
+        for diagnostic in diagnostics {
+          logger.error("invalid definitions", fields={
+            "file": Json::string(diagnostic.file),
+            "pointer": Json::string(diagnostic.pointer),
+            "error": Json::string(diagnostic.message),
+          })
+        }
+        return 1
+      }
+    }
+    let engine = @engine.Engine(snapshot)
+    lifecycle.started(engine)
+    guard listen(logger, "plain", settings.port) is Some(plain) else {
+      return 1
+    }
+    let tls_listener = match tls {
+      None => None
+      Some(_) => {
+        guard listen(logger, "tls", settings.tls_port) is Some(listener) else {
+          plain.close()
+          return 1
+        }
+        Some(listener)
+      }
+    }
+    lifecycle.serving()
+    logger.info("listening", fields={
+      "listener": "plain",
+      "address": Json::string("0.0.0.0:\{plain.addr.port()}"),
+    })
+    if tls is Some((files, _)) && tls_listener is Some(listener) {
+      logger.info("listening", fields={
+        "listener": "tls",
+        "address": Json::string("0.0.0.0:\{listener.addr.port()}"),
+        "cert_file": Json::string(files.cert_file),
+        "key_file": Json::string(files.key_file),
+      })
+    }
     if watch is Some(watch) && settings.dir is Some(dir) {
       let reloader : Reloader = {
         dir,
@@ -123,43 +212,60 @@ pub async fn serve(
         reloads,
         last_read: (snapshot.digest, []),
       }
-      group.spawn_bg(() => reloader.run(watch))
+      group.spawn_bg(no_wait=true, () => reloader.run(watch))
     }
-    group.spawn_bg(() => {
-      accept_loop(group, plain, conn => {
-        serve_mocks(conn, engine, rand, settings)
-      })
-    })
-    if tls is Some((_, config)) && tls_listener is Some(listener) {
-      group.spawn_bg(() => {
-        accept_loop(group, listener, conn => {
-          // A connection that is still in its handshake has sent no
-          // request bytes, so the idle timeout bounds the handshake too.
-          let stream = @async.with_timeout_opt(settings.idle_timeout_ms, () => {
-            TlsStream::accept(conn, config)
+    let listening = group.spawn(() => {
+      @async.with_task_group(listeners => {
+        listeners.spawn_bg(() => {
+          defer plain.close()
+          accept_loop(plain, conn => {
+            connections.serve(group, conn, connection => {
+              serve_mocks(conn, engine, rand, settings, lifecycle, connection)
+            })
           })
-          guard stream is Some(Some(stream)) else { return }
-          serve_mocks(stream, engine, rand, settings)
-          stream.shutdown()
         })
-      })
-    }
-    group.spawn_bg(() => {
-      accept_loop(group, admin_listener, conn => {
-        serve_connection(
-          conn,
-          settings,
-          respond=(stream, request) => {
-            @io.Writer::write(stream, admin.respond(request))
-            request.keep_alive
-          },
-          reject=status => admin.reject(status),
-        )
+        if tls is Some((_, config)) && tls_listener is Some(listener) {
+          listeners.spawn_bg(() => {
+            defer listener.close()
+            accept_loop(listener, conn => {
+              connections.serve(group, conn, connection => {
+                // A connection that is still in its handshake has sent no
+                // request bytes, so the idle timeout bounds the handshake
+                // too.
+                let stream = @async.with_timeout_opt(settings.idle_timeout_ms, () => {
+                  TlsStream::accept(conn, config)
+                })
+                guard stream is Some(Some(stream)) else { return }
+                serve_mocks(
+                  stream, engine, rand, settings, lifecycle, connection,
+                )
+                stream.shutdown()
+              })
+            })
+          })
+        }
       })
     })
+    lifecycle.wait_for_drain()
+    logger.info("drain started", fields={
+      "timeoutMs": Json::number(settings.drain_timeout_ms.to_double()),
+    })
+    // Cancelling the accept loops closes the listeners, so that new
+    // connections are refused.
+    listening.cancel()
+    listening.wait() catch {
+      _ => ()
+    }
+    connections.close_idle()
+    let ended = @async.with_timeout_opt(settings.drain_timeout_ms, () => {
+      connections.wait_all_ended()
+    })
+    let cut = if ended is Some(_) { 0 } else { connections.cut() }
+    logger.info("drain ended", fields={
+      "connectionsCut": Json::number(cut.to_double()),
+    })
+    0
   })
-  // The listeners serve until the process is stopped.
-  0
 }
 
 ///|
@@ -192,20 +298,15 @@ async fn listen(
 }
 
 ///|
-/// Accepts connections on `listener` and serves each one with `handle` in
-/// its own task of `group`. A connection that fails ends alone: the others
-/// carry on.
-async fn[X] accept_loop(
-  group : @async.TaskGroup[X],
+/// Accepts connections on `listener` and hands each one to `serve`, which
+/// serves it in a task of its own, until the task is cancelled.
+async fn accept_loop(
   listener : @socket.TcpServer,
-  handle : async (@socket.Tcp) -> Unit,
+  serve : (@socket.Tcp) -> Unit,
 ) -> Unit {
   for ;; {
     let (conn, _) = listener.accept()
-    group.spawn_bg(allow_failure=true, () => {
-      defer conn.close()
-      handle(conn)
-    })
+    serve(conn)
   }
 }
 
@@ -217,15 +318,21 @@ async fn[X] accept_loop(
 /// the status line is written once the delay is over, and meanwhile other
 /// connections are served as usual. A connection Fault in the plan ends the
 /// connection instead of the response, or part of the way through it.
+///
+/// While smock drains, a response says `Connection: close`, and the
+/// connection closes after it.
 async fn[S : @io.Reader + @io.Writer] serve_mocks(
   stream : S,
   engine : @engine.Engine,
   rand : @prng.Generator,
   settings : @settings.ServeSettings,
+  lifecycle : Lifecycle,
+  connection : Connection,
 ) -> Unit {
   serve_connection(
     stream,
     settings,
+    connection~,
     respond=(stream, request) => {
       let plan = engine.handle(
           to_engine_request(request),
@@ -237,13 +344,17 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
       if plan.delay_ms > 0 {
         @async.sleep(plan.delay_ms)
       }
-      match plan.fault {
-        None => write_response(stream, plan, request)
+      let keep_open = match plan.fault {
+        None =>
+          write_response(stream, plan, request, close=lifecycle.is_draining())
         // Closing the connection sends a FIN. The engine does not plan a
         // reset yet, since Definitions reject it.
         Some(Close) | Some(Reset) => false
         Some(Partial) => write_response(stream, plan, request, partial=true)
       }
+      // A response that began before the drain, such as a stream, and ends
+      // during it closes its connection too.
+      keep_open && !lifecycle.is_draining()
     },
     reject=status => @http1.encode_response(status, [], b"", close=true),
   )
@@ -270,11 +381,14 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
 /// - `reject` gives the encoded response, with `Connection: close`, to
 ///   bytes that are not a valid request or are over a limit, with the status
 ///   the codec chose.
+/// - `connection`, when given, is kept told whether the connection is idle,
+///   so that a drain can close it.
 async fn[S : @io.Reader + @io.Writer] serve_connection(
   stream : S,
   settings : @settings.ServeSettings,
   respond~ : async (S, @http1.Request) -> Bool,
   reject~ : (Int) -> Bytes,
+  connection? : Connection,
 ) -> Unit {
   let parser = @http1.Parser(
     header_size_limit=settings.header_size_limit,
@@ -312,9 +426,15 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
         if remaining <= 0L {
           return
         }
+        if connection is Some(connection) {
+          connection.idle = !parser.in_request()
+        }
         let read = @async.with_timeout_opt(remaining.to_int(), () => {
           @io.Reader::read(stream, buf)
         })
+        if connection is Some(connection) {
+          connection.idle = false
+        }
         guard read is Some(n) && n > 0 else { return }
         last_read = @async.now()
         parser.feed(buf.unsafe_reinterpret_as_bytes()[:n])
@@ -343,9 +463,10 @@ fn to_engine_request(request : @http1.Request) -> @engine.Request {
 
 ///|
 /// Writes the response `plan` describes, as the answer to `request`, and
-/// returns whether the connection stays open after it. With `partial`, as a
-/// partial Fault, it writes the status line, the header fields and the
-/// first half of the body, and the connection closes.
+/// returns whether the connection stays open after it. With `close`, the
+/// response says `Connection: close`, and the connection closes after it.
+/// With `partial`, as a partial Fault, it writes the status line, the header
+/// fields and the first half of the body, and the connection closes.
 ///
 /// Server-Sent Events are streamed: the head at once, then each event after
 /// its delay. Waiting suspends only this connection's task, so the others
@@ -357,6 +478,7 @@ async fn[S : @io.Writer] write_response(
   stream : S,
   plan : @engine.ResponsePlan,
   request : @http1.Request,
+  close? : Bool = false,
   partial? : Bool = false,
 ) -> Bool {
   match plan.body {
@@ -366,16 +488,22 @@ async fn[S : @io.Writer] write_response(
         plan.headers,
         body,
         request~,
+        close~,
       )
       if partial {
         @io.Writer::write(stream, cut_short(response))
         return false
       }
       @io.Writer::write(stream, response)
-      request.keep_alive
+      request.keep_alive && !close
     }
     Events(events) => {
-      let response = @http1.ResponseStream(plan.status, plan.headers, request~)
+      let response = @http1.ResponseStream(
+        plan.status,
+        plan.headers,
+        request~,
+        close~,
+      )
       @io.Writer::write(stream, response.head())
       let count = if partial { events.length() / 2 } else { events.length() }
       for event in events[:count] {

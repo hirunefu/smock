@@ -466,7 +466,8 @@ served). Each reload also writes one log entry: `definitions reloaded` with
 `oldDigest` and `newDigest`, or `definitions reload failed` with the digest
 still served and every error. The Prometheus counter
 `smock_definition_reloads_total` counts reloads by `result`. A failed reload
-does not change readiness.
+does not change readiness: `/readyz` on the admin port still passes, so one
+bad commit does not drain every Pod.
 
 ## Checking a definitions directory
 

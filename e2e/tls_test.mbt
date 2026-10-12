@@ -182,9 +182,11 @@ async test "the TLS settings can come from SMOCK_ environment variables, and the
       content=(
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
         #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","cert_file":"*/ecdsa-chain.pem","key_file":"*/ecdsa-key.pem"}
-        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"drain started","timeoutMs":20000}
+        #|{"level":"info","msg":"drain ended","connectionsCut":0}
       ),
     )
   })

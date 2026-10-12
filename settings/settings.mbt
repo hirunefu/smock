@@ -47,6 +47,10 @@ pub(all) struct ServeSettings {
   read_timeout_ms : Int
   /// How long, in milliseconds, a connection may wait for its next request.
   idle_timeout_ms : Int
+  /// How long, in milliseconds, smock may drain after SIGTERM before it
+  /// cuts the responses, Server-Sent Event streams and delays still in
+  /// progress and exits.
+  drain_timeout_ms : Int
   /// The seed of the process generator, from 0 to 2^53 - 1, or `None` for
   /// one that smock picks at startup.
   seed : UInt64?
@@ -188,6 +192,11 @@ let serve_settings : Array[Setting] = [
     name: "idle-timeout-ms",
     about: "How long a connection may wait for a request, in milliseconds. Then it closes.",
     default: Some("60000"),
+  },
+  {
+    name: "drain-timeout-ms",
+    about: "How long smock may drain after SIGTERM, in milliseconds: responses in progress, Server-Sent Event streams and delays still running then are cut, and smock exits.",
+    default: Some("20000"),
   },
   {
     name: "seed",
@@ -345,6 +354,12 @@ pub fn ServeSettings::from_matches(
       matches,
       "idle-timeout-ms",
       min=1,
+      max=max_duration_ms,
+    ),
+    drain_timeout_ms: int_value(
+      matches,
+      "drain-timeout-ms",
+      min=0,
       max=max_duration_ms,
     ),
     seed: seed_value(matches, "seed"),
