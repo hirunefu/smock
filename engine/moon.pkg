@@ -4,6 +4,8 @@ import {
 }
 
 import {
+  "smock/yaml",
   "moonbitlang/core/debug",
   "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
 } for "test"

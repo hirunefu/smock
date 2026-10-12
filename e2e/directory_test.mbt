@@ -53,6 +53,56 @@ async test "Definition files are the regular top-level .json files, symlinks fol
 }
 
 ///|
+/// `stub_file` written in YAML.
+fn yaml_stub_file(id : String, path : String, body : String) -> String {
+  (
+    $|stubs:
+    $|  - id: \{id}
+    $|    mock: m
+    $|    request: { method: GET, path: \{path} }
+    $|    response: { status: 200, body: \{body} }
+  )
+}
+
+///|
+async test "YAML and JSON Definition files mix in one directory, in byte-wise name order whatever their extension" {
+  with_definitions(
+    [
+      ("mocks.yml", "mocks: [{ name: m }]\n"),
+      // Byte-wise, a.yaml < a.yml < b.json, so a.yaml's Stub is tried first.
+      ("a.yml", yaml_stub_file("a-yml", "/first", "from a.yml")),
+      ("b.json", stub_file("b-json", "/first", "from b.json")),
+      ("a.yaml", yaml_stub_file("a-yaml", "/first", "from a.yaml")),
+      // And c.json < c.yml.
+      ("c.yml", yaml_stub_file("c-yml", "/second", "from c.yml")),
+      ("c.json", stub_file("c-json", "/second", "from c.json")),
+      // Not Definition files, so never parsed.
+      (".hidden.yaml", "not: [YAML"),
+      ("sub/nested.yml", "not: [YAML"),
+      ("stubs.yaml.bak", "not: [YAML"),
+    ],
+    dir => {
+      let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+        inspect(
+          smock.get("/first") + "\n---\n" + smock.get("/second"),
+          content=(
+            #|200 OK
+            #|Content-Length: 11
+            #|
+            #|from a.yaml
+            #|---
+            #|200 OK
+            #|Content-Length: 11
+            #|
+            #|from c.json
+          ),
+        )
+      })
+    },
+  )
+}
+
+///|
 async test "a missing or empty definitions directory, or none at all, gives an empty definition set" {
   with_definitions([], dir => {
     let runs = [
