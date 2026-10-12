@@ -35,9 +35,9 @@ Packages of `smock/smock`:
 - `engine`: decides the response to each request from the snapshot,
   including its Faults, and renders a named Stub's response for a sample
   request, for `smock render` and the Admin render operation. It also holds
-  the Ephemeral Stubs per Mock and Session, applies the Admin API
-  operations on them, and reads the Session a request carries in its W3C
-  Baggage header. `Engine(snapshot, match_index=false)` tries every Stub in
+  the Ephemeral Stubs per Mock and Session and the Journal, with its bound,
+  eviction counts and query filter, applies the Admin API operations on
+  them, and reads the Session a request carries in its W3C Baggage header. `Engine(snapshot, match_index=false)` tries every Stub in
   matching order instead of using the index; tests check the index against
   it.
 - `prng`: the seeded pseudo-random generator that Fault decisions draw
@@ -62,7 +62,8 @@ Packages of `smock/smock`:
   `users.example.com` and `orders.example.com`, each leaf with its own fixed
   expiry), used only by tests. `scripts/gen-test-certificates.sh`
   regenerates it.
-- `log`: the JSON logger, one object per line.
+- `log`: the JSON logger, one object per line, and the RFC 3339 times it
+  writes, which the Admin API and the CLI also read.
 - `buildinfo`: the version, commit and toolchain the binary was built with.
 - `e2e`: tests that run the `smock` binary as a black box (native).
 
@@ -121,6 +122,10 @@ settings:
 | `--idle-timeout-ms` | `SMOCK_IDLE_TIMEOUT_MS` | 60000: a connection that waits 60 s for a request closes |
 | `--drain-timeout-ms` | `SMOCK_DRAIN_TIMEOUT_MS` | 20000: how long smock drains after SIGTERM before it cuts what is still running |
 | `--seed` | `SMOCK_SEED` | none: smock picks the seed of its random generator, from 0 to 9007199254740991, and logs it ([Faults](docs/definition-files.md#seeds)) |
+| `--journal` | `SMOCK_JOURNAL` | `on`: requests are recorded in the [Journal](#the-journal); `off` records none |
+| `--journal-max-entries` | `SMOCK_JOURNAL_MAX_ENTRIES` | 10000: beyond it, the oldest entries are evicted |
+| `--journal-max-bytes` | `SMOCK_JOURNAL_MAX_BYTES` | 67108864 bytes (64 MiB): beyond it, the oldest entries are evicted |
+| `--journal-body-limit` | `SMOCK_JOURNAL_BODY_LIMIT` | 4096 bytes (4 KiB): the most of a request body an entry keeps |
 
 A request over a limit gets its status with `Connection: close`, then the
 connection closes; a timeout closes the connection without a response.
@@ -279,7 +284,9 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   toolchain as labels; `smock_definition_reloads_total` counts reloads of
   the Definition files by result; with HTTPS,
   `smock_tls_certificate_expiry_timestamp_seconds` gives when each
-  certificate expires.
+  certificate expires; `smock_journal_entries`, `smock_journal_bytes` and
+  `smock_journal_evictions_total` show the [Journal](#the-journal)'s size
+  and evictions, without labels.
 - The request traffic on the plain and TLS ports is in
   `smock_requests_total` and the latency histogram
   `smock_request_duration_seconds` (from the request being read in full to
@@ -299,7 +306,10 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   `smock render` does (below). The optional `time` and `seed` query
   parameters give the time (RFC 3339) and the seed of the random source.
 - `/v1/mocks/{mock}/stubs` adds, lists and deletes Ephemeral Stubs, and
-  `POST /v1/reset` clears them ([below](#sessions-and-ephemeral-stubs)).
+  `POST /v1/reset` clears them and Journal entries
+  ([below](#sessions-and-ephemeral-stubs)).
+- `POST /v1/journal/query` lists the calling Session's requests from the
+  [Journal](#the-journal).
 - The other operations of the document answer 501 until their tickets
   build them.
 
@@ -442,15 +452,64 @@ curl localhost:8080/users/1                                           # 200, fro
   ID in `Smock-Near-Miss`.
 - `GET` lists and `DELETE /v1/mocks/{mock}/stubs/{id}` deletes the calling
   Session's Ephemeral Stubs of the Mock. `POST /v1/reset` with
-  `{"scope":"session"}` clears the calling Session's Ephemeral Stubs of
-  every Mock, `{"scope":"mock","mock":"users"}` every Session's of one Mock,
-  and `{"scope":"all"}` all of them.
+  `{"scope":"session"}` clears the calling Session's Ephemeral Stubs and
+  [Journal](#the-journal) entries of every Mock, and its eviction count;
+  `{"scope":"mock","mock":"users"}` every Session's of one Mock; and
+  `{"scope":"all"}` all of them, and every eviction count. It answers how
+  many Ephemeral Stubs and Journal entries it removed.
 - Ephemeral Stubs live in the process that received them, until a reset or
   a restart. They survive a [reload](docs/definition-files.md#reloading) of
   the Definition files, except those of a Mock the new files no longer
   declare.
 - Adding, deleting and resetting each write a log entry (`Ephemeral Stub
   added`, `Ephemeral Stub deleted`, `reset`); requests write none.
+
+## The Journal
+
+smock records the requests it receives in the *Journal*, so that a test can
+check what its system sent. A test queries its own Session's entries:
+
+```sh
+curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42" \
+  -d '{"filter":{"mock":"users","method":"GET","path":"/users/1"},"limit":10}' \
+  localhost:9090/v1/journal/query
+```
+
+- Each entry records the Session, the Host, the Mock and whether the
+  Default Mock answered; the method, target, HTTP version, header fields
+  and body; the Stub that answered, or the Near miss with what each failed
+  condition expects and what the request sent; the status, or the
+  connection Fault; when the request was received and how long the response
+  took; and the digest of the definition set that answered. A request for
+  a Host that no Mock answers is recorded too, with no Mock.
+- A request is in the Journal as soon as its client has the whole
+  response: smock records it just before it writes the response's last
+  bytes, so a query made right after a call always finds it. A stream of
+  Server-Sent Events is recorded when its last event is written, and a
+  request ended by a connection Fault when the connection closes.
+- The filter takes a Mock, a method, a path and headers, with the
+  semantics of Stub conditions (exact or `{ "pattern": … }`), and a time
+  range on when the request was received: `since` (included) and `until`
+  (excluded), as RFC 3339 date-times. Every member is optional. Entries
+  come oldest first, at most `limit` of them (100 by default, at most
+  10000); `more` says whether more passed the filter.
+- The Journal is one ring buffer per process, bounded by entry count and by
+  bytes (`--journal-max-entries`, `--journal-max-bytes`), and keeps at most
+  4 KiB of each body (`--journal-body-limit`), cut at a character boundary
+  when the body is UTF-8. When it is full, the oldest entries are evicted,
+  and smock counts the evicted entries of each Session: `evicted` in the
+  query's result says how many of the calling Session's entries may be
+  missing. Requests without a Session have their own count.
+- `--journal off` records nothing, and a Mock with `"journal": false`
+  ([docs/definition-files.md](docs/definition-files.md#turning-the-journal-off-for-a-mock))
+  records none of its requests, so that a high-rate load test pays nothing
+  for recording. A query while the Journal is off, or whose filter names
+  such a Mock, gets 409 `journal_off` rather than entries that cannot be
+  trusted.
+- The Journal survives a [reload](docs/definition-files.md#reloading) of
+  the Definition files; each entry keeps the digest of the set that
+  answered it. It lives in the process that received the requests, until a
+  reset or a restart.
 
 ## Container image and release binaries
 

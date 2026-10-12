@@ -53,6 +53,9 @@ pub suberror AdminError {
   /// The Ephemeral Stub to add is not valid. The problems have no file;
   /// their JSON Pointers point into the Stub as it was given.
   InvalidStub(Array[@definitions.Diagnostic])
+  /// The Journal is off for what the operation touches: globally for
+  /// `None`, or for the Mock with this name.
+  JournalOff(String?)
 } derive(Debug)
 
 ///|
@@ -228,12 +231,13 @@ pub fn Engine::delete_ephemeral_stub(
 ///|
 /// What a reset clears.
 pub(all) enum ResetScope {
-  /// The Ephemeral Stubs of this Session, or of the no-Session space for
-  /// `None`, across all Mocks.
+  /// The Ephemeral Stubs and Journal entries of this Session, or of the
+  /// no-Session space for `None`, across all Mocks, and its eviction count.
   Session(String?)
-  /// The Ephemeral Stubs of this Mock, for every Session.
+  /// The Ephemeral Stubs and Journal entries of this Mock, for every
+  /// Session.
   Mock(String)
-  /// Every Ephemeral Stub.
+  /// Every Ephemeral Stub, the whole Journal and every eviction count.
   All
 } derive(Debug)
 
@@ -242,11 +246,14 @@ pub(all) enum ResetScope {
 pub(all) struct Removed {
   /// How many Ephemeral Stubs.
   ephemeral_stubs : Int
+  /// How many Journal entries.
+  journal_entries : Int
 } derive(Debug)
 
 ///|
-/// Clears the Ephemeral Stubs in `scope`. What Definition files declare
-/// never changes.
+/// Clears the Ephemeral Stubs and the Journal entries in `scope`, and for
+/// the scope of a Session or everything, the eviction counts. What
+/// Definition files declare never changes.
 ///
 /// Raises `UnknownMock` when the scope is a Mock that no Mock has the name
 /// of.
@@ -254,13 +261,25 @@ pub fn Engine::reset(
   self : Engine,
   scope : ResetScope,
 ) -> Removed raise AdminError {
-  let ephemeral_stubs = match scope {
-    Session(session) => self.ephemeral.remove_where((_, s) => s == session)
+  match scope {
+    Session(session) =>
+      {
+        ephemeral_stubs: self.ephemeral.remove_where((_, s) => s == session),
+        journal_entries: self.journal.reset_session(session),
+      }
     Mock(mock) => {
       self.check_mock(mock)
-      self.ephemeral.remove_where((m, _) => m == mock)
+      {
+        ephemeral_stubs: self.ephemeral.remove_where((m, _) => m == mock),
+        journal_entries: self.journal.remove_where(entry => {
+          entry.mock == Some(mock)
+        }),
+      }
     }
-    All => self.ephemeral.remove_where((_, _) => true)
+    All =>
+      {
+        ephemeral_stubs: self.ephemeral.remove_where((_, _) => true),
+        journal_entries: self.journal.reset_all(),
+      }
   }
-  { ephemeral_stubs, }
 }

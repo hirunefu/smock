@@ -64,6 +64,14 @@ pub(all) struct ServeSettings {
   /// The seed of the process generator, from 0 to 2^53 - 1, or `None` for
   /// one that smock picks at startup.
   seed : UInt64?
+  /// Whether smock records requests in the Journal.
+  journal : Bool
+  /// The most entries the Journal holds.
+  journal_max_entries : Int
+  /// The most bytes the Journal's entries take, as they count them.
+  journal_max_bytes : Int
+  /// The most bytes of a request body a Journal entry keeps.
+  journal_body_limit : Int
 } derive(Debug)
 
 ///|
@@ -256,6 +264,26 @@ let serve_settings : Array[Setting] = [
     name: "seed",
     about: "The seed of the process random generator, from 0 to 9007199254740991. Faults of Stubs without their own seed draw from it. Without it, smock picks a seed at startup and logs it.",
     default: None,
+  },
+  {
+    name: "journal",
+    about: "Whether smock records the requests it receives in the Journal: on or off. Off, it records none, and Journal queries are refused.",
+    default: Some("on"),
+  },
+  {
+    name: "journal-max-entries",
+    about: "The most entries the Journal holds. Beyond it, the oldest entries are evicted.",
+    default: Some("10000"),
+  },
+  {
+    name: "journal-max-bytes",
+    about: "The most bytes the Journal's entries take: each counts 256, two per character of its request line, header fields, names and Near miss values, and the body bytes it keeps. Beyond it, the oldest entries are evicted.",
+    default: Some("67108864"),
+  },
+  {
+    name: "journal-body-limit",
+    about: "The most bytes of a request body a Journal entry keeps; the rest is cut.",
+    default: Some("4096"),
   },
 ]
 
@@ -471,6 +499,30 @@ pub fn ServeSettings::from_matches(
       max=max_duration_ms,
     ),
     seed: seed_value(matches, "seed"),
+    journal: match value(matches, "journal") {
+      Some("on") => true
+      Some("off") => false
+      other =>
+        raise invalid("journal", other.unwrap_or(""), "must be on or off")
+    },
+    journal_max_entries: int_value(
+      matches,
+      "journal-max-entries",
+      min=1,
+      max=max_size,
+    ),
+    journal_max_bytes: int_value(
+      matches,
+      "journal-max-bytes",
+      min=1,
+      max=max_size,
+    ),
+    journal_body_limit: int_value(
+      matches,
+      "journal-body-limit",
+      min=0,
+      max=max_size,
+    ),
   }
 }
 
@@ -567,128 +619,6 @@ pub fn parse_seed(text : String) -> UInt64? {
 }
 
 ///|
-/// The time `text` gives as an RFC 3339 date-time, such as
-/// `2026-10-12T14:30:05Z` or `2026-10-12T16:30:05.123+02:00`, in
-/// milliseconds since the Unix epoch. Digits of the fraction beyond
-/// milliseconds are dropped, and a leap second counts as the first second
-/// of the next minute. `None` when it is not one.
-pub fn parse_time(text : String) -> Int64? {
-  let c = text.iter().collect()
-  // The number that the `count` digits from `start` write, if they are
-  // digits.
-  let number = (start : Int, count : Int) => {
-    if start + count > c.length() {
-      return None
-    }
-    let mut n = 0
-    for i in start..<(start + count) {
-      guard c[i] >= '0' && c[i] <= '9' else { return None }
-      n = n * 10 + (c[i].to_int() - '0'.to_int())
-    }
-    Some(n)
-  }
-  let at = (i : Int, chars : String) => {
-    i < c.length() && chars.contains_char(c[i])
-  }
-  guard number(0, 4) is Some(year) &&
-    at(4, "-") &&
-    number(5, 2) is Some(month) &&
-    at(7, "-") &&
-    number(8, 2) is Some(day) &&
-    at(10, "Tt") &&
-    number(11, 2) is Some(hour) &&
-    at(13, ":") &&
-    number(14, 2) is Some(minute) &&
-    at(16, ":") &&
-    number(17, 2) is Some(second) else {
-    return None
-  }
-  let mut i = 19
-  let mut millisecond = 0
-  if at(i, ".") {
-    i += 1
-    let start = i
-    while i < c.length() && c[i] >= '0' && c[i] <= '9' {
-      if i - start < 3 {
-        millisecond = millisecond * 10 + (c[i].to_int() - '0'.to_int())
-      }
-      i += 1
-    }
-    match i - start {
-      0 => return None
-      1 => millisecond *= 100
-      2 => millisecond *= 10
-      _ => ()
-    }
-  }
-  let offset_minutes = if at(i, "Zz") && i + 1 == c.length() {
-    0
-  } else if at(i, "+-") &&
-    i + 6 == c.length() &&
-    number(i + 1, 2) is Some(offset_hour) &&
-    at(i + 3, ":") &&
-    number(i + 4, 2) is Some(offset_minute) &&
-    offset_hour <= 23 &&
-    offset_minute <= 59 {
-    let minutes = offset_hour * 60 + offset_minute
-    if c[i] == '-' {
-      -minutes
-    } else {
-      minutes
-    }
-  } else {
-    return None
-  }
-  if month < 1 ||
-    month > 12 ||
-    day < 1 ||
-    day > days_in_month(year, month) ||
-    hour > 23 ||
-    minute > 59 ||
-    second > 60 {
-    return None
-  }
-  let days = days_from_civil(year, month, day).to_int64()
-  let seconds = ((days * 24L + hour.to_int64()) * 60L + minute.to_int64()) * 60L +
-    second.to_int64() -
-    offset_minutes.to_int64() * 60L
-  Some(seconds * 1000L + millisecond.to_int64())
-}
-
-///|
-/// The number of days in `month` of `year`, in the proleptic Gregorian
-/// calendar.
-fn days_in_month(year : Int, month : Int) -> Int {
-  match month {
-    2 =>
-      if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 {
-        29
-      } else {
-        28
-      }
-    4 | 6 | 9 | 11 => 30
-    _ => 31
-  }
-}
-
-///|
-/// The number of days from 1970-01-01 to the date `year`-`month`-`day`, in
-/// the proleptic Gregorian calendar, for years from 0 to 9999.
-fn days_from_civil(year : Int, month : Int, day : Int) -> Int {
-  // Years start in March, so that the leap day ends them.
-  let y = if month <= 2 { year - 1 } else { year }
-  let era = (if y >= 0 { y } else { y - 399 }) / 400
-  let year_of_era = y - era * 400
-  let m = if month > 2 { month - 3 } else { month + 9 }
-  let day_of_year = (153 * m + 2) / 5 + day - 1
-  let day_of_era = year_of_era * 365 +
-    year_of_era / 4 -
-    year_of_era / 100 +
-    day_of_year
-  era * 146097 + day_of_era - 719468
-}
-
-///|
 /// The largest size limit: 1 GiB. A request is held in memory whole.
 let max_size : Int = 1024 * 1024 * 1024
 
@@ -732,7 +662,7 @@ pub fn RenderSettings::from_matches(
   let time = match value(matches, "time") {
     None => None
     Some(text) =>
-      match parse_time(text) {
+      match @log.parse_time(text) {
         Some(time) => Some(time)
         None =>
           raise InvalidOption(

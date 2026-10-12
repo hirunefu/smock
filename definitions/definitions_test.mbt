@@ -306,9 +306,30 @@ test "a field the Schema defines but smock does not implement yet is rejected as
       ),
     ]),
     content=(
-      #|a.json: /mocks/0/journal: is not supported yet
       #|a.json: /stubs/0/response/template: is not supported yet
       #|a.json: /stubs/0/fault/connection/kind: "reset" is not supported yet
+    ),
+  )
+}
+
+///|
+test "a Mock's journal is true or false" {
+  inspect(
+    problems([
+      (
+        "a.json",
+        (
+          #|{ "mocks": [
+          #|  { "name": "a", "journal": false },
+          #|  { "name": "b", "journal": true },
+          #|  { "name": "c", "journal": "off" },
+          #|  { "name": "d", "journal": null } ] }
+        ),
+      ),
+    ]),
+    content=(
+      #|a.json: /mocks/2/journal: must be true or false
+      #|a.json: /mocks/3/journal: must be true or false
     ),
   )
 }
@@ -360,7 +381,6 @@ test "two Mocks with the same name are rejected at the later one in file-name or
       #|b.json: /mocks/0/name: the Mock name "users" is already declared at a.json: /mocks/0/name
       #|c.json: /mocks/0/name: the Mock name "orders" is already declared at b.json: /mocks/1/name
       #|c.json: /mocks/1/name: the Mock name "users" is already declared at a.json: /mocks/0/name
-      #|c.json: /mocks/2/journal: is not supported yet
       #|c.json: /mocks/2/name: the Mock name "orders" is already declared at b.json: /mocks/1/name
     ),
   )

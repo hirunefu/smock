@@ -161,6 +161,7 @@ fn SampleRequest::to_request(self : SampleRequest) -> Request {
   {
     meth: self.meth,
     target: target.to_string(),
+    version: "HTTP/1.1",
     headers: self.headers,
     body: @utf8.encode(self.body),
   }
@@ -274,8 +275,9 @@ pub impl ToJson for Rendering with fn to_json(self) {
 
 ///|
 /// The `Body` schema of the Admin API document: the bytes as text when they
-/// are UTF-8, otherwise in base64, never truncated.
-fn body_json(bytes : Bytes) -> Json {
+/// are UTF-8, otherwise in base64. `bytes` are the first bytes of a body of
+/// `size` bytes, by default all of them.
+fn body_json(bytes : Bytes, size? : Int = bytes.length()) -> Json {
   let (encoding, data) = try @utf8.decode(bytes) catch {
     _ => ("base64", @base64.encode(bytes))
   } noraise {
@@ -284,8 +286,8 @@ fn body_json(bytes : Bytes) -> Json {
   {
     "encoding": encoding.to_json(),
     "data": data.to_json(),
-    "size": bytes.length().to_json(),
-    "truncated": false,
+    "size": size.to_json(),
+    "truncated": Json::boolean(bytes.length() < size),
   }
 }
 

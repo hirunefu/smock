@@ -854,6 +854,54 @@ async test "the contract checker rejects responses that break the document" {
         ),
       },
     ),
+    (
+      "a Journal page with an unmatched request",
+      "POST",
+      "/v1/journal/query",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"entries":[{"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":null,"session":"s","host":"users.example.com","mock":"users","viaDefault":false,"digest":"0123456789ab","request":{"method":"POST","target":"/users/1","version":"HTTP/1.1","headers":[{"name":"Host","value":"users.example.com"}],"body":{"encoding":"utf-8","data":"hi","size":2,"truncated":false}},"stub":null,"nearMiss":{"stub":"get-user","failed":[{"condition":"method","expected":"GET","actual":["POST"]}]},"status":404,"fault":null}],"more":false,"evicted":3,"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a Journal entry without its timing",
+      "POST",
+      "/v1/journal/query",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"entries":[{"receivedAt":"2026-10-13T01:02:03.004Z","session":null,"host":null,"mock":null,"viaDefault":false,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.0","headers":[],"body":{"encoding":"base64","data":"","size":0,"truncated":false}},"stub":null,"nearMiss":null,"status":null,"fault":"close"}],"more":false,"evicted":0,"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a Journal page without the eviction count",
+      "POST",
+      "/v1/journal/query",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"entries":[],"more":false,"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a Journal query refused because the Journal is off",
+      "POST",
+      "/v1/journal/query",
+      {
+        status: 409,
+        headers: replica,
+        body: (
+          #|{"error":"journal_off","message":"m","warnings":[]}
+        ),
+      },
+    ),
   ]
   let out = []
   for case in cases {
@@ -891,6 +939,10 @@ async test "the contract checker rejects responses that break the document" {
       #|an unknown Ephemeral Stub: conforms
       #|a reset without the count of Journal entries: /removed: journalEntries is missing
       #|a reset with a scope the document does not list: /scope: "replica" is not one of ["session","mock","all"]
+      #|a Journal page with an unmatched request: conforms
+      #|a Journal entry without its timing: /entries/0: durationMs is missing
+      #|a Journal page without the eviction count: : evicted is missing
+      #|a Journal query refused because the Journal is off: conforms
     ),
   )
 }

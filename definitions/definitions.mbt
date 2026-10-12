@@ -87,6 +87,9 @@ pub struct Mock {
   hosts : ReadOnlyArray[String]
   /// The status of the response when no Stub matches.
   no_match_status : Int
+  /// Whether the Journal records the requests the Mock answers: the Mock's
+  /// `journal`, true by default.
+  journal : Bool
   /// The Stubs of this Mock, in the order they are tried: by priority,
   /// lower numbers first and Stubs without a priority last; Stubs of equal
   /// priority in declaration order, that is file-name order, then position
@@ -351,6 +354,7 @@ pub fn load(
           name: "default",
           hosts: ReadOnlyArray::from_array([]),
           no_match_status: 404,
+          journal: true,
           stubs: ReadOnlyArray::from_array([]),
           index: MatchIndex::new(ReadOnlyArray::from_array([])),
         },
@@ -371,6 +375,7 @@ pub fn load(
       name: mock.name,
       hosts: ReadOnlyArray::from_iter(mock.hosts.iter().map(host => host.0)),
       no_match_status: mock.no_match_status,
+      journal: mock.journal,
       stubs,
       index: MatchIndex::new(stubs),
     }
