@@ -17,4 +17,5 @@ smock is written in MoonBit. We want to use MoonBit and grow its ecosystem, we w
 - MoonBit is pre-1.0 and has breaking changes every month, so we expect to keep up with language and library changes.
 - The official async runtime is single-threaded, so one process uses one core and we scale by adding Pods (ADR 0003).
 - HTTP/1.1, HTTP/2, gRPC framing and WebSocket are ours to build and maintain. That is why the first release is limited to HTTP/1.1, HTTPS and SSE.
-- Running Wasm plugins inside the native server needs an embedded Wasm runtime (Wasmtime or Extism, both C APIs). We accept that as the one planned exception to "C only for TLS"; which runtime to embed is decided when plugins are designed.
+- Running Wasm plugins inside the native server needs an embedded Wasm runtime (Wasmtime or Extism, both C APIs). We accept that as a planned exception to "C only for TLS"; which runtime to embed is decided when plugins are designed.
+- One more exception, decided in [#3](https://github.com/hirunefu/smock/issues/3): a single small C function that calls `setsockopt` (SO_LINGER) so the `reset` Fault can end a connection with an RST. Any other C needs a new ADR.
