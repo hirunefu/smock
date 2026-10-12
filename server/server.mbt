@@ -1,16 +1,17 @@
 ///|
 /// Runs `smock serve`: listens on the admin port, loads the definitions and
-/// the TLS certificates, if any, then listens on the plain port and, with a
-/// certificate, on the TLS port, and serves until SIGTERM, then drains. The
-/// plain and TLS ports serve the same Mocks; the admin port serves the
-/// Admin API and the probes, from before the definitions load, so that the
-/// startup probe can tell that they have not loaded yet, until the drain
-/// ends.
+/// the TLS certificate files, or without them generates a self-signed
+/// certificate, then listens on the plain and the TLS port, and serves until
+/// SIGTERM, then drains. The plain and TLS ports serve the same Mocks; the
+/// admin port serves the Admin API and the probes, from before the
+/// definitions load, so that the startup probe can tell that they have not
+/// loaded yet, until the drain ends.
 ///
 /// Returns the exit status: 0 after the drain, and 1 when Admin API
 /// authentication is on and no token is set, the definition set is invalid,
-/// the default TLS certificate or a Mock's own cannot be loaded or a port
-/// cannot be listened on. Every problem is logged first.
+/// the default TLS certificate or a Mock's own cannot be loaded, the
+/// self-signed certificate cannot be generated, or a port cannot be listened
+/// on. Every problem is logged first.
 pub async fn serve(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
@@ -119,11 +120,11 @@ async fn sleep_forever() -> Unit {
 
 ///|
 /// Serves the Admin API on `admin_listener`, from now until it returns;
-/// loads the definitions and the TLS certificates; listens on the plain
-/// port and, with a certificate, on the TLS port; serves the Mocks there
-/// until the drain starts; and drains. Returns the exit status: 0 after the
-/// drain, or 1 when the definition set is invalid, a TLS certificate cannot
-/// be loaded or a port cannot be listened on.
+/// loads the definitions and the TLS certificates; listens on the plain and
+/// the TLS port; serves the Mocks there until the drain starts; and drains.
+/// Returns the exit status: 0 after the drain, or 1 when the definition set
+/// is invalid, a TLS certificate cannot be loaded or generated, or a port
+/// cannot be listened on.
 ///
 /// The drain closes the plain and TLS listeners and the idle connections at
 /// once. The responses in progress go on, and end with
@@ -194,32 +195,37 @@ async fn run(
           None => return 1
         }
     }
+    // Without certificate files, the TLS port presents a self-signed
+    // certificate generated for the Hosts served.
+    let certificate = match tls {
+      Some((_, certificates)) => Files(certificates)
+      None =>
+        match SelfSignedCertificate::generate(engine, logger) {
+          Some(certificate) => SelfSigned(certificate)
+          None => return 1
+        }
+    }
     guard listen(logger, "plain", settings.port) is Some(plain) else {
       return 1
     }
-    let tls_listener = match tls {
-      None => None
-      Some(_) => {
-        guard listen(logger, "tls", settings.tls_port) is Some(listener) else {
-          plain.close()
-          return 1
-        }
-        Some(listener)
-      }
+    guard listen(logger, "tls", settings.tls_port) is Some(tls_listener) else {
+      plain.close()
+      return 1
     }
     lifecycle.serving()
     logger.info("listening", fields={
       "listener": "plain",
       "address": Json::string("0.0.0.0:\{plain.addr.port()}"),
     })
-    if tls is Some((files, _)) && tls_listener is Some(listener) {
-      logger.info("listening", fields={
-        "listener": "tls",
-        "address": Json::string("0.0.0.0:\{listener.addr.port()}"),
-        "cert_file": Json::string(files.cert_file),
-        "key_file": Json::string(files.key_file),
-      })
+    let tls_fields : Map[String, Json] = {
+      "listener": "tls",
+      "address": Json::string("0.0.0.0:\{tls_listener.addr.port()}"),
     }
+    if tls is Some((files, _)) {
+      tls_fields["cert_file"] = Json::string(files.cert_file)
+      tls_fields["key_file"] = Json::string(files.key_file)
+    }
+    logger.info("listening", fields=tls_fields)
     if watch is Some(watch) && settings.dir is Some(dir) {
       let reloader : Reloader = {
         dir,
@@ -228,11 +234,7 @@ async fn run(
         logger,
         reloads,
         last_read: (snapshot.digest, []),
-        after_swap: () => {
-          if tls is Some((_, certificates)) {
-            certificates.warn_undeclared()
-          }
-        },
+        after_swap: () => certificate.after_swap(engine, logger),
       }
       group.spawn_bg(no_wait=true, () => reloader.run(watch))
     }
@@ -252,26 +254,23 @@ async fn run(
             })
           })
         })
-        if tls is Some((_, certificates)) && tls_listener is Some(listener) {
-          listeners.spawn_bg(() => {
-            defer listener.close()
-            accept_loop(listener, conn => {
-              connections.serve(group, conn, connection => {
-                // A connection that is still in its handshake has sent no
-                // request bytes, so the idle timeout bounds the handshake
-                // too.
-                let stream = @async.with_timeout_opt(settings.idle_timeout_ms, () => {
-                  TlsStream::accept(conn, name => certificates.select(name))
-                })
-                guard stream is Some(Some(stream)) else { return }
-                serve_mocks(
-                  stream, engine, rand, settings, lifecycle, connection,
-                )
-                stream.shutdown()
+        listeners.spawn_bg(() => {
+          defer tls_listener.close()
+          accept_loop(tls_listener, conn => {
+            connections.serve(group, conn, connection => {
+              // A connection that is still in its handshake has sent no
+              // request bytes, so the idle timeout bounds the handshake too.
+              // It gets the certificate presented when its handshake
+              // starts: a later one is for later connections.
+              let stream = @async.with_timeout_opt(settings.idle_timeout_ms, () => {
+                TlsStream::accept(conn, name => certificate.select(name))
               })
+              guard stream is Some(Some(stream)) else { return }
+              serve_mocks(stream, engine, rand, settings, lifecycle, connection)
+              stream.shutdown()
             })
           })
-        }
+        })
       })
     })
     lifecycle.wait_for_drain()

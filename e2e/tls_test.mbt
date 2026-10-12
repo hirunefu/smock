@@ -34,7 +34,6 @@ async test "with a certificate chain and its key, smock serves HTTPS on the TLS 
         let (kind, cert, key) = pair
         let _ = with_smock(
           ["--dir", dir, "--port", "0", ..certs.args(cert~, key~)],
-          tls=true,
           smock => {
             let plain = smock.exchange(Plain, get_user)
             let tls = smock.exchange(Tls(certs), get_user)
@@ -191,7 +190,6 @@ async test "the TLS settings can come from SMOCK_ environment variables, and the
         "SMOCK_TLS_CERT_FILE": certs.ecdsa_chain,
         "SMOCK_TLS_KEY_FILE": certs.ecdsa_key,
       },
-      tls=true,
       smock => {
         let response = smock.exchange(Tls(certs), get_user)
         inspect(response.has_prefix("HTTP/1.1 404 Not Found"), content="true")
@@ -214,25 +212,24 @@ async test "the TLS settings can come from SMOCK_ environment variables, and the
 
 ///|
 /// Runs `openssl s_client` against the TLS port with `options`, trusting
-/// only the test root CA, sends `request` once the handshake is done, and
-/// returns its exit status and, for each group of prefixes in `show`, the
-/// first line it printed that starts with one of them. By default these are
-/// what ALPN selected, the certificate verification result and the
-/// response's status line.
+/// only the PEM certificates in the file `ca` (by default the test root CA
+/// of `certs`), sends `request` once the handshake is done, and returns its
+/// exit status and, for each group of prefixes in `show`, the first line it
+/// printed that starts with one of them. By default these are what ALPN
+/// selected, the certificate verification result and the response's status
+/// line. The request goes through a file in `certs.dir`.
 async fn Smock::s_client(
   self : Smock,
   certs : Certificates,
   options : Array[String],
   request : String,
+  ca? : String = certs.ca,
   show? : Array[Array[String]] = [
     ["ALPN protocol:", "No ALPN negotiated"],
     ["Verify return code:"],
     ["HTTP/"],
   ],
 ) -> String {
-  guard self.tls_port is Some(port) else {
-    fail("the test did not wait for the TLS port")
-  }
   write(certs.dir, "request.txt", request)
   let result = @async.with_timeout_opt(patience_ms, () => {
     @process.collect_output(
@@ -240,9 +237,9 @@ async fn Smock::s_client(
       [
         "s_client",
         "-connect",
-        "127.0.0.1:\{port}",
+        "127.0.0.1:\{self.tls_port}",
         "-CAfile",
-        certs.ca,
+        ca,
         "-verify_return_error",
         "-ign_eof",
         ..options,
@@ -274,37 +271,33 @@ async fn Smock::s_client(
 async test "ALPN: a client offering h2 and http/1.1 gets http/1.1, and a client that sends no ALPN is served" {
   with_definitions([("users.json", users)], dir => {
     with_certificates(certs => {
-      let _ = with_smock(
-        ["--dir", dir, "--port", "0", ..certs.args()],
-        tls=true,
-        smock => {
-          let out = []
-          let offers = [
-            ("h2 and http/1.1", ["-alpn", "h2,http/1.1"]),
-            ("no ALPN", []),
-          ]
-          for offer in offers {
-            let (label, options) = offer
-            out.push("\{label}:\n" + smock.s_client(certs, options, get_user))
-          }
-          inspect(
-            out.join("\n---\n"),
-            content=(
-              #|h2 and http/1.1:
-              #|status 0
-              #|ALPN protocol: http/1.1
-              #|Verify return code: 0 (ok)
-              #|HTTP/1.1 200 OK
-              #|---
-              #|no ALPN:
-              #|status 0
-              #|No ALPN negotiated
-              #|Verify return code: 0 (ok)
-              #|HTTP/1.1 200 OK
-            ),
-          )
-        },
-      )
+      let _ = with_smock(["--dir", dir, "--port", "0", ..certs.args()], smock => {
+        let out = []
+        let offers = [
+          ("h2 and http/1.1", ["-alpn", "h2,http/1.1"]),
+          ("no ALPN", []),
+        ]
+        for offer in offers {
+          let (label, options) = offer
+          out.push("\{label}:\n" + smock.s_client(certs, options, get_user))
+        }
+        inspect(
+          out.join("\n---\n"),
+          content=(
+            #|h2 and http/1.1:
+            #|status 0
+            #|ALPN protocol: http/1.1
+            #|Verify return code: 0 (ok)
+            #|HTTP/1.1 200 OK
+            #|---
+            #|no ALPN:
+            #|status 0
+            #|No ALPN negotiated
+            #|Verify return code: 0 (ok)
+            #|HTTP/1.1 200 OK
+          ),
+        )
+      })
     })
   })
 }
@@ -332,52 +325,48 @@ let users_and_orders : Array[(String, String)] = [
 async test "SNI never chooses the Mock: a request whose SNI names one Mock's Host and whose Host header names another's is answered by the Mock of its Host header" {
   with_definitions(users_and_orders, dir => {
     with_certificates(certs => {
-      let _ = with_smock(
-        ["--dir", dir, "--port", "0", ..certs.args()],
-        tls=true,
-        smock => {
-          let out = []
-          let cases = [
-            ("orders.example.com", "users.example.com"),
-            ("users.example.com", "orders.example.com"),
-            ("unknown.example.com", "orders.example.com"),
-          ]
-          for case in cases {
-            let (sni, host) = case
-            let request = "GET /x HTTP/1.1\r\nHost: \{host}\r\nConnection: close\r\n\r\n"
-            out.push(
-              "SNI \{sni}, Host \{host}:\n" +
-              smock.s_client(certs, ["-servername", sni], request, show=[
-                ["Verify return code:"],
-                ["HTTP/"],
-                ["from "],
-              ]),
-            )
-          }
-          inspect(
-            out.join("\n---\n"),
-            content=(
-              #|SNI orders.example.com, Host users.example.com:
-              #|status 0
-              #|Verify return code: 0 (ok)
-              #|HTTP/1.1 200 OK
-              #|from users
-              #|---
-              #|SNI users.example.com, Host orders.example.com:
-              #|status 0
-              #|Verify return code: 0 (ok)
-              #|HTTP/1.1 200 OK
-              #|from orders
-              #|---
-              #|SNI unknown.example.com, Host orders.example.com:
-              #|status 0
-              #|Verify return code: 0 (ok)
-              #|HTTP/1.1 200 OK
-              #|from orders
-            ),
+      let _ = with_smock(["--dir", dir, "--port", "0", ..certs.args()], smock => {
+        let out = []
+        let cases = [
+          ("orders.example.com", "users.example.com"),
+          ("users.example.com", "orders.example.com"),
+          ("unknown.example.com", "orders.example.com"),
+        ]
+        for case in cases {
+          let (sni, host) = case
+          let request = "GET /x HTTP/1.1\r\nHost: \{host}\r\nConnection: close\r\n\r\n"
+          out.push(
+            "SNI \{sni}, Host \{host}:\n" +
+            smock.s_client(certs, ["-servername", sni], request, show=[
+              ["Verify return code:"],
+              ["HTTP/"],
+              ["from "],
+            ]),
           )
-        },
-      )
+        }
+        inspect(
+          out.join("\n---\n"),
+          content=(
+            #|SNI orders.example.com, Host users.example.com:
+            #|status 0
+            #|Verify return code: 0 (ok)
+            #|HTTP/1.1 200 OK
+            #|from users
+            #|---
+            #|SNI users.example.com, Host orders.example.com:
+            #|status 0
+            #|Verify return code: 0 (ok)
+            #|HTTP/1.1 200 OK
+            #|from orders
+            #|---
+            #|SNI unknown.example.com, Host orders.example.com:
+            #|status 0
+            #|Verify return code: 0 (ok)
+            #|HTTP/1.1 200 OK
+            #|from orders
+          ),
+        )
+      })
     })
   })
 }
@@ -408,10 +397,8 @@ async test "a stalled or failed handshake affects only its own connection, and t
           "1500",
           ..certs.args(),
         ],
-        tls=true,
         smock => {
-          let tls_port = smock.tls_port.unwrap()
-          let address = @socket.Addr::parse("127.0.0.1:\{tls_port}")
+          let address = @socket.Addr::parse("127.0.0.1:\{smock.tls_port}")
           // The first bytes of a TLS record, then nothing more.
           let since = @async.now()
           let stalled = @socket.Tcp::connect(address)

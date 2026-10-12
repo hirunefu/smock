@@ -111,7 +111,6 @@ async test "rewriting the certificate files rotates the certificate without a re
       with_pair(@testcerts.rsa_chain, @testcerts.rsa_key, tls_dir => {
         let stopped = with_smock(
           ["--dir", dir, "--port", "0", ..certs.pair_args(tls_dir)],
-          tls=true,
           smock => {
             let open = smock.connect(over=Tls(certs))
             defer open.close()
@@ -193,7 +192,6 @@ async test "a Secret-style update, which swaps the ..data symlink and keeps the 
       with_secret(@testcerts.rsa_chain, @testcerts.rsa_key, secret => {
         let _ = with_smock(
           ["--dir", dir, "--port", "0", ..certs.pair_args(secret)],
-          tls=true,
           smock => {
             let before = smock.presented(certs)
             configmap_update(
@@ -234,7 +232,6 @@ async test "a changed pair that cannot be used is not swapped in: smock keeps pr
       with_pair(@testcerts.rsa_chain, @testcerts.rsa_key, tls_dir => {
         let _ = with_smock(
           ["--dir", dir, "--port", "0", ..certs.pair_args(tls_dir)],
-          tls=true,
           smock => {
             let steps : Array[(String, async () -> Unit)] = [
               (
@@ -346,7 +343,6 @@ async test "SNI: a name that is a Host of a Mock with its own certificate gets t
             mock_certs([("users", users_dir)]),
             ..certs.args(),
           ],
-          tls=true,
           smock => {
             let presented = smock.presented_by_sni(certs, [
               Some("users.example.com"),
@@ -387,7 +383,6 @@ async test "SNI never chooses the Mock: a request whose SNI gets one Mock's cert
         let _ = with_smock(
           ["--dir", dir, "--port", "0", ..certs.args()],
           env={ "SMOCK_TLS_MOCK_CERTS": mock_certs([("users", users_dir)]) },
-          tls=true,
           smock => {
             let request = "GET /x HTTP/1.1\r\nHost: orders.example.com\r\nConnection: close\r\n\r\n"
             inspect(
@@ -428,7 +423,6 @@ async test "a Mock's certificate rotates the same way as the default certificate
               mock_certs([("users", users_dir)]),
               ..certs.pair_args(default_dir),
             ],
-            tls=true,
             smock => {
               let snis = [Some("users.example.com"), None]
               let steps : Array[(String, async () -> Unit)] = [
@@ -622,7 +616,6 @@ async test "SNI follows the Hosts of the current definition set, and a Mock with
               mapping,
               ..certs.args(),
             ],
-            tls=true,
             smock => {
               let snis = [
                 Some("users.example.com"),

@@ -118,7 +118,8 @@ async test "a missing or empty definitions directory, or none at all, gives an e
     for args in runs {
       let stopped = with_smock(args, smock => out.push(smock.get("/anything")))
       // No load errors: the startup entry, the random seed, listening on
-      // the admin and the plain port, then the start and end of the drain.
+      // the admin port, the self-signed certificate, listening on the
+      // plain and the TLS port, then the start and end of the drain.
       out.push("\{stopped.logs.length()} log entries")
     }
     inspect(
@@ -131,7 +132,7 @@ async test "a missing or empty definitions directory, or none at all, gives an e
         #|
         #|{"error":"no Stub matched"}
         #|---
-        #|6 log entries
+        #|8 log entries
         #|---
         #|404 Not Found
         #|Content-Type: application/json
@@ -140,7 +141,7 @@ async test "a missing or empty definitions directory, or none at all, gives an e
         #|
         #|{"error":"no Stub matched"}
         #|---
-        #|6 log entries
+        #|8 log entries
         #|---
         #|404 Not Found
         #|Content-Type: application/json
@@ -149,7 +150,7 @@ async test "a missing or empty definitions directory, or none at all, gives an e
         #|
         #|{"error":"no Stub matched"}
         #|---
-        #|6 log entries
+        #|8 log entries
       ),
     )
   })

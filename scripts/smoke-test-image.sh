@@ -13,7 +13,10 @@
 #   on the plain port and over HTTPS with a test certificate, which shows
 #   that OpenSSL is found at run time, and its Admin API status operation
 #   answers on the admin port with the token and names the same build as
-#   `smock --version`.
+#   `smock --version`;
+# - without certificate files, `smock serve` answers over HTTPS with the
+#   self-signed certificate it generates in memory, on the same read-only
+#   root filesystem.
 #
 # It needs docker, curl, openssl, readelf and jq.
 #
@@ -184,5 +187,30 @@ build=$(echo "$status" | jq -r '"\(.version) (commit \(.commit), \(.toolchain))"
 [ "$build" = "$version (commit $commit, $toolchain)" ] ||
   serve_fail "the Admin API status names the build \"$build\", not \"$version (commit $commit, $toolchain)\""
 echo "smoke-test-image: the Admin API status operation answers on the admin port"
+
+# Without certificate files, smock serves HTTPS with a self-signed
+# certificate that it generates and keeps in memory, so the read-only root
+# filesystem does not stop it. A client that trusts that certificate, read
+# from the handshake, verifies it for 127.0.0.1.
+docker rm --force "$container" >/dev/null
+container=smock-smoke-generated-$$
+# shellcheck disable=SC2086 # $run_flags is a list of flags
+docker run --detach --name "$container" $run_flags \
+  --volume "$tmp/definitions:/definitions:ro" --volume "$tmp/admin:/admin:ro" \
+  --publish 127.0.0.1::8080 --publish 127.0.0.1::8443 \
+  "$image" serve --dir /definitions --admin-token-file /admin/token >/dev/null
+plain_port=$(port 8080)
+tls_port=$(port 8443)
+get "http://127.0.0.1:$plain_port/smoke" >/dev/null ||
+  serve_fail "no answer on the plain port without certificate files"
+openssl s_client -connect "127.0.0.1:$tls_port" </dev/null 2>/dev/null |
+  sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' >"$tmp/generated.pem"
+[ -s "$tmp/generated.pem" ] || serve_fail "the TLS port presented no certificate"
+body=$(get "https://127.0.0.1:$tls_port/smoke" --cacert "$tmp/generated.pem") ||
+  serve_fail "no answer over HTTPS with the generated certificate"
+[ "$body" = "smoke ok" ] || serve_fail "the TLS port answered \"$body\", not \"smoke ok\""
+docker logs "$container" 2>&1 | grep -q '"msg":"self-signed certificate in use"' ||
+  serve_fail "smock did not log that a self-signed certificate is in use"
+echo "smoke-test-image: without certificate files, the TLS port answers over HTTPS with a generated certificate"
 
 echo "smoke-test-image: $image passed"

@@ -257,7 +257,9 @@ async test "a client that closes the connection mid-stream ends that stream, and
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"self-signed certificate in use","sha256Fingerprint":"*","names":["localhost","127.0.0.1","::1"]}
         #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*"}
         #|{"level":"info","msg":"drain started","timeoutMs":20000}
         #|{"level":"info","msg":"drain ended","connectionsCut":0}
       ),

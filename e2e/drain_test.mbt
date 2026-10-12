@@ -83,7 +83,6 @@ async test "on SIGTERM, smock refuses new connections, closes idle ones at once,
           "10000",
           ..certs.args(),
         ],
-        tls=true,
         smock => {
           let idle = []
           for over in [Plain, Tls(certs)] {
@@ -112,9 +111,8 @@ async test "on SIGTERM, smock refuses new connections, closes idle ones at once,
             )
           }
           out.push(smock.probes())
-          guard smock.tls_port is Some(tls_port) else { fail("no TLS port") }
           out.push("new plain connection: \{connection_to(smock.port)}")
-          out.push("new TLS connection: \{connection_to(tls_port)}")
+          out.push("new TLS connection: \{connection_to(smock.tls_port)}")
           out.push(read_response(slow))
           let answered = @async.now() - start
           out.push(
