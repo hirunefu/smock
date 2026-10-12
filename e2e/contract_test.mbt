@@ -638,11 +638,75 @@ async test "the contract checker rejects responses that break the document" {
         ),
       },
     ),
+    (
+      "a failed reload with its errors",
+      "GET",
+      "/v1/status",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"version":"1","commit":"c","toolchain":"t","digest":"0123456789ab","lastReload":{"at":"2026-10-13T01:02:03.004Z","result":"failed","errors":[{"file":"a.json","pointer":"/stubs/0","message":"m"}]},"mocks":[],"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a reload result the document does not list",
+      "GET",
+      "/v1/status",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"version":"1","commit":"c","toolchain":"t","digest":"0123456789ab","lastReload":{"at":"2026-10-13T01:02:03.004Z","result":"reloaded","errors":[]},"mocks":[],"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a reload without its errors",
+      "GET",
+      "/v1/status",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"version":"1","commit":"c","toolchain":"t","digest":"0123456789ab","lastReload":{"at":"2026-10-13T01:02:03.004Z","result":"swapped"},"mocks":[],"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a reload error without its pointer",
+      "GET",
+      "/v1/status",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"version":"1","commit":"c","toolchain":"t","digest":"0123456789ab","lastReload":{"at":"2026-10-13T01:02:03.004Z","result":"failed","errors":[{"file":"a.json","message":"m"}]},"mocks":[],"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a reload with an undocumented field",
+      "GET",
+      "/v1/status",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"version":"1","commit":"c","toolchain":"t","digest":"0123456789ab","lastReload":{"at":"2026-10-13T01:02:03.004Z","result":"unchanged","errors":[],"digest":"0123456789ab"},"mocks":[],"warnings":[]}
+        ),
+      },
+    ),
   ]
   let out = []
   for case in cases {
     let (name, meth, path, response) = case
-    out.push("\{name}: \{contract.check(meth, path, response).join("; ")}")
+    let problems = match contract.check(meth, path, response) {
+      [] => "conforms"
+      problems => problems.join("; ")
+    }
+    out.push("\{name}: \{problems}")
   }
   inspect(
     out.join("\n"),
@@ -653,6 +717,11 @@ async test "the contract checker rejects responses that break the document" {
       #|a 401 without WWW-Authenticate: header WWW-Authenticate is missing
       #|an error code the document does not list: /error: "nope" is not one of ["unauthorized","not_found","method_not_allowed","malformed_json","invalid_request","invalid_stub","unknown_mock","unknown_stub","journal_off","not_started","not_ready","bad_request","content_too_large","header_fields_too_large","not_implemented","http_version_not_supported"]
       #|an undocumented field: /extra: no value is allowed here
+      #|a failed reload with its errors: conforms
+      #|a reload result the document does not list: /lastReload: {"at":"2026-10-13T01:02:03.004Z","result":"reloaded","err... matches 0 of oneOf, not 1
+      #|a reload without its errors: /lastReload: {"at":"2026-10-13T01:02:03.004Z","result":"swapped"} matches 0 of oneOf, not 1
+      #|a reload error without its pointer: /lastReload: {"at":"2026-10-13T01:02:03.004Z","result":"failed","error... matches 0 of oneOf, not 1
+      #|a reload with an undocumented field: /lastReload: {"at":"2026-10-13T01:02:03.004Z","result":"unchanged","er... matches 0 of oneOf, not 1
     ),
   )
 }

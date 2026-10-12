@@ -336,8 +336,16 @@ fn status(admin : Admin, _request : @http1.Request, _body : Json?) -> Reply {
     "version": Json::string(admin.build.version),
     "commit": Json::string(admin.build.commit),
     "toolchain": Json::string(admin.build.toolchain),
-    "digest": Json::null(),
-    "lastReload": Json::null(),
+    "digest": Json::string(status.digest),
+    "lastReload": match status.last_reload {
+      None => Json::null()
+      Some(reload) =>
+        {
+          "at": Json::string(@log.format_time(reload.at)),
+          "result": Json::string(outcome_name(reload.result)),
+          "errors": diagnostics_json(reload.errors),
+        }
+    },
     "mocks": Json::array(
       status.mocks.map(mock => {
         "name": Json::string(mock.name),

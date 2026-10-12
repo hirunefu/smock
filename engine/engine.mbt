@@ -3,12 +3,16 @@
 /// snapshot. It does no I/O: the caller gives it the request, the Session
 /// key, the time and a random source, and carries out the plan it returns.
 pub struct Engine {
-  priv snapshot : @definitions.Snapshot
-  /// The generators of the Stubs that have a seed, by Stub ID.
-  priv generators : Map[String, @prng.Generator]
+  /// The snapshot served. A reload replaces it whole, between two calls.
+  priv mut snapshot : @definitions.Snapshot
+  /// The generators of the Stubs of the snapshot that have a seed, by Stub
+  /// ID. A reload that swaps the snapshot creates them anew.
+  priv mut generators : Map[String, @prng.Generator]
   /// Whether Stubs are found through the snapshot's match index, rather
   /// than by trying every Stub of the Mock in matching order.
   priv match_index : Bool
+  /// The result of the last reload, if there was one.
+  priv mut last_reload : ReloadResult?
 }
 
 ///|
@@ -115,7 +119,12 @@ pub fn Engine::Engine(
   snapshot : @definitions.Snapshot,
   match_index? : Bool = true,
 ) -> Engine {
-  { snapshot, generators: seeded_generators(snapshot), match_index, }
+  {
+    snapshot,
+    generators: seeded_generators(snapshot),
+    match_index,
+    last_reload: None,
+  }
 }
 
 ///|
@@ -123,6 +132,10 @@ pub fn Engine::Engine(
 pub(all) struct Status {
   /// The Mocks, in declaration order.
   mocks : Array[MockStatus]
+  /// The definition set digest of the definition set served.
+  digest : String
+  /// The result of the last reload, or `None` before the first one.
+  last_reload : ReloadResult?
 } derive(Debug)
 
 ///|
@@ -149,7 +162,77 @@ pub fn Engine::status(self : Engine) -> Status {
       is_default: default_name == Some(mock.name),
     })
     .collect(),
+    digest: self.snapshot.digest,
+    last_reload: self.last_reload,
   }
+}
+
+///|
+/// What a reload did.
+pub(all) struct ReloadResult {
+  /// When the reload finished, in milliseconds since the Unix epoch.
+  at : Int64
+  result : ReloadOutcome
+  /// The digest of the definition set served before the reload.
+  old_digest : String
+  /// The digest of the definition set served after it: the new set's when
+  /// it was swapped in, otherwise `old_digest`.
+  new_digest : String
+  /// Every problem in the new set when it was invalid, as
+  /// `@definitions.load` gives them; otherwise none.
+  errors : Array[@definitions.Diagnostic]
+} derive(Debug)
+
+///|
+/// How a reload ended.
+pub(all) enum ReloadOutcome {
+  /// The new set was valid and is served now.
+  Swapped
+  /// The new set has the digest of the one served, so nothing was swapped.
+  Unchanged
+  /// The new set was invalid, and the one served before still is.
+  Failed
+} derive(Debug, Eq)
+
+///|
+/// Reloads the definitions from `set`, read with the problems
+/// `read_problems`, at the time `at` (milliseconds since the Unix epoch).
+/// Every file is validated and a whole new snapshot is built:
+///
+/// - When it is valid and its digest differs from the served one, it
+///   replaces the served snapshot at once, and each Stub with a seed gets a
+///   new generator, created from its seed. Plans the engine returned before
+///   stay as they were: they hold their own bytes.
+/// - When it is valid with the digest served, nothing is swapped.
+/// - When it is invalid, the served snapshot stays.
+///
+/// Status shows the result as the last reload.
+pub fn Engine::reload(
+  self : Engine,
+  set : @definitions.DefinitionSet,
+  read_problems? : Array[@definitions.Diagnostic] = [],
+  at~ : Int64,
+) -> ReloadResult {
+  let old_digest = self.snapshot.digest
+  let (result, errors) : (ReloadOutcome, Array[@definitions.Diagnostic]) = match
+    @definitions.load(set, read_problems~) {
+    Ok(snapshot) if snapshot.digest == old_digest => (Unchanged, [])
+    Ok(snapshot) => {
+      self.snapshot = snapshot
+      self.generators = seeded_generators(snapshot)
+      (Swapped, [])
+    }
+    Err(errors) => (Failed, errors)
+  }
+  let reload = {
+    at,
+    result,
+    old_digest,
+    new_digest: self.snapshot.digest,
+    errors,
+  }
+  self.last_reload = Some(reload)
+  reload
 }
 
 ///|

@@ -362,8 +362,9 @@ Each matched request draws whether its delay and its connection Fault
 apply, and how long the delay is.
 
 - A Stub with a `seed`, from 0 to 9007199254740991, has its own generator.
-  smock creates it when it loads the Definition files, and it advances once
-  per request the Stub matches. So the n-th request a seeded Stub matches
+  smock creates it when it loads the Definition files, and again from the
+  seed when a [reload](#reloading) swaps in a new definition set, and it
+  advances once per request the Stub matches. So the n-th request a seeded Stub matches
   gets the same Faults in every run, whatever requests other Stubs get. The
   generator is a fixed algorithm, the same on every platform.
 - Stubs without a seed draw from the process generator, which they share.
@@ -391,6 +392,81 @@ The Schema describes every field of format version 1, including fields smock
 does not implement yet. smock rejects those with a message saying they are
 not supported yet, so a file never means something smock silently ignores.
 smock also rejects any field the Schema does not define.
+
+## Reloading
+
+`smock serve` watches the definitions directory, body-file subdirectory
+included, and reloads the definition set when its files change, without a
+restart:
+
+- Adding, editing, renaming or removing a Definition file or a body file
+  triggers a reload. So does a Kubernetes ConfigMap update, which swaps the
+  `..data` symlink and keeps the visible names. Any change in the directory
+  counts, so a reload can also find nothing new.
+- Changes are coalesced: smock reloads once they have been quiet for
+  250 ms, so a burst of changes gives one reload. It also polls the
+  directory every 10 s, in case a change went unnoticed, and reloads when
+  the files differ from those it read last. A definitions directory that
+  does not exist yet is polled until it appears. One that cannot be watched
+  for another reason, such as the inotify limits, is only polled, and smock
+  logs a warning.
+- A reload reads and validates every file, builds a whole new definition
+  set and swaps it in at once, so no request sees half of a change.
+  Requests already being handled finish with the set they started with,
+  body-file bytes included.
+- A Mock the new set no longer declares is gone: its Hosts resolve like any
+  unknown Host.
+- When the new set is invalid, smock keeps serving the current one and
+  reports every problem, as `smock check` would, in the Admin API status, in
+  a log entry and in the reload metric. Fix the files, and the next reload
+  swaps the fixed set in.
+- When the new set has the digest of the one served, nothing is swapped.
+- Without `--dir`, there is nothing to watch and nothing is reloaded.
+
+Each definition set has a *definition set digest*: a short content hash of
+its Definition files and body files, so that replicas serving the same files
+report the same digest. While a ConfigMap update rolls out, the digest in
+each replica's status shows which set it serves. The digest is the first 12
+hex digits of the SHA-256 of every file, framed one after another: the
+Definition files in byte-wise order of their names (relative to the
+definitions directory), then the body files in the same order (relative to
+the body-file subdirectory). Each file is framed as
+
+- one byte, `D` for a Definition file or `B` for a body file;
+- the length of its name in UTF-8 bytes, as an 8-byte big-endian number,
+  then the name;
+- the length of its contents, as an 8-byte big-endian number, then the
+  contents.
+
+Every part carries its length, so two different sets never frame to the
+same bytes. Files that are not part of the set, such as `notes.txt` or
+`.hidden.json`, do not change the digest.
+
+`GET /v1/status` on the Admin API shows the digest served and the result
+of the last reload (`null` until the first one), as
+[openapi/admin.json](../openapi/admin.json) defines them:
+
+```json
+{
+  "digest": "3f1c0a9b2e7d",
+  "lastReload": {
+    "at": "2026-10-13T09:12:44.317Z",
+    "result": "failed",
+    "errors": [
+      { "file": "users.json", "pointer": "/stubs/0/response/status",
+        "message": "must be an integer from 200 to 599" }
+    ]
+  }
+}
+```
+
+`result` is `swapped` (the new set is served now), `unchanged` (it had the
+digest served) or `failed` (it was invalid; the previous set is still
+served). Each reload also writes one log entry: `definitions reloaded` with
+`oldDigest` and `newDigest`, or `definitions reload failed` with the digest
+still served and every error. The Prometheus counter
+`smock_definition_reloads_total` counts reloads by `result`. A failed reload
+does not change readiness.
 
 ## Checking a definitions directory
 

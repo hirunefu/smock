@@ -106,7 +106,8 @@ fn json_stub(id : String) -> String {
 /// Loads one Definition file given as text: what its snapshot serves (the
 /// Mocks with their Stubs, the Hosts and the Default Mock), or its problems
 /// without the file name. A snapshot also records the file each Stub comes
-/// from, which differs between twins.
+/// from and the digest of the files' names and bytes, which differ between
+/// twins.
 fn load_one(
   name : String,
   text : String,
