@@ -2,7 +2,7 @@
 // connection Fault, each with a probability, and a seed.
 
 ///|
-test "delays, close and partial connection Faults and seeds are read as the Schema defines them" {
+test "delays, reset, close and partial connection Faults and seeds are read as the Schema defines them" {
   inspect(
     stub_problems([
       stub_with("fixed", "\"fault\": { \"delay\": { \"fixed\": 100 } }"),
@@ -25,6 +25,9 @@ test "delays, close and partial connection Faults and seeds are read as the Sche
           #|"fault": { "delay": { "lognormal": { "median": 80, "sigma": 0.6 } },
           #|  "seed": 42 }
         ),
+      ),
+      stub_with(
+        "reset", "\"fault\": { \"connection\": { \"kind\": \"reset\", \"probability\": 0.5 } }",
       ),
       stub_with(
         "close", "\"fault\": { \"connection\": { \"kind\": \"close\", \"probability\": 0.1 } }",
@@ -183,20 +186,6 @@ test "a uniform delay's min must not exceed its max" {
     ]),
     content=(
       #|a.json: /stubs/0/fault/delay/uniform: "min" (150) must not exceed "max" (50)
-    ),
-  )
-}
-
-///|
-test "the reset connection Fault is rejected as not supported yet" {
-  inspect(
-    stub_problems([
-      stub_with(
-        "a", "\"fault\": { \"connection\": { \"kind\": \"reset\", \"probability\": 1 } }",
-      ),
-    ]),
-    content=(
-      #|a.json: /stubs/0/fault/connection/kind: "reset" is not supported yet
     ),
   )
 }

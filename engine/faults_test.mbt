@@ -279,6 +279,94 @@ test "a close or partial connection Fault is planned with the Stub's response an
 }
 
 ///|
+test "a reset connection Fault is planned instead of the response, after any delay, and its entry has no status" {
+  let h = harness([
+    faults_file([
+      fault_stub(
+        "/reset", "{ \"connection\": { \"kind\": \"reset\" }, \"delay\": { \"fixed\": 30 } }",
+      ),
+    ]),
+  ])
+  inspect(
+    describe(h.send("GET", "/reset", body="ping")),
+    content=(
+      #|plan:
+      #|  status: 200
+      #|  header: Smock-Mock: m; via=default
+      #|  body: "ok"
+      #|  delay_ms: 30
+      #|  fault: Some(Reset)
+      #|journal:
+      #|  session: None
+      #|  host: None
+      #|  mock: Some("m")
+      #|  via_default: true
+      #|  request: GET /reset HTTP/1.1
+      #|  body: "ping"
+      #|  stub: Some("reset")
+      #|  status: None
+      #|  fault: Some(Reset)
+      #|  received_at: 1791815405123
+      #|near_miss: None
+    ),
+  )
+}
+
+///|
+/// What `outcome` does to its connection: `reset`, or the status of the
+/// normal response, with its body.
+fn reset_or_response(outcome : @engine.Outcome) -> String {
+  match outcome.plan {
+    { fault: Some(Reset), .. } => "reset"
+    { fault: Some(fault), .. } => "unexpected \{@debug.to_string(fault)}"
+    { fault: None, status, body: Bytes(body), .. } =>
+      "\{status} \{@utf8.decode_lossy(body)}"
+    { fault: None, status, .. } => "\{status} with events"
+  }
+}
+
+///|
+test "a seeded reset Fault with a probability resets the same requests in every run, and the others get the normal response" {
+  let file = faults_file([
+    fault_stub(
+      "/flaky", "{ \"connection\": { \"kind\": \"reset\", \"probability\": 0.5 }, \"seed\": 2026 }",
+    ),
+    coin_flips("/other"),
+  ])
+  // Each harness is a run: a new engine, and a process generator seeded
+  // differently. The second run's requests to another Stub do not change
+  // which requests the seeded Stub resets.
+  let first = harness([file], process_seed=1)
+  let second = harness([file], process_seed=2)
+  let run = (h : Harness, other : Int) => {
+    Array::makei(12, i => {
+      let _ = decisions(h, "/other", other * (i % 3))
+      reset_or_response(h.send("GET", "/flaky"))
+    })
+  }
+  let resets = run(first, 0)
+  inspect(resets == run(second, 1), content="true")
+  // The sequence of seed 2026 is pinned, on every target.
+  inspect(
+    resets.join("\n"),
+    content=(
+      #|200 ok
+      #|reset
+      #|reset
+      #|200 ok
+      #|reset
+      #|reset
+      #|200 ok
+      #|200 ok
+      #|reset
+      #|reset
+      #|reset
+      #|reset
+    ),
+  )
+}
+
+///|
 test "an events Stub with Faults plans its events with the delay and the connection Fault" {
   let h = harness([
     faults_file([

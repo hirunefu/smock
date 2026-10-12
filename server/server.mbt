@@ -262,8 +262,9 @@ async fn run(
           defer plain.close()
           accept_loop(plain, conn => {
             connections.serve(group, conn, connection => {
-              serve_mocks(
-                conn, engine, rand, settings, traffic, lifecycle, connection,
+              let _ = serve_mocks(
+                conn, conn, engine, rand, settings, traffic, lifecycle, connection,
+                logger,
               )
             })
           })
@@ -280,10 +281,15 @@ async fn run(
                 TlsStream::accept(conn, name => certificate.select(name))
               })
               guard stream is Some(Some(stream)) else { return }
-              serve_mocks(
-                stream, engine, rand, settings, traffic, lifecycle, connection,
+              let reset = serve_mocks(
+                stream, conn, engine, rand, settings, traffic, lifecycle, connection,
+                logger,
               )
-              stream.shutdown()
+              // A reset sends no close_notify: the RST alone ends the
+              // connection.
+              if !reset {
+                stream.shutdown()
+              }
             })
           })
         })
@@ -355,12 +361,18 @@ async fn accept_loop(
 
 ///|
 /// Serves the requests for the Mocks that arrive on one connection of the
-/// plain or the TLS port.
+/// plain or the TLS port: `stream`, which reads and writes through `tcp`,
+/// the connection's socket. Returns whether a reset Fault ended it: closing
+/// `tcp` then resets the connection with an RST, and the caller must write
+/// nothing more to it.
 ///
 /// The engine's plan for a request may hold back the response by a delay:
 /// the status line is written once the delay is over, and meanwhile other
 /// connections are served as usual. A connection Fault in the plan ends the
-/// connection instead of the response, or part of the way through it.
+/// connection instead of the response, or part of the way through it. A
+/// reset comes once the whole request, body included, has been read, and
+/// nothing is written before it; when it cannot be set up, the failure is
+/// logged to `logger` and the connection closes as for a close Fault.
 ///
 /// The request's Journal entry, if the engine returned one, is committed
 /// just before the response's last bytes are written, so that a client
@@ -379,13 +391,16 @@ async fn accept_loop(
 /// connection closes after it.
 async fn[S : @io.Reader + @io.Writer] serve_mocks(
   stream : S,
+  tcp : @socket.Tcp,
   engine : @engine.Engine,
   rand : @prng.Generator,
   settings : @settings.ServeSettings,
   traffic : Traffic,
   lifecycle : Lifecycle,
   connection : Connection,
-) -> Unit {
+  logger : @log.Logger,
+) -> Bool {
+  let reset = Ref(false)
   serve_connection(
     stream,
     settings,
@@ -433,9 +448,14 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
             close=lifecycle.is_draining(),
             before_last=commit,
           )
-        // Closing the connection sends a FIN. The engine does not plan a
-        // reset yet, since Definitions reject it.
-        Some(Close) | Some(Reset) => false
+        // Closing the connection sends an RST, once the Journal entry is
+        // committed, so that a client that sees the reset finds it there.
+        Some(Reset) => {
+          reset.val = reset_on_close(tcp, logger)
+          false
+        }
+        // Closing the connection sends a FIN.
+        Some(Close) => false
         Some(Partial) => write_response(stream, plan, request, partial=true)
       }
       // A response that began before the drain, such as a stream, and ends
@@ -444,6 +464,7 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
     },
     reject=status => @http1.encode_response(status, [], b"", close=true),
   )
+  reset.val
 }
 
 ///|

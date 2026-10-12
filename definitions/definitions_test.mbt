@@ -300,14 +300,12 @@ test "a field the Schema defines but smock does not implement yet is rejected as
           #|    "noMatch": { "status": 418 }, "journal": false }],
           #|  "stubs": [{ "id": "a", "mock": "m", "priority": 1,
           #|    "request": { "method": "GET", "path": "/a" },
-          #|    "response": { "status": 200, "template": true },
-          #|    "fault": { "connection": { "kind": "reset" } } }] }
+          #|    "response": { "status": 200, "template": true } }] }
         ),
       ),
     ]),
     content=(
       #|a.json: /stubs/0/response/template: is not supported yet
-      #|a.json: /stubs/0/fault/connection/kind: "reset" is not supported yet
     ),
   )
 }
