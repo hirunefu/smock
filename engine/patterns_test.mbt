@@ -389,7 +389,7 @@ test "pathological patterns against long inputs are answered in linear time" {
   let a = "a".repeat(n)
   let x = "x".repeat(n)
   let send = (target : String, headers : Array[(String, String)], body) => {
-    h.send("POST", target, headers~, body~).journal.stub.unwrap_or("none")
+    h.send("POST", target, headers~, body~).stub.unwrap_or("none")
   }
   inspect(
     [
@@ -416,11 +416,11 @@ test "a body that is not valid UTF-8 never matches a body pattern as a whole, ev
   ])
   let send = (body : Bytes) => {
     h.engine.handle(
-      { meth: "POST", target: "/", headers: [], body, },
+      { meth: "POST", target: "/", version: "HTTP/1.1", headers: [], body, },
       session=None,
       now=h.now,
       rand=h.rand,
-    ).journal.stub
+    ).stub
   }
   debug_inspect(
     [

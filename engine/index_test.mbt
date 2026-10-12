@@ -16,9 +16,15 @@ fn index_winners(
   let lines = []
   for request in requests {
     let (meth, target, headers) = request
-    let outcome = twins.send({ meth, target, headers, body: b"", })
+    let outcome = twins.send({
+      meth,
+      target,
+      version: "HTTP/1.1",
+      headers,
+      body: b"",
+    })
     let shown_headers = headers.map(h => " [\{h.0}: \{h.1}]").join("")
-    let winner = outcome.journal.stub.unwrap_or("none")
+    let winner = outcome.stub.unwrap_or("none")
     lines.push("\{meth} \{target}\{shown_headers} -> \{winner}")
   }
   lines.join("\n")
@@ -277,7 +283,13 @@ test "each snapshot is built with its own match index, and an engine keeps the o
     ),
   ])
   let winner = (twins : Twins, target : String) => {
-    twins.send({ meth: "GET", target, headers: [], body: b"", }).journal.stub
+    twins.send({
+      meth: "GET",
+      target,
+      version: "HTTP/1.1",
+      headers: [],
+      body: b"",
+    }).stub
   }
   debug_inspect(
     [

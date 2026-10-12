@@ -253,12 +253,15 @@ test "without a Default Mock, a request whose Host no Mock lists gets 404 with t
       #|  fault: None
       #|journal:
       #|  session: None
+      #|  host: Some("usres.example.com")
       #|  mock: None
-      #|  request: GET /x
+      #|  via_default: false
+      #|  request: GET /x HTTP/1.1
       #|  header: Host: Usres.Example.com:8080
       #|  body: ""
       #|  stub: None
-      #|  status: 404
+      #|  status: Some(404)
+      #|  fault: None
       #|  received_at: 1791815405123
       #|near_miss: None
     ),
@@ -404,7 +407,7 @@ test "an absolute-form target is matched on its path, which is / when it has non
     ]
     .map(target => {
       let outcome = h.send("GET", target)
-      "\{target} -> \{@debug.to_string(outcome.journal.stub)}"
+      "\{target} -> \{@debug.to_string(outcome.stub)}"
     })
     .join("\n"),
     content=(

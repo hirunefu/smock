@@ -52,11 +52,14 @@ test "a fixed delay applies to every matched request, before a normal response" 
       #|  fault: None
       #|journal:
       #|  session: None
+      #|  host: None
       #|  mock: Some("m")
-      #|  request: GET /slow
+      #|  via_default: true
+      #|  request: GET /slow HTTP/1.1
       #|  body: ""
       #|  stub: Some("slow")
-      #|  status: 200
+      #|  status: Some(200)
+      #|  fault: None
       #|  received_at: 1791815405123
       #|near_miss: None
     ),
@@ -301,11 +304,14 @@ test "an events Stub with Faults plans its events with the delay and the connect
       #|  fault: Some(Partial)
       #|journal:
       #|  session: None
+      #|  host: None
       #|  mock: Some("m")
-      #|  request: GET /ticks
+      #|  via_default: true
+      #|  request: GET /ticks HTTP/1.1
       #|  body: ""
       #|  stub: Some("ticks")
-      #|  status: 200
+      #|  status: Some(200)
+      #|  fault: Some(Partial)
       #|  received_at: 1791815405123
       #|near_miss: None
     ),

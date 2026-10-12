@@ -28,7 +28,7 @@ fn winners(
   .map(r => {
     let (meth, target, headers, body) = r
     let outcome = h.send(meth, target, headers~, body~)
-    let winner = match outcome.journal.stub {
+    let winner = match outcome.stub {
       Some(id) => id
       None => "none"
     }
@@ -389,11 +389,11 @@ test "an exact body condition compares bytes, so a body that is not UTF-8 never 
   ])
   let send = (body : Bytes) => {
     h.engine.handle(
-      { meth: "POST", target: "/", headers: [], body, },
+      { meth: "POST", target: "/", version: "HTTP/1.1", headers: [], body, },
       session=None,
       now=h.now,
       rand=h.rand,
-    ).journal.stub
+    ).stub
   }
   debug_inspect(
     [send(b"\xff"), send(b"\xef\xbf\xbd")],
@@ -565,11 +565,11 @@ test "a json condition fails on a body that does not parse as JSON" {
   )
   let send = (body : Bytes) => {
     h.engine.handle(
-      { meth: "POST", target: "/", headers: [], body, },
+      { meth: "POST", target: "/", version: "HTTP/1.1", headers: [], body, },
       session=None,
       now=h.now,
       rand=h.rand,
-    ).journal.stub
+    ).stub
   }
   // Not UTF-8: not JSON.
   debug_inspect(send(b"{\"a\":\"\xff\"}"), content="None")

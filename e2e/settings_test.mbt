@@ -10,26 +10,30 @@ async test "every serve setting is a flag with a matching SMOCK_ environment var
       #|Serve the Mocks and Stubs of a definitions directory.
       #|
       #|Options:
-      #|  -h, --help                                 Show help information.
-      #|  --dir <dir>                                The definitions directory. Without it, smock serves one empty Default Mock. [env: SMOCK_DIR]
-      #|  --port <port>                              The plain HTTP port. 0 picks a free port. [env: SMOCK_PORT] [default: 8080]
-      #|  --tls-port <tls-port>                      The HTTPS port, served when --tls-cert-file and --tls-key-file are set. 0 picks a free port. [env: SMOCK_TLS_PORT] [default: 8443]
-      #|  --tls-cert-file <tls-cert-file>            The PEM certificate chain for the HTTPS port: the leaf certificate, then its intermediates. [env: SMOCK_TLS_CERT_FILE]
-      #|  --tls-key-file <tls-key-file>              The PEM private key of the leaf certificate in --tls-cert-file. [env: SMOCK_TLS_KEY_FILE]
-      #|  --admin-port <admin-port>                  The Admin API port, separate from the plain and TLS ports. 0 picks a free port. [env: SMOCK_ADMIN_PORT] [default: 9090]
-      #|  --admin-auth <admin-auth>                  Whether the Admin API needs a bearer token: on or off. Turn it off only for local use. [env: SMOCK_ADMIN_AUTH] [default: on]
-      #|  --admin-token-file <admin-token-file>      A file that holds the Admin API token. Without it, the token comes from the environment variable SMOCK_ADMIN_TOKEN. [env: SMOCK_ADMIN_TOKEN_FILE]
-      #|  --replicas <replicas>                      How many replicas the deployment runs. Above 1, every Admin API response warns that state is per replica. [env: SMOCK_REPLICAS] [default: 1]
-      #|  --session-header <session-header>          The request header that carries the Session, as W3C Baggage, on requests and Admin API calls. [env: SMOCK_SESSION_HEADER] [default: baggage]
-      #|  --session-member <session-member>          The member of the Session header whose value is the Session key. [env: SMOCK_SESSION_MEMBER] [default: smock-session]
-      #|  --log-format <log-format>                  The log format: json. [env: SMOCK_LOG_FORMAT] [default: json]
-      #|  --body-file-dir <body-file-dir>            The body-file subdirectory of the definitions directory. [env: SMOCK_BODY_FILE_DIR] [default: files]
-      #|  --header-size-limit <header-size-limit>    The most bytes a request head (request line and header fields) may take. Larger heads get 431. [env: SMOCK_HEADER_SIZE_LIMIT] [default: 16384]
-      #|  --header-count-limit <header-count-limit>  The most header fields a request may have. More get 431. [env: SMOCK_HEADER_COUNT_LIMIT] [default: 100]
-      #|  --body-limit <body-limit>                  The longest request body, in bytes. Longer bodies get 413. [env: SMOCK_BODY_LIMIT] [default: 10485760]
-      #|  --read-timeout-ms <read-timeout-ms>        How long a request may take to arrive, in milliseconds, from its first byte to its last. Then the connection closes. [env: SMOCK_READ_TIMEOUT_MS] [default: 30000]
-      #|  --idle-timeout-ms <idle-timeout-ms>        How long a connection may wait for a request, in milliseconds. Then it closes. [env: SMOCK_IDLE_TIMEOUT_MS] [default: 60000]
-      #|  --seed <seed>                              The seed of the process random generator, from 0 to 9007199254740991. Faults of Stubs without their own seed draw from it. Without it, smock picks a seed at startup and logs it. [env: SMOCK_SEED]
+      #|  -h, --help                                   Show help information.
+      #|  --dir <dir>                                  The definitions directory. Without it, smock serves one empty Default Mock. [env: SMOCK_DIR]
+      #|  --port <port>                                The plain HTTP port. 0 picks a free port. [env: SMOCK_PORT] [default: 8080]
+      #|  --tls-port <tls-port>                        The HTTPS port, served when --tls-cert-file and --tls-key-file are set. 0 picks a free port. [env: SMOCK_TLS_PORT] [default: 8443]
+      #|  --tls-cert-file <tls-cert-file>              The PEM certificate chain for the HTTPS port: the leaf certificate, then its intermediates. [env: SMOCK_TLS_CERT_FILE]
+      #|  --tls-key-file <tls-key-file>                The PEM private key of the leaf certificate in --tls-cert-file. [env: SMOCK_TLS_KEY_FILE]
+      #|  --admin-port <admin-port>                    The Admin API port, separate from the plain and TLS ports. 0 picks a free port. [env: SMOCK_ADMIN_PORT] [default: 9090]
+      #|  --admin-auth <admin-auth>                    Whether the Admin API needs a bearer token: on or off. Turn it off only for local use. [env: SMOCK_ADMIN_AUTH] [default: on]
+      #|  --admin-token-file <admin-token-file>        A file that holds the Admin API token. Without it, the token comes from the environment variable SMOCK_ADMIN_TOKEN. [env: SMOCK_ADMIN_TOKEN_FILE]
+      #|  --replicas <replicas>                        How many replicas the deployment runs. Above 1, every Admin API response warns that state is per replica. [env: SMOCK_REPLICAS] [default: 1]
+      #|  --session-header <session-header>            The request header that carries the Session, as W3C Baggage, on requests and Admin API calls. [env: SMOCK_SESSION_HEADER] [default: baggage]
+      #|  --session-member <session-member>            The member of the Session header whose value is the Session key. [env: SMOCK_SESSION_MEMBER] [default: smock-session]
+      #|  --log-format <log-format>                    The log format: json. [env: SMOCK_LOG_FORMAT] [default: json]
+      #|  --body-file-dir <body-file-dir>              The body-file subdirectory of the definitions directory. [env: SMOCK_BODY_FILE_DIR] [default: files]
+      #|  --header-size-limit <header-size-limit>      The most bytes a request head (request line and header fields) may take. Larger heads get 431. [env: SMOCK_HEADER_SIZE_LIMIT] [default: 16384]
+      #|  --header-count-limit <header-count-limit>    The most header fields a request may have. More get 431. [env: SMOCK_HEADER_COUNT_LIMIT] [default: 100]
+      #|  --body-limit <body-limit>                    The longest request body, in bytes. Longer bodies get 413. [env: SMOCK_BODY_LIMIT] [default: 10485760]
+      #|  --read-timeout-ms <read-timeout-ms>          How long a request may take to arrive, in milliseconds, from its first byte to its last. Then the connection closes. [env: SMOCK_READ_TIMEOUT_MS] [default: 30000]
+      #|  --idle-timeout-ms <idle-timeout-ms>          How long a connection may wait for a request, in milliseconds. Then it closes. [env: SMOCK_IDLE_TIMEOUT_MS] [default: 60000]
+      #|  --seed <seed>                                The seed of the process random generator, from 0 to 9007199254740991. Faults of Stubs without their own seed draw from it. Without it, smock picks a seed at startup and logs it. [env: SMOCK_SEED]
+      #|  --journal <journal>                          Whether smock records the requests it receives in the Journal: on or off. Off, it records none, and Journal queries are refused. [env: SMOCK_JOURNAL] [default: on]
+      #|  --journal-max-entries <journal-max-entries>  The most entries the Journal holds. Beyond it, the oldest entries are evicted. [env: SMOCK_JOURNAL_MAX_ENTRIES] [default: 10000]
+      #|  --journal-max-bytes <journal-max-bytes>      The most bytes the Journal's entries take: each counts 256, two per character of its request line, header fields, names and Near miss values, and the body bytes it keeps. Beyond it, the oldest entries are evicted. [env: SMOCK_JOURNAL_MAX_BYTES] [default: 67108864]
+      #|  --journal-body-limit <journal-body-limit>    The most bytes of a request body a Journal entry keeps; the rest is cut. [env: SMOCK_JOURNAL_BODY_LIMIT] [default: 4096]
       #|
     ),
   )
@@ -160,6 +164,12 @@ async test "an invalid value stops startup with a message that names the setting
     ([], { "SMOCK_SESSION_HEADER": "baggage:" }),
     (["--session-member", "smock session"], Map([])),
     ([], { "SMOCK_SESSION_MEMBER": "" }),
+    (["--journal", "false"], Map([])),
+    ([], { "SMOCK_JOURNAL": "OFF" }),
+    (["--journal-max-entries", "0"], Map([])),
+    ([], { "SMOCK_JOURNAL_MAX_BYTES": "64MiB" }),
+    (["--journal-max-bytes", "1073741825"], Map([])),
+    ([], { "SMOCK_JOURNAL_BODY_LIMIT": "-1" }),
   ]
   let out = []
   for run in runs {
@@ -209,6 +219,12 @@ async test "an invalid value stops startup with a message that names the setting
       #|status 2: smock serve: invalid value "baggage:" for --session-header (SMOCK_SESSION_HEADER): must be a header name, such as baggage
       #|status 2: smock serve: invalid value "smock session" for --session-member (SMOCK_SESSION_MEMBER): must be a W3C Baggage key, such as smock-session
       #|status 2: smock serve: invalid value "" for --session-member (SMOCK_SESSION_MEMBER): must be a W3C Baggage key, such as smock-session
+      #|status 2: smock serve: invalid value "false" for --journal (SMOCK_JOURNAL): must be on or off
+      #|status 2: smock serve: invalid value "OFF" for --journal (SMOCK_JOURNAL): must be on or off
+      #|status 2: smock serve: invalid value "0" for --journal-max-entries (SMOCK_JOURNAL_MAX_ENTRIES): must be an integer from 1 to 1073741824
+      #|status 2: smock serve: invalid value "64MiB" for --journal-max-bytes (SMOCK_JOURNAL_MAX_BYTES): must be an integer from 1 to 1073741824
+      #|status 2: smock serve: invalid value "1073741825" for --journal-max-bytes (SMOCK_JOURNAL_MAX_BYTES): must be an integer from 1 to 1073741824
+      #|status 2: smock serve: invalid value "-1" for --journal-body-limit (SMOCK_JOURNAL_BODY_LIMIT): must be an integer from 0 to 1073741824
     ),
   )
 }

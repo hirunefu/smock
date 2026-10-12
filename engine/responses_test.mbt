@@ -111,11 +111,14 @@ test "when no Stub matches, the Mock answers 404 with a JSON body saying so" {
       #|  fault: None
       #|journal:
       #|  session: None
+      #|  host: None
       #|  mock: Some("users")
-      #|  request: GET /users/2
+      #|  via_default: true
+      #|  request: GET /users/2 HTTP/1.1
       #|  body: ""
       #|  stub: None
-      #|  status: 404
+      #|  status: Some(404)
+      #|  fault: None
       #|  received_at: 1791815405123
       #|near_miss: Some(
       #|  {

@@ -32,12 +32,15 @@ test "a request whose method and path equal a Stub's gets that Stub's response" 
       #|  fault: None
       #|journal:
       #|  session: None
+      #|  host: Some("localhost")
       #|  mock: Some("users")
-      #|  request: GET /users/1
+      #|  via_default: true
+      #|  request: GET /users/1 HTTP/1.1
       #|  header: Host: localhost:8080
       #|  body: ""
       #|  stub: Some("get-user")
-      #|  status: 200
+      #|  status: Some(200)
+      #|  fault: None
       #|  received_at: 1791815405123
       #|near_miss: None
     ),
@@ -74,7 +77,7 @@ test "any other request gets the no-match response" {
     requests
     .map(r => {
       let outcome = h.send(r.0, r.1)
-      "\{r.0} \{r.1} -> \{outcome.plan.status} stub=\{@debug.to_string(outcome.journal.stub)}"
+      "\{r.0} \{r.1} -> \{outcome.plan.status} stub=\{@debug.to_string(outcome.stub)}"
     })
     .join("\n"),
     content=(
@@ -103,11 +106,14 @@ test "with no Definition file, one empty Mock named default answers 404" {
       #|  fault: None
       #|journal:
       #|  session: None
+      #|  host: None
       #|  mock: Some("default")
-      #|  request: GET /anything
+      #|  via_default: true
+      #|  request: GET /anything HTTP/1.1
       #|  body: ""
       #|  stub: None
-      #|  status: 404
+      #|  status: Some(404)
+      #|  fault: None
       #|  received_at: 1791815405123
       #|near_miss: None
     ),

@@ -58,7 +58,15 @@ pub async fn serve(
         }
       }
   }
-  let engine = @engine.Engine(snapshot)
+  let engine = @engine.Engine(
+    snapshot,
+    journal=@engine.JournalSettings(
+      enabled=settings.journal,
+      max_entries=settings.journal_max_entries,
+      max_bytes=settings.journal_max_bytes,
+      body_limit=settings.journal_body_limit,
+    ),
+  )
   // The process generator. Its seed is logged, so that a run can be
   // replayed with --seed.
   let seed = match settings.seed {
@@ -77,6 +85,7 @@ pub async fn serve(
     engine,
     build,
     metrics~,
+    journal_metrics=JournalMetrics::register(metrics),
     logger~,
     token~,
     replica=replica_name(),
@@ -220,6 +229,14 @@ async fn[X] accept_loop(
 /// the status line is written once the delay is over, and meanwhile other
 /// connections are served as usual. A connection Fault in the plan ends the
 /// connection instead of the response, or part of the way through it.
+///
+/// The request's Journal entry, if the engine returned one, is committed
+/// just before the response's last bytes are written, so that a client
+/// that has the whole response finds its request in the Journal: before
+/// the last event of a stream of Server-Sent Events. A request that ends
+/// otherwise, as with a connection Fault or a client that goes away, is
+/// committed when it ends, before the connection closes. The entry's timing
+/// is filled in last.
 async fn[S : @io.Reader + @io.Writer] serve_mocks(
   stream : S,
   engine : @engine.Engine,
@@ -236,17 +253,31 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
         header=settings.session_header,
         member_name=settings.session_member,
       )
-      let plan = engine.handle(
-          engine_request,
-          session~,
-          now=@async.now(),
-          rand~,
-        ).plan
+      let outcome = engine.handle(
+        engine_request,
+        session~,
+        now=@async.now(),
+        rand~,
+      )
+      let plan = outcome.plan
+      let pending = Ref(outcome.journal)
+      let commit = () => {
+        if pending.val is Some(entry) {
+          pending.val = None
+          engine.commit(entry)
+        }
+      }
+      defer {
+        commit()
+        if outcome.journal is Some(entry) {
+          entry.finish(at=@async.now())
+        }
+      }
       if plan.delay_ms > 0 {
         @async.sleep(plan.delay_ms)
       }
       match plan.fault {
-        None => write_response(stream, plan, request)
+        None => write_response(stream, plan, request, before_last=commit)
         // Closing the connection sends a FIN. The engine does not plan a
         // reset yet, since Definitions reject it.
         Some(Close) | Some(Reset) => false
@@ -342,6 +373,10 @@ fn to_engine_request(request : @http1.Request) -> @engine.Request {
   {
     meth: request.meth,
     target: request.target,
+    version: match request.version {
+      Http10 => "HTTP/1.0"
+      Http11 => "HTTP/1.1"
+    },
     headers: request.headers.map(header => {
       (header.name, @utf8.decode_lossy(header.value))
     }),
@@ -361,11 +396,17 @@ fn to_engine_request(request : @http1.Request) -> @engine.Request {
 /// makes a later write fail, which ends the stream and the connection. The
 /// first half of a stream is the first half of its events, rounded down,
 /// and a stream cut short is not ended: a chunked one lacks its last chunk.
+///
+/// `before_last` is called just before the response's last bytes are
+/// written: before the whole response when it is written at once, and
+/// before the last event of a stream, or its end when it has none. A
+/// response cut short never calls it.
 async fn[S : @io.Writer] write_response(
   stream : S,
   plan : @engine.ResponsePlan,
   request : @http1.Request,
   partial? : Bool = false,
+  before_last? : () -> Unit = () => (),
 ) -> Bool {
   match plan.body {
     Bytes(body) => {
@@ -379,6 +420,7 @@ async fn[S : @io.Writer] write_response(
         @io.Writer::write(stream, cut_short(response))
         return false
       }
+      before_last()
       @io.Writer::write(stream, response)
       request.keep_alive
     }
@@ -386,7 +428,7 @@ async fn[S : @io.Writer] write_response(
       let response = @http1.ResponseStream(plan.status, plan.headers, request~)
       @io.Writer::write(stream, response.head())
       let count = if partial { events.length() / 2 } else { events.length() }
-      for event in events[:count] {
+      for i, event in events[:count] {
         if event.delay_ms > 0 {
           @async.sleep(event.delay_ms)
         }
@@ -395,10 +437,16 @@ async fn[S : @io.Writer] write_response(
           event?=event.event,
           id?=event.id,
         )
+        if !partial && i == count - 1 {
+          before_last()
+        }
         write_some(stream, response.part(data))
       }
       if partial {
         return false
+      }
+      if count == 0 {
+        before_last()
       }
       write_some(stream, response.end())
       response.keeps_open()

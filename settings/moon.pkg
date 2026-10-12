@@ -1,3 +1,4 @@
 import {
+  "smock/smock/log",
   "moonbitlang/core/argparse",
 }

@@ -8,6 +8,8 @@ priv struct Admin {
   build : @buildinfo.BuildInfo
   /// The metrics `/metrics` serves.
   metrics : @metrics.Registry
+  /// The metrics of the Journal, brought up to date on each scrape.
+  journal_metrics : JournalMetrics
   /// Where changes made through the Admin API are logged.
   logger : @log.Logger
   /// The token every operation needs, as UTF-8, or `None` when
@@ -58,7 +60,7 @@ let routes : Array[Route] = [
   route("/v1/mocks/{mock}/stubs", "POST", add_stub, takes_body=true),
   route("/v1/mocks/{mock}/stubs/{id}", "DELETE", delete_stub),
   route("/v1/reset", "POST", reset, takes_body=true),
-  route("/v1/journal/query", "POST", not_implemented, takes_body=true),
+  route("/v1/journal/query", "POST", query_journal, takes_body=true),
   route("/v1/journal/verify", "POST", not_implemented, takes_body=true),
   route("/v1/journal/unmatched", "GET", not_implemented),
   route("/v1/stubs/{id}/render", "POST", render, takes_body=true),
@@ -82,7 +84,8 @@ fn route(
 ///|
 /// Creates the Admin API of a process that serves through `engine`.
 ///
-/// - `metrics` holds the metrics `/metrics` serves.
+/// - `metrics` holds the metrics `/metrics` serves, among them
+///   `journal_metrics`.
 /// - `logger` logs each change made through the Admin API.
 /// - `token` is the bearer token every operation needs, or `None` to turn
 ///   authentication off.
@@ -94,6 +97,7 @@ fn Admin::new(
   engine : @engine.Engine,
   build : @buildinfo.BuildInfo,
   metrics~ : @metrics.Registry,
+  journal_metrics~ : JournalMetrics,
   logger~ : @log.Logger,
   token~ : String?,
   replica~ : String,
@@ -116,6 +120,7 @@ fn Admin::new(
     engine,
     build,
     metrics,
+    journal_metrics,
     logger,
     token: token.map(token => @utf8.encode(token)),
     replica,
@@ -394,7 +399,7 @@ fn render(admin : Admin, request : @http1.Request, body : Json?) -> Reply {
     Err(message) => return invalid(message)
     Ok(None) => @async.now()
     Ok(Some(text)) =>
-      match @settings.parse_time(text) {
+      match @log.parse_time(text) {
         Some(time) => time
         None =>
           return invalid(
@@ -468,6 +473,7 @@ fn query_parameter(target : String, name : String) -> Result[String?, String] {
 ///|
 /// Serves every metric in the Prometheus text format.
 fn metrics(admin : Admin, _request : @http1.Request, _body : Json?) -> Reply {
+  admin.journal_metrics.update(admin.engine.journal_stats())
   {
     status: 200,
     headers: [("Content-Type", "text/plain; version=0.0.4; charset=utf-8")],

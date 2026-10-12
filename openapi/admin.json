@@ -1132,7 +1132,7 @@
         "type": "object",
         "properties": {
           "mock": {
-            "description": "Only entries of this Mock.",
+            "description": "Only entries of this Mock. It may name a Mock the definitions served no longer declare: the entries it recorded before a reload removed it remain.",
             "type": "string",
             "minLength": 1
           },
@@ -1241,7 +1241,7 @@
             "type": ["string", "null"]
           },
           "nearMiss": {
-            "description": "When no Stub matched and the Mock had candidate Stubs: the Near miss. Otherwise null.",
+            "description": "When no Stub matched and the Mock had candidate Stubs: the Near miss. Otherwise null. The actual value of a failed body condition is truncated as the recorded request body is.",
             "oneOf": [
               {
                 "$ref": "#/components/schemas/NearMiss"

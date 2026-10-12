@@ -1,6 +1,6 @@
-// The Admin API operations on Ephemeral Stubs and reset. Each is scoped to
-// the calling Session, named the way mocked requests name theirs, and each
-// change is logged.
+// The Admin API operations on Ephemeral Stubs, and reset, which clears
+// Journal entries too. Each is scoped to the calling Session, named the way
+// mocked requests name theirs, and each change is logged.
 
 ///|
 /// The calling Session of `request`: the member of the Session header that
@@ -70,6 +70,16 @@ fn Admin::refused(
         "invalid_stub",
         problems.map(problem => problem.to_string()).join("\n"),
       )
+    JournalOff(None) =>
+      self.error(
+        409, "journal_off", "the Journal is off (--journal off): smock records no request",
+      )
+    JournalOff(Some(mock)) =>
+      self.error(
+        409,
+        "journal_off",
+        "the Journal is off for the Mock \{mock.escape()} (\"journal\": false in the Definition files): smock records none of its requests",
+      )
   }
 }
 
@@ -137,10 +147,9 @@ fn reset(admin : Admin, request : @http1.Request, body : Json?) -> Reply {
   let removed = admin.engine.reset(scope) catch {
     error => return admin.refused(error, session)
   }
-  // The Journal is not recorded yet, so a reset removes no entry.
   let removed : Json = {
     "ephemeralStubs": Json::number(removed.ephemeral_stubs.to_double()),
-    "journalEntries": Json::number(0),
+    "journalEntries": Json::number(removed.journal_entries.to_double()),
   }
   let (scope_name, fields) : (String, Map[String, Json]) = match scope {
     Session(session) => ("session", { "session": session_json(session) })
