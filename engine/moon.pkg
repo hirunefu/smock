@@ -2,6 +2,8 @@ import {
   "smock/smock/definitions",
   "smock/smock/prng",
   "moonbitlang/core/buffer",
+  "moonbitlang/core/encoding/base64",
+  "moonbitlang/core/encoding/percent",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
   "moonbitlang/core/math",
