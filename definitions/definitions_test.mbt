@@ -94,12 +94,102 @@ test "every problem is reported, each with its file and JSON Pointer" {
 }
 
 ///|
-test "a YAML Definition file gets a diagnostic saying YAML is not supported yet" {
+test "a YAML file outside the safe subset gets a diagnostic with its file and the JSON Pointer of the offending value" {
   inspect(
-    problems([("a.yaml", "mocks: []\n"), ("b.yml", "")]),
+    problems([
+      (
+        "10-users.yaml",
+        (
+          #|mocks: [{ name: users }]
+          #|stubs:
+          #|  - { id: a, mock: users, response: { status: 200 } }
+          #|  - { id: b, mock: users, response: { status: 200 } }
+          #|  - { id: c, mock: users, response: { status: 200 } }
+          #|  - id: d
+          #|    mock: users
+          #|    request:
+          #|      path: ~
+          #|    response:
+          #|      status: 200
+        ),
+      ),
+      ("20-anchors.yml", "mocks:\n  - &users\n    name: users\n"),
+      ("30-aliases.yaml", "stubs:\n  - *users\n"),
+      ("40-tags.yaml", "mocks: !!seq []\n"),
+      ("50-merge.yaml", "mocks:\n  - <<: { name: users }\n"),
+      ("60-duplicate.yaml", "mocks:\n  - name: users\n    name: orders\n"),
+      ("70-documents.yaml", "mocks: []\n---\nstubs: []\n"),
+      ("80-on.yaml", "stubs:\n  - id: x\n    request: { method: on }\n"),
+      ("90-syntax.yml", "mocks:\n  - name: \"users\n"),
+      ("91-flow.yaml", "mocks: [{ name: users }\n"),
+      ("92-tab.yaml", "mocks:\n\t- name: users\n"),
+      ("93-empty.yml", ""),
+    ]),
     content=(
-      #|a.yaml: YAML Definition files are not supported yet; write this file as JSON
-      #|b.yml: YAML Definition files are not supported yet; write this file as JSON
+      #|10-users.yaml: /stubs/3/request/path: "~" may be read as null; quote this value
+      #|20-anchors.yml: /mocks/0: anchors (&) are not supported; quote the value if it is text
+      #|30-aliases.yaml: /stubs/0: aliases (*) are not supported; quote the value if it is text
+      #|40-tags.yaml: /mocks: tags (!) are not supported; quote the value if it is text
+      #|50-merge.yaml: /mocks/0/<<: merge keys (<<) are not supported
+      #|60-duplicate.yaml: /mocks/0/name: duplicate key
+      #|70-documents.yaml: multiple documents are not supported
+      #|80-on.yaml: /stubs/0/request/method: "on" may be read as a boolean; quote this value
+      #|90-syntax.yml: /mocks/0/name: unterminated double-quoted value
+      #|91-flow.yaml: /mocks/0/name: unterminated flow sequence
+      #|92-tab.yaml: /mocks: tabs are not allowed in indentation
+      #|93-empty.yml: the document is empty
+    ),
+  )
+}
+
+///|
+test "a YAML file is validated like the equivalent JSON file" {
+  let yaml =
+    #|mocks:
+    #|  - name: ""
+    #|  - 3
+    #|stubs:
+    #|  - id: 1
+    #|    mock: users
+    #|    request: { method: 5 }
+    #|    response:
+    #|      status: 99
+    #|      headers: { a/b: "1", Connection: close }
+  let json =
+    #|{ "mocks": [{ "name": "" }, 3],
+    #|  "stubs": [{ "id": 1, "mock": "users", "request": { "method": 5 },
+    #|    "response": { "status": 99, "headers": { "a/b": "1", "Connection": "close" } } }] }
+  let expected =
+    #|users.EXT: /mocks/0/name: must be a non-empty string
+    #|users.EXT: /mocks/1: must be an object
+    #|users.EXT: /stubs/0/id: must be a non-empty string
+    #|users.EXT: /stubs/0/request/method: must be a string
+    #|users.EXT: /stubs/0/response/status: must be an integer from 200 to 599
+    #|users.EXT: /stubs/0/response/headers/a~1b: is not a valid header name
+    #|users.EXT: /stubs/0/response/headers/Connection: is set by smock and cannot be given
+  assert_eq(@yaml.parse(yaml), @json.parse(json))
+  inspect(
+    problems([("users.yaml", yaml)]),
+    content=expected.replace_all(old=".EXT", new=".yaml"),
+  )
+  inspect(
+    problems([("users.json", json)]),
+    content=expected.replace_all(old=".EXT", new=".json"),
+  )
+}
+
+///|
+test "YAML and JSON files are read together, in byte-wise name order" {
+  inspect(
+    problems([
+      ("b.yml", "mocks: [{ name: b }]\nstubs: 7\n"),
+      ("a.json", "{ \"stubs\": 7 }"),
+      ("B.yaml", "mocks: yes\n"),
+    ]),
+    content=(
+      #|B.yaml: /mocks: "yes" may be read as a boolean; quote this value
+      #|a.json: /stubs: must be an array
+      #|b.yml: /stubs: must be an array
     ),
   )
 }
@@ -107,13 +197,19 @@ test "a YAML Definition file gets a diagnostic saying YAML is not supported yet"
 ///|
 test "a file that is not UTF-8 gets a diagnostic" {
   let set : @definitions.DefinitionSet = {
-    files: [("a.json", b"{\"mocks\": [{\"name\": \"\xff\"}]}")],
+    files: [
+      ("a.json", b"{\"mocks\": [{\"name\": \"\xff\"}]}"),
+      ("b.yaml", b"mocks: [{ name: \xff }]\n"),
+    ],
     body_files: [],
   }
   guard @definitions.load(set) is Err(diagnostics) else { fail("valid") }
   inspect(
     diagnostics.map(d => d.to_string()).join("\n"),
-    content="a.json: not valid UTF-8",
+    content=(
+      #|a.json: not valid UTF-8
+      #|b.yaml: not valid UTF-8
+    ),
   )
 }
 

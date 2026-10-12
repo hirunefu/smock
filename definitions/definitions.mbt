@@ -40,7 +40,7 @@ pub struct Snapshot {
   /// file. When no Definition file declares a Mock, this is one empty Mock
   /// named `default`.
   mocks : ReadOnlyArray[Mock]
-}
+} derive(Debug, Eq)
 
 ///|
 /// A Mock and its Stubs.
@@ -48,7 +48,7 @@ pub struct Mock {
   name : String
   /// The Stubs of this Mock, in the order they are tried.
   stubs : ReadOnlyArray[Stub]
-}
+} derive(Debug, Eq)
 
 ///|
 /// A Stub from a Definition file.
@@ -58,7 +58,7 @@ pub struct Stub {
   mock : String
   request : Conditions
   response : Response
-}
+} derive(Debug, Eq)
 
 ///|
 /// The conditions a request must meet for a Stub to match it. An omitted
@@ -68,7 +68,7 @@ pub struct Conditions {
   meth : String?
   /// The path, without the query, compared exactly.
   path : String?
-}
+} derive(Debug, Eq)
 
 ///|
 /// A static response.
@@ -76,7 +76,7 @@ pub struct Response {
   status : Int
   headers : ReadOnlyArray[(String, String)]
   body : Bytes
-}
+} derive(Debug, Eq)
 
 ///|
 /// The Default Mock: the only Mock, when there is exactly one. With several
@@ -142,13 +142,8 @@ priv struct Reader {
 ///|
 fn Reader::read_file(self : Reader, name : String, bytes : Bytes) -> Unit {
   let file = File::{ name, diagnostics: self.diagnostics, }
-  if name.has_suffix(".yaml") || name.has_suffix(".yml") {
-    file.error(
-      "", "YAML Definition files are not supported yet; write this file as JSON",
-    )
-    return
-  }
-  if !name.has_suffix(".json") {
+  let yaml = name.has_suffix(".yaml") || name.has_suffix(".yml")
+  if !yaml && !name.has_suffix(".json") {
     file.error("", "a Definition file name ends in .json, .yaml or .yml")
     return
   }
@@ -158,10 +153,20 @@ fn Reader::read_file(self : Reader, name : String, bytes : Bytes) -> Unit {
       return
     }
   }
-  let json = @json.parse(text) catch {
-    err => {
-      file.error("", "not valid JSON: \{err}")
-      return
+  // YAML and JSON files give the same tree; everything after it is shared.
+  let json = if yaml {
+    @yaml.parse(text) catch {
+      ParseError(pointer~, message~) => {
+        file.error(pointer, message)
+        return
+      }
+    }
+  } else {
+    @json.parse(text) catch {
+      err => {
+        file.error("", "not valid JSON: \{err}")
+        return
+      }
     }
   }
   guard json is Object(top) else {
