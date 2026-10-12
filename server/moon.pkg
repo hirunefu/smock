@@ -1,7 +1,6 @@
 import {
   "smock/http1",
   "smock/smock/defdir",
-  "smock/smock/definitions",
   "smock/smock/engine",
   "smock/smock/log",
   "smock/smock/openssl",

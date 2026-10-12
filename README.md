@@ -14,7 +14,7 @@ The repository is a MoonBit workspace (`moon.work`) of four modules:
 | `.` | `smock/smock` | smock itself. Its parts are packages of this module. |
 | `http1/` | `smock/http1` | The HTTP/1.1 codec. |
 | `re2/` | `smock/re2` | RE2-syntax regular expressions. |
-| `yaml/` | `smock/yaml` | Safe-subset YAML. |
+| `yaml/` | `smock/yaml` | Safe-subset YAML: `parse` turns a document into the tree `@json.parse` gives for the equivalent JSON (documented in `yaml/yaml.mbt`). |
 
 The three protocol modules do no I/O and do not depend on smock, so they can
 be published on mooncakes on their own. `scripts/check-protocol-modules.sh`
@@ -25,10 +25,13 @@ Packages of `smock/smock`:
 - `cmd/smock`: the `smock` binary.
 - `settings`: the settings of `smock serve`, each a flag with a matching
   `SMOCK_<NAME>` environment variable.
-- `definitions`: reads a definition set, given as (name, bytes) pairs, into
-  an immutable snapshot, or into diagnostics (file, JSON Pointer, message).
+- `definitions`: reads a definition set, given as (name, bytes) pairs of
+  JSON and YAML files, into an immutable snapshot, or into diagnostics
+  (file, JSON Pointer, message). Its validation is written by hand and
+  follows the JSON Schema.
 - `engine`: decides the response to each request from the snapshot.
-- `defdir`: reads the definitions directory (native).
+- `defdir`: reads the definitions directory and loads it, for both
+  `smock serve` and `smock check` (native).
 - `server`: the listeners and the connection loop (native).
 - `log`: the JSON logger, one object per line.
 - `buildinfo`: the version, commit and toolchain the binary was built with.
@@ -36,6 +39,11 @@ Packages of `smock/smock`:
 
 A package that does I/O or uses FFI declares `supported_targets = "native"`.
 Every other package also builds for `wasm-gc`, and CI tests it there.
+
+`schema/v1/definitions.json` is the JSON Schema of Definition files, the
+contract for their format. `.github/workflows/schema-pages.yml` publishes it
+on GitHub Pages, and `schema/v1/fixtures/` holds the Definition files that
+CI checks with both the Schema and smock.
 
 ## Run
 
@@ -75,7 +83,47 @@ A Definition file, such as `defs/users.json`:
 }
 ```
 
-The field names are provisional until the JSON Schema is published.
+`smock check defs` validates a definitions directory the way `smock serve`
+loads it: it prints every problem, one per line with the file and a JSON
+Pointer, and exits with status 1 if there is any.
+[docs/definition-files.md](docs/definition-files.md) describes the format,
+its JSON Schema, editor support and writing Definition files in another
+configuration language.
+
+Definition files can also be YAML (`.yaml` or `.yml`), mixed with JSON files
+in one directory. A YAML file means exactly what the equivalent JSON file
+means. `defs/users.yaml` is the same as `defs/users.json` above:
+
+```yaml
+mocks:
+  - name: users
+stubs:
+  - id: get-user
+    mock: users
+    request: { method: GET, path: /users/1 }
+    response:
+      status: 200
+      headers:
+        Content-Type: application/json
+      body: '{"id":1,"name":"Alice"}'
+```
+
+To keep that meaning the same in every YAML version and tool, smock accepts
+only a safe subset of YAML (`yaml/`):
+
+- Block and flow collections, plain and quoted scalars, `|` and `>` block
+  scalars with their chomping indicators, comments, and one document.
+- Plain `true`, `false`, `null` and JSON-syntax numbers are typed; quoted
+  scalars are always strings. Any other plain scalar that YAML 1.1 or 1.2
+  would type, such as `yes`, `on`, `~`, `True`, `0x1F`, `007`, `1_000`,
+  `.inf` or `2001-12-14`, is rejected with "quote this value". Every other
+  plain scalar is a string.
+- Anchors, aliases, tags, merge keys, duplicate keys and multiple documents
+  are rejected.
+
+Every problem is reported with the file and the JSON Pointer of the value,
+such as `users.yaml: /stubs/0/request/method: "on" may be read as a boolean;
+quote this value`.
 
 ## Toolchain
 
@@ -94,7 +142,13 @@ scripts/check-protocol-modules.sh
 scripts/check-no-c.sh          # the C boundary of ADR 0001
 scripts/build-release.sh       # dist/smock
 dist/smock --version
+scripts/check-schema.sh dist/smock   # the JSON Schema and smock agree
 ```
+
+`scripts/check-schema.sh` runs the external validator check-jsonschema
+through `uvx` (or `pipx`) and needs `jq`. Adding a fixture file under
+`schema/v1/fixtures/` adds it to the cross-check; the README there says
+which directory a fixture belongs in.
 
 CI runs all of these on linux/amd64 and linux/arm64
 (`.github/workflows/build-test.yml`).

@@ -37,7 +37,19 @@ pub(all) struct TlsFiles {
 } derive(Debug)
 
 ///|
-/// A setting was given a value it cannot take.
+/// The settings of `smock check`. The definitions directory is its
+/// argument. The body-file subdirectory is the `smock serve` setting of the
+/// same name, flag and variable, so that both read a directory the same
+/// way.
+pub(all) struct CheckSettings {
+  /// The definitions directory.
+  dir : String
+  /// The body-file subdirectory of the definitions directory.
+  body_file_dir : String
+} derive(Debug)
+
+///|
+/// A setting or an argument was given a value it cannot take.
 pub suberror InvalidSetting {
   InvalidSetting(
     flag~ : String,
@@ -45,14 +57,20 @@ pub suberror InvalidSetting {
     value~ : String,
     reason~ : String
   )
+  InvalidArgument(name~ : String, value~ : String, reason~ : String)
 } derive(Debug)
 
 ///|
 /// What to tell the user, naming the setting by its flag and its variable,
-/// such as `invalid value "x" for --port (SMOCK_PORT): must be ...`.
+/// such as `invalid value "x" for --port (SMOCK_PORT): must be ...`, or the
+/// argument by its name, such as `invalid value "" for <dir>: ...`.
 pub fn InvalidSetting::message(self : InvalidSetting) -> String {
-  let InvalidSetting(flag~, env~, value~, reason~) = self
-  "invalid value \{value.escape()} for --\{flag} (\{env}): \{reason}"
+  match self {
+    InvalidSetting(flag~, env~, value~, reason~) =>
+      "invalid value \{value.escape()} for --\{flag} (\{env}): \{reason}"
+    InvalidArgument(name~, value~, reason~) =>
+      "invalid value \{value.escape()} for <\{name}>: \{reason}"
+  }
 }
 
 ///|
@@ -62,6 +80,13 @@ priv struct Setting {
   name : String
   about : String
   default : String?
+}
+
+///|
+let body_file_dir_setting : Setting = {
+  name: "body-file-dir",
+  about: "The body-file subdirectory of the definitions directory.",
+  default: Some("files"),
 }
 
 ///|
@@ -92,12 +117,13 @@ let serve_settings : Array[Setting] = [
     default: None,
   },
   { name: "log-format", about: "The log format: json.", default: Some("json"), },
-  {
-    name: "body-file-dir",
-    about: "The body-file subdirectory of the definitions directory.",
-    default: Some("files"),
-  },
+  body_file_dir_setting,
 ]
+
+///|
+/// The settings of `smock check`: those of `smock serve` that decide how
+/// the definitions directory is read.
+let check_settings : Array[Setting] = [body_file_dir_setting]
 
 ///|
 /// The environment variable of a setting: `SMOCK_` and its name in upper
@@ -112,18 +138,40 @@ pub fn serve_command() -> @argparse.Command {
   @argparse.Command(
     "serve",
     about="Serve the Mocks and Stubs of a definitions directory.",
-    options=serve_settings.map(setting => {
-      @argparse.OptionArg(
-        setting.name,
-        long=setting.name,
-        env=env_name(setting.name),
-        about=setting.about,
-        default_values=match setting.default {
-          Some(value) => [value]
-          None => []
-        },
-      )
-    }),
+    options=serve_settings.map(option),
+  )
+}
+
+///|
+/// The `check` subcommand: the definitions directory as its argument, and
+/// a flag and a variable for every setting.
+pub fn check_command() -> @argparse.Command {
+  @argparse.Command(
+    "check",
+    about="Check a definitions directory as smock serve would load it. Prints every problem, one per line, and exits with status 1 if there is any.",
+    positionals=[
+      @argparse.PositionArg(
+        "dir",
+        about="The definitions directory.",
+        num_args=@argparse.ValueRange::single(),
+      ),
+    ],
+    options=check_settings.map(option),
+  )
+}
+
+///|
+/// The option of `setting`: its flag and its variable.
+fn option(setting : Setting) -> @argparse.OptionArg {
+  @argparse.OptionArg(
+    setting.name,
+    long=setting.name,
+    env=env_name(setting.name),
+    about=setting.about,
+    default_values=match setting.default {
+      Some(value) => [value]
+      None => []
+    },
   )
 }
 
@@ -164,13 +212,31 @@ pub fn ServeSettings::from_matches(
     Some("json") => Json
     other => raise invalid("log-format", other.unwrap_or(""), "must be json")
   }
-  let body_file_dir = value(matches, "body-file-dir").unwrap_or("")
-  if !is_inner_relative_path(body_file_dir) {
+  let body_file_dir = body_file_dir(matches)
+  { dir, port, tls_port, tls, log_format, body_file_dir, }
+}
+
+///|
+/// Reads and checks the settings from the parsed `check` subcommand.
+pub fn CheckSettings::from_matches(
+  matches : @argparse.Matches,
+) -> CheckSettings raise InvalidSetting {
+  let dir = value(matches, "dir").unwrap_or("")
+  if dir == "" {
+    raise InvalidArgument(name="dir", value=dir, reason="must not be empty")
+  }
+  { dir, body_file_dir: body_file_dir(matches), }
+}
+
+///|
+fn body_file_dir(matches : @argparse.Matches) -> String raise InvalidSetting {
+  let dir = value(matches, "body-file-dir").unwrap_or("")
+  if !is_inner_relative_path(dir) {
     raise invalid(
-      "body-file-dir", body_file_dir, "must be a relative path inside the definitions directory",
+      "body-file-dir", dir, "must be a relative path inside the definitions directory",
     )
   }
-  { dir, port, tls_port, tls, log_format, body_file_dir, }
+  dir
 }
 
 ///|

@@ -1,0 +1,34 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "get-user",
+      "mock": "users",
+      "request": {
+        "path": {
+          "pattern": "/users/[0-9]+"
+        },
+        "query": {
+          "page": {
+            "pattern": "[0-9]+"
+          }
+        },
+        "headers": {
+          "Authorization": {
+            "pattern": "Bearer .+"
+          }
+        },
+        "body": {
+          "pattern": ".*Alice.*"
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

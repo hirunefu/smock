@@ -76,13 +76,16 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
     let missing = "\{certs.dir}/missing.pem"
     let not_pem = "\{certs.dir}/notes.txt"
     write(certs.dir, "notes.txt", "not PEM\n")
+    // A directory, such as a Secret volume, instead of a file in it.
+    let secret_dir = "\{certs.dir}/secret"
+    @fs.mkdir(secret_dir)
     let runs : Array[(Array[String], Map[String, String])] = [
       (["--tls-cert-file", certs.rsa_chain], Map([])),
       ([], { "SMOCK_TLS_KEY_FILE": certs.rsa_key }),
       (["--tls-cert-file", "", "--tls-key-file", certs.rsa_key], Map([])),
       (certs.args(cert=missing), Map([])),
       (certs.args(key=missing), Map([])),
-      (certs.args(cert=certs.dir), Map([])),
+      (certs.args(cert=secret_dir), Map([])),
       (certs.args(cert=not_pem), Map([])),
       (certs.args(cert=certs.rsa_key), Map([])),
       (certs.args(key=not_pem), Map([])),
@@ -113,43 +116,43 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"$CERTS/missing.pem","key_file":"$CERTS/rsa-key.pem","error":"cannot read the certificate file: no such file"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/missing.pem","key_file":"*/rsa-key.pem","error":"cannot read the certificate file: no such file"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"$CERTS/rsa-chain.pem","key_file":"$CERTS/missing.pem","error":"cannot read the key file: no such file"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/rsa-chain.pem","key_file":"*/missing.pem","error":"cannot read the key file: no such file"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"$CERTS","key_file":"$CERTS/rsa-key.pem","error":"cannot read the certificate file: is a directory"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/secret","key_file":"*/rsa-key.pem","error":"cannot read the certificate file: is a directory"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"$CERTS/notes.txt","key_file":"$CERTS/rsa-key.pem","error":"certificate file: no PEM certificate found"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/notes.txt","key_file":"*/rsa-key.pem","error":"certificate file: no PEM certificate found"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"$CERTS/rsa-key.pem","key_file":"$CERTS/rsa-key.pem","error":"certificate file: no PEM certificate found"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/rsa-key.pem","key_file":"*/rsa-key.pem","error":"certificate file: no PEM certificate found"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"$CERTS/rsa-chain.pem","key_file":"$CERTS/notes.txt","error":"key file: no PEM private key found"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/rsa-chain.pem","key_file":"*/notes.txt","error":"key file: no PEM private key found"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"$CERTS/rsa-chain.pem","key_file":"$CERTS/rsa-chain.pem","error":"key file: no PEM private key found"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/rsa-chain.pem","key_file":"*/rsa-chain.pem","error":"key file: no PEM private key found"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"$CERTS/rsa-chain.pem","key_file":"$CERTS/other-key.pem","error":"the private key does not match the leaf certificate"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/rsa-chain.pem","key_file":"*/other-key.pem","error":"the private key does not match the leaf certificate"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"$CERTS/rsa-chain.pem","key_file":"$CERTS/ecdsa-key.pem","error":"the private key does not match the leaf certificate"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/rsa-chain.pem","key_file":"*/ecdsa-key.pem","error":"the private key does not match the leaf certificate"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"$CERTS/ecdsa-chain.pem","key_file":"$CERTS/rsa-key.pem","error":"the private key does not match the leaf certificate"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/ecdsa-chain.pem","key_file":"*/rsa-key.pem","error":"the private key does not match the leaf certificate"}
       ),
     )
   })
@@ -173,11 +176,11 @@ async test "the TLS settings can come from SMOCK_ environment variables, and the
       },
     )
     inspect(
-      hide_dir(entries(stopped.logs), certs),
+      entries(stopped.logs),
       content=(
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
         #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
-        #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","cert_file":"$CERTS/ecdsa-chain.pem","key_file":"$CERTS/ecdsa-key.pem"}
+        #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","cert_file":"*/ecdsa-chain.pem","key_file":"*/ecdsa-key.pem"}
       ),
     )
   })

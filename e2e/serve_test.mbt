@@ -36,6 +36,41 @@ async test "smock serve answers a request that matches a Stub with that Stub's r
 }
 
 ///|
+/// `users` written in YAML.
+let users_yaml : String =
+  #|mocks:
+  #|  - name: users
+  #|stubs:
+  #|  - id: get-user
+  #|    mock: users
+  #|    request: { method: GET, path: /users/1 }
+  #|    response:
+  #|      status: 200
+  #|      headers:
+  #|        Content-Type: application/json
+  #|        X-Source: smock
+  #|      body: '{"id":1,"name":"Alice"}'
+
+///|
+async test "smock serve answers a request that matches a Stub declared in a YAML file" {
+  with_definitions([("users.yaml", users_yaml)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      inspect(
+        smock.get("/users/1"),
+        content=(
+          #|200 OK
+          #|Content-Type: application/json
+          #|X-Source: smock
+          #|Content-Length: 23
+          #|
+          #|{"id":1,"name":"Alice"}
+        ),
+      )
+    })
+  })
+}
+
+///|
 async test "any other request gets 404" {
   with_definitions([("users.json", users)], dir => {
     let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
@@ -58,8 +93,11 @@ async test "with an invalid definition set, smock logs every error with its file
     [
       ("users.json", users),
       ("broken.json", "{ \"stubs\": [{ \"id\": 7, \"mock\": \"users\" }] }"),
-      ("orders.yaml", "mocks: []\n"),
-      ("payments.yml", "mocks: []\n"),
+      (
+        "orders.yaml", "stubs:\n  - id: get-order\n    mock: users\n    request: { method: on }\n",
+      ),
+      ("payments.yml", "mocks:\n  - name: \"payments\n"),
+      ("refunds.yaml", "mocks: [{ name: refunds }]\n---\nstubs: []\n"),
     ],
     dir => {
       let stopped = run_smock(["serve", "--dir", dir, "--port", "0"])
@@ -69,9 +107,10 @@ async test "with an invalid definition set, smock logs every error with its file
           #|status 1
           #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
           #|{"level":"error","msg":"invalid definitions","file":"broken.json","pointer":"/stubs/0/id","error":"must be a non-empty string"}
-          #|{"level":"error","msg":"invalid definitions","file":"broken.json","pointer":"/stubs/0","error":"needs a response"}
-          #|{"level":"error","msg":"invalid definitions","file":"orders.yaml","pointer":"","error":"YAML Definition files are not supported yet; write this file as JSON"}
-          #|{"level":"error","msg":"invalid definitions","file":"payments.yml","pointer":"","error":"YAML Definition files are not supported yet; write this file as JSON"}
+          #|{"level":"error","msg":"invalid definitions","file":"broken.json","pointer":"/stubs/0","error":"needs \"response\""}
+          #|{"level":"error","msg":"invalid definitions","file":"orders.yaml","pointer":"/stubs/0/request/method","error":"\"on\" may be read as a boolean; quote this value"}
+          #|{"level":"error","msg":"invalid definitions","file":"payments.yml","pointer":"/mocks/0/name","error":"unterminated double-quoted value"}
+          #|{"level":"error","msg":"invalid definitions","file":"refunds.yaml","pointer":"","error":"multiple documents are not supported"}
         ),
       )
     },

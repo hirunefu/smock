@@ -116,6 +116,27 @@ fn Certificates::args(
 }
 
 ///|
+/// Starts smock with `users` and a certificate, runs `f` once over the
+/// plain port and once over the TLS port, and returns how smock ended. The
+/// HTTP/1.1 tests run this way: the codec and the connection loop are the
+/// same on both ports.
+async fn on_both_ports(f : async (Smock, Over) -> Unit) -> Stopped {
+  let mut stopped = None
+  with_definitions([("users.json", users)], dir => {
+    with_certificates(certs => {
+      stopped = Some(
+        with_smock(["--dir", dir, "--port", "0", ..certs.args()], tls=true, smock => {
+          for over in [Plain, Tls(certs)] {
+            f(smock, over)
+          }
+        }),
+      )
+    })
+  })
+  stopped.unwrap()
+}
+
+///|
 /// How a test reaches smock: over plain TCP on the plain port, or over TLS
 /// on the TLS port with a client that trusts only the test root CA and
 /// checks the certificate for `localhost`.
@@ -132,7 +153,7 @@ enum Conn {
 }
 
 ///|
-async fn Conn::write(self : Conn, data : String) -> Unit {
+async fn Conn::write(self : Conn, data : &@io.Data) -> Unit {
   match self {
     PlainConn(tcp) => tcp.write(data)
     TlsConn(tls, _) => tls.write(data)
@@ -240,6 +261,42 @@ async fn with_smock(
     guard status is Some(status) else { fail("smock did not stop in time") }
     reader.wait()
     { status, logs, }
+  })
+}
+
+///|
+/// Whether `smock serve <args>` loads its definitions: `"serves"` once it
+/// listens (it is then stopped), or `"exits with status <n>"` when it stops
+/// by itself first.
+async fn serve_verdict(args : Array[String]) -> String {
+  build.wait()
+  @async.with_task_group(group => {
+    let (stderr, stderr_end) = @process.read_from_process()
+    defer stderr.close()
+    let process = @process.spawn(
+      group,
+      binary,
+      ["serve", "--port", "0", ..args],
+      inherit_env=false,
+      stderr=stderr_end,
+      no_wait=true,
+    )
+    let verdict = @async.with_timeout_opt(patience_ms, () => {
+      for ;; {
+        guard stderr.read_until("\n") is Some(line) else {
+          break "exits with status \{process.wait()}"
+        }
+        if listening(line) is Some(_) {
+          let _ = @process.run("kill", ["-TERM", process.pid.to_string()])
+          let _ = process.wait()
+          break "serves"
+        }
+      }
+    })
+    guard verdict is Some(verdict) else {
+      fail("smock serve neither listened nor stopped in time")
+    }
+    verdict
   })
 }
 
@@ -386,6 +443,14 @@ fn entries(logs : Array[String]) -> String {
       match key {
         "time" => ()
         "version" | "commit" | "toolchain" => out[key] = "*"
+        "cert_file" | "key_file" =>
+          out[key] = match value {
+            String(path) =>
+              Json::string(
+                "*/" + path[path.rev_find("/").unwrap_or(-1) + 1:].to_owned(),
+              )
+            _ => value
+          }
         "address" =>
           out[key] = match value {
             String(address) =>

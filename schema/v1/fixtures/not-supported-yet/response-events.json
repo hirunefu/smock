@@ -1,0 +1,30 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "get-user",
+      "mock": "users",
+      "response": {
+        "status": 200,
+        "headers": {
+          "Cache-Control": "no-cache"
+        },
+        "events": [
+          {
+            "data": "first"
+          },
+          {
+            "delay": 250,
+            "event": "update",
+            "id": "2",
+            "data": "line 1\nline 2"
+          }
+        ]
+      }
+    }
+  ]
+}

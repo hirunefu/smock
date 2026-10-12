@@ -1,0 +1,20 @@
+{
+  "mocks": [
+    {
+      "name": "users",
+      "hosts": [
+        "users.example.com",
+        "users:8080",
+        "[::1]:8080"
+      ],
+      "default": true
+    },
+    {
+      "name": "orders",
+      "hosts": [
+        "orders.example.com"
+      ],
+      "default": false
+    }
+  ]
+}
