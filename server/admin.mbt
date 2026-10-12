@@ -55,7 +55,7 @@ let routes : Array[Route] = [
   route("/v1/journal/query", "POST", not_implemented, takes_body=true),
   route("/v1/journal/verify", "POST", not_implemented, takes_body=true),
   route("/v1/journal/unmatched", "GET", not_implemented),
-  route("/v1/stubs/{id}/render", "POST", not_implemented, takes_body=true),
+  route("/v1/stubs/{id}/render", "POST", render, takes_body=true),
   route("/startupz", "GET", not_implemented, open=true),
   route("/readyz", "GET", not_implemented, open=true),
   route("/livez", "GET", not_implemented, open=true),
@@ -346,6 +346,100 @@ fn status(admin : Admin, _request : @http1.Request, _body : Json?) -> Reply {
       }),
     ),
   })
+}
+
+///|
+/// Renders the response of a Stub from the Definition files for the sample
+/// request in the body, against the snapshot this replica serves now, as
+/// `smock render` does. The `time` and `seed` query parameters give the
+/// time the sample is received at and the seed of the random source the
+/// rendering draws from; without them, the time is now and the seed is a
+/// fresh one. Rendering changes nothing.
+fn render(admin : Admin, request : @http1.Request, body : Json?) -> Reply {
+  let invalid = (message : String) => {
+    admin.error(400, "invalid_request", message)
+  }
+  let path = path_of(request.target)
+  let segment = path["/v1/stubs/".length():path.length() - "/render".length()]
+  let id = @percent.decode(segment) catch {
+    _ =>
+      return invalid(
+        "the Stub ID in the path is not valid percent-encoded UTF-8",
+      )
+  }
+  let now = match query_parameter(request.target, "time") {
+    Err(message) => return invalid(message)
+    Ok(None) => @async.now()
+    Ok(Some(text)) =>
+      match @settings.parse_time(text) {
+        Some(time) => time
+        None =>
+          return invalid(
+            "the time query parameter must be an RFC 3339 date-time, such as 2026-10-12T14:30:05Z",
+          )
+      }
+  }
+  let seed = match query_parameter(request.target, "seed") {
+    Err(message) => return invalid(message)
+    Ok(None) => random_seed()
+    Ok(Some(text)) =>
+      match @settings.parse_seed(text) {
+        Some(seed) => seed
+        None =>
+          return invalid(
+            "the seed query parameter must be an integer from 0 to 9007199254740991",
+          )
+      }
+  }
+  guard body is Some(json) else {
+    return invalid("the body must be a sample request: a JSON object")
+  }
+  let sample = @engine.SampleRequest::from_json(json) catch {
+    err => return invalid("the sample request is not valid: \{err.message()}")
+  }
+  let rendering = admin.engine.render(
+    id,
+    sample,
+    now~,
+    rand=@prng.Generator(seed),
+  ) catch {
+    err => return admin.error(404, "unknown_stub", err.message())
+  }
+  guard rendering.to_json() is Object(members) else {
+    abort("a rendering is a JSON object")
+  }
+  admin.json(200, members)
+}
+
+///|
+/// The value of the query parameter `name` in the request target `target`,
+/// percent-decoded, if it is given. A `+` stays a plus sign, as in a time
+/// zone offset. Fails with a message when the parameter is given more than
+/// once or its value is not valid percent-encoded UTF-8.
+fn query_parameter(target : String, name : String) -> Result[String?, String] {
+  guard target.find("?") is Some(start) else { return Ok(None) }
+  let mut found = None
+  for parameter in target[start + 1:].split("&") {
+    let (key, value) = match parameter.find("=") {
+      Some(i) => (parameter[:i], parameter[i + 1:])
+      None => (parameter, "")
+    }
+    if @percent.decode_lossy(key) != name {
+      continue
+    }
+    if found is Some(_) {
+      return Err("the \{name} query parameter is given more than once")
+    }
+    found = Some(
+      @percent.decode(value) catch {
+        _ =>
+          return Err(
+            "the \{name} query parameter is not valid percent-encoded UTF-8",
+          )
+      },
+    )
+  }
+  Ok(found)
 }
 
 ///|

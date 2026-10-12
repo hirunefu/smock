@@ -24,7 +24,8 @@ Packages of `smock/smock`:
 
 - `cmd/smock`: the `smock` binary.
 - `settings`: the settings of `smock serve`, each a flag with a matching
-  `SMOCK_<NAME>` environment variable.
+  `SMOCK_<NAME>` environment variable, and the arguments of `smock check`
+  and `smock render`.
 - `definitions`: reads a definition set, given as (name, bytes) pairs of
   JSON and YAML files, into an immutable snapshot, or into diagnostics
   (file, JSON Pointer, message). Its validation is written by hand and
@@ -32,13 +33,14 @@ Packages of `smock/smock`:
   order and their match index, which finds the Stubs a request can match
   by its method and exact path.
 - `engine`: decides the response to each request from the snapshot,
-  including its Faults. `Engine(snapshot, match_index=false)` tries every
+  including its Faults, and renders a named Stub's response for a sample
+  request, for `smock render` and the Admin render operation. `Engine(snapshot, match_index=false)` tries every
   Stub in matching order instead of using the index; tests check the index
   against it.
 - `prng`: the seeded pseudo-random generator that Fault decisions draw
   from. Its sequence for a seed is fixed, the same on every target.
-- `defdir`: reads the definitions directory and loads it, for both
-  `smock serve` and `smock check` (native).
+- `defdir`: reads the definitions directory and loads it, for
+  `smock serve`, `smock check` and `smock render` (native).
 - `server`: the listeners, the connection loop and the Admin API (native).
   On the TLS port the same loop reads and writes through a TLS stream; on
   the admin port it answers the Admin API.
@@ -155,11 +157,17 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
 - `GET /metrics` serves the Prometheus metrics, without a token, also when
   authentication is on. `smock_build_info` carries the version, commit and
   toolchain as labels.
+- `POST /v1/stubs/{id}/render` renders a Stub's response for the sample
+  request in the body, against the definitions the replica serves now, as
+  `smock render` does (below). The optional `time` and `seed` query
+  parameters give the time (RFC 3339) and the seed of the random source.
 - The other operations of the document answer 501 until their tickets
   build them.
 
 ```sh
 curl -H "Authorization: Bearer change-me" localhost:9090/v1/status
+curl -H "Authorization: Bearer change-me" -d '{"path": "/users/1"}' \
+  localhost:9090/v1/stubs/get-user/render
 curl localhost:9090/metrics
 ```
 
@@ -199,6 +207,25 @@ loads it: it prints every problem, one per line with the file and a JSON
 Pointer, and exits with status 1 if there is any. It also warns about Stubs
 that can never match, because an earlier Stub always matches first;
 warnings do not change the exit status.
+
+`smock render --dir defs get-user --request sample.json` shows what a Stub
+returns for a sample request before a test relies on it. The sample is JSON,
+`{method, path, query, headers, body, session}`, every member optional
+(`GET /` without query, headers, body or Session); the path and the query
+values are given percent-decoded, as Stub conditions compare them, and a
+repeated parameter or header takes an array of values. smock reads the
+directory as `smock serve` does, body files included, and prints the
+rendering as JSON, the same as the Admin render operation's result without
+its `warnings`: the Stub's status, headers and body (`utf-8` text, or
+`base64`) or its Server-Sent Events, and the conditions the sample fails,
+with expected and actual values as in a Near miss (empty when it meets them
+all). The Stub is rendered even when the sample fails them. `--time` (RFC
+3339) and `--seed` fix the clock and the random source of the rendering;
+a static response depends on neither. An invalid definitions directory
+prints the messages `smock check` prints, and it, an unknown Stub ID and a
+sample that cannot be read or is not valid exit with status 1, with the
+problem on stderr.
+
 [docs/definition-files.md](docs/definition-files.md) describes the format:
 how Stubs match requests (method, path, query parameters, headers and
 body, exactly, by RE2 pattern or as JSON), the order they are tried in (priority, then
