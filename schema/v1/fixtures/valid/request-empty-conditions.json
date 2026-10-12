@@ -1,0 +1,37 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "s0",
+      "mock": "users",
+      "request": {
+        "query": {},
+        "headers": {},
+        "body": ""
+      },
+      "response": {
+        "status": 200
+      }
+    },
+    {
+      "id": "s1",
+      "mock": "users",
+      "request": {
+        "query": {
+          "": "",
+          "a b": "ë"
+        },
+        "headers": {
+          "X-Empty": ""
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

@@ -133,10 +133,11 @@ async test "the Default Mock answers an unknown Host or no Host, and says so in 
         #|from users
         #|---
         #|HTTP/1.1 404 Not Found
+        #|Content-Type: application/json
         #|Smock-Mock: users; via=default
-        #|Content-Length: 0
+        #|Content-Length: 27
         #|
-        #|
+        #|{"error":"no Stub matched"}
         #|---
         #|HTTP/1.1 200 OK
         #|Smock-Mock: users; via=default
@@ -146,9 +147,10 @@ async test "the Default Mock answers an unknown Host or no Host, and says so in 
         #|from users
         #|---
         #|HTTP/1.1 404 Not Found
-        #|Content-Length: 0
+        #|Content-Type: application/json
+        #|Content-Length: 27
         #|
-        #|
+        #|{"error":"no Stub matched"}
       ),
     )
   })

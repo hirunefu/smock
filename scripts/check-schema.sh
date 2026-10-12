@@ -19,6 +19,10 @@
 #                           "not supported yet": it uses a field smock does
 #                           not implement yet
 #
+# Each definitions directory also gets the files under body-files/ as its
+# body-file subdirectory (files/, the default), so that fixtures can refer
+# to them with bodyFile.
+#
 # Adding a fixture file is enough to add it to the cross-check.
 #
 # usage: scripts/check-schema.sh [smock binary]
@@ -110,6 +114,7 @@ for category in valid invalid invalid-beyond-schema not-supported-yet; do
     rm -rf "$tmp/definitions"
     mkdir "$tmp/definitions"
     cp "$fixture" "$tmp/definitions/$name"
+    cp -R "$fixtures/body-files" "$tmp/definitions/files"
     status=0
     "$smock" check "$tmp/definitions" >"$tmp/smock.out" 2>&1 || status=$?
     case $status in

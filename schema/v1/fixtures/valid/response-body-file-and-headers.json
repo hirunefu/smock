@@ -1,0 +1,28 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "s0",
+      "mock": "users",
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "bodyFile": "users/1.json"
+      }
+    },
+    {
+      "id": "s1",
+      "mock": "users",
+      "response": {
+        "status": 200,
+        "bodyFile": "users/1.json"
+      }
+    }
+  ]
+}

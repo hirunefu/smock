@@ -12,12 +12,16 @@ struct Harness {
 let fixed_now : Int64 = 1_791_815_405_123L
 
 ///|
-/// Builds an engine from Definition files given as (name, JSON text) pairs.
-/// Fails the test if the set is invalid.
-fn harness(files : Array[(String, String)]) -> Harness {
+/// Builds an engine from Definition files given as (name, JSON text) pairs,
+/// and body files as (name, bytes) pairs. Fails the test if the set is
+/// invalid.
+fn harness(
+  files : Array[(String, String)],
+  body_files? : Array[(String, Bytes)] = [],
+) -> Harness {
   let set : @definitions.DefinitionSet = {
     files: files.map(file => (file.0, @utf8.encode(file.1))),
-    body_files: [],
+    body_files,
   }
   match @definitions.load(set) {
     Ok(snapshot) =>
