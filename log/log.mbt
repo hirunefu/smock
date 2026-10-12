@@ -86,8 +86,9 @@ fn Logger::write(
 
 ///|
 /// Formats milliseconds since the Unix epoch as an RFC 3339 UTC timestamp
-/// with milliseconds, such as `2026-10-12T14:30:05.123Z`.
-fn format_time(ms : Int64) -> String {
+/// with milliseconds, such as `2026-10-12T14:30:05.123Z`: the time format
+/// of log entries, also used for times the Admin API shows.
+pub fn format_time(ms : Int64) -> String {
   let ms_per_day = 86_400_000L
   let days = floor_div(ms, ms_per_day)
   let ms_of_day = ms - days * ms_per_day

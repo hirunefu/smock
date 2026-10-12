@@ -103,15 +103,20 @@ fn json_stub(id : String) -> String {
 }
 
 ///|
-/// Loads one Definition file given as text: its snapshot, or its problems
-/// without the file name.
+/// Loads one Definition file given as text: what its snapshot serves (the
+/// Mocks, the Hosts and the Default Mock, but not the digest, which differs
+/// with the file's name and bytes), or its problems without the file name.
 fn load_one(
   name : String,
   text : String,
-) -> Result[@definitions.Snapshot, Array[String]] {
+) -> Result[
+  (ReadOnlyArray[@definitions.Mock], Array[String], @definitions.Mock?),
+  Array[String],
+] {
   match
     @definitions.load({ files: [(name, @utf8.encode(text))], body_files: [], }) {
-    Ok(snapshot) => Ok(snapshot)
+    Ok(snapshot) =>
+      Ok((snapshot.mocks, snapshot.hosts(), snapshot.default_mock()))
     Err(diagnostics) => Err(diagnostics.map(d => "\{d.pointer}: \{d.message}"))
   }
 }

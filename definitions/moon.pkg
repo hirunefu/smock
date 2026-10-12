@@ -1,6 +1,7 @@
 import {
   "smock/re2",
   "smock/yaml",
+  "moonbitlang/core/buffer",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
 }
