@@ -1,0 +1,9 @@
+import {
+  "smock/smock/definitions",
+  "moonbitlang/core/random",
+}
+
+import {
+  "moonbitlang/core/debug",
+  "moonbitlang/core/encoding/utf8",
+} for "test"
