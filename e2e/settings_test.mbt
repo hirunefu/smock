@@ -27,6 +27,7 @@ async test "every serve setting is a flag with a matching SMOCK_ environment var
       #|  --body-limit <body-limit>                  The longest request body, in bytes. Longer bodies get 413. [env: SMOCK_BODY_LIMIT] [default: 10485760]
       #|  --read-timeout-ms <read-timeout-ms>        How long a request may take to arrive, in milliseconds, from its first byte to its last. Then the connection closes. [env: SMOCK_READ_TIMEOUT_MS] [default: 30000]
       #|  --idle-timeout-ms <idle-timeout-ms>        How long a connection may wait for a request, in milliseconds. Then it closes. [env: SMOCK_IDLE_TIMEOUT_MS] [default: 60000]
+      #|  --seed <seed>                              The seed of the process random generator, from 0 to 9007199254740991. Faults of Stubs without their own seed draw from it. Without it, smock picks a seed at startup and logs it. [env: SMOCK_SEED]
       #|
     ),
   )
@@ -147,6 +148,11 @@ async test "an invalid value stops startup with a message that names the setting
     (["--admin-token-file", ""], Map([])),
     (["--replicas", "0"], Map([])),
     ([], { "SMOCK_REPLICAS": "two" }),
+    (["--seed", "9007199254740992"], Map([])),
+    ([], { "SMOCK_SEED": "-1" }),
+    (["--seed", ""], Map([])),
+    ([], { "SMOCK_SEED": "0x2a" }),
+    ([], { "SMOCK_SEED": "12345678901234567890" }),
   ]
   let out = []
   for run in runs {
@@ -186,6 +192,11 @@ async test "an invalid value stops startup with a message that names the setting
       #|status 2: smock serve: invalid value "" for --admin-token-file (SMOCK_ADMIN_TOKEN_FILE): must not be empty
       #|status 2: smock serve: invalid value "0" for --replicas (SMOCK_REPLICAS): must be an integer from 1 to 10000
       #|status 2: smock serve: invalid value "two" for --replicas (SMOCK_REPLICAS): must be an integer from 1 to 10000
+      #|status 2: smock serve: invalid value "9007199254740992" for --seed (SMOCK_SEED): must be an integer from 0 to 9007199254740991
+      #|status 2: smock serve: invalid value "-1" for --seed (SMOCK_SEED): must be an integer from 0 to 9007199254740991
+      #|status 2: smock serve: invalid value "" for --seed (SMOCK_SEED): must be an integer from 0 to 9007199254740991
+      #|status 2: smock serve: invalid value "0x2a" for --seed (SMOCK_SEED): must be an integer from 0 to 9007199254740991
+      #|status 2: smock serve: invalid value "12345678901234567890" for --seed (SMOCK_SEED): must be an integer from 0 to 9007199254740991
     ),
   )
 }

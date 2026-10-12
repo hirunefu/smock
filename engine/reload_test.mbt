@@ -332,6 +332,41 @@ test "a response planned before a swap stays as it was after it, body-file bytes
 }
 
 ///|
+test "a swap creates the generators of seeded Stubs anew from their seeds; a reload that swaps nothing keeps them going" {
+  let seeded = faults_file([coin_flips("/seeded", seed=42)])
+  let h = harness([seeded])
+  let first = decisions(h, "/seeded", 4)
+  // The same files: nothing is swapped, so the generator goes on.
+  let _ = h.reload([seeded])
+  let went_on = decisions(h, "/seeded", 4)
+  // Another Stub added: the new snapshot's generator starts from the seed.
+  let _ = h.reload([
+    faults_file([coin_flips("/seeded", seed=42), coin_flips("/other", seed=7)]),
+  ])
+  let restarted = decisions(h, "/seeded", 4)
+  // The first 8 decisions of seed 42, as the Fault tests pin them.
+  inspect(
+    [..first, "---", ..went_on, "---", ..restarted].join("\n"),
+    content=(
+      #|delay 0, Close
+      #|delay 0
+      #|delay 395
+      #|delay 572
+      #|---
+      #|delay 818
+      #|delay 0, Close
+      #|delay 594, Close
+      #|delay 0
+      #|---
+      #|delay 0, Close
+      #|delay 0
+      #|delay 395
+      #|delay 572
+    ),
+  )
+}
+
+///|
 test "after a reload removes a Mock, its Hosts resolve like any unknown Host" {
   let h = harness([
     mock_file("users", "\"hosts\": [\"users.example.com\"]"),

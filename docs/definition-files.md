@@ -181,6 +181,14 @@ order:
 So a specific Stub can win over a general one wherever it is declared, by
 giving it a lower priority number.
 
+smock does not try every Stub in turn: an index, built when the Definition
+files are loaded, finds the Stubs whose `method` and exact `path` fit the
+request. The index never changes which Stub answers. A Stub with a
+`method` and no exact `path` is tried for every request with that method,
+and a Stub with neither, such as one with only a path pattern, for every
+request of its Mock, each in its place in the order. Large definition sets
+stay fast when most Stubs have an exact path.
+
 ### When no Stub matches
 
 The Mock answers with its `noMatch.status`, 404 by default, and the body
@@ -190,6 +198,41 @@ Mock the status its real service returns for unknown requests:
 ```json
 { "mocks": [{ "name": "users", "noMatch": { "status": 501 } }] }
 ```
+
+The response also names the *Near miss*: the Stub that came closest, and
+the conditions it failed, in a `Smock-Near-Miss` header. With this Stub:
+
+```json
+{
+  "id": "get-user",
+  "mock": "users",
+  "request": {
+    "method": "GET",
+    "path": "/users/1",
+    "headers": { "X-Api-Key": "secret" }
+  },
+  "response": { "status": 200 }
+}
+```
+
+`POST /users/1` without an `X-Api-Key` header gets
+
+```http
+Smock-Near-Miss: get-user; failed=method,header:x-api-key
+```
+
+The Near miss is the Stub of the Mock that failed the fewest conditions; on
+a tie, the one tried first. Each of these counts as one condition: the
+method, the path, each listed query parameter, each listed header, and the
+body. They are named `method`, `path`, `query:<name>`, `header:<name>` (in
+lower case) and `body`, in that order. The header is ASCII only and never
+carries what a condition expects or what the request sent: the Stub ID and
+query and header names are percent-encoded where they hold anything other
+than the characters of an HTTP token. A Mock without Stubs, and a request
+for a Host that no Mock answers, get no `Smock-Near-Miss` header.
+
+A request that matches pays nothing for this: smock counts failed
+conditions only once every Stub has failed to match.
 
 ## Responses
 
@@ -259,6 +302,80 @@ data: line 2
 - While a stream waits, smock serves every other connection. A client that
   closes the connection mid-stream ends that stream: smock notices when it
   next writes an event.
+
+## Faults
+
+A Stub can inject Faults, to test how a client handles slow and failing
+calls. Its `fault` has a delay, a connection Fault, or both, and an optional
+seed:
+
+```json
+{
+  "id": "get-user",
+  "mock": "users",
+  "request": { "method": "GET", "path": "/users/1" },
+  "response": { "status": 200, "body": "{\"id\":1}" },
+  "fault": {
+    "delay": { "lognormal": { "median": 80, "sigma": 0.6 }, "probability": 0.5 },
+    "connection": { "kind": "close", "probability": 0.01 },
+    "seed": 42
+  }
+}
+```
+
+### Delays
+
+A `delay` makes smock wait before it writes the status line. Meanwhile it
+keeps serving other connections. The delay is drawn from one distribution,
+in whole milliseconds:
+
+| Distribution | Delay |
+|---|---|
+| `"fixed": 100` | always 100 ms. |
+| `"uniform": { "min": 50, "max": 150 }` | a whole number of milliseconds from `min` to `max`, both included, each equally likely. `min` must not exceed `max`. |
+| `"lognormal": { "median": 80, "sigma": 0.6 }` | log-normal: half the delays are below `median`, and `sigma`, the standard deviation of the delay's natural logarithm, sets how long the tail of slow responses is. |
+
+`probability`, from 0 to 1, is the share of matched requests that are
+delayed. Without it, every matched request is.
+
+### Connection Faults
+
+A `connection` Fault makes a request fail at the connection level, instead
+of getting its response:
+
+- `close`: smock reads the request, then closes the connection (a FIN)
+  without writing anything.
+- `partial`: smock writes the status line, the headers, with the
+  `Content-Length` of the whole body, and the first half of the body, then
+  closes the connection. The client sees a response cut short. For
+  Server-Sent Events, the first half is the first half of the events,
+  rounded down, each after its delay, and the stream is not ended.
+- `reset` is in the JSON Schema but not supported yet.
+
+`probability`, from 0 to 1, is the share of matched requests that fail;
+without it, every matched request fails. A Stub with both a delay and a
+connection Fault waits first, then fails.
+
+### Seeds
+
+Each matched request draws whether its delay and its connection Fault
+apply, and how long the delay is.
+
+- A Stub with a `seed`, from 0 to 9007199254740991, has its own generator.
+  smock creates it when it loads the Definition files, and again from the
+  seed when a [reload](#reloading) swaps in a new definition set, and it
+  advances once per request the Stub matches. So the n-th request a seeded Stub matches
+  gets the same Faults in every run, whatever requests other Stubs get. The
+  generator is a fixed algorithm, the same on every platform.
+- Stubs without a seed draw from the process generator, which they share.
+  smock picks its seed at startup and logs it:
+
+  ```json
+  {"time":"2026-10-13T09:12:44.512Z","level":"info","msg":"random seed","seed":5126750341862113}
+  ```
+
+  To replay a run, start smock with that seed (`--seed`, `SMOCK_SEED`): the
+  same requests in the same order then get the same Faults.
 
 ## The JSON Schema
 
@@ -357,7 +474,7 @@ does not change readiness.
 does, so a directory that passes `smock check` loads in `smock serve`, and
 the reverse. It prints every problem on its own line, with the file and a
 JSON Pointer to the value, and exits with status 1. A valid directory
-prints nothing and exits with status 0.
+prints nothing, apart from [warnings](#warnings), and exits with status 0.
 
 ```console
 $ smock check defs
@@ -380,6 +497,36 @@ In CI, run it as a step that fails the build:
 ```yaml
 - run: smock check defs
 ```
+
+### Warnings
+
+For a valid directory, `smock check` also warns about Stubs that can never
+match, because an earlier Stub of the same Mock always matches first. Each
+warning is one line, marked `warning:`, with the file and JSON Pointer of
+the shadowed Stub, and names the Stub that shadows it. Warnings do not
+change the exit status:
+
+```console
+$ smock check defs
+users.json: /stubs/1: warning: the Stub "user-1" can never match: the Stub "any-user" at users.json: /stubs/0 is tried first and matches every request this one would
+$ echo $?
+0
+```
+
+"Earlier" means earlier in the order Stubs are [tried](#which-stub-answers).
+A Stub `s` is shadowed by an earlier Stub `t` when `t` has a subset of
+`s`'s conditions:
+
+- `t` has no method, or the same method as `s`;
+- `t` has no path, the same exact path as `s`, or a pattern that matches
+  `s`'s exact path;
+- each of `t`'s query, header and body conditions is also in `s`, written
+  the same way (header names in any case).
+
+smock does not compare two patterns, or a pattern or `json` condition with
+another condition: it warns only when the shadowing is certain, so a
+warning is never a false alarm, but some Stubs that can never match are
+not reported.
 
 ## Editor support
 

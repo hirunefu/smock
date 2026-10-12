@@ -5,6 +5,12 @@
 pub struct Engine {
   /// The snapshot served. A reload replaces it whole, between two calls.
   priv mut snapshot : @definitions.Snapshot
+  /// The generators of the Stubs of the snapshot that have a seed, by Stub
+  /// ID. A reload that swaps the snapshot creates them anew.
+  priv mut generators : Map[String, @prng.Generator]
+  /// Whether Stubs are found through the snapshot's match index, rather
+  /// than by trying every Stub of the Mock in matching order.
+  priv match_index : Bool
   /// The result of the last reload, if there was one.
   priv mut last_reload : ReloadResult?
 }
@@ -102,17 +108,23 @@ pub(all) struct JournalEntry {
 } derive(Debug)
 
 ///|
-/// The Stub that came closest to matching a request that matched nothing,
-/// and the conditions it failed.
-pub(all) struct NearMiss {
-  stub : String
-  failed : Array[String]
-} derive(Debug)
-
-///|
-/// Creates an engine that serves `snapshot`.
-pub fn Engine::Engine(snapshot : @definitions.Snapshot) -> Engine {
-  { snapshot, last_reload: None, }
+/// Creates an engine that serves `snapshot`. Each Stub with a seed gets its
+/// own generator, created from its seed.
+///
+/// With `match_index=false`, the engine tries every Stub of the Mock in
+/// matching order instead of finding them through the snapshot's match
+/// index. The outcome is the same either way, only slower; tests use it as
+/// the oracle the index is checked against.
+pub fn Engine::Engine(
+  snapshot : @definitions.Snapshot,
+  match_index? : Bool = true,
+) -> Engine {
+  {
+    snapshot,
+    generators: seeded_generators(snapshot),
+    match_index,
+    last_reload: None,
+  }
 }
 
 ///|
@@ -188,7 +200,8 @@ pub(all) enum ReloadOutcome {
 /// Every file is validated and a whole new snapshot is built:
 ///
 /// - When it is valid and its digest differs from the served one, it
-///   replaces the served snapshot at once. Plans the engine returned before
+///   replaces the served snapshot at once, and each Stub with a seed gets a
+///   new generator, created from its seed. Plans the engine returned before
 ///   stay as they were: they hold their own bytes.
 /// - When it is valid with the digest served, nothing is swapped.
 /// - When it is invalid, the served snapshot stays.
@@ -206,6 +219,7 @@ pub fn Engine::reload(
     Ok(snapshot) if snapshot.digest == old_digest => (Unchanged, [])
     Ok(snapshot) => {
       self.snapshot = snapshot
+      self.generators = seeded_generators(snapshot)
       (Swapped, [])
     }
     Err(errors) => (Failed, errors)
@@ -227,16 +241,15 @@ pub fn Engine::reload(
 /// - `session` is the request's Session key, or `None` without a Session.
 /// - `now` is the time the request was received, in milliseconds since the
 ///   Unix epoch.
-/// - `rand` is the process's random source.
+/// - `rand` is the process generator. Fault decisions for Stubs without a
+///   seed draw from it.
 pub fn Engine::handle(
   self : Engine,
   request : Request,
   session~ : String?,
   now~ : Int64,
-  rand~ : @random.Rand,
+  rand~ : @prng.Generator,
 ) -> Outcome {
-  // Faults and templates draw from `rand` once their tickets land.
-  ignore(rand)
   let host = host_of(request)
   let (resolution, mock) = match
     host.bind(host => self.snapshot.mock_for_host(host)) {
@@ -248,15 +261,31 @@ pub fn Engine::handle(
       }
   }
   let incoming = Incoming::new(request)
+  // The match index only narrows the search for the Stub that answers. The
+  // Near miss of a request that matched nothing is chosen among every Stub
+  // of the Mock, in matching order.
   let matched = match mock {
-    Some(mock) =>
-      mock.stubs.iter().find_first(stub => incoming.meets(stub.request))
+    Some(mock) => {
+      let candidates = if self.match_index {
+        mock.candidates(request.meth, incoming.path)
+      } else {
+        mock.stubs.iter()
+      }
+      candidates.find_first(stub => incoming.meets(stub.request))
+    }
     None => None
   }
-  let plan : ResponsePlan = match (mock, matched) {
-    (None, _) => no_mock(host, self.snapshot.hosts())
-    (Some(_), Some(stub)) => stub_response(stub.response)
-    (Some(mock), None) => no_match(mock)
+  let (plan, near_miss) : (ResponsePlan, NearMiss?) = match (mock, matched) {
+    (None, _) => (no_mock(host, self.snapshot.hosts()), None)
+    (Some(_), Some(stub)) => {
+      let (delay_ms, fault) = self.decide_faults(stub, rand)
+      ({ ..stub_response(stub.response), delay_ms, fault, }, None)
+    }
+    (Some(mock), None) => {
+      // Only now, when every candidate has failed, are conditions counted.
+      let near_miss = incoming.near_miss(mock.stubs)
+      (no_match(mock, near_miss), near_miss)
+    }
   }
   // A mistyped Host must not silently succeed.
   if resolution is ViaDefault(name) {
@@ -276,7 +305,7 @@ pub fn Engine::handle(
       status: plan.status,
       received_at: now,
     },
-    near_miss: None,
+    near_miss,
   }
 }
 
@@ -310,11 +339,16 @@ fn stub_response(response : @definitions.Response) -> ResponsePlan {
 }
 
 ///|
-/// The response of `mock` when no Stub matches.
-fn no_match(mock : @definitions.Mock) -> ResponsePlan {
+/// The response of `mock` when no Stub matches, with the Near miss, if
+/// any, in the `Smock-Near-Miss` header.
+fn no_match(mock : @definitions.Mock, near_miss : NearMiss?) -> ResponsePlan {
+  let headers = [("Content-Type", "application/json")]
+  if near_miss is Some(near_miss) {
+    headers.push(("Smock-Near-Miss", near_miss.header_value()))
+  }
   {
     status: mock.no_match_status,
-    headers: [("Content-Type", "application/json")],
+    headers,
     body: Bytes(b"{\"error\":\"no Stub matched\"}"),
     delay_ms: 0,
     fault: None,

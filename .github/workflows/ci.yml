@@ -13,3 +13,10 @@ jobs:
     uses: ./.github/workflows/build-test.yml
     with:
       toolchain: pinned
+
+  release-workflow:
+    name: Check that the release workflow publishes only for tags
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - run: scripts/check-release-workflow.sh

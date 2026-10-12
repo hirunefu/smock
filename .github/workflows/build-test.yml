@@ -79,6 +79,17 @@ jobs:
           "${GITHUB_SHA::12}"
           "moonc $(moonc -v | cut -d' ' -f1)"
 
+      # The release workflow builds and smoke-tests the image the same way.
+      - name: Build the container image
+        run: docker build --provenance=false --tag smock:ci .
+
+      - name: Smoke-test the container image
+        run: >-
+          scripts/smoke-test-image.sh smock:ci
+          "$SMOCK_VERSION"
+          "${GITHUB_SHA::12}"
+          "moonc $(moonc -v | cut -d' ' -f1)"
+
       # An external JSON Schema validator and smock check must agree on
       # every Definition-file fixture under schema/v1/fixtures/.
       - name: Cross-check the JSON Schema with smock

@@ -30,6 +30,7 @@ async test "several requests in turn, with and without bodies, are answered on o
         #|---
         #|HTTP/1.1 404 Not Found
         #|Content-Type: application/json
+        #|Smock-Near-Miss: get-user; failed=method
         #|Smock-Mock: users; via=default
         #|Content-Length: 27
         #|

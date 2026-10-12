@@ -26,6 +26,7 @@ let any_method : String =
 /// after it started.
 let startup_only : String =
   #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
+  #|{"level":"info","msg":"random seed","seed":"*"}
   #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
   #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","cert_file":"*/rsa-chain.pem","key_file":"*/rsa-key.pem"}
   #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
@@ -172,6 +173,7 @@ async test "a pipelined request that says Connection: close is answered, then th
         #|---
         #|HTTP/1.1 404 Not Found
         #|Content-Type: application/json
+        #|Smock-Near-Miss: user; failed=path
         #|Smock-Mock: users; via=default
         #|Connection: close
         #|Content-Length: 27
@@ -219,6 +221,7 @@ async test "HEAD: the response carries its status and headers, with the Content-
         #|{"id":1,"name":"Alice"}---
         #|HTTP/1.1 404 Not Found
         #|Content-Type: application/json
+        #|Smock-Near-Miss: user; failed=path
         #|Smock-Mock: users; via=default
         #|Content-Length: 27
         #|---

@@ -1,12 +1,15 @@
 import {
   "smock/smock/definitions",
+  "smock/smock/prng",
   "moonbitlang/core/buffer",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
-  "moonbitlang/core/random",
+  "moonbitlang/core/math",
 }
 
 import {
   "smock/yaml",
+  "moonbitlang/core/bench",
   "moonbitlang/core/debug",
+  "moonbitlang/core/random",
 } for "test"

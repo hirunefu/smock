@@ -55,11 +55,18 @@ async fn main {
 
 ///|
 /// Runs `smock check`: loads the definitions directory as `smock serve`
-/// does and prints every problem to stdout, one per line. Returns the exit
-/// status: 0 when the definition set is valid, 1 when it is not.
+/// does and prints every problem to stdout, one per line, or, when the set
+/// is valid, every warning, such as a Stub that can never match. Returns the
+/// exit status: 0 when the definition set is valid, with or without
+/// warnings, 1 when it is not.
 async fn check(settings : @settings.CheckSettings) -> Int {
   match @defdir.load(Some(settings.dir), body_file_dir=settings.body_file_dir) {
-    Ok(_) => 0
+    Ok(snapshot) => {
+      for warning in snapshot.warnings() {
+        println(warning.to_string())
+      }
+      0
+    }
     Err(diagnostics) => {
       for diagnostic in diagnostics {
         println(diagnostic.to_string())

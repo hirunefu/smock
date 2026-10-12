@@ -26,6 +26,7 @@ let pipelined_responses : String =
   #|---
   #|HTTP/1.1 404 Not Found
   #|Content-Type: application/json
+  #|Smock-Near-Miss: get-user; failed=path
   #|Smock-Mock: users; via=default
   #|Content-Length: 27
   #|
@@ -33,6 +34,7 @@ let pipelined_responses : String =
   #|---
   #|HTTP/1.1 404 Not Found
   #|Content-Type: application/json
+  #|Smock-Near-Miss: get-user; failed=method
   #|Smock-Mock: users; via=default
   #|Content-Length: 27
   #|
@@ -40,6 +42,7 @@ let pipelined_responses : String =
   #|---
   #|HTTP/1.1 404 Not Found
   #|Content-Type: application/json
+  #|Smock-Near-Miss: get-user; failed=method
   #|Smock-Mock: users; via=default
   #|Content-Length: 27
   #|
@@ -135,6 +138,7 @@ async test "after malformed or ambiguous framing, smock answers what came before
     entries(stopped.logs),
     content=(
       #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
+      #|{"level":"info","msg":"random seed","seed":"*"}
       #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
       #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","cert_file":"*/rsa-chain.pem","key_file":"*/rsa-key.pem"}
       #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
@@ -207,6 +211,7 @@ async test "split reads: requests sent in pieces, with pauses between writes, ge
       content=(
         #|HTTP/1.1 404 Not Found
         #|Content-Type: application/json
+        #|Smock-Near-Miss: get-user; failed=method
         #|Smock-Mock: users; via=default
         #|Content-Length: 27
         #|

@@ -372,21 +372,23 @@ async test "a definitions directory that does not exist yet is polled every 10 s
         ),
       )
     })
-    let messages = stopped.logs.map(line => {
-      let entry = @json.parse(line) catch { _ => return line }
+    // The warnings and errors, and the reloads: no warning about watching.
+    let messages = stopped.logs.filter_map(line => {
+      let entry = @json.parse(line) catch { _ => return Some(line) }
       guard entry is Object(fields) &&
         fields.get("level") is Some(String(level)) &&
         fields.get("msg") is Some(String(msg)) else {
-        return line
+        return Some(line)
       }
-      "\{level}: \{msg}"
+      if level != "info" || msg.contains("reload") {
+        Some("\{level}: \{msg}")
+      } else {
+        None
+      }
     })
     inspect(
       messages.join("\n"),
       content=(
-        #|info: smock starting
-        #|info: listening
-        #|info: listening
         #|info: definitions reloaded
       ),
     )

@@ -59,6 +59,8 @@ fn one_line(s : String) -> String {
 
 ///|
 /// An immutable snapshot of a valid definition set: what the engine serves.
+/// Each Mock holds its Stubs in matching order and their match index, both
+/// built with the snapshot.
 pub struct Snapshot {
   /// The Mocks, in declaration order: file-name order, then position in the
   /// file. When no Definition file declares a Mock, this is one empty Mock
@@ -69,6 +71,9 @@ pub struct Snapshot {
   priv host_index : Map[String, Int]
   /// The index in `mocks` of the Default Mock, if there is one.
   priv default_index : Int?
+  /// Where each Stub is declared, by its ID: the Definition file and the
+  /// JSON Pointer to the Stub in it.
+  priv stub_locations : Map[String, (String, String)]
   /// The definition set digest of the set the snapshot was built from, as
   /// `DefinitionSet::digest` gives it.
   digest : String
@@ -87,6 +92,8 @@ pub struct Mock {
   /// priority in declaration order, that is file-name order, then position
   /// in the file.
   stubs : ReadOnlyArray[Stub]
+  /// The match index of `stubs`, which `candidates` looks up.
+  priv index : MatchIndex
 } derive(Debug, Eq)
 
 ///|
@@ -100,6 +107,62 @@ pub struct Stub {
   priority : Int?
   request : Conditions
   response : Response
+  /// The Faults the Stub injects when it matches, if it has `fault`.
+  fault : Fault?
+} derive(Debug, Eq)
+
+///|
+/// The Faults a Stub injects when it matches. Their random draws come from
+/// the Stub's own generator when it has a seed, and otherwise from the
+/// process generator.
+pub struct Fault {
+  /// A delay before the status line is written.
+  delay : Delay?
+  /// A connection Fault, injected instead of the response.
+  connection : ConnectionFault?
+  /// The seed of the Stub's own generator, from 0 to 2^53 - 1.
+  seed : UInt64?
+} derive(Debug, Eq)
+
+///|
+/// A delay drawn from a distribution, applied to a share of the matched
+/// requests.
+pub struct Delay {
+  distribution : Distribution
+  /// The share of matched requests the delay applies to, from 0 to 1.
+  probability : Double
+} derive(Debug, Eq)
+
+///|
+/// A distribution of delays, in whole milliseconds.
+pub enum Distribution {
+  /// Always this many milliseconds.
+  Fixed(Int)
+  /// A whole number of milliseconds drawn uniformly from `min` to `max`,
+  /// both included. `min` does not exceed `max`.
+  Uniform(min~ : Int, max~ : Int)
+  /// A number of milliseconds drawn from a log-normal distribution with
+  /// this median, where `sigma` is the standard deviation of its natural
+  /// logarithm.
+  Lognormal(median~ : Int, sigma~ : Double)
+} derive(Debug, Eq)
+
+///|
+/// A connection Fault, applied to a share of the matched requests.
+pub struct ConnectionFault {
+  kind : ConnectionKind
+  /// The share of matched requests the Fault applies to, from 0 to 1.
+  probability : Double
+} derive(Debug, Eq)
+
+///|
+/// How a connection Fault ends the connection.
+pub enum ConnectionKind {
+  /// Close the connection without writing anything.
+  Close
+  /// Write the status line, the headers and the first half of the body,
+  /// then close the connection.
+  Partial
 } derive(Debug, Eq)
 
 ///|
@@ -289,22 +352,28 @@ pub fn load(
           hosts: ReadOnlyArray::from_array([]),
           no_match_status: 404,
           stubs: ReadOnlyArray::from_array([]),
+          index: MatchIndex::new(ReadOnlyArray::from_array([])),
         },
       ]),
       host_index: Map([]),
       default_index: Some(0),
+      stub_locations: Map([]),
       digest,
     })
   }
-  let mocks = reader.mocks.map(mock => Mock::{
-    name: mock.name,
-    hosts: ReadOnlyArray::from_iter(mock.hosts.iter().map(host => host.0)),
-    no_match_status: mock.no_match_status,
-    stubs: ReadOnlyArray::from_array(
+  let mocks = reader.mocks.map(mock => {
+    let stubs = ReadOnlyArray::from_array(
       in_matching_order(
         reader.stubs.iter().filter(stub => stub.mock == mock.name).collect(),
       ),
-    ),
+    )
+    Mock::{
+      name: mock.name,
+      hosts: ReadOnlyArray::from_iter(mock.hosts.iter().map(host => host.0)),
+      no_match_status: mock.no_match_status,
+      stubs,
+      index: MatchIndex::new(stubs),
+    }
   })
   let index_of = Map([])
   for i, mock in mocks {
@@ -323,6 +392,7 @@ pub fn load(
     mocks: ReadOnlyArray::from_array(mocks),
     host_index,
     default_index,
+    stub_locations: reader.stub_locations,
     digest,
   })
 }
