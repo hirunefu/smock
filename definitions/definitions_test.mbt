@@ -300,8 +300,7 @@ test "a field the Schema defines but smock does not implement yet is rejected as
           #|    "noMatch": { "status": 418 }, "journal": false }],
           #|  "stubs": [{ "id": "a", "mock": "m", "priority": 1,
           #|    "request": { "method": "GET", "path": "/a" },
-          #|    "response": { "status": 200,
-          #|      "template": true, "events": [{ "data": "x" }] },
+          #|    "response": { "status": 200, "template": true },
           #|    "fault": { "seed": 1 } }] }
         ),
       ),
@@ -309,7 +308,6 @@ test "a field the Schema defines but smock does not implement yet is rejected as
     content=(
       #|a.json: /mocks/0/journal: is not supported yet
       #|a.json: /stubs/0/response/template: is not supported yet
-      #|a.json: /stubs/0/response/events: is not supported yet
       #|a.json: /stubs/0/fault: is not supported yet
     ),
   )

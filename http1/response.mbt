@@ -41,14 +41,7 @@ pub fn encode_response(
   close? : Bool = false,
 ) -> Bytes {
   let out = @buffer.Buffer(size_hint=128 + body.length())
-  out.write_string_utf8("HTTP/1.1 \{status} \{reason_phrase(status)}\r\n")
-  for header in headers {
-    let (name, value) = header
-    out.write_string_utf8(name)
-    out.write_bytes(b": ")
-    out.write_string_utf8(value)
-    out.write_bytes(b"\r\n")
-  }
+  write_status_and_headers(out, status, headers)
   match request {
     _ if close => out.write_bytes(b"Connection: close\r\n")
     Some({ keep_alive: false, .. }) => out.write_bytes(b"Connection: close\r\n")
@@ -65,6 +58,24 @@ pub fn encode_response(
     out.write_bytes(body)
   }
   out.to_bytes()
+}
+
+///|
+/// Writes the status line and `headers`, in the order given, each line
+/// ending with CRLF. Names and values are written as UTF-8.
+fn write_status_and_headers(
+  out : @buffer.Buffer,
+  status : Int,
+  headers : ArrayView[(String, String)],
+) -> Unit {
+  out.write_string_utf8("HTTP/1.1 \{status} \{reason_phrase(status)}\r\n")
+  for header in headers {
+    let (name, value) = header
+    out.write_string_utf8(name)
+    out.write_bytes(b": ")
+    out.write_string_utf8(value)
+    out.write_bytes(b"\r\n")
+  }
 }
 
 ///|

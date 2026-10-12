@@ -185,8 +185,8 @@ Pointer, and exits with status 1 if there is any.
 how Stubs match requests (method, path, query parameters, headers and
 body, exactly, by RE2 pattern or as JSON), the order they are tried in (priority, then
 file-name order), what a Mock answers when nothing matches, responses with
-inline bodies or body files, the JSON Schema, editor support and writing
-Definition files in another configuration language.
+inline bodies, body files or Server-Sent Events, the JSON Schema, editor
+support and writing Definition files in another configuration language.
 
 Definition files can also be YAML (`.yaml` or `.yml`), mixed with JSON files
 in one directory. A YAML file means exactly what the equivalent JSON file

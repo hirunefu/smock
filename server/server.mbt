@@ -120,7 +120,10 @@ pub async fn serve(
         serve_connection(
           conn,
           settings,
-          respond=request => admin.respond(request),
+          respond=(stream, request) => {
+            @io.Writer::write(stream, admin.respond(request))
+            request.keep_alive
+          },
           reject=status => admin.reject(status),
         )
       })
@@ -182,7 +185,7 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
   serve_connection(
     stream,
     settings,
-    respond=request => {
+    respond=(stream, request) => {
       let outcome = engine.handle(
         to_engine_request(request),
         // Sessions come with the "Sessions and Ephemeral Stubs" ticket.
@@ -190,7 +193,7 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
         now=@async.now(),
         rand~,
       )
-      encode(outcome.plan, request)
+      write_response(stream, outcome.plan, request)
     },
     reject=status => @http1.encode_response(status, [], b"", close=true),
   )
@@ -210,14 +213,15 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
 /// byte stream: a TCP connection, or a TLS session on top of one. Nothing is
 /// logged per request.
 ///
-/// - `respond` gives the encoded response to each request.
+/// - `respond` writes the response to each request to `stream` and returns
+///   whether the connection stays open after it.
 /// - `reject` gives the encoded response, with `Connection: close`, to
 ///   bytes that are not a valid request or are over a limit, with the status
 ///   the codec chose.
 async fn[S : @io.Reader + @io.Writer] serve_connection(
   stream : S,
   settings : @settings.ServeSettings,
-  respond~ : (@http1.Request) -> Bytes,
+  respond~ : async (S, @http1.Request) -> Bool,
   reject~ : (Int) -> Bytes,
 ) -> Unit {
   let parser = @http1.Parser(
@@ -234,8 +238,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
   for ;; {
     match parser.next() {
       Complete(request) => {
-        @io.Writer::write(stream, respond(request))
-        if !request.keep_alive {
+        if !respond(stream, request) {
           return
         }
         idle_deadline = @async.now() + idle_timeout
@@ -287,13 +290,53 @@ fn to_engine_request(request : @http1.Request) -> @engine.Request {
 }
 
 ///|
-/// The bytes of the response `plan` describes, as the answer to `request`.
-/// Delays, connection Faults and Server-Sent Events come with their own
-/// tickets; the engine does not plan them yet.
-fn encode(plan : @engine.ResponsePlan, request : @http1.Request) -> Bytes {
-  let body = match plan.body {
-    Bytes(body) => body
-    Events(_) => b""
+/// Writes the response `plan` describes, as the answer to `request`, and
+/// returns whether the connection stays open after it. Delays and
+/// connection Faults come with their own tickets; the engine does not plan
+/// them yet.
+///
+/// Server-Sent Events are streamed: the head at once, then each event after
+/// its delay. Waiting suspends only this connection's task, so the others
+/// are served meanwhile. A client that closes the connection mid-stream
+/// makes a later write fail, which ends the stream and the connection.
+async fn[S : @io.Writer] write_response(
+  stream : S,
+  plan : @engine.ResponsePlan,
+  request : @http1.Request,
+) -> Bool {
+  match plan.body {
+    Bytes(body) => {
+      @io.Writer::write(
+        stream,
+        @http1.encode_response(plan.status, plan.headers, body, request~),
+      )
+      request.keep_alive
+    }
+    Events(events) => {
+      let response = @http1.ResponseStream(plan.status, plan.headers, request~)
+      @io.Writer::write(stream, response.head())
+      for event in events {
+        if event.delay_ms > 0 {
+          @async.sleep(event.delay_ms)
+        }
+        let data = @http1.encode_sse_event(
+          event.data,
+          event?=event.event,
+          id?=event.id,
+        )
+        write_some(stream, response.part(data))
+      }
+      write_some(stream, response.end())
+      response.keeps_open()
+    }
   }
-  @http1.encode_response(plan.status, plan.headers, body, request~)
+}
+
+///|
+/// Writes `bytes` unless there are none, as for the body of a response to
+/// HEAD.
+async fn[S : @io.Writer] write_some(stream : S, bytes : Bytes) -> Unit {
+  if bytes.length() > 0 {
+    @io.Writer::write(stream, bytes)
+  }
 }

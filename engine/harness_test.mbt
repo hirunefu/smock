@@ -62,7 +62,10 @@ fn response(outcome : @engine.Outcome) -> String {
   }
   match plan.body {
     Bytes(body) => out.write_string(@utf8.decode_lossy(body))
-    Events(events) => out.write_string("(\{events.length()} events)")
+    Events(events) =>
+      for event in events {
+        out.write_string("\{sse_event(event)}\n")
+      }
   }
   out.to_string()
 }
@@ -81,7 +84,10 @@ fn describe(outcome : @engine.Outcome) -> String {
   }
   match plan.body {
     Bytes(body) => out.write_string("  body: \{text(body)}\n")
-    Events(events) => out.write_string("  events: \{events.length()}\n")
+    Events(events) =>
+      for event in events {
+        out.write_string("  event: \{sse_event(event)}\n")
+      }
   }
   out.write_string("  delay_ms: \{plan.delay_ms}\n")
   out.write_string("  fault: \{@debug.to_string(plan.fault)}\n")
@@ -103,4 +109,12 @@ fn describe(outcome : @engine.Outcome) -> String {
 ///|
 fn text(bytes : Bytes) -> String {
   @utf8.decode_lossy(bytes).escape()
+}
+
+///|
+/// A Server-Sent Event of a response plan: its delay, then its type, ID
+/// and data as given, with strings escaped.
+fn sse_event(event : @engine.SseEvent) -> String {
+  let field = (value : String?) => value.map_or("-", value => value.escape())
+  "after \{event.delay_ms} ms: event \{field(event.event)}, id \{field(event.id)}, data \{event.data.escape()}"
 }
