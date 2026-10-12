@@ -90,6 +90,15 @@ jobs:
           "${GITHUB_SHA::12}"
           "moonc $(moonc -v | cut -d' ' -f1)"
 
+      - name: Install helm, kubectl and kind
+        run: scripts/install-kubernetes-tools.sh "$RUNNER_TEMP/bin"
+
+      # Installs the chart with this image into a namespace that enforces
+      # the Restricted Pod Security Standard, and checks that a ConfigMap
+      # update reaches smock without a restart.
+      - name: Test the Helm chart on kind
+        run: scripts/test-helm-chart-on-kind.sh smock:ci
+
       # An external JSON Schema validator and smock check must agree on
       # every Definition-file fixture under schema/v1/fixtures/.
       - name: Cross-check the JSON Schema with smock

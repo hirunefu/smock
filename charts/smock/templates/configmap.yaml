@@ -1,0 +1,26 @@
+{{- /*
+The Definition files given in the values. The Deployment does not depend on
+their content, so an update reaches the running smock through its file
+reload: Kubernetes swaps the files in the mounted volume, and no Pod
+restarts.
+*/ -}}
+{{- if and (eq .Values.definitions.source "configMap") (not .Values.definitions.configMap.name) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "smock.definitionsConfigMap" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "smock.labels" . | nindent 4 }}
+{{- if or .Values.definitions.configMap.files .Values.definitions.configMap.bodyFiles }}
+data:
+  {{- range $name, $content := .Values.definitions.configMap.files }}
+  {{ $name | quote }}: {{ $content | quote }}
+  {{- end }}
+  {{- range $path, $content := .Values.definitions.configMap.bodyFiles }}
+  {{ include "smock.bodyFileKey" $path }}: {{ $content | quote }}
+  {{- end }}
+{{- else }}
+data: {}
+{{- end }}
+{{- end }}

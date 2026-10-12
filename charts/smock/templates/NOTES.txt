@@ -1,0 +1,10 @@
+smock {{ .Chart.AppVersion }} serves the Mocks of its Definition files ({{ .Values.definitions.source }}) through the Service {{ include "smock.fullname" . }} (ports {{ .Values.service.plainPort }} and {{ .Values.service.tlsPort }}).
+
+The Admin API, the probes and the metrics are on the Service {{ include "smock.adminServiceName" . }} (port {{ .Values.adminService.port }}){{ if .Values.adminAuth.enabled }}; the Admin API needs the token from the Secret {{ .Values.adminAuth.tokenSecret.name }}{{ end }}:
+
+  kubectl --namespace {{ .Release.Namespace }} port-forward service/{{ include "smock.adminServiceName" . }} {{ .Values.adminService.port }}
+  curl {{ if .Values.adminAuth.enabled }}-H "Authorization: Bearer $TOKEN" {{ end }}localhost:{{ .Values.adminService.port }}/v1/status
+{{- if gt (int64 .Values.replicas) 1 }}
+
+With {{ .Values.replicas }} replicas, each Pod keeps its own Ephemeral Stubs and Journal: tests that use them need one replica or session affinity.
+{{- end }}

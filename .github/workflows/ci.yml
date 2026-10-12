@@ -20,3 +20,20 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: scripts/check-release-workflow.sh
+
+  # The chart on a cluster is tested in build-test.yml, with the image built
+  # there.
+  helm-chart:
+    name: Rendering tests of the Helm chart
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install helm
+        run: scripts/install-kubernetes-tools.sh "$RUNNER_TEMP/bin" helm
+
+      - name: Lint the chart
+        run: helm lint --strict charts/smock --set adminAuth.tokenSecret.name=smock-admin-token
+
+      - name: Render the chart for each delivery mode and option and check it
+        run: scripts/test-helm-chart.sh

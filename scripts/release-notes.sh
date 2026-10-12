@@ -31,6 +31,19 @@ smock $version (commit $commit, $toolchain)
 and has an SPDX SBOM; [the README]($readme#verify-the-image) explains how to
 verify the signature and fetch the SBOM.
 
+## Helm chart
+
+\`${image%/*}/charts/smock\`, version $version, published as an OCI chart. It
+runs \`$image:$version\` by default:
+
+\`\`\`sh
+helm install smock oci://${image%/*}/charts/smock --version $version \\
+  --set adminAuth.tokenSecret.name=<Secret with the Admin API token>
+\`\`\`
+
+[Its README](https://github.com/hirunefu/smock/blob/v$version/charts/smock/README.md)
+lists its values.
+
 ## Binaries
 
 - \`smock-$version-linux-amd64\`
