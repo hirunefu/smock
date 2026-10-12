@@ -26,7 +26,7 @@ pub fn session_of(
   let header = header.to_lower()
   let mut found = None
   for field in headers {
-    if field.0.to_lower() != header {
+    if !is_name(field.0, header) {
       continue
     }
     for list_member in field.1.split(",") {
