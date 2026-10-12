@@ -42,9 +42,9 @@ fn compile_node(node : Node) -> Prog raise CompileError {
 /// Appends `inst` and returns its index.
 fn Compiler::push(self : Compiler, inst : Inst) -> Int raise CompileError {
   if self.insts.length() >= MAX_PROGRAM_SIZE {
-    raise CompileError(
-      position=0,
-      message="pattern too large: it compiles to more than \{MAX_PROGRAM_SIZE} instructions",
+    fail_at(
+      0,
+      "pattern too large: it compiles to more than \{MAX_PROGRAM_SIZE} instructions",
     )
   }
   self.insts.push(inst)

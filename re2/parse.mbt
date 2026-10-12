@@ -105,7 +105,7 @@ fn parse(pattern : String) -> Node raise CompileError {
   let node = p.parse_alternation()
   if p.pos < p.chars.length() {
     // parse_alternation stops only at the end or at a `)`.
-    p.fail(p.pos, "unexpected )")
+    fail_at(p.pos, "unexpected )")
   }
   node
 }
@@ -121,12 +121,8 @@ fn code_points(s : String) -> Array[Int] {
 }
 
 ///|
-fn Parser::fail(
-  self : Parser,
-  position : Int,
-  message : String,
-) -> Unit raise CompileError {
-  ignore(self)
+/// Fails with the problem `message` at `position` in the pattern.
+fn[T] fail_at(position : Int, message : String) -> T raise CompileError {
   raise CompileError(position~, message~)
 }
 
@@ -187,16 +183,15 @@ fn Parser::parse_concat(self : Parser) -> Node raise CompileError {
         if last_repeat >= 0 {
           let ops = self.text(last_repeat, self.pos)
           if op == "+" {
-            self.fail(
+            fail_at(
               last_repeat,
               "possessive quantifier \{ops} is not RE2 syntax",
             )
           }
-          self.fail(last_repeat, "bad repetition operator \{ops}")
+          fail_at(last_repeat, "bad repetition operator \{ops}")
         }
         guard items.pop() is Some(sub) else {
-          self.fail(op_start, "missing argument to repetition operator \{op}")
-          return Empty
+          fail_at(op_start, "missing argument to repetition operator \{op}")
         }
         let (sub_nullable, sub_product) = info(sub)
         // As in RE2, only counted repetitions count, by their maximum, or
@@ -210,7 +205,7 @@ fn Parser::parse_concat(self : Parser) -> Node raise CompileError {
         }
         let product = sub_product * @cmp.maximum(count, 1)
         if product > MAX_REPEAT {
-          self.fail(
+          fail_at(
             op_start,
             "nested repetition counts multiply to more than \{MAX_REPEAT} at \{op}",
           )
@@ -282,10 +277,7 @@ fn Parser::parse_repeat_op(self : Parser) -> (Int, Int)? raise CompileError {
       }
       self.pos = close + 1
       if min > MAX_REPEAT || max > MAX_REPEAT || (max >= 0 && max < min) {
-        self.fail(
-          start,
-          "invalid repetition size \{self.text(start, self.pos)}",
-        )
+        fail_at(start, "invalid repetition size \{self.text(start, self.pos)}")
       }
       Some((min, max))
     }
@@ -401,12 +393,12 @@ fn Parser::parse_group(self : Parser) -> Node? raise CompileError {
     }
   }
   if self.depth == MAX_DEPTH {
-    self.fail(open, "groups nest more than \{MAX_DEPTH} deep")
+    fail_at(open, "groups nest more than \{MAX_DEPTH} deep")
   }
   self.depth += 1
   let node = self.parse_alternation()
   if self.peek(self.pos) != ')' {
-    self.fail(open, "missing closing )")
+    fail_at(open, "missing closing )")
   }
   self.pos += 1
   self.depth -= 1
@@ -428,7 +420,7 @@ fn Parser::reject_group_syntax(
     '<' if c2 == '=' || c2 == '!' =>
       "lookbehind (?<\{self.text(open + 3, open + 4)}"
     '<' =>
-      return self.fail(
+      fail_at(
         open, "named group (?<name>...) is not supported in R1; use (?P<name>...)",
       )
     '>' => "atomic group (?>"
@@ -443,7 +435,7 @@ fn Parser::reject_group_syntax(
     'C' => "callout (?C"
     _ => return
   }
-  self.fail(open, "\{what} is not RE2 syntax")
+  fail_at(open, "\{what} is not RE2 syntax")
 }
 
 ///|
@@ -454,7 +446,7 @@ fn Parser::parse_group_name(
   open : Int,
 ) -> Unit raise CompileError {
   if self.peek(open + 3) != '<' {
-    self.fail(open, "invalid group \{self.text(open, open + 4)}")
+    fail_at(open, "invalid group \{self.text(open, open + 4)}")
   }
   let start = open + 4
   let mut end = start
@@ -472,13 +464,13 @@ fn Parser::parse_group_name(
   }
   if valid && !ascii {
     // RE2 also accepts Unicode word characters in names.
-    self.fail(
+    fail_at(
       open,
       "non-ASCII capture group name \{self.text(open, end + 1)} is not supported in R1",
     )
   }
   if !valid {
-    self.fail(open, "invalid named capture group \{self.text(open, end + 1)}")
+    fail_at(open, "invalid named capture group \{self.text(open, end + 1)}")
   }
   self.pos = end + 1
 }
@@ -508,11 +500,11 @@ fn Parser::parse_flags(
         self.pos = i + 1
         return (flags, c == ':')
       }
-      'U' => self.fail(i, "flag U is not supported in R1")
-      _ if c < 0 => self.fail(open, "missing closing )")
+      'U' => fail_at(i, "flag U is not supported in R1")
+      _ if c < 0 => fail_at(open, "missing closing )")
       _ if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') =>
-        self.fail(i, "flag \{self.text(i, i + 1)} is not RE2 syntax")
-      _ => self.fail(open, "invalid flags \{self.text(open, i + 1)}")
+        fail_at(i, "flag \{self.text(i, i + 1)} is not RE2 syntax")
+      _ => fail_at(open, "invalid flags \{self.text(open, i + 1)}")
     }
     if negated && c != '-' {
       cleared = true
@@ -554,7 +546,7 @@ fn Parser::parse_char_escape(
   let start = self.pos
   let c = self.peek(start + 1)
   if c < 0 {
-    self.fail(start, "trailing backslash at end of pattern")
+    fail_at(start, "trailing backslash at end of pattern")
   }
   if (c < 0x80 && !word_chars.contains(c)) || c == '_' {
     self.pos = start + 2
@@ -563,17 +555,16 @@ fn Parser::parse_char_escape(
   let escape = self.text(start, start + 2)
   match c {
     '1'..='7' if self.peek(start + 2) >= '0' && self.peek(start + 2) <= '7' =>
-      self.fail(
+      fail_at(
         start,
         "octal escape \{self.text(start, start + 3)} is not supported in R1",
       )
     '1'..='9' | 'k' | 'g' =>
-      self.fail(start, "backreference \{escape} is not RE2 syntax")
-    '0' => self.fail(start, "octal escape \{escape} is not supported in R1")
-    'x' =>
-      self.fail(start, "hexadecimal escape \{escape} is not supported in R1")
+      fail_at(start, "backreference \{escape} is not RE2 syntax")
+    '0' => fail_at(start, "octal escape \{escape} is not supported in R1")
+    'x' => fail_at(start, "hexadecimal escape \{escape} is not supported in R1")
     'a' | 'f' | 'n' | 'r' | 't' | 'v' =>
-      self.fail(start, "escape \{escape} is not supported in R1")
+      fail_at(start, "escape \{escape} is not supported in R1")
     'p' | 'P' => {
       let end = if self.peek(start + 2) == '{' {
         let mut i = start + 3
@@ -584,7 +575,7 @@ fn Parser::parse_char_escape(
       } else {
         start + 3
       }
-      self.fail(
+      fail_at(
         start,
         "Unicode class \{self.text(start, end)} is not supported in R1",
       )
@@ -592,17 +583,16 @@ fn Parser::parse_char_escape(
     // Assertions and \Q and \C reach here only inside a class, Perl classes
     // only as the end of a range.
     'b' | 'B' | 'A' | 'z' | 'Q' | 'C' if in_class =>
-      self.fail(
+      fail_at(
         start,
         "escape \{escape} inside a character class is not RE2 syntax",
       )
-    'Q' => self.fail(start, "quoting with \\Q...\\E is not supported in R1")
-    'C' => self.fail(start, "\\C (any byte) is not supported in R1")
+    'Q' => fail_at(start, "quoting with \\Q...\\E is not supported in R1")
+    'C' => fail_at(start, "\\C (any byte) is not supported in R1")
     'd' | 'D' | 's' | 'S' | 'w' | 'W' =>
-      self.fail(start, "\{escape} cannot end a character class range")
-    _ => self.fail(start, "escape \{escape} is not RE2 syntax")
+      fail_at(start, "\{escape} cannot end a character class range")
+    _ => fail_at(start, "escape \{escape} is not RE2 syntax")
   }
-  0
 }
 
 ///|
@@ -675,7 +665,7 @@ fn Parser::parse_class(self : Parser) -> Node raise CompileError {
       self.pos += 1
       hi = self.parse_class_char(open)
       if hi < lo {
-        self.fail(
+        fail_at(
           lo_pos,
           "invalid character class range \{self.text(lo_pos, self.pos)}",
         )
@@ -720,9 +710,9 @@ fn Parser::reject_posix_class(self : Parser) -> Unit raise CompileError {
   }
   let class = self.text(start, end + 2)
   if posix_classes.contains(self.text(name_start, end)) {
-    self.fail(start, "POSIX class \{class} is not supported in R1")
+    fail_at(start, "POSIX class \{class} is not supported in R1")
   }
-  self.fail(start, "invalid POSIX class \{class}")
+  fail_at(start, "invalid POSIX class \{class}")
 }
 
 ///|
@@ -733,11 +723,11 @@ fn Parser::parse_class_char(
 ) -> Int raise CompileError {
   let c = self.peek(self.pos)
   if c < 0 {
-    self.fail(open, "missing closing ]")
+    fail_at(open, "missing closing ]")
   }
   if c == '\\' {
     if self.peek(self.pos + 1) < 0 {
-      self.fail(open, "missing closing ]")
+      fail_at(open, "missing closing ]")
     }
     return self.parse_char_escape(in_class=true)
   }
