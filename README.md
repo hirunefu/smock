@@ -63,6 +63,10 @@ Every other package also builds for `wasm-gc`, and CI tests it there.
 contract for it as the JSON Schema is for Definition files; a client can be
 generated from it in any language.
 
+`Dockerfile` packs the release binary into the container image, and
+`.github/workflows/release.yml` publishes the image and the release binaries
+(see [Container image and release binaries](#container-image-and-release-binaries)).
+
 `schema/v1/definitions.json` is the JSON Schema of Definition files, the
 contract for their format. `.github/workflows/schema-pages.yml` publishes it
 on GitHub Pages, and `schema/v1/fixtures/` holds the Definition files that
@@ -237,11 +241,107 @@ Every problem is reported with the file and the JSON Pointer of the value,
 such as `users.yaml: /stubs/0/request/method: "on" may be read as a boolean;
 quote this value`.
 
+## Container image and release binaries
+
+Each release publishes the image `ghcr.io/hirunefu/smock:<version>` for
+linux/amd64 and linux/arm64. It is distroless
+(`gcr.io/distroless/base-debian13`): it holds the smock binary and what the
+binary links dynamically, glibc and OpenSSL 3, and has no shell. smock runs
+as UID 65532 and writes nothing to the filesystem, so the root filesystem can
+be read-only:
+
+```sh
+export SMOCK_ADMIN_TOKEN=change-me
+docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges \
+  -e SMOCK_ADMIN_TOKEN -p 8080:8080 -p 9090:9090 -v "$PWD/defs:/defs:ro" \
+  ghcr.io/hirunefu/smock:<version> serve --dir /defs
+```
+
+The image's command is `serve`; arguments replace it (`... smock:<version>
+--version`). Like any `smock serve`, it needs the Admin API token, from
+`SMOCK_ADMIN_TOKEN` or from a mounted file that `--admin-token-file` names
+(such as a Kubernetes Secret). The image exposes the plain port 8080, the TLS
+port 8443 and the admin port 9090. Files mounted into the container must be
+readable by UID 65532.
+
+### Verify the image
+
+The image and the image of each architecture are signed with cosign, without
+a key: each signature's certificate names the release workflow at the
+release's tag. With cosign 2.6 or later:
+
+```sh
+cosign verify ghcr.io/hirunefu/smock:<version> \
+  --certificate-identity https://github.com/hirunefu/smock/.github/workflows/release.yml@refs/tags/v<version> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+The image of each architecture has an SPDX SBOM, attached as a signed
+attestation. To verify the SBOM of the linux/arm64 image and save it as
+`smock.spdx.json` (use `amd64` for linux/amd64):
+
+```sh
+digest=$(docker buildx imagetools inspect --raw ghcr.io/hirunefu/smock:<version> |
+  jq -r '.manifests[] | select(.platform.architecture == "arm64") | .digest')
+cosign verify-attestation --type spdxjson \
+  --certificate-identity https://github.com/hirunefu/smock/.github/workflows/release.yml@refs/tags/v<version> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "ghcr.io/hirunefu/smock@$digest" | jq -r .payload | base64 -d | jq .predicate >smock.spdx.json
+```
+
+The same `cosign verify` flags verify that architecture's signature with
+`"ghcr.io/hirunefu/smock@$digest"`. The GitHub release also has the SBOMs as
+files, `smock-<version>-linux-<arch>.spdx.json`.
+`scripts/verify-image.sh ghcr.io/hirunefu/smock:<version>` runs all of these
+checks.
+
+### Release binaries
+
+Each GitHub release has the binaries `smock-<version>-linux-amd64` and
+`smock-<version>-linux-arm64`, the same builds as in the image (Linux only in
+R1). They link OpenSSL 3 dynamically, so they need it at run time: on Debian
+and Ubuntu, the `libssl3` package (`libssl3t64` on newer releases). Make the
+downloaded file executable with `chmod +x`. The release notes name the
+MoonBit toolchain the release was built with, which `smock --version` also
+prints.
+
+### Making a release
+
+Pushing a tag `v<major>.<minor>.<patch>` (or `v<major>.<minor>.<patch>-<pre-release>`)
+runs `.github/workflows/release.yml`. On an amd64 and an arm64 runner, each
+building for its own architecture without emulation, it builds smock with
+the toolchain in `.moonbit-version`, builds the image and runs
+`scripts/smoke-test-image.sh` on it. Only then does it push, combine, sign
+and attest the image, verify it with `scripts/verify-image.sh`, and create
+the GitHub release with notes from `scripts/release-notes.sh`. It never runs
+on pull requests. Started by hand from the Actions tab, it builds and
+smoke-tests everything and keeps the binaries, images and notes as workflow
+artifacts, but publishes nothing. `scripts/check-release-workflow.sh`, run in
+CI, checks those rules. After the first release, make the
+`ghcr.io/hirunefu/smock` package public in its settings; GitHub creates it
+private.
+
+To smoke-test the image locally (needs docker, curl, openssl, readelf and jq):
+
+```sh
+scripts/build-release.sh
+docker build --tag smock:dev .
+scripts/smoke-test-image.sh smock:dev 0.0.0-dev "$(git rev-parse --short=12 HEAD)" "moonc $(moonc -v | cut -d' ' -f1)"
+```
+
+It runs the image as its own UID with a read-only root filesystem, no
+capabilities and no privilege escalation, and checks `smock --version`, a
+Stub on the plain port, HTTPS with a test certificate, and the Admin API
+status operation with a token file, which must name the same build as
+`smock --version`. It also checks that the image adds nothing to its base but
+the smock binary, and that the image is for the machine it runs on.
+
 ## Toolchain
 
 The MoonBit toolchain version is pinned in `.moonbit-version`, and CI installs
-exactly that version. A weekly CI job also builds and tests with the latest
-stable MoonBit and opens an issue when that fails.
+exactly that version, as does the release workflow; the release notes name
+it. A weekly CI job also builds and tests with the latest stable MoonBit and
+opens an issue when that fails.
 
 ## Build and test
 
@@ -258,6 +358,9 @@ scripts/build-release.sh       # dist/smock
 dist/smock --version
 scripts/check-schema.sh dist/smock   # the JSON Schema and smock agree
 scripts/check-openapi.sh       # the Admin API document is valid OpenAPI 3.1
+docker build --tag smock:dev .
+scripts/smoke-test-image.sh smock:dev 0.0.0-dev <commit> "moonc <version>"   # the container image
+scripts/check-release-workflow.sh    # the release workflow publishes only for tags (needs yq)
 ```
 
 `scripts/check-schema.sh` runs the external validator check-jsonschema
