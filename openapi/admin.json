@@ -592,7 +592,7 @@
         "operationId": "getMetrics",
         "tags": ["Metrics"],
         "summary": "Prometheus metrics",
-        "description": "Every metric in the Prometheus text exposition format, version 0.0.4. Series are labelled at most by Mock and Stub ID, never by path, Host, method or Session. `smock_build_info` is always 1 and carries the build as labels: `version`, `commit` and `toolchain`, the same as `smock --version` and the status.",
+        "description": "Every metric in the Prometheus text exposition format, version 0.0.4. Series are labelled at most by Mock and Stub ID, never by path, Host, method or Session. `smock_build_info` is always 1 and carries the build as labels: `version`, `commit` and `toolchain`, the same as `smock --version` and the status. `smock_requests_total` and the histogram `smock_request_duration_seconds`, labelled by `mock` and `stub`, and `smock_unmatched_requests_total`, labelled by `mock`, cover the requests served on the plain and TLS ports, not those on the admin port: every Ephemeral Stub is `stub=\"ephemeral\"`, no Stub `stub=\"\"`, and no Mock `mock=\"\"`.",
         "security": [],
         "responses": {
           "200": {

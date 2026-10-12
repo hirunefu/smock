@@ -65,7 +65,7 @@ test "a request that matches gets no Near miss and no Smock-Near-Miss header" {
     ),
   ])
   let outcome = h.send("POST", "/users/1")
-  debug_inspect(outcome.stub, content="Some(\"any\")")
+  debug_inspect(matched_id(outcome), content="Some(\"any\")")
   inspect(
     near_misses(h, [("GET", "/users/1", [], ""), ("POST", "/users/1", [], "")]),
     content=(

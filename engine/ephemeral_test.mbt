@@ -81,7 +81,7 @@ fn Harness::brief(
     Bytes(body) => @utf8.decode_lossy(body)
     Events(_) => "(events)"
   }
-  "\{outcome.plan.status} \{body} (\{outcome.stub.unwrap_or("no Stub")})"
+  "\{outcome.plan.status} \{body} (\{matched_id(outcome).unwrap_or("no Stub")})"
 }
 
 ///|
@@ -755,6 +755,50 @@ test "an Ephemeral Stub with a seed gets its own generator when it is added: its
       #|noise: 924 428 776
       #|then: 280 910
       #|test-b: 365 239
+    ),
+  )
+}
+
+///|
+test "the outcome names the Stub that matched and whether it comes from a Definition file or is an Ephemeral Stub, whatever its ID looks like" {
+  let h = harness(
+    [
+      ..shop,
+      (
+        "30-refunds.json",
+        (
+          #|{ "stubs": [{ "id": "eph-1", "mock": "payments",
+          #|    "request": { "method": "GET", "path": "/refunds" },
+          #|    "response": { "status": 200, "body": "none" } }] }
+        ),
+      ),
+    ],
+  )
+  let _ = h.add("payments", Some("test-a"), get_stub("/orders/42", 503, "down"))
+  let out = []
+  let step = (label : String, outcome : @engine.Outcome) => {
+    out.push("\{label}: \{@debug.to_string(outcome.matched)}")
+  }
+  step(
+    "a Stub from a Definition file",
+    h.send("GET", "http://payments.svc/orders/42"),
+  )
+  step(
+    "an Ephemeral Stub",
+    h.send("GET", "http://payments.svc/orders/42", session="test-a"),
+  )
+  step(
+    "a Stub from a Definition file with the ID eph-1",
+    h.send("GET", "http://payments.svc/refunds", session="test-a"),
+  )
+  step("no Stub", h.send("GET", "http://payments.svc/orders/43"))
+  inspect(
+    out.join("\n"),
+    content=(
+      #|a Stub from a Definition file: Some(FromFile("p-order"))
+      #|an Ephemeral Stub: Some(Ephemeral("eph-1"))
+      #|a Stub from a Definition file with the ID eph-1: Some(FromFile("eph-1"))
+      #|no Stub: None
     ),
   )
 }

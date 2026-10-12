@@ -164,7 +164,7 @@ fn check_index_case(case : Int, tally : IndexTally) -> Unit raise {
         )
       e => raise e
     }
-    let kind = match outcome.stub {
+    let kind = match matched_id(outcome) {
       Some(id) if id.has_prefix("eph-") => "ephemeral"
       Some(id) => generated.kinds.get(id).unwrap_or("unknown Stub \{id}")
       None => "no match"

@@ -253,6 +253,20 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   certificate expires; `smock_journal_entries`, `smock_journal_bytes` and
   `smock_journal_evictions_total` show the [Journal](#the-journal)'s size
   and evictions, without labels.
+- The request traffic on the plain and TLS ports is in
+  `smock_requests_total` and the latency histogram
+  `smock_request_duration_seconds` (from the request being read in full to
+  the last byte of its response, so injected delays and Server-Sent Event
+  streams count; buckets from 100 µs to 5 minutes), labelled only by `mock`
+  and `stub`, and in `smock_unmatched_requests_total`, labelled only by
+  `mock`. A Stub from a Definition file is labelled by its ID, every
+  Ephemeral Stub by `stub="ephemeral"`, and a request that matched no Stub
+  by `stub=""`. A request is labelled with the Mock that answered it, the
+  Default Mock included, or `mock=""` when no Mock did. Labels never carry a
+  path, Host, method or Session, so the number of series stays bounded by
+  the Definition files. A request is counted once its response is written;
+  the Admin API, probes and `/metrics` are not counted. No request is
+  logged.
 - `POST /v1/stubs/{id}/render` renders a Stub's response for the sample
   request in the body, against the definitions the replica serves now, as
   `smock render` does (below). The optional `time` and `seed` query

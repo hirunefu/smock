@@ -389,7 +389,7 @@ test "pathological patterns against long inputs are answered in linear time" {
   let a = "a".repeat(n)
   let x = "x".repeat(n)
   let send = (target : String, headers : Array[(String, String)], body) => {
-    h.send("POST", target, headers~, body~).stub.unwrap_or("none")
+    matched_id(h.send("POST", target, headers~, body~)).unwrap_or("none")
   }
   inspect(
     [
@@ -420,7 +420,8 @@ test "a body that is not valid UTF-8 never matches a body pattern as a whole, ev
       session=None,
       now=h.now,
       rand=h.rand,
-    ).stub
+    )
+    |> matched_id
   }
   debug_inspect(
     [

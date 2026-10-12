@@ -26,7 +26,7 @@ let mock_m : (String, String) = (
 ///|
 /// The ID of the Stub that answers `GET target`, or `none`.
 fn winner(h : Harness, target : String) -> String {
-  h.send("GET", target).stub.unwrap_or("none")
+  matched_id(h.send("GET", target)).unwrap_or("none")
 }
 
 ///|

@@ -58,8 +58,9 @@ test "match index: lookups with 100 and 10,000 Stubs" (b : @bench.T) {
     // Both engines answer every request from its own Stub.
     for request in requests {
       let outcome = twins.send(request)
-      guard outcome.stub is Some(id) && id == "item-\{request.target[7:]}" else {
-        fail("\{request.target} -> \{@debug.to_string(outcome.stub)}")
+      guard matched_id(outcome) is Some(id) &&
+        id == "item-\{request.target[7:]}" else {
+        fail("\{request.target} -> \{@debug.to_string(matched_id(outcome))}")
       }
     }
     b.bench(name="indexed, \{count} Stubs", () => {

@@ -40,6 +40,16 @@ fn harness(
 }
 
 ///|
+/// The ID of the Stub that matched in `outcome`, from a Definition file or
+/// an Ephemeral Stub, if any.
+fn matched_id(outcome : @engine.Outcome) -> String? {
+  match outcome.matched {
+    Some(FromFile(id)) | Some(Ephemeral(id)) => Some(id)
+    None => None
+  }
+}
+
+///|
 /// Sends a request, by default without a Session, and returns the
 /// engine's outcome.
 fn Harness::send(

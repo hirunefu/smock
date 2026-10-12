@@ -24,7 +24,7 @@ fn index_winners(
       body: b"",
     })
     let shown_headers = headers.map(h => " [\{h.0}: \{h.1}]").join("")
-    let winner = outcome.stub.unwrap_or("none")
+    let winner = matched_id(outcome).unwrap_or("none")
     lines.push("\{meth} \{target}\{shown_headers} -> \{winner}")
   }
   lines.join("\n")
@@ -289,7 +289,8 @@ test "each snapshot is built with its own match index, and an engine keeps the o
       version: "HTTP/1.1",
       headers: [],
       body: b"",
-    }).stub
+    })
+    |> matched_id
   }
   debug_inspect(
     [

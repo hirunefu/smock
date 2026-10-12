@@ -407,7 +407,7 @@ test "an absolute-form target is matched on its path, which is / when it has non
     ]
     .map(target => {
       let outcome = h.send("GET", target)
-      "\{target} -> \{@debug.to_string(outcome.stub)}"
+      "\{target} -> \{@debug.to_string(matched_id(outcome))}"
     })
     .join("\n"),
     content=(

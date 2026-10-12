@@ -77,7 +77,7 @@ test "any other request gets the no-match response" {
     requests
     .map(r => {
       let outcome = h.send(r.0, r.1)
-      "\{r.0} \{r.1} -> \{outcome.plan.status} stub=\{@debug.to_string(outcome.stub)}"
+      "\{r.0} \{r.1} -> \{outcome.plan.status} stub=\{@debug.to_string(matched_id(outcome))}"
     })
     .join("\n"),
     content=(
