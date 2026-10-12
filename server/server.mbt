@@ -1,15 +1,26 @@
 ///|
 /// Runs `smock serve`: loads the definitions and the TLS certificate, if
-/// any, listens on the plain port and, with a certificate, on the TLS port,
-/// and serves until the process is stopped. Both ports serve the same Mocks.
+/// any, listens on the plain port, on the admin port and, with a
+/// certificate, on the TLS port, and serves until the process is stopped.
+/// The plain and TLS ports serve the same Mocks; the admin port serves the
+/// Admin API.
 ///
-/// Returns the exit status when it stops by itself: 1 when the definition
-/// set is invalid, the TLS certificate cannot be loaded or a port cannot be
-/// listened on. Every problem is logged first.
+/// Returns the exit status when it stops by itself: 1 when Admin API
+/// authentication is on and no token is set, the definition set is invalid,
+/// the TLS certificate cannot be loaded or a port cannot be listened on.
+/// Every problem is logged first.
 pub async fn serve(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
 ) -> Int {
+  let token = if settings.admin_auth {
+    match read_admin_token(settings, logger) {
+      Some(token) => Some(token)
+      None => return 1
+    }
+  } else {
+    None
+  }
   let snapshot = match
     @defdir.load(settings.dir, body_file_dir=settings.body_file_dir) {
     Ok(snapshot) => snapshot
@@ -50,6 +61,17 @@ pub async fn serve(
   logger.info("random seed", fields={
     "seed": Json::number(seed.to_double(), repr=seed.to_string()),
   })
+  let build = @buildinfo.current()
+  let metrics = @metrics.Registry()
+  build.register_metric(metrics)
+  let admin = Admin::new(
+    engine,
+    build,
+    metrics~,
+    token~,
+    replica=replica_name(),
+    replicas=settings.replicas,
+  )
   guard listen(logger, "plain", settings.port) is Some(plain) else { return 1 }
   defer plain.close()
   let tls_listener = match tls {
@@ -62,6 +84,10 @@ pub async fn serve(
     }
   }
   defer (if tls_listener is Some(listener) { listener.close() })
+  guard listen(logger, "admin", settings.admin_port) is Some(admin_listener) else {
+    return 1
+  }
+  defer admin_listener.close()
   logger.info("listening", fields={
     "listener": "plain",
     "address": Json::string("0.0.0.0:\{plain.addr.port()}"),
@@ -74,10 +100,14 @@ pub async fn serve(
       "key_file": Json::string(files.key_file),
     })
   }
+  logger.info("listening", fields={
+    "listener": "admin",
+    "address": Json::string("0.0.0.0:\{admin_listener.addr.port()}"),
+  })
   @async.with_task_group(group => {
     group.spawn_bg(() => {
       accept_loop(group, plain, conn => {
-        serve_connection(conn, engine, rand, settings)
+        serve_mocks(conn, engine, rand, settings)
       })
     })
     if tls is Some((_, config)) && tls_listener is Some(listener) {
@@ -89,11 +119,21 @@ pub async fn serve(
             TlsStream::accept(conn, config)
           })
           guard stream is Some(Some(stream)) else { return }
-          serve_connection(stream, engine, rand, settings)
+          serve_mocks(stream, engine, rand, settings)
           stream.shutdown()
         })
       })
     }
+    group.spawn_bg(() => {
+      accept_loop(group, admin_listener, conn => {
+        serve_connection(
+          conn,
+          settings,
+          respond=request => { bytes: admin.respond(request), close: false, },
+          reject=status => admin.reject(status),
+        )
+      })
+    })
   })
   // The listeners serve until the process is stopped.
   0
@@ -147,6 +187,57 @@ async fn[X] accept_loop(
 }
 
 ///|
+/// What the connection loop does with one request: it writes `bytes`, then
+/// keeps the connection open if the request asks for that, unless `close`.
+priv struct Outgoing {
+  bytes : BytesView
+  /// Whether the connection closes after `bytes`, whatever the request
+  /// asks.
+  close : Bool
+}
+
+///|
+/// Serves the requests for the Mocks that arrive on one connection of the
+/// plain or the TLS port.
+///
+/// The engine's plan for a request may hold back the response by a delay:
+/// the status line is written once the delay is over, and meanwhile other
+/// connections are served as usual. A connection Fault in the plan ends the
+/// connection instead of the response, or part of the way through it.
+async fn[S : @io.Reader + @io.Writer] serve_mocks(
+  stream : S,
+  engine : @engine.Engine,
+  rand : @prng.Generator,
+  settings : @settings.ServeSettings,
+) -> Unit {
+  serve_connection(
+    stream,
+    settings,
+    respond=request => {
+      let plan = engine.handle(
+          to_engine_request(request),
+          // Sessions come with the "Sessions and Ephemeral Stubs" ticket.
+          session=None,
+          now=@async.now(),
+          rand~,
+        ).plan
+      if plan.delay_ms > 0 {
+        @async.sleep(plan.delay_ms)
+      }
+      match plan.fault {
+        None => { bytes: encode(plan, request), close: false, }
+        // Closing the connection sends a FIN. The engine does not plan a
+        // reset yet, since Definitions reject it.
+        Some(Close) | Some(Reset) => { bytes: b"", close: true, }
+        Some(Partial) =>
+          { bytes: cut_short(encode(plan, request)), close: true, }
+      }
+    },
+    reject=status => @http1.encode_response(status, [], b"", close=true),
+  )
+}
+
+///|
 /// Serves the requests that arrive on one connection, in turn, until the
 /// client closes it, a request asks to close it, a request cannot be parsed
 /// or is over a limit, or a timeout runs out:
@@ -156,19 +247,22 @@ async fn[X] accept_loop(
 /// - the read timeout, while a request arrives: from its first byte until
 ///   all of it, body included, has arrived.
 ///
-/// A response the engine plans with a delay is written once the delay is
-/// over. Meanwhile the connection reads nothing, and other connections are
-/// served as usual. A connection Fault ends the connection instead of the
-/// response, or part of the way through it.
-///
 /// It reads and writes only through `stream`, so the same loop serves any
 /// byte stream: a TCP connection, or a TLS session on top of one. Nothing is
 /// logged per request.
+///
+/// - `respond` gives the reply to each request: the encoded response, or
+///   part of it, and whether the connection then closes. While it waits,
+///   the connection reads nothing, and other connections are served as
+///   usual.
+/// - `reject` gives the encoded response, with `Connection: close`, to
+///   bytes that are not a valid request or are over a limit, with the status
+///   the codec chose.
 async fn[S : @io.Reader + @io.Writer] serve_connection(
   stream : S,
-  engine : @engine.Engine,
-  rand : @prng.Generator,
   settings : @settings.ServeSettings,
+  respond~ : async (@http1.Request) -> Outgoing,
+  reject~ : (Int) -> Bytes,
 ) -> Unit {
   let parser = @http1.Parser(
     header_size_limit=settings.header_size_limit,
@@ -184,29 +278,11 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
   for ;; {
     match parser.next() {
       Complete(request) => {
-        let outcome = engine.handle(
-          to_engine_request(request),
-          // Sessions come with the "Sessions and Ephemeral Stubs" ticket.
-          session=None,
-          now=@async.now(),
-          rand~,
-        )
-        let plan = outcome.plan
-        if plan.delay_ms > 0 {
-          @async.sleep(plan.delay_ms)
+        let reply = respond(request)
+        if reply.bytes.length() > 0 {
+          @io.Writer::write(stream, reply.bytes)
         }
-        match plan.fault {
-          None => ()
-          // Returning closes the connection, which sends a FIN. The engine
-          // does not plan a reset yet, since Definitions reject it.
-          Some(Close) | Some(Reset) => return
-          Some(Partial) => {
-            @io.Writer::write(stream, cut_short(encode(plan, request)))
-            return
-          }
-        }
-        @io.Writer::write(stream, encode(plan, request))
-        if !request.keep_alive {
+        if reply.close || !request.keep_alive {
           return
         }
         idle_deadline = @async.now() + idle_timeout
@@ -236,10 +312,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
         parser.feed(buf.unsafe_reinterpret_as_bytes()[:n])
       }
       Invalid(status~) => {
-        @io.Writer::write(
-          stream,
-          @http1.encode_response(status, [], b"", close=true),
-        )
+        @io.Writer::write(stream, reject(status))
         return
       }
     }

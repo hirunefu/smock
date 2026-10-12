@@ -1,8 +1,10 @@
 import {
   "smock/http1",
+  "smock/smock/buildinfo",
   "smock/smock/defdir",
   "smock/smock/engine",
   "smock/smock/log",
+  "smock/smock/metrics",
   "smock/smock/openssl",
   "smock/smock/prng",
   "smock/smock/settings",
@@ -10,8 +12,11 @@ import {
   "moonbitlang/async/fs",
   "moonbitlang/async/io",
   "moonbitlang/async/os_error",
+  "moonbitlang/async/process",
   "moonbitlang/async/socket",
   "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
   "moonbitlang/core/random",
 }
 

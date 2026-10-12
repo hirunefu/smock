@@ -81,10 +81,10 @@ Stub without `request` matches every request of its Mock.
 | Condition | A request meets it when |
 |---|---|
 | `method` | its method is exactly this, case and all, such as `GET`. |
-| `path` | its path, percent-decoded and without the query, is exactly this. `/users/a%20b` meets `"/users/a b"`. |
-| `query` | each listed parameter is present, and one of its values, decoded, is exactly the given value. Parameters that are not listed are ignored. |
-| `headers` | each listed header is present, its name compared case-insensitively, and one of its values is exactly the given value. Headers that are not listed are ignored. |
-| `body` | a string: the body is exactly this text in UTF-8. `{ "json": … }`: the body parses as JSON and contains the given value. |
+| `path` | its path, percent-decoded and without the query, is exactly this. `/users/a%20b` meets `"/users/a b"`. `{ "pattern": … }`: the pattern matches the whole path. |
+| `query` | each listed parameter is present, and one of its values, decoded, is exactly the given value, or matches the given `{ "pattern": … }` as a whole. Parameters that are not listed are ignored. |
+| `headers` | each listed header is present, its name compared case-insensitively, and one of its values is exactly the given value, or matches the given `{ "pattern": … }` as a whole. Headers that are not listed are ignored. |
+| `body` | a string: the body is exactly this text in UTF-8. `{ "pattern": … }`: the pattern matches the whole body. `{ "json": … }`: the body parses as JSON and contains the given value. |
 
 Query parameters are decoded as HTML forms encode them: `%20` and `+` both
 stand for a space, so `?q=a+b` meets `"query": { "q": "a b" }`. A parameter
@@ -114,6 +114,58 @@ A body that does not parse as JSON never meets a `json` condition.
   },
   "response": { "status": 201 }
 }
+```
+
+### Pattern conditions
+
+The path, a query parameter, a header and the body can each be given as a
+pattern instead of an exact value, in RE2 syntax:
+
+```json
+{
+  "id": "get-user",
+  "mock": "users",
+  "request": {
+    "method": "GET",
+    "path": { "pattern": "/users/[0-9]+" },
+    "query": { "fields": { "pattern": "[a-z]+(,[a-z]+)*" } },
+    "headers": { "Authorization": { "pattern": "Bearer [A-Za-z0-9._-]+" } }
+  },
+  "response": { "status": 200 }
+}
+```
+
+- A pattern must match the whole value, not only part of it, so it needs
+  no `^` or `$`: `/users/[0-9]+` meets `/users/42` but not
+  `/users/42/orders` or `/api/users/42`.
+- It is matched against the same value as an exact condition: the
+  percent-decoded path without the query, the decoded values of a query
+  parameter, the values of a header, and the body. When a parameter or a
+  header is repeated, any one of its values may match.
+- The body is matched as text in UTF-8. `.` does not match a line break
+  unless the pattern turns on the `s` flag, as in `(?s)BEGIN.*END`. A body
+  that is not valid UTF-8 never meets a pattern, not even `(?s).*`.
+- Exact, pattern and `json` conditions can be mixed on one Stub, which then
+  matches only when all of them hold. Stubs with patterns are tried in the
+  same order as any other Stub.
+
+smock supports a subset of RE2 syntax, which the
+[RE2 module's README](../re2/README.mbt.md#syntax-in-r1) lists: literals,
+`.`, bracket classes, `\d`, `\w` and `\s`, anchors and word boundaries,
+groups, alternation, repetitions (counts up to 1000) and the flags `i`, `s`
+and `m`. Matching takes time linear in the length of the value, whatever
+the pattern, so no pattern can stall smock.
+
+Patterns are compiled once, when smock loads the Definition files. A
+pattern that does not compile, or that uses RE2 syntax outside the subset,
+such as the Unicode class `\p{Greek}`, makes the definition set invalid.
+`smock check` reports it, and `smock serve` does not start, with the JSON
+Pointer of the `pattern` field and the position of the problem in the
+pattern, counted in characters from 0:
+
+```console
+users.json: /stubs/0/request/path/pattern: is not a valid pattern: position 7: missing closing )
+users.json: /stubs/1/request/headers/X-Region/pattern: is not a valid pattern: position 0: Unicode class \p{Greek} is not supported in R1
 ```
 
 ### Which Stub answers
@@ -274,7 +326,8 @@ span the Mocks and files of the set: Mock names and Stub IDs are unique, no
 two Mocks claim the same Host after normalisation, at most one Mock is
 marked `default`, and every Stub names a Mock that some file declares. A
 duplicate is reported where it occurs the second time, in file-name order,
-and the message names the first.
+and the message names the first. It also compiles every
+[pattern](#pattern-conditions), which the Schema accepts as any string.
 
 In CI, run it as a step that fails the build:
 

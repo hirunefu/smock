@@ -117,43 +117,43 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|not JSON: smock serve: invalid value "" for --tls-cert-file (SMOCK_TLS_CERT_FILE): must not be empty
         #|---
         #|status 1
-        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/missing.pem","key_file":"*/rsa-key.pem","error":"cannot read the certificate file: no such file"}
         #|---
         #|status 1
-        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/rsa-chain.pem","key_file":"*/missing.pem","error":"cannot read the key file: no such file"}
         #|---
         #|status 1
-        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/secret","key_file":"*/rsa-key.pem","error":"cannot read the certificate file: is a directory"}
         #|---
         #|status 1
-        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/notes.txt","key_file":"*/rsa-key.pem","error":"certificate file: no PEM certificate found"}
         #|---
         #|status 1
-        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/rsa-key.pem","key_file":"*/rsa-key.pem","error":"certificate file: no PEM certificate found"}
         #|---
         #|status 1
-        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/rsa-chain.pem","key_file":"*/notes.txt","error":"key file: no PEM private key found"}
         #|---
         #|status 1
-        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/rsa-chain.pem","key_file":"*/rsa-chain.pem","error":"key file: no PEM private key found"}
         #|---
         #|status 1
-        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/rsa-chain.pem","key_file":"*/other-key.pem","error":"the private key does not match the leaf certificate"}
         #|---
         #|status 1
-        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/rsa-chain.pem","key_file":"*/ecdsa-key.pem","error":"the private key does not match the leaf certificate"}
         #|---
         #|status 1
-        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/ecdsa-chain.pem","key_file":"*/rsa-key.pem","error":"the private key does not match the leaf certificate"}
       ),
     )
@@ -180,10 +180,11 @@ async test "the TLS settings can come from SMOCK_ environment variables, and the
     inspect(
       entries(stopped.logs),
       content=(
-        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
         #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","cert_file":"*/ecdsa-chain.pem","key_file":"*/ecdsa-key.pem"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
       ),
     )
   })

@@ -1,5 +1,6 @@
 import {
   "smock/smock/log",
+  "smock/smock/metrics",
 }
 
 rule(name: "build_info", command: "sh $input > $output")

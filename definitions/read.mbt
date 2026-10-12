@@ -653,11 +653,14 @@ fn File::read_conditions(
         }
       "path" =>
         match value {
-          String(value) if value.has_prefix("/") => path = Some(value)
+          String(value) if value.has_prefix("/") =>
+            path = Some(ValueCondition::Exact(value))
           String(_) => self.error(field, "must start with /")
-          Object(_) =>
-            self.error(field, "pattern conditions are not supported yet")
-          _ => self.error(field, "must be a string")
+          Object(condition) =>
+            path = self
+              .read_pattern(field, condition)
+              .map(pattern => ValueCondition::Pattern(pattern))
+          _ => self.error(field, "must be a string or an object")
         }
       "query" => query = self.read_value_conditions(field, value)
       "headers" =>
@@ -679,7 +682,7 @@ fn File::read_conditions(
 
 ///|
 /// Reads a condition on the request body: an exact text, or an object
-/// holding a `json` condition.
+/// holding a `json` condition or a pattern.
 fn File::read_body_condition(
   self : File,
   pointer : String,
@@ -695,33 +698,36 @@ fn File::read_body_condition(
   }
   let mut out = None
   for key, value in condition {
+    let field = child(pointer, key)
     match key {
       "json" => out = Some(Json(value))
-      "pattern" => ()
-      _ => self.unknown_field(child(pointer, key))
+      "pattern" =>
+        if self.string(field, value) is Some(source) &&
+          self.compile(field, source) is Some(pattern) {
+          out = Some(BodyCondition::Pattern(pattern))
+        }
+      _ => self.unknown_field(field)
     }
   }
   match (condition.contains("json"), condition.contains("pattern")) {
     (true, true) =>
       self.error(pointer, "needs \"json\" or \"pattern\", not both")
-    (false, true) =>
-      self.error(pointer, "pattern conditions are not supported yet")
     (false, false) => self.error(pointer, "needs \"json\" or \"pattern\"")
-    (true, false) => ()
+    _ => ()
   }
   out
 }
 
 ///|
 /// Reads conditions on named values, such as query parameters: an object
-/// whose members are names and exact values. With `header_names`, each
-/// name must be a valid header name.
+/// whose members are names and exact values or pattern conditions. With
+/// `header_names`, each name must be a valid header name.
 fn File::read_value_conditions(
   self : File,
   pointer : String,
   json : Json,
   header_names? : Bool = false,
-) -> Array[(String, String)] {
+) -> Array[(String, ValueCondition)] {
   let out = []
   guard json is Object(conditions) else {
     self.error(pointer, "must be an object")
@@ -734,12 +740,53 @@ fn File::read_value_conditions(
       continue
     }
     match value {
-      String(value) => out.push((name, value))
-      Object(_) => self.error(field, "pattern conditions are not supported yet")
-      _ => self.error(field, "must be a string")
+      String(value) => out.push((name, ValueCondition::Exact(value)))
+      Object(condition) =>
+        if self.read_pattern(field, condition) is Some(pattern) {
+          out.push((name, ValueCondition::Pattern(pattern)))
+        }
+      _ => self.error(field, "must be a string or an object")
     }
   }
   out
+}
+
+///|
+/// Reads a pattern condition, the object at `pointer`, and compiles its
+/// pattern. It has none when the object is malformed or the pattern does
+/// not compile.
+fn File::read_pattern(
+  self : File,
+  pointer : String,
+  condition : Map[String, Json],
+) -> Pattern? {
+  let mut out = None
+  for key, value in condition {
+    let field = child(pointer, key)
+    match key {
+      "pattern" =>
+        if self.string(field, value) is Some(source) {
+          out = self.compile(field, source)
+        }
+      _ => self.unknown_field(field)
+    }
+  }
+  self.require(condition, pointer, "pattern")
+  out
+}
+
+///|
+/// Compiles the pattern `source`, the value at `pointer`, or reports why
+/// it does not compile, with the position of the problem in the pattern.
+fn File::compile(self : File, pointer : String, source : String) -> Pattern? {
+  try @re2.compile(source) catch {
+    error => {
+      self.error(pointer, "is not a valid pattern: \{error}")
+      None
+    }
+  } noraise {
+    regex => Some({ source, regex, })
+  }
 }
 
 ///|
