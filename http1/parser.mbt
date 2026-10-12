@@ -9,6 +9,13 @@
 /// extensions and trailer fields are accepted and ignored. An empty line
 /// before a request line is ignored (RFC 9112, section 2.2).
 ///
+/// It decides what a server must decide from the bytes alone: whether the
+/// connection stays open after each request (`Request::keep_alive`), when
+/// to answer `100 Continue` (`Continue`), and whether a request is over the
+/// limits on header size, header count and body size that `Parser::Parser`
+/// takes. Timeouts are the caller's; `Parser::in_request` tells which one
+/// runs.
+///
 /// ```mbt check
 /// test {
 ///   let parser = @http1.Parser()
@@ -27,12 +34,20 @@ pub struct Parser {
   /// the head they leave it, so the scan resumes there.
   priv mut scanned : Int
   priv mut scan : HeadScan
-  /// The head of the next request and its length in bytes, once parsed.
-  priv mut head : (Head, Int)?
+  /// How many header fields the head scan has seen begin.
+  priv mut fields : Int
+  /// The head of the next request, once parsed. Its bytes are consumed.
+  priv mut head : Head?
   /// How far the chunked body of the next request is decoded.
   priv chunks : Chunks
   /// The status of the error that stopped the parser.
   priv mut invalid : Int?
+  /// The most bytes a request head may take.
+  priv header_size_limit : Int
+  /// The most header fields a request may have.
+  priv header_count_limit : Int
+  /// The longest body a request may have, in bytes.
+  priv body_limit : Int
 }
 
 ///|
@@ -41,6 +56,13 @@ pub(all) enum Parsed {
   /// A complete request. Its bytes are consumed; the next call looks at the
   /// bytes after it.
   Complete(Request)
+  /// The head of the next request asks whether to send its body
+  /// (`Expect: 100-continue`), and the body is within the body limit: write
+  /// a `100 Continue` response, such as `encode_response(100, [], b"")`,
+  /// then call `next` again. Only HTTP/1.1 requests with a body ask, and
+  /// each asks once, right after its head, whether or not its body has
+  /// arrived (RFC 9110, section 10.1.1).
+  Continue
   /// The next request is not complete yet: feed more bytes.
   NeedMore
   /// The bytes are not a valid request. Answer with `status` and close the
@@ -51,7 +73,8 @@ pub(all) enum Parsed {
   ///   framing, both Content-Length and Transfer-Encoding, Content-Length
   ///   values that disagree or are not numbers, or Transfer-Encoding in an
   ///   HTTP/1.0 request;
-  /// - 413 for a body too large to hold;
+  /// - 413 for a body over the body limit;
+  /// - 431 for a head over the header size limit or the header count limit;
   /// - 501 for a transfer coding other than `chunked`;
   /// - 505 for an HTTP major version other than 1.
   ///
@@ -94,16 +117,47 @@ pub(all) struct Request {
 
 ///|
 /// Creates a parser with nothing fed yet.
-pub fn Parser::Parser() -> Parser {
+///
+/// - `header_size_limit` is the most bytes a request head may take: its
+///   request line, its header fields and the empty line that ends them.
+///   Empty lines before the request line do not count. A head that grows
+///   past it gets 431 at once.
+/// - `header_count_limit` is the most header fields a request may have. A
+///   request gets 431 as soon as a field over it begins.
+/// - `body_limit` is the longest body a request may have, in bytes, counted
+///   after chunked decoding: chunk sizes, chunk extensions and trailer
+///   fields do not count. A declared Content-Length over it gets 413 before
+///   any of the body is read, and a chunked body gets 413 as soon as a chunk
+///   size would take it past the limit, before that chunk's data. The parser
+///   keeps the body and not the framing around it, so neither the framing
+///   nor the body can make it hold much more than the body limit.
+///
+/// The defaults are smock's: 16 KiB, 100 header fields and 10 MiB.
+pub fn Parser::Parser(
+  header_size_limit? : Int = 16 * 1024,
+  header_count_limit? : Int = 100,
+  body_limit? : Int = 10 * 1024 * 1024,
+) -> Parser {
+  let body_limit = if body_limit < 0 {
+    0
+  } else if body_limit >= max_length {
+    max_length - 1
+  } else {
+    body_limit
+  }
   {
     buf: FixedArray::make(4096, b'\x00'),
     start: 0,
     end: 0,
     scanned: 0,
     scan: Method(0),
+    fields: 0,
     head: None,
-    chunks: Chunks(),
+    chunks: Chunks(limit=body_limit),
     invalid: None,
+    header_size_limit,
+    header_count_limit,
+    body_limit,
   }
 }
 
@@ -112,9 +166,10 @@ pub fn Parser::Parser() -> Parser {
 pub fn Parser::feed(self : Parser, data : BytesView) -> Unit {
   let used = self.end - self.start
   if self.buf.length() - self.end < data.length() {
+    let needed = used + data.length()
     let mut capacity = self.buf.length()
-    while capacity < used + data.length() {
-      capacity *= 2
+    while capacity < needed {
+      capacity = if capacity >= 0x40000000 { needed } else { capacity * 2 }
     }
     let target = if capacity == self.buf.length() {
       self.buf
@@ -131,26 +186,45 @@ pub fn Parser::feed(self : Parser, data : BytesView) -> Unit {
 }
 
 ///|
+/// Whether part of a request has been fed and not taken out by `next` yet.
+/// A server uses it to tell a request that is still arriving (the read
+/// timeout runs) from a connection waiting for its next request (the idle
+/// timeout runs).
+///
+/// Empty lines before a request line are not part of a request once `next`
+/// has skipped them, so ask after `next` returns `NeedMore`.
+pub fn Parser::in_request(self : Parser) -> Bool {
+  self.head is Some(_) || self.end > self.start
+}
+
+///|
 /// Takes the next request out of the bytes fed so far.
 pub fn Parser::next(self : Parser) -> Parsed {
   if self.invalid is Some(status) {
     return Invalid(status~)
   }
-  let (head, head_length) = match self.head {
-    Some(parsed) => parsed
+  let head = match self.head {
+    Some(head) => head
     None => {
       let head_end = match self.scan_head() {
-        Some(head_end) => head_end
-        None if self.scan is Broken => {
-          self.invalid = Some(400)
-          return Invalid(status=400)
+        Ended(head_end) => head_end
+        Partial => return NeedMore
+        Rejected(status) => {
+          self.invalid = Some(status)
+          return Invalid(status~)
         }
-        None => return NeedMore
       }
-      match parse_head(self.buf, self.start, head_end) {
+      match parse_head(self.buf, self.start, head_end, self.body_limit) {
         Ok(head) => {
-          self.head = Some((head, head_end - self.start))
-          (head, head_end - self.start)
+          self.head = Some(head)
+          self.start = head_end
+          self.scanned = 0
+          self.scan = Method(0)
+          self.fields = 0
+          if head.expects_continue {
+            return Continue
+          }
+          head
         }
         Err(status) => {
           self.invalid = Some(status)
@@ -159,22 +233,25 @@ pub fn Parser::next(self : Parser) -> Parsed {
       }
     }
   }
-  let body_start = self.start + head_length
   let (body, consumed) = match head.framing {
     Length(length) => {
-      let body_end = body_start + length
+      let body_end = self.start + length
       if self.end < body_end {
         return NeedMore
       }
       (
-        self.buf.unsafe_reinterpret_as_bytes()[body_start:body_end].to_owned(),
-        head_length + length,
+        self.buf.unsafe_reinterpret_as_bytes()[self.start:body_end].to_owned(),
+        length,
       )
     }
     Chunked =>
-      match self.chunks.decode(self.buf, body_start, self.end) {
-        Ok(Some(length)) => (self.chunks.take_body(), head_length + length)
-        Ok(None) => return NeedMore
+      match self.chunks.decode(self.buf, self.start, self.end) {
+        Ok(Some(length)) => (self.chunks.take_body(), length)
+        Ok(None) => {
+          // The decoder holds what it needs of these bytes.
+          self.start = self.end
+          return NeedMore
+        }
         Err(status) => {
           self.invalid = Some(status)
           return Invalid(status~)
@@ -182,8 +259,6 @@ pub fn Parser::next(self : Parser) -> Parsed {
       }
   }
   self.head = None
-  self.scanned = 0
-  self.scan = Method(0)
   self.start += consumed
   Complete({
     meth: head.meth,
@@ -205,6 +280,8 @@ priv struct Head {
   keep_alive : Bool
   /// How the body that follows the head is framed.
   framing : Framing
+  /// Whether to answer `100 Continue` before the body.
+  expects_continue : Bool
 }
 
 ///|
@@ -217,20 +294,35 @@ priv enum Framing {
 }
 
 ///|
-/// Scans the head of the next request, from where the last scan stopped,
-/// and returns the index just after the empty line that ends it, or `None`
-/// while that line has not arrived or once `self.scan` is `Broken`.
+/// How far a scan of the head of the next request got.
+priv enum HeadEnd {
+  /// The head ends just before this index.
+  Ended(Int)
+  /// The end of the head has not arrived.
+  Partial
+  /// The head gets this error status.
+  Rejected(Int)
+}
+
+///|
+/// Scans the head of the next request, from where the last scan stopped.
 ///
 /// Each byte is checked as it arrives, so bytes that cannot be part of a
-/// request head are rejected at once instead of waiting for an empty line
-/// that may never come.
-fn Parser::scan_head(self : Parser) -> Int? {
+/// request head, and heads over the limits, are rejected at once instead of
+/// waiting for an empty line that may never come.
+fn Parser::scan_head(self : Parser) -> HeadEnd {
   while self.start + self.scanned < self.end {
-    self.scan = self.scan.after(self.buf[self.start + self.scanned])
+    let before = self.scan
+    self.scan = before.after(self.buf[self.start + self.scanned])
     self.scanned += 1
+    if (before, self.scan) is (Fields(FieldStart), Fields(FieldName)) {
+      self.fields += 1
+    }
     match self.scan {
-      Fields(Ended) => return Some(self.start + self.scanned)
-      Broken => return None
+      Broken => return Rejected(400)
+      _ if self.scanned > self.header_size_limit ||
+        self.fields > self.header_count_limit => return Rejected(431)
+      Fields(Ended) => return Ended(self.start + self.scanned)
       EmptyLine => {
         // An empty line before the request line is consumed and ignored.
         self.start += self.scanned
@@ -240,7 +332,7 @@ fn Parser::scan_head(self : Parser) -> Int? {
       _ => ()
     }
   }
-  None
+  Partial
 }
 
 ///|
@@ -385,6 +477,7 @@ fn parse_head(
   buf : FixedArray[Byte],
   start : Int,
   end : Int,
+  body_limit : Int,
 ) -> Result[Head, Int] {
   let lines = split_lines(buf, start, end)
   let (meth, target, version) = match parse_request_line(buf, lines[0]) {
@@ -395,6 +488,7 @@ fn parse_head(
   let content_lengths = []
   let mut close = false
   let mut keep_alive = false
+  let mut expect_continue = false
   let mut hosts = 0
   let transfer_encodings = []
   for line in lines[1:] {
@@ -415,6 +509,12 @@ fn parse_head(
           _ => ()
         }
       }
+    } else if name == "expect" {
+      for expectation in @utf8.decode_lossy(header.value).split(",") {
+        if expectation.trim(char_set=" \t").to_lower() == "100-continue" {
+          expect_continue = true
+        }
+      }
     }
   }
   // An HTTP/1.1 request names exactly one Host, and no request names more
@@ -423,7 +523,7 @@ fn parse_head(
     return Err(400)
   }
   let framing = if transfer_encodings.is_empty() {
-    match content_length(content_lengths) {
+    match content_length(content_lengths, body_limit) {
       Ok(length) => Length(length)
       Err(status) => return Err(status)
     }
@@ -450,6 +550,11 @@ fn parse_head(
     headers,
     keep_alive: !close && (version is Http11 || keep_alive),
     framing,
+    // An HTTP/1.0 client cannot ask for 100 Continue, and there is nothing
+    // to confirm without a body (RFC 9110, section 10.1.1).
+    expects_continue: expect_continue &&
+    version is Http11 &&
+    !(framing is Length(0)),
   })
 }
 
@@ -482,8 +587,8 @@ fn check_transfer_codings(values : Array[Bytes]) -> Result[Unit, Int] {
 /// Each field holds one or more comma-separated lengths, each one or more
 /// digits, or the request gets 400. Lengths that disagree get 400 as well;
 /// the same length repeated is not a conflict (RFC 9110, section 8.6). A
-/// length too large to hold gets 413.
-fn content_length(values : Array[Bytes]) -> Result[Int, Int] {
+/// length over `limit` gets 413.
+fn content_length(values : Array[Bytes], limit : Int) -> Result[Int, Int] {
   // Lengths are compared as digits without leading zeros, so that lengths
   // too large to hold still compare.
   let mut digits : String? = None
@@ -503,7 +608,7 @@ fn content_length(values : Array[Bytes]) -> Result[Int, Int] {
   let mut length = 0L
   for c in digits.unwrap_or("") {
     length = length * 10L + (c.to_int() - '0'.to_int()).to_int64()
-    if length >= max_length.to_int64() {
+    if length > limit.to_int64() {
       return Err(413)
     }
   }

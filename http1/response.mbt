@@ -1,18 +1,44 @@
 ///|
 /// Encodes an HTTP/1.1 response: the status line, `headers` in the order
-/// given, a Content-Length that `encode_response` sets from `body`, and then
-/// `body`.
+/// given, a Connection field when the connection decision needs one, a
+/// Content-Length that `encode_response` sets from `body`, and then `body`.
 ///
-/// Responses with status 204 or 304 get neither Content-Length nor a body
-/// (RFC 9110, sections 8.6 and 15.4.5).
+/// - `request` is the request the response answers, when one was parsed.
+///   The connection closes after the response when `close` is true or when
+///   `request` does not keep it open (`Request::keep_alive`); the response
+///   then says `Connection: close`. A response to an HTTP/1.0 request that
+///   keeps the connection open says `Connection: keep-alive`, since HTTP/1.0
+///   closes it by default.
+/// - A response to HEAD carries the Content-Length that `body` has, but not
+///   `body` (RFC 9110, section 9.3.2).
+/// - Responses with status 1xx, 204 or 304 get neither Content-Length nor a
+///   body (RFC 9110, sections 8.6, 15.2, 15.3.5 and 15.4.5).
+///
+/// The body is always framed by Content-Length, never chunked, so a response
+/// suits HTTP/1.0 and HTTP/1.1 clients alike.
 ///
 /// The caller passes valid field names (tokens) and values (no CR, LF or
-/// other control characters except tab), and does not pass Content-Length
-/// or Transfer-Encoding itself. Values are written as UTF-8.
+/// other control characters except tab), and does not pass Connection,
+/// Content-Length or Transfer-Encoding itself. Values are written as UTF-8.
+///
+/// ```mbt check
+/// test {
+///   let parser = @http1.Parser()
+///   parser.feed(b"HEAD /a HTTP/1.0\r\n\r\n")
+///   guard parser.next() is Complete(request) else { fail("no request") }
+///   let response = @http1.encode_response(200, [], b"hello", request~)
+///   inspect(
+///     @utf8.decode_lossy(response),
+///     content="HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 5\r\n\r\n",
+///   )
+/// }
+/// ```
 pub fn encode_response(
   status : Int,
   headers : ArrayView[(String, String)],
   body : BytesView,
+  request? : Request,
+  close? : Bool = false,
 ) -> Bytes {
   let out = @buffer.Buffer(size_hint=128 + body.length())
   out.write_string_utf8("HTTP/1.1 \{status} \{reason_phrase(status)}\r\n")
@@ -23,12 +49,19 @@ pub fn encode_response(
     out.write_string_utf8(value)
     out.write_bytes(b"\r\n")
   }
-  let has_body = !(status is (204 | 304))
-  if has_body {
+  match request {
+    _ if close => out.write_bytes(b"Connection: close\r\n")
+    Some({ keep_alive: false, .. }) => out.write_bytes(b"Connection: close\r\n")
+    Some({ version: Http10, .. }) =>
+      out.write_bytes(b"Connection: keep-alive\r\n")
+    _ => ()
+  }
+  let has_content = !(status is (100..=199 | 204 | 304))
+  if has_content {
     out.write_string_utf8("Content-Length: \{body.length()}\r\n")
   }
   out.write_bytes(b"\r\n")
-  if has_body {
+  if has_content && !(request is Some({ meth: "HEAD", .. })) {
     out.write_bytes(body)
   }
   out.to_bytes()

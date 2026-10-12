@@ -21,6 +21,7 @@ fn parse_all(chunks : Array[String]) -> String {
 ///|
 fn render(parsed : @http1.Parsed) -> String {
   match parsed {
+    Continue => "continue"
     NeedMore => "need more"
     Invalid(status~) => "invalid \{status}"
     Complete(req) => {

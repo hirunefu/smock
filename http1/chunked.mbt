@@ -1,16 +1,16 @@
 ///|
 /// The state of decoding one chunked body (RFC 9112, section 7.1), kept
 /// between calls so that each byte is looked at once however the body
-/// arrives.
+/// arrives, and so that the bytes looked at need not be kept.
 priv struct Chunks {
-  /// The next byte to look at, counted from the start of the body.
-  mut pos : Int
   mut state : ChunkState
   /// The size of the chunk being read, then the bytes of its data still to
   /// come.
   mut size : Int
   /// The data of the chunks decoded so far.
   mut body : @buffer.Buffer
+  /// The longest body allowed, below `max_length`.
+  limit : Int
 }
 
 ///|
@@ -52,15 +52,14 @@ priv enum ChunkState {
 }
 
 ///|
-fn Chunks::Chunks() -> Chunks {
-  { pos: 0, state: SizeStart, size: 0, body: @buffer.Buffer(), }
+fn Chunks::Chunks(limit~ : Int) -> Chunks {
+  { state: SizeStart, size: 0, body: @buffer.Buffer(), limit, }
 }
 
 ///|
 /// Hands over the decoded body and gets ready for the next one.
 fn Chunks::take_body(self : Chunks) -> Bytes {
   let body = self.body.to_bytes()
-  self.pos = 0
   self.state = SizeStart
   self.size = 0
   self.body = @buffer.Buffer()
@@ -68,18 +67,18 @@ fn Chunks::take_body(self : Chunks) -> Bytes {
 }
 
 ///|
-/// Decodes the chunked body that starts at `buf[start]`, from where the last
-/// call stopped up to `end`. Returns the length of the whole chunked body
-/// once its end has arrived, `None` while more is needed, or the status of
-/// the error that breaks its framing.
+/// Decodes `buf[start:end]`, the bytes of the chunked body that follow those
+/// the last calls decoded. Returns how many of them the body takes once its
+/// end has arrived, `None` when all of them are decoded and more are needed,
+/// or the status of the error that breaks its framing.
 fn Chunks::decode(
   self : Chunks,
   buf : FixedArray[Byte],
   start : Int,
   end : Int,
 ) -> Result[Int?, Int] {
-  while start + self.pos < end {
-    let i = start + self.pos
+  let mut i = start
+  while i < end {
     let c = buf[i]
     match self.state {
       SizeStart =>
@@ -154,7 +153,7 @@ fn Chunks::decode(
       ExtAfterQuoted => self.state = after_value(c)
       SizeLf => {
         guard c == b'\n' else { return Err(400) }
-        if self.size > max_length - self.body.length() - 1 {
+        if self.size > self.limit - self.body.length() {
           return Err(413)
         }
         self.state = if self.size == 0 { Trailer(FieldStart) } else { Data }
@@ -163,7 +162,7 @@ fn Chunks::decode(
         let take = if self.size < end - i { self.size } else { end - i }
         self.body.write_bytes(buf.unsafe_reinterpret_as_bytes()[i:i + take])
         self.size -= take
-        self.pos += take
+        i += take
         if self.size == 0 {
           self.state = DataCr
         }
@@ -181,7 +180,7 @@ fn Chunks::decode(
       // its fields are ignored.
       Trailer(section) =>
         match section.after(c) {
-          Ended => return Ok(Some(self.pos + 1))
+          Ended => return Ok(Some(i + 1 - start))
           Broken => return Err(400)
           section => self.state = Trailer(section)
         }
@@ -190,14 +189,14 @@ fn Chunks::decode(
     if self.state is Broken {
       return Err(400)
     }
-    self.pos += 1
+    i += 1
   }
   Ok(None)
 }
 
 ///|
-/// One more than the longest body the parser can hold; a request whose body
-/// would reach it gets 413.
+/// One more than the longest body limit the parser takes. Chunk sizes too
+/// large to hold saturate at it.
 let max_length : Int = 0x7fffffff
 
 ///|
