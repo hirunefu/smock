@@ -325,3 +325,43 @@ async test "an operation the document defines but this build does not implement 
     )
   })
 }
+
+///|
+async test "with more than one replica, every JSON response, errors included, warns that state is per replica" {
+  let (_, uname) = @process.collect_stdout("uname", ["-n"])
+  let host = uname.text().trim().to_owned()
+  let warnings = []
+  let _ = with_smock(["--port", "0"], env={ "SMOCK_REPLICAS": "3" }, smock => {
+    for call in each_kind(smock) {
+      let (meth, path, response) = call
+      conforms(meth, path, response)
+      guard response.json() is Object(body) && body.get("warnings") is Some(w) else {
+        fail("no warnings in \{response.body}")
+      }
+      warnings.push(w.stringify().replace_all(old=host, new="<host>"))
+    }
+  })
+  let distinct = Set::from_array(warnings)
+  inspect(
+    "\{warnings.length()} responses, \{distinct.length()} kind of warnings:\n\{distinct.iter().collect().join("\n")}",
+    content=(
+      #|6 responses, 1 kind of warnings:
+      #|[{"code":"per_replica_state","message":"This deployment runs 3 replicas (--replicas), and each one keeps its own Ephemeral Stubs and Journal. This response comes from <host> alone."}]
+    ),
+  )
+}
+
+///|
+async test "with one replica, the default, warnings are empty" {
+  let _ = with_smock(["--port", "0"], smock => {
+    let out = []
+    for call in each_kind(smock) {
+      let (_, _, response) = call
+      guard response.json() is Object(body) && body.get("warnings") is Some(w) else {
+        fail("no warnings in \{response.body}")
+      }
+      out.push(w.stringify())
+    }
+    inspect(out.join(" "), content="[] [] [] [] [] []")
+  })
+}
