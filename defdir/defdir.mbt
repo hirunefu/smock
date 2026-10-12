@@ -1,4 +1,26 @@
 ///|
+/// Reads the definitions directory `dir`, if any, and validates it into a
+/// snapshot, or returns every problem: those reading the directory, then
+/// those in the definition set. `smock serve` and `smock check` both load
+/// definitions this way, so a set that one accepts, the other accepts too.
+///
+/// Without a directory, the definition set is empty.
+pub async fn load(
+  dir : String?,
+  body_file_dir~ : String,
+) -> Result[@definitions.Snapshot, Array[@definitions.Diagnostic]] {
+  let (set, read_problems) = match dir {
+    Some(dir) => read(dir, body_file_dir~)
+    None => ({ files: [], body_files: [], }, [])
+  }
+  match @definitions.load(set) {
+    Ok(snapshot) if read_problems.length() == 0 => Ok(snapshot)
+    Ok(_) => Err(read_problems)
+    Err(problems) => Err([..read_problems, ..problems])
+  }
+}
+
+///|
 /// Reads the definitions directory `dir` into a definition set.
 ///
 /// - Definition files are the regular files at the top level whose names
@@ -40,21 +62,28 @@ pub async fn read(
       set.files.push((name, bytes))
     }
   }
-  let body_dir = "\{dir}/\{body_file_dir}"
-  if kind(body_dir) is Some(Directory) {
-    read_body_files(body_dir, "", set.body_files, diagnostics, visited=[])
+  if kind("\{dir}/\{body_file_dir}") is Some(Directory) {
+    read_body_files(
+      dir,
+      body_file_dir,
+      set.body_files,
+      diagnostics,
+      base=body_file_dir,
+      visited=[],
+    )
   }
   (set, diagnostics)
 }
 
 ///|
 /// Reads the regular files under `root/relative` into `out`, recursively,
-/// named relative to `root`.
+/// named relative to `root/base`. Problems name files relative to `root`.
 async fn read_body_files(
   root : String,
   relative : String,
   out : Array[(String, Bytes)],
   diagnostics : Array[@definitions.Diagnostic],
+  base~ : String,
   visited~ : Array[String],
 ) -> Unit {
   let dir = if relative == "" { root } else { "\{root}/\{relative}" }
@@ -69,9 +98,10 @@ async fn read_body_files(
     match kind("\{root}/\{path}") {
       Some(Regular) =>
         if read_file(root, path, diagnostics) is Some(bytes) {
-          out.push((path, bytes))
+          out.push((path[base.length() + 1:].to_owned(), bytes))
         }
-      Some(Directory) => read_body_files(root, path, out, diagnostics, visited~)
+      Some(Directory) =>
+        read_body_files(root, path, out, diagnostics, base~, visited~)
       _ => ()
     }
   }

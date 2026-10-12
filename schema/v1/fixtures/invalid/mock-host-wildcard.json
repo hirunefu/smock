@@ -1,0 +1,10 @@
+{
+  "mocks": [
+    {
+      "name": "users",
+      "hosts": [
+        "*.example.com"
+      ]
+    }
+  ]
+}

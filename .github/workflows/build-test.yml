@@ -70,6 +70,11 @@ jobs:
           "${GITHUB_SHA::12}"
           "moonc $(moonc -v | cut -d' ' -f1)"
 
+      # An external JSON Schema validator and smock check must agree on
+      # every Definition-file fixture under schema/v1/fixtures/.
+      - name: Cross-check the JSON Schema with smock
+        run: scripts/check-schema.sh dist/smock
+
   wasm-gc:
     name: wasm-gc (no-I/O packages)
     runs-on: ubuntu-24.04

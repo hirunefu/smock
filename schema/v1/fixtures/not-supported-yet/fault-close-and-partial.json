@@ -1,0 +1,35 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "close",
+      "mock": "users",
+      "fault": {
+        "connection": {
+          "kind": "close",
+          "probability": 0.1
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    },
+    {
+      "id": "partial",
+      "mock": "users",
+      "fault": {
+        "connection": {
+          "kind": "partial"
+        },
+        "seed": 7
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

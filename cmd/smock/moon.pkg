@@ -3,6 +3,7 @@ import {
   "moonbitlang/core/argparse",
   "moonbitlang/core/env",
   "smock/smock/buildinfo",
+  "smock/smock/defdir",
   "smock/smock/log",
   "smock/smock/server",
   "smock/smock/settings",

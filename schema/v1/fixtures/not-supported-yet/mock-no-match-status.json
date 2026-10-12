@@ -1,0 +1,10 @@
+{
+  "mocks": [
+    {
+      "name": "users",
+      "noMatch": {
+        "status": 418
+      }
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "get-user",
+      "mock": "users",
+      "fault": {
+        "connection": {
+          "kind": "close",
+          "probability": 1.5
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "get-user",
+      "mock": "users",
+      "request": {
+        "method": "POST",
+        "path": "/users",
+        "query": {
+          "dry-run": "true"
+        },
+        "headers": {
+          "Content-Type": "text/plain"
+        },
+        "body": "Alice"
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}
