@@ -124,6 +124,30 @@ extern "C" fn ssl_shutdown_ffi(ssl : Ssl) = "smock_openssl_ssl_shutdown"
 extern "C" fn ssl_alpn_ffi(ssl : Ssl) -> Bytes = "smock_openssl_ssl_alpn"
 
 ///|
+/// An OpenSSL `X509` and its `EVP_PKEY`, generated in memory.
+priv type Generated
+
+///|
+#borrow(names)
+extern "C" fn self_signed_new_ffi(names : Bytes, days : Int) -> Generated = "smock_openssl_self_signed_new"
+
+///|
+#borrow(generated)
+extern "C" fn self_signed_is_null_ffi(generated : Generated) -> Bool = "smock_openssl_self_signed_is_null"
+
+///|
+#borrow(generated)
+extern "C" fn self_signed_certificate_ffi(generated : Generated) -> Bytes = "smock_openssl_self_signed_certificate"
+
+///|
+#borrow(generated)
+extern "C" fn self_signed_private_key_ffi(generated : Generated) -> Bytes = "smock_openssl_self_signed_private_key"
+
+///|
+#borrow(generated)
+extern "C" fn self_signed_sha256_ffi(generated : Generated) -> Bytes = "smock_openssl_self_signed_sha256"
+
+///|
 /// OpenSSL's reason for the last failure, then a clean error queue.
 fn take_error() -> String {
   let reason = @utf8.decode_lossy(take_error_ffi())
@@ -398,4 +422,77 @@ pub fn Connection::alpn_protocol(self : Connection) -> String? {
   } else {
     Some(@utf8.decode_lossy(protocol))
   }
+}
+
+///|
+/// A certificate for a TLS server that signs itself, and its private key,
+/// generated in memory. Nothing is written to disk.
+pub struct SelfSigned {
+  /// The certificate in PEM.
+  certificate : Bytes
+  /// Its private key, ECDSA P-256, in PEM (PKCS#8, not encrypted).
+  private_key : Bytes
+  /// The SHA-256 fingerprint of the certificate: the digest of its DER
+  /// encoding as 32 upper-case hex pairs separated by colons, as
+  /// `openssl x509 -fingerprint -sha256` and browsers show it.
+  sha256_fingerprint : String
+}
+
+///|
+/// Generates a new ECDSA P-256 key and a certificate for it, signed with
+/// itself, for a TLS server. A client that trusts the certificate verifies
+/// it for each of `names` and for no other name.
+///
+/// - `names` become its subject alternative names: a name that is an IPv4
+///   or IPv6 address, without brackets, such as `127.0.0.1` or `::1`,
+///   becomes an IP address, and every other name a DNS name.
+/// - It is valid from an hour before now, for clocks a little behind, for
+///   `days` days.
+///
+/// Each call makes a new key, and a new certificate with a random serial
+/// number, so no two share a fingerprint.
+pub fn SelfSigned::generate(
+  names : Array[String],
+  days~ : Int,
+) -> SelfSigned raise TlsError {
+  if names.is_empty() {
+    raise Failed("a self-signed certificate needs at least one name")
+  }
+  let list = Buffer()
+  for name in names {
+    if name == "" || name.contains_char('\u{0}') {
+      raise Failed("invalid name \{name.escape()} for a certificate")
+    }
+    list.write_bytes(@utf8.encode(name))
+    list.write_byte(b'\x00')
+  }
+  let generated = self_signed_new_ffi(list.to_bytes(), days)
+  if self_signed_is_null_ffi(generated) {
+    raise Failed("cannot generate a self-signed certificate: \{take_error()}")
+  }
+  let certificate = self_signed_certificate_ffi(generated)
+  let private_key = self_signed_private_key_ffi(generated)
+  let digest = self_signed_sha256_ffi(generated)
+  if certificate.length() == 0 ||
+    private_key.length() == 0 ||
+    digest.length() == 0 {
+    raise Failed("cannot encode the self-signed certificate: \{take_error()}")
+  }
+  { certificate, private_key, sha256_fingerprint: fingerprint(digest), }
+}
+
+///|
+/// `digest` as upper-case hex pairs separated by colons, such as `0A:FF`.
+fn fingerprint(digest : Bytes) -> String {
+  let hex = "0123456789ABCDEF"
+  let out = StringBuilder()
+  for i, byte in digest {
+    if i > 0 {
+      out.write_char(':')
+    }
+    let n = byte.to_int()
+    out.write_char(hex.get_char(n >> 4).unwrap())
+    out.write_char(hex.get_char(n & 15).unwrap())
+  }
+  out.to_string()
 }

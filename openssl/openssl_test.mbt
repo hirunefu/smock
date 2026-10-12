@@ -207,3 +207,127 @@ test "a close_notify from the peer reads as Closed" {
   let buf = FixedArray::make(16, b'\x00')
   debug_inspect(server.read(buf, offset=0, max_len=16), content="Closed")
 }
+
+///|
+/// Generates a self-signed certificate for `names`, valid for a year.
+fn self_signed(names : Array[String]) -> @openssl.SelfSigned raise {
+  @openssl.SelfSigned::generate(names, days=365)
+}
+
+///|
+/// Whether a client that trusts only `trusted` completes a handshake with a
+/// server presenting `config`, checking its certificate for `name`.
+fn verify_for(
+  config : @openssl.ServerConfig,
+  trusted : Bytes,
+  name : String,
+) -> String {
+  let result = try {
+    let client = @openssl.ClientConfig(trusted~).connect(server_name=name)
+    handshake(client, config.accept())
+  } catch {
+    err => describe(err)
+  } noraise {
+    _ => "verified"
+  }
+  "\{name}: \{result}"
+}
+
+///|
+test "a generated self-signed certificate serves TLS, and a client that trusts it verifies it for each of its names, IP addresses included, and for no other name" {
+  let generated = self_signed([
+    "localhost", "127.0.0.1", "::1", "users.example.com",
+  ])
+  let config = @openssl.ServerConfig(
+    certificate_chain=generated.certificate,
+    private_key=generated.private_key,
+    alpn=["http/1.1"],
+  )
+  let names = [
+    "localhost", "127.0.0.1", "::1", "users.example.com", "orders.example.com", "127.0.0.2",
+    "::2",
+  ]
+  inspect(
+    names
+    .map(name => verify_for(config, generated.certificate, name))
+    .join("\n"),
+    content=(
+      #|localhost: verified
+      #|127.0.0.1: verified
+      #|::1: verified
+      #|users.example.com: verified
+      #|orders.example.com: failed: certificate verify failed
+      #|127.0.0.2: failed: certificate verify failed
+      #|::2: failed: certificate verify failed
+    ),
+  )
+}
+
+///|
+/// `fingerprint` with each hex digit shown as `h`, if it has only hex
+/// digits and colons.
+fn fingerprint_shape(fingerprint : String) -> String {
+  fingerprint
+  .iter()
+  .map(c => {
+    if (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') {
+      'h'
+    } else {
+      c
+    }
+  })
+  .collect()
+  |> String::from_array
+}
+
+///|
+test "each generated certificate has a new key and its own SHA-256 fingerprint" {
+  let first = self_signed(["localhost"])
+  let second = self_signed(["localhost"])
+  let out = [
+    "fingerprint: " + fingerprint_shape(first.sha256_fingerprint),
+    "same fingerprint: \{first.sha256_fingerprint == second.sha256_fingerprint}",
+    "first certificate with the second key: " +
+    load_bytes(first.certificate, second.private_key),
+    "first certificate with its own key: " +
+    load_bytes(first.certificate, first.private_key),
+  ]
+  inspect(
+    out.join("\n"),
+    content=(
+      #|fingerprint: hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh:hh
+      #|same fingerprint: false
+      #|first certificate with the second key: key mismatch
+      #|first certificate with its own key: loaded
+    ),
+  )
+}
+
+///|
+/// What loading a server configuration from PEM bytes gives.
+fn load_bytes(chain : Bytes, key : Bytes) -> String {
+  let config = @openssl.ServerConfig(certificate_chain=chain, private_key=key, alpn=[
+    "http/1.1",
+  ]) catch {
+    err => return describe(err)
+  }
+  ignore(config)
+  "loaded"
+}
+
+///|
+test "a self-signed certificate needs names, none of them empty" {
+  let out = [[], ["localhost", ""], ["a\u{0}b"]].map(names => {
+    let generated = self_signed(names) catch { err => return describe(err) }
+    ignore(generated)
+    "generated"
+  })
+  inspect(
+    out.join("\n"),
+    content=(
+      #|failed: a self-signed certificate needs at least one name
+      #|failed: invalid name "" for a certificate
+      #|failed: invalid name "a\u{00}b" for a certificate
+    ),
+  )
+}

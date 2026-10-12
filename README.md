@@ -55,7 +55,8 @@ Packages of `smock/smock`:
 - `openssl`: smock's own bindings to OpenSSL, the one C library ADR 0001
   allows (native). A TLS connection there does no I/O: it takes the bytes
   that arrive from the peer and hands out the bytes to send, and `server`
-  carries them over the socket. Its C is `openssl/openssl.c`.
+  carries them over the socket. It also generates self-signed certificates
+  in memory. Its C is `openssl/openssl.c`.
 - `testcerts`: a test PKI (a root CA, an intermediate CA, RSA and ECDSA
   leaf chains for `localhost` and `127.0.0.1`, and ECDSA leaf chains for
   `users.example.com` and `orders.example.com`, each leaf with its own fixed
@@ -89,7 +90,7 @@ SMOCK_ADMIN_TOKEN=change-me _build/native/debug/build/smock/smock/cmd/smock/smoc
 ```
 
 `smock serve` reads the Definition files in the definitions directory and
-listens on the plain port and on the admin port. It watches the directory
+listens on the plain port, on the TLS port and on the admin port. It watches the directory
 and swaps in the new definition set when the files change, ConfigMap updates
 included; an invalid set is reported and the current one keeps serving
 ([docs/definition-files.md](docs/definition-files.md#reloading)). Logs go
@@ -101,8 +102,8 @@ settings:
 | `--dir` | `SMOCK_DIR` | none: one empty Default Mock |
 | `--port` | `SMOCK_PORT` | 8080 (0 picks a free port) |
 | `--tls-port` | `SMOCK_TLS_PORT` | 8443 (0 picks a free port) |
-| `--tls-cert-file` | `SMOCK_TLS_CERT_FILE` | none |
-| `--tls-key-file` | `SMOCK_TLS_KEY_FILE` | none |
+| `--tls-cert-file` | `SMOCK_TLS_CERT_FILE` | none: a generated self-signed certificate |
+| `--tls-key-file` | `SMOCK_TLS_KEY_FILE` | none: a generated self-signed certificate |
 | `--tls-mock-certs` | `SMOCK_TLS_MOCK_CERTS` | none: no Mock has a certificate of its own (see below) |
 | `--admin-port` | `SMOCK_ADMIN_PORT` | 9090 (0 picks a free port) |
 | `--admin-auth` | `SMOCK_ADMIN_AUTH` | `on`: the Admin API needs a bearer token; `off` for local use |
@@ -143,7 +144,6 @@ smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /et
 - The Host header chooses the Mock, as on the plain port; SNI does not.
 - The `listening` log entry of the TLS port names the certificate and key
   files.
-- Without certificate files, smock does not listen on the TLS port.
 
 smock watches the directories of the certificate and key files, as it
 watches the definitions directory: changes are coalesced for 250 ms, the
@@ -194,6 +194,28 @@ certificate the TLS port presents expires (its notAfter), in seconds since
 the Unix epoch: `mock=""` for the default certificate and `mock="<name>"` for
 a Mock's own. It follows rotations, so an alert on it notices a renewal that
 stopped working before clients fail.
+
+Without certificate files, smock still serves HTTPS on the TLS port, with a
+self-signed certificate it generates at startup, for local use:
+
+- The certificate covers `localhost`, `127.0.0.1`, `::1` and every Host of
+  every Mock. Hosts that are IP addresses are IP address names, the others
+  DNS names, so a client that trusts the certificate can call any Mock by
+  its Host.
+- Its key is a new ECDSA P-256 key. Both are generated with OpenSSL and
+  held only in memory; nothing is written to disk, so a read-only root
+  filesystem is fine. The certificate is valid for 365 days.
+- When a reload changes the set of Hosts, smock generates a new certificate
+  for new connections; open connections keep theirs. A reload that keeps
+  the Hosts, and a failed reload, keep the certificate.
+- A log entry at startup and at each new certificate gives its SHA-256
+  fingerprint and its names:
+  `{"level":"info","msg":"self-signed certificate in use","sha256Fingerprint":"AB:12:…","names":["localhost","127.0.0.1","::1","users.example.com"]}`.
+  To trust it, read it from the handshake, for example with
+  `openssl s_client -connect 127.0.0.1:8443 </dev/null | openssl x509 >smock.pem`
+  and `curl --cacert smock.pem https://localhost:8443/`, and check its
+  fingerprint against the log with `openssl x509 -in smock.pem -noout -fingerprint -sha256`.
+- With certificate files configured, nothing is generated.
 
 The Admin API is JSON over HTTP/1.1 on the admin port, as
 [openapi/admin.json](openapi/admin.json) describes it:
@@ -473,7 +495,9 @@ It runs the image as its own UID with a read-only root filesystem, no
 capabilities and no privilege escalation, and checks `smock --version`, a
 Stub on the plain port, HTTPS with a test certificate, and the Admin API
 status operation with a token file, which must name the same build as
-`smock --version`. It also checks that the image adds nothing to its base but
+`smock --version`. Then, without certificate files, it checks HTTPS with
+the self-signed certificate smock generates, on the same read-only root
+filesystem. It also checks that the image adds nothing to its base but
 the smock binary, and that the image is for the machine it runs on.
 
 ## Toolchain
@@ -523,10 +547,12 @@ Most tests drive the engine through its public interface, with in-memory
 Definition files, a fixed clock and a seeded random source
 (`engine/harness_test.mbt`). The tests in `e2e/` run the binary itself: each
 one first runs `moon build --target native cmd/smock`, then starts smock with
-its own temporary definitions directory and port 0, so they run in parallel
-(`e2e/harness_test.mbt`). They need `moon`, `kill` and `openssl` on `PATH`.
-The HTTPS tests use clients that trust only the root CA of `testcerts`, and
-the HTTP/1.1 tests run on both the plain and the TLS port.
+its own temporary definitions directory and port 0 for each port, so they
+run in parallel (`e2e/harness_test.mbt`). They need `moon`, `kill` and
+`openssl` on `PATH`. The HTTPS tests use clients that trust only the root CA
+of `testcerts`, and the HTTP/1.1 tests run on both the plain and the TLS
+port. The tests of the generated certificate (`e2e/self_signed_test.mbt`)
+read it from the handshake with `openssl s_client` and then trust only it.
 
 `SMOCK_VERSION` and `SMOCK_COMMIT` set the version and the commit that
 `scripts/build-release.sh` records in the binary.
