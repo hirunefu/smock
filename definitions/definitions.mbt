@@ -132,13 +132,35 @@ pub enum BodyCondition {
 } derive(Debug, Eq)
 
 ///|
-/// A static response.
+/// A Stub's response.
 pub struct Response {
   status : Int
   headers : ReadOnlyArray[(String, String)]
-  /// The body: the inline body in UTF-8, or the bytes of the body file,
-  /// read when the snapshot was built.
-  body : Bytes
+  body : ResponseBody
+} derive(Debug, Eq)
+
+///|
+/// The body of a Stub's response.
+pub enum ResponseBody {
+  /// Bytes sent at once: the inline body in UTF-8, or the bytes of the body
+  /// file, read when the snapshot was built.
+  Bytes(Bytes)
+  /// Server-Sent Events, streamed one after another.
+  Events(ReadOnlyArray[SseEvent])
+} derive(Debug, Eq)
+
+///|
+/// One Server-Sent Event of a response.
+pub struct SseEvent {
+  /// How long to wait before writing the event, in milliseconds: after the
+  /// previous event, or after the head for the first one.
+  delay_ms : Int
+  /// The event type, one line.
+  event : String?
+  /// The event ID, one line without NUL characters.
+  id : String?
+  /// The data, which may span several lines.
+  data : String
 } derive(Debug, Eq)
 
 ///|

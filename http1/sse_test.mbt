@@ -60,6 +60,145 @@ test "a streamed response to HTTP/1.1 is chunked: one chunk per part, then the l
 }
 
 ///|
+test "a streamed response to HTTP/1.0 is never chunked: the parts as they are, and the connection closes to end it, even when the request asks to keep it open" {
+  inspect(
+    streamed(
+      200,
+      [("Content-Type", "text/event-stream")],
+      ["data: a\n\n", "data: b\n\n"],
+      request=request_of(
+        "GET /events HTTP/1.0\r\nConnection: keep-alive\r\n\r\n",
+      ),
+    ),
+    content=(
+      #|HTTP/1.1 200 OK\r\n
+      #|Content-Type: text/event-stream\r\n
+      #|Connection: close\r\n
+      #|\r\n
+      #|data: a
+      #|
+      #|data: b
+      #|
+      #|[closed]
+    ),
+  )
+}
+
+///|
+test "a streamed response to HTTP/1.1 that closes the connection after it is still chunked, and says Connection: close" {
+  let asks_to_close = request_of(
+    "GET /events HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n",
+  )
+  let keep_alive = request_of("GET /events HTTP/1.1\r\nHost: a\r\n\r\n")
+  inspect(
+    streamed(200, [], ["x"], request=asks_to_close) +
+    "\n---\n" +
+    streamed(200, [], ["x"], request=keep_alive, close=true),
+    content=(
+      #|HTTP/1.1 200 OK\r\n
+      #|Connection: close\r\n
+      #|Transfer-Encoding: chunked\r\n
+      #|\r\n
+      #|1\r\n
+      #|x\r\n
+      #|0\r\n
+      #|\r\n
+      #|[closed]
+      #|---
+      #|HTTP/1.1 200 OK\r\n
+      #|Connection: close\r\n
+      #|Transfer-Encoding: chunked\r\n
+      #|\r\n
+      #|1\r\n
+      #|x\r\n
+      #|0\r\n
+      #|\r\n
+      #|[closed]
+    ),
+  )
+}
+
+///|
+test "an empty part writes nothing, so it cannot end a chunked body early" {
+  let request = request_of("GET /events HTTP/1.1\r\nHost: a\r\n\r\n")
+  inspect(
+    streamed(200, [], ["", "x", ""], request~),
+    content=(
+      #|HTTP/1.1 200 OK\r\n
+      #|Transfer-Encoding: chunked\r\n
+      #|\r\n
+      #|1\r\n
+      #|x\r\n
+      #|0\r\n
+      #|\r\n
+      #|[open]
+    ),
+  )
+}
+
+///|
+test "a streamed response to HEAD has the head a GET would get, and no body" {
+  inspect(
+    streamed(
+      200,
+      [],
+      ["data: a\n\n"],
+      request=request_of("HEAD /events HTTP/1.1\r\nHost: a\r\n\r\n"),
+    ) +
+    "\n---\n" +
+    streamed(
+      200,
+      [],
+      ["data: a\n\n"],
+      request=request_of("HEAD /events HTTP/1.0\r\n\r\n"),
+    ),
+    content=(
+      #|HTTP/1.1 200 OK\r\n
+      #|Transfer-Encoding: chunked\r\n
+      #|\r\n
+      #|[open]
+      #|---
+      #|HTTP/1.1 200 OK\r\n
+      #|Connection: close\r\n
+      #|\r\n
+      #|[closed]
+    ),
+  )
+}
+
+///|
+test "a streamed response with status 204 or 304 has no body, so neither Transfer-Encoding nor a close ends it" {
+  inspect(
+    streamed(
+      204,
+      [("X-A", "1")],
+      ["data: a\n\n"],
+      request=request_of("GET /events HTTP/1.1\r\nHost: a\r\n\r\n"),
+    ) +
+    "\n---\n" +
+    streamed(
+      304,
+      [],
+      ["data: a\n\n"],
+      request=request_of(
+        "GET /events HTTP/1.0\r\nConnection: keep-alive\r\n\r\n",
+      ),
+    ),
+    content=(
+      #|HTTP/1.1 204 No Content\r\n
+      #|X-A: 1\r\n
+      #|\r\n
+      #|[open]
+      #|---
+      #|HTTP/1.1 304 Not Modified\r\n
+      #|Connection: keep-alive\r\n
+      #|\r\n
+      #|[open]
+    ),
+  )
+}
+
+///|
 test "an event with only data is one data field and the blank line that ends it" {
   inspect(sse("hello"), content="data: hello\n\n")
 }

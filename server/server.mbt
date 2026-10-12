@@ -170,8 +170,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
           now=@async.now(),
           rand~,
         )
-        @io.Writer::write(stream, encode(outcome.plan, request))
-        if !request.keep_alive {
+        if !respond(stream, outcome.plan, request) {
           return
         }
         idle_deadline = @async.now() + idle_timeout
@@ -226,13 +225,53 @@ fn to_engine_request(request : @http1.Request) -> @engine.Request {
 }
 
 ///|
-/// The bytes of the response `plan` describes, as the answer to `request`.
-/// Delays, connection Faults and Server-Sent Events come with their own
-/// tickets; the engine does not plan them yet.
-fn encode(plan : @engine.ResponsePlan, request : @http1.Request) -> Bytes {
-  let body = match plan.body {
-    Bytes(body) => body
-    Events(_) => b""
+/// Writes the response `plan` describes, as the answer to `request`, and
+/// returns whether the connection stays open after it. Delays and
+/// connection Faults come with their own tickets; the engine does not plan
+/// them yet.
+///
+/// Server-Sent Events are streamed: the head at once, then each event after
+/// its delay. Waiting suspends only this connection's task, so the others
+/// are served meanwhile. A client that closes the connection mid-stream
+/// makes a later write fail, which ends the stream and the connection.
+async fn[S : @io.Writer] respond(
+  stream : S,
+  plan : @engine.ResponsePlan,
+  request : @http1.Request,
+) -> Bool {
+  match plan.body {
+    Bytes(body) => {
+      @io.Writer::write(
+        stream,
+        @http1.encode_response(plan.status, plan.headers, body, request~),
+      )
+      request.keep_alive
+    }
+    Events(events) => {
+      let response = @http1.ResponseStream(plan.status, plan.headers, request~)
+      @io.Writer::write(stream, response.head())
+      for event in events {
+        if event.delay_ms > 0 {
+          @async.sleep(event.delay_ms)
+        }
+        let data = @http1.encode_sse_event(
+          event.data,
+          event?=event.event,
+          id?=event.id,
+        )
+        write_some(stream, response.part(data))
+      }
+      write_some(stream, response.end())
+      response.keeps_open()
+    }
   }
-  @http1.encode_response(plan.status, plan.headers, body, request~)
+}
+
+///|
+/// Writes `bytes` unless there are none, as for the body of a response to
+/// HEAD.
+async fn[S : @io.Writer] write_some(stream : S, bytes : Bytes) -> Unit {
+  if bytes.length() > 0 {
+    @io.Writer::write(stream, bytes)
+  }
 }

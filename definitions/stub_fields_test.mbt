@@ -225,10 +225,80 @@ test "a response gives at most one of body, bodyFile and events" {
     ),
     content=(
       #|a.json: /stubs/0/response: has "body" and "bodyFile"; give at most one of "body", "bodyFile" and "events"
-      #|a.json: /stubs/1/response/events: is not supported yet
       #|a.json: /stubs/1/response: has "bodyFile" and "events"; give at most one of "body", "bodyFile" and "events"
-      #|a.json: /stubs/2/response/events: is not supported yet
       #|a.json: /stubs/2/response: has "body" and "events"; give at most one of "body", "bodyFile" and "events"
+    ),
+  )
+}
+
+///|
+/// A Stub of Mock `m` whose response streams `events`, given as JSON.
+fn events_stub(i : Int, events : String) -> String {
+  "{ \"id\": \"s\{i}\", \"mock\": \"m\", \"response\": { \"status\": 200, \"events\": \{events} } }"
+}
+
+///|
+test "events are read as the Schema defines them: data, and optionally a delay in milliseconds, a type and an ID" {
+  inspect(
+    stub_problems(
+      [
+        "[]",
+        "[{ \"data\": \"\" }]",
+        (
+          #|[{ "data": "first" },
+          #|  { "delay": 250, "event": "update", "id": "2", "data": "line 1\nline 2" },
+          #|  { "delay": 0, "event": "", "id": "", "data": "a\r\n\u0000b" },
+          #|  { "delay": 2147483647, "event": " x\t", "id": "é", "data": "x" },
+          #|  { "delay": 7.0, "data": "x" }]
+        ),
+      ].mapi(events_stub),
+    ),
+    content="valid",
+  )
+}
+
+///|
+test "a malformed event is a diagnostic at its JSON Pointer" {
+  inspect(
+    stub_problems(
+      [
+        "{ \"data\": \"x\" }",
+        "[\"data: x\", null]",
+        "[{ \"event\": \"ping\" }, { \"data\": 1 }, { \"data\": null }]",
+        (
+          #|[{ "delay": -1, "data": "x" }, { "delay": 1.5, "data": "x" },
+          #|  { "delay": 2147483648, "data": "x" }, { "delay": "100", "data": "x" }]
+        ),
+        (
+          #|[{ "event": "a\nb", "data": "x" }, { "event": "a\rb", "data": "x" },
+          #|  { "event": 1, "data": "x" }]
+        ),
+        (
+          #|[{ "id": "a\nb", "data": "x" }, { "id": "a\rb", "data": "x" },
+          #|  { "id": "a\u0000b", "data": "x" }, { "id": 2, "data": "x" }]
+        ),
+        "[{ \"data\": \"x\", \"retry\": 1000 }]",
+      ].mapi(events_stub),
+    ),
+    content=(
+      #|a.json: /stubs/0/response/events: must be an array
+      #|a.json: /stubs/1/response/events/0: must be an object
+      #|a.json: /stubs/1/response/events/1: must be an object
+      #|a.json: /stubs/2/response/events/0: needs "data"
+      #|a.json: /stubs/2/response/events/1/data: must be a string
+      #|a.json: /stubs/2/response/events/2/data: must be a string
+      #|a.json: /stubs/3/response/events/0/delay: must be an integer from 0 to 2147483647
+      #|a.json: /stubs/3/response/events/1/delay: must be an integer from 0 to 2147483647
+      #|a.json: /stubs/3/response/events/2/delay: must be an integer from 0 to 2147483647
+      #|a.json: /stubs/3/response/events/3/delay: must be an integer from 0 to 2147483647
+      #|a.json: /stubs/4/response/events/0/event: must be one line
+      #|a.json: /stubs/4/response/events/1/event: must be one line
+      #|a.json: /stubs/4/response/events/2/event: must be a string
+      #|a.json: /stubs/5/response/events/0/id: must be one line without NUL characters
+      #|a.json: /stubs/5/response/events/1/id: must be one line without NUL characters
+      #|a.json: /stubs/5/response/events/2/id: must be one line without NUL characters
+      #|a.json: /stubs/5/response/events/3/id: must be a string
+      #|a.json: /stubs/6/response/events/0/retry: is not a known field
     ),
   )
 }

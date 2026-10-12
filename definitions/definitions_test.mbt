@@ -302,8 +302,7 @@ test "a field the Schema defines but smock does not implement yet is rejected as
           #|    "request": { "method": "GET", "path": { "pattern": "/a.*" },
           #|      "query": { "q": { "pattern": "1" } }, "headers": { "X-A": { "pattern": "1" } },
           #|      "body": { "pattern": "{}" } },
-          #|    "response": { "status": 200,
-          #|      "template": true, "events": [{ "data": "x" }] },
+          #|    "response": { "status": 200, "template": true },
           #|    "fault": { "seed": 1 } }] }
         ),
       ),
@@ -315,7 +314,6 @@ test "a field the Schema defines but smock does not implement yet is rejected as
       #|a.json: /stubs/0/request/headers/X-A: pattern conditions are not supported yet
       #|a.json: /stubs/0/request/body: pattern conditions are not supported yet
       #|a.json: /stubs/0/response/template: is not supported yet
-      #|a.json: /stubs/0/response/events: is not supported yet
       #|a.json: /stubs/0/fault: is not supported yet
     ),
   )

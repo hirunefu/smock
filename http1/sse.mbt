@@ -1,8 +1,26 @@
 ///|
-/// Encodes one Server-Sent Event, as the body of a `text/event-stream`
-/// response carries it (HTML Living Standard, section 9.2.6): its `event`
-/// field when `event` is given, its `id` field when `id` is given, one
-/// `data` field per line of `data`, and the blank line that ends the event.
+/// Encodes one Server-Sent Event as the body of a `text/event-stream`
+/// response carries it (HTML Living Standard, "Server-sent events"): its
+/// `event` field when `event` is given, its `id` field when `id` is given,
+/// one `data` field per line of `data`, and the blank line that ends the
+/// event. Lines of `data` end at CRLF, LF or CR, as a client reads them, so
+/// the client gets `data` back with each line break as LF. The text is
+/// written as UTF-8.
+///
+/// The caller passes an `event` without CR or LF, and an `id` without CR,
+/// LF or NUL: a client would read anything else differently.
+///
+/// Write the events as parts of a `ResponseStream`.
+///
+/// ```mbt check
+/// test {
+///   let bytes = @http1.encode_sse_event("line 1\nline 2", event="update", id="7")
+///   inspect(
+///     @utf8.decode_lossy(bytes),
+///     content="event: update\nid: 7\ndata: line 1\ndata: line 2\n\n",
+///   )
+/// }
+/// ```
 pub fn encode_sse_event(data : String, event? : String, id? : String) -> Bytes {
   let out = @buffer.Buffer(size_hint=data.length() + 16)
   if event is Some(event) {

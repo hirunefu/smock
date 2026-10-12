@@ -166,6 +166,48 @@ with `.`. A path that breaks this rule, or names a file that does not
 exist, is reported with the file and JSON Pointer of the `bodyFile`, by
 `smock check` and when `smock serve` starts.
 
+### Server-Sent Events
+
+Instead of a body, a response can stream `events`, to mock a streaming API:
+
+```json
+"response": {
+  "status": 200,
+  "headers": { "Cache-Control": "no-cache" },
+  "events": [
+    { "data": "first" },
+    { "delay": 250, "event": "update", "id": "2", "data": "line 1\nline 2" }
+  ]
+}
+```
+
+smock sends the status and the headers at once, with
+`Content-Type: text/event-stream` unless the Stub gives its own
+`Content-Type`. Then, for each event, it waits the event's `delay` (in
+milliseconds, counted from the previous event or, for the first one, from
+the headers; 0 by default) and writes the event:
+
+```text
+data: first
+
+event: update
+id: 2
+data: line 1
+data: line 2
+
+```
+
+- `data` is required. Each of its lines becomes its own `data:` line.
+- `event` (the event type) and `id` are written only when given. Each is
+  one line, and `id` has no NUL characters.
+- The stream ends after the last event. To an HTTP/1.1 client it is sent
+  with chunked framing, so the connection carries the next request. An
+  HTTP/1.0 client gets it unframed, and smock closes the connection to end
+  it.
+- While a stream waits, smock serves every other connection. A client that
+  closes the connection mid-stream ends that stream: smock notices when it
+  next writes an event.
+
 ## The JSON Schema
 
 The format of Definition files is published as a JSON Schema, one per
