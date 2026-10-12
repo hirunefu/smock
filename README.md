@@ -87,6 +87,9 @@ contract for their format. `.github/workflows/schema-pages.yml` publishes it
 on GitHub Pages, and `schema/v1/fixtures/` holds the Definition files that
 CI checks with both the Schema and smock.
 
+`bench/` is the release benchmark, and `.github/workflows/benchmark.yml`
+runs it when started by hand (see [Benchmark](#benchmark)).
+
 ## Run
 
 ```sh
@@ -692,6 +695,7 @@ scripts/check-openapi.sh       # the Admin API document is valid OpenAPI 3.1
 docker build --tag smock:dev .
 scripts/smoke-test-image.sh smock:dev 0.0.0-dev <commit> "moonc <version>"   # the container image
 scripts/check-release-workflow.sh    # the release workflow publishes only for tags (needs yq)
+scripts/check-benchmark-workflow.sh  # the benchmark workflow runs only by hand (needs yq)
 scripts/test-helm-chart.sh           # rendering tests of the Helm chart (needs helm, yq and jq)
 scripts/test-helm-chart-on-kind.sh smock:dev   # the chart on a kind cluster (needs kind, kubectl and helm)
 ```
@@ -737,6 +741,117 @@ read it from the handshake with `openssl s_client` and then trust only it.
 
 `SMOCK_VERSION` and `SMOCK_COMMIT` set the version and the commit that
 `scripts/build-release.sh` records in the binary.
+
+## Benchmark
+
+The release benchmark measures smock's real request path: realistic
+requests, matched against a definition set with many Stubs, with the
+Journal on. It sends them at a fixed arrival rate and reports p99 and p99.9
+latency for each case, and checks the provisional performance targets.
+
+| File | What it is |
+|---|---|
+| `bench/bench.py` | Runs the benchmark. |
+| `bench/definitions/` | The definition set smock serves: four Mocks, one of them the Default Mock, and 1161 Stubs with exact, pattern and `json` conditions. `bench/gen_definitions.py` writes it. |
+| `bench/requests.json` | The request mix: nine kinds of request, with weights, realistic headers, a Session in `baggage`, and bodies. |
+| `bench/plan.json` | The cases, the CPU limits, and the rates and durations. |
+| `bench/targets.json` | The provisional targets, the one place to change them. |
+
+`e2e/bench_test.mbt` checks on every test run that each request of the mix
+reaches the Mock and the Stub it names, on the plain and on the TLS port,
+and lands in the Journal under its Session. CI checks that
+`bench/definitions/` is what `bench/gen_definitions.py` writes.
+
+### Run it on your machine
+
+It needs Linux on amd64 or arm64 with at least three CPUs, python3 3.10 or
+later, `openssl`, `taskset` and `lscpu` (util-linux), oha 1.16.0 on `PATH`
+(`scripts/install-oha.sh` installs it into `~/.local/bin`, checked against
+its digest), and a systemd user manager that can set CPU quotas: `cpu` must
+be in `/sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/cgroup.controllers`.
+Recent systemd delegates it by default; otherwise add a drop-in for
+`user@.service` with `Delegate=cpu cpuset io memory pids`.
+
+```sh
+scripts/build-release.sh                 # dist/smock, which the benchmark runs
+python3 bench/bench.py run               # the whole plan, about 20 minutes
+python3 bench/bench.py run --cases http-keep-alive --cpu-limits 1   # one case under one limit
+python3 bench/bench.py run --rate 500 --ramp 1 --duration 3 --tail 1 --settle 1 --cooldown 0   # a check of the setup, about 2 minutes
+python3 -m unittest discover -s bench -v # the harness's own tests, about 2 minutes
+```
+
+`python3 bench/bench.py run --help` lists the options. A run writes to
+`bench/results/<date>-<time>/` unless `--out` says otherwise. Options that
+change the plan's rates or durations are for checking the setup: the run
+records them, and the summary says it was not a full run. For numbers worth
+comparing, close other programs and plug a laptop in; the conditions
+record the CPU frequency governor.
+
+### What a run does
+
+- **Idle RSS.** smock starts with the benchmark's definitions under a 1-CPU
+  limit. Once it is ready and has idled for 5 seconds, its RSS is the idle
+  RSS.
+- **Cases.** Each case of `bench/plan.json` runs under each CPU limit it
+  has a rate for: 250m, 500m, 1 and 2 cores. The cases are plain HTTP and
+  TLS with keep-alive connections, plain HTTP and TLS with a new connection
+  per request, plain HTTP with 1000 idle connections held open during the
+  load, and a 10-minute run under 1 CPU that records RSS every second.
+- **CPU limits and pinning.** smock runs in its own systemd scope with a
+  CPU quota over the 100 ms period Kubernetes also uses, pinned to the two
+  fastest CPUs. The load generator and the harness run on the other CPUs.
+  The run reads the quota back from smock's cgroup and stops if it did not
+  take effect.
+- **Fixed arrival rate.** oha sends each kind of request at its weight's
+  share of the case's rate and connections. Its schedule releases request
+  `i` at `i / rate` whether or not a connection is free to send it, and a
+  request's latency counts from that release. A request that waits behind
+  a busy or stalled smock counts its wait. oha's own timer releases requests
+  a millisecond or two late; that lag is reported apart as the generator
+  lag. When its p99 is over 5 ms, the load generator fell behind, and the
+  case says so (`load_generator_late`).
+- **Window.** Requests scheduled in the first 2 seconds, while connections
+  open, are not counted. The next 20 seconds are measured, and 3 more let
+  the last of them finish.
+- **Errors.** A request scheduled in the window that did not get the status
+  `bench/requests.json` expects is an error, whether it got another status
+  or no response.
+- **Targets.** Each target of `bench/targets.json` is met, missed or not
+  measured. A latency target holds for one case under one CPU limit at one
+  rate. A run that did not run that case at that rate does not measure it,
+  nor does one whose load generator fell behind; any error misses it.
+
+### What a run writes
+
+- `conditions.json`: what ran where. The smock version, commit, toolchain
+  and binary digest; the definition set digest and the Mocks; the request
+  mix; the architecture, CPU model, kernel and CPU governors; the CPU limits
+  and the CPUs of smock and of the load generator; each case's rate,
+  durations and connection counts; oha and its version; the targets file;
+  any options that changed the plan.
+- `summary.json`: for each case, latency (p50, p90, p99, p99.9, max), the
+  achieved rate, the errors by kind, the generator lag, smock's CPU use and
+  throttling, the quota and CPUs read while it ran, smock's RSS (first,
+  last, max), the TCP connections the machine accepted during the load, and
+  the idle connections still open at its end. Then the idle RSS, and each
+  target with its verdict. `format` numbers the layout.
+- `summary.md`: the same for people.
+- `raw/<cpu limit>/<case>/`: `latency.json`, a histogram of the latencies
+  in microseconds to three significant digits; `rss.json`, smock's RSS
+  over time; smock's log; and oha's own report for each kind of request.
+  `raw/idle-rss.json` has the RSS samples of the idle measurement.
+
+### In CI
+
+`.github/workflows/benchmark.yml` runs the benchmark on linux/amd64 and
+linux/arm64 when started by hand from the Actions tab, optionally for some
+cases or CPU limits only. It builds the release binary, installs oha, lets
+the runner's systemd user manager set CPU quotas, runs the harness's tests
+and then the whole plan. The output of each architecture is a workflow
+artifact, `benchmark-linux-amd64` and `benchmark-linux-arm64`, and the run's
+page shows the summaries. It never runs on pull requests or pushes;
+`scripts/check-benchmark-workflow.sh` checks that in CI. GitHub's shared
+runners vary from run to run, so a single run is a rough measure.
 
 ## Licence
 

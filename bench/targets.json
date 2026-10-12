@@ -1,0 +1,32 @@
+{
+  "about": "smock's provisional performance targets, from spec #1, which bench/bench.py checks on every run. They are revisited after the first runs on the real path: changing one is a change to this file alone. A latency target holds for one case of bench/plan.json under one CPU limit at one rate; a run that did not run that case at that rate does not measure it, and one whose requests failed misses it. metric is p50, p90, p99, p99_9 or max (unit ms) or idle_rss (unit MiB).",
+  "targets": [
+    {
+      "id": "p99",
+      "about": "p99 latency at 50k requests/s under a 1-CPU limit",
+      "case": "http-keep-alive",
+      "cpu_limit": "1",
+      "rate": 50000,
+      "metric": "p99",
+      "max": 1,
+      "unit": "ms"
+    },
+    {
+      "id": "p99.9",
+      "about": "p99.9 latency at 50k requests/s under a 1-CPU limit",
+      "case": "http-keep-alive",
+      "cpu_limit": "1",
+      "rate": 50000,
+      "metric": "p99_9",
+      "max": 5,
+      "unit": "ms"
+    },
+    {
+      "id": "idle-rss",
+      "about": "idle RSS after startup with the benchmark's definitions",
+      "metric": "idle_rss",
+      "max": 20,
+      "unit": "MiB"
+    }
+  ]
+}

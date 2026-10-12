@@ -21,6 +21,17 @@ jobs:
       - uses: actions/checkout@v5
       - run: scripts/check-release-workflow.sh
 
+  # The benchmark itself runs only by hand (benchmark.yml); this checks its
+  # files. Its request mix and definitions are checked against smock by the
+  # tests in e2e/bench_test.mbt.
+  benchmark-files:
+    name: Check the benchmark workflow and definitions
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - run: scripts/check-benchmark-workflow.sh
+      - run: python3 bench/gen_definitions.py --check
+
   # The chart on a cluster is tested in build-test.yml, with the image built
   # there.
   helm-chart:
