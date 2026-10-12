@@ -27,9 +27,11 @@ Packages of `smock/smock`:
   `SMOCK_<NAME>` environment variable.
 - `definitions`: reads a definition set, given as (name, bytes) pairs of
   JSON and YAML files, into an immutable snapshot, or into diagnostics
-  (file, JSON Pointer, message).
+  (file, JSON Pointer, message). Its validation is written by hand and
+  follows the JSON Schema.
 - `engine`: decides the response to each request from the snapshot.
-- `defdir`: reads the definitions directory (native).
+- `defdir`: reads the definitions directory and loads it, for both
+  `smock serve` and `smock check` (native).
 - `server`: the listeners and the connection loop (native).
 - `log`: the JSON logger, one object per line.
 - `buildinfo`: the version, commit and toolchain the binary was built with.
@@ -37,6 +39,11 @@ Packages of `smock/smock`:
 
 A package that does I/O or uses FFI declares `supported_targets = "native"`.
 Every other package also builds for `wasm-gc`, and CI tests it there.
+
+`schema/v1/definitions.json` is the JSON Schema of Definition files, the
+contract for their format. `.github/workflows/schema-pages.yml` publishes it
+on GitHub Pages, and `schema/v1/fixtures/` holds the Definition files that
+CI checks with both the Schema and smock.
 
 ## Run
 
@@ -76,7 +83,12 @@ A Definition file, such as `defs/users.json`:
 }
 ```
 
-The field names are provisional until the JSON Schema is published.
+`smock check defs` validates a definitions directory the way `smock serve`
+loads it: it prints every problem, one per line with the file and a JSON
+Pointer, and exits with status 1 if there is any.
+[docs/definition-files.md](docs/definition-files.md) describes the format,
+its JSON Schema, editor support and writing Definition files in another
+configuration language.
 
 Definition files can also be YAML (`.yaml` or `.yml`), mixed with JSON files
 in one directory. A YAML file means exactly what the equivalent JSON file
@@ -130,7 +142,13 @@ scripts/check-protocol-modules.sh
 scripts/check-no-c.sh          # the C boundary of ADR 0001
 scripts/build-release.sh       # dist/smock
 dist/smock --version
+scripts/check-schema.sh dist/smock   # the JSON Schema and smock agree
 ```
+
+`scripts/check-schema.sh` runs the external validator check-jsonschema
+through `uvx` (or `pipx`) and needs `jq`. Adding a fixture file under
+`schema/v1/fixtures/` adds it to the cross-check; the README there says
+which directory a fixture belongs in.
 
 CI runs all of these on linux/amd64 and linux/arm64
 (`.github/workflows/build-test.yml`).

@@ -125,6 +125,42 @@ async fn with_smock(
 }
 
 ///|
+/// Whether `smock serve <args>` loads its definitions: `"serves"` once it
+/// listens (it is then stopped), or `"exits with status <n>"` when it stops
+/// by itself first.
+async fn serve_verdict(args : Array[String]) -> String {
+  build.wait()
+  @async.with_task_group(group => {
+    let (stderr, stderr_end) = @process.read_from_process()
+    defer stderr.close()
+    let process = @process.spawn(
+      group,
+      binary,
+      ["serve", "--port", "0", ..args],
+      inherit_env=false,
+      stderr=stderr_end,
+      no_wait=true,
+    )
+    let verdict = @async.with_timeout_opt(patience_ms, () => {
+      for ;; {
+        guard stderr.read_until("\n") is Some(line) else {
+          break "exits with status \{process.wait()}"
+        }
+        if listening_port(line) is Some(_) {
+          let _ = @process.run("kill", ["-TERM", process.pid.to_string()])
+          let _ = process.wait()
+          break "serves"
+        }
+      }
+    })
+    guard verdict is Some(verdict) else {
+      fail("smock serve neither listened nor stopped in time")
+    }
+    verdict
+  })
+}
+
+///|
 /// The port of a `listening` log entry.
 fn listening_port(line : String) -> Int? {
   let entry = @json.parse(line) catch { _ => return None }

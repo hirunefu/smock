@@ -1,0 +1,21 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "get-user",
+      "mock": "users",
+      "fault": {
+        "connection": {
+          "kind": "timeout"
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

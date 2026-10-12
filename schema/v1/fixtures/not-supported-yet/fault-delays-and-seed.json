@@ -1,0 +1,53 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "fixed",
+      "mock": "users",
+      "fault": {
+        "delay": {
+          "fixed": 100
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    },
+    {
+      "id": "uniform",
+      "mock": "users",
+      "fault": {
+        "delay": {
+          "uniform": {
+            "min": 50,
+            "max": 150
+          },
+          "probability": 0.5
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    },
+    {
+      "id": "lognormal",
+      "mock": "users",
+      "fault": {
+        "delay": {
+          "lognormal": {
+            "median": 80,
+            "sigma": 0.6
+          }
+        },
+        "seed": 42
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "mocks": [
+    {
+      "name": "ユーザー API"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "1 / x",
+      "mock": "ユーザー API",
+      "response": {
+        "status": 599
+      }
+    }
+  ]
+}
