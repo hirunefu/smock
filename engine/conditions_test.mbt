@@ -151,6 +151,29 @@ test "a percent sign that does not start an escape stays as it is in the decoded
 }
 
 ///|
+test "the path and the query of an absolute-form target are decoded like those of an origin-form one" {
+  let h = stubs([
+    (
+      #|{ "id": "search", "mock": "m",
+      #|  "request": { "path": "/a b", "query": { "q": "x y" } },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  inspect(
+    winners(h, [
+      ("GET", "http://localhost:8080/a%20b?q=x+y", [], ""),
+      ("GET", "http://localhost/a%20b?q=x%20y&other=1", [], ""),
+      ("GET", "http://localhost/a%20b", [], ""),
+    ]),
+    content=(
+      #|GET http://localhost:8080/a%20b?q=x+y -> search
+      #|GET http://localhost/a%20b?q=x%20y&other=1 -> search
+      #|GET http://localhost/a%20b -> none
+    ),
+  )
+}
+
+///|
 test "each listed query parameter must be present with its decoded value; others are ignored" {
   let h = stubs([
     (

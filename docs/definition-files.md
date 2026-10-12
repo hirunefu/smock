@@ -17,6 +17,61 @@ in a definitions directory, such as `defs/`, that `smock serve --dir` and
   (`--body-file-dir`, `SMOCK_BODY_FILE_DIR`). smock reads them when it
   loads the Definition files, and serves them from memory.
 
+## Hosts and the Default Mock
+
+One smock can stand in for several services. Each Mock lists the Hosts it
+answers to, and a request goes to the Mock whose `hosts` include its Host:
+
+```yaml
+mocks:
+  - name: users
+    hosts: [users.example.com, "users:8080"]
+    default: true
+  - name: orders
+    hosts: [orders.example.com]
+```
+
+- A request's Host is the authority of an absolute-form target, such as
+  `GET http://orders.example.com/orders/1 HTTP/1.1`, or else its `Host`
+  header.
+- Hosts are exact names, with no wildcards. They are compared
+  case-insensitively, without the port and without a trailing dot, so
+  `Users.Example.com.:8080` is the Host `users.example.com`. An IPv6 address
+  is written in brackets, such as `[::1]:8080`.
+- Each Host belongs to at most one Mock. The same Host repeated within one
+  Mock is fine.
+
+A request whose Host no Mock lists, or that has none (HTTP/1.0 allows that),
+goes to the Default Mock:
+
+- the Mock marked `default: true`; at most one Mock may be marked;
+- otherwise the only Mock, when the definition set declares exactly one, so
+  a single Mock answers on `localhost` without any `hosts`;
+- with no Mock declared at all, including an empty or missing definitions
+  directory, smock serves one empty Default Mock named `default`, with no
+  Hosts.
+
+Every response the Default Mock sends because no Host matched, including
+its no-match response, carries a header that says so, so that a mistyped
+Host does not silently succeed:
+
+```http
+Smock-Mock: users; via=default
+```
+
+The header is ASCII: a Mock name that is not an HTTP token has its other
+bytes percent-encoded, as in `%E3%83%A6...%20API`. A request for one of the
+Default Mock's own Hosts gets no header.
+
+Without a Default Mock, such a request gets a 404 that names its Host and
+every Host the Mocks declare, both normalised:
+
+```json
+{"error":"no Mock for this Host","host":"usres.example.com","acceptedHosts":["users.example.com","users","orders.example.com"]}
+```
+
+`host` is `null` for a request without a Host.
+
 ## How a Stub matches a request
 
 A Stub's `request` lists the conditions a request must meet. Every condition
@@ -144,10 +199,11 @@ $ echo $?
 ```
 
 `smock check` also checks the rules the Schema cannot express, because they
-span the files of the set: Mock names and Stub IDs are unique, and every
-Stub names a Mock that some file declares. A duplicate is reported where it
-occurs the second time, in file-name order, and the message names the
-first.
+span the Mocks and files of the set: Mock names and Stub IDs are unique, no
+two Mocks claim the same Host after normalisation, at most one Mock is
+marked `default`, and every Stub names a Mock that some file declares. A
+duplicate is reported where it occurs the second time, in file-name order,
+and the message names the first.
 
 In CI, run it as a step that fails the build:
 

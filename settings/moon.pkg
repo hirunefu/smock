@@ -1,4 +1,3 @@
 import {
   "moonbitlang/core/argparse",
-  "moonbitlang/core/string",
 }

@@ -25,10 +25,12 @@ test "a Stub answers with its status, its headers in order, and its inline body"
       #|201
       #|Location: /users/7
       #|Content-Type: text/plain; charset=utf-8
+      #|Smock-Mock: m; via=default
       #|créé
       #|
       #|---
       #|204
+      #|Smock-Mock: m; via=default
       #|
     ),
   )
@@ -67,10 +69,12 @@ test "a Stub answers with the bytes of its body file, named relative to the body
     content=(
       #|200
       #|Content-Type: application/json
+      #|Smock-Mock: m; via=default
       #|{"id":1,"name":"Alice"}
       #|
       #|---
       #|200
+      #|Smock-Mock: m; via=default
       #|{"id":1,"name":"Alice"}
       #|
     ),
@@ -100,6 +104,7 @@ test "when no Stub matches, the Mock answers 404 with a JSON body saying so" {
       #|plan:
       #|  status: 404
       #|  header: Content-Type: application/json
+      #|  header: Smock-Mock: users; via=default
       #|  body: "{\"error\":\"no Stub matched\"}"
       #|  delay_ms: 0
       #|  fault: None
@@ -132,18 +137,22 @@ test "a Mock's noMatch.status is the status when no Stub matches" {
     content=(
       #|418
       #|Content-Type: application/json
+      #|Smock-Mock: m; via=default
       #|{"error":"no Stub matched"}
       #|---
       #|503
       #|Content-Type: application/json
+      #|Smock-Mock: m; via=default
       #|{"error":"no Stub matched"}
       #|---
       #|404
       #|Content-Type: application/json
+      #|Smock-Mock: m; via=default
       #|{"error":"no Stub matched"}
       #|---
       #|404
       #|Content-Type: application/json
+      #|Smock-Mock: m; via=default
       #|{"error":"no Stub matched"}
     ),
   )

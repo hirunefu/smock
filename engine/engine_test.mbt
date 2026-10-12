@@ -26,6 +26,7 @@ test "a request whose method and path equal a Stub's gets that Stub's response" 
       #|  status: 200
       #|  header: Content-Type: application/json
       #|  header: X-Source: smock
+      #|  header: Smock-Mock: users; via=default
       #|  body: "{\"id\":1,\"name\":\"Alice\"}"
       #|  delay_ms: 0
       #|  fault: None
@@ -52,6 +53,7 @@ test "the path is compared without the query" {
       #|200
       #|Content-Type: application/json
       #|X-Source: smock
+      #|Smock-Mock: users; via=default
       #|{"id":1,"name":"Alice"}
     ),
   )
@@ -95,6 +97,7 @@ test "with no Definition file, one empty Mock named default answers 404" {
       #|plan:
       #|  status: 404
       #|  header: Content-Type: application/json
+      #|  header: Smock-Mock: default; via=default
       #|  body: "{\"error\":\"no Stub matched\"}"
       #|  delay_ms: 0
       #|  fault: None
@@ -127,12 +130,26 @@ test "Definition files are read in byte-wise name order, so the first matching S
     ("aa.json", stub("from-aa")),
     ("mocks.json", "{ \"mocks\": [{ \"name\": \"m\" }] }"),
   ])
-  inspect(response(h.send("GET", "/x")), content="200\nfrom-aa")
+  inspect(
+    response(h.send("GET", "/x")),
+    content=(
+      #|200
+      #|Smock-Mock: m; via=default
+      #|from-aa
+    ),
+  )
   let h = harness([
     ("b.json", stub("from-b")),
     ("aa.json", stub("from-aa")),
     ("Z.json", stub("from-Z")),
     ("mocks.json", "{ \"mocks\": [{ \"name\": \"m\" }] }"),
   ])
-  inspect(response(h.send("GET", "/x")), content="200\nfrom-Z")
+  inspect(
+    response(h.send("GET", "/x")),
+    content=(
+      #|200
+      #|Smock-Mock: m; via=default
+      #|from-Z
+    ),
+  )
 }

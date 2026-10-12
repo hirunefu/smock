@@ -1,5 +1,5 @@
 // HTTP/1.1 framing on the wire: exact bytes sent to the smock binary over
-// raw TCP connections.
+// raw connections, on the plain port and on the TLS port.
 
 ///|
 /// Requests that use every framing smock reads: no body, a Content-Length
@@ -19,24 +19,28 @@ let pipelined_responses : String =
   #|HTTP/1.1 200 OK
   #|Content-Type: application/json
   #|X-Source: smock
+  #|Smock-Mock: users; via=default
   #|Content-Length: 23
   #|
   #|{"id":1,"name":"Alice"}
   #|---
   #|HTTP/1.1 404 Not Found
   #|Content-Type: application/json
+  #|Smock-Mock: users; via=default
   #|Content-Length: 27
   #|
   #|{"error":"no Stub matched"}
   #|---
   #|HTTP/1.1 404 Not Found
   #|Content-Type: application/json
+  #|Smock-Mock: users; via=default
   #|Content-Length: 27
   #|
   #|{"error":"no Stub matched"}
   #|---
   #|HTTP/1.1 404 Not Found
   #|Content-Type: application/json
+  #|Smock-Mock: users; via=default
   #|Content-Length: 27
   #|
   #|{"error":"no Stub matched"}
@@ -44,6 +48,7 @@ let pipelined_responses : String =
   #|HTTP/1.1 200 OK
   #|Content-Type: application/json
   #|X-Source: smock
+  #|Smock-Mock: users; via=default
   #|Content-Length: 23
   #|
   #|{"id":1,"name":"Alice"}
@@ -89,26 +94,23 @@ let rejected : Array[(String, Bytes)] = [
 
 ///|
 async test "after malformed or ambiguous framing, smock answers what came before, then writes the error status with Connection: close and closes the connection" {
-  with_definitions([("users.json", users)], dir => {
+  let stopped = on_both_ports((smock, over) => {
     let outcomes = []
-    let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
-      for case in rejected {
-        let (name, bytes) = case
-        let conn = smock.connect()
-        defer conn.close()
-        conn.write(
-          @utf8.encode("GET /users/1 HTTP/1.1\r\nHost: localhost\r\n\r\n") +
-          bytes,
-        )
-        let first = read_response(conn)
-        let status_line = first[:first.find("\n").unwrap_or(0)]
-        let error = read_response(conn)
-          .trim_end(char_set="\n")
-          .replace_all(old="\n", new=" | ")
-        let end = if closed(conn) { "closed" } else { "open" }
-        outcomes.push("\{name}: \{status_line}, then \{error}, then \{end}")
-      }
-    })
+    for case in rejected {
+      let (name, bytes) = case
+      let conn = smock.connect(over~)
+      defer conn.close()
+      conn.write(
+        @utf8.encode("GET /users/1 HTTP/1.1\r\nHost: localhost\r\n\r\n") + bytes,
+      )
+      let first = read_response(conn)
+      let status_line = first[:first.find("\n").unwrap_or(0)]
+      let error = read_response(conn)
+        .trim_end(char_set="\n")
+        .replace_all(old="\n", new=" | ")
+      let end = if closed(conn) { "closed" } else { "open" }
+      outcomes.push("\{name}: \{status_line}, then \{error}, then \{end}")
+    }
     inspect(
       outcomes.join("\n"),
       content=(
@@ -127,20 +129,21 @@ async test "after malformed or ambiguous framing, smock answers what came before
         #|a TLS handshake: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
       ),
     )
-    // Rejected requests are not logged: R1 writes no per-request log lines.
-    inspect(
-      entries(stopped.logs),
-      content=(
-        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
-        #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
-      ),
-    )
   })
+  // Rejected requests are not logged: R1 writes no per-request log lines.
+  inspect(
+    entries(stopped.logs),
+    content=(
+      #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+      #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
+      #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","cert_file":"*/rsa-chain.pem","key_file":"*/rsa-key.pem"}
+    ),
+  )
 }
 
 ///|
 /// Reads `n` responses and joins them, separated by `---` lines.
-async fn read_responses(conn : @socket.Tcp, n : Int) -> String {
+async fn read_responses(conn : Conn, n : Int) -> String {
   let responses = []
   for _ in 0..<n {
     responses.push(read_response(conn))
@@ -150,73 +153,72 @@ async fn read_responses(conn : @socket.Tcp, n : Int) -> String {
 
 ///|
 async test "pipelining: requests sent in one write are all answered, in order, on the same connection" {
-  with_definitions([("users.json", users)], dir => {
-    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
-      let conn = smock.connect()
-      defer conn.close()
-      conn.write(pipelined)
-      assert_eq(read_responses(conn, 5), pipelined_responses)
-      // The connection is still open for the next request.
-      conn.write("GET /users/1 HTTP/1.1\r\nHost: localhost\r\n\r\n")
-      inspect(
-        read_response(conn),
-        content=(
-          #|HTTP/1.1 200 OK
-          #|Content-Type: application/json
-          #|X-Source: smock
-          #|Content-Length: 23
-          #|
-          #|{"id":1,"name":"Alice"}
-        ),
-      )
-    })
+  let _ = on_both_ports((smock, over) => {
+    let conn = smock.connect(over~)
+    defer conn.close()
+    conn.write(pipelined)
+    assert_eq(read_responses(conn, 5), pipelined_responses)
+    // The connection is still open for the next request.
+    conn.write("GET /users/1 HTTP/1.1\r\nHost: localhost\r\n\r\n")
+    inspect(
+      read_response(conn),
+      content=(
+        #|HTTP/1.1 200 OK
+        #|Content-Type: application/json
+        #|X-Source: smock
+        #|Smock-Mock: users; via=default
+        #|Content-Length: 23
+        #|
+        #|{"id":1,"name":"Alice"}
+      ),
+    )
   })
 }
 
 ///|
 async test "split reads: requests sent in pieces, with pauses between writes, get the same answers" {
-  with_definitions([("users.json", users)], dir => {
-    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
-      let bytes = @utf8.encode(pipelined)
-      // Pieces of 7 bytes cut the stream inside request lines, header
-      // fields, CRLFs, chunk sizes and chunk data.
-      let conn = smock.connect()
-      defer conn.close()
-      for offset = 0; offset < bytes.length(); offset = offset + 7 {
-        let end = if offset + 7 < bytes.length() {
-          offset + 7
-        } else {
-          bytes.length()
-        }
-        conn.write(bytes[offset:end])
-        @async.sleep(2)
+  let _ = on_both_ports((smock, over) => {
+    let bytes = @utf8.encode(pipelined)
+    // Pieces of 7 bytes cut the stream inside request lines, header
+    // fields, CRLFs, chunk sizes and chunk data.
+    let conn = smock.connect(over~)
+    defer conn.close()
+    for offset = 0; offset < bytes.length(); offset = offset + 7 {
+      let end = if offset + 7 < bytes.length() {
+        offset + 7
+      } else {
+        bytes.length()
       }
-      assert_eq(read_responses(conn, 5), pipelined_responses)
-      // One byte at a time.
-      let chunked = @utf8.encode(
-        "POST /users/1 HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n2;a=b\r\nhi\r\n0\r\n\r\nGET /users/1 HTTP/1.1\r\nHost: localhost\r\n\r\n",
-      )
-      for i in 0..<chunked.length() {
-        conn.write(chunked[i:i + 1])
-        @async.sleep(1)
-      }
-      inspect(
-        read_responses(conn, 2),
-        content=(
-          #|HTTP/1.1 404 Not Found
-          #|Content-Type: application/json
-          #|Content-Length: 27
-          #|
-          #|{"error":"no Stub matched"}
-          #|---
-          #|HTTP/1.1 200 OK
-          #|Content-Type: application/json
-          #|X-Source: smock
-          #|Content-Length: 23
-          #|
-          #|{"id":1,"name":"Alice"}
-        ),
-      )
-    })
+      conn.write(bytes[offset:end])
+      @async.sleep(2)
+    }
+    assert_eq(read_responses(conn, 5), pipelined_responses)
+    // One byte at a time.
+    let chunked = @utf8.encode(
+      "POST /users/1 HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n2;a=b\r\nhi\r\n0\r\n\r\nGET /users/1 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    )
+    for i in 0..<chunked.length() {
+      conn.write(chunked[i:i + 1])
+      @async.sleep(1)
+    }
+    inspect(
+      read_responses(conn, 2),
+      content=(
+        #|HTTP/1.1 404 Not Found
+        #|Content-Type: application/json
+        #|Smock-Mock: users; via=default
+        #|Content-Length: 27
+        #|
+        #|{"error":"no Stub matched"}
+        #|---
+        #|HTTP/1.1 200 OK
+        #|Content-Type: application/json
+        #|X-Source: smock
+        #|Smock-Mock: users; via=default
+        #|Content-Length: 23
+        #|
+        #|{"id":1,"name":"Alice"}
+      ),
+    )
   })
 }

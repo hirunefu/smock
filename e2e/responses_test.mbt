@@ -74,6 +74,7 @@ async test "smock serve answers from a body file, matches exact and json conditi
         content=(
           #|HTTP/1.1 200 OK
           #|Content-Type: application/json
+          #|Smock-Mock: teapot; via=default
           #|Content-Length: 33
           #|
           #|{
@@ -83,23 +84,27 @@ async test "smock serve answers from a body file, matches exact and json conditi
           #|
           #|---
           #|HTTP/1.1 200 OK
+          #|Smock-Mock: teapot; via=default
           #|Content-Length: 5
           #|
           #|first
           #|---
           #|HTTP/1.1 201 Created
+          #|Smock-Mock: teapot; via=default
           #|Content-Length: 7
           #|
           #|created
           #|---
           #|HTTP/1.1 501 Not Implemented
           #|Content-Type: application/json
+          #|Smock-Mock: teapot; via=default
           #|Content-Length: 27
           #|
           #|{"error":"no Stub matched"}
           #|---
           #|HTTP/1.1 501 Not Implemented
           #|Content-Type: application/json
+          #|Smock-Mock: teapot; via=default
           #|Content-Length: 27
           #|
           #|{"error":"no Stub matched"}
@@ -130,6 +135,7 @@ async test "smock serve reads body files from the body-file subdirectory its set
             smock.send("GET", "/users/1"),
             content=(
               #|HTTP/1.1 200 OK
+              #|Smock-Mock: users; via=default
               #|Content-Length: 12
               #|
               #|from bodies/

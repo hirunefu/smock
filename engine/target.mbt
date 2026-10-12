@@ -6,14 +6,9 @@
 // `+` stands for a space.
 
 ///|
-/// The percent-decoded path of a request target: everything before the
-/// query.
+/// The percent-decoded path of a request target, as `path_of` finds it.
 fn decoded_path(target : String) -> String {
-  let path = match target.find("?") {
-    Some(i) => target[:i]
-    None => target[:]
-  }
-  percent_decode(path, plus_is_space=false)
+  percent_decode(path_of(target), plus_is_space=false)
 }
 
 ///|

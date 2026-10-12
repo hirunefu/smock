@@ -26,6 +26,7 @@ async test "smock serve answers a request that matches a Stub with that Stub's r
           #|200 OK
           #|Content-Type: application/json
           #|X-Source: smock
+          #|Smock-Mock: users; via=default
           #|Content-Length: 23
           #|
           #|{"id":1,"name":"Alice"}
@@ -61,6 +62,7 @@ async test "smock serve answers a request that matches a Stub declared in a YAML
           #|200 OK
           #|Content-Type: application/json
           #|X-Source: smock
+          #|Smock-Mock: users; via=default
           #|Content-Length: 23
           #|
           #|{"id":1,"name":"Alice"}
@@ -79,6 +81,7 @@ async test "any other request gets the no-match response" {
         content=(
           #|404 Not Found
           #|Content-Type: application/json
+          #|Smock-Mock: users; via=default
           #|Content-Length: 27
           #|
           #|{"error":"no Stub matched"}
