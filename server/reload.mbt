@@ -10,6 +10,9 @@ priv struct Reloader {
   body_file_dir : String
   engine : @engine.Engine
   logger : @log.Logger
+  /// The certificate of the TLS port, which follows the Hosts when smock
+  /// generated it.
+  certificate : TlsCertificate
   /// `smock_definition_reloads_total`, by result.
   reloads : @metrics.Counter
   /// The digest of the set read last, at startup or by the last reload,
@@ -86,6 +89,11 @@ async fn Reloader::check(self : Reloader, check : @watch.Check) -> Unit {
         "digest": Json::string(result.new_digest),
         "errors": diagnostics_json(result.errors),
       })
+  }
+  // Nothing between the swap and here waits, so no connection is accepted
+  // in between with a certificate for the previous Hosts.
+  if result.result is Swapped {
+    self.certificate.follow_hosts(self.engine, self.logger)
   }
 }
 

@@ -1,14 +1,14 @@
 ///|
-/// Runs `smock serve`: loads the definitions and the TLS certificate, if
-/// any, listens on the plain port, on the admin port and, with a
-/// certificate, on the TLS port, and serves until the process is stopped.
-/// The plain and TLS ports serve the same Mocks; the admin port serves the
-/// Admin API.
+/// Runs `smock serve`: loads the definitions and the TLS certificate files,
+/// or without them generates a self-signed certificate, listens on the
+/// plain, the TLS and the admin port, and serves until the process is
+/// stopped. The plain and TLS ports serve the same Mocks; the admin port
+/// serves the Admin API.
 ///
 /// Returns the exit status when it stops by itself: 1 when Admin API
 /// authentication is on and no token is set, the definition set is invalid,
-/// the TLS certificate cannot be loaded or a port cannot be listened on.
-/// Every problem is logged first.
+/// the TLS certificate cannot be loaded or generated, or a port cannot be
+/// listened on. Every problem is logged first.
 pub async fn serve(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
@@ -69,6 +69,14 @@ pub async fn serve(
   logger.info("random seed", fields={
     "seed": Json::number(seed.to_double(), repr=seed.to_string()),
   })
+  let certificate = match tls {
+    Some((_, config)) => TlsCertificate::from_files(config)
+    None =>
+      match TlsCertificate::self_signed(engine, logger) {
+        Some(certificate) => certificate
+        None => return 1
+      }
+  }
   let build = @buildinfo.current()
   let metrics = @metrics.Registry()
   build.register_metric(metrics)
@@ -83,16 +91,10 @@ pub async fn serve(
   )
   guard listen(logger, "plain", settings.port) is Some(plain) else { return 1 }
   defer plain.close()
-  let tls_listener = match tls {
-    None => None
-    Some(_) => {
-      guard listen(logger, "tls", settings.tls_port) is Some(listener) else {
-        return 1
-      }
-      Some(listener)
-    }
+  guard listen(logger, "tls", settings.tls_port) is Some(tls_listener) else {
+    return 1
   }
-  defer (if tls_listener is Some(listener) { listener.close() })
+  defer tls_listener.close()
   guard listen(logger, "admin", settings.admin_port) is Some(admin_listener) else {
     return 1
   }
@@ -101,14 +103,15 @@ pub async fn serve(
     "listener": "plain",
     "address": Json::string("0.0.0.0:\{plain.addr.port()}"),
   })
-  if tls is Some((files, _)) && tls_listener is Some(listener) {
-    logger.info("listening", fields={
-      "listener": "tls",
-      "address": Json::string("0.0.0.0:\{listener.addr.port()}"),
-      "cert_file": Json::string(files.cert_file),
-      "key_file": Json::string(files.key_file),
-    })
+  let tls_fields : Map[String, Json] = {
+    "listener": "tls",
+    "address": Json::string("0.0.0.0:\{tls_listener.addr.port()}"),
   }
+  if tls is Some((files, _)) {
+    tls_fields["cert_file"] = Json::string(files.cert_file)
+    tls_fields["key_file"] = Json::string(files.key_file)
+  }
+  logger.info("listening", fields=tls_fields)
   logger.info("listening", fields={
     "listener": "admin",
     "address": Json::string("0.0.0.0:\{admin_listener.addr.port()}"),
@@ -120,6 +123,7 @@ pub async fn serve(
         body_file_dir: settings.body_file_dir,
         engine,
         logger,
+        certificate,
         reloads,
         last_read: (snapshot.digest, []),
       }
@@ -130,20 +134,21 @@ pub async fn serve(
         serve_mocks(conn, engine, rand, settings)
       })
     })
-    if tls is Some((_, config)) && tls_listener is Some(listener) {
-      group.spawn_bg(() => {
-        accept_loop(group, listener, conn => {
-          // A connection that is still in its handshake has sent no
-          // request bytes, so the idle timeout bounds the handshake too.
-          let stream = @async.with_timeout_opt(settings.idle_timeout_ms, () => {
-            TlsStream::accept(conn, config)
-          })
-          guard stream is Some(Some(stream)) else { return }
-          serve_mocks(stream, engine, rand, settings)
-          stream.shutdown()
+    group.spawn_bg(() => {
+      accept_loop(group, tls_listener, conn => {
+        // The certificate presented when the connection was accepted: a
+        // later one is for later connections.
+        let config = certificate.config
+        // A connection that is still in its handshake has sent no request
+        // bytes, so the idle timeout bounds the handshake too.
+        let stream = @async.with_timeout_opt(settings.idle_timeout_ms, () => {
+          TlsStream::accept(conn, config)
         })
+        guard stream is Some(Some(stream)) else { return }
+        serve_mocks(stream, engine, rand, settings)
+        stream.shutdown()
       })
-    }
+    })
     group.spawn_bg(() => {
       accept_loop(group, admin_listener, conn => {
         serve_connection(

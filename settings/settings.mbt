@@ -15,11 +15,10 @@ pub(all) struct ServeSettings {
   dir : String?
   /// The plain port. 0 asks the system for a free port.
   port : Int
-  /// The TLS port. 0 asks the system for a free port. smock listens on it
-  /// only when `tls` is set.
+  /// The TLS port. 0 asks the system for a free port.
   tls_port : Int
   /// The certificate and key files for the TLS port, or `None` when none
-  /// are configured.
+  /// are configured: smock then generates a self-signed certificate.
   tls : TlsFiles?
   /// The admin port, where the Admin API, the probes and the metrics are
   /// served. 0 asks the system for a free port.
@@ -129,12 +128,12 @@ let serve_settings : Array[Setting] = [
   },
   {
     name: "tls-port",
-    about: "The HTTPS port, served when --tls-cert-file and --tls-key-file are set. 0 picks a free port.",
+    about: "The HTTPS port. 0 picks a free port.",
     default: Some("8443"),
   },
   {
     name: "tls-cert-file",
-    about: "The PEM certificate chain for the HTTPS port: the leaf certificate, then its intermediates.",
+    about: "The PEM certificate chain for the HTTPS port: the leaf certificate, then its intermediates. Without it and --tls-key-file, smock generates a self-signed certificate in memory for localhost, 127.0.0.1, ::1 and every Mock Host.",
     default: None,
   },
   {
@@ -292,7 +291,7 @@ pub fn ServeSettings::from_matches(
       "must differ from --port (SMOCK_PORT)",
     )
   }
-  if admin_port != 0 && tls is Some(_) && admin_port == tls_port {
+  if admin_port != 0 && admin_port == tls_port {
     raise invalid(
       "admin-port",
       admin_port.to_string(),
