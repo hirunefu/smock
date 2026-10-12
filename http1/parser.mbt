@@ -511,16 +511,16 @@ fn parse_head(
     } else if name == "content-length" {
       content_lengths.push(header.value)
     } else if name == "connection" {
-      for token in @utf8.decode_lossy(header.value).split(",") {
-        match token.trim(char_set=" \t").to_lower() {
+      for token in list_elements(header.value) {
+        match token.to_lower() {
           "close" => close = true
           "keep-alive" => keep_alive = true
           _ => ()
         }
       }
     } else if name == "expect" {
-      for expectation in @utf8.decode_lossy(header.value).split(",") {
-        if expectation.trim(char_set=" \t").to_lower() == "100-continue" {
+      for expectation in list_elements(header.value) {
+        if expectation.to_lower() == "100-continue" {
           expect_continue = true
         }
       }
@@ -574,8 +574,8 @@ fn parse_head(
 fn check_transfer_codings(values : Array[Bytes]) -> Result[Unit, Int] {
   let mut chunked = 0
   for value in values {
-    for coding in @utf8.decode_lossy(value).split(",") {
-      match coding.trim(char_set=" \t").to_lower() {
+    for coding in list_elements(value) {
+      match coding.to_lower() {
         "" => ()
         "chunked" => chunked += 1
         _ => return Err(501)
@@ -602,8 +602,7 @@ fn content_length(values : Array[Bytes], limit : Int) -> Result[Int, Int] {
   // too large to hold still compare.
   let mut digits : String? = None
   for value in values {
-    for element in @utf8.decode_lossy(value).split(",") {
-      let element = element.trim(char_set=" \t")
+    for element in list_elements(value) {
       if element.is_empty() || element.iter().any(c => c < '0' || c > '9') {
         return Err(400)
       }
@@ -622,6 +621,16 @@ fn content_length(values : Array[Bytes], limit : Int) -> Result[Int, Int] {
     }
   }
   Ok(length.to_int())
+}
+
+///|
+/// The elements of the comma-separated list in the field value `value`
+/// (RFC 9110, section 5.6.1), without the white space around each. Empty
+/// elements are among them; the caller decides whether to allow them.
+fn list_elements(value : Bytes) -> Iter[StringView] {
+  @utf8.decode_lossy(value)
+  .split(",")
+  .map(element => element.trim(char_set=" \t"))
 }
 
 ///|
