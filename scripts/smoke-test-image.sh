@@ -11,9 +11,11 @@
 #   capabilities and no privilege escalation, `smock --version` names the
 #   version, the commit and the toolchain, and `smock serve` answers a Stub
 #   on the plain port and over HTTPS with a test certificate, which shows
-#   that OpenSSL is found at run time.
+#   that OpenSSL is found at run time, and its Admin API status operation
+#   answers on the admin port with the token and names the same build as
+#   `smock --version`.
 #
-# It needs docker, curl, openssl and readelf.
+# It needs docker, curl, openssl, readelf and jq.
 #
 # usage: scripts/smoke-test-image.sh <image> <version> <commit> <toolchain>
 # example: scripts/smoke-test-image.sh smock:dev 0.0.0-dev 0123456789ab "moonc v0.10.14+7d59c7ec9"
@@ -95,15 +97,21 @@ chmod +x "$tmp/smock-in-image"
 scripts/check-version.sh "$tmp/smock-in-image" "$version" "$commit" "$toolchain" ||
   fail "smock --version in the image is wrong"
 
-# smock serve, with a definitions directory and a test certificate mounted
-# read-only. The container's user owns none of the mounted files, so they are
+# smock serve, with a definitions directory, a test certificate and an Admin
+# API token file mounted read-only, as Kubernetes mounts a ConfigMap and
+# Secrets. The container's user owns none of the mounted files, so they are
 # made world-readable.
-mkdir "$tmp/definitions" "$tmp/tls"
+mkdir "$tmp/definitions" "$tmp/tls" "$tmp/admin"
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
   -days 1 -subj /CN=localhost -addext subjectAltName=DNS:localhost,IP:127.0.0.1 \
   -keyout "$tmp/tls/key.pem" -out "$tmp/tls/cert.pem" 2>/dev/null
 chmod 755 "$tmp/tls"
 chmod 644 "$tmp/tls/key.pem" "$tmp/tls/cert.pem"
+openssl rand -hex 16 >"$tmp/admin/token"
+chmod 755 "$tmp/admin"
+chmod 644 "$tmp/admin/token"
+# The token goes to curl in a header file, not on its command line.
+printf 'Authorization: Bearer %s\n' "$(cat "$tmp/admin/token")" >"$tmp/admin-header"
 cat >"$tmp/definitions/smoke.json" <<'JSON'
 {
   "mocks": [{ "name": "smoke" }],
@@ -125,9 +133,11 @@ trap 'docker rm --force "$container" >/dev/null 2>&1 || true; rm -rf "$tmp"' EXI
 # shellcheck disable=SC2086 # $run_flags is a list of flags
 docker run --detach --name "$container" $run_flags \
   --volume "$tmp/definitions:/definitions:ro" --volume "$tmp/tls:/tls:ro" \
-  --publish 127.0.0.1::8080 --publish 127.0.0.1::8443 \
+  --volume "$tmp/admin:/admin:ro" \
+  --publish 127.0.0.1::8080 --publish 127.0.0.1::8443 --publish 127.0.0.1::9090 \
   "$image" serve --dir /definitions \
-  --tls-cert-file /tls/cert.pem --tls-key-file /tls/key.pem >/dev/null
+  --tls-cert-file /tls/cert.pem --tls-key-file /tls/key.pem \
+  --admin-token-file /admin/token >/dev/null
 
 serve_fail() {
   echo "smoke-test-image: smock serve logged:" >&2
@@ -135,10 +145,16 @@ serve_fail() {
   fail "$@"
 }
 
-# port <container port>: the host port it is published on.
+# port <container port>: the host port it is published on, which exists
+# only while the container runs.
 port() {
-  docker port "$container" "$1/tcp" | head -n 1 | sed 's/.*://'
+  published=$(docker port "$container" "$1/tcp" 2>/dev/null | head -n 1 | sed 's/.*://')
+  [ -n "$published" ] || serve_fail "smock serve stopped"
+  echo "$published"
 }
+plain_port=$(port 8080)
+tls_port=$(port 8443)
+admin_port=$(port 9090)
 
 # get <url> [curl flags...]: the body of a GET, retried while smock starts.
 get() {
@@ -148,15 +164,25 @@ get() {
     --retry 20 --retry-delay 1 --retry-all-errors "$@" "$url"
 }
 
-body=$(get "http://127.0.0.1:$(port 8080)/smoke") ||
+body=$(get "http://127.0.0.1:$plain_port/smoke") ||
   serve_fail "no answer on the plain port"
 [ "$body" = "smoke ok" ] || serve_fail "the plain port answered \"$body\", not \"smoke ok\""
 echo "smoke-test-image: the plain port answers"
 
 # HTTPS needs the OpenSSL libraries in the image.
-body=$(get "https://127.0.0.1:$(port 8443)/smoke" --cacert "$tmp/tls/cert.pem") ||
+body=$(get "https://127.0.0.1:$tls_port/smoke" --cacert "$tmp/tls/cert.pem") ||
   serve_fail "no answer over HTTPS on the TLS port"
 [ "$body" = "smoke ok" ] || serve_fail "the TLS port answered \"$body\", not \"smoke ok\""
 echo "smoke-test-image: the TLS port answers over HTTPS"
+
+# The Admin API status operation answers with the token and names the build
+# that `smock --version` printed above.
+status=$(get "http://127.0.0.1:$admin_port/v1/status" --header "@$tmp/admin-header") ||
+  serve_fail "no answer from the Admin API status operation on the admin port"
+build=$(echo "$status" | jq -r '"\(.version) (commit \(.commit), \(.toolchain))"') ||
+  serve_fail "the Admin API status is not JSON: $status"
+[ "$build" = "$version (commit $commit, $toolchain)" ] ||
+  serve_fail "the Admin API status names the build \"$build\", not \"$version (commit $commit, $toolchain)\""
+echo "smoke-test-image: the Admin API status operation answers on the admin port"
 
 echo "smoke-test-image: $image passed"

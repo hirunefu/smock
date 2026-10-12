@@ -237,12 +237,18 @@ as UID 65532 and writes nothing to the filesystem, so the root filesystem can
 be read-only:
 
 ```sh
+export SMOCK_ADMIN_TOKEN=change-me
 docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges \
-  -p 8080:8080 -v "$PWD/defs:/defs:ro" ghcr.io/hirunefu/smock:<version> serve --dir /defs
+  -e SMOCK_ADMIN_TOKEN -p 8080:8080 -p 9090:9090 -v "$PWD/defs:/defs:ro" \
+  ghcr.io/hirunefu/smock:<version> serve --dir /defs
 ```
 
 The image's command is `serve`; arguments replace it (`... smock:<version>
---version`). Files mounted into the container must be readable by UID 65532.
+--version`). Like any `smock serve`, it needs the Admin API token, from
+`SMOCK_ADMIN_TOKEN` or from a mounted file that `--admin-token-file` names
+(such as a Kubernetes Secret). The image exposes the plain port 8080, the TLS
+port 8443 and the admin port 9090. Files mounted into the container must be
+readable by UID 65532.
 
 ### Verify the image
 
@@ -301,7 +307,7 @@ CI, checks those rules. After the first release, make the
 `ghcr.io/hirunefu/smock` package public in its settings; GitHub creates it
 private.
 
-To smoke-test the image locally (needs docker, curl, openssl and readelf):
+To smoke-test the image locally (needs docker, curl, openssl, readelf and jq):
 
 ```sh
 scripts/build-release.sh
@@ -311,9 +317,10 @@ scripts/smoke-test-image.sh smock:dev 0.0.0-dev "$(git rev-parse --short=12 HEAD
 
 It runs the image as its own UID with a read-only root filesystem, no
 capabilities and no privilege escalation, and checks `smock --version`, a
-Stub on the plain port and HTTPS with a test certificate. It also checks that
-the image adds nothing to its base but the smock binary, and that the image is
-for the machine it runs on.
+Stub on the plain port, HTTPS with a test certificate, and the Admin API
+status operation with a token file, which must name the same build as
+`smock --version`. It also checks that the image adds nothing to its base but
+the smock binary, and that the image is for the machine it runs on.
 
 ## Toolchain
 

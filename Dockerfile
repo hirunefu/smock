@@ -22,8 +22,8 @@ COPY --chmod=0755 dist/smock /usr/local/bin/smock
 # filesystem can be read-only.
 USER 65532:65532
 
-# Plain and TLS ports.
-EXPOSE 8080 8443
+# Plain, TLS and admin ports.
+EXPOSE 8080 8443 9090
 
 ENTRYPOINT ["/usr/local/bin/smock"]
 CMD ["serve"]
