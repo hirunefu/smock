@@ -20,6 +20,8 @@ pub(all) struct Request {
 ///|
 /// What the engine decided for one request.
 pub(all) struct Outcome {
+  /// Which Mock answered the request, if any.
+  resolution : Resolution
   /// The response to send.
   plan : ResponsePlan
   /// The Journal entry for the request. The caller commits it.
@@ -27,6 +29,17 @@ pub(all) struct Outcome {
   /// The Near miss, when no Stub matched.
   near_miss : NearMiss?
 } derive(Debug)
+
+///|
+/// Which Mock answered a request, and how the engine chose it.
+pub(all) enum Resolution {
+  /// The Mock whose Hosts include the request's Host.
+  ByHost(String)
+  /// The Default Mock, because no Mock lists the request's Host.
+  ViaDefault(String)
+  /// None: no Mock lists the request's Host and there is no Default Mock.
+  NoMock
+} derive(Debug, Eq)
 
 ///|
 /// The response to send, and how to send it.
@@ -115,15 +128,25 @@ pub fn Engine::handle(
 ) -> Outcome {
   // Faults and templates draw from `rand` once their tickets land.
   ignore(rand)
-  let mock = self.snapshot.default_mock()
+  let host = host_of(request)
+  let (resolution, mock) = match
+    host.bind(host => self.snapshot.mock_for_host(host)) {
+    Some(mock) => (ByHost(mock.name), Some(mock))
+    None =>
+      match self.snapshot.default_mock() {
+        Some(mock) => (ViaDefault(mock.name), Some(mock))
+        None => (NoMock, None)
+      }
+  }
   let path = path_of(request.target)
   let matched = match mock {
     Some(mock) =>
       mock.stubs.iter().find_first(stub => matches(stub, request, path))
     None => None
   }
-  let plan : ResponsePlan = match matched {
-    Some(stub) =>
+  let plan : ResponsePlan = match (mock, matched) {
+    (None, _) => no_mock(host, self.snapshot.hosts())
+    (Some(_), Some(stub)) =>
       {
         status: stub.response.status,
         headers: stub.response.headers.iter().collect(),
@@ -131,10 +154,15 @@ pub fn Engine::handle(
         delay_ms: 0,
         fault: None,
       }
-    None =>
+    (Some(_), None) =>
       { status: 404, headers: [], body: Bytes(b""), delay_ms: 0, fault: None, }
   }
+  // A mistyped Host must not silently succeed.
+  if resolution is ViaDefault(name) {
+    plan.headers.push(("Smock-Mock", "\{header_safe(name)}; via=default"))
+  }
   {
+    resolution,
     plan,
     journal: {
       session,
@@ -152,6 +180,104 @@ pub fn Engine::handle(
 }
 
 ///|
+/// The response to a request whose Host, normalised as `host`, no Mock
+/// lists, when there is no Default Mock: 404 with the Hosts the Mocks
+/// declare, `hosts`, normalised.
+fn no_mock(host : String?, hosts : Array[String]) -> ResponsePlan {
+  let body : Json = {
+    "error": "no Mock for this Host",
+    "host": host.map_or(Json::null(), host => Json::string(host)),
+    "acceptedHosts": Json::array(hosts.map(host => Json::string(host))),
+  }
+  {
+    status: 404,
+    headers: [("Content-Type", "application/json")],
+    body: Bytes(@utf8.encode(body.stringify())),
+    delay_ms: 0,
+    fault: None,
+  }
+}
+
+///|
+/// `name` as it can be written in a header value, ASCII only: the
+/// characters of an HTTP token stay as they are, except `%`, and every
+/// other byte of its UTF-8 encoding is percent-encoded. A Mock name can be
+/// any text, so this keeps a name such as `a\r\nb` or `a; via=x` from
+/// changing the response or the header's meaning.
+fn header_safe(name : String) -> String {
+  let out = StringBuilder()
+  for byte in @utf8.encode(name) {
+    let c = byte.to_int().unsafe_to_char()
+    let token = (c >= 'a' && c <= 'z') ||
+      (c >= 'A' && c <= 'Z') ||
+      (c >= '0' && c <= '9') ||
+      "!#$&'*+-.^_`|~".contains_char(c)
+    if token {
+      out.write_char(c)
+    } else {
+      out.write_string("%")
+      out.write_string(
+        byte.to_int().to_string(radix=16).to_upper().pad_start(2, '0'),
+      )
+    }
+  }
+  out.to_string()
+}
+
+///|
+/// The request's Host, normalised: the authority of an absolute-form
+/// target, or else the `Host` header field. A request has none without
+/// either, or when it is empty.
+fn host_of(request : Request) -> String? {
+  let raw = match authority_of(request.target) {
+    Some(authority) => authority
+    None =>
+      match request.headers.search_by(h => h.0.to_lower() == "host") {
+        Some(i) => request.headers[i].1
+        None => ""
+      }
+  }
+  match @definitions.normalize_host(raw) {
+    "" => None
+    host => Some(host)
+  }
+}
+
+///|
+/// The authority of an absolute-form request target, such as
+/// `users.example.com:8080` in `http://users.example.com:8080/users/1`,
+/// without any user information. Other targets have none.
+fn authority_of(target : String) -> String? {
+  guard scheme_end(target) is Some(end) else { return None }
+  let rest = target[end + 3:]
+  let authority = match rest.find_by(c => c is ('/' | '?' | '#')) {
+    Some(i) => rest[:i]
+    None => rest
+  }
+  let authority = match authority.rev_find("@") {
+    Some(i) => authority[i + 1:]
+    None => authority
+  }
+  Some(authority.to_owned())
+}
+
+///|
+/// Where the scheme of an absolute-form target ends: the index of its
+/// `://`.
+fn scheme_end(target : String) -> Int? {
+  guard target.find("://") is Some(end) && end > 0 else { return None }
+  for i, c in target[:end] {
+    let ok = (c >= 'a' && c <= 'z') ||
+      (c >= 'A' && c <= 'Z') ||
+      (i > 0 && ((c >= '0' && c <= '9') || c is ('+' | '-' | '.')))
+    if !ok {
+      return None
+    }
+  }
+  Some(end)
+}
+
+///|
 /// Whether `request`, whose path is `path`, meets every condition of `stub`.
 fn matches(stub : @definitions.Stub, request : Request, path : String) -> Bool {
   let conditions = stub.request
@@ -160,10 +286,27 @@ fn matches(stub : @definitions.Stub, request : Request, path : String) -> Bool {
 }
 
 ///|
-/// The path of a request target: everything before the query.
+/// The path of a request target: everything before the query, after the
+/// scheme and authority of an absolute-form target, where an empty path is
+/// `/`.
 fn path_of(target : String) -> String {
-  match target.find("?") {
-    Some(i) => target[:i].to_owned()
+  let target = match scheme_end(target) {
+    Some(end) => {
+      let rest = target[end + 3:]
+      match rest.find_by(c => c is ('/' | '?' | '#')) {
+        Some(i) => rest[i:]
+        None => ""
+      }
+    }
+    None => target[:]
+  }
+  let path = match target.find("?") {
+    Some(i) => target[:i]
     None => target
+  }
+  if path == "" {
+    "/"
+  } else {
+    path.to_owned()
   }
 }

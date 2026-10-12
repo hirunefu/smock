@@ -309,8 +309,6 @@ test "a field the Schema defines but smock does not implement yet is rejected as
       ),
     ]),
     content=(
-      #|a.json: /mocks/0/hosts: is not supported yet
-      #|a.json: /mocks/0/default: is not supported yet
       #|a.json: /mocks/0/noMatch: is not supported yet
       #|a.json: /mocks/0/journal: is not supported yet
       #|a.json: /stubs/0/priority: is not supported yet
@@ -375,6 +373,114 @@ test "two Mocks with the same name are rejected at the later one in file-name or
       #|c.json: /mocks/1/name: the Mock name "users" is already declared at a.json: /mocks/0/name
       #|c.json: /mocks/2/journal: is not supported yet
       #|c.json: /mocks/2/name: the Mock name "orders" is already declared at b.json: /mocks/1/name
+    ),
+  )
+}
+
+///|
+test "hosts are host names or IP addresses, optionally with a port, and default is true or false" {
+  inspect(
+    problems([
+      (
+        "a.json",
+        (
+          #|{ "mocks": [
+          #|  { "name": "a", "hosts": ["users.example.com", "users:8080", "10.0.0.7", "[::1]:8080",
+          #|      "fe80::1", "under_score", "USERS.EXAMPLE.COM."], "default": false },
+          #|  { "name": "b", "hosts": [], "default": true } ] }
+        ),
+      ),
+    ]),
+    content="valid",
+  )
+  inspect(
+    problems([
+      (
+        "a.json",
+        (
+          #|{ "mocks": [
+          #|  { "name": "a", "hosts": "users.example.com" },
+          #|  { "name": "b", "hosts": [1, "", "*.example.com", "users.*", "a b", "http://users",
+          #|      "users/x", "ユーザー.example", "users\n"] },
+          #|  { "name": "c", "default": "true" },
+          #|  { "name": "d", "default": 1 },
+          #|  { "name": "e", "default": null } ] }
+        ),
+      ),
+    ]),
+    content=(
+      #|a.json: /mocks/0/hosts: must be an array
+      #|a.json: /mocks/1/hosts/0: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/1/hosts/1: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/1/hosts/2: must be an exact name: Hosts have no wildcards
+      #|a.json: /mocks/1/hosts/3: must be an exact name: Hosts have no wildcards
+      #|a.json: /mocks/1/hosts/4: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/1/hosts/5: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/1/hosts/6: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/1/hosts/7: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/1/hosts/8: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/2/default: must be true or false
+      #|a.json: /mocks/3/default: must be true or false
+      #|a.json: /mocks/4/default: must be true or false
+    ),
+  )
+}
+
+///|
+test "two Mocks that claim the same Host after normalisation are rejected at the later claim, naming the earlier one" {
+  inspect(
+    problems([
+      (
+        "b.json",
+        (
+          #|{ "mocks": [{ "name": "orders",
+          #|  "hosts": ["orders.example.com", "USERS.example.com.:8443", "shared"] }] }
+        ),
+      ),
+      (
+        "a.json",
+        (
+          #|{ "mocks": [{ "name": "users",
+          #|  "hosts": ["users.example.com:8080", "users.internal", "[::1]:8080"] }] }
+        ),
+      ),
+      (
+        "c.json",
+        (
+          #|{ "mocks": [
+          #|  { "name": "payments", "hosts": ["::1", "Users.Internal", "payments", "shared:1"] },
+          #|  { "name": "refunds", "hosts": ["refunds", "Refunds.", "refunds:9"] } ] }
+        ),
+      ),
+    ]),
+    content=(
+      #|b.json: /mocks/0/hosts/1: the Host "users.example.com" is already claimed by the Mock "users" at a.json: /mocks/0/hosts/0
+      #|c.json: /mocks/0/hosts/0: the Host "[::1]" is already claimed by the Mock "users" at a.json: /mocks/0/hosts/2
+      #|c.json: /mocks/0/hosts/1: the Host "users.internal" is already claimed by the Mock "users" at a.json: /mocks/0/hosts/1
+      #|c.json: /mocks/0/hosts/3: the Host "shared" is already claimed by the Mock "orders" at b.json: /mocks/0/hosts/2
+    ),
+  )
+}
+
+///|
+test "more than one Mock marked default is rejected at the later one, naming the earlier one" {
+  inspect(
+    problems([
+      (
+        "b.json",
+        (
+          #|{ "mocks": [{ "name": "orders", "default": true },
+          #|  { "name": "payments", "default": false }] }
+        ),
+      ),
+      ("a.json", "{ \"mocks\": [{ \"name\": \"users\", \"default\": true }] }"),
+      (
+        "c.json", "{ \"mocks\": [{ \"name\": \"refunds\", \"default\": true }] }",
+      ),
+    ]),
+    content=(
+      #|b.json: /mocks/0/default: the Default Mock is already "users", marked at a.json: /mocks/0/default
+      #|c.json: /mocks/0/default: the Default Mock is already "users", marked at a.json: /mocks/0/default
     ),
   )
 }

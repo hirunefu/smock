@@ -19,21 +19,25 @@ let pipelined_responses : String =
   #|HTTP/1.1 200 OK
   #|Content-Type: application/json
   #|X-Source: smock
+  #|Smock-Mock: users; via=default
   #|Content-Length: 23
   #|
   #|{"id":1,"name":"Alice"}
   #|---
   #|HTTP/1.1 404 Not Found
+  #|Smock-Mock: users; via=default
   #|Content-Length: 0
   #|
   #|
   #|---
   #|HTTP/1.1 404 Not Found
+  #|Smock-Mock: users; via=default
   #|Content-Length: 0
   #|
   #|
   #|---
   #|HTTP/1.1 404 Not Found
+  #|Smock-Mock: users; via=default
   #|Content-Length: 0
   #|
   #|
@@ -41,6 +45,7 @@ let pipelined_responses : String =
   #|HTTP/1.1 200 OK
   #|Content-Type: application/json
   #|X-Source: smock
+  #|Smock-Mock: users; via=default
   #|Content-Length: 23
   #|
   #|{"id":1,"name":"Alice"}
@@ -161,6 +166,7 @@ async test "pipelining: requests sent in one write are all answered, in order, o
           #|HTTP/1.1 200 OK
           #|Content-Type: application/json
           #|X-Source: smock
+          #|Smock-Mock: users; via=default
           #|Content-Length: 23
           #|
           #|{"id":1,"name":"Alice"}
@@ -201,6 +207,7 @@ async test "split reads: requests sent in pieces, with pauses between writes, ge
         read_responses(conn, 2),
         content=(
           #|HTTP/1.1 404 Not Found
+          #|Smock-Mock: users; via=default
           #|Content-Length: 0
           #|
           #|
@@ -208,6 +215,7 @@ async test "split reads: requests sent in pieces, with pauses between writes, ge
           #|HTTP/1.1 200 OK
           #|Content-Type: application/json
           #|X-Source: smock
+          #|Smock-Mock: users; via=default
           #|Content-Length: 23
           #|
           #|{"id":1,"name":"Alice"}

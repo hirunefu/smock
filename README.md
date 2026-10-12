@@ -83,6 +83,13 @@ A Definition file, such as `defs/users.json`:
 }
 ```
 
+A Mock answers the requests for the Hosts it lists in `hosts`, and the
+Default Mock answers the rest. A lone Mock is the Default Mock, so `users`
+answers `curl localhost:8080/users/1`, with a `Smock-Mock: users;
+via=default` header that says no Host matched.
+[docs/definition-files.md](docs/definition-files.md#hosts-and-the-default-mock)
+describes Hosts and the Default Mock.
+
 `smock check defs` validates a definitions directory the way `smock serve`
 loads it: it prints every problem, one per line with the file and a JSON
 Pointer, and exits with status 1 if there is any.

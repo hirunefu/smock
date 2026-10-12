@@ -62,14 +62,21 @@ fn one_line(s : String) -> String {
 pub struct Snapshot {
   /// The Mocks, in declaration order: file-name order, then position in the
   /// file. When no Definition file declares a Mock, this is one empty Mock
-  /// named `default`.
+  /// named `default`, with no Hosts.
   mocks : ReadOnlyArray[Mock]
+  /// The Host index: each Host the Mocks declare, normalised, and the index
+  /// in `mocks` of the Mock that declares it, in declaration order.
+  priv host_index : Map[String, Int]
+  /// The index in `mocks` of the Default Mock, if there is one.
+  priv default_index : Int?
 } derive(Debug, Eq)
 
 ///|
 /// A Mock and its Stubs.
 pub struct Mock {
   name : String
+  /// The Hosts the Mock answers to, as declared.
+  hosts : ReadOnlyArray[String]
   /// The Stubs of this Mock, in the order they are tried.
   stubs : ReadOnlyArray[Stub]
 } derive(Debug, Eq)
@@ -103,13 +110,48 @@ pub struct Response {
 } derive(Debug, Eq)
 
 ///|
-/// The Default Mock: the only Mock, when there is exactly one. With several
-/// Mocks there is none yet.
+/// The Mock whose Hosts include `host`, a Host normalised by
+/// `normalize_host`.
+pub fn Snapshot::mock_for_host(self : Snapshot, host : String) -> Mock? {
+  self.host_index.get(host).map(i => self.mocks[i])
+}
+
+///|
+/// The Default Mock, which answers the requests whose Host no Mock lists:
+/// the Mock marked `default`, or else the only Mock when there is exactly
+/// one. Otherwise there is none.
 pub fn Snapshot::default_mock(self : Snapshot) -> Mock? {
-  if self.mocks.length() == 1 {
-    Some(self.mocks[0])
+  self.default_index.map(i => self.mocks[i])
+}
+
+///|
+/// Every Host the Mocks declare, normalised, in declaration order.
+pub fn Snapshot::hosts(self : Snapshot) -> Array[String] {
+  self.host_index.keys().collect()
+}
+
+///|
+/// A Host as smock compares it: in lower case, without the port and without
+/// a trailing dot. A bracketed IPv6 literal keeps its brackets, and an IPv6
+/// literal without brackets, which cannot carry a port, gets them, so
+/// `[::1]:8080`, `[::1]` and `::1` are the same Host.
+pub fn normalize_host(host : String) -> String {
+  let host = host.to_lower()
+  if host.has_prefix("[") {
+    return match host.find("]") {
+      Some(end) => host[:end + 1].to_owned()
+      None => host
+    }
+  }
+  let name = match host.find(":") {
+    Some(colon) if host.rev_find(":") == Some(colon) => host[:colon].to_owned()
+    Some(_) => return "[\{host}]"
+    None => host
+  }
+  if name.has_suffix(".") {
+    name[:name.length() - 1].to_owned()
   } else {
-    None
+    name
   }
 }
 
@@ -128,23 +170,40 @@ pub fn load(set : DefinitionSet) -> Result[Snapshot, Array[Diagnostic]] {
   if reader.diagnostics.length() > 0 {
     return Err(reader.diagnostics)
   }
-  let mocks = if reader.mocks.length() == 0 {
-    ["default"]
-  } else {
-    reader.mocks
+  if reader.mocks.length() == 0 {
+    return Ok({
+      mocks: ReadOnlyArray::from_array([
+        {
+          name: "default",
+          hosts: ReadOnlyArray::from_array([]),
+          stubs: ReadOnlyArray::from_array([]),
+        },
+      ]),
+      host_index: Map([]),
+      default_index: Some(0),
+    })
   }
-  Ok({
-    mocks: ReadOnlyArray::from_iter(
-      mocks
-      .iter()
-      .map(name => Mock::{
-        name,
-        stubs: ReadOnlyArray::from_iter(
-          reader.stubs.iter().filter(stub => stub.mock == name),
-        ),
-      }),
+  let mocks = reader.mocks.map(mock => Mock::{
+    name: mock.name,
+    hosts: ReadOnlyArray::from_iter(mock.hosts.iter().map(host => host.0)),
+    stubs: ReadOnlyArray::from_iter(
+      reader.stubs.iter().filter(stub => stub.mock == mock.name),
     ),
   })
+  let index_of = Map([])
+  for i, mock in mocks {
+    index_of[mock.name] = i
+  }
+  let host_index = Map([])
+  for host, claim in reader.hosts {
+    host_index[host] = index_of[claim.0]
+  }
+  let default_index = match reader.default_mock {
+    Some((name, _)) => Some(index_of[name])
+    None if mocks.length() == 1 => Some(0)
+    None => None
+  }
+  Ok({ mocks: ReadOnlyArray::from_array(mocks), host_index, default_index, })
 }
 
 ///|
