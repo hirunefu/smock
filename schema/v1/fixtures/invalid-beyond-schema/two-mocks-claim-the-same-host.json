@@ -1,0 +1,16 @@
+{
+  "mocks": [
+    {
+      "name": "users",
+      "hosts": [
+        "users.example.com"
+      ]
+    },
+    {
+      "name": "accounts",
+      "hosts": [
+        "Users.Example.com.:8080"
+      ]
+    }
+  ]
+}

@@ -26,6 +26,7 @@ async test "smock serve answers a request that matches a Stub with that Stub's r
           #|200 OK
           #|Content-Type: application/json
           #|X-Source: smock
+          #|Smock-Mock: users; via=default
           #|Content-Length: 23
           #|
           #|{"id":1,"name":"Alice"}
@@ -61,6 +62,7 @@ async test "smock serve answers a request that matches a Stub declared in a YAML
           #|200 OK
           #|Content-Type: application/json
           #|X-Source: smock
+          #|Smock-Mock: users; via=default
           #|Content-Length: 23
           #|
           #|{"id":1,"name":"Alice"}
@@ -78,6 +80,7 @@ async test "any other request gets 404" {
         smock.get("/users/2"),
         content=(
           #|404 Not Found
+          #|Smock-Mock: users; via=default
           #|Content-Length: 0
           #|
           #|

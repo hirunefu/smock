@@ -14,8 +14,10 @@ disagree.
 | `not-supported-yet/` | accepts it | rejects it as "not supported yet" |
 
 - `invalid-beyond-schema/` holds files that break a rule the Schema cannot
-  express, such as a rule across the files of a definition set: duplicate
-  Mock names or Stub IDs, or a Stub that names a Mock no file declares.
+  express, such as a rule across the Mocks and files of a definition set:
+  duplicate Mock names or Stub IDs, two Mocks that claim the same Host
+  after normalisation, more than one Mock marked `default`, or a Stub that
+  names a Mock no file declares.
   Files that are invalid only because of an RE2 pattern or a missing body
   file belong here too.
 - `not-supported-yet/` holds files that use a field the Schema defines but

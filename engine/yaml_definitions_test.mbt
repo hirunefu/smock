@@ -151,13 +151,16 @@ test "the engine answers a request with the response of a Stub declared in a YAM
     content=(
       #|200
       #|Content-Type: application/json
+      #|Smock-Mock: orders; via=default
       #|[{"id": 1}, {"id": 2}]
       #|
       #|---
       #|201
+      #|Smock-Mock: orders; via=default
       #|created order 3
       #|---
       #|404
+      #|Smock-Mock: orders; via=default
       #|
     ),
   )
@@ -193,12 +196,26 @@ test "YAML and JSON Definition files mix, read in byte-wise name order whatever 
     ("aa.json", json_of("stub from-aa")),
     ("mocks.yaml", yaml_of("mock m")),
   ])
-  inspect(response(h.send("GET", "/x")), content="200\nfrom-aa")
+  inspect(
+    response(h.send("GET", "/x")),
+    content=(
+      #|200
+      #|Smock-Mock: m; via=default
+      #|from-aa
+    ),
+  )
   let h = harness([
     ("b.yaml", yaml_of("stub from-b")),
     ("aa.json", json_of("stub from-aa")),
     ("Z.yml", yaml_of("stub from-Z")),
     ("mocks.yaml", yaml_of("mock m")),
   ])
-  inspect(response(h.send("GET", "/x")), content="200\nfrom-Z")
+  inspect(
+    response(h.send("GET", "/x")),
+    content=(
+      #|200
+      #|Smock-Mock: m; via=default
+      #|from-Z
+    ),
+  )
 }

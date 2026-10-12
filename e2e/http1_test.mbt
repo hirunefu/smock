@@ -21,11 +21,13 @@ async test "several requests in turn, with and without bodies, are answered on o
           #|HTTP/1.1 200 OK
           #|Content-Type: application/json
           #|X-Source: smock
+          #|Smock-Mock: users; via=default
           #|Content-Length: 23
           #|
           #|{"id":1,"name":"Alice"}
           #|---
           #|HTTP/1.1 404 Not Found
+          #|Smock-Mock: users; via=default
           #|Content-Length: 0
           #|
           #|
@@ -33,6 +35,7 @@ async test "several requests in turn, with and without bodies, are answered on o
           #|HTTP/1.1 200 OK
           #|Content-Type: application/json
           #|X-Source: smock
+          #|Smock-Mock: users; via=default
           #|Connection: close
           #|Content-Length: 23
           #|
@@ -60,6 +63,7 @@ async test "a request that cannot be parsed gets 400 and the connection closes" 
           #|HTTP/1.1 200 OK
           #|Content-Type: application/json
           #|X-Source: smock
+          #|Smock-Mock: users; via=default
           #|Content-Length: 23
           #|
           #|{"id":1,"name":"Alice"}

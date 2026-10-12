@@ -37,11 +37,13 @@ async test "Definition files are the regular top-level .json files, symlinks fol
           smock.get("/order") + "\n---\n" + smock.get("/linked"),
           content=(
             #|200 OK
+            #|Smock-Mock: m; via=default
             #|Content-Length: 12
             #|
             #|from aa.json
             #|---
             #|200 OK
+            #|Smock-Mock: m; via=default
             #|Content-Length: 13
             #|
             #|via a symlink
@@ -87,11 +89,13 @@ async test "YAML and JSON Definition files mix in one directory, in byte-wise na
           smock.get("/first") + "\n---\n" + smock.get("/second"),
           content=(
             #|200 OK
+            #|Smock-Mock: m; via=default
             #|Content-Length: 11
             #|
             #|from a.yaml
             #|---
             #|200 OK
+            #|Smock-Mock: m; via=default
             #|Content-Length: 11
             #|
             #|from c.json
@@ -120,6 +124,7 @@ async test "a missing or empty definitions directory, or none at all, gives an e
       out.join("\n---\n"),
       content=(
         #|404 Not Found
+        #|Smock-Mock: default; via=default
         #|Content-Length: 0
         #|
         #|
@@ -127,6 +132,7 @@ async test "a missing or empty definitions directory, or none at all, gives an e
         #|2 log entries
         #|---
         #|404 Not Found
+        #|Smock-Mock: default; via=default
         #|Content-Length: 0
         #|
         #|
@@ -134,6 +140,7 @@ async test "a missing or empty definitions directory, or none at all, gives an e
         #|2 log entries
         #|---
         #|404 Not Found
+        #|Smock-Mock: default; via=default
         #|Content-Length: 0
         #|
         #|
