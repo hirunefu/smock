@@ -16,26 +16,23 @@ priv enum Inst {
 }
 
 ///|
-priv struct Prog {
-  insts : Array[Inst]
-}
-
-///|
 /// The most instructions a compiled program may have. Like RE2's memory
 /// budget, it bounds the time and memory that compiling and matching take.
 const MAX_PROGRAM_SIZE : Int = 100000
 
 ///|
+/// Builds a program, one instruction at a time.
 priv struct Compiler {
   insts : Array[Inst]
 }
 
 ///|
-fn compile_node(node : Node) -> Prog raise CompileError {
+/// The program that matches `node`, ending with `Match`.
+fn compile_node(node : Node) -> FixedArray[Inst] raise CompileError {
   let c : Compiler = { insts: [], }
   c.emit(node)
   c.push(Match) |> ignore
-  { insts: c.insts, }
+  FixedArray::from_array(c.insts)
 }
 
 ///|
