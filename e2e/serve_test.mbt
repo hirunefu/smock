@@ -59,6 +59,7 @@ async test "with an invalid definition set, smock logs every error with its file
       ("users.json", users),
       ("broken.json", "{ \"stubs\": [{ \"id\": 7, \"mock\": \"users\" }] }"),
       ("orders.yaml", "mocks: []\n"),
+      ("payments.yml", "mocks: []\n"),
     ],
     dir => {
       let stopped = run_smock(["serve", "--dir", dir, "--port", "0"])
@@ -70,6 +71,7 @@ async test "with an invalid definition set, smock logs every error with its file
           #|{"level":"error","msg":"invalid definitions","file":"broken.json","pointer":"/stubs/0/id","error":"must be a non-empty string"}
           #|{"level":"error","msg":"invalid definitions","file":"broken.json","pointer":"/stubs/0","error":"needs a response"}
           #|{"level":"error","msg":"invalid definitions","file":"orders.yaml","pointer":"","error":"YAML Definition files are not supported yet; write this file as JSON"}
+          #|{"level":"error","msg":"invalid definitions","file":"payments.yml","pointer":"","error":"YAML Definition files are not supported yet; write this file as JSON"}
         ),
       )
     },
