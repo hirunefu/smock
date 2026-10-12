@@ -36,15 +36,16 @@ fn Incoming::meets(
   conditions : @definitions.Conditions,
 ) -> Bool {
   conditions.meth.map_or(true, meth => meth == self.request.meth) &&
-  conditions.path.map_or(true, path => meets(self.path, path)) &&
+  conditions.path.map_or(true, path => value_meets(self.path, path)) &&
   conditions.query.iter().all(condition => self.has_parameter(condition)) &&
   conditions.headers.iter().all(condition => self.has_header(condition)) &&
   conditions.body.map_or(true, condition => self.body_meets(condition))
 }
 
 ///|
-/// Whether the request has a query parameter with the name and value of
-/// `condition`. A repeated parameter matches when any of its values does.
+/// Whether the request has a query parameter with the name of `condition`
+/// and a decoded value that meets it. A repeated parameter matches when
+/// any of its values does.
 fn Incoming::has_parameter(
   self : Incoming,
   condition : (String, @definitions.ValueCondition),
@@ -58,12 +59,14 @@ fn Incoming::has_parameter(
     }
   }
   let (name, value) = condition
-  query.iter().any(parameter => parameter.0 == name && meets(parameter.1, value))
+  query
+  .iter()
+  .any(parameter => parameter.0 == name && value_meets(parameter.1, value))
 }
 
 ///|
-/// Whether the request has a header with the name and value of
-/// `condition`, whose name is in lower case. Names are compared
+/// Whether the request has a header with the name of `condition`, which is
+/// in lower case, and a value that meets it. Names are compared
 /// case-insensitively. A repeated header matches when any of its values
 /// does.
 fn Incoming::has_header(
@@ -73,13 +76,13 @@ fn Incoming::has_header(
   let (lower_name, value) = condition
   self.request.headers
   .iter()
-  .any(header => is_name(header.0, lower_name) && meets(header.1, value))
+  .any(header => is_name(header.0, lower_name) && value_meets(header.1, value))
 }
 
 ///|
 /// Whether `value` meets `condition`: it is exactly the given text, or the
 /// pattern matches the whole of it.
-fn meets(value : String, condition : @definitions.ValueCondition) -> Bool {
+fn value_meets(value : String, condition : @definitions.ValueCondition) -> Bool {
   match condition {
     Exact(exact) => value == exact
     Pattern(pattern) => pattern.matches(@utf8.encode(value))

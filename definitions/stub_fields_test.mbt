@@ -109,8 +109,7 @@ test "pattern conditions on the path, query, headers and body are read as the Sc
         ),
       ),
       stub_with(
-        "not-a-path",
-        "\"request\": { \"path\": { \"pattern\": \"users|[a-z]*\" } }",
+        "not-a-path", "\"request\": { \"path\": { \"pattern\": \"users|[a-z]*\" } }",
       ),
     ]),
     content="valid",
@@ -170,7 +169,9 @@ test "a pattern that does not compile is a diagnostic at the JSON Pointer of its
       stub_with(
         "b", "\"request\": { \"path\": { \"pattern\": \"/café/(?P<é>x)\" } }",
       ),
-      stub_with("c", "\"request\": { \"query\": { \"~q\": { \"pattern\": \")\" } } }"),
+      stub_with(
+        "c", "\"request\": { \"query\": { \"~q\": { \"pattern\": \")\" } } }",
+      ),
     ]),
     content=(
       #|a.json: /stubs/0/request/path/pattern: is not a valid pattern: position 7: missing closing )
@@ -193,9 +194,9 @@ test "a pattern with syntax outside the R1 subset, or that is not RE2 syntax, is
   }
   inspect(
     stub_problems(
-      ["/\\p{Greek}+", "/\\pL", "/[[:alpha:]]", "/(?U)a*", "/\\x41", "/(?=a)", "/(a)\\1"].mapi(
-        stub,
-      ),
+      [
+        "/\\p{Greek}+", "/\\pL", "/[[:alpha:]]", "/(?U)a*", "/\\x41", "/(?=a)", "/(a)\\1",
+      ].mapi(stub),
     ),
     content=(
       #|a.json: /stubs/0/request/path/pattern: is not a valid pattern: position 1: Unicode class \p{Greek} is not supported in R1

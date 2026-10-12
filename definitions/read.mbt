@@ -588,7 +588,7 @@ fn File::compile(self : File, pointer : String, source : String) -> Pattern? {
       None
     }
   } noraise {
-    regex => Some({ source, regex })
+    regex => Some({ source, regex, })
   }
 }
 

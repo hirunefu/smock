@@ -152,8 +152,18 @@ test "a repeated header meets a pattern when any of its values matches it" {
   ])
   inspect(
     winners(h, [
-      ("GET", "/", [("Accept", "text/html"), ("ACCEPT", "application/json")], ""),
-      ("GET", "/", [("Accept", "application/problem+json"), ("Accept", "x")], ""),
+      (
+        "GET",
+        "/",
+        [("Accept", "text/html"), ("ACCEPT", "application/json")],
+        "",
+      ),
+      (
+        "GET",
+        "/",
+        [("Accept", "application/problem+json"), ("Accept", "x")],
+        "",
+      ),
       ("GET", "/", [("Accept", "text/html"), ("Accept", "application/xml")], ""),
     ]),
     content=(
@@ -292,7 +302,9 @@ test "exact, pattern and json conditions combine on one Stub, which matches only
         [("Content-Type", "application/json"), ("X-Api-Key", "K")],
         body,
       ),
-      ("POST", "/teams/red/users?dryRun=true&v=2", headers, "{\"name\":\"Bob\"}"),
+      (
+        "POST", "/teams/red/users?dryRun=true&v=2", headers, "{\"name\":\"Bob\"}",
+      ),
     ]),
     content=(
       #|POST /teams/red/users?dryRun=true&v=2 [Content-Type: application/json; charset=utf-8] [X-Api-Key: k] "{\"name\":\"Alice\",\"age\":30}" -> create
@@ -328,7 +340,11 @@ test "Stubs with patterns are tried by priority, then in declaration order, like
     (
       "b.json",
       stub_file([
-        stub("me", priority=1, request="\"path\": { \"pattern\": \"/users/me\" }"),
+        stub(
+          "me",
+          priority=1,
+          request="\"path\": { \"pattern\": \"/users/me\" }",
+        ),
       ]),
     ),
   ])
