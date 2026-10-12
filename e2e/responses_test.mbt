@@ -165,6 +165,8 @@ async test "a missing body file or a body-file path that leaves its subdirectory
       content=(
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
+        #|{"level":"info","msg":"random seed","seed":"*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"invalid definitions","file":"users.json","pointer":"/stubs/0/response/bodyFile","error":"no body file \"users/2.json\" in the body-file subdirectory"}
         #|{"level":"error","msg":"invalid definitions","file":"users.json","pointer":"/stubs/1/response/bodyFile","error":"must be a path inside the body-file subdirectory, such as users/1.json, with no name starting with ."}
         #|---

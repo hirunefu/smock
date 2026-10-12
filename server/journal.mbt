@@ -77,9 +77,9 @@ fn query_journal(
         "the query is not valid: \{err.message()}",
       )
   }
-  let page = admin.engine.query_journal(query, session~) catch {
-    error => return admin.refused(error, session)
-  }
+  let page = admin.engine().query_journal(query, session~) catch {
+      error => return admin.refused(error, session)
+    }
   guard ToJson::to_json(page) is Object(members) else {
     abort("a Journal page is a JSON object")
   }

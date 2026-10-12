@@ -151,10 +151,12 @@ async test "rewriting the certificate files rotates the certificate without a re
           content=(
             #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
             #|{"level":"info","msg":"random seed","seed":"*"}
+            #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
             #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
             #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","cert_file":"*/tls.crt","key_file":"*/tls.key"}
-            #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
             #|{"level":"info","msg":"TLS certificate reloaded","mock":"","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
+            #|{"level":"info","msg":"drain started","timeoutMs":20000}
+            #|{"level":"info","msg":"drain ended","connectionsCut":0}
           ),
         )
       })
@@ -553,10 +555,14 @@ async test "smock serve refuses to start when a Mock's certificate pair cannot b
       content=(
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
+        #|{"level":"info","msg":"random seed","seed":"*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"users","cert_file":"*/missing.pem","key_file":"*/rsa-key.pem","error":"cannot read the certificate file: no such file"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
+        #|{"level":"info","msg":"random seed","seed":"*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"users","cert_file":"*/rsa-chain.pem","key_file":"*/other-key.pem","error":"the private key does not match the leaf certificate"}
         #|---
         #|status 2

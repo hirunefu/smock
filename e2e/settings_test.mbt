@@ -30,6 +30,7 @@ async test "every serve setting is a flag with a matching SMOCK_ environment var
       #|  --body-limit <body-limit>                    The longest request body, in bytes. Longer bodies get 413. [env: SMOCK_BODY_LIMIT] [default: 10485760]
       #|  --read-timeout-ms <read-timeout-ms>          How long a request may take to arrive, in milliseconds, from its first byte to its last. Then the connection closes. [env: SMOCK_READ_TIMEOUT_MS] [default: 30000]
       #|  --idle-timeout-ms <idle-timeout-ms>          How long a connection may wait for a request, in milliseconds. Then it closes. [env: SMOCK_IDLE_TIMEOUT_MS] [default: 60000]
+      #|  --drain-timeout-ms <drain-timeout-ms>        How long smock may drain after SIGTERM, in milliseconds: responses in progress, Server-Sent Event streams and delays still running then are cut, and smock exits. [env: SMOCK_DRAIN_TIMEOUT_MS] [default: 20000]
       #|  --seed <seed>                                The seed of the process random generator, from 0 to 9007199254740991. Faults of Stubs without their own seed draw from it. Without it, smock picks a seed at startup and logs it. [env: SMOCK_SEED]
       #|  --journal <journal>                          Whether smock records the requests it receives in the Journal: on or off. Off, it records none, and Journal queries are refused. [env: SMOCK_JOURNAL] [default: on]
       #|  --journal-max-entries <journal-max-entries>  The most entries the Journal holds. Beyond it, the oldest entries are evicted. [env: SMOCK_JOURNAL_MAX_ENTRIES] [default: 10000]
@@ -140,6 +141,9 @@ async test "an invalid value stops startup with a message that names the setting
     (["--read-timeout-ms", "30s"], Map([])),
     (["--read-timeout-ms", "2147483648"], Map([])),
     ([], { "SMOCK_IDLE_TIMEOUT_MS": "0" }),
+    (["--drain-timeout-ms", "20s"], Map([])),
+    ([], { "SMOCK_DRAIN_TIMEOUT_MS": "-1" }),
+    (["--drain-timeout-ms", "2147483648"], Map([])),
     (["--admin-port", "65536"], Map([])),
     ([], { "SMOCK_ADMIN_PORT": "admin" }),
     (["--port", "8080", "--admin-port", "8080"], Map([])),
@@ -203,6 +207,9 @@ async test "an invalid value stops startup with a message that names the setting
       #|status 2: smock serve: invalid value "30s" for --read-timeout-ms (SMOCK_READ_TIMEOUT_MS): must be an integer from 1 to 2147483647
       #|status 2: smock serve: invalid value "2147483648" for --read-timeout-ms (SMOCK_READ_TIMEOUT_MS): must be an integer from 1 to 2147483647
       #|status 2: smock serve: invalid value "0" for --idle-timeout-ms (SMOCK_IDLE_TIMEOUT_MS): must be an integer from 1 to 2147483647
+      #|status 2: smock serve: invalid value "20s" for --drain-timeout-ms (SMOCK_DRAIN_TIMEOUT_MS): must be an integer from 0 to 2147483647
+      #|status 2: smock serve: invalid value "-1" for --drain-timeout-ms (SMOCK_DRAIN_TIMEOUT_MS): must be an integer from 0 to 2147483647
+      #|status 2: smock serve: invalid value "2147483648" for --drain-timeout-ms (SMOCK_DRAIN_TIMEOUT_MS): must be an integer from 0 to 2147483647
       #|status 2: smock serve: invalid value "65536" for --admin-port (SMOCK_ADMIN_PORT): must be an integer from 0 to 65535
       #|status 2: smock serve: invalid value "admin" for --admin-port (SMOCK_ADMIN_PORT): must be an integer from 0 to 65535
       #|status 2: smock serve: invalid value "8080" for --admin-port (SMOCK_ADMIN_PORT): must differ from --port (SMOCK_PORT)

@@ -88,9 +88,9 @@ fn Admin::refused(
 /// are tried.
 fn list_stubs(admin : Admin, request : @http1.Request, _body : Json?) -> Reply {
   let session = admin.session(request)
-  let stubs = admin.engine.ephemeral_stubs(mock=mock_of(request), session~) catch {
-    error => return admin.refused(error, session)
-  }
+  let stubs = admin.engine().ephemeral_stubs(mock=mock_of(request), session~) catch {
+      error => return admin.refused(error, session)
+    }
   admin.json(200, {
     "stubs": Json::array(stubs.map(stub => ToJson::to_json(stub))),
   })
@@ -106,9 +106,9 @@ fn add_stub(admin : Admin, request : @http1.Request, body : Json?) -> Reply {
       400, "invalid_request", "the body must be the Ephemeral Stub to add, a JSON object",
     )
   }
-  let stub = admin.engine.add_ephemeral_stub(mock~, session~, body) catch {
-    error => return admin.refused(error, session)
-  }
+  let stub = admin.engine().add_ephemeral_stub(mock~, session~, body) catch {
+      error => return admin.refused(error, session)
+    }
   admin.logger.info("Ephemeral Stub added", fields={
     "mock": Json::string(mock),
     "session": session_json(session),
@@ -123,7 +123,7 @@ fn delete_stub(admin : Admin, request : @http1.Request, _body : Json?) -> Reply 
   let session = admin.session(request)
   let mock = mock_of(request)
   let id = path_segment(request, 5)
-  admin.engine.delete_ephemeral_stub(mock~, session~, id~) catch {
+  admin.engine().delete_ephemeral_stub(mock~, session~, id~) catch {
     error => return admin.refused(error, session)
   }
   admin.logger.info("Ephemeral Stub deleted", fields={
@@ -144,9 +144,9 @@ fn reset(admin : Admin, request : @http1.Request, body : Json?) -> Reply {
       400, "invalid_request", "the body must be {\"scope\":\"session\"}, {\"scope\":\"mock\",\"mock\":<name>} or {\"scope\":\"all\"}",
     )
   }
-  let removed = admin.engine.reset(scope) catch {
-    error => return admin.refused(error, session)
-  }
+  let removed = admin.engine().reset(scope) catch {
+      error => return admin.refused(error, session)
+    }
   let removed : Json = {
     "ephemeralStubs": Json::number(removed.ephemeral_stubs.to_double()),
     "journalEntries": Json::number(removed.journal_entries.to_double()),

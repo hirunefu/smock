@@ -85,6 +85,23 @@ struct Smock {
   pid : Int
   /// The log lines it has written so far: they keep coming while it runs.
   logs : Array[String]
+  /// The process, to wait for its exit.
+  process : @process.Process
+}
+
+///|
+/// Sends smock SIGTERM, which makes it drain and exit.
+async fn Smock::terminate(self : Smock) -> Unit {
+  let _ = @process.run("kill", ["-TERM", self.pid.to_string()])
+}
+
+///|
+/// Waits for smock to exit, and returns its exit status (minus the signal
+/// number when a signal ended it).
+async fn Smock::exited(self : Smock) -> Int {
+  let status = @async.with_timeout_opt(patience_ms, () => self.process.wait())
+  guard status is Some(status) else { fail("smock did not exit in time") }
+  status
 }
 
 ///|
@@ -239,7 +256,8 @@ struct Stopped {
 /// Starts `smock serve <args>` with only `smock_env(env)` as its
 /// environment, in the working directory `cwd` (by default the test's own),
 /// waits until it listens on the plain, the TLS and the admin port, runs
-/// `f`, then stops it with SIGTERM and waits for it to exit.
+/// `f`, then stops it with SIGTERM, unless `f` has, and waits for it to
+/// exit.
 async fn with_smock(
   args : Array[String],
   env? : Map[String, String] = Map([]),
@@ -295,8 +313,11 @@ async fn with_smock(
       admin_port: ports.get("admin").unwrap(),
       pid: process.pid,
       logs,
+      process,
     })
-    let _ = @process.run("kill", ["-TERM", process.pid.to_string()])
+    if process.try_wait() is None {
+      let _ = @process.run("kill", ["-TERM", process.pid.to_string()])
+    }
     let status = @async.with_timeout_opt(patience_ms, () => process.wait())
     guard status is Some(status) else { fail("smock did not stop in time") }
     reader.wait()
@@ -306,8 +327,9 @@ async fn with_smock(
 
 ///|
 /// Whether `smock serve <args>` loads its definitions: `"serves"` once it
-/// listens on its admin port, the last it opens (it is then stopped), or
-/// `"exits with status <n>"` when it stops by itself first.
+/// listens on its plain port, which it opens once they have loaded (it is
+/// then stopped), or `"exits with status <n>"` when it stops by itself
+/// first.
 async fn serve_verdict(args : Array[String]) -> String {
   build.wait()
   @async.with_task_group(group => {
@@ -327,7 +349,7 @@ async fn serve_verdict(args : Array[String]) -> String {
         guard stderr.read_until("\n") is Some(line) else {
           break "exits with status \{process.wait()}"
         }
-        if listening(line) is Some(("admin", _)) {
+        if listening(line) is Some(("plain", _)) {
           let _ = @process.run("kill", ["-TERM", process.pid.to_string()])
           let _ = process.wait()
           break "serves"
