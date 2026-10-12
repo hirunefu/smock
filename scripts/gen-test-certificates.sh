@@ -1,14 +1,22 @@
 #!/bin/sh
 # Writes testcerts/testcerts.mbt: a small PKI for the TLS tests, made with the
-# openssl command line tool. Run it again to replace every certificate and key,
-# for example when they near their expiry (they are valid for 100 years).
+# openssl command line tool (3.4 or later, for -not_before and -not_after).
+# Run it again to replace every certificate and key. Every certificate has
+# fixed validity dates, so tests can show when one expires, and each leaf
+# expires at a different time, so its expiry tells which leaf it is.
 #
 # - a root CA (ECDSA P-256), the only certificate a test client trusts;
 # - an intermediate CA (ECDSA P-256) issued by the root;
-# - two leaf certificates for localhost and 127.0.0.1 issued by the
-#   intermediate, one with an RSA key and one with an ECDSA key. Their chain
-#   files hold the leaf, then the intermediate, as cert-manager writes them;
+# - leaf certificates issued by the intermediate. Their chain files hold the
+#   leaf, then the intermediate, as cert-manager writes them:
+#   - two for localhost and 127.0.0.1, one with an RSA key and one with an
+#     ECDSA key;
+#   - two for users.example.com (the second one as a renewal would issue it,
+#     with a new key) and one for orders.example.com, all with ECDSA keys;
 # - a further RSA key that matches no certificate.
+#
+# Each leaf's common name names the leaf, such as smock-test-rsa, so that a
+# client's view of the certificate shows which one it got.
 #
 # The keys are test fixtures with no other use.
 set -eu
@@ -17,7 +25,8 @@ cd "$(dirname "$0")/.."
 out=testcerts/testcerts.mbt
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-days=36500
+not_before=20261001000000Z
+ca_not_after=21261001000000Z
 
 cat >"$work/root.cnf" <<'CNF'
 [req]
@@ -40,35 +49,51 @@ subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid:always
 EXT
 
-cat >"$work/leaf.ext" <<'EXT'
+# leaf_ext <file> <subjectAltName>
+leaf_ext() {
+  cat >"$work/$1" <<EXT
 basicConstraints = critical, CA:false
 keyUsage = critical, digitalSignature, keyEncipherment
 extendedKeyUsage = serverAuth
-subjectAltName = DNS:localhost, IP:127.0.0.1
+subjectAltName = $2
 subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid:always
 EXT
+}
+leaf_ext localhost.ext "DNS:localhost, IP:127.0.0.1"
+leaf_ext users.ext "DNS:users.example.com"
+leaf_ext orders.ext "DNS:orders.example.com"
 
-# issue <name> <subject> <key> <issuer cert> <issuer key> <extensions>
+# issue <name> <subject> <key> <issuer cert> <issuer key> <extensions> <not after>
 issue() {
   openssl req -new -key "$work/$3" -subj "$2" -out "$work/$1.csr"
   openssl x509 -req -in "$work/$1.csr" -CA "$work/$4" -CAkey "$work/$5" \
-    -CAcreateserial -days "$days" -sha256 -extfile "$work/$6" \
-    -out "$work/$1.pem"
+    -CAcreateserial -not_before "$not_before" -not_after "$7" -sha256 \
+    -extfile "$work/$6" -out "$work/$1.pem"
+}
+
+# ecdsa_leaf <name> <extensions> <not after>: a leaf with a new ECDSA key in
+# SEC1 PEM, issued by the intermediate.
+ecdsa_leaf() {
+  openssl ecparam -name prime256v1 -genkey -noout -out "$work/$1.key"
+  issue "$1" "/CN=smock-test-$1" "$1.key" intermediate.pem intermediate.key "$2" "$3"
 }
 
 openssl ecparam -name prime256v1 -genkey -noout -out "$work/root.key"
 openssl req -new -x509 -config "$work/root.cnf" -key "$work/root.key" \
-  -days "$days" -sha256 -out "$work/root.pem"
+  -not_before "$not_before" -not_after "$ca_not_after" -sha256 \
+  -out "$work/root.pem"
 
 openssl ecparam -name prime256v1 -genkey -noout -out "$work/intermediate.key"
-issue intermediate "/CN=smock test intermediate CA" intermediate.key root.pem root.key intermediate.ext
+issue intermediate "/CN=smock test intermediate CA" intermediate.key root.pem root.key intermediate.ext "$ca_not_after"
 
 # PKCS#1 and SEC1 ("RSA PRIVATE KEY", "EC PRIVATE KEY"): cert-manager's default encoding.
 openssl genrsa -traditional -out "$work/rsa.key" 2048
-issue rsa "/CN=localhost" rsa.key intermediate.pem intermediate.key leaf.ext
-openssl ecparam -name prime256v1 -genkey -noout -out "$work/ecdsa.key"
-issue ecdsa "/CN=localhost" ecdsa.key intermediate.pem intermediate.key leaf.ext
+issue rsa "/CN=smock-test-rsa" rsa.key intermediate.pem intermediate.key localhost.ext 21260101000000Z
+ecdsa_leaf ecdsa localhost.ext 21250101000000Z
+ecdsa_leaf users users.ext 21240101000000Z
+ecdsa_leaf users-renewed users.ext 21240701000000Z
+ecdsa_leaf orders orders.ext 21230101000000Z
 # PKCS#8 ("PRIVATE KEY").
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$work/other.key"
 
@@ -81,14 +106,24 @@ value() {
   cat "$@" | sed 's/^/  #|/'
 }
 
+# chain <name> <leaf> <names> <not after>: the chain constant of a leaf and
+# the constant of its key.
+chain() {
+  value "$1_chain" "The certificate chain smock-test-$2: for $3 with an $(key_kind "$2") key, valid until $4 UTC; the leaf, then \`intermediate_ca\`." "$work/$2.pem" "$work/intermediate.pem"
+  value "$1_key" "The private key of \`$1_chain\`, in $(key_format "$2") PEM." "$work/$2.key"
+}
+key_kind() { if [ "$1" = rsa ]; then echo RSA; else echo "ECDSA P-256"; fi; }
+key_format() { if [ "$1" = rsa ]; then echo "PKCS#1"; else echo SEC1; fi; }
+
 {
   echo "// Generated by scripts/gen-test-certificates.sh. Do not edit."
   value root_ca "The root CA certificate. Test clients trust only this certificate." "$work/root.pem"
   value intermediate_ca "The intermediate CA certificate, issued by \`root_ca\`." "$work/intermediate.pem"
-  value rsa_chain "A certificate chain for localhost and 127.0.0.1 with an RSA key: the leaf, then \`intermediate_ca\`." "$work/rsa.pem" "$work/intermediate.pem"
-  value rsa_key "The private key of \`rsa_chain\`, in PKCS#1 PEM." "$work/rsa.key"
-  value ecdsa_chain "A certificate chain for localhost and 127.0.0.1 with an ECDSA P-256 key: the leaf, then \`intermediate_ca\`." "$work/ecdsa.pem" "$work/intermediate.pem"
-  value ecdsa_key "The private key of \`ecdsa_chain\`, in SEC1 PEM." "$work/ecdsa.key"
+  chain rsa rsa "localhost and 127.0.0.1" "2126-01-01 00:00:00"
+  chain ecdsa ecdsa "localhost and 127.0.0.1" "2125-01-01 00:00:00"
+  chain users users users.example.com "2124-01-01 00:00:00"
+  chain users_renewed users-renewed users.example.com "2124-07-01 00:00:00"
+  chain orders orders orders.example.com "2123-01-01 00:00:00"
   value other_rsa_key "An RSA private key in PKCS#8 PEM that belongs to no certificate here." "$work/other.key"
 } >"$out"
 

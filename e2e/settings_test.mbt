@@ -13,9 +13,10 @@ async test "every serve setting is a flag with a matching SMOCK_ environment var
       #|  -h, --help                                   Show help information.
       #|  --dir <dir>                                  The definitions directory. Without it, smock serves one empty Default Mock. [env: SMOCK_DIR]
       #|  --port <port>                                The plain HTTP port. 0 picks a free port. [env: SMOCK_PORT] [default: 8080]
-      #|  --tls-port <tls-port>                        The HTTPS port, served when --tls-cert-file and --tls-key-file are set. 0 picks a free port. [env: SMOCK_TLS_PORT] [default: 8443]
-      #|  --tls-cert-file <tls-cert-file>              The PEM certificate chain for the HTTPS port: the leaf certificate, then its intermediates. [env: SMOCK_TLS_CERT_FILE]
+      #|  --tls-port <tls-port>                        The HTTPS port. 0 picks a free port. [env: SMOCK_TLS_PORT] [default: 8443]
+      #|  --tls-cert-file <tls-cert-file>              The PEM certificate chain for the HTTPS port: the leaf certificate, then its intermediates. Without it and --tls-key-file, smock generates a self-signed certificate in memory for localhost, 127.0.0.1, ::1 and every Mock Host. [env: SMOCK_TLS_CERT_FILE]
       #|  --tls-key-file <tls-key-file>                The PEM private key of the leaf certificate in --tls-cert-file. [env: SMOCK_TLS_KEY_FILE]
+      #|  --tls-mock-certs <tls-mock-certs>            Certificates of single Mocks, chosen by SNI: a JSON object that maps each Mock name to its PEM files, such as {"users":{"certFile":"/certs/users/tls.crt","keyFile":"/certs/users/tls.key"}}. A handshake whose SNI is a Host of a listed Mock gets that Mock's certificate; any other gets --tls-cert-file, which must be set. Empty by default. [env: SMOCK_TLS_MOCK_CERTS]
       #|  --admin-port <admin-port>                    The Admin API port, separate from the plain and TLS ports. 0 picks a free port. [env: SMOCK_ADMIN_PORT] [default: 9090]
       #|  --admin-auth <admin-auth>                    Whether the Admin API needs a bearer token: on or off. Turn it off only for local use. [env: SMOCK_ADMIN_AUTH] [default: on]
       #|  --admin-token-file <admin-token-file>        A file that holds the Admin API token. Without it, the token comes from the environment variable SMOCK_ADMIN_TOKEN. [env: SMOCK_ADMIN_TOKEN_FILE]
@@ -142,6 +143,8 @@ async test "an invalid value stops startup with a message that names the setting
     (["--admin-port", "65536"], Map([])),
     ([], { "SMOCK_ADMIN_PORT": "admin" }),
     (["--port", "8080", "--admin-port", "8080"], Map([])),
+    // The TLS port is served with or without certificate files.
+    (["--tls-port", "8443", "--admin-port", "8443"], Map([])),
     (
       [
         "--tls-port", "8443", "--admin-port", "8443", "--tls-cert-file", "c.pem",
@@ -203,6 +206,7 @@ async test "an invalid value stops startup with a message that names the setting
       #|status 2: smock serve: invalid value "65536" for --admin-port (SMOCK_ADMIN_PORT): must be an integer from 0 to 65535
       #|status 2: smock serve: invalid value "admin" for --admin-port (SMOCK_ADMIN_PORT): must be an integer from 0 to 65535
       #|status 2: smock serve: invalid value "8080" for --admin-port (SMOCK_ADMIN_PORT): must differ from --port (SMOCK_PORT)
+      #|status 2: smock serve: invalid value "8443" for --admin-port (SMOCK_ADMIN_PORT): must differ from --tls-port (SMOCK_TLS_PORT)
       #|status 2: smock serve: invalid value "8443" for --admin-port (SMOCK_ADMIN_PORT): must differ from --tls-port (SMOCK_TLS_PORT)
       #|status 2: smock serve: invalid value "false" for --admin-auth (SMOCK_ADMIN_AUTH): must be on or off
       #|status 2: smock serve: invalid value "OFF" for --admin-auth (SMOCK_ADMIN_AUTH): must be on or off

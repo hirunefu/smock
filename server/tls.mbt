@@ -3,12 +3,11 @@
 let alpn : Array[String] = ["http/1.1"]
 
 ///|
-/// Reads the certificate and key files and loads them for the TLS port.
-/// Returns what is wrong with them otherwise, as one sentence that names
-/// the file at fault.
-async fn load_tls(
+/// Reads the certificate and key files: their bytes, or what keeps them
+/// from being read, as one sentence that names the file at fault.
+async fn read_pair(
   files : @settings.TlsFiles,
-) -> Result[@openssl.ServerConfig, String] {
+) -> Result[(Bytes, Bytes), String] {
   let cert = match read_file(files.cert_file) {
     Ok(cert) => cert
     Err(reason) => return Err("cannot read the certificate file: \{reason}")
@@ -17,6 +16,17 @@ async fn load_tls(
     Ok(key) => key
     Err(reason) => return Err("cannot read the key file: \{reason}")
   }
+  Ok((cert, key))
+}
+
+///|
+/// Loads a certificate chain and its key, as read from their files, for
+/// the TLS port. Returns what is wrong with them otherwise, as one sentence
+/// that names the file at fault.
+fn load_pair(
+  cert : Bytes,
+  key : Bytes,
+) -> Result[@openssl.ServerConfig, String] {
   try
     @openssl.ServerConfig(certificate_chain=cert, private_key=key, alpn~)
   catch {
@@ -71,21 +81,34 @@ priv struct TlsStream {
 const MAX_WRITE = 16384
 
 ///|
-/// Runs the server side of the handshake on `tcp`. Returns `None` when the
-/// client closes the connection first. A client that fails the handshake
-/// gets OpenSSL's alert, if any, and the error is raised; the caller then
-/// closes the connection either way.
+/// Runs the server side of the handshake on `tcp`, with the configuration
+/// `select` gives for the name the client asks for by SNI, or for no name.
+/// Returns `None` when the client closes the connection first. A client
+/// that fails the handshake gets OpenSSL's alert, if any, and the error is
+/// raised; the caller then closes the connection either way.
 async fn TlsStream::accept(
   tcp : @socket.Tcp,
-  config : @openssl.ServerConfig,
+  select : (String?) -> @openssl.ServerConfig,
 ) -> TlsStream? {
-  let (buffer, _) = @io.pipe()
-  let self = {
-    tcp,
-    tls: config.accept(),
-    buffer,
-    input: FixedArray::make(16 * 1024, b'\x00'),
+  let input = FixedArray::make(16 * 1024, b'\x00')
+  // The ClientHello comes first: read it whole to learn the name, before
+  // the connection starts with a configuration.
+  let hello = Buffer()
+  let server_name = for ;; {
+    match read_client_hello(hello.to_bytes()[:]) {
+      ServerName(name) => break name
+      Incomplete => {
+        let n = tcp.read(input)
+        if n == 0 {
+          return None
+        }
+        hello.write_bytes(input.unsafe_reinterpret_as_bytes()[:n])
+      }
+    }
   }
+  let (buffer, _) = @io.pipe()
+  let self = { tcp, tls: select(server_name).accept(), buffer, input, }
+  self.tls.receive(hello.to_bytes()[:])
   // A failed handshake still sends its alert.
   errdefer self.try_flush()
   for ;; {

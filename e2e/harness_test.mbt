@@ -57,11 +57,15 @@ async fn write(dir : String, path : String, text : String) -> Unit {
 let test_token : String = "e2e-admin-token"
 
 ///|
-/// The environment of a smock process: `env`, plus an admin port of 0 (a
-/// free port, so tests run in parallel) and the test token, unless `env`
-/// sets them.
+/// The environment of a smock process: `env`, plus a TLS port and an admin
+/// port of 0 (free ports, so tests run in parallel) and the test token,
+/// unless `env` sets them.
 fn smock_env(env : Map[String, String]) -> Map[String, String] {
-  let out = { "SMOCK_ADMIN_PORT": "0", "SMOCK_ADMIN_TOKEN": test_token }
+  let out = {
+    "SMOCK_TLS_PORT": "0",
+    "SMOCK_ADMIN_PORT": "0",
+    "SMOCK_ADMIN_TOKEN": test_token,
+  }
   for name, value in env {
     out[name] = value
   }
@@ -75,10 +79,12 @@ struct Smock {
   port : Int
   /// The admin port it listens on.
   admin_port : Int
-  /// The TLS port it listens on, when the test waited for it.
-  tls_port : Int?
+  /// The TLS port it listens on.
+  tls_port : Int
   /// Its process ID.
   pid : Int
+  /// The log lines it has written so far: they keep coming while it runs.
+  logs : Array[String]
 }
 
 ///|
@@ -151,15 +157,11 @@ async fn on_both_ports(
   with_definitions(files, dir => {
     with_certificates(certs => {
       stopped = Some(
-        with_smock(
-          ["--dir", dir, "--port", "0", ..certs.args(), ..args],
-          tls=true,
-          smock => {
-            for over in [Plain, Tls(certs)] {
-              f(smock, over)
-            }
-          },
-        ),
+        with_smock(["--dir", dir, "--port", "0", ..certs.args(), ..args], smock => {
+          for over in [Plain, Tls(certs)] {
+            f(smock, over)
+          }
+        }),
       )
     })
   })
@@ -235,13 +237,13 @@ struct Stopped {
 
 ///|
 /// Starts `smock serve <args>` with only `smock_env(env)` as its
-/// environment, waits until it listens on the plain and the admin port, and
-/// on the TLS port too when `tls` is set, runs `f`, then stops it with
-/// SIGTERM and waits for it to exit.
+/// environment, in the working directory `cwd` (by default the test's own),
+/// waits until it listens on the plain, the TLS and the admin port, runs
+/// `f`, then stops it with SIGTERM and waits for it to exit.
 async fn with_smock(
   args : Array[String],
   env? : Map[String, String] = Map([]),
-  tls? : Bool = false,
+  cwd? : String = ".",
   f : async (Smock) -> Unit,
 ) -> Stopped {
   build.wait()
@@ -249,11 +251,12 @@ async fn with_smock(
     let (stderr, stderr_end) = @process.read_from_process()
     let process = @process.spawn(
       group,
-      binary,
+      @fs.realpath(binary),
       ["serve", ..args],
       extra_env=smock_env(env),
       inherit_env=false,
       stderr=stderr_end,
+      cwd~,
       no_wait=true,
     )
     let logs = []
@@ -272,11 +275,7 @@ async fn with_smock(
       }
     })
     let ports : Map[String, Int] = Map([])
-    let expected = if tls {
-      ["plain", "tls", "admin"]
-    } else {
-      ["plain", "admin"]
-    }
+    let expected = ["plain", "tls", "admin"]
     let listening = @async.with_timeout_opt(patience_ms, () => {
       while !expected.iter().all(listener => ports.contains(listener)) {
         guard lines.get() is Some(line) else {
@@ -292,9 +291,10 @@ async fn with_smock(
     }
     f({
       port: ports.get("plain").unwrap(),
-      tls_port: ports.get("tls"),
+      tls_port: ports.get("tls").unwrap(),
       admin_port: ports.get("admin").unwrap(),
       pid: process.pid,
+      logs,
     })
     let _ = @process.run("kill", ["-TERM", process.pid.to_string()])
     let status = @async.with_timeout_opt(patience_ms, () => process.wait())
@@ -488,10 +488,9 @@ async fn Smock::connect(self : Smock, over? : Over = Plain) -> Conn {
         @socket.Tcp::connect(@socket.Addr::parse("127.0.0.1:\{self.port}")),
       )
     Tls(certs) => {
-      guard self.tls_port is Some(port) else {
-        fail("the test did not wait for the TLS port")
-      }
-      let tcp = @socket.Tcp::connect(@socket.Addr::parse("127.0.0.1:\{port}"))
+      let tcp = @socket.Tcp::connect(
+        @socket.Addr::parse("127.0.0.1:\{self.tls_port}"),
+      )
       errdefer tcp.close()
       let tls = @tls.Tls::client(
         tcp,
@@ -554,7 +553,8 @@ fn entries(logs : Array[String]) -> String {
     for key, value in fields {
       match key {
         "time" => ()
-        "version" | "commit" | "toolchain" | "seed" => out[key] = "*"
+        "version" | "commit" | "toolchain" | "seed" | "sha256Fingerprint" =>
+          out[key] = "*"
         "cert_file" | "key_file" =>
           out[key] = match value {
             String(path) =>

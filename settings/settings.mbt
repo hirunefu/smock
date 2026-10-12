@@ -15,12 +15,17 @@ pub(all) struct ServeSettings {
   dir : String?
   /// The plain port. 0 asks the system for a free port.
   port : Int
-  /// The TLS port. 0 asks the system for a free port. smock listens on it
-  /// only when `tls` is set.
+  /// The TLS port. 0 asks the system for a free port.
   tls_port : Int
   /// The certificate and key files for the TLS port, or `None` when none
-  /// are configured.
+  /// are configured: smock then generates a self-signed certificate. It is
+  /// the default certificate: a handshake gets it unless its SNI chooses one
+  /// of `tls_mock_certs`.
   tls : TlsFiles?
+  /// The certificate and key files of single Mocks, by Mock name: a
+  /// handshake whose SNI is a Host of one of these Mocks gets its pair.
+  /// Empty unless `tls` is set.
+  tls_mock_certs : Map[String, TlsFiles]
   /// The admin port, where the Admin API, the probes and the metrics are
   /// served. 0 asks the system for a free port.
   admin_port : Int
@@ -171,17 +176,22 @@ let serve_settings : Array[Setting] = [
   },
   {
     name: "tls-port",
-    about: "The HTTPS port, served when --tls-cert-file and --tls-key-file are set. 0 picks a free port.",
+    about: "The HTTPS port. 0 picks a free port.",
     default: Some("8443"),
   },
   {
     name: "tls-cert-file",
-    about: "The PEM certificate chain for the HTTPS port: the leaf certificate, then its intermediates.",
+    about: "The PEM certificate chain for the HTTPS port: the leaf certificate, then its intermediates. Without it and --tls-key-file, smock generates a self-signed certificate in memory for localhost, 127.0.0.1, ::1 and every Mock Host.",
     default: None,
   },
   {
     name: "tls-key-file",
     about: "The PEM private key of the leaf certificate in --tls-cert-file.",
+    default: None,
+  },
+  {
+    name: "tls-mock-certs",
+    about: "Certificates of single Mocks, chosen by SNI: a JSON object that maps each Mock name to its PEM files, such as {\"users\":{\"certFile\":\"/certs/users/tls.crt\",\"keyFile\":\"/certs/users/tls.key\"}}. A handshake whose SNI is a Host of a listed Mock gets that Mock's certificate; any other gets --tls-cert-file, which must be set. Empty by default.",
     default: None,
   },
   {
@@ -400,6 +410,7 @@ pub fn ServeSettings::from_matches(
         "needs --tls-cert-file (\{env_name("tls-cert-file")}) as well",
       )
   }
+  let tls_mock_certs = mock_certs_value(matches, "tls-mock-certs", tls~)
   let admin_port = int_value(matches, "admin-port", min=0, max=65535)
   if admin_port != 0 && admin_port == port {
     raise invalid(
@@ -408,7 +419,7 @@ pub fn ServeSettings::from_matches(
       "must differ from --port (SMOCK_PORT)",
     )
   }
-  if admin_port != 0 && tls is Some(_) && admin_port == tls_port {
+  if admin_port != 0 && admin_port == tls_port {
     raise invalid(
       "admin-port",
       admin_port.to_string(),
@@ -438,6 +449,7 @@ pub fn ServeSettings::from_matches(
     port,
     tls_port,
     tls,
+    tls_mock_certs,
     admin_port,
     admin_auth,
     admin_token_file,
@@ -497,6 +509,52 @@ pub fn ServeSettings::from_matches(
       max=max_size,
     ),
   }
+}
+
+///|
+/// The value of the per-Mock certificates setting: a JSON object that maps
+/// each Mock name to `{"certFile": <path>, "keyFile": <path>}`. Without it,
+/// no Mock has a certificate of its own. It needs the default certificate,
+/// `tls`, as well.
+fn mock_certs_value(
+  matches : @argparse.Matches,
+  name : String,
+  tls~ : TlsFiles?,
+) -> Map[String, TlsFiles] raise InvalidSetting {
+  guard value(matches, name) is Some(text) else { return Map([]) }
+  let entry_format = "{\"certFile\": <path>, \"keyFile\": <path>}"
+  let not_a_map = "must be a JSON object that maps each Mock name to \{entry_format}"
+  let json = @json.parse(text) catch {
+    _ => raise invalid(name, text, not_a_map)
+  }
+  guard json is Object(entries) else { raise invalid(name, text, not_a_map) }
+  let out : Map[String, TlsFiles] = Map([])
+  for mock, entry in entries {
+    if mock == "" {
+      raise invalid(name, text, "a Mock name must not be empty")
+    }
+    guard entry is Object(fields) &&
+      fields.length() == 2 &&
+      fields.get("certFile") is Some(String(cert_file)) &&
+      fields.get("keyFile") is Some(String(key_file)) &&
+      cert_file != "" &&
+      key_file != "" else {
+      raise invalid(
+        name,
+        text,
+        "the entry of the Mock \{mock.escape()} must be \{entry_format}, with paths that are not empty",
+      )
+    }
+    out[mock] = { cert_file, key_file, }
+  }
+  if !out.is_empty() && tls is None {
+    raise invalid(
+      name,
+      text,
+      "needs --tls-cert-file (\{env_name("tls-cert-file")}) and --tls-key-file (\{env_name("tls-key-file")}) as well, for the default certificate",
+    )
+  }
+  out
 }
 
 ///|

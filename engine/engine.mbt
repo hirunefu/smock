@@ -166,6 +166,18 @@ pub fn Engine::status(self : Engine) -> Status {
 }
 
 ///|
+/// The name of the Mock whose Hosts include `host`, compared as Host
+/// resolution compares Hosts: case-insensitively, without a port and
+/// without a trailing dot. `None` when no Mock lists it, even when there is
+/// a Default Mock. It answers from the snapshot served, so it follows each
+/// reload; the TLS port asks it which Mock an SNI name belongs to.
+pub fn Engine::mock_for_host(self : Engine, host : String) -> String? {
+  self.snapshot
+  .mock_for_host(@definitions.normalize_host(host))
+  .map(mock => mock.name)
+}
+
+///|
 /// What a reload did.
 pub(all) struct ReloadResult {
   /// When the reload finished, in milliseconds since the Unix epoch.

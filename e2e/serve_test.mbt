@@ -132,6 +132,7 @@ async test "when the port is taken, smock logs that it cannot listen and exits w
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
+        #|{"level":"info","msg":"self-signed certificate in use","sha256Fingerprint":"*","names":["localhost","127.0.0.1","::1"]}
         #|{"level":"error","msg":"cannot listen","listener":"plain","address":"0.0.0.0:*","error":"OSError(\"@socket.TcpServer::new(): Address already in use\")"}
       ),
     )
@@ -139,7 +140,7 @@ async test "when the port is taken, smock logs that it cannot listen and exits w
 }
 
 ///|
-async test "logs start with the startup entry, then the random seed and the listening address, and have no per-request lines" {
+async test "logs start with the startup entry, then the random seed, the TLS certificate and the listening addresses, and have no per-request lines" {
   // SIGTERM ends smock at once for now; the drain comes with "Probes and
   // graceful shutdown".
   with_definitions([("users.json", users)], dir => {
@@ -153,7 +154,9 @@ async test "logs start with the startup entry, then the random seed and the list
         #|status -15
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
+        #|{"level":"info","msg":"self-signed certificate in use","sha256Fingerprint":"*","names":["localhost","127.0.0.1","::1"]}
         #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
+        #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
       ),
     )

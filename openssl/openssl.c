@@ -1,6 +1,7 @@
 // smock's bindings to OpenSSL (ADR 0001). They call OpenSSL only: no
 // sockets, no files. Each TLS connection reads from and writes to two memory
 // BIOs, and the MoonBit side carries the bytes between them and the network.
+// Self-signed certificates are generated in memory too.
 //
 // Contexts and connections are MoonBit external objects: their finalizers
 // free the OpenSSL objects when MoonBit drops the last reference.
@@ -11,7 +12,10 @@
 #include <string.h>
 
 #include <moonbit.h>
+#include <openssl/bn.h>
+#include <openssl/ec.h>
 #include <openssl/err.h>
+#include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
@@ -450,6 +454,176 @@ MOONBIT_FFI_EXPORT moonbit_bytes_t smock_openssl_ssl_alpn(smock_ssl *self) {
   moonbit_bytes_t out = moonbit_make_bytes((int32_t)length, 0);
   if (length > 0) {
     memcpy(out, protocol, length);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Self-signed certificates
+
+// A certificate and its private key, generated in memory.
+typedef struct {
+  X509 *cert;
+  EVP_PKEY *key;
+} smock_self_signed;
+
+static void smock_self_signed_finalize(void *object) {
+  smock_self_signed *self = object;
+  X509_free(self->cert);
+  EVP_PKEY_free(self->key);
+}
+
+// Adds `name` to `names`: as an IP address when OpenSSL reads it as an IPv4
+// or IPv6 address, otherwise as a DNS name. Returns 1, or 0 on failure.
+static int add_name(GENERAL_NAMES *names, const char *name) {
+  GENERAL_NAME *entry = GENERAL_NAME_new();
+  if (entry == NULL) {
+    return 0;
+  }
+  ASN1_OCTET_STRING *ip = a2i_IPADDRESS(name);
+  if (ip != NULL) {
+    GENERAL_NAME_set0_value(entry, GEN_IPADD, ip);
+  } else {
+    ASN1_IA5STRING *dns = ASN1_IA5STRING_new();
+    if (dns == NULL || ASN1_STRING_set(dns, name, (int)strlen(name)) != 1) {
+      ASN1_IA5STRING_free(dns);
+      GENERAL_NAME_free(entry);
+      return 0;
+    }
+    GENERAL_NAME_set0_value(entry, GEN_DNS, dns);
+  }
+  if (sk_GENERAL_NAME_push(names, entry) <= 0) {
+    GENERAL_NAME_free(entry);
+    return 0;
+  }
+  return 1;
+}
+
+// Adds the extension `nid` with the value `value`, in the syntax of
+// OpenSSL's configuration files, to `cert`. Returns 1, or 0 on failure.
+static int add_extension(X509 *cert, int nid, const char *value) {
+  X509V3_CTX ctx;
+  X509V3_set_ctx(&ctx, cert, cert, NULL, NULL, 0);
+  X509_EXTENSION *extension = X509V3_EXT_conf_nid(NULL, &ctx, nid, value);
+  if (extension == NULL) {
+    return 0;
+  }
+  int ok = X509_add_ext(cert, extension, -1) == 1;
+  X509_EXTENSION_free(extension);
+  return ok;
+}
+
+// Generates a new ECDSA P-256 key and a certificate for it that it signs
+// itself, for a TLS server, valid from an hour ago (for clocks that are a
+// little behind) for `days` days. Its subject alternative names are
+// `names`: each name followed by a NUL byte. Its serial number is 127
+// random bits, so no two certificates share one. Its `cert` is NULL when
+// OpenSSL could not create it (see smock_openssl_take_error).
+MOONBIT_FFI_EXPORT smock_self_signed *smock_openssl_self_signed_new(
+    moonbit_bytes_t names, int32_t days) {
+  ERR_clear_error();
+  smock_self_signed *self = moonbit_make_external_object(
+      smock_self_signed_finalize, sizeof(smock_self_signed));
+  self->cert = NULL;
+  self->key = NULL;
+  EVP_PKEY *key = EVP_EC_gen("P-256");
+  X509 *cert = X509_new();
+  GENERAL_NAMES *sans = sk_GENERAL_NAME_new_null();
+  BIGNUM *serial = BN_new();
+  int ok = key != NULL && cert != NULL && sans != NULL && serial != NULL &&
+           X509_set_version(cert, X509_VERSION_3) == 1 &&
+           BN_rand(serial, 127, BN_RAND_TOP_ANY, BN_RAND_BOTTOM_ANY) == 1 &&
+           BN_to_ASN1_INTEGER(serial, X509_get_serialNumber(cert)) != NULL &&
+           X509_gmtime_adj(X509_getm_notBefore(cert), -3600) != NULL &&
+           X509_time_adj_ex(X509_getm_notAfter(cert), days, 0, NULL) != NULL;
+  X509_NAME *subject = ok ? X509_get_subject_name(cert) : NULL;
+  ok = ok &&
+       X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC,
+                                  (const unsigned char *)"smock self-signed",
+                                  -1, -1, 0) == 1 &&
+       X509_set_issuer_name(cert, subject) == 1 &&
+       X509_set_pubkey(cert, key) == 1;
+  const char *name = (const char *)names;
+  const char *end = name + Moonbit_array_length(names);
+  while (ok && name < end) {
+    const char *nul = memchr(name, 0, (size_t)(end - name));
+    ok = nul != NULL && add_name(sans, name);
+    name = ok ? nul + 1 : end;
+  }
+  ok = ok && sk_GENERAL_NAME_num(sans) > 0 &&
+       X509_add1_ext_i2d(cert, NID_subject_alt_name, sans, 0,
+                         X509V3_ADD_DEFAULT) == 1 &&
+       add_extension(cert, NID_basic_constraints, "critical,CA:FALSE") &&
+       add_extension(cert, NID_ext_key_usage, "serverAuth") &&
+       add_extension(cert, NID_subject_key_identifier, "hash") &&
+       X509_sign(cert, key, EVP_sha256()) > 0;
+  GENERAL_NAMES_free(sans);
+  BN_free(serial);
+  if (!ok) {
+    X509_free(cert);
+    EVP_PKEY_free(key);
+    return self;
+  }
+  self->cert = cert;
+  self->key = key;
+  return self;
+}
+
+MOONBIT_FFI_EXPORT int32_t smock_openssl_self_signed_is_null(
+    smock_self_signed *self) {
+  return self->cert == NULL;
+}
+
+// The bytes `bio` holds, then frees it. Empty when `bio` is NULL.
+static moonbit_bytes_t take_bio(BIO *bio) {
+  char *data = NULL;
+  long length = bio == NULL ? 0 : BIO_get_mem_data(bio, &data);
+  if (length < 0 || length > INT_MAX) {
+    length = 0;
+  }
+  moonbit_bytes_t out = moonbit_make_bytes((int32_t)length, 0);
+  if (length > 0) {
+    memcpy(out, data, (size_t)length);
+  }
+  BIO_free(bio);
+  return out;
+}
+
+// The certificate in PEM, or empty on failure.
+MOONBIT_FFI_EXPORT moonbit_bytes_t smock_openssl_self_signed_certificate(
+    smock_self_signed *self) {
+  BIO *bio = BIO_new(BIO_s_mem());
+  if (bio != NULL && PEM_write_bio_X509(bio, self->cert) != 1) {
+    BIO_free(bio);
+    bio = NULL;
+  }
+  return take_bio(bio);
+}
+
+// The private key in PEM (PKCS#8, not encrypted), or empty on failure.
+MOONBIT_FFI_EXPORT moonbit_bytes_t smock_openssl_self_signed_private_key(
+    smock_self_signed *self) {
+  BIO *bio = BIO_new(BIO_s_mem());
+  if (bio != NULL && PEM_write_bio_PrivateKey(bio, self->key, NULL, NULL, 0,
+                                              NULL, NULL) != 1) {
+    BIO_free(bio);
+    bio = NULL;
+  }
+  return take_bio(bio);
+}
+
+// The SHA-256 digest of the certificate's DER encoding: 32 bytes, or empty
+// on failure.
+MOONBIT_FFI_EXPORT moonbit_bytes_t smock_openssl_self_signed_sha256(
+    smock_self_signed *self) {
+  unsigned char digest[EVP_MAX_MD_SIZE];
+  unsigned int length = 0;
+  if (X509_digest(self->cert, EVP_sha256(), digest, &length) != 1) {
+    length = 0;
+  }
+  moonbit_bytes_t out = moonbit_make_bytes((int32_t)length, 0);
+  if (length > 0) {
+    memcpy(out, digest, length);
   }
   return out;
 }
