@@ -1,9 +1,11 @@
 import {
+  "smock/smock/testcerts",
   "moonbitlang/async",
   "moonbitlang/async/fs",
   "moonbitlang/async/http",
   "moonbitlang/async/process",
   "moonbitlang/async/socket",
+  "moonbitlang/async/tls",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
   "moonbitlang/core/string",
