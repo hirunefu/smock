@@ -77,6 +77,8 @@ struct Smock {
   admin_port : Int
   /// The TLS port it listens on, when the test waited for it.
   tls_port : Int?
+  /// Its process ID.
+  pid : Int
 }
 
 ///|
@@ -292,6 +294,7 @@ async fn with_smock(
       port: ports.get("plain").unwrap(),
       tls_port: ports.get("tls"),
       admin_port: ports.get("admin").unwrap(),
+      pid: process.pid,
     })
     let _ = @process.run("kill", ["-TERM", process.pid.to_string()])
     let status = @async.with_timeout_opt(patience_ms, () => process.wait())
