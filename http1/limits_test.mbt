@@ -10,23 +10,39 @@ fn head_of_size(size : Int) -> String {
 }
 
 ///|
+/// What `parser` takes out of the bytes fed so far: what `next` returns, in
+/// turn, past `Continue`, up to the first `NeedMore` or `Invalid`.
+fn drain(parser : @http1.Parser) -> Array[@http1.Parsed] {
+  let out = []
+  for ;; {
+    let parsed = parser.next()
+    out.push(parsed)
+    if parsed is (NeedMore | Invalid(..)) {
+      break
+    }
+  }
+  out
+}
+
+///|
+/// What `next` returned, with a request shown by its method, target and
+/// body length.
+fn brief(parsed : @http1.Parsed) -> String {
+  match parsed {
+    Complete(request) =>
+      "\{request.meth} \{request.target} body=\{request.body.length()}"
+    Continue => "continue"
+    NeedMore => "need more"
+    Invalid(status~) => "invalid \{status}"
+  }
+}
+
+///|
 /// What `parser` makes of `stream` fed whole: each request it takes out
 /// (method, target and body length), then how it ends.
 fn limited(parser : @http1.Parser, stream : String) -> String {
   parser.feed(@utf8.encode(stream))
-  let out = []
-  for ;; {
-    match parser.next() {
-      Complete(request) =>
-        out.push(
-          "\{request.meth} \{request.target} body=\{request.body.length()}",
-        )
-      Continue => out.push("continue")
-      NeedMore => break out.push("need more")
-      Invalid(status~) => break out.push("invalid \{status}")
-    }
-  }
-  out.join(", ")
+  drain(parser).map(brief).join(", ")
 }
 
 ///|
@@ -243,13 +259,14 @@ fn fed_in_pieces(
     } else {
       bytes.length()
     }
-    let step = limited(parser, @utf8.decode_lossy(bytes[offset:end]))
-    if step.has_suffix("need more") {
-      if step != "need more" {
-        out.push(step[:step.length() - ", need more".length()].to_owned())
+    parser.feed(bytes[offset:end])
+    let taken = drain(parser)
+    for parsed in taken {
+      if !(parsed is NeedMore) {
+        out.push(brief(parsed))
       }
-    } else {
-      out.push(step)
+    }
+    if taken.last() is Some(Invalid(..)) {
       return out.join(", ")
     }
   }
