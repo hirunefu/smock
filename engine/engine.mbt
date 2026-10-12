@@ -113,6 +113,7 @@ pub fn Engine::handle(
   now~ : Int64,
   rand~ : @random.Rand,
 ) -> Outcome {
+  // Faults and templates draw from `rand` once their tickets land.
   ignore(rand)
   let mock = self.snapshot.default_mock()
   let path = path_of(request.target)

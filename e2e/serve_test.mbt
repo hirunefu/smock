@@ -77,6 +77,21 @@ async test "with an invalid definition set, smock logs every error with its file
 }
 
 ///|
+async test "when the port is taken, smock logs that it cannot listen and exits with status 1" {
+  let _ = with_smock(["--port", "0"], first => {
+    let second = run_smock(["serve", "--port", first.port.to_string()])
+    inspect(
+      "status \{second.status}\n\{entries(second.logs)}",
+      content=(
+        #|status 1
+        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+        #|{"level":"error","msg":"cannot listen","listener":"plain","address":"0.0.0.0:*","error":"OSError(\"@socket.TcpServer::new(): Address already in use\")"}
+      ),
+    )
+  })
+}
+
+///|
 async test "logs start with the startup entry, then the listening address, and have no per-request lines" {
   // SIGTERM ends smock at once for now; the drain comes with "Probes and
   // graceful shutdown".

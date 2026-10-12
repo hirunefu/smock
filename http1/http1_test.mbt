@@ -101,6 +101,39 @@ test "requests that follow each other on one connection come out in turn, each s
 }
 
 ///|
+test "requests fed one byte at a time come out as when fed whole" {
+  let stream = "GET /a HTTP/1.1\r\nHost: a.example\r\n\r\nPOST /b HTTP/1.1\r\nHost: a.example\r\nContent-Length: 4\r\n\r\n\r\n\r\nGET /c HTTP/1.1\r\nHost: a.example\r\n\r\n"
+  let bytes = @utf8.encode(stream)
+  let parser = @http1.Parser()
+  let one_by_one = []
+  for i in 0..<bytes.length() {
+    parser.feed(bytes[i:i + 1])
+    while parser.next() is Complete(req) {
+      one_by_one.push(render(Complete(req)))
+    }
+  }
+  inspect(
+    one_by_one.join("\n") + "\n" + render(parser.next()),
+    content=(
+      #|GET /a HTTP/1.1 | Host: a.example | body="" | keep-alive
+      #|POST /b HTTP/1.1 | Host: a.example | Content-Length: 4 | body="\r\n\r\n" | keep-alive
+      #|GET /c HTTP/1.1 | Host: a.example | body="" | keep-alive
+      #|need more
+    ),
+  )
+  inspect(
+    parse_all([stream]),
+    content=(
+      #|GET /a HTTP/1.1 | Host: a.example | body="" | keep-alive
+      #|POST /b HTTP/1.1 | Host: a.example | Content-Length: 4 | body="\r\n\r\n" | keep-alive
+      #|GET /c HTTP/1.1 | Host: a.example | body="" | keep-alive
+      #|need more
+      #|
+    ),
+  )
+}
+
+///|
 test "a request that cannot be parsed gets 400" {
   let cases = [
     "GET\r\n\r\n", "GET /a\r\n\r\n", "GET /a HTTP/1.1 extra\r\nHost: a\r\n\r\n",

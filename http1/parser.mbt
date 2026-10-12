@@ -17,6 +17,9 @@ pub struct Parser {
   priv mut buf : FixedArray[Byte]
   priv mut start : Int
   priv mut end : Int
+  /// How many bytes after `start` were searched for the end of the head
+  /// without finding it, so the search resumes there.
+  priv mut scanned : Int
   /// The head of the next request and its length in bytes, once parsed.
   priv mut head : (Head, Int)?
   /// The status of the error that stopped the parser.
@@ -74,6 +77,7 @@ pub fn Parser::Parser() -> Parser {
     buf: FixedArray::make(4096, b'\x00'),
     start: 0,
     end: 0,
+    scanned: 0,
     head: None,
     invalid: None,
   }
@@ -111,9 +115,15 @@ pub fn Parser::next(self : Parser) -> Parsed {
   let (head, head_length) = match self.head {
     Some(parsed) => parsed
     None => {
-      let head_end = match find_head_end(self.buf, self.start, self.end) {
+      // The empty line may have begun in the bytes searched already.
+      let from = self.start +
+        (if self.scanned > 3 { self.scanned - 3 } else { 0 })
+      let head_end = match find_head_end(self.buf, from, self.end) {
         Some(head_end) => head_end
-        None => return NeedMore
+        None => {
+          self.scanned = self.end - self.start
+          return NeedMore
+        }
       }
       match parse_head(self.buf, self.start, head_end) {
         Ok(head) => {
@@ -134,6 +144,7 @@ pub fn Parser::next(self : Parser) -> Parsed {
   }
   let body = self.buf.unsafe_reinterpret_as_bytes()[body_start:body_end].to_owned()
   self.head = None
+  self.scanned = 0
   self.start = body_end
   Complete({
     meth: head.meth,

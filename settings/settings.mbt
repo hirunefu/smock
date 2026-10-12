@@ -86,7 +86,7 @@ pub fn serve_command() -> @argparse.Command {
         setting.name,
         long=setting.name,
         env=env_name(setting.name),
-        about="\{setting.about} [env: \{env_name(setting.name)}]",
+        about=setting.about,
         default_values=match setting.default {
           Some(value) => [value]
           None => []

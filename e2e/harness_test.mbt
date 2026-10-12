@@ -165,6 +165,20 @@ async fn run_smock(
 }
 
 ///|
+/// Runs `smock <args>` until it exits, and returns its exit status and what
+/// it wrote to stdout, such as help text.
+async fn smock_stdout(args : Array[String]) -> (Int, String) {
+  build.wait()
+  let result = @async.with_timeout_opt(patience_ms, () => {
+    @process.collect_stdout(binary, args, inherit_env=false)
+  })
+  guard result is Some((status, stdout)) else {
+    fail("smock did not exit in time")
+  }
+  (status, stdout.text())
+}
+
+///|
 /// Sends `GET path` with a real HTTP client and renders the response: the
 /// status, the headers and the body.
 async fn Smock::get(self : Smock, path : String) -> String {

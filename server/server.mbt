@@ -119,6 +119,8 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
 }
 
 ///|
+/// The engine's view of a parsed request. Header values are decoded as
+/// UTF-8, with invalid bytes replaced by U+FFFD.
 fn to_engine_request(request : @http1.Request) -> @engine.Request {
   {
     meth: request.meth,
