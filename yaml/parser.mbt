@@ -251,8 +251,7 @@ fn Parser::block_node(
     let _ = self.next_content()
     return value
   }
-  self.check_node_start(flow=false)
-  let scalar = self.scalar(parent)
+  let scalar = self.scalar(parent, flow=false)
   self.skip_space()
   if self.at_key_indicator() {
     if inline {
@@ -263,11 +262,7 @@ fn Parser::block_node(
     return self.block_mapping(column, pointer, scalar)
   }
   let _ = self.next_content()
-  if scalar.quoted {
-    Json::string(scalar.text)
-  } else {
-    self.plain_value(scalar.text)
-  }
+  self.scalar_value(scalar)
 }
 
 ///|
@@ -360,15 +355,36 @@ priv struct Scalar {
 }
 
 ///|
-/// Scans the scalar at the current position. Its continuation lines must
-/// be indented more than `parent`.
-fn Parser::scalar(self : Parser, parent : Int) -> Scalar raise ParseError {
+/// Scans the scalar at the current position: a quoted one, or else a plain
+/// one, once `check_node_start` has found nothing else starting there. Its
+/// continuation lines must be indented more than `parent`. In a flow
+/// collection (`flow`), flow indicators also end a plain scalar.
+fn Parser::scalar(
+  self : Parser,
+  parent : Int,
+  flow~ : Bool,
+) -> Scalar raise ParseError {
   if self.peek() is ('"' | '\'') {
     let (text, multiline) = self.quoted(parent)
     { text, quoted: true, multiline, }
   } else {
-    let (text, multiline) = self.plain(parent)
+    self.check_node_start(flow~)
+    let (text, multiline) = self.plain(parent, flow~)
     { text, quoted: false, multiline, }
+  }
+}
+
+///|
+/// The value of `scalar`: a quoted scalar is a string, and a plain one
+/// means what `plain_value` says.
+fn Parser::scalar_value(
+  self : Parser,
+  scalar : Scalar,
+) -> Json raise ParseError {
+  if scalar.quoted {
+    Json::string(scalar.text)
+  } else {
+    self.plain_value(scalar.text)
   }
 }
 
@@ -787,8 +803,7 @@ fn Parser::block_mapping(
     if self.peek() is ('[' | '{') {
       self.fail("a key must be a plain or quoted scalar")
     }
-    self.check_node_start(flow=false)
-    key = self.scalar(column)
+    key = self.scalar(column, flow=false)
     self.skip_space()
     if !self.at_key_indicator() {
       self.fail("expected a key followed by ':'")
@@ -826,11 +841,7 @@ fn Parser::mapping_value(
 /// Scans a plain scalar. It continues on following lines indented more
 /// than `parent`, folded: one line break becomes a space, each empty line a
 /// `\n`. Returns its text and whether it spans lines.
-fn Parser::plain(
-  self : Parser,
-  parent : Int,
-  flow? : Bool = false,
-) -> (String, Bool) {
+fn Parser::plain(self : Parser, parent : Int, flow~ : Bool) -> (String, Bool) {
   let out = StringBuilder()
   let mut multiline = false
   self.plain_line(out, flow~)
@@ -935,11 +946,7 @@ fn Parser::flow_node(
   match self.peek() {
     '[' => self.flow_sequence(parent, pointer)
     '{' => self.flow_mapping(parent, pointer)
-    '"' | '\'' => Json::string(self.quoted(parent).0)
-    _ => {
-      self.check_node_start(flow=true)
-      self.plain_value(self.plain(parent, flow=true).0)
-    }
+    _ => self.scalar_value(self.scalar(parent, flow=true))
   }
 }
 
@@ -1040,14 +1047,7 @@ fn Parser::flow_mapping(
     if self.peek() == ',' {
       self.fail("expected a key before ','")
     }
-    let key : Scalar = if self.peek() is ('"' | '\'') {
-      let (text, multiline) = self.quoted(parent)
-      { text, quoted: true, multiline, }
-    } else {
-      self.check_node_start(flow=true)
-      let (text, multiline) = self.plain(parent, flow=true)
-      { text, quoted: false, multiline, }
-    }
+    let key = self.scalar(parent, flow=true)
     let key_pointer = self.key_pointer(map, pointer, key)
     self.reached = key_pointer
     self.skip_flow_space(parent, what)
