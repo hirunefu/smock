@@ -181,6 +181,14 @@ order:
 So a specific Stub can win over a general one wherever it is declared, by
 giving it a lower priority number.
 
+smock does not try every Stub in turn: an index, built when the Definition
+files are loaded, finds the Stubs whose `method` and exact `path` fit the
+request. The index never changes which Stub answers. A Stub with a
+`method` and no exact `path` is tried for every request with that method,
+and a Stub with neither, such as one with only a path pattern, for every
+request of its Mock, each in its place in the order. Large definition sets
+stay fast when most Stubs have an exact path.
+
 ### When no Stub matches
 
 The Mock answers with its `noMatch.status`, 404 by default, and the body

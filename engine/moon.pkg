@@ -9,5 +9,7 @@ import {
 
 import {
   "smock/yaml",
+  "moonbitlang/core/bench",
   "moonbitlang/core/debug",
+  "moonbitlang/core/random",
 } for "test"
