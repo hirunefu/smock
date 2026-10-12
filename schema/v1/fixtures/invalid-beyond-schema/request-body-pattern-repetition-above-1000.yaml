@@ -1,0 +1,10 @@
+mocks:
+  - name: users
+stubs:
+  - id: create-user
+    mock: users
+    request:
+      body:
+        pattern: "x{1001}"
+    response:
+      status: 201

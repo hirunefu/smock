@@ -36,7 +36,7 @@ fn Incoming::meets(
   conditions : @definitions.Conditions,
 ) -> Bool {
   conditions.meth.map_or(true, meth => meth == self.request.meth) &&
-  conditions.path.map_or(true, path => path == self.path) &&
+  conditions.path.map_or(true, path => meets(self.path, path)) &&
   conditions.query.iter().all(condition => self.has_parameter(condition)) &&
   conditions.headers.iter().all(condition => self.has_header(condition)) &&
   conditions.body.map_or(true, condition => self.body_meets(condition))
@@ -47,7 +47,7 @@ fn Incoming::meets(
 /// `condition`. A repeated parameter matches when any of its values does.
 fn Incoming::has_parameter(
   self : Incoming,
-  condition : (String, String),
+  condition : (String, @definitions.ValueCondition),
 ) -> Bool {
   let query = match self.query {
     Some(query) => query
@@ -57,7 +57,8 @@ fn Incoming::has_parameter(
       query
     }
   }
-  query.iter().any(parameter => parameter == condition)
+  let (name, value) = condition
+  query.iter().any(parameter => parameter.0 == name && meets(parameter.1, value))
 }
 
 ///|
@@ -65,11 +66,24 @@ fn Incoming::has_parameter(
 /// `condition`, whose name is in lower case. Names are compared
 /// case-insensitively. A repeated header matches when any of its values
 /// does.
-fn Incoming::has_header(self : Incoming, condition : (String, String)) -> Bool {
+fn Incoming::has_header(
+  self : Incoming,
+  condition : (String, @definitions.ValueCondition),
+) -> Bool {
   let (lower_name, value) = condition
   self.request.headers
   .iter()
-  .any(header => header.1 == value && is_name(header.0, lower_name))
+  .any(header => is_name(header.0, lower_name) && meets(header.1, value))
+}
+
+///|
+/// Whether `value` meets `condition`: it is exactly the given text, or the
+/// pattern matches the whole of it.
+fn meets(value : String, condition : @definitions.ValueCondition) -> Bool {
+  match condition {
+    Exact(exact) => value == exact
+    Pattern(pattern) => pattern.matches(@utf8.encode(value))
+  }
 }
 
 ///|
@@ -97,6 +111,7 @@ fn Incoming::body_meets(
 ) -> Bool {
   match condition {
     Exact(body) => body == self.request.body
+    Pattern(pattern) => pattern.matches(self.request.body)
     Json(expected) =>
       match self.body_json() {
         Some(body) => contains(body, expected)
