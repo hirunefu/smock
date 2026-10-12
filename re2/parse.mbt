@@ -10,13 +10,13 @@ priv enum Node {
   Concat(Array[Node])
   /// The alternatives, in order of preference.
   Alternate(Array[Node])
-  /// `min` to `max` repetitions (`max` is -1 for no limit), preferring more
-  /// when greedy and fewer when not. `nullable` and `product` are the
+  /// `min` to `max` repetitions (`max` is `None` for no limit), preferring
+  /// more when greedy and fewer when not. `nullable` and `product` are the
   /// node's `info`, kept so that it is computed once per node.
   Repeat(
     Node,
     min~ : Int,
-    max~ : Int,
+    max~ : Int?,
     greedy~ : Bool,
     nullable~ : Bool,
     product~ : Int
@@ -127,12 +127,17 @@ fn[T] fail_at(position : Int, message : String) -> T raise CompileError {
 }
 
 ///|
-/// The code point at `pos`, or -1 past the end of the pattern.
+/// What `Parser::peek` returns past the end of the pattern. No code point
+/// is negative.
+const END : Int = -1
+
+///|
+/// The code point at `pos`, or `END` past the end of the pattern.
 fn Parser::peek(self : Parser, pos : Int) -> Int {
   if pos >= 0 && pos < self.chars.length() {
     self.chars[pos]
   } else {
-    -1
+    END
   }
 }
 
@@ -168,9 +173,9 @@ fn Parser::parse_alternation(self : Parser) -> Node raise CompileError {
 fn Parser::parse_concat(self : Parser) -> Node raise CompileError {
   let items : Array[Node] = []
   // Where the repetition operator that ends `items` starts, if one does.
-  let mut last_repeat = -1
+  let mut last_repeat : Int? = None
   for c = self.peek(self.pos)
-      c >= 0 && c != '|' && c != ')'
+      c != END && c != '|' && c != ')'
       c = self.peek(self.pos) {
     let op_start = self.pos
     match self.parse_repeat_op() {
@@ -180,7 +185,7 @@ fn Parser::parse_concat(self : Parser) -> Node raise CompileError {
           self.pos += 1
         }
         let op = self.text(op_start, self.pos)
-        if last_repeat >= 0 {
+        if last_repeat is Some(last_repeat) {
           let ops = self.text(last_repeat, self.pos)
           if op == "+" {
             fail_at(
@@ -198,10 +203,8 @@ fn Parser::parse_concat(self : Parser) -> Node raise CompileError {
         // their minimum when they have none.
         let count = if self.peek(op_start) != '{' {
           1
-        } else if max >= 0 {
-          max
         } else {
-          min
+          max.unwrap_or(min)
         }
         let product = sub_product * @cmp.maximum(count, 1)
         if product > MAX_REPEAT {
@@ -220,13 +223,13 @@ fn Parser::parse_concat(self : Parser) -> Node raise CompileError {
             product~,
           ),
         )
-        last_repeat = op_start
+        last_repeat = Some(op_start)
       }
       None => {
         if self.parse_atom() is Some(atom) {
           items.push(atom)
         }
-        last_repeat = -1
+        last_repeat = None
       }
     }
   }
@@ -240,43 +243,44 @@ fn Parser::parse_concat(self : Parser) -> Node raise CompileError {
 ///|
 /// Parses a repetition operator (`*`, `+`, `?`, `{n}`, `{n,}` or `{n,m}`)
 /// at the current position, without a lazy `?` after it, and returns its
-/// minimum and maximum (-1 for no limit). Returns `None`, consuming nothing,
-/// when there is none: a `{` that does not start a valid counted repetition
-/// is a literal, as in RE2.
-fn Parser::parse_repeat_op(self : Parser) -> (Int, Int)? raise CompileError {
+/// minimum and maximum (`None` for no limit). Returns `None`, consuming
+/// nothing, when there is none: a `{` that does not start a valid counted
+/// repetition is a literal, as in RE2.
+fn Parser::parse_repeat_op(self : Parser) -> (Int, Int?)? raise CompileError {
   let start = self.pos
   match self.peek(start) {
     '*' => {
       self.pos += 1
-      Some((0, -1))
+      Some((0, None))
     }
     '+' => {
       self.pos += 1
-      Some((1, -1))
+      Some((1, None))
     }
     '?' => {
       self.pos += 1
-      Some((0, 1))
+      Some((0, Some(1)))
     }
     '{' => {
       guard self.parse_count(start + 1) is Some((min, after_min)) else {
         return None
       }
       let (max, close) = match self.peek(after_min) {
-        '}' => (min, after_min)
+        '}' => (Some(min), after_min)
         ',' =>
           if self.peek(after_min + 1) == '}' {
-            (-1, after_min + 1)
+            (None, after_min + 1)
           } else if self.parse_count(after_min + 1) is Some((max, after_max)) &&
             self.peek(after_max) == '}' {
-            (max, after_max)
+            (Some(max), after_max)
           } else {
             return None
           }
         _ => return None
       }
       self.pos = close + 1
-      if min > MAX_REPEAT || max > MAX_REPEAT || (max >= 0 && max < min) {
+      if min > MAX_REPEAT ||
+        (max is Some(max) && (max > MAX_REPEAT || max < min)) {
         fail_at(start, "invalid repetition size \{self.text(start, self.pos)}")
       }
       Some((min, max))
@@ -450,7 +454,7 @@ fn Parser::parse_group_name(
   }
   let start = open + 4
   let mut end = start
-  while self.peek(end) >= 0 && self.peek(end) != '>' {
+  while self.peek(end) != END && self.peek(end) != '>' {
     end += 1
   }
   let mut valid = self.peek(end) == '>' && end > start
@@ -501,7 +505,7 @@ fn Parser::parse_flags(
         return (flags, c == ':')
       }
       'U' => fail_at(i, "flag U is not supported in R1")
-      _ if c < 0 => fail_at(open, "missing closing )")
+      _ if c == END => fail_at(open, "missing closing )")
       _ if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') =>
         fail_at(i, "flag \{self.text(i, i + 1)} is not RE2 syntax")
       _ => fail_at(open, "invalid flags \{self.text(open, i + 1)}")
@@ -545,7 +549,7 @@ fn Parser::parse_char_escape(
 ) -> Int raise CompileError {
   let start = self.pos
   let c = self.peek(start + 1)
-  if c < 0 {
+  if c == END {
     fail_at(start, "trailing backslash at end of pattern")
   }
   if (c < 0x80 && !word_chars.contains(c)) || c == '_' {
@@ -568,7 +572,7 @@ fn Parser::parse_char_escape(
     'p' | 'P' => {
       let end = if self.peek(start + 2) == '{' {
         let mut i = start + 3
-        while self.peek(i) >= 0 && self.peek(i) != '}' {
+        while self.peek(i) != END && self.peek(i) != '}' {
           i += 1
         }
         i + 1
@@ -695,11 +699,11 @@ fn Parser::reject_posix_class(self : Parser) -> Unit raise CompileError {
   }
   // As in RE2, the class name runs to the next `:]`, wherever it is.
   let mut end = start + 2
-  while self.peek(end) >= 0 &&
+  while self.peek(end) != END &&
         !(self.peek(end) == ':' && self.peek(end + 1) == ']') {
     end += 1
   }
-  if self.peek(end) < 0 {
+  if self.peek(end) == END {
     self.no_posix_end = true
     return
   }
@@ -722,11 +726,11 @@ fn Parser::parse_class_char(
   open : Int,
 ) -> Int raise CompileError {
   let c = self.peek(self.pos)
-  if c < 0 {
+  if c == END {
     fail_at(open, "missing closing ]")
   }
   if c == '\\' {
-    if self.peek(self.pos + 1) < 0 {
+    if self.peek(self.pos + 1) == END {
       fail_at(open, "missing closing ]")
     }
     return self.parse_char_escape(in_class=true)

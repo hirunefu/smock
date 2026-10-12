@@ -146,10 +146,10 @@ fn Compiler::emit_repeat(
   sub : Node,
   sub_nullable : Bool,
   min : Int,
-  max : Int,
+  max : Int?,
   greedy : Bool,
 ) -> Unit raise CompileError {
-  if max == -1 {
+  guard max is Some(max) else {
     match min {
       0 => self.emit_star(sub, sub_nullable, greedy)
       1 => self.emit_plus(sub, greedy)
