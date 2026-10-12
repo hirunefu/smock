@@ -902,6 +902,126 @@ async test "the contract checker rejects responses that break the document" {
         ),
       },
     ),
+    (
+      "a verification that passed",
+      "POST",
+      "/v1/journal/verify",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"ok":true,"count":2,"evicted":0,"reason":null,"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a verification that failed because entries were evicted",
+      "POST",
+      "/v1/journal/verify",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"ok":false,"count":0,"evicted":2,"reason":"evicted","warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a verification with a reason the document does not list",
+      "POST",
+      "/v1/journal/verify",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"ok":false,"count":0,"evicted":0,"reason":"bound","warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a verification without the eviction count",
+      "POST",
+      "/v1/journal/verify",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"ok":true,"count":1,"reason":null,"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a verification with a count below 0",
+      "POST",
+      "/v1/journal/verify",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"ok":true,"count":-1,"evicted":0,"reason":null,"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a verification refused because the Journal is off",
+      "POST",
+      "/v1/journal/verify",
+      {
+        status: 409,
+        headers: replica,
+        body: (
+          #|{"error":"journal_off","message":"m","warnings":[]}
+        ),
+      },
+    ),
+    (
+      "unmatched requests, one with its Near miss and one for an unknown Host",
+      "GET",
+      "/v1/journal/unmatched?limit=2",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"entries":[{"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":1,"session":"s","host":"users.example.com","mock":"users","viaDefault":false,"digest":"0123456789ab","request":{"method":"GET","target":"/users/x?a=b","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":null,"nearMiss":{"stub":"get-user","failed":[{"condition":"path","expected":{"pattern":"/users/[0-9]+"},"actual":["/users/x"]},{"condition":"query:a","expected":"c","actual":["b"]}]},"status":404,"fault":null},{"receivedAt":"2026-10-13T01:02:03.005Z","durationMs":0,"session":"s","host":"nowhere.example.com","mock":null,"viaDefault":false,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":null,"nearMiss":null,"status":404,"fault":null}],"more":true,"evicted":0,"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "unmatched requests without more",
+      "GET",
+      "/v1/journal/unmatched",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"entries":[],"evicted":0,"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a Near miss with a condition the document does not list",
+      "GET",
+      "/v1/journal/unmatched",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"entries":[{"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":1,"session":null,"host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":null,"nearMiss":{"stub":"get-user","failed":[{"condition":"cookie:id","expected":"1","actual":[]}]},"status":404,"fault":null}],"more":false,"evicted":0,"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "unmatched requests refused because the Journal is off",
+      "GET",
+      "/v1/journal/unmatched",
+      {
+        status: 409,
+        headers: replica,
+        body: (
+          #|{"error":"journal_off","message":"m","warnings":[]}
+        ),
+      },
+    ),
   ]
   let out = []
   for case in cases {
@@ -943,6 +1063,16 @@ async test "the contract checker rejects responses that break the document" {
       #|a Journal entry without its timing: /entries/0: durationMs is missing
       #|a Journal page without the eviction count: : evicted is missing
       #|a Journal query refused because the Journal is off: conforms
+      #|a verification that passed: conforms
+      #|a verification that failed because entries were evicted: conforms
+      #|a verification with a reason the document does not list: /reason: "bound" is not one of ["count","evicted",null]
+      #|a verification without the eviction count: : evicted is missing
+      #|a verification with a count below 0: /count: -1 is below 0
+      #|a verification refused because the Journal is off: conforms
+      #|unmatched requests, one with its Near miss and one for an unknown Host: conforms
+      #|unmatched requests without more: : more is missing
+      #|a Near miss with a condition the document does not list: /entries/0/nearMiss: {"stub":"get-user","failed":[{"condition":"cookie:id","ex... matches 0 of oneOf, not 1
+      #|unmatched requests refused because the Journal is off: conforms
     ),
   )
 }
