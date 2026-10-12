@@ -6,6 +6,8 @@
 priv struct Admin {
   engine : @engine.Engine
   build : @buildinfo.BuildInfo
+  /// The metrics `/metrics` serves.
+  metrics : @metrics.Registry
   /// The token every operation needs, as UTF-8, or `None` when
   /// authentication is off.
   token : Bytes?
@@ -57,6 +59,7 @@ let routes : Array[Route] = [
   route("/startupz", "GET", not_implemented, open=true),
   route("/readyz", "GET", not_implemented, open=true),
   route("/livez", "GET", not_implemented, open=true),
+  route("/metrics", "GET", metrics, open=true),
 ]
 
 ///|
@@ -73,6 +76,7 @@ fn route(
 ///|
 /// Creates the Admin API of a process that serves through `engine`.
 ///
+/// - `metrics` holds the metrics `/metrics` serves.
 /// - `token` is the bearer token every operation needs, or `None` to turn
 ///   authentication off.
 /// - `replica` is the replica's name, such as the Pod's hostname.
@@ -80,6 +84,7 @@ fn route(
 fn Admin::new(
   engine : @engine.Engine,
   build : @buildinfo.BuildInfo,
+  metrics~ : @metrics.Registry,
   token~ : String?,
   replica~ : String,
   replicas~ : Int,
@@ -98,6 +103,7 @@ fn Admin::new(
   {
     engine,
     build,
+    metrics,
     token: token.map(token => @utf8.encode(token)),
     replica,
     warnings: Json::array(warnings),
@@ -340,6 +346,16 @@ fn status(admin : Admin, _request : @http1.Request, _body : Json?) -> Reply {
       }),
     ),
   })
+}
+
+///|
+/// Serves every metric in the Prometheus text format.
+fn metrics(admin : Admin, _request : @http1.Request, _body : Json?) -> Reply {
+  {
+    status: 200,
+    headers: [("Content-Type", "text/plain; version=0.0.4; charset=utf-8")],
+    body: @utf8.encode(admin.metrics.render()),
+  }
 }
 
 ///|

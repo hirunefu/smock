@@ -52,9 +52,13 @@ pub async fn serve(
   }
   let engine = @engine.Engine(snapshot)
   let rand = @random.Rand::new()
+  let build = @buildinfo.current()
+  let metrics = @metrics.Registry()
+  build.register_metric(metrics)
   let admin = Admin::new(
     engine,
-    @buildinfo.current(),
+    build,
+    metrics~,
     token~,
     replica=replica_name(),
     replicas=settings.replicas,

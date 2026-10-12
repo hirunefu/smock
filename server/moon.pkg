@@ -4,6 +4,7 @@ import {
   "smock/smock/defdir",
   "smock/smock/engine",
   "smock/smock/log",
+  "smock/smock/metrics",
   "smock/smock/openssl",
   "smock/smock/settings",
   "moonbitlang/async",

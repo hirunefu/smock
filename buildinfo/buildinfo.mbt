@@ -38,3 +38,21 @@ pub fn BuildInfo::log_startup(
   }
   logger.info("smock starting", fields=entry)
 }
+
+///|
+/// Registers the build-info metric, `smock_build_info`, in `registry`: a
+/// gauge that is always 1 and carries the version, the commit and the
+/// toolchain as labels.
+pub fn BuildInfo::register_metric(
+  self : BuildInfo,
+  registry : @metrics.Registry,
+) -> Unit {
+  registry
+  .gauge(
+    "smock_build_info",
+    help="The smock build: its version, commit and MoonBit toolchain, as labels. Always 1.",
+    labels=["version", "commit", "toolchain"],
+  )
+  .labels([self.version, self.commit, self.toolchain])
+  .set(1)
+}
