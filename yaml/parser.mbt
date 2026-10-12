@@ -36,7 +36,7 @@ fn Parser::enter(self : Parser) -> Unit raise ParseError {
 const EOF : Char = '\u{0}'
 
 ///|
-fn Parser::new(text : StringView) -> Parser {
+fn Parser::Parser(text : StringView) -> Parser {
   let chars = []
   let mut previous = EOF
   for c in text {

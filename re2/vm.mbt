@@ -18,7 +18,7 @@ priv struct Threads {
 }
 
 ///|
-fn Threads::new(n : Int) -> Threads {
+fn Threads::Threads(n : Int) -> Threads {
   {
     dense: FixedArray::make(n, 0),
     sparse: FixedArray::make(n, 0),
@@ -54,8 +54,8 @@ fn run(
 ) -> (Match?, Int) {
   let n = insts.length()
   let len = input.length()
-  let mut clist = Threads::new(n)
-  let mut nlist = Threads::new(n)
+  let mut clist = Threads(n)
+  let mut nlist = Threads(n)
   let stack : Array[Int] = []
   let mut steps = 0
   let mut matched : Match? = None

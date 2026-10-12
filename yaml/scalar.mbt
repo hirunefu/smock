@@ -40,7 +40,7 @@ fn resolve(text : String) -> Plain {
 /// Whether `text` is a number in JSON syntax:
 /// `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][-+]?[0-9]+)?`.
 fn is_json_number(text : String) -> Bool {
-  let s = Scan::new(text)
+  let s = Scan(text)
   let _ = s.char('-')
   if !s.char('0') && !(s.one(is_nonzero_digit) && s.skip_while(is_digit)) {
     return false
@@ -64,7 +64,7 @@ fn is_yaml_number(text : String) -> Bool {
   let signed = text.has_prefix("+") || text.has_prefix("-")
   let body = if signed { text[1:].to_owned() } else { text }
   let matches = (pattern : (Scan) -> Bool) => {
-    let s = Scan::new(body)
+    let s = Scan(body)
     pattern(s) && s.done()
   }
   body is (".inf" | ".Inf" | ".INF") ||
@@ -134,11 +134,11 @@ fn is_timestamp(text : String) -> Bool {
     s.char('-') &&
     s.digits(min, 2)
   }
-  let s = Scan::new(text)
+  let s = Scan(text)
   if date(s, false) && s.done() {
     return true
   }
-  let s = Scan::new(text)
+  let s = Scan(text)
   date(s, true) &&
   (s.char('T') || s.char('t') || s.run(is_blank) > 0) &&
   s.digits(1, 2) &&
@@ -168,7 +168,7 @@ priv struct Scan {
 }
 
 ///|
-fn Scan::new(text : String) -> Scan {
+fn Scan::Scan(text : String) -> Scan {
   { chars: text.to_array(), i: 0, }
 }
 
