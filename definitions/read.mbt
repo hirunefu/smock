@@ -387,6 +387,7 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
     headers: ReadOnlyArray::from_array([]),
     body: Bytes(b""),
   }
+  let mut fault = None
   for key, value in stub {
     let field = child(pointer, key)
     match key {
@@ -395,14 +396,210 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
       "request" => request = self.read_conditions(field, value)
       "response" => response = self.read_response(field, value)
       "priority" => priority = self.read_priority(field, value)
-      "fault" => self.not_supported(field)
+      "fault" => fault = self.read_fault(field, value)
       _ => self.unknown_field(field)
     }
   }
   self.require(stub, pointer, "id")
   self.require(stub, pointer, "mock")
   self.require(stub, pointer, "response")
-  Some({ id, mock, priority, request, response, })
+  Some({ id, mock, priority, request, response, fault, })
+}
+
+///|
+/// Reads the Faults of a Stub.
+fn File::read_fault(self : File, pointer : String, json : Json) -> Fault? {
+  guard json is Object(fault) else {
+    self.error(pointer, "must be an object")
+    return None
+  }
+  let mut delay = None
+  let mut connection = None
+  let mut seed = None
+  for key, value in fault {
+    let field = child(pointer, key)
+    match key {
+      "delay" => delay = self.read_delay(field, value)
+      "connection" => connection = self.read_connection_fault(field, value)
+      "seed" => seed = self.read_seed(field, value)
+      _ => self.unknown_field(field)
+    }
+  }
+  Some({ delay, connection, seed, })
+}
+
+///|
+/// Reads a delay: exactly one distribution, and a probability.
+fn File::read_delay(self : File, pointer : String, json : Json) -> Delay? {
+  guard json is Object(delay) else {
+    self.error(pointer, "must be an object")
+    return None
+  }
+  let mut distribution = None
+  let mut probability = 1.0
+  for key, value in delay {
+    let field = child(pointer, key)
+    match key {
+      "fixed" =>
+        distribution = self.read_milliseconds(field, value).map(ms => Fixed(ms))
+      "uniform" => distribution = self.read_uniform(field, value)
+      "lognormal" => distribution = self.read_lognormal(field, value)
+      "probability" => probability = self.read_probability(field, value)
+      _ => self.unknown_field(field)
+    }
+  }
+  let given = ["fixed", "uniform", "lognormal"].filter(key => {
+    delay.contains(key)
+  })
+  match given.length() {
+    0 =>
+      self.error(
+        pointer, "needs one of \"fixed\", \"uniform\" and \"lognormal\"",
+      )
+    1 => ()
+    _ => {
+      let given = given.map(key => "\"\{key}\"").join(" and ")
+      self.error(
+        pointer,
+        "has \{given}; give exactly one of \"fixed\", \"uniform\" and \"lognormal\"",
+      )
+    }
+  }
+  distribution.map(distribution => { distribution, probability, })
+}
+
+///|
+/// Reads a uniform distribution: `min` and `max`, where `min` does not
+/// exceed `max`.
+fn File::read_uniform(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> Distribution? {
+  guard json is Object(uniform) else {
+    self.error(pointer, "must be an object")
+    return None
+  }
+  let mut min = None
+  let mut max = None
+  for key, value in uniform {
+    let field = child(pointer, key)
+    match key {
+      "min" => min = self.read_milliseconds(field, value)
+      "max" => max = self.read_milliseconds(field, value)
+      _ => self.unknown_field(field)
+    }
+  }
+  self.require(uniform, pointer, "min")
+  self.require(uniform, pointer, "max")
+  guard min is Some(min) && max is Some(max) else { return None }
+  if min > max {
+    self.error(pointer, "\"min\" (\{min}) must not exceed \"max\" (\{max})")
+    return None
+  }
+  Some(Uniform(min~, max~))
+}
+
+///|
+/// Reads a log-normal distribution: its `median` and its `sigma`.
+fn File::read_lognormal(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> Distribution? {
+  guard json is Object(lognormal) else {
+    self.error(pointer, "must be an object")
+    return None
+  }
+  let mut median = None
+  let mut sigma = None
+  for key, value in lognormal {
+    let field = child(pointer, key)
+    match key {
+      "median" => median = self.read_milliseconds(field, value)
+      "sigma" =>
+        match value {
+          Number(n, ..) if n >= 0.0 => sigma = Some(n)
+          _ => self.error(field, "must be a number of 0 or more")
+        }
+      _ => self.unknown_field(field)
+    }
+  }
+  self.require(lognormal, pointer, "median")
+  self.require(lognormal, pointer, "sigma")
+  guard median is Some(median) && sigma is Some(sigma) else { return None }
+  Some(Lognormal(median~, sigma~))
+}
+
+///|
+/// Reads a connection Fault: its kind and a probability.
+fn File::read_connection_fault(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> ConnectionFault? {
+  guard json is Object(connection) else {
+    self.error(pointer, "must be an object")
+    return None
+  }
+  let mut kind = None
+  let mut probability = 1.0
+  for key, value in connection {
+    let field = child(pointer, key)
+    match key {
+      "kind" =>
+        match value {
+          String("close") => kind = Some(Close)
+          String("partial") => kind = Some(Partial)
+          String("reset") => self.error(field, "\"reset\" is not supported yet")
+          _ => self.error(field, "must be \"reset\", \"close\" or \"partial\"")
+        }
+      "probability" => probability = self.read_probability(field, value)
+      _ => self.unknown_field(field)
+    }
+  }
+  self.require(connection, pointer, "kind")
+  kind.map(kind => { kind, probability, })
+}
+
+///|
+/// Reads a probability: a number from 0 to 1.
+fn File::read_probability(self : File, pointer : String, json : Json) -> Double {
+  match json {
+    Number(n, ..) if n >= 0.0 && n <= 1.0 => n
+    _ => {
+      self.error(pointer, "must be a number from 0 to 1")
+      1.0
+    }
+  }
+}
+
+///|
+/// Reads a duration in whole milliseconds: an integer from 0 to
+/// 2147483647.
+fn File::read_milliseconds(self : File, pointer : String, json : Json) -> Int? {
+  match json {
+    Number(n, ..) if n == n.floor() && n >= 0.0 && n <= 2147483647.0 =>
+      Some(n.to_int())
+    _ => {
+      self.error(pointer, "must be an integer from 0 to 2147483647")
+      None
+    }
+  }
+}
+
+///|
+/// Reads a seed: an integer from 0 to 2^53 - 1, which a JSON number holds
+/// exactly.
+fn File::read_seed(self : File, pointer : String, json : Json) -> UInt64? {
+  match json {
+    Number(n, ..) if n == n.floor() && n >= 0.0 && n <= 9007199254740991.0 =>
+      Some(n.to_uint64())
+    _ => {
+      self.error(pointer, "must be an integer from 0 to 9007199254740991")
+      None
+    }
+  }
 }
 
 ///|
@@ -649,7 +846,7 @@ fn File::read_events(
     for key, value in fields {
       let field = child(event_pointer, key)
       match key {
-        "delay" => delay_ms = self.read_milliseconds(field, value)
+        "delay" => delay_ms = self.read_milliseconds(field, value).unwrap_or(0)
         "event" =>
           event_type = self.string_without(
             field, value, "\r\n", "must be one line",
@@ -684,20 +881,6 @@ fn File::string_without(
     return None
   }
   Some(value)
-}
-
-///|
-/// Reads a duration in whole milliseconds: an integer from 0 to
-/// 2147483647.
-fn File::read_milliseconds(self : File, pointer : String, json : Json) -> Int {
-  match json {
-    Number(n, ..) if n == n.floor() && n >= 0.0 && n <= 2147483647.0 =>
-      n.to_int()
-    _ => {
-      self.error(pointer, "must be an integer from 0 to 2147483647")
-      0
-    }
-  }
 }
 
 ///|

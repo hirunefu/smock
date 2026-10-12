@@ -29,7 +29,10 @@ Packages of `smock/smock`:
   JSON and YAML files, into an immutable snapshot, or into diagnostics
   (file, JSON Pointer, message). Its validation is written by hand and
   follows the JSON Schema.
-- `engine`: decides the response to each request from the snapshot.
+- `engine`: decides the response to each request from the snapshot,
+  including its Faults.
+- `prng`: the seeded pseudo-random generator that Fault decisions draw
+  from. Its sequence for a seed is fixed, the same on every target.
 - `defdir`: reads the definitions directory and loads it, for both
   `smock serve` and `smock check` (native).
 - `server`: the listeners, the connection loop and the Admin API (native).
@@ -94,6 +97,7 @@ object per line. `smock serve --help` lists the settings:
 | `--body-limit` | `SMOCK_BODY_LIMIT` | 10485760 bytes (10 MiB): longer bodies get 413 |
 | `--read-timeout-ms` | `SMOCK_READ_TIMEOUT_MS` | 30000: a request must arrive whole within 30 s of its first byte |
 | `--idle-timeout-ms` | `SMOCK_IDLE_TIMEOUT_MS` | 60000: a connection that waits 60 s for a request closes |
+| `--seed` | `SMOCK_SEED` | none: smock picks the seed of its random generator, from 0 to 9007199254740991, and logs it ([Faults](docs/definition-files.md#seeds)) |
 
 A request over a limit gets its status with `Connection: close`, then the
 connection closes; a timeout closes the connection without a response.

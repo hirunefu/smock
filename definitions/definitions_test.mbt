@@ -301,14 +301,14 @@ test "a field the Schema defines but smock does not implement yet is rejected as
           #|  "stubs": [{ "id": "a", "mock": "m", "priority": 1,
           #|    "request": { "method": "GET", "path": "/a" },
           #|    "response": { "status": 200, "template": true },
-          #|    "fault": { "seed": 1 } }] }
+          #|    "fault": { "connection": { "kind": "reset" } } }] }
         ),
       ),
     ]),
     content=(
       #|a.json: /mocks/0/journal: is not supported yet
       #|a.json: /stubs/0/response/template: is not supported yet
-      #|a.json: /stubs/0/fault: is not supported yet
+      #|a.json: /stubs/0/fault/connection/kind: "reset" is not supported yet
     ),
   )
 }
