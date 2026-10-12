@@ -75,6 +75,11 @@ jobs:
       - name: Cross-check the JSON Schema with smock
         run: scripts/check-schema.sh dist/smock
 
+      # The contract tests in e2e/ check smock's responses against the
+      # document; this checks the document itself.
+      - name: Check that the Admin API document is valid OpenAPI
+        run: scripts/check-openapi.sh
+
   wasm-gc:
     name: wasm-gc (no-I/O packages)
     runs-on: ubuntu-24.04
