@@ -68,11 +68,13 @@ pub(all) enum Parsed {
   /// The bytes are not a valid request. Answer with `status` and close the
   /// connection; the parser keeps returning this. The status is:
   ///
-  /// - 400 for a malformed request line or header field (RFC 9112), and for
-  ///   framing that is broken or ambiguous: a bad chunk size, broken chunk
-  ///   framing, both Content-Length and Transfer-Encoding, Content-Length
-  ///   values that disagree or are not numbers, or Transfer-Encoding in an
-  ///   HTTP/1.0 request;
+  /// - 400 for a malformed request line or header field (RFC 9112), such as
+  ///   a request target in none of the four forms of RFC 9112, section 3.2,
+  ///   or with a fragment, or a Host field whose value is not a host and an
+  ///   optional port; and for framing that is broken or ambiguous: a bad
+  ///   chunk size, broken chunk framing, both Content-Length and
+  ///   Transfer-Encoding, Content-Length values that disagree or are not
+  ///   numbers, or Transfer-Encoding in an HTTP/1.0 request;
   /// - 413 for a body over the body limit;
   /// - 431 for a head over the header size limit or the header count limit;
   /// - 501 for a transfer coding other than `chunked`;
@@ -496,6 +498,13 @@ fn parse_head(
     headers.push(header)
     let name = header.name.to_lower()
     if name == "host" {
+      // A Host field with an invalid value gets 400 (RFC 9112, section 3.2).
+      if !is_host_and_port(
+          @utf8.decode_lossy(header.value),
+          port_required=false,
+        ) {
+        return Err(400)
+      }
       hosts += 1
     } else if name == "transfer-encoding" {
       transfer_encodings.push(header.value)
@@ -638,7 +647,8 @@ fn split_lines(
 /// Reads `method SP request-target SP HTTP-version` from the line
 /// `buf[start:end]`, which the head scan has checked. A version whose major
 /// number is not 1 gets 505; a later minor version than 1 is read as
-/// HTTP/1.1 (RFC 9110, section 2.5).
+/// HTTP/1.1 (RFC 9110, section 2.5). A target in none of the forms of a
+/// request target gets 400.
 fn parse_request_line(
   buf : FixedArray[Byte],
   line : (Int, Int),
@@ -655,7 +665,11 @@ fn parse_request_line(
     (b'1', _) => Http11
     _ => return Err(505)
   }
-  Ok((ascii(buf, start, space), ascii(buf, space + 1, end - 9), version))
+  let target = ascii(buf, space + 1, end - 9)
+  if !is_request_target(target) {
+    return Err(400)
+  }
+  Ok((ascii(buf, start, space), target, version))
 }
 
 ///|

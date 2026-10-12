@@ -92,6 +92,18 @@ let rejected : Array[(String, Bytes)] = [
     "an invalid character in a field name", b"GET /users/1 HTTP/1.1\r\nHost: localhost\r\nX(A): 1\r\n\r\n",
   ),
   ("bare LF line ends", b"GET /users/1 HTTP/1.1\nHost: localhost\n\n"),
+  (
+    "a request target without a leading /", b"GET users/1 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+  ),
+  (
+    "a fragment in the request target", b"GET /users/1#x HTTP/1.1\r\nHost: localhost\r\n\r\n",
+  ),
+  (
+    "a Host with a space in it", b"GET /users/1 HTTP/1.1\r\nHost: local host\r\n\r\n",
+  ),
+  (
+    "a Host with a / and an @ in it", b"GET /users/1 HTTP/1.1\r\nHost: a/b@localhost\r\n\r\n",
+  ),
   ("a TLS handshake", b"\x16\x03\x01\x02\x00\x01\x00\x01\xfc\x03\x03"),
 ]
 
@@ -129,6 +141,10 @@ async test "after malformed or ambiguous framing, smock answers what came before
         #|obsolete line folding: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
         #|an invalid character in a field name: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
         #|bare LF line ends: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
+        #|a request target without a leading /: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
+        #|a fragment in the request target: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
+        #|a Host with a space in it: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
+        #|a Host with a / and an @ in it: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
         #|a TLS handshake: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
       ),
     )
