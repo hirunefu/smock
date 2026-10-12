@@ -1,0 +1,83 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "lowest",
+      "mock": "users",
+      "fault": {
+        "delay": {
+          "fixed": 0,
+          "probability": 0
+        },
+        "connection": {
+          "kind": "close",
+          "probability": 0
+        },
+        "seed": 0
+      },
+      "response": {
+        "status": 200
+      }
+    },
+    {
+      "id": "highest",
+      "mock": "users",
+      "fault": {
+        "delay": {
+          "fixed": 2147483647,
+          "probability": 1
+        },
+        "connection": {
+          "kind": "partial",
+          "probability": 1
+        },
+        "seed": 9007199254740991
+      },
+      "response": {
+        "status": 200
+      }
+    },
+    {
+      "id": "uniform-one-value",
+      "mock": "users",
+      "fault": {
+        "delay": {
+          "uniform": {
+            "min": 7,
+            "max": 7
+          }
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    },
+    {
+      "id": "lognormal-flat",
+      "mock": "users",
+      "fault": {
+        "delay": {
+          "lognormal": {
+            "median": 0,
+            "sigma": 0
+          }
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    },
+    {
+      "id": "empty",
+      "mock": "users",
+      "fault": {},
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

@@ -51,7 +51,16 @@ pub async fn serve(
       }
   }
   let engine = @engine.Engine(snapshot)
-  let rand = @random.Rand::new()
+  // The process generator. Its seed is logged, so that a run can be
+  // replayed with --seed.
+  let seed = match settings.seed {
+    Some(seed) => seed
+    None => random_seed()
+  }
+  let rand = @prng.Generator(seed)
+  logger.info("random seed", fields={
+    "seed": Json::number(seed.to_double(), repr=seed.to_string()),
+  })
   let build = @buildinfo.current()
   let metrics = @metrics.Registry()
   build.register_metric(metrics)
@@ -134,6 +143,13 @@ pub async fn serve(
 }
 
 ///|
+/// A seed for the process generator from the platform's entropy: an integer
+/// from 0 to 2^53 - 1, like the seeds `--seed` takes.
+fn random_seed() -> UInt64 {
+  @random.Rand::new().uint64() & 0x1FFFFFFFFFFFFFUL
+}
+
+///|
 /// Listens on `port` of every IPv4 address, or logs why it cannot.
 async fn listen(
   logger : @log.Logger,
@@ -176,24 +192,38 @@ async fn[X] accept_loop(
 ///|
 /// Serves the requests for the Mocks that arrive on one connection of the
 /// plain or the TLS port.
+///
+/// The engine's plan for a request may hold back the response by a delay:
+/// the status line is written once the delay is over, and meanwhile other
+/// connections are served as usual. A connection Fault in the plan ends the
+/// connection instead of the response, or part of the way through it.
 async fn[S : @io.Reader + @io.Writer] serve_mocks(
   stream : S,
   engine : @engine.Engine,
-  rand : @random.Rand,
+  rand : @prng.Generator,
   settings : @settings.ServeSettings,
 ) -> Unit {
   serve_connection(
     stream,
     settings,
     respond=(stream, request) => {
-      let outcome = engine.handle(
-        to_engine_request(request),
-        // Sessions come with the "Sessions and Ephemeral Stubs" ticket.
-        session=None,
-        now=@async.now(),
-        rand~,
-      )
-      write_response(stream, outcome.plan, request)
+      let plan = engine.handle(
+          to_engine_request(request),
+          // Sessions come with the "Sessions and Ephemeral Stubs" ticket.
+          session=None,
+          now=@async.now(),
+          rand~,
+        ).plan
+      if plan.delay_ms > 0 {
+        @async.sleep(plan.delay_ms)
+      }
+      match plan.fault {
+        None => write_response(stream, plan, request)
+        // Closing the connection sends a FIN. The engine does not plan a
+        // reset yet, since Definitions reject it.
+        Some(Close) | Some(Reset) => false
+        Some(Partial) => write_response(stream, plan, request, partial=true)
+      }
     },
     reject=status => @http1.encode_response(status, [], b"", close=true),
   )
@@ -213,8 +243,10 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
 /// byte stream: a TCP connection, or a TLS session on top of one. Nothing is
 /// logged per request.
 ///
-/// - `respond` writes the response to each request to `stream` and returns
-///   whether the connection stays open after it.
+/// - `respond` writes the response to each request to `stream`, or part of
+///   it, and returns whether the connection stays open after it. While it
+///   waits, the connection reads nothing, and other connections are served
+///   as usual.
 /// - `reject` gives the encoded response, with `Connection: close`, to
 ///   bytes that are not a valid request or are over a limit, with the status
 ///   the codec chose.
@@ -291,31 +323,42 @@ fn to_engine_request(request : @http1.Request) -> @engine.Request {
 
 ///|
 /// Writes the response `plan` describes, as the answer to `request`, and
-/// returns whether the connection stays open after it. Delays and
-/// connection Faults come with their own tickets; the engine does not plan
-/// them yet.
+/// returns whether the connection stays open after it. With `partial`, as a
+/// partial Fault, it writes the status line, the header fields and the
+/// first half of the body, and the connection closes.
 ///
 /// Server-Sent Events are streamed: the head at once, then each event after
 /// its delay. Waiting suspends only this connection's task, so the others
 /// are served meanwhile. A client that closes the connection mid-stream
-/// makes a later write fail, which ends the stream and the connection.
+/// makes a later write fail, which ends the stream and the connection. The
+/// first half of a stream is the first half of its events, rounded down,
+/// and a stream cut short is not ended: a chunked one lacks its last chunk.
 async fn[S : @io.Writer] write_response(
   stream : S,
   plan : @engine.ResponsePlan,
   request : @http1.Request,
+  partial? : Bool = false,
 ) -> Bool {
   match plan.body {
     Bytes(body) => {
-      @io.Writer::write(
-        stream,
-        @http1.encode_response(plan.status, plan.headers, body, request~),
+      let response = @http1.encode_response(
+        plan.status,
+        plan.headers,
+        body,
+        request~,
       )
+      if partial {
+        @io.Writer::write(stream, cut_short(response))
+        return false
+      }
+      @io.Writer::write(stream, response)
       request.keep_alive
     }
     Events(events) => {
       let response = @http1.ResponseStream(plan.status, plan.headers, request~)
       @io.Writer::write(stream, response.head())
-      for event in events {
+      let count = if partial { events.length() / 2 } else { events.length() }
+      for event in events[:count] {
         if event.delay_ms > 0 {
           @async.sleep(event.delay_ms)
         }
@@ -325,6 +368,9 @@ async fn[S : @io.Writer] write_response(
           id?=event.id,
         )
         write_some(stream, response.part(data))
+      }
+      if partial {
+        return false
       }
       write_some(stream, response.end())
       response.keeps_open()
@@ -339,4 +385,16 @@ async fn[S : @io.Writer] write_some(stream : S, bytes : Bytes) -> Unit {
   if bytes.length() > 0 {
     @io.Writer::write(stream, bytes)
   }
+}
+
+///|
+/// The first part of the encoded `response`, as a partial Fault sends it:
+/// the status line, the header fields and the first half of the body. The
+/// head ends at the first empty line, since header values hold no CR or LF.
+fn cut_short(response : Bytes) -> BytesView {
+  let head = match response[:].find(b"\r\n\r\n") {
+    Some(i) => i + 4
+    None => response.length()
+  }
+  response[:head + (response.length() - head) / 2]
 }
