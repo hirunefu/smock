@@ -27,25 +27,25 @@ fail() {
 
 json=$(yq --output-format=json "$workflow")
 
-triggers=$(echo "$json" | jq -r '.on | keys | join(" ")')
+triggers=$(printf '%s\n' "$json" | jq -r '.on | keys | join(" ")')
 [ "$triggers" = "push workflow_dispatch" ] ||
   fail "it should run on push and workflow_dispatch only, not on: $triggers"
-push=$(echo "$json" | jq -r '.on.push | keys | join(" ")')
+push=$(printf '%s\n' "$json" | jq -r '.on.push | keys | join(" ")')
 [ "$push" = tags ] || fail "it should run on pushed tags only, but on.push has: $push"
-for pattern in $(echo "$json" | jq -r '.on.push.tags[]?'); do
+for pattern in $(printf '%s\n' "$json" | jq -r '.on.push.tags[]?'); do
   case $pattern in
   v*) ;;
   *) fail "it should run on version tags (v*) only, not on $pattern" ;;
   esac
 done
 
-echo "$json" | jq -e '.permissions | type == "object" and all(.[]; . != "write")' >/dev/null ||
+printf '%s\n' "$json" | jq -e '.permissions | type == "object" and all(.[]; . != "write")' >/dev/null ||
   fail "its default permissions should be read-only"
 if grep -q 'secrets\.' "$workflow"; then
   fail "it should use no secrets, only its own token"
 fi
 
-for job in $(echo "$json" | jq -r --arg condition "$publish_condition" '
+for job in $(printf '%s\n' "$json" | jq -r --arg condition "$publish_condition" '
   .jobs | to_entries[]
   | select(.value.permissions | tostring | test("write"))
   | select(.value.if != $condition)
