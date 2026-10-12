@@ -33,23 +33,24 @@ fn twins(files : Array[(String, String)]) -> Twins raise {
 }
 
 ///|
-/// Sends `request`, without a Session, to both engines, each with a random
+/// Sends `request`, with `session`, by default none, to both engines, each with a random
 /// source seeded the same way, and returns the outcome. Fails, showing both,
 /// when the outcomes differ in any part: the response plan, the Journal
 /// entry or the Near miss.
 fn Twins::send(
   self : Twins,
   request : @engine.Request,
+  session? : String? = None,
 ) -> @engine.Outcome raise {
   let indexed = self.indexed.handle(
     request,
-    session=None,
+    session~,
     now=fixed_now,
     rand=@prng.Generator(1),
   )
   let linear = self.linear.handle(
     request,
-    session=None,
+    session~,
     now=fixed_now,
     rand=@prng.Generator(1),
   )
@@ -73,7 +74,8 @@ let index_requests_per_case : Int = 40
 /// reaches every kind of Stub and requests that match nothing.
 struct IndexTally {
   /// The number of requests per kind of Stub that answered them: `exact
-  /// path`, `path pattern` or `no path`, or `no match`.
+  /// path`, `path pattern` or `no path` for a Stub from a Definition file,
+  /// `ephemeral` for an Ephemeral Stub, or `no match`.
   counts : Map[String, Int]
 }
 
@@ -84,6 +86,7 @@ fn IndexTally::IndexTally() -> IndexTally {
       ("exact path", 0),
       ("path pattern", 0),
       ("no path", 0),
+      ("ephemeral", 0),
       ("no match", 0),
     ]),
   }
@@ -95,7 +98,7 @@ fn IndexTally::to_string(self : IndexTally) -> String {
 }
 
 ///|
-test "the match index picks the same Stub as the matching order, for generated definition sets and requests" {
+test "the match index picks the same Stub as the matching order, for generated definition sets, Ephemeral Stubs and requests" {
   let tally = IndexTally()
   for case in 0..<index_cases {
     check_index_case(case, tally)
@@ -103,33 +106,48 @@ test "the match index picks the same Stub as the matching order, for generated d
   inspect(
     tally.to_string(),
     content=(
-      #|exact path: 1060
-      #|path pattern: 1513
-      #|no path: 2280
-      #|no match: 7147
+      #|exact path: 999
+      #|path pattern: 1404
+      #|no path: 2152
+      #|ephemeral: 542
+      #|no match: 6903
     ),
   )
 }
 
 ///|
 /// Generates definition set number `case` and its requests from the seed
-/// of `case`, and checks every request against both engines, adding what
-/// it matched to `tally`.
+/// of `case`, adds the same generated Ephemeral Stubs to both engines,
+/// drawn from a seed of their own, and checks every request against both
+/// engines, adding what it matched to `tally`.
 fn check_index_case(case : Int, tally : IndexTally) -> Unit raise {
   let rand = @random.Rand::chacha8(seed=index_case_seed(case))
   let generated = gen_definition_set(rand)
   let files = generated.files
-  let shown_files = files.map(file => "\{file.0}: \{file.1}").join("\n")
   let twins = twins(files) catch {
     Failure(message) =>
       fail(
-        "case \{case}: the generated set is invalid:\n\{message}\n\{shown_files}",
+        "case \{case}: the generated set is invalid:\n\{message}\n\{show_files(files)}",
       )
     e => raise e
   }
+  let sessions = @random.Rand::chacha8(seed=ephemeral_case_seed(case))
+  let ephemeral = gen_ephemeral_stubs(sessions)
+  for stub in ephemeral {
+    let (mock, session, json) = stub
+    let _ = twins.indexed.add_ephemeral_stub(mock~, session~, json)
+    let _ = twins.linear.add_ephemeral_stub(mock~, session~, json)
+  }
+  let shown_files = show_files(files) +
+    ephemeral
+    .map(stub => {
+      "\nEphemeral Stub of \{stub.0} for \{@debug.to_string(stub.1)}: \{stub.2.stringify()}"
+    })
+    .join("")
   for _ in 0..<index_requests_per_case {
     let request = gen_request(rand)
-    let outcome = twins.send(request) catch {
+    let session = gen_session(sessions)
+    let outcome = twins.send(request, session~) catch {
       Failure(message) =>
         fail(
           (
@@ -137,6 +155,7 @@ fn check_index_case(case : Int, tally : IndexTally) -> Unit raise {
             $|  \{request.meth} \{request.target}
             $|  headers: \{@debug.to_string(request.headers)}
             $|  body: \{text(request.body)}
+            $|  session: \{@debug.to_string(session)}
             $|Definition files:
             $|\{shown_files}
             $|
@@ -146,6 +165,7 @@ fn check_index_case(case : Int, tally : IndexTally) -> Unit raise {
       e => raise e
     }
     let kind = match outcome.journal.stub {
+      Some(id) if id.has_prefix("eph-") => "ephemeral"
       Some(id) => generated.kinds.get(id).unwrap_or("unknown Stub \{id}")
       None => "no match"
     }
@@ -158,6 +178,49 @@ fn check_index_case(case : Int, tally : IndexTally) -> Unit raise {
 fn index_case_seed(case : Int) -> Bytes {
   let number = case.to_string().pad_start(5, '0')
   @utf8.encode("smock-match-index-property-\{number}")
+}
+
+///|
+/// The 32-byte seed of the Ephemeral Stubs and Sessions of case number
+/// `case`.
+fn ephemeral_case_seed(case : Int) -> Bytes {
+  let number = case.to_string().pad_start(5, '0')
+  @utf8.encode("smock-match-index-sessions-\{number}")
+}
+
+///|
+/// Definition files as (name, JSON text), one per line.
+fn show_files(files : Array[(String, String)]) -> String {
+  files.map(file => "\{file.0}: \{file.1}").join("\n")
+}
+
+///|
+/// The Sessions of the generated requests and Ephemeral Stubs.
+let generated_sessions : Array[String?] = [None, Some("s"), Some("t")]
+
+///|
+/// One of the Sessions, drawn from `rand`.
+fn gen_session(rand : @random.Rand) -> String? {
+  generated_sessions[rand.int(limit=generated_sessions.length())]
+}
+
+///|
+/// Generates up to four Ephemeral Stubs, as (Mock, Session, Stub without
+/// `id` and `mock`), in the order they are added.
+fn gen_ephemeral_stubs(rand : @random.Rand) -> Array[(String, String?, Json)] {
+  let out = []
+  for i in 0..<rand.int(limit=5) {
+    guard gen_stub(rand, "e\{i}").0 is Object(stub) else { continue }
+    let mock = match stub.get("mock") {
+      Some(String(mock)) => mock
+      _ => "m"
+    }
+    let ephemeral = stub.copy()
+    ephemeral.remove("id")
+    ephemeral.remove("mock")
+    out.push((mock, gen_session(rand), Json::object(ephemeral)))
+  }
+  out
 }
 
 ///|

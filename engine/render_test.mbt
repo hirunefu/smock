@@ -226,7 +226,8 @@ test "a Stub that answers from a body file renders the bytes of the file, as tex
 /// The error rendering the Stub `id` for `sample` gives, or `rendered`.
 fn Harness::render_error(self : Harness, id : String, sample : Json) -> String {
   try self.render(id, sample) catch {
-    @engine.UnknownStub(_) as err => "unknown Stub: \{err.message()}"
+    @engine.UnknownStub::UnknownStub(_) as err =>
+      "unknown Stub: \{err.message()}"
     @engine.InvalidSample(_) as err => "invalid sample: \{err.message()}"
     err => "other error: \{err}"
   } noraise {

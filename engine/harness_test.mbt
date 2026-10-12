@@ -37,17 +37,19 @@ fn harness(
 }
 
 ///|
-/// Sends a request without a Session and returns the engine's outcome.
+/// Sends a request, by default without a Session, and returns the
+/// engine's outcome.
 fn Harness::send(
   self : Harness,
   meth : String,
   target : String,
   headers? : Array[(String, String)] = [],
   body? : String = "",
+  session? : String,
 ) -> @engine.Outcome {
   self.engine.handle(
     { meth, target, headers, body: @utf8.encode(body), },
-    session=None,
+    session~,
     now=self.now,
     rand=self.rand,
   )

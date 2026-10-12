@@ -21,23 +21,22 @@ fn seeded_generators(
 
 ///|
 /// The Fault decisions for one request that `stub` matched: the delay, in
-/// milliseconds, and the connection Fault, if any.
+/// milliseconds, and the connection Fault, if any. They draw from `source`:
+/// the Stub's own generator, or else the process generator.
 ///
-/// The source, the Stub's own generator or else the process generator
-/// `rand`, advances exactly once per matched request: every draw for the
-/// request comes from a generator split off it. So the n-th matched request
-/// of a seeded Stub gets the same decisions in every run, whatever other
-/// Stubs do, and whatever earlier requests drew.
-fn Engine::decide_faults(
-  self : Engine,
+/// The source advances exactly once per matched request: every draw for
+/// the request comes from a generator split off it. So the n-th matched
+/// request of a seeded Stub gets the same decisions in every run, whatever
+/// other Stubs do, and whatever earlier requests drew.
+fn decide_faults(
   stub : @definitions.Stub,
-  rand : @prng.Generator,
+  source : @prng.Generator,
 ) -> (Int, ConnectionFault?) {
   guard stub.fault is Some(fault) &&
     (fault.delay is Some(_) || fault.connection is Some(_)) else {
     return (0, None)
   }
-  let draws = self.generators.get(stub.id).unwrap_or(rand).split()
+  let draws = source.split()
   let delay_ms = match fault.delay {
     Some(delay) if draws.double() < delay.probability =>
       sample(delay.distribution, draws)

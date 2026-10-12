@@ -16,6 +16,9 @@ pub(all) struct DefinitionSet {
 /// A problem in a definition set: the file it is in, a JSON Pointer
 /// (RFC 6901) to the value it is about within that file, and a message.
 /// The pointer is `""` when the problem is about the whole file.
+///
+/// A problem in an Ephemeral Stub has no file: its file is `""`, and its
+/// pointer points into the Stub as the Admin API received it.
 pub(all) struct Diagnostic {
   file : String
   pointer : String
@@ -24,16 +27,13 @@ pub(all) struct Diagnostic {
 
 ///|
 /// `<file>: <pointer>: <message>`, or `<file>: <message>` when the problem
-/// is about the whole file. It is always one line: line breaks and other
-/// control characters, such as in a file name or a field name, are written
-/// as escapes like `\n` and `\u{1b}`.
+/// is about the whole file, each without `<file>: ` when there is no file.
+/// It is always one line: line breaks and other control characters, such
+/// as in a file name or a field name, are written as escapes like `\n` and
+/// `\u{1b}`.
 pub fn Diagnostic::to_string(self : Diagnostic) -> String {
-  let line = if self.pointer == "" {
-    "\{self.file}: \{self.message}"
-  } else {
-    "\{self.file}: \{self.pointer}: \{self.message}"
-  }
-  one_line(line)
+  let parts = [self.file, self.pointer, self.message].filter(part => part != "")
+  one_line(parts.join(": "))
 }
 
 ///|

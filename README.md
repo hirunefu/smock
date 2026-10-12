@@ -34,9 +34,12 @@ Packages of `smock/smock`:
   by its method and exact path.
 - `engine`: decides the response to each request from the snapshot,
   including its Faults, and renders a named Stub's response for a sample
-  request, for `smock render` and the Admin render operation. `Engine(snapshot, match_index=false)` tries every
-  Stub in matching order instead of using the index; tests check the index
-  against it.
+  request, for `smock render` and the Admin render operation. It also holds
+  the Ephemeral Stubs per Mock and Session, applies the Admin API
+  operations on them, and reads the Session a request carries in its W3C
+  Baggage header. `Engine(snapshot, match_index=false)` tries every Stub in
+  matching order instead of using the index; tests check the index against
+  it.
 - `prng`: the seeded pseudo-random generator that Fault decisions draw
   from. Its sequence for a seed is fixed, the same on every target.
 - `defdir`: reads the definitions directory and loads it, for
@@ -100,6 +103,8 @@ settings:
 | `--admin-auth` | `SMOCK_ADMIN_AUTH` | `on`: the Admin API needs a bearer token; `off` for local use |
 | `--admin-token-file` | `SMOCK_ADMIN_TOKEN_FILE` | none: the token comes from `SMOCK_ADMIN_TOKEN` |
 | `--replicas` | `SMOCK_REPLICAS` | 1: above 1, every Admin API response warns that state is per replica |
+| `--session-header` | `SMOCK_SESSION_HEADER` | `baggage`: the W3C Baggage header that carries the [Session](#sessions-and-ephemeral-stubs) |
+| `--session-member` | `SMOCK_SESSION_MEMBER` | `smock-session`: the member of that header whose value is the Session key |
 | `--log-format` | `SMOCK_LOG_FORMAT` | `json` |
 | `--body-file-dir` | `SMOCK_BODY_FILE_DIR` | `files` |
 | `--header-size-limit` | `SMOCK_HEADER_SIZE_LIMIT` | 16384 bytes (16 KiB): larger request heads get 431 |
@@ -166,6 +171,8 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   request in the body, against the definitions the replica serves now, as
   `smock render` does (below). The optional `time` and `seed` query
   parameters give the time (RFC 3339) and the seed of the random source.
+- `/v1/mocks/{mock}/stubs` adds, lists and deletes Ephemeral Stubs, and
+  `POST /v1/reset` clears them ([below](#sessions-and-ephemeral-stubs)).
 - The other operations of the document answer 501 until their tickets
   build them.
 
@@ -272,6 +279,50 @@ only a safe subset of YAML (`yaml/`):
 Every problem is reported with the file and the JSON Pointer of the value,
 such as `users.yaml: /stubs/0/request/method: "on" may be read as a boolean;
 quote this value`.
+
+## Sessions and Ephemeral Stubs
+
+A test names its *Session* in the W3C `baggage` header of its requests, in
+the `smock-session` member, and Admin API calls name theirs the same way.
+Through the Admin API, a test adds *Ephemeral Stubs* to a Mock from the
+Definition files, for its Session only:
+
+```sh
+curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42" \
+  -d '{"request":{"method":"GET","path":"/users/1"},"response":{"status":503}}' \
+  localhost:9090/v1/mocks/users/stubs
+curl -H "baggage: smock-session=checkout-42" localhost:8080/users/1   # 503
+curl localhost:8080/users/1                                           # 200, from the file
+```
+
+- The Session key is the value of the first `smock-session` member of the
+  `baggage` headers, combined, trimmed and percent-decoded; properties after
+  `;` are ignored. A missing or empty value, or a `baggage` header that is
+  not W3C Baggage, means no Session. `--session-header` and
+  `--session-member` name another header or member.
+- An Ephemeral Stub has the shape of a Stub in a Definition file, without
+  `id` and `mock`: the path names the Mock, and smock assigns the ID,
+  `eph-<n>`, and returns it. Its body must be inline. It is validated like a
+  Stub from a Definition file: problems get 400 `invalid_stub` with the
+  messages `smock check` gives. A Mock that does not exist gets 404
+  `unknown_mock`: Mocks come only from Definition files.
+- Requests with the Session try its Ephemeral Stubs of the Mock before any
+  Stub from the Definition files: by their own `priority`, the newest first
+  among equal priorities. Other Sessions never see them. Requests without a
+  Session form their own space, and Ephemeral Stubs added without a Session
+  apply only to them. An Ephemeral Stub can be the Near miss, named by its
+  ID in `Smock-Near-Miss`.
+- `GET` lists and `DELETE /v1/mocks/{mock}/stubs/{id}` deletes the calling
+  Session's Ephemeral Stubs of the Mock. `POST /v1/reset` with
+  `{"scope":"session"}` clears the calling Session's Ephemeral Stubs of
+  every Mock, `{"scope":"mock","mock":"users"}` every Session's of one Mock,
+  and `{"scope":"all"}` all of them.
+- Ephemeral Stubs live in the process that received them, until a reset or
+  a restart. They survive a [reload](docs/definition-files.md#reloading) of
+  the Definition files, except those of a Mock the new files no longer
+  declare.
+- Adding, deleting and resetting each write a log entry (`Ephemeral Stub
+  added`, `Ephemeral Stub deleted`, `reset`); requests write none.
 
 ## Container image and release binaries
 
