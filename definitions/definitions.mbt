@@ -161,6 +161,9 @@ pub struct ConnectionFault {
 ///|
 /// How a connection Fault ends the connection.
 pub enum ConnectionKind {
+  /// Read the whole request, then reset the connection (an RST) without
+  /// writing anything.
+  Reset
   /// Close the connection without writing anything.
   Close
   /// Write the status line, the headers and the first half of the body,

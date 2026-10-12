@@ -1,0 +1,45 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "get-user",
+      "mock": "users",
+      "request": {
+        "path": "/users/1"
+      },
+      "fault": {
+        "connection": {
+          "kind": "reset",
+          "probability": 1
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    },
+    {
+      "id": "flaky",
+      "mock": "users",
+      "request": {
+        "path": "/flaky"
+      },
+      "fault": {
+        "delay": {
+          "fixed": 50
+        },
+        "connection": {
+          "kind": "reset",
+          "probability": 0.25
+        },
+        "seed": 7
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

@@ -37,7 +37,7 @@ Packages of `smock/smock`:
   request, for `smock render` and the Admin render operation. It also holds
   the Ephemeral Stubs per Mock and Session and the Journal, with its bound,
   eviction counts and query filter, applies the Admin API operations on
-  them, and reads the Session a request carries in its W3C Baggage header. `Engine(snapshot, match_index=false)` tries every Stub in
+  them (verification and the unmatched requests included), and reads the Session a request carries in its W3C Baggage header. `Engine(snapshot, match_index=false)` tries every Stub in
   matching order instead of using the index; tests check the index against
   it.
 - `prng`: the seeded pseudo-random generator that Fault decisions draw
@@ -48,7 +48,9 @@ Packages of `smock/smock`:
   On the TLS port the same loop reads and writes through a TLS stream; on
   the admin port it answers the Admin API. It reloads rotated certificates,
   and reads the SNI name from the ClientHello before OpenSSL sees it, so that
-  the name chooses the certificate without a C callback.
+  the name chooses the certificate without a C callback. Its one C
+  function, in `server/reset.c`, sets `SO_LINGER` so that the reset Fault
+  ends a connection with an RST, the exception ADR 0001 makes for it.
 - `metrics`: the metrics registry: counters, gauges and histograms with
   fixed label names, rendered in the Prometheus text format. Features
   register their metrics in the one registry `smock serve` keeps.
@@ -77,6 +79,8 @@ generated from it in any language.
 `Dockerfile` packs the release binary into the container image, and
 `.github/workflows/release.yml` publishes the image and the release binaries
 (see [Container image and release binaries](#container-image-and-release-binaries)).
+`charts/smock/` is the Helm chart, which the release workflow publishes too
+(see [Helm chart](#helm-chart)).
 
 `schema/v1/definitions.json` is the JSON Schema of Definition files, the
 contract for their format. `.github/workflows/schema-pages.yml` publishes it
@@ -309,9 +313,10 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   `POST /v1/reset` clears them and Journal entries
   ([below](#sessions-and-ephemeral-stubs)).
 - `POST /v1/journal/query` lists the calling Session's requests from the
-  [Journal](#the-journal).
-- The other operations of the document answer 501 until their tickets
-  build them.
+  [Journal](#the-journal), `POST /v1/journal/verify` checks how many of
+  them there were, and `GET /v1/journal/unmatched` lists those that no
+  Stub answered, with their Near misses
+  ([below](#verifying-calls-and-unmatched-requests)).
 
 ```sh
 curl -H "Authorization: Bearer change-me" localhost:9090/v1/status
@@ -511,6 +516,38 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   answered it. It lives in the process that received the requests, until a
   reset or a restart.
 
+### Verifying calls and unmatched requests
+
+A test checks that its system sent a request exactly, at least or at most
+N times. It gives the same filter as a query, and exactly one of
+`exactly`, `atLeast` and `atMost`:
+
+```sh
+curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42" \
+  -d '{"filter":{"method":"POST","path":"/orders"},"exactly":1}' \
+  localhost:9090/v1/journal/verify
+# {"ok":true,"count":1,"evicted":0,"reason":null,"warnings":[]}
+```
+
+- `count` is how many of the calling Session's entries pass the filter;
+  other Sessions' requests are never counted. A check that fails is still
+  a 200 response, with `ok` false and `reason` `count`.
+- Verification never trusts a count that may be wrong. When the Journal
+  bound has evicted any of the Session's entries since its last reset
+  (`evicted` above 0), `exactly` and `atMost` fail with `reason` `evicted`,
+  whatever the count. `atLeast` is still decided by the count, because
+  eviction can only lower it. A Session reset clears the eviction count.
+- Like a query, verification while the Journal is off, or whose filter
+  names a Mock whose Journal is off, gets 409 `journal_off`.
+
+`GET /v1/journal/unmatched` lists the calling Session's requests that no
+Stub answered, oldest first, at most `limit` of them (a query parameter,
+100 by default, at most 10000), in the same form as a query's entries. Each
+carries its full Near miss: the closest Stub, and every condition it
+failed with what the Stub expects and what the request sent. A request for
+a Host that no Mock answers is among them, with no Mock and no Near miss.
+It gets 409 `journal_off` while the Journal is off.
+
 ## Container image and release binaries
 
 Each release publishes the image `ghcr.io/hirunefu/smock:<version>` for
@@ -533,6 +570,27 @@ The image's command is `serve`; arguments replace it (`... smock:<version>
 (such as a Kubernetes Secret). The image exposes the plain port 8080, the TLS
 port 8443 and the admin port 9090. Files mounted into the container must be
 readable by UID 65532.
+
+### Helm chart
+
+Each release also publishes the Helm chart `oci://ghcr.io/hirunefu/charts/smock`,
+with the release's version as its version and app version, so it runs the
+image of the same release:
+
+```sh
+kubectl create secret generic smock-admin-token --from-literal=token="$(openssl rand -hex 32)"
+helm install smock oci://ghcr.io/hirunefu/charts/smock --version <version> \
+  --set adminAuth.tokenSecret.name=smock-admin-token \
+  --set-file 'definitions.configMap.files.users\.yaml=mocks/users.yaml'
+```
+
+The Definition files come from a ConfigMap by default, and a ConfigMap
+update reaches the running smock through its reload, without a restart; a
+git-sync sidecar or an OCI image volume can deliver them instead. The Pods
+meet the Restricted Pod Security Standard, run one replica with about one
+CPU core by default, and get the Admin API token and the TLS certificate
+from Secrets. [charts/smock/README.md](charts/smock/README.md) describes the
+chart and lists every value with its default.
 
 ### Verify the image
 
@@ -582,14 +640,15 @@ runs `.github/workflows/release.yml`. On an amd64 and an arm64 runner, each
 building for its own architecture without emulation, it builds smock with
 the toolchain in `.moonbit-version`, builds the image and runs
 `scripts/smoke-test-image.sh` on it. Only then does it push, combine, sign
-and attest the image, verify it with `scripts/verify-image.sh`, and create
-the GitHub release with notes from `scripts/release-notes.sh`. It never runs
+and attest the image, verify it with `scripts/verify-image.sh`, push the
+Helm chart packaged by `scripts/package-helm-chart.sh`, and create the
+GitHub release with notes from `scripts/release-notes.sh`. It never runs
 on pull requests. Started by hand from the Actions tab, it builds and
-smoke-tests everything and keeps the binaries, images and notes as workflow
-artifacts, but publishes nothing. `scripts/check-release-workflow.sh`, run in
+smoke-tests everything and keeps the binaries, images, chart and notes as
+workflow artifacts, but publishes nothing. `scripts/check-release-workflow.sh`, run in
 CI, checks those rules. After the first release, make the
-`ghcr.io/hirunefu/smock` package public in its settings; GitHub creates it
-private.
+`ghcr.io/hirunefu/smock` and `ghcr.io/hirunefu/charts/smock` packages public
+in their settings; GitHub creates them private.
 
 To smoke-test the image locally (needs docker, curl, openssl, readelf and jq):
 
@@ -633,7 +692,21 @@ scripts/check-openapi.sh       # the Admin API document is valid OpenAPI 3.1
 docker build --tag smock:dev .
 scripts/smoke-test-image.sh smock:dev 0.0.0-dev <commit> "moonc <version>"   # the container image
 scripts/check-release-workflow.sh    # the release workflow publishes only for tags (needs yq)
+scripts/test-helm-chart.sh           # rendering tests of the Helm chart (needs helm, yq and jq)
+scripts/test-helm-chart-on-kind.sh smock:dev   # the chart on a kind cluster (needs kind, kubectl and helm)
 ```
+
+`scripts/test-helm-chart.sh` renders `charts/smock` for each delivery mode
+of the Definition files and each Admin API authentication and TLS option,
+and checks the manifests, the Restricted Pod Security Standard included,
+and that the chart's README lists every value with its default.
+`scripts/test-helm-chart-on-kind.sh` creates a kind cluster, checks every
+delivery mode against Kubernetes' own Pod Security admission, installs the
+chart with the image into a namespace that enforces the Restricted
+standard, and checks that a Stub answers and that a ConfigMap update is
+served without a Pod restart; it deletes the cluster afterwards.
+`scripts/install-kubernetes-tools.sh` installs the pinned helm, kubectl and
+kind that CI uses.
 
 `scripts/check-schema.sh` runs the external validator check-jsonschema
 through `uvx` (or `pipx`) and needs `jq`; `scripts/check-openapi.sh` runs

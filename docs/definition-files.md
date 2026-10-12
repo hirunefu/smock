@@ -244,7 +244,9 @@ conditions only once every Stub has failed to match.
 
 The [Journal](../README.md#the-journal) records the full Near miss of each
 unmatched request: every condition it failed, with what the Stub expects
-and what the request sent.
+and what the request sent. A test lists its Session's unmatched requests
+with `GET /v1/journal/unmatched`
+([README](../README.md#verifying-calls-and-unmatched-requests)).
 
 ### Turning the Journal off for a Mock
 
@@ -369,6 +371,12 @@ delayed. Without it, every matched request is.
 A `connection` Fault makes a request fail at the connection level, instead
 of getting its response:
 
+- `reset`: smock reads the whole request, body included, then resets the
+  connection (an RST) without writing anything. The client gets a
+  connection-reset error, not an empty response. On the TLS port, smock
+  sends no `close_notify` first. Should the operating system refuse the
+  reset, smock logs an error (`cannot reset the connection`) and closes the
+  connection with a FIN instead.
 - `close`: smock reads the request, then closes the connection (a FIN)
   without writing anything.
 - `partial`: smock writes the status line, the headers, with the
@@ -376,7 +384,6 @@ of getting its response:
   closes the connection. The client sees a response cut short. For
   Server-Sent Events, the first half is the first half of the events,
   rounded down, each after its delay, and the stream is not ended.
-- `reset` is in the JSON Schema but not supported yet.
 
 `probability`, from 0 to 1, is the share of matched requests that fail;
 without it, every matched request fails. A Stub with both a delay and a

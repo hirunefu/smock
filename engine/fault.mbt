@@ -45,6 +45,7 @@ fn decide_faults(
   let connection = match fault.connection {
     Some(connection) if draws.double() < connection.probability =>
       match connection.kind {
+        Reset => Some(Reset)
         Close => Some(Close)
         Partial => Some(Partial)
       }

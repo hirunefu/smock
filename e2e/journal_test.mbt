@@ -332,6 +332,80 @@ async test "a request ended by a close or partial connection Fault is in the Jou
 }
 
 ///|
+async test "a request ended by a reset Fault is in the Journal, body included, as soon as its client sees the reset, many times in a row" {
+  let defs =
+    #|{ "mocks": [{ "name": "m" }],
+    #|  "stubs": [{ "id": "reset", "mock": "m",
+    #|    "request": { "path": { "pattern": "/reset/[0-9]+" } },
+    #|    "response": { "status": 200, "body": "never sent" },
+    #|    "fault": { "connection": { "kind": "reset" } } }] }
+  with_definitions([("m.json", defs)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let missed = []
+      for i in 0..<20 {
+        let conn = smock.connect()
+        defer conn.close()
+        conn.write(
+          "POST /reset/\{i} HTTP/1.1\r\nHost: localhost\r\nbaggage: smock-session=resets\r\nContent-Length: 5\r\n\r\nhello",
+        )
+        let ended = how_it_ends(conn)
+        guard ended == "0 bytes, then an RST" else {
+          fail("/reset/\{i}: \{ended}")
+        }
+        let found = smock.journal_count(
+          "resets",
+          "{\"filter\":{\"path\":\"/reset/\{i}\"}}",
+        )
+        if found != 1 {
+          missed.push("/reset/\{i}: \{found} entries")
+        }
+      }
+      debug_inspect(missed, content="[]")
+      let (_, page) = smock.journal(
+        session="resets",
+        query="{\"filter\":{\"path\":\"/reset/0\"}}",
+      )
+      json_inspect(journal_shown(page), content={
+        "entries": [
+          {
+            "receivedAt": "<time>",
+            "durationMs": "<ms>",
+            "session": "resets",
+            "host": "localhost",
+            "mock": "m",
+            "viaDefault": true,
+            "digest": "<digest>",
+            "request": {
+              "method": "POST",
+              "target": "/reset/0",
+              "version": "HTTP/1.1",
+              "headers": [
+                { "name": "Host", "value": "localhost" },
+                { "name": "baggage", "value": "smock-session=resets" },
+                { "name": "Content-Length", "value": "5" },
+              ],
+              "body": {
+                "encoding": "utf-8",
+                "data": "hello",
+                "size": 5,
+                "truncated": false,
+              },
+            },
+            "stub": "reset",
+            "nearMiss": null,
+            "status": null,
+            "fault": "reset",
+          },
+        ],
+        "more": false,
+        "evicted": 0,
+        "warnings": [],
+      })
+    })
+  })
+}
+
+///|
 async test "a query is refused with journal_off when its filter names a Mock whose Journal is off, or when the Journal is off globally" {
   with_definitions([("users.json", journal_defs)], dir => {
     let out = []

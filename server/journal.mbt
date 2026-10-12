@@ -80,8 +80,94 @@ fn query_journal(
   let page = admin.engine().query_journal(query, session~) catch {
       error => return admin.refused(error, session)
     }
+  admin.page(page)
+}
+
+///|
+/// The reply that carries a Journal page.
+fn Admin::page(self : Admin, page : @engine.JournalPage) -> Reply {
   guard ToJson::to_json(page) is Object(members) else {
     abort("a Journal page is a JSON object")
   }
+  self.json(200, members)
+}
+
+///|
+/// Counts the calling Session's Journal entries that pass the filter in
+/// the body, and checks the count exactly, at least or at most N. A failed
+/// check is still a 200 reply, with `ok` false.
+fn verify_journal(
+  admin : Admin,
+  request : @http1.Request,
+  body : Json?,
+) -> Reply {
+  let session = admin.session(request)
+  guard body is Some(body) else {
+    return admin.error(
+      400, "invalid_request", "the body must be a verification: a JSON object, such as {\"filter\":{\"path\":\"/users/1\"},\"exactly\":1}",
+    )
+  }
+  let verify = @engine.VerifyRequest::from_json(body) catch {
+    err =>
+      return admin.error(
+        400,
+        "invalid_request",
+        "the verification is not valid: \{err.message()}",
+      )
+  }
+  let verification = admin.engine().verify(verify, session~) catch {
+      error => return admin.refused(error, session)
+    }
+  guard ToJson::to_json(verification) is Object(members) else {
+    abort("a verification is a JSON object")
+  }
   admin.json(200, members)
+}
+
+///|
+/// Lists the calling Session's Journal entries that no Stub answered,
+/// oldest first, each with its Near miss, at most as many as the `limit`
+/// query parameter says.
+fn list_unmatched(
+  admin : Admin,
+  request : @http1.Request,
+  _body : Json?,
+) -> Reply {
+  let session = admin.session(request)
+  let invalid = (message : String) => {
+    admin.error(400, "invalid_request", message)
+  }
+  let limit = match query_parameter(request.target, "limit") {
+    Err(message) => return invalid(message)
+    Ok(None) => None
+    Ok(Some(text)) =>
+      match parse_limit(text) {
+        Some(limit) => Some(limit)
+        None =>
+          return invalid(
+            "the limit query parameter must be an integer from 1 to 10000",
+          )
+      }
+  }
+  let page = admin.engine().unmatched(session~, limit?) catch {
+      error => return admin.refused(error, session)
+    }
+  admin.page(page)
+}
+
+///|
+/// The limit `text` gives: a decimal integer from 1 to 10,000, without a
+/// sign, prefix or separator. `None` when it is not one.
+fn parse_limit(text : String) -> Int? {
+  if text == "" ||
+    text.length() > 5 ||
+    !text.iter().all(c => c >= '0' && c <= '9') {
+    return None
+  }
+  let n = text.fold(init=0, (n, c) => n * 10 + (c.to_int() - '0'.to_int()))
+  if n >= 1 && n <= 10000 {
+    Some(n)
+  } else {
+    None
+  }
 }

@@ -53,8 +53,7 @@ priv struct Route {
 
 ///|
 /// Everything the admin port serves: the operations of the OpenAPI
-/// document, openapi/admin.json. Those that later tickets build answer 501
-/// until then.
+/// document, openapi/admin.json.
 let routes : Array[Route] = [
   route("/v1/status", "GET", status),
   route("/v1/mocks/{mock}/stubs", "GET", list_stubs),
@@ -62,8 +61,8 @@ let routes : Array[Route] = [
   route("/v1/mocks/{mock}/stubs/{id}", "DELETE", delete_stub),
   route("/v1/reset", "POST", reset, takes_body=true),
   route("/v1/journal/query", "POST", query_journal, takes_body=true),
-  route("/v1/journal/verify", "POST", not_implemented, takes_body=true),
-  route("/v1/journal/unmatched", "GET", not_implemented),
+  route("/v1/journal/verify", "POST", verify_journal, takes_body=true),
+  route("/v1/journal/unmatched", "GET", list_unmatched),
   route("/v1/stubs/{id}/render", "POST", render, takes_body=true),
   route("/startupz", "GET", startup_probe, open=true),
   route("/readyz", "GET", readiness_probe, open=true),
@@ -268,21 +267,6 @@ fn path_matches(template : String, path : String) -> Bool {
     let (t, a) = pair
     (t.has_prefix("{") && t.has_suffix("}") && a != "") || t == a
   })
-}
-
-///|
-/// Answers an operation that the document defines and a later ticket
-/// builds.
-fn not_implemented(
-  admin : Admin,
-  request : @http1.Request,
-  _body : Json?,
-) -> Reply {
-  admin.error(
-    501,
-    "not_implemented",
-    "\{request.meth} \{path_of(request.target)} is not implemented in this build",
-  )
 }
 
 ///|
