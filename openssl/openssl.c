@@ -29,7 +29,7 @@ MOONBIT_FFI_EXPORT moonbit_bytes_t smock_openssl_take_error(void) {
   const char *reason = code == 0 ? NULL : ERR_reason_error_string(code);
   char fallback[32];
   if (code != 0 && reason == NULL) {
-    snprintf(fallback, sizeof fallback, "error %lu", ERR_GET_REASON(code));
+    snprintf(fallback, sizeof fallback, "error %d", ERR_GET_REASON(code));
     reason = fallback;
   }
   int32_t length = reason == NULL ? 0 : (int32_t)strlen(reason);
@@ -115,7 +115,11 @@ MOONBIT_FFI_EXPORT smock_ctx *smock_openssl_ctx_new(int32_t server) {
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     SSL_CTX_set_mode(ctx, SSL_MODE_RELEASE_BUFFERS);
     SSL_CTX_set_options(ctx, SSL_OP_NO_RENEGOTIATION);
-    if (!server) {
+    if (server) {
+      // Resumption uses stateless session tickets only, so memory does not
+      // grow with the number of clients.
+      SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_OFF);
+    } else {
       SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
     }
   }
