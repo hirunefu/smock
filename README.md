@@ -48,7 +48,9 @@ Packages of `smock/smock`:
   On the TLS port the same loop reads and writes through a TLS stream; on
   the admin port it answers the Admin API. It reloads rotated certificates,
   and reads the SNI name from the ClientHello before OpenSSL sees it, so that
-  the name chooses the certificate without a C callback.
+  the name chooses the certificate without a C callback. Its one C
+  function, in `server/reset.c`, sets `SO_LINGER` so that the reset Fault
+  ends a connection with an RST, the exception ADR 0001 makes for it.
 - `metrics`: the metrics registry: counters, gauges and histograms with
   fixed label names, rendered in the Prometheus text format. Features
   register their metrics in the one registry `smock serve` keeps.
