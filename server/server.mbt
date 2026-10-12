@@ -1,15 +1,16 @@
 ///|
-/// Runs `smock serve`: listens on the admin port, loads the definitions,
-/// then listens on the plain port and, with a TLS certificate, on the TLS
-/// port, and serves until SIGTERM, then drains. The plain and TLS ports
-/// serve the same Mocks; the admin port serves the Admin API and the probes,
-/// from before the definitions load, so that the startup probe can tell
-/// that they have not loaded yet, until the drain ends.
+/// Runs `smock serve`: listens on the admin port, loads the definitions and
+/// the TLS certificates, if any, then listens on the plain port and, with a
+/// certificate, on the TLS port, and serves until SIGTERM, then drains. The
+/// plain and TLS ports serve the same Mocks; the admin port serves the
+/// Admin API and the probes, from before the definitions load, so that the
+/// startup probe can tell that they have not loaded yet, until the drain
+/// ends.
 ///
 /// Returns the exit status: 0 after the drain, and 1 when Admin API
-/// authentication is on and no token is set, the TLS certificate cannot be
-/// loaded, the definition set is invalid or a port cannot be listened on.
-/// Every problem is logged first.
+/// authentication is on and no token is set, the definition set is invalid,
+/// the default TLS certificate or a Mock's own cannot be loaded or a port
+/// cannot be listened on. Every problem is logged first.
 pub async fn serve(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
@@ -22,21 +23,6 @@ pub async fn serve(
   } else {
     None
   }
-  let tls = match settings.tls {
-    None => None
-    Some(files) =>
-      match load_tls(files) {
-        Ok(config) => Some((files, config))
-        Err(message) => {
-          logger.error("cannot load the TLS certificate", fields={
-            "cert_file": Json::string(files.cert_file),
-            "key_file": Json::string(files.key_file),
-            "error": Json::string(message),
-          })
-          return 1
-        }
-      }
-  }
   // Watching starts before the first load, so that no change made while it
   // reads the files goes unnoticed. Without a definitions directory, there
   // is nothing to watch and nothing to reload.
@@ -45,6 +31,16 @@ pub async fn serve(
     Some(dir) => Some(@watch.Watch(dir))
   }
   defer (if watch is Some(watch) { watch.close() })
+  // The directories of the certificate and key files are watched too, also
+  // from before the first load.
+  let tls_watches = []
+  if settings.tls is Some(files) {
+    let pairs = [files, ..settings.tls_mock_certs.values()]
+    for dir in tls_dirs(pairs) {
+      tls_watches.push((dir, @watch.Watch(dir)))
+    }
+  }
+  defer tls_watches.each(watch => watch.1.close())
   // The process generator. Its seed is logged, so that a run can be
   // replayed with --seed.
   let seed = match settings.seed {
@@ -55,8 +51,8 @@ pub async fn serve(
   logger.info("random seed", fields={
     "seed": Json::number(seed.to_double(), repr=seed.to_string()),
   })
-  let build = @buildinfo.current()
   let metrics = @metrics.Registry()
+  let build = @buildinfo.current()
   build.register_metric(metrics)
   let reloads = register_reload_metric(metrics)
   let lifecycle = Lifecycle::new()
@@ -64,9 +60,12 @@ pub async fn serve(
     lifecycle,
     build,
     metrics~,
+    logger~,
     token~,
     replica=replica_name(),
     replicas=settings.replicas,
+    session_header=settings.session_header,
+    session_member=settings.session_member,
   )
   guard listen(logger, "admin", settings.admin_port) is Some(admin_listener) else {
     return 1
@@ -97,8 +96,9 @@ pub async fn serve(
             lifecycle,
             admin,
             admin_listener,
-            tls~,
+            metrics~,
             watch~,
+            tls_watches~,
             rand~,
             reloads~,
           )
@@ -119,10 +119,11 @@ async fn sleep_forever() -> Unit {
 
 ///|
 /// Serves the Admin API on `admin_listener`, from now until it returns;
-/// loads the definitions; listens on the plain port and, with `tls`, on the
-/// TLS port; serves the Mocks there until the drain starts; and drains.
-/// Returns the exit status: 0 after the drain, or 1 when the definition set
-/// is invalid or a port cannot be listened on.
+/// loads the definitions and the TLS certificates; listens on the plain
+/// port and, with a certificate, on the TLS port; serves the Mocks there
+/// until the drain starts; and drains. Returns the exit status: 0 after the
+/// drain, or 1 when the definition set is invalid, a TLS certificate cannot
+/// be loaded or a port cannot be listened on.
 ///
 /// The drain closes the plain and TLS listeners and the idle connections at
 /// once. The responses in progress go on, and end with
@@ -136,8 +137,9 @@ async fn run(
   lifecycle : Lifecycle,
   admin : Admin,
   admin_listener : @socket.TcpServer,
-  tls~ : (@settings.TlsFiles, @openssl.ServerConfig)?,
+  metrics~ : @metrics.Registry,
   watch~ : @watch.Watch?,
+  tls_watches~ : Array[(String, @watch.Watch)],
   rand~ : @prng.Generator,
   reloads~ : @metrics.Counter,
 ) -> Int {
@@ -177,6 +179,21 @@ async fn run(
     }
     let engine = @engine.Engine(snapshot)
     lifecycle.started(engine)
+    let tls = match settings.tls {
+      None => None
+      Some(files) =>
+        match
+          Certificates::load(
+            files,
+            settings.tls_mock_certs,
+            engine~,
+            logger~,
+            metrics~,
+          ) {
+          Some(certificates) => Some((files, certificates))
+          None => return 1
+        }
+    }
     guard listen(logger, "plain", settings.port) is Some(plain) else {
       return 1
     }
@@ -211,8 +228,19 @@ async fn run(
         logger,
         reloads,
         last_read: (snapshot.digest, []),
+        after_swap: () => {
+          if tls is Some((_, certificates)) {
+            certificates.warn_undeclared()
+          }
+        },
       }
       group.spawn_bg(no_wait=true, () => reloader.run(watch))
+    }
+    if tls is Some((_, certificates)) {
+      for watch in tls_watches {
+        let (dir, watch) = watch
+        group.spawn_bg(no_wait=true, () => certificates.run(dir, watch))
+      }
     }
     let listening = group.spawn(() => {
       @async.with_task_group(listeners => {
@@ -224,7 +252,7 @@ async fn run(
             })
           })
         })
-        if tls is Some((_, config)) && tls_listener is Some(listener) {
+        if tls is Some((_, certificates)) && tls_listener is Some(listener) {
           listeners.spawn_bg(() => {
             defer listener.close()
             accept_loop(listener, conn => {
@@ -233,7 +261,7 @@ async fn run(
                 // request bytes, so the idle timeout bounds the handshake
                 // too.
                 let stream = @async.with_timeout_opt(settings.idle_timeout_ms, () => {
-                  TlsStream::accept(conn, config)
+                  TlsStream::accept(conn, name => certificates.select(name))
                 })
                 guard stream is Some(Some(stream)) else { return }
                 serve_mocks(
@@ -334,10 +362,15 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
     settings,
     connection~,
     respond=(stream, request) => {
+      let engine_request = to_engine_request(request)
+      let session = @engine.session_of(
+        engine_request.headers,
+        header=settings.session_header,
+        member_name=settings.session_member,
+      )
       let plan = engine.handle(
-          to_engine_request(request),
-          // Sessions come with the "Sessions and Ephemeral Stubs" ticket.
-          session=None,
+          engine_request,
+          session~,
           now=@async.now(),
           rand~,
         ).plan

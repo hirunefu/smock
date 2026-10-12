@@ -13,6 +13,8 @@ pub struct Engine {
   priv match_index : Bool
   /// The result of the last reload, if there was one.
   priv mut last_reload : ReloadResult?
+  /// The Ephemeral Stubs, by Mock and Session.
+  priv ephemeral : EphemeralStubs
 }
 
 ///|
@@ -124,6 +126,7 @@ pub fn Engine::Engine(
     generators: seeded_generators(snapshot),
     match_index,
     last_reload: None,
+    ephemeral: EphemeralStubs::new(),
   }
 }
 
@@ -168,6 +171,18 @@ pub fn Engine::status(self : Engine) -> Status {
 }
 
 ///|
+/// The name of the Mock whose Hosts include `host`, compared as Host
+/// resolution compares Hosts: case-insensitively, without a port and
+/// without a trailing dot. `None` when no Mock lists it, even when there is
+/// a Default Mock. It answers from the snapshot served, so it follows each
+/// reload; the TLS port asks it which Mock an SNI name belongs to.
+pub fn Engine::mock_for_host(self : Engine, host : String) -> String? {
+  self.snapshot
+  .mock_for_host(@definitions.normalize_host(host))
+  .map(mock => mock.name)
+}
+
+///|
 /// What a reload did.
 pub(all) struct ReloadResult {
   /// When the reload finished, in milliseconds since the Unix epoch.
@@ -202,7 +217,9 @@ pub(all) enum ReloadOutcome {
 /// - When it is valid and its digest differs from the served one, it
 ///   replaces the served snapshot at once, and each Stub with a seed gets a
 ///   new generator, created from its seed. Plans the engine returned before
-///   stay as they were: they hold their own bytes.
+///   stay as they were: they hold their own bytes. Ephemeral Stubs stay,
+///   generators included, except those of a Mock the new set does not
+///   declare, which are dropped.
 /// - When it is valid with the digest served, nothing is swapped.
 /// - When it is invalid, the served snapshot stays.
 ///
@@ -220,6 +237,9 @@ pub fn Engine::reload(
     Ok(snapshot) => {
       self.snapshot = snapshot
       self.generators = seeded_generators(snapshot)
+      // Ephemeral Stubs stay, except those of the Mocks that are gone.
+      let mocks = Set::from_iter(snapshot.mocks.iter().map(mock => mock.name))
+      self.ephemeral.remove_where((mock, _) => !mocks.contains(mock)) |> ignore
       (Swapped, [])
     }
     Err(errors) => (Failed, errors)
@@ -261,29 +281,43 @@ pub fn Engine::handle(
       }
   }
   let incoming = Incoming::new(request)
-  // The match index only narrows the search for the Stub that answers. The
-  // Near miss of a request that matched nothing is chosen among every Stub
-  // of the Mock, in matching order.
-  let matched = match mock {
-    Some(mock) => {
+  // The Ephemeral Stubs of the Mock and the Session come first, in their
+  // own order, then the Stubs from Definition files. The match index only
+  // narrows the search among the latter. The Near miss of a request that
+  // matched nothing is chosen among every candidate, in that order.
+  let ephemeral = mock.bind(mock => self.ephemeral.of(mock.name, session))
+  let matched_ephemeral = ephemeral.bind(list => {
+    list.iter().find_first(e => incoming.meets(e.stub.request))
+  })
+  // The Stub that matched, with its own generator if it has one.
+  let matched : (@definitions.Stub, @prng.Generator?)? = match
+    (mock, matched_ephemeral) {
+    (_, Some(e)) => Some((e.stub, e.generator))
+    (Some(mock), None) => {
       let candidates = if self.match_index {
         mock.candidates(request.meth, incoming.path)
       } else {
         mock.stubs.iter()
       }
-      candidates.find_first(stub => incoming.meets(stub.request))
+      candidates
+      .find_first(stub => incoming.meets(stub.request))
+      .map(stub => (stub, self.generators.get(stub.id)))
     }
-    None => None
+    (None, None) => None
   }
   let (plan, near_miss) : (ResponsePlan, NearMiss?) = match (mock, matched) {
     (None, _) => (no_mock(host, self.snapshot.hosts()), None)
-    (Some(_), Some(stub)) => {
-      let (delay_ms, fault) = self.decide_faults(stub, rand)
+    (Some(_), Some((stub, generator))) => {
+      let (delay_ms, fault) = decide_faults(stub, generator.unwrap_or(rand))
       ({ ..stub_response(stub.response), delay_ms, fault, }, None)
     }
     (Some(mock), None) => {
       // Only now, when every candidate has failed, are conditions counted.
-      let near_miss = incoming.near_miss(mock.stubs)
+      let ephemeral = match ephemeral {
+        Some(list) => list.iter().map(e => e.stub)
+        None => Iter::empty()
+      }
+      let near_miss = incoming.near_miss(ephemeral.concat(mock.stubs.iter()))
       (no_match(mock, near_miss), near_miss)
     }
   }
@@ -301,7 +335,7 @@ pub fn Engine::handle(
       target: request.target,
       headers: request.headers,
       body: request.body,
-      stub: matched.map(stub => stub.id),
+      stub: matched.map(matched => matched.0.id),
       status: plan.status,
       received_at: now,
     },

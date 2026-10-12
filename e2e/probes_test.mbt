@@ -39,7 +39,8 @@ async test "the probes need no token while authentication is on, and pass once s
 /// Starts `smock serve <args>` and runs `f` as soon as smock listens on its
 /// admin port, which it opens before it loads its definitions; then stops
 /// smock with SIGTERM and waits for it to exit. `f` gets smock without its
-/// plain port, which is not known yet (0).
+/// plain port, which is not known yet (0), and with the log lines up to the
+/// one that says it listens on its admin port.
 async fn while_starting(
   args : Array[String],
   f : async (Smock) -> Unit,
@@ -57,11 +58,13 @@ async fn while_starting(
       stderr=stderr_end,
       no_wait=true,
     )
+    let logs = []
     let admin_port = @async.with_timeout_opt(patience_ms, () => {
       for ;; {
         guard stderr.read_until("\n") is Some(line) else {
           fail("smock exited before it listened on its admin port")
         }
+        logs.push(line)
         if listening(line) is Some(("admin", port)) {
           break port
         }
@@ -70,7 +73,7 @@ async fn while_starting(
     guard admin_port is Some(admin_port) else {
       fail("smock did not listen on its admin port in time")
     }
-    f({ port: 0, admin_port, tls_port: None, pid: process.pid, process, })
+    f({ port: 0, admin_port, tls_port: None, pid: process.pid, logs, process, })
     let _ = @process.run("kill", ["-TERM", process.pid.to_string()])
     let status = @async.with_timeout_opt(patience_ms, () => process.wait())
     guard status is Some(_) else { fail("smock did not stop in time") }

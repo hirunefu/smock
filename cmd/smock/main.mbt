@@ -10,7 +10,11 @@ async fn main {
     about="A mock server for HTTP/1.1, HTTPS and Server-Sent Events.",
     version=@buildinfo.current().version_line(),
     arg_required_else_help=true,
-    subcommands=[@settings.serve_command(), @settings.check_command()],
+    subcommands=[
+      @settings.serve_command(),
+      @settings.check_command(),
+      @settings.render_command(),
+    ],
   )
   // `--help` and `--version` print and exit 0 inside `parse`.
   let matches = cli.parse(env=@env.get_env_vars()) catch {
@@ -49,8 +53,87 @@ async fn main {
       }
       exit(check(settings))
     }
+    Some(("render", matches)) => {
+      let settings = @settings.RenderSettings::from_matches(matches) catch {
+        err => {
+          eprintln("smock render: \{err.message()}")
+          exit(2)
+          return
+        }
+      }
+      exit(render(settings))
+    }
     _ => ()
   }
+}
+
+///|
+/// Runs `smock render`: loads the definitions directory as `smock serve`
+/// does, reads the sample request, renders the named Stub's response for it
+/// and prints the rendering to stdout as JSON, in the form of the Admin
+/// render operation's result without its warnings. Returns the exit status:
+/// 0 when it rendered, 1 when the definition set is invalid, with the
+/// messages `smock check` prints, when the sample request cannot be read or
+/// is not valid, or when no Stub has the ID. Every problem goes to stderr.
+async fn render(settings : @settings.RenderSettings) -> Int {
+  let snapshot = match
+    @defdir.load(Some(settings.dir), body_file_dir=settings.body_file_dir) {
+    Ok(snapshot) => snapshot
+    Err(diagnostics) => {
+      for diagnostic in diagnostics {
+        eprintln(diagnostic.to_string())
+      }
+      return 1
+    }
+  }
+  let file = settings.request_file
+  let text = @fs.read_file(file).text() catch {
+    err => {
+      let reason = match err {
+        @os_error.OSError(_) as err if err.is_ENOENT() => "no such file"
+        @os_error.OSError(_) as err if err.is_EACCES() => "permission denied"
+        @os_error.OSError(_) => err.to_string()
+        _ => "it is not UTF-8 text"
+      }
+      eprintln(
+        "smock render: cannot read the sample request \{file}: \{reason}",
+      )
+      return 1
+    }
+  }
+  let json = @json.parse(text) catch {
+    err => {
+      eprintln(
+        "smock render: the sample request \{file} is not valid JSON: \{err}",
+      )
+      return 1
+    }
+  }
+  let sample = @engine.SampleRequest::from_json(json) catch {
+    err => {
+      eprintln(
+        "smock render: the sample request \{file} is not valid: \{err.message()}",
+      )
+      return 1
+    }
+  }
+  let seed = match settings.seed {
+    Some(seed) => seed
+    None => @random.Rand::new().uint64() & 0x1FFFFFFFFFFFFFUL
+  }
+  let rendering = @engine.Engine(snapshot).render(
+    settings.stub,
+    sample,
+    now=settings.time.unwrap_or(@async.now()),
+    rand=@prng.Generator(seed),
+  ) catch {
+    err => {
+      eprintln("smock render: \{err.message()}")
+      return 1
+    }
+  }
+  println(rendering.to_json().stringify(indent=2))
+  0
 }
 
 ///|

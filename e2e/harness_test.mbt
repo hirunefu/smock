@@ -79,6 +79,8 @@ struct Smock {
   tls_port : Int?
   /// Its process ID.
   pid : Int
+  /// The log lines it has written so far: they keep coming while it runs.
+  logs : Array[String]
   /// The process, to wait for its exit.
   process : @process.Process
 }
@@ -312,6 +314,7 @@ async fn with_smock(
       tls_port: ports.get("tls"),
       admin_port: ports.get("admin").unwrap(),
       pid: process.pid,
+      logs,
       process,
     })
     if process.try_wait() is None {

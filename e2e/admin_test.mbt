@@ -311,16 +311,20 @@ async test "errors take the form {error, message, warnings}: a missing token, an
 
 ///|
 async test "an operation the document defines but this build does not implement yet gets 501" {
-  // Reset comes with the "Sessions and Ephemeral Stubs" ticket, which
-  // replaces this case.
+  // Verification comes with the "Verification and unmatched requests"
+  // ticket, which replaces this case.
   let _ = with_smock(["--port", "0"], smock => {
-    let response = smock.admin("POST", "/v1/reset", body="{\"scope\":\"all\"}")
-    conforms("POST", "/v1/reset", response)
+    let response = smock.admin(
+      "POST",
+      "/v1/journal/verify",
+      body="{\"count\":{\"exactly\":1}}",
+    )
+    conforms("POST", "/v1/journal/verify", response)
     inspect(
       summary(response),
       content=(
         #|501
-        #|{"error":"not_implemented","message":"POST /v1/reset is not implemented in this build","warnings":[]}
+        #|{"error":"not_implemented","message":"POST /v1/journal/verify is not implemented in this build","warnings":[]}
       ),
     )
   })

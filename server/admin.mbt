@@ -9,6 +9,8 @@ priv struct Admin {
   build : @buildinfo.BuildInfo
   /// The metrics `/metrics` serves.
   metrics : @metrics.Registry
+  /// Where changes made through the Admin API are logged.
+  logger : @log.Logger
   /// The token every operation needs, as UTF-8, or `None` when
   /// authentication is off.
   token : Bytes?
@@ -16,6 +18,10 @@ priv struct Admin {
   replica : String
   /// The warnings every JSON response carries.
   warnings : Json
+  /// The header that carries the calling Session, as W3C Baggage, and the
+  /// member whose value is the Session key, as on mocked requests.
+  session_header : String
+  session_member : String
 }
 
 ///|
@@ -49,14 +55,14 @@ priv struct Route {
 /// until then.
 let routes : Array[Route] = [
   route("/v1/status", "GET", status),
-  route("/v1/mocks/{mock}/stubs", "GET", not_implemented),
-  route("/v1/mocks/{mock}/stubs", "POST", not_implemented, takes_body=true),
-  route("/v1/mocks/{mock}/stubs/{id}", "DELETE", not_implemented),
-  route("/v1/reset", "POST", not_implemented, takes_body=true),
+  route("/v1/mocks/{mock}/stubs", "GET", list_stubs),
+  route("/v1/mocks/{mock}/stubs", "POST", add_stub, takes_body=true),
+  route("/v1/mocks/{mock}/stubs/{id}", "DELETE", delete_stub),
+  route("/v1/reset", "POST", reset, takes_body=true),
   route("/v1/journal/query", "POST", not_implemented, takes_body=true),
   route("/v1/journal/verify", "POST", not_implemented, takes_body=true),
   route("/v1/journal/unmatched", "GET", not_implemented),
-  route("/v1/stubs/{id}/render", "POST", not_implemented, takes_body=true),
+  route("/v1/stubs/{id}/render", "POST", render, takes_body=true),
   route("/startupz", "GET", startup_probe, open=true),
   route("/readyz", "GET", readiness_probe, open=true),
   route("/livez", "GET", liveness_probe, open=true),
@@ -78,17 +84,23 @@ fn route(
 /// Creates the Admin API of a process whose life `lifecycle` follows.
 ///
 /// - `metrics` holds the metrics `/metrics` serves.
+/// - `logger` logs each change made through the Admin API.
 /// - `token` is the bearer token every operation needs, or `None` to turn
 ///   authentication off.
 /// - `replica` is the replica's name, such as the Pod's hostname.
 /// - `replicas` is how many replicas the deployment runs.
+/// - `session_header` and `session_member` name the calling Session's
+///   header and its W3C Baggage member.
 fn Admin::new(
   lifecycle : Lifecycle,
   build : @buildinfo.BuildInfo,
   metrics~ : @metrics.Registry,
+  logger~ : @log.Logger,
   token~ : String?,
   replica~ : String,
   replicas~ : Int,
+  session_header~ : String,
+  session_member~ : String,
 ) -> Admin {
   let replica = header_safe(replica)
   let warnings : Array[Json] = if replicas > 1 {
@@ -105,9 +117,12 @@ fn Admin::new(
     lifecycle,
     build,
     metrics,
+    logger,
     token: token.map(token => @utf8.encode(token)),
     replica,
     warnings: Json::array(warnings),
+    session_header,
+    session_member,
   }
 }
 
@@ -167,8 +182,9 @@ fn Admin::error(
 
 ///|
 /// The reply to `request`. Checks, in this order: the token, unless the
-/// path is served without one; the path; the method; the JSON body, for an
-/// operation that takes one.
+/// path is served without one; the path; the method; that the first
+/// definition set has loaded, unless the path is served without a token;
+/// the JSON body, for an operation that takes one.
 fn Admin::handle(self : Admin, request : @http1.Request) -> Reply {
   let path = path_of(request.target)
   let at_path = routes.filter(route => path_matches(route.path, path))
@@ -207,6 +223,10 @@ fn Admin::handle(self : Admin, request : @http1.Request) -> Reply {
     return reply
   }
   let route = at_path[i]
+  // Every operation but the probes and the metrics needs the definitions.
+  if !route.open && self.lifecycle.engine is None {
+    return self.not_started()
+  }
   let body = if route.takes_body && request.body.length() > 0 {
     let parsed = try @json.parse(@utf8.decode(request.body)) catch {
       @utf8.Malformed(_) => Err("it is not UTF-8")
@@ -332,10 +352,7 @@ fn Admin::json(self : Admin, status : Int, body : Map[String, Json]) -> Reply {
 ///|
 /// Shows what this replica runs and serves.
 fn status(admin : Admin, _request : @http1.Request, _body : Json?) -> Reply {
-  guard admin.lifecycle.engine is Some(engine) else {
-    return admin.not_started()
-  }
-  let status = engine.status()
+  let status = admin.engine().status()
   admin.json(200, {
     "version": Json::string(admin.build.version),
     "commit": Json::string(admin.build.commit),
@@ -365,6 +382,17 @@ fn status(admin : Admin, _request : @http1.Request, _body : Json?) -> Reply {
 /// definition set has loaded.
 fn Admin::not_started(self : Admin) -> Reply {
   self.error(503, "not_started", "the first definition set has not loaded yet")
+}
+
+///|
+/// The engine, for an operation that needs the definitions. `handle`
+/// answers such an operation with `not_started` until the first definition
+/// set has loaded, so the engine is there when it runs.
+fn Admin::engine(self : Admin) -> @engine.Engine {
+  match self.lifecycle.engine {
+    Some(engine) => engine
+    None => abort("an Admin API operation ran before the definitions loaded")
+  }
 }
 
 ///|
@@ -417,6 +445,97 @@ fn liveness_probe(
   _body : Json?,
 ) -> Reply {
   admin.probe_ok()
+}
+
+///|
+/// Renders the response of a Stub from the Definition files for the sample
+/// request in the body, against the snapshot this replica serves now, as
+/// `smock render` does. The `time` and `seed` query parameters give the
+/// time the sample is received at and the seed of the random source the
+/// rendering draws from; without them, the time is now and the seed is a
+/// fresh one. Rendering changes nothing.
+fn render(admin : Admin, request : @http1.Request, body : Json?) -> Reply {
+  let invalid = (message : String) => {
+    admin.error(400, "invalid_request", message)
+  }
+  let path = path_of(request.target)
+  let segment = path["/v1/stubs/".length():path.length() - "/render".length()]
+  let id = @percent.decode(segment) catch {
+    _ =>
+      return invalid(
+        "the Stub ID in the path is not valid percent-encoded UTF-8",
+      )
+  }
+  let now = match query_parameter(request.target, "time") {
+    Err(message) => return invalid(message)
+    Ok(None) => @async.now()
+    Ok(Some(text)) =>
+      match @settings.parse_time(text) {
+        Some(time) => time
+        None =>
+          return invalid(
+            "the time query parameter must be an RFC 3339 date-time, such as 2026-10-12T14:30:05Z",
+          )
+      }
+  }
+  let seed = match query_parameter(request.target, "seed") {
+    Err(message) => return invalid(message)
+    Ok(None) => random_seed()
+    Ok(Some(text)) =>
+      match @settings.parse_seed(text) {
+        Some(seed) => seed
+        None =>
+          return invalid(
+            "the seed query parameter must be an integer from 0 to 9007199254740991",
+          )
+      }
+  }
+  guard body is Some(json) else {
+    return invalid("the body must be a sample request: a JSON object")
+  }
+  let sample = @engine.SampleRequest::from_json(json) catch {
+    err => return invalid("the sample request is not valid: \{err.message()}")
+  }
+  let rendering = admin
+    .engine()
+    .render(id, sample, now~, rand=@prng.Generator(seed)) catch {
+      err => return admin.error(404, "unknown_stub", err.message())
+    }
+  guard rendering.to_json() is Object(members) else {
+    abort("a rendering is a JSON object")
+  }
+  admin.json(200, members)
+}
+
+///|
+/// The value of the query parameter `name` in the request target `target`,
+/// percent-decoded, if it is given. A `+` stays a plus sign, as in a time
+/// zone offset. Fails with a message when the parameter is given more than
+/// once or its value is not valid percent-encoded UTF-8.
+fn query_parameter(target : String, name : String) -> Result[String?, String] {
+  guard target.find("?") is Some(start) else { return Ok(None) }
+  let mut found = None
+  for parameter in target[start + 1:].split("&") {
+    let (key, value) = match parameter.find("=") {
+      Some(i) => (parameter[:i], parameter[i + 1:])
+      None => (parameter, "")
+    }
+    if @percent.decode_lossy(key) != name {
+      continue
+    }
+    if found is Some(_) {
+      return Err("the \{name} query parameter is given more than once")
+    }
+    found = Some(
+      @percent.decode(value) catch {
+        _ =>
+          return Err(
+            "the \{name} query parameter is not valid percent-encoded UTF-8",
+          )
+      },
+    )
+  }
+  Ok(found)
 }
 
 ///|

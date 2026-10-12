@@ -131,7 +131,7 @@ priv enum Failed {
 /// one on a tie. There is none without candidates.
 fn Incoming::near_miss(
   self : Incoming,
-  candidates : ReadOnlyArray[@definitions.Stub],
+  candidates : Iter[@definitions.Stub],
 ) -> NearMiss? {
   let mut best : (@definitions.Stub, Array[Failed])? = None
   for stub in candidates {

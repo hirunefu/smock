@@ -24,7 +24,8 @@ Packages of `smock/smock`:
 
 - `cmd/smock`: the `smock` binary.
 - `settings`: the settings of `smock serve`, each a flag with a matching
-  `SMOCK_<NAME>` environment variable.
+  `SMOCK_<NAME>` environment variable, and the arguments of `smock check`
+  and `smock render`.
 - `definitions`: reads a definition set, given as (name, bytes) pairs of
   JSON and YAML files, into an immutable snapshot, or into diagnostics
   (file, JSON Pointer, message). Its validation is written by hand and
@@ -32,16 +33,22 @@ Packages of `smock/smock`:
   order and their match index, which finds the Stubs a request can match
   by its method and exact path.
 - `engine`: decides the response to each request from the snapshot,
-  including its Faults. `Engine(snapshot, match_index=false)` tries every
-  Stub in matching order instead of using the index; tests check the index
-  against it.
+  including its Faults, and renders a named Stub's response for a sample
+  request, for `smock render` and the Admin render operation. It also holds
+  the Ephemeral Stubs per Mock and Session, applies the Admin API
+  operations on them, and reads the Session a request carries in its W3C
+  Baggage header. `Engine(snapshot, match_index=false)` tries every Stub in
+  matching order instead of using the index; tests check the index against
+  it.
 - `prng`: the seeded pseudo-random generator that Fault decisions draw
   from. Its sequence for a seed is fixed, the same on every target.
-- `defdir`: reads the definitions directory and loads it, for both
-  `smock serve` and `smock check` (native).
+- `defdir`: reads the definitions directory and loads it, for
+  `smock serve`, `smock check` and `smock render` (native).
 - `server`: the listeners, the connection loop and the Admin API (native).
   On the TLS port the same loop reads and writes through a TLS stream; on
-  the admin port it answers the Admin API.
+  the admin port it answers the Admin API. It reloads rotated certificates,
+  and reads the SNI name from the ClientHello before OpenSSL sees it, so that
+  the name chooses the certificate without a C callback.
 - `metrics`: the metrics registry: counters, gauges and histograms with
   fixed label names, rendered in the Prometheus text format. Features
   register their metrics in the one registry `smock serve` keeps.
@@ -50,8 +57,10 @@ Packages of `smock/smock`:
   that arrive from the peer and hands out the bytes to send, and `server`
   carries them over the socket. Its C is `openssl/openssl.c`.
 - `testcerts`: a test PKI (a root CA, an intermediate CA, RSA and ECDSA
-  leaf chains for `localhost` and `127.0.0.1`), used only by tests.
-  `scripts/gen-test-certificates.sh` regenerates it.
+  leaf chains for `localhost` and `127.0.0.1`, and ECDSA leaf chains for
+  `users.example.com` and `orders.example.com`, each leaf with its own fixed
+  expiry), used only by tests. `scripts/gen-test-certificates.sh`
+  regenerates it.
 - `log`: the JSON logger, one object per line.
 - `buildinfo`: the version, commit and toolchain the binary was built with.
 - `e2e`: tests that run the `smock` binary as a black box (native).
@@ -94,10 +103,13 @@ settings:
 | `--tls-port` | `SMOCK_TLS_PORT` | 8443 (0 picks a free port) |
 | `--tls-cert-file` | `SMOCK_TLS_CERT_FILE` | none |
 | `--tls-key-file` | `SMOCK_TLS_KEY_FILE` | none |
+| `--tls-mock-certs` | `SMOCK_TLS_MOCK_CERTS` | none: no Mock has a certificate of its own (see below) |
 | `--admin-port` | `SMOCK_ADMIN_PORT` | 9090 (0 picks a free port) |
 | `--admin-auth` | `SMOCK_ADMIN_AUTH` | `on`: the Admin API needs a bearer token; `off` for local use |
 | `--admin-token-file` | `SMOCK_ADMIN_TOKEN_FILE` | none: the token comes from `SMOCK_ADMIN_TOKEN` |
 | `--replicas` | `SMOCK_REPLICAS` | 1: above 1, every Admin API response warns that state is per replica |
+| `--session-header` | `SMOCK_SESSION_HEADER` | `baggage`: the W3C Baggage header that carries the [Session](#sessions-and-ephemeral-stubs) |
+| `--session-member` | `SMOCK_SESSION_MEMBER` | `smock-session`: the member of that header whose value is the Session key |
 | `--log-format` | `SMOCK_LOG_FORMAT` | `json` |
 | `--body-file-dir` | `SMOCK_BODY_FILE_DIR` | `files` |
 | `--header-size-limit` | `SMOCK_HEADER_SIZE_LIMIT` | 16384 bytes (16 KiB): larger request heads get 431 |
@@ -153,6 +165,56 @@ smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /et
   files.
 - Without certificate files, smock does not listen on the TLS port.
 
+smock watches the directories of the certificate and key files, as it
+watches the definitions directory: changes are coalesced for 250 ms, the
+directories are polled every 10 s as well, and a Secret update (which swaps
+the `..data` symlink) counts as a change. When a pair changes, smock loads
+it without a restart: new handshakes get the new certificate, and open
+connections carry on with the one they started with. A changed pair that
+cannot be used (a file that cannot be read or holds no usable PEM, or a key
+that does not belong to the certificate) is not swapped in, and smock keeps
+presenting the previous one. Either way one log entry names the pair
+(`"mock":""` for the default certificate) and the new certificate's expiry:
+
+```json
+{"time":"…","level":"info","msg":"TLS certificate reloaded","mock":"","cert_file":"/etc/smock/tls/tls.crt","key_file":"/etc/smock/tls/tls.key","expiry":"2027-01-01T00:00:00.000Z"}
+{"time":"…","level":"error","msg":"TLS certificate reload failed","mock":"","cert_file":"/etc/smock/tls/tls.crt","key_file":"/etc/smock/tls/tls.key","expiry":null,"error":"certificate file: no PEM certificate found"}
+```
+
+By default every handshake gets that one certificate, usually with a SAN for
+each Host. `--tls-mock-certs` (`SMOCK_TLS_MOCK_CERTS`) gives single Mocks
+their own certificates, as a JSON object that maps each Mock name to its
+certificate and key files:
+
+```sh
+smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /etc/smock/tls/tls.key \
+  --tls-mock-certs '{"users":{"certFile":"/etc/smock/users/tls.crt","keyFile":"/etc/smock/users/tls.key"}}'
+```
+
+- A handshake whose SNI is one of the Hosts of a listed Mock, compared as
+  Hosts are (case-insensitively, without a trailing dot), gets that Mock's
+  certificate. A handshake without SNI, or whose SNI is no Host of a listed
+  Mock, gets the default certificate, which must be configured.
+- SNI follows the Hosts of the definition set served, reloads included. It
+  only chooses the certificate: the Host header still chooses the Mock.
+  Definition files never refer to certificates.
+- A listed Mock that the Definition files do not declare is not an error,
+  since Mocks come and go on reload: its certificate is chosen for nothing
+  until a reload declares the Mock, and smock logs a warning
+  (`TLS certificate for a Mock that is not declared`) each time it goes
+  missing, at startup included.
+- Each pair is loaded at startup, and one that cannot be loaded stops
+  `smock serve` with exit status 1, as for the default pair. A value that is
+  not such a JSON object, an entry without both files, or the setting without
+  `--tls-cert-file` and `--tls-key-file` exits with status 2.
+- Each pair rotates as the default certificate does.
+
+The metric `smock_tls_certificate_expiry_timestamp_seconds` gives when each
+certificate the TLS port presents expires (its notAfter), in seconds since
+the Unix epoch: `mock=""` for the default certificate and `mock="<name>"` for
+a Mock's own. It follows rotations, so an alert on it notices a renewal that
+stopped working before clients fail.
+
 The Admin API is JSON over HTTP/1.1 on the admin port, as
 [openapi/admin.json](openapi/admin.json) describes it:
 
@@ -192,12 +254,22 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
 - `GET /metrics` serves the Prometheus metrics, without a token, also when
   authentication is on. `smock_build_info` carries the version, commit and
   toolchain as labels; `smock_definition_reloads_total` counts reloads of
-  the Definition files by result.
+  the Definition files by result; with HTTPS,
+  `smock_tls_certificate_expiry_timestamp_seconds` gives when each
+  certificate expires.
+- `POST /v1/stubs/{id}/render` renders a Stub's response for the sample
+  request in the body, against the definitions the replica serves now, as
+  `smock render` does (below). The optional `time` and `seed` query
+  parameters give the time (RFC 3339) and the seed of the random source.
+- `/v1/mocks/{mock}/stubs` adds, lists and deletes Ephemeral Stubs, and
+  `POST /v1/reset` clears them ([below](#sessions-and-ephemeral-stubs)).
 - The other operations of the document answer 501 until their tickets
   build them.
 
 ```sh
 curl -H "Authorization: Bearer change-me" localhost:9090/v1/status
+curl -H "Authorization: Bearer change-me" -d '{"path": "/users/1"}' \
+  localhost:9090/v1/stubs/get-user/render
 curl localhost:9090/metrics
 curl localhost:9090/readyz
 ```
@@ -238,6 +310,25 @@ loads it: it prints every problem, one per line with the file and a JSON
 Pointer, and exits with status 1 if there is any. It also warns about Stubs
 that can never match, because an earlier Stub always matches first;
 warnings do not change the exit status.
+
+`smock render --dir defs get-user --request sample.json` shows what a Stub
+returns for a sample request before a test relies on it. The sample is JSON,
+`{method, path, query, headers, body, session}`, every member optional
+(`GET /` without query, headers, body or Session); the path and the query
+values are given percent-decoded, as Stub conditions compare them, and a
+repeated parameter or header takes an array of values. smock reads the
+directory as `smock serve` does, body files included, and prints the
+rendering as JSON, the same as the Admin render operation's result without
+its `warnings`: the Stub's status, headers and body (`utf-8` text, or
+`base64`) or its Server-Sent Events, and the conditions the sample fails,
+with expected and actual values as in a Near miss (empty when it meets them
+all). The Stub is rendered even when the sample fails them. `--time` (RFC
+3339) and `--seed` fix the clock and the random source of the rendering;
+a static response depends on neither. An invalid definitions directory
+prints the messages `smock check` prints, and it, an unknown Stub ID and a
+sample that cannot be read or is not valid exit with status 1, with the
+problem on stderr.
+
 [docs/definition-files.md](docs/definition-files.md) describes the format:
 how Stubs match requests (method, path, query parameters, headers and
 body, exactly, by RE2 pattern or as JSON), the order they are tried in (priority, then
@@ -279,6 +370,50 @@ only a safe subset of YAML (`yaml/`):
 Every problem is reported with the file and the JSON Pointer of the value,
 such as `users.yaml: /stubs/0/request/method: "on" may be read as a boolean;
 quote this value`.
+
+## Sessions and Ephemeral Stubs
+
+A test names its *Session* in the W3C `baggage` header of its requests, in
+the `smock-session` member, and Admin API calls name theirs the same way.
+Through the Admin API, a test adds *Ephemeral Stubs* to a Mock from the
+Definition files, for its Session only:
+
+```sh
+curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42" \
+  -d '{"request":{"method":"GET","path":"/users/1"},"response":{"status":503}}' \
+  localhost:9090/v1/mocks/users/stubs
+curl -H "baggage: smock-session=checkout-42" localhost:8080/users/1   # 503
+curl localhost:8080/users/1                                           # 200, from the file
+```
+
+- The Session key is the value of the first `smock-session` member of the
+  `baggage` headers, combined, trimmed and percent-decoded; properties after
+  `;` are ignored. A missing or empty value, or a `baggage` header that is
+  not W3C Baggage, means no Session. `--session-header` and
+  `--session-member` name another header or member.
+- An Ephemeral Stub has the shape of a Stub in a Definition file, without
+  `id` and `mock`: the path names the Mock, and smock assigns the ID,
+  `eph-<n>`, and returns it. Its body must be inline. It is validated like a
+  Stub from a Definition file: problems get 400 `invalid_stub` with the
+  messages `smock check` gives. A Mock that does not exist gets 404
+  `unknown_mock`: Mocks come only from Definition files.
+- Requests with the Session try its Ephemeral Stubs of the Mock before any
+  Stub from the Definition files: by their own `priority`, the newest first
+  among equal priorities. Other Sessions never see them. Requests without a
+  Session form their own space, and Ephemeral Stubs added without a Session
+  apply only to them. An Ephemeral Stub can be the Near miss, named by its
+  ID in `Smock-Near-Miss`.
+- `GET` lists and `DELETE /v1/mocks/{mock}/stubs/{id}` deletes the calling
+  Session's Ephemeral Stubs of the Mock. `POST /v1/reset` with
+  `{"scope":"session"}` clears the calling Session's Ephemeral Stubs of
+  every Mock, `{"scope":"mock","mock":"users"}` every Session's of one Mock,
+  and `{"scope":"all"}` all of them.
+- Ephemeral Stubs live in the process that received them, until a reset or
+  a restart. They survive a [reload](docs/definition-files.md#reloading) of
+  the Definition files, except those of a Mock the new files no longer
+  declare.
+- Adding, deleting and resetting each write a log entry (`Ephemeral Stub
+  added`, `Ephemeral Stub deleted`, `reset`); requests write none.
 
 ## Container image and release binaries
 

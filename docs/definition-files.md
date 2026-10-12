@@ -181,6 +181,13 @@ order:
 So a specific Stub can win over a general one wherever it is declared, by
 giving it a lower priority number.
 
+A request that carries a Session tries the Ephemeral Stubs its Session added
+to the Mock through the Admin API before any of these, by their own
+`priority`, the newest first among equal priorities; a request without a
+Session, those added without one. Priority orders Stubs only within their
+source: an Ephemeral Stub without a priority still comes before a Stub from
+a Definition file with priority -2147483648.
+
 smock does not try every Stub in turn: an index, built when the Definition
 files are loaded, finds the Stubs whose `method` and exact `path` fit the
 request. The index never changes which Stub answers. A Stub with a
@@ -222,9 +229,10 @@ Smock-Near-Miss: get-user; failed=method,header:x-api-key
 ```
 
 The Near miss is the Stub of the Mock that failed the fewest conditions; on
-a tie, the one tried first. Each of these counts as one condition: the
-method, the path, each listed query parameter, each listed header, and the
-body. They are named `method`, `path`, `query:<name>`, `header:<name>` (in
+a tie, the one tried first. The request's Ephemeral Stubs are candidates
+too, in the order they are tried, and the header names them by their ID,
+such as `eph-3`. Each of these counts as one condition: the method, the
+path, each listed query parameter, each listed header, and the body. They are named `method`, `path`, `query:<name>`, `header:<name>` (in
 lower case) and `body`, in that order. The header is ASCII only and never
 carries what a condition expects or what the request sent: the Stub ID and
 query and header names are percent-encoded where they hold anything other
@@ -364,9 +372,11 @@ apply, and how long the delay is.
 - A Stub with a `seed`, from 0 to 9007199254740991, has its own generator.
   smock creates it when it loads the Definition files, and again from the
   seed when a [reload](#reloading) swaps in a new definition set, and it
-  advances once per request the Stub matches. So the n-th request a seeded Stub matches
-  gets the same Faults in every run, whatever requests other Stubs get. The
-  generator is a fixed algorithm, the same on every platform.
+  advances once per request the Stub matches. An Ephemeral Stub with a seed
+  gets its own generator when it is added, which a reload keeps. So the n-th
+  request a seeded Stub matches gets the same Faults in every run, whatever
+  requests other Stubs get. The generator is a fixed algorithm, the same on
+  every platform.
 - Stubs without a seed draw from the process generator, which they share.
   smock picks its seed at startup and logs it:
 
@@ -414,7 +424,8 @@ restart:
   set and swaps it in at once, so no request sees half of a change.
   Requests already being handled finish with the set they started with,
   body-file bytes included.
-- A Mock the new set no longer declares is gone: its Hosts resolve like any
+- Ephemeral Stubs survive the swap. A Mock the new set no longer declares
+  is gone: its Ephemeral Stubs are dropped, and its Hosts resolve like any
   unknown Host.
 - When the new set is invalid, smock keeps serving the current one and
   reports every problem, as `smock check` would, in the Admin API status, in

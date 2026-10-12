@@ -19,8 +19,13 @@ pub(all) struct ServeSettings {
   /// only when `tls` is set.
   tls_port : Int
   /// The certificate and key files for the TLS port, or `None` when none
-  /// are configured.
+  /// are configured. It is the default certificate: a handshake gets it
+  /// unless its SNI chooses one of `tls_mock_certs`.
   tls : TlsFiles?
+  /// The certificate and key files of single Mocks, by Mock name: a
+  /// handshake whose SNI is a Host of one of these Mocks gets its pair.
+  /// Empty unless `tls` is set.
+  tls_mock_certs : Map[String, TlsFiles]
   /// The admin port, where the Admin API, the probes and the metrics are
   /// served. 0 asks the system for a free port.
   admin_port : Int
@@ -32,6 +37,11 @@ pub(all) struct ServeSettings {
   /// How many replicas the deployment runs, as the Admin API's replica
   /// warning tells it.
   replicas : Int
+  /// The request header that carries the Session, as W3C Baggage. Header
+  /// names are compared case-insensitively.
+  session_header : String
+  /// The member of the Session header whose value is the Session key.
+  session_member : String
   log_format : LogFormat
   /// The body-file subdirectory of the definitions directory.
   body_file_dir : String
@@ -79,6 +89,30 @@ pub(all) struct CheckSettings {
 } derive(Debug)
 
 ///|
+/// The settings of `smock render`. The definitions directory and the
+/// body-file subdirectory are the `smock serve` settings of the same names,
+/// flags and variables, so that both read a directory the same way. The
+/// Stub ID is its argument, and the sample request, the time and the seed
+/// are flags of its own, without variables: they belong to one rendering,
+/// not to a process.
+pub(all) struct RenderSettings {
+  /// The definitions directory.
+  dir : String
+  /// The body-file subdirectory of the definitions directory.
+  body_file_dir : String
+  /// The ID of the Stub to render.
+  stub : String
+  /// The file that holds the sample request, as JSON.
+  request_file : String
+  /// The time the sample request is received at, in milliseconds since the
+  /// Unix epoch, or `None` for now.
+  time : Int64?
+  /// The seed of the random source the rendering draws from, from 0 to
+  /// 2^53 - 1, or `None` for a fresh one.
+  seed : UInt64?
+} derive(Debug)
+
+///|
 /// A setting or an argument was given a value it cannot take.
 pub suberror InvalidSetting {
   InvalidSetting(
@@ -88,18 +122,23 @@ pub suberror InvalidSetting {
     reason~ : String
   )
   InvalidArgument(name~ : String, value~ : String, reason~ : String)
+  /// A flag without a variable.
+  InvalidOption(flag~ : String, value~ : String, reason~ : String)
 } derive(Debug)
 
 ///|
 /// What to tell the user, naming the setting by its flag and its variable,
-/// such as `invalid value "x" for --port (SMOCK_PORT): must be ...`, or the
-/// argument by its name, such as `invalid value "" for <dir>: ...`.
+/// such as `invalid value "x" for --port (SMOCK_PORT): must be ...`, the
+/// argument by its name, such as `invalid value "" for <dir>: ...`, or a
+/// flag without a variable by the flag alone.
 pub fn InvalidSetting::message(self : InvalidSetting) -> String {
   match self {
     InvalidSetting(flag~, env~, value~, reason~) =>
       "invalid value \{value.escape()} for --\{flag} (\{env}): \{reason}"
     InvalidArgument(name~, value~, reason~) =>
       "invalid value \{value.escape()} for <\{name}>: \{reason}"
+    InvalidOption(flag~, value~, reason~) =>
+      "invalid value \{value.escape()} for --\{flag}: \{reason}"
   }
 }
 
@@ -147,6 +186,11 @@ let serve_settings : Array[Setting] = [
     default: None,
   },
   {
+    name: "tls-mock-certs",
+    about: "Certificates of single Mocks, chosen by SNI: a JSON object that maps each Mock name to its PEM files, such as {\"users\":{\"certFile\":\"/certs/users/tls.crt\",\"keyFile\":\"/certs/users/tls.key\"}}. A handshake whose SNI is a Host of a listed Mock gets that Mock's certificate; any other gets --tls-cert-file, which must be set. Empty by default.",
+    default: None,
+  },
+  {
     name: "admin-port",
     about: "The Admin API port, separate from the plain and TLS ports. 0 picks a free port.",
     default: Some("9090"),
@@ -165,6 +209,16 @@ let serve_settings : Array[Setting] = [
     name: "replicas",
     about: "How many replicas the deployment runs. Above 1, every Admin API response warns that state is per replica.",
     default: Some("1"),
+  },
+  {
+    name: "session-header",
+    about: "The request header that carries the Session, as W3C Baggage, on requests and Admin API calls.",
+    default: Some("baggage"),
+  },
+  {
+    name: "session-member",
+    about: "The member of the Session header whose value is the Session key.",
+    default: Some("smock-session"),
   },
   { name: "log-format", about: "The log format: json.", default: Some("json"), },
   body_file_dir_setting,
@@ -246,6 +300,50 @@ pub fn check_command() -> @argparse.Command {
 }
 
 ///|
+/// The `render` subcommand: the Stub ID as its argument, the definitions
+/// directory and the body-file subdirectory as `smock serve` takes them,
+/// and the sample request, the time and the seed.
+pub fn render_command() -> @argparse.Command {
+  @argparse.Command(
+    "render",
+    about="Render a Stub's response for a sample request, as the Admin API render operation does, and print it as JSON: the status, the headers and the body, and the Stub's conditions the sample fails, with expected and actual values. Exits with status 1 if the definitions directory is invalid, no Stub has the ID, or the sample request is not valid.",
+    positionals=[
+      @argparse.PositionArg(
+        "stub-id",
+        about="The ID of a Stub from the Definition files.",
+        num_args=@argparse.ValueRange::single(),
+      ),
+    ],
+    options=[
+      @argparse.OptionArg(
+        "dir",
+        long="dir",
+        env=env_name("dir"),
+        about="The definitions directory, read as smock serve reads it.",
+        required=true,
+      ),
+      option(body_file_dir_setting),
+      @argparse.OptionArg(
+        "request",
+        long="request",
+        about="A file that holds the sample request as JSON: {method, path, query, headers, body, session}, each optional.",
+        required=true,
+      ),
+      @argparse.OptionArg(
+        "time",
+        long="time",
+        about="The time the sample request is received at, as an RFC 3339 date-time such as 2026-10-12T14:30:05Z. Default: now.",
+      ),
+      @argparse.OptionArg(
+        "seed",
+        long="seed",
+        about="The seed of the random source the rendering draws from, from 0 to \{max_seed}. Default: a fresh seed.",
+      ),
+    ],
+  )
+}
+
+///|
 /// The option of `setting`: its flag and its variable.
 fn option(setting : Setting) -> @argparse.OptionArg {
   @argparse.OptionArg(
@@ -293,6 +391,7 @@ pub fn ServeSettings::from_matches(
         "needs --tls-cert-file (\{env_name("tls-cert-file")}) as well",
       )
   }
+  let tls_mock_certs = mock_certs_value(matches, "tls-mock-certs", tls~)
   let admin_port = int_value(matches, "admin-port", min=0, max=65535)
   if admin_port != 0 && admin_port == port {
     raise invalid(
@@ -320,15 +419,24 @@ pub fn ServeSettings::from_matches(
     other => raise invalid("log-format", other.unwrap_or(""), "must be json")
   }
   let body_file_dir = body_file_dir(matches)
+  let session_header = token_value(
+    matches, "session-header", "must be a header name, such as baggage",
+  )
+  let session_member = token_value(
+    matches, "session-member", "must be a W3C Baggage key, such as smock-session",
+  )
   {
     dir,
     port,
     tls_port,
     tls,
+    tls_mock_certs,
     admin_port,
     admin_auth,
     admin_token_file,
     replicas: int_value(matches, "replicas", min=1, max=max_replicas),
+    session_header,
+    session_member,
     log_format,
     body_file_dir,
     header_size_limit: int_value(
@@ -367,6 +475,52 @@ pub fn ServeSettings::from_matches(
 }
 
 ///|
+/// The value of the per-Mock certificates setting: a JSON object that maps
+/// each Mock name to `{"certFile": <path>, "keyFile": <path>}`. Without it,
+/// no Mock has a certificate of its own. It needs the default certificate,
+/// `tls`, as well.
+fn mock_certs_value(
+  matches : @argparse.Matches,
+  name : String,
+  tls~ : TlsFiles?,
+) -> Map[String, TlsFiles] raise InvalidSetting {
+  guard value(matches, name) is Some(text) else { return Map([]) }
+  let entry_format = "{\"certFile\": <path>, \"keyFile\": <path>}"
+  let not_a_map = "must be a JSON object that maps each Mock name to \{entry_format}"
+  let json = @json.parse(text) catch {
+    _ => raise invalid(name, text, not_a_map)
+  }
+  guard json is Object(entries) else { raise invalid(name, text, not_a_map) }
+  let out : Map[String, TlsFiles] = Map([])
+  for mock, entry in entries {
+    if mock == "" {
+      raise invalid(name, text, "a Mock name must not be empty")
+    }
+    guard entry is Object(fields) &&
+      fields.length() == 2 &&
+      fields.get("certFile") is Some(String(cert_file)) &&
+      fields.get("keyFile") is Some(String(key_file)) &&
+      cert_file != "" &&
+      key_file != "" else {
+      raise invalid(
+        name,
+        text,
+        "the entry of the Mock \{mock.escape()} must be \{entry_format}, with paths that are not empty",
+      )
+    }
+    out[mock] = { cert_file, key_file, }
+  }
+  if !out.is_empty() && tls is None {
+    raise invalid(
+      name,
+      text,
+      "needs --tls-cert-file (\{env_name("tls-cert-file")}) and --tls-key-file (\{env_name("tls-key-file")}) as well, for the default certificate",
+    )
+  }
+  out
+}
+
+///|
 /// The largest seed, 2^53 - 1, as in Definition files, where a seed is a
 /// JSON number that holds it exactly.
 let max_seed : UInt64 = 9007199254740991
@@ -379,21 +533,159 @@ fn seed_value(
   name : String,
 ) -> UInt64? raise InvalidSetting {
   guard value(matches, name) is Some(text) else { return None }
-  let reason = "must be an integer from 0 to \{max_seed}"
-  // Decimal digits only: no sign, prefix or separator. Sixteen digits hold
-  // every seed, and a UInt64 every sixteen-digit number.
+  match parse_seed(text) {
+    Some(seed) => Some(seed)
+    None => raise invalid(name, text, seed_reason())
+  }
+}
+
+///|
+/// Why a value is not a seed.
+fn seed_reason() -> String {
+  "must be an integer from 0 to \{max_seed}"
+}
+
+///|
+/// The seed `text` gives: a decimal integer from 0 to 2^53 - 1, without a
+/// sign, prefix or separator. `None` when it is not one.
+pub fn parse_seed(text : String) -> UInt64? {
+  // Sixteen digits hold every seed, and a UInt64 every sixteen-digit
+  // number.
   if text == "" ||
     text.length() > 16 ||
     !text.iter().all(c => c >= '0' && c <= '9') {
-    raise invalid(name, text, reason)
+    return None
   }
   let n = text.fold(init=0UL, (n, c) => {
     n * 10UL + (c.to_int() - '0'.to_int()).to_uint64()
   })
   if n > max_seed {
-    raise invalid(name, text, reason)
+    None
+  } else {
+    Some(n)
   }
-  Some(n)
+}
+
+///|
+/// The time `text` gives as an RFC 3339 date-time, such as
+/// `2026-10-12T14:30:05Z` or `2026-10-12T16:30:05.123+02:00`, in
+/// milliseconds since the Unix epoch. Digits of the fraction beyond
+/// milliseconds are dropped, and a leap second counts as the first second
+/// of the next minute. `None` when it is not one.
+pub fn parse_time(text : String) -> Int64? {
+  let c = text.iter().collect()
+  // The number that the `count` digits from `start` write, if they are
+  // digits.
+  let number = (start : Int, count : Int) => {
+    if start + count > c.length() {
+      return None
+    }
+    let mut n = 0
+    for i in start..<(start + count) {
+      guard c[i] >= '0' && c[i] <= '9' else { return None }
+      n = n * 10 + (c[i].to_int() - '0'.to_int())
+    }
+    Some(n)
+  }
+  let at = (i : Int, chars : String) => {
+    i < c.length() && chars.contains_char(c[i])
+  }
+  guard number(0, 4) is Some(year) &&
+    at(4, "-") &&
+    number(5, 2) is Some(month) &&
+    at(7, "-") &&
+    number(8, 2) is Some(day) &&
+    at(10, "Tt") &&
+    number(11, 2) is Some(hour) &&
+    at(13, ":") &&
+    number(14, 2) is Some(minute) &&
+    at(16, ":") &&
+    number(17, 2) is Some(second) else {
+    return None
+  }
+  let mut i = 19
+  let mut millisecond = 0
+  if at(i, ".") {
+    i += 1
+    let start = i
+    while i < c.length() && c[i] >= '0' && c[i] <= '9' {
+      if i - start < 3 {
+        millisecond = millisecond * 10 + (c[i].to_int() - '0'.to_int())
+      }
+      i += 1
+    }
+    match i - start {
+      0 => return None
+      1 => millisecond *= 100
+      2 => millisecond *= 10
+      _ => ()
+    }
+  }
+  let offset_minutes = if at(i, "Zz") && i + 1 == c.length() {
+    0
+  } else if at(i, "+-") &&
+    i + 6 == c.length() &&
+    number(i + 1, 2) is Some(offset_hour) &&
+    at(i + 3, ":") &&
+    number(i + 4, 2) is Some(offset_minute) &&
+    offset_hour <= 23 &&
+    offset_minute <= 59 {
+    let minutes = offset_hour * 60 + offset_minute
+    if c[i] == '-' {
+      -minutes
+    } else {
+      minutes
+    }
+  } else {
+    return None
+  }
+  if month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > days_in_month(year, month) ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 60 {
+    return None
+  }
+  let days = days_from_civil(year, month, day).to_int64()
+  let seconds = ((days * 24L + hour.to_int64()) * 60L + minute.to_int64()) * 60L +
+    second.to_int64() -
+    offset_minutes.to_int64() * 60L
+  Some(seconds * 1000L + millisecond.to_int64())
+}
+
+///|
+/// The number of days in `month` of `year`, in the proleptic Gregorian
+/// calendar.
+fn days_in_month(year : Int, month : Int) -> Int {
+  match month {
+    2 =>
+      if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 {
+        29
+      } else {
+        28
+      }
+    4 | 6 | 9 | 11 => 30
+    _ => 31
+  }
+}
+
+///|
+/// The number of days from 1970-01-01 to the date `year`-`month`-`day`, in
+/// the proleptic Gregorian calendar, for years from 0 to 9999.
+fn days_from_civil(year : Int, month : Int, day : Int) -> Int {
+  // Years start in March, so that the leap day ends them.
+  let y = if month <= 2 { year - 1 } else { year }
+  let era = (if y >= 0 { y } else { y - 399 }) / 400
+  let year_of_era = y - era * 400
+  let m = if month > 2 { month - 3 } else { month + 9 }
+  let day_of_year = (153 * m + 2) / 5 + day - 1
+  let day_of_era = year_of_era * 365 +
+    year_of_era / 4 -
+    year_of_era / 100 +
+    day_of_year
+  era * 146097 + day_of_era - 719468
 }
 
 ///|
@@ -421,6 +713,55 @@ pub fn CheckSettings::from_matches(
 }
 
 ///|
+/// Reads and checks the settings from the parsed `render` subcommand.
+pub fn RenderSettings::from_matches(
+  matches : @argparse.Matches,
+) -> RenderSettings raise InvalidSetting {
+  let dir = value(matches, "dir").unwrap_or("")
+  if dir == "" {
+    raise invalid("dir", dir, "must not be empty")
+  }
+  let request_file = value(matches, "request").unwrap_or("")
+  if request_file == "" {
+    raise InvalidOption(
+      flag="request",
+      value=request_file,
+      reason="must not be empty",
+    )
+  }
+  let time = match value(matches, "time") {
+    None => None
+    Some(text) =>
+      match parse_time(text) {
+        Some(time) => Some(time)
+        None =>
+          raise InvalidOption(
+            flag="time",
+            value=text,
+            reason="must be an RFC 3339 date-time, such as 2026-10-12T14:30:05Z",
+          )
+      }
+  }
+  let seed = match value(matches, "seed") {
+    None => None
+    Some(text) =>
+      match parse_seed(text) {
+        Some(seed) => Some(seed)
+        None =>
+          raise InvalidOption(flag="seed", value=text, reason=seed_reason())
+      }
+  }
+  {
+    dir,
+    body_file_dir: body_file_dir(matches),
+    stub: value(matches, "stub-id").unwrap_or(""),
+    request_file,
+    time,
+    seed,
+  }
+}
+
+///|
 fn body_file_dir(matches : @argparse.Matches) -> String raise InvalidSetting {
   let dir = value(matches, "body-file-dir").unwrap_or("")
   if !is_inner_relative_path(dir) {
@@ -437,6 +778,30 @@ fn value(matches : @argparse.Matches, name : String) -> String? {
     Some(values) => values.last()
     None => None
   }
+}
+
+///|
+/// The value of a setting that must be an HTTP token, as header names and
+/// W3C Baggage keys are, or `reason` when it is not.
+fn token_value(
+  matches : @argparse.Matches,
+  name : String,
+  reason : String,
+) -> String raise InvalidSetting {
+  let text = value(matches, name).unwrap_or("")
+  let token = text != "" &&
+    text
+    .iter()
+    .all(c => {
+      (c >= 'a' && c <= 'z') ||
+      (c >= 'A' && c <= 'Z') ||
+      (c >= '0' && c <= '9') ||
+      "!#$%&'*+-.^_`|~".contains_char(c)
+    })
+  if !token {
+    raise invalid(name, text, reason)
+  }
+  text
 }
 
 ///|
