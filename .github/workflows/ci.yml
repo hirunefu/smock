@@ -1,0 +1,15 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Build and test (pinned MoonBit)
+    uses: ./.github/workflows/build-test.yml
+    with:
+      toolchain: pinned

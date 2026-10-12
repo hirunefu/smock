@@ -1,0 +1,11 @@
+import {
+  "smock/smock/log",
+}
+
+rule(name: "build_info", command: "sh $input > $output")
+
+dev_build(
+  rule: "build_info",
+  input: "gen_build_info.sh",
+  output: "build_info.mbt",
+)

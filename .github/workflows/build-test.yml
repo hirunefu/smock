@@ -1,0 +1,89 @@
+# Builds and tests every module. ci.yml runs it with the pinned toolchain on
+# each push and pull request; latest-toolchain.yml runs it weekly with the
+# latest stable MoonBit.
+name: Build and test
+
+on:
+  workflow_call:
+    inputs:
+      toolchain:
+        description: "pinned (the version in .moonbit-version) or latest (the latest stable MoonBit)"
+        type: string
+        default: pinned
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: native (linux/${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            machine: x86_64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            machine: aarch64
+    runs-on: ${{ matrix.runner }}
+    env:
+      SMOCK_VERSION: 0.0.0-ci.${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check that the runner is ${{ matrix.machine }}
+        run: test "$(uname -m)" = "${{ matrix.machine }}"
+
+      - name: Install MoonBit (${{ inputs.toolchain }})
+        run: scripts/install-moonbit.sh "${{ inputs.toolchain }}"
+
+      - run: moon version --all
+
+      - name: Update the mooncakes registry index
+        run: moon update
+
+      - name: Check formatting
+        if: inputs.toolchain == 'pinned'
+        run: moon fmt --check
+
+      - name: Check every target
+        run: moon check --deny-warn --target all
+
+      - name: Check that the protocol modules stay independent of smock and of I/O
+        run: scripts/check-protocol-modules.sh
+
+      - name: Check the C boundary (ADR 0001)
+        run: scripts/check-no-c.sh
+
+      - name: Test every module natively
+        run: moon test --target native
+
+      - name: Build the release binary
+        run: scripts/build-release.sh
+
+      - name: Check smock --version
+        run: >-
+          scripts/check-version.sh dist/smock
+          "$SMOCK_VERSION"
+          "${GITHUB_SHA::12}"
+          "moonc $(moonc -v | cut -d' ' -f1)"
+
+  wasm-gc:
+    name: wasm-gc (no-I/O packages)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install MoonBit (${{ inputs.toolchain }})
+        run: scripts/install-moonbit.sh "${{ inputs.toolchain }}"
+
+      - name: Update the mooncakes registry index
+        run: moon update
+
+      # moon skips every package whose supported_targets leave out wasm-gc,
+      # which is how packages that do I/O are marked. Every other package,
+      # including each new no-I/O package, is tested here with no change.
+      - name: Test every no-I/O package on wasm-gc
+        run: moon test --target wasm-gc
