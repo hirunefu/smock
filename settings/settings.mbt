@@ -141,7 +141,13 @@ fn int_value(
 ) -> Int raise InvalidSetting {
   let text = value(matches, name).unwrap_or("")
   let reason = "must be an integer from \{min} to \{max}"
-  let n = @string.parse_int(text) catch {
+  // Decimal digits only: no sign, prefix or separator.
+  if text == "" ||
+    text.length() > 9 ||
+    !text.iter().all(c => c >= '0' && c <= '9') {
+    raise invalid(name, text, reason)
+  }
+  let n = @string.parse_int(text, base=10) catch {
     _ => raise invalid(name, text, reason)
   }
   if n < min || n > max {

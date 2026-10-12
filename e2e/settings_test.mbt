@@ -56,6 +56,8 @@ async test "an invalid value stops startup with a message that names the setting
   let runs = [
     (["--port", "65536"], Map([])),
     (["--port", "eighty"], Map([])),
+    (["--port", "0x50"], Map([])),
+    (["--port", "8_080"], Map([])),
     ([], { "SMOCK_PORT": "-1" }),
     (["--log-format", "text"], Map([])),
     ([], { "SMOCK_LOG_FORMAT": "" }),
@@ -74,6 +76,8 @@ async test "an invalid value stops startup with a message that names the setting
     content=(
       #|status 2: smock serve: invalid value "65536" for --port (SMOCK_PORT): must be an integer from 0 to 65535
       #|status 2: smock serve: invalid value "eighty" for --port (SMOCK_PORT): must be an integer from 0 to 65535
+      #|status 2: smock serve: invalid value "0x50" for --port (SMOCK_PORT): must be an integer from 0 to 65535
+      #|status 2: smock serve: invalid value "8_080" for --port (SMOCK_PORT): must be an integer from 0 to 65535
       #|status 2: smock serve: invalid value "-1" for --port (SMOCK_PORT): must be an integer from 0 to 65535
       #|status 2: smock serve: invalid value "text" for --log-format (SMOCK_LOG_FORMAT): must be json
       #|status 2: smock serve: invalid value "" for --log-format (SMOCK_LOG_FORMAT): must be json
