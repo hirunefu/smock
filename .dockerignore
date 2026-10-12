@@ -1,0 +1,3 @@
+# The image packs only the release binary (see Dockerfile).
+*
+!dist/smock

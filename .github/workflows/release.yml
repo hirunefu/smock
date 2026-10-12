@@ -1,0 +1,253 @@
+# Releases smock. A version tag (v1.2.3, or v1.2.3-rc.1 for a pre-release)
+# starts it. It never runs on pull requests.
+#
+# 1. build: on an amd64 and an arm64 runner, each building for its own
+#    architecture without emulation, it builds smock with the MoonBit
+#    toolchain in .moonbit-version, packs the binary into the distroless image
+#    (Dockerfile) and smoke-tests the image (scripts/smoke-test-image.sh).
+# 2. publish-image: pushes both images to ghcr.io/hirunefu/smock, combines
+#    them into one multi-architecture image tagged with the version, signs
+#    it and each architecture with cosign (keyless, with the workflow's
+#    GitHub OIDC identity), attests an SPDX SBOM for each architecture, and
+#    verifies all of that as the README does (scripts/verify-image.sh).
+# 3. release: creates the GitHub release with the linux/amd64 and
+#    linux/arm64 binaries (the same binaries as in the image), the SBOMs, and
+#    notes that name the MoonBit toolchain (scripts/release-notes.sh).
+#
+# Run it by hand from the Actions tab to try it before a tag: it builds and
+# smoke-tests both architectures, keeps the binaries, images and notes as
+# workflow artifacts, and publishes nothing. Only the publishing jobs get
+# write permissions, and they run only for a pushed tag;
+# scripts/check-release-workflow.sh checks that in CI.
+#
+# One-time maintainer step after the first release: in the package settings
+# of ghcr.io/hirunefu/smock, make the package public. GitHub creates it
+# private.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/hirunefu/smock
+
+jobs:
+  plan:
+    name: Plan the release
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      commit: ${{ steps.plan.outputs.commit }}
+      toolchain: ${{ steps.plan.outputs.toolchain }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # A tag names the version. A run by hand on a branch gets a
+      # development version.
+      - id: plan
+        name: Choose the version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version=${GITHUB_REF_NAME#v}
+            if ! echo "$version" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?'; then
+              echo "::error::The tag $GITHUB_REF_NAME is not v<major>.<minor>.<patch>[-<pre-release>]."
+              exit 1
+            fi
+          else
+            version=0.0.0-dev.$GITHUB_RUN_NUMBER
+          fi
+          {
+            echo "version=$version"
+            echo "commit=${GITHUB_SHA::12}"
+            echo "toolchain=moonc v$(cat .moonbit-version)"
+          } | tee -a "$GITHUB_OUTPUT"
+
+      - name: Write the release notes
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          COMMIT: ${{ steps.plan.outputs.commit }}
+          TOOLCHAIN: ${{ steps.plan.outputs.toolchain }}
+        run: |
+          scripts/release-notes.sh "$VERSION" "$COMMIT" "$TOOLCHAIN" "$IMAGE" >release-notes.md
+          cat release-notes.md
+
+      - name: Check that the notes name the toolchain and that the binaries need OpenSSL
+        env:
+          TOOLCHAIN: ${{ steps.plan.outputs.toolchain }}
+        run: |
+          grep -qF "$TOOLCHAIN" release-notes.md
+          grep -qF "need OpenSSL 3" release-notes.md
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+
+  build:
+    name: Build and smoke-test (linux/${{ matrix.arch }})
+    needs: plan
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            machine: x86_64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            machine: aarch64
+    runs-on: ${{ matrix.runner }}
+    env:
+      SMOCK_VERSION: ${{ needs.plan.outputs.version }}
+      SMOCK_COMMIT: ${{ needs.plan.outputs.commit }}
+      TOOLCHAIN: ${{ needs.plan.outputs.toolchain }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check that the runner is ${{ matrix.machine }}
+        run: test "$(uname -m)" = "${{ matrix.machine }}"
+
+      - name: Install OpenSSL
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libssl-dev openssl
+
+      - name: Install MoonBit (the version in .moonbit-version)
+        run: scripts/install-moonbit.sh pinned
+
+      - name: Update the mooncakes registry index
+        run: moon update
+
+      - name: Build the release binary
+        run: scripts/build-release.sh
+
+      - name: Check smock --version
+        run: scripts/check-version.sh dist/smock "$SMOCK_VERSION" "$SMOCK_COMMIT" "$TOOLCHAIN"
+
+      # No --platform: the image is for this runner's own architecture.
+      - name: Build the image
+        run: >-
+          docker build --provenance=false
+          --label "org.opencontainers.image.version=$SMOCK_VERSION"
+          --label "org.opencontainers.image.revision=$GITHUB_SHA"
+          --tag "smock:$ARCH" .
+
+      - name: Smoke-test the image
+        run: scripts/smoke-test-image.sh "smock:$ARCH" "$SMOCK_VERSION" "$SMOCK_COMMIT" "$TOOLCHAIN"
+
+      - name: Keep the binary and the image
+        run: |
+          mkdir out
+          cp dist/smock "out/smock-$SMOCK_VERSION-linux-$ARCH"
+          docker save "smock:$ARCH" | gzip >"out/image-linux-$ARCH.tar.gz"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: build-linux-${{ matrix.arch }}
+          path: out/
+          if-no-files-found: error
+
+  publish-image:
+    name: Publish, sign and attest the image
+    needs: [plan, build]
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io
+      id-token: write # keyless cosign signatures and attestations
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: build-linux-*
+          path: out
+          merge-multiple: true
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+
+      - id: syft
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          syft-version: v1.54.1
+
+      - name: Log in to ghcr.io
+        env:
+          TOKEN: ${{ github.token }}
+        run: echo "$TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Push the image of each architecture
+        run: |
+          for arch in amd64 arm64; do
+            docker load --input "out/image-linux-$arch.tar.gz"
+            docker tag "smock:$arch" "$IMAGE:$VERSION-$arch"
+            docker push "$IMAGE:$VERSION-$arch"
+          done
+
+      - name: Combine them into one multi-architecture image
+        run: >-
+          docker buildx imagetools create --tag "$IMAGE:$VERSION"
+          "$IMAGE:$VERSION-amd64" "$IMAGE:$VERSION-arm64"
+
+      # --recursive signs the multi-architecture image and each architecture.
+      - name: Sign the image
+        run: |
+          digest=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)
+          cosign sign --yes --recursive "$IMAGE@$digest"
+
+      - name: Make and attest the SBOM of each architecture
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+        run: |
+          mkdir sbom
+          for arch in amd64 arm64; do
+            digest=$(docker buildx imagetools inspect --raw "$IMAGE:$VERSION" | jq -r --arg arch "$arch" \
+              '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest')
+            sbom="sbom/smock-$VERSION-linux-$arch.spdx.json"
+            "$SYFT" scan "registry:$IMAGE@$digest" --output "spdx-json=$sbom"
+            cosign attest --yes --type spdxjson --predicate "$sbom" "$IMAGE@$digest"
+          done
+
+      - name: Verify the published image as the README does
+        run: scripts/verify-image.sh "$IMAGE:$VERSION"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sbom
+          path: sbom/
+          if-no-files-found: error
+
+  release:
+    name: Publish the GitHub release
+    needs: [plan, publish-image]
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # create the release
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Create the release
+        run: |
+          prerelease=
+          case $VERSION in *-*) prerelease=--prerelease ;; esac
+          gh release create "$GITHUB_REF_NAME" --verify-tag $prerelease \
+            --title "smock $VERSION" --notes-file out/release-notes.md \
+            "out/smock-$VERSION-linux-amd64" "out/smock-$VERSION-linux-arm64" \
+            "out/smock-$VERSION-linux-amd64.spdx.json" "out/smock-$VERSION-linux-arm64.spdx.json"
