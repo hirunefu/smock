@@ -1,0 +1,6 @@
+_build/
+.mooncakes/
+target/
+dist/
+# Written at build time by buildinfo/gen_build_info.sh
+buildinfo/build_info.mbt
