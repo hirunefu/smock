@@ -82,8 +82,12 @@ SMOCK_ADMIN_TOKEN=change-me _build/native/debug/build/smock/smock/cmd/smock/smoc
 ```
 
 `smock serve` reads the Definition files in the definitions directory and
-listens on the plain port and on the admin port. Logs go to stderr, one JSON
-object per line. `smock serve --help` lists the settings:
+listens on the plain port and on the admin port. It watches the directory
+and swaps in the new definition set when the files change, ConfigMap updates
+included; an invalid set is reported and the current one keeps serving
+([docs/definition-files.md](docs/definition-files.md#reloading)). Logs go
+to stderr, one JSON object per line. `smock serve --help` lists the
+settings:
 
 | Flag | Variable | Default |
 |---|---|---|
@@ -151,12 +155,13 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   unknown operations (404), unsupported methods (405) and malformed JSON
   (400) included.
 - `GET /v1/status` shows the version, commit and toolchain, as
-  `smock --version` prints them, and the Mocks with their Hosts and which
-  one is the Default Mock. The definition set digest and the last reload
-  result are `null` until reloading arrives.
+  `smock --version` prints them, the definition set digest, the result of
+  the last reload of the Definition files (`null` until the first one), and
+  the Mocks with their Hosts and which one is the Default Mock.
 - `GET /metrics` serves the Prometheus metrics, without a token, also when
   authentication is on. `smock_build_info` carries the version, commit and
-  toolchain as labels.
+  toolchain as labels; `smock_definition_reloads_total` counts reloads of
+  the Definition files by result.
 - `POST /v1/stubs/{id}/render` renders a Stub's response for the sample
   request in the body, against the definitions the replica serves now, as
   `smock render` does (below). The optional `time` and `seed` query

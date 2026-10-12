@@ -21,6 +21,14 @@ pub async fn serve(
   } else {
     None
   }
+  // Watching starts before the first load, so that no change made while it
+  // reads the files goes unnoticed. Without a definitions directory, there
+  // is nothing to watch and nothing to reload.
+  let watch = match settings.dir {
+    None => None
+    Some(dir) => Some(@watch.Watch(dir))
+  }
+  defer (if watch is Some(watch) { watch.close() })
   let snapshot = match
     @defdir.load(settings.dir, body_file_dir=settings.body_file_dir) {
     Ok(snapshot) => snapshot
@@ -64,6 +72,7 @@ pub async fn serve(
   let build = @buildinfo.current()
   let metrics = @metrics.Registry()
   build.register_metric(metrics)
+  let reloads = register_reload_metric(metrics)
   let admin = Admin::new(
     engine,
     build,
@@ -105,6 +114,17 @@ pub async fn serve(
     "address": Json::string("0.0.0.0:\{admin_listener.addr.port()}"),
   })
   @async.with_task_group(group => {
+    if watch is Some(watch) && settings.dir is Some(dir) {
+      let reloader : Reloader = {
+        dir,
+        body_file_dir: settings.body_file_dir,
+        engine,
+        logger,
+        reloads,
+        last_read: (snapshot.digest, []),
+      }
+      group.spawn_bg(() => reloader.run(watch))
+    }
     group.spawn_bg(() => {
       accept_loop(group, plain, conn => {
         serve_mocks(conn, engine, rand, settings)

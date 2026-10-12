@@ -13,11 +13,7 @@ pub async fn load(
     Some(dir) => read(dir, body_file_dir~)
     None => ({ files: [], body_files: [], }, [])
   }
-  match @definitions.load(set) {
-    Ok(snapshot) if read_problems.length() == 0 => Ok(snapshot)
-    Ok(_) => Err(read_problems)
-    Err(problems) => Err([..read_problems, ..problems])
-  }
+  @definitions.load(set, read_problems~)
 }
 
 ///|
@@ -38,9 +34,19 @@ pub async fn read(
   dir : String,
   body_file_dir~ : String,
 ) -> (@definitions.DefinitionSet, Array[@definitions.Diagnostic]) {
-  let diagnostics = []
+  let diagnostics : Array[@definitions.Diagnostic] = []
   let set : @definitions.DefinitionSet = { files: [], body_files: [], }
-  if !@fs.exists(dir) {
+  let exists = @fs.exists(dir) catch {
+    err => {
+      diagnostics.push({
+        file: dir,
+        pointer: "",
+        message: "cannot be read: \{err}",
+      })
+      return (set, diagnostics)
+    }
+  }
+  if !exists {
     return (set, diagnostics)
   }
   if kind(dir) is Some(kind) && !(kind is Directory) {

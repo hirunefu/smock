@@ -74,6 +74,9 @@ pub struct Snapshot {
   /// Where each Stub is declared, by its ID: the Definition file and the
   /// JSON Pointer to the Stub in it.
   priv stub_locations : Map[String, (String, String)]
+  /// The definition set digest of the set the snapshot was built from, as
+  /// `DefinitionSet::digest` gives it.
+  digest : String
 } derive(Debug, Eq)
 
 ///|
@@ -319,7 +322,14 @@ pub fn normalize_host(host : String) -> String {
 /// Validates a definition set and builds its snapshot, or returns every
 /// problem found, in file-name order and then in the order they appear in
 /// each file.
-pub fn load(set : DefinitionSet) -> Result[Snapshot, Array[Diagnostic]] {
+///
+/// `read_problems` are the problems the caller had reading the set, such
+/// as a file that cannot be read. A set read with problems is invalid
+/// whatever its files hold; they come first among its problems.
+pub fn load(
+  set : DefinitionSet,
+  read_problems? : Array[Diagnostic] = [],
+) -> Result[Snapshot, Array[Diagnostic]] {
   let files = sorted_by_name(set.files).map(file => {
     (file.0, parse_file(file.0, file.1))
   })
@@ -330,9 +340,10 @@ pub fn load(set : DefinitionSet) -> Result[Snapshot, Array[Diagnostic]] {
   for file in files {
     reader.read_file(file.0, file.1)
   }
-  if reader.diagnostics.length() > 0 {
-    return Err(reader.diagnostics)
+  if read_problems.length() > 0 || reader.diagnostics.length() > 0 {
+    return Err([..read_problems, ..reader.diagnostics])
   }
+  let digest = set.digest()
   if reader.mocks.length() == 0 {
     return Ok({
       mocks: ReadOnlyArray::from_array([
@@ -347,6 +358,7 @@ pub fn load(set : DefinitionSet) -> Result[Snapshot, Array[Diagnostic]] {
       host_index: Map([]),
       default_index: Some(0),
       stub_locations: Map([]),
+      digest,
     })
   }
   let mocks = reader.mocks.map(mock => {
@@ -381,6 +393,7 @@ pub fn load(set : DefinitionSet) -> Result[Snapshot, Array[Diagnostic]] {
     host_index,
     default_index,
     stub_locations: reader.stub_locations,
+    digest,
   })
 }
 
@@ -399,6 +412,47 @@ fn in_matching_order(stubs : Array[Stub]) -> Array[Stub] {
     }
   })
   indexed.map(entry => entry.1)
+}
+
+///|
+/// The definition set digest: a short content hash of every Definition
+/// file and body file, so that replicas serving the same files report the
+/// same digest. It is the first 12 hex digits (lower case) of the SHA-256
+/// of every file, framed one after another: the Definition files in
+/// byte-wise order of their names, then the body files in the same order,
+/// files with the same name in byte-wise order of their bytes. Each file is
+///
+/// - one byte, `D` for a Definition file or `B` for a body file;
+/// - the length of its name in bytes, as an 8-byte big-endian number, then
+///   its name in UTF-8;
+/// - the length of its bytes, as an 8-byte big-endian number, then its
+///   bytes.
+///
+/// Every part has its length, so two different sets never frame to the
+/// same bytes, and the order the files come in does not matter.
+pub fn DefinitionSet::digest(self : DefinitionSet) -> String {
+  let framed = @buffer.Buffer()
+  for kind in [(b'D', self.files), (b'B', self.body_files)] {
+    let entries = kind.1.map(file => (@utf8.encode(file.0), file.1))
+    entries.sort_by((a, b) => {
+      match a.0.lexical_compare(b.0) {
+        0 => a.1.lexical_compare(b.1)
+        order => order
+      }
+    })
+    for entry in entries {
+      framed.write_byte(kind.0)
+      framed.write_uint64_be(entry.0.length().to_uint64())
+      framed.write_bytes(entry.0)
+      framed.write_uint64_be(entry.1.length().to_uint64())
+      framed.write_bytes(entry.1)
+    }
+  }
+  let hex = StringBuilder()
+  for byte in sha256(framed.to_bytes())[:6] {
+    hex.write_string(byte.to_int().to_string(radix=16).pad_start(2, '0'))
+  }
+  hex.to_string()
 }
 
 ///|
