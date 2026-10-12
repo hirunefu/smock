@@ -33,7 +33,10 @@ async fn main {
         Json =>
           @log.Logger(write_line=line => eprintln(line), now=() => @async.now())
       }
-      @buildinfo.current().log_startup(logger)
+      let admin_auth = if settings.admin_auth { "on" } else { "off" }
+      @buildinfo.current().log_startup(logger, fields={
+        "adminAuth": Json::string(admin_auth),
+      })
       exit(@server.serve(settings, logger))
     }
     Some(("check", matches)) => {

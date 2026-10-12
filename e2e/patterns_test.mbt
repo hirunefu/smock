@@ -75,7 +75,7 @@ async test "smock serve exits with status 1 at startup when a pattern does not c
         "status \{stopped.status}\n" + entries(stopped.logs),
         content=(
           #|status 1
-          #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+          #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
           #|{"level":"error","msg":"invalid definitions","file":"20-orders.yaml","pointer":"/stubs/0/request/path/pattern","error":"is not a valid pattern: position 8: missing closing )"}
           #|{"level":"error","msg":"invalid definitions","file":"20-orders.yaml","pointer":"/stubs/0/request/headers/X-Region/pattern","error":"is not a valid pattern: position 0: Unicode class \\p{Greek} is not supported in R1"}
         ),
