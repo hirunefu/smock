@@ -8,5 +8,6 @@ import {
 
 import {
   "smock/yaml",
+  "moonbitlang/core/bench",
   "moonbitlang/core/debug",
 } for "test"

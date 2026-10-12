@@ -59,6 +59,8 @@ fn one_line(s : String) -> String {
 
 ///|
 /// An immutable snapshot of a valid definition set: what the engine serves.
+/// Each Mock holds its Stubs in matching order and their match index, both
+/// built with the snapshot.
 pub struct Snapshot {
   /// The Mocks, in declaration order: file-name order, then position in the
   /// file. When no Definition file declares a Mock, this is one empty Mock
@@ -84,6 +86,8 @@ pub struct Mock {
   /// priority in declaration order, that is file-name order, then position
   /// in the file.
   stubs : ReadOnlyArray[Stub]
+  /// The match index of `stubs`, which `candidates` looks up.
+  priv index : MatchIndex
 } derive(Debug, Eq)
 
 ///|
@@ -256,21 +260,26 @@ pub fn load(set : DefinitionSet) -> Result[Snapshot, Array[Diagnostic]] {
           hosts: ReadOnlyArray::from_array([]),
           no_match_status: 404,
           stubs: ReadOnlyArray::from_array([]),
+          index: MatchIndex::new(ReadOnlyArray::from_array([])),
         },
       ]),
       host_index: Map([]),
       default_index: Some(0),
     })
   }
-  let mocks = reader.mocks.map(mock => Mock::{
-    name: mock.name,
-    hosts: ReadOnlyArray::from_iter(mock.hosts.iter().map(host => host.0)),
-    no_match_status: mock.no_match_status,
-    stubs: ReadOnlyArray::from_array(
+  let mocks = reader.mocks.map(mock => {
+    let stubs = ReadOnlyArray::from_array(
       in_matching_order(
         reader.stubs.iter().filter(stub => stub.mock == mock.name).collect(),
       ),
-    ),
+    )
+    Mock::{
+      name: mock.name,
+      hosts: ReadOnlyArray::from_iter(mock.hosts.iter().map(host => host.0)),
+      no_match_status: mock.no_match_status,
+      stubs,
+      index: MatchIndex::new(stubs),
+    }
   })
   let index_of = Map([])
   for i, mock in mocks {

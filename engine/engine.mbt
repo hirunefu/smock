@@ -4,6 +4,9 @@
 /// key, the time and a random source, and carries out the plan it returns.
 pub struct Engine {
   priv snapshot : @definitions.Snapshot
+  /// Whether Stubs are found through the snapshot's match index, rather
+  /// than by trying every Stub of the Mock in matching order.
+  priv match_index : Bool
 }
 
 ///|
@@ -108,8 +111,16 @@ pub(all) struct NearMiss {
 
 ///|
 /// Creates an engine that serves `snapshot`.
-pub fn Engine::Engine(snapshot : @definitions.Snapshot) -> Engine {
-  { snapshot, }
+///
+/// With `match_index=false`, the engine tries every Stub of the Mock in
+/// matching order instead of finding them through the snapshot's match
+/// index. The outcome is the same either way, only slower; tests use it as
+/// the oracle the index is checked against.
+pub fn Engine::Engine(
+  snapshot : @definitions.Snapshot,
+  match_index? : Bool = true,
+) -> Engine {
+  { snapshot, match_index, }
 }
 
 ///|
@@ -173,9 +184,18 @@ pub fn Engine::handle(
       }
   }
   let incoming = Incoming::new(request)
+  // The match index only narrows the search for the Stub that answers. The
+  // Near miss of a request that matched nothing is chosen among every Stub
+  // of the Mock, in matching order.
   let matched = match mock {
-    Some(mock) =>
-      mock.stubs.iter().find_first(stub => incoming.meets(stub.request))
+    Some(mock) => {
+      let candidates = if self.match_index {
+        mock.candidates(request.meth, incoming.path)
+      } else {
+        mock.stubs.iter()
+      }
+      candidates.find_first(stub => incoming.meets(stub.request))
+    }
     None => None
   }
   let plan : ResponsePlan = match (mock, matched) {
