@@ -698,6 +698,102 @@ async test "the contract checker rejects responses that break the document" {
         ),
       },
     ),
+    (
+      "an added Ephemeral Stub",
+      "POST",
+      "/v1/mocks/users/stubs",
+      {
+        status: 201,
+        headers: replica,
+        body: (
+          #|{"stub":{"id":"eph-12","mock":"users","session":null,"request":{"method":"GET"},"response":{"status":503,"body":"down"}},"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "an Ephemeral Stub ID that is not eph-<n>",
+      "POST",
+      "/v1/mocks/users/stubs",
+      {
+        status: 201,
+        headers: replica,
+        body: (
+          #|{"stub":{"id":"eph-0","mock":"users","session":"s","response":{"status":200}},"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "an added Ephemeral Stub without its Session",
+      "POST",
+      "/v1/mocks/users/stubs",
+      {
+        status: 201,
+        headers: replica,
+        body: (
+          #|{"stub":{"id":"eph-1","mock":"users","response":{"status":200}},"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a listed Ephemeral Stub with a status out of range",
+      "GET",
+      "/v1/mocks/users/stubs",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"stubs":[{"id":"eph-1","mock":"users","session":"s","response":{"status":99}}],"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a deleted Ephemeral Stub with its Mock",
+      "DELETE",
+      "/v1/mocks/users/stubs/eph-1",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"id":"eph-1","mock":"users","warnings":[]}
+        ),
+      },
+    ),
+    (
+      "an unknown Ephemeral Stub",
+      "DELETE",
+      "/v1/mocks/users/stubs/eph-1",
+      {
+        status: 404,
+        headers: replica,
+        body: (
+          #|{"error":"unknown_stub","message":"m","warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a reset without the count of Journal entries",
+      "POST",
+      "/v1/reset",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"scope":"all","removed":{"ephemeralStubs":1},"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a reset with a scope the document does not list",
+      "POST",
+      "/v1/reset",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"scope":"replica","removed":{"ephemeralStubs":0,"journalEntries":0},"warnings":[]}
+        ),
+      },
+    ),
   ]
   let out = []
   for case in cases {
@@ -722,6 +818,14 @@ async test "the contract checker rejects responses that break the document" {
       #|a reload without its errors: /lastReload: {"at":"2026-10-13T01:02:03.004Z","result":"swapped"} matches 0 of oneOf, not 1
       #|a reload error without its pointer: /lastReload: {"at":"2026-10-13T01:02:03.004Z","result":"failed","error... matches 0 of oneOf, not 1
       #|a reload with an undocumented field: /lastReload: {"at":"2026-10-13T01:02:03.004Z","result":"unchanged","er... matches 0 of oneOf, not 1
+      #|an added Ephemeral Stub: conforms
+      #|an Ephemeral Stub ID that is not eph-<n>: /stub/id: "eph-0" does not match ^eph-[1-9][0-9]*$
+      #|an added Ephemeral Stub without its Session: /stub: session is missing
+      #|a listed Ephemeral Stub with a status out of range: /stubs/0/response/status: 99 is below 200
+      #|a deleted Ephemeral Stub with its Mock: /mock: no value is allowed here
+      #|an unknown Ephemeral Stub: conforms
+      #|a reset without the count of Journal entries: /removed: journalEntries is missing
+      #|a reset with a scope the document does not list: /scope: "replica" is not one of ["session","mock","all"]
     ),
   )
 }

@@ -77,9 +77,12 @@ pub async fn serve(
     engine,
     build,
     metrics~,
+    logger~,
     token~,
     replica=replica_name(),
     replicas=settings.replicas,
+    session_header=settings.session_header,
+    session_member=settings.session_member,
   )
   guard listen(logger, "plain", settings.port) is Some(plain) else { return 1 }
   defer plain.close()
@@ -227,10 +230,15 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
     stream,
     settings,
     respond=(stream, request) => {
+      let engine_request = to_engine_request(request)
+      let session = @engine.session_of(
+        engine_request.headers,
+        header=settings.session_header,
+        member_name=settings.session_member,
+      )
       let plan = engine.handle(
-          to_engine_request(request),
-          // Sessions come with the "Sessions and Ephemeral Stubs" ticket.
-          session=None,
+          engine_request,
+          session~,
           now=@async.now(),
           rand~,
         ).plan

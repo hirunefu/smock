@@ -20,6 +20,8 @@ async test "every serve setting is a flag with a matching SMOCK_ environment var
       #|  --admin-auth <admin-auth>                  Whether the Admin API needs a bearer token: on or off. Turn it off only for local use. [env: SMOCK_ADMIN_AUTH] [default: on]
       #|  --admin-token-file <admin-token-file>      A file that holds the Admin API token. Without it, the token comes from the environment variable SMOCK_ADMIN_TOKEN. [env: SMOCK_ADMIN_TOKEN_FILE]
       #|  --replicas <replicas>                      How many replicas the deployment runs. Above 1, every Admin API response warns that state is per replica. [env: SMOCK_REPLICAS] [default: 1]
+      #|  --session-header <session-header>          The request header that carries the Session, as W3C Baggage, on requests and Admin API calls. [env: SMOCK_SESSION_HEADER] [default: baggage]
+      #|  --session-member <session-member>          The member of the Session header whose value is the Session key. [env: SMOCK_SESSION_MEMBER] [default: smock-session]
       #|  --log-format <log-format>                  The log format: json. [env: SMOCK_LOG_FORMAT] [default: json]
       #|  --body-file-dir <body-file-dir>            The body-file subdirectory of the definitions directory. [env: SMOCK_BODY_FILE_DIR] [default: files]
       #|  --header-size-limit <header-size-limit>    The most bytes a request head (request line and header fields) may take. Larger heads get 431. [env: SMOCK_HEADER_SIZE_LIMIT] [default: 16384]
@@ -153,6 +155,11 @@ async test "an invalid value stops startup with a message that names the setting
     (["--seed", ""], Map([])),
     ([], { "SMOCK_SEED": "0x2a" }),
     ([], { "SMOCK_SEED": "12345678901234567890" }),
+    (["--session-header", ""], Map([])),
+    (["--session-header", "x baggage"], Map([])),
+    ([], { "SMOCK_SESSION_HEADER": "baggage:" }),
+    (["--session-member", "smock session"], Map([])),
+    ([], { "SMOCK_SESSION_MEMBER": "" }),
   ]
   let out = []
   for run in runs {
@@ -197,6 +204,11 @@ async test "an invalid value stops startup with a message that names the setting
       #|status 2: smock serve: invalid value "" for --seed (SMOCK_SEED): must be an integer from 0 to 9007199254740991
       #|status 2: smock serve: invalid value "0x2a" for --seed (SMOCK_SEED): must be an integer from 0 to 9007199254740991
       #|status 2: smock serve: invalid value "12345678901234567890" for --seed (SMOCK_SEED): must be an integer from 0 to 9007199254740991
+      #|status 2: smock serve: invalid value "" for --session-header (SMOCK_SESSION_HEADER): must be a header name, such as baggage
+      #|status 2: smock serve: invalid value "x baggage" for --session-header (SMOCK_SESSION_HEADER): must be a header name, such as baggage
+      #|status 2: smock serve: invalid value "baggage:" for --session-header (SMOCK_SESSION_HEADER): must be a header name, such as baggage
+      #|status 2: smock serve: invalid value "smock session" for --session-member (SMOCK_SESSION_MEMBER): must be a W3C Baggage key, such as smock-session
+      #|status 2: smock serve: invalid value "" for --session-member (SMOCK_SESSION_MEMBER): must be a W3C Baggage key, such as smock-session
     ),
   )
 }

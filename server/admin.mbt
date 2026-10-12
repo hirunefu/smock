@@ -8,6 +8,8 @@ priv struct Admin {
   build : @buildinfo.BuildInfo
   /// The metrics `/metrics` serves.
   metrics : @metrics.Registry
+  /// Where changes made through the Admin API are logged.
+  logger : @log.Logger
   /// The token every operation needs, as UTF-8, or `None` when
   /// authentication is off.
   token : Bytes?
@@ -15,6 +17,10 @@ priv struct Admin {
   replica : String
   /// The warnings every JSON response carries.
   warnings : Json
+  /// The header that carries the calling Session, as W3C Baggage, and the
+  /// member whose value is the Session key, as on mocked requests.
+  session_header : String
+  session_member : String
 }
 
 ///|
@@ -48,10 +54,10 @@ priv struct Route {
 /// until then.
 let routes : Array[Route] = [
   route("/v1/status", "GET", status),
-  route("/v1/mocks/{mock}/stubs", "GET", not_implemented),
-  route("/v1/mocks/{mock}/stubs", "POST", not_implemented, takes_body=true),
-  route("/v1/mocks/{mock}/stubs/{id}", "DELETE", not_implemented),
-  route("/v1/reset", "POST", not_implemented, takes_body=true),
+  route("/v1/mocks/{mock}/stubs", "GET", list_stubs),
+  route("/v1/mocks/{mock}/stubs", "POST", add_stub, takes_body=true),
+  route("/v1/mocks/{mock}/stubs/{id}", "DELETE", delete_stub),
+  route("/v1/reset", "POST", reset, takes_body=true),
   route("/v1/journal/query", "POST", not_implemented, takes_body=true),
   route("/v1/journal/verify", "POST", not_implemented, takes_body=true),
   route("/v1/journal/unmatched", "GET", not_implemented),
@@ -77,17 +83,23 @@ fn route(
 /// Creates the Admin API of a process that serves through `engine`.
 ///
 /// - `metrics` holds the metrics `/metrics` serves.
+/// - `logger` logs each change made through the Admin API.
 /// - `token` is the bearer token every operation needs, or `None` to turn
 ///   authentication off.
 /// - `replica` is the replica's name, such as the Pod's hostname.
 /// - `replicas` is how many replicas the deployment runs.
+/// - `session_header` and `session_member` name the calling Session's
+///   header and its W3C Baggage member.
 fn Admin::new(
   engine : @engine.Engine,
   build : @buildinfo.BuildInfo,
   metrics~ : @metrics.Registry,
+  logger~ : @log.Logger,
   token~ : String?,
   replica~ : String,
   replicas~ : Int,
+  session_header~ : String,
+  session_member~ : String,
 ) -> Admin {
   let replica = header_safe(replica)
   let warnings : Array[Json] = if replicas > 1 {
@@ -104,9 +116,12 @@ fn Admin::new(
     engine,
     build,
     metrics,
+    logger,
     token: token.map(token => @utf8.encode(token)),
     replica,
     warnings: Json::array(warnings),
+    session_header,
+    session_member,
   }
 }
 

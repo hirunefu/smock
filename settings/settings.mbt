@@ -32,6 +32,11 @@ pub(all) struct ServeSettings {
   /// How many replicas the deployment runs, as the Admin API's replica
   /// warning tells it.
   replicas : Int
+  /// The request header that carries the Session, as W3C Baggage. Header
+  /// names are compared case-insensitively.
+  session_header : String
+  /// The member of the Session header whose value is the Session key.
+  session_member : String
   log_format : LogFormat
   /// The body-file subdirectory of the definitions directory.
   body_file_dir : String
@@ -161,6 +166,16 @@ let serve_settings : Array[Setting] = [
     name: "replicas",
     about: "How many replicas the deployment runs. Above 1, every Admin API response warns that state is per replica.",
     default: Some("1"),
+  },
+  {
+    name: "session-header",
+    about: "The request header that carries the Session, as W3C Baggage, on requests and Admin API calls.",
+    default: Some("baggage"),
+  },
+  {
+    name: "session-member",
+    about: "The member of the Session header whose value is the Session key.",
+    default: Some("smock-session"),
   },
   { name: "log-format", about: "The log format: json.", default: Some("json"), },
   body_file_dir_setting,
@@ -311,6 +326,12 @@ pub fn ServeSettings::from_matches(
     other => raise invalid("log-format", other.unwrap_or(""), "must be json")
   }
   let body_file_dir = body_file_dir(matches)
+  let session_header = token_value(
+    matches, "session-header", "must be a header name, such as baggage",
+  )
+  let session_member = token_value(
+    matches, "session-member", "must be a W3C Baggage key, such as smock-session",
+  )
   {
     dir,
     port,
@@ -320,6 +341,8 @@ pub fn ServeSettings::from_matches(
     admin_auth,
     admin_token_file,
     replicas: int_value(matches, "replicas", min=1, max=max_replicas),
+    session_header,
+    session_member,
     log_format,
     body_file_dir,
     header_size_limit: int_value(
@@ -422,6 +445,30 @@ fn value(matches : @argparse.Matches, name : String) -> String? {
     Some(values) => values.last()
     None => None
   }
+}
+
+///|
+/// The value of a setting that must be an HTTP token, as header names and
+/// W3C Baggage keys are, or `reason` when it is not.
+fn token_value(
+  matches : @argparse.Matches,
+  name : String,
+  reason : String,
+) -> String raise InvalidSetting {
+  let text = value(matches, name).unwrap_or("")
+  let token = text != "" &&
+    text
+    .iter()
+    .all(c => {
+      (c >= 'a' && c <= 'z') ||
+      (c >= 'A' && c <= 'Z') ||
+      (c >= '0' && c <= '9') ||
+      "!#$%&'*+-.^_`|~".contains_char(c)
+    })
+  if !token {
+    raise invalid(name, text, reason)
+  }
+  text
 }
 
 ///|

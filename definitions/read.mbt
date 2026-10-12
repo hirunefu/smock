@@ -208,7 +208,7 @@ fn Reader::read_file(
   let file = File::{
     name,
     diagnostics: self.diagnostics,
-    body_files: self.body_files,
+    body_files: Some(self.body_files),
   }
   let top = match parsed {
     Ok(top) => top
@@ -258,8 +258,9 @@ fn Reader::read_file(
 priv struct File {
   name : String
   diagnostics : Array[Diagnostic]
-  /// The body files of the set, which Stubs refer to.
-  body_files : Map[String, Bytes]
+  /// The body files of the set, which Stubs refer to, or `None` for an
+  /// Ephemeral Stub, whose body must be inline.
+  body_files : Map[String, Bytes]?
 }
 
 ///|
@@ -894,6 +895,12 @@ fn File::string_without(
 /// names are not empty, and none starts with `.`, as smock skips such
 /// files.
 fn File::read_body_file(self : File, pointer : String, json : Json) -> Bytes {
+  guard self.body_files is Some(body_files) else {
+    self.error(
+      pointer, "is not allowed in an Ephemeral Stub, whose body must be inline: give \"body\" instead",
+    )
+    return b""
+  }
   guard self.string(pointer, json) is Some(path) else { return b"" }
   let inside = path
     .split("/")
@@ -904,7 +911,7 @@ fn File::read_body_file(self : File, pointer : String, json : Json) -> Bytes {
     )
     return b""
   }
-  match self.body_files.get(path) {
+  match body_files.get(path) {
     Some(bytes) => bytes
     None => {
       self.error(
