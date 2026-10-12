@@ -662,7 +662,7 @@ fn File::read_conditions(
     match key {
       "method" =>
         match value {
-          String(value) if is_token(value) => meth = Some(value)
+          String(value) if @http1.is_token(value) => meth = Some(value)
           _ => self.error(field, "must be an HTTP token, such as GET")
         }
       "path" =>
@@ -749,7 +749,7 @@ fn File::read_value_conditions(
   }
   for name, value in conditions {
     let field = child(pointer, name)
-    if header_names && !is_token(name) {
+    if header_names && !@http1.is_token(name) {
       self.error(field, "is not a valid header name")
       continue
     }
@@ -946,7 +946,7 @@ fn File::read_headers(
   }
   for name, value in headers {
     let field = child(pointer, name)
-    if !is_token(name) {
+    if !@http1.is_token(name) {
       self.error(field, "is not a valid header name")
     } else if name.to_lower()
       is ("content-length" | "transfer-encoding" | "connection") {
@@ -954,7 +954,7 @@ fn File::read_headers(
     }
     match value {
       String(value) =>
-        if is_field_value(value) {
+        if @http1.is_field_value(value) {
           out.push((name, value))
         } else {
           self.error(
@@ -1024,36 +1024,6 @@ fn is_host(s : String) -> Bool {
       (c >= '0' && c <= '9') ||
       "._:[]-".contains_char(c)
     if !ok {
-      return false
-    }
-  }
-  true
-}
-
-///|
-/// Whether `s` is an HTTP token, as a header name must be.
-fn is_token(s : String) -> Bool {
-  if s == "" {
-    return false
-  }
-  for c in s {
-    let ok = (c >= 'a' && c <= 'z') ||
-      (c >= 'A' && c <= 'Z') ||
-      (c >= '0' && c <= '9') ||
-      "!#$%&'*+-.^_`|~".contains_char(c)
-    if !ok {
-      return false
-    }
-  }
-  true
-}
-
-///|
-/// Whether `s` can be written as a header value: no control characters
-/// other than tab.
-fn is_field_value(s : String) -> Bool {
-  for c in s {
-    if (c < ' ' && c != '\t') || c == '\u{7f}' {
       return false
     }
   }

@@ -17,9 +17,9 @@
 /// The body is always framed by Content-Length, never chunked, so a response
 /// suits HTTP/1.0 and HTTP/1.1 clients alike.
 ///
-/// The caller passes valid field names (tokens) and values (no CR, LF or
-/// other control characters except tab), and does not pass Connection,
-/// Content-Length or Transfer-Encoding itself. Values are written as UTF-8.
+/// The caller passes valid field names (`is_token`) and values
+/// (`is_field_value`), and does not pass Connection, Content-Length or
+/// Transfer-Encoding itself. Values are written as UTF-8.
 ///
 /// ```mbt check
 /// test {
@@ -102,6 +102,38 @@ fn has_content(status : Int) -> Bool {
 /// content, and it does not answer HEAD (RFC 9110, section 9.3.2).
 fn writes_body(status : Int, request : Request?) -> Bool {
   has_content(status) && !(request is Some({ meth: "HEAD", .. }))
+}
+
+///|
+/// Whether `s` is a token (RFC 9110, section 5.6.2), as a field name and a
+/// method are: one or more ASCII letters, digits and ``!#$%&'*+-.^_`|~``.
+///
+/// ```mbt check
+/// test {
+///   inspect(@http1.is_token("Content-Type"), content="true")
+///   inspect(@http1.is_token("Content Type"), content="false")
+///   inspect(@http1.is_token(""), content="false")
+/// }
+/// ```
+pub fn is_token(s : StringView) -> Bool {
+  !s.is_empty() &&
+  s.iter().all(c => c.is_ascii() && is_tchar(c.to_int().to_byte()))
+}
+
+///|
+/// Whether `s` can be written as a field value (RFC 9110, section 5.5): it
+/// holds no control character other than tab, so no CR or LF. Characters
+/// beyond ASCII are written as UTF-8.
+///
+/// ```mbt check
+/// test {
+///   inspect(@http1.is_field_value("text/plain;\tcharset=utf-8"), content="true")
+///   inspect(@http1.is_field_value("caf\u{e9}"), content="true")
+///   inspect(@http1.is_field_value("a\r\nSet-Cookie: x"), content="false")
+/// }
+/// ```
+pub fn is_field_value(s : StringView) -> Bool {
+  s.iter().all(c => !c.is_ascii() || is_field_value_byte(c.to_int().to_byte()))
 }
 
 ///|

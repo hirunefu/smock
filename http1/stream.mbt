@@ -23,9 +23,9 @@
 ///   `end` are empty, and the connection stays open as for
 ///   `encode_response`.
 ///
-/// The caller passes valid field names (tokens) and values (no CR, LF or
-/// other control characters except tab), and does not pass Connection,
-/// Content-Length or Transfer-Encoding itself. Values are written as UTF-8.
+/// The caller passes valid field names (`is_token`) and values
+/// (`is_field_value`), and does not pass Connection, Content-Length or
+/// Transfer-Encoding itself. Values are written as UTF-8.
 ///
 /// ```mbt check
 /// test {
