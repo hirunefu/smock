@@ -141,7 +141,7 @@ let serve_settings : Array[Setting] = [
   },
   {
     name: "admin-port",
-    about: "The Admin API port, separate from the plain port. 0 picks a free port.",
+    about: "The Admin API port, separate from the plain and TLS ports. 0 picks a free port.",
     default: Some("9090"),
   },
   {
