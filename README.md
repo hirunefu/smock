@@ -89,10 +89,11 @@ moon build --target native
 SMOCK_ADMIN_TOKEN=change-me _build/native/debug/build/smock/smock/cmd/smock/smock.exe serve --dir defs
 ```
 
-`smock serve` reads the Definition files in the definitions directory and
-listens on the plain port, on the TLS port and on the admin port. It watches the directory
-and swaps in the new definition set when the files change, ConfigMap updates
-included; an invalid set is reported and the current one keeps serving
+`smock serve` listens on the admin port, reads the Definition files in the
+definitions directory, then listens on the plain port and on the TLS port.
+It watches the directory and swaps in the new definition set when the files
+change, ConfigMap updates included; an invalid set is reported and the
+current one keeps serving
 ([docs/definition-files.md](docs/definition-files.md#reloading)). Logs go
 to stderr, one JSON object per line. `smock serve --help` lists the
 settings:
@@ -118,11 +119,31 @@ settings:
 | `--body-limit` | `SMOCK_BODY_LIMIT` | 10485760 bytes (10 MiB): longer bodies get 413 |
 | `--read-timeout-ms` | `SMOCK_READ_TIMEOUT_MS` | 30000: a request must arrive whole within 30 s of its first byte |
 | `--idle-timeout-ms` | `SMOCK_IDLE_TIMEOUT_MS` | 60000: a connection that waits 60 s for a request closes |
+| `--drain-timeout-ms` | `SMOCK_DRAIN_TIMEOUT_MS` | 20000: how long smock drains after SIGTERM before it cuts what is still running |
 | `--seed` | `SMOCK_SEED` | none: smock picks the seed of its random generator, from 0 to 9007199254740991, and logs it ([Faults](docs/definition-files.md#seeds)) |
 
 A request over a limit gets its status with `Connection: close`, then the
 connection closes; a timeout closes the connection without a response.
 Neither is logged.
+
+On SIGTERM, smock drains instead of dropping requests, so that a rolling
+update does not fail the tests running against the old Pod. SIGINT and
+SIGHUP do the same.
+
+- `/readyz` fails from the moment the signal arrives. The plain and TLS
+  listeners close, so new connections are refused, and idle keep-alive
+  connections close at once.
+- Responses in progress finish with `Connection: close`, and their
+  connections close after them. Server-Sent Event streams and pending
+  delays go on.
+- smock exits with status 0 as soon as nothing is in flight, and at the
+  latest when the drain timeout (`--drain-timeout-ms`) expires: what is still
+  running then is cut. Keep the Pod's `terminationGracePeriodSeconds` above
+  it.
+- The admin port serves until exit, so the probes can be read during the
+  drain. Log entries mark the start of the drain (`drain started`, with
+  `timeoutMs`) and its end (`drain ended`, with `connectionsCut`, the number
+  of connections still open when the timeout expired).
 
 With a certificate and its key, smock also serves HTTPS on the TLS port, with
 the same Mocks as the plain port. Both are PEM files, for example the
@@ -240,6 +261,19 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   `smock --version` prints them, the definition set digest, the result of
   the last reload of the Definition files (`null` until the first one), and
   the Mocks with their Hosts and which one is the Default Mock.
+- The probes need no token, also when authentication is on. They answer
+  200 `{"status": "ok", ...}` when they pass and 503 with the error shape
+  when they fail:
+  - `GET /startupz` passes once the first definition set has loaded. The
+    admin port opens before the definitions load, and until then the probe
+    fails with `not_started`, as does every operation that needs the
+    definitions.
+  - `GET /readyz` passes while smock serves, also after a reload that
+    failed, since the previous definition set keeps serving. It fails with
+    `not_started` before startup completes and with `not_ready` from the
+    moment SIGTERM arrives.
+  - `GET /livez` passes while the event loop answers, during the drain too,
+    so that Kubernetes does not kill a draining Pod early.
 - `GET /metrics` serves the Prometheus metrics, without a token, also when
   authentication is on. `smock_build_info` carries the version, commit and
   toolchain as labels; `smock_definition_reloads_total` counts reloads of
@@ -274,6 +308,7 @@ curl -H "Authorization: Bearer change-me" localhost:9090/v1/status
 curl -H "Authorization: Bearer change-me" -d '{"path": "/users/1"}' \
   localhost:9090/v1/stubs/get-user/render
 curl localhost:9090/metrics
+curl localhost:9090/readyz
 ```
 
 A Definition file, such as `defs/users.json`:

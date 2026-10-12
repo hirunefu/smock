@@ -390,6 +390,8 @@ async test "adding, deleting and resetting each write a JSON log entry; failed c
         #|{"level":"info","msg":"reset","scope":"session","session":null,"removed":{"ephemeralStubs":1,"journalEntries":0}}
         #|{"level":"info","msg":"reset","scope":"mock","mock":"users","removed":{"ephemeralStubs":0,"journalEntries":0}}
         #|{"level":"info","msg":"reset","scope":"all","removed":{"ephemeralStubs":0,"journalEntries":0}}
+        #|{"level":"info","msg":"drain started","timeoutMs":20000}
+        #|{"level":"info","msg":"drain ended","connectionsCut":0}
       ),
     )
   })

@@ -4,7 +4,8 @@
 ///|
 /// The Admin API of one smock process.
 priv struct Admin {
-  engine : @engine.Engine
+  /// Where the process is in its life, which the probes report.
+  lifecycle : Lifecycle
   build : @buildinfo.BuildInfo
   /// The metrics `/metrics` serves.
   metrics : @metrics.Registry
@@ -62,9 +63,9 @@ let routes : Array[Route] = [
   route("/v1/journal/verify", "POST", not_implemented, takes_body=true),
   route("/v1/journal/unmatched", "GET", not_implemented),
   route("/v1/stubs/{id}/render", "POST", render, takes_body=true),
-  route("/startupz", "GET", not_implemented, open=true),
-  route("/readyz", "GET", not_implemented, open=true),
-  route("/livez", "GET", not_implemented, open=true),
+  route("/startupz", "GET", startup_probe, open=true),
+  route("/readyz", "GET", readiness_probe, open=true),
+  route("/livez", "GET", liveness_probe, open=true),
   route("/metrics", "GET", metrics, open=true),
 ]
 
@@ -80,7 +81,7 @@ fn route(
 }
 
 ///|
-/// Creates the Admin API of a process that serves through `engine`.
+/// Creates the Admin API of a process whose life `lifecycle` follows.
 ///
 /// - `metrics` holds the metrics `/metrics` serves.
 /// - `logger` logs each change made through the Admin API.
@@ -91,7 +92,7 @@ fn route(
 /// - `session_header` and `session_member` name the calling Session's
 ///   header and its W3C Baggage member.
 fn Admin::new(
-  engine : @engine.Engine,
+  lifecycle : Lifecycle,
   build : @buildinfo.BuildInfo,
   metrics~ : @metrics.Registry,
   logger~ : @log.Logger,
@@ -113,7 +114,7 @@ fn Admin::new(
     []
   }
   {
-    engine,
+    lifecycle,
     build,
     metrics,
     logger,
@@ -181,8 +182,9 @@ fn Admin::error(
 
 ///|
 /// The reply to `request`. Checks, in this order: the token, unless the
-/// path is served without one; the path; the method; the JSON body, for an
-/// operation that takes one.
+/// path is served without one; the path; the method; that the first
+/// definition set has loaded, unless the path is served without a token;
+/// the JSON body, for an operation that takes one.
 fn Admin::handle(self : Admin, request : @http1.Request) -> Reply {
   let path = path_of(request.target)
   let at_path = routes.filter(route => path_matches(route.path, path))
@@ -221,6 +223,10 @@ fn Admin::handle(self : Admin, request : @http1.Request) -> Reply {
     return reply
   }
   let route = at_path[i]
+  // Every operation but the probes and the metrics needs the definitions.
+  if !route.open && self.lifecycle.engine is None {
+    return self.not_started()
+  }
   let body = if route.takes_body && request.body.length() > 0 {
     let parsed = try @json.parse(@utf8.decode(request.body)) catch {
       @utf8.Malformed(_) => Err("it is not UTF-8")
@@ -346,7 +352,7 @@ fn Admin::json(self : Admin, status : Int, body : Map[String, Json]) -> Reply {
 ///|
 /// Shows what this replica runs and serves.
 fn status(admin : Admin, _request : @http1.Request, _body : Json?) -> Reply {
-  let status = admin.engine.status()
+  let status = admin.engine().status()
   admin.json(200, {
     "version": Json::string(admin.build.version),
     "commit": Json::string(admin.build.commit),
@@ -369,6 +375,76 @@ fn status(admin : Admin, _request : @http1.Request, _body : Json?) -> Reply {
       }),
     ),
   })
+}
+
+///|
+/// The reply to an operation that needs the definitions before the first
+/// definition set has loaded.
+fn Admin::not_started(self : Admin) -> Reply {
+  self.error(503, "not_started", "the first definition set has not loaded yet")
+}
+
+///|
+/// The engine, for an operation that needs the definitions. `handle`
+/// answers such an operation with `not_started` until the first definition
+/// set has loaded, so the engine is there when it runs.
+fn Admin::engine(self : Admin) -> @engine.Engine {
+  match self.lifecycle.engine {
+    Some(engine) => engine
+    None => abort("an Admin API operation ran before the definitions loaded")
+  }
+}
+
+///|
+/// The reply of a probe that passes.
+fn Admin::probe_ok(self : Admin) -> Reply {
+  self.json(200, { "status": "ok" })
+}
+
+///|
+/// The startup probe: it passes once the first definition set has loaded.
+fn startup_probe(
+  admin : Admin,
+  _request : @http1.Request,
+  _body : Json?,
+) -> Reply {
+  match admin.lifecycle.engine {
+    Some(_) => admin.probe_ok()
+    None => admin.not_started()
+  }
+}
+
+///|
+/// The readiness probe: it passes while smock serves, also after a reload
+/// that failed, since the previous definition set still serves. It fails
+/// before startup completes and from the moment smock starts to drain.
+fn readiness_probe(
+  admin : Admin,
+  _request : @http1.Request,
+  _body : Json?,
+) -> Reply {
+  match (admin.lifecycle.phase, admin.lifecycle.engine) {
+    (Serving, _) => admin.probe_ok()
+    (Starting, None) => admin.not_started()
+    (Starting, Some(_)) =>
+      admin.error(503, "not_ready", "the plain and TLS ports are not open yet")
+    (Draining, _) =>
+      admin.error(
+        503, "not_ready", "smock is draining its connections before it exits",
+      )
+  }
+}
+
+///|
+/// The liveness probe: it passes whenever the event loop answers it,
+/// including while smock drains, so that a draining process is not killed
+/// early.
+fn liveness_probe(
+  admin : Admin,
+  _request : @http1.Request,
+  _body : Json?,
+) -> Reply {
+  admin.probe_ok()
 }
 
 ///|
@@ -420,14 +496,11 @@ fn render(admin : Admin, request : @http1.Request, body : Json?) -> Reply {
   let sample = @engine.SampleRequest::from_json(json) catch {
     err => return invalid("the sample request is not valid: \{err.message()}")
   }
-  let rendering = admin.engine.render(
-    id,
-    sample,
-    now~,
-    rand=@prng.Generator(seed),
-  ) catch {
-    err => return admin.error(404, "unknown_stub", err.message())
-  }
+  let rendering = admin
+    .engine()
+    .render(id, sample, now~, rand=@prng.Generator(seed)) catch {
+      err => return admin.error(404, "unknown_stub", err.message())
+    }
   guard rendering.to_json() is Object(members) else {
     abort("a rendering is a JSON object")
   }
