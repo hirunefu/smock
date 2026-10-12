@@ -40,6 +40,8 @@ namespace=mocks
 release=smock
 
 tmp=$(mktemp -d)
+# The cluster's credentials stay here, out of the user's kubeconfig.
+export KUBECONFIG="$tmp/kubeconfig"
 pids=
 cleanup() {
   for pid in $pids; do
@@ -79,7 +81,30 @@ kubectl --namespace "$namespace" get secret smock-admin-token -o jsonpath='{.dat
 printf 'Authorization: Bearer %s\n' "$(cat "$tmp/token")" >"$tmp/admin-header"
 
 # Kubernetes' own Pod Security admission, on every delivery mode. On a
-# Deployment it only warns, which --warnings-as-errors makes fatal.
+# Deployment it only warns, which --warnings-as-errors makes fatal. First,
+# the check itself: it refuses a Pod without a security context.
+cat >"$tmp/broken.yaml" <<YAML
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broken
+spec:
+  selector:
+    matchLabels: { app: broken }
+  template:
+    metadata:
+      labels: { app: broken }
+    spec:
+      containers:
+        - name: broken
+          image: $image
+YAML
+if kubectl --namespace "$namespace" apply --dry-run=server --warnings-as-errors \
+  -f "$tmp/broken.yaml" >"$tmp/broken.log" 2>&1; then
+  fail "the dry run accepts a Pod that breaks the Restricted standard, so it checks nothing"
+fi
+grep -q 'violate PodSecurity "restricted' "$tmp/broken.log" ||
+  fail "the dry run refused a Pod for another reason than the Restricted standard: $(cat "$tmp/broken.log")"
 token="--set adminAuth.tokenSecret.name=smock-admin-token"
 for mode in \
   "configmap|$token" \
