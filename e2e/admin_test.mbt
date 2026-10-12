@@ -235,3 +235,93 @@ async test "the token can come from a file, without the whitespace around it" {
     )
   })
 }
+
+///|
+/// Requests that get a response of each kind: a success, the errors of
+/// authentication, routing and the request body, and an error from the
+/// HTTP/1.1 codec, which closes the connection.
+async fn each_kind(smock : Smock) -> Array[(String, String, AdminResponse)] {
+  [
+    ("GET", "/v1/status", smock.admin("GET", "/v1/status")),
+    ("GET", "/v1/status", smock.admin("GET", "/v1/status", token=None)),
+    ("GET", "/v1/nowhere", smock.admin("GET", "/v1/nowhere")),
+    ("DELETE", "/v1/status", smock.admin("DELETE", "/v1/status")),
+    ("POST", "/v1/reset", smock.admin("POST", "/v1/reset", body="{\"scope\":")),
+    (
+      "GET",
+      "/v1/status",
+      smock.admin("GET", "/v1/status", headers=[("X-Big", "x".repeat(17000))]),
+    ),
+  ]
+}
+
+///|
+async test "every Admin API response, errors included, names the replica that handled it: the host name" {
+  let (_, uname) = @process.collect_stdout("uname", ["-n"])
+  let host = uname.text().trim().to_owned()
+  let _ = with_smock(["--port", "0"], smock => {
+    let out = []
+    for call in each_kind(smock) {
+      let (meth, path, response) = call
+      let replica = response.header("Smock-Replica")
+      out.push("\{meth} \{path} \{response.status}: \{replica == Some(host)}")
+    }
+    inspect(
+      out.join("\n"),
+      content=(
+        #|GET /v1/status 200: true
+        #|GET /v1/status 401: true
+        #|GET /v1/nowhere 404: true
+        #|DELETE /v1/status 405: true
+        #|POST /v1/reset 400: true
+        #|GET /v1/status 431: true
+      ),
+    )
+  })
+}
+
+///|
+async test "errors take the form {error, message, warnings}: a missing token, an unknown operation or method, malformed JSON, a request over a limit" {
+  let _ = with_smock(["--port", "0"], smock => {
+    let out = []
+    for call in each_kind(smock)[1:] {
+      let (meth, path, response) = call
+      conforms(meth, path, response)
+      out.push("\{meth} \{path}: \{summary(response)}")
+    }
+    inspect(
+      out.join("\n"),
+      content=(
+        #|GET /v1/status: 401
+        #|WWW-Authenticate: Bearer
+        #|{"error":"unauthorized","message":"the Admin API needs Authorization: Bearer <token>","warnings":[]}
+        #|GET /v1/nowhere: 404
+        #|{"error":"not_found","message":"no Admin API operation at /v1/nowhere","warnings":[]}
+        #|DELETE /v1/status: 405
+        #|Allow: GET, HEAD
+        #|{"error":"method_not_allowed","message":"/v1/status takes GET, HEAD, not DELETE","warnings":[]}
+        #|POST /v1/reset: 400
+        #|{"error":"malformed_json","message":"the body is not valid JSON: Unexpected end of file","warnings":[]}
+        #|GET /v1/status: 431
+        #|{"error":"header_fields_too_large","message":"the request head is over the header limits (--header-size-limit, --header-count-limit)","warnings":[]}
+      ),
+    )
+  })
+}
+
+///|
+async test "an operation the document defines but this build does not implement yet gets 501" {
+  // Reset comes with the "Sessions and Ephemeral Stubs" ticket, which
+  // replaces this case.
+  let _ = with_smock(["--port", "0"], smock => {
+    let response = smock.admin("POST", "/v1/reset", body="{\"scope\":\"all\"}")
+    conforms("POST", "/v1/reset", response)
+    inspect(
+      summary(response),
+      content=(
+        #|501
+        #|{"error":"not_implemented","message":"POST /v1/reset is not implemented in this build","warnings":[]}
+      ),
+    )
+  })
+}

@@ -24,18 +24,51 @@ priv struct Reply {
 }
 
 ///|
-/// An operation: a path, its method and what answers it.
+/// An operation of the Admin API, or another endpoint of the admin port.
 priv struct Route {
+  /// The path, where `{name}` stands for one path segment, such as
+  /// `/v1/mocks/{mock}/stubs`.
   path : String
   meth : String
-  answer : (Admin, @http1.Request) -> Reply
+  /// Whether it is served without a token, as the probes and the metrics
+  /// are.
+  open : Bool
+  /// Whether it takes a JSON request body.
+  takes_body : Bool
+  /// What answers a call, given the request and its body, parsed as JSON
+  /// when there is one.
+  answer : (Admin, @http1.Request, Json?) -> Reply
 }
 
 ///|
-/// The operations of the Admin API.
+/// Everything the admin port serves: the operations of the OpenAPI
+/// document, openapi/admin.json. Those that later tickets build answer 501
+/// until then.
 let routes : Array[Route] = [
-  { path: "/v1/status", meth: "GET", answer: status, },
+  route("/v1/status", "GET", status),
+  route("/v1/mocks/{mock}/stubs", "GET", not_implemented),
+  route("/v1/mocks/{mock}/stubs", "POST", not_implemented, takes_body=true),
+  route("/v1/mocks/{mock}/stubs/{id}", "DELETE", not_implemented),
+  route("/v1/reset", "POST", not_implemented, takes_body=true),
+  route("/v1/journal/query", "POST", not_implemented, takes_body=true),
+  route("/v1/journal/verify", "POST", not_implemented, takes_body=true),
+  route("/v1/journal/unmatched", "GET", not_implemented),
+  route("/v1/stubs/{id}/render", "POST", not_implemented, takes_body=true),
+  route("/startupz", "GET", not_implemented, open=true),
+  route("/readyz", "GET", not_implemented, open=true),
+  route("/livez", "GET", not_implemented, open=true),
 ]
+
+///|
+fn route(
+  path : String,
+  meth : String,
+  answer : (Admin, @http1.Request, Json?) -> Reply,
+  open? : Bool = false,
+  takes_body? : Bool = false,
+) -> Route {
+  { path, meth, open, takes_body, answer, }
+}
 
 ///|
 /// Creates the Admin API of a process that serves through `engine`.
@@ -126,9 +159,14 @@ fn Admin::error(
 }
 
 ///|
-/// The reply to `request`.
+/// The reply to `request`. Checks, in this order: the token, unless the
+/// path is served without one; the path; the method; the JSON body, for an
+/// operation that takes one.
 fn Admin::handle(self : Admin, request : @http1.Request) -> Reply {
-  if self.token is Some(token) {
+  let path = path_of(request.target)
+  let at_path = routes.filter(route => path_matches(route.path, path))
+  let open = at_path.length() > 0 && at_path.iter().all(route => route.open)
+  if !open && self.token is Some(token) {
     match bearer_token(request) {
       None =>
         return self.unauthorized(
@@ -139,13 +177,80 @@ fn Admin::handle(self : Admin, request : @http1.Request) -> Reply {
       Some(_) => ()
     }
   }
-  let path = path_of(request.target)
-  for route in routes {
-    if route.path == path && route.meth == request.meth {
-      return (route.answer)(self, request)
-    }
+  if at_path.is_empty() {
+    return self.error(404, "not_found", "no Admin API operation at \{path}")
   }
-  self.json(404, {})
+  // HEAD is GET without the body, which the codec leaves out.
+  let meth = if request.meth == "HEAD" { "GET" } else { request.meth }
+  guard at_path.search_by(route => route.meth == meth) is Some(i) else {
+    let allowed = []
+    for route in at_path {
+      allowed.push(route.meth)
+      if route.meth == "GET" {
+        allowed.push("HEAD")
+      }
+    }
+    let allow = allowed.join(", ")
+    let reply = self.error(
+      405,
+      "method_not_allowed",
+      "\{path} takes \{allow}, not \{request.meth}",
+    )
+    reply.headers.push(("Allow", allow))
+    return reply
+  }
+  let route = at_path[i]
+  let body = if route.takes_body && request.body.length() > 0 {
+    let parsed = try @json.parse(@utf8.decode(request.body)) catch {
+      @utf8.Malformed(_) => Err("it is not UTF-8")
+      err => Err(err.to_string())
+    } noraise {
+      json => Ok(json)
+    }
+    match parsed {
+      Ok(json) => Some(json)
+      Err(reason) =>
+        return self.error(
+          400,
+          "malformed_json",
+          "the body is not valid JSON: \{reason}",
+        )
+    }
+  } else {
+    None
+  }
+  (route.answer)(self, request, body)
+}
+
+///|
+/// Whether `path` fits the route path `template`, where `{name}` stands
+/// for any one non-empty path segment.
+fn path_matches(template : String, path : String) -> Bool {
+  let expected = template.split("/").collect()
+  let actual = path.split("/").collect()
+  expected.length() == actual.length() &&
+  expected
+  .iter()
+  .zip(actual.iter())
+  .all(pair => {
+    let (t, a) = pair
+    (t.has_prefix("{") && t.has_suffix("}") && a != "") || t == a
+  })
+}
+
+///|
+/// Answers an operation that the document defines and a later ticket
+/// builds.
+fn not_implemented(
+  admin : Admin,
+  request : @http1.Request,
+  _body : Json?,
+) -> Reply {
+  admin.error(
+    501,
+    "not_implemented",
+    "\{request.meth} \{path_of(request.target)} is not implemented in this build",
+  )
 }
 
 ///|
@@ -219,7 +324,7 @@ fn Admin::json(self : Admin, status : Int, body : Map[String, Json]) -> Reply {
 
 ///|
 /// Shows what this replica runs and serves.
-fn status(admin : Admin, _request : @http1.Request) -> Reply {
+fn status(admin : Admin, _request : @http1.Request, _body : Json?) -> Reply {
   let status = admin.engine.status()
   admin.json(200, {
     "version": Json::string(admin.build.version),

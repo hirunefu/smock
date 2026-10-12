@@ -173,8 +173,9 @@ fn AdminResponse::json(self : AdminResponse) -> Json raise {
 
 ///|
 /// The problems with `response` as the answer to `meth path`, by the
-/// document: none when it conforms. A path the document does not list must
-/// be answered as the document's `Error` response says.
+/// document: none when it conforms. A path the document does not list, or a
+/// method it does not list for the path, must be answered as the document's
+/// `Error` response says.
 fn Contract::check(
   self : Contract,
   meth : String,
@@ -195,13 +196,19 @@ fn Contract::check(
       item = Some(value)
     }
   }
-  let response_object = match item {
+  let operation = match item {
+    Some(Object(item)) =>
+      match item.get(meth.to_lower()) {
+        Some(Object(operation)) => Some(operation)
+        _ => None
+      }
+    _ => None
+  }
+  let response_object = match operation {
     None => self.resolve(document, "#/components/responses/Error")
-    Some(item) => {
-      guard item is Object(item) &&
-        item.get(meth.to_lower()) is Some(Object(operation)) &&
-        operation.get("responses") is Some(Object(responses)) else {
-        return ["the document has no operation \{meth} \{path}"]
+    Some(operation) => {
+      guard operation.get("responses") is Some(Object(responses)) else {
+        fail("\{meth} \{path} has no responses in \{document}")
       }
       let status = response.status.to_string()
       let keys = [status, "\{status[:1]}XX", "default"]
