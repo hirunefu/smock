@@ -317,6 +317,44 @@ async test "smock render and the Admin render operation give the same rendered r
 }
 
 ///|
+async test "the Admin render operation renders against the definitions the replica serves now, after a reload too" {
+  with_definitions(render_definitions, dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let sample = "\{dir}/samples/user.json"
+      let brief = (response : AdminResponse) => {
+        guard response.json() is Object(body) else { return response.body }
+        match body.get("response") {
+          Some(Object(rendered)) =>
+            "\{response.status} \{rendered.get("body").unwrap_or(Json::null()).stringify()}"
+          _ =>
+            "\{response.status} \{body.get("message").unwrap_or(Json::null()).stringify()}"
+        }
+      }
+      let out = [brief(smock.render("get-user", sample~))]
+      let before = smock.status()
+      write(dir, "files/users/1.json", "Bob")
+      @fs.remove("\{dir}/10-users.json")
+      write(
+        dir, "10-users.json", "{ \"mocks\": [{ \"name\": \"users\" }], \"stubs\": [] }",
+      )
+      let after = smock.reloaded(before)
+      out.push(last_reload(after))
+      out.push(brief(smock.render("get-user", sample~)))
+      out.push(brief(smock.render("create-user", sample~)))
+      inspect(
+        out.join("\n"),
+        content=(
+          #|200 {"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false}
+          #|"swapped"
+          #|200 {"encoding":"utf-8","data":"Bob","size":3,"truncated":false}
+          #|404 "no Stub from the Definition files has the ID \"create-user\""
+        ),
+      )
+    })
+  })
+}
+
+///|
 async test "the Admin render operation answers with the rendering, the failed conditions and the warnings" {
   with_definitions(render_definitions, dir => {
     let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
