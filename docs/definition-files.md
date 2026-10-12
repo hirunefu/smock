@@ -242,6 +242,26 @@ for a Host that no Mock answers, get no `Smock-Near-Miss` header.
 A request that matches pays nothing for this: smock counts failed
 conditions only once every Stub has failed to match.
 
+The [Journal](../README.md#the-journal) records the full Near miss of each
+unmatched request: every condition it failed, with what the Stub expects
+and what the request sent. A test lists its Session's unmatched requests
+with `GET /v1/journal/unmatched`
+([README](../README.md#verifying-calls-and-unmatched-requests)).
+
+### Turning the Journal off for a Mock
+
+smock records every request a Mock answers in the Journal, unless the Mock
+says `"journal": false`. A Mock that takes a high-rate load test can turn it
+off, so that recording costs nothing:
+
+```json
+{ "mocks": [{ "name": "load-target", "hosts": ["api.example.com"], "journal": false }] }
+```
+
+A Journal query whose filter names such a Mock is refused with
+`journal_off`, rather than answered with no entries. `--journal off`
+turns the Journal off for every Mock.
+
 ## Responses
 
 A Stub's `response` has a `status`, `headers`, and a body. smock sets

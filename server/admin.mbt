@@ -9,6 +9,8 @@ priv struct Admin {
   build : @buildinfo.BuildInfo
   /// The metrics `/metrics` serves.
   metrics : @metrics.Registry
+  /// The metrics of the Journal, brought up to date on each scrape.
+  journal_metrics : JournalMetrics
   /// Where changes made through the Admin API are logged.
   logger : @log.Logger
   /// The token every operation needs, as UTF-8, or `None` when
@@ -51,17 +53,16 @@ priv struct Route {
 
 ///|
 /// Everything the admin port serves: the operations of the OpenAPI
-/// document, openapi/admin.json. Those that later tickets build answer 501
-/// until then.
+/// document, openapi/admin.json.
 let routes : Array[Route] = [
   route("/v1/status", "GET", status),
   route("/v1/mocks/{mock}/stubs", "GET", list_stubs),
   route("/v1/mocks/{mock}/stubs", "POST", add_stub, takes_body=true),
   route("/v1/mocks/{mock}/stubs/{id}", "DELETE", delete_stub),
   route("/v1/reset", "POST", reset, takes_body=true),
-  route("/v1/journal/query", "POST", not_implemented, takes_body=true),
-  route("/v1/journal/verify", "POST", not_implemented, takes_body=true),
-  route("/v1/journal/unmatched", "GET", not_implemented),
+  route("/v1/journal/query", "POST", query_journal, takes_body=true),
+  route("/v1/journal/verify", "POST", verify_journal, takes_body=true),
+  route("/v1/journal/unmatched", "GET", list_unmatched),
   route("/v1/stubs/{id}/render", "POST", render, takes_body=true),
   route("/startupz", "GET", startup_probe, open=true),
   route("/readyz", "GET", readiness_probe, open=true),
@@ -83,7 +84,8 @@ fn route(
 ///|
 /// Creates the Admin API of a process whose life `lifecycle` follows.
 ///
-/// - `metrics` holds the metrics `/metrics` serves.
+/// - `metrics` holds the metrics `/metrics` serves, among them
+///   `journal_metrics`.
 /// - `logger` logs each change made through the Admin API.
 /// - `token` is the bearer token every operation needs, or `None` to turn
 ///   authentication off.
@@ -95,6 +97,7 @@ fn Admin::new(
   lifecycle : Lifecycle,
   build : @buildinfo.BuildInfo,
   metrics~ : @metrics.Registry,
+  journal_metrics~ : JournalMetrics,
   logger~ : @log.Logger,
   token~ : String?,
   replica~ : String,
@@ -117,6 +120,7 @@ fn Admin::new(
     lifecycle,
     build,
     metrics,
+    journal_metrics,
     logger,
     token: token.map(token => @utf8.encode(token)),
     replica,
@@ -263,21 +267,6 @@ fn path_matches(template : String, path : String) -> Bool {
     let (t, a) = pair
     (t.has_prefix("{") && t.has_suffix("}") && a != "") || t == a
   })
-}
-
-///|
-/// Answers an operation that the document defines and a later ticket
-/// builds.
-fn not_implemented(
-  admin : Admin,
-  request : @http1.Request,
-  _body : Json?,
-) -> Reply {
-  admin.error(
-    501,
-    "not_implemented",
-    "\{request.meth} \{path_of(request.target)} is not implemented in this build",
-  )
 }
 
 ///|
@@ -470,7 +459,7 @@ fn render(admin : Admin, request : @http1.Request, body : Json?) -> Reply {
     Err(message) => return invalid(message)
     Ok(None) => @async.now()
     Ok(Some(text)) =>
-      match @settings.parse_time(text) {
+      match @log.parse_time(text) {
         Some(time) => time
         None =>
           return invalid(
@@ -539,8 +528,12 @@ fn query_parameter(target : String, name : String) -> Result[String?, String] {
 }
 
 ///|
-/// Serves every metric in the Prometheus text format.
+/// Serves every metric in the Prometheus text format. The Journal's are
+/// brought up to date first, once the definitions have loaded.
 fn metrics(admin : Admin, _request : @http1.Request, _body : Json?) -> Reply {
+  if admin.lifecycle.engine is Some(engine) {
+    admin.journal_metrics.update(engine.journal_stats())
+  }
   {
     status: 200,
     headers: [("Content-Type", "text/plain; version=0.0.4; charset=utf-8")],

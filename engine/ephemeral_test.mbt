@@ -81,7 +81,7 @@ fn Harness::brief(
     Bytes(body) => @utf8.decode_lossy(body)
     Events(_) => "(events)"
   }
-  "\{outcome.plan.status} \{body} (\{outcome.journal.stub.unwrap_or("no Stub")})"
+  "\{outcome.plan.status} \{body} (\{matched_id(outcome).unwrap_or("no Stub")})"
 }
 
 ///|

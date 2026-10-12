@@ -15,6 +15,8 @@ pub struct Engine {
   priv mut last_reload : ReloadResult?
   /// The Ephemeral Stubs, by Mock and Session.
   priv ephemeral : EphemeralStubs
+  /// The Journal: the entries committed, oldest first, within its bound.
+  priv journal : Journal
 }
 
 ///|
@@ -23,6 +25,8 @@ pub(all) struct Request {
   meth : String
   /// The request target as sent, such as `/users/1?x=y`.
   target : String
+  /// The protocol version, as the Journal records it, such as `HTTP/1.1`.
+  version : String
   /// The header fields in the order they were sent.
   headers : Array[(String, String)]
   body : Bytes
@@ -35,8 +39,10 @@ pub(all) struct Outcome {
   resolution : Resolution
   /// The response to send.
   plan : ResponsePlan
-  /// The Journal entry for the request. The caller commits it.
-  journal : JournalEntry
+  /// The Journal entry for the request, uncommitted: the caller commits it.
+  /// There is none when the Journal is off, globally or for the Mock that
+  /// answered.
+  journal : JournalEntry?
   /// The Near miss, when no Stub matched.
   near_miss : NearMiss?
   /// The Stub that matched, if any, and where it comes from.
@@ -106,23 +112,6 @@ pub(all) enum ConnectionFault {
 } derive(Debug)
 
 ///|
-/// A Journal entry the caller commits to the Journal.
-pub(all) struct JournalEntry {
-  session : String?
-  /// The Mock that answered, if any.
-  mock : String?
-  meth : String
-  target : String
-  headers : Array[(String, String)]
-  body : Bytes
-  /// The ID of the Stub that matched, if any.
-  stub : String?
-  status : Int
-  /// When the request was received, in milliseconds since the Unix epoch.
-  received_at : Int64
-} derive(Debug)
-
-///|
 /// Creates an engine that serves `snapshot`. Each Stub with a seed gets its
 /// own generator, created from its seed.
 ///
@@ -130,9 +119,12 @@ pub(all) struct JournalEntry {
 /// matching order instead of finding them through the snapshot's match
 /// index. The outcome is the same either way, only slower; tests use it as
 /// the oracle the index is checked against.
+///
+/// `journal` bounds the Journal and says whether it is on.
 pub fn Engine::Engine(
   snapshot : @definitions.Snapshot,
   match_index? : Bool = true,
+  journal? : JournalSettings = JournalSettings(),
 ) -> Engine {
   {
     snapshot,
@@ -140,6 +132,7 @@ pub fn Engine::Engine(
     match_index,
     last_reload: None,
     ephemeral: EphemeralStubs::new(),
+    journal: Journal::new(journal),
   }
 }
 
@@ -339,20 +332,28 @@ pub fn Engine::handle(
   if resolution is ViaDefault(name) {
     plan.headers.push(("Smock-Mock", "\{header_safe(name)}; via=default"))
   }
+  let stub = matched.map(matched => matched.0.id)
+  let journal = if self.journal.records(mock) {
+    Some(
+      self.journal.entry(
+        request,
+        session~,
+        host~,
+        resolution~,
+        stub~,
+        near_miss~,
+        plan~,
+        digest=self.snapshot.digest,
+        now~,
+      ),
+    )
+  } else {
+    None
+  }
   {
     resolution,
     plan,
-    journal: {
-      session,
-      mock: mock.map(mock => mock.name),
-      meth: request.meth,
-      target: request.target,
-      headers: request.headers,
-      body: request.body,
-      stub: matched.map(matched => matched.0.id),
-      status: plan.status,
-      received_at: now,
-    },
+    journal,
     near_miss,
     matched: matched.map(matched => {
       let (stub, _, ephemeral) = matched

@@ -5,7 +5,8 @@ struct Harness {
   engine : @engine.Engine
   /// The process generator.
   rand : @prng.Generator
-  now : Int64
+  /// The time requests are received at; a test may move it on.
+  mut now : Int64
 }
 
 ///|
@@ -15,11 +16,13 @@ let fixed_now : Int64 = 1_791_815_405_123L
 ///|
 /// Builds an engine from Definition files given as (name, JSON text) pairs,
 /// and body files as (name, bytes) pairs, with a process generator seeded
-/// with `process_seed`. Fails the test if the set is invalid.
+/// with `process_seed`, and the Journal settings `journal`. Fails the test
+/// if the set is invalid.
 fn harness(
   files : Array[(String, String)],
   body_files? : Array[(String, Bytes)] = [],
   process_seed? : UInt64 = 1,
+  journal? : @engine.JournalSettings = @engine.JournalSettings(),
 ) -> Harness {
   let set : @definitions.DefinitionSet = {
     files: files.map(file => (file.0, @utf8.encode(file.1))),
@@ -28,11 +31,21 @@ fn harness(
   match @definitions.load(set) {
     Ok(snapshot) =>
       {
-        engine: @engine.Engine(snapshot),
+        engine: @engine.Engine(snapshot, journal~),
         rand: @prng.Generator(process_seed),
         now: fixed_now,
       }
     Err(diagnostics) => abort(diagnostics.map(d => d.to_string()).join("\n"))
+  }
+}
+
+///|
+/// The ID of the Stub that matched in `outcome`, from a Definition file or
+/// an Ephemeral Stub, if any.
+fn matched_id(outcome : @engine.Outcome) -> String? {
+  match outcome.matched {
+    Some(FromFile(id)) | Some(Ephemeral(id)) => Some(id)
+    None => None
   }
 }
 
@@ -48,7 +61,7 @@ fn Harness::send(
   session? : String,
 ) -> @engine.Outcome {
   self.engine.handle(
-    { meth, target, headers, body: @utf8.encode(body), },
+    { meth, target, version: "HTTP/1.1", headers, body: @utf8.encode(body), },
     session~,
     now=self.now,
     rand=self.rand,
@@ -79,7 +92,6 @@ fn response(outcome : @engine.Outcome) -> String {
 /// Near miss, with bodies shown as text.
 fn describe(outcome : @engine.Outcome) -> String {
   let plan = outcome.plan
-  let journal = outcome.journal
   let out = StringBuilder()
   out.write_string("plan:\n")
   out.write_string("  status: \{plan.status}\n")
@@ -95,17 +107,27 @@ fn describe(outcome : @engine.Outcome) -> String {
   }
   out.write_string("  delay_ms: \{plan.delay_ms}\n")
   out.write_string("  fault: \{@debug.to_string(plan.fault)}\n")
-  out.write_string("journal:\n")
-  out.write_string("  session: \{@debug.to_string(journal.session)}\n")
-  out.write_string("  mock: \{@debug.to_string(journal.mock)}\n")
-  out.write_string("  request: \{journal.meth} \{journal.target}\n")
-  for header in journal.headers {
-    out.write_string("  header: \{header.0}: \{header.1}\n")
+  match outcome.journal {
+    None => out.write_string("journal: none\n")
+    Some(journal) => {
+      out.write_string("journal:\n")
+      out.write_string("  session: \{@debug.to_string(journal.session)}\n")
+      out.write_string("  host: \{@debug.to_string(journal.host)}\n")
+      out.write_string("  mock: \{@debug.to_string(journal.mock)}\n")
+      out.write_string("  via_default: \{journal.via_default}\n")
+      out.write_string(
+        "  request: \{journal.meth} \{journal.target} \{journal.version}\n",
+      )
+      for header in journal.headers {
+        out.write_string("  header: \{header.0}: \{header.1}\n")
+      }
+      out.write_string("  body: \{text(journal.body)}\n")
+      out.write_string("  stub: \{@debug.to_string(journal.stub)}\n")
+      out.write_string("  status: \{@debug.to_string(journal.status)}\n")
+      out.write_string("  fault: \{@debug.to_string(journal.fault)}\n")
+      out.write_string("  received_at: \{journal.received_at}\n")
+    }
   }
-  out.write_string("  body: \{text(journal.body)}\n")
-  out.write_string("  stub: \{@debug.to_string(journal.stub)}\n")
-  out.write_string("  status: \{journal.status}\n")
-  out.write_string("  received_at: \{journal.received_at}\n")
   out.write_string("near_miss: \{@debug.to_string(outcome.near_miss)}")
   out.to_string()
 }

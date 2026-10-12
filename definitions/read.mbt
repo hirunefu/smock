@@ -112,6 +112,8 @@ priv struct MockDecl {
   default : String?
   /// The status of the response when no Stub matches.
   no_match_status : Int
+  /// Whether the Journal records the requests the Mock answers.
+  journal : Bool
 }
 
 ///|
@@ -304,6 +306,7 @@ fn File::read_mock(self : File, pointer : String, json : Json) -> MockDecl? {
   let mut hosts = []
   let mut default = None
   let mut no_match_status = 404
+  let mut journal = true
   for key, value in mock {
     let field = child(pointer, key)
     match key {
@@ -316,12 +319,17 @@ fn File::read_mock(self : File, pointer : String, json : Json) -> MockDecl? {
           _ => self.error(field, "must be true or false")
         }
       "noMatch" => no_match_status = self.read_no_match(field, value)
-      "journal" => self.not_supported(field)
+      "journal" =>
+        match value {
+          True => journal = true
+          False => journal = false
+          _ => self.error(field, "must be true or false")
+        }
       _ => self.unknown_field(field)
     }
   }
   self.require(mock, pointer, "name")
-  name.map(name => { name, hosts, default, no_match_status, })
+  name.map(name => { name, hosts, default, no_match_status, journal, })
 }
 
 ///|

@@ -34,12 +34,15 @@ test "an events Stub plans Content-Type: text/event-stream with its status and h
       #|  fault: None
       #|journal:
       #|  session: None
+      #|  host: Some("m.example")
       #|  mock: Some("m")
-      #|  request: GET /events
+      #|  via_default: false
+      #|  request: GET /events HTTP/1.1
       #|  header: Host: m.example
       #|  body: ""
       #|  stub: Some("stream")
-      #|  status: 201
+      #|  status: Some(201)
+      #|  fault: None
       #|  received_at: 1791815405123
       #|near_miss: None
     ),
