@@ -21,11 +21,20 @@ pub fn BuildInfo::version_line(self : BuildInfo) -> String {
 }
 
 ///|
-/// Writes the startup entry, the first entry `smock serve` logs.
-pub fn BuildInfo::log_startup(self : BuildInfo, logger : @log.Logger) -> Unit {
-  logger.info("smock starting", fields={
+/// Writes the startup entry, the first entry `smock serve` logs: the
+/// version, the commit and the toolchain, then `fields`.
+pub fn BuildInfo::log_startup(
+  self : BuildInfo,
+  logger : @log.Logger,
+  fields? : Map[String, Json] = {},
+) -> Unit {
+  let entry : Map[String, Json] = {
     "version": Json::string(self.version),
     "commit": Json::string(self.commit),
     "toolchain": Json::string(self.toolchain),
-  })
+  }
+  for key, value in fields {
+    entry[key] = value
+  }
+  logger.info("smock starting", fields=entry)
 }

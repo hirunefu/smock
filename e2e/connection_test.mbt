@@ -23,7 +23,7 @@ let any_method : String =
 ///|
 /// The log lines of a smock process that wrote nothing after it started.
 let startup_only : String =
-  #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+  #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
   #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
   #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
 

@@ -108,7 +108,7 @@ async test "with an invalid definition set, smock logs every error with its file
         "status \{stopped.status}\n" + entries(stopped.logs),
         content=(
           #|status 1
-          #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+          #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
           #|{"level":"error","msg":"invalid definitions","file":"broken.json","pointer":"/stubs/0/id","error":"must be a non-empty string"}
           #|{"level":"error","msg":"invalid definitions","file":"broken.json","pointer":"/stubs/0","error":"needs \"response\""}
           #|{"level":"error","msg":"invalid definitions","file":"orders.yaml","pointer":"/stubs/0/request/method","error":"\"on\" may be read as a boolean; quote this value"}
@@ -128,7 +128,7 @@ async test "when the port is taken, smock logs that it cannot listen and exits w
       "status \{second.status}\n\{entries(second.logs)}",
       content=(
         #|status 1
-        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"error","msg":"cannot listen","listener":"plain","address":"0.0.0.0:*","error":"OSError(\"@socket.TcpServer::new(): Address already in use\")"}
       ),
     )
@@ -148,7 +148,7 @@ async test "logs start with the startup entry, then the listening address, and h
       "status \{stopped.status}\n" + entries(stopped.logs),
       content=(
         #|status -15
-        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
       ),

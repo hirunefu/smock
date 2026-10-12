@@ -9,6 +9,14 @@ pub async fn serve(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
 ) -> Int {
+  let token = if settings.admin_auth {
+    match read_admin_token(settings, logger) {
+      Some(token) => Some(token)
+      None => return 1
+    }
+  } else {
+    None
+  }
   let snapshot = match
     @defdir.load(settings.dir, body_file_dir=settings.body_file_dir) {
     Ok(snapshot) => snapshot
@@ -28,6 +36,7 @@ pub async fn serve(
   let admin = Admin::new(
     engine,
     @buildinfo.current(),
+    token~,
     replica=replica_name(),
     replicas=settings.replicas,
   )

@@ -54,3 +54,184 @@ async test "without Definition files, status shows the one empty Default Mock" {
     ])
   })
 }
+
+///|
+/// A response as its status, the headers a test cares about and its body,
+/// one per line.
+fn summary(response : AdminResponse) -> String {
+  let out = StringBuilder()
+  out.write_string("\{response.status}")
+  for name in ["WWW-Authenticate", "Allow"] {
+    if response.header(name) is Some(value) {
+      out.write_string("\n\{name}: \{value}")
+    }
+  }
+  out.write_string("\n\{response.body}")
+  out.to_string()
+}
+
+///|
+async test "a missing or wrong bearer token gets 401 with WWW-Authenticate: Bearer; the right one gets through" {
+  let _ = with_smock(["--port", "0"], smock => {
+    let calls = [
+      ("no token", smock.admin("GET", "/v1/status", token=None)),
+      ("a wrong token", smock.admin("GET", "/v1/status", token=Some("wrong"))),
+      (
+        "a prefix of the token",
+        smock.admin("GET", "/v1/status", token=Some(test_token[:4].to_owned())),
+      ),
+      (
+        "the token with a character more",
+        smock.admin("GET", "/v1/status", token=Some(test_token + "x")),
+      ),
+      (
+        "the token in Basic credentials",
+        smock.admin("GET", "/v1/status", token=None, headers=[
+          ("Authorization", "Basic \{test_token}"),
+        ]),
+      ),
+    ]
+    let out = []
+    for call in calls {
+      let (name, response) = call
+      conforms("GET", "/v1/status", response)
+      out.push("\{name}: \{summary(response)}")
+    }
+    let right = smock.admin("GET", "/v1/status")
+    conforms("GET", "/v1/status", right)
+    out.push("the right token: \{right.status}")
+    inspect(
+      out.join("\n"),
+      content=(
+        #|no token: 401
+        #|WWW-Authenticate: Bearer
+        #|{"error":"unauthorized","message":"the Admin API needs Authorization: Bearer <token>","warnings":[]}
+        #|a wrong token: 401
+        #|WWW-Authenticate: Bearer
+        #|{"error":"unauthorized","message":"the bearer token is wrong","warnings":[]}
+        #|a prefix of the token: 401
+        #|WWW-Authenticate: Bearer
+        #|{"error":"unauthorized","message":"the bearer token is wrong","warnings":[]}
+        #|the token with a character more: 401
+        #|WWW-Authenticate: Bearer
+        #|{"error":"unauthorized","message":"the bearer token is wrong","warnings":[]}
+        #|the token in Basic credentials: 401
+        #|WWW-Authenticate: Bearer
+        #|{"error":"unauthorized","message":"the Admin API needs Authorization: Bearer <token>","warnings":[]}
+        #|the right token: 200
+      ),
+    )
+  })
+}
+
+///|
+async test "with --admin-auth off, no operation needs a token, and the startup entry says authentication is off" {
+  let out = []
+  let stopped = with_smock(
+    ["--port", "0", "--admin-auth", "off"],
+    env={ "SMOCK_ADMIN_TOKEN": "" },
+    smock => {
+      for call in [("no token", None), ("any token", Some("anything"))] {
+        let (name, token) = call
+        let response = smock.admin("GET", "/v1/status", token~)
+        conforms("GET", "/v1/status", response)
+        out.push("\{name}: \{response.status}")
+      }
+    },
+  )
+  out.push(entries([stopped.logs[0]]))
+  inspect(
+    out.join("\n"),
+    content=(
+      #|no token: 200
+      #|any token: 200
+      #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"off"}
+    ),
+  )
+}
+
+///|
+async test "authentication is on by default, and the startup entry says so" {
+  let stopped = with_smock(["--port", "0"], smock => {
+    inspect(smock.admin("GET", "/v1/status", token=None).status, content="401")
+  })
+  inspect(
+    entries([stopped.logs[0]]),
+    content=(
+      #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
+    ),
+  )
+}
+
+///|
+async test "with authentication on, smock refuses to start without exactly one token, logs why and exits with status 1" {
+  with_definitions([("empty-token", " \n"), ("token", "from-file\n")], dir => {
+    let runs = [
+      ("no token", [], { "SMOCK_ADMIN_TOKEN": "" }),
+      ("a blank SMOCK_ADMIN_TOKEN", [], { "SMOCK_ADMIN_TOKEN": " \t" }),
+      (
+        "an empty token file",
+        ["--admin-token-file", "\{dir}/empty-token"],
+        { "SMOCK_ADMIN_TOKEN": "" },
+      ),
+      (
+        "a missing token file",
+        ["--admin-token-file", "\{dir}/missing"],
+        { "SMOCK_ADMIN_TOKEN": "" },
+      ),
+      (
+        "a token file and SMOCK_ADMIN_TOKEN",
+        ["--admin-token-file", "\{dir}/token"],
+        { "SMOCK_ADMIN_TOKEN": "from-variable" },
+      ),
+    ]
+    let out = []
+    for run in runs {
+      let (name, args, env) = run
+      let stopped = run_smock(["serve", "--port", "0", ..args], env~)
+      out.push(
+        "\{name}: status \{stopped.status}\n" +
+        entries(stopped.logs[1:].to_owned()).replace_all(old=dir, new="<dir>"),
+      )
+    }
+    inspect(
+      out.join("\n"),
+      content=(
+        #|no token: status 1
+        #|{"level":"error","msg":"no Admin API token","error":"Admin API authentication is on, but no token is set: set --admin-token-file (SMOCK_ADMIN_TOKEN_FILE) or SMOCK_ADMIN_TOKEN, or turn authentication off with --admin-auth off"}
+        #|a blank SMOCK_ADMIN_TOKEN: status 1
+        #|{"level":"error","msg":"no Admin API token","error":"Admin API authentication is on, but no token is set: set --admin-token-file (SMOCK_ADMIN_TOKEN_FILE) or SMOCK_ADMIN_TOKEN, or turn authentication off with --admin-auth off"}
+        #|an empty token file: status 1
+        #|{"level":"error","msg":"no Admin API token","error":"the token file \"<dir>/empty-token\" is empty"}
+        #|a missing token file: status 1
+        #|{"level":"error","msg":"no Admin API token","error":"cannot read the token file \"<dir>/missing\": no such file"}
+        #|a token file and SMOCK_ADMIN_TOKEN: status 1
+        #|{"level":"error","msg":"no Admin API token","error":"both --admin-token-file (SMOCK_ADMIN_TOKEN_FILE) and SMOCK_ADMIN_TOKEN are set; set only one"}
+      ),
+    )
+  })
+}
+
+///|
+async test "the token can come from a file, without the whitespace around it" {
+  with_definitions([("token", "  from-file\n")], dir => {
+    let _ = with_smock(
+      ["--port", "0", "--admin-token-file", "\{dir}/token"],
+      env={ "SMOCK_ADMIN_TOKEN": "" },
+      smock => {
+        let out = []
+        for token in ["from-file", test_token] {
+          let response = smock.admin("GET", "/v1/status", token=Some(token))
+          out.push("\{token}: \{response.status}")
+        }
+        inspect(
+          out.join("\n"),
+          content=(
+            #|from-file: 200
+            #|e2e-admin-token: 401
+          ),
+        )
+      },
+    )
+  })
+}

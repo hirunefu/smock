@@ -6,6 +6,9 @@
 priv struct Admin {
   engine : @engine.Engine
   build : @buildinfo.BuildInfo
+  /// The token every operation needs, as UTF-8, or `None` when
+  /// authentication is off.
+  token : Bytes?
   /// The replica's name, as the `Smock-Replica` header carries it.
   replica : String
   /// The warnings every JSON response carries.
@@ -37,11 +40,14 @@ let routes : Array[Route] = [
 ///|
 /// Creates the Admin API of a process that serves through `engine`.
 ///
+/// - `token` is the bearer token every operation needs, or `None` to turn
+///   authentication off.
 /// - `replica` is the replica's name, such as the Pod's hostname.
 /// - `replicas` is how many replicas the deployment runs.
 fn Admin::new(
   engine : @engine.Engine,
   build : @buildinfo.BuildInfo,
+  token~ : String?,
   replica~ : String,
   replicas~ : Int,
 ) -> Admin {
@@ -56,7 +62,13 @@ fn Admin::new(
   } else {
     []
   }
-  { engine, build, replica, warnings: Json::array(warnings), }
+  {
+    engine,
+    build,
+    token: token.map(token => @utf8.encode(token)),
+    replica,
+    warnings: Json::array(warnings),
+  }
 }
 
 ///|
@@ -116,6 +128,17 @@ fn Admin::error(
 ///|
 /// The reply to `request`.
 fn Admin::handle(self : Admin, request : @http1.Request) -> Reply {
+  if self.token is Some(token) {
+    match bearer_token(request) {
+      None =>
+        return self.unauthorized(
+          "the Admin API needs Authorization: Bearer <token>",
+        )
+      Some(given) if !same_token(token, given) =>
+        return self.unauthorized("the bearer token is wrong")
+      Some(_) => ()
+    }
+  }
   let path = path_of(request.target)
   for route in routes {
     if route.path == path && route.meth == request.meth {
@@ -123,6 +146,64 @@ fn Admin::handle(self : Admin, request : @http1.Request) -> Reply {
     }
   }
   self.json(404, {})
+}
+
+///|
+/// The reply to a request without the right bearer token.
+fn Admin::unauthorized(self : Admin, message : String) -> Reply {
+  let reply = self.error(401, "unauthorized", message)
+  reply.headers.push(("WWW-Authenticate", "Bearer"))
+  reply
+}
+
+///|
+/// The token of the request's `Authorization: Bearer <token>` field. A
+/// request has none without exactly one Authorization field, or when the
+/// field uses another scheme.
+fn bearer_token(request : @http1.Request) -> BytesView? {
+  let fields = request.headers.filter(header => {
+    header.name.to_lower() == "authorization"
+  })
+  guard fields is [field] else { return None }
+  let value = field.value[:]
+  let scheme = "bearer"
+  guard value.length() > scheme.length() &&
+    value[scheme.length()] is (b' ' | b'\t') else {
+    return None
+  }
+  for i, c in scheme {
+    let byte = value[i]
+    let lower = if byte >= b'A' && byte <= b'Z' { byte + 32 } else { byte }
+    if lower.to_int() != c.to_int() {
+      return None
+    }
+  }
+  let mut start = scheme.length()
+  while start < value.length() && value[start] is (b' ' | b'\t') {
+    start += 1
+  }
+  if start == value.length() {
+    None
+  } else {
+    Some(value[start:])
+  }
+}
+
+///|
+/// Whether `given` is `token`, compared in constant time: the time taken
+/// depends on the length of `token` only, never on how much of `given`
+/// matches it.
+fn same_token(token : Bytes, given : BytesView) -> Bool {
+  let mut difference = token.length() ^ given.length()
+  for i, byte in token {
+    let other = if given.length() == 0 {
+      0
+    } else {
+      given[i % given.length()].to_int()
+    }
+    difference = difference | (byte.to_int() ^ other)
+  }
+  difference == 0
 }
 
 ///|

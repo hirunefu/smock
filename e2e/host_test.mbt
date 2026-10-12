@@ -215,7 +215,7 @@ async test "two Mocks claiming one Host, or two Default Mocks, fail smock check 
       "status \{stopped.status}\n" + entries(stopped.logs),
       content=(
         #|status 1
-        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"error","msg":"invalid definitions","file":"b.yaml","pointer":"/mocks/0/hosts/0","error":"the Host \"users.example.com\" is already claimed by the Mock \"users\" at a.json: /mocks/0/hosts/0"}
         #|{"level":"error","msg":"invalid definitions","file":"b.yaml","pointer":"/mocks/0/default","error":"the Default Mock is already \"users\", marked at a.json: /mocks/0/default"}
       ),
