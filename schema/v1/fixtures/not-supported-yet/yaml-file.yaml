@@ -1,0 +1,11 @@
+mocks:
+  - name: users
+stubs:
+  - id: get-user
+    mock: users
+    request:
+      method: GET
+      path: /users/1
+    response:
+      status: 200
+      body: '{"id":1}'

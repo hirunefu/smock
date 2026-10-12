@@ -1,0 +1,20 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "get-user",
+      "mock": "users",
+      "response": {
+        "status": 200,
+        "headers": {
+          "X-Token!#$%&'*+.^_`|~": "tab\tand é",
+          "x-empty": ""
+        }
+      }
+    }
+  ]
+}

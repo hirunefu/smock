@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "get-user",
+      "mock": "users",
+      "request": {
+        "method": "GET",
+        "path": "/users/1"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": "{\"id\":1,\"name\":\"Alice\"}"
+      }
+    },
+    {
+      "id": "create-user",
+      "mock": "users",
+      "request": {
+        "method": "POST",
+        "path": "/users"
+      },
+      "response": {
+        "status": 201
+      }
+    }
+  ]
+}

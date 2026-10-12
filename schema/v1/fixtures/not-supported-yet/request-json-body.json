@@ -1,0 +1,30 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "get-user",
+      "mock": "users",
+      "request": {
+        "method": "POST",
+        "body": {
+          "json": {
+            "name": "Alice",
+            "tags": [
+              "a",
+              1,
+              null,
+              true
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

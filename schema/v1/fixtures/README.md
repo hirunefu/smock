@@ -1,0 +1,28 @@
+# Definition-file fixtures
+
+`scripts/check-schema.sh` checks every file here twice, each alone in a
+definitions directory: with an external JSON Schema validator against
+`../definitions.json`, and with `smock check`. Both verdicts must match the
+directory the file is in, so CI fails as soon as smock and the Schema
+disagree.
+
+| Directory | The Schema | smock |
+|---|---|---|
+| `valid/` | accepts it | accepts it |
+| `invalid/` | rejects it | rejects it |
+| `invalid-beyond-schema/` | accepts it | rejects it, for a reason the Schema cannot see |
+| `not-supported-yet/` | accepts it | rejects it as "not supported yet" |
+
+- `invalid-beyond-schema/` holds files that break a rule the Schema cannot
+  express, such as a rule across the files of a definition set: duplicate
+  Mock names or Stub IDs, or a Stub that names a Mock no file declares.
+  Files that are invalid only because of an RE2 pattern or a missing body
+  file belong here too.
+- `not-supported-yet/` holds files that use a field the Schema defines but
+  smock does not implement yet. When a ticket implements the field, it moves
+  them to `valid/`, or to `invalid-beyond-schema/` when they stay invalid
+  for another reason.
+
+Adding a fixture is adding a file, named after what it shows and ending in
+`.json`, `.yaml` or `.yml`. `valid/users-from-jsonnet.json` is exported from
+the Jsonnet example in `docs/definition-files.md`.
