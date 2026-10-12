@@ -1,0 +1,8 @@
+{
+  "mocks": [
+    {"name": "catalog", "hosts": ["catalog.bench.internal"]},
+    {"name": "users", "hosts": ["users.bench.internal"]},
+    {"name": "orders", "hosts": ["orders.bench.internal"]},
+    {"name": "payments", "hosts": ["payments.bench.internal"], "default": true}
+  ]
+}
