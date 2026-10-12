@@ -4,6 +4,8 @@
 /// key, the time and a random source, and carries out the plan it returns.
 pub struct Engine {
   priv snapshot : @definitions.Snapshot
+  /// The generators of the Stubs that have a seed, by Stub ID.
+  priv generators : Map[String, @prng.Generator]
 }
 
 ///|
@@ -107,9 +109,10 @@ pub(all) struct NearMiss {
 } derive(Debug)
 
 ///|
-/// Creates an engine that serves `snapshot`.
+/// Creates an engine that serves `snapshot`. Each Stub with a seed gets its
+/// own generator, created from its seed.
 pub fn Engine::Engine(snapshot : @definitions.Snapshot) -> Engine {
-  { snapshot, }
+  { snapshot, generators: seeded_generators(snapshot), }
 }
 
 ///|
@@ -118,16 +121,15 @@ pub fn Engine::Engine(snapshot : @definitions.Snapshot) -> Engine {
 /// - `session` is the request's Session key, or `None` without a Session.
 /// - `now` is the time the request was received, in milliseconds since the
 ///   Unix epoch.
-/// - `rand` is the process's random source.
+/// - `rand` is the process generator. Fault decisions for Stubs without a
+///   seed draw from it.
 pub fn Engine::handle(
   self : Engine,
   request : Request,
   session~ : String?,
   now~ : Int64,
-  rand~ : @random.Rand,
+  rand~ : @prng.Generator,
 ) -> Outcome {
-  // Faults and templates draw from `rand` once their tickets land.
-  ignore(rand)
   let host = host_of(request)
   let (resolution, mock) = match
     host.bind(host => self.snapshot.mock_for_host(host)) {
@@ -146,14 +148,16 @@ pub fn Engine::handle(
   }
   let plan : ResponsePlan = match (mock, matched) {
     (None, _) => no_mock(host, self.snapshot.hosts())
-    (Some(_), Some(stub)) =>
+    (Some(_), Some(stub)) => {
+      let (delay_ms, fault) = self.decide_faults(stub, rand)
       {
         status: stub.response.status,
         headers: stub.response.headers.iter().collect(),
         body: Bytes(stub.response.body),
-        delay_ms: 0,
-        fault: None,
+        delay_ms,
+        fault,
       }
+    }
     (Some(mock), None) => no_match(mock)
   }
   // A mistyped Host must not silently succeed.

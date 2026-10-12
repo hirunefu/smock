@@ -166,6 +166,77 @@ with `.`. A path that breaks this rule, or names a file that does not
 exist, is reported with the file and JSON Pointer of the `bodyFile`, by
 `smock check` and when `smock serve` starts.
 
+## Faults
+
+A Stub can inject Faults, to test how a client handles slow and failing
+calls. Its `fault` has a delay, a connection Fault, or both, and an optional
+seed:
+
+```json
+{
+  "id": "get-user",
+  "mock": "users",
+  "request": { "method": "GET", "path": "/users/1" },
+  "response": { "status": 200, "body": "{\"id\":1}" },
+  "fault": {
+    "delay": { "lognormal": { "median": 80, "sigma": 0.6 }, "probability": 0.5 },
+    "connection": { "kind": "close", "probability": 0.01 },
+    "seed": 42
+  }
+}
+```
+
+### Delays
+
+A `delay` makes smock wait before it writes the status line. Meanwhile it
+keeps serving other connections. The delay is drawn from one distribution,
+in whole milliseconds:
+
+| Distribution | Delay |
+|---|---|
+| `"fixed": 100` | always 100 ms. |
+| `"uniform": { "min": 50, "max": 150 }` | a whole number of milliseconds from `min` to `max`, both included, each equally likely. `min` must not exceed `max`. |
+| `"lognormal": { "median": 80, "sigma": 0.6 }` | log-normal: half the delays are below `median`, and `sigma`, the standard deviation of the delay's natural logarithm, sets how long the tail of slow responses is. |
+
+`probability`, from 0 to 1, is the share of matched requests that are
+delayed. Without it, every matched request is.
+
+### Connection Faults
+
+A `connection` Fault makes a request fail at the connection level, instead
+of getting its response:
+
+- `close`: smock reads the request, then closes the connection (a FIN)
+  without writing anything.
+- `partial`: smock writes the status line, the headers, with the
+  `Content-Length` of the whole body, and the first half of the body, then
+  closes the connection. The client sees a response cut short.
+- `reset` is in the JSON Schema but not supported yet.
+
+`probability`, from 0 to 1, is the share of matched requests that fail;
+without it, every matched request fails. A Stub with both a delay and a
+connection Fault waits first, then fails.
+
+### Seeds
+
+Each matched request draws whether its delay and its connection Fault
+apply, and how long the delay is.
+
+- A Stub with a `seed`, from 0 to 9007199254740991, has its own generator.
+  smock creates it when it loads the Definition files, and it advances once
+  per request the Stub matches. So the n-th request a seeded Stub matches
+  gets the same Faults in every run, whatever requests other Stubs get. The
+  generator is a fixed algorithm, the same on every platform.
+- Stubs without a seed draw from the process generator, which they share.
+  smock picks its seed at startup and logs it:
+
+  ```json
+  {"time":"2026-10-13T09:12:44.512Z","level":"info","msg":"random seed","seed":5126750341862113}
+  ```
+
+  To replay a run, start smock with that seed (`--seed`, `SMOCK_SEED`): the
+  same requests in the same order then get the same Faults.
+
 ## The JSON Schema
 
 The format of Definition files is published as a JSON Schema, one per

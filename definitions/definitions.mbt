@@ -97,6 +97,62 @@ pub struct Stub {
   priority : Int?
   request : Conditions
   response : Response
+  /// The Faults the Stub injects when it matches, if it has `fault`.
+  fault : Fault?
+} derive(Debug, Eq)
+
+///|
+/// The Faults a Stub injects when it matches. Their random draws come from
+/// the Stub's own generator when it has a seed, and otherwise from the
+/// process generator.
+pub struct Fault {
+  /// A delay before the status line is written.
+  delay : Delay?
+  /// A connection Fault, injected instead of the response.
+  connection : ConnectionFault?
+  /// The seed of the Stub's own generator, from 0 to 2^53 - 1.
+  seed : UInt64?
+} derive(Debug, Eq)
+
+///|
+/// A delay drawn from a distribution, applied to a share of the matched
+/// requests.
+pub struct Delay {
+  distribution : Distribution
+  /// The share of matched requests the delay applies to, from 0 to 1.
+  probability : Double
+} derive(Debug, Eq)
+
+///|
+/// A distribution of delays, in whole milliseconds.
+pub enum Distribution {
+  /// Always this many milliseconds.
+  Fixed(Int)
+  /// A whole number of milliseconds drawn uniformly from `min` to `max`,
+  /// both included. `min` does not exceed `max`.
+  Uniform(min~ : Int, max~ : Int)
+  /// A number of milliseconds drawn from a log-normal distribution with
+  /// this median, where `sigma` is the standard deviation of its natural
+  /// logarithm.
+  Lognormal(median~ : Int, sigma~ : Double)
+} derive(Debug, Eq)
+
+///|
+/// A connection Fault, applied to a share of the matched requests.
+pub struct ConnectionFault {
+  kind : ConnectionKind
+  /// The share of matched requests the Fault applies to, from 0 to 1.
+  probability : Double
+} derive(Debug, Eq)
+
+///|
+/// How a connection Fault ends the connection.
+pub enum ConnectionKind {
+  /// Close the connection without writing anything.
+  Close
+  /// Write the status line, the headers and the first half of the body,
+  /// then close the connection.
+  Partial
 } derive(Debug, Eq)
 
 ///|

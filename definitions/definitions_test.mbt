@@ -304,7 +304,7 @@ test "a field the Schema defines but smock does not implement yet is rejected as
           #|      "body": { "pattern": "{}" } },
           #|    "response": { "status": 200,
           #|      "template": true, "events": [{ "data": "x" }] },
-          #|    "fault": { "seed": 1 } }] }
+          #|    "fault": { "connection": { "kind": "reset" } } }] }
         ),
       ),
     ]),
@@ -316,7 +316,7 @@ test "a field the Schema defines but smock does not implement yet is rejected as
       #|a.json: /stubs/0/request/body: pattern conditions are not supported yet
       #|a.json: /stubs/0/response/template: is not supported yet
       #|a.json: /stubs/0/response/events: is not supported yet
-      #|a.json: /stubs/0/fault: is not supported yet
+      #|a.json: /stubs/0/fault/connection/kind: "reset" is not supported yet
     ),
   )
 }

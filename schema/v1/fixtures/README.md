@@ -18,8 +18,8 @@ disagree.
   duplicate Mock names or Stub IDs, two Mocks that claim the same Host
   after normalisation, more than one Mock marked `default`, or a Stub that
   names a Mock no file declares.
-  Files that are invalid only because of an RE2 pattern or a missing body
-  file belong here too.
+  Files that are invalid only because of an RE2 pattern, a missing body
+  file or a uniform delay whose `min` exceeds its `max` belong here too.
 - `not-supported-yet/` holds files that use a field the Schema defines but
   smock does not implement yet. When a ticket implements the field, it moves
   them to `valid/`, or to `invalid-beyond-schema/` when they stay invalid

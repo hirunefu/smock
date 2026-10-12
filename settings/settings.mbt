@@ -36,6 +36,9 @@ pub(all) struct ServeSettings {
   read_timeout_ms : Int
   /// How long, in milliseconds, a connection may wait for its next request.
   idle_timeout_ms : Int
+  /// The seed of the process generator, from 0 to 2^53 - 1, or `None` for
+  /// one that smock picks at startup.
+  seed : UInt64?
 } derive(Debug)
 
 ///|
@@ -154,6 +157,11 @@ let serve_settings : Array[Setting] = [
     name: "idle-timeout-ms",
     about: "How long a connection may wait for a request, in milliseconds. Then it closes.",
     default: Some("60000"),
+  },
+  {
+    name: "seed",
+    about: "The seed of the process random generator, from 0 to 9007199254740991. Faults of Stubs without their own seed draw from it. Without it, smock picks a seed at startup and logs it.",
+    default: None,
   },
 ]
 
@@ -282,7 +290,38 @@ pub fn ServeSettings::from_matches(
       min=1,
       max=max_duration_ms,
     ),
+    seed: seed_value(matches, "seed"),
   }
+}
+
+///|
+/// The largest seed, 2^53 - 1, as in Definition files, where a seed is a
+/// JSON number that holds it exactly.
+let max_seed : UInt64 = 9007199254740991
+
+///|
+/// The value of a seed setting, when given: a decimal integer from 0 to
+/// `max_seed`.
+fn seed_value(
+  matches : @argparse.Matches,
+  name : String,
+) -> UInt64? raise InvalidSetting {
+  guard value(matches, name) is Some(text) else { return None }
+  let reason = "must be an integer from 0 to \{max_seed}"
+  // Decimal digits only: no sign, prefix or separator. Sixteen digits hold
+  // every seed, and a UInt64 every sixteen-digit number.
+  if text == "" ||
+    text.length() > 16 ||
+    !text.iter().all(c => c >= '0' && c <= '9') {
+    raise invalid(name, text, reason)
+  }
+  let n = text.fold(init=0UL, (n, c) => {
+    n * 10UL + (c.to_int() - '0'.to_int()).to_uint64()
+  })
+  if n > max_seed {
+    raise invalid(name, text, reason)
+  }
+  Some(n)
 }
 
 ///|

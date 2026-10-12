@@ -26,6 +26,7 @@ let any_method : String =
 /// after it started.
 let startup_only : String =
   #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*"}
+  #|{"level":"info","msg":"random seed","seed":"*"}
   #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
   #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","cert_file":"*/rsa-chain.pem","key_file":"*/rsa-key.pem"}
 

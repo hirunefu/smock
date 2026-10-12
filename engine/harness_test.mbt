@@ -3,7 +3,8 @@
 /// with a fixed clock and a seeded random source.
 struct Harness {
   engine : @engine.Engine
-  rand : @random.Rand
+  /// The process generator.
+  rand : @prng.Generator
   now : Int64
 }
 
@@ -13,11 +14,12 @@ let fixed_now : Int64 = 1_791_815_405_123L
 
 ///|
 /// Builds an engine from Definition files given as (name, JSON text) pairs,
-/// and body files as (name, bytes) pairs. Fails the test if the set is
-/// invalid.
+/// and body files as (name, bytes) pairs, with a process generator seeded
+/// with `process_seed`. Fails the test if the set is invalid.
 fn harness(
   files : Array[(String, String)],
   body_files? : Array[(String, Bytes)] = [],
+  process_seed? : UInt64 = 1,
 ) -> Harness {
   let set : @definitions.DefinitionSet = {
     files: files.map(file => (file.0, @utf8.encode(file.1))),
@@ -27,7 +29,7 @@ fn harness(
     Ok(snapshot) =>
       {
         engine: @engine.Engine(snapshot),
-        rand: @random.Rand::chacha8(seed=b"smock-seam-1-fixed-seed-32-bytes"),
+        rand: @prng.Generator(process_seed),
         now: fixed_now,
       }
     Err(diagnostics) => abort(diagnostics.map(d => d.to_string()).join("\n"))

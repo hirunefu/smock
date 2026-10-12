@@ -451,7 +451,7 @@ fn entries(logs : Array[String]) -> String {
     for key, value in fields {
       match key {
         "time" => ()
-        "version" | "commit" | "toolchain" => out[key] = "*"
+        "version" | "commit" | "toolchain" | "seed" => out[key] = "*"
         "cert_file" | "key_file" =>
           out[key] = match value {
             String(path) =>

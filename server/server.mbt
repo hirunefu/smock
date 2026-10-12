@@ -40,7 +40,16 @@ pub async fn serve(
       }
   }
   let engine = @engine.Engine(snapshot)
-  let rand = @random.Rand::new()
+  // The process generator. Its seed is logged, so that a run can be
+  // replayed with --seed.
+  let seed = match settings.seed {
+    Some(seed) => seed
+    None => random_seed()
+  }
+  let rand = @prng.Generator(seed)
+  logger.info("random seed", fields={
+    "seed": Json::number(seed.to_double(), repr=seed.to_string()),
+  })
   guard listen(logger, "plain", settings.port) is Some(plain) else { return 1 }
   defer plain.close()
   let tls_listener = match tls {
@@ -88,6 +97,13 @@ pub async fn serve(
   })
   // The listeners serve until the process is stopped.
   0
+}
+
+///|
+/// A seed for the process generator from the platform's entropy: an integer
+/// from 0 to 2^53 - 1, like the seeds `--seed` takes.
+fn random_seed() -> UInt64 {
+  @random.Rand::new().uint64() & 0x1FFFFFFFFFFFFFUL
 }
 
 ///|
@@ -140,13 +156,18 @@ async fn[X] accept_loop(
 /// - the read timeout, while a request arrives: from its first byte until
 ///   all of it, body included, has arrived.
 ///
+/// A response the engine plans with a delay is written once the delay is
+/// over. Meanwhile the connection reads nothing, and other connections are
+/// served as usual. A connection Fault ends the connection instead of the
+/// response, or part of the way through it.
+///
 /// It reads and writes only through `stream`, so the same loop serves any
 /// byte stream: a TCP connection, or a TLS session on top of one. Nothing is
 /// logged per request.
 async fn[S : @io.Reader + @io.Writer] serve_connection(
   stream : S,
   engine : @engine.Engine,
-  rand : @random.Rand,
+  rand : @prng.Generator,
   settings : @settings.ServeSettings,
 ) -> Unit {
   let parser = @http1.Parser(
@@ -170,7 +191,21 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
           now=@async.now(),
           rand~,
         )
-        @io.Writer::write(stream, encode(outcome.plan, request))
+        let plan = outcome.plan
+        if plan.delay_ms > 0 {
+          @async.sleep(plan.delay_ms)
+        }
+        match plan.fault {
+          None => ()
+          // Returning closes the connection, which sends a FIN. The engine
+          // does not plan a reset yet, since Definitions reject it.
+          Some(Close) | Some(Reset) => return
+          Some(Partial) => {
+            @io.Writer::write(stream, cut_short(encode(plan, request)))
+            return
+          }
+        }
+        @io.Writer::write(stream, encode(plan, request))
         if !request.keep_alive {
           return
         }
@@ -227,12 +262,24 @@ fn to_engine_request(request : @http1.Request) -> @engine.Request {
 
 ///|
 /// The bytes of the response `plan` describes, as the answer to `request`.
-/// Delays, connection Faults and Server-Sent Events come with their own
-/// tickets; the engine does not plan them yet.
+/// Server-Sent Events come with their own ticket; the engine does not plan
+/// them yet.
 fn encode(plan : @engine.ResponsePlan, request : @http1.Request) -> Bytes {
   let body = match plan.body {
     Bytes(body) => body
     Events(_) => b""
   }
   @http1.encode_response(plan.status, plan.headers, body, request~)
+}
+
+///|
+/// The first part of the encoded `response`, as a partial Fault sends it:
+/// the status line, the header fields and the first half of the body. The
+/// head ends at the first empty line, since header values hold no CR or LF.
+fn cut_short(response : Bytes) -> BytesView {
+  let head = match response[:].find(b"\r\n\r\n") {
+    Some(i) => i + 4
+    None => response.length()
+  }
+  response[:head + (response.length() - head) / 2]
 }

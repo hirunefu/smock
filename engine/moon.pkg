@@ -1,9 +1,10 @@
 import {
   "smock/smock/definitions",
+  "smock/smock/prng",
   "moonbitlang/core/buffer",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
-  "moonbitlang/core/random",
+  "moonbitlang/core/math",
 }
 
 import {
