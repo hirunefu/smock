@@ -54,6 +54,15 @@ listens on the plain port. Logs go to stderr, one JSON object per line.
 | `--port` | `SMOCK_PORT` | 8080 (0 picks a free port) |
 | `--log-format` | `SMOCK_LOG_FORMAT` | `json` |
 | `--body-file-dir` | `SMOCK_BODY_FILE_DIR` | `files` |
+| `--header-size-limit` | `SMOCK_HEADER_SIZE_LIMIT` | 16384 bytes (16 KiB): larger request heads get 431 |
+| `--header-count-limit` | `SMOCK_HEADER_COUNT_LIMIT` | 100 header fields: more get 431 |
+| `--body-limit` | `SMOCK_BODY_LIMIT` | 10485760 bytes (10 MiB): longer bodies get 413 |
+| `--read-timeout-ms` | `SMOCK_READ_TIMEOUT_MS` | 30000: a request must arrive whole within 30 s of its first byte |
+| `--idle-timeout-ms` | `SMOCK_IDLE_TIMEOUT_MS` | 60000: a connection that waits 60 s for a request closes |
+
+A request over a limit gets its status with `Connection: close`, then the
+connection closes; a timeout closes the connection without a response.
+Neither is logged.
 
 A Definition file, such as `defs/users.json`:
 
