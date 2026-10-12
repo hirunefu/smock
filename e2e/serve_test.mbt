@@ -71,16 +71,17 @@ async test "smock serve answers a request that matches a Stub declared in a YAML
 }
 
 ///|
-async test "any other request gets 404" {
+async test "any other request gets the no-match response" {
   with_definitions([("users.json", users)], dir => {
     let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
       inspect(
         smock.get("/users/2"),
         content=(
           #|404 Not Found
-          #|Content-Length: 0
+          #|Content-Type: application/json
+          #|Content-Length: 27
           #|
-          #|
+          #|{"error":"no Stub matched"}
         ),
       )
     })

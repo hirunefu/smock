@@ -61,21 +61,27 @@ priv struct Reader {
   diagnostics : Array[Diagnostic]
   /// The names of the Mocks any file of the set declares.
   declared : Set[String]
-  /// The names of the Mocks read so far.
-  mocks : Array[String]
+  /// The Mocks read so far, without their Stubs.
+  mocks : Array[Mock]
   /// Where each Mock name was first declared, as `<file>: <pointer>`.
   mock_names : Map[String, String]
   /// The Stubs read so far.
   stubs : Array[Stub]
   /// Where each Stub ID was first used, as `<file>: <pointer>`.
   stub_ids : Map[String, String]
+  /// The body files, by their name relative to the body-file subdirectory.
+  body_files : Map[String, Bytes]
 }
 
 ///|
-fn Reader::new(declared~ : Set[String]) -> Reader {
+fn Reader::new(
+  declared~ : Set[String],
+  body_files~ : Map[String, Bytes],
+) -> Reader {
   {
     diagnostics: [],
     declared,
+    body_files,
     mocks: [],
     mock_names: Map([]),
     stubs: [],
@@ -84,14 +90,15 @@ fn Reader::new(declared~ : Set[String]) -> Reader {
 }
 
 ///|
-/// Declares the Mock `name`, whose name is at `pointer` in `file`, unless
-/// an earlier Mock has that name.
+/// Declares `mock`, whose name is at `pointer` in `file`, unless an
+/// earlier Mock has that name.
 fn Reader::declare_mock(
   self : Reader,
   file : File,
   pointer : String,
-  name : String,
+  mock : Mock,
 ) -> Unit {
+  let name = mock.name
   match self.mock_names.get(name) {
     Some(earlier) =>
       file.error(
@@ -100,7 +107,7 @@ fn Reader::declare_mock(
       )
     None => {
       self.mock_names[name] = "\{file.name}: \{pointer}"
-      self.mocks.push(name)
+      self.mocks.push(mock)
     }
   }
 }
@@ -147,7 +154,11 @@ fn Reader::read_file(
   name : String,
   parsed : Result[Map[String, Json], (String, String)],
 ) -> Unit {
-  let file = File::{ name, diagnostics: self.diagnostics, }
+  let file = File::{
+    name,
+    diagnostics: self.diagnostics,
+    body_files: self.body_files,
+  }
   let top = match parsed {
     Ok(top) => top
     Err((pointer, message)) => {
@@ -171,8 +182,8 @@ fn Reader::read_file(
       "mocks" =>
         for i, mock in file.array(pointer, value) {
           let mock_pointer = child(pointer, i.to_string())
-          if file.read_mock(mock_pointer, mock) is Some(name) {
-            self.declare_mock(file, child(mock_pointer, "name"), name)
+          if file.read_mock(mock_pointer, mock) is Some(mock) {
+            self.declare_mock(file, child(mock_pointer, "name"), mock)
           }
         }
       "stubs" =>
@@ -196,6 +207,8 @@ fn Reader::read_file(
 priv struct File {
   name : String
   diagnostics : Array[Diagnostic]
+  /// The body files of the set, which Stubs refer to.
+  body_files : Map[String, Bytes]
 }
 
 ///|
@@ -229,23 +242,56 @@ fn File::require(
 }
 
 ///|
-/// Reads a Mock and returns its name.
-fn File::read_mock(self : File, pointer : String, json : Json) -> String? {
-  guard json is Object(mock) else {
+/// Reads a Mock, without its Stubs, or nothing when it has no usable name.
+fn File::read_mock(self : File, pointer : String, json : Json) -> Mock? {
+  guard json is Object(fields) else {
     self.error(pointer, "must be an object")
     return None
   }
   let mut name = None
-  for key, value in mock {
+  let mut mock = empty_mock("")
+  for key, value in fields {
     let field = child(pointer, key)
     match key {
       "name" => name = self.name(field, value)
-      "hosts" | "default" | "noMatch" | "journal" => self.not_supported(field)
+      "noMatch" =>
+        mock = { ..mock, no_match_status: self.read_no_match(field, value), }
+      "hosts" | "default" | "journal" => self.not_supported(field)
       _ => self.unknown_field(field)
     }
   }
-  self.require(mock, pointer, "name")
-  name
+  self.require(fields, pointer, "name")
+  name.map(name => { ..mock, name, })
+}
+
+///|
+/// Reads how a Mock answers when no Stub matches, and returns the status.
+fn File::read_no_match(self : File, pointer : String, json : Json) -> Int {
+  let mut status = 404
+  guard json is Object(fields) else {
+    self.error(pointer, "must be an object")
+    return status
+  }
+  for key, value in fields {
+    let field = child(pointer, key)
+    match key {
+      "status" => status = self.read_status(field, value)
+      _ => self.unknown_field(field)
+    }
+  }
+  status
+}
+
+///|
+/// Reads a response status: an integer from 200 to 599.
+fn File::read_status(self : File, pointer : String, json : Json) -> Int {
+  match json {
+    Number(n, ..) if n == n.floor() && n >= 200.0 && n <= 599.0 => n.to_int()
+    _ => {
+      self.error(pointer, "must be an integer from 200 to 599")
+      0
+    }
+  }
 }
 
 ///|
@@ -257,7 +303,8 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
   }
   let mut id = ""
   let mut mock = ""
-  let mut request = Conditions::{ meth: None, path: None, }
+  let mut priority = None
+  let mut request = no_conditions()
   let mut response = Response::{
     status: 0,
     headers: ReadOnlyArray::from_array([]),
@@ -270,14 +317,41 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
       "mock" => mock = self.name(field, value).unwrap_or("")
       "request" => request = self.read_conditions(field, value)
       "response" => response = self.read_response(field, value)
-      "priority" | "fault" => self.not_supported(field)
+      "priority" => priority = self.read_priority(field, value)
+      "fault" => self.not_supported(field)
       _ => self.unknown_field(field)
     }
   }
   self.require(stub, pointer, "id")
   self.require(stub, pointer, "mock")
   self.require(stub, pointer, "response")
-  Some({ id, mock, request, response, })
+  Some({ id, mock, priority, request, response, })
+}
+
+///|
+/// The conditions of a Stub without `request`: none, so it matches every
+/// request.
+fn no_conditions() -> Conditions {
+  {
+    meth: None,
+    path: None,
+    query: ReadOnlyArray::from_array([]),
+    headers: ReadOnlyArray::from_array([]),
+    body: None,
+  }
+}
+
+///|
+/// Reads a priority: a 32-bit integer.
+fn File::read_priority(self : File, pointer : String, json : Json) -> Int? {
+  match json {
+    Number(n, ..) if n == n.floor() && n >= -2147483648.0 && n <= 2147483647.0 =>
+      Some(n.to_int())
+    _ => {
+      self.error(pointer, "must be an integer from -2147483648 to 2147483647")
+      None
+    }
+  }
 }
 
 ///|
@@ -286,13 +360,15 @@ fn File::read_conditions(
   pointer : String,
   json : Json,
 ) -> Conditions {
-  let conditions = Conditions::{ meth: None, path: None, }
   guard json is Object(request) else {
     self.error(pointer, "must be an object")
-    return conditions
+    return no_conditions()
   }
   let mut meth = None
   let mut path = None
+  let mut query = []
+  let mut headers = []
+  let mut body = None
   for key, value in request {
     let field = child(pointer, key)
     match key {
@@ -309,11 +385,87 @@ fn File::read_conditions(
             self.error(field, "pattern conditions are not supported yet")
           _ => self.error(field, "must be a string")
         }
-      "query" | "headers" | "body" => self.not_supported(field)
+      "query" => query = self.read_value_conditions(field, value)
+      "headers" =>
+        headers = self
+          .read_value_conditions(field, value, header_names=true)
+          .map(header => (header.0.to_lower(), header.1))
+      "body" => body = self.read_body_condition(field, value)
       _ => self.unknown_field(field)
     }
   }
-  { meth, path, }
+  {
+    meth,
+    path,
+    query: ReadOnlyArray::from_array(query),
+    headers: ReadOnlyArray::from_array(headers),
+    body,
+  }
+}
+
+///|
+/// Reads a condition on the request body: an exact text, or an object
+/// holding a `json` condition.
+fn File::read_body_condition(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> BodyCondition? {
+  let condition = match json {
+    String(text) => return Some(Exact(@utf8.encode(text)))
+    Object(condition) => condition
+    _ => {
+      self.error(pointer, "must be a string or an object")
+      return None
+    }
+  }
+  let mut out = None
+  for key, value in condition {
+    match key {
+      "json" => out = Some(Json(value))
+      "pattern" => ()
+      _ => self.unknown_field(child(pointer, key))
+    }
+  }
+  match (condition.contains("json"), condition.contains("pattern")) {
+    (true, true) =>
+      self.error(pointer, "needs \"json\" or \"pattern\", not both")
+    (false, true) =>
+      self.error(pointer, "pattern conditions are not supported yet")
+    (false, false) => self.error(pointer, "needs \"json\" or \"pattern\"")
+    (true, false) => ()
+  }
+  out
+}
+
+///|
+/// Reads conditions on named values, such as query parameters: an object
+/// whose members are names and exact values. With `header_names`, each
+/// name must be a valid header name.
+fn File::read_value_conditions(
+  self : File,
+  pointer : String,
+  json : Json,
+  header_names? : Bool = false,
+) -> Array[(String, String)] {
+  let out = []
+  guard json is Object(conditions) else {
+    self.error(pointer, "must be an object")
+    return out
+  }
+  for name, value in conditions {
+    let field = child(pointer, name)
+    if header_names && !is_token(name) {
+      self.error(field, "is not a valid header name")
+      continue
+    }
+    match value {
+      String(value) => out.push((name, value))
+      Object(_) => self.error(field, "pattern conditions are not supported yet")
+      _ => self.error(field, "must be a string")
+    }
+  }
+  out
 }
 
 ///|
@@ -328,20 +480,54 @@ fn File::read_response(self : File, pointer : String, json : Json) -> Response {
   for key, value in response {
     let field = child(pointer, key)
     match key {
-      "status" =>
-        match value {
-          Number(n, ..) if n == n.floor() && n >= 200.0 && n <= 599.0 =>
-            status = n.to_int()
-          _ => self.error(field, "must be an integer from 200 to 599")
-        }
+      "status" => status = self.read_status(field, value)
       "headers" => headers = self.read_headers(field, value)
       "body" => body = @utf8.encode(self.string(field, value).unwrap_or(""))
-      "bodyFile" | "template" | "events" => self.not_supported(field)
+      "bodyFile" => body = self.read_body_file(field, value)
+      "template" | "events" => self.not_supported(field)
       _ => self.unknown_field(field)
     }
   }
   self.require(response, pointer, "status")
+  let bodies = ["body", "bodyFile", "events"].filter(key => {
+    response.contains(key)
+  })
+  if bodies.length() > 1 {
+    let given = bodies.map(key => "\"\{key}\"").join(" and ")
+    self.error(
+      pointer,
+      "has \{given}; give at most one of \"body\", \"bodyFile\" and \"events\"",
+    )
+  }
   { status, headers: ReadOnlyArray::from_array(headers), body, }
+}
+
+///|
+/// Reads a reference to a body file and returns the file's bytes. The path
+/// is relative to the body-file subdirectory and stays inside it: its
+/// names are not empty, and none starts with `.`, as smock skips such
+/// files.
+fn File::read_body_file(self : File, pointer : String, json : Json) -> Bytes {
+  guard self.string(pointer, json) is Some(path) else { return b"" }
+  let inside = path
+    .split("/")
+    .all(name => !name.is_empty() && !name.has_prefix("."))
+  if !inside {
+    self.error(
+      pointer, "must be a path inside the body-file subdirectory, such as users/1.json, with no name starting with .",
+    )
+    return b""
+  }
+  match self.body_files.get(path) {
+    Some(bytes) => bytes
+    None => {
+      self.error(
+        pointer,
+        "no body file \{path.escape()} in the body-file subdirectory",
+      )
+      b""
+    }
+  }
 }
 
 ///|

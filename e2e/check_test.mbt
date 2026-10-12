@@ -81,7 +81,7 @@ async test "smock check prints every problem, one line each with the file and JS
           #|20-orders.json: /stubs/0/mock: no file declares the Mock "orders"
           #|20-orders.json: /stubs/1/request/path: must start with /
           #|20-orders.json: /stubs/1/response/status: must be an integer from 200 to 599
-          #|20-orders.json: /stubs/1/response/bodyFile: is not supported yet
+          #|20-orders.json: /stubs/1/response/bodyFile: no body file "list.json" in the body-file subdirectory
           #|20-orders.json: /stubs/2/respnose: is not a known field
           #|20-orders.json: /stubs/2: needs "response"
           #|30-version.json: /version: must be 1, the only format version

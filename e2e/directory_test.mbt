@@ -120,23 +120,26 @@ async test "a missing or empty definitions directory, or none at all, gives an e
       out.join("\n---\n"),
       content=(
         #|404 Not Found
-        #|Content-Length: 0
+        #|Content-Type: application/json
+        #|Content-Length: 27
         #|
-        #|
+        #|{"error":"no Stub matched"}
         #|---
         #|2 log entries
         #|---
         #|404 Not Found
-        #|Content-Length: 0
+        #|Content-Type: application/json
+        #|Content-Length: 27
         #|
-        #|
+        #|{"error":"no Stub matched"}
         #|---
         #|2 log entries
         #|---
         #|404 Not Found
-        #|Content-Length: 0
+        #|Content-Type: application/json
+        #|Content-Length: 27
         #|
-        #|
+        #|{"error":"no Stub matched"}
         #|---
         #|2 log entries
       ),

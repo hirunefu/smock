@@ -116,10 +116,10 @@ pub fn Engine::handle(
   // Faults and templates draw from `rand` once their tickets land.
   ignore(rand)
   let mock = self.snapshot.default_mock()
-  let path = path_of(request.target)
+  let incoming = Incoming::new(request)
   let matched = match mock {
     Some(mock) =>
-      mock.stubs.iter().find_first(stub => matches(stub, request, path))
+      mock.stubs.iter().find_first(stub => incoming.meets(stub.request))
     None => None
   }
   let plan : ResponsePlan = match matched {
@@ -132,7 +132,17 @@ pub fn Engine::handle(
         fault: None,
       }
     None =>
-      { status: 404, headers: [], body: Bytes(b""), delay_ms: 0, fault: None, }
+      match mock {
+        Some(mock) => no_match(mock)
+        None =>
+          {
+            status: 404,
+            headers: [],
+            body: Bytes(b""),
+            delay_ms: 0,
+            fault: None,
+          }
+      }
   }
   {
     plan,
@@ -152,18 +162,13 @@ pub fn Engine::handle(
 }
 
 ///|
-/// Whether `request`, whose path is `path`, meets every condition of `stub`.
-fn matches(stub : @definitions.Stub, request : Request, path : String) -> Bool {
-  let conditions = stub.request
-  conditions.meth.map_or(true, meth => meth == request.meth) &&
-  conditions.path.map_or(true, expected => expected == path)
-}
-
-///|
-/// The path of a request target: everything before the query.
-fn path_of(target : String) -> String {
-  match target.find("?") {
-    Some(i) => target[:i].to_owned()
-    None => target
+/// The response of `mock` when no Stub matches.
+fn no_match(mock : @definitions.Mock) -> ResponsePlan {
+  {
+    status: mock.no_match_status,
+    headers: [("Content-Type", "application/json")],
+    body: Bytes(b"{\"error\":\"no Stub matched\"}"),
+    delay_ms: 0,
+    fault: None,
   }
 }

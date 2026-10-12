@@ -58,7 +58,7 @@ test "the path is compared without the query" {
 }
 
 ///|
-test "any other request gets 404 with an empty body" {
+test "any other request gets the no-match response" {
   let h = harness([("users.json", users)])
   let requests = [
     ("POST", "/users/1"),
@@ -72,22 +72,16 @@ test "any other request gets 404 with an empty body" {
     requests
     .map(r => {
       let outcome = h.send(r.0, r.1)
-      "\{r.0} \{r.1} -> \{response(outcome)} stub=\{@debug.to_string(outcome.journal.stub)}"
+      "\{r.0} \{r.1} -> \{outcome.plan.status} stub=\{@debug.to_string(outcome.journal.stub)}"
     })
     .join("\n"),
     content=(
-      #|POST /users/1 -> 404
-      #| stub=None
-      #|get /users/1 -> 404
-      #| stub=None
-      #|GET /users/2 -> 404
-      #| stub=None
-      #|GET /users/1/ -> 404
-      #| stub=None
-      #|GET /USERS/1 -> 404
-      #| stub=None
-      #|GET / -> 404
-      #| stub=None
+      #|POST /users/1 -> 404 stub=None
+      #|get /users/1 -> 404 stub=None
+      #|GET /users/2 -> 404 stub=None
+      #|GET /users/1/ -> 404 stub=None
+      #|GET /USERS/1 -> 404 stub=None
+      #|GET / -> 404 stub=None
     ),
   )
 }
@@ -100,7 +94,8 @@ test "with no Definition file, one empty Mock named default answers 404" {
     content=(
       #|plan:
       #|  status: 404
-      #|  body: ""
+      #|  header: Content-Type: application/json
+      #|  body: "{\"error\":\"no Stub matched\"}"
       #|  delay_ms: 0
       #|  fault: None
       #|journal:
