@@ -244,7 +244,9 @@ conditions only once every Stub has failed to match.
 
 The [Journal](../README.md#the-journal) records the full Near miss of each
 unmatched request: every condition it failed, with what the Stub expects
-and what the request sent.
+and what the request sent. A test lists its Session's unmatched requests
+with `GET /v1/journal/unmatched`
+([README](../README.md#verifying-calls-and-unmatched-requests)).
 
 ### Turning the Journal off for a Mock
 

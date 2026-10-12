@@ -462,6 +462,12 @@ fn read_filter(
 }
 
 ///|
+/// The filter of no condition, which every entry passes.
+fn every_entry() -> JournalFilter {
+  { mock: None, conditions: no_conditions(), since: None, until: None, }
+}
+
+///|
 /// Conditions that every request meets.
 fn no_conditions() -> @definitions.Conditions {
   match @definitions.request_conditions(Json::object(Map([]))) {
@@ -521,12 +527,7 @@ pub fn JournalQuery::from_json(json : Json) -> JournalQuery raise InvalidQuery {
   if problems.length() > 0 {
     raise InvalidQuery(problems)
   }
-  let filter = match filter {
-    Some(filter) => filter
-    None =>
-      { mock: None, conditions: no_conditions(), since: None, until: None, }
-  }
-  { filter, limit, }
+  { filter: filter.unwrap_or_else(every_entry), limit, }
 }
 
 ///|
@@ -556,19 +557,51 @@ pub fn Engine::query_journal(
   session~ : String?,
 ) -> JournalPage raise AdminError {
   self.check_journal(query.filter)
+  self.journal.page(session, query.limit, entry => query.filter.passes(entry))
+}
+
+///|
+/// The entries of `session`, or of the no-Session space for `None`, that no
+/// Stub answered, oldest first, at most `limit` of them, with how many of
+/// that Session's entries the bound evicted. Each carries its full Near
+/// miss, when its Mock had candidate Stubs. A request for a Host that no
+/// Mock lists, with no Default Mock, is among them with no Mock and no Near
+/// miss.
+///
+/// Raises `JournalOff` while the Journal is off globally: there is no entry
+/// to trust.
+pub fn Engine::unmatched(
+  self : Engine,
+  session~ : String?,
+  limit? : Int = default_limit,
+) -> JournalPage raise AdminError {
+  self.check_journal(every_entry())
+  self.journal.page(session, limit, entry => entry.stub is None)
+}
+
+///|
+/// The entries of `session` for which `takes` holds, oldest first, at most
+/// `limit` of them, with how many of that Session's entries the bound
+/// evicted.
+fn Journal::page(
+  self : Journal,
+  session : String?,
+  limit : Int,
+  takes : (JournalEntry) -> Bool,
+) -> JournalPage {
   let entries = []
   let mut more = false
-  for entry in self.journal.entries {
-    if entry.session != session || !query.filter.passes(entry) {
+  for entry in self.entries {
+    if entry.session != session || !takes(entry) {
       continue
     }
-    if entries.length() >= query.limit {
+    if entries.length() >= limit {
       more = true
       break
     }
     entries.push(entry)
   }
-  { entries, more, evicted: self.journal.evicted.get(session).unwrap_or(0), }
+  { entries, more, evicted: self.evicted.get(session).unwrap_or(0), }
 }
 
 ///|
