@@ -563,9 +563,9 @@ fn File::read_connection_fault(
     match key {
       "kind" =>
         match value {
+          String("reset") => kind = Some(Reset)
           String("close") => kind = Some(Close)
           String("partial") => kind = Some(Partial)
-          String("reset") => self.error(field, "\"reset\" is not supported yet")
           _ => self.error(field, "must be \"reset\", \"close\" or \"partial\"")
         }
       "probability" => probability = self.read_probability(field, value)

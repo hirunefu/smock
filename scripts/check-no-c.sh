@@ -6,7 +6,11 @@ set -eu
 cd "$(dirname "$0")/.."
 
 # Paths of C sources ADR 0001 allows, one per line.
-allowed="openssl/openssl.c"
+allowed="openssl/openssl.c
+server/reset.c"
+
+# The C source of the reset Fault, which ADR 0001 allows one function.
+reset=server/reset.c
 
 failed=0
 for file in $(git ls-files --cached --others --exclude-standard \
@@ -16,6 +20,14 @@ for file in $(git ls-files --cached --others --exclude-standard \
     failed=1
   fi
 done
+
+if [ -e "$reset" ]; then
+  functions=$(grep -c 'MOONBIT_FFI_EXPORT' "$reset" || true)
+  if [ "$functions" -ne 1 ]; then
+    echo "check-no-c: $reset has $functions exported functions; ADR 0001 allows one" >&2
+    failed=1
+  fi
+fi
 
 if [ "$failed" -ne 0 ]; then
   exit 1

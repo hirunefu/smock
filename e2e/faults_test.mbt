@@ -1,11 +1,13 @@
-// Seam 2 tests of Faults: a delayed status line, a connection closed
-// without a response, a partial response, and replay from --seed.
+// Seam 2 tests of Faults: a delayed status line, a connection reset or
+// closed without a response, a partial response, and replay from --seed.
 
 ///|
 /// Mock `m` with Stubs that answer `GET /slow` after a fixed delay of
-/// 1500 ms, `GET /fast` at once, `GET /close` by closing the connection,
-/// `GET /partial` with half its body, and `GET /coin` by closing the
-/// connection half of the time, as the process generator decides.
+/// 1500 ms, `GET /fast` at once, `/reset` by resetting the connection,
+/// `GET /close` by closing the connection, `GET /partial` with half its
+/// body, `GET /coin` by closing the connection half of the time, as the
+/// process generator decides, and `GET /flaky` by resetting the connection
+/// half of the time, as the Stub's own generator, seeded, decides.
 let faults : String =
   #|{ "mocks": [{ "name": "m" }],
   #|  "stubs": [
@@ -14,6 +16,9 @@ let faults : String =
   #|      "fault": { "delay": { "fixed": 1500 } } },
   #|    { "id": "fast", "mock": "m", "request": { "path": "/fast" },
   #|      "response": { "status": 200, "body": "fast" } },
+  #|    { "id": "reset", "mock": "m", "request": { "path": "/reset" },
+  #|      "response": { "status": 200, "body": "never sent" },
+  #|      "fault": { "connection": { "kind": "reset" } } },
   #|    { "id": "close", "mock": "m", "request": { "path": "/close" },
   #|      "response": { "status": 200, "body": "never sent" },
   #|      "fault": { "connection": { "kind": "close" } } },
@@ -23,7 +28,11 @@ let faults : String =
   #|      "fault": { "connection": { "kind": "partial", "probability": 1 } } },
   #|    { "id": "coin", "mock": "m", "request": { "path": "/coin" },
   #|      "response": { "status": 200, "body": "heads" },
-  #|      "fault": { "connection": { "kind": "close", "probability": 0.5 } } } ] }
+  #|      "fault": { "connection": { "kind": "close", "probability": 0.5 } } },
+  #|    { "id": "flaky", "mock": "m", "request": { "path": "/flaky" },
+  #|      "response": { "status": 200, "body": "answered" },
+  #|      "fault": { "connection": { "kind": "reset", "probability": 0.5 },
+  #|        "seed": 2026 } } ] }
 
 ///|
 /// Every byte smock sends on `conn` until it closes the connection with a
@@ -104,6 +113,123 @@ async test "a close Fault ends the connection with a FIN, without a byte of resp
         #|then: HTTP/1.1 200 OK
       ),
     )
+  })
+}
+
+///|
+/// Whether `err` is the error a read gets when the peer resets the
+/// connection, ECONNRESET.
+fn is_reset(err : @os_error.OSError) -> Bool {
+  err.to_string().contains("Connection reset by peer")
+}
+
+///|
+/// How smock ends `conn`, waiting at most `within` milliseconds: how many
+/// bytes it sends first, then whether an RST (a connection-reset error) or
+/// a FIN (a clean end of stream) ends the connection, or it stays open.
+async fn how_it_ends(conn : Conn, within? : Int = patience_ms) -> String {
+  let (received, ending) = sent_until_end(conn, within~)
+  "\{received.length()} bytes, then \{ending}"
+}
+
+///|
+/// Every byte smock sends on `conn` until the connection ends, waiting at
+/// most `within` milliseconds, and how it ends: `an RST`, `a FIN`, or
+/// `nothing yet: it is still open`.
+async fn sent_until_end(conn : Conn, within~ : Int) -> (Bytes, String) {
+  let received = @buffer.Buffer()
+  let ending = @async.with_timeout_opt(within, () => {
+    for ;; {
+      let bytes = conn.read_some() catch {
+        @os_error.OSError(_, ..) as err if is_reset(err) => break "an RST"
+        err => break "an error: \{err}"
+      }
+      guard bytes is Some(bytes) else { break "a FIN" }
+      received.write_bytes(bytes)
+    }
+  })
+  (received.to_bytes(), ending.unwrap_or("nothing yet: it is still open"))
+}
+
+///|
+async test "a reset Fault reads the whole request, body included, then ends the connection with an RST, without a byte of response" {
+  let stopped = on_both_ports(files=[("m.json", faults)], (smock, over) => {
+    // A connection open meanwhile carries on.
+    let other = smock.connect(over~)
+    defer other.close()
+    other.write("GET /fast HTTP/1.1\r\nHost: localhost\r\n\r\n")
+    let before = status_line(read_response(other))
+    let conn = smock.connect(over~)
+    defer conn.close()
+    conn.write(
+      "POST /reset HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\n01234",
+    )
+    // Half the body has arrived: smock waits for the rest.
+    let early = how_it_ends(conn, within=500)
+    conn.write("56789")
+    let ended = how_it_ends(conn)
+    other.write("GET /fast HTTP/1.1\r\nHost: localhost\r\n\r\n")
+    let after = status_line(read_response(other))
+    inspect(
+      [
+        "before the whole body: \{early}",
+        "after it: \{ended}",
+        "another connection, before: \{before}",
+        "and after: \{after}",
+      ].join("\n"),
+      content=(
+        #|before the whole body: 0 bytes, then nothing yet: it is still open
+        #|after it: 0 bytes, then an RST
+        #|another connection, before: HTTP/1.1 200 OK
+        #|and after: HTTP/1.1 200 OK
+      ),
+    )
+  })
+  // Nothing is logged per request, reset or not.
+  inspect(entries(stopped.logs), content=startup_only)
+}
+
+///|
+async test "a reset Fault with a probability resets only the requests its seeded generator draws, and the others get the Stub's whole response" {
+  with_definitions([("m.json", faults)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let out = []
+      for _ in 0..<12 {
+        let conn = smock.connect()
+        defer conn.close()
+        conn.write(
+          "GET /flaky HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        )
+        let (received, ending) = sent_until_end(conn, within=patience_ms)
+        out.push(
+          match ending {
+            "an RST" if received.length() == 0 => "reset"
+            "a FIN" =>
+              @utf8.decode_lossy(received).replace_all(old="\r\n", new=" | ")
+            _ => "\{received.length()} bytes, then \{ending}"
+          },
+        )
+      }
+      // The same sequence as the seed gives in the engine's own tests: the
+      // Stub's generator is the same on every run and every target.
+      inspect(
+        out.join("\n"),
+        content=(
+          #|HTTP/1.1 200 OK | Smock-Mock: m; via=default | Connection: close | Content-Length: 8 |  | answered
+          #|reset
+          #|reset
+          #|HTTP/1.1 200 OK | Smock-Mock: m; via=default | Connection: close | Content-Length: 8 |  | answered
+          #|reset
+          #|reset
+          #|HTTP/1.1 200 OK | Smock-Mock: m; via=default | Connection: close | Content-Length: 8 |  | answered
+          #|HTTP/1.1 200 OK | Smock-Mock: m; via=default | Connection: close | Content-Length: 8 |  | answered
+          #|reset
+          #|reset
+          #|reset
+          #|reset
+        ),
+      )
+    })
   })
 }
 

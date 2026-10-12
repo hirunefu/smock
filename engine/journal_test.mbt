@@ -802,13 +802,16 @@ test "the Journal survives a reload, each entry keeping the digest of the defini
 }
 
 ///|
-test "an entry records the connection Fault injected; one that closes the connection before a status has none" {
+test "an entry records the connection Fault injected; one that resets or closes the connection before a status has none" {
   let h = harness([
     (
       "faults.json",
       (
         #|{ "mocks": [{ "name": "m" }],
         #|  "stubs": [
+        #|    { "id": "reset", "mock": "m", "request": { "path": "/reset" },
+        #|      "fault": { "connection": { "kind": "reset" } },
+        #|      "response": { "status": 200 } },
         #|    { "id": "close", "mock": "m", "request": { "path": "/close" },
         #|      "fault": { "connection": { "kind": "close" } },
         #|      "response": { "status": 200 } },
@@ -818,11 +821,22 @@ test "an entry records the connection Fault injected; one that closes the connec
       ),
     ),
   ])
+  let _ = h.record("GET", "/reset", session="s")
+  let reset = h.answered(Some("s"))
   let _ = h.record("GET", "/close", session="s")
   let closed = h.answered(Some("s"))
   let _ = h.record("GET", "/partial", session="s")
   let partial = h.answered(Some("s"))
-  json_inspect([closed, partial], content=[
+  json_inspect([reset, closed, partial], content=[
+    {
+      "host": Json::null(),
+      "mock": "m",
+      "viaDefault": true,
+      "stub": "reset",
+      "nearMiss": Json::null(),
+      "status": Json::null(),
+      "fault": "reset",
+    },
     {
       "host": Json::null(),
       "mock": "m",
