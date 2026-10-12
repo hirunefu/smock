@@ -390,7 +390,7 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
   let mut response = Response::{
     status: 0,
     headers: ReadOnlyArray::from_array([]),
-    body: b"",
+    body: Bytes(b""),
   }
   for key, value in stub {
     let field = child(pointer, key)
@@ -601,7 +601,7 @@ fn File::compile(self : File, pointer : String, source : String) -> Pattern? {
 fn File::read_response(self : File, pointer : String, json : Json) -> Response {
   let mut status = 0
   let mut headers = []
-  let mut body = b""
+  let mut body : ResponseBody = Bytes(b"")
   guard json is Object(response) else {
     self.error(pointer, "must be an object")
     return { status, headers: ReadOnlyArray::from_array(headers), body, }
@@ -611,9 +611,11 @@ fn File::read_response(self : File, pointer : String, json : Json) -> Response {
     match key {
       "status" => status = self.read_status(field, value)
       "headers" => headers = self.read_headers(field, value)
-      "body" => body = @utf8.encode(self.string(field, value).unwrap_or(""))
-      "bodyFile" => body = self.read_body_file(field, value)
-      "template" | "events" => self.not_supported(field)
+      "body" =>
+        body = Bytes(@utf8.encode(self.string(field, value).unwrap_or("")))
+      "bodyFile" => body = Bytes(self.read_body_file(field, value))
+      "events" => body = Events(self.read_events(field, value))
+      "template" => self.not_supported(field)
       _ => self.unknown_field(field)
     }
   }
@@ -629,6 +631,78 @@ fn File::read_response(self : File, pointer : String, json : Json) -> Response {
     )
   }
   { status, headers: ReadOnlyArray::from_array(headers), body, }
+}
+
+///|
+/// Reads the Server-Sent Events of a response.
+fn File::read_events(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> ReadOnlyArray[SseEvent] {
+  let events = []
+  for i, event in self.array(pointer, json) {
+    let event_pointer = child(pointer, i.to_string())
+    guard event is Object(fields) else {
+      self.error(event_pointer, "must be an object")
+      continue
+    }
+    let mut delay_ms = 0
+    let mut event_type = None
+    let mut id = None
+    let mut data = ""
+    for key, value in fields {
+      let field = child(event_pointer, key)
+      match key {
+        "delay" => delay_ms = self.read_milliseconds(field, value)
+        "event" =>
+          event_type = self.string_without(
+            field, value, "\r\n", "must be one line",
+          )
+        "id" =>
+          id = self.string_without(
+            field, value, "\u{0}\r\n", "must be one line without NUL characters",
+          )
+        "data" => data = self.string(field, value).unwrap_or("")
+        _ => self.unknown_field(field)
+      }
+    }
+    self.require(fields, event_pointer, "data")
+    events.push({ delay_ms, event: event_type, id, data, })
+  }
+  ReadOnlyArray::from_array(events)
+}
+
+///|
+/// Reads a string that contains none of the characters in `forbidden`, or
+/// reports `message`.
+fn File::string_without(
+  self : File,
+  pointer : String,
+  json : Json,
+  forbidden : String,
+  message : String,
+) -> String? {
+  guard self.string(pointer, json) is Some(value) else { return None }
+  if value.contains_any(chars=forbidden) {
+    self.error(pointer, message)
+    return None
+  }
+  Some(value)
+}
+
+///|
+/// Reads a duration in whole milliseconds: an integer from 0 to
+/// 2147483647.
+fn File::read_milliseconds(self : File, pointer : String, json : Json) -> Int {
+  match json {
+    Number(n, ..) if n == n.floor() && n >= 0.0 && n <= 2147483647.0 =>
+      n.to_int()
+    _ => {
+      self.error(pointer, "must be an integer from 0 to 2147483647")
+      0
+    }
+  }
 }
 
 ///|

@@ -172,17 +172,7 @@ pub fn Engine::handle(
   }
   let (plan, near_miss) : (ResponsePlan, NearMiss?) = match (mock, matched) {
     (None, _) => (no_mock(host, self.snapshot.hosts()), None)
-    (Some(_), Some(stub)) =>
-      (
-        {
-          status: stub.response.status,
-          headers: stub.response.headers.iter().collect(),
-          body: Bytes(stub.response.body),
-          delay_ms: 0,
-          fault: None,
-        },
-        None,
-      )
+    (Some(_), Some(stub)) => (stub_response(stub.response), None)
     (Some(mock), None) => {
       // Only now, when every candidate has failed, are conditions counted.
       let near_miss = incoming.near_miss(mock.stubs)
@@ -209,6 +199,35 @@ pub fn Engine::handle(
     },
     near_miss,
   }
+}
+
+///|
+/// The plan of a Stub's `response`. Server-Sent Events are sent with
+/// `Content-Type: text/event-stream`, unless the Stub gives its own
+/// Content-Type.
+fn stub_response(response : @definitions.Response) -> ResponsePlan {
+  let headers = []
+  let body : Body = match response.body {
+    Bytes(bytes) => Bytes(bytes)
+    Events(events) => {
+      if !response.headers.iter().any(h => h.0.to_lower() == "content-type") {
+        headers.push(("Content-Type", "text/event-stream"))
+      }
+      Events(
+        events
+        .iter()
+        .map(event => SseEvent::{
+          delay_ms: event.delay_ms,
+          event: event.event,
+          id: event.id,
+          data: event.data,
+        })
+        .collect(),
+      )
+    }
+  }
+  headers.push_iter(response.headers.iter())
+  { status: response.status, headers, body, delay_ms: 0, fault: None, }
 }
 
 ///|
