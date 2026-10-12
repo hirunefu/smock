@@ -222,7 +222,15 @@ async test "a definitions directory that passes smock check loads in smock serve
     [("users.json", users_file), ("orders.json", "{ \"stubs\": [] }")],
     [("users.json", users_file), ("again.json", users_file)],
     [("users.json", "{ \"version\": \"latest\" }")],
-    [("users.json", "{ \"mocks\": [{ \"name\": \"users\", \"hosts\": [] }] }")],
+    [
+      (
+        "users.json",
+        (
+          #|{ "mocks": [{ "name": "users", "hosts": ["users.example.com"] },
+          #|  { "name": "accounts", "hosts": ["USERS.example.com:8080"] }] }
+        ),
+      ),
+    ],
   ]
   let out = []
   for files in sets {

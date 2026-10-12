@@ -116,20 +116,29 @@ fn Certificates::args(
 }
 
 ///|
-/// Starts smock with `users` and a certificate, runs `f` once over the
-/// plain port and once over the TLS port, and returns how smock ended. The
-/// HTTP/1.1 tests run this way: the codec and the connection loop are the
-/// same on both ports.
-async fn on_both_ports(f : async (Smock, Over) -> Unit) -> Stopped {
+/// Starts smock with a definitions directory holding `files` (by default
+/// `users`), a certificate and `args`, runs `f` once over the plain port and
+/// once over the TLS port, and returns how smock ended. The HTTP/1.1 tests
+/// run this way: the codec and the connection loop are the same on both
+/// ports.
+async fn on_both_ports(
+  files? : Array[(String, String)] = [("users.json", users)],
+  args? : Array[String] = [],
+  f : async (Smock, Over) -> Unit,
+) -> Stopped {
   let mut stopped = None
-  with_definitions([("users.json", users)], dir => {
+  with_definitions(files, dir => {
     with_certificates(certs => {
       stopped = Some(
-        with_smock(["--dir", dir, "--port", "0", ..certs.args()], tls=true, smock => {
-          for over in [Plain, Tls(certs)] {
-            f(smock, over)
-          }
-        }),
+        with_smock(
+          ["--dir", dir, "--port", "0", ..certs.args(), ..args],
+          tls=true,
+          smock => {
+            for over in [Plain, Tls(certs)] {
+              f(smock, over)
+            }
+          },
+        ),
       )
     })
   })

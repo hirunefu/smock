@@ -73,6 +73,15 @@ listens on the plain port. Logs go to stderr, one JSON object per line.
 | `--tls-key-file` | `SMOCK_TLS_KEY_FILE` | none |
 | `--log-format` | `SMOCK_LOG_FORMAT` | `json` |
 | `--body-file-dir` | `SMOCK_BODY_FILE_DIR` | `files` |
+| `--header-size-limit` | `SMOCK_HEADER_SIZE_LIMIT` | 16384 bytes (16 KiB): larger request heads get 431 |
+| `--header-count-limit` | `SMOCK_HEADER_COUNT_LIMIT` | 100 header fields: more get 431 |
+| `--body-limit` | `SMOCK_BODY_LIMIT` | 10485760 bytes (10 MiB): longer bodies get 413 |
+| `--read-timeout-ms` | `SMOCK_READ_TIMEOUT_MS` | 30000: a request must arrive whole within 30 s of its first byte |
+| `--idle-timeout-ms` | `SMOCK_IDLE_TIMEOUT_MS` | 60000: a connection that waits 60 s for a request closes |
+
+A request over a limit gets its status with `Connection: close`, then the
+connection closes; a timeout closes the connection without a response.
+Neither is logged.
 
 With a certificate and its key, smock also serves HTTPS on the TLS port, with
 the same Mocks as the plain port. Both are PEM files, for example the
@@ -115,6 +124,13 @@ A Definition file, such as `defs/users.json`:
   ]
 }
 ```
+
+A Mock answers the requests for the Hosts it lists in `hosts`, and the
+Default Mock answers the rest. A lone Mock is the Default Mock, so `users`
+answers `curl localhost:8080/users/1`, with a `Smock-Mock: users;
+via=default` header that says no Host matched.
+[docs/definition-files.md](docs/definition-files.md#hosts-and-the-default-mock)
+describes Hosts and the Default Mock.
 
 `smock check defs` validates a definitions directory the way `smock serve`
 loads it: it prints every problem, one per line with the file and a JSON

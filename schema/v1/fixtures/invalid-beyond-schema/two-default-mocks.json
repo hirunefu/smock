@@ -1,0 +1,12 @@
+{
+  "mocks": [
+    {
+      "name": "users",
+      "default": true
+    },
+    {
+      "name": "orders",
+      "default": true
+    }
+  ]
+}

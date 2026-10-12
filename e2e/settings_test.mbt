@@ -10,14 +10,19 @@ async test "every serve setting is a flag with a matching SMOCK_ environment var
       #|Serve the Mocks and Stubs of a definitions directory.
       #|
       #|Options:
-      #|  -h, --help                       Show help information.
-      #|  --dir <dir>                      The definitions directory. Without it, smock serves one empty Default Mock. [env: SMOCK_DIR]
-      #|  --port <port>                    The plain HTTP port. 0 picks a free port. [env: SMOCK_PORT] [default: 8080]
-      #|  --tls-port <tls-port>            The HTTPS port, served when --tls-cert-file and --tls-key-file are set. 0 picks a free port. [env: SMOCK_TLS_PORT] [default: 8443]
-      #|  --tls-cert-file <tls-cert-file>  The PEM certificate chain for the HTTPS port: the leaf certificate, then its intermediates. [env: SMOCK_TLS_CERT_FILE]
-      #|  --tls-key-file <tls-key-file>    The PEM private key of the leaf certificate in --tls-cert-file. [env: SMOCK_TLS_KEY_FILE]
-      #|  --log-format <log-format>        The log format: json. [env: SMOCK_LOG_FORMAT] [default: json]
-      #|  --body-file-dir <body-file-dir>  The body-file subdirectory of the definitions directory. [env: SMOCK_BODY_FILE_DIR] [default: files]
+      #|  -h, --help                                 Show help information.
+      #|  --dir <dir>                                The definitions directory. Without it, smock serves one empty Default Mock. [env: SMOCK_DIR]
+      #|  --port <port>                              The plain HTTP port. 0 picks a free port. [env: SMOCK_PORT] [default: 8080]
+      #|  --tls-port <tls-port>                      The HTTPS port, served when --tls-cert-file and --tls-key-file are set. 0 picks a free port. [env: SMOCK_TLS_PORT] [default: 8443]
+      #|  --tls-cert-file <tls-cert-file>            The PEM certificate chain for the HTTPS port: the leaf certificate, then its intermediates. [env: SMOCK_TLS_CERT_FILE]
+      #|  --tls-key-file <tls-key-file>              The PEM private key of the leaf certificate in --tls-cert-file. [env: SMOCK_TLS_KEY_FILE]
+      #|  --log-format <log-format>                  The log format: json. [env: SMOCK_LOG_FORMAT] [default: json]
+      #|  --body-file-dir <body-file-dir>            The body-file subdirectory of the definitions directory. [env: SMOCK_BODY_FILE_DIR] [default: files]
+      #|  --header-size-limit <header-size-limit>    The most bytes a request head (request line and header fields) may take. Larger heads get 431. [env: SMOCK_HEADER_SIZE_LIMIT] [default: 16384]
+      #|  --header-count-limit <header-count-limit>  The most header fields a request may have. More get 431. [env: SMOCK_HEADER_COUNT_LIMIT] [default: 100]
+      #|  --body-limit <body-limit>                  The longest request body, in bytes. Longer bodies get 413. [env: SMOCK_BODY_LIMIT] [default: 10485760]
+      #|  --read-timeout-ms <read-timeout-ms>        How long a request may take to arrive, in milliseconds, from its first byte to its last. Then the connection closes. [env: SMOCK_READ_TIMEOUT_MS] [default: 30000]
+      #|  --idle-timeout-ms <idle-timeout-ms>        How long a connection may wait for a request, in milliseconds. Then it closes. [env: SMOCK_IDLE_TIMEOUT_MS] [default: 60000]
       #|
     ),
   )
@@ -36,6 +41,52 @@ async test "settings can come from SMOCK_ environment variables" {
       },
       smock => {
         inspect(smock.get("/users/1").has_prefix("200 OK"), content="true")
+      },
+    )
+  })
+}
+
+///|
+async test "limits and timeouts can come from SMOCK_ environment variables" {
+  with_definitions([("users.json", users)], dir => {
+    let _ = with_smock(
+      ["--dir", dir, "--port", "0"],
+      env={
+        "SMOCK_HEADER_SIZE_LIMIT": "100",
+        "SMOCK_HEADER_COUNT_LIMIT": "2",
+        "SMOCK_BODY_LIMIT": "4",
+        "SMOCK_READ_TIMEOUT_MS": "200",
+        "SMOCK_IDLE_TIMEOUT_MS": "200",
+      },
+      smock => {
+        let out = []
+        for
+          request in [
+            "GET /users/1 HTTP/1.1\r\nHost: localhost\r\nX: \{"x".repeat(60)}\r\n\r\n",
+            "GET /users/1 HTTP/1.1\r\nHost: localhost\r\nX-1: 1\r\nX-2: 2\r\n\r\n",
+            "POST /users/1 HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\n",
+          ] {
+          let conn = smock.connect()
+          defer conn.close()
+          conn.write(request)
+          out.push(status_line(read_response(conn)))
+        }
+        let idle = smock.connect()
+        defer idle.close()
+        let since = @async.now()
+        let (elapsed, _) = ended(idle, since)
+        out.push(
+          "idle connection ended after at least 200 ms: \{elapsed >= 200}",
+        )
+        inspect(
+          out.join("\n"),
+          content=(
+            #|HTTP/1.1 431 Request Header Fields Too Large
+            #|HTTP/1.1 431 Request Header Fields Too Large
+            #|HTTP/1.1 413 Content Too Large
+            #|idle connection ended after at least 200 ms: true
+          ),
+        )
       },
     )
   })
@@ -69,6 +120,14 @@ async test "an invalid value stops startup with a message that names the setting
     (["--dir", ""], Map([])),
     (["--body-file-dir", "../files"], Map([])),
     ([], { "SMOCK_BODY_FILE_DIR": "/srv/files" }),
+    (["--header-size-limit", "0"], Map([])),
+    ([], { "SMOCK_HEADER_SIZE_LIMIT": "16KiB" }),
+    (["--header-count-limit", "0"], Map([])),
+    (["--body-limit", "1073741825"], Map([])),
+    ([], { "SMOCK_BODY_LIMIT": "-1" }),
+    (["--read-timeout-ms", "30s"], Map([])),
+    (["--read-timeout-ms", "2147483648"], Map([])),
+    ([], { "SMOCK_IDLE_TIMEOUT_MS": "0" }),
   ]
   let out = []
   for run in runs {
@@ -91,6 +150,14 @@ async test "an invalid value stops startup with a message that names the setting
       #|status 2: smock serve: invalid value "" for --dir (SMOCK_DIR): must not be empty
       #|status 2: smock serve: invalid value "../files" for --body-file-dir (SMOCK_BODY_FILE_DIR): must be a relative path inside the definitions directory
       #|status 2: smock serve: invalid value "/srv/files" for --body-file-dir (SMOCK_BODY_FILE_DIR): must be a relative path inside the definitions directory
+      #|status 2: smock serve: invalid value "0" for --header-size-limit (SMOCK_HEADER_SIZE_LIMIT): must be an integer from 1 to 1073741824
+      #|status 2: smock serve: invalid value "16KiB" for --header-size-limit (SMOCK_HEADER_SIZE_LIMIT): must be an integer from 1 to 1073741824
+      #|status 2: smock serve: invalid value "0" for --header-count-limit (SMOCK_HEADER_COUNT_LIMIT): must be an integer from 1 to 1073741824
+      #|status 2: smock serve: invalid value "1073741825" for --body-limit (SMOCK_BODY_LIMIT): must be an integer from 0 to 1073741824
+      #|status 2: smock serve: invalid value "-1" for --body-limit (SMOCK_BODY_LIMIT): must be an integer from 0 to 1073741824
+      #|status 2: smock serve: invalid value "30s" for --read-timeout-ms (SMOCK_READ_TIMEOUT_MS): must be an integer from 1 to 2147483647
+      #|status 2: smock serve: invalid value "2147483648" for --read-timeout-ms (SMOCK_READ_TIMEOUT_MS): must be an integer from 1 to 2147483647
+      #|status 2: smock serve: invalid value "0" for --idle-timeout-ms (SMOCK_IDLE_TIMEOUT_MS): must be an integer from 1 to 2147483647
     ),
   )
 }

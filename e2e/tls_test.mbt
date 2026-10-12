@@ -51,6 +51,7 @@ async test "with a certificate chain and its key, smock serves HTTPS on the TLS 
           #|HTTP/1.1 200 OK
           #|Content-Type: application/json
           #|X-Source: smock
+          #|Smock-Mock: users; via=default
           #|Connection: close
           #|Content-Length: 23
           #|
@@ -60,6 +61,7 @@ async test "with a certificate chain and its key, smock serves HTTPS on the TLS 
           #|HTTP/1.1 200 OK
           #|Content-Type: application/json
           #|X-Source: smock
+          #|Smock-Mock: users; via=default
           #|Connection: close
           #|Content-Length: 23
           #|
@@ -189,13 +191,20 @@ async test "the TLS settings can come from SMOCK_ environment variables, and the
 ///|
 /// Runs `openssl s_client` against the TLS port with `options`, trusting
 /// only the test root CA, sends `request` once the handshake is done, and
-/// returns three lines of what it printed: what ALPN selected, the
-/// certificate verification result and the response's status line.
+/// returns its exit status and, for each group of prefixes in `show`, the
+/// first line it printed that starts with one of them. By default these are
+/// what ALPN selected, the certificate verification result and the
+/// response's status line.
 async fn Smock::s_client(
   self : Smock,
   certs : Certificates,
   options : Array[String],
   request : String,
+  show? : Array[Array[String]] = [
+    ["ALPN protocol:", "No ALPN negotiated"],
+    ["Verify return code:"],
+    ["HTTP/"],
+  ],
 ) -> String {
   guard self.tls_port is Some(port) else {
     fail("the test did not wait for the TLS port")
@@ -234,12 +243,7 @@ async fn Smock::s_client(
     .get(0)
     .unwrap_or("(none of \{prefixes.join(", ")})")
   }
-  [
-    "status \{status}",
-    first(["ALPN protocol:", "No ALPN negotiated"]),
-    first(["Verify return code:"]),
-    first(["HTTP/"]),
-  ].join("\n")
+  ["status \{status}", ..show.map(first)].join("\n")
 }
 
 ///|
@@ -282,41 +286,70 @@ async test "ALPN: a client offering h2 and http/1.1 gets http/1.1, and a client 
 }
 
 ///|
-async test "SNI never chooses the Mock: whatever name the client sends by SNI, the request is answered as on the plain port" {
-  with_definitions([("users.json", users)], dir => {
+/// Two Mocks with Hosts, each with a Stub `GET /x` that answers with its
+/// name on a line of its own.
+let users_and_orders : Array[(String, String)] = [
+  (
+    "mocks.json",
+    (
+      #|{ "mocks": [{ "name": "users", "hosts": ["users.example.com"] },
+      #|            { "name": "orders", "hosts": ["orders.example.com"] }],
+      #|  "stubs": [{ "id": "users-x", "mock": "users",
+      #|              "request": { "method": "GET", "path": "/x" },
+      #|              "response": { "status": 200, "body": "from users\n" } },
+      #|            { "id": "orders-x", "mock": "orders",
+      #|              "request": { "method": "GET", "path": "/x" },
+      #|              "response": { "status": 200, "body": "from orders\n" } }] }
+    ),
+  ),
+]
+
+///|
+async test "SNI never chooses the Mock: a request whose SNI names one Mock's Host and whose Host header names another's is answered by the Mock of its Host header" {
+  with_definitions(users_and_orders, dir => {
     with_certificates(certs => {
       let _ = with_smock(
         ["--dir", dir, "--port", "0", ..certs.args()],
         tls=true,
         smock => {
-          let plain = smock.exchange(Plain, get_user)
           let out = []
-          for name in ["localhost", "orders.example"] {
+          let cases = [
+            ("orders.example.com", "users.example.com"),
+            ("users.example.com", "orders.example.com"),
+            ("unknown.example.com", "orders.example.com"),
+          ]
+          for case in cases {
+            let (sni, host) = case
+            let request = "GET /x HTTP/1.1\r\nHost: \{host}\r\nConnection: close\r\n\r\n"
             out.push(
-              "SNI \{name}:\n" +
-              smock.s_client(certs, ["-servername", name], get_user),
+              "SNI \{sni}, Host \{host}:\n" +
+              smock.s_client(certs, ["-servername", sni], request, show=[
+                ["Verify return code:"],
+                ["HTTP/"],
+                ["from "],
+              ]),
             )
           }
           inspect(
-            "plain port:\n" +
-            plain.split("\n").collect()[0].to_owned() +
-            "\n---\n" +
             out.join("\n---\n"),
             content=(
-              #|plain port:
-              #|HTTP/1.1 200 OK
-              #|---
-              #|SNI localhost:
+              #|SNI orders.example.com, Host users.example.com:
               #|status 0
-              #|No ALPN negotiated
               #|Verify return code: 0 (ok)
               #|HTTP/1.1 200 OK
+              #|from users
               #|---
-              #|SNI orders.example:
+              #|SNI users.example.com, Host orders.example.com:
               #|status 0
-              #|No ALPN negotiated
               #|Verify return code: 0 (ok)
               #|HTTP/1.1 200 OK
+              #|from orders
+              #|---
+              #|SNI unknown.example.com, Host orders.example.com:
+              #|status 0
+              #|Verify return code: 0 (ok)
+              #|HTTP/1.1 200 OK
+              #|from orders
             ),
           )
         },
@@ -338,22 +371,25 @@ async fn ends(tcp : @socket.Tcp) -> Bool {
 }
 
 ///|
-/// The status line of a response.
-fn status_line(response : String) -> String {
-  response.split("\n").collect()[0].to_owned()
-}
-
-///|
-async test "a stalled or failed handshake affects only its own connection" {
+async test "a stalled or failed handshake affects only its own connection, and the idle timeout ends a stalled one" {
   with_definitions([("users.json", users)], dir => {
     with_certificates(certs => {
       let _ = with_smock(
-        ["--dir", dir, "--port", "0", ..certs.args()],
+        [
+          "--dir",
+          dir,
+          "--port",
+          "0",
+          "--idle-timeout-ms",
+          "1500",
+          ..certs.args(),
+        ],
         tls=true,
         smock => {
           let tls_port = smock.tls_port.unwrap()
           let address = @socket.Addr::parse("127.0.0.1:\{tls_port}")
           // The first bytes of a TLS record, then nothing more.
+          let since = @async.now()
           let stalled = @socket.Tcp::connect(address)
           defer stalled.close()
           stalled.write(b"\x16\x03\x01\x02\x00\x01")
@@ -367,12 +403,18 @@ async test "a stalled or failed handshake affects only its own connection" {
             status_line(smock.exchange(Tls(certs), get_user)),
             "HTTP meanwhile: " + status_line(smock.exchange(Plain, get_user)),
           ]
+          let stalled_closed = ends(stalled)
+          let elapsed = @async.now() - since
+          out.push(
+            "the stalled handshake's connection is closed after the idle timeout: \{stalled_closed && elapsed >= 1500}",
+          )
           inspect(
             out.join("\n"),
             content=(
               #|the failed handshake's connection is closed: true
               #|HTTPS meanwhile: HTTP/1.1 200 OK
               #|HTTP meanwhile: HTTP/1.1 200 OK
+              #|the stalled handshake's connection is closed after the idle timeout: true
             ),
           )
         },

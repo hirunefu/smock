@@ -1,7 +1,8 @@
 // Reading and validating Definition files. The JSON Schema in
 // schema/v1/definitions.json is the contract: what it rejects, smock
-// rejects too. Rules that span the definition set (unique Mock names and
-// Stub IDs, Stubs that name a declared Mock) are beyond the Schema.
+// rejects too. Rules that span the definition set (unique Mock names,
+// Hosts and Stub IDs, at most one Default Mock, Stubs that name a declared
+// Mock) are beyond the Schema.
 
 ///|
 /// Parses a Definition file, JSON or YAML, into its top-level object, or
@@ -61,10 +62,16 @@ priv struct Reader {
   diagnostics : Array[Diagnostic]
   /// The names of the Mocks any file of the set declares.
   declared : Set[String]
-  /// The names of the Mocks read so far.
-  mocks : Array[String]
+  /// The Mocks read so far.
+  mocks : Array[MockDecl]
   /// Where each Mock name was first declared, as `<file>: <pointer>`.
   mock_names : Map[String, String]
+  /// Each Host claimed so far, normalised, with the name of the Mock that
+  /// claims it and where, as `<file>: <pointer>`.
+  hosts : Map[String, (String, String)]
+  /// The Mock marked `default` so far, if any, and where, as
+  /// `<file>: <pointer>`.
+  mut default_mock : (String, String)?
   /// The Stubs read so far.
   stubs : Array[Stub]
   /// Where each Stub ID was first used, as `<file>: <pointer>`.
@@ -78,29 +85,67 @@ fn Reader::new(declared~ : Set[String]) -> Reader {
     declared,
     mocks: [],
     mock_names: Map([]),
+    hosts: Map([]),
+    default_mock: None,
     stubs: [],
     stub_ids: Map([]),
   }
 }
 
 ///|
-/// Declares the Mock `name`, whose name is at `pointer` in `file`, unless
-/// an earlier Mock has that name.
+/// A Mock as a Definition file declares it.
+priv struct MockDecl {
+  name : String
+  /// The Hosts, as declared, each with its JSON Pointer.
+  hosts : Array[(String, String)]
+  /// The JSON Pointer of `default` when it is true.
+  default : String?
+}
+
+///|
+/// Declares `mock`, at `pointer` in `file`, unless an earlier Mock has its
+/// name. Then claims its Hosts, unless another Mock claims one of them
+/// already, and makes it the Default Mock when it is marked `default`,
+/// unless an earlier Mock is.
 fn Reader::declare_mock(
   self : Reader,
   file : File,
   pointer : String,
-  name : String,
+  mock : MockDecl,
 ) -> Unit {
-  match self.mock_names.get(name) {
-    Some(earlier) =>
-      file.error(
-        pointer,
-        "the Mock name \{name.escape()} is already declared at \{earlier}",
-      )
-    None => {
-      self.mock_names[name] = "\{file.name}: \{pointer}"
-      self.mocks.push(name)
+  let name = mock.name
+  let name_pointer = child(pointer, "name")
+  if self.mock_names.get(name) is Some(earlier) {
+    file.error(
+      name_pointer,
+      "the Mock name \{name.escape()} is already declared at \{earlier}",
+    )
+    return
+  }
+  self.mock_names[name] = "\{file.name}: \{name_pointer}"
+  self.mocks.push(mock)
+  for declared in mock.hosts {
+    let (host, host_pointer) = declared
+    let host = normalize_host(host)
+    match self.hosts.get(host) {
+      Some((owner, _)) if owner == name => ()
+      Some((owner, earlier)) =>
+        file.error(
+          host_pointer,
+          "the Host \{host.escape()} is already claimed by the Mock \{owner.escape()} at \{earlier}",
+        )
+      None => self.hosts[host] = (name, "\{file.name}: \{host_pointer}")
+    }
+  }
+  if mock.default is Some(default_pointer) {
+    match self.default_mock {
+      Some((owner, earlier)) =>
+        file.error(
+          default_pointer,
+          "the Default Mock is already \{owner.escape()}, marked at \{earlier}",
+        )
+      None =>
+        self.default_mock = Some((name, "\{file.name}: \{default_pointer}"))
     }
   }
 }
@@ -171,8 +216,8 @@ fn Reader::read_file(
       "mocks" =>
         for i, mock in file.array(pointer, value) {
           let mock_pointer = child(pointer, i.to_string())
-          if file.read_mock(mock_pointer, mock) is Some(name) {
-            self.declare_mock(file, child(mock_pointer, "name"), name)
+          if file.read_mock(mock_pointer, mock) is Some(mock) {
+            self.declare_mock(file, mock_pointer, mock)
           }
         }
       "stubs" =>
@@ -229,23 +274,55 @@ fn File::require(
 }
 
 ///|
-/// Reads a Mock and returns its name.
-fn File::read_mock(self : File, pointer : String, json : Json) -> String? {
+/// Reads a Mock. It has none when it has no usable name.
+fn File::read_mock(self : File, pointer : String, json : Json) -> MockDecl? {
   guard json is Object(mock) else {
     self.error(pointer, "must be an object")
     return None
   }
   let mut name = None
+  let mut hosts = []
+  let mut default = None
   for key, value in mock {
     let field = child(pointer, key)
     match key {
       "name" => name = self.name(field, value)
-      "hosts" | "default" | "noMatch" | "journal" => self.not_supported(field)
+      "hosts" => hosts = self.read_hosts(field, value)
+      "default" =>
+        match value {
+          True => default = Some(field)
+          False => ()
+          _ => self.error(field, "must be true or false")
+        }
+      "noMatch" | "journal" => self.not_supported(field)
       _ => self.unknown_field(field)
     }
   }
   self.require(mock, pointer, "name")
-  name
+  name.map(name => { name, hosts, default, })
+}
+
+///|
+/// Reads the Hosts of a Mock, each with its JSON Pointer.
+fn File::read_hosts(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> Array[(String, String)] {
+  let out = []
+  for i, host in self.array(pointer, json) {
+    let field = child(pointer, i.to_string())
+    match host {
+      String(host) if is_host(host) => out.push((host, field))
+      String(host) if host.contains("*") =>
+        self.error(field, "must be an exact name: Hosts have no wildcards")
+      _ =>
+        self.error(
+          field, "must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080",
+        )
+    }
+  }
+  out
 }
 
 ///|
@@ -422,6 +499,25 @@ fn child(pointer : String, key : String) -> String {
     .replace_all(old="~", new="~0")
     .replace_all(old="/", new="~1")
   "\{pointer}/\{escaped}"
+}
+
+///|
+/// Whether `s` can be a Host in a Definition file: letters, digits and
+/// `.`, `_`, `:`, `[`, `]` and `-`, as the JSON Schema allows.
+fn is_host(s : String) -> Bool {
+  if s == "" {
+    return false
+  }
+  for c in s {
+    let ok = (c >= 'a' && c <= 'z') ||
+      (c >= 'A' && c <= 'Z') ||
+      (c >= '0' && c <= '9') ||
+      "._:[]-".contains_char(c)
+    if !ok {
+      return false
+    }
+  }
+  true
 }
 
 ///|

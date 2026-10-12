@@ -26,6 +26,7 @@ test "a request whose method and path equal a Stub's gets that Stub's response" 
       #|  status: 200
       #|  header: Content-Type: application/json
       #|  header: X-Source: smock
+      #|  header: Smock-Mock: users; via=default
       #|  body: "{\"id\":1,\"name\":\"Alice\"}"
       #|  delay_ms: 0
       #|  fault: None
@@ -52,6 +53,7 @@ test "the path is compared without the query" {
       #|200
       #|Content-Type: application/json
       #|X-Source: smock
+      #|Smock-Mock: users; via=default
       #|{"id":1,"name":"Alice"}
     ),
   )
@@ -77,16 +79,22 @@ test "any other request gets 404 with an empty body" {
     .join("\n"),
     content=(
       #|POST /users/1 -> 404
+      #|Smock-Mock: users; via=default
       #| stub=None
       #|get /users/1 -> 404
+      #|Smock-Mock: users; via=default
       #| stub=None
       #|GET /users/2 -> 404
+      #|Smock-Mock: users; via=default
       #| stub=None
       #|GET /users/1/ -> 404
+      #|Smock-Mock: users; via=default
       #| stub=None
       #|GET /USERS/1 -> 404
+      #|Smock-Mock: users; via=default
       #| stub=None
       #|GET / -> 404
+      #|Smock-Mock: users; via=default
       #| stub=None
     ),
   )
@@ -100,6 +108,7 @@ test "with no Definition file, one empty Mock named default answers 404" {
     content=(
       #|plan:
       #|  status: 404
+      #|  header: Smock-Mock: default; via=default
       #|  body: ""
       #|  delay_ms: 0
       #|  fault: None
@@ -132,12 +141,26 @@ test "Definition files are read in byte-wise name order, so the first matching S
     ("aa.json", stub("from-aa")),
     ("mocks.json", "{ \"mocks\": [{ \"name\": \"m\" }] }"),
   ])
-  inspect(response(h.send("GET", "/x")), content="200\nfrom-aa")
+  inspect(
+    response(h.send("GET", "/x")),
+    content=(
+      #|200
+      #|Smock-Mock: m; via=default
+      #|from-aa
+    ),
+  )
   let h = harness([
     ("b.json", stub("from-b")),
     ("aa.json", stub("from-aa")),
     ("Z.json", stub("from-Z")),
     ("mocks.json", "{ \"mocks\": [{ \"name\": \"m\" }] }"),
   ])
-  inspect(response(h.send("GET", "/x")), content="200\nfrom-Z")
+  inspect(
+    response(h.send("GET", "/x")),
+    content=(
+      #|200
+      #|Smock-Mock: m; via=default
+      #|from-Z
+    ),
+  )
 }
