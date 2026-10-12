@@ -69,6 +69,9 @@ pub struct Snapshot {
   priv host_index : Map[String, Int]
   /// The index in `mocks` of the Default Mock, if there is one.
   priv default_index : Int?
+  /// Where each Stub is declared, by its ID: the Definition file and the
+  /// JSON Pointer to the Stub in it.
+  priv stub_locations : Map[String, (String, String)]
 } derive(Debug, Eq)
 
 ///|
@@ -260,6 +263,7 @@ pub fn load(set : DefinitionSet) -> Result[Snapshot, Array[Diagnostic]] {
       ]),
       host_index: Map([]),
       default_index: Some(0),
+      stub_locations: Map([]),
     })
   }
   let mocks = reader.mocks.map(mock => Mock::{
@@ -285,7 +289,12 @@ pub fn load(set : DefinitionSet) -> Result[Snapshot, Array[Diagnostic]] {
     None if mocks.length() == 1 => Some(0)
     None => None
   }
-  Ok({ mocks: ReadOnlyArray::from_array(mocks), host_index, default_index, })
+  Ok({
+    mocks: ReadOnlyArray::from_array(mocks),
+    host_index,
+    default_index,
+    stub_locations: reader.stub_locations,
+  })
 }
 
 ///|

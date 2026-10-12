@@ -76,6 +76,9 @@ priv struct Reader {
   stubs : Array[Stub]
   /// Where each Stub ID was first used, as `<file>: <pointer>`.
   stub_ids : Map[String, String]
+  /// Where each Stub read so far is declared, by its ID: the file and the
+  /// JSON Pointer to the Stub.
+  stub_locations : Map[String, (String, String)]
   /// The body files, by their name relative to the body-file subdirectory.
   body_files : Map[String, Bytes]
 }
@@ -95,6 +98,7 @@ fn Reader::new(
     default_mock: None,
     stubs: [],
     stub_ids: Map([]),
+    stub_locations: Map([]),
   }
 }
 
@@ -190,6 +194,7 @@ fn Reader::declare_stub(
   }
   if ok {
     self.stubs.push(stub)
+    self.stub_locations[stub.id] = (file.name, pointer)
   }
 }
 
