@@ -29,10 +29,11 @@ async test "several requests in turn, with and without bodies, are answered on o
         #|{"id":1,"name":"Alice"}
         #|---
         #|HTTP/1.1 404 Not Found
+        #|Content-Type: application/json
         #|Smock-Mock: users; via=default
-        #|Content-Length: 0
+        #|Content-Length: 27
         #|
-        #|
+        #|{"error":"no Stub matched"}
         #|---
         #|HTTP/1.1 200 OK
         #|Content-Type: application/json

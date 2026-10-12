@@ -77,7 +77,12 @@ pub struct Mock {
   name : String
   /// The Hosts the Mock answers to, as declared.
   hosts : ReadOnlyArray[String]
-  /// The Stubs of this Mock, in the order they are tried.
+  /// The status of the response when no Stub matches.
+  no_match_status : Int
+  /// The Stubs of this Mock, in the order they are tried: by priority,
+  /// lower numbers first and Stubs without a priority last; Stubs of equal
+  /// priority in declaration order, that is file-name order, then position
+  /// in the file.
   stubs : ReadOnlyArray[Stub]
 } derive(Debug, Eq)
 
@@ -87,6 +92,9 @@ pub struct Stub {
   id : String
   /// The name of the Mock the Stub belongs to.
   mock : String
+  /// The priority: a lower number is tried first, and a Stub without one
+  /// after every Stub with one.
+  priority : Int?
   request : Conditions
   response : Response
 } derive(Debug, Eq)
@@ -97,8 +105,30 @@ pub struct Stub {
 pub struct Conditions {
   /// The method, compared exactly.
   meth : String?
-  /// The path, without the query, compared exactly.
+  /// The path, compared exactly with the percent-decoded path of the
+  /// request, without its query.
   path : String?
+  /// Query parameters as (name, value): each must be present, and one of
+  /// its decoded values must equal the given value.
+  query : ReadOnlyArray[(String, String)]
+  /// Headers as (name in lower case, value): each must be present, and one
+  /// of its values must equal the given value. Names are compared
+  /// case-insensitively.
+  headers : ReadOnlyArray[(String, String)]
+  /// The body.
+  body : BodyCondition?
+} derive(Debug, Eq)
+
+///|
+/// A condition on the request body.
+pub enum BodyCondition {
+  /// The body is exactly these bytes: the text of the condition in UTF-8.
+  Exact(Bytes)
+  /// The body parses as JSON and contains this value: an object has each
+  /// listed key, with a value that contains the listed one; an array has
+  /// the same length, and each element contains the listed one; any other
+  /// value is equal, numbers by their value.
+  Json(Json)
 } derive(Debug, Eq)
 
 ///|
@@ -106,6 +136,8 @@ pub struct Conditions {
 pub struct Response {
   status : Int
   headers : ReadOnlyArray[(String, String)]
+  /// The body: the inline body in UTF-8, or the bytes of the body file,
+  /// read when the snapshot was built.
   body : Bytes
 } derive(Debug, Eq)
 
@@ -163,7 +195,10 @@ pub fn load(set : DefinitionSet) -> Result[Snapshot, Array[Diagnostic]] {
   let files = sorted_by_name(set.files).map(file => {
     (file.0, parse_file(file.0, file.1))
   })
-  let reader = Reader::new(declared=declared_mocks(files))
+  let reader = Reader::new(
+    declared=declared_mocks(files),
+    body_files=Map::from_array(set.body_files),
+  )
   for file in files {
     reader.read_file(file.0, file.1)
   }
@@ -176,6 +211,7 @@ pub fn load(set : DefinitionSet) -> Result[Snapshot, Array[Diagnostic]] {
         {
           name: "default",
           hosts: ReadOnlyArray::from_array([]),
+          no_match_status: 404,
           stubs: ReadOnlyArray::from_array([]),
         },
       ]),
@@ -186,8 +222,11 @@ pub fn load(set : DefinitionSet) -> Result[Snapshot, Array[Diagnostic]] {
   let mocks = reader.mocks.map(mock => Mock::{
     name: mock.name,
     hosts: ReadOnlyArray::from_iter(mock.hosts.iter().map(host => host.0)),
-    stubs: ReadOnlyArray::from_iter(
-      reader.stubs.iter().filter(stub => stub.mock == mock.name),
+    no_match_status: mock.no_match_status,
+    stubs: ReadOnlyArray::from_array(
+      in_matching_order(
+        reader.stubs.iter().filter(stub => stub.mock == mock.name).collect(),
+      ),
     ),
   })
   let index_of = Map([])
@@ -204,6 +243,23 @@ pub fn load(set : DefinitionSet) -> Result[Snapshot, Array[Diagnostic]] {
     None => None
   }
   Ok({ mocks: ReadOnlyArray::from_array(mocks), host_index, default_index, })
+}
+
+///|
+/// `stubs`, given in declaration order, in the order they are tried: by
+/// priority, lower numbers first and Stubs without a priority last, then in
+/// declaration order.
+fn in_matching_order(stubs : Array[Stub]) -> Array[Stub] {
+  let indexed = stubs.mapi((i, stub) => (i, stub))
+  indexed.sort_by((a, b) => {
+    match (a.1.priority, b.1.priority) {
+      (Some(p), Some(q)) if p != q => p.compare(q)
+      (Some(_), None) => -1
+      (None, Some(_)) => 1
+      _ => a.0.compare(b.0)
+    }
+  })
+  indexed.map(entry => entry.1)
 }
 
 ///|

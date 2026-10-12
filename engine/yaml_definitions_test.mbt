@@ -160,8 +160,9 @@ test "the engine answers a request with the response of a Stub declared in a YAM
       #|created order 3
       #|---
       #|404
+      #|Content-Type: application/json
       #|Smock-Mock: orders; via=default
-      #|
+      #|{"error":"no Stub matched"}
     ),
   )
 }

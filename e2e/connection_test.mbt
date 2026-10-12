@@ -170,11 +170,12 @@ async test "a pipelined request that says Connection: close is answered, then th
         #|HTTP/1.1 200 OK
         #|---
         #|HTTP/1.1 404 Not Found
+        #|Content-Type: application/json
         #|Smock-Mock: users; via=default
         #|Connection: close
-        #|Content-Length: 0
+        #|Content-Length: 27
         #|
-        #|
+        #|{"error":"no Stub matched"}
         #|---
         #|then "" and closed
       ),
@@ -216,8 +217,9 @@ async test "HEAD: the response carries its status and headers, with the Content-
         #|
         #|{"id":1,"name":"Alice"}---
         #|HTTP/1.1 404 Not Found
+        #|Content-Type: application/json
         #|Smock-Mock: users; via=default
-        #|Content-Length: 0
+        #|Content-Length: 27
         #|---
         #|HTTP/1.1 200 OK
         #|Content-Type: application/json

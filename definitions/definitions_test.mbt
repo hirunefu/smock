@@ -300,23 +300,20 @@ test "a field the Schema defines but smock does not implement yet is rejected as
           #|    "noMatch": { "status": 418 }, "journal": false }],
           #|  "stubs": [{ "id": "a", "mock": "m", "priority": 1,
           #|    "request": { "method": "GET", "path": { "pattern": "/a.*" },
-          #|      "query": { "q": "1" }, "headers": { "X-A": "1" },
-          #|      "body": { "json": {} } },
-          #|    "response": { "status": 200, "bodyFile": "a.json",
+          #|      "query": { "q": { "pattern": "1" } }, "headers": { "X-A": { "pattern": "1" } },
+          #|      "body": { "pattern": "{}" } },
+          #|    "response": { "status": 200,
           #|      "template": true, "events": [{ "data": "x" }] },
           #|    "fault": { "seed": 1 } }] }
         ),
       ),
     ]),
     content=(
-      #|a.json: /mocks/0/noMatch: is not supported yet
       #|a.json: /mocks/0/journal: is not supported yet
-      #|a.json: /stubs/0/priority: is not supported yet
       #|a.json: /stubs/0/request/path: pattern conditions are not supported yet
-      #|a.json: /stubs/0/request/query: is not supported yet
-      #|a.json: /stubs/0/request/headers: is not supported yet
-      #|a.json: /stubs/0/request/body: is not supported yet
-      #|a.json: /stubs/0/response/bodyFile: is not supported yet
+      #|a.json: /stubs/0/request/query/q: pattern conditions are not supported yet
+      #|a.json: /stubs/0/request/headers/X-A: pattern conditions are not supported yet
+      #|a.json: /stubs/0/request/body: pattern conditions are not supported yet
       #|a.json: /stubs/0/response/template: is not supported yet
       #|a.json: /stubs/0/response/events: is not supported yet
       #|a.json: /stubs/0/fault: is not supported yet
