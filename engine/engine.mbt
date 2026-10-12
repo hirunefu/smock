@@ -44,9 +44,9 @@ pub(all) struct Outcome {
 } derive(Debug)
 
 ///|
-/// The Stub that matched a request, by its ID, and where it comes from:
-/// the metrics label every Ephemeral Stub alike, whatever its ID, and a
-/// Stub from a Definition file by its ID.
+/// The Stub that matched a request, by its ID, and where it comes from. A
+/// Stub from a Definition file may have an ID that looks like one smock
+/// assigns, so only this tells the two apart.
 pub(all) enum MatchedStub {
   /// A Stub from a Definition file.
   FromFile(String)

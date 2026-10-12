@@ -23,8 +23,8 @@ fn is_traffic(name : String) -> Bool {
 /// The request traffic metrics in `/metrics`, `text`, with its `samples`:
 ///
 /// - their `# TYPE` lines;
-/// - their samples, one per line in text order, without the latency
-///   histogram's buckets and sum, whose values depend on timing;
+/// - their samples, one per line, sorted, without the latency histogram's
+///   buckets and sum, whose values depend on timing;
 /// - the label names of each sample name, buckets and sum included.
 fn traffic(text : String, samples : Array[Sample]) -> String {
   let out = []
