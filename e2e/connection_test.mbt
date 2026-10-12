@@ -172,6 +172,7 @@ async test "a pipelined request that says Connection: close is answered, then th
         #|---
         #|HTTP/1.1 404 Not Found
         #|Content-Type: application/json
+        #|Smock-Near-Miss: user; failed=path
         #|Smock-Mock: users; via=default
         #|Connection: close
         #|Content-Length: 27
@@ -219,6 +220,7 @@ async test "HEAD: the response carries its status and headers, with the Content-
         #|{"id":1,"name":"Alice"}---
         #|HTTP/1.1 404 Not Found
         #|Content-Type: application/json
+        #|Smock-Near-Miss: user; failed=path
         #|Smock-Mock: users; via=default
         #|Content-Length: 27
         #|---

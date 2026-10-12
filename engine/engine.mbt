@@ -99,14 +99,6 @@ pub(all) struct JournalEntry {
 } derive(Debug)
 
 ///|
-/// The Stub that came closest to matching a request that matched nothing,
-/// and the conditions it failed.
-pub(all) struct NearMiss {
-  stub : String
-  failed : Array[String]
-} derive(Debug)
-
-///|
 /// Creates an engine that serves `snapshot`.
 pub fn Engine::Engine(snapshot : @definitions.Snapshot) -> Engine {
   { snapshot, }
@@ -178,17 +170,24 @@ pub fn Engine::handle(
       mock.stubs.iter().find_first(stub => incoming.meets(stub.request))
     None => None
   }
-  let plan : ResponsePlan = match (mock, matched) {
-    (None, _) => no_mock(host, self.snapshot.hosts())
+  let (plan, near_miss) : (ResponsePlan, NearMiss?) = match (mock, matched) {
+    (None, _) => (no_mock(host, self.snapshot.hosts()), None)
     (Some(_), Some(stub)) =>
-      {
-        status: stub.response.status,
-        headers: stub.response.headers.iter().collect(),
-        body: Bytes(stub.response.body),
-        delay_ms: 0,
-        fault: None,
-      }
-    (Some(mock), None) => no_match(mock)
+      (
+        {
+          status: stub.response.status,
+          headers: stub.response.headers.iter().collect(),
+          body: Bytes(stub.response.body),
+          delay_ms: 0,
+          fault: None,
+        },
+        None,
+      )
+    (Some(mock), None) => {
+      // Only now, when every candidate has failed, are conditions counted.
+      let near_miss = incoming.near_miss(mock.stubs)
+      (no_match(mock, near_miss), near_miss)
+    }
   }
   // A mistyped Host must not silently succeed.
   if resolution is ViaDefault(name) {
@@ -208,16 +207,21 @@ pub fn Engine::handle(
       status: plan.status,
       received_at: now,
     },
-    near_miss: None,
+    near_miss,
   }
 }
 
 ///|
-/// The response of `mock` when no Stub matches.
-fn no_match(mock : @definitions.Mock) -> ResponsePlan {
+/// The response of `mock` when no Stub matches, with the Near miss, if
+/// any, in the `Smock-Near-Miss` header.
+fn no_match(mock : @definitions.Mock, near_miss : NearMiss?) -> ResponsePlan {
+  let headers = [("Content-Type", "application/json")]
+  if near_miss is Some(near_miss) {
+    headers.push(("Smock-Near-Miss", near_miss.header_value()))
+  }
   {
     status: mock.no_match_status,
-    headers: [("Content-Type", "application/json")],
+    headers,
     body: Bytes(b"{\"error\":\"no Stub matched\"}"),
     delay_ms: 0,
     fault: None,

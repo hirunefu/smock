@@ -152,6 +152,7 @@ test "the Mock marked default answers a request whose Host no Mock lists, and it
       #|ViaDefault("users")
       #|404
       #|Content-Type: application/json
+      #|Smock-Near-Miss: users-x; failed=path
       #|Smock-Mock: users; via=default
       #|{"error":"no Stub matched"}
       #|---
@@ -162,6 +163,7 @@ test "the Mock marked default answers a request whose Host no Mock lists, and it
       #|ByHost("users")
       #|404
       #|Content-Type: application/json
+      #|Smock-Near-Miss: users-x; failed=path
       #|{"error":"no Stub matched"}
       #|---
       #|ByHost("orders")

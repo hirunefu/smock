@@ -104,6 +104,7 @@ test "when no Stub matches, the Mock answers 404 with a JSON body saying so" {
       #|plan:
       #|  status: 404
       #|  header: Content-Type: application/json
+      #|  header: Smock-Near-Miss: get-user; failed=path
       #|  header: Smock-Mock: users; via=default
       #|  body: "{\"error\":\"no Stub matched\"}"
       #|  delay_ms: 0
@@ -116,7 +117,12 @@ test "when no Stub matches, the Mock answers 404 with a JSON body saying so" {
       #|  stub: None
       #|  status: 404
       #|  received_at: 1791815405123
-      #|near_miss: None
+      #|near_miss: Some(
+      #|  {
+      #|    stub: "get-user",
+      #|    failed: [{ condition: Path, expected: Exact("/users/1"), actual: ["/users/2"] }],
+      #|  },
+      #|)
     ),
   )
 }

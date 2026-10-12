@@ -81,6 +81,7 @@ async test "any other request gets the no-match response" {
         content=(
           #|404 Not Found
           #|Content-Type: application/json
+          #|Smock-Near-Miss: get-user; failed=path
           #|Smock-Mock: users; via=default
           #|Content-Length: 27
           #|

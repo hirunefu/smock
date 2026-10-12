@@ -50,7 +50,18 @@ fn Incoming::has_parameter(
   self : Incoming,
   condition : (String, @definitions.ValueCondition),
 ) -> Bool {
-  let query = match self.query {
+  let (name, value) = condition
+  self
+  .query_parameters()
+  .iter()
+  .any(parameter => parameter.0 == name && value_meets(parameter.1, value))
+}
+
+///|
+/// The decoded query parameters of the request, as (name, value), in
+/// request order. They are decoded at most once.
+fn Incoming::query_parameters(self : Incoming) -> Array[(String, String)] {
+  match self.query {
     Some(query) => query
     None => {
       let query = query_parameters(self.request.target)
@@ -58,10 +69,6 @@ fn Incoming::has_parameter(
       query
     }
   }
-  let (name, value) = condition
-  query
-  .iter()
-  .any(parameter => parameter.0 == name && value_meets(parameter.1, value))
 }
 
 ///|

@@ -97,6 +97,7 @@ async test "smock serve answers from a body file, matches exact and json conditi
           #|---
           #|HTTP/1.1 501 Not Implemented
           #|Content-Type: application/json
+          #|Smock-Near-Miss: first; failed=path
           #|Smock-Mock: teapot; via=default
           #|Content-Length: 27
           #|
@@ -104,6 +105,7 @@ async test "smock serve answers from a body file, matches exact and json conditi
           #|---
           #|HTTP/1.1 501 Not Implemented
           #|Content-Type: application/json
+          #|Smock-Near-Miss: first; failed=path
           #|Smock-Mock: teapot; via=default
           #|Content-Length: 27
           #|

@@ -26,6 +26,7 @@ let pipelined_responses : String =
   #|---
   #|HTTP/1.1 404 Not Found
   #|Content-Type: application/json
+  #|Smock-Near-Miss: get-user; failed=path
   #|Smock-Mock: users; via=default
   #|Content-Length: 27
   #|
@@ -33,6 +34,7 @@ let pipelined_responses : String =
   #|---
   #|HTTP/1.1 404 Not Found
   #|Content-Type: application/json
+  #|Smock-Near-Miss: get-user; failed=method
   #|Smock-Mock: users; via=default
   #|Content-Length: 27
   #|
@@ -40,6 +42,7 @@ let pipelined_responses : String =
   #|---
   #|HTTP/1.1 404 Not Found
   #|Content-Type: application/json
+  #|Smock-Near-Miss: get-user; failed=method
   #|Smock-Mock: users; via=default
   #|Content-Length: 27
   #|
@@ -207,6 +210,7 @@ async test "split reads: requests sent in pieces, with pauses between writes, ge
       content=(
         #|HTTP/1.1 404 Not Found
         #|Content-Type: application/json
+        #|Smock-Near-Miss: get-user; failed=method
         #|Smock-Mock: users; via=default
         #|Content-Length: 27
         #|
