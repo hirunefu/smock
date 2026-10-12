@@ -1,0 +1,19 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "s0",
+      "mock": "users",
+      "response": {
+        "status": 200,
+        "bodyFile": [
+          "users/1.json"
+        ]
+      }
+    }
+  ]
+}

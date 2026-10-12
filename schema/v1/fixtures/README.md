@@ -23,6 +23,11 @@ disagree.
   them to `valid/`, or to `invalid-beyond-schema/` when they stay invalid
   for another reason.
 
+Each definitions directory also gets the files under `body-files/` as its
+body-file subdirectory (`files/`, the default), so a fixture can refer to
+`users/1.json` with `bodyFile`. A fixture whose `bodyFile` names a file that
+is not there belongs in `invalid-beyond-schema/`.
+
 Adding a fixture is adding a file, named after what it shows and ending in
 `.json`, `.yaml` or `.yml`. `valid/users-from-jsonnet.json` is exported from
 the Jsonnet example in `docs/definition-files.md`.

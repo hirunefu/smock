@@ -1,0 +1,19 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "s0",
+      "mock": "users",
+      "request": {
+        "headers": "Accept: */*"
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}
