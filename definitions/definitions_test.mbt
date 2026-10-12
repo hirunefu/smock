@@ -167,6 +167,7 @@ test "a YAML file is validated like the equivalent JSON file" {
     #|users.EXT: /stubs/0/response/status: must be an integer from 200 to 599
     #|users.EXT: /stubs/0/response/headers/a~1b: is not a valid header name
     #|users.EXT: /stubs/0/response/headers/Connection: is set by smock and cannot be given
+  assert_eq(@yaml.parse(yaml), @json.parse(json))
   inspect(
     problems([("users.yaml", yaml)]),
     content=expected.replace_all(old=".EXT", new=".yaml"),
