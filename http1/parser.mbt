@@ -1,7 +1,13 @@
 ///|
 /// An incremental HTTP/1.1 request parser for one connection. It does no
 /// I/O: the caller feeds it the bytes it reads, in order, and takes complete
-/// requests out with `next`.
+/// requests out with `next`. However the bytes are split into pieces, it
+/// takes out the same requests, so pipelined requests and requests that
+/// arrive over many reads come out alike.
+///
+/// Bodies are framed by Content-Length or by chunked transfer coding. Chunk
+/// extensions and trailer fields are accepted and ignored. An empty line
+/// before a request line is ignored (RFC 9112, section 2.2).
 ///
 /// ```mbt check
 /// test {
@@ -17,11 +23,14 @@ pub struct Parser {
   priv mut buf : FixedArray[Byte]
   priv mut start : Int
   priv mut end : Int
-  /// How many bytes after `start` were searched for the end of the head
-  /// without finding it, so the search resumes there.
+  /// How many bytes after `start` the head scan has looked at, and where in
+  /// the head they leave it, so the scan resumes there.
   priv mut scanned : Int
+  priv mut scan : HeadScan
   /// The head of the next request and its length in bytes, once parsed.
   priv mut head : (Head, Int)?
+  /// How far the chunked body of the next request is decoded.
+  priv chunks : Chunks
   /// The status of the error that stopped the parser.
   priv mut invalid : Int?
 }
@@ -35,7 +44,18 @@ pub(all) enum Parsed {
   /// The next request is not complete yet: feed more bytes.
   NeedMore
   /// The bytes are not a valid request. Answer with `status` and close the
-  /// connection; the parser keeps returning this.
+  /// connection; the parser keeps returning this. The status is:
+  ///
+  /// - 400 for a malformed request line or header field (RFC 9112), and for
+  ///   framing that is broken or ambiguous: a bad chunk size, broken chunk
+  ///   framing, both Content-Length and Transfer-Encoding, Content-Length
+  ///   values that disagree or are not numbers, or Transfer-Encoding in an
+  ///   HTTP/1.0 request;
+  /// - 413 for a body too large to hold;
+  /// - 501 for a transfer coding other than `chunked`;
+  /// - 505 for an HTTP major version other than 1.
+  ///
+  /// Bytes that cannot begin a request head get 400 as soon as they arrive.
   Invalid(status~ : Int)
 } derive(Debug)
 
@@ -61,8 +81,10 @@ pub(all) struct Request {
   /// The request target as sent, such as `/users/1?x=y`.
   target : String
   version : Version
-  /// The header fields in the order they were sent.
+  /// The header fields in the order they were sent. Trailer fields of a
+  /// chunked body are not among them.
   headers : Array[Header]
+  /// The body, decoded when it was chunked.
   body : Bytes
   /// Whether the connection stays open after the response: HTTP/1.1 keeps
   /// it open unless the request says `Connection: close`, HTTP/1.0 closes it
@@ -78,7 +100,9 @@ pub fn Parser::Parser() -> Parser {
     start: 0,
     end: 0,
     scanned: 0,
+    scan: Method(0),
     head: None,
+    chunks: Chunks(),
     invalid: None,
   }
 }
@@ -115,15 +139,13 @@ pub fn Parser::next(self : Parser) -> Parsed {
   let (head, head_length) = match self.head {
     Some(parsed) => parsed
     None => {
-      // The empty line may have begun in the bytes searched already.
-      let from = self.start +
-        (if self.scanned > 3 { self.scanned - 3 } else { 0 })
-      let head_end = match find_head_end(self.buf, from, self.end) {
+      let head_end = match self.scan_head() {
         Some(head_end) => head_end
-        None => {
-          self.scanned = self.end - self.start
-          return NeedMore
+        None if self.scan is Broken => {
+          self.invalid = Some(400)
+          return Invalid(status=400)
         }
+        None => return NeedMore
       }
       match parse_head(self.buf, self.start, head_end) {
         Ok(head) => {
@@ -138,14 +160,31 @@ pub fn Parser::next(self : Parser) -> Parsed {
     }
   }
   let body_start = self.start + head_length
-  let body_end = body_start + head.content_length
-  if self.end < body_end {
-    return NeedMore
+  let (body, consumed) = match head.framing {
+    Length(length) => {
+      let body_end = body_start + length
+      if self.end < body_end {
+        return NeedMore
+      }
+      (
+        self.buf.unsafe_reinterpret_as_bytes()[body_start:body_end].to_owned(),
+        head_length + length,
+      )
+    }
+    Chunked =>
+      match self.chunks.decode(self.buf, body_start, self.end) {
+        Ok(Some(length)) => (self.chunks.take_body(), head_length + length)
+        Ok(None) => return NeedMore
+        Err(status) => {
+          self.invalid = Some(status)
+          return Invalid(status~)
+        }
+      }
   }
-  let body = self.buf.unsafe_reinterpret_as_bytes()[body_start:body_end].to_owned()
   self.head = None
   self.scanned = 0
-  self.start = body_end
+  self.scan = Method(0)
+  self.start += consumed
   Complete({
     meth: head.meth,
     target: head.target,
@@ -164,27 +203,184 @@ priv struct Head {
   version : Version
   headers : Array[Header]
   keep_alive : Bool
-  /// The length of the body that follows the head.
-  content_length : Int
+  /// How the body that follows the head is framed.
+  framing : Framing
 }
 
 ///|
-/// The index just after the empty line that ends the head in
-/// `buf[from:end]`, or `None` while that line has not arrived.
-fn find_head_end(buf : FixedArray[Byte], from : Int, end : Int) -> Int? {
-  for i in from..<(end - 3) {
-    if buf[i] == b'\r' &&
-      buf[i + 1] == b'\n' &&
-      buf[i + 2] == b'\r' &&
-      buf[i + 3] == b'\n' {
-      return Some(i + 4)
+/// How the body of a request is framed.
+priv enum Framing {
+  /// The body is that many bytes long.
+  Length(Int)
+  /// The body is chunked (RFC 9112, section 7.1).
+  Chunked
+}
+
+///|
+/// Scans the head of the next request, from where the last scan stopped,
+/// and returns the index just after the empty line that ends it, or `None`
+/// while that line has not arrived or once `self.scan` is `Broken`.
+///
+/// Each byte is checked as it arrives, so bytes that cannot be part of a
+/// request head are rejected at once instead of waiting for an empty line
+/// that may never come.
+fn Parser::scan_head(self : Parser) -> Int? {
+  while self.start + self.scanned < self.end {
+    self.scan = self.scan.after(self.buf[self.start + self.scanned])
+    self.scanned += 1
+    match self.scan {
+      Fields(Ended) => return Some(self.start + self.scanned)
+      Broken => return None
+      EmptyLine => {
+        // An empty line before the request line is consumed and ignored.
+        self.start += self.scanned
+        self.scanned = 0
+        self.scan = Method(0)
+      }
+      _ => ()
     }
   }
   None
 }
 
 ///|
-/// Parses the head in `buf[start:end]`, which ends with an empty line.
+/// Where a scan of a request head is (RFC 9112, sections 3 and 5):
+/// `method SP request-target SP HTTP-version CRLF`, then the header section.
+priv enum HeadScan {
+  /// The LF of an empty line before the request line is next.
+  EmptyLineLf
+  /// An empty line before the request line has ended; servers ignore it
+  /// (RFC 9112, section 2.2).
+  EmptyLine
+  /// In the method, after that many bytes of it.
+  Method(Int)
+  /// In the request target, after that many bytes of it.
+  Target(Int)
+  /// In the HTTP version, after that many bytes of `HTTP/D.D`.
+  Version(Int)
+  /// The LF ending the request line is next.
+  VersionLf
+  /// In the header section.
+  Fields(Section)
+  /// The bytes so far cannot begin a request.
+  Broken
+}
+
+///|
+/// The scan after the byte `c`.
+fn HeadScan::after(self : HeadScan, c : Byte) -> HeadScan {
+  match self {
+    EmptyLineLf => if c == b'\n' { EmptyLine } else { Broken }
+    Method(n) =>
+      if is_tchar(c) {
+        Method(n + 1)
+      } else if c == b' ' && n > 0 {
+        Target(0)
+      } else if c == b'\r' && n == 0 {
+        EmptyLineLf
+      } else {
+        Broken
+      }
+    Target(n) =>
+      if c > b' ' && c < b'\x7f' {
+        Target(n + 1)
+      } else if c == b' ' && n > 0 {
+        Version(0)
+      } else {
+        Broken
+      }
+    Version(n) => {
+      let expected = match n {
+        0 => c == b'H'
+        1 | 2 => c == b'T'
+        3 => c == b'P'
+        4 => c == b'/'
+        5 | 7 => is_digit(c)
+        6 => c == b'.'
+        _ => c == b'\r'
+      }
+      match (expected, n) {
+        (false, _) => Broken
+        (true, 8) => VersionLf
+        (true, _) => Version(n + 1)
+      }
+    }
+    VersionLf => if c == b'\n' { Fields(FieldStart) } else { Broken }
+    Fields(section) =>
+      match section.after(c) {
+        Broken => Broken
+        section => Fields(section)
+      }
+    EmptyLine | Broken => Broken
+  }
+}
+
+///|
+/// Where a scan of a header or trailer section is (RFC 9112, section 5):
+/// field lines `field-name ":" OWS field-value OWS CRLF`, then an empty
+/// line. Lines end with CRLF; a bare CR or LF breaks the section.
+priv enum Section {
+  /// A field line or the empty line is next.
+  FieldStart
+  /// In a field name.
+  FieldName
+  /// In a field value.
+  FieldValue
+  /// The LF ending a field line is next.
+  FieldLf
+  /// The LF of the empty line is next.
+  EndLf
+  /// The empty line has ended the section.
+  Ended
+  /// The section is not valid.
+  Broken
+}
+
+///|
+/// The scan after the byte `c`. Obsolete line folding and whitespace before
+/// a colon break the section (RFC 9112, sections 5.1 and 5.2).
+fn Section::after(self : Section, c : Byte) -> Section {
+  match self {
+    FieldStart =>
+      if c == b'\r' {
+        EndLf
+      } else if is_tchar(c) {
+        FieldName
+      } else {
+        Broken
+      }
+    FieldName =>
+      if is_tchar(c) {
+        FieldName
+      } else if c == b':' {
+        FieldValue
+      } else {
+        Broken
+      }
+    FieldValue =>
+      if c == b'\r' {
+        FieldLf
+      } else if is_field_value_byte(c) {
+        FieldValue
+      } else {
+        Broken
+      }
+    FieldLf => if c == b'\n' { FieldStart } else { Broken }
+    EndLf => if c == b'\n' { Ended } else { Broken }
+    Ended | Broken => Broken
+  }
+}
+
+///|
+/// Whether `c` may appear in a field value: visible characters, space, tab
+/// and bytes above 0x7f (obs-text).
+fn is_field_value_byte(c : Byte) -> Bool {
+  c == b'\t' || (c >= b' ' && c != b'\x7f')
+}
+
+///|
+/// Parses the head in `buf[start:end]`, which the head scan has checked and
+/// which ends with an empty line, and decides how the body is framed.
 fn parse_head(
   buf : FixedArray[Byte],
   start : Int,
@@ -192,35 +388,25 @@ fn parse_head(
 ) -> Result[Head, Int] {
   let lines = split_lines(buf, start, end)
   let (meth, target, version) = match parse_request_line(buf, lines[0]) {
-    Some(line) => line
-    None => return Err(400)
+    Ok(line) => line
+    Err(status) => return Err(status)
   }
   let headers = []
-  let mut content_length = None
+  let content_lengths = []
   let mut close = false
   let mut keep_alive = false
   let mut hosts = 0
-  let mut transfer_encoding = false
+  let transfer_encodings = []
   for line in lines[1:] {
-    let header = match parse_field(buf, line) {
-      Some(header) => header
-      None => return Err(400)
-    }
+    let header = parse_field(buf, line)
     headers.push(header)
     let name = header.name.to_lower()
     if name == "host" {
       hosts += 1
     } else if name == "transfer-encoding" {
-      transfer_encoding = true
+      transfer_encodings.push(header.value)
     } else if name == "content-length" {
-      let length = match parse_content_length(header.value) {
-        Ok(length) => length
-        Err(status) => return Err(status)
-      }
-      if content_length is Some(previous) && previous != length {
-        return Err(400)
-      }
-      content_length = Some(length)
+      content_lengths.push(header.value)
     } else if name == "connection" {
       for token in @utf8.decode_lossy(header.value).split(",") {
         match token.trim(char_set=" \t").to_lower() {
@@ -231,12 +417,31 @@ fn parse_head(
       }
     }
   }
-  // An HTTP/1.1 request names exactly one Host (RFC 9112, section 3.2).
-  if version is Http11 && hosts != 1 {
+  // An HTTP/1.1 request names exactly one Host, and no request names more
+  // (RFC 9112, section 3.2).
+  if hosts > 1 || (version is Http11 && hosts != 1) {
     return Err(400)
   }
-  if transfer_encoding {
-    return Err(501)
+  let framing = if transfer_encodings.is_empty() {
+    match content_length(content_lengths) {
+      Ok(length) => Length(length)
+      Err(status) => return Err(status)
+    }
+  } else {
+    // A request with both is how requests are smuggled past a proxy that
+    // reads the other one (RFC 9112, section 6.3).
+    if !content_lengths.is_empty() {
+      return Err(400)
+    }
+    // HTTP/1.0 has no Transfer-Encoding, so its framing cannot be trusted
+    // (RFC 9112, section 6.1).
+    if version is Http10 {
+      return Err(400)
+    }
+    match check_transfer_codings(transfer_encodings) {
+      Ok(_) => Chunked
+      Err(status) => return Err(status)
+    }
   }
   Ok({
     meth,
@@ -244,24 +449,61 @@ fn parse_head(
     version,
     headers,
     keep_alive: !close && (version is Http11 || keep_alive),
-    content_length: content_length.unwrap_or(0),
+    framing,
   })
 }
 
 ///|
-/// A Content-Length value: one or more digits. A length too large to hold
-/// gets 413.
-fn parse_content_length(value : Bytes) -> Result[Int, Int] {
-  if value.length() == 0 {
-    return Err(400)
+/// Checks the transfer codings that the Transfer-Encoding fields `values`
+/// list: only `chunked` is implemented, so any other coding gets 501, and
+/// `chunked` must be listed exactly once, or the request gets 400.
+fn check_transfer_codings(values : Array[Bytes]) -> Result[Unit, Int] {
+  let mut chunked = 0
+  for value in values {
+    for coding in @utf8.decode_lossy(value).split(",") {
+      match coding.trim(char_set=" \t").to_lower() {
+        "" => ()
+        "chunked" => chunked += 1
+        _ => return Err(501)
+      }
+    }
+  }
+  if chunked == 1 {
+    Ok(())
+  } else {
+    Err(400)
+  }
+}
+
+///|
+/// The body length that the Content-Length fields `values` give, 0 without
+/// any.
+///
+/// Each field holds one or more comma-separated lengths, each one or more
+/// digits, or the request gets 400. Lengths that disagree get 400 as well;
+/// the same length repeated is not a conflict (RFC 9110, section 8.6). A
+/// length too large to hold gets 413.
+fn content_length(values : Array[Bytes]) -> Result[Int, Int] {
+  // Lengths are compared as digits without leading zeros, so that lengths
+  // too large to hold still compare.
+  let mut digits : String? = None
+  for value in values {
+    for element in @utf8.decode_lossy(value).split(",") {
+      let element = element.trim(char_set=" \t")
+      if element.is_empty() || element.iter().any(c => c < '0' || c > '9') {
+        return Err(400)
+      }
+      let significant = element.trim_start(char_set="0").to_owned()
+      if digits is Some(previous) && previous != significant {
+        return Err(400)
+      }
+      digits = Some(significant)
+    }
   }
   let mut length = 0L
-  for c in value {
-    if c < b'0' || c > b'9' {
-      return Err(400)
-    }
-    length = length * 10L + (c - b'0').to_int64()
-    if length > 0x7fffffffL {
+  for c in digits.unwrap_or("") {
+    length = length * 10L + (c.to_int() - '0'.to_int()).to_int64()
+    if length >= max_length.to_int64() {
       return Err(413)
     }
   }
@@ -288,50 +530,44 @@ fn split_lines(
 }
 
 ///|
-/// Parses `method SP request-target SP HTTP-version`.
+/// Reads `method SP request-target SP HTTP-version` from the line
+/// `buf[start:end]`, which the head scan has checked. A version whose major
+/// number is not 1 gets 505; a later minor version than 1 is read as
+/// HTTP/1.1 (RFC 9110, section 2.5).
 fn parse_request_line(
   buf : FixedArray[Byte],
   line : (Int, Int),
-) -> (String, String, Version)? {
+) -> Result[(String, String, Version), Int] {
   let (start, end) = line
-  let mut i = start
-  while i < end && is_tchar(buf[i]) {
-    i += 1
+  // The method holds no space, and the version is the last 8 bytes,
+  // `HTTP/D.D`.
+  let mut space = start
+  while buf[space] != b' ' {
+    space += 1
   }
-  if i == start || i >= end || buf[i] != b' ' {
-    return None
+  let version = match (buf[end - 3], buf[end - 1]) {
+    (b'1', b'0') => Http10
+    (b'1', _) => Http11
+    _ => return Err(505)
   }
-  let meth = ascii(buf, start, i)
-  let target_start = i + 1
-  i = target_start
-  while i < end && buf[i] > b' ' && buf[i] < b'\x7f' {
-    i += 1
-  }
-  if i == target_start || i >= end || buf[i] != b' ' {
-    return None
-  }
-  let target = ascii(buf, target_start, i)
-  let version = match ascii(buf, i + 1, end) {
-    "HTTP/1.1" => Http11
-    "HTTP/1.0" => Http10
-    _ => return None
-  }
-  Some((meth, target, version))
+  Ok((ascii(buf, start, space), ascii(buf, space + 1, end - 9), version))
 }
 
 ///|
-/// Parses `field-name ":" OWS field-value OWS`.
-fn parse_field(buf : FixedArray[Byte], line : (Int, Int)) -> Header? {
+fn is_digit(c : Byte) -> Bool {
+  c >= b'0' && c <= b'9'
+}
+
+///|
+/// Reads `field-name ":" OWS field-value OWS` from the line
+/// `buf[start:end]`, which the head scan has checked.
+fn parse_field(buf : FixedArray[Byte], line : (Int, Int)) -> Header {
   let (start, end) = line
-  let mut i = start
-  while i < end && is_tchar(buf[i]) {
-    i += 1
+  let mut colon = start
+  while buf[colon] != b':' {
+    colon += 1
   }
-  if i == start || i >= end || buf[i] != b':' {
-    return None
-  }
-  let name = ascii(buf, start, i)
-  let mut value_start = i + 1
+  let mut value_start = colon + 1
   while value_start < end && is_ows(buf[value_start]) {
     value_start += 1
   }
@@ -339,16 +575,10 @@ fn parse_field(buf : FixedArray[Byte], line : (Int, Int)) -> Header? {
   while value_end > value_start && is_ows(buf[value_end - 1]) {
     value_end -= 1
   }
-  for k in value_start..<value_end {
-    let c = buf[k]
-    if (c < b' ' && c != b'\t') || c == b'\x7f' {
-      return None
-    }
-  }
-  Some({
-    name,
+  {
+    name: ascii(buf, start, colon),
     value: buf.unsafe_reinterpret_as_bytes()[value_start:value_end].to_owned(),
-  })
+  }
 }
 
 ///|

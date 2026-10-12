@@ -168,13 +168,377 @@ test "a request that cannot be parsed gets 400" {
 }
 
 ///|
-test "a body framed by Transfer-Encoding is not supported yet" {
+test "empty lines before a request line are ignored" {
   inspect(
     parse_all([
-      "POST /a HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n0\r\n\r\n",
+      "\r\nGET /a HTTP/1.1\r\nHost: a\r\n\r\n", "POST /b HTTP/1.1\r\nHost: a\r\nContent-Length: 2\r\n\r\nok\r\n",
+      "\r", "\n\r\nGET /c HTTP/1.1\r\nHost: a\r\n\r\n", "\r\n\n",
     ]),
     content=(
-      #|invalid 501
+      #|GET /a HTTP/1.1 | Host: a | body="" | keep-alive
+      #|need more
+      #|POST /b HTTP/1.1 | Host: a | Content-Length: 2 | body="ok" | keep-alive
+      #|need more
+      #|need more
+      #|GET /c HTTP/1.1 | Host: a | body="" | keep-alive
+      #|need more
+      #|invalid 400
+      #|
+    ),
+  )
+}
+
+///|
+test "other malformed request lines and header fields get 400" {
+  let cases = [
+    "GET  / HTTP/1.1\r\nHost: a\r\n\r\n", "GET /  HTTP/1.1\r\nHost: a\r\n\r\n", "GET\t/ HTTP/1.1\r\nHost: a\r\n\r\n",
+    " GET / HTTP/1.1\r\nHost: a\r\n\r\n", "GET / HTTP/1.1 \r\nHost: a\r\n\r\n", "GET /\u{0} HTTP/1.1\r\nHost: a\r\n\r\n",
+    "GET /é HTTP/1.1\r\nHost: a\r\n\r\n", "GET / http/1.1\r\nHost: a\r\n\r\n", "GET / HTTP/1.10\r\nHost: a\r\n\r\n",
+    "GET / HTTP/1\r\nHost: a\r\n\r\n", "GET / HTTP/11.1\r\nHost: a\r\n\r\n", "GET / HTTP/1.a\r\nHost: a\r\n\r\n",
+    "GET / HTTP/1.1\r\n Host: a\r\n\r\n", "GET / HTTP/1.1\r\nHost: a\r\nX\t: 1\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost: a\r\nX(Y: 1\r\n\r\n", "GET / HTTP/1.1\r\nHost: a\r\nX\u{80}: 1\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost: a\r\nX: 1\u{0}2\r\n\r\n", "GET / HTTP/1.1\r\nHost: a\rX: 1\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost: a\nX: 1\r\n\r\n", "GET / HTTP/1.1\nHost: a\r\n\r\n",
+    "GET / HTTP/1.1\r\nHost: a\n\n", "GET / HTTP/1.1\r\nHost: a\r\n\n", "GET / HTTP/1.1\r\nHost: a\r\n\r\r\n",
+    "GET / HTTP/1.0\r\nHost: a\r\nHost: b\r\n\r\n",
+  ]
+  inspect(
+    cases
+    .map(case => {
+      "\{shown(case)} -> \{parse_all([case]).trim_end(char_set="\n").replace_all(old="\n", new=", ")}"
+    })
+    .join("\n"),
+    content=(
+      #|"GET  / HTTP/1.1\r\nHost: a\r\n\r\n" -> invalid 400
+      #|"GET /  HTTP/1.1\r\nHost: a\r\n\r\n" -> invalid 400
+      #|"GET\t/ HTTP/1.1\r\nHost: a\r\n\r\n" -> invalid 400
+      #|" GET / HTTP/1.1\r\nHost: a\r\n\r\n" -> invalid 400
+      #|"GET / HTTP/1.1 \r\nHost: a\r\n\r\n" -> invalid 400
+      #|"GET /\u{00} HTTP/1.1\r\nHost: a\r\n\r\n" -> invalid 400
+      #|"GET /\u{e9} HTTP/1.1\r\nHost: a\r\n\r\n" -> invalid 400
+      #|"GET / http/1.1\r\nHost: a\r\n\r\n" -> invalid 400
+      #|"GET / HTTP/1.10\r\nHost: a\r\n\r\n" -> invalid 400
+      #|"GET / HTTP/1\r\nHost: a\r\n\r\n" -> invalid 400
+      #|"GET / HTTP/11.1\r\nHost: a\r\n\r\n" -> invalid 400
+      #|"GET / HTTP/1.a\r\nHost: a\r\n\r\n" -> invalid 400
+      #|"GET / HTTP/1.1\r\n Host: a\r\n\r\n" -> invalid 400
+      #|"GET / HTTP/1.1\r\nHost: a\r\nX\t: 1\r\n\r\n" -> invalid 400
+      #|"GET / HTTP/1.1\r\nHost: a\r\nX(Y: 1\r\n\r\n" -> invalid 400
+      #|"GET / HTTP/1.1\r\nHost: a\r\nX\u{80}: 1\r\n\r\n" -> invalid 400
+      #|"GET / HTTP/1.1\r\nHost: a\r\nX: 1\u{00}2\r\n\r\n" -> invalid 400
+      #|"GET / HTTP/1.1\r\nHost: a\rX: 1\r\n\r\n" -> invalid 400
+      #|"GET / HTTP/1.1\r\nHost: a\nX: 1\r\n\r\n" -> invalid 400
+      #|"GET / HTTP/1.1\nHost: a\r\n\r\n" -> invalid 400
+      #|"GET / HTTP/1.1\r\nHost: a\n\n" -> invalid 400
+      #|"GET / HTTP/1.1\r\nHost: a\r\n\n" -> invalid 400
+      #|"GET / HTTP/1.1\r\nHost: a\r\n\r\r\n" -> invalid 400
+      #|"GET / HTTP/1.0\r\nHost: a\r\nHost: b\r\n\r\n" -> invalid 400
+    ),
+  )
+}
+
+///|
+test "a chunked body is decoded, and the request after it comes out next" {
+  inspect(
+    parse_all([
+      "POST /a HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n7\r\n, world\r\n0\r\n\r\nGET /b HTTP/1.1\r\nHost: a\r\n\r\n",
+    ]),
+    content=(
+      #|POST /a HTTP/1.1 | Host: a | Transfer-Encoding: chunked | body="hello, world" | keep-alive
+      #|GET /b HTTP/1.1 | Host: a | body="" | keep-alive
+      #|need more
+      #|
+    ),
+  )
+}
+
+///|
+test "chunk extensions and trailer fields are accepted and ignored" {
+  inspect(
+    parse_all([
+      "POST /a HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n" +
+      "5;name\r\nhello\r\n" +
+      "1 ; a = b ;c=\"quoted \\\" \\\\ ;=\"\t;d\r\n,\r\n" +
+      "6;e=\"\"\r\n world\r\n" +
+      "000;last=1\r\n" +
+      "Checksum: abc\r\nX-Trailer:\t1 \r\n\r\n" +
+      "GET /b HTTP/1.1\r\nHost: a\r\n\r\n",
+    ]),
+    content=(
+      #|POST /a HTTP/1.1 | Host: a | Transfer-Encoding: chunked | body="hello, world" | keep-alive
+      #|GET /b HTTP/1.1 | Host: a | body="" | keep-alive
+      #|need more
+      #|
+    ),
+  )
+}
+
+///|
+/// `s` as a quoted, escaped string literal, with DEL and every character
+/// beyond ASCII escaped too.
+fn shown(s : String) -> String {
+  let out = StringBuilder()
+  for c in s.escape() {
+    if c.to_int() >= 0x7f {
+      out.write_string("\\u{\{c.to_int().to_string(radix=16)}}")
+    } else {
+      out.write_char(c)
+    }
+  }
+  out.to_string()
+}
+
+///|
+/// What a parser makes of a chunked request whose body is `body`, followed
+/// by a request it must not reach when the body is broken.
+fn chunked_outcome(body : String) -> String {
+  parse_all([
+    "POST /a HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n\{body}GET /b HTTP/1.1\r\nHost: a\r\n\r\n",
+  ])
+  .trim_end(char_set="\n")
+  .split("\n")
+  .map(line => {
+    if line.has_prefix("POST") {
+      "complete"
+    } else {
+      line.to_owned()
+    }
+  })
+  .join(", ")
+}
+
+///|
+test "a bad chunk size or broken chunk framing gets 400" {
+  let cases = [
+    "x\r\nhello\r\n0\r\n\r\n", "\r\nhello\r\n0\r\n\r\n", "-5\r\nhello\r\n0\r\n\r\n",
+    "+5\r\nhello\r\n0\r\n\r\n", "0x5\r\nhello\r\n0\r\n\r\n", " 5\r\nhello\r\n0\r\n\r\n",
+    "5 \r\nhello\r\n0\r\n\r\n", "5;\r\nhello\r\n0\r\n\r\n", "5;a=\r\nhello\r\n0\r\n\r\n",
+    "5;a b\r\nhello\r\n0\r\n\r\n", "5;a=b c\r\nhello\r\n0\r\n\r\n", "5;a=\"b\r\nhello\r\n0\r\n\r\n",
+    "5;a=\"b\"c\r\nhello\r\n0\r\n\r\n", "5;a=\"\\\r\"\r\nhello\r\n0\r\n\r\n", "5;a=b\u{0}\r\nhello\r\n0\r\n\r\n",
+    "5\nhello\r\n0\r\n\r\n", "5\rhello\r\n0\r\n\r\n", "5\r\nhelloX\r\n0\r\n\r\n",
+    "5\r\nhel\r\n0\r\n\r\n", "5\r\nhello\n0\r\n\r\n", "5\r\nhello0\r\n\r\n", "0\r\n\n",
+    "0\r\n\r\r\n", "0\nX: 1\r\n\r\n", "0\r\nX : 1\r\n\r\n", "0\r\n folded\r\n\r\n",
+    "0\r\nX: 1\r\n folded\r\n\r\n", "0\r\nX\r\n\r\n", "0\r\n: 1\r\n\r\n", "0\r\nX: \u{7f}\r\n\r\n",
+    "0\r\nX: 1\n\r\n",
+  ]
+  inspect(
+    cases.map(case => "\{shown(case)} -> \{chunked_outcome(case)}").join("\n"),
+    content=(
+      #|"x\r\nhello\r\n0\r\n\r\n" -> invalid 400
+      #|"\r\nhello\r\n0\r\n\r\n" -> invalid 400
+      #|"-5\r\nhello\r\n0\r\n\r\n" -> invalid 400
+      #|"+5\r\nhello\r\n0\r\n\r\n" -> invalid 400
+      #|"0x5\r\nhello\r\n0\r\n\r\n" -> invalid 400
+      #|" 5\r\nhello\r\n0\r\n\r\n" -> invalid 400
+      #|"5 \r\nhello\r\n0\r\n\r\n" -> invalid 400
+      #|"5;\r\nhello\r\n0\r\n\r\n" -> invalid 400
+      #|"5;a=\r\nhello\r\n0\r\n\r\n" -> invalid 400
+      #|"5;a b\r\nhello\r\n0\r\n\r\n" -> invalid 400
+      #|"5;a=b c\r\nhello\r\n0\r\n\r\n" -> invalid 400
+      #|"5;a=\"b\r\nhello\r\n0\r\n\r\n" -> invalid 400
+      #|"5;a=\"b\"c\r\nhello\r\n0\r\n\r\n" -> invalid 400
+      #|"5;a=\"\\\r\"\r\nhello\r\n0\r\n\r\n" -> invalid 400
+      #|"5;a=b\u{00}\r\nhello\r\n0\r\n\r\n" -> invalid 400
+      #|"5\nhello\r\n0\r\n\r\n" -> invalid 400
+      #|"5\rhello\r\n0\r\n\r\n" -> invalid 400
+      #|"5\r\nhelloX\r\n0\r\n\r\n" -> invalid 400
+      #|"5\r\nhel\r\n0\r\n\r\n" -> invalid 400
+      #|"5\r\nhello\n0\r\n\r\n" -> invalid 400
+      #|"5\r\nhello0\r\n\r\n" -> invalid 400
+      #|"0\r\n\n" -> invalid 400
+      #|"0\r\n\r\r\n" -> invalid 400
+      #|"0\nX: 1\r\n\r\n" -> invalid 400
+      #|"0\r\nX : 1\r\n\r\n" -> invalid 400
+      #|"0\r\n folded\r\n\r\n" -> invalid 400
+      #|"0\r\nX: 1\r\n folded\r\n\r\n" -> invalid 400
+      #|"0\r\nX\r\n\r\n" -> invalid 400
+      #|"0\r\n: 1\r\n\r\n" -> invalid 400
+      #|"0\r\nX: \u{7f}\r\n\r\n" -> invalid 400
+      #|"0\r\nX: 1\n\r\n" -> invalid 400
+    ),
+  )
+}
+
+///|
+test "a chunk size too large to hold gets 413; leading zeros are not too large" {
+  inspect(
+    [
+      "80000000\r\n", "ffffffffffffffffffff\r\n", "000000000000000000000005\r\nhello\r\n0\r\n\r\n",
+    ]
+    .map(case => "\{shown(case)} -> \{chunked_outcome(case)}")
+    .join("\n"),
+    content=(
+      #|"80000000\r\n" -> invalid 413
+      #|"ffffffffffffffffffff\r\n" -> invalid 413
+      #|"000000000000000000000005\r\nhello\r\n0\r\n\r\n" -> complete, GET /b HTTP/1.1 | Host: a | body="" | keep-alive, need more
+    ),
+  )
+}
+
+///|
+/// What a parser makes of `POST /a` with the header fields `fields` and the
+/// bytes `rest` after its head, followed by `GET /b`. The POST request is
+/// shown with its body only.
+fn framing_outcome(fields : String, rest : String) -> String {
+  parse_all([
+    "POST /a HTTP/1.1\r\nHost: a\r\n\{fields}\r\n\{rest}GET /b HTTP/1.1\r\nHost: a\r\n\r\n",
+  ])
+  .trim_end(char_set="\n")
+  .split("\n")
+  .map(line => {
+    guard line.has_prefix("POST") else { line.to_owned() }
+    line[line.find("body=").unwrap_or(0):].to_owned()
+  })
+  .join(", ")
+}
+
+///|
+test "a request with both Content-Length and Transfer-Encoding gets 400" {
+  let cases = [
+    (
+      "Content-Length: 5\r\nTransfer-Encoding: chunked\r\n", "5\r\nhello\r\n0\r\n\r\n",
+    ),
+    (
+      "Transfer-Encoding: chunked\r\nContent-Length: 5\r\n", "5\r\nhello\r\n0\r\n\r\n",
+    ),
+    ("Transfer-Encoding: gzip\r\nContent-Length: 5\r\n", "hello"),
+    ("Transfer-Encoding: \r\nContent-Length: 5\r\n", "hello"),
+  ]
+  inspect(
+    cases
+    .map(case => {
+      let (fields, rest) = case
+      "\{shown(fields)} -> \{framing_outcome(fields, rest)}"
+    })
+    .join("\n"),
+    content=(
+      #|"Content-Length: 5\r\nTransfer-Encoding: chunked\r\n" -> invalid 400
+      #|"Transfer-Encoding: chunked\r\nContent-Length: 5\r\n" -> invalid 400
+      #|"Transfer-Encoding: gzip\r\nContent-Length: 5\r\n" -> invalid 400
+      #|"Transfer-Encoding: \r\nContent-Length: 5\r\n" -> invalid 400
+    ),
+  )
+}
+
+///|
+test "chunked is the only transfer coding; any other gets 501, and chunked twice gets 400" {
+  let body = "5\r\nhello\r\n0\r\n\r\n"
+  let cases = [
+    "Transfer-Encoding: Chunked\r\n", "Transfer-Encoding: , chunked ,\r\n", "Transfer-Encoding: gzip\r\n",
+    "Transfer-Encoding: gzip, chunked\r\n", "Transfer-Encoding: chunked, gzip\r\n",
+    "Transfer-Encoding: identity\r\n", "Transfer-Encoding: xchunked\r\n", "Transfer-Encoding: chunked;a=b\r\n",
+    "Transfer-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n", "Transfer-Encoding: chunked, chunked\r\n",
+    "Transfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n", "Transfer-Encoding: \r\n",
+    "Transfer-Encoding: ,\r\n",
+  ]
+  inspect(
+    cases
+    .map(fields => "\{shown(fields)} -> \{framing_outcome(fields, body)}")
+    .join("\n"),
+    content=(
+      #|"Transfer-Encoding: Chunked\r\n" -> body="hello" | keep-alive, GET /b HTTP/1.1 | Host: a | body="" | keep-alive, need more
+      #|"Transfer-Encoding: , chunked ,\r\n" -> body="hello" | keep-alive, GET /b HTTP/1.1 | Host: a | body="" | keep-alive, need more
+      #|"Transfer-Encoding: gzip\r\n" -> invalid 501
+      #|"Transfer-Encoding: gzip, chunked\r\n" -> invalid 501
+      #|"Transfer-Encoding: chunked, gzip\r\n" -> invalid 501
+      #|"Transfer-Encoding: identity\r\n" -> invalid 501
+      #|"Transfer-Encoding: xchunked\r\n" -> invalid 501
+      #|"Transfer-Encoding: chunked;a=b\r\n" -> invalid 501
+      #|"Transfer-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n" -> invalid 501
+      #|"Transfer-Encoding: chunked, chunked\r\n" -> invalid 400
+      #|"Transfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n" -> invalid 400
+      #|"Transfer-Encoding: \r\n" -> invalid 400
+      #|"Transfer-Encoding: ,\r\n" -> invalid 400
+    ),
+  )
+}
+
+///|
+test "Content-Length values that disagree get 400; identical repeated values do not" {
+  let cases = [
+    "Content-Length: 5, 5\r\n", "Content-Length: 5\r\nContent-Length: 5\r\n", "Content-Length: 5 ,5\r\nContent-Length: 005\r\n",
+    "Content-Length: 00000000000000000005\r\n", "Content-Length: 5, 6\r\n", "Content-Length: 5\r\nContent-Length: 6\r\n",
+    "Content-Length: 5, 5\r\nContent-Length: 6\r\n", "Content-Length: 99999999999, 5\r\n",
+    "Content-Length: 5\r\nContent-Length: 99999999999\r\n",
+  ]
+  inspect(
+    cases
+    .map(fields => "\{shown(fields)} -> \{framing_outcome(fields, "hello")}")
+    .join("\n"),
+    content=(
+      #|"Content-Length: 5, 5\r\n" -> body="hello" | keep-alive, GET /b HTTP/1.1 | Host: a | body="" | keep-alive, need more
+      #|"Content-Length: 5\r\nContent-Length: 5\r\n" -> body="hello" | keep-alive, GET /b HTTP/1.1 | Host: a | body="" | keep-alive, need more
+      #|"Content-Length: 5 ,5\r\nContent-Length: 005\r\n" -> body="hello" | keep-alive, GET /b HTTP/1.1 | Host: a | body="" | keep-alive, need more
+      #|"Content-Length: 00000000000000000005\r\n" -> body="hello" | keep-alive, GET /b HTTP/1.1 | Host: a | body="" | keep-alive, need more
+      #|"Content-Length: 5, 6\r\n" -> invalid 400
+      #|"Content-Length: 5\r\nContent-Length: 6\r\n" -> invalid 400
+      #|"Content-Length: 5, 5\r\nContent-Length: 6\r\n" -> invalid 400
+      #|"Content-Length: 99999999999, 5\r\n" -> invalid 400
+      #|"Content-Length: 5\r\nContent-Length: 99999999999\r\n" -> invalid 400
+    ),
+  )
+}
+
+///|
+test "a Content-Length that is not a valid number gets 400; one too large to hold gets 413" {
+  let cases = [
+    "Content-Length: \r\n", "Content-Length: 5,\r\n", "Content-Length: ,5\r\n", "Content-Length: +5\r\n",
+    "Content-Length: -5\r\n", "Content-Length: 0x5\r\n", "Content-Length: 5 5\r\n",
+    "Content-Length: 5.0\r\n", "Content-Length: 5;q\r\n", "Content-Length: \"5\"\r\n",
+    "Content-Length: 99999999999\r\n", "Content-Length: 99999999999, 99999999999\r\n",
+  ]
+  inspect(
+    cases
+    .map(fields => "\{shown(fields)} -> \{framing_outcome(fields, "hello")}")
+    .join("\n"),
+    content=(
+      #|"Content-Length: \r\n" -> invalid 400
+      #|"Content-Length: 5,\r\n" -> invalid 400
+      #|"Content-Length: ,5\r\n" -> invalid 400
+      #|"Content-Length: +5\r\n" -> invalid 400
+      #|"Content-Length: -5\r\n" -> invalid 400
+      #|"Content-Length: 0x5\r\n" -> invalid 400
+      #|"Content-Length: 5 5\r\n" -> invalid 400
+      #|"Content-Length: 5.0\r\n" -> invalid 400
+      #|"Content-Length: 5;q\r\n" -> invalid 400
+      #|"Content-Length: \"5\"\r\n" -> invalid 400
+      #|"Content-Length: 99999999999\r\n" -> invalid 413
+      #|"Content-Length: 99999999999, 99999999999\r\n" -> invalid 413
+    ),
+  )
+}
+
+///|
+test "a request line with an HTTP major version other than 1 gets 505; a later HTTP/1 minor version is read as HTTP/1.1" {
+  let cases = [
+    "GET / HTTP/2.0\r\nHost: a\r\n\r\n", "GET / HTTP/0.9\r\n\r\n", "GET / HTTP/3.1\r\nHost: a\r\n\r\n",
+    "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "GET / HTTP/1.2\r\nHost: a\r\n\r\n", "GET / HTTP/1.9\r\n\r\n",
+  ]
+  inspect(
+    cases
+    .map(case => {
+      "\{shown(case)} -> \{parse_all([case]).trim_end(char_set="\n").replace_all(old="\n", new=", ")}"
+    })
+    .join("\n"),
+    content=(
+      #|"GET / HTTP/2.0\r\nHost: a\r\n\r\n" -> invalid 505
+      #|"GET / HTTP/0.9\r\n\r\n" -> invalid 505
+      #|"GET / HTTP/3.1\r\nHost: a\r\n\r\n" -> invalid 505
+      #|"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" -> invalid 505
+      #|"GET / HTTP/1.2\r\nHost: a\r\n\r\n" -> GET / HTTP/1.1 | Host: a | body="" | keep-alive, need more
+      #|"GET / HTTP/1.9\r\n\r\n" -> invalid 400
+    ),
+  )
+}
+
+///|
+test "an HTTP/1.0 request with Transfer-Encoding gets 400, since its framing cannot be trusted" {
+  inspect(
+    parse_all([
+      "POST /a HTTP/1.0\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+    ]),
+    content=(
+      #|invalid 400
       #|
     ),
   )
