@@ -56,6 +56,152 @@ async fn write(dir : String, path : String, text : String) -> Unit {
 struct Smock {
   /// The plain port it listens on.
   port : Int
+  /// The TLS port it listens on, when the test waited for it.
+  tls_port : Int?
+}
+
+///|
+/// The test PKI from `@testcerts`, written to files: the paths of the root
+/// CA certificate, of two certificate chains for `localhost` and
+/// `127.0.0.1` (the leaf, then the intermediate CA) with their keys, and of
+/// a key that belongs to no certificate.
+struct Certificates {
+  dir : String
+  ca : String
+  rsa_chain : String
+  rsa_key : String
+  ecdsa_chain : String
+  ecdsa_key : String
+  other_key : String
+}
+
+///|
+/// Writes the test PKI to a temporary directory, runs `f` with its paths
+/// and removes it.
+async fn with_certificates(f : async (Certificates) -> Unit) -> Unit {
+  let dir = @fs.tmpdir(prefix="smock-e2e-certs-")
+  defer @fs.rmdir(dir, recursive=true)
+  let files = [
+    ("ca.pem", @testcerts.root_ca),
+    ("rsa-chain.pem", @testcerts.rsa_chain),
+    ("rsa-key.pem", @testcerts.rsa_key),
+    ("ecdsa-chain.pem", @testcerts.ecdsa_chain),
+    ("ecdsa-key.pem", @testcerts.ecdsa_key),
+    ("other-key.pem", @testcerts.other_rsa_key),
+  ]
+  for file in files {
+    let (name, pem) = file
+    write(dir, name, pem + "\n")
+  }
+  f({
+    dir,
+    ca: "\{dir}/ca.pem",
+    rsa_chain: "\{dir}/rsa-chain.pem",
+    rsa_key: "\{dir}/rsa-key.pem",
+    ecdsa_chain: "\{dir}/ecdsa-chain.pem",
+    ecdsa_key: "\{dir}/ecdsa-key.pem",
+    other_key: "\{dir}/other-key.pem",
+  })
+}
+
+///|
+/// The flags that serve HTTPS on a free TLS port with `cert` and `key`, by
+/// default the RSA chain and its key.
+fn Certificates::args(
+  self : Certificates,
+  cert? : String = self.rsa_chain,
+  key? : String = self.rsa_key,
+) -> Array[String] {
+  ["--tls-port", "0", "--tls-cert-file", cert, "--tls-key-file", key]
+}
+
+///|
+/// Starts smock with a definitions directory holding `files` (by default
+/// `users`), a certificate and `args`, runs `f` once over the plain port and
+/// once over the TLS port, and returns how smock ended. The HTTP/1.1 tests
+/// run this way: the codec and the connection loop are the same on both
+/// ports.
+async fn on_both_ports(
+  files? : Array[(String, String)] = [("users.json", users)],
+  args? : Array[String] = [],
+  f : async (Smock, Over) -> Unit,
+) -> Stopped {
+  let mut stopped = None
+  with_definitions(files, dir => {
+    with_certificates(certs => {
+      stopped = Some(
+        with_smock(
+          ["--dir", dir, "--port", "0", ..certs.args(), ..args],
+          tls=true,
+          smock => {
+            for over in [Plain, Tls(certs)] {
+              f(smock, over)
+            }
+          },
+        ),
+      )
+    })
+  })
+  stopped.unwrap()
+}
+
+///|
+/// How a test reaches smock: over plain TCP on the plain port, or over TLS
+/// on the TLS port with a client that trusts only the test root CA and
+/// checks the certificate for `localhost`.
+enum Over {
+  Plain
+  Tls(Certificates)
+}
+
+///|
+/// A connection to smock, over plain TCP or over TLS.
+enum Conn {
+  PlainConn(@socket.Tcp)
+  TlsConn(@tls.Tls, @socket.Tcp)
+}
+
+///|
+async fn Conn::write(self : Conn, data : &@io.Data) -> Unit {
+  match self {
+    PlainConn(tcp) => tcp.write(data)
+    TlsConn(tls, _) => tls.write(data)
+  }
+}
+
+///|
+async fn Conn::read_until(self : Conn, separator : String) -> String? {
+  match self {
+    PlainConn(tcp) => tcp.read_until(separator)
+    TlsConn(tls, _) => tls.read_until(separator)
+  }
+}
+
+///|
+async fn Conn::read_exactly(self : Conn, length : Int) -> Bytes {
+  match self {
+    PlainConn(tcp) => tcp.read_exactly(length)
+    TlsConn(tls, _) => tls.read_exactly(length)
+  }
+}
+
+///|
+async fn Conn::read_some(self : Conn) -> Bytes? {
+  match self {
+    PlainConn(tcp) => tcp.read_some()
+    TlsConn(tls, _) => tls.read_some()
+  }
+}
+
+///|
+fn Conn::close(self : Conn) -> Unit {
+  match self {
+    PlainConn(tcp) => tcp.close()
+    TlsConn(tls, tcp) => {
+      tls.close()
+      tcp.close()
+    }
+  }
 }
 
 ///|
@@ -68,11 +214,12 @@ struct Stopped {
 
 ///|
 /// Starts `smock serve <args>` with only `env` as its environment, waits
-/// until it listens, runs `f`, then stops it with SIGTERM and waits for it
-/// to exit.
+/// until it listens on the plain port, and on the TLS port too when `tls`
+/// is set, runs `f`, then stops it with SIGTERM and waits for it to exit.
 async fn with_smock(
   args : Array[String],
   env? : Map[String, String] = Map([]),
+  tls? : Bool = false,
   f : async (Smock) -> Unit,
 ) -> Stopped {
   build.wait()
@@ -102,20 +249,22 @@ async fn with_smock(
         }
       }
     })
-    let port = @async.with_timeout_opt(patience_ms, () => {
-      for ;; {
+    let ports : Map[String, Int] = Map([])
+    let expected = if tls { ["plain", "tls"] } else { ["plain"] }
+    let listening = @async.with_timeout_opt(patience_ms, () => {
+      while !expected.iter().all(listener => ports.contains(listener)) {
         guard lines.get() is Some(line) else {
           fail("smock exited before listening:\n\{logs.join("\n")}")
         }
-        if listening_port(line) is Some(port) {
-          break port
+        if listening(line) is Some((listener, port)) {
+          ports[listener] = port
         }
       }
     })
-    guard port is Some(port) else {
+    guard listening is Some(_) else {
       fail("smock did not listen in time:\n\{logs.join("\n")}")
     }
-    f({ port, })
+    f({ port: ports.get("plain").unwrap(), tls_port: ports.get("tls"), })
     let _ = @process.run("kill", ["-TERM", process.pid.to_string()])
     let status = @async.with_timeout_opt(patience_ms, () => process.wait())
     guard status is Some(status) else { fail("smock did not stop in time") }
@@ -146,7 +295,7 @@ async fn serve_verdict(args : Array[String]) -> String {
         guard stderr.read_until("\n") is Some(line) else {
           break "exits with status \{process.wait()}"
         }
-        if listening_port(line) is Some(_) {
+        if listening(line) is Some(_) {
           let _ = @process.run("kill", ["-TERM", process.pid.to_string()])
           let _ = process.wait()
           break "serves"
@@ -161,11 +310,12 @@ async fn serve_verdict(args : Array[String]) -> String {
 }
 
 ///|
-/// The port of a `listening` log entry.
-fn listening_port(line : String) -> Int? {
+/// The listener and the port of a `listening` log entry.
+fn listening(line : String) -> (String, Int)? {
   let entry = @json.parse(line) catch { _ => return None }
   guard entry is Object(entry) &&
     entry.get("msg") is Some(String("listening")) &&
+    entry.get("listener") is Some(String(listener)) &&
     entry.get("address") is Some(String(address)) else {
     return None
   }
@@ -173,7 +323,7 @@ fn listening_port(line : String) -> Int? {
   try @string.parse_int(address[colon + 1:]) catch {
     _ => None
   } noraise {
-    port => Some(port)
+    port => Some((listener, port))
   }
 }
 
@@ -226,15 +376,34 @@ async fn Smock::get(self : Smock, path : String) -> String {
 }
 
 ///|
-/// Opens a raw TCP connection to smock, for tests that send exact bytes.
-async fn Smock::connect(self : Smock) -> @socket.Tcp {
-  @socket.Tcp::connect(@socket.Addr::parse("127.0.0.1:\{self.port}"))
+/// Opens a connection to smock for tests that send exact bytes: over plain
+/// TCP by default, or over TLS.
+async fn Smock::connect(self : Smock, over? : Over = Plain) -> Conn {
+  match over {
+    Plain =>
+      PlainConn(
+        @socket.Tcp::connect(@socket.Addr::parse("127.0.0.1:\{self.port}")),
+      )
+    Tls(certs) => {
+      guard self.tls_port is Some(port) else {
+        fail("the test did not wait for the TLS port")
+      }
+      let tcp = @socket.Tcp::connect(@socket.Addr::parse("127.0.0.1:\{port}"))
+      errdefer tcp.close()
+      let tls = @tls.Tls::client(
+        tcp,
+        host="localhost",
+        trust=CustomPemFile(certs.ca),
+      )
+      TlsConn(tls, tcp)
+    }
+  }
 }
 
 ///|
 /// Reads one response, framed by its Content-Length, and renders it with
 /// `\r\n` shown as `\n`. Returns `"closed"` when the connection ends first.
-async fn read_response(conn : @socket.Tcp) -> String {
+async fn read_response(conn : Conn) -> String {
   let result = @async.with_timeout_opt(patience_ms, () => {
     guard conn.read_until("\r\n\r\n") is Some(head) else { return "closed" }
     let mut length = 0
@@ -252,7 +421,7 @@ async fn read_response(conn : @socket.Tcp) -> String {
 
 ///|
 /// Whether smock closes the connection without sending anything more.
-async fn closed(conn : @socket.Tcp) -> Bool {
+async fn closed(conn : Conn) -> Bool {
   let result = @async.with_timeout_opt(patience_ms, () => conn.read_some())
   guard result is Some(rest) else { fail("the connection stayed open") }
   rest is None
@@ -283,6 +452,14 @@ fn entries(logs : Array[String]) -> String {
       match key {
         "time" => ()
         "version" | "commit" | "toolchain" => out[key] = "*"
+        "cert_file" | "key_file" =>
+          out[key] = match value {
+            String(path) =>
+              Json::string(
+                "*/" + path[path.rev_find("/").unwrap_or(-1) + 1:].to_owned(),
+              )
+            _ => value
+          }
         "address" =>
           out[key] = match value {
             String(address) =>

@@ -1,10 +1,11 @@
 ///|
-/// Runs `smock serve`: loads the definitions, listens on the plain port and
-/// serves until the process is stopped.
+/// Runs `smock serve`: loads the definitions and the TLS certificate, if
+/// any, listens on the plain port and, with a certificate, on the TLS port,
+/// and serves until the process is stopped. Both ports serve the same Mocks.
 ///
 /// Returns the exit status when it stops by itself: 1 when the definition
-/// set is invalid or the port cannot be listened on. Every problem is
-/// logged first.
+/// set is invalid, the TLS certificate cannot be loaded or a port cannot be
+/// listened on. Every problem is logged first.
 pub async fn serve(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
@@ -23,36 +24,110 @@ pub async fn serve(
       return 1
     }
   }
+  let tls = match settings.tls {
+    None => None
+    Some(files) =>
+      match load_tls(files) {
+        Ok(config) => Some((files, config))
+        Err(message) => {
+          logger.error("cannot load the TLS certificate", fields={
+            "cert_file": Json::string(files.cert_file),
+            "key_file": Json::string(files.key_file),
+            "error": Json::string(message),
+          })
+          return 1
+        }
+      }
+  }
   let engine = @engine.Engine(snapshot)
   let rand = @random.Rand::new()
-  let address = "0.0.0.0:\{settings.port}"
-  let listener = @socket.TcpServer(
-    @socket.Addr::parse(address),
-    reuse_addr=true,
-  ) catch {
+  guard listen(logger, "plain", settings.port) is Some(plain) else { return 1 }
+  defer plain.close()
+  let tls_listener = match tls {
+    None => None
+    Some(_) => {
+      guard listen(logger, "tls", settings.tls_port) is Some(listener) else {
+        return 1
+      }
+      Some(listener)
+    }
+  }
+  defer (if tls_listener is Some(listener) { listener.close() })
+  logger.info("listening", fields={
+    "listener": "plain",
+    "address": Json::string("0.0.0.0:\{plain.addr.port()}"),
+  })
+  if tls is Some((files, _)) && tls_listener is Some(listener) {
+    logger.info("listening", fields={
+      "listener": "tls",
+      "address": Json::string("0.0.0.0:\{listener.addr.port()}"),
+      "cert_file": Json::string(files.cert_file),
+      "key_file": Json::string(files.key_file),
+    })
+  }
+  @async.with_task_group(group => {
+    group.spawn_bg(() => {
+      accept_loop(group, plain, conn => {
+        serve_connection(conn, engine, rand, settings)
+      })
+    })
+    if tls is Some((_, config)) && tls_listener is Some(listener) {
+      group.spawn_bg(() => {
+        accept_loop(group, listener, conn => {
+          // A connection that is still in its handshake has sent no
+          // request bytes, so the idle timeout bounds the handshake too.
+          let stream = @async.with_timeout_opt(settings.idle_timeout_ms, () => {
+            TlsStream::accept(conn, config)
+          })
+          guard stream is Some(Some(stream)) else { return }
+          serve_connection(stream, engine, rand, settings)
+          stream.shutdown()
+        })
+      })
+    }
+  })
+  // The listeners serve until the process is stopped.
+  0
+}
+
+///|
+/// Listens on `port` of every IPv4 address, or logs why it cannot.
+async fn listen(
+  logger : @log.Logger,
+  listener : String,
+  port : Int,
+) -> @socket.TcpServer? {
+  let address = "0.0.0.0:\{port}"
+  try @socket.TcpServer(@socket.Addr::parse(address), reuse_addr=true) catch {
     err => {
       logger.error("cannot listen", fields={
-        "listener": "plain",
+        "listener": Json::string(listener),
         "address": Json::string(address),
         "error": Json::string(err.to_string()),
       })
-      return 1
+      None
     }
+  } noraise {
+    server => Some(server)
   }
-  defer listener.close()
-  logger.info("listening", fields={
-    "listener": "plain",
-    "address": Json::string("0.0.0.0:\{listener.addr.port()}"),
-  })
-  @async.with_task_group(group => {
-    for ;; {
-      let (conn, _) = listener.accept()
-      group.spawn_bg(allow_failure=true, () => {
-        defer conn.close()
-        serve_connection(conn, engine, rand, settings)
-      })
-    }
-  })
+}
+
+///|
+/// Accepts connections on `listener` and serves each one with `handle` in
+/// its own task of `group`. A connection that fails ends alone: the others
+/// carry on.
+async fn[X] accept_loop(
+  group : @async.TaskGroup[X],
+  listener : @socket.TcpServer,
+  handle : async (@socket.Tcp) -> Unit,
+) -> Unit {
+  for ;; {
+    let (conn, _) = listener.accept()
+    group.spawn_bg(allow_failure=true, () => {
+      defer conn.close()
+      handle(conn)
+    })
+  }
 }
 
 ///|

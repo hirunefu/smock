@@ -6,7 +6,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 # Paths of C sources ADR 0001 allows, one per line.
-allowed=""
+allowed="openssl/openssl.c"
 
 failed=0
 for file in $(git ls-files --cached --others --exclude-standard \

@@ -15,6 +15,12 @@ pub(all) struct ServeSettings {
   dir : String?
   /// The plain port. 0 asks the system for a free port.
   port : Int
+  /// The TLS port. 0 asks the system for a free port. smock listens on it
+  /// only when `tls` is set.
+  tls_port : Int
+  /// The certificate and key files for the TLS port, or `None` when none
+  /// are configured.
+  tls : TlsFiles?
   log_format : LogFormat
   /// The body-file subdirectory of the definitions directory.
   body_file_dir : String
@@ -30,6 +36,16 @@ pub(all) struct ServeSettings {
   read_timeout_ms : Int
   /// How long, in milliseconds, a connection may wait for its next request.
   idle_timeout_ms : Int
+} derive(Debug)
+
+///|
+/// The PEM files the TLS port presents.
+pub(all) struct TlsFiles {
+  /// The certificate chain: the leaf certificate, then the certificates
+  /// that issued it.
+  cert_file : String
+  /// The private key of the leaf certificate.
+  key_file : String
 } derive(Debug)
 
 ///|
@@ -96,6 +112,21 @@ let serve_settings : Array[Setting] = [
     name: "port",
     about: "The plain HTTP port. 0 picks a free port.",
     default: Some("8080"),
+  },
+  {
+    name: "tls-port",
+    about: "The HTTPS port, served when --tls-cert-file and --tls-key-file are set. 0 picks a free port.",
+    default: Some("8443"),
+  },
+  {
+    name: "tls-cert-file",
+    about: "The PEM certificate chain for the HTTPS port: the leaf certificate, then its intermediates.",
+    default: None,
+  },
+  {
+    name: "tls-key-file",
+    about: "The PEM private key of the leaf certificate in --tls-cert-file.",
+    default: None,
   },
   { name: "log-format", about: "The log format: json.", default: Some("json"), },
   body_file_dir_setting,
@@ -196,6 +227,24 @@ pub fn ServeSettings::from_matches(
     None => None
   }
   let port = int_value(matches, "port", min=0, max=65535)
+  let tls_port = int_value(matches, "tls-port", min=0, max=65535)
+  let tls = match
+    (file_value(matches, "tls-cert-file"), file_value(matches, "tls-key-file")) {
+    (Some(cert_file), Some(key_file)) => Some({ cert_file, key_file, })
+    (None, None) => None
+    (Some(cert_file), None) =>
+      raise invalid(
+        "tls-cert-file",
+        cert_file,
+        "needs --tls-key-file (\{env_name("tls-key-file")}) as well",
+      )
+    (None, Some(key_file)) =>
+      raise invalid(
+        "tls-key-file",
+        key_file,
+        "needs --tls-cert-file (\{env_name("tls-cert-file")}) as well",
+      )
+  }
   let log_format = match value(matches, "log-format") {
     Some("json") => Json
     other => raise invalid("log-format", other.unwrap_or(""), "must be json")
@@ -204,6 +253,8 @@ pub fn ServeSettings::from_matches(
   {
     dir,
     port,
+    tls_port,
+    tls,
     log_format,
     body_file_dir,
     header_size_limit: int_value(
@@ -270,6 +321,18 @@ fn value(matches : @argparse.Matches, name : String) -> String? {
   match matches.values.get(name) {
     Some(values) => values.last()
     None => None
+  }
+}
+
+///|
+/// The value of a file setting, which must not be empty when given.
+fn file_value(
+  matches : @argparse.Matches,
+  name : String,
+) -> String? raise InvalidSetting {
+  match value(matches, name) {
+    Some("") => raise invalid(name, "", "must not be empty")
+    other => other
   }
 }
 
