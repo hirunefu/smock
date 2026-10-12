@@ -1,0 +1,55 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "create-user",
+      "mock": "users",
+      "priority": 1,
+      "request": {
+        "method": "POST",
+        "path": {
+          "pattern": "/teams/[a-z]+/users"
+        },
+        "query": {
+          "dryRun": "true",
+          "v": {
+            "pattern": "[0-9]+"
+          }
+        },
+        "headers": {
+          "Content-Type": {
+            "pattern": "application/json(;.*)?"
+          },
+          "X-Api-Key": "s3cret"
+        },
+        "body": {
+          "json": {
+            "name": "Alice"
+          }
+        }
+      },
+      "response": {
+        "status": 201
+      }
+    },
+    {
+      "id": "any-text",
+      "mock": "users",
+      "request": {
+        "path": {
+          "pattern": ""
+        },
+        "body": {
+          "pattern": "(?s).*"
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

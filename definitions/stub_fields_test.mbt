@@ -73,11 +73,11 @@ test "a malformed query, header or body condition is a diagnostic at its JSON Po
     content=(
       #|a.json: /stubs/0/request/query: must be an object
       #|a.json: /stubs/0/request/headers: must be an object
-      #|a.json: /stubs/1/request/query/q: must be a string
-      #|a.json: /stubs/1/request/query/r: must be a string
-      #|a.json: /stubs/1/request/query/s: must be a string
+      #|a.json: /stubs/1/request/query/q: must be a string or an object
+      #|a.json: /stubs/1/request/query/r: must be a string or an object
+      #|a.json: /stubs/1/request/query/s: must be a string or an object
       #|a.json: /stubs/1/request/headers/X A: is not a valid header name
-      #|a.json: /stubs/1/request/headers/X-B: must be a string
+      #|a.json: /stubs/1/request/headers/X-B: must be a string or an object
       #|a.json: /stubs/1/request/headers/a~1b: is not a valid header name
       #|a.json: /stubs/2/request/body: must be a string or an object
       #|a.json: /stubs/3/request/body: needs "json" or "pattern"
@@ -89,23 +89,162 @@ test "a malformed query, header or body condition is a diagnostic at its JSON Po
 }
 
 ///|
-test "pattern conditions on the query, headers and body are rejected as not supported yet" {
+test "pattern conditions on the path, query, headers and body are read as the Schema defines them" {
   inspect(
     stub_problems([
       stub_with(
         "a",
         (
-          #|"request": { "query": { "q": { "pattern": "[0-9]+" } },
-          #|  "headers": { "X-A": { "pattern": ".*" } },
-          #|  "body": { "pattern": ".*" } }
+          #|"request": { "path": { "pattern": "/users/[0-9]+" },
+          #|  "query": { "q": { "pattern": "[0-9]+" }, "r": "exact" },
+          #|  "headers": { "X-A": { "pattern": ".*" }, "X-B": "exact" },
+          #|  "body": { "pattern": "(?s).*" } }
         ),
+      ),
+      stub_with(
+        "empty",
+        (
+          #|"request": { "path": { "pattern": "" }, "query": { "q": { "pattern": "" } },
+          #|  "headers": { "X-A": { "pattern": "" } }, "body": { "pattern": "" } }
+        ),
+      ),
+      stub_with(
+        "not-a-path", "\"request\": { \"path\": { \"pattern\": \"users|[a-z]*\" } }",
+      ),
+    ]),
+    content="valid",
+  )
+}
+
+///|
+test "a malformed pattern condition is a diagnostic at its JSON Pointer" {
+  inspect(
+    stub_problems([
+      stub_with(
+        "a",
+        (
+          #|"request": { "path": {}, "query": { "q": { "pattern": 1 } },
+          #|  "headers": { "X-A": { "regex": ".*" } }, "body": { "pattern": null } }
+        ),
+      ),
+      stub_with(
+        "b",
+        (
+          #|"request": { "path": { "pattern": "/a", "flags": "i" },
+          #|  "query": { "q": { "pattern": ["1"] } }, "headers": { "X-A": { } },
+          #|  "body": { "pattern": ".*", "exact": "x" } }
+        ),
+      ),
+      stub_with("c", "\"request\": { \"path\": 1, \"query\": { \"q\": [] } }"),
+    ]),
+    content=(
+      #|a.json: /stubs/0/request/path: needs "pattern"
+      #|a.json: /stubs/0/request/query/q/pattern: must be a string
+      #|a.json: /stubs/0/request/headers/X-A/regex: is not a known field
+      #|a.json: /stubs/0/request/headers/X-A: needs "pattern"
+      #|a.json: /stubs/0/request/body/pattern: must be a string
+      #|a.json: /stubs/1/request/path/flags: is not a known field
+      #|a.json: /stubs/1/request/query/q/pattern: must be a string
+      #|a.json: /stubs/1/request/headers/X-A: needs "pattern"
+      #|a.json: /stubs/1/request/body/exact: is not a known field
+      #|a.json: /stubs/2/request/path: must be a string or an object
+      #|a.json: /stubs/2/request/query/q: must be a string or an object
+    ),
+  )
+}
+
+///|
+test "a pattern that does not compile is a diagnostic at the JSON Pointer of its pattern field, with the error and its position in the pattern" {
+  inspect(
+    stub_problems([
+      stub_with(
+        "a",
+        (
+          #|"request": { "path": { "pattern": "/users/([0-9]+" },
+          #|  "query": { "q": { "pattern": "a**" } },
+          #|  "headers": { "X-A/B": { "pattern": "[z-a]" } },
+          #|  "body": { "pattern": "x{1001}" } }
+        ),
+      ),
+      stub_with(
+        "b", "\"request\": { \"path\": { \"pattern\": \"/café/(?P<é>x)\" } }",
+      ),
+      stub_with(
+        "c", "\"request\": { \"query\": { \"~q\": { \"pattern\": \")\" } } }",
       ),
     ]),
     content=(
-      #|a.json: /stubs/0/request/query/q: pattern conditions are not supported yet
-      #|a.json: /stubs/0/request/headers/X-A: pattern conditions are not supported yet
-      #|a.json: /stubs/0/request/body: pattern conditions are not supported yet
+      #|a.json: /stubs/0/request/path/pattern: is not a valid pattern: position 7: missing closing )
+      #|a.json: /stubs/0/request/query/q/pattern: is not a valid pattern: position 1: bad repetition operator **
+      #|a.json: /stubs/0/request/headers/X-A~1B: is not a valid header name
+      #|a.json: /stubs/0/request/body/pattern: is not a valid pattern: position 1: invalid repetition size {1001}
+      #|a.json: /stubs/1/request/path/pattern: is not a valid pattern: position 6: non-ASCII capture group name (?P<é> is not supported in R1
+      #|a.json: /stubs/2/request/query/~0q/pattern: is not a valid pattern: position 0: unexpected )
     ),
+  )
+}
+
+///|
+test "a pattern with syntax outside the R1 subset, or that is not RE2 syntax, is rejected the same way" {
+  let stub = (i : Int, pattern : String) => {
+    stub_with(
+      "s\{i}",
+      "\"request\": { \"path\": { \"pattern\": \{pattern.escape()} } }",
+    )
+  }
+  inspect(
+    stub_problems(
+      [
+        "/\\p{Greek}+", "/\\pL", "/[[:alpha:]]", "/(?U)a*", "/\\x41", "/(?=a)", "/(a)\\1",
+      ].mapi(stub),
+    ),
+    content=(
+      #|a.json: /stubs/0/request/path/pattern: is not a valid pattern: position 1: Unicode class \p{Greek} is not supported in R1
+      #|a.json: /stubs/1/request/path/pattern: is not a valid pattern: position 1: Unicode class \pL is not supported in R1
+      #|a.json: /stubs/2/request/path/pattern: is not a valid pattern: position 2: POSIX class [:alpha:] is not supported in R1
+      #|a.json: /stubs/3/request/path/pattern: is not a valid pattern: position 3: flag U is not supported in R1
+      #|a.json: /stubs/4/request/path/pattern: is not a valid pattern: position 1: hexadecimal escape \x is not supported in R1
+      #|a.json: /stubs/5/request/path/pattern: is not a valid pattern: position 1: lookahead (?= is not RE2 syntax
+      #|a.json: /stubs/6/request/path/pattern: is not a valid pattern: position 4: backreference \1 is not RE2 syntax
+    ),
+  )
+}
+
+///|
+test "the snapshot holds each pattern compiled when the set is loaded, ready to match" {
+  let file =
+    #|{ "mocks": [{ "name": "m" }],
+    #|  "stubs": [{ "id": "a", "mock": "m",
+    #|    "request": { "path": { "pattern": "/users/[0-9]+" },
+    #|      "query": { "q": { "pattern": "a|b" } }, "headers": { "X-A": { "pattern": "1+" } },
+    #|      "body": { "pattern": "(?s).*" } },
+    #|    "response": { "status": 200 } }] }
+  let set : @definitions.DefinitionSet = {
+    files: [("a.json", @utf8.encode(file))],
+    body_files: [],
+  }
+  guard @definitions.load(set) is Ok(snapshot) else { fail("not loaded") }
+  let request = snapshot.mocks[0].stubs[0].request
+  debug_inspect(
+    request,
+    content=(
+      #|{
+      #|  meth: None,
+      #|  path: Some(Pattern(Pattern("/users/[0-9]+"))),
+      #|  query: <ReadOnlyArray: [("q", Pattern(Pattern("a|b")))]>,
+      #|  headers: <ReadOnlyArray: [("x-a", Pattern(Pattern("1+")))]>,
+      #|  body: Some(Pattern(Pattern("(?s).*"))),
+      #|}
+    ),
+  )
+  guard request.path is Some(Pattern(path)) else { fail("no path pattern") }
+  debug_inspect(
+    [
+      path.matches(b"/users/42"),
+      path.matches(b"/users/42/orders"),
+      path.matches(b"/users/x"),
+    ],
+    content="[true, false, false]",
   )
 }
 
