@@ -534,7 +534,10 @@ two Mocks claim the same Host after normalisation, at most one Mock is
 marked `default`, and every Stub names a Mock that some file declares. A
 duplicate is reported where it occurs the second time, in file-name order,
 and the message names the first. It also compiles every
-[pattern](#pattern-conditions), which the Schema accepts as any string.
+[pattern](#pattern-conditions), which the Schema accepts as any string, and
+rejects a key repeated within one JSON object, as YAML files reject it:
+JSON parsers disagree on which of the two values counts, and the Schema
+sees only one of them.
 
 In CI, run it as a step that fails the build:
 

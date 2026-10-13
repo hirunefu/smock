@@ -422,6 +422,9 @@ only a safe subset of YAML (`yaml/`):
 - Anchors, aliases, tags, merge keys, duplicate keys and multiple documents
   are rejected.
 
+A JSON file with a key repeated in one object is rejected too, at the later
+key: JSON parsers disagree on which of the two values counts.
+
 Every problem is reported with the file and the JSON Pointer of the value,
 such as `users.yaml: /stubs/0/request/method: "on" may be read as a boolean;
 quote this value`.

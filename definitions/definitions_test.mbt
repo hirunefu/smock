@@ -181,6 +181,46 @@ test "a YAML file is validated like the equivalent JSON file" {
 }
 
 ///|
+test "a JSON file with a duplicate key is rejected at the later key, as the equivalent YAML file is" {
+  inspect(
+    problems([
+      (
+        "10-users.json", "{ \"mocks\": [{ \"name\": \"users\", \"name\": \"orders\" }] }",
+      ),
+      (
+        "20-stubs.json",
+        (
+          #|{ "mocks": [{ "name": "m" }],
+          #|  "stubs": [{ "id": "a", "mock": "m", "response": { "status": 200 } }],
+          #|  "stubs": [{ "id": "b", "mock": "m", "response": { "status": 200 } }] }
+        ),
+      ),
+      (
+        "30-escaped.json",
+        (
+          #|{ "mocks": [{ "name": "n" }],
+          #|  "stubs": [{ "id": "c", "mock": "n", "response": { "status": 200 },
+          #|    "request": { "body": { "json": { "a/b": [{}, { "x": 1, "\u0078": 2 }] } } } }] }
+        ),
+      ),
+      (
+        "40-distinct.json",
+        (
+          #|{ "mocks": [{ "name": "o" }],
+          #|  "stubs": [{ "id": "d", "mock": "o", "response": { "status": 200 },
+          #|    "request": { "body": { "json": [{ "x": 1 }, { "x": 2, "X": 3, "x ": 4 }] } } }] }
+        ),
+      ),
+    ]),
+    content=(
+      #|10-users.json: /mocks/0/name: duplicate key
+      #|20-stubs.json: /stubs: duplicate key
+      #|30-escaped.json: /stubs/0/request/body/json/a~1b/1/x: duplicate key
+    ),
+  )
+}
+
+///|
 test "YAML and JSON files are read together, in byte-wise name order" {
   inspect(
     problems([

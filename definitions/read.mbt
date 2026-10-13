@@ -27,9 +27,13 @@ fn parse_file(
       ParseError(pointer~, message~) => return problem(pointer, message)
     }
   } else {
-    @json.parse(text) catch {
+    let json = @json.parse(text) catch {
       err => return problem("", "not valid JSON: \{err}")
     }
+    if first_duplicate_key(text) is Some(pointer) {
+      return problem(pointer, "duplicate key")
+    }
+    json
   }
   match json {
     Object(top) => Ok(top)
