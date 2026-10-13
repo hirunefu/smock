@@ -492,3 +492,24 @@ test "without a seed, Fault decisions come from the process generator, so its se
     ),
   )
 }
+
+///|
+/// `a` times `a`, minus `c`, as the log-normal sampler multiplies and adds.
+fn product_minus(a : Double, c : Double) -> Double {
+  a * a - c
+}
+
+///|
+test "Fault arithmetic is never fused into multiply-adds, so a seeded delay is the same on every target" {
+  // Read at run time, so that the compiler cannot fold them: 1 + 2^-30 and
+  // 1 + 2^-29. Rounded to a Double, a * a is c, so a * a - c is 0; a fused
+  // multiply-add would keep the 2^-60 the rounding drops, as an aarch64
+  // release build does unless it is compiled with -ffp-contract=off.
+  guard @json.parse(
+      "[1.000000000931322574615478515625, 1.00000000186264514923095703125]",
+    )
+    is Array([Number(a, ..), Number(c, ..)]) else {
+    fail("not two numbers")
+  }
+  inspect(product_minus(a, c), content="0")
+}

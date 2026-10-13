@@ -730,7 +730,10 @@ The native build links OpenSSL 3 (on Debian and Ubuntu, `libssl-dev`).
 `prebuild.py`, which `moon` runs with `python3` before every native build,
 adds `-lssl -lcrypto` to every executable that uses the bindings, tests
 included, because link flags in a library's own `moon.pkg` do not reach the
-packages that import it.
+packages that import it. It also compiles every executable that holds the
+engine with `-ffp-contract=off`, so that a release build on arm64 does not
+fuse floating-point multiply-adds and a seeded delay is the same as on
+wasm-gc; CI tests the engine in a release build to check it.
 
 Most tests drive the engine through its public interface, with in-memory
 Definition files, a fixed clock and a seeded random source

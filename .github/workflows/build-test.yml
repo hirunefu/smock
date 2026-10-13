@@ -66,6 +66,12 @@ jobs:
       - name: Test every module natively
         run: moon test --target native
 
+      # A release build may fuse floating-point multiply-adds, so that a
+      # seeded log-normal delay differs from the one wasm-gc draws.
+      # prebuild.py turns that off, and the engine's tests check it.
+      - name: Test the engine in a release build
+        run: moon test --target native --release -p smock/smock/engine
+
       - name: Test the OpenSSL bindings under AddressSanitizer and LeakSanitizer
         run: scripts/test-openssl-asan.sh
 
