@@ -180,7 +180,7 @@ let serve_settings : Array[Setting] = [
   },
   {
     name: "tls-port",
-    about: "The HTTPS port. 0 picks a free port.",
+    about: "The HTTPS port, separate from the plain port. 0 picks a free port.",
     default: Some("8443"),
   },
   {
@@ -407,6 +407,13 @@ pub fn ServeSettings::from_matches(
   }
   let port = int_value(matches, "port", min=0, max=65535)
   let tls_port = int_value(matches, "tls-port", min=0, max=65535)
+  if tls_port != 0 && tls_port == port {
+    raise invalid(
+      "tls-port",
+      tls_port.to_string(),
+      "must differ from --port (SMOCK_PORT)",
+    )
+  }
   let tls = match
     (file_value(matches, "tls-cert-file"), file_value(matches, "tls-key-file")) {
     (Some(cert_file), Some(key_file)) => Some({ cert_file, key_file, })

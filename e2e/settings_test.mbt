@@ -13,7 +13,7 @@ async test "every serve setting is a flag with a matching SMOCK_ environment var
       #|  -h, --help                                   Show help information.
       #|  --dir <dir>                                  The definitions directory. Without it, smock serves one empty Default Mock. [env: SMOCK_DIR]
       #|  --port <port>                                The plain HTTP port. 0 picks a free port. [env: SMOCK_PORT] [default: 8080]
-      #|  --tls-port <tls-port>                        The HTTPS port. 0 picks a free port. [env: SMOCK_TLS_PORT] [default: 8443]
+      #|  --tls-port <tls-port>                        The HTTPS port, separate from the plain port. 0 picks a free port. [env: SMOCK_TLS_PORT] [default: 8443]
       #|  --tls-cert-file <tls-cert-file>              The PEM certificate chain for the HTTPS port: the leaf certificate, then its intermediates. Without it and --tls-key-file, smock generates a self-signed certificate in memory for localhost, 127.0.0.1, ::1 and every Mock Host. [env: SMOCK_TLS_CERT_FILE]
       #|  --tls-key-file <tls-key-file>                The PEM private key of the leaf certificate in --tls-cert-file. [env: SMOCK_TLS_KEY_FILE]
       #|  --tls-mock-certs <tls-mock-certs>            Certificates of single Mocks, chosen by SNI: a JSON object that maps each Mock name to its PEM files, such as {"users":{"certFile":"/certs/users/tls.crt","keyFile":"/certs/users/tls.key"}}. A handshake whose SNI is a Host of a listed Mock gets that Mock's certificate; any other gets --tls-cert-file, which must be set. Empty by default. [env: SMOCK_TLS_MOCK_CERTS]
@@ -128,6 +128,8 @@ async test "an invalid value stops startup with a message that names the setting
     ([], { "SMOCK_PORT": "-1" }),
     (["--tls-port", "65536"], Map([])),
     ([], { "SMOCK_TLS_PORT": "https" }),
+    (["--port", "8443", "--tls-port", "8443"], Map([])),
+    ([], { "SMOCK_PORT": "9000", "SMOCK_TLS_PORT": "9000" }),
     (["--log-format", "text"], Map([])),
     ([], { "SMOCK_LOG_FORMAT": "" }),
     (["--dir", ""], Map([])),
@@ -194,6 +196,8 @@ async test "an invalid value stops startup with a message that names the setting
       #|status 2: smock serve: invalid value "-1" for --port (SMOCK_PORT): must be an integer from 0 to 65535
       #|status 2: smock serve: invalid value "65536" for --tls-port (SMOCK_TLS_PORT): must be an integer from 0 to 65535
       #|status 2: smock serve: invalid value "https" for --tls-port (SMOCK_TLS_PORT): must be an integer from 0 to 65535
+      #|status 2: smock serve: invalid value "8443" for --tls-port (SMOCK_TLS_PORT): must differ from --port (SMOCK_PORT)
+      #|status 2: smock serve: invalid value "9000" for --tls-port (SMOCK_TLS_PORT): must differ from --port (SMOCK_PORT)
       #|status 2: smock serve: invalid value "text" for --log-format (SMOCK_LOG_FORMAT): must be json
       #|status 2: smock serve: invalid value "" for --log-format (SMOCK_LOG_FORMAT): must be json
       #|status 2: smock serve: invalid value "" for --dir (SMOCK_DIR): must not be empty
