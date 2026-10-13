@@ -369,21 +369,24 @@ priv struct Match {
 }
 
 ///|
-/// The plan of a Stub's `response`. Server-Sent Events are sent with
-/// `Content-Type: text/event-stream`, unless the Stub gives its own
-/// Content-Type.
+/// The plan of a Stub's `response`. Server-Sent Events are always sent with
+/// `Content-Type: text/event-stream`, which replaces a Content-Type the Stub
+/// gives.
 fn stub_response(response : @definitions.Response) -> ResponsePlan {
   let headers = []
   let body : Body = match response.body {
-    Bytes(bytes) => Bytes(bytes)
+    Bytes(bytes) => {
+      headers.push_iter(response.headers.iter())
+      Bytes(bytes)
+    }
     Events(events) => {
-      if !response.headers.iter().any(h => h.0.to_lower() == "content-type") {
-        headers.push(("Content-Type", "text/event-stream"))
-      }
+      headers.push(("Content-Type", "text/event-stream"))
+      headers.push_iter(
+        response.headers.iter().filter(h => h.0.to_lower() != "content-type"),
+      )
       Events(events)
     }
   }
-  headers.push_iter(response.headers.iter())
   { status: response.status, headers, body, delay_ms: 0, fault: None, }
 }
 

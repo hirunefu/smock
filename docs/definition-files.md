@@ -316,9 +316,9 @@ Instead of a body, a response can stream `events`, to mock a streaming API:
 }
 ```
 
-smock sends the status and the headers at once, with
-`Content-Type: text/event-stream` unless the Stub gives its own
-`Content-Type`. Then, for each event, it waits the event's `delay` (in
+smock sends the status and the headers at once, always with
+`Content-Type: text/event-stream`: a `Content-Type` the Stub gives is
+replaced. Then, for each event, it waits the event's `delay` (in
 milliseconds, counted from the previous event or, for the first one, from
 the headers; 0 by default) and writes the event:
 

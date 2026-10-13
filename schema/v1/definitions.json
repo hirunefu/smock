@@ -211,7 +211,7 @@
           "default": false
         },
         "events": {
-          "description": "Server-Sent Events to stream instead of a body. smock sends the status and the headers at once, with Content-Type: text/event-stream, then writes each event after its delay, and closes the stream after the last one.",
+          "description": "Server-Sent Events to stream instead of a body. smock sends the status and the headers at once, always with Content-Type: text/event-stream (a Content-Type in headers is replaced), then writes each event after its delay, and closes the stream after the last one.",
           "type": "array",
           "items": { "$ref": "#/$defs/event" }
         }
