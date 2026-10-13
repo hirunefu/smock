@@ -399,6 +399,13 @@ of getting its response:
   closes the connection. The client sees a response cut short. For
   Server-Sent Events, the first half is the first half of the events,
   rounded down, each after its delay, and the stream is not ended.
+  - A response with no body bytes to halve, such as an empty body or a
+    response to `HEAD`, would be whole that way. smock leaves out the empty
+    line that ends its headers instead, so the client still sees it cut
+    short.
+  - A stream of Server-Sent Events to an HTTP/1.0 client ends when the
+    connection closes, so a client cannot tell a partial one from a whole
+    stream with fewer events.
 
 `probability`, from 0 to 1, is the share of matched requests that fail;
 without it, every matched request fails. A Stub with both a delay and a

@@ -592,7 +592,9 @@ fn SessionCarrier::session_of(
 /// returns whether the connection stays open after it. With `close`, the
 /// response says `Connection: close`, and the connection closes after it.
 /// With `partial`, as a partial Fault, it writes the status line, the header
-/// fields and the first half of the body, and the connection closes.
+/// fields and the first half of the body, and the connection closes; a
+/// response with no body bytes loses the empty line that ends its head
+/// instead (`cut_short`).
 ///
 /// Server-Sent Events are streamed: the head at once, then each event after
 /// its delay. Waiting suspends only this connection's task, so the others
@@ -600,7 +602,8 @@ fn SessionCarrier::session_of(
 /// is its head alone, written at once: no event is waited for. A client that closes the connection mid-stream
 /// makes a later write fail, which ends the stream and the connection. The
 /// first half of a stream is the first half of its events, rounded down,
-/// and a stream cut short is not ended: a chunked one lacks its last chunk.
+/// and a stream cut short is not ended: a chunked one lacks its last chunk,
+/// while one to HTTP/1.0, which closing the connection ends, looks whole.
 ///
 /// `before_last` is called just before the response's last bytes are
 /// written: before the whole response when it is written at once, and
@@ -638,7 +641,11 @@ async fn[S : @io.Writer] write_response(
         request~,
         close~,
       )
-      if !partial && !response.has_body() {
+      if !response.has_body() {
+        if partial {
+          @io.Writer::write(stream, cut_short(response.head()))
+          return false
+        }
         before_last()
         @io.Writer::write(stream, response.head())
         return response.keeps_open()
@@ -682,12 +689,15 @@ async fn[S : @io.Writer] write_some(stream : S, bytes : Bytes) -> Unit {
 
 ///|
 /// The first part of the encoded `response`, as a partial Fault sends it:
-/// the status line, the header fields and the first half of the body. The
+/// the status line, the header fields and the first half of the body. A
+/// response with no body bytes, such as one to HEAD, would then be whole, so
+/// its head is cut short instead: without the empty line that ends it. The
 /// head ends at the first empty line, since header values hold no CR or LF.
 fn cut_short(response : Bytes) -> BytesView {
-  let head = match response[:].find(b"\r\n\r\n") {
-    Some(i) => i + 4
-    None => response.length()
+  guard response[:].find(b"\r\n\r\n") is Some(i) else { return response[:] }
+  let head = i + 4
+  if head == response.length() {
+    return response[:head - 2]
   }
   response[:head + (response.length() - head) / 2]
 }

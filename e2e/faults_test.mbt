@@ -288,6 +288,53 @@ async test "a partial Fault on Server-Sent Events sends the head and the first h
 }
 
 ///|
+async test "a partial Fault on a response without body bytes cuts its head short: the status line and the headers, without the empty line that ends them, then a FIN" {
+  let defs =
+    #|{ "mocks": [{ "name": "m" }],
+    #|  "stubs": [
+    #|    { "id": "empty", "mock": "m", "request": { "path": "/empty" },
+    #|      "response": { "status": 200 },
+    #|      "fault": { "connection": { "kind": "partial" } } },
+    #|    { "id": "text", "mock": "m", "request": { "path": "/text" },
+    #|      "response": { "status": 200, "body": "0123456789" },
+    #|      "fault": { "connection": { "kind": "partial" } } },
+    #|    { "id": "ticks", "mock": "m", "request": { "path": "/ticks" },
+    #|      "response": { "status": 200, "events": [
+    #|        { "delay": 2000, "data": "one" }, { "data": "two" }] },
+    #|      "fault": { "connection": { "kind": "partial" } } } ] }
+  let _ = on_both_ports(files=[("m.json", defs)], (smock, over) => {
+    let out = []
+    for request in ["GET /empty", "HEAD /text", "HEAD /ticks"] {
+      let conn = smock.connect(over~)
+      defer conn.close()
+      conn.write("\{request} HTTP/1.1\r\nHost: localhost\r\n\r\n")
+      out.push("\{request}:\n\{read_to_end(conn)}")
+    }
+    inspect(
+      out.join("---\n"),
+      content=(
+        #|GET /empty:
+        #|HTTP/1.1 200 OK
+        #|Smock-Mock: m; via=default
+        #|Content-Length: 0
+        #|---
+        #|HEAD /text:
+        #|HTTP/1.1 200 OK
+        #|Smock-Mock: m; via=default
+        #|Content-Length: 10
+        #|---
+        #|HEAD /ticks:
+        #|HTTP/1.1 200 OK
+        #|Content-Type: text/event-stream
+        #|Smock-Mock: m; via=default
+        #|Transfer-Encoding: chunked
+        #|
+      ),
+    )
+  })
+}
+
+///|
 async test "a real HTTP client sees a partial response cut short" {
   with_definitions([("m.json", faults)], dir => {
     let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
