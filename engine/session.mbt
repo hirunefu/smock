@@ -49,7 +49,8 @@ pub fn session_of(
     }
   }
   match found {
-    Some(value) if !value.is_empty() => Some(@percent.decode_lossy(value))
+    Some(value) if !value.is_empty() =>
+      Some(percent_decode(value, plus_is_space=false))
     _ => None
   }
 }
