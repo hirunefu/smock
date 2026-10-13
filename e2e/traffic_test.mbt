@@ -77,8 +77,8 @@ fn ephemeral_get(path : String) -> String {
 }
 
 ///|
-/// The status line of each response in `responses`, as `exchange` renders
-/// them.
+/// The status line of each response in `responses`, as `exchange_each`
+/// renders them.
 fn statuses(responses : String) -> String {
   responses
   .split("\n---\n")
@@ -100,7 +100,7 @@ async test "after a matched request, two Ephemeral Stub matches, an unmatched re
           out.push("add GET \{path} to orders: \{response.status}")
         }
         for over in [Plain, Tls(certs)] {
-          let responses = exchange(smock, over, [
+          let responses = exchange_each(smock, over, [
             "GET /x HTTP/1.1\r\nHost: users.example.com\r\n\r\n", "GET /a HTTP/1.1\r\nHost: orders.example.com\r\n\r\n",
             "GET /b HTTP/1.1\r\nHost: orders.example.com\r\n\r\n", "GET /nope HTTP/1.1\r\nHost: users.example.com\r\n\r\n",
             "GET /x HTTP/1.1\r\nHost: elsewhere.example.com\r\n\r\n",
@@ -146,7 +146,7 @@ async test "after a matched request, two Ephemeral Stub matches, an unmatched re
 async test "a request the Default Mock answers because no Mock lists its Host is labelled with the Default Mock's name" {
   with_definitions(two_mocks(default=true), dir => {
     let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
-      let responses = exchange(smock, Plain, [
+      let responses = exchange_each(smock, Plain, [
         "GET /x HTTP/1.1\r\nHost: usres.example.com\r\n\r\n", "GET /y HTTP/1.1\r\nHost: usres.example.com\r\n\r\n",
         "GET /x HTTP/1.0\r\n\r\n",
       ])
@@ -358,7 +358,7 @@ async test "smock writes no log line per request: traffic on the plain and TLS p
         let before = smock.logs.length()
         let out = []
         for over in [Plain, Tls(certs)] {
-          let responses = exchange(smock, over, [
+          let responses = exchange_each(smock, over, [
             "GET /users/1 HTTP/1.1\r\nHost: localhost\r\n\r\n", "POST /users/1 HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\n{}",
             "GET /users/1 HTTP/1.1\r\nHost: elsewhere.example.com\r\n\r\n", "GET /users/1 HTTP/1.1\r\nHost : bad\r\n\r\n",
           ])
@@ -380,7 +380,7 @@ async test "smock writes no log line per request: traffic on the plain and TLS p
           fail("the Admin API change was not logged")
         }
         out.push("logged since the traffic began:")
-        out.push(entries(smock.logs[before:].to_owned()))
+        out.push(log_entries(smock.logs[before:].to_owned()))
         inspect(
           out.join("\n"),
           content=(

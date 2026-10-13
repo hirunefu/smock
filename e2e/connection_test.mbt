@@ -393,7 +393,7 @@ async test "limits: a head over the header size or header count limit gets 431, 
     },
   )
   // Requests that hit a limit are not logged one by one.
-  inspect(entries(stopped.logs), content=startup_only)
+  inspect(log_entries(stopped.logs), content=startup_only)
 }
 
 ///|
@@ -464,7 +464,7 @@ async test "read timeout: a request that has begun but has not all arrived withi
     },
   )
   // Timeouts are not logged one by one.
-  inspect(entries(stopped.logs), content=startup_only)
+  inspect(log_entries(stopped.logs), content=startup_only)
 }
 
 ///|
@@ -515,7 +515,7 @@ async test "read timeout: a request pipelined behind a slow response has the rea
       )
     },
   )
-  inspect(entries(stopped.logs), content=startup_only)
+  inspect(log_entries(stopped.logs), content=startup_only)
 }
 
 ///|
@@ -564,5 +564,5 @@ async test "idle timeout: a connection that receives no request bytes for the id
       )
     },
   )
-  inspect(entries(stopped.logs), content=startup_only)
+  inspect(log_entries(stopped.logs), content=startup_only)
 }

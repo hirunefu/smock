@@ -186,7 +186,7 @@ async test "a reset Fault reads the whole request, body included, then ends the 
     )
   })
   // Nothing is logged per request, reset or not.
-  inspect(entries(stopped.logs), content=startup_only)
+  inspect(log_entries(stopped.logs), content=startup_only)
 }
 
 ///|

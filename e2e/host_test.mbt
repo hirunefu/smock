@@ -32,19 +32,16 @@ fn two_mocks(default~ : Bool) -> Array[(String, String)] {
 }
 
 ///|
-/// Sends each request in `requests` on its own connection and renders the
-/// responses.
-async fn exchange(
+/// Sends each request in `requests` on its own connection, as
+/// `Smock::exchange` does, and renders the responses, separated by `---`.
+async fn exchange_each(
   smock : Smock,
   over : Over,
   requests : Array[String],
 ) -> String {
   let out = []
   for request in requests {
-    let conn = smock.connect(over~)
-    defer conn.close()
-    conn.write(request)
-    out.push(read_response(conn))
+    out.push(smock.exchange(over, request))
   }
   out.join("\n---\n")
 }
@@ -53,7 +50,7 @@ async fn exchange(
 async test "requests reach the Mock whose Hosts include their Host, whatever its case, port or trailing dot" {
   let _ = on_both_ports(files=two_mocks(default=true), (smock, over) => {
     inspect(
-      exchange(smock, over, [
+      exchange_each(smock, over, [
         "GET /x HTTP/1.1\r\nHost: users.example.com\r\n\r\n", "GET /x HTTP/1.1\r\nHost: ORDERS.Example.com.:8080\r\n\r\n",
         "GET /x HTTP/1.1\r\nHost: [::1]:9999\r\n\r\n", "GET /x HTTP/1.1\r\nHost: orders.example.com.\r\n\r\n",
       ]),
@@ -86,7 +83,7 @@ async test "requests reach the Mock whose Hosts include their Host, whatever its
 async test "the authority of an absolute-form target wins over the Host header" {
   let _ = on_both_ports(files=two_mocks(default=true), (smock, over) => {
     inspect(
-      exchange(smock, over, [
+      exchange_each(smock, over, [
         "GET http://orders.example.com/x HTTP/1.1\r\nHost: users.example.com\r\n\r\n",
         "GET http://Orders.Example.com:8080/x?page=2 HTTP/1.1\r\nHost: users.example.com\r\n\r\n",
         "GET http://unknown.example.com/x HTTP/1.1\r\nHost: orders.example.com\r\n\r\n",
@@ -116,7 +113,7 @@ async test "the authority of an absolute-form target wins over the Host header" 
 async test "the Default Mock answers an unknown Host or no Host, and says so in Smock-Mock" {
   let _ = on_both_ports(files=two_mocks(default=true), (smock, over) => {
     inspect(
-      exchange(smock, over, [
+      exchange_each(smock, over, [
         "GET /x HTTP/1.1\r\nHost: usres.example.com\r\n\r\n",
         // Its no-match response says so too.
          "GET /y HTTP/1.1\r\nHost: usres.example.com\r\n\r\n",
@@ -162,7 +159,7 @@ async test "the Default Mock answers an unknown Host or no Host, and says so in 
 async test "without a Default Mock, an unknown Host or no Host gets 404 with the accepted Hosts" {
   let _ = on_both_ports(files=two_mocks(default=false), (smock, over) => {
     inspect(
-      exchange(smock, over, [
+      exchange_each(smock, over, [
         "GET /x HTTP/1.1\r\nHost: Usres.Example.com:8080\r\n\r\n", "GET /x HTTP/1.0\r\n\r\n",
       ]),
       content=(
@@ -214,7 +211,7 @@ async test "two Mocks claiming one Host, or two Default Mocks, fail smock check 
     )
     let stopped = run_smock(["serve", "--dir", dir, "--port", "0"])
     inspect(
-      "status \{stopped.status}\n" + entries(stopped.logs),
+      "status \{stopped.status}\n" + log_entries(stopped.logs),
       content=(
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}

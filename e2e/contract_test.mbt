@@ -145,33 +145,6 @@ fn Contract::follow(self : Contract, located : Located) -> Located raise {
 }
 
 ///|
-/// A response as a test sees it.
-struct AdminResponse {
-  status : Int
-  /// The header fields, in the order they came.
-  headers : Array[(String, String)]
-  body : String
-}
-
-///|
-/// The value of the header field `name`, compared case-insensitively.
-fn AdminResponse::header(self : AdminResponse, name : String) -> String? {
-  let name = name.to_lower()
-  for header in self.headers {
-    if header.0.to_lower() == name {
-      return Some(header.1)
-    }
-  }
-  None
-}
-
-///|
-/// The body, parsed as JSON.
-fn AdminResponse::json(self : AdminResponse) -> Json raise {
-  @json.parse(self.body)
-}
-
-///|
 /// The problems with `response` as the answer to `meth path`, by the
 /// document: none when it conforms. A path the document does not list, or a
 /// method it does not list for the path, must be answered as the document's

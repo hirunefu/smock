@@ -380,7 +380,7 @@ async test "adding, deleting and resetting each write a JSON log entry; failed c
     let after = stopped.logs.length() -
       stopped.logs.rev().search_by(line => listening(line) is Some(_)).unwrap()
     inspect(
-      entries(stopped.logs[after:].to_owned()),
+      log_entries(stopped.logs[after:].to_owned()),
       content=(
         #|{"level":"info","msg":"Ephemeral Stub added","mock":"users","session":"test-a","id":"eph-1"}
         #|{"level":"info","msg":"Ephemeral Stub added","mock":"users","session":null,"id":"eph-2"}

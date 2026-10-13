@@ -100,7 +100,10 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
       let (args, env) = run
       let stopped = run_smock(["serve", "--port", "0", ..args], env~)
       out.push(
-        hide_dir("status \{stopped.status}\n\{entries(stopped.logs)}", certs),
+        hide_dir(
+          "status \{stopped.status}\n\{log_entries(stopped.logs)}",
+          certs,
+        ),
       )
     }
     inspect(
@@ -196,7 +199,7 @@ async test "the TLS settings can come from SMOCK_ environment variables, and the
       },
     )
     inspect(
-      entries(stopped.logs),
+      log_entries(stopped.logs),
       content=(
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}

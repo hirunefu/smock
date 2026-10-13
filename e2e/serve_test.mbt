@@ -107,7 +107,7 @@ async test "with an invalid definition set, smock logs every error with its file
     dir => {
       let stopped = run_smock(["serve", "--dir", dir, "--port", "0"])
       inspect(
-        "status \{stopped.status}\n" + entries(stopped.logs),
+        "status \{stopped.status}\n" + log_entries(stopped.logs),
         content=(
           #|status 1
           #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
@@ -129,7 +129,7 @@ async test "when the port is taken, smock logs that it cannot listen and exits w
   let _ = with_smock(["--port", "0"], first => {
     let second = run_smock(["serve", "--port", first.port.to_string()])
     inspect(
-      "status \{second.status}\n\{entries(second.logs)}",
+      "status \{second.status}\n\{log_entries(second.logs)}",
       content=(
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
@@ -150,7 +150,7 @@ async test "logs start with the startup entry, then the random seed, the listeni
       let _ = smock.get("/users/2")
     })
     inspect(
-      "status \{stopped.status}\n" + entries(stopped.logs),
+      "status \{stopped.status}\n" + log_entries(stopped.logs),
       content=(
         #|status 0
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}

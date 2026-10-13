@@ -251,7 +251,7 @@ async test "a client that closes the connection mid-stream ends that stream, and
     // smock logged nothing about the closed connection, and stopped only
     // when the test sent SIGTERM.
     inspect(
-      "status \{stopped.status}\n\{entries(stopped.logs)}",
+      "status \{stopped.status}\n\{log_entries(stopped.logs)}",
       content=(
         #|status 0
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}

@@ -153,7 +153,7 @@ async test "a missing body file or a body-file path that leaves its subdirectory
   with_definitions([("users.json", defs), ("files/users/1.json", "{}")], dir => {
     let stopped = run_smock(["serve", "--dir", dir, "--port", "0"])
     inspect(
-      "status \{stopped.status}\n\{entries(stopped.logs)}\n---\n\{check([dir])}",
+      "status \{stopped.status}\n\{log_entries(stopped.logs)}\n---\n\{check([dir])}",
       content=(
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}

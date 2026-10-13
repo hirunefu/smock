@@ -44,13 +44,13 @@ fn is_certificate_entry(line : String) -> Bool {
 
 ///|
 /// Waits until smock has logged `count` entries about TLS certificates in
-/// all, and returns them as `entries` shows them.
+/// all, and returns them as `log_entries` shows them.
 async fn Smock::certificate_entries(self : Smock, count : Int) -> String {
   let logged = @async.with_timeout_opt(reload_patience_ms, () => {
     for ;; {
       let lines = self.logs.filter(is_certificate_entry)
       if lines.length() >= count {
-        break entries(lines)
+        break log_entries(lines)
       }
       @async.sleep(20)
     }
@@ -123,7 +123,7 @@ async test "rewriting the certificate files rotates the certificate without a re
         )
         // Four handshakes, one rotation.
         inspect(
-          entries(stopped.logs),
+          log_entries(stopped.logs),
           content=(
             #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
             #|{"level":"info","msg":"random seed","seed":"*"}
@@ -616,7 +616,10 @@ async test "smock serve refuses to start when a Mock's certificate pair cannot b
       let (args, env) = run
       let stopped = run_smock(["serve", "--port", "0", ..args], env~)
       out.push(
-        hide_dir("status \{stopped.status}\n\{entries(stopped.logs)}", certs),
+        hide_dir(
+          "status \{stopped.status}\n\{log_entries(stopped.logs)}",
+          certs,
+        ),
       )
     }
     inspect(
@@ -723,7 +726,7 @@ async test "SNI follows the Hosts of the current definition set, and a Mock with
             },
           )
           inspect(
-            entries(stopped.logs.filter(is_certificate_entry)),
+            log_entries(stopped.logs.filter(is_certificate_entry)),
             content=(
               #|{"level":"warn","msg":"TLS certificate for a Mock that is not declared","mock":"orders","certFile":"*/tls.crt","keyFile":"*/tls.key"}
               #|{"level":"warn","msg":"TLS certificate for a Mock that is not declared","mock":"orders","certFile":"*/tls.crt","keyFile":"*/tls.key"}

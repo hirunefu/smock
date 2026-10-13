@@ -538,6 +538,33 @@ async fn Smock::admin(
 }
 
 ///|
+/// An Admin API response as a test sees it.
+struct AdminResponse {
+  status : Int
+  /// The header fields, in the order they came.
+  headers : Array[(String, String)]
+  body : String
+}
+
+///|
+/// The value of the header field `name`, compared case-insensitively.
+fn AdminResponse::header(self : AdminResponse, name : String) -> String? {
+  let name = name.to_lower()
+  for header in self.headers {
+    if header.0.to_lower() == name {
+      return Some(header.1)
+    }
+  }
+  None
+}
+
+///|
+/// The body, parsed as JSON.
+fn AdminResponse::json(self : AdminResponse) -> Json raise {
+  @json.parse(self.body)
+}
+
+///|
 /// Reads one response and parses its status and header fields.
 async fn read_admin_response(conn : Conn) -> AdminResponse {
   guard read_framed(conn) is Some((head, body)) else {
@@ -681,7 +708,7 @@ fn render_response(response : @http.Response, body : String) -> String {
 ///|
 /// The log lines as JSON objects without their time, with the values that
 /// differ from build to build and run to run replaced by `*`.
-fn entries(logs : Array[String]) -> String {
+fn log_entries(logs : Array[String]) -> String {
   logs
   .map(line => {
     let entry = @json.parse(line) catch { _ => return "not JSON: \{line}" }

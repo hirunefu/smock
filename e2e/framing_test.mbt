@@ -151,7 +151,7 @@ async test "after malformed or ambiguous framing, smock answers what came before
   })
   // Rejected requests are not logged: R1 writes no per-request log lines.
   inspect(
-    entries(stopped.logs),
+    log_entries(stopped.logs),
     content=(
       #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
       #|{"level":"info","msg":"random seed","seed":"*"}

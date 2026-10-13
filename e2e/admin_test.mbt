@@ -134,7 +134,7 @@ async test "with --admin-auth off, no operation needs a token, and the startup e
       }
     },
   )
-  out.push(entries([stopped.logs[0]]))
+  out.push(log_entries([stopped.logs[0]]))
   inspect(
     out.join("\n"),
     content=(
@@ -151,7 +151,7 @@ async test "authentication is on by default, and the startup entry says so" {
     inspect(smock.admin("GET", "/v1/status", token=None).status, content="401")
   })
   inspect(
-    entries([stopped.logs[0]]),
+    log_entries([stopped.logs[0]]),
     content=(
       #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
     ),
@@ -186,7 +186,10 @@ async test "with authentication on, smock refuses to start without exactly one t
       let stopped = run_smock(["serve", "--port", "0", ..args], env~)
       out.push(
         "\{name}: status \{stopped.status}\n" +
-        entries(stopped.logs[1:].to_owned()).replace_all(old=dir, new="<dir>"),
+        log_entries(stopped.logs[1:].to_owned()).replace_all(
+          old=dir,
+          new="<dir>",
+        ),
       )
     }
     inspect(
