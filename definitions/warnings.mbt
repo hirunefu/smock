@@ -14,10 +14,15 @@ pub(all) struct Warning {
 } derive(Debug, Eq)
 
 ///|
-/// `<file>: <pointer>: warning: <message>`, on one line, as
-/// `Diagnostic::to_string` writes a problem.
+/// `<file>: <pointer>: warning: <message>`, written as
+/// `Diagnostic::to_string` writes a problem: on one line, and without the
+/// parts that are empty.
 pub fn Warning::to_string(self : Warning) -> String {
-  one_line("\{self.file}: \{self.pointer}: warning: \{self.message}")
+  Diagnostic::{
+    file: self.file,
+    pointer: self.pointer,
+    message: "warning: \{self.message}",
+  }.to_string()
 }
 
 ///|
