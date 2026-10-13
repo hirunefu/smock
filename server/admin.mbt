@@ -133,12 +133,25 @@ fn Admin::new(
 ///|
 /// The encoded response to `request`.
 fn Admin::respond(self : Admin, request : @http1.Request) -> Bytes {
-  let reply = self.handle(request)
+  self.encode(self.handle(request), request~)
+}
+
+///|
+/// `reply` encoded, with the replica's name in `Smock-Replica` first, as
+/// the answer to `request` when one was parsed. With `close`, it says
+/// `Connection: close`.
+fn Admin::encode(
+  self : Admin,
+  reply : Reply,
+  request? : @http1.Request,
+  close? : Bool = false,
+) -> Bytes {
   @http1.encode_response(
     reply.status,
     [("Smock-Replica", self.replica), ..reply.headers],
     reply.body,
-    request~,
+    request?,
+    close~,
   )
 }
 
@@ -161,13 +174,7 @@ fn Admin::reject(self : Admin, status : Int) -> Bytes {
       ("http_version_not_supported", "the request is not HTTP/1.0 or HTTP/1.1")
     _ => ("bad_request", "the request is not valid HTTP/1.1")
   }
-  let reply = self.error(status, code, message)
-  @http1.encode_response(
-    reply.status,
-    [("Smock-Replica", self.replica), ..reply.headers],
-    reply.body,
-    close=true,
-  )
+  self.encode(self.error(status, code, message), close=true)
 }
 
 ///|
@@ -339,6 +346,16 @@ fn Admin::json(self : Admin, status : Int, body : Map[String, Json]) -> Reply {
 }
 
 ///|
+/// A 200 JSON reply that carries `value`, a result the engine gives as a
+/// JSON object, with the `warnings` member added.
+fn[T : ToJson] Admin::result(self : Admin, value : T) -> Reply {
+  guard value.to_json() is Object(members) else {
+    abort("an Admin API result is a JSON object")
+  }
+  self.json(200, members)
+}
+
+///|
 /// Shows what this replica runs and serves.
 fn status(admin : Admin, _request : @http1.Request, _body : Json?) -> Reply {
   let status = admin.engine().status()
@@ -490,10 +507,7 @@ fn render(admin : Admin, request : @http1.Request, body : Json?) -> Reply {
     .render(id, sample, now~, rand=@prng.Generator(seed)) catch {
       err => return admin.error(404, "unknown_stub", err.message())
     }
-  guard rendering.to_json() is Object(members) else {
-    abort("a rendering is a JSON object")
-  }
-  admin.json(200, members)
+  admin.result(rendering)
 }
 
 ///|

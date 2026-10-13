@@ -80,16 +80,7 @@ fn query_journal(
   let page = admin.engine().query_journal(query, session~) catch {
       error => return admin.refused(error, session)
     }
-  admin.page(page)
-}
-
-///|
-/// The reply that carries a Journal page.
-fn Admin::page(self : Admin, page : @engine.JournalPage) -> Reply {
-  guard ToJson::to_json(page) is Object(members) else {
-    abort("a Journal page is a JSON object")
-  }
-  self.json(200, members)
+  admin.result(page)
 }
 
 ///|
@@ -118,10 +109,7 @@ fn verify_journal(
   let verification = admin.engine().verify(verify, session~) catch {
       error => return admin.refused(error, session)
     }
-  guard ToJson::to_json(verification) is Object(members) else {
-    abort("a verification is a JSON object")
-  }
-  admin.json(200, members)
+  admin.result(verification)
 }
 
 ///|
@@ -152,7 +140,7 @@ fn list_unmatched(
   let page = admin.engine().unmatched(session~, limit?) catch {
       error => return admin.refused(error, session)
     }
-  admin.page(page)
+  admin.result(page)
 }
 
 ///|
