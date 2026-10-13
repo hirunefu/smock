@@ -122,16 +122,6 @@ fn Admin::new(
   sessions~ : SessionCarrier,
 ) -> Admin {
   let replica = @engine.header_safe(replica)
-  let warnings : Array[Json] = if replicas > 1 {
-    [
-      {
-        "code": "per_replica_state",
-        "message": "This deployment runs \{replicas} replicas (--replicas), and each one keeps its own Ephemeral Stubs and Journal. This response comes from \{replica} alone.",
-      },
-    ]
-  } else {
-    []
-  }
   {
     lifecycle,
     build,
@@ -140,7 +130,7 @@ fn Admin::new(
     logger,
     token: token.map(token => @utf8.encode(token)),
     replica,
-    warnings: Json::array(warnings),
+    warnings: @engine.admin_warnings(replicas~, replica~).to_json(),
     sessions,
   }
 }
