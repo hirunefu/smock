@@ -681,8 +681,9 @@ The Definition files come from a ConfigMap by default, and a ConfigMap
 update reaches the running smock through its reload, without a restart
 (with body files, a file added, removed or renamed restarts the Pods); a
 git-sync sidecar or an OCI image volume can deliver them instead. The Pods
-meet the Restricted Pod Security Standard, run one replica with about one
-CPU core by default, and get the Admin API token and the TLS certificates,
+meet the Restricted Pod Security Standard, run one replica with one CPU
+core and 1 GiB by default (requests equal to limits, valid on GKE Autopilot
+as they are), and get the Admin API token and the TLS certificates,
 the default one and those of single Mocks, from Secrets. Before SIGTERM,
 smock's container sleeps in a preStop hook (5 s by default) while the Pod
 leaves its Services' endpoints, and the Pod's grace period covers that sleep

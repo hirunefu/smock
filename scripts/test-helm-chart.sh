@@ -2,9 +2,10 @@
 # Rendering tests of the Helm chart (charts/smock). Each test renders the
 # chart with `helm template` for some values and checks the manifests with a
 # jq filter, or checks that rendering fails with a clear message. Together
-# they cover every delivery mode of the Definition files and the Admin API
-# authentication and TLS options. scripts/test-helm-chart-on-kind.sh installs
-# the chart on a real cluster.
+# they cover every delivery mode of the Definition files, the Admin API
+# authentication and TLS options, and default resources that GKE Autopilot
+# accepts as they are. scripts/test-helm-chart-on-kind.sh installs the chart
+# on a real cluster.
 #
 # It needs helm (v3.8 or later, or v4), yq (mikefarah/yq v4) and jq.
 #
@@ -66,6 +67,33 @@ def volume($n): pod | .volumes[] | select(.name == $n);
 def mount($c; $n): [container($c) | .volumeMounts[]? | select(.name == $n)] | first;
 def configmaps: [kind("ConfigMap")];
 def service($n): kind("Service") | select(.metadata.name == $n);
+
+# A Kubernetes quantity as a number: CPU in cores, memory in bytes.
+def quantity:
+  tostring as $s
+  | ($s | capture("^(?<n>[0-9]+([.][0-9]+)?)(?<u>m|k|M|G|T|Ki|Mi|Gi|Ti)?$")
+     // error("not a quantity: \($s)")) as $q
+  | ($q.n | tonumber)
+    * {"": 1, "m": 0.001, "k": 1e3, "M": 1e6, "G": 1e9, "T": 1e12,
+       "Ki": 1024, "Mi": 1048576, "Gi": 1073741824, "Ti": 1099511627776}[$q.u // ""];
+# What a container requests of resource $r: its limit when it sets no request.
+def request($r): .resources.requests[$r] // .resources.limits[$r] // 0 | quantity;
+# What the Pod requests of $r, as Kubernetes counts it: its containers
+# together, or its largest init container if that is more.
+def pod_request($r):
+  pod | [([.containers[] | request($r)] | add), (.initContainers // [] | map(request($r)) | max // 0)] | max;
+# The memory the Pod requests per CPU, in GiB per vCPU: GKE Autopilot needs
+# 1 to 6.5 of general-purpose Pods.
+def gib_per_cpu: pod_request("memory") / 1073741824 / pod_request("cpu");
+# The QoS class of the Pod: Guaranteed when every container limits CPU and
+# memory and requests what it limits.
+def qos:
+  [pod | (.initContainers // []) + .containers | .[] | .resources // {}] as $rs
+  | if all($rs[]; .limits as $l | (.requests // {}) as $q
+         | all("cpu", "memory"; $l[.] != null and (($q[.] // $l[.]) | quantity) == ($l[.] | quantity)))
+    then "Guaranteed"
+    elif all($rs[]; (.requests // {}) == {} and (.limits // {}) == {}) then "BestEffort"
+    else "Burstable" end;
 
 # Why the Pod does not meet the Restricted Pod Security Standard (and the
 # Baseline rules it includes) as far as the chart can break them, or why a
@@ -456,12 +484,46 @@ check ports "the probes call /startupz, /readyz and /livez on the admin port, wi
      {"path": "/readyz", "port": "admin"},
      {"path": "/livez", "port": "admin"}]'
 
-# --- Replicas, CPU, drain and other settings --------------------------------
+# --- Resources ---------------------------------------------------------------
 
 render defaults --values "$tmp/values-token.yaml"
+check defaults "smock's container requests and limits one CPU core and 1 GiB" \
+  'smock.resources == {"requests": {"cpu": "1", "memory": "1Gi"}, "limits": {"cpu": "1", "memory": "1Gi"}}'
+check defaults "requests equal limits, so the Pod's QoS class is Guaranteed" 'qos == "Guaranteed"'
+check defaults "the Pod's CPU:memory ratio is within 1:1 to 1:6.5, which GKE Autopilot needs of general-purpose Pods" \
+  'gib_per_cpu | . >= 1 and . <= 6.5'
+check git-sync "with git-sync, the Pod's CPU:memory ratio is still within 1:1 to 1:6.5" \
+  'gib_per_cpu | . >= 1 and . <= 6.5'
+check git-sync "git-sync, whose memory limit is above its request, makes the Pod Burstable" 'qos == "Burstable"'
+
+# The ratio check finds Pods outside the range: the chart's earlier default
+# (1 CPU, 128Mi) and more memory per CPU than general-purpose Pods take.
+render ratio-low --values "$tmp/values-token.yaml" --set resources.requests.memory=128Mi --set resources.limits=null
+check ratio-low "the ratio check finds 1 CPU to 128Mi below 1:1, and the QoS check finds the Pod Burstable" \
+  'gib_per_cpu < 1 and qos == "Burstable"'
+render ratio-high --values "$tmp/values-token.yaml" --set resources.requests.memory=7Gi --set resources.limits.memory=7Gi
+check ratio-high "the ratio check finds 1 CPU to 7Gi above 1:6.5" 'gib_per_cpu > 6.5'
+
+# The smaller Pods of the README's sizing table, each with requests equal to
+# limits, as the README shows them.
+for size in 50m/52Mi 250m/512Mi; do
+  cpu=${size%/*} memory=${size#*/}
+  printf 'resources:\n  requests: {cpu: %s, memory: %s}\n  limits: {cpu: %s, memory: %s}\n' \
+    "$cpu" "$memory" "$cpu" "$memory" >"$tmp/values-size.yaml"
+  render "size-$cpu" --values "$tmp/values-token.yaml" --values "$tmp/values-size.yaml"
+  check "size-$cpu" "$cpu and $memory reach smock's container, Guaranteed and within 1:1 to 1:6.5" \
+    "smock.resources == {\"requests\": {\"cpu\": \"$cpu\", \"memory\": \"$memory\"}, \"limits\": {\"cpu\": \"$cpu\", \"memory\": \"$memory\"}}
+     and qos == \"Guaranteed\" and (gib_per_cpu | . >= 1 and . <= 6.5)"
+done
+# Values merge with the defaults, so requests alone keep the default limits.
+printf 'resources:\n  requests: {cpu: 250m, memory: 512Mi}\n' >"$tmp/values-requests.yaml"
+render requests-only --values "$tmp/values-token.yaml" --values "$tmp/values-requests.yaml"
+check requests-only "requests alone keep the default limits of 1 CPU and 1Gi, as the README warns" \
+  'smock.resources.limits == {"cpu": "1", "memory": "1Gi"} and qos == "Burstable"'
+
+# --- Replicas, drain and other settings ------------------------------------
+
 check defaults "one replica by default" 'deployment | .spec.replicas == 1'
-check defaults "the Pod requests about one CPU core, and no CPU limit above it" \
-  'smock | .resources.requests.cpu == "1" and ((.resources.limits.cpu // "1") | tostring | IN("1", "1000m"))'
 check defaults "smock is told the replica count, for the Admin API replica warning" \
   'env("SMOCK_REPLICAS").value == "1"'
 check defaults "Kubernetes sleeps 5 s in smock's preStop hook, so endpoints are gone before SIGTERM closes the listeners" \

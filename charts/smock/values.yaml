@@ -139,14 +139,19 @@ drainTimeoutMs: 20000
 # above their sum. Empty: the sleep plus the drain timeout plus 10 s.
 terminationGracePeriodSeconds: null
 
-# About one CPU core per Pod: smock is single-threaded, so a CPU limit above
-# one core does not make it faster. Scale with replicas instead.
+# One CPU core and 1 GiB per Pod. smock is single-threaded, so a CPU limit
+# above one core does not make it faster: scale with replicas instead.
+# Requests equal to limits give the Pod the Guaranteed QoS class, and the
+# CPU:memory ratio, 1:1, is one GKE Autopilot accepts as it is (1:1 to 1:6.5
+# for general-purpose Pods). The README has a sizing table. Values merge
+# with these, so a smaller Pod sets both requests and limits.
 resources:
   requests:
     cpu: "1"
-    memory: 128Mi
+    memory: 1Gi
   limits:
-    memory: 512Mi
+    cpu: "1"
+    memory: 1Gi
 
 # Other smock settings, as SMOCK_<NAME> environment variables, such as
 # SMOCK_IDLE_TIMEOUT_MS: "120000" for --idle-timeout-ms.
