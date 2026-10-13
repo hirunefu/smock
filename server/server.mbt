@@ -162,7 +162,7 @@ async fn run(
           serve_connection(
             conn,
             settings,
-            respond=(stream, request) => {
+            respond=(stream, request, _) => {
               @io.Writer::write(stream, admin.respond(request))
               @http1.keeps_open(request~)
             },
@@ -385,8 +385,9 @@ priv struct MockPorts {
 ///
 /// Each request is counted in the traffic metrics once its response is
 /// written, or once the connection ends before it is, with the time from
-/// the request being read in full to then. Nothing is counted before the
-/// response, so counting never holds one back.
+/// the request being read in full to then: for a request pipelined behind
+/// others, its wait behind their responses counts. Nothing is counted
+/// before the response, so counting never holds one back.
 ///
 /// While smock drains, a response says `Connection: close`, and the
 /// connection closes after it.
@@ -401,9 +402,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
     stream,
     self.settings,
     connection~,
-    respond=(stream, request) => {
-      // The request has just been read in full.
-      let stopwatch = Stopwatch::start()
+    respond=(stream, request, stopwatch) => {
       let engine_request = to_engine_request(request)
       let session = self.sessions.session_of(engine_request.headers)
       let outcome = self.engine.handle(
@@ -476,9 +475,11 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
 /// logged per request.
 ///
 /// - `respond` writes the response to each request to `stream`, or part of
-///   it, and returns whether the connection stays open after it. While it
-///   waits, the connection reads nothing, and other connections are served
-///   as usual.
+///   it, and returns whether the connection stays open after it. It also
+///   gets a stopwatch started when the request had been read in full: at
+///   the read that brought its last byte, which may be well before the
+///   response to a request pipelined after others. While it waits, the
+///   connection reads nothing, and other connections are served as usual.
 /// - `reject` gives the encoded response, with `Connection: close`, to
 ///   bytes that are not a valid request or are over a limit, with the status
 ///   the codec chose.
@@ -487,7 +488,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
 async fn[S : @io.Reader + @io.Writer] serve_connection(
   stream : S,
   settings : @settings.ServeSettings,
-  respond~ : async (S, @http1.Request) -> Bool,
+  respond~ : async (S, @http1.Request, Stopwatch) -> Bool,
   reject~ : (Int) -> Bytes,
   connection? : Connection,
 ) -> Unit {
@@ -505,10 +506,13 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
   // when they were read, or, for bytes read before a response, when it was
   // written, since nothing is read while a response is written.
   let mut read_since = @async.now()
+  // Started at the last read, which brought the last byte of every request
+  // the parser holds complete.
+  let mut last_read = Stopwatch::start()
   for ;; {
     match parser.next() {
       Complete(request) => {
-        if !respond(stream, request) {
+        if !respond(stream, request, last_read) {
           return
         }
         idle_deadline = @async.now() + idle_timeout
@@ -541,6 +545,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
           connection.idle = false
         }
         guard read is Some(n) && n > 0 else { return }
+        last_read = Stopwatch::start()
         read_since = @async.now()
         parser.feed(buf.unsafe_reinterpret_as_bytes()[:n])
       }

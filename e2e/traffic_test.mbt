@@ -212,14 +212,17 @@ async test "Admin API, probe and /metrics requests on the admin port are not req
 }
 
 ///|
-/// A Mock whose `/delayed` answers after a delay of 1 s, and whose
-/// `/stream` sends one event at once and the last one 1 s later.
+/// A Mock whose `/delayed` answers after a delay of 1 s, whose `/quick`
+/// answers at once, and whose `/stream` sends one event at once and the
+/// last one 1 s later.
 let slow : String =
   #|{ "mocks": [{ "name": "slow" }],
   #|  "stubs": [
   #|    { "id": "delayed", "mock": "slow", "request": { "path": "/delayed" },
   #|      "fault": { "delay": { "fixed": 1000 } },
   #|      "response": { "status": 200, "body": "late" } },
+  #|    { "id": "quick", "mock": "slow", "request": { "path": "/quick" },
+  #|      "response": { "status": 200, "body": "quick" } },
   #|    { "id": "stream", "mock": "slow", "request": { "path": "/stream" },
   #|      "response": { "status": 200,
   #|        "events": [{ "data": "first" }, { "delay": 1000, "data": "last" }] } } ] }
@@ -290,6 +293,31 @@ async test "the latency histogram runs from the request to the last byte of its 
           #|/stream sends: "data: last"
           #|end of stream
           #|/stream, after: up to 0.5 s: 0, up to 5 s: 1, count 1
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "the latency of a request pipelined behind a slow response runs from when it was read, so its wait behind that response counts" {
+  with_definitions([("slow.json", slow)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let conn = smock.connect()
+      defer conn.close()
+      conn.write(
+        "GET /delayed HTTP/1.1\r\nHost: localhost\r\n\r\nGET /quick HTTP/1.1\r\nHost: localhost\r\n\r\n",
+      )
+      let delayed = read_response(conn)
+      let quick = read_response(conn)
+      inspect(
+        [
+          "answers: \{statuses(delayed)}, \{statuses(quick)}",
+          "/quick: \{latency(smock.metrics().1, "quick")}",
+        ].join("\n"),
+        content=(
+          #|answers: HTTP/1.1 200 OK, HTTP/1.1 200 OK
+          #|/quick: up to 0.5 s: 0, up to 5 s: 1, count 1
         ),
       )
     })
