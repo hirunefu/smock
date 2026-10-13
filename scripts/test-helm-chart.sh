@@ -436,7 +436,7 @@ own=$(for name in token-file token-env tls; do
   jq -r "$defs envs | .[]" "$tmp/$name.json"
 done | sort -u)
 if [ -n "$own" ]; then
-  pass "env-chart: the Deployment sets variables of its own: $(echo $own)"
+  pass "env-chart: the Deployment sets variables of its own: $(printf "%s" "$own" | tr "\n" " ")"
 else
   fail "env-chart: no variables found in the Deployment"
 fi

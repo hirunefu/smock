@@ -62,13 +62,11 @@ check_manifest() {
   fi
 }
 
-# Fails each of the MoonBit files given that declares an extern function.
-check_sources() {
-  for src in "$@"; do
-    if grep -nE '^[[:space:]]*(pub[^ ]* )?extern[[:space:]]' "$src" >/dev/null; then
-      fail "$src declares an extern (FFI) function"
-    fi
-  done
+# Fails a MoonBit file that declares an extern function.
+check_source() {
+  if grep -nE '^[[:space:]]*(pub[^ ]* )?extern[[:space:]]' "$1" >/dev/null; then
+    fail "$1 declares an extern (FFI) function"
+  fi
 }
 
 for module in $modules; do
@@ -91,7 +89,9 @@ for module in $modules; do
     check_manifest "$pkg"
   done
 
-  check_sources $(find "$module" -name '*.mbt' -not -path '*/_build/*' | sort)
+  for src in $(find "$module" -name '*.mbt' -not -path '*/_build/*' | sort); do
+    check_source "$src"
+  done
 done
 
 for package in $packages; do
@@ -116,7 +116,9 @@ for package in $packages; do
 
   # Only the package's own files: a subdirectory with a moon.pkg is another
   # package.
-  check_sources $(find "$package" -maxdepth 1 -name '*.mbt' | sort)
+  for src in $(find "$package" -maxdepth 1 -name '*.mbt' | sort); do
+    check_source "$src"
+  done
 done
 
 if [ "$failed" -ne 0 ]; then

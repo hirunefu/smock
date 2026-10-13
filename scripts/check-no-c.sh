@@ -65,7 +65,7 @@ fi
 linked=$(grep -o '"link_libs": *\[[^]]*\]' prebuild.py | sed 's/^"link_libs"//' |
   grep -o '"[^"]*"' | tr -d '"' | sort -u)
 if [ "$linked" != "$libraries" ]; then
-  echo "check-no-c: prebuild.py links $(echo $linked); ADR 0001 allows $(echo $libraries)" >&2
+  echo "check-no-c: prebuild.py links $(printf "%s" "$linked" | tr "\n" " "); ADR 0001 allows $(printf "%s" "$libraries" | tr "\n" " ")" >&2
   failed=1
 fi
 if grep -o '"link_flags": *"[^"]*"' prebuild.py | grep -qE '[" ]-l'; then
