@@ -830,6 +830,34 @@ test "the Journal survives a reload, each entry keeping the digest of the defini
 }
 
 ///|
+test "a Mock-scope reset clears the entries of a Mock a reload removed; a name that neither the definitions nor the Journal knows is an unknown Mock" {
+  let h = harness(journal_shop)
+  let _ = h.record("GET", "http://orders.example.com/orders/1", session="s")
+  let _ = h.record("GET", "http://users.example.com/users/1", session="s")
+  let _ = h.reload([("users.json", journal_users)])
+  let orders = "{ \"filter\": { \"mock\": \"orders\" } }"
+  let out = [
+    "orders: \{h.outcome(Some("s"), query=orders)}",
+    "reset Mock orders: \{h.reset_journal(Mock("orders"))}",
+    "orders: \{h.outcome(Some("s"), query=orders)}",
+    "reset Mock orders again: \{h.reset_journal(Mock("orders"))}",
+    "reset Mock payments: \{h.reset_journal(Mock("payments"))}",
+    h.stats(),
+  ]
+  inspect(
+    out.join("\n"),
+    content=(
+      #|orders: GET http://orders.example.com/orders/1 (s); more: false, evicted: 0
+      #|reset Mock orders: removed 0 Ephemeral Stubs, 1 entries
+      #|orders: more: false, evicted: 0
+      #|reset Mock orders again: UnknownMock("orders")
+      #|reset Mock payments: UnknownMock("payments")
+      #|1 entries, 404 bytes, 0 evicted
+    ),
+  )
+}
+
+///|
 test "an entry records the connection Fault injected; one that resets or closes the connection before a status has none" {
   let h = harness([
     (

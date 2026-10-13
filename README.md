@@ -462,7 +462,8 @@ curl localhost:8080/users/1                                           # 200, fro
   Session's Ephemeral Stubs of the Mock. `POST /v1/reset` with
   `{"scope":"session"}` clears the calling Session's Ephemeral Stubs and
   [Journal](#the-journal) entries of every Mock, and its eviction count;
-  `{"scope":"mock","mock":"users"}` every Session's of one Mock; and
+  `{"scope":"mock","mock":"users"}` every Session's of one Mock, even one
+  that a reload removed while the Journal holds its entries; and
   `{"scope":"all"}` all of them, and every eviction count. It answers how
   many Ephemeral Stubs and Journal entries it removed.
 - Ephemeral Stubs live in the process that received them, until a reset or

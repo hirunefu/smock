@@ -1065,7 +1065,7 @@
                 "const": "mock"
               },
               "mock": {
-                "description": "The Mock's name.",
+                "description": "The Mock's name. It may name a Mock the definitions served no longer declare, while the Journal holds entries it recorded before a reload removed it: the reset clears them.",
                 "type": "string",
                 "minLength": 1
               }

@@ -230,7 +230,9 @@ pub(all) struct Removed {
 /// Definition files declare never changes.
 ///
 /// Raises `UnknownMock` when the scope is a Mock that no Mock has the name
-/// of.
+/// of and that the Journal holds no entries of. A Mock that a reload
+/// removed has no Ephemeral Stubs left, but the entries it recorded remain,
+/// and a reset of it clears them.
 pub fn Engine::reset(
   self : Engine,
   scope : ResetScope,
@@ -242,12 +244,15 @@ pub fn Engine::reset(
         journal_entries: self.journal.reset_session(session),
       }
     Mock(mock) => {
-      self.check_mock(mock)
+      let journal_entries = self.journal.remove_where(entry => {
+        entry.mock == Some(mock)
+      })
+      if journal_entries == 0 {
+        self.check_mock(mock)
+      }
       {
         ephemeral_stubs: self.ephemeral.remove_where((m, _) => m == mock),
-        journal_entries: self.journal.remove_where(entry => {
-          entry.mock == Some(mock)
-        }),
+        journal_entries,
       }
     }
     All =>
