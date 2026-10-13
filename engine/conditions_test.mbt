@@ -529,6 +529,42 @@ test "a json condition needs scalars to be equal: same type, and numbers by valu
 }
 
 ///|
+test "a json condition compares numbers by their exact value, even integers above 2^53 and numbers beyond a Double's range" {
+  let h = stubs([
+    (
+      #|{ "id": "id", "mock": "m",
+      #|  "request": { "body": { "json": { "id": 9007199254740993 } } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "huge", "mock": "m",
+      #|  "request": { "body": { "json": { "v": 1e400 } } },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  inspect(
+    winners(h, [
+      ("POST", "/", [], "{\"id\":9007199254740993}"),
+      ("POST", "/", [], "{\"id\":9007199254740992}"),
+      ("POST", "/", [], "{\"id\":9007199254740994}"),
+      ("POST", "/", [], "{\"v\":1e400}"),
+      ("POST", "/", [], "{\"v\":10E+399}"),
+      ("POST", "/", [], "{\"v\":1e401}"),
+      ("POST", "/", [], "{\"v\":-1e400}"),
+    ]),
+    content=(
+      #|POST / "{\"id\":9007199254740993}" -> id
+      #|POST / "{\"id\":9007199254740992}" -> none
+      #|POST / "{\"id\":9007199254740994}" -> none
+      #|POST / "{\"v\":1e400}" -> huge
+      #|POST / "{\"v\":10E+399}" -> huge
+      #|POST / "{\"v\":1e401}" -> none
+      #|POST / "{\"v\":-1e400}" -> none
+    ),
+  )
+}
+
+///|
 test "a json condition fails on a body that does not parse as JSON" {
   let h = stubs([
     (

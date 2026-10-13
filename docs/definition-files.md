@@ -98,6 +98,9 @@ A `json` condition is a subset match:
 - an array needs the same length, matched element by element;
 - any other value must be equal: strings exactly, numbers by their value
   (`1` and `1.0` are equal), and `true`, `false` and `null` themselves.
+  Integers are compared exactly however many digits they have, so a 64-bit
+  ID such as `9007199254740993` matches only itself; a number with a
+  fraction or an exponent is compared as closely as a 64-bit float holds it.
 
 A body that does not parse as JSON never meets a `json` condition.
 

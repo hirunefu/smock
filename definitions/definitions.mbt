@@ -288,7 +288,7 @@ fn JsonCondition::new(value : Json) -> JsonCondition {
 /// Whether `actual` contains the condition's value: an object has each
 /// listed key, with a value that contains the listed one; an array has the
 /// same length, and each element contains the listed one; any other value
-/// is equal, numbers by their value.
+/// is equal, numbers by their value (see `same_number`).
 pub fn JsonCondition::matches(self : JsonCondition, actual : Json) -> Bool {
   contains(actual, self.value)
 }
@@ -313,10 +313,131 @@ fn contains(actual : Json, expected : Json) -> Bool {
       }
       true
     }
-    (Number(expected, ..), Number(actual, ..)) => expected == actual
+    (Number(expected, repr=expected_text), Number(actual, repr=actual_text)) =>
+      same_number(expected, expected_text, actual, actual_text)
     (String(expected), String(actual)) => expected == actual
     (True, True) | (False, False) | (Null, Null) => true
     _ => false
+  }
+}
+
+///|
+/// Whether `a` and `b` are the same JSON value: objects with the same keys
+/// and the same value for each, arrays of the same values in the same
+/// order, and scalars as `contains` compares them.
+fn same_value(a : Json, b : Json) -> Bool {
+  match (a, b) {
+    (Object(a), Object(b)) =>
+      a.length() == b.length() &&
+      a
+      .iter()
+      .all(entry => b.get(entry.0) is Some(value) && same_value(entry.1, value))
+    (Array(a), Array(b)) => {
+      if a.length() != b.length() {
+        return false
+      }
+      for i, value in a {
+        if !same_value(value, b[i]) {
+          return false
+        }
+      }
+      true
+    }
+    (Number(a, repr=a_text), Number(b, repr=b_text)) =>
+      same_number(a, a_text, b, b_text)
+    _ => a == b
+  }
+}
+
+///|
+/// Whether two parsed JSON numbers, `a` and `b`, have the same value.
+///
+/// The parser keeps a number's source text, `a_text` or `b_text`, when its
+/// Double cannot hold it: an integer above 2^53, or a number beyond a
+/// Double's range, which becomes an infinity. Two such numbers are compared
+/// by their text, as exact decimals, so that two 64-bit IDs that differ in
+/// their last digit differ. Any other pair is compared by their Doubles.
+fn same_number(
+  a : Double,
+  a_text : String?,
+  b : Double,
+  b_text : String?,
+) -> Bool {
+  match (a_text, b_text) {
+    (Some(a_text), Some(b_text)) =>
+      canonical_number(a_text) == canonical_number(b_text)
+    _ => a == b
+  }
+}
+
+///|
+/// The JSON number `text` written so that two numbers whose exponents have
+/// at most 18 digits have the same canonical text exactly when they have
+/// the same value: `0`, or an optional `-`, the significant digits without
+/// leading or trailing zeros, `e` and the power of ten of the last digit.
+/// It takes time linear in the length of `text`, however large its
+/// exponent.
+fn canonical_number(text : String) -> String {
+  let negative = text.has_prefix("-")
+  let digits = StringBuilder()
+  let mut fraction_digits = 0
+  let mut in_fraction = false
+  let exponent = StringBuilder()
+  let mut exponent_negative = false
+  let mut in_exponent = false
+  for c in text {
+    match c {
+      '-' if in_exponent => exponent_negative = true
+      '-' | '+' => ()
+      '.' => in_fraction = true
+      'e' | 'E' => in_exponent = true
+      _ if in_exponent => exponent.write_char(c)
+      _ => {
+        digits.write_char(c)
+        if in_fraction {
+          fraction_digits += 1
+        }
+      }
+    }
+  }
+  let digits = digits.to_string()
+  let mut start = 0
+  while start < digits.length() && digits[start] == '0' {
+    start += 1
+  }
+  if start == digits.length() {
+    return "0"
+  }
+  let mut end = digits.length()
+  while digits[end - 1] == '0' {
+    end -= 1
+  }
+  let significant = digits[start:end].to_owned()
+  // The power of ten of the last significant digit is the exponent plus
+  // `shift`, which the length of `text` bounds.
+  let shift = digits.length() - end - fraction_digits
+  let exponent = exponent.to_string()
+  let mut first = 0
+  while first < exponent.length() && exponent[first] == '0' {
+    first += 1
+  }
+  let exponent = exponent[first:].to_owned()
+  let sign = if negative { "-" } else { "" }
+  // An Int64 holds any exponent of at most 18 digits plus the shift. A
+  // longer one is kept as written, with the shift apart: such numbers are
+  // equal only when written alike.
+  if exponent.length() <= 18 {
+    let mut power = 0L
+    for c in exponent {
+      power = power * 10L + (c.to_int() - '0'.to_int()).to_int64()
+    }
+    if exponent_negative {
+      power = -power
+    }
+    "\{sign}\{significant}e\{power + shift.to_int64()}"
+  } else {
+    let exponent_sign = if exponent_negative { "-" } else { "" }
+    "\{sign}\{significant}e\{exponent_sign}\{exponent}+\{shift}"
   }
 }
 
@@ -327,9 +448,10 @@ pub impl ToJson for JsonCondition with fn to_json(self) {
 }
 
 ///|
-/// Conditions are equal when their values are.
+/// Conditions are equal when their values are, with numbers compared as
+/// matching compares them.
 pub impl Eq for JsonCondition with fn equal(self, other) {
-  self.value == other.value
+  same_value(self.value, other.value)
 }
 
 ///|
