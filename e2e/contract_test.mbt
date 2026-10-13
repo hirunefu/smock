@@ -459,7 +459,7 @@ fn Contract::validate(
         }
       ("pattern", String(pattern)) =>
         if value is String(s) {
-          let regex = @re2.compile(pattern) catch {
+          let regex = @re2.compile(re2_syntax(pattern)) catch {
             err => fail("pattern \{pattern.escape()} in \{file}: \{err}")
           }
           if regex.search(@utf8.encode(s)) is None {
@@ -529,6 +529,55 @@ fn Contract::evaluated_by(
       }
     _ => ()
   }
+}
+
+///|
+/// `pattern`, an ECMA-262 regular expression as JSON Schema writes it, in
+/// the RE2 subset of `smock/re2`: its `\uXXXX`, `\r`, `\n` and `\t`
+/// escapes, which the subset lacks, as the characters they stand for. The
+/// patterns of the contract use no other syntax that the subset lacks.
+fn re2_syntax(pattern : String) -> String {
+  let out = StringBuilder()
+  let mut i = 0
+  while i < pattern.length() {
+    if pattern[i] == '\\' && i + 1 < pattern.length() {
+      match pattern[i + 1] {
+        'u' if i + 6 <= pattern.length() => {
+          let mut code = 0
+          for c in pattern[i + 2:i + 6] {
+            let digit = match c {
+              '0'..='9' => c.to_int() - '0'.to_int()
+              'a'..='f' => c.to_int() - 'a'.to_int() + 10
+              _ => c.to_int() - 'A'.to_int() + 10
+            }
+            code = code * 16 + digit
+          }
+          out.write_char(code.unsafe_to_char())
+          i += 6
+        }
+        'r' => {
+          out.write_char('\r')
+          i += 2
+        }
+        'n' => {
+          out.write_char('\n')
+          i += 2
+        }
+        't' => {
+          out.write_char('\t')
+          i += 2
+        }
+        _ => {
+          out.write_string(pattern[i:i + 2].to_owned())
+          i += 2
+        }
+      }
+    } else {
+      out.write_char(pattern[i].unsafe_to_char())
+      i += 1
+    }
+  }
+  out.to_string()
 }
 
 ///|

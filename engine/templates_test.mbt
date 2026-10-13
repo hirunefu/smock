@@ -244,12 +244,15 @@ fn render_with(
   seed? : UInt64,
   fresh? : UInt64 = 1234,
 ) -> String raise {
-  h.engine
-  .render(id, @engine.SampleRequest::from_json(sample), now~, seed?, fresh_seed=() => {
-    fresh
-  })
-  .to_json()
-  .stringify(indent=2)
+  let fresh_seed = () => fresh
+  let rendering = h.engine.render(
+    id,
+    @engine.SampleRequest::from_json(sample),
+    now~,
+    seed?,
+    fresh_seed~,
+  )
+  rendering.to_json().stringify(indent=2)
 }
 
 ///|

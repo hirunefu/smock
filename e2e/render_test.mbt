@@ -64,6 +64,49 @@ async fn render(
 }
 
 ///|
+/// `text`, a rendering as JSON, with the time and the seed it used, which
+/// change from run to run unless they are given, as `<time>` and `<seed>`.
+fn masked(text : String) -> String {
+  // Where the value of `name` starts, after `"name":` and any space.
+  let value_at = (text : String, name : String) => {
+    text
+    .find("\"\{name}\":")
+    .map(start => {
+      let mut from = start + name.length() + 3
+      while from < text.length() && text[from] == ' ' {
+        from += 1
+      }
+      from
+    })
+  }
+  let mut text = text
+  if value_at(text, "time") is Some(from) &&
+    text[from + 1:].find("\"") is Some(length) {
+    text = "\{text[:from + 1]}<time>\{text[from + 1 + length:]}"
+  }
+  if value_at(text, "seed") is Some(from) {
+    let mut end = from
+    while end < text.length() && text[end] >= '0' && text[end] <= '9' {
+      end += 1
+    }
+    text = "\{text[:from]}<seed>\{text[end:]}"
+  }
+  text
+}
+
+///|
+/// The time and the seed of a rendering: the values, when `given`, or
+/// `<time>` and `<seed>` when they change from run to run.
+fn time_and_seed(json : Json, time_given~ : Bool, seed_given~ : Bool) -> String {
+  guard json is { "time": String(time), "seed": Number(seed, ..), .. } else {
+    return "no time or seed"
+  }
+  let time = if time_given { time } else { "<time>" }
+  let seed = if seed_given { seed.to_int64().to_string() } else { "<seed>" }
+  "time \{time}, seed \{seed}"
+}
+
+///|
 /// Runs `smock render <args>` until it exits, with only `env` as its
 /// environment, and returns its exit status, stdout and stderr.
 async fn render_output(
@@ -77,18 +120,22 @@ async fn render_output(
 async test "smock render prints the named Stub's status, headers and body for a sample request, with no failed conditions when it meets them all" {
   with_definitions(render_definitions, dir => {
     inspect(
-      render([
-        "--dir",
-        dir,
-        "create-user",
-        "--request",
-        "\{dir}/samples/match.json",
-      ]),
+      masked(
+        render([
+          "--dir",
+          dir,
+          "create-user",
+          "--request",
+          "\{dir}/samples/match.json",
+        ]),
+      ),
       content=(
         #|status 0
         #|{
         #|  "stub": "create-user",
         #|  "mock": "users",
+        #|  "time": "<time>",
+        #|  "seed": <seed>,
         #|  "response": {
         #|    "status": 201,
         #|    "headers": [
@@ -109,6 +156,7 @@ async test "smock render prints the named Stub's status, headers and body for a 
         #|    },
         #|    "events": null
         #|  },
+        #|  "templateError": null,
         #|  "failed": []
         #|}
         #|
@@ -121,18 +169,22 @@ async test "smock render prints the named Stub's status, headers and body for a 
 async test "smock render still renders the Stub when the sample fails its conditions, and lists them with expected and actual values" {
   with_definitions(render_definitions, dir => {
     inspect(
-      render([
-        "--dir",
-        dir,
-        "create-user",
-        "--request",
-        "\{dir}/samples/fail.json",
-      ]),
+      masked(
+        render([
+          "--dir",
+          dir,
+          "create-user",
+          "--request",
+          "\{dir}/samples/fail.json",
+        ]),
+      ),
       content=(
         #|status 0
         #|{
         #|  "stub": "create-user",
         #|  "mock": "users",
+        #|  "time": "<time>",
+        #|  "seed": <seed>,
         #|  "response": {
         #|    "status": 201,
         #|    "headers": [
@@ -153,6 +205,7 @@ async test "smock render still renders the Stub when the sample fails its condit
         #|    },
         #|    "events": null
         #|  },
+        #|  "templateError": null,
         #|  "failed": [
         #|    {
         #|      "condition": "method",
@@ -346,12 +399,12 @@ async test "the Admin render operation answers with the rendering, the failed co
         body="{ \"method\": \"POST\", \"path\": \"/users\", \"query\": { \"dry\": \"no\" } }",
       )
       inspect(
-        "\{matched.status}\n\{matched.body}\n\{failed.status}\n\{failed.body}",
+        "\{matched.status}\n\{masked(matched.body)}\n\{failed.status}\n\{masked(failed.body)}",
         content=(
           #|200
-          #|{"stub":"get-user","mock":"users","response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"failed":[],"warnings":[]}
+          #|{"stub":"get-user","mock":"users","time":"<time>","seed":<seed>,"response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"templateError":null,"failed":[],"warnings":[]}
           #|200
-          #|{"stub":"create-user","mock":"users","response":{"status":201,"headers":[{"name":"Location","value":"/users/7"},{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":7}","size":8,"truncated":false},"events":null},"failed":[{"condition":"query:dry","expected":"yes","actual":["no"]},{"condition":"header:x-api-key","expected":"secret","actual":[]},{"condition":"body","expected":{"json":{"name":"Zoë"}},"actual":[""]}],"warnings":[]}
+          #|{"stub":"create-user","mock":"users","time":"<time>","seed":<seed>,"response":{"status":201,"headers":[{"name":"Location","value":"/users/7"},{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":7}","size":8,"truncated":false},"events":null},"templateError":null,"failed":[{"condition":"query:dry","expected":"yes","actual":["no"]},{"condition":"header:x-api-key","expected":"secret","actual":[]},{"condition":"body","expected":{"json":{"name":"Zoë"}},"actual":[""]}],"warnings":[]}
         ),
       )
     })
@@ -536,8 +589,17 @@ async test "the time and the seed can be given to smock render and to the Admin 
         ["--seed", "0"],
       ] {
       let (status, stdout, stderr) = render_output([..base, ..args])
+      let json = @json.parse(stdout)
+      // A static response depends on neither the time nor the seed, but
+      // the rendering shows those it used.
+      let same = rendered(json) == rendered(@json.parse(plain))
+      let shown = time_and_seed(
+        json,
+        time_given=args.contains("--time"),
+        seed_given=args.contains("--seed"),
+      )
       out.push(
-        "\{args.join(" ")}: status \{status}, same: \{stdout == plain}\{stderr}",
+        "\{args.join(" ")}: status \{status}, same: \{same}, \{shown}\{stderr}",
       )
     }
     for
@@ -565,16 +627,26 @@ async test "the time and the seed can be given to smock render and to the Admin 
           "?seed=1.5", "?seed=9007199254740992", "?seed=1&seed=2", "?time=%ZZ",
         ] {
         let response = smock.render("get-user", sample~, query~)
-        out.push("\{query}: \{response.status} \{response.body}")
+        if response.status == 200 {
+          let json = response.json()
+          let shown = time_and_seed(
+            json,
+            time_given=query.contains("time="),
+            seed_given=query.contains("seed="),
+          )
+          out.push("\{query}: 200 \{rendered(json)}, \{shown}")
+        } else {
+          out.push("\{query}: \{response.status} \{response.body}")
+        }
       }
     })
     inspect(
       out.join("\n"),
       content=(
-        #|--time 2026-10-12T14:30:05Z --seed 42: status 0, same: true
-        #|--time 2026-10-12t16:30:05.123456+02:00: status 0, same: true
-        #|--time 2024-02-29T23:59:60-00:30 --seed 9007199254740991: status 0, same: true
-        #|--seed 0: status 0, same: true
+        #|--time 2026-10-12T14:30:05Z --seed 42: status 0, same: true, time 2026-10-12T14:30:05.000Z, seed 42
+        #|--time 2026-10-12t16:30:05.123456+02:00: status 0, same: true, time 2026-10-12T14:30:05.123Z, seed <seed>
+        #|--time 2024-02-29T23:59:60-00:30 --seed 9007199254740991: status 0, same: true, time 2024-03-01T00:30:00.000Z, seed 9007199254740991
+        #|--seed 0: status 0, same: true, time <time>, seed 0
         #|status 2
         #|stderr:
         #|smock render: invalid value "2026-10-12 14:30:05" for --time: must be an RFC 3339 date-time, such as 2026-10-12T14:30:05Z
@@ -599,9 +671,9 @@ async test "the time and the seed can be given to smock render and to the Admin 
         #|status 2
         #|stderr:
         #|smock render: invalid value "" for --request: must not be empty
-        #|?time=2026-10-12T14:30:05Z&seed=42: 200 {"stub":"get-user","mock":"users","response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"failed":[],"warnings":[]}
-        #|?time=2026-10-12T16%3A30%3A05%2B02%3A00: 200 {"stub":"get-user","mock":"users","response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"failed":[],"warnings":[]}
-        #|?seed=7&other=ignored: 200 {"stub":"get-user","mock":"users","response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"failed":[],"warnings":[]}
+        #|?time=2026-10-12T14:30:05Z&seed=42: 200 {"stub":"get-user","mock":"users","response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"failed":[]}, time 2026-10-12T14:30:05.000Z, seed 42
+        #|?time=2026-10-12T16%3A30%3A05%2B02%3A00: 200 {"stub":"get-user","mock":"users","response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"failed":[]}, time 2026-10-12T14:30:05.000Z, seed <seed>
+        #|?seed=7&other=ignored: 200 {"stub":"get-user","mock":"users","response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"failed":[]}, time <time>, seed 7
         #|?time=yesterday: 400 {"error":"invalid_request","message":"the time query parameter must be an RFC 3339 date-time, such as 2026-10-12T14:30:05Z","warnings":[]}
         #|?time=2026-10-12T14:30:05: 400 {"error":"invalid_request","message":"the time query parameter must be an RFC 3339 date-time, such as 2026-10-12T14:30:05Z","warnings":[]}
         #|?seed=1.5: 400 {"error":"invalid_request","message":"the seed query parameter must be an integer from 0 to 9007199254740991","warnings":[]}
