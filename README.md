@@ -838,11 +838,24 @@ record the CPU frequency governor.
 - **Fixed arrival rate.** oha sends each kind of request at its weight's
   share of the case's rate and connections. Its schedule releases request
   `i` at `i / rate` whether or not a connection is free to send it, and a
-  request's latency counts from that release. A request that waits behind
-  a busy or stalled smock counts its wait. oha's own timer releases requests
-  a millisecond or two late; that lag is reported apart as the generator
-  lag. When its p99 is over 5 ms, the load generator fell behind, and the
-  case says so (`load_generator_late`).
+  request's latency counts from that time, when it was due. A request that
+  waits behind a busy or stalled smock counts its wait, and so does one
+  that oha releases late because it fell behind, as it can when a stalled
+  smock answers a burst at once.
+- **Latency from release and generator lag.** Beside the latency, each
+  case reports the latency from the time oha actually released each
+  request, and the generator lag, how late it released them: the latency is
+  their sum. oha's timer has a resolution of 1 ms, so it releases requests
+  about a millisecond late, and the scheduler adds a few milliseconds now
+  and then. When the lag's p99.9 is over 5 ms or its maximum over 10 ms, the
+  load generator fell behind its schedule, and the case says so
+  (`load_generator_late`).
+- **What oha's timer means for the targets.** Since every latency includes
+  the generator lag, about a millisecond at p50 and up to a few at p99, a
+  target below a millisecond or two cannot be met as measured, whatever
+  smock does: the p99 target of 1 ms is one. The latency from release
+  shows what smock itself adds; checking such a target needs a load
+  generator that paces requests more finely than 1 ms.
 - **Window.** Requests scheduled in the first 2 seconds, while connections
   open, are not counted. The next 20 seconds are measured, and 3 more let
   the last of them finish.
@@ -850,9 +863,10 @@ record the CPU frequency governor.
   `bench/requests.json` expects is an error, whether it got another status
   or no response.
 - **Targets.** Each target of `bench/targets.json` is met, missed or not
-  measured. A latency target holds for one case under one CPU limit at one
-  rate. A run that did not run that case at that rate does not measure it,
-  nor does one whose load generator fell behind; any error misses it.
+  measured, by the latency counted from the scheduled send times. A latency
+  target holds for one case under one CPU limit at one rate. A run that did
+  not run that case at that rate does not measure it, nor does one whose
+  load generator fell behind; any error misses it.
 
 ### What a run writes
 
@@ -862,15 +876,17 @@ record the CPU frequency governor.
   and the CPUs of smock and of the load generator; each case's rate,
   durations and connection counts; oha and its version; the targets file;
   any options that changed the plan.
-- `summary.json`: for each case, latency (p50, p90, p99, p99.9, max), the
-  achieved rate, the errors by kind, the generator lag, smock's CPU use and
+- `summary.json`: for each case, the latency from the scheduled send times
+  and the latency from release (each p50, p90, p99, p99.9, max), the
+  generator lag (p50, p99, p99.9, max) and whether the load generator fell
+  behind, the achieved rate, the errors by kind, smock's CPU use and
   throttling, the quota and CPUs read while it ran, smock's RSS (first,
   last, max), the TCP connections the machine accepted during the load, and
   the idle connections still open at its end. Then the idle RSS, and each
   target with its verdict. `format` numbers the layout.
 - `summary.md`: the same for people.
 - `raw/<cpu limit>/<case>/`: `latency.json`, a histogram of the latencies
-  in microseconds to three significant digits; `rss.json`, smock's RSS
+  from the scheduled send times in microseconds to three significant digits; `rss.json`, smock's RSS
   over time; smock's log; and oha's own report for each kind of request.
   `raw/idle-rss.json` has the RSS samples of the idle measurement.
 
