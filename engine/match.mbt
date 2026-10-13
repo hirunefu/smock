@@ -35,11 +35,28 @@ fn Incoming::meets(
   self : Incoming,
   conditions : @definitions.Conditions,
 ) -> Bool {
-  conditions.meth.map_or(true, meth => meth == self.request.meth) &&
-  conditions.path.map_or(true, path => value_meets(self.path, path)) &&
-  conditions.query.iter().all(condition => self.has_parameter(condition)) &&
-  conditions.headers.iter().all(condition => self.has_header(condition)) &&
-  conditions.body.map_or(true, condition => self.body_meets(condition))
+  // Plain loops, with no closure or iterator per Stub, since a request may
+  // be matched against many.
+  if conditions.meth is Some(meth) && meth != self.request.meth {
+    return false
+  }
+  if conditions.path is Some(path) && !value_meets(self.path, path) {
+    return false
+  }
+  for i in 0..<conditions.query.length() {
+    if !self.has_parameter(conditions.query[i]) {
+      return false
+    }
+  }
+  for i in 0..<conditions.headers.length() {
+    if !self.has_header(conditions.headers[i]) {
+      return false
+    }
+  }
+  match conditions.body {
+    Some(condition) => self.body_meets(condition)
+    None => true
+  }
 }
 
 ///|
@@ -51,10 +68,14 @@ fn Incoming::has_parameter(
   condition : (String, @definitions.ValueCondition),
 ) -> Bool {
   let (name, value) = condition
-  self
-  .query_parameters()
-  .iter()
-  .any(parameter => parameter.0 == name && value_meets(parameter.1, value))
+  let parameters = self.query_parameters()
+  for i in 0..<parameters.length() {
+    let parameter = parameters[i]
+    if parameter.0 == name && value_meets(parameter.1, value) {
+      return true
+    }
+  }
+  false
 }
 
 ///|
@@ -81,9 +102,14 @@ fn Incoming::has_header(
   condition : (String, @definitions.ValueCondition),
 ) -> Bool {
   let (lower_name, value) = condition
-  self.request.headers
-  .iter()
-  .any(header => is_name(header.0, lower_name) && value_meets(header.1, value))
+  let headers = self.request.headers
+  for i in 0..<headers.length() {
+    let header = headers[i]
+    if is_name(header.0, lower_name) && value_meets(header.1, value) {
+      return true
+    }
+  }
+  false
 }
 
 ///|
