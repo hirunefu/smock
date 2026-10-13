@@ -57,8 +57,8 @@ jobs:
       - name: Check every target
         run: moon check --deny-warn --target all
 
-      - name: Check that the protocol modules stay independent of smock and of I/O
-        run: scripts/check-protocol-modules.sh
+      - name: Check that the protocol modules and the packages that decide a response do no I/O
+        run: scripts/check-no-io.sh
 
       - name: Check the C boundary (ADR 0001)
         run: scripts/check-no-c.sh
@@ -130,5 +130,7 @@ jobs:
       # moon skips every package whose supported_targets leave out wasm-gc,
       # which is how packages that do I/O are marked. Every other package,
       # including each new no-I/O package, is tested here with no change.
+      # scripts/check-no-io.sh keeps the packages that decide a response
+      # from leaving wasm-gc out.
       - name: Test every no-I/O package on wasm-gc
         run: moon test --target wasm-gc

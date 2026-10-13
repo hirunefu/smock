@@ -17,8 +17,8 @@ The repository is a MoonBit workspace (`moon.work`) of four modules:
 | `yaml/` | `smock/yaml` | Safe-subset YAML: `parse` turns a document into the tree `@json.parse` gives for the equivalent JSON (documented in `yaml/yaml.mbt`). |
 
 The three protocol modules do no I/O and do not depend on smock, so they can
-be published on mooncakes on their own. `scripts/check-protocol-modules.sh`
-checks that.
+be published on mooncakes on their own. `scripts/check-no-io.sh` checks
+that.
 
 Packages of `smock/smock`:
 
@@ -78,7 +78,11 @@ Packages of `smock/smock`:
 - `e2e`: tests that run the `smock` binary as a black box (native).
 
 A package that does I/O or uses FFI declares `supported_targets = "native"`.
-Every other package also builds for `wasm-gc`, and CI tests it there.
+Every other package also builds for `wasm-gc`, and CI tests it there. The
+packages that decide a response, `definitions` and `engine`, and the ones
+they import, `prng` and `log`, must stay that way: `scripts/check-no-io.sh`
+fails if one of them leaves out `wasm-gc`, reads the environment, binds C
+or imports a package that does I/O.
 
 `openapi/admin.json` is the OpenAPI 3.1 document of the Admin API, the
 contract for it as the JSON Schema is for Definition files; a client can be
@@ -704,7 +708,7 @@ moon test --target wasm-gc     # every package that does no I/O
 moon check --deny-warn --target all
 moon fmt --check
 moon bench -p smock/smock/engine --release   # match index lookups: 100 vs 10,000 Stubs
-scripts/check-protocol-modules.sh
+scripts/check-no-io.sh         # no I/O in the protocol modules and the packages that decide a response
 scripts/check-no-c.sh          # the C boundary of ADR 0001
 scripts/test-openssl-asan.sh   # the OpenSSL bindings under AddressSanitizer and LeakSanitizer
 scripts/build-release.sh       # dist/smock
