@@ -407,20 +407,19 @@ fn no_mock(host : String?, hosts : Array[String]) -> ResponsePlan {
 }
 
 ///|
-/// `name` as it can be written in a header value, ASCII only: the
+/// `text` as it can be written in a header value, ASCII only: the
 /// characters of an HTTP token stay as they are, except `%`, and every
-/// other byte of its UTF-8 encoding is percent-encoded. A Mock name can be
-/// any text, so this keeps a name such as `a\r\nb` or `a; via=x` from
-/// changing the response or the header's meaning.
-fn header_safe(name : String) -> String {
+/// other byte of its UTF-8 encoding is percent-encoded. A name, such as a
+/// Mock name, can be any text, so this keeps a name such as `a\r\nb` or
+/// `a; via=x` from changing the response or the header's meaning.
+pub fn header_safe(text : String) -> String {
+  if @http1.is_token(text) && !text.contains_char('%') {
+    return text
+  }
   let out = StringBuilder()
-  for byte in @utf8.encode(name) {
+  for byte in @utf8.encode(text) {
     let c = byte.to_int().unsafe_to_char()
-    let token = (c >= 'a' && c <= 'z') ||
-      (c >= 'A' && c <= 'Z') ||
-      (c >= '0' && c <= '9') ||
-      "!#$&'*+-.^_`|~".contains_char(c)
-    if token {
+    if c != '%' && @http1.is_token(c.to_string()) {
       out.write_char(c)
     } else {
       out.write_string("%")

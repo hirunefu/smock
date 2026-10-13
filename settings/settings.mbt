@@ -719,16 +719,7 @@ fn token_value(
   reason : String,
 ) -> String raise InvalidSetting {
   let text = value(matches, name).unwrap_or("")
-  let token = text != "" &&
-    text
-    .iter()
-    .all(c => {
-      (c >= 'a' && c <= 'z') ||
-      (c >= 'A' && c <= 'Z') ||
-      (c >= '0' && c <= '9') ||
-      "!#$%&'*+-.^_`|~".contains_char(c)
-    })
-  if !token {
+  if !@http1.is_token(text) {
     raise invalid(name, text, reason)
   }
   text

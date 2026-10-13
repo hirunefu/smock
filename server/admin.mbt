@@ -105,7 +105,7 @@ fn Admin::new(
   session_header~ : String,
   session_member~ : String,
 ) -> Admin {
-  let replica = header_safe(replica)
+  let replica = @engine.header_safe(replica)
   let warnings : Array[Json] = if replicas > 1 {
     [
       {
@@ -548,28 +548,4 @@ fn path_of(target : String) -> String {
     Some(i) => target[:i].to_owned()
     None => target
   }
-}
-
-///|
-/// `value` as it can be written in a header value, ASCII only: the
-/// characters of an HTTP token stay as they are, except `%`, and every other
-/// byte of its UTF-8 encoding is percent-encoded.
-fn header_safe(value : String) -> String {
-  let out = StringBuilder()
-  for byte in @utf8.encode(value) {
-    let c = byte.to_int().unsafe_to_char()
-    let token = (c >= 'a' && c <= 'z') ||
-      (c >= 'A' && c <= 'Z') ||
-      (c >= '0' && c <= '9') ||
-      "!#$&'*+-.^_`|~".contains_char(c)
-    if token {
-      out.write_char(c)
-    } else {
-      out.write_string("%")
-      out.write_string(
-        byte.to_int().to_string(radix=16).to_upper().pad_start(2, '0'),
-      )
-    }
-  }
-  out.to_string()
 }

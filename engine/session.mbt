@@ -64,15 +64,7 @@ fn trim_ows(s : StringView) -> StringView {
 ///|
 /// Whether `s` is a W3C Baggage key: an HTTP token.
 fn is_baggage_key(s : StringView) -> Bool {
-  !s.is_empty() &&
-  s
-  .iter()
-  .all(c => {
-    (c >= 'a' && c <= 'z') ||
-    (c >= 'A' && c <= 'Z') ||
-    (c >= '0' && c <= '9') ||
-    "!#$%&'*+-.^_`|~".contains_char(c)
-  })
+  @http1.is_token(s)
 }
 
 ///|
