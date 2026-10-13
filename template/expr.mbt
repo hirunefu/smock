@@ -271,7 +271,7 @@ fn Parser::value(self : Parser) -> Expr raise Syntax {
     Some(c) if is_name_start(c) => self.named(start)
     Some('!') | Some('=') =>
       raise Syntax(
-        start, "! , == and != are allowed only in the condition of $if",
+        start, "!, == and != are allowed only in the condition of $if",
       )
     Some(_) => raise Syntax(start, "expected a value, found \{self.found()}")
   }
@@ -448,7 +448,7 @@ fn Parser::reference(
       _ =>
         raise Syntax(
           start,
-          "\{text} must be \{root_word(root)} followed by one name, such as \{root_word(root)}.x or \{root_word(root)}['x y']",
+          "\{text}: \{root_word(root)} takes exactly one name, such as \{root_word(root)}.x or \{root_word(root)}['x y']",
         )
     }
   }
@@ -478,7 +478,7 @@ fn Parser::reference(
       }
     "loop" => {
       if !self.in_loop {
-        raise Syntax(start, "\{text}: loop.index is only inside $each")
+        raise Syntax(start, "loop.index is only inside $each")
       }
       match steps {
         [Name("index")] => Ref(LoopIndex, steps, text)

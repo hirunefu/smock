@@ -190,6 +190,11 @@ fn parse_parts(
     parser.skip_space()
     match parser.peek() {
       Some('}') => parser.i += 1
+      Some('=') | Some('!') if parser.peek(offset=1) == Some('=') =>
+        raise Syntax(
+          parser.i,
+          "== and != are allowed only in the condition of $if",
+        )
       None => raise Syntax(start, "the ${ is not closed")
       Some(_) =>
         raise Syntax(

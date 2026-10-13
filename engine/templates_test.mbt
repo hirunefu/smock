@@ -232,3 +232,207 @@ test "worked example: a templated body file, escaped for its text/html Content-T
     ),
   )
 }
+
+///|
+/// Renders the Stub `id` of `h` for `sample` at `now`, with `seed` if
+/// given and `fresh` as the fresh seed, as `smock render` prints it.
+fn render_with(
+  h : Harness,
+  id : String,
+  sample : Json,
+  now~ : Int64,
+  seed? : UInt64,
+  fresh? : UInt64 = 1234,
+) -> String raise {
+  h.engine
+  .render(id, @engine.SampleRequest::from_json(sample), now~, seed?, fresh_seed=() => {
+    fresh
+  })
+  .to_json()
+  .stringify(indent=2)
+}
+
+///|
+test "rendering a templated Stub shows its rendered events, with the time and the seed it used; given both, it is the same on every run" {
+  let render = () => {
+    render_with(
+      harness([price_stream_example]),
+      "price-stream",
+      { "path": "/v1/prices/stream", "query": { "symbol": "ABC" } },
+      now=nine_o_clock,
+      seed=7,
+    )
+  }
+  let first = render()
+  inspect(
+    first,
+    content=(
+      #|{
+      #|  "stub": "price-stream",
+      #|  "mock": "market",
+      #|  "time": "2026-10-13T09:00:00.000Z",
+      #|  "seed": 7,
+      #|  "response": {
+      #|    "status": 200,
+      #|    "headers": [
+      #|      {
+      #|        "name": "Content-Type",
+      #|        "value": "text/event-stream"
+      #|      },
+      #|      {
+      #|        "name": "Cache-Control",
+      #|        "value": "no-cache"
+      #|      }
+      #|    ],
+      #|    "body": null,
+      #|    "events": [
+      #|      {
+      #|        "delay": 0,
+      #|        "event": "price",
+      #|        "id": "1",
+      #|        "data": "{\"symbol\":\"ABC\",\"price\":105.49,\"at\":\"2026-10-13T09:00:00.000Z\"}"
+      #|      },
+      #|      {
+      #|        "delay": 500,
+      #|        "event": "price",
+      #|        "id": "2",
+      #|        "data": "{\"symbol\":\"ABC\",\"price\":101.49,\"at\":\"2026-10-13T09:00:00.500Z\"}"
+      #|      },
+      #|      {
+      #|        "delay": 500,
+      #|        "event": "done",
+      #|        "data": "[DONE]"
+      #|      }
+      #|    ]
+      #|  },
+      #|  "templateError": null,
+      #|  "failed": []
+      #|}
+    ),
+  )
+  inspect(render() == first, content="true")
+}
+
+///|
+test "rendering with seed S shows what the first matched request of a Stub with fault.seed S gets; without a seed it uses the Stub's, or a fresh one" {
+  let sample : Json = {
+    "path": "/v1/prices/stream",
+    "query": { "symbol": "ABC" },
+  }
+  let h = harness([price_stream_example])
+  h.now = nine_o_clock
+  let events = (rendering : String) => {
+    guard @json.parse(rendering) is { "response": { "events": events, .. }, .. } else {
+      return "no events"
+    }
+    events.stringify()
+  }
+  let with_seed_7 = events(
+    render_with(h, "price-stream", sample, now=nine_o_clock, seed=7),
+  )
+  // The Stub has fault.seed 7.
+  let with_stub_seed = render_with(h, "price-stream", sample, now=nine_o_clock)
+  inspect(events(with_stub_seed) == with_seed_7, content="true")
+  inspect(with_stub_seed.contains("\"seed\": 7,"), content="true")
+  // The first request the Stub matches gets the same events.
+  guard h.send("GET", "/v1/prices/stream?symbol=ABC").plan.body is Events(sent) else {
+    fail("no events")
+  }
+  inspect(
+    sent.iter().map(event => event.data).collect().join("\n"),
+    content=(
+      #|{"symbol":"ABC","price":105.49,"at":"2026-10-13T09:00:00.000Z"}
+      #|{"symbol":"ABC","price":101.49,"at":"2026-10-13T09:00:00.500Z"}
+      #|[DONE]
+    ),
+  )
+  inspect(
+    with_seed_7.contains("105.49") && with_seed_7.contains("101.49"),
+    content="true",
+  )
+  // A Stub without a seed renders with the fresh seed, and shows it.
+  let unseeded = harness([create_order_example])
+  let fresh = render_with(
+    unseeded,
+    "create-order",
+    {
+      "method": "POST",
+      "path": "/orders",
+      "body": "{\"customer\":{\"name\":\"Ada\"},\"items\":[]}",
+    },
+    now=nine_o_clock,
+    fresh=99,
+  )
+  inspect(
+    fresh,
+    content=(
+      #|{
+      #|  "stub": "create-order",
+      #|  "mock": "orders",
+      #|  "time": "2026-10-13T09:00:00.000Z",
+      #|  "seed": 99,
+      #|  "response": {
+      #|    "status": 201,
+      #|    "headers": [
+      #|      {
+      #|        "name": "Content-Type",
+      #|        "value": "application/json"
+      #|      }
+      #|    ],
+      #|    "body": {
+      #|      "encoding": "utf-8",
+      #|      "data": "{\"orderId\":\"15e7a3e5-e429-4e85-a58e-1144d766ec08\",\"customer\":\"Ada\",\"lines\":[]}",
+      #|      "size": 78,
+      #|      "truncated": false
+      #|    },
+      #|    "events": null
+      #|  },
+      #|  "templateError": null,
+      #|  "failed": []
+      #|}
+    ),
+  )
+}
+
+///|
+test "rendering a template that fails for the sample shows the 500 the request would get, and the error" {
+  let h = harness([create_order_example])
+  inspect(
+    render_with(
+      h,
+      "create-order",
+      { "method": "POST", "path": "/orders", "body": "{}" },
+      now=nine_o_clock,
+      seed=3,
+    ),
+    content=(
+      #|{
+      #|  "stub": "create-order",
+      #|  "mock": "orders",
+      #|  "time": "2026-10-13T09:00:00.000Z",
+      #|  "seed": 3,
+      #|  "response": {
+      #|    "status": 500,
+      #|    "headers": [
+      #|      {
+      #|        "name": "Content-Type",
+      #|        "value": "application/json"
+      #|      }
+      #|    ],
+      #|    "body": {
+      #|      "encoding": "utf-8",
+      #|      "data": "{\"error\":\"template failed\",\"stub\":\"create-order\",\"at\":\"/response/json/customer\",\"message\":\"body.customer.name is missing\"}",
+      #|      "size": 122,
+      #|      "truncated": false
+      #|    },
+      #|    "events": null
+      #|  },
+      #|  "templateError": {
+      #|    "at": "/response/json/customer",
+      #|    "message": "body.customer.name is missing"
+      #|  },
+      #|  "failed": []
+      #|}
+    ),
+  )
+}

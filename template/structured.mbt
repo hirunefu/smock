@@ -63,7 +63,7 @@ pub fn Structured::parse(
   let root = parse_node(source, pointer, [], false, true, problems)
   if problems.is_empty() {
     let least = least_iterations(root)
-    if least > max_iterations {
+    if least > max_iterations.to_int64() {
       problems.push({
         pointer,
         message: "template: its loops run at least \{least} times; one response runs at most \{max_iterations} loop iterations",
@@ -293,24 +293,26 @@ fn parse_directive(
 
 ///|
 /// The fewest loop iterations `node` runs, whatever the request: those of
-/// the loops over literal ranges that always run.
-fn least_iterations(node : Node) -> Int {
+/// the loops over literal ranges that always run. Counts stop growing at
+/// `saturated`, far above the bound.
+fn least_iterations(node : Node) -> Int64 {
   match node {
-    Static(_) | Interpolated(_, _) | Single(_, _) => 0
+    Static(_) | Interpolated(_, _) | Single(_, _) => 0L
     Members(members) =>
-      sum_capped(members.map(entry => least_iterations(entry.1)))
-    Elements(elements) => sum_capped(elements.map(least_iterations))
+      saturated_sum(members.map(entry => least_iterations(entry.1)))
+    Elements(elements) => saturated_sum(elements.map(least_iterations))
     Each(expr, _, body, _) =>
       match literal_range(expr) {
         Some(count) => {
-          let each = 1 + least_iterations(body)
-          if count > 0 && each > max_iterations / count + 1 {
-            max_iterations + 1
+          let each = 1L + least_iterations(body)
+          let product = count.to_int64() * each
+          if product > saturated {
+            saturated
           } else {
-            count * each
+            product
           }
         }
-        None => 0
+        None => 0L
       }
     If(_, then, Some(otherwise), _) => {
       let a = least_iterations(then)
@@ -321,18 +323,23 @@ fn least_iterations(node : Node) -> Int {
         b
       }
     }
-    If(_, _, None, _) => 0
+    If(_, _, None, _) => 0L
   }
 }
 
 ///|
-/// The sum of `counts`, capped just above the bound.
-fn sum_capped(counts : Array[Int]) -> Int {
-  let mut sum = 0
+/// Where iteration counts stop growing: 2^40, so that a product of two of
+/// them still fits in an `Int64`.
+let saturated : Int64 = 1L << 40
+
+///|
+/// The sum of `counts`, at most `saturated`.
+fn saturated_sum(counts : Array[Int64]) -> Int64 {
+  let mut sum = 0L
   for count in counts {
     sum += count
-    if sum > max_iterations {
-      return max_iterations + 1
+    if sum > saturated {
+      return saturated
     }
   }
   sum

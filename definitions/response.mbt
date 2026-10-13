@@ -217,6 +217,9 @@ fn File::parse_templates(
               text(value, pointer, EventLine).map(text => Some(text))
           }
         }
+        // Each field is parsed, so that every problem is reported.
+        let event_type = line(event.event)
+        let id = line(event.id)
         let data = match event.data {
           NoData => None
           Data(pointer, source) =>
@@ -224,8 +227,8 @@ fn File::parse_templates(
           JsonData(pointer, value) =>
             structured(value, pointer).map(json => EventData::Json(json))
         }
-        if line(event.event) is Some(event_type) &&
-          line(event.id) is Some(id) &&
+        if event_type is Some(event_type) &&
+          id is Some(id) &&
           data is Some(data) {
           templates.push(EventTemplate::{
             delay_ms: event.delay_ms,
