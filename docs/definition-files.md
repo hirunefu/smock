@@ -521,6 +521,9 @@ does, so a directory that passes `smock check` loads in `smock serve`, and
 the reverse. It prints every problem on its own line, with the file and a
 JSON Pointer to the value, and exits with status 1. A valid directory
 prints nothing, apart from [warnings](#warnings), and exits with status 0.
+A directory that does not exist is an empty definition set, as for
+`smock serve`, so it passes too; `smock check` then says on stderr that the
+directory does not exist, so that a mistyped path is noticed.
 
 ```console
 $ smock check defs

@@ -249,6 +249,21 @@ async test "smock check names the definitions directory as given when the direct
 }
 
 ///|
+async test "smock check passes a missing definitions directory, as smock serve loads it, and says on stderr that it does not exist" {
+  with_definitions([], dir => {
+    inspect(
+      check(["\{dir}/defz"]).replace_all(old=dir, new="<dir>"),
+      content=(
+        #|status 0
+        #|stderr:
+        #|smock check: the definitions directory <dir>/defz does not exist, so it is read as an empty definition set
+        #|
+      ),
+    )
+  })
+}
+
+///|
 async test "smock check needs the definitions directory as its argument" {
   inspect(
     check([]),
