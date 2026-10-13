@@ -22,7 +22,8 @@ checks that.
 
 Packages of `smock/smock`:
 
-- `cmd/smock`: the `smock` binary.
+- `cmd/smock`: the `smock` binary. It binds libc's `exit` to end with a
+  status, since neither core nor `moonbitlang/async` exposes one.
 - `settings`: the settings of `smock serve`, each a flag with a matching
   `SMOCK_<NAME>` environment variable, and the arguments of `smock check`
   and `smock render`.
@@ -58,7 +59,9 @@ Packages of `smock/smock`:
   allows (native). A TLS connection there does no I/O: it takes the bytes
   that arrive from the peer and hands out the bytes to send, and `server`
   carries them over the socket. It also generates self-signed certificates
-  in memory. Its C is `openssl/openssl.c`.
+  in memory. Its C is `openssl/openssl.c`. The client side
+  (`openssl/client.mbt`) is there for the bindings' own tests, which run a
+  client and a server in memory under the sanitizers.
 - `testcerts`: a test PKI (a root CA, an intermediate CA, RSA and ECDSA
   leaf chains for `localhost` and `127.0.0.1`, and ECDSA leaf chains for
   `users.example.com` and `orders.example.com`, each leaf with its own fixed
