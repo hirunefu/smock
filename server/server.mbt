@@ -612,11 +612,14 @@ fn SessionCarrier::session_of(
 /// Server-Sent Events are streamed: the head at once, then each event after
 /// its delay. Waiting suspends only this connection's task, so the others
 /// are served meanwhile. A stream without a body, as in a response to HEAD,
-/// is its head alone, written at once: no event is waited for. A client that closes the connection mid-stream
-/// makes a later write fail, which ends the stream and the connection. The
-/// first half of a stream is the first half of its events, rounded down,
-/// and a stream cut short is not ended: a chunked one lacks its last chunk,
-/// while one to HTTP/1.0, which closing the connection ends, looks whole.
+/// is its head alone, written at once: no event is waited for. A client
+/// that closes the connection mid-stream makes a later write fail, which
+/// ends the stream and the connection; the connection is not watched while
+/// an event's delay runs, since a client may close its sending side alone
+/// and still read the stream. The first half of a stream is the first half
+/// of its events, rounded down, and a stream cut short is not ended: a
+/// chunked one lacks its last chunk, while one to HTTP/1.0, which closing
+/// the connection ends, looks whole.
 ///
 /// `before_last` is called just before the response's last bytes are
 /// written: before the whole response when it is written at once, and

@@ -344,7 +344,11 @@ data: line 2
   for no event.
 - While a stream waits, smock serves every other connection. A client that
   closes the connection mid-stream ends that stream: smock notices when it
-  next writes an event.
+  next writes an event. Until then, which an event's long delay can put
+  off, the stream keeps its connection, and a [drain](../README.md#run) on
+  SIGTERM waits for it as for any stream in progress. smock does not watch
+  the connection meanwhile, since a client may close its sending side once
+  its request is sent and still read the stream.
 
 ## Faults
 

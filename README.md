@@ -150,7 +150,9 @@ SIGHUP do the same.
   connections close at once.
 - Responses in progress finish with `Connection: close`, and their
   connections close after them. Server-Sent Event streams and pending
-  delays go on.
+  delays go on. A stream whose client has gone away counts too, until smock
+  next writes an event to it and notices, which an event's long delay can
+  put off until the drain timeout.
 - smock exits with status 0 as soon as nothing is in flight, and at the
   latest when the drain timeout (`--drain-timeout-ms`) expires: what is still
   running then is cut. Keep the Pod's `terminationGracePeriodSeconds` above
