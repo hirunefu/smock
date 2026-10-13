@@ -68,11 +68,13 @@ pub(all) enum Parsed {
   /// The bytes are not a valid request. Answer with `status` and close the
   /// connection; the parser keeps returning this. The status is:
   ///
-  /// - 400 for a malformed request line or header field (RFC 9112), and for
-  ///   framing that is broken or ambiguous: a bad chunk size, broken chunk
-  ///   framing, both Content-Length and Transfer-Encoding, Content-Length
-  ///   values that disagree or are not numbers, or Transfer-Encoding in an
-  ///   HTTP/1.0 request;
+  /// - 400 for a malformed request line or header field (RFC 9112), such as
+  ///   a request target in none of the four forms of RFC 9112, section 3.2,
+  ///   or with a fragment, or a Host field whose value is not a host and an
+  ///   optional port; and for framing that is broken or ambiguous: a bad
+  ///   chunk size, broken chunk framing, both Content-Length and
+  ///   Transfer-Encoding, Content-Length values that disagree or are not
+  ///   numbers, or Transfer-Encoding in an HTTP/1.0 request;
   /// - 413 for a body over the body limit;
   /// - 431 for a head over the header size limit or the header count limit;
   /// - 501 for a transfer coding other than `chunked`;
@@ -132,7 +134,7 @@ pub(all) struct Request {
 ///   keeps the body and not the framing around it, so neither the framing
 ///   nor the body can make it hold much more than the body limit.
 ///
-/// The defaults are smock's: 16 KiB, 100 header fields and 10 MiB.
+/// The defaults are 16 KiB, 100 header fields and 10 MiB.
 pub fn Parser::Parser(
   header_size_limit? : Int = 16 * 1024,
   header_count_limit? : Int = 100,
@@ -496,22 +498,26 @@ fn parse_head(
     headers.push(header)
     let name = header.name.to_lower()
     if name == "host" {
+      // A Host field with an invalid value gets 400 (RFC 9112, section 3.2).
+      if !is_host_value(@utf8.decode_lossy(header.value)) {
+        return Err(400)
+      }
       hosts += 1
     } else if name == "transfer-encoding" {
       transfer_encodings.push(header.value)
     } else if name == "content-length" {
       content_lengths.push(header.value)
     } else if name == "connection" {
-      for token in @utf8.decode_lossy(header.value).split(",") {
-        match token.trim(char_set=" \t").to_lower() {
+      for token in list_elements(header.value) {
+        match token.to_lower() {
           "close" => close = true
           "keep-alive" => keep_alive = true
           _ => ()
         }
       }
     } else if name == "expect" {
-      for expectation in @utf8.decode_lossy(header.value).split(",") {
-        if expectation.trim(char_set=" \t").to_lower() == "100-continue" {
+      for expectation in list_elements(header.value) {
+        if expectation.to_lower() == "100-continue" {
           expect_continue = true
         }
       }
@@ -565,8 +571,8 @@ fn parse_head(
 fn check_transfer_codings(values : Array[Bytes]) -> Result[Unit, Int] {
   let mut chunked = 0
   for value in values {
-    for coding in @utf8.decode_lossy(value).split(",") {
-      match coding.trim(char_set=" \t").to_lower() {
+    for coding in list_elements(value) {
+      match coding.to_lower() {
         "" => ()
         "chunked" => chunked += 1
         _ => return Err(501)
@@ -593,8 +599,7 @@ fn content_length(values : Array[Bytes], limit : Int) -> Result[Int, Int] {
   // too large to hold still compare.
   let mut digits : String? = None
   for value in values {
-    for element in @utf8.decode_lossy(value).split(",") {
-      let element = element.trim(char_set=" \t")
+    for element in list_elements(value) {
       if element.is_empty() || element.iter().any(c => c < '0' || c > '9') {
         return Err(400)
       }
@@ -613,6 +618,16 @@ fn content_length(values : Array[Bytes], limit : Int) -> Result[Int, Int] {
     }
   }
   Ok(length.to_int())
+}
+
+///|
+/// The elements of the comma-separated list in the field value `value`
+/// (RFC 9110, section 5.6.1), without the white space around each. Empty
+/// elements are among them; the caller decides whether to allow them.
+fn list_elements(value : Bytes) -> Iter[StringView] {
+  @utf8.decode_lossy(value)
+  .split(",")
+  .map(element => element.trim(char_set=" \t"))
 }
 
 ///|
@@ -638,7 +653,8 @@ fn split_lines(
 /// Reads `method SP request-target SP HTTP-version` from the line
 /// `buf[start:end]`, which the head scan has checked. A version whose major
 /// number is not 1 gets 505; a later minor version than 1 is read as
-/// HTTP/1.1 (RFC 9110, section 2.5).
+/// HTTP/1.1 (RFC 9110, section 2.5). A target in none of the forms of a
+/// request target gets 400.
 fn parse_request_line(
   buf : FixedArray[Byte],
   line : (Int, Int),
@@ -655,7 +671,11 @@ fn parse_request_line(
     (b'1', _) => Http11
     _ => return Err(505)
   }
-  Ok((ascii(buf, start, space), ascii(buf, space + 1, end - 9), version))
+  let target = ascii(buf, space + 1, end - 9)
+  if !is_request_target(target) {
+    return Err(400)
+  }
+  Ok((ascii(buf, start, space), target, version))
 }
 
 ///|

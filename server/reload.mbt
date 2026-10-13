@@ -29,8 +29,8 @@ fn register_reload_metric(metrics : @metrics.Registry) -> @metrics.Counter {
     help="Reloads of the Definition files, by result: swapped (the new definition set is served), unchanged (it had the digest served) or failed (it was invalid, and the previous one is still served).",
     labels=["result"],
   )
-  for result in ["swapped", "unchanged", "failed"] {
-    reloads.labels([result]).inc(by=0)
+  for outcome in @engine.ReloadOutcome::all() {
+    reloads.labels([outcome.name()]).inc(by=0)
   }
   reloads
 }
@@ -76,11 +76,11 @@ async fn Reloader::check(self : Reloader, check : @watch.Check) -> Unit {
   }
   self.last_read = read
   let result = self.engine.reload(set, read_problems=problems, at=@async.now())
-  self.reloads.labels([outcome_name(result.result)]).inc()
+  self.reloads.labels([result.result.name()]).inc()
   match result.result {
     Swapped | Unchanged => {
       self.logger.info("definitions reloaded", fields={
-        "result": Json::string(outcome_name(result.result)),
+        "result": Json::string(result.result.name()),
         "oldDigest": Json::string(result.old_digest),
         "newDigest": Json::string(result.new_digest),
       })
@@ -92,21 +92,10 @@ async fn Reloader::check(self : Reloader, check : @watch.Check) -> Unit {
     }
     Failed =>
       self.logger.error("definitions reload failed", fields={
-        "result": Json::string(outcome_name(result.result)),
+        "result": Json::string(result.result.name()),
         "digest": Json::string(result.new_digest),
         "errors": diagnostics_json(result.errors),
       })
-  }
-}
-
-///|
-/// The name of a reload result, as the Admin API, the logs and the metric
-/// give it.
-fn outcome_name(outcome : @engine.ReloadOutcome) -> String {
-  match outcome {
-    Swapped => "swapped"
-    Unchanged => "unchanged"
-    Failed => "failed"
   }
 }
 

@@ -6,32 +6,38 @@
 
 ///|
 /// Parses a Definition file, JSON or YAML, into its top-level object, or
-/// the problem that stops it from being read, as a JSON Pointer and a
-/// message. A YAML file gives the tree of the equivalent JSON file, so
-/// everything after parsing is shared.
+/// the problem that stops it from being read. A YAML file gives the tree of
+/// the equivalent JSON file, so everything after parsing is shared.
 fn parse_file(
   name : String,
   bytes : Bytes,
-) -> Result[Map[String, Json], (String, String)] {
+) -> Result[Map[String, Json], Diagnostic] {
+  let problem = (pointer : String, message : String) => {
+    Err(Diagnostic::{ file: name, pointer, message, })
+  }
   let yaml = name.has_suffix(".yaml") || name.has_suffix(".yml")
   if !yaml && !name.has_suffix(".json") {
-    return Err(("", "a Definition file name ends in .json, .yaml or .yml"))
+    return problem("", "a Definition file name ends in .json, .yaml or .yml")
   }
   let text = @utf8.decode(bytes) catch {
-    _ => return Err(("", "not valid UTF-8"))
+    _ => return problem("", "not valid UTF-8")
   }
   let json = if yaml {
     @yaml.parse(text) catch {
-      ParseError(pointer~, message~) => return Err((pointer, message))
+      ParseError(pointer~, message~) => return problem(pointer, message)
     }
   } else {
-    @json.parse(text) catch {
-      err => return Err(("", "not valid JSON: \{err}"))
+    let json = @json.parse(text) catch {
+      err => return problem("", "not valid JSON: \{err}")
     }
+    if first_duplicate_key(text) is Some(pointer) {
+      return problem(pointer, "duplicate key")
+    }
+    json
   }
   match json {
     Object(top) => Ok(top)
-    _ => Err(("", "must be an object"))
+    _ => problem("", "must be an object")
   }
 }
 
@@ -39,7 +45,7 @@ fn parse_file(
 /// The names of the Mocks the parsed files declare, so that a Stub may name
 /// a Mock declared in any file, earlier or later.
 fn declared_mocks(
-  files : Array[(String, Result[Map[String, Json], (String, String)])],
+  files : Array[(String, Result[Map[String, Json], Diagnostic])],
 ) -> Set[String] {
   let names = Set([])
   for file in files {
@@ -56,6 +62,28 @@ fn declared_mocks(
 }
 
 ///|
+/// Where a value is in a definition set: the Definition file it is in, and
+/// the JSON Pointer to it within that file.
+priv struct Location {
+  file : String
+  pointer : String
+} derive(Debug, Eq)
+
+///|
+/// `<file>: <pointer>`, as problems name a place.
+impl Show for Location with fn output(self, logger) {
+  logger.write_string("\{self.file}: \{self.pointer}")
+}
+
+///|
+/// A Mock's claim to what only one Mock may have, such as a Host: the
+/// Mock's name and where the claim is made.
+priv struct Claim {
+  mock : String
+  at : Location
+}
+
+///|
 /// Reads Definition files one after another, collecting what they declare
 /// and every problem in them.
 priv struct Reader {
@@ -64,21 +92,18 @@ priv struct Reader {
   declared : Set[String]
   /// The Mocks read so far.
   mocks : Array[MockDecl]
-  /// Where each Mock name was first declared, as `<file>: <pointer>`.
-  mock_names : Map[String, String]
-  /// Each Host claimed so far, normalised, with the name of the Mock that
-  /// claims it and where, as `<file>: <pointer>`.
-  hosts : Map[String, (String, String)]
-  /// The Mock marked `default` so far, if any, and where, as
-  /// `<file>: <pointer>`.
-  mut default_mock : (String, String)?
+  /// Where each Mock name was first declared.
+  mock_names : Map[String, Location]
+  /// Each Host claimed so far, normalised, with its claim.
+  hosts : Map[String, Claim]
+  /// The claim of the Mock marked `default` so far, if any.
+  mut default_mock : Claim?
   /// The Stubs read so far.
   stubs : Array[Stub]
-  /// Where each Stub ID was first used, as `<file>: <pointer>`.
-  stub_ids : Map[String, String]
-  /// Where each Stub read so far is declared, by its ID: the file and the
-  /// JSON Pointer to the Stub.
-  stub_locations : Map[String, (String, String)]
+  /// Where each Stub ID was first used: the Stub's `id` member.
+  stub_ids : Map[String, Location]
+  /// Where each Stub read so far is declared, by its ID: the Stub itself.
+  stub_locations : Map[String, Location]
   /// The body files, by their name relative to the body-file subdirectory.
   body_files : Map[String, Bytes]
 }
@@ -128,7 +153,7 @@ fn Reader::declare_mock(
   mock : MockDecl,
 ) -> Unit {
   let name = mock.name
-  let name_pointer = child(pointer, "name")
+  let name_pointer = child_pointer(pointer, "name")
   if self.mock_names.get(name) is Some(earlier) {
     file.error(
       name_pointer,
@@ -136,30 +161,30 @@ fn Reader::declare_mock(
     )
     return
   }
-  self.mock_names[name] = "\{file.name}: \{name_pointer}"
+  self.mock_names[name] = file.at(name_pointer)
   self.mocks.push(mock)
   for declared in mock.hosts {
     let (host, host_pointer) = declared
     let host = normalize_host(host)
     match self.hosts.get(host) {
-      Some((owner, _)) if owner == name => ()
-      Some((owner, earlier)) =>
+      Some({ mock: owner, .. }) if owner == name => ()
+      Some({ mock: owner, at: earlier, }) =>
         file.error(
           host_pointer,
           "the Host \{host.escape()} is already claimed by the Mock \{owner.escape()} at \{earlier}",
         )
-      None => self.hosts[host] = (name, "\{file.name}: \{host_pointer}")
+      None => self.hosts[host] = { mock: name, at: file.at(host_pointer), }
     }
   }
   if mock.default is Some(default_pointer) {
     match self.default_mock {
-      Some((owner, earlier)) =>
+      Some({ mock: owner, at: earlier, }) =>
         file.error(
           default_pointer,
           "the Default Mock is already \{owner.escape()}, marked at \{earlier}",
         )
       None =>
-        self.default_mock = Some((name, "\{file.name}: \{default_pointer}"))
+        self.default_mock = Some({ mock: name, at: file.at(default_pointer), })
     }
   }
 }
@@ -175,7 +200,7 @@ fn Reader::declare_stub(
 ) -> Unit {
   let mut ok = stub.id != "" && stub.mock != ""
   if stub.id != "" {
-    let id_pointer = child(pointer, "id")
+    let id_pointer = child_pointer(pointer, "id")
     match self.stub_ids.get(stub.id) {
       Some(earlier) => {
         file.error(
@@ -184,19 +209,19 @@ fn Reader::declare_stub(
         )
         ok = false
       }
-      None => self.stub_ids[stub.id] = "\{file.name}: \{id_pointer}"
+      None => self.stub_ids[stub.id] = file.at(id_pointer)
     }
   }
   if stub.mock != "" && !self.declared.contains(stub.mock) {
     file.error(
-      child(pointer, "mock"),
+      child_pointer(pointer, "mock"),
       "no file declares the Mock \{stub.mock.escape()}",
     )
     ok = false
   }
   if ok {
     self.stubs.push(stub)
-    self.stub_locations[stub.id] = (file.name, pointer)
+    self.stub_locations[stub.id] = file.at(pointer)
   }
 }
 
@@ -205,7 +230,7 @@ fn Reader::declare_stub(
 fn Reader::read_file(
   self : Reader,
   name : String,
-  parsed : Result[Map[String, Json], (String, String)],
+  parsed : Result[Map[String, Json], Diagnostic],
 ) -> Unit {
   let file = File::{
     name,
@@ -214,8 +239,8 @@ fn Reader::read_file(
   }
   let top = match parsed {
     Ok(top) => top
-    Err((pointer, message)) => {
-      file.error(pointer, message)
+    Err(problem) => {
+      self.diagnostics.push(problem)
       return
     }
   }
@@ -229,19 +254,19 @@ fn Reader::read_file(
     }
   }
   for key, value in top {
-    let pointer = child("", key)
+    let pointer = child_pointer("", key)
     match key {
       "version" => ()
       "mocks" =>
         for i, mock in file.array(pointer, value) {
-          let mock_pointer = child(pointer, i.to_string())
+          let mock_pointer = child_pointer(pointer, i.to_string())
           if file.read_mock(mock_pointer, mock) is Some(mock) {
             self.declare_mock(file, mock_pointer, mock)
           }
         }
       "stubs" =>
         for i, stub in file.array(pointer, value) {
-          let stub_pointer = child(pointer, i.to_string())
+          let stub_pointer = child_pointer(pointer, i.to_string())
           if file.read_stub(stub_pointer, stub) is Some(stub) {
             self.declare_stub(file, stub_pointer, stub)
           }
@@ -263,6 +288,12 @@ priv struct File {
   /// The body files of the set, which Stubs refer to, or `None` for an
   /// Ephemeral Stub, whose body must be inline.
   body_files : Map[String, Bytes]?
+}
+
+///|
+/// Where the value at `pointer` in the file is.
+fn File::at(self : File, pointer : String) -> Location {
+  { file: self.name, pointer, }
 }
 
 ///|
@@ -308,7 +339,7 @@ fn File::read_mock(self : File, pointer : String, json : Json) -> MockDecl? {
   let mut no_match_status = 404
   let mut journal = true
   for key, value in mock {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "name" => name = self.name(field, value)
       "hosts" => hosts = self.read_hosts(field, value)
@@ -341,9 +372,10 @@ fn File::read_hosts(
 ) -> Array[(String, String)] {
   let out = []
   for i, host in self.array(pointer, json) {
-    let field = child(pointer, i.to_string())
+    let field = child_pointer(pointer, i.to_string())
     match host {
-      String(host) if is_host(host) => out.push((host, field))
+      String(host) if is_host(host) && is_reachable_host(host) =>
+        out.push((host, field))
       String(host) if host.contains("*") =>
         self.error(field, "must be an exact name: Hosts have no wildcards")
       _ =>
@@ -364,7 +396,7 @@ fn File::read_no_match(self : File, pointer : String, json : Json) -> Int {
     return status
   }
   for key, value in fields {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "status" => status = self.read_status(field, value)
       _ => self.unknown_field(field)
@@ -376,11 +408,28 @@ fn File::read_no_match(self : File, pointer : String, json : Json) -> Int {
 ///|
 /// Reads a response status: an integer from 200 to 599.
 fn File::read_status(self : File, pointer : String, json : Json) -> Int {
+  self
+  .read_integer(pointer, json, min=200L, max=599L)
+  .map_or(0, n => n.to_int())
+}
+
+///|
+/// Reads an integer from `min` to `max`, which a JSON number holds exactly,
+/// or reports that the value must be one.
+fn File::read_integer(
+  self : File,
+  pointer : String,
+  json : Json,
+  min~ : Int64,
+  max~ : Int64,
+) -> Int64? {
   match json {
-    Number(n, ..) if n == n.floor() && n >= 200.0 && n <= 599.0 => n.to_int()
+    Number(n, ..) if n == n.floor() &&
+      n >= min.to_double() &&
+      n <= max.to_double() => Some(n.to_int64())
     _ => {
-      self.error(pointer, "must be an integer from 200 to 599")
-      0
+      self.error(pointer, "must be an integer from \{min} to \{max}")
+      None
     }
   }
 }
@@ -403,7 +452,7 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
   }
   let mut fault = None
   for key, value in stub {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "id" => id = self.name(field, value).unwrap_or("")
       "mock" => mock = self.name(field, value).unwrap_or("")
@@ -431,7 +480,7 @@ fn File::read_fault(self : File, pointer : String, json : Json) -> Fault? {
   let mut connection = None
   let mut seed = None
   for key, value in fault {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "delay" => delay = self.read_delay(field, value)
       "connection" => connection = self.read_connection_fault(field, value)
@@ -452,7 +501,7 @@ fn File::read_delay(self : File, pointer : String, json : Json) -> Delay? {
   let mut distribution = None
   let mut probability = 1.0
   for key, value in delay {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "fixed" =>
         distribution = self.read_milliseconds(field, value).map(ms => Fixed(ms))
@@ -497,7 +546,7 @@ fn File::read_uniform(
   let mut min = None
   let mut max = None
   for key, value in uniform {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "min" => min = self.read_milliseconds(field, value)
       "max" => max = self.read_milliseconds(field, value)
@@ -528,7 +577,7 @@ fn File::read_lognormal(
   let mut median = None
   let mut sigma = None
   for key, value in lognormal {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "median" => median = self.read_milliseconds(field, value)
       "sigma" =>
@@ -559,13 +608,12 @@ fn File::read_connection_fault(
   let mut kind = None
   let mut probability = 1.0
   for key, value in connection {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "kind" =>
         match value {
-          String("reset") => kind = Some(Reset)
-          String("close") => kind = Some(Close)
-          String("partial") => kind = Some(Partial)
+          String(name) if connection_kind(name) is Some(named) =>
+            kind = Some(named)
           _ => self.error(field, "must be \"reset\", \"close\" or \"partial\"")
         }
       "probability" => probability = self.read_probability(field, value)
@@ -590,30 +638,19 @@ fn File::read_probability(self : File, pointer : String, json : Json) -> Double 
 
 ///|
 /// Reads a duration in whole milliseconds: an integer from 0 to
-/// 2147483647.
+/// `max_milliseconds`.
 fn File::read_milliseconds(self : File, pointer : String, json : Json) -> Int? {
-  match json {
-    Number(n, ..) if n == n.floor() && n >= 0.0 && n <= 2147483647.0 =>
-      Some(n.to_int())
-    _ => {
-      self.error(pointer, "must be an integer from 0 to 2147483647")
-      None
-    }
-  }
+  self
+  .read_integer(pointer, json, min=0L, max=max_milliseconds.to_int64())
+  .map(n => n.to_int())
 }
 
 ///|
-/// Reads a seed: an integer from 0 to 2^53 - 1, which a JSON number holds
-/// exactly.
+/// Reads a seed: an integer from 0 to `max_seed`.
 fn File::read_seed(self : File, pointer : String, json : Json) -> UInt64? {
-  match json {
-    Number(n, ..) if n == n.floor() && n >= 0.0 && n <= 9007199254740991.0 =>
-      Some(n.to_uint64())
-    _ => {
-      self.error(pointer, "must be an integer from 0 to 9007199254740991")
-      None
-    }
-  }
+  self
+  .read_integer(pointer, json, min=0L, max=max_seed.reinterpret_as_int64())
+  .map(n => n.reinterpret_as_uint64())
 }
 
 ///|
@@ -632,14 +669,14 @@ fn no_conditions() -> Conditions {
 ///|
 /// Reads a priority: a 32-bit integer.
 fn File::read_priority(self : File, pointer : String, json : Json) -> Int? {
-  match json {
-    Number(n, ..) if n == n.floor() && n >= -2147483648.0 && n <= 2147483647.0 =>
-      Some(n.to_int())
-    _ => {
-      self.error(pointer, "must be an integer from -2147483648 to 2147483647")
-      None
-    }
-  }
+  self
+  .read_integer(
+    pointer,
+    json,
+    min=@int.MIN_VALUE.to_int64(),
+    max=@int.MAX_VALUE.to_int64(),
+  )
+  .map(n => n.to_int())
 }
 
 ///|
@@ -658,11 +695,11 @@ fn File::read_conditions(
   let mut headers = []
   let mut body = None
   for key, value in request {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "method" =>
         match value {
-          String(value) if is_token(value) => meth = Some(value)
+          String(value) if @http1.is_token(value) => meth = Some(value)
           _ => self.error(field, "must be an HTTP token, such as GET")
         }
       "path" =>
@@ -712,9 +749,9 @@ fn File::read_body_condition(
   }
   let mut out = None
   for key, value in condition {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
-      "json" => out = Some(Json(value))
+      "json" => out = Some(Json(JsonCondition::new(value)))
       "pattern" =>
         if self.string(field, value) is Some(source) &&
           self.compile(field, source) is Some(pattern) {
@@ -748,8 +785,8 @@ fn File::read_value_conditions(
     return out
   }
   for name, value in conditions {
-    let field = child(pointer, name)
-    if header_names && !is_token(name) {
+    let field = child_pointer(pointer, name)
+    if header_names && !@http1.is_token(name) {
       self.error(field, "is not a valid header name")
       continue
     }
@@ -776,7 +813,7 @@ fn File::read_pattern(
 ) -> Pattern? {
   let mut out = None
   for key, value in condition {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "pattern" =>
         if self.string(field, value) is Some(source) {
@@ -813,7 +850,7 @@ fn File::read_response(self : File, pointer : String, json : Json) -> Response {
     return { status, headers: ReadOnlyArray::from_array(headers), body, }
   }
   for key, value in response {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "status" => status = self.read_status(field, value)
       "headers" => headers = self.read_headers(field, value)
@@ -848,7 +885,7 @@ fn File::read_events(
 ) -> ReadOnlyArray[SseEvent] {
   let events = []
   for i, event in self.array(pointer, json) {
-    let event_pointer = child(pointer, i.to_string())
+    let event_pointer = child_pointer(pointer, i.to_string())
     guard event is Object(fields) else {
       self.error(event_pointer, "must be an object")
       continue
@@ -858,7 +895,7 @@ fn File::read_events(
     let mut id = None
     let mut data = ""
     for key, value in fields {
-      let field = child(event_pointer, key)
+      let field = child_pointer(event_pointer, key)
       match key {
         "delay" => delay_ms = self.read_milliseconds(field, value).unwrap_or(0)
         "event" =>
@@ -945,8 +982,8 @@ fn File::read_headers(
     return out
   }
   for name, value in headers {
-    let field = child(pointer, name)
-    if !is_token(name) {
+    let field = child_pointer(pointer, name)
+    if !@http1.is_token(name) {
       self.error(field, "is not a valid header name")
     } else if name.to_lower()
       is ("content-length" | "transfer-encoding" | "connection") {
@@ -954,7 +991,7 @@ fn File::read_headers(
     }
     match value {
       String(value) =>
-        if is_field_value(value) {
+        if @http1.is_field_value(value) {
           out.push((name, value))
         } else {
           self.error(
@@ -1003,12 +1040,30 @@ fn File::array(self : File, pointer : String, json : Json) -> Array[Json] {
 }
 
 ///|
-/// The JSON Pointer to member or element `key` of the value at `pointer`.
-fn child(pointer : String, key : String) -> String {
+/// The JSON Pointer (RFC 6901) to member or element `key` of the value at
+/// `pointer`, with `key` escaped: `~` as `~0` and `/` as `~1`. The
+/// pointers of Diagnostics are built with it, so a pointer built with it
+/// elsewhere joins theirs.
+pub fn child_pointer(pointer : String, key : String) -> String {
   let escaped = key
     .replace_all(old="~", new="~0")
     .replace_all(old="/", new="~1")
   "\{pointer}/\{escaped}"
+}
+
+///|
+/// Whether `host`, which `is_host` accepts, is a Host a request can carry,
+/// so that it can match: the value of a Host field, or an IPv6 address
+/// without brackets, which then has no port; and not one that normalises
+/// to no name, such as `.` or `:8080`. The JSON Schema cannot tell these
+/// apart from the rest.
+fn is_reachable_host(host : String) -> Bool {
+  let value = if !host.contains("[") && host.find(":") != host.rev_find(":") {
+    "[\{host}]"
+  } else {
+    host
+  }
+  @http1.is_host_value(value) && normalize_host(host) != ""
 }
 
 ///|
@@ -1024,36 +1079,6 @@ fn is_host(s : String) -> Bool {
       (c >= '0' && c <= '9') ||
       "._:[]-".contains_char(c)
     if !ok {
-      return false
-    }
-  }
-  true
-}
-
-///|
-/// Whether `s` is an HTTP token, as a header name must be.
-fn is_token(s : String) -> Bool {
-  if s == "" {
-    return false
-  }
-  for c in s {
-    let ok = (c >= 'a' && c <= 'z') ||
-      (c >= 'A' && c <= 'Z') ||
-      (c >= '0' && c <= '9') ||
-      "!#$%&'*+-.^_`|~".contains_char(c)
-    if !ok {
-      return false
-    }
-  }
-  true
-}
-
-///|
-/// Whether `s` can be written as a header value: no control characters
-/// other than tab.
-fn is_field_value(s : String) -> Bool {
-  for c in s {
-    if (c < ' ' && c != '\t') || c == '\u{7f}' {
       return false
     }
   }

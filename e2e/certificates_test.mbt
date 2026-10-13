@@ -34,30 +34,6 @@ async fn Smock::presented(
 }
 
 ///|
-/// The lines of the metric `name`: its samples, and also its HELP and TYPE
-/// lines with `help`.
-async fn Smock::metric(
-  self : Smock,
-  name : String,
-  help? : Bool = false,
-) -> String {
-  let response = self.admin("GET", "/metrics")
-  conforms("GET", "/metrics", response)
-  response.body
-  .split("\n")
-  .filter(line => {
-    line.has_prefix(name) ||
-    (
-      help &&
-      (line.has_prefix("# HELP \{name} ") || line.has_prefix("# TYPE \{name} "))
-    )
-  })
-  .map(line => line.to_owned())
-  .collect()
-  .join("\n")
-}
-
-///|
 /// Whether a log line is about a TLS certificate.
 fn is_certificate_entry(line : String) -> Bool {
   let entry = @json.parse(line) catch { _ => return false }
@@ -68,13 +44,13 @@ fn is_certificate_entry(line : String) -> Bool {
 
 ///|
 /// Waits until smock has logged `count` entries about TLS certificates in
-/// all, and returns them as `entries` shows them.
+/// all, and returns them as `log_entries` shows them.
 async fn Smock::certificate_entries(self : Smock, count : Int) -> String {
   let logged = @async.with_timeout_opt(reload_patience_ms, () => {
     for ;; {
       let lines = self.logs.filter(is_certificate_entry)
       if lines.length() >= count {
-        break entries(lines)
+        break log_entries(lines)
       }
       @async.sleep(20)
     }
@@ -137,7 +113,7 @@ async test "rewriting the certificate files rotates the certificate without a re
                 #|open connection: HTTP/1.1 200 OK
                 #|before: smock-test-rsa
                 #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4922899200
-                #|{"level":"info","msg":"TLS certificate reloaded","mock":"","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
+                #|{"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
                 #|after: smock-test-ecdsa
                 #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4891363200
                 #|open connection after the rotation: HTTP/1.1 200 OK
@@ -147,14 +123,14 @@ async test "rewriting the certificate files rotates the certificate without a re
         )
         // Four handshakes, one rotation.
         inspect(
-          entries(stopped.logs),
+          log_entries(stopped.logs),
           content=(
             #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
             #|{"level":"info","msg":"random seed","seed":"*"}
             #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
             #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
-            #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","cert_file":"*/tls.crt","key_file":"*/tls.key"}
-            #|{"level":"info","msg":"TLS certificate reloaded","mock":"","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
+            #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","certFile":"*/tls.crt","keyFile":"*/tls.key"}
+            #|{"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
             #|{"level":"info","msg":"drain started","timeoutMs":20000}
             #|{"level":"info","msg":"drain ended","connectionsCut":0}
           ),
@@ -213,7 +189,7 @@ async test "a Secret-style update, which swaps the ..data symlink and keeps the 
               ),
               content=(
                 #|before: smock-test-rsa
-                #|{"level":"info","msg":"TLS certificate reloaded","mock":"","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
+                #|{"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
                 #|after: smock-test-ecdsa
                 #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4891363200
               ),
@@ -270,19 +246,19 @@ async test "a changed pair that cannot be used is not swapped in: smock keeps pr
               out.join("\n"),
               content=(
                 #|a certificate file that is not PEM:
-                #|{"level":"error","msg":"TLS certificate reload failed","mock":"","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":null,"error":"certificate file: no PEM certificate found"}
+                #|{"level":"error","msg":"TLS certificate reload failed","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":null,"error":"certificate file: no PEM certificate found"}
                 #|presented: smock-test-rsa
                 #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4922899200
                 #|a certificate the key does not belong to:
-                #|{"level":"error","msg":"TLS certificate reload failed","mock":"","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z","error":"the private key does not match the leaf certificate"}
+                #|{"level":"error","msg":"TLS certificate reload failed","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z","error":"the private key does not match the leaf certificate"}
                 #|presented: smock-test-rsa
                 #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4922899200
                 #|a key file that cannot be read:
-                #|{"level":"error","msg":"TLS certificate reload failed","mock":"","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":null,"error":"cannot read the key file: no such file"}
+                #|{"level":"error","msg":"TLS certificate reload failed","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":null,"error":"cannot read the key file: no such file"}
                 #|presented: smock-test-rsa
                 #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4922899200
                 #|the key of the new certificate:
-                #|{"level":"info","msg":"TLS certificate reloaded","mock":"","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
+                #|{"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
                 #|presented: smock-test-ecdsa
                 #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4891363200
               ),
@@ -366,6 +342,103 @@ async test "SNI: a name that is a Host of a Mock with its own certificate gets t
                 #|# TYPE smock_tls_certificate_expiry_timestamp_seconds gauge
                 #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4922899200
                 #|smock_tls_certificate_expiry_timestamp_seconds{mock="users"} 4859740800
+              ),
+            )
+          },
+        )
+      })
+    })
+  })
+}
+
+///|
+/// What each handshake in `snis` gets, one line each, as a client that
+/// does not verify the certificate sees it: the SNI it sends, or none, and
+/// the common name of the certificate presented. `scratch` is a directory
+/// for openssl's input.
+async fn Smock::unverified_by_sni(
+  self : Smock,
+  scratch : String,
+  snis : Array[String?],
+) -> String {
+  write(scratch, "empty.txt", "")
+  let out = []
+  for sni in snis {
+    let (options, shown) = match sni {
+      Some(name) => (["-servername", name], "SNI \{name}")
+      None => (["-noservername"], "no SNI")
+    }
+    let (_, output) = run_openssl(
+      ["s_client", "-connect", "127.0.0.1:\{self.tls_port}", ..options],
+      stdin="\{scratch}/empty.txt",
+    )
+    // OpenSSL 3.0 writes `subject=CN = name`, later versions
+    // `subject=CN=name`.
+    let subject = line_after(output, "subject=")
+    let name = subject[subject.rev_find("=").unwrap_or(-1) + 1:].trim()
+    out.push("\{shown}: \{name}")
+  }
+  out.join("\n")
+}
+
+///|
+async test "without default certificate files, a Mock's own certificate is chosen by SNI and rotates, and any other handshake gets the self-signed certificate for every Host" {
+  with_definitions(users_and_orders, dir => {
+    with_secret(@testcerts.users_chain, @testcerts.users_key, users_dir => {
+      with_scratch(scratch => {
+        let _ = with_smock(
+          [
+            "--dir",
+            dir,
+            "--port",
+            "0",
+            "--tls-mock-certs",
+            mock_certs([("users", users_dir)]),
+          ],
+          smock => {
+            let snis = [
+              Some("users.example.com"),
+              Some("orders.example.com"),
+              Some("unknown.example.com"),
+              None,
+            ]
+            let before = smock.unverified_by_sni(scratch, snis)
+            let names = smock.logs
+              .filter(line => line.contains("self-signed certificate in use"))
+              .map(line => {
+                guard @json.parse(line) is Object({ "names": names, .. }) else {
+                  line
+                }
+                names.stringify()
+              })
+            configmap_update(
+              users_dir,
+              "2026_10_13_02",
+              [
+                ("tls.crt", @testcerts.users_renewed_chain + "\n"),
+                ("tls.key", @testcerts.users_renewed_key + "\n"),
+              ],
+              replaces="2026_10_13_01",
+            )
+            let logged = smock.certificate_entries(1)
+            inspect(
+              (
+                $|\{before}
+                $|self-signed names: \{names.join(" | ")}
+                $|\{logged}
+                $|\{smock.unverified_by_sni(scratch, snis)}
+              ),
+              content=(
+                #|SNI users.example.com: smock-test-users
+                #|SNI orders.example.com: smock self-signed
+                #|SNI unknown.example.com: smock self-signed
+                #|no SNI: smock self-signed
+                #|self-signed names: ["localhost","127.0.0.1","::1","orders.example.com","users.example.com"]
+                #|{"level":"info","msg":"TLS certificate reloaded","mock":"users","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2124-07-01T00:00:00.000Z"}
+                #|SNI users.example.com: smock-test-users-renewed
+                #|SNI orders.example.com: smock self-signed
+                #|SNI unknown.example.com: smock self-signed
+                #|no SNI: smock self-signed
               ),
             )
           },
@@ -472,13 +545,13 @@ async test "a Mock's certificate rotates the same way as the default certificate
                   #|SNI users.example.com: smock-test-users
                   #|no SNI: smock-test-rsa
                   #|a Secret-style update of the Mock's pair:
-                  #|{"level":"info","msg":"TLS certificate reloaded","mock":"users","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":"2124-07-01T00:00:00.000Z"}
+                  #|{"level":"info","msg":"TLS certificate reloaded","mock":"users","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2124-07-01T00:00:00.000Z"}
                   #|SNI users.example.com: smock-test-users-renewed
                   #|no SNI: smock-test-rsa
                   #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4922899200
                   #|smock_tls_certificate_expiry_timestamp_seconds{mock="users"} 4875465600
                   #|rewriting the default pair:
-                  #|{"level":"info","msg":"TLS certificate reloaded","mock":"","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
+                  #|{"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
                   #|SNI users.example.com: smock-test-users-renewed
                   #|no SNI: smock-test-ecdsa
                   #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4891363200
@@ -494,7 +567,7 @@ async test "a Mock's certificate rotates the same way as the default certificate
 }
 
 ///|
-async test "smock serve refuses to start when a Mock's certificate pair cannot be loaded, as for the default pair, or when the per-Mock setting is not a mapping of Mock names to file pairs or comes without the default certificate" {
+async test "smock serve refuses to start when a Mock's certificate pair cannot be loaded, as for the default pair, or when the per-Mock setting is not a mapping of Mock names to file pairs" {
   with_certificates(certs => {
     let missing = "\{certs.dir}/missing.pem"
     let users_pair = (cert : String, key : String) => {
@@ -537,17 +610,16 @@ async test "smock serve refuses to start when a Mock's certificate pair cannot b
         ],
         Map([]),
       ),
-      (
-        ["--tls-mock-certs", users_pair(certs.rsa_chain, certs.rsa_key)],
-        Map([]),
-      ),
     ]
     let out = []
     for run in runs {
       let (args, env) = run
       let stopped = run_smock(["serve", "--port", "0", ..args], env~)
       out.push(
-        hide_dir("status \{stopped.status}\n\{entries(stopped.logs)}", certs),
+        hide_dir(
+          "status \{stopped.status}\n\{log_entries(stopped.logs)}",
+          certs,
+        ),
       )
     }
     inspect(
@@ -557,13 +629,13 @@ async test "smock serve refuses to start when a Mock's certificate pair cannot b
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","mock":"users","cert_file":"*/missing.pem","key_file":"*/rsa-key.pem","error":"cannot read the certificate file: no such file"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","mock":"users","certFile":"*/missing.pem","keyFile":"*/rsa-key.pem","error":"cannot read the certificate file: no such file"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","mock":"users","cert_file":"*/rsa-chain.pem","key_file":"*/other-key.pem","error":"the private key does not match the leaf certificate"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","mock":"users","certFile":"*/rsa-chain.pem","keyFile":"*/other-key.pem","error":"the private key does not match the leaf certificate"}
         #|---
         #|status 2
         #|not JSON: smock serve: invalid value "not JSON" for --tls-mock-certs (SMOCK_TLS_MOCK_CERTS): must be a JSON object that maps each Mock name to {"certFile": <path>, "keyFile": <path>}
@@ -576,9 +648,6 @@ async test "smock serve refuses to start when a Mock's certificate pair cannot b
         #|---
         #|status 2
         #|not JSON: smock serve: invalid value "{\"\":{\"certFile\":\"x.pem\",\"keyFile\":\"y.pem\"}}" for --tls-mock-certs (SMOCK_TLS_MOCK_CERTS): a Mock name must not be empty
-        #|---
-        #|status 2
-        #|not JSON: smock serve: invalid value "{\"users\":{\"certFile\":\"$CERTS/rsa-chain.pem\",\"keyFile\":\"$CERTS/rsa-key.pem\"}}" for --tls-mock-certs (SMOCK_TLS_MOCK_CERTS): needs --tls-cert-file (SMOCK_TLS_CERT_FILE) and --tls-key-file (SMOCK_TLS_KEY_FILE) as well, for the default certificate
       ),
     )
   })
@@ -657,10 +726,10 @@ async test "SNI follows the Hosts of the current definition set, and a Mock with
             },
           )
           inspect(
-            entries(stopped.logs.filter(is_certificate_entry)),
+            log_entries(stopped.logs.filter(is_certificate_entry)),
             content=(
-              #|{"level":"warn","msg":"TLS certificate for a Mock that is not declared","mock":"orders","cert_file":"*/tls.crt","key_file":"*/tls.key"}
-              #|{"level":"warn","msg":"TLS certificate for a Mock that is not declared","mock":"orders","cert_file":"*/tls.crt","key_file":"*/tls.key"}
+              #|{"level":"warn","msg":"TLS certificate for a Mock that is not declared","mock":"orders","certFile":"*/tls.crt","keyFile":"*/tls.key"}
+              #|{"level":"warn","msg":"TLS certificate for a Mock that is not declared","mock":"orders","certFile":"*/tls.crt","keyFile":"*/tls.key"}
             ),
           )
         })

@@ -31,6 +31,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 
+# .github/workflows/schema-pages.yml reads this line too.
 validator_version=0.38.2
 schema=schema/v1/definitions.json
 fixtures=schema/v1/fixtures

@@ -111,7 +111,7 @@ fn Harness::listed(
   )
   let lines = page.entries.map(entry => {
     let session = entry.session.unwrap_or("no Session")
-    "\{entry.meth} \{entry.target} (\{session})"
+    "\{entry.request.meth} \{entry.request.target} (\{session})"
   })
   lines.push("more: \{page.more}, evicted: \{page.evicted}")
   lines.join("\n")
@@ -294,6 +294,32 @@ test "when the byte bound is reached, the oldest entries are evicted; an entry o
       #|more: false, evicted: 1
       #|--
       #|0 entries, 0 bytes, 1 evicted
+    ),
+  )
+}
+
+///|
+test "an entry over the whole byte bound is evicted alone: the older entries, of any Session, stay" {
+  let h = harness(
+    [("users.json", journal_users)],
+    journal=@engine.JournalSettings(max_bytes=2000),
+  )
+  let _ = h.record("GET", "/users/1", session="test-a")
+  let _ = h.record("GET", "/users/2", session="test-a")
+  // The two entries take 332 and 348 bytes; the third, over 3000.
+  let _ = h.record("POST", "/users/3", body="x".repeat(3000), session="test-b")
+  inspect(
+    [h.listed(Some("test-a")), h.listed(Some("test-b")), h.stats()].join(
+      "\n--\n",
+    ),
+    content=(
+      #|GET /users/1 (test-a)
+      #|GET /users/2 (test-a)
+      #|more: false, evicted: 0
+      #|--
+      #|more: false, evicted: 1
+      #|--
+      #|2 entries, 680 bytes, 1 evicted
     ),
   )
 }
@@ -515,7 +541,9 @@ test "the filter takes a Mock, a method, a path and headers with the semantics o
       @engine.JournalQuery::from_json(@json.parse("{ \"filter\": \{filter} }")),
       session=Some("s"),
     )
-    let targets = page.entries.map(entry => "\{entry.meth} \{entry.target}")
+    let targets = page.entries.map(entry => {
+      "\{entry.request.meth} \{entry.request.target}"
+    })
     let listed = if targets.is_empty() { "none" } else { targets.join(", ") }
     out.push("\{filter} -> \{listed}")
   }
@@ -797,6 +825,34 @@ test "the Journal survives a reload, each entry keeping the digest of the defini
       #|orders served by the first set, users served by the first set, users served by the second set; evicted: 2
       #|refused: JournalOff(Some("orders"))
       #|orders served by the first set; evicted: 2
+    ),
+  )
+}
+
+///|
+test "a Mock-scope reset clears the entries of a Mock a reload removed; a name that neither the definitions nor the Journal knows is an unknown Mock" {
+  let h = harness(journal_shop)
+  let _ = h.record("GET", "http://orders.example.com/orders/1", session="s")
+  let _ = h.record("GET", "http://users.example.com/users/1", session="s")
+  let _ = h.reload([("users.json", journal_users)])
+  let orders = "{ \"filter\": { \"mock\": \"orders\" } }"
+  let out = [
+    "orders: \{h.outcome(Some("s"), query=orders)}",
+    "reset Mock orders: \{h.reset_journal(Mock("orders"))}",
+    "orders: \{h.outcome(Some("s"), query=orders)}",
+    "reset Mock orders again: \{h.reset_journal(Mock("orders"))}",
+    "reset Mock payments: \{h.reset_journal(Mock("payments"))}",
+    h.stats(),
+  ]
+  inspect(
+    out.join("\n"),
+    content=(
+      #|orders: GET http://orders.example.com/orders/1 (s); more: false, evicted: 0
+      #|reset Mock orders: removed 0 Ephemeral Stubs, 1 entries
+      #|orders: more: false, evicted: 0
+      #|reset Mock orders again: UnknownMock("orders")
+      #|reset Mock payments: UnknownMock("payments")
+      #|1 entries, 404 bytes, 0 evicted
     ),
   )
 }

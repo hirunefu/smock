@@ -91,57 +91,29 @@ fn der_element(data : BytesView, pos : Int) -> (Int, BytesView, Int)? {
 ///|
 /// A UTCTime (tag 0x17, `YYMMDDHHMMSSZ`) or GeneralizedTime (tag 0x18,
 /// `YYYYMMDDHHMMSSZ`) as DER writes them, in milliseconds since the Unix
-/// epoch.
+/// epoch: read as the RFC 3339 date-time with the same fields.
 fn der_time(tag : Int, value : BytesView) -> Int64? {
   let digits = match (tag, value.length()) {
     (0x17, 13) | (0x18, 15) => value[:value.length() - 1]
     _ => return None
   }
-  if value[value.length() - 1] != b'Z' {
+  if value[value.length() - 1] != b'Z' ||
+    !digits.iter().all(b => b >= b'0' && b <= b'9') {
     return None
   }
-  let numbers : Array[Int64] = []
-  for b in digits {
-    if b < b'0' || b > b'9' {
-      return None
+  let year_first = if tag == 0x17 {
+    // RFC 5280, section 4.1.2.5.1: a UTCTime year below 50 is in the 2000s.
+    if digits[0] < b'5' {
+      "20"
+    } else {
+      "19"
     }
-    numbers.push((b - b'0').to_int64())
-  }
-  let two = (i : Int) => numbers[i] * 10L + numbers[i + 1]
-  // RFC 5280, section 4.1.2.5.1: a UTCTime year below 50 is in the 2000s.
-  let (year, rest) = if tag == 0x17 {
-    let yy = two(0)
-    (if yy < 50L { 2000L + yy } else { 1900L + yy }, 2)
   } else {
-    (two(0) * 100L + two(2), 4)
+    ""
   }
-  let month = two(rest)
-  let day = two(rest + 2)
-  let hour = two(rest + 4)
-  let minute = two(rest + 6)
-  let second = two(rest + 8)
-  if month < 1L ||
-    month > 12L ||
-    day < 1L ||
-    day > 31L ||
-    hour > 23L ||
-    minute > 59L ||
-    second > 60L {
-    return None
-  }
-  let days = days_from_civil(year, month, day)
-  Some(((days * 24L + hour) * 60L + minute) * 60_000L + second * 1000L)
-}
-
-///|
-/// The number of days from 1970-01-01 to the given date of the proleptic
-/// Gregorian calendar, after Howard Hinnant's `days_from_civil`.
-fn days_from_civil(year : Int64, month : Int64, day : Int64) -> Int64 {
-  let y = if month <= 2L { year - 1L } else { year }
-  let era = (if y >= 0L { y } else { y - 399L }) / 400L
-  let yoe = y - era * 400L
-  let mp = if month > 2L { month - 3L } else { month + 9L }
-  let doy = (153L * mp + 2L) / 5L + day - 1L
-  let doe = yoe * 365L + yoe / 4L - yoe / 100L + doy
-  era * 146_097L + doe - 719_468L
+  // YYYYMMDDHHMMSS, punctuated as YYYY-MM-DDTHH:MM:SSZ.
+  let d = year_first + @utf8.decode_lossy(digits)
+  @log.parse_time(
+    "\{d[0:4]}-\{d[4:6]}-\{d[6:8]}T\{d[8:10]}:\{d[10:12]}:\{d[12:14]}Z",
+  )
 }

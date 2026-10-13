@@ -20,8 +20,11 @@ spec:
       labels:
         {{- include "smock.labels" . | nindent 8 }}
       {{- /*
-      Nothing here depends on the Definition files, so a ConfigMap update
-      restarts no Pod: smock reloads the files Kubernetes swaps in.
+      Nothing here depends on the content of the Definition files, so a
+      ConfigMap update restarts no Pod: smock reloads the files Kubernetes
+      swaps in. Only the definitions volume's items, which exist with body
+      files, name the files: adding, removing or renaming one changes this
+      template and so restarts the Pods.
       */}}
       {{- with .Values.podAnnotations }}
       annotations:
@@ -105,6 +108,10 @@ spec:
             - name: SMOCK_TLS_KEY_FILE
               value: /etc/smock/tls/tls.key
             {{- end }}
+            {{- if .Values.tls.mockSecrets }}
+            - name: SMOCK_TLS_MOCK_CERTS
+              value: {{ include "smock.tlsMockCerts" . | quote }}
+            {{- end }}
             {{- range $name, $value := .Values.env }}
             - name: {{ $name }}
               value: {{ include "smock.string" $value | quote }}
@@ -163,6 +170,11 @@ spec:
               mountPath: /etc/smock/tls
               readOnly: true
             {{- end }}
+            {{- range $mock, $_ := .Values.tls.mockSecrets }}
+            - name: {{ include "smock.tlsMockVolume" $mock }}
+              mountPath: {{ include "smock.tlsMockDir" $mock }}
+              readOnly: true
+            {{- end }}
         {{- if eq $source "gitSync" }}
         {{- include "smock.gitSyncContainer" (dict "root" . "oneTime" false) | nindent 8 }}
         {{- end }}
@@ -201,5 +213,11 @@ spec:
         - name: tls
           secret:
             secretName: {{ .Values.tls.secretName | quote }}
+            defaultMode: 0440
+        {{- end }}
+        {{- range $mock, $secret := .Values.tls.mockSecrets }}
+        - name: {{ include "smock.tlsMockVolume" $mock }}
+          secret:
+            secretName: {{ $secret | quote }}
             defaultMode: 0440
         {{- end }}

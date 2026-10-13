@@ -40,9 +40,9 @@ fn resolve(text : String) -> Plain {
 /// Whether `text` is a number in JSON syntax:
 /// `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][-+]?[0-9]+)?`.
 fn is_json_number(text : String) -> Bool {
-  let s = Scan::new(text)
+  let s = Scan(text)
   let _ = s.char('-')
-  if !s.char('0') && !(s.one(is_nonzero_digit) && s.skip(is_digit)) {
+  if !s.char('0') && !(s.one(is_nonzero_digit) && s.skip_while(is_digit)) {
     return false
   }
   if s.char('.') && s.run(is_digit) == 0 {
@@ -64,7 +64,7 @@ fn is_yaml_number(text : String) -> Bool {
   let signed = text.has_prefix("+") || text.has_prefix("-")
   let body = if signed { text[1:].to_owned() } else { text }
   let matches = (pattern : (Scan) -> Bool) => {
-    let s = Scan::new(body)
+    let s = Scan(body)
     pattern(s) && s.done()
   }
   body is (".inf" | ".Inf" | ".INF") ||
@@ -75,19 +75,21 @@ fn is_yaml_number(text : String) -> Bool {
   matches(s => s.str("0b") && s.run(c => c is ('0' | '1' | '_')) > 0) ||
   matches(s => s.str("0x") && s.run(c => is_hex_digit(c) || c == '_') > 0) ||
   matches(s => s.char('0') && s.run(c => is_octal_digit(c) || c == '_') > 0) ||
-  matches(s => s.one(is_nonzero_digit) && s.skip(is_digit_or_underscore)) ||
+  matches(s => s.one(is_nonzero_digit) && s.skip_while(is_digit_or_underscore)) ||
   // YAML 1.2: 08
   matches(s => s.run(is_digit) > 0) ||
   // YAML 1.1 sexagesimal: 190:20:30, 190:20:30.15
   matches(s => {
-    s.one(is_nonzero_digit) && s.skip(is_digit_or_underscore) && s.sexagesimal()
+    s.one(is_nonzero_digit) &&
+    s.skip_while(is_digit_or_underscore) &&
+    s.sexagesimal()
   }) ||
   matches(s => {
     s.one(is_digit) &&
-    s.skip(is_digit_or_underscore) &&
+    s.skip_while(is_digit_or_underscore) &&
     s.sexagesimal() &&
     s.char('.') &&
-    s.skip(is_digit_or_underscore)
+    s.skip_while(is_digit_or_underscore)
   }) ||
   // YAML 1.1 float: 1_000.5, .5, 1.2.3, 1.5e+3
   matches(s => {
@@ -111,9 +113,12 @@ fn is_yaml_number(text : String) -> Bool {
     (if s.char('.') {
       s.run(is_digit) > 0
     } else {
-      s.run(is_digit) > 0 && (!s.char('.') || s.skip(is_digit))
+      s.run(is_digit) > 0 && (!s.char('.') || s.skip_while(is_digit))
     }) &&
-    (!(s.char('e') || s.char('E')) || (s.sign() && s.run(is_digit) > 0))
+    (
+      !(s.char('e') || s.char('E')) ||
+      (s.optional_sign() && s.run(is_digit) > 0)
+    )
   })
 }
 
@@ -129,11 +134,11 @@ fn is_timestamp(text : String) -> Bool {
     s.char('-') &&
     s.digits(min, 2)
   }
-  let s = Scan::new(text)
+  let s = Scan(text)
   if date(s, false) && s.done() {
     return true
   }
-  let s = Scan::new(text)
+  let s = Scan(text)
   date(s, true) &&
   (s.char('T') || s.char('t') || s.run(is_blank) > 0) &&
   s.digits(1, 2) &&
@@ -141,8 +146,8 @@ fn is_timestamp(text : String) -> Bool {
   s.digits(2, 2) &&
   s.char(':') &&
   s.digits(2, 2) &&
-  (!s.char('.') || s.skip(is_digit)) &&
-  s.skip(is_blank) &&
+  (!s.char('.') || s.skip_while(is_digit)) &&
+  s.skip_while(is_blank) &&
   (
     s.done() ||
     s.char('Z') ||
@@ -163,7 +168,7 @@ priv struct Scan {
 }
 
 ///|
-fn Scan::new(text : String) -> Scan {
+fn Scan::Scan(text : String) -> Scan {
   { chars: text.to_array(), i: 0, }
 }
 
@@ -208,15 +213,18 @@ fn Scan::run(self : Scan, pred : (Char) -> Bool) -> Int {
 }
 
 ///|
-/// Consumes the characters that satisfy `pred`, if any.
-fn Scan::skip(self : Scan, pred : (Char) -> Bool) -> Bool {
+/// Consumes the characters that satisfy `pred`, if any. Like `*` in a
+/// regular expression, it always matches, so it returns `true`, to chain
+/// with `&&`.
+fn Scan::skip_while(self : Scan, pred : (Char) -> Bool) -> Bool {
   let _ = self.run(pred)
   true
 }
 
 ///|
-/// Consumes an optional `+` or `-`.
-fn Scan::sign(self : Scan) -> Bool {
+/// Consumes a `+` or `-`, if one comes next. Like `[+-]?` in a regular
+/// expression, it always matches, so it returns `true`, to chain with `&&`.
+fn Scan::optional_sign(self : Scan) -> Bool {
   let _ = self.char('+') || self.char('-')
   true
 }

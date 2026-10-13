@@ -1,0 +1,10 @@
+{
+  "mocks": [
+    {
+      "name": "users",
+      "hosts": [
+        "[::1]junk"
+      ]
+    }
+  ]
+}

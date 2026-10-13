@@ -47,7 +47,9 @@ path, and the volume's items put it back at its path.
 The items of the definitions volume, as a YAML list, or nothing when the
 whole ConfigMap is mounted as it is. The ConfigMap the chart makes needs
 items only for body files, which go under the body-file subdirectory; once
-there are items, every Definition file needs one too.
+there are items, every Definition file needs one too. The items are part of
+the Pod template, so with them a file added, removed or renamed restarts
+the Pods; new content for the same files still reaches smock by reload.
 */}}
 {{- define "smock.definitionsItems" -}}
 {{- $cm := .Values.definitions.configMap -}}
@@ -86,8 +88,9 @@ seccompProfile:
 {{/*
 Where smock's container mounts the definitions volume, and the definitions
 directory smock reads, for each delivery mode. git-sync publishes each
-commit it syncs by swapping the symlink "current" under its root, which
-smock's file reload follows.
+commit it syncs by swapping the symlink "current" under its root and then
+removing the worktree it replaced, which leads smock's file reload to the
+new one (e2e/reload_test.mbt has a test of that).
 */}}
 {{- define "smock.definitionsMountPath" -}}
 {{- if eq .Values.definitions.source "gitSync" -}}/git{{- else -}}/definitions{{- end -}}
@@ -144,6 +147,32 @@ the init container, which syncs once so that smock starts with its files
     {{- /* git-sync's HOME, for its Git configuration. */}}
     - name: git-sync-home
       mountPath: /tmp
+{{- end -}}
+
+{{/*
+The volume of the Secret with a Mock's own certificate, and the directory
+where the smock container mounts it, given the Mock's name. Both are named
+after a hash of it, since a Mock name may hold any character.
+*/}}
+{{- define "smock.tlsMockVolume" -}}
+{{- printf "tls-mock-%s" (sha256sum . | trunc 20) -}}
+{{- end -}}
+
+{{- define "smock.tlsMockDir" -}}
+{{- printf "/etc/smock/tls-mocks/%s" (sha256sum . | trunc 20) -}}
+{{- end -}}
+
+{{/*
+smock's --tls-mock-certs: the tls.crt and tls.key of each Mock's Secret, as
+the JSON object smock reads.
+*/}}
+{{- define "smock.tlsMockCerts" -}}
+{{- $certs := dict -}}
+{{- range $mock, $secret := .Values.tls.mockSecrets -}}
+{{- $dir := include "smock.tlsMockDir" $mock -}}
+{{- $_ := set $certs $mock (dict "certFile" (printf "%s/tls.crt" $dir) "keyFile" (printf "%s/tls.key" $dir)) -}}
+{{- end -}}
+{{- toJson $certs -}}
 {{- end -}}
 
 {{/*

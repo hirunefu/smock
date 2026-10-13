@@ -50,9 +50,13 @@ pub struct Verification {
 } derive(Debug)
 
 ///|
-/// The names of the members that give the check, in the `VerifyRequest`
-/// schema.
-let check_members : Array[String] = ["exactly", "atLeast", "atMost"]
+/// The members that give the check, in the `VerifyRequest` schema, each
+/// with the check it gives for a count.
+let check_members : Array[(String, (Int) -> CountCheck)] = [
+  ("exactly", n => Exactly(n)),
+  ("atLeast", n => AtLeast(n)),
+  ("atMost", n => AtMost(n)),
+]
 
 ///|
 /// Reads a verification from its JSON form, the `VerifyRequest` schema: an
@@ -71,7 +75,7 @@ pub fn VerifyRequest::from_json(
     ])
   }
   let problems : Array[@definitions.Diagnostic] = []
-  let given = check_members.filter(name => members.contains(name))
+  let given = check_members.filter(entry => members.contains(entry.0))
   if given.length() != 1 {
     problems.push({
       file: "",
@@ -82,22 +86,18 @@ pub fn VerifyRequest::from_json(
   let mut filter = None
   let mut check = None
   for name, value in members {
-    let pointer = "/" + pointer_token(name)
-    match name {
-      "filter" => filter = Some(read_filter(value, pointer, problems))
-      "exactly" | "atLeast" | "atMost" =>
+    let pointer = @definitions.child_pointer("", name)
+    let gives_check = check_members.iter().find_first(entry => entry.0 == name)
+    match (name, gives_check) {
+      ("filter", _) => filter = Some(read_filter(value, pointer, problems))
+      (_, Some((_, check_of))) =>
         match value {
           Number(n, ..) if n == n.floor() && n >= 0.0 => {
             // No count reaches the largest Int, so a larger N checks the
             // same as it.
-            let n = if n >= 2147483647.0 { 2147483647 } else { n.to_int() }
-            check = Some(
-              match name {
-                "exactly" => Exactly(n)
-                "atLeast" => AtLeast(n)
-                _ => AtMost(n)
-              },
-            )
+            let largest = @int.MAX_VALUE
+            let n = if n >= largest.to_double() { largest } else { n.to_int() }
+            check = Some(check_of(n))
           }
           _ =>
             problems.push({

@@ -2,9 +2,10 @@
 """Writes the release benchmark's definition set, bench/definitions/.
 
 The set stands in for four services of a shop, each a Mock with its own
-Host, with 1161 Stubs in all. Most Stubs have an exact path, so the match
-index finds them; a few have path, query, header or body patterns, or
-`json` body conditions, which smock tries in their place in the order:
+Host, with about 1,200 Stubs in all (e2e/bench_test.mbt pins the exact
+count). Most Stubs have an exact path, so the match index finds them; a
+few have path, query, header or body patterns, or `json` body conditions,
+which smock tries in their place in the order:
 
 - catalog (catalog.bench.internal): 600 items by SKU, a search with query
   patterns whose results come from a body file, and two path patterns;

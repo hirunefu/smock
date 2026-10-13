@@ -168,22 +168,8 @@ async test "on SIGTERM, smock refuses new connections, closes idle ones at once,
 /// and when the end came, in milliseconds after `since`, and every byte
 /// received, with `\r\n` shown as `\n`.
 async fn until_end(conn : Conn, since : Int64) -> (Int64, Int64, String) {
-  let received = @buffer.Buffer()
-  let mut last = -1L
-  let result = @async.with_timeout_opt(patience_ms, () => {
-    for ;; {
-      let more = conn.read_some() catch { _ => None }
-      guard more is Some(bytes) else { break }
-      last = @async.now() - since
-      received.write_bytes(bytes)
-    }
-  })
-  guard result is Some(_) else { fail("the connection stayed open") }
-  (
-    last,
-    @async.now() - since,
-    @utf8.decode_lossy(received.to_bytes()).replace_all(old="\r\n", new="\n"),
-  )
+  let (last, end, received) = received_until_end(conn, since)
+  (last, end, @utf8.decode_lossy(received).replace_all(old="\r\n", new="\n"))
 }
 
 ///|

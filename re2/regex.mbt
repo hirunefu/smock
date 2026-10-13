@@ -6,7 +6,8 @@
 /// in lockstep, one input character at a time, so its time grows linearly
 /// with the length of the input whatever the pattern is.
 pub struct Regex {
-  priv prog : Prog
+  /// The compiled program.
+  priv insts : FixedArray[Inst]
 }
 
 ///|
@@ -44,7 +45,7 @@ pub impl Show for CompileError with fn output(self, logger) {
 /// of more than 100 000 instructions, or groups nested more than 100 deep.
 pub fn compile(pattern : String) -> Regex raise CompileError {
   let node = parse(pattern)
-  { prog: compile_node(node), }
+  { insts: compile_node(node), }
 }
 
 ///|
@@ -57,7 +58,7 @@ pub fn compile(pattern : String) -> Regex raise CompileError {
 /// character: nothing in a pattern consumes it, so input that contains one
 /// never matches as a whole.
 pub fn Regex::full_match(self : Regex, input : BytesView) -> Bool {
-  run(self.prog, input, Full).0 is Some(_)
+  run(self.insts, input, Full).0 is Some(_)
 }
 
 ///|
@@ -71,7 +72,7 @@ pub fn Regex::full_match(self : Regex, input : BytesView) -> Bool {
 /// character: nothing in a pattern consumes it, so no match contains it, but
 /// a match may end just before it or start just after it.
 pub fn Regex::search(self : Regex, input : BytesView) -> Match? {
-  run(self.prog, input, Search).0
+  run(self.insts, input, Search).0
 }
 
 ///|
@@ -80,7 +81,7 @@ pub fn Regex::search(self : Regex, input : BytesView) -> Match? {
 /// the length of the input. It is a measure of work that does not depend on
 /// the machine, for tests and benchmarks.
 pub fn Regex::full_match_steps(self : Regex, input : BytesView) -> Int {
-  run(self.prog, input, Full).1
+  run(self.insts, input, Full).1
 }
 
 ///|
@@ -89,5 +90,5 @@ pub fn Regex::full_match_steps(self : Regex, input : BytesView) -> Int {
 /// length of the input. It is a measure of work that does not depend on the
 /// machine, for tests and benchmarks.
 pub fn Regex::search_steps(self : Regex, input : BytesView) -> Int {
-  run(self.prog, input, Search).1
+  run(self.insts, input, Search).1
 }

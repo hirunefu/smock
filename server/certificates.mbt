@@ -1,9 +1,21 @@
 // The certificates the TLS port presents: the default certificate, and the
-// certificates of single Mocks, which SNI chooses. Each certificate and key
-// file pair is read again when its directory changes, as the Definition
-// files are, and a new pair that can be used replaces the one presented:
-// new handshakes get it, while open connections keep the one they started
+// certificates of single Mocks, which SNI chooses. The default certificate
+// comes from the configured files or, without them, is a self-signed one
+// smock generates for the Hosts it serves. Each certificate and key file
+// pair is read again when its directory changes, as the Definition files
+// are, and a new pair that can be used replaces the one presented: new
+// handshakes get it, while open connections keep the one they started
 // with. A new pair that cannot be used is not swapped in.
+
+///|
+/// The certificate a handshake gets unless its SNI chooses the certificate
+/// of a single Mock.
+priv enum DefaultCertificate {
+  /// The configured certificate and key files.
+  Files(Pair)
+  /// A self-signed certificate smock generated for the Hosts it serves.
+  SelfSigned(SelfSignedCertificate)
+}
 
 ///|
 /// One certificate and key file pair that the TLS port presents.
@@ -24,7 +36,7 @@ priv struct Pair {
 ///|
 /// The certificates of the TLS port.
 priv struct Certificates {
-  default : Pair
+  default : DefaultCertificate
   /// The pairs of single Mocks, by Mock name.
   by_mock : Map[String, Pair]
   /// Which Mock an SNI name belongs to comes from the definition set it
@@ -39,12 +51,15 @@ priv struct Certificates {
 }
 
 ///|
-/// Loads the default pair, `default`, and the pair of each Mock in
-/// `by_mock`, and registers the expiry metric in `metrics`. When a pair
-/// cannot be loaded, it logs why and returns `None`: smock then does not
-/// start. Warns about each Mock in `by_mock` that `engine` does not serve.
+/// Loads the default pair, `default`, or without it generates a
+/// self-signed certificate for the Hosts `engine` serves; loads the pair of
+/// each Mock in `by_mock`; and registers the expiry metric in `metrics`,
+/// with a series for each of these certificates.
+/// When a pair cannot be loaded, or the certificate cannot be generated, it
+/// logs why and returns `None`: smock then does not start. Warns about each
+/// Mock in `by_mock` that `engine` does not serve.
 async fn Certificates::load(
-  default : @settings.TlsFiles,
+  default : @settings.TlsFiles?,
   by_mock : Map[String, @settings.TlsFiles],
   engine~ : @engine.Engine,
   logger~ : @log.Logger,
@@ -55,8 +70,18 @@ async fn Certificates::load(
     help="When each certificate the TLS port presents expires (its notAfter), in seconds since the Unix epoch, by the Mock it is for: mock=\"\" for the default certificate.",
     labels=["mock"],
   )
-  guard Pair::load("", default, expiry, logger) is Some(default) else {
-    return None
+  let default = match default {
+    Some(files) =>
+      match Pair::load("", files, expiry, logger) {
+        Some(pair) => Files(pair)
+        None => return None
+      }
+    None =>
+      match
+        SelfSignedCertificate::generate(engine, logger, expiry.labels([""])) {
+        Some(certificate) => SelfSigned(certificate)
+        None => return None
+      }
   }
   let pairs = Map([])
   for mock, files in by_mock {
@@ -105,17 +130,33 @@ async fn Pair::load(
       Some(pair)
     }
     Err(reason) => {
-      let fields : Map[String, Json] = Map([])
-      if mock != "" {
-        fields["mock"] = Json::string(mock)
-      }
-      fields["cert_file"] = Json::string(files.cert_file)
-      fields["key_file"] = Json::string(files.key_file)
+      let fields = pair_fields(mock, files)
       fields["error"] = Json::string(reason)
       logger.error("cannot load the TLS certificate", fields~)
       None
     }
   }
+}
+
+///|
+/// The fields that name the pair of `mock` ("" for the default
+/// certificate), with the files `files`, in each log entry about it.
+fn pair_fields(mock : String, files : @settings.TlsFiles) -> Map[String, Json] {
+  let fields : Map[String, Json] = { "mock": Json::string(mock) }
+  add_file_fields(fields, files)
+  fields
+}
+
+///|
+/// Adds the fields that name the certificate and key files `files` to
+/// `fields`, the fields of a log entry, with the keys `--tls-mock-certs`
+/// gives them.
+fn add_file_fields(
+  fields : Map[String, Json],
+  files : @settings.TlsFiles,
+) -> Unit {
+  fields["certFile"] = Json::string(files.cert_file)
+  fields["keyFile"] = Json::string(files.key_file)
 }
 
 ///|
@@ -159,9 +200,23 @@ fn Certificates::select(
     server_name is Some(name) &&
     self.engine.mock_for_host(name) is Some(mock) &&
     self.by_mock.get(mock) is Some(pair) {
-    pair.config
-  } else {
-    self.default.config
+    return pair.config
+  }
+  match self.default {
+    Files(pair) => pair.config
+    SelfSigned(certificate) => certificate.config
+  }
+}
+
+///|
+/// Follows a reload that swapped in a new definition set: warns about the
+/// Mocks with certificate files of their own that it does not declare, and
+/// replaces a self-signed default certificate whose names no longer match
+/// its Hosts.
+fn Certificates::after_swap(self : Certificates) -> Unit {
+  self.warn_undeclared()
+  if self.default is SelfSigned(certificate) {
+    certificate.follow_hosts(self.engine, self.logger)
   }
 }
 
@@ -178,31 +233,25 @@ fn Certificates::warn_undeclared(self : Certificates) -> Unit {
     }
     undeclared.push(mock)
     if !self.undeclared.contains(mock) {
-      self.logger.warn("TLS certificate for a Mock that is not declared", fields={
-        "mock": Json::string(mock),
-        "cert_file": Json::string(pair.files.cert_file),
-        "key_file": Json::string(pair.files.key_file),
-      })
+      self.logger.warn(
+        "TLS certificate for a Mock that is not declared",
+        fields=pair_fields(mock, pair.files),
+      )
     }
   }
   self.undeclared = undeclared
 }
 
 ///|
-/// Checks every pair on each check of `watch`, the watch of `dir`, a
-/// directory that holds certificate or key files, until the task is
-/// cancelled. Logs a warning when the directory cannot be watched, and is
-/// only polled.
-async fn Certificates::run(
-  self : Certificates,
-  dir : String,
-  watch : @watch.Watch,
-) -> Unit {
+/// Checks every pair on each check of `watch`, the watch of a directory
+/// that holds certificate or key files, until the task is cancelled. Logs
+/// a warning when the directory cannot be watched, and is only polled.
+async fn Certificates::run(self : Certificates, watch : @watch.Watch) -> Unit {
   watch.run(async fn(_) { self.check() }, on_error=err => {
     self.logger.warn(
       "cannot watch the TLS certificate directory, only polling it",
       fields={
-        "dir": Json::string(dir),
+        "dir": Json::string(watch.dir()),
         "error": Json::string(err.to_string()),
       },
     )
@@ -215,15 +264,17 @@ async fn Certificates::run(
 async fn Certificates::check(self : Certificates) -> Unit {
   self.checking.acquire()
   defer self.checking.release()
-  for pair in [self.default, ..self.by_mock.values()] {
+  let pairs = match self.default {
+    Files(pair) => [pair, ..self.by_mock.values()]
+    SelfSigned(_) => [..self.by_mock.values()]
+  }
+  for pair in pairs {
     self.check_pair(pair) catch {
-      err =>
-        self.logger.error("TLS certificate reload failed", fields={
-          "mock": Json::string(pair.mock),
-          "cert_file": Json::string(pair.files.cert_file),
-          "key_file": Json::string(pair.files.key_file),
-          "error": Json::string(err.to_string()),
-        })
+      err => {
+        let fields = pair_fields(pair.mock, pair.files)
+        fields["error"] = Json::string(err.to_string())
+        self.logger.error("TLS certificate reload failed", fields~)
+      }
     }
   }
 }
@@ -242,14 +293,10 @@ async fn Certificates::check_pair(self : Certificates, pair : Pair) -> Unit {
     Ok((cert, key)) => (load_pair(cert, key), certificate_expiry(cert))
     Err(reason) => (Err(reason), None)
   }
-  let fields : Map[String, Json] = {
-    "mock": Json::string(pair.mock),
-    "cert_file": Json::string(pair.files.cert_file),
-    "key_file": Json::string(pair.files.key_file),
-    "expiry": match expiry {
-      Some(ms) => Json::string(@log.format_time(ms))
-      None => Json::null()
-    },
+  let fields = pair_fields(pair.mock, pair.files)
+  fields["expiry"] = match expiry {
+    Some(ms) => Json::string(@log.format_time(ms))
+    None => Json::null()
   }
   match loaded {
     Ok(config) => {

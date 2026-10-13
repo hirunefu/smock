@@ -136,6 +136,12 @@ refuse() {
   fi
 }
 
+# same_deployment <name> <name>: the manifests rendered as the two names have
+# the same Deployment, so an upgrade from one to the other restarts no Pod.
+same_deployment() {
+  [ "$(jq -S "$defs [deployment]" "$tmp/$1.json")" = "$(jq -S "$defs [deployment]" "$tmp/$2.json")" ]
+}
+
 # --- Default delivery: a ConfigMap ------------------------------------------
 
 cat >"$tmp/values-files.yaml" <<'YAML'
@@ -164,8 +170,7 @@ definitions:
       users.json: '{"mocks":[{"name":"users","hosts":["users.example.com"]}]}'
 YAML
 render configmap-updated --values "$tmp/values-token.yaml" --values "$tmp/values-files-updated.yaml"
-if [ "$(jq -S '[.[] | select(.kind == "Deployment")]' "$tmp/configmap.json")" = \
-  "$(jq -S '[.[] | select(.kind == "Deployment")]' "$tmp/configmap-updated.json")" ]; then
+if same_deployment configmap configmap-updated; then
   pass "configmap-updated: new Definition files leave the Deployment as it was, so no Pod restarts"
 else
   fail "configmap-updated: new Definition files change the Deployment, which restarts the Pods"
@@ -201,6 +206,34 @@ check body-files "smock reads body files from that subdirectory" \
   'env("SMOCK_BODY_FILE_DIR").value == "files"'
 check body-files "the volume is still mounted whole, without subPath" \
   'mount("smock"; "definitions") == {"name": "definitions", "mountPath": "/definitions", "readOnly": true}'
+
+# With body files, the volume's items name every file. New content for the
+# same files leaves the Deployment as it was, so smock reloads it. A file
+# added, removed or renamed changes the Pod template, so the Pods restart
+# and lose their Ephemeral Stubs and Journal; the chart's README says so.
+cat >"$tmp/values-body-files-edited.yaml" <<'YAML'
+definitions:
+  configMap:
+    files:
+      users.json: '{"stubs":[{"id":"x"}]}'
+    bodyFiles:
+      users/1.json: '{"id":2}'
+      README.txt: 'still not a Definition file'
+YAML
+render body-files-edited --values "$tmp/values-token.yaml" --values "$tmp/values-body-files-edited.yaml"
+if same_deployment body-files body-files-edited; then
+  pass "body-files-edited: new content for the same files leaves the Deployment as it was, so no Pod restarts"
+else
+  fail "body-files-edited: new content for the same files changes the Deployment, which restarts the Pods"
+fi
+printf 'definitions:\n  configMap:\n    files:\n      orders.json: "{}"\n' >"$tmp/values-body-files-added.yaml"
+render body-files-added --values "$tmp/values-token.yaml" --values "$tmp/values-body-files.yaml" \
+  --values "$tmp/values-body-files-added.yaml"
+if ! same_deployment body-files body-files-added; then
+  pass "body-files-added: with body files, a new file changes the Pod template, which restarts the Pods"
+else
+  fail "body-files-added: with body files, a new file leaves the Pod template as it was, so no Pod shows it"
+fi
 
 render body-file-dir --values "$tmp/values-token.yaml" --values "$tmp/values-body-files.yaml" --set definitions.bodyFileDir=bodies
 check body-file-dir "the body-file subdirectory follows definitions.bodyFileDir" \
@@ -335,7 +368,8 @@ check auth-off "a value turns authentication off through smock's setting, and no
 render no-tls --values "$tmp/values-token.yaml"
 check no-tls "without a TLS Secret, smock gets no certificate files and generates its own" \
   'env("SMOCK_TLS_CERT_FILE") == null and env("SMOCK_TLS_KEY_FILE") == null
-   and ([pod | .volumes[] | select(.name == "tls")] == [])'
+   and env("SMOCK_TLS_MOCK_CERTS") == null
+   and [pod | .volumes[] | select(.secret) | .name] == ["admin-token"]'
 
 render tls --values "$tmp/values-token.yaml" --set tls.secretName=smock-tls
 check tls "the TLS Secret is mounted read-only as a whole volume, so renewals reach smock" \
@@ -344,6 +378,45 @@ check tls "the TLS Secret is mounted read-only as a whole volume, so renewals re
 check tls "smock's certificate settings name the Secret's tls.crt and tls.key" \
   'env("SMOCK_TLS_CERT_FILE").value == "/etc/smock/tls/tls.crt"
    and env("SMOCK_TLS_KEY_FILE").value == "/etc/smock/tls/tls.key"'
+
+# Certificates of single Mocks, chosen by SNI, each from a Secret of its own.
+cat >"$tmp/values-tls-mocks.yaml" <<'YAML'
+tls:
+  mockSecrets:
+    users: users-tls
+    orders.v2: orders-tls
+YAML
+render tls-mocks --values "$tmp/values-token.yaml" --values "$tmp/values-tls-mocks.yaml"
+# The volume of the Secret named $s, and where the smock container mounts it.
+secret_mount='def secret_mount($s):
+  [pod | .volumes[] | select(.secret.secretName == $s)] as $v
+  | {volume: $v, mount: [smock | .volumeMounts[]? | select(.name == $v[0].name)]};'
+check tls-mocks "each Mock's Secret is mounted read-only as a whole volume of its own, so renewals reach smock" \
+  "$secret_mount"'
+   [secret_mount("users-tls", "orders-tls")] as $m
+   | volume("admin-token").secret.defaultMode as $mode
+   | all($m[]; (.volume | length) == 1 and .volume[0].secret.defaultMode == $mode
+       and (.volume[0].secret | has("items") | not)
+       and (.mount | length) == 1 and .mount[0].readOnly == true and (.mount[0] | has("subPath") | not))
+   and ([$m[].mount[0].mountPath, "/etc/smock/tls"] | unique | length) == 3'
+check tls-mocks "SMOCK_TLS_MOCK_CERTS maps each Mock to the tls.crt and tls.key of its Secret" \
+  "$secret_mount"'
+   . as $manifests
+   | (env("SMOCK_TLS_MOCK_CERTS").value | fromjson) as $certs
+   | ($certs | keys) == ["orders.v2", "users"]
+   and all({"users": "users-tls", "orders.v2": "orders-tls"} | to_entries[];
+       .key as $mock | .value as $secret | ($manifests | secret_mount($secret).mount[0].mountPath) as $dir
+       | $certs[$mock] == {"certFile": "\($dir)/tls.crt", "keyFile": "\($dir)/tls.key"})'
+check tls-mocks "without tls.secretName, the default certificate is still the self-signed one" \
+  'env("SMOCK_TLS_CERT_FILE") == null and env("SMOCK_TLS_KEY_FILE") == null'
+render tls-mocks-and-default --values "$tmp/values-token.yaml" --values "$tmp/values-tls-mocks.yaml" \
+  --set tls.secretName=smock-tls
+check tls-mocks-and-default "the Mocks' certificates go with a default certificate from tls.secretName" \
+  'env("SMOCK_TLS_CERT_FILE").value == "/etc/smock/tls/tls.crt"
+   and (env("SMOCK_TLS_MOCK_CERTS").value | fromjson | keys) == ["orders.v2", "users"]'
+refuse tls-mocks-no-secret "a Mock without the name of its Secret" \
+  'tls.mockSecrets: the Mock "users" has no Secret name' \
+  --values "$tmp/values-token.yaml" --set tls.mockSecrets.users=
 
 # --- Ports, Services and probes ---------------------------------------------
 
@@ -429,7 +502,18 @@ check env "each variable is set once" 'envs | length == (unique | length)'
 refuse env-name "a variable that is not a smock setting" \
   'env: "HTTP_PROXY" is not a smock setting: its name must be SMOCK_ and the setting' \
   --values "$tmp/values-token.yaml" --set env.HTTP_PROXY=x
-for name in SMOCK_REPLICAS SMOCK_DIR SMOCK_ADMIN_TOKEN SMOCK_DRAIN_TIMEOUT_MS SMOCK_TLS_CERT_FILE; do
+# Every variable the Deployment sets in any of the chart's own modes (the
+# token as a file or as a variable, with and without TLS) is refused in
+# env, so the list _validate.tpl refuses cannot fall behind the Deployment.
+own=$(for name in token-file token-env tls tls-mocks; do
+  jq -r "$defs envs | .[]" "$tmp/$name.json"
+done | sort -u)
+if [ -n "$own" ]; then
+  pass "env-chart: the Deployment sets variables of its own: $(printf "%s" "$own" | tr "\n" " ")"
+else
+  fail "env-chart: no variables found in the Deployment"
+fi
+for name in $own; do
   refuse env-chart "$name, which the chart sets from its own values" \
     "env: the chart sets $name itself" \
     --values "$tmp/values-token.yaml" --set "env.$name=1"
@@ -547,7 +631,7 @@ render image-tls --set definitions.source=image --set definitions.image.referenc
   --set adminAuth.tokenSecret.name=smock-admin-token --set adminAuth.tokenAs=env --set tls.secretName=smock-tls
 render image-off --set definitions.source=image --set definitions.image.reference=ghcr.io/team/mocks:v1 \
   --set adminAuth.enabled=false
-for name in configmap body-files existing-configmap-items token-file token-env auth-off tls pod \
+for name in configmap body-files existing-configmap-items token-file token-env auth-off tls tls-mocks pod \
   git-sync git-sync-tls git-sync-env git-sync-off image image-tls image-off; do
   restricted "$name"
 done

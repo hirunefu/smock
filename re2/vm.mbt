@@ -18,7 +18,7 @@ priv struct Threads {
 }
 
 ///|
-fn Threads::new(n : Int) -> Threads {
+fn Threads::Threads(n : Int) -> Threads {
   {
     dense: FixedArray::make(n, 0),
     sparse: FixedArray::make(n, 0),
@@ -42,15 +42,20 @@ fn Threads::insert(self : Threads, pc : Int, start : Int) -> Unit {
 }
 
 ///|
-/// Runs `prog` over `input` as a Pike VM: every thread advances in lockstep,
-/// one code point at a time, so the work per input position is bounded by
-/// the program size and never depends on what came before. Returns the match
-/// and the number of steps taken (one per instruction a thread visits).
-fn run(prog : Prog, input : BytesView, mode : Mode) -> (Match?, Int) {
-  let n = prog.insts.length()
+/// Runs the program `insts` over `input` as a Pike VM: every thread
+/// advances in lockstep, one code point at a time, so the work per input
+/// position is bounded by the program size and never depends on what came
+/// before. Returns the match and the number of steps taken (one per
+/// instruction a thread visits).
+fn run(
+  insts : FixedArray[Inst],
+  input : BytesView,
+  mode : Mode,
+) -> (Match?, Int) {
+  let n = insts.length()
   let len = input.length()
-  let mut clist = Threads::new(n)
-  let mut nlist = Threads::new(n)
+  let mut clist = Threads(n)
+  let mut nlist = Threads(n)
   let stack : Array[Int] = []
   let mut steps = 0
   let mut matched : Match? = None
@@ -64,7 +69,7 @@ fn run(prog : Prog, input : BytesView, mode : Mode) -> (Match?, Int) {
       }
       list.insert(pc, start)
       steps += 1
-      match prog.insts[pc] {
+      match insts[pc] {
         Assert(a) => if holds(a, input, at) { stack.push(pc + 1) }
         Jmp(x) => stack.push(x)
         Split(x, y) => {
@@ -94,7 +99,7 @@ fn run(prog : Prog, input : BytesView, mode : Mode) -> (Match?, Int) {
       let pc = clist.dense[i]
       let start = clist.starts[i]
       steps += 1
-      match prog.insts[pc] {
+      match insts[pc] {
         Match =>
           if mode == Full {
             if pos == len {

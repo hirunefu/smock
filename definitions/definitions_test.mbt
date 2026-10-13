@@ -181,6 +181,46 @@ test "a YAML file is validated like the equivalent JSON file" {
 }
 
 ///|
+test "a JSON file with a duplicate key is rejected at the later key, as the equivalent YAML file is" {
+  inspect(
+    problems([
+      (
+        "10-users.json", "{ \"mocks\": [{ \"name\": \"users\", \"name\": \"orders\" }] }",
+      ),
+      (
+        "20-stubs.json",
+        (
+          #|{ "mocks": [{ "name": "m" }],
+          #|  "stubs": [{ "id": "a", "mock": "m", "response": { "status": 200 } }],
+          #|  "stubs": [{ "id": "b", "mock": "m", "response": { "status": 200 } }] }
+        ),
+      ),
+      (
+        "30-escaped.json",
+        (
+          #|{ "mocks": [{ "name": "n" }],
+          #|  "stubs": [{ "id": "c", "mock": "n", "response": { "status": 200 },
+          #|    "request": { "body": { "json": { "a/b": [{}, { "x": 1, "\u0078": 2 }] } } } }] }
+        ),
+      ),
+      (
+        "40-distinct.json",
+        (
+          #|{ "mocks": [{ "name": "o" }],
+          #|  "stubs": [{ "id": "d", "mock": "o", "response": { "status": 200 },
+          #|    "request": { "body": { "json": [{ "x": 1 }, { "x": 2, "X": 3, "x ": 4 }] } } }] }
+        ),
+      ),
+    ]),
+    content=(
+      #|10-users.json: /mocks/0/name: duplicate key
+      #|20-stubs.json: /stubs: duplicate key
+      #|30-escaped.json: /stubs/0/request/body/json/a~1b/1/x: duplicate key
+    ),
+  )
+}
+
+///|
 test "YAML and JSON files are read together, in byte-wise name order" {
   inspect(
     problems([
@@ -429,6 +469,46 @@ test "hosts are host names or IP addresses, optionally with a port, and default 
       #|a.json: /mocks/2/default: must be true or false
       #|a.json: /mocks/3/default: must be true or false
       #|a.json: /mocks/4/default: must be true or false
+    ),
+  )
+}
+
+///|
+test "a Host must be one a request can carry: a port is digits, a bracketed IP literal ends the name, and the name is not empty once normalised" {
+  inspect(
+    problems([
+      (
+        "a.json",
+        (
+          #|{ "mocks": [
+          #|  { "name": "a", "hosts": ["users:", "[::1]:", "[fe80::1]", "fe80::1", "10.0.0.7:80"] } ] }
+        ),
+      ),
+    ]),
+    content="valid",
+  )
+  inspect(
+    problems([
+      (
+        "a.json",
+        (
+          #|{ "mocks": [
+          #|  { "name": "a", "hosts": [":8080", ".", "[::1]junk", "users:http", "[]", "[::1",
+          #|      "a]b", "users:8080:9090", "[zz]", "[::1]:x"] } ] }
+        ),
+      ),
+    ]),
+    content=(
+      #|a.json: /mocks/0/hosts/0: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/0/hosts/1: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/0/hosts/2: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/0/hosts/3: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/0/hosts/4: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/0/hosts/5: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/0/hosts/6: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/0/hosts/7: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/0/hosts/8: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/0/hosts/9: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
     ),
   )
 }

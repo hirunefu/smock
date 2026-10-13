@@ -44,21 +44,6 @@ pub impl ToJson for EphemeralStub with fn to_json(self) {
 }
 
 ///|
-/// Why the engine refused an Admin API operation.
-pub suberror AdminError {
-  /// No Mock has this name. Mocks come only from Definition files.
-  UnknownMock(String)
-  /// The calling Session has no Ephemeral Stub with this ID in the Mock.
-  UnknownStub(mock~ : String, id~ : String)
-  /// The Ephemeral Stub to add is not valid. The problems have no file;
-  /// their JSON Pointers point into the Stub as it was given.
-  InvalidStub(Array[@definitions.Diagnostic])
-  /// The Journal is off for what the operation touches: globally for
-  /// `None`, or for the Mock with this name.
-  JournalOff(String?)
-} derive(Debug)
-
-///|
 /// Ephemeral Stubs, by Mock, then by Session (`None` for the no-Session
 /// space), each list in the order its Stubs are tried. No list is empty,
 /// and no Mock is without one, so that Sessions that come and go leave
@@ -165,20 +150,9 @@ pub fn Engine::add_ephemeral_stub(
   }
   // The newest is tried first among equal priorities: it goes before every
   // Stub whose priority is not lower.
-  let at = list.search_by(other => !tried_before(other.stub, compiled))
+  let at = list.search_by(other => other.stub.compare_priority(compiled) >= 0)
   list.insert(at.unwrap_or(list.length()), added)
   added
-}
-
-///|
-/// Whether `a` has a lower priority number than `b`, where a Stub without
-/// a priority comes after every Stub with one.
-fn tried_before(a : @definitions.Stub, b : @definitions.Stub) -> Bool {
-  match (a.priority, b.priority) {
-    (Some(p), Some(q)) => p < q
-    (Some(_), None) => true
-    (None, _) => false
-  }
 }
 
 ///|
@@ -209,8 +183,8 @@ pub fn Engine::ephemeral_stubs(
 /// `session`, or for the no-Session space when it is `None`. Another
 /// Session's Ephemeral Stubs are unknown here.
 ///
-/// Raises `UnknownMock` when no Mock has the name `mock`, and `UnknownStub`
-/// when `session` has no Ephemeral Stub `id` in it.
+/// Raises `UnknownMock` when no Mock has the name `mock`, and
+/// `UnknownEphemeralStub` when `session` has no Ephemeral Stub `id` in it.
 pub fn Engine::delete_ephemeral_stub(
   self : Engine,
   mock~ : String,
@@ -220,7 +194,7 @@ pub fn Engine::delete_ephemeral_stub(
   self.check_mock(mock)
   guard self.ephemeral.of(mock, session) is Some(list) &&
     list.search_by(stub => stub.id == id) is Some(i) else {
-    raise UnknownStub(mock~, id~)
+    raise UnknownEphemeralStub(mock~, id~)
   }
   list.remove(i) |> ignore
   if list.is_empty() {
@@ -256,7 +230,9 @@ pub(all) struct Removed {
 /// Definition files declare never changes.
 ///
 /// Raises `UnknownMock` when the scope is a Mock that no Mock has the name
-/// of.
+/// of and that the Journal holds no entries of. A Mock that a reload
+/// removed has no Ephemeral Stubs left, but the entries it recorded remain,
+/// and a reset of it clears them.
 pub fn Engine::reset(
   self : Engine,
   scope : ResetScope,
@@ -268,12 +244,15 @@ pub fn Engine::reset(
         journal_entries: self.journal.reset_session(session),
       }
     Mock(mock) => {
-      self.check_mock(mock)
+      let journal_entries = self.journal.remove_where(entry => {
+        entry.mock == Some(mock)
+      })
+      if journal_entries == 0 {
+        self.check_mock(mock)
+      }
       {
         ephemeral_stubs: self.ephemeral.remove_where((m, _) => m == mock),
-        journal_entries: self.journal.remove_where(entry => {
-          entry.mock == Some(mock)
-        }),
+        journal_entries,
       }
     }
     All =>

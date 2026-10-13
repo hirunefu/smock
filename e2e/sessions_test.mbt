@@ -10,6 +10,16 @@ fn baggage(session : String) -> (String, String) {
 }
 
 ///|
+/// The `baggage` header that carries `session`, when it is given; none
+/// without.
+fn session_headers(session : String?) -> Array[(String, String)] {
+  match session {
+    Some(session) => [baggage(session)]
+    None => []
+  }
+}
+
+///|
 /// Calls the Admin API with the test token, as `session` when it is given,
 /// checks the response against the document, and returns its status and
 /// body.
@@ -20,12 +30,7 @@ async fn Smock::call(
   session? : String,
   body? : String,
 ) -> String {
-  let headers = match session {
-    Some(session) => [baggage(session)]
-    None => []
-  }
-  let response = self.admin(meth, path, headers~, body?)
-  conforms(meth, path, response)
+  let response = self.admin(meth, path, headers=session_headers(session), body?)
   "\{response.status} \{response.body}"
 }
 
@@ -38,11 +43,7 @@ async fn Smock::user(
   session? : String,
   meth? : String = "GET",
 ) -> String {
-  let headers = match session {
-    Some(session) => [baggage(session)]
-    None => []
-  }
-  let response = self.send(meth, "/users/1", headers~)
+  let response = self.send(meth, "/users/1", headers=session_headers(session))
   let lines = response.split("\n").collect()
   let near_miss = lines
     .iter()
@@ -72,7 +73,6 @@ async test "over the authenticated Admin API, Ephemeral Stubs are added, listed,
         "without a token",
         {
           let response = smock.admin("GET", stubs, token=None)
-          conforms("GET", stubs, response)
           response.status.to_string()
         },
       )
@@ -208,7 +208,6 @@ async test "an invalid Ephemeral Stub gets 400 invalid_stub with the problems sm
       "/v1/mocks/default/stubs",
       body=invalid_stub,
     )
-    conforms("POST", "/v1/mocks/default/stubs", response)
     guard response.json() is Object(error) &&
       error.get("message") is Some(String(message)) else {
       fail(response.body)
@@ -381,7 +380,7 @@ async test "adding, deleting and resetting each write a JSON log entry; failed c
     let after = stopped.logs.length() -
       stopped.logs.rev().search_by(line => listening(line) is Some(_)).unwrap()
     inspect(
-      entries(stopped.logs[after:].to_owned()),
+      log_entries(stopped.logs[after:].to_owned()),
       content=(
         #|{"level":"info","msg":"Ephemeral Stub added","mock":"users","session":"test-a","id":"eph-1"}
         #|{"level":"info","msg":"Ephemeral Stub added","mock":"users","session":null,"id":"eph-2"}
@@ -426,7 +425,6 @@ async test "the Session header and member are settings, by flag or SMOCK_ variab
           headers=context,
           body=ephemeral_user(503, "t1"),
         )
-        conforms("POST", "/v1/mocks/users/stubs", added)
         out.push("\{name}: added \{added.status}")
         for
           request in [

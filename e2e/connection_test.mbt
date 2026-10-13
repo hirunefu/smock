@@ -29,7 +29,7 @@ let startup_only : String =
   #|{"level":"info","msg":"random seed","seed":"*"}
   #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
   #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
-  #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","cert_file":"*/rsa-chain.pem","key_file":"*/rsa-key.pem"}
+  #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","certFile":"*/rsa-chain.pem","keyFile":"*/rsa-key.pem"}
   #|{"level":"info","msg":"drain started","timeoutMs":20000}
   #|{"level":"info","msg":"drain ended","connectionsCut":0}
 
@@ -59,16 +59,8 @@ fn status_line(response : String) -> String {
 /// after `since` that was and what smock sent until then. A reset ends the
 /// connection too.
 async fn ended(conn : Conn, since : Int64) -> (Int64, String) {
-  let received = StringBuilder()
-  let result = @async.with_timeout_opt(patience_ms, () => {
-    for ;; {
-      let more = conn.read_some() catch { _ => None }
-      guard more is Some(bytes) else { break }
-      received.write_string(@utf8.decode_lossy(bytes))
-    }
-  })
-  guard result is Some(_) else { fail("the connection stayed open") }
-  (@async.now() - since, received.to_string())
+  let (_, end, received) = received_until_end(conn, since)
+  (end, @utf8.decode_lossy(received))
 }
 
 ///|
@@ -401,7 +393,7 @@ async test "limits: a head over the header size or header count limit gets 431, 
     },
   )
   // Requests that hit a limit are not logged one by one.
-  inspect(entries(stopped.logs), content=startup_only)
+  inspect(log_entries(stopped.logs), content=startup_only)
 }
 
 ///|
@@ -472,7 +464,58 @@ async test "read timeout: a request that has begun but has not all arrived withi
     },
   )
   // Timeouts are not logged one by one.
-  inspect(entries(stopped.logs), content=startup_only)
+  inspect(log_entries(stopped.logs), content=startup_only)
+}
+
+///|
+async test "read timeout: a request pipelined behind a slow response has the read timeout from when that response is written, since smock reads nothing while it writes" {
+  let defs =
+    #|{ "mocks": [{ "name": "users" }],
+    #|  "stubs": [
+    #|    { "id": "slow", "mock": "users", "request": { "path": "/slow" },
+    #|      "response": { "status": 200, "body": "slow" },
+    #|      "fault": { "delay": { "fixed": 600 } } },
+    #|    { "id": "user", "mock": "users", "request": { "path": "/users/1" },
+    #|      "response": { "status": 200, "body": "Alice" } } ] }
+  let stopped = on_both_ports(
+    files=[("users.json", defs)],
+    args=["--read-timeout-ms", "300", "--idle-timeout-ms", "10000"],
+    (smock, over) => {
+      let out = []
+      // The next request begins in the same write as the slow one, and its
+      // rest comes once the slow response, 600 ms later, is in.
+      let rest_later = smock.connect(over~)
+      defer rest_later.close()
+      rest_later.write(
+        "GET /slow HTTP/1.1\r\nHost: localhost\r\n\r\nGET /users/1 HTTP/1.1\r\nHost: local",
+      )
+      out.push("slow: \{status_line(read_response(rest_later))}")
+      rest_later.write("host\r\n\r\n")
+      out.push("pipelined: \{status_line(read_response(rest_later))}")
+      // A rest that never comes still ends the connection, the read timeout
+      // after the slow response (give or take the time it takes to read).
+      let no_rest = smock.connect(over~)
+      defer no_rest.close()
+      no_rest.write(
+        "GET /slow HTTP/1.1\r\nHost: localhost\r\n\r\nGET /users/1 HTTP/1.1\r\nHost: local",
+      )
+      let _ = read_response(no_rest)
+      let since = @async.now()
+      let (elapsed, rest) = ended(no_rest, since)
+      out.push(
+        "no rest: \{rest.escape()}, ended about 300 ms after the slow response: \{elapsed >= 200 && elapsed < 1000}",
+      )
+      inspect(
+        out.join("\n"),
+        content=(
+          #|slow: HTTP/1.1 200 OK
+          #|pipelined: HTTP/1.1 200 OK
+          #|no rest: "", ended about 300 ms after the slow response: true
+        ),
+      )
+    },
+  )
+  inspect(log_entries(stopped.logs), content=startup_only)
 }
 
 ///|
@@ -483,10 +526,12 @@ async test "idle timeout: a connection that receives no request bytes for the id
     (smock, over) => {
       let out = []
       // A new connection that never sends anything: the read timeout does
-      // not apply to it.
+      // not apply to it. Each wait is timed from before smock can have
+      // started its idle timeout, so that a scheduling delay cannot make it
+      // look short.
+      let since = @async.now()
       let silent = smock.connect(over~)
       defer silent.close()
-      let since = @async.now()
       let (elapsed, rest) = ended(silent, since)
       out.push(
         "new and silent: \{rest.escape()}, ended after at least 1500 ms: \{elapsed >= 1500}",
@@ -494,9 +539,9 @@ async test "idle timeout: a connection that receives no request bytes for the id
       // A kept-alive connection, after its response.
       let kept = smock.connect(over~)
       defer kept.close()
+      let since = @async.now()
       kept.write("GET /users/1 HTTP/1.1\r\nHost: localhost\r\n\r\n")
       let response = read_response(kept)
-      let since = @async.now()
       let (elapsed, rest) = ended(kept, since)
       out.push(
         "kept alive: \{status_line(response)}, then \{rest.escape()}, ended after at least 1500 ms: \{elapsed >= 1500}",
@@ -521,5 +566,5 @@ async test "idle timeout: a connection that receives no request bytes for the id
       )
     },
   )
-  inspect(entries(stopped.logs), content=startup_only)
+  inspect(log_entries(stopped.logs), content=startup_only)
 }

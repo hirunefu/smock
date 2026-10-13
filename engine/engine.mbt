@@ -80,35 +80,15 @@ pub(all) struct ResponsePlan {
   /// How long to wait, in milliseconds, before writing the status line.
   delay_ms : Int
   /// A connection Fault to inject instead of a normal response.
-  fault : ConnectionFault?
+  fault : @definitions.ConnectionKind?
 } derive(Debug)
 
 ///|
-/// A response body: bytes sent at once, or a stream of Server-Sent Events.
+/// A response body: bytes sent at once, or a stream of Server-Sent Events,
+/// each written after waiting its `delay_ms` milliseconds.
 pub(all) enum Body {
   Bytes(Bytes)
-  Events(Array[SseEvent])
-} derive(Debug)
-
-///|
-/// One Server-Sent Event, written after waiting `delay_ms` milliseconds.
-pub(all) struct SseEvent {
-  delay_ms : Int
-  event : String?
-  id : String?
-  data : String
-} derive(Debug)
-
-///|
-/// A connection-level Fault.
-pub(all) enum ConnectionFault {
-  /// Reset the connection after reading the request.
-  Reset
-  /// Close the connection without writing anything.
-  Close
-  /// Write the status line, the headers and the first half of the body,
-  /// then close the connection.
-  Partial
+  Events(ReadOnlyArray[@definitions.SseEvent])
 } derive(Debug)
 
 ///|
@@ -216,6 +196,23 @@ pub(all) enum ReloadOutcome {
 } derive(Debug, Eq)
 
 ///|
+/// Every way a reload can end.
+pub fn ReloadOutcome::all() -> Array[ReloadOutcome] {
+  [Swapped, Unchanged, Failed]
+}
+
+///|
+/// The outcome's name, as the Admin API, the logs and the reload metric
+/// give it: `swapped`, `unchanged` or `failed`.
+pub fn ReloadOutcome::name(self : ReloadOutcome) -> String {
+  match self {
+    Swapped => "swapped"
+    Unchanged => "unchanged"
+    Failed => "failed"
+  }
+}
+
+///|
 /// Reloads the definitions from `set`, read with the problems
 /// `read_problems`, at the time `at` (milliseconds since the Unix epoch).
 /// Every file is validated and a whole new snapshot is built:
@@ -295,11 +292,9 @@ pub fn Engine::handle(
   let matched_ephemeral = ephemeral.bind(list => {
     list.iter().find_first(e => incoming.meets(e.stub.request))
   })
-  // The Stub that matched, with its own generator if it has one, and
-  // whether it is an Ephemeral Stub.
-  let matched : (@definitions.Stub, @prng.Generator?, Bool)? = match
-    (mock, matched_ephemeral) {
-    (_, Some(e)) => Some((e.stub, e.generator, true))
+  let matched : Match? = match (mock, matched_ephemeral) {
+    (_, Some(e)) =>
+      Some({ stub: e.stub, generator: e.generator, source: Ephemeral(e.id), })
     (Some(mock), None) => {
       let candidates = if self.match_index {
         mock.candidates(request.meth, incoming.path)
@@ -308,13 +303,17 @@ pub fn Engine::handle(
       }
       candidates
       .find_first(stub => incoming.meets(stub.request))
-      .map(stub => (stub, self.generators.get(stub.id), false))
+      .map(stub => {
+        stub,
+        generator: self.generators.get(stub.id),
+        source: FromFile(stub.id),
+      })
     }
     (None, None) => None
   }
   let (plan, near_miss) : (ResponsePlan, NearMiss?) = match (mock, matched) {
     (None, _) => (no_mock(host, self.snapshot.hosts()), None)
-    (Some(_), Some((stub, generator, _))) => {
+    (Some(_), Some({ stub, generator, .. })) => {
       let (delay_ms, fault) = decide_faults(stub, generator.unwrap_or(rand))
       ({ ..stub_response(stub.response), delay_ms, fault, }, None)
     }
@@ -332,7 +331,7 @@ pub fn Engine::handle(
   if resolution is ViaDefault(name) {
     plan.headers.push(("Smock-Mock", "\{header_safe(name)}; via=default"))
   }
-  let stub = matched.map(matched => matched.0.id)
+  let stub = matched.map(matched => matched.stub.id)
   let journal = if self.journal.records(mock) {
     Some(
       self.journal.entry(
@@ -355,15 +354,18 @@ pub fn Engine::handle(
     plan,
     journal,
     near_miss,
-    matched: matched.map(matched => {
-      let (stub, _, ephemeral) = matched
-      if ephemeral {
-        Ephemeral(stub.id)
-      } else {
-        FromFile(stub.id)
-      }
-    }),
+    matched: matched.map(matched => matched.source),
   }
+}
+
+///|
+/// The Stub that matched a request, with the generator its Fault decisions
+/// draw from when it has a seed, and where it comes from.
+priv struct Match {
+  stub : @definitions.Stub
+  /// Its own generator, when it has a seed.
+  generator : @prng.Generator?
+  source : MatchedStub
 }
 
 ///|
@@ -378,17 +380,7 @@ fn stub_response(response : @definitions.Response) -> ResponsePlan {
       if !response.headers.iter().any(h => h.0.to_lower() == "content-type") {
         headers.push(("Content-Type", "text/event-stream"))
       }
-      Events(
-        events
-        .iter()
-        .map(event => SseEvent::{
-          delay_ms: event.delay_ms,
-          event: event.event,
-          id: event.id,
-          data: event.data,
-        })
-        .collect(),
-      )
+      Events(events)
     }
   }
   headers.push_iter(response.headers.iter())
@@ -432,20 +424,19 @@ fn no_mock(host : String?, hosts : Array[String]) -> ResponsePlan {
 }
 
 ///|
-/// `name` as it can be written in a header value, ASCII only: the
+/// `text` as it can be written in a header value, ASCII only: the
 /// characters of an HTTP token stay as they are, except `%`, and every
-/// other byte of its UTF-8 encoding is percent-encoded. A Mock name can be
-/// any text, so this keeps a name such as `a\r\nb` or `a; via=x` from
-/// changing the response or the header's meaning.
-fn header_safe(name : String) -> String {
+/// other byte of its UTF-8 encoding is percent-encoded. A name, such as a
+/// Mock name, can be any text, so this keeps a name such as `a\r\nb` or
+/// `a; via=x` from changing the response or the header's meaning.
+pub fn header_safe(text : String) -> String {
+  if @http1.is_token(text) && !text.contains_char('%') {
+    return text
+  }
   let out = StringBuilder()
-  for byte in @utf8.encode(name) {
+  for byte in @utf8.encode(text) {
     let c = byte.to_int().unsafe_to_char()
-    let token = (c >= 'a' && c <= 'z') ||
-      (c >= 'A' && c <= 'Z') ||
-      (c >= '0' && c <= '9') ||
-      "!#$&'*+-.^_`|~".contains_char(c)
-    if token {
+    if c != '%' && @http1.is_token(c.to_string()) {
       out.write_char(c)
     } else {
       out.write_string("%")

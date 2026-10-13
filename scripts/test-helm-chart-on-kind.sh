@@ -108,7 +108,7 @@ grep -q 'violate PodSecurity "restricted' "$tmp/broken.log" ||
 token="--set adminAuth.tokenSecret.name=smock-admin-token"
 for mode in \
   "configmap|$token" \
-  "configmap-env-tls|$token --set adminAuth.tokenAs=env --set tls.secretName=smock-tls" \
+  "configmap-env-tls|$token --set adminAuth.tokenAs=env --set tls.secretName=smock-tls --set tls.mockSecrets.users=users-tls" \
   "configmap-auth-off|--set adminAuth.enabled=false" \
   "git-sync|$token --set definitions.source=gitSync --set definitions.gitSync.repo=https://example.com/mocks.git --set tls.secretName=smock-tls" \
   "image|$token --set definitions.source=image --set definitions.image.reference=ghcr.io/hirunefu/mocks:v1 --set tls.secretName=smock-tls"; do

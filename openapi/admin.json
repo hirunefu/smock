@@ -864,8 +864,8 @@
             "type": "string"
           },
           "digest": {
-            "description": "The definition set digest of the definition set this replica serves: the first 12 hex digits of SHA-256 over the sorted relative names and bytes of every Definition file and body file. Replicas that serve the same files report the same digest. null when this replica does not compute it.",
-            "type": ["string", "null"],
+            "description": "The definition set digest of the definition set this replica serves: the first 12 hex digits of SHA-256 over the sorted relative names and bytes of every Definition file and body file. Replicas that serve the same files report the same digest. Every definition set has one, the one served at startup and the empty one served without a definitions directory included.",
+            "type": "string",
             "pattern": "^[0-9a-f]{12}$"
           },
           "lastReload": {
@@ -993,7 +993,8 @@
             "type": ["string", "null"]
           }
         },
-        "required": ["id", "mock", "session"]
+        "required": ["id", "mock", "session"],
+        "unevaluatedProperties": false
       },
       "EphemeralStubAdded": {
         "description": "The Ephemeral Stub that was added.",
@@ -1065,7 +1066,7 @@
                 "const": "mock"
               },
               "mock": {
-                "description": "The Mock's name.",
+                "description": "The Mock's name. It may name a Mock the definitions served no longer declare, while the Journal holds entries it recorded before a reload removed it: the reset clears them.",
                 "type": "string",
                 "minLength": 1
               }
@@ -1230,7 +1231,7 @@
           },
           "digest": {
             "description": "The digest of the definition set that answered the request, as in the status.",
-            "type": ["string", "null"],
+            "type": "string",
             "pattern": "^[0-9a-f]{12}$"
           },
           "request": {
@@ -1369,7 +1370,7 @@
             "$ref": "../schema/v1/definitions.json#/$defs/request/properties/body"
           },
           "actual": {
-            "description": "The values the request carries for the condition, in order: one for method, path and body; every value of a query parameter or header, which may be repeated; none when it is absent.",
+            "description": "The values the request carries for the condition, in order: one for method, path and body; every value of a query parameter or header, which may be repeated; none when it is absent. A body that is not UTF-8 is shown with U+FFFD in place of each sequence that is not; the Journal entry's request body keeps its bytes.",
             "type": "array",
             "items": {
               "type": "string"

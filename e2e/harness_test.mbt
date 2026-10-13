@@ -92,7 +92,13 @@ struct Smock {
 ///|
 /// Sends smock SIGTERM, which makes it drain and exit.
 async fn Smock::terminate(self : Smock) -> Unit {
-  let _ = @process.run("kill", ["-TERM", self.pid.to_string()])
+  terminate(self.pid)
+}
+
+///|
+/// Sends the process `pid` SIGTERM.
+async fn terminate(pid : Int) -> Unit {
+  let _ = @process.run("kill", ["-TERM", pid.to_string()])
 }
 
 ///|
@@ -264,65 +270,131 @@ async fn with_smock(
   cwd? : String = ".",
   f : async (Smock) -> Unit,
 ) -> Stopped {
-  build.wait()
   @async.with_task_group(group => {
-    let (stderr, stderr_end) = @process.read_from_process()
-    let process = @process.spawn(
-      group,
-      @fs.realpath(binary),
-      ["serve", ..args],
-      extra_env=smock_env(env),
-      inherit_env=false,
-      stderr=stderr_end,
-      cwd~,
-      no_wait=true,
-    )
-    let logs = []
-    let lines : @async.Queue[String?] = @async.Queue(kind=Unbounded)
-    let reader = group.spawn(() => {
-      defer stderr.close()
-      for ;; {
-        let line = stderr.read_until("\n")
-        if line is Some(line) {
-          logs.push(line)
-        }
-        lines.put(line)
-        if line is None {
-          break
-        }
-      }
-    })
-    let ports : Map[String, Int] = Map([])
-    let expected = ["plain", "tls", "admin"]
-    let listening = @async.with_timeout_opt(patience_ms, () => {
-      while !expected.iter().all(listener => ports.contains(listener)) {
-        guard lines.get() is Some(line) else {
-          fail("smock exited before listening:\n\{logs.join("\n")}")
-        }
-        if listening(line) is Some((listener, port)) {
-          ports[listener] = port
-        }
-      }
-    })
-    guard listening is Some(_) else {
-      fail("smock did not listen in time:\n\{logs.join("\n")}")
+    let serving = Serving::start(group, args, env~, cwd~)
+    guard serving.listening_on(["plain", "tls", "admin"]) is Some(ports) else {
+      fail("smock exited before listening:\n\{serving.logs.join("\n")}")
     }
-    f({
-      port: ports.get("plain").unwrap(),
-      tls_port: ports.get("tls").unwrap(),
-      admin_port: ports.get("admin").unwrap(),
-      pid: process.pid,
-      logs,
-      process,
-    })
-    if process.try_wait() is None {
-      let _ = @process.run("kill", ["-TERM", process.pid.to_string()])
-    }
-    let status = @async.with_timeout_opt(patience_ms, () => process.wait())
-    guard status is Some(status) else { fail("smock did not stop in time") }
-    reader.wait()
-    { status, logs, }
+    f(serving.smock(ports))
+    let status = serving.stop()
+    { status, logs: serving.logs, }
   })
+}
+
+///|
+/// A `smock serve` process the harness started, while it runs.
+struct Serving {
+  process : @process.Process
+  /// The log lines it has written so far: they keep coming while it runs.
+  logs : Array[String]
+  /// Each log line as it comes, then `None` once smock has closed stderr,
+  /// which it does when it exits.
+  lines : @async.Queue[String?]
+  /// Reads the log lines, until smock closes stderr.
+  reader : @async.Task[Unit]
+}
+
+///|
+/// Starts `smock serve <args>` in `group`, with only `smock_env(env)` as
+/// its environment, in the working directory `cwd`, and reads its log lines
+/// as they come.
+async fn[X] Serving::start(
+  group : @async.TaskGroup[X],
+  args : Array[String],
+  env? : Map[String, String] = Map([]),
+  cwd? : String = ".",
+) -> Serving {
+  build.wait()
+  let (stderr, stderr_end) = @process.read_from_process()
+  let process = @process.spawn(
+    group,
+    @fs.realpath(binary),
+    ["serve", ..args],
+    extra_env=smock_env(env),
+    inherit_env=false,
+    stderr=stderr_end,
+    cwd~,
+    no_wait=true,
+  )
+  let logs = []
+  let lines : @async.Queue[String?] = @async.Queue(kind=Unbounded)
+  let reader = group.spawn(() => {
+    defer stderr.close()
+    for ;; {
+      let line = stderr.read_until("\n")
+      if line is Some(line) {
+        logs.push(line)
+      }
+      lines.put(line)
+      if line is None {
+        break
+      }
+    }
+  })
+  { process, logs, lines, reader, }
+}
+
+///|
+/// Waits until smock listens on each of `listeners` (`"plain"`, `"tls"`,
+/// `"admin"`) and returns their ports, or `None` when smock exits first.
+async fn Serving::listening_on(
+  self : Serving,
+  listeners : Array[String],
+) -> Map[String, Int]? {
+  let ports : Map[String, Int] = Map([])
+  let listened = @async.with_timeout_opt(patience_ms, () => {
+    for ;; {
+      if listeners.iter().all(listener => ports.contains(listener)) {
+        break true
+      }
+      guard self.lines.get() is Some(line) else { break false }
+      if listening(line) is Some((listener, port)) {
+        ports[listener] = port
+      }
+    }
+  })
+  guard listened is Some(listened) else {
+    fail("smock did not listen in time:\n\{self.logs.join("\n")}")
+  }
+  if listened {
+    Some(ports)
+  } else {
+    None
+  }
+}
+
+///|
+/// The running smock, with the ports it listens on from `ports`; a port it
+/// has not opened yet is 0.
+fn Serving::smock(self : Serving, ports : Map[String, Int]) -> Smock {
+  {
+    port: ports.get("plain").unwrap_or(0),
+    tls_port: ports.get("tls").unwrap_or(0),
+    admin_port: ports.get("admin").unwrap_or(0),
+    pid: self.process.pid,
+    logs: self.logs,
+    process: self.process,
+  }
+}
+
+///|
+/// Waits for smock to exit and for its last log line, and returns its exit
+/// status (minus the signal number when a signal ended it).
+async fn Serving::wait(self : Serving) -> Int {
+  let status = @async.with_timeout_opt(patience_ms, () => self.process.wait())
+  guard status is Some(status) else { fail("smock did not stop in time") }
+  self.reader.wait()
+  status
+}
+
+///|
+/// Stops smock with SIGTERM, unless it has exited, and waits for it as
+/// `wait` does.
+async fn Serving::stop(self : Serving) -> Int {
+  if self.process.try_wait() is None {
+    terminate(self.process.pid)
+  }
+  self.wait()
 }
 
 ///|
@@ -331,35 +403,14 @@ async fn with_smock(
 /// then stopped), or `"exits with status <n>"` when it stops by itself
 /// first.
 async fn serve_verdict(args : Array[String]) -> String {
-  build.wait()
   @async.with_task_group(group => {
-    let (stderr, stderr_end) = @process.read_from_process()
-    defer stderr.close()
-    let process = @process.spawn(
-      group,
-      binary,
-      ["serve", "--port", "0", ..args],
-      extra_env=smock_env(Map([])),
-      inherit_env=false,
-      stderr=stderr_end,
-      no_wait=true,
-    )
-    let verdict = @async.with_timeout_opt(patience_ms, () => {
-      for ;; {
-        guard stderr.read_until("\n") is Some(line) else {
-          break "exits with status \{process.wait()}"
-        }
-        if listening(line) is Some(("plain", _)) {
-          let _ = @process.run("kill", ["-TERM", process.pid.to_string()])
-          let _ = process.wait()
-          break "serves"
-        }
-      }
-    })
-    guard verdict is Some(verdict) else {
-      fail("smock serve neither listened nor stopped in time")
+    let serving = Serving::start(group, ["--port", "0", ..args])
+    if serving.listening_on(["plain"]) is Some(_) {
+      let _ = serving.stop()
+      "serves"
+    } else {
+      "exits with status \{serving.wait()}"
     }
-    verdict
   })
 }
 
@@ -389,20 +440,8 @@ async fn run_smock(
   args : Array[String],
   env? : Map[String, String] = Map([]),
 ) -> Stopped {
-  build.wait()
-  let result = @async.with_timeout_opt(patience_ms, () => {
-    @process.collect_stderr(
-      binary,
-      args,
-      extra_env=smock_env(env),
-      inherit_env=false,
-    )
-  })
-  guard result is Some((status, stderr)) else {
-    fail("smock did not exit in time")
-  }
+  let (status, _, stderr) = smock_output(args, env=smock_env(env))
   let logs = stderr
-    .text()
     .split("\n")
     .filter(line => line != "")
     .map(line => line.to_owned())
@@ -414,14 +453,38 @@ async fn run_smock(
 /// Runs `smock <args>` until it exits, and returns its exit status and what
 /// it wrote to stdout, such as help text.
 async fn smock_stdout(args : Array[String]) -> (Int, String) {
+  let (status, stdout, _) = smock_output(args)
+  (status, stdout)
+}
+
+///|
+/// Runs `smock <args>` with only `env` as its environment until it exits by
+/// itself, and returns its exit status and what it wrote to stdout and to
+/// stderr.
+async fn smock_output(
+  args : Array[String],
+  env? : Map[String, String] = Map([]),
+) -> (Int, String, String) {
   build.wait()
   let result = @async.with_timeout_opt(patience_ms, () => {
-    @process.collect_stdout(binary, args, inherit_env=false)
+    @process.collect_output(binary, args, extra_env=env, inherit_env=false)
   })
-  guard result is Some((status, stdout)) else {
-    fail("smock did not exit in time")
+  guard result is Some((status, stdout, stderr)) else {
+    fail("smock \{args.join(" ")} did not exit in time")
   }
-  (status, stdout.text())
+  (status, stdout.text(), stderr.text())
+}
+
+///|
+/// Renders how a run of smock ended, as `smock_output` returns it: the exit
+/// status, then what smock wrote to stdout and, if anything, to stderr.
+fn exit_report(output : (Int, String, String)) -> String {
+  let (status, stdout, stderr) = output
+  let out = "status \{status}\n\{stdout}"
+  match stderr {
+    "" => out
+    err => "\{out}stderr:\n\{err}"
+  }
 }
 
 ///|
@@ -436,7 +499,9 @@ async fn Smock::get(self : Smock, path : String) -> String {
 }
 
 ///|
-/// Sends one request to the Admin API and reads the whole response.
+/// Sends one request to the Admin API and reads the whole response. It fails
+/// the test unless the response conforms to the OpenAPI document
+/// (`conforms`), so every Admin API response a test gets is checked.
 ///
 /// - `token` goes in `Authorization: Bearer <token>`; `None` sends no
 ///   Authorization field. The default is the token the harness gives smock.
@@ -450,51 +515,114 @@ async fn Smock::admin(
   headers? : Array[(String, String)] = [],
   body? : String,
 ) -> AdminResponse {
-  let conn = @socket.Tcp::connect(
-    @socket.Addr::parse("127.0.0.1:\{self.admin_port}"),
+  let conn = PlainConn(
+    @socket.Tcp::connect(@socket.Addr::parse("127.0.0.1:\{self.admin_port}")),
   )
   defer conn.close()
-  let request = StringBuilder()
-  request.write_string("\{meth} \{path} HTTP/1.1\r\nHost: localhost\r\n")
-  if token is Some(token) {
-    request.write_string("Authorization: Bearer \{token}\r\n")
+  let authorization = match token {
+    Some(token) => [("Authorization", "Bearer \{token}")]
+    None => []
   }
-  for header in headers {
-    request.write_string("\{header.0}: \{header.1}\r\n")
-  }
-  match body {
-    Some(body) => {
-      let length = @utf8.encode(body).length()
-      request.write_string("Content-Length: \{length}\r\n\r\n\{body}")
-    }
-    None => request.write_string("\r\n")
-  }
-  conn.write(request.to_string())
-  read_admin_response(conn)
+  conn.write(
+    raw_request(
+      meth,
+      path,
+      host="localhost",
+      headers=[..authorization, ..headers],
+      body?,
+    ),
+  )
+  let response = read_admin_response(conn)
+  conforms(meth, path, response)
+  response
 }
 
 ///|
-/// Reads one response, framed by its Content-Length.
-async fn read_admin_response(conn : @socket.Tcp) -> AdminResponse {
+/// An Admin API response as a test sees it.
+struct AdminResponse {
+  status : Int
+  /// The header fields, in the order they came.
+  headers : Array[(String, String)]
+  body : String
+}
+
+///|
+/// The value of the header field `name`, compared case-insensitively.
+fn AdminResponse::header(self : AdminResponse, name : String) -> String? {
+  let name = name.to_lower()
+  for header in self.headers {
+    if header.0.to_lower() == name {
+      return Some(header.1)
+    }
+  }
+  None
+}
+
+///|
+/// The body, parsed as JSON.
+fn AdminResponse::json(self : AdminResponse) -> Json raise {
+  @json.parse(self.body)
+}
+
+///|
+/// Reads one response and parses its status and header fields.
+async fn read_admin_response(conn : Conn) -> AdminResponse {
+  guard read_framed(conn) is Some((head, body)) else {
+    fail("the connection closed without a response")
+  }
+  let lines = head.split("\r\n").collect()
+  let status = @string.parse_int(lines[0].split(" ").nth(1).unwrap())
+  let headers = []
+  for line in lines[1:] {
+    guard line.find(":") is Some(colon) else { continue }
+    headers.push((line[:colon].to_owned(), line[colon + 1:].trim().to_owned()))
+  }
+  AdminResponse::{ status, headers, body: @utf8.decode(body), }
+}
+
+///|
+/// A request as raw HTTP/1.1 bytes: the request line, `Host: <host>` when
+/// `host` is given, `headers` in order, then, when `body` is given, its
+/// Content-Length and the body.
+fn raw_request(
+  meth : String,
+  target : String,
+  host? : String,
+  headers? : Array[(String, String)] = [],
+  body? : String,
+) -> String {
+  let out = StringBuilder()
+  out.write_string("\{meth} \{target} HTTP/1.1\r\n")
+  if host is Some(host) {
+    out.write_string("Host: \{host}\r\n")
+  }
+  for header in headers {
+    out.write_string("\{header.0}: \{header.1}\r\n")
+  }
+  match body {
+    Some(body) =>
+      out.write_string(
+        "Content-Length: \{@utf8.encode(body).length()}\r\n\r\n\{body}",
+      )
+    None => out.write_string("\r\n")
+  }
+  out.to_string()
+}
+
+///|
+/// Reads one response, framed by its Content-Length: its head, without the
+/// empty line that ends it, and its body. `None` when the connection ends
+/// first.
+async fn read_framed(conn : Conn) -> (String, Bytes)? {
   let result = @async.with_timeout_opt(patience_ms, () => {
-    guard conn.read_until("\r\n\r\n") is Some(head) else {
-      fail("the connection closed without a response")
-    }
-    let lines = head.split("\r\n").collect()
-    let status = @string.parse_int(lines[0].split(" ").nth(1).unwrap())
-    let headers = []
+    guard conn.read_until("\r\n\r\n") is Some(head) else { return None }
     let mut length = 0
-    for line in lines[1:] {
-      guard line.find(":") is Some(colon) else { continue }
-      let name = line[:colon].to_owned()
-      let value = line[colon + 1:].trim().to_owned()
-      if name.to_lower() == "content-length" {
-        length = @string.parse_int(value)
+    for line in head.split("\r\n") {
+      if line.to_lower().has_prefix("content-length:") {
+        length = @string.parse_int(line["content-length:".length():].trim())
       }
-      headers.push((name, value))
     }
-    let body = @utf8.decode(conn.read_exactly(length))
-    AdminResponse::{ status, headers, body, }
+    Some((head, conn.read_exactly(length)))
   })
   guard result is Some(response) else { fail("no response in time") }
   response
@@ -528,19 +656,11 @@ async fn Smock::connect(self : Smock, over? : Over = Plain) -> Conn {
 /// Reads one response, framed by its Content-Length, and renders it with
 /// `\r\n` shown as `\n`. Returns `"closed"` when the connection ends first.
 async fn read_response(conn : Conn) -> String {
-  let result = @async.with_timeout_opt(patience_ms, () => {
-    guard conn.read_until("\r\n\r\n") is Some(head) else { return "closed" }
-    let mut length = 0
-    for line in head.split("\r\n") {
-      if line.to_lower().has_prefix("content-length:") {
-        length = @string.parse_int(line["content-length:".length():].trim())
-      }
-    }
-    let body = conn.read_exactly(length)
-    head.replace_all(old="\r\n", new="\n") + "\n\n" + @utf8.decode_lossy(body)
-  })
-  guard result is Some(response) else { fail("no response in time") }
-  response
+  match read_framed(conn) {
+    Some((head, body)) =>
+      head.replace_all(old="\r\n", new="\n") + "\n\n" + @utf8.decode_lossy(body)
+    None => "closed"
+  }
 }
 
 ///|
@@ -549,6 +669,28 @@ async fn closed(conn : Conn) -> Bool {
   let result = @async.with_timeout_opt(patience_ms, () => conn.read_some())
   guard result is Some(rest) else { fail("the connection stayed open") }
   rest is None
+}
+
+///|
+/// Reads `conn` until smock ends it, by a FIN or a reset alike, and returns
+/// when the last bytes came (-1 if none did) and when the end came, in
+/// milliseconds after `since`, and every byte received.
+async fn received_until_end(
+  conn : Conn,
+  since : Int64,
+) -> (Int64, Int64, Bytes) {
+  let received = @buffer.Buffer()
+  let mut last = -1L
+  let result = @async.with_timeout_opt(patience_ms, () => {
+    for ;; {
+      let more = conn.read_some() catch { _ => None }
+      guard more is Some(bytes) else { break }
+      last = @async.now() - since
+      received.write_bytes(bytes)
+    }
+  })
+  guard result is Some(_) else { fail("the connection stayed open") }
+  (last, @async.now() - since, received.to_bytes())
 }
 
 ///|
@@ -566,7 +708,7 @@ fn render_response(response : @http.Response, body : String) -> String {
 ///|
 /// The log lines as JSON objects without their time, with the values that
 /// differ from build to build and run to run replaced by `*`.
-fn entries(logs : Array[String]) -> String {
+fn log_entries(logs : Array[String]) -> String {
   logs
   .map(line => {
     let entry = @json.parse(line) catch { _ => return "not JSON: \{line}" }
@@ -577,7 +719,7 @@ fn entries(logs : Array[String]) -> String {
         "time" => ()
         "version" | "commit" | "toolchain" | "seed" | "sha256Fingerprint" =>
           out[key] = "*"
-        "cert_file" | "key_file" =>
+        "certFile" | "keyFile" =>
           out[key] = match value {
             String(path) =>
               Json::string(

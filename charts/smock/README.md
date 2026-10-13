@@ -40,11 +40,11 @@ the Admin API through `smock-admin` (port 9090): for example
 
 The ConfigMap is mounted as a whole volume at the definitions directory,
 never with `subPath`, so Kubernetes swaps updated files in and smock reloads
-them, without a restart: `helm upgrade` with new files changes the ConfigMap
-and leaves the Deployment as it is. The kubelet refreshes mounted ConfigMaps
-periodically, so an update takes up to a minute or two to arrive. The
-definition set digest in each replica's `GET /v1/status` shows which files
-it serves.
+them, without a restart: `helm upgrade` with new Definition files changes
+the ConfigMap and leaves the Deployment as it is. The kubelet refreshes
+mounted ConfigMaps periodically, so an update takes up to a minute or two to
+arrive. The definition set digest in each replica's `GET /v1/status` shows
+which files it serves.
 
 The values can carry the files, by name in `definitions.configMap.files`,
 and the body files, by path in `definitions.configMap.bodyFiles`. Body files
@@ -73,6 +73,14 @@ start with `.`; body file paths must stay inside the body-file
 subdirectory. The chart refuses others, since smock would not read them.
 Values hold text only, and a ConfigMap holds at most 1 MiB.
 
+ConfigMap keys cannot hold `/`, so with body files the volume lists every
+file in its `items`, and those are part of the Pod template. New content for
+the same files still reaches smock by reload, but adding, removing or
+renaming a file, a Definition file included, changes the Pod template:
+`helm upgrade` then rolls out new Pods, which start without the Ephemeral
+Stubs and the Journal of the old ones. Without body files there are no
+items, and any change reloads in place.
+
 Or `definitions.configMap.name` names a ConfigMap you manage yourself, and
 the chart mounts it. Each of its keys is then a file at the top level of the
 definitions directory. To place body files under the body-file
@@ -88,15 +96,22 @@ definitions:
       - { key: user-1, path: files/users/1.json }
 ```
 
+As with body files in the values, `items` are part of the Pod template:
+changing them restarts the Pods, while new content for the listed keys
+reloads in place.
+
 ### From a Git repository (git-sync)
 
 With `definitions.source=gitSync`, a [git-sync](https://github.com/kubernetes/git-sync)
 init container clones `definitions.gitSync.repo` before smock starts, so
 smock never starts without its files, and a git-sync sidecar then checks for
 new commits every `definitions.gitSync.period`. git-sync publishes each new
-commit by swapping a symlink, and smock reloads the files it finds there.
-`definitions.gitSync.path` is the definitions directory inside the
-repository.
+commit by swapping a symlink and removing the worktree it replaced, and smock
+reloads the files it finds there as soon as that worktree goes. A
+`--stale-worktree-timeout` in `definitions.gitSync.extraArgs` keeps old
+worktrees for a while; smock then finds each new commit with its poll of the
+directory, within 10 s. `definitions.gitSync.path` is the definitions
+directory inside the repository.
 
 ```yaml
 definitions:
@@ -150,6 +165,20 @@ each change. The files in the image must be readable by UID 65532.
   and passed to smock's certificate settings, so a renewed certificate
   reaches smock without a restart. Without it, smock serves HTTPS with a
   self-signed certificate it generates.
+- `tls.mockSecrets` gives single Mocks certificates of their own, chosen by
+  SNI: it maps each Mock name to a `kubernetes.io/tls` Secret. Each Secret
+  is mounted as a whole volume of its own and passed to smock's
+  `SMOCK_TLS_MOCK_CERTS`, so its renewals reach smock without a restart
+  too. A handshake whose SNI is a Host of a listed Mock gets that Mock's
+  certificate; any other gets the default one, from `tls.secretName` or
+  self-signed.
+
+  ```yaml
+  tls:
+    mockSecrets:
+      users: users-tls
+      orders: orders-tls
+  ```
 
 ## Ports, Services and probes
 
@@ -199,8 +228,8 @@ env:
   SMOCK_SEED: "42"
 ```
 
-The chart refuses the variables it sets itself and names the value to use
-instead.
+The chart refuses the variables it sets itself, `SMOCK_TLS_MOCK_CERTS`
+among them, and names the value to use instead.
 
 ## Values
 
@@ -214,9 +243,9 @@ instead.
 | `definitions.source` | `"configMap"` | Where the Definition files come from: `configMap`, `gitSync` or `image`. |
 | `definitions.bodyFileDir` | `"files"` | The body-file subdirectory of the definitions directory (smock's `SMOCK_BODY_FILE_DIR`). |
 | `definitions.configMap.name` | `""` | An existing ConfigMap to mount. Empty: the chart makes one from `files` and `bodyFiles`. |
-| `definitions.configMap.items` | `[]` | With `name`: where its keys go (`key`, `path`), as in a ConfigMap volume. Empty: every key at the top level. |
+| `definitions.configMap.items` | `[]` | With `name`: where its keys go (`key`, `path`), as in a ConfigMap volume. Empty: every key at the top level. A change to it restarts the Pods. |
 | `definitions.configMap.files` | `{}` | Definition files, by file name. |
-| `definitions.configMap.bodyFiles` | `{}` | Body files, by path inside `definitions.bodyFileDir`. |
+| `definitions.configMap.bodyFiles` | `{}` | Body files, by path inside `definitions.bodyFileDir`. With them, a file added, removed or renamed restarts the Pods. |
 | `definitions.gitSync.repo` | `""` | The Git repository URL. Required with `source: gitSync`. |
 | `definitions.gitSync.ref` | `"HEAD"` | The branch, tag or commit to sync. |
 | `definitions.gitSync.path` | `""` | The definitions directory inside the repository. Empty: its top. |
@@ -238,6 +267,7 @@ instead.
 | `adminAuth.tokenSecret.key` | `"token"` | The key of the token in that Secret. |
 | `adminAuth.tokenAs` | `"file"` | How smock gets the token: `file` (mounted) or `env` (`SMOCK_ADMIN_TOKEN`). |
 | `tls.secretName` | `""` | A `kubernetes.io/tls` Secret for the TLS port. Empty: a generated self-signed certificate. |
+| `tls.mockSecrets` | `{}` | Certificates of single Mocks, chosen by SNI: a `kubernetes.io/tls` Secret by Mock name. |
 | `ports.plain` | `8080` | smock's plain port. |
 | `ports.tls` | `8443` | smock's TLS port. |
 | `ports.admin` | `9090` | smock's admin port: the Admin API, probes and metrics. |

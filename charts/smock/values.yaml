@@ -24,7 +24,9 @@ definitions:
 
   # source: configMap. A ConfigMap mounted as a whole volume at the
   # definitions directory: Kubernetes swaps updated files in, and smock
-  # reloads them without a restart.
+  # reloads them without a restart. With bodyFiles or items, the Pod
+  # template names every file, so a file added, removed or renamed
+  # restarts the Pods.
   configMap:
     # An existing ConfigMap to mount. Empty: the chart makes one from files
     # and bodyFiles.
@@ -96,6 +98,11 @@ tls:
   # makes). Renewed files reach smock without a restart. Empty: smock
   # generates a self-signed certificate.
   secretName: ""
+  # Certificates of single Mocks, chosen by SNI: each Mock name maps to a
+  # kubernetes.io/tls Secret, such as users: users-tls. Each is mounted as a
+  # whole volume, so renewed files reach smock without a restart. Any other
+  # handshake gets the default certificate above.
+  mockSecrets: {}
 
 # smock's container ports.
 ports:

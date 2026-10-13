@@ -33,22 +33,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Check that the runner is ${{ matrix.machine }}
-        run: test "$(uname -m)" = "${{ matrix.machine }}"
-
-      # The native build links OpenSSL, the one C library ADR 0001 allows
-      # (prebuild.py adds -lssl -lcrypto). The TLS tests also use the
-      # openssl command line tool as an independent TLS client.
-      - name: Install OpenSSL
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libssl-dev openssl
-
-      - name: Install MoonBit (${{ inputs.toolchain }})
-        run: scripts/install-moonbit.sh "${{ inputs.toolchain }}"
+      # The runner check, OpenSSL, MoonBit and moon update.
+      - uses: ./.github/actions/native-setup
+        with:
+          machine: ${{ matrix.machine }}
+          toolchain: ${{ inputs.toolchain }}
 
       - run: moon version --all
-
-      - name: Update the mooncakes registry index
-        run: moon update
 
       - name: Check formatting
         if: inputs.toolchain == 'pinned'
@@ -57,14 +48,20 @@ jobs:
       - name: Check every target
         run: moon check --deny-warn --target all
 
-      - name: Check that the protocol modules stay independent of smock and of I/O
-        run: scripts/check-protocol-modules.sh
+      - name: Check that the protocol modules and the packages that decide a response do no I/O
+        run: scripts/check-no-io.sh
 
       - name: Check the C boundary (ADR 0001)
         run: scripts/check-no-c.sh
 
       - name: Test every module natively
         run: moon test --target native
+
+      # A release build may fuse floating-point multiply-adds, so that a
+      # seeded log-normal delay differs from the one wasm-gc draws.
+      # prebuild.py turns that off, and the engine's tests check it.
+      - name: Test the engine in a release build
+        run: moon test --target native --release -p smock/smock/engine
 
       - name: Test the OpenSSL bindings under AddressSanitizer and LeakSanitizer
         run: scripts/test-openssl-asan.sh
@@ -89,6 +86,23 @@ jobs:
           "$SMOCK_VERSION"
           "${GITHUB_SHA::12}"
           "moonc $(moonc -v | cut -d' ' -f1)"
+
+      - id: syft
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          syft-version: v1.54.1
+
+      # The release workflow makes the published image's SBOM the same way,
+      # but only for a tag: this checks on every push that smock and its
+      # MoonBit modules get into it.
+      - name: Make the image's SBOM as the release workflow does
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+        run: |
+          "$SYFT" scan docker:smock:ci --output spdx-json=sbom.spdx.json
+          scripts/add-smock-to-sbom.sh sbom.spdx.json "$SMOCK_VERSION" "$GITHUB_SHA"
+          jq -e --arg version "$SMOCK_VERSION" \
+            'any(.packages[]; .name == "smock" and .versionInfo == $version)' sbom.spdx.json
 
       - name: Install helm, kubectl and kind
         run: scripts/install-kubernetes-tools.sh "$RUNNER_TEMP/bin"
@@ -124,5 +138,7 @@ jobs:
       # moon skips every package whose supported_targets leave out wasm-gc,
       # which is how packages that do I/O are marked. Every other package,
       # including each new no-I/O package, is tested here with no change.
+      # scripts/check-no-io.sh keeps the packages that decide a response
+      # from leaving wasm-gc out.
       - name: Test every no-I/O package on wasm-gc
         run: moon test --target wasm-gc

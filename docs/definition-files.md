@@ -15,7 +15,9 @@ in a definitions directory, such as `defs/`, that `smock serve --dir` and
   file declares.
 - Body files live in the body-file subdirectory, `files/` by default
   (`--body-file-dir`, `SMOCK_BODY_FILE_DIR`). smock reads them when it
-  loads the Definition files, and serves them from memory.
+  loads the Definition files, and serves them from memory. Symlinks inside
+  it are followed while they stay inside it; one that leads a file or a
+  directory outside it is a problem, so that nothing outside is served.
 
 ## Hosts and the Default Mock
 
@@ -38,6 +40,10 @@ mocks:
   case-insensitively, without the port and without a trailing dot, so
   `Users.Example.com.:8080` is the Host `users.example.com`. An IPv6 address
   is written in brackets, such as `[::1]:8080`.
+- A Host is written as a request's `Host` header carries it, so a port is
+  digits, and nothing but a port follows a bracketed address. A Host that
+  leaves no name once normalised, such as `.` or `:8080`, could never match
+  and is rejected.
 - Each Host belongs to at most one Mock. The same Host repeated within one
   Mock is fine.
 
@@ -89,7 +95,10 @@ Stub without `request` matches every request of its Mock.
 Query parameters are decoded as HTML forms encode them: `%20` and `+` both
 stand for a space, so `?q=a+b` meets `"query": { "q": "a b" }`. A parameter
 without `=` has the empty value. When a parameter or a header is repeated,
-the condition holds when any one of its values matches.
+the condition holds when any one of its values matches. Each header field
+line is one value: a client or proxy that joins repeated values into one
+line, such as `X-Tag: b, a`, sends the value `b, a`, which `"X-Tag": "a"`
+does not match; a pattern such as `{ "pattern": "(.*, )?a(, .*)?" }` does.
 
 A `json` condition is a subset match:
 
@@ -98,6 +107,9 @@ A `json` condition is a subset match:
 - an array needs the same length, matched element by element;
 - any other value must be equal: strings exactly, numbers by their value
   (`1` and `1.0` are equal), and `true`, `false` and `null` themselves.
+  Integers are compared exactly however many digits they have, so a 64-bit
+  ID such as `9007199254740993` matches only itself; a number with a
+  fraction or an exponent is compared as closely as a 64-bit float holds it.
 
 A body that does not parse as JSON never meets a `json` condition.
 
@@ -327,9 +339,16 @@ data: line 2
   with chunked framing, so the connection carries the next request. An
   HTTP/1.0 client gets it unframed, and smock closes the connection to end
   it.
+- A response with no body, to a `HEAD` request or with status 204 or 304,
+  is the status and the headers alone. smock sends them at once and waits
+  for no event.
 - While a stream waits, smock serves every other connection. A client that
   closes the connection mid-stream ends that stream: smock notices when it
-  next writes an event.
+  next writes an event. Until then, which an event's long delay can put
+  off, the stream keeps its connection, and a [drain](../README.md#run) on
+  SIGTERM waits for it as for any stream in progress. smock does not watch
+  the connection meanwhile, since a client may close its sending side once
+  its request is sent and still read the stream.
 
 ## Faults
 
@@ -384,10 +403,24 @@ of getting its response:
   closes the connection. The client sees a response cut short. For
   Server-Sent Events, the first half is the first half of the events,
   rounded down, each after its delay, and the stream is not ended.
+  - A response with no body bytes to halve, such as an empty body or a
+    response to `HEAD`, would be whole that way. smock leaves out the empty
+    line that ends its headers instead, so the client still sees it cut
+    short.
+  - A stream of Server-Sent Events to an HTTP/1.0 client ends when the
+    connection closes, so a client cannot tell a partial one from a whole
+    stream with fewer events.
 
 `probability`, from 0 to 1, is the share of matched requests that fail;
 without it, every matched request fails. A Stub with both a delay and a
 connection Fault waits first, then fails.
+
+A request that asks for `100 Continue` (`Expect: 100-continue`) gets it
+before its body is read, as HTTP/1.1 requires of a client that waits for
+it, and so before smock knows which Stub, and which Fault, applies. Its
+`reset` or `close` then comes after that interim response, which is all
+the client receives. smock sends `100 Continue` also when the body arrives
+without waiting for it.
 
 ### Seeds
 
@@ -438,6 +471,13 @@ restart:
   triggers a reload. So does a Kubernetes ConfigMap update, which swaps the
   `..data` symlink and keeps the visible names. Any change in the directory
   counts, so a reload can also find nothing new.
+- When `--dir` goes through a symlink that is pointed at a new directory,
+  as git-sync does for each commit (`--dir /git/current/mocks`), smock goes
+  on watching the directory it found at first until that one changes or is
+  removed. git-sync removes the directory it replaced at once by default,
+  so the new commit is reloaded right away and watched from then on. When
+  the old directory stays, as with git-sync's `--stale-worktree-timeout`,
+  the new commit is found by the next poll, within 10 s.
 - Changes are coalesced: smock reloads once they have been quiet for
   250 ms, so a burst of changes gives one reload. It also polls the
   directory every 10 s, in case a change went unnoticed, and reloads when
@@ -512,6 +552,9 @@ does, so a directory that passes `smock check` loads in `smock serve`, and
 the reverse. It prints every problem on its own line, with the file and a
 JSON Pointer to the value, and exits with status 1. A valid directory
 prints nothing, apart from [warnings](#warnings), and exits with status 0.
+A directory that does not exist is an empty definition set, as for
+`smock serve`, so it passes too; `smock check` then says on stderr that the
+directory does not exist, so that a mistyped path is noticed.
 
 ```console
 $ smock check defs
@@ -527,7 +570,10 @@ two Mocks claim the same Host after normalisation, at most one Mock is
 marked `default`, and every Stub names a Mock that some file declares. A
 duplicate is reported where it occurs the second time, in file-name order,
 and the message names the first. It also compiles every
-[pattern](#pattern-conditions), which the Schema accepts as any string.
+[pattern](#pattern-conditions), which the Schema accepts as any string, and
+rejects a key repeated within one JSON object, as YAML files reject it:
+JSON parsers disagree on which of the two values counts, and the Schema
+sees only one of them.
 
 In CI, run it as a step that fails the build:
 
@@ -583,8 +629,36 @@ directory:
 }
 ```
 
+For YAML Definition files, the YAML extension by Red Hat (which runs
+yaml-language-server) takes the Schema the same way, in `yaml.schemas`:
+
+```json
+{
+  "yaml.schemas": {
+    "https://hirunefu.github.io/smock/schema/v1/definitions.json": [
+      "defs/*.yaml",
+      "defs/*.yml"
+    ]
+  }
+}
+```
+
 Do not add a `$schema` field to the files themselves: smock rejects fields
-the Schema does not define.
+the Schema does not define. In a YAML file, a comment can name the Schema
+instead, since comments are not fields:
+
+```yaml
+# yaml-language-server: $schema=https://hirunefu.github.io/smock/schema/v1/definitions.json
+mocks:
+  - name: users
+stubs:
+  - id: get-user
+    mock: users
+    request: { method: GET, path: /users/1 }
+    response:
+      status: 200
+      body: '{"id":1,"name":"Alice"}'
+```
 
 ## Writing Definition files in another configuration language
 

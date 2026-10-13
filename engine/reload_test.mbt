@@ -371,20 +371,18 @@ test "after a reload removes a Mock, its Hosts resolve like any unknown Host" {
   let h = harness([
     mock_file("users", "\"hosts\": [\"users.example.com\"]"),
     mock_file("orders", "\"hosts\": [\"orders.example.com\"]"),
-    mock_file("fallback", "\"hosts\": [\"fallback.example.com\"]"),
+    mock_file("other", "\"hosts\": [\"other.example.com\"]"),
   ])
   let orders = [("Host", "orders.example.com")]
   let before = answer(h, "/x", orders)
   let _ = h.reload([
     mock_file("users", "\"hosts\": [\"users.example.com\"]"),
-    mock_file("fallback", "\"hosts\": [\"fallback.example.com\"]"),
+    mock_file("other", "\"hosts\": [\"other.example.com\"]"),
   ])
   let without_default = answer(h, "/x", orders)
   let _ = h.reload([
     mock_file("users", "\"hosts\": [\"users.example.com\"]"),
-    mock_file(
-      "fallback", "\"hosts\": [\"fallback.example.com\"], \"default\": true",
-    ),
+    mock_file("other", "\"hosts\": [\"other.example.com\"], \"default\": true"),
   ])
   let with_default = answer(h, "/x", orders)
   inspect(
@@ -396,11 +394,19 @@ test "after a reload removes a Mock, its Hosts resolve like any unknown Host" {
       #|NoMock
       #|404
       #|Content-Type: application/json
-      #|{"error":"no Mock for this Host","host":"orders.example.com","acceptedHosts":["fallback.example.com","users.example.com"]}---
-      #|ViaDefault("fallback")
+      #|{"error":"no Mock for this Host","host":"orders.example.com","acceptedHosts":["other.example.com","users.example.com"]}---
+      #|ViaDefault("other")
       #|200
-      #|Smock-Mock: fallback; via=default
-      #|from fallback
+      #|Smock-Mock: other; via=default
+      #|from other
     ),
+  )
+}
+
+///|
+test "the reload outcomes are named as the Admin API's lastReload.result names them" {
+  inspect(
+    @engine.ReloadOutcome::all().map(outcome => outcome.name()).join(", "),
+    content="swapped, unchanged, failed",
   )
 }

@@ -37,39 +37,14 @@ fn query_parameters(target : String) -> Array[(String, String)] {
 }
 
 ///|
-/// Percent-decodes `s`. With `plus_is_space`, `+` stands for a space.
+/// Percent-decodes `s`, as `@percent.decode_lossy` does. With
+/// `plus_is_space`, `+` stands for a space.
 fn percent_decode(s : StringView, plus_is_space~ : Bool) -> String {
-  guard s.contains_char('%') || (plus_is_space && s.contains_char('+')) else {
-    return s.to_owned()
-  }
-  let bytes = @utf8.encode(s)
-  let out = @buffer.Buffer(size_hint=bytes.length())
-  let mut i = 0
-  while i < bytes.length() {
-    if bytes[i] == b'%' &&
-      i + 2 < bytes.length() &&
-      hex_digit(bytes[i + 1]) is Some(high) &&
-      hex_digit(bytes[i + 2]) is Some(low) {
-      out.write_byte((high * 16 + low).to_byte())
-      i += 3
-    } else if plus_is_space && bytes[i] == b'+' {
-      out.write_byte(b' ')
-      i += 1
-    } else {
-      out.write_byte(bytes[i])
-      i += 1
-    }
-  }
-  @utf8.decode_lossy(out.to_bytes())
-}
-
-///|
-/// The value of the hexadecimal digit `b`, if it is one.
-fn hex_digit(b : Byte) -> Int? {
-  match b {
-    b'0'..=b'9' => Some(b.to_int() - 0x30)
-    b'a'..=b'f' => Some(b.to_int() - 0x61 + 10)
-    b'A'..=b'F' => Some(b.to_int() - 0x41 + 10)
-    _ => None
+  if plus_is_space && s.contains_char('+') {
+    @percent.decode_lossy(s.to_owned().replace_all(old="+", new=" "))
+  } else if s.contains_char('%') {
+    @percent.decode_lossy(s)
+  } else {
+    s.to_owned()
   }
 }

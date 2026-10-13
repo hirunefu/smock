@@ -62,7 +62,7 @@ pub fn SampleRequest::from_json(
   let mut body = ""
   let mut session = None
   for name, value in members {
-    let at = "/" + pointer_token(name)
+    let at = @definitions.child_pointer("", name)
     match name {
       "method" =>
         match value {
@@ -115,7 +115,7 @@ fn values(
   }
   let out = []
   for name, value in members {
-    let at = "\{at}/\{pointer_token(name)}"
+    let at = @definitions.child_pointer(at, name)
     match value {
       String(value) => out.push((name, value))
       Array(items) =>
@@ -136,12 +136,6 @@ fn values(
     }
   }
   out
-}
-
-///|
-/// `name` as a reference token of a JSON Pointer: `~` as `~0`, `/` as `~1`.
-fn pointer_token(name : String) -> String {
-  name.replace_all(old="~", new="~0").replace_all(old="/", new="~1")
 }
 
 ///|
@@ -253,7 +247,8 @@ fn Engine::file_stub(self : Engine, id : String) -> @definitions.Stub? {
 pub impl ToJson for Rendering with fn to_json(self) {
   let (body, events) = match self.body {
     Bytes(bytes) => (body_json(bytes), Json::null())
-    Events(events) => (Json::null(), Json::array(events.map(event_json)))
+    Events(events) =>
+      (Json::null(), Json::array(events.iter().map(event_json).collect()))
   }
   {
     "stub": self.stub.to_json(),
@@ -294,7 +289,7 @@ fn body_json(bytes : Bytes, size? : Int = bytes.length()) -> Json {
 ///|
 /// A Server-Sent Event as Definition files write it: its delay, its type
 /// and ID when it has them, and its data.
-fn event_json(event : SseEvent) -> Json {
+fn event_json(event : @definitions.SseEvent) -> Json {
   let out : Map[String, Json] = { "delay": event.delay_ms.to_json() }
   if event.event is Some(event) {
     out["event"] = event.to_json()

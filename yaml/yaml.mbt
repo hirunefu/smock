@@ -85,5 +85,5 @@ pub impl Show for ParseError with fn output(self, logger) {
 /// }
 /// ```
 pub fn parse(text : StringView) -> Json raise ParseError {
-  Parser::new(text).document()
+  Parser(text).document()
 }

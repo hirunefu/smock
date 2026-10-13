@@ -72,7 +72,7 @@ async test "smock serve exits with status 1 at startup when a pattern does not c
     dir => {
       let stopped = run_smock(["serve", "--dir", dir, "--port", "0"])
       inspect(
-        "status \{stopped.status}\n" + entries(stopped.logs),
+        "status \{stopped.status}\n" + log_entries(stopped.logs),
         content=(
           #|status 1
           #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}

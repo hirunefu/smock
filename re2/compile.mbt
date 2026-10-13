@@ -16,35 +16,32 @@ priv enum Inst {
 }
 
 ///|
-priv struct Prog {
-  insts : Array[Inst]
-}
-
-///|
 /// The most instructions a compiled program may have. Like RE2's memory
 /// budget, it bounds the time and memory that compiling and matching take.
 const MAX_PROGRAM_SIZE : Int = 100000
 
 ///|
+/// Builds a program, one instruction at a time.
 priv struct Compiler {
   insts : Array[Inst]
 }
 
 ///|
-fn compile_node(node : Node) -> Prog raise CompileError {
+/// The program that matches `node`, ending with `Match`.
+fn compile_node(node : Node) -> FixedArray[Inst] raise CompileError {
   let c : Compiler = { insts: [], }
   c.emit(node)
   c.push(Match) |> ignore
-  { insts: c.insts, }
+  FixedArray::from_array(c.insts)
 }
 
 ///|
 /// Appends `inst` and returns its index.
 fn Compiler::push(self : Compiler, inst : Inst) -> Int raise CompileError {
   if self.insts.length() >= MAX_PROGRAM_SIZE {
-    raise CompileError(
-      position=0,
-      message="pattern too large: it compiles to more than \{MAX_PROGRAM_SIZE} instructions",
+    fail_at(
+      0,
+      "pattern too large: it compiles to more than \{MAX_PROGRAM_SIZE} instructions",
     )
   }
   self.insts.push(inst)
@@ -146,10 +143,10 @@ fn Compiler::emit_repeat(
   sub : Node,
   sub_nullable : Bool,
   min : Int,
-  max : Int,
+  max : Int?,
   greedy : Bool,
 ) -> Unit raise CompileError {
-  if max == -1 {
+  guard max is Some(max) else {
     match min {
       0 => self.emit_star(sub, sub_nullable, greedy)
       1 => self.emit_plus(sub, greedy)

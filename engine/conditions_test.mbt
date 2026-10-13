@@ -346,6 +346,39 @@ test "a repeated header matches when any of its values does, whatever the case o
 }
 
 ///|
+test "each header field line is one value: a line that joins values with commas matches only as a whole" {
+  let h = stubs([
+    (
+      #|{ "id": "tagged", "mock": "m", "request": { "headers": { "x-tag": "a" } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "both", "mock": "m", "request": { "headers": { "x-tag": "b, a" } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "listed", "mock": "m",
+      #|  "request": { "headers": { "x-tag": { "pattern": "(.*, )?a(, .*)?" } } },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  inspect(
+    winners(h, [
+      ("GET", "/", [("X-Tag", "b"), ("X-Tag", "a")], ""),
+      ("GET", "/", [("X-Tag", "b, a")], ""),
+      ("GET", "/", [("X-Tag", "a, b")], ""),
+      ("GET", "/", [("X-Tag", "ab, c")], ""),
+    ]),
+    content=(
+      #|GET / [X-Tag: b] [X-Tag: a] -> tagged
+      #|GET / [X-Tag: b, a] -> both
+      #|GET / [X-Tag: a, b] -> listed
+      #|GET / [X-Tag: ab, c] -> none
+    ),
+  )
+}
+
+///|
 test "an exact body condition matches only a body of exactly that text in UTF-8" {
   let h = stubs([
     (
@@ -524,6 +557,42 @@ test "a json condition needs scalars to be equal: same type, and numbers by valu
       #|POST / "{\"n\":1,\"s\":\"1\",\"t\":true,\"z\":false}" -> none
       #|POST / "{\"n\":1,\"s\":\"1\",\"t\":true}" -> none
       #|POST / "{\"n\":1.5,\"s\":\"1\",\"t\":true,\"z\":null}" -> none
+    ),
+  )
+}
+
+///|
+test "a json condition compares numbers by their exact value, even integers above 2^53 and numbers beyond a Double's range" {
+  let h = stubs([
+    (
+      #|{ "id": "id", "mock": "m",
+      #|  "request": { "body": { "json": { "id": 9007199254740993 } } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "huge", "mock": "m",
+      #|  "request": { "body": { "json": { "v": 1e400 } } },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  inspect(
+    winners(h, [
+      ("POST", "/", [], "{\"id\":9007199254740993}"),
+      ("POST", "/", [], "{\"id\":9007199254740992}"),
+      ("POST", "/", [], "{\"id\":9007199254740994}"),
+      ("POST", "/", [], "{\"v\":1e400}"),
+      ("POST", "/", [], "{\"v\":10E+399}"),
+      ("POST", "/", [], "{\"v\":1e401}"),
+      ("POST", "/", [], "{\"v\":-1e400}"),
+    ]),
+    content=(
+      #|POST / "{\"id\":9007199254740993}" -> id
+      #|POST / "{\"id\":9007199254740992}" -> none
+      #|POST / "{\"id\":9007199254740994}" -> none
+      #|POST / "{\"v\":1e400}" -> huge
+      #|POST / "{\"v\":10E+399}" -> huge
+      #|POST / "{\"v\":1e401}" -> none
+      #|POST / "{\"v\":-1e400}" -> none
     ),
   )
 }

@@ -54,14 +54,9 @@ pub struct JournalEntry {
   via_default : Bool
   /// The digest of the definition set that answered.
   digest : String
-  meth : String
-  /// The request target as sent.
-  target : String
-  version : String
-  /// The header fields, in the order they were sent.
-  headers : Array[(String, String)]
-  /// The first bytes of the body, as many as the Journal keeps.
-  body : Bytes
+  /// The request as it was received, except that its body is only the
+  /// first bytes, as many as the Journal keeps.
+  request : Request
   /// The length of the whole body, in bytes.
   body_size : Int
   /// The ID of the Stub that matched, if any.
@@ -72,7 +67,7 @@ pub struct JournalEntry {
   /// request before a status was written.
   status : Int?
   /// The connection Fault injected instead of the response, if any.
-  fault : ConnectionFault?
+  fault : @definitions.ConnectionKind?
   /// The bytes the entry counts against the Journal's byte bound.
   priv size : Int
 } derive(Debug)
@@ -182,11 +177,7 @@ fn Journal::entry(
     mock,
     via_default,
     digest,
-    meth: request.meth,
-    target: request.target,
-    version: request.version,
-    headers: request.headers,
-    body,
+    request: { ..request, body, },
     body_size: request.body.length(),
     stub,
     near_miss,
@@ -224,11 +215,7 @@ let vacated : JournalEntry = {
   mock: None,
   via_default: false,
   digest: "",
-  meth: "",
-  target: "",
-  version: "",
-  headers: [],
-  body: b"",
+  request: { meth: "", target: "", version: "", headers: [], body: b"", },
   body_size: 0,
   stub: None,
   near_miss: None,
@@ -239,8 +226,14 @@ let vacated : JournalEntry = {
 
 ///|
 /// Appends `entry`, then evicts the oldest entries while the Journal is
-/// over either of its bounds, counting them per Session.
+/// over either of its bounds, counting them per Session. An entry that
+/// alone takes more bytes than the bound is evicted at once instead, and
+/// the entries before it stay.
 fn Journal::append(self : Journal, entry : JournalEntry) -> Unit {
+  if entry.size > self.settings.max_bytes {
+    self.count_eviction(entry)
+    return
+  }
   self.entries.push_back(entry)
   self.bytes += entry.size
   while self.entries.length() > self.settings.max_entries ||
@@ -249,10 +242,15 @@ fn Journal::append(self : Journal, entry : JournalEntry) -> Unit {
     self.entries[0] = vacated
     self.entries.pop_front() |> ignore
     self.bytes -= oldest.size
-    self.evicted[oldest.session] = self.evicted.get(oldest.session).unwrap_or(0) +
-      1
-    self.evictions += 1L
+    self.count_eviction(oldest)
   }
+}
+
+///|
+/// Counts `entry` as evicted by the bound, for its Session.
+fn Journal::count_eviction(self : Journal, entry : JournalEntry) -> Unit {
+  self.evicted[entry.session] = self.evicted.get(entry.session).unwrap_or(0) + 1
+  self.evictions += 1L
 }
 
 ///|
@@ -355,14 +353,7 @@ fn JournalFilter::passes(self : JournalFilter, entry : JournalEntry) -> Bool {
   if self.until is Some(until) && entry.received_at >= until {
     return false
   }
-  let request = {
-    meth: entry.meth,
-    target: entry.target,
-    version: entry.version,
-    headers: entry.headers,
-    body: entry.body,
-  }
-  Incoming::new(request).meets(self.conditions)
+  Incoming::new(entry.request).meets(self.conditions)
 }
 
 ///|
@@ -417,7 +408,7 @@ fn read_filter(
   match json {
     Object(members) =>
       for name, value in members {
-        let pointer = "\{at}/\{pointer_token(name)}"
+        let pointer = @definitions.child_pointer(at, name)
         let time = () => {
           match value {
             String(text) if @log.parse_time(text) is Some(time) => Some(time)
@@ -506,7 +497,7 @@ pub fn JournalQuery::from_json(json : Json) -> JournalQuery raise InvalidQuery {
   let mut filter = None
   let mut limit = default_limit
   for name, value in members {
-    let pointer = "/" + pointer_token(name)
+    let pointer = @definitions.child_pointer("", name)
     match name {
       "filter" => filter = Some(read_filter(value, pointer, problems))
       "limit" =>
@@ -647,16 +638,16 @@ pub impl ToJson for JournalEntry with fn to_json(self) {
     "viaDefault": Json::boolean(self.via_default),
     "digest": Json::string(self.digest),
     "request": {
-      "method": Json::string(self.meth),
-      "target": Json::string(self.target),
-      "version": Json::string(self.version),
+      "method": Json::string(self.request.meth),
+      "target": Json::string(self.request.target),
+      "version": Json::string(self.request.version),
       "headers": Json::array(
-        self.headers.map(header => {
+        self.request.headers.map(header => {
           "name": Json::string(header.0),
           "value": Json::string(header.1),
         }),
       ),
-      "body": body_json(self.body, size=self.body_size),
+      "body": body_json(self.request.body, size=self.body_size),
     },
     "stub": optional(self.stub),
     "nearMiss": self.near_miss.map_or(Json::null(), near_miss => {
@@ -665,11 +656,6 @@ pub impl ToJson for JournalEntry with fn to_json(self) {
     "status": self.status.map_or(Json::null(), status => {
       Json::number(status.to_double())
     }),
-    "fault": match self.fault {
-      None => Json::null()
-      Some(Reset) => Json::string("reset")
-      Some(Close) => Json::string("close")
-      Some(Partial) => Json::string("partial")
-    },
+    "fault": self.fault.map_or(Json::null(), kind => Json::string(kind.name())),
   }
 }

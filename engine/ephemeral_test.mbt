@@ -352,14 +352,14 @@ test "delete removes only one of the calling Session's Ephemeral Stubs of the Mo
   inspect(
     out.join("\n"),
     content=(
-      #|test-b deletes test-a's eph-1: UnknownStub(mock="payments", id="eph-1")
-      #|no Session deletes test-a's eph-1: UnknownStub(mock="payments", id="eph-1")
-      #|test-a deletes eph-1 from users: UnknownStub(mock="users", id="eph-1")
+      #|test-b deletes test-a's eph-1: UnknownEphemeralStub(mock="payments", id="eph-1")
+      #|no Session deletes test-a's eph-1: UnknownEphemeralStub(mock="payments", id="eph-1")
+      #|test-a deletes eph-1 from users: UnknownEphemeralStub(mock="users", id="eph-1")
       #|test-a deletes eph-1 from orders: UnknownMock("orders")
       #|test-a: 503 a (eph-1)
       #|test-a deletes eph-1: deleted
       #|test-a: 200 pending (p-order)
-      #|test-a deletes eph-1 again: UnknownStub(mock="payments", id="eph-1")
+      #|test-a deletes eph-1 again: UnknownEphemeralStub(mock="payments", id="eph-1")
       #|test-b: 503 b (eph-2)
       #|test-b deletes eph-2: deleted
       #|test-b: 200 pending (p-order)
@@ -800,5 +800,40 @@ test "the outcome names the Stub that matched and whether it comes from a Defini
       #|a Stub from a Definition file with the ID eph-1: Some(FromFile("eph-1"))
       #|no Stub: None
     ),
+  )
+}
+
+///|
+test "changing the JSON an Ephemeral Stub was added from changes no later match" {
+  let h = harness(shop)
+  let stub = @json.parse(
+    (
+      #|{ "request": { "method": "POST", "path": "/orders",
+      #|    "body": { "json": { "item": "tea" } } },
+      #|  "response": { "status": 201 } }
+    ),
+  )
+  let added = h.engine.add_ephemeral_stub(mock="users", session=None, stub)
+  // Both the JSON given and the JSON the Ephemeral Stub shows.
+  for json in [stub, Json::object(added.added)] {
+    guard json
+      is Object(
+        {
+          "request": Object(
+            { "body": Object({ "json": Object(item), .. }), .. }
+          ),
+          ..
+        }
+      ) else {
+      fail("the Stub has no json condition")
+    }
+    item["item"] = Json::string("coffee")
+  }
+  debug_inspect(
+    [
+      matched_id(h.send("POST", "/orders", body="{\"item\": \"coffee\"}")),
+      matched_id(h.send("POST", "/orders", body="{\"item\": \"tea\"}")),
+    ],
+    content="[None, Some(\"eph-1\")]",
   )
 }

@@ -6,8 +6,10 @@ CPU limits and sends it the request mix (bench/requests.json) at a fixed
 arrival rate, an open model: requests go out on schedule whether or not
 earlier ones have been answered. Each request's latency counts from the time
 it was scheduled to be sent, so a server that stalls cannot hide the queue
-that builds up behind it. bench/plan.json says which cases run, at which
-rates and for how long.
+that builds up behind it, even when the load generator falls behind with
+it. The latency from the time the load generator released each request,
+and how late it released them, are reported beside it. bench/plan.json
+says which cases run, at which rates and for how long.
 
 usage:
   python3 bench/bench.py run [options]    run the benchmark (--help lists the options)
@@ -42,8 +44,9 @@ BENCH = Path(__file__).resolve().parent
 ROOT = BENCH.parent
 
 # The version of the layout of the files a run writes. A change that a
-# program reading them would notice increments it.
-FORMAT = 1
+# program reading them would notice increments it. 2: latency_ms counts
+# from each request's due time, latency_from_release_ms from its release.
+FORMAT = 2
 
 # How long smock may take to start listening, and to exit after SIGTERM.
 START_TIMEOUT_S = 30
@@ -52,11 +55,18 @@ STOP_TIMEOUT_S = 30
 # The CFS period systemd gives a CPU quota, as Kubernetes does.
 CFS_PERIOD_US = 100_000
 
-# A case whose load generator released its requests later than this after
-# their due times (p99 over the measured window) fell behind its schedule:
-# its latencies leave out part of the wait, so its latency targets are not
-# measured.
-GENERATOR_LAG_LIMIT_MS = 5
+# How late after their due times the load generator may release a case's
+# requests, at p99.9 and at most, over the measured window. oha's 1 ms
+# timer releases them about a millisecond late, and the scheduler adds a
+# few milliseconds now and then. A case whose generator was later than
+# this fell behind its schedule: smock did not get the fixed arrival rate,
+# and the generator's own wait is a large part of the latencies, so the
+# case's latency targets are not measured. p99.9 may be at most the p99.9
+# target, 5 ms. The maximum catches a single stop of the generator that
+# delays fewer than one request in a thousand: at a fixed rate, a stop
+# shorter than a thousandth of the window (20 ms of a 20 s window) does not
+# reach p99.9.
+GENERATOR_LAG_LIMITS_MS = {"p99_9": 5, "max": 10}
 
 
 class BenchError(Exception):
@@ -109,6 +119,17 @@ def cpu_quota_percent(limit):
     if limit.endswith("m"):
         return int(limit[:-1]) // 10
     return int(float(limit) * 100)
+
+
+def cpus_needed(limit):
+    """How many CPUs a Kubernetes-style CPU limit can keep busy: 250m needs
+    one, 2 needs two."""
+    return math.ceil(cpu_quota_percent(limit) / 100)
+
+
+def override(value, default):
+    """`value`, from the command line, when it was given; else `default`."""
+    return value if value is not None else default
 
 
 def cpus_allowed(pid):
@@ -511,9 +532,9 @@ class Run:
         self.processes = []
         self.started_at = now()
         self.smock_status = None
-        self.ramp_s = args.ramp if args.ramp is not None else self.plan["ramp_s"]
-        self.duration_s = args.duration if args.duration is not None else self.plan["duration_s"]
-        self.tail_s = args.tail if args.tail is not None else self.plan["tail_s"]
+        self.ramp_s = override(args.ramp, self.plan["ramp_s"])
+        self.duration_s = override(args.duration, self.plan["duration_s"])
+        self.tail_s = override(args.tail, self.plan["tail_s"])
         self.rate = args.rate
         self.cpu_limits = args.cpu_limits.split(",") if args.cpu_limits else self.plan["cpu_limits"]
         names = [case["name"] for case in self.plan["cases"]]
@@ -521,15 +542,15 @@ class Run:
         for name in self.cases:
             if name not in names:
                 raise BenchError(f"no case {name} in bench/plan.json")
-        self.cooldown_s = args.cooldown if args.cooldown is not None else self.plan["cooldown_s"]
-        self.settle_s = args.settle if args.settle is not None else self.plan["idle_rss"]["settle_s"]
+        self.cooldown_s = override(args.cooldown, self.plan["cooldown_s"])
+        self.settle_s = override(args.settle, self.plan["idle_rss"]["settle_s"])
         self.targets_path = Path(args.targets).resolve()
         self.targets = read_targets(self.targets_path)
         ordered = cpus_by_speed()
         # smock gets as many CPUs as the largest limit of the plan needs,
         # whichever limits this run has, so that runs compare.
         limits = [*self.plan["cpu_limits"], *self.cpu_limits]
-        needed = max(math.ceil(cpu_quota_percent(limit) / 100) for limit in limits)
+        needed = max(cpus_needed(limit) for limit in limits)
         self.smock_cpus = parse_cpu_list(args.smock_cpus) if args.smock_cpus else ordered[:needed]
         self.generator_cpus = (parse_cpu_list(args.generator_cpus) if args.generator_cpus
                                else [cpu for cpu in ordered if cpu not in self.smock_cpus])
@@ -537,7 +558,7 @@ class Run:
             raise BenchError("smock and the load generator need CPUs of their own: "
                              f"smock has {self.smock_cpus}, the load generator {self.generator_cpus}")
         for limit in self.cpu_limits:
-            if len(self.smock_cpus) < math.ceil(cpu_quota_percent(limit) / 100):
+            if len(self.smock_cpus) < cpus_needed(limit):
                 raise BenchError(f"a CPU limit of {limit} needs as many CPUs for smock, "
                                  f"but it has {self.smock_cpus}")
         # A case runs under the limits it has a rate for.
@@ -644,8 +665,8 @@ class Run:
 
 
 def case_spec(run, case, cpu_limit):
-    rate = run.rate if run.rate is not None else case["rates"][cpu_limit]
-    duration_s = run.args.duration if run.args.duration is not None else case.get("duration_s", run.duration_s)
+    rate = override(run.rate, case["rates"][cpu_limit])
+    duration_s = override(run.args.duration, case.get("duration_s", run.duration_s))
     return {
         "id": f"{case['name']}@{cpu_limit}",
         "case": case["name"],
@@ -729,33 +750,40 @@ def start_load(run, smock, spec, raw):
 
 def analyze_request(run, item, spec, raw):
     """What one oha process measured for its request: the latencies of the
-    requests scheduled in the window, counted from the times its schedule
-    released them, how late it released them, and what went wrong."""
+    requests scheduled in the window, counted from their due times and from
+    the times oha released them, how late it released them, and what went
+    wrong."""
     request, rate = item["request"], item["rate"]
     database = run.tmp / f"{request['name']}.sqlite"
     first = math.ceil(spec["ramp_s"] * rate)
     last = math.ceil((spec["ramp_s"] + spec["duration_s"]) * rate)
-    latencies, lags = array.array("d"), array.array("d")
+    latencies, release_latencies, lags = array.array("d"), array.array("d"), array.array("d")
     ok = unexpected = 0
     if database.exists():
         connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
         # With -q and --latency-correction, one task of oha releases ticket
-        # i once i / rate has passed since its start, whether or not a
+        # k once k / rate has passed since its start, whether or not a
         # connection is free to send it, and each request records the time
-        # its ticket was released: a request that waits for a busy or
-        # stalled smock counts that wait. oha's timer has a resolution of
-        # 1 ms, so tickets go out up to a millisecond or two after they are
-        # due, or later when oha falls behind; that lag is oha's, not
-        # smock's, and is reported apart. Tickets are released in order, so
-        # the k-th release is ticket k. oha stores only the requests that
-        # got a response: when some got none, the k-th stored release is
-        # ticket k or a later one, and the lag of such a case is overstated.
+        # its ticket was released. A request's latency counts from k / rate,
+        # its due time, so every wait counts: for a busy or stalled smock,
+        # and for oha itself when it falls behind, as it does when a stalled
+        # smock answers a burst at once and oha's one thread is busy reading
+        # it. oha's timer has a resolution of 1 ms, so tickets go out about
+        # a millisecond after they are due, now and then a few more: the
+        # lag, reported apart with the latency from release, which leaves
+        # it out. Tickets are
+        # released in order, so the k-th release is ticket k. oha stores only
+        # the requests that got a response: when some got none, the k-th
+        # stored release is ticket k or a later one, and the lag and the
+        # latency of such a case are overstated.
         rows = connection.execute("SELECT start_latency_correction, end, status FROM oha "
                                   "ORDER BY start_latency_correction")
         for k, (released, ended, status) in enumerate(rows):
             if first <= k < last:
-                lags.append(released - k / rate)
-                latencies.append(ended - released)
+                due = k / rate
+                latencies.append(ended - due)
+                release_latencies.append(ended - released)
+                lags.append(released - due)
                 if status == request["expect"]["status"]:
                     ok += 1
                 else:
@@ -780,7 +808,7 @@ def analyze_request(run, item, spec, raw):
         "no_response": max(0, scheduled - ok - unexpected),
         "oha_errors": oha_errors,
         "oha_exit_status": item["process"].returncode,
-    }, latencies, lags
+    }, latencies, release_latencies, lags
 
 
 def cpu_use(before, after):
@@ -824,17 +852,20 @@ def run_case(run, spec):
         cpu_after = smock.cpu_stat()
         opens = tcp_passive_opens() - opens_before
         idle_open = idle.open_count()
-    kinds, latencies, lags = [], array.array("d"), array.array("d")
+    kinds = []
+    latencies, release_latencies, lags = array.array("d"), array.array("d"), array.array("d")
     for item in load:
-        kind, kind_latencies, kind_lags = analyze_request(run, item, spec, raw)
+        kind, kind_latencies, kind_release_latencies, kind_lags = analyze_request(run, item, spec, raw)
         kinds.append(kind)
         latencies.extend(kind_latencies)
+        release_latencies.extend(kind_release_latencies)
         lags.extend(kind_lags)
     latencies = sorted(latencies)
+    release_latencies = sorted(release_latencies)
     lags = sorted(lags)
     write_json(raw / "latency.json", {
         "about": "Latencies of the requests scheduled in the measured window that got a response, "
-                 "from the times the fixed-rate schedule released them, all request kinds together: "
+                 "from the times the fixed-rate schedule had them due, all request kinds together: "
                  "[upper bound, count] per bucket, three significant digits.",
         "unit": "us",
         "counts": histogram(latencies),
@@ -850,24 +881,16 @@ def run_case(run, spec):
     scheduled = sum(kind["scheduled"] for kind in kinds)
     ok = sum(kind["ok"] for kind in kinds)
     errors = scheduled - ok
-    lag_p99 = ms(percentile(lags, 0.99))
+    lag = percentiles_ms(lags, ("p50", "p99", "p99_9", "max"))
     result = {
         **spec,
         "achieved_rate": round(ok / spec["duration_s"], 1),
         "errors": errors,
-        "latency_ms": {
-            "p50": ms(percentile(latencies, 0.5)),
-            "p90": ms(percentile(latencies, 0.9)),
-            "p99": ms(percentile(latencies, 0.99)),
-            "p99_9": ms(percentile(latencies, 0.999)),
-            "max": ms(latencies[-1] if latencies else None),
-        },
-        "generator_lag_ms": {
-            "p50": ms(percentile(lags, 0.5)),
-            "p99": lag_p99,
-            "max": ms(lags[-1] if lags else None),
-        },
-        "load_generator_late": lag_p99 is not None and lag_p99 > GENERATOR_LAG_LIMIT_MS,
+        "latency_ms": percentiles_ms(latencies, LATENCY_METRICS),
+        "latency_from_release_ms": percentiles_ms(release_latencies, LATENCY_METRICS),
+        "generator_lag_ms": lag,
+        "load_generator_late": any(lag[name] is not None and lag[name] > limit
+                                   for name, limit in GENERATOR_LAG_LIMITS_MS.items()),
         "requests": {
             "scheduled": scheduled,
             "ok": ok,
@@ -887,11 +910,25 @@ def run_case(run, spec):
         "per_request": kinds,
     }
     log(f"{spec['id']}: p99 {result['latency_ms']['p99']} ms, p99.9 {result['latency_ms']['p99_9']} ms, "
-        f"{result['achieved_rate']} requests/s, {errors} errors")
+        f"{result['achieved_rate']} requests/s, {errors} errors, "
+        f"generator lag p99.9 {lag['p99_9']} ms, max {lag['max']} ms")
     return result
 
 
 LATENCY_METRICS = ("p50", "p90", "p99", "p99_9", "max")
+
+
+def percentiles_ms(ordered, metrics):
+    """The `metrics` (p50, p90, p99, p99_9 or max) of sorted values in
+    seconds, in milliseconds."""
+    fractions = {"p50": 0.5, "p90": 0.9, "p99": 0.99, "p99_9": 0.999}
+    return {metric: ms(ordered[-1] if ordered else None) if metric == "max"
+            else ms(percentile(ordered, fractions[metric])) for metric in metrics}
+
+
+def lag_limits_text():
+    """The limits of GENERATOR_LAG_LIMITS_MS, for people."""
+    return ", ".join(f"{name.replace('_', '.')} {limit} ms" for name, limit in GENERATOR_LAG_LIMITS_MS.items())
 
 
 def read_targets(path):
@@ -930,8 +967,10 @@ def check_target(target, summary):
             return checked
         checked["measured"] = case["latency_ms"][target["metric"]]
         if case["load_generator_late"]:
+            lag = case["generator_lag_ms"]
             checked["reason"] = (f"the load generator fell behind its schedule in {case_id} "
-                                 f"(lag p99 {case['generator_lag_ms']['p99']} ms)")
+                                 f"(lag p99.9 {lag['p99_9']} ms, max {lag['max']} ms; "
+                                 f"at most {lag_limits_text()})")
             return checked
         if case["errors"]:
             checked["verdict"] = "missed"
@@ -967,12 +1006,20 @@ def summary_markdown(summary, conditions):
         verdict = target["verdict"] + (f": {target['reason']}" if target["reason"] else "")
         lines.append(f"| {target['about']} | {target['max']} {target['unit']} | {measured} | {verdict} |")
     lines += ["", "## Cases", "",
-              "| Case | CPU limit | Rate | Achieved | p50 ms | p99 ms | p99.9 ms | Max ms | Errors | Max RSS KiB |",
-              "|---|---|---|---|---|---|---|---|---|---|"]
+              "Latency counts from each request's scheduled send time. *From release* counts from when the "
+              "load generator released it, and *lag* is how late it released them; oha's 1 ms timer adds "
+              "about a millisecond, now and then a few more. A case whose lag is over its limits "
+              f"({lag_limits_text()}) fell behind its schedule and is marked *late*.",
+              "",
+              "| Case | CPU limit | Rate | Achieved | p50 ms | p99 ms | p99.9 ms | Max ms "
+              "| From release p99 ms | From release p99.9 ms | Lag p99.9 ms | Lag max ms | Errors | Max RSS KiB |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for case in summary["cases"]:
-        latency = case["latency_ms"]
-        lines.append(f"| {case['case']} | {case['cpu_limit']} | {case['rate']} | {case['achieved_rate']} | "
+        latency, release, lag = case["latency_ms"], case["latency_from_release_ms"], case["generator_lag_ms"]
+        late = " (late)" if case["load_generator_late"] else ""
+        lines.append(f"| {case['case']}{late} | {case['cpu_limit']} | {case['rate']} | {case['achieved_rate']} | "
                      f"{latency['p50']} | {latency['p99']} | {latency['p99_9']} | {latency['max']} | "
+                     f"{release['p99']} | {release['p99_9']} | {lag['p99_9']} | {lag['max']} | "
                      f"{case['errors']} | {case['rss_kib']['max']} |")
     idle = summary["idle_rss"]
     if idle:

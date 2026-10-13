@@ -239,6 +239,119 @@ test "other malformed request lines and header fields get 400" {
 }
 
 ///|
+/// What a parser makes of the first request in `stream`: `accepted`, or
+/// `invalid <status>`.
+fn first_verdict(stream : String) -> String {
+  let parser = @http1.Parser()
+  parser.feed(@utf8.encode(stream))
+  match parser.next() {
+    Complete(_) => "accepted"
+    Invalid(status~) => "invalid \{status}"
+    Continue | NeedMore => "incomplete"
+  }
+}
+
+///|
+test "a request target in one of the four forms of RFC 9112 is accepted; any other target, or one with a fragment, gets 400" {
+  let targets = [
+    // origin-form, absolute-form, authority-form and asterisk-form
+    "/", "/users/1?x=y", "/a|b^c", "http://a.example", "http://a.example:8080/x?y",
+    "urn:a", "a.example:443", "127.0.0.1:8080", "[::1]:80", "[v1.x]:80", "*", // in none of them
+     "users/1", "a", "?x", "127.0.0.1", "[::1]", "[::1:80", "a/b:80", "a@b:80", "1http://a/",
+    "**", "*/", // with a fragment
+     "/#frag", "/a?x#", "http://a.example/#x",
+  ]
+  inspect(
+    targets
+    .map(target => {
+      "\{target} -> \{first_verdict("OPTIONS \{target} HTTP/1.1\r\nHost: a\r\n\r\n")}"
+    })
+    .join("\n"),
+    content=(
+      #|/ -> accepted
+      #|/users/1?x=y -> accepted
+      #|/a|b^c -> accepted
+      #|http://a.example -> accepted
+      #|http://a.example:8080/x?y -> accepted
+      #|urn:a -> accepted
+      #|a.example:443 -> accepted
+      #|127.0.0.1:8080 -> accepted
+      #|[::1]:80 -> accepted
+      #|[v1.x]:80 -> accepted
+      #|* -> accepted
+      #|users/1 -> invalid 400
+      #|a -> invalid 400
+      #|?x -> invalid 400
+      #|127.0.0.1 -> invalid 400
+      #|[::1] -> invalid 400
+      #|[::1:80 -> invalid 400
+      #|a/b:80 -> invalid 400
+      #|a@b:80 -> invalid 400
+      #|1http://a/ -> invalid 400
+      #|** -> invalid 400
+      #|*/ -> invalid 400
+      #|/#frag -> invalid 400
+      #|/a?x# -> invalid 400
+      #|http://a.example/#x -> invalid 400
+    ),
+  )
+}
+
+///|
+test "a Host field whose value is not a host and an optional port gets 400" {
+  let hosts = [
+    // valid, including an empty value
+    "a.example", "A.Example.:8080", "", "a.example:", "127.0.0.1:80", "a%2Db_~!$&'()*+,;=",
+    "[::1]", "[::1]:8080", "[2001:db8::7]", "[1:2:3:4:5:6:7:8]", "[1:2:3:4:5:6:7::]",
+    "[::ffff:192.0.2.1]", "[v7.a:b]", // not valid
+     "a b", "a/b@c", "a@b", "a:b:80", "a:8o", "a%2", "a%zz", "[::1", "[::1]x", "[::1]:x",
+    "[1:2:3:4:5:6:7:8:9]", "[1:2:3:4:5:6:7:8::]", "[::1::2]", "[12345::]", "[1.2.3.4]",
+    "[::256.0.0.1]", "[::1.2.3.04]", "[v.a]", "[v7.]",
+  ]
+  inspect(
+    hosts
+    .map(host => {
+      "\{shown(host)} -> \{first_verdict("GET / HTTP/1.1\r\nHost: \{host}\r\n\r\n")}"
+    })
+    .join("\n"),
+    content=(
+      #|"a.example" -> accepted
+      #|"A.Example.:8080" -> accepted
+      #|"" -> accepted
+      #|"a.example:" -> accepted
+      #|"127.0.0.1:80" -> accepted
+      #|"a%2Db_~!$&'()*+,;=" -> accepted
+      #|"[::1]" -> accepted
+      #|"[::1]:8080" -> accepted
+      #|"[2001:db8::7]" -> accepted
+      #|"[1:2:3:4:5:6:7:8]" -> accepted
+      #|"[1:2:3:4:5:6:7::]" -> accepted
+      #|"[::ffff:192.0.2.1]" -> accepted
+      #|"[v7.a:b]" -> accepted
+      #|"a b" -> invalid 400
+      #|"a/b@c" -> invalid 400
+      #|"a@b" -> invalid 400
+      #|"a:b:80" -> invalid 400
+      #|"a:8o" -> invalid 400
+      #|"a%2" -> invalid 400
+      #|"a%zz" -> invalid 400
+      #|"[::1" -> invalid 400
+      #|"[::1]x" -> invalid 400
+      #|"[::1]:x" -> invalid 400
+      #|"[1:2:3:4:5:6:7:8:9]" -> invalid 400
+      #|"[1:2:3:4:5:6:7:8::]" -> invalid 400
+      #|"[::1::2]" -> invalid 400
+      #|"[12345::]" -> invalid 400
+      #|"[1.2.3.4]" -> invalid 400
+      #|"[::256.0.0.1]" -> invalid 400
+      #|"[::1.2.3.04]" -> invalid 400
+      #|"[v.a]" -> invalid 400
+      #|"[v7.]" -> invalid 400
+    ),
+  )
+}
+
+///|
 test "a chunked body is decoded, and the request after it comes out next" {
   inspect(
     parse_all([

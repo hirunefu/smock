@@ -8,7 +8,9 @@ would make a Pod that cannot start or does not do what they ask.
 {{- fail (printf "terminationGracePeriodSeconds (%s) must be above the drain timeout, drainTimeoutMs (%s ms), or Kubernetes kills smock before it has drained: raise it, or leave it empty for the drain timeout plus 10 s" (include "smock.string" .Values.terminationGracePeriodSeconds) (include "smock.string" .Values.drainTimeoutMs)) -}}
 {{- end -}}
 {{- end -}}
-{{- /* The variables the chart sets itself, and the values that set them. */ -}}
+{{- /* The variables the chart sets itself, and the values that set them.
+A variable added to the Deployment's env is added here too:
+scripts/test-helm-chart.sh fails until it is. */ -}}
 {{- $own := dict
   "SMOCK_DIR" "definitions.source"
   "SMOCK_BODY_FILE_DIR" "definitions.bodyFileDir"
@@ -20,6 +22,7 @@ would make a Pod that cannot start or does not do what they ask.
   "SMOCK_ADMIN_TOKEN_FILE" "adminAuth.tokenSecret"
   "SMOCK_TLS_CERT_FILE" "tls.secretName"
   "SMOCK_TLS_KEY_FILE" "tls.secretName"
+  "SMOCK_TLS_MOCK_CERTS" "tls.mockSecrets"
   "SMOCK_REPLICAS" "replicas"
   "SMOCK_DRAIN_TIMEOUT_MS" "drainTimeoutMs" -}}
 {{- range $name, $_ := .Values.env -}}
@@ -36,6 +39,11 @@ would make a Pod that cannot start or does not do what they ask.
 {{- end -}}
 {{- if not (has $auth.tokenAs (list "file" "env")) -}}
 {{- fail (printf "adminAuth.tokenAs must be \"file\" or \"env\", not %q" (toString $auth.tokenAs)) -}}
+{{- end -}}
+{{- range $mock, $secret := .Values.tls.mockSecrets -}}
+{{- if not $secret -}}
+{{- fail (printf "tls.mockSecrets: the Mock %q has no Secret name: name the kubernetes.io/tls Secret that holds its tls.crt and tls.key" $mock) -}}
+{{- end -}}
 {{- end -}}
 {{- $d := .Values.definitions -}}
 {{- if not (has $d.source (list "configMap" "gitSync" "image")) -}}

@@ -145,33 +145,6 @@ fn Contract::follow(self : Contract, located : Located) -> Located raise {
 }
 
 ///|
-/// A response as a test sees it.
-struct AdminResponse {
-  status : Int
-  /// The header fields, in the order they came.
-  headers : Array[(String, String)]
-  body : String
-}
-
-///|
-/// The value of the header field `name`, compared case-insensitively.
-fn AdminResponse::header(self : AdminResponse, name : String) -> String? {
-  let name = name.to_lower()
-  for header in self.headers {
-    if header.0.to_lower() == name {
-      return Some(header.1)
-    }
-  }
-  None
-}
-
-///|
-/// The body, parsed as JSON.
-fn AdminResponse::json(self : AdminResponse) -> Json raise {
-  @json.parse(self.body)
-}
-
-///|
 /// The problems with `response` as the answer to `meth path`, by the
 /// document: none when it conforms. A path the document does not list, or a
 /// method it does not list for the path, must be answered as the document's
@@ -401,6 +374,20 @@ fn Contract::validate(
             }
           }
         }
+      ("unevaluatedProperties", _) =>
+        if value is Object(object) {
+          let seen : Set[String] = Set([])
+          for other, other_argument in members {
+            if other != keyword {
+              self.evaluated_by(other, other_argument, file, value, seen)
+            }
+          }
+          for name, v in object {
+            if !seen.contains(name) {
+              self.validate(sub(argument), v, "\{at}/\{name}", problems)
+            }
+          }
+        }
       ("propertyNames", _) =>
         if value is Object(object) {
           for name, _ in object {
@@ -484,6 +471,63 @@ fn Contract::validate(
           "\{at}: the contract checker does not know the keyword \{keyword} in \{file}",
         )
     }
+  }
+}
+
+///|
+/// Adds to `seen` the names of the properties of `value`, an object, that
+/// the keyword `keyword` with `argument`, in a schema in `file`, evaluates:
+/// those `properties` names, every one for `additionalProperties` and
+/// `unevaluatedProperties`, and those that the subschemas applied in place
+/// evaluate (`$ref`, `allOf`, the passing ones of `anyOf` and `oneOf`, and
+/// `dependentSchemas`). The properties no keyword evaluates are the ones
+/// `unevaluatedProperties` applies to.
+fn Contract::evaluated_by(
+  self : Contract,
+  keyword : String,
+  argument : Json,
+  file : String,
+  value : Json,
+  seen : Set[String],
+) -> Unit raise {
+  guard value is Object(object) else { return }
+  let in_place = (schema : Located) => {
+    if schema.json is Object(members) {
+      for k, a in members {
+        self.evaluated_by(k, a, schema.file, value, seen)
+      }
+    }
+  }
+  let sub = (json : Json) => Located::{ file, json, }
+  match (keyword, argument) {
+    ("properties", Object(properties)) =>
+      for name, _ in object {
+        if properties.contains(name) {
+          seen.add(name)
+        }
+      }
+    ("additionalProperties" | "unevaluatedProperties", _) =>
+      for name, _ in object {
+        seen.add(name)
+      }
+    ("$ref", String(reference)) => in_place(self.resolve(file, reference))
+    ("allOf", Array(schemas)) =>
+      for s in schemas {
+        in_place(sub(s))
+      }
+    ("anyOf" | "oneOf", Array(schemas)) =>
+      for s in schemas {
+        if self.passes(sub(s), value) {
+          in_place(sub(s))
+        }
+      }
+    ("dependentSchemas", Object(dependents)) =>
+      for name, dependent in dependents {
+        if object.contains(name) {
+          in_place(sub(dependent))
+        }
+      }
+    _ => ()
   }
 }
 
@@ -574,7 +618,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"version":"1","commit":"c","toolchain":"t","digest":null,"lastReload":null,"mocks":[]}
+          #|{"version":"1","commit":"c","toolchain":"t","digest":"0123456789ab","lastReload":null,"mocks":[]}
         ),
       },
     ),
@@ -586,7 +630,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: [("Content-Type", "application/json")],
         body: (
-          #|{"version":"1","commit":"c","toolchain":"t","digest":null,"lastReload":null,"mocks":[],"warnings":[]}
+          #|{"version":"1","commit":"c","toolchain":"t","digest":"0123456789ab","lastReload":null,"mocks":[],"warnings":[]}
         ),
       },
     ),
@@ -599,6 +643,18 @@ async test "the contract checker rejects responses that break the document" {
         headers: replica,
         body: (
           #|{"version":"1","commit":"c","toolchain":"t","digest":"xyz","lastReload":null,"mocks":[],"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "status without a digest",
+      "GET",
+      "/v1/status",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"version":"1","commit":"c","toolchain":"t","digest":null,"lastReload":null,"mocks":[],"warnings":[]}
         ),
       },
     ),
@@ -807,6 +863,18 @@ async test "the contract checker rejects responses that break the document" {
       },
     ),
     (
+      "a listed Ephemeral Stub with an undocumented field",
+      "GET",
+      "/v1/mocks/users/stubs",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"stubs":[{"id":"eph-1","mock":"users","session":"s","response":{"status":200},"addedAt":1}],"warnings":[]}
+        ),
+      },
+    ),
+    (
       "a deleted Ephemeral Stub with its Mock",
       "DELETE",
       "/v1/mocks/users/stubs/eph-1",
@@ -875,6 +943,18 @@ async test "the contract checker rejects responses that break the document" {
         headers: replica,
         body: (
           #|{"entries":[{"receivedAt":"2026-10-13T01:02:03.004Z","session":null,"host":null,"mock":null,"viaDefault":false,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.0","headers":[],"body":{"encoding":"base64","data":"","size":0,"truncated":false}},"stub":null,"nearMiss":null,"status":null,"fault":"close"}],"more":false,"evicted":0,"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a Journal entry without its digest",
+      "POST",
+      "/v1/journal/query",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"entries":[{"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":null,"host":null,"mock":null,"viaDefault":false,"digest":null,"request":{"method":"GET","target":"/","version":"HTTP/1.0","headers":[],"body":{"encoding":"base64","data":"","size":0,"truncated":false}},"stub":null,"nearMiss":null,"status":null,"fault":"close"}],"more":false,"evicted":0,"warnings":[]}
         ),
       },
     ),
@@ -1038,6 +1118,7 @@ async test "the contract checker rejects responses that break the document" {
       #|status without warnings: : warnings is missing
       #|status without Smock-Replica: header Smock-Replica is missing
       #|a digest that is not 12 hex digits: /digest: "xyz" does not match ^[0-9a-f]{12}$
+      #|status without a digest: /digest: null is not of type string
       #|a 401 without WWW-Authenticate: header WWW-Authenticate is missing
       #|an error code the document does not list: /error: "nope" is not one of ["unauthorized","not_found","method_not_allowed","malformed_json","invalid_request","invalid_stub","unknown_mock","unknown_stub","journal_off","not_started","not_ready","bad_request","content_too_large","header_fields_too_large","not_implemented","http_version_not_supported"]
       #|an undocumented field: /extra: no value is allowed here
@@ -1055,12 +1136,14 @@ async test "the contract checker rejects responses that break the document" {
       #|an Ephemeral Stub ID that is not eph-<n>: /stub/id: "eph-0" does not match ^eph-[1-9][0-9]*$
       #|an added Ephemeral Stub without its Session: /stub: session is missing
       #|a listed Ephemeral Stub with a status out of range: /stubs/0/response/status: 99 is below 200
+      #|a listed Ephemeral Stub with an undocumented field: /stubs/0/addedAt: no value is allowed here
       #|a deleted Ephemeral Stub with its Mock: /mock: no value is allowed here
       #|an unknown Ephemeral Stub: conforms
       #|a reset without the count of Journal entries: /removed: journalEntries is missing
       #|a reset with a scope the document does not list: /scope: "replica" is not one of ["session","mock","all"]
       #|a Journal page with an unmatched request: conforms
       #|a Journal entry without its timing: /entries/0: durationMs is missing
+      #|a Journal entry without its digest: /entries/0/digest: null is not of type string
       #|a Journal page without the eviction count: : evicted is missing
       #|a Journal query refused because the Journal is off: conforms
       #|a verification that passed: conforms

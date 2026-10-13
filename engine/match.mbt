@@ -124,7 +124,7 @@ fn Incoming::body_meets(
     Pattern(pattern) => pattern.matches(self.request.body)
     Json(expected) =>
       match self.body_json() {
-        Some(body) => contains(body, expected)
+        Some(body) => expected.matches(body)
         None => false
       }
   }
@@ -146,35 +146,4 @@ fn Incoming::body_json(self : Incoming) -> Json? {
   }
   self.json = parsed
   self.body_json()
-}
-
-///|
-/// Whether `actual` contains `expected`: an object has each key of
-/// `expected`, with a value that contains the expected one; an array has
-/// the same length, and each element contains the expected one; any other
-/// value is equal, numbers by their value.
-fn contains(actual : Json, expected : Json) -> Bool {
-  match (expected, actual) {
-    (Object(expected), Object(actual)) =>
-      expected
-      .iter()
-      .all(entry => {
-        actual.get(entry.0) is Some(value) && contains(value, entry.1)
-      })
-    (Array(expected), Array(actual)) => {
-      if expected.length() != actual.length() {
-        return false
-      }
-      for i, value in expected {
-        if !contains(actual[i], value) {
-          return false
-        }
-      }
-      true
-    }
-    (Number(expected, ..), Number(actual, ..)) => expected == actual
-    (String(expected), String(actual)) => expected == actual
-    (True, True) | (False, False) | (Null, Null) => true
-    _ => false
-  }
 }

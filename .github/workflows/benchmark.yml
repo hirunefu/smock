@@ -40,19 +40,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Check that the runner is ${{ matrix.machine }}
-        run: test "$(uname -m)" = "${{ matrix.machine }}"
-
-      # The native build links OpenSSL; the benchmark makes its TLS
-      # certificate with the openssl command line tool.
-      - name: Install OpenSSL
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libssl-dev openssl
-
-      - name: Install MoonBit (pinned)
-        run: scripts/install-moonbit.sh pinned
-
-      - name: Update the mooncakes registry index
-        run: moon update
+      # The runner check, OpenSSL (the benchmark also makes its TLS
+      # certificate with the openssl command line tool), the pinned MoonBit
+      # and moon update.
+      - uses: ./.github/actions/native-setup
+        with:
+          machine: ${{ matrix.machine }}
 
       - name: Build the release binary
         run: scripts/build-release.sh

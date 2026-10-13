@@ -209,6 +209,12 @@ test "shadowing needs t's body condition to be absent or to appear identically i
       (
         "{ \"body\": { \"json\": { \"a\": 1 } } }", "{ \"body\": { \"json\": { \"a\": 2 } } }",
       ),
+      (
+        "{ \"body\": { \"json\": { \"a\": 1 } } }", "{ \"body\": { \"json\": { \"a\": 1.0 } } }",
+      ),
+      (
+        "{ \"body\": { \"json\": { \"id\": 9007199254740993 } } }", "{ \"body\": { \"json\": { \"id\": 9007199254740992 } } }",
+      ),
       ("{ \"body\": { \"json\": \"x\" } }", "{ \"body\": \"x\" }"),
       ("{ \"body\": \"x\" }", "{}"),
     ]),
@@ -219,6 +225,8 @@ test "shadowing needs t's body condition to be absent or to appear identically i
       #|t { "body": { "pattern": "[a-z]+" } } / s { "body": { "pattern": "[a-z]+" } } -> shadowed
       #|t { "body": { "json": { "a": [1, true] } } } / s { "body": { "json": { "a": [1, true] } } } -> shadowed
       #|t { "body": { "json": { "a": 1 } } } / s { "body": { "json": { "a": 2 } } } -> not reported
+      #|t { "body": { "json": { "a": 1 } } } / s { "body": { "json": { "a": 1.0 } } } -> shadowed
+      #|t { "body": { "json": { "id": 9007199254740993 } } } / s { "body": { "json": { "id": 9007199254740992 } } } -> not reported
       #|t { "body": { "json": "x" } } / s { "body": "x" } -> not reported
       #|t { "body": "x" } / s {} -> not reported
     ),

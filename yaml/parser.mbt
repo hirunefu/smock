@@ -36,7 +36,7 @@ fn Parser::enter(self : Parser) -> Unit raise ParseError {
 const EOF : Char = '\u{0}'
 
 ///|
-fn Parser::new(text : StringView) -> Parser {
+fn Parser::Parser(text : StringView) -> Parser {
   let chars = []
   let mut previous = EOF
   for c in text {
@@ -251,8 +251,7 @@ fn Parser::block_node(
     let _ = self.next_content()
     return value
   }
-  self.check_node_start(flow=false)
-  let scalar = self.scalar(parent)
+  let scalar = self.scalar(parent, flow=false)
   self.skip_space()
   if self.at_key_indicator() {
     if inline {
@@ -263,11 +262,7 @@ fn Parser::block_node(
     return self.block_mapping(column, pointer, scalar)
   }
   let _ = self.next_content()
-  if scalar.quoted {
-    Json::string(scalar.text)
-  } else {
-    self.plain_value(scalar.text)
-  }
+  self.scalar_value(scalar)
 }
 
 ///|
@@ -360,15 +355,36 @@ priv struct Scalar {
 }
 
 ///|
-/// Scans the scalar at the current position. Its continuation lines must
-/// be indented more than `parent`.
-fn Parser::scalar(self : Parser, parent : Int) -> Scalar raise ParseError {
+/// Scans the scalar at the current position: a quoted one, or else a plain
+/// one, once `check_node_start` has found nothing else starting there. Its
+/// continuation lines must be indented more than `parent`. In a flow
+/// collection (`flow`), flow indicators also end a plain scalar.
+fn Parser::scalar(
+  self : Parser,
+  parent : Int,
+  flow~ : Bool,
+) -> Scalar raise ParseError {
   if self.peek() is ('"' | '\'') {
     let (text, multiline) = self.quoted(parent)
     { text, quoted: true, multiline, }
   } else {
-    let (text, multiline) = self.plain(parent)
+    self.check_node_start(flow~)
+    let (text, multiline) = self.plain(parent, flow~)
     { text, quoted: false, multiline, }
+  }
+}
+
+///|
+/// The value of `scalar`: a quoted scalar is a string, and a plain one
+/// means what `plain_value` says.
+fn Parser::scalar_value(
+  self : Parser,
+  scalar : Scalar,
+) -> Json raise ParseError {
+  if scalar.quoted {
+    Json::string(scalar.text)
+  } else {
+    self.plain_value(scalar.text)
   }
 }
 
@@ -456,25 +472,48 @@ fn Parser::next_quoted_line(
 ) -> Int raise ParseError {
   let mut empty = 0
   for ;; {
+    match self.next_line(parent) {
+      Blank => empty += 1
+      Text(inside=true) => return empty
+      End | Text(inside=false) => self.fail("unterminated \{what} value")
+    }
+  }
+}
+
+///|
+/// What `next_line` finds on the line after a line break.
+priv enum NextLine {
+  /// Only white space: the parser is at the line break that ends it.
+  Blank
+  /// The end of the input.
+  End
+  /// Text, at the parser's position. It is `inside` the node being parsed,
+  /// whose enclosing block collection is indented by `parent`, when the
+  /// line is indented more than `parent` and does not start with a document
+  /// marker.
+  Text(inside~ : Bool)
+}
+
+///|
+/// Moves from a line break to the next line, past its leading white space,
+/// and says what is there. Indentation counts spaces only.
+fn Parser::next_line(self : Parser, parent : Int) -> NextLine {
+  self.bump()
+  let mut spaces = 0
+  while self.peek() == ' ' {
     self.bump()
-    let mut spaces = 0
-    while self.peek() == ' ' {
-      self.bump()
-      spaces += 1
-    }
-    let at_line_start = self.pos == self.line_start
-    self.skip_space()
-    match self.peek() {
-      '\n' => empty += 1
-      EOF => self.fail("unterminated \{what} value")
-      _ => {
-        if spaces <= parent ||
-          (at_line_start && self.document_marker_at(self.pos)) {
-          self.fail("unterminated \{what} value")
-        }
-        return empty
-      }
-    }
+    spaces += 1
+  }
+  let at_line_start = self.pos == self.line_start
+  self.skip_space()
+  match self.peek() {
+    '\n' => Blank
+    EOF => End
+    _ =>
+      Text(
+        inside=spaces > parent &&
+          !(at_line_start && self.document_marker_at(self.pos)),
+      )
   }
 }
 
@@ -569,23 +608,33 @@ fn Parser::hex(self : Parser, n : Int) -> Int raise ParseError {
 }
 
 ///|
+/// What a block scalar does with the line breaks at its end (YAML 1.2,
+/// section 8.1.1.2).
+priv enum Chomping {
+  /// `-`: drops them all.
+  Strip
+  /// No indicator: keeps the first one.
+  Clip
+  /// `+`: keeps them all.
+  Keep
+}
+
+///|
 /// Parses a `|` (literal) or `>` (folded) block scalar from its header.
 /// Its lines must be indented more than `parent`.
 fn Parser::block_scalar(self : Parser, parent : Int) -> Json raise ParseError {
   let folded = self.peek() == '>'
   self.bump()
-  // Chomping: Some(false) strips the final line breaks, Some(true) keeps
-  // them all, None keeps one.
-  let keep = match self.peek() {
+  let chomping : Chomping = match self.peek() {
     '-' => {
       self.bump()
-      Some(false)
+      Strip
     }
     '+' => {
       self.bump()
-      Some(true)
+      Keep
     }
-    _ => None
+    _ => Clip
   }
   if self.peek() is ('0'..='9') {
     self.fail("block scalar indentation indicators are not supported")
@@ -684,10 +733,10 @@ fn Parser::block_scalar(self : Parser, parent : Int) -> Json raise ParseError {
     }
     terminated = self.peek() == '\n'
   }
-  let final_breaks = match keep {
-    Some(false) => 0
-    None => if read_content && terminated { 1 } else { 0 }
-    Some(true) => (if read_content && terminated { 1 } else { 0 }) + empty
+  let final_breaks = match chomping {
+    Strip => 0
+    Clip => if read_content && terminated { 1 } else { 0 }
+    Keep => (if read_content && terminated { 1 } else { 0 }) + empty
   }
   for _ in 0..<final_breaks {
     out.write_char('\n')
@@ -777,8 +826,7 @@ fn Parser::block_mapping(
     if self.peek() is ('[' | '{') {
       self.fail("a key must be a plain or quoted scalar")
     }
-    self.check_node_start(flow=false)
-    key = self.scalar(column)
+    key = self.scalar(column, flow=false)
     self.skip_space()
     if !self.at_key_indicator() {
       self.fail("expected a key followed by ':'")
@@ -816,11 +864,7 @@ fn Parser::mapping_value(
 /// Scans a plain scalar. It continues on following lines indented more
 /// than `parent`, folded: one line break becomes a space, each empty line a
 /// `\n`. Returns its text and whether it spans lines.
-fn Parser::plain(
-  self : Parser,
-  parent : Int,
-  flow? : Bool = false,
-) -> (String, Bool) {
+fn Parser::plain(self : Parser, parent : Int, flow~ : Bool) -> (String, Bool) {
   let out = StringBuilder()
   let mut multiline = false
   self.plain_line(out, flow~)
@@ -831,21 +875,13 @@ fn Parser::plain(
     let mut empty = 0
     let continues = self.peek() == '\n' &&
       (for ;; {
-        self.bump()
-        let mut spaces = 0
-        while self.peek() == ' ' {
-          self.bump()
-          spaces += 1
-        }
-        let at_line_start = self.pos == self.line_start
-        self.skip_space()
-        match self.peek() {
-          '\n' => empty += 1
-          EOF | '#' => break false
-          c =>
-            break spaces > parent &&
-              !(at_line_start && self.document_marker_at(self.pos)) &&
-              !(flow && is_flow_indicator(c))
+        match self.next_line(parent) {
+          Blank => empty += 1
+          End => break false
+          Text(inside~) => {
+            let c = self.peek()
+            break inside && c != '#' && !(flow && is_flow_indicator(c))
+          }
         }
       })
     if !continues {
@@ -925,11 +961,7 @@ fn Parser::flow_node(
   match self.peek() {
     '[' => self.flow_sequence(parent, pointer)
     '{' => self.flow_mapping(parent, pointer)
-    '"' | '\'' => Json::string(self.quoted(parent).0)
-    _ => {
-      self.check_node_start(flow=true)
-      self.plain_value(self.plain(parent, flow=true).0)
-    }
+    _ => self.scalar_value(self.scalar(parent, flow=true))
   }
 }
 
@@ -947,24 +979,13 @@ fn Parser::skip_flow_space(
     self.skip_comment()
     match self.peek() {
       EOF => self.fail("unterminated \{what}")
-      '\n' => {
-        self.bump()
-        let mut spaces = 0
-        while self.peek() == ' ' {
-          self.bump()
-          spaces += 1
+      '\n' =>
+        // A comment, or a line that closes a collection, may be indented
+        // less.
+        if self.next_line(parent) is Text(inside=false) &&
+          !(self.peek() is ('#' | ']' | '}')) {
+          self.fail("unterminated \{what}")
         }
-        let at_line_start = self.pos == self.line_start
-        self.skip_space()
-        match self.peek() {
-          '\n' | '#' | EOF | ']' | '}' => ()
-          _ =>
-            if spaces <= parent ||
-              (at_line_start && self.document_marker_at(self.pos)) {
-              self.fail("unterminated \{what}")
-            }
-        }
-      }
       _ => return
     }
   }
@@ -1030,14 +1051,7 @@ fn Parser::flow_mapping(
     if self.peek() == ',' {
       self.fail("expected a key before ','")
     }
-    let key : Scalar = if self.peek() is ('"' | '\'') {
-      let (text, multiline) = self.quoted(parent)
-      { text, quoted: true, multiline, }
-    } else {
-      self.check_node_start(flow=true)
-      let (text, multiline) = self.plain(parent, flow=true)
-      { text, quoted: false, multiline, }
-    }
+    let key = self.scalar(parent, flow=true)
     let key_pointer = self.key_pointer(map, pointer, key)
     self.reached = key_pointer
     self.skip_flow_space(parent, what)

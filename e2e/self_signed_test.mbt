@@ -485,3 +485,56 @@ async test "the generated certificate and its key stay in memory: smock serves H
     )
   })
 }
+
+///|
+/// When the certificate in the PEM file `file` expires, its notAfter, in
+/// seconds since the Unix epoch, as `openssl x509` and `date` read it.
+async fn not_after(file : String) -> String {
+  let (_, text) = run_openssl(["x509", "-in", file, "-noout", "-enddate"])
+  let date = line_after(text, "notAfter=")
+  let (status, out) = @process.collect_stdout("date", ["-u", "-d", date, "+%s"])
+  guard status == 0 else { fail("date cannot read \{date}") }
+  out.text().trim().to_owned()
+}
+
+///|
+async test "the expiry metric reports when the self-signed certificate expires, with mock=\"\", and follows the certificate a reload generates" {
+  let users = ("users", "users.example.com")
+  let orders = ("orders", "orders.example.com")
+  with_definitions([("mocks.json", mocks_with_stubs([users]))], defs => {
+    with_scratch(dir => {
+      let _ = with_smock(["--dir", defs, "--port", "0"], smock => {
+        let metric = "smock_tls_certificate_expiry_timestamp_seconds"
+        let out = []
+        let first = smock.presented_certificate(dir)
+        out.push("at startup:")
+        out.push(
+          smock
+          .metric(metric, help=true)
+          .replace(old=not_after(first.file), new="<its notAfter>"),
+        )
+        let status = smock.status()
+        write(defs, "mocks.json", mocks_with_stubs([users, orders]))
+        let _ = smock.reloaded(status)
+        let second = smock.presented_certificate(dir)
+        out.push("after a new one: \{second.fingerprint != first.fingerprint}")
+        out.push(
+          smock
+          .metric(metric)
+          .replace(old=not_after(second.file), new="<its notAfter>"),
+        )
+        inspect(
+          out.join("\n"),
+          content=(
+            #|at startup:
+            #|# HELP smock_tls_certificate_expiry_timestamp_seconds When each certificate the TLS port presents expires (its notAfter), in seconds since the Unix epoch, by the Mock it is for: mock="" for the default certificate.
+            #|# TYPE smock_tls_certificate_expiry_timestamp_seconds gauge
+            #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} <its notAfter>
+            #|after a new one: true
+            #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} <its notAfter>
+          ),
+        )
+      })
+    })
+  })
+}

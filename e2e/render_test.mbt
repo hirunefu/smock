@@ -60,12 +60,7 @@ async fn render(
   args : Array[String],
   env? : Map[String, String] = Map([]),
 ) -> String {
-  let (status, stdout, stderr) = render_output(args, env~)
-  let out = "status \{status}\n\{stdout}"
-  match stderr {
-    "" => out
-    err => "\{out}stderr:\n\{err}"
-  }
+  exit_report(render_output(args, env~))
 }
 
 ///|
@@ -75,19 +70,7 @@ async fn render_output(
   args : Array[String],
   env? : Map[String, String] = Map([]),
 ) -> (Int, String, String) {
-  build.wait()
-  let result = @async.with_timeout_opt(patience_ms, () => {
-    @process.collect_output(
-      binary,
-      ["render", ..args],
-      extra_env=env,
-      inherit_env=false,
-    )
-  })
-  guard result is Some((status, stdout, stderr)) else {
-    fail("smock render did not exit in time")
-  }
-  (status, stdout.text(), stderr.text())
+  smock_output(["render", ..args], env~)
 }
 
 ///|
@@ -275,7 +258,6 @@ async fn Smock::render(
   }
   let path = "/v1/stubs/\{@percent.encode(id)}/render\{query}"
   let response = self.admin("POST", path, body?, token~)
-  conforms("POST", path, response)
   response
 }
 

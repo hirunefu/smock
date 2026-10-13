@@ -133,6 +133,35 @@ fn describe(err : Error) -> String {
 }
 
 ///|
+test "a refused configuration's message says why, without naming the file it was loading" {
+  let message = (chain : String, key : String) => {
+    try
+      @openssl.ServerConfig(
+        certificate_chain=bytes(chain),
+        private_key=bytes(key),
+        alpn=["http/1.1"],
+      )
+    catch {
+      err => err.message()
+    } noraise {
+      _ => "loaded"
+    }
+  }
+  inspect(
+    [
+      message(@testcerts.rsa_key, @testcerts.rsa_key),
+      message(@testcerts.rsa_chain, @testcerts.rsa_chain),
+      message(@testcerts.rsa_chain, @testcerts.ecdsa_key),
+    ].join("\n"),
+    content=(
+      #|no PEM certificate found
+      #|no PEM private key found
+      #|the private key does not match the leaf certificate
+    ),
+  )
+}
+
+///|
 test "a configuration that cannot be used is refused with the reason" {
   let rsa_leaf = leaf_of(@testcerts.rsa_chain)
   let out = [

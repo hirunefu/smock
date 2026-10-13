@@ -36,10 +36,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # With the check-jsonschema version scripts/check-schema.sh pins.
       - name: Check that each Schema is a valid JSON Schema
-        run: >-
-          pipx run --spec check-jsonschema==0.38.2 check-jsonschema
-          --check-metaschema schema/v*/*.json
+        run: |
+          version=$(sed -n 's/^validator_version=//p' scripts/check-schema.sh)
+          test -n "$version"
+          pipx run --spec "check-jsonschema==$version" check-jsonschema \
+            --check-metaschema schema/v*/*.json
 
       # Only the Schemas are published, at their paths in the repository;
       # the fixtures next to them are not.

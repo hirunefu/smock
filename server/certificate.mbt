@@ -1,6 +1,6 @@
-// The certificate the TLS port presents: the configured certificate files,
-// or, without them, a self-signed certificate smock generates in memory for
-// local use.
+// The self-signed certificate the TLS port presents by default when no
+// default certificate files are configured: smock generates it in memory,
+// for local use, for the Hosts it serves.
 
 ///|
 /// How many days a generated certificate is valid. smock generates a new
@@ -9,63 +9,31 @@
 const SELF_SIGNED_DAYS = 365
 
 ///|
-/// What the TLS port presents to each new connection. A connection keeps
-/// the certificate it started its handshake with.
-priv enum TlsCertificate {
-  /// The configured certificate files: the default pair and the pairs of
-  /// single Mocks, which SNI chooses and which rotate.
-  Files(Certificates)
-  /// A self-signed certificate smock generated for the Hosts it serves.
-  SelfSigned(SelfSignedCertificate)
-}
-
-///|
-/// The configuration a new handshake gets when the client asks for
-/// `server_name` by SNI, or for no name.
-fn TlsCertificate::select(
-  self : TlsCertificate,
-  server_name : String?,
-) -> @openssl.ServerConfig {
-  match self {
-    Files(certificates) => certificates.select(server_name)
-    SelfSigned(certificate) => certificate.config
-  }
-}
-
-///|
-/// Follows a reload that swapped in a new definition set served by
-/// `engine`: warns about the Mocks with certificate files of their own that
-/// it does not declare, or replaces a self-signed certificate whose names no
-/// longer match its Hosts.
-fn TlsCertificate::after_swap(
-  self : TlsCertificate,
-  engine : @engine.Engine,
-  logger : @log.Logger,
-) -> Unit {
-  match self {
-    Files(certificates) => certificates.warn_undeclared()
-    SelfSigned(certificate) => certificate.follow_hosts(engine, logger)
-  }
-}
-
-///|
 /// A self-signed certificate smock generated, loaded for the TLS port.
 priv struct SelfSignedCertificate {
   /// What new handshakes get.
   mut config : @openssl.ServerConfig
   /// The names it covers.
   mut names : Array[String]
+  /// Its series of the expiry metric, the default certificate's.
+  expiry : @metrics.GaugeSeries
 }
 
 ///|
-/// A self-signed certificate for the Hosts `engine` serves. Returns `None`
-/// when it cannot be generated, which is logged.
+/// A self-signed certificate for the Hosts `engine` serves, whose expiry
+/// `expiry`, the default certificate's series of the expiry metric,
+/// reports. Returns `None` when it cannot be generated, which is logged.
 fn SelfSignedCertificate::generate(
   engine : @engine.Engine,
   logger : @log.Logger,
+  expiry : @metrics.GaugeSeries,
 ) -> SelfSignedCertificate? {
   let names = self_signed_names(engine.status())
-  generate_self_signed(names, logger).map(config => { config, names, })
+  generate_self_signed(names, logger).map(generated => {
+    let (config, certificate) = generated
+    set_self_signed_expiry(expiry, certificate)
+    { config, names, expiry, }
+  })
 }
 
 ///|
@@ -82,9 +50,22 @@ fn SelfSignedCertificate::follow_hosts(
   if names == self.names {
     return
   }
-  if generate_self_signed(names, logger) is Some(config) {
+  if generate_self_signed(names, logger) is Some((config, certificate)) {
     self.config = config
     self.names = names
+    set_self_signed_expiry(self.expiry, certificate)
+  }
+}
+
+///|
+/// Sets `expiry` to when `certificate`, a generated certificate in PEM,
+/// expires.
+fn set_self_signed_expiry(
+  expiry : @metrics.GaugeSeries,
+  certificate : Bytes,
+) -> Unit {
+  if certificate_expiry(certificate) is Some(ms) {
+    expiry.set(ms.to_double() / 1000.0)
   }
 }
 
@@ -116,11 +97,12 @@ fn self_signed_names(status : @engine.Status) -> Array[String] {
 ///|
 /// Generates a self-signed certificate for `names` and loads it for the TLS
 /// port, and logs that it is in use, with its SHA-256 fingerprint and its
-/// names. Returns `None` when it cannot, which is logged instead.
+/// names. Returns the configuration that presents it and the certificate,
+/// in PEM, or `None` when it cannot, which is logged instead.
 fn generate_self_signed(
   names : Array[String],
   logger : @log.Logger,
-) -> @openssl.ServerConfig? {
+) -> (@openssl.ServerConfig, Bytes)? {
   try {
     let generated = @openssl.SelfSigned::generate(names, days=SELF_SIGNED_DAYS)
     let config = @openssl.ServerConfig(
@@ -128,27 +110,21 @@ fn generate_self_signed(
       private_key=generated.private_key,
       alpn~,
     )
-    (config, generated.sha256_fingerprint)
+    (config, generated.certificate, generated.sha256_fingerprint)
   } catch {
     err => {
-      let reason = match err {
-        Failed(reason)
-        | InvalidCertificate(reason)
-        | InvalidPrivateKey(reason) => reason
-        KeyMismatch => "the private key does not match the certificate"
-      }
       logger.error("cannot generate a self-signed certificate", fields={
-        "error": Json::string(reason),
+        "error": Json::string(err.message()),
       })
       None
     }
   } noraise {
-    (config, fingerprint) => {
+    (config, certificate, fingerprint) => {
       logger.info("self-signed certificate in use", fields={
         "sha256Fingerprint": Json::string(fingerprint),
         "names": Json::array(names.map(name => Json::string(name))),
       })
-      Some(config)
+      Some((config, certificate))
     }
   }
 }

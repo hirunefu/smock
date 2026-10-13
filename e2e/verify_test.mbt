@@ -110,7 +110,6 @@ async test "verify and the unmatched requests need the bearer token" {
       ] {
       let (meth, path, body) = call
       let response = smock.admin(meth, path, token=None, body?)
-      conforms(meth, path, response)
       out.push("\{meth} \{path}: \{response.status} \{response.body}")
     }
     inspect(
@@ -136,7 +135,6 @@ async test "a verification that does not have the shape of the document is refus
         Some("{\"exactly\":1,\"atMost\":-1,\"filter\":{\"since\":\"now\"}}"),
       ] {
       let response = smock.admin("POST", "/v1/journal/verify", body?)
-      conforms("POST", "/v1/journal/verify", response)
       out.push("\{response.status} \{response.body}")
     }
     inspect(
@@ -221,7 +219,6 @@ async fn Smock::unmatched(
     None => "/v1/journal/unmatched"
   }
   let response = self.admin("GET", path, headers=[baggage(session)])
-  conforms("GET", path, response)
   (response.status, response.json())
 }
 

@@ -10,15 +10,7 @@ async fn Smock::send(
 ) -> String {
   let conn = self.connect()
   defer conn.close()
-  let request = StringBuilder()
-  request.write_string("\{meth} \{target} HTTP/1.1\r\nHost: localhost\r\n")
-  for header in headers {
-    request.write_string("\{header.0}: \{header.1}\r\n")
-  }
-  let bytes = @utf8.encode(body)
-  request.write_string("Content-Length: \{bytes.length()}\r\n\r\n")
-  conn.write(request.to_string())
-  conn.write(bytes)
+  conn.write(raw_request(meth, target, host="localhost", headers~, body~))
   read_response(conn)
 }
 
@@ -161,7 +153,7 @@ async test "a missing body file or a body-file path that leaves its subdirectory
   with_definitions([("users.json", defs), ("files/users/1.json", "{}")], dir => {
     let stopped = run_smock(["serve", "--dir", dir, "--port", "0"])
     inspect(
-      "status \{stopped.status}\n\{entries(stopped.logs)}\n---\n\{check([dir])}",
+      "status \{stopped.status}\n\{log_entries(stopped.logs)}\n---\n\{check([dir])}",
       content=(
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}

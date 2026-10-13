@@ -6,27 +6,7 @@
 /// The calling Session of `request`: the member of the Session header that
 /// mocked requests carry it in, or `None` for the no-Session space.
 fn Admin::session(self : Admin, request : @http1.Request) -> String? {
-  @engine.session_of(
-    request.headers.map(header => {
-      (header.name, @utf8.decode_lossy(header.value))
-    }),
-    header=self.session_header,
-    member_name=self.session_member,
-  )
-}
-
-///|
-/// The path segment at `index` of the request's path, percent-decoded, such
-/// as the Mock name `users api` in `/v1/mocks/users%20api/stubs`.
-fn path_segment(request : @http1.Request, index : Int) -> String {
-  let segments = path_of(request.target).split("/").collect()
-  @percent.decode_lossy(segments[index])
-}
-
-///|
-/// The Mock an operation on `/v1/mocks/{mock}/...` names.
-fn mock_of(request : @http1.Request) -> String {
-  path_segment(request, 3)
+  self.sessions.session_of(decoded_headers(request))
 }
 
 ///|
@@ -53,7 +33,7 @@ fn Admin::refused(
         "unknown_mock",
         "no Mock is named \{mock.escape()}: Mocks come only from Definition files",
       )
-    UnknownStub(mock~, id~) => {
+    UnknownEphemeralStub(mock~, id~) => {
       let caller = match session {
         Some(_) => "the calling Session"
         None => "the no-Session space"
@@ -86,9 +66,9 @@ fn Admin::refused(
 ///|
 /// Lists the calling Session's Ephemeral Stubs of a Mock, in the order they
 /// are tried.
-fn list_stubs(admin : Admin, request : @http1.Request, _body : Json?) -> Reply {
-  let session = admin.session(request)
-  let stubs = admin.engine().ephemeral_stubs(mock=mock_of(request), session~) catch {
+fn list_stubs(admin : Admin, call : Call) -> Reply {
+  let session = admin.session(call.request)
+  let stubs = admin.engine().ephemeral_stubs(mock=call.param("mock"), session~) catch {
       error => return admin.refused(error, session)
     }
   admin.json(200, {
@@ -98,10 +78,10 @@ fn list_stubs(admin : Admin, request : @http1.Request, _body : Json?) -> Reply {
 
 ///|
 /// Adds an Ephemeral Stub to a Mock for the calling Session, and logs it.
-fn add_stub(admin : Admin, request : @http1.Request, body : Json?) -> Reply {
-  let session = admin.session(request)
-  let mock = mock_of(request)
-  guard body is Some(body) else {
+fn add_stub(admin : Admin, call : Call) -> Reply {
+  let session = admin.session(call.request)
+  let mock = call.param("mock")
+  guard call.body is Some(body) else {
     return admin.error(
       400, "invalid_request", "the body must be the Ephemeral Stub to add, a JSON object",
     )
@@ -119,10 +99,10 @@ fn add_stub(admin : Admin, request : @http1.Request, body : Json?) -> Reply {
 
 ///|
 /// Deletes one of the calling Session's Ephemeral Stubs, and logs it.
-fn delete_stub(admin : Admin, request : @http1.Request, _body : Json?) -> Reply {
-  let session = admin.session(request)
-  let mock = mock_of(request)
-  let id = path_segment(request, 5)
+fn delete_stub(admin : Admin, call : Call) -> Reply {
+  let session = admin.session(call.request)
+  let mock = call.param("mock")
+  let id = call.param("id")
   admin.engine().delete_ephemeral_stub(mock~, session~, id~) catch {
     error => return admin.refused(error, session)
   }
@@ -137,9 +117,9 @@ fn delete_stub(admin : Admin, request : @http1.Request, _body : Json?) -> Reply 
 ///|
 /// Resets the scope the body names: the calling Session, one Mock or
 /// everything. Logs what it removed.
-fn reset(admin : Admin, request : @http1.Request, body : Json?) -> Reply {
-  let session = admin.session(request)
-  guard reset_scope(body, session) is Some(scope) else {
+fn reset(admin : Admin, call : Call) -> Reply {
+  let session = admin.session(call.request)
+  guard reset_scope(call.body, session) is Some(scope) else {
     return admin.error(
       400, "invalid_request", "the body must be {\"scope\":\"session\"}, {\"scope\":\"mock\",\"mock\":<name>} or {\"scope\":\"all\"}",
     )

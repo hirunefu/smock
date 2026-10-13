@@ -17,12 +17,13 @@ The repository is a MoonBit workspace (`moon.work`) of four modules:
 | `yaml/` | `smock/yaml` | Safe-subset YAML: `parse` turns a document into the tree `@json.parse` gives for the equivalent JSON (documented in `yaml/yaml.mbt`). |
 
 The three protocol modules do no I/O and do not depend on smock, so they can
-be published on mooncakes on their own. `scripts/check-protocol-modules.sh`
-checks that.
+be published on mooncakes on their own. `scripts/check-no-io.sh` checks
+that.
 
 Packages of `smock/smock`:
 
-- `cmd/smock`: the `smock` binary.
+- `cmd/smock`: the `smock` binary. It binds libc's `exit` to end with a
+  status, since neither core nor `moonbitlang/async` exposes one.
 - `settings`: the settings of `smock serve`, each a flag with a matching
   `SMOCK_<NAME>` environment variable, and the arguments of `smock check`
   and `smock render`.
@@ -51,6 +52,11 @@ Packages of `smock/smock`:
   the name chooses the certificate without a C callback. Its one C
   function, in `server/reset.c`, sets `SO_LINGER` so that the reset Fault
   ends a connection with an RST, the exception ADR 0001 makes for it.
+- `watch`: watches a directory, with the async runtime's file watcher
+  (inotify) and polling in case an event is missed, so that `server` can
+  reload the definitions directory and the certificate directories
+  (native). Its `Schedule`, which coalesces a burst of events into one
+  check and keeps the poll interval, does no I/O and reads no clock.
 - `metrics`: the metrics registry: counters, gauges and histograms with
   fixed label names, rendered in the Prometheus text format. Features
   register their metrics in the one registry `smock serve` keeps.
@@ -58,7 +64,9 @@ Packages of `smock/smock`:
   allows (native). A TLS connection there does no I/O: it takes the bytes
   that arrive from the peer and hands out the bytes to send, and `server`
   carries them over the socket. It also generates self-signed certificates
-  in memory. Its C is `openssl/openssl.c`.
+  in memory. Its C is `openssl/openssl.c`. The client side
+  (`openssl/client.mbt`) is there for the bindings' own tests, which run a
+  client and a server in memory under the sanitizers.
 - `testcerts`: a test PKI (a root CA, an intermediate CA, RSA and ECDSA
   leaf chains for `localhost` and `127.0.0.1`, and ECDSA leaf chains for
   `users.example.com` and `orders.example.com`, each leaf with its own fixed
@@ -70,7 +78,11 @@ Packages of `smock/smock`:
 - `e2e`: tests that run the `smock` binary as a black box (native).
 
 A package that does I/O or uses FFI declares `supported_targets = "native"`.
-Every other package also builds for `wasm-gc`, and CI tests it there.
+Every other package also builds for `wasm-gc`, and CI tests it there. The
+packages that decide a response, `definitions` and `engine`, and the ones
+they import, `prng` and `log`, must stay that way: `scripts/check-no-io.sh`
+fails if one of them leaves out `wasm-gc`, reads the environment, binds C
+or imports a package that does I/O.
 
 `openapi/admin.json` is the OpenAPI 3.1 document of the Admin API, the
 contract for it as the JSON Schema is for Definition files; a client can be
@@ -125,7 +137,7 @@ settings:
 | `--header-size-limit` | `SMOCK_HEADER_SIZE_LIMIT` | 16384 bytes (16 KiB): larger request heads get 431 |
 | `--header-count-limit` | `SMOCK_HEADER_COUNT_LIMIT` | 100 header fields: more get 431 |
 | `--body-limit` | `SMOCK_BODY_LIMIT` | 10485760 bytes (10 MiB): longer bodies get 413 |
-| `--read-timeout-ms` | `SMOCK_READ_TIMEOUT_MS` | 30000: a request must arrive whole within 30 s of its first byte |
+| `--read-timeout-ms` | `SMOCK_READ_TIMEOUT_MS` | 30000: a request must arrive whole within 30 s of its first byte, or, when it was pipelined behind a response, of that response |
 | `--idle-timeout-ms` | `SMOCK_IDLE_TIMEOUT_MS` | 60000: a connection that waits 60 s for a request closes |
 | `--drain-timeout-ms` | `SMOCK_DRAIN_TIMEOUT_MS` | 20000: how long smock drains after SIGTERM before it cuts what is still running |
 | `--seed` | `SMOCK_SEED` | none: smock picks the seed of its random generator, from 0 to 9007199254740991, and logs it ([Faults](docs/definition-files.md#seeds)) |
@@ -147,7 +159,9 @@ SIGHUP do the same.
   connections close at once.
 - Responses in progress finish with `Connection: close`, and their
   connections close after them. Server-Sent Event streams and pending
-  delays go on.
+  delays go on. A stream whose client has gone away counts too, until smock
+  next writes an event to it and notices, which an event's long delay can
+  put off until the drain timeout.
 - smock exits with status 0 as soon as nothing is in flight, and at the
   latest when the drain timeout (`--drain-timeout-ms`) expires: what is still
   running then is cut. Keep the Pod's `terminationGracePeriodSeconds` above
@@ -190,8 +204,8 @@ presenting the previous one. Either way one log entry names the pair
 (`"mock":""` for the default certificate) and the new certificate's expiry:
 
 ```json
-{"time":"…","level":"info","msg":"TLS certificate reloaded","mock":"","cert_file":"/etc/smock/tls/tls.crt","key_file":"/etc/smock/tls/tls.key","expiry":"2027-01-01T00:00:00.000Z"}
-{"time":"…","level":"error","msg":"TLS certificate reload failed","mock":"","cert_file":"/etc/smock/tls/tls.crt","key_file":"/etc/smock/tls/tls.key","expiry":null,"error":"certificate file: no PEM certificate found"}
+{"time":"…","level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"/etc/smock/tls/tls.crt","keyFile":"/etc/smock/tls/tls.key","expiry":"2027-01-01T00:00:00.000Z"}
+{"time":"…","level":"error","msg":"TLS certificate reload failed","mock":"","certFile":"/etc/smock/tls/tls.crt","keyFile":"/etc/smock/tls/tls.key","expiry":null,"error":"certificate file: no PEM certificate found"}
 ```
 
 By default every handshake gets that one certificate, usually with a SAN for
@@ -207,7 +221,8 @@ smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /et
 - A handshake whose SNI is one of the Hosts of a listed Mock, compared as
   Hosts are (case-insensitively, without a trailing dot), gets that Mock's
   certificate. A handshake without SNI, or whose SNI is no Host of a listed
-  Mock, gets the default certificate, which must be configured.
+  Mock, gets the default certificate: `--tls-cert-file`, or without it the
+  generated self-signed certificate (below).
 - SNI follows the Hosts of the definition set served, reloads included. It
   only chooses the certificate: the Host header still chooses the Mock.
   Definition files never refer to certificates.
@@ -218,18 +233,22 @@ smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /et
   missing, at startup included.
 - Each pair is loaded at startup, and one that cannot be loaded stops
   `smock serve` with exit status 1, as for the default pair. A value that is
-  not such a JSON object, an entry without both files, or the setting without
-  `--tls-cert-file` and `--tls-key-file` exits with status 2.
+  not such a JSON object, or an entry without both files, exits with
+  status 2.
 - Each pair rotates as the default certificate does.
 
 The metric `smock_tls_certificate_expiry_timestamp_seconds` gives when each
 certificate the TLS port presents expires (its notAfter), in seconds since
-the Unix epoch: `mock=""` for the default certificate and `mock="<name>"` for
-a Mock's own. It follows rotations, so an alert on it notices a renewal that
-stopped working before clients fail.
+the Unix epoch: `mock=""` for the default certificate, the generated
+self-signed one included, and `mock="<name>"` for a Mock's own. It follows
+rotations and new self-signed certificates, so an alert on it notices a
+renewal that stopped working before clients fail.
 
-Without certificate files, smock still serves HTTPS on the TLS port, with a
-self-signed certificate it generates at startup, for local use:
+Without default certificate files, smock still serves HTTPS on the TLS
+port, with a self-signed certificate it generates at startup, for local
+use. It is the default certificate, so with `--tls-mock-certs` the listed
+Mocks' Hosts get their own certificates by SNI and every other handshake
+gets this one:
 
 - The certificate covers `localhost`, `127.0.0.1`, `::1` and every Host of
   every Mock. Hosts that are IP addresses are IP address names, the others
@@ -248,7 +267,7 @@ self-signed certificate it generates at startup, for local use:
   `openssl s_client -connect 127.0.0.1:8443 </dev/null | openssl x509 >smock.pem`
   and `curl --cacert smock.pem https://localhost:8443/`, and check its
   fingerprint against the log with `openssl x509 -in smock.pem -noout -fingerprint -sha256`.
-- With certificate files configured, nothing is generated.
+- With default certificate files configured, nothing is generated.
 
 The Admin API is JSON over HTTP/1.1 on the admin port, as
 [openapi/admin.json](openapi/admin.json) describes it:
@@ -422,6 +441,9 @@ only a safe subset of YAML (`yaml/`):
 - Anchors, aliases, tags, merge keys, duplicate keys and multiple documents
   are rejected.
 
+A JSON file with a key repeated in one object is rejected too, at the later
+key: JSON parsers disagree on which of the two values counts.
+
 Every problem is reported with the file and the JSON Pointer of the value,
 such as `users.yaml: /stubs/0/request/method: "on" may be read as a boolean;
 quote this value`.
@@ -462,7 +484,8 @@ curl localhost:8080/users/1                                           # 200, fro
   Session's Ephemeral Stubs of the Mock. `POST /v1/reset` with
   `{"scope":"session"}` clears the calling Session's Ephemeral Stubs and
   [Journal](#the-journal) entries of every Mock, and its eviction count;
-  `{"scope":"mock","mock":"users"}` every Session's of one Mock; and
+  `{"scope":"mock","mock":"users"}` every Session's of one Mock, even one
+  that a reload removed while the Journal holds its entries; and
   `{"scope":"all"}` all of them, and every eviction count. It answers how
   many Ephemeral Stubs and Journal entries it removed.
 - Ephemeral Stubs live in the process that received them, until a reset or
@@ -588,11 +611,12 @@ helm install smock oci://ghcr.io/hirunefu/charts/smock --version <version> \
 ```
 
 The Definition files come from a ConfigMap by default, and a ConfigMap
-update reaches the running smock through its reload, without a restart; a
+update reaches the running smock through its reload, without a restart
+(with body files, a file added, removed or renamed restarts the Pods); a
 git-sync sidecar or an OCI image volume can deliver them instead. The Pods
 meet the Restricted Pod Security Standard, run one replica with about one
-CPU core by default, and get the Admin API token and the TLS certificate
-from Secrets. [charts/smock/README.md](charts/smock/README.md) describes the
+CPU core by default, and get the Admin API token and the TLS certificates,
+the default one and those of single Mocks, from Secrets. [charts/smock/README.md](charts/smock/README.md) describes the
 chart and lists every value with its default.
 
 ### Verify the image
@@ -608,8 +632,11 @@ cosign verify ghcr.io/hirunefu/smock:<version> \
 ```
 
 The image of each architecture has an SPDX SBOM, attached as a signed
-attestation. To verify the SBOM of the linux/arm64 image and save it as
-`smock.spdx.json` (use `amd64` for linux/amd64):
+attestation. It lists the packages of the distroless base and smock itself:
+the binary with the release's version, the commit and MoonBit toolchain it
+was built from, the MoonBit modules compiled into it, and its dynamic link
+to the base's OpenSSL. To verify the SBOM of the linux/arm64 image and save
+it as `smock.spdx.json` (use `amd64` for linux/amd64):
 
 ```sh
 digest=$(docker buildx imagetools inspect --raw ghcr.io/hirunefu/smock:<version> |
@@ -685,7 +712,7 @@ moon test --target wasm-gc     # every package that does no I/O
 moon check --deny-warn --target all
 moon fmt --check
 moon bench -p smock/smock/engine --release   # match index lookups: 100 vs 10,000 Stubs
-scripts/check-protocol-modules.sh
+scripts/check-no-io.sh         # no I/O in the protocol modules and the packages that decide a response
 scripts/check-no-c.sh          # the C boundary of ADR 0001
 scripts/test-openssl-asan.sh   # the OpenSSL bindings under AddressSanitizer and LeakSanitizer
 scripts/build-release.sh       # dist/smock
@@ -694,8 +721,8 @@ scripts/check-schema.sh dist/smock   # the JSON Schema and smock agree
 scripts/check-openapi.sh       # the Admin API document is valid OpenAPI 3.1
 docker build --tag smock:dev .
 scripts/smoke-test-image.sh smock:dev 0.0.0-dev <commit> "moonc <version>"   # the container image
-scripts/check-release-workflow.sh    # the release workflow publishes only for tags (needs yq)
-scripts/check-benchmark-workflow.sh  # the benchmark workflow runs only by hand (needs yq)
+scripts/check-release-workflow.sh    # the release workflow publishes only for tags (needs yq and jq)
+scripts/check-benchmark-workflow.sh  # the benchmark workflow runs only by hand (needs yq and jq)
 scripts/test-helm-chart.sh           # rendering tests of the Helm chart (needs helm, yq and jq)
 scripts/test-helm-chart-on-kind.sh smock:dev   # the chart on a kind cluster (needs kind, kubectl and helm)
 ```
@@ -726,21 +753,27 @@ The native build links OpenSSL 3 (on Debian and Ubuntu, `libssl-dev`).
 `prebuild.py`, which `moon` runs with `python3` before every native build,
 adds `-lssl -lcrypto` to every executable that uses the bindings, tests
 included, because link flags in a library's own `moon.pkg` do not reach the
-packages that import it.
+packages that import it. It also compiles every executable that holds the
+engine with `-ffp-contract=off`, so that a release build on arm64 does not
+fuse floating-point multiply-adds and a seeded delay is the same as on
+wasm-gc; CI tests the engine in a release build to check it. And it brings
+the build information that `smock --version` reports up to date, so every
+native build, release or not, names the commit checked out and the
+toolchain in use.
 
 Most tests drive the engine through its public interface, with in-memory
 Definition files, a fixed clock and a seeded random source
 (`engine/harness_test.mbt`). The tests in `e2e/` run the binary itself: each
 one first runs `moon build --target native cmd/smock`, then starts smock with
 its own temporary definitions directory and port 0 for each port, so they
-run in parallel (`e2e/harness_test.mbt`). They need `moon`, `kill` and
-`openssl` on `PATH`. The HTTPS tests use clients that trust only the root CA
-of `testcerts`, and the HTTP/1.1 tests run on both the plain and the TLS
-port. The tests of the generated certificate (`e2e/self_signed_test.mbt`)
+run in parallel (`e2e/harness_test.mbt`). They need `moon`, `moonc`, `git`,
+`kill` and `openssl` on `PATH`. The HTTPS tests use clients that trust only
+the root CA of `testcerts`, and the HTTP/1.1 tests run on both the plain and
+the TLS port. The tests of the generated certificate (`e2e/self_signed_test.mbt`)
 read it from the handshake with `openssl s_client` and then trust only it.
 
-`SMOCK_VERSION` and `SMOCK_COMMIT` set the version and the commit that
-`scripts/build-release.sh` records in the binary.
+`SMOCK_VERSION` and `SMOCK_COMMIT` set the version and the commit that a
+native build, such as `scripts/build-release.sh`, records in the binary.
 
 ## Benchmark
 
@@ -752,7 +785,7 @@ latency for each case, and checks the provisional performance targets.
 | File | What it is |
 |---|---|
 | `bench/bench.py` | Runs the benchmark. |
-| `bench/definitions/` | The definition set smock serves: four Mocks, one of them the Default Mock, and 1161 Stubs with exact, pattern and `json` conditions. `bench/gen_definitions.py` writes it. |
+| `bench/definitions/` | The definition set smock serves: four Mocks, one of them the Default Mock, and about 1,200 Stubs with exact, pattern and `json` conditions (`e2e/bench_test.mbt` pins the exact count). `bench/gen_definitions.py` writes it. |
 | `bench/requests.json` | The request mix: nine kinds of request, with weights, realistic headers, a Session in `baggage`, and bodies. |
 | `bench/plan.json` | The cases, the CPU limits, and the rates and durations. |
 | `bench/targets.json` | The provisional targets, the one place to change them. |
@@ -805,11 +838,24 @@ record the CPU frequency governor.
 - **Fixed arrival rate.** oha sends each kind of request at its weight's
   share of the case's rate and connections. Its schedule releases request
   `i` at `i / rate` whether or not a connection is free to send it, and a
-  request's latency counts from that release. A request that waits behind
-  a busy or stalled smock counts its wait. oha's own timer releases requests
-  a millisecond or two late; that lag is reported apart as the generator
-  lag. When its p99 is over 5 ms, the load generator fell behind, and the
-  case says so (`load_generator_late`).
+  request's latency counts from that time, when it was due. A request that
+  waits behind a busy or stalled smock counts its wait, and so does one
+  that oha releases late because it fell behind, as it can when a stalled
+  smock answers a burst at once.
+- **Latency from release and generator lag.** Beside the latency, each
+  case reports the latency from the time oha actually released each
+  request, and the generator lag, how late it released them: the latency is
+  their sum. oha's timer has a resolution of 1 ms, so it releases requests
+  about a millisecond late, and the scheduler adds a few milliseconds now
+  and then. When the lag's p99.9 is over 5 ms or its maximum over 10 ms, the
+  load generator fell behind its schedule, and the case says so
+  (`load_generator_late`).
+- **What oha's timer means for the targets.** Since every latency includes
+  the generator lag, about a millisecond at p50 and up to a few at p99, a
+  target below a millisecond or two cannot be met as measured, whatever
+  smock does: the p99 target of 1 ms is one. The latency from release
+  shows what smock itself adds; checking such a target needs a load
+  generator that paces requests more finely than 1 ms.
 - **Window.** Requests scheduled in the first 2 seconds, while connections
   open, are not counted. The next 20 seconds are measured, and 3 more let
   the last of them finish.
@@ -817,9 +863,10 @@ record the CPU frequency governor.
   `bench/requests.json` expects is an error, whether it got another status
   or no response.
 - **Targets.** Each target of `bench/targets.json` is met, missed or not
-  measured. A latency target holds for one case under one CPU limit at one
-  rate. A run that did not run that case at that rate does not measure it,
-  nor does one whose load generator fell behind; any error misses it.
+  measured, by the latency counted from the scheduled send times. A latency
+  target holds for one case under one CPU limit at one rate. A run that did
+  not run that case at that rate does not measure it, nor does one whose
+  load generator fell behind; any error misses it.
 
 ### What a run writes
 
@@ -829,15 +876,17 @@ record the CPU frequency governor.
   and the CPUs of smock and of the load generator; each case's rate,
   durations and connection counts; oha and its version; the targets file;
   any options that changed the plan.
-- `summary.json`: for each case, latency (p50, p90, p99, p99.9, max), the
-  achieved rate, the errors by kind, the generator lag, smock's CPU use and
+- `summary.json`: for each case, the latency from the scheduled send times
+  and the latency from release (each p50, p90, p99, p99.9, max), the
+  generator lag (p50, p99, p99.9, max) and whether the load generator fell
+  behind, the achieved rate, the errors by kind, smock's CPU use and
   throttling, the quota and CPUs read while it ran, smock's RSS (first,
   last, max), the TCP connections the machine accepted during the load, and
   the idle connections still open at its end. Then the idle RSS, and each
   target with its verdict. `format` numbers the layout.
 - `summary.md`: the same for people.
 - `raw/<cpu limit>/<case>/`: `latency.json`, a histogram of the latencies
-  in microseconds to three significant digits; `rss.json`, smock's RSS
+  from the scheduled send times in microseconds to three significant digits; `rss.json`, smock's RSS
   over time; smock's log; and oha's own report for each kind of request.
   `raw/idle-rss.json` has the RSS samples of the idle measurement.
 

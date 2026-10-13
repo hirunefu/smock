@@ -14,10 +14,15 @@ pub(all) struct Warning {
 } derive(Debug, Eq)
 
 ///|
-/// `<file>: <pointer>: warning: <message>`, on one line, as
-/// `Diagnostic::to_string` writes a problem.
+/// `<file>: <pointer>: warning: <message>`, written as
+/// `Diagnostic::to_string` writes a problem: on one line, and without the
+/// parts that are empty.
 pub fn Warning::to_string(self : Warning) -> String {
-  one_line("\{self.file}: \{self.pointer}: warning: \{self.message}")
+  Diagnostic::{
+    file: self.file,
+    pointer: self.pointer,
+    message: "warning: \{self.message}",
+  }.to_string()
 }
 
 ///|
@@ -36,12 +41,12 @@ pub fn Snapshot::warnings(self : Snapshot) -> Array[Warning] {
         }
       }
       guard shadowing is Some(earlier) else { continue }
-      let (file, pointer) = self.stub_locations[stub.id]
-      let (earlier_file, earlier_pointer) = self.stub_locations[earlier.id]
+      let { file, pointer, } = self.stub_locations[stub.id]
+      let earlier_at = self.stub_locations[earlier.id]
       out.push({
         file,
         pointer,
-        message: "the Stub \{stub.id.escape()} can never match: the Stub \{earlier.id.escape()} at \{earlier_file}: \{earlier_pointer} is tried first and matches every request this one would",
+        message: "the Stub \{stub.id.escape()} can never match: the Stub \{earlier.id.escape()} at \{earlier_at} is tried first and matches every request this one would",
       })
     }
   }

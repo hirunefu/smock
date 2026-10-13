@@ -7,7 +7,6 @@
 /// The status, checked against the document.
 async fn Smock::status(self : Smock) -> Map[String, Json] {
   let response = self.admin("GET", "/v1/status")
-  conforms("GET", "/v1/status", response)
   guard response.json() is Object(status) else { fail(response.body) }
   status
 }
@@ -172,19 +171,6 @@ fn reload_entries(
 }
 
 ///|
-/// The lines of the reload metric.
-async fn Smock::reload_metric(self : Smock) -> String {
-  let response = self.admin("GET", "/metrics")
-  conforms("GET", "/metrics", response)
-  response.body
-  .split("\n")
-  .filter(line => line.contains("smock_definition_reloads_total"))
-  .map(line => line.to_owned())
-  .collect()
-  .join("\n")
-}
-
-///|
 async test "an invalid set keeps the current one serving and is reported in status, a log entry and the reload metric; fixing it swaps" {
   with_definitions(
     [
@@ -217,7 +203,7 @@ async test "an invalid set keeps the current one serving and is reported in stat
             $|digest kept: \{kept}; /users/1: \{served}
             $|fixed: \{last_reload(fixed)}
             $|digest changed: \{changed}; /users/1: \{smock.brief("/users/1")}
-            $|\{smock.reload_metric()}
+            $|\{smock.metric("smock_definition_reloads_total", help=true)}
           ),
           content=(
             #|broken: "failed"
@@ -329,7 +315,7 @@ async test "without a definitions directory, nothing is watched and no reload ha
       (
         $|digest: \{status.get("digest").map_or("missing", d => d.stringify())}
         $|lastReload: \{last_reload(status)}
-        $|\{smock.reload_metric()}
+        $|\{smock.metric("smock_definition_reloads_total", help=true)}
       ),
       content=(
         #|digest: "e3b0c44298fc"
@@ -372,27 +358,35 @@ async test "a definitions directory that does not exist yet is polled every 10 s
         ),
       )
     })
-    // The warnings and errors, and the reloads: no warning about watching.
-    let messages = stopped.logs.filter_map(line => {
-      let entry = @json.parse(line) catch { _ => return Some(line) }
-      guard entry is Object(fields) &&
-        fields.get("level") is Some(String(level)) &&
-        fields.get("msg") is Some(String(msg)) else {
-        return Some(line)
-      }
-      if level != "info" || msg.contains("reload") {
-        Some("\{level}: \{msg}")
-      } else {
-        None
-      }
-    })
+    // No warning about watching.
     inspect(
-      messages.join("\n"),
+      warnings_and_reloads(stopped.logs),
       content=(
         #|info: definitions reloaded
       ),
     )
   })
+}
+
+///|
+/// The level and message of each warning, error and reload in `logs`, one
+/// per line, and any line that is not a log entry.
+fn warnings_and_reloads(logs : Array[String]) -> String {
+  logs
+  .filter_map(line => {
+    let entry = @json.parse(line) catch { _ => return Some(line) }
+    guard entry is Object(fields) &&
+      fields.get("level") is Some(String(level)) &&
+      fields.get("msg") is Some(String(msg)) else {
+      return Some(line)
+    }
+    if level != "info" || msg.contains("reload") {
+      Some("\{level}: \{msg}")
+    } else {
+      None
+    }
+  })
+  .join("\n")
 }
 
 ///|
@@ -451,5 +445,89 @@ async test "a ConfigMap update, which swaps the ..data symlink and keeps the vis
         ),
       )
     })
+  })
+}
+
+///|
+/// Writes `files` into `root` the way git-sync publishes a commit: into a
+/// new worktree `.worktrees/<commit>`, then points the symlink `current` at
+/// it with an atomic rename, then removes the worktree it replaced, if any,
+/// as git-sync does by default.
+async fn git_sync_update(
+  root : String,
+  commit : String,
+  files : Array[(String, String)],
+  replaces? : String,
+) -> Unit {
+  for file in files {
+    write(root, ".worktrees/\{commit}/\{file.0}", file.1)
+  }
+  @fs.symlink(target=".worktrees/\{commit}", "\{root}/current_tmp")
+  @fs.rename("\{root}/current_tmp", "\{root}/current")
+  if replaces is Some(old) {
+    @fs.rmdir("\{root}/.worktrees/\{old}", recursive=true)
+  }
+}
+
+///|
+async test "a git-sync update, which points the symlink that --dir goes through at a new worktree and removes the old one, reloads the definitions" {
+  with_definitions([], root => {
+    git_sync_update(root, "c1", [
+      ("mocks/mocks.json", reload_mock),
+      ("mocks/users.json", user_stub),
+      ("mocks/files/users/1.json", "Alice"),
+    ])
+    let stopped = with_smock(
+      ["--dir", "\{root}/current/mocks", "--port", "0"],
+      smock => {
+        let before = smock.status()
+        let served_before = smock.brief("/users/1")
+        git_sync_update(
+          root,
+          "c2",
+          [
+            ("mocks/mocks.json", reload_mock),
+            ("mocks/users.json", user_stub),
+            ("mocks/files/users/1.json", "Bob"),
+          ],
+          replaces="c1",
+        )
+        let after = smock.reloaded(before)
+        let served_after = smock.brief("/users/1")
+        // The watch has moved on to the new worktree, so the next commit
+        // is seen too.
+        git_sync_update(
+          root,
+          "c3",
+          [
+            ("mocks/mocks.json", reload_mock),
+            ("mocks/users.json", user_stub),
+            ("mocks/files/users/1.json", "Carol"),
+          ],
+          replaces="c2",
+        )
+        let next = smock.reloaded(after)
+        inspect(
+          (
+            $|before: \{served_before}
+            $|\{last_reload(after)}: \{served_after}
+            $|\{last_reload(next)}: \{smock.brief("/users/1")}
+          ),
+          content=(
+            #|before: 200 Alice
+            #|"swapped": 200 Bob
+            #|"swapped": 200 Carol
+          ),
+        )
+      },
+    )
+    // A reload for each commit, and no warning about watching.
+    inspect(
+      warnings_and_reloads(stopped.logs),
+      content=(
+        #|info: definitions reloaded
+        #|info: definitions reloaded
+      ),
+    )
   })
 }

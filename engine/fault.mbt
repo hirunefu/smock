@@ -21,7 +21,7 @@ fn seeded_generators(
 
 ///|
 /// The Fault decisions for one request that `stub` matched: the delay, in
-/// milliseconds, and the connection Fault, if any. They draw from `source`:
+/// milliseconds, and the kind of connection Fault, if any. They draw from `source`:
 /// the Stub's own generator, or else the process generator.
 ///
 /// The source advances exactly once per matched request: every draw for
@@ -31,7 +31,7 @@ fn seeded_generators(
 fn decide_faults(
   stub : @definitions.Stub,
   source : @prng.Generator,
-) -> (Int, ConnectionFault?) {
+) -> (Int, @definitions.ConnectionKind?) {
   guard stub.fault is Some(fault) &&
     (fault.delay is Some(_) || fault.connection is Some(_)) else {
     return (0, None)
@@ -44,11 +44,7 @@ fn decide_faults(
   }
   let connection = match fault.connection {
     Some(connection) if draws.double() < connection.probability =>
-      match connection.kind {
-        Reset => Some(Reset)
-        Close => Some(Close)
-        Partial => Some(Partial)
-      }
+      Some(connection.kind)
     _ => None
   }
   (delay_ms, connection)
@@ -86,13 +82,13 @@ fn standard_normal(g : @prng.Generator) -> Double {
 
 ///|
 /// `ms` rounded to whole milliseconds, from 0 to the longest delay a
-/// Definition file can give, 2147483647.
+/// Definition file can give, `@definitions.max_milliseconds`.
 fn milliseconds(ms : Double) -> Int {
   if ms.is_nan() || ms <= 0.0 {
     // NaN comes only from a median of 0 times an infinite factor.
     0
-  } else if ms >= 2147483647.0 {
-    2147483647
+  } else if ms >= @definitions.max_milliseconds.to_double() {
+    @definitions.max_milliseconds
   } else {
     ms.round().to_int()
   }

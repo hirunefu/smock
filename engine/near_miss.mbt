@@ -213,7 +213,7 @@ fn Incoming::explain(self : Incoming, failed : Failed) -> FailedCondition {
         expected: match body {
           Exact(bytes) => Exact(@utf8.decode_lossy(bytes))
           Pattern(pattern) => Pattern(pattern.source)
-          Json(value) => Json(value)
+          Json(condition) => Json(condition.to_json())
         },
         actual: [@utf8.decode_lossy(self.request.body)],
       }

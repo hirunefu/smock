@@ -98,7 +98,10 @@ def case(out, case_id):
 class LatencyFromScheduledSendTime(unittest.TestCase):
     """Requests go out at a fixed arrival rate, and each one's latency counts
     from the time it was scheduled to be sent, so a stall shows up in the
-    tail however few requests were in flight when it began."""
+    tail however few requests were in flight when it began, and even when
+    the load generator falls behind with it. The latency from the time the
+    load generator released each request, and how late it released them,
+    are reported beside it."""
 
     ARGS = ["--cases", "http-keep-alive", "--cpu-limits", "1", "--rate", "400", *SHORT]
 
@@ -128,19 +131,44 @@ class LatencyFromScheduledSendTime(unittest.TestCase):
         self.assertEqual(result["errors"], 0)
         self.assertGreaterEqual(result["achieved_rate"], 400 * 0.95)
 
-    def test_a_stalled_load_generator_shows_as_its_lag_not_as_smocks_latency(self):
-        # The load generator's own lateness is not smock's: it is reported
-        # apart, and the case says that the generator fell behind.
+    def test_a_stall_that_holds_up_the_load_generator_too_still_shows_in_p99_and_p999(self):
+        # The requests due while both are stopped go out late, all at once,
+        # and smock answers them quickly: only the time since they were due
+        # shows the wait.
+        result = self.run_with(lambda smock, generators: stall([smock, *generators], 0.5), after_s=1.5)
+        self.assertGreaterEqual(result["latency_ms"]["p99"], 300)
+        self.assertGreaterEqual(result["latency_ms"]["p99_9"], 400)
+        self.assertLess(result["latency_from_release_ms"]["p99"], 100)
+        self.assertEqual(result["errors"], 0)
+
+    def test_a_stalled_load_generator_shows_as_its_lag_and_the_case_says_it_fell_behind(self):
+        # The load generator's own lateness counts in the latency, but the
+        # latency from release and the lag tell it apart from smock's, and
+        # the case says that the generator fell behind.
         result = self.run_with(lambda smock, generators: stall(generators, 0.5), after_s=1.5)
         self.assertGreaterEqual(result["generator_lag_ms"]["max"], 400)
         self.assertTrue(result["load_generator_late"])
-        self.assertLess(result["latency_ms"]["p99"], 100)
+        self.assertGreaterEqual(result["latency_ms"]["p99"], 300)
+        self.assertLess(result["latency_from_release_ms"]["p99"], 100)
         self.assertEqual(result["errors"], 0)
+
+    def test_a_load_generator_late_for_fewer_than_one_in_a_hundred_requests_fell_behind(self):
+        # About 10 of the 1,600 requests in the window go out up to 25 ms
+        # late: p99 of the lag does not see them, p99.9 and the maximum do.
+        result = self.run_with(lambda smock, generators: stall(generators, 0.025), after_s=1.5)
+        self.assertGreaterEqual(result["generator_lag_ms"]["p99_9"], 10)
+        self.assertTrue(result["load_generator_late"])
 
     def test_a_load_generator_on_schedule_is_not_late(self):
         result = self.run_with(lambda smock, generators: None, after_s=0)
         self.assertFalse(result["load_generator_late"])
-        self.assertLess(result["generator_lag_ms"]["p99"], 5)
+        # oha's timer and the scheduler: within the limits of bench.py,
+        # GENERATOR_LAG_LIMITS_MS.
+        lag = result["generator_lag_ms"]
+        self.assertLessEqual(lag["p99_9"], 5)
+        self.assertLessEqual(lag["max"], 10)
+        # Each latency is the lag plus the latency from release.
+        self.assertGreaterEqual(result["latency_ms"]["p99"], result["latency_from_release_ms"]["p99"])
 
     def test_requests_that_get_no_response_count_as_errors_once(self):
         # smock dies 1.5 s into the 4 s window: the rest of its requests fail.
@@ -329,7 +357,7 @@ class IdleRss(unittest.TestCase):
         # The last sample, taken once smock was ready and had settled.
         self.assertGreaterEqual(samples[-1][0], 1.5)
         self.assertEqual(idle["rss_kib"], samples[-1][1])
-        # 1161 Stubs take more than a bare process and far less than 1 GiB.
+        # About 1,200 Stubs take more than a bare process and far less than 1 GiB.
         self.assertTrue(2048 < idle["rss_kib"] < 1024 * 1024, idle)
         self.assertEqual(idle["digest"], definition_set_digest(BENCH / "definitions"))
 
@@ -401,6 +429,23 @@ class Targets(unittest.TestCase):
         for target in targets.values():
             self.assertTrue([line for line in lines if target["about"] in line and target["verdict"] in line],
                             target["id"])
+
+    def test_a_latency_target_is_not_measured_when_the_load_generator_fell_behind(self):
+        path = targets_file(self, [latency_target("loose-p99", "p99", 1000, 200)])
+        threads = []
+
+        def on_line(line):
+            pids = load_started(line)
+            if pids:
+                threads.append(later(1, lambda: stall(pids[1], 0.025)))
+
+        out = bench(self, *self.ARGS, "--targets", str(path), on_line=on_line)
+        for thread in threads:
+            thread.join()
+        target = read(out, "summary.json")["targets"][0]
+        self.assertEqual(target["verdict"], "not measured")
+        self.assertIn("fell behind", target["reason"])
+        self.assertIn("p99.9", target["reason"])
 
     def test_a_latency_target_is_missed_when_requests_fail_whatever_the_latencies(self):
         path = targets_file(self, [latency_target("loose-p99", "p99", 1000, 200)])

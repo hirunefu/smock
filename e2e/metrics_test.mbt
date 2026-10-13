@@ -26,18 +26,13 @@ async test "the build-info metric carries the version, commit and toolchain smoc
   let build_info = "smock_build_info{version=\"\{version}\",commit=\"\{commit}\",toolchain=\"\{toolchain}\"} 1"
   let _ = with_smock(["--port", "0"], smock => {
     let response = smock.admin("GET", "/metrics")
-    conforms("GET", "/metrics", response)
-    let lines = response.body
-      .split("\n")
-      .filter(line => line.contains("smock_build_info"))
-      .map(line => {
-        if line == build_info {
-          "<build info>"
-        } else {
-          line.to_owned()
-        }
-      })
-      .collect()
+    let lines = metric_lines(response.body, "smock_build_info", help=true).map(line => {
+      if line == build_info {
+        "<build info>"
+      } else {
+        line
+      }
+    })
     inspect(
       "\{response.status} \{response.header("Content-Type").unwrap_or("")}\n\{lines.join("\n")}",
       content=(
@@ -59,7 +54,6 @@ async test "/metrics needs no token, also with authentication on, and names the 
     for call in [("no token", None), ("a wrong token", Some("wrong"))] {
       let (name, token) = call
       let response = smock.admin("GET", "/metrics", token~)
-      conforms("GET", "/metrics", response)
       let replica = response.header("Smock-Replica") == Some(host)
       out.push(
         "\{name}: \{response.status}, Smock-Replica is the host name: \{replica}",

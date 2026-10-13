@@ -20,10 +20,9 @@ priv struct Admin {
   replica : String
   /// The warnings every JSON response carries.
   warnings : Json
-  /// The header that carries the calling Session, as W3C Baggage, and the
-  /// member whose value is the Session key, as on mocked requests.
-  session_header : String
-  session_member : String
+  /// Where calls carry the calling Session, as requests to the Mocks
+  /// carry theirs.
+  sessions : SessionCarrier
 }
 
 ///|
@@ -46,9 +45,28 @@ priv struct Route {
   open : Bool
   /// Whether it takes a JSON request body.
   takes_body : Bool
-  /// What answers a call, given the request and its body, parsed as JSON
-  /// when there is one.
-  answer : (Admin, @http1.Request, Json?) -> Reply
+  /// What answers a call.
+  answer : (Admin, Call) -> Reply
+}
+
+///|
+/// One call of an operation.
+priv struct Call {
+  request : @http1.Request
+  /// Each `{name}` of the route's path, with the segment of the request's
+  /// path it stands for, as sent: still percent-encoded.
+  params : Map[String, String]
+  /// The body, parsed as JSON, for an operation that takes one and a
+  /// request that has one.
+  body : Json?
+}
+
+///|
+/// The path parameter `name` of the call, percent-decoded, with bytes that
+/// are not UTF-8 as U+FFFD: such as the Mock name `users api` in
+/// `/v1/mocks/users%20api/stubs`.
+fn Call::param(self : Call, name : String) -> String {
+  @percent.decode_lossy(self.params[name])
 }
 
 ///|
@@ -74,7 +92,7 @@ let routes : Array[Route] = [
 fn route(
   path : String,
   meth : String,
-  answer : (Admin, @http1.Request, Json?) -> Reply,
+  answer : (Admin, Call) -> Reply,
   open? : Bool = false,
   takes_body? : Bool = false,
 ) -> Route {
@@ -91,8 +109,7 @@ fn route(
 ///   authentication off.
 /// - `replica` is the replica's name, such as the Pod's hostname.
 /// - `replicas` is how many replicas the deployment runs.
-/// - `session_header` and `session_member` name the calling Session's
-///   header and its W3C Baggage member.
+/// - `sessions` says where calls carry the calling Session.
 fn Admin::new(
   lifecycle : Lifecycle,
   build : @buildinfo.BuildInfo,
@@ -102,20 +119,9 @@ fn Admin::new(
   token~ : String?,
   replica~ : String,
   replicas~ : Int,
-  session_header~ : String,
-  session_member~ : String,
+  sessions~ : SessionCarrier,
 ) -> Admin {
-  let replica = header_safe(replica)
-  let warnings : Array[Json] = if replicas > 1 {
-    [
-      {
-        "code": "per_replica_state",
-        "message": "This deployment runs \{replicas} replicas (--replicas), and each one keeps its own Ephemeral Stubs and Journal. This response comes from \{replica} alone.",
-      },
-    ]
-  } else {
-    []
-  }
+  let replica = @engine.header_safe(replica)
   {
     lifecycle,
     build,
@@ -124,21 +130,33 @@ fn Admin::new(
     logger,
     token: token.map(token => @utf8.encode(token)),
     replica,
-    warnings: Json::array(warnings),
-    session_header,
-    session_member,
+    warnings: @engine.admin_warnings(replicas~, replica~).to_json(),
+    sessions,
   }
 }
 
 ///|
 /// The encoded response to `request`.
 fn Admin::respond(self : Admin, request : @http1.Request) -> Bytes {
-  let reply = self.handle(request)
+  self.encode(self.handle(request), request~)
+}
+
+///|
+/// `reply` encoded, with the replica's name in `Smock-Replica` first, as
+/// the answer to `request` when one was parsed. With `close`, it says
+/// `Connection: close`.
+fn Admin::encode(
+  self : Admin,
+  reply : Reply,
+  request? : @http1.Request,
+  close? : Bool = false,
+) -> Bytes {
   @http1.encode_response(
     reply.status,
     [("Smock-Replica", self.replica), ..reply.headers],
     reply.body,
-    request~,
+    request?,
+    close~,
   )
 }
 
@@ -161,13 +179,7 @@ fn Admin::reject(self : Admin, status : Int) -> Bytes {
       ("http_version_not_supported", "the request is not HTTP/1.0 or HTTP/1.1")
     _ => ("bad_request", "the request is not valid HTTP/1.1")
   }
-  let reply = self.error(status, code, message)
-  @http1.encode_response(
-    reply.status,
-    [("Smock-Replica", self.replica), ..reply.headers],
-    reply.body,
-    close=true,
-  )
+  self.encode(self.error(status, code, message), close=true)
 }
 
 ///|
@@ -191,8 +203,13 @@ fn Admin::error(
 /// the JSON body, for an operation that takes one.
 fn Admin::handle(self : Admin, request : @http1.Request) -> Reply {
   let path = path_of(request.target)
-  let at_path = routes.filter(route => path_matches(route.path, path))
-  let open = at_path.length() > 0 && at_path.iter().all(route => route.open)
+  let at_path = []
+  for route in routes {
+    if path_params(route.path, path) is Some(params) {
+      at_path.push((route, params))
+    }
+  }
+  let open = at_path.length() > 0 && at_path.iter().all(at => at.0.open)
   if !open && self.token is Some(token) {
     match bearer_token(request) {
       None =>
@@ -209,9 +226,10 @@ fn Admin::handle(self : Admin, request : @http1.Request) -> Reply {
   }
   // HEAD is GET without the body, which the codec leaves out.
   let meth = if request.meth == "HEAD" { "GET" } else { request.meth }
-  guard at_path.search_by(route => route.meth == meth) is Some(i) else {
+  guard at_path.search_by(at => at.0.meth == meth) is Some(i) else {
     let allowed = []
-    for route in at_path {
+    for at in at_path {
+      let (route, _) = at
       allowed.push(route.meth)
       if route.meth == "GET" {
         allowed.push("HEAD")
@@ -226,7 +244,7 @@ fn Admin::handle(self : Admin, request : @http1.Request) -> Reply {
     reply.headers.push(("Allow", allow))
     return reply
   }
-  let route = at_path[i]
+  let (route, params) = at_path[i]
   // Every operation but the probes and the metrics needs the definitions.
   if !route.open && self.lifecycle.engine is None {
     return self.not_started()
@@ -250,23 +268,29 @@ fn Admin::handle(self : Admin, request : @http1.Request) -> Reply {
   } else {
     None
   }
-  (route.answer)(self, request, body)
+  (route.answer)(self, { request, params, body, })
 }
 
 ///|
-/// Whether `path` fits the route path `template`, where `{name}` stands
-/// for any one non-empty path segment.
-fn path_matches(template : String, path : String) -> Bool {
+/// The path parameters of `path` when it fits the route path `template`,
+/// where `{name}` stands for any one non-empty path segment: each name with
+/// its segment, as sent. `None` when it does not fit.
+fn path_params(template : String, path : String) -> Map[String, String]? {
   let expected = template.split("/").collect()
   let actual = path.split("/").collect()
-  expected.length() == actual.length() &&
-  expected
-  .iter()
-  .zip(actual.iter())
-  .all(pair => {
-    let (t, a) = pair
-    (t.has_prefix("{") && t.has_suffix("}") && a != "") || t == a
-  })
+  if expected.length() != actual.length() {
+    return None
+  }
+  let params = Map([])
+  for i, t in expected {
+    let a = actual[i]
+    if t.has_prefix("{") && t.has_suffix("}") && a != "" {
+      params[t[1:t.length() - 1].to_owned()] = a.to_owned()
+    } else if t != a {
+      return None
+    }
+  }
+  Some(params)
 }
 
 ///|
@@ -339,8 +363,18 @@ fn Admin::json(self : Admin, status : Int, body : Map[String, Json]) -> Reply {
 }
 
 ///|
+/// A 200 JSON reply that carries `value`, a result the engine gives as a
+/// JSON object, with the `warnings` member added.
+fn[T : ToJson] Admin::result(self : Admin, value : T) -> Reply {
+  guard value.to_json() is Object(members) else {
+    abort("an Admin API result is a JSON object")
+  }
+  self.json(200, members)
+}
+
+///|
 /// Shows what this replica runs and serves.
-fn status(admin : Admin, _request : @http1.Request, _body : Json?) -> Reply {
+fn status(admin : Admin, _call : Call) -> Reply {
   let status = admin.engine().status()
   admin.json(200, {
     "version": Json::string(admin.build.version),
@@ -352,7 +386,7 @@ fn status(admin : Admin, _request : @http1.Request, _body : Json?) -> Reply {
       Some(reload) =>
         {
           "at": Json::string(@log.format_time(reload.at)),
-          "result": Json::string(outcome_name(reload.result)),
+          "result": Json::string(reload.result.name()),
           "errors": diagnostics_json(reload.errors),
         }
     },
@@ -392,11 +426,7 @@ fn Admin::probe_ok(self : Admin) -> Reply {
 
 ///|
 /// The startup probe: it passes once the first definition set has loaded.
-fn startup_probe(
-  admin : Admin,
-  _request : @http1.Request,
-  _body : Json?,
-) -> Reply {
+fn startup_probe(admin : Admin, _call : Call) -> Reply {
   match admin.lifecycle.engine {
     Some(_) => admin.probe_ok()
     None => admin.not_started()
@@ -407,11 +437,7 @@ fn startup_probe(
 /// The readiness probe: it passes while smock serves, also after a reload
 /// that failed, since the previous definition set still serves. It fails
 /// before startup completes and from the moment smock starts to drain.
-fn readiness_probe(
-  admin : Admin,
-  _request : @http1.Request,
-  _body : Json?,
-) -> Reply {
+fn readiness_probe(admin : Admin, _call : Call) -> Reply {
   match (admin.lifecycle.phase, admin.lifecycle.engine) {
     (Serving, _) => admin.probe_ok()
     (Starting, None) => admin.not_started()
@@ -428,11 +454,7 @@ fn readiness_probe(
 /// The liveness probe: it passes whenever the event loop answers it,
 /// including while smock drains, so that a draining process is not killed
 /// early.
-fn liveness_probe(
-  admin : Admin,
-  _request : @http1.Request,
-  _body : Json?,
-) -> Reply {
+fn liveness_probe(admin : Admin, _call : Call) -> Reply {
   admin.probe_ok()
 }
 
@@ -443,13 +465,12 @@ fn liveness_probe(
 /// time the sample is received at and the seed of the random source the
 /// rendering draws from; without them, the time is now and the seed is a
 /// fresh one. Rendering changes nothing.
-fn render(admin : Admin, request : @http1.Request, body : Json?) -> Reply {
+fn render(admin : Admin, call : Call) -> Reply {
   let invalid = (message : String) => {
     admin.error(400, "invalid_request", message)
   }
-  let path = path_of(request.target)
-  let segment = path["/v1/stubs/".length():path.length() - "/render".length()]
-  let id = @percent.decode(segment) catch {
+  let request = call.request
+  let id = @percent.decode(call.params["id"]) catch {
     _ =>
       return invalid(
         "the Stub ID in the path is not valid percent-encoded UTF-8",
@@ -469,17 +490,17 @@ fn render(admin : Admin, request : @http1.Request, body : Json?) -> Reply {
   }
   let seed = match query_parameter(request.target, "seed") {
     Err(message) => return invalid(message)
-    Ok(None) => random_seed()
+    Ok(None) => @settings.random_seed()
     Ok(Some(text)) =>
       match @settings.parse_seed(text) {
         Some(seed) => seed
         None =>
           return invalid(
-            "the seed query parameter must be an integer from 0 to 9007199254740991",
+            "the seed query parameter must be an integer from 0 to \{@definitions.max_seed}",
           )
       }
   }
-  guard body is Some(json) else {
+  guard call.body is Some(json) else {
     return invalid("the body must be a sample request: a JSON object")
   }
   let sample = @engine.SampleRequest::from_json(json) catch {
@@ -490,10 +511,7 @@ fn render(admin : Admin, request : @http1.Request, body : Json?) -> Reply {
     .render(id, sample, now~, rand=@prng.Generator(seed)) catch {
       err => return admin.error(404, "unknown_stub", err.message())
     }
-  guard rendering.to_json() is Object(members) else {
-    abort("a rendering is a JSON object")
-  }
-  admin.json(200, members)
+  admin.result(rendering)
 }
 
 ///|
@@ -530,7 +548,7 @@ fn query_parameter(target : String, name : String) -> Result[String?, String] {
 ///|
 /// Serves every metric in the Prometheus text format. The Journal's are
 /// brought up to date first, once the definitions have loaded.
-fn metrics(admin : Admin, _request : @http1.Request, _body : Json?) -> Reply {
+fn metrics(admin : Admin, _call : Call) -> Reply {
   if admin.lifecycle.engine is Some(engine) {
     admin.journal_metrics.update(engine.journal_stats())
   }
@@ -548,28 +566,4 @@ fn path_of(target : String) -> String {
     Some(i) => target[:i].to_owned()
     None => target
   }
-}
-
-///|
-/// `value` as it can be written in a header value, ASCII only: the
-/// characters of an HTTP token stay as they are, except `%`, and every other
-/// byte of its UTF-8 encoding is percent-encoded.
-fn header_safe(value : String) -> String {
-  let out = StringBuilder()
-  for byte in @utf8.encode(value) {
-    let c = byte.to_int().unsafe_to_char()
-    let token = (c >= 'a' && c <= 'z') ||
-      (c >= 'A' && c <= 'Z') ||
-      (c >= '0' && c <= '9') ||
-      "!#$&'*+-.^_`|~".contains_char(c)
-    if token {
-      out.write_char(c)
-    } else {
-      out.write_string("%")
-      out.write_string(
-        byte.to_int().to_string(radix=16).to_upper().pad_start(2, '0'),
-      )
-    }
-  }
-  out.to_string()
 }

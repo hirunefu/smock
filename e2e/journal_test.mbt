@@ -38,12 +38,12 @@ async fn Smock::journal(
   session? : String,
   query? : String = "{}",
 ) -> (Int, Json) {
-  let headers = match session {
-    Some(session) => [baggage(session)]
-    None => []
-  }
-  let response = self.admin("POST", "/v1/journal/query", headers~, body=query)
-  conforms("POST", "/v1/journal/query", response)
+  let response = self.admin(
+    "POST",
+    "/v1/journal/query",
+    headers=session_headers(session),
+    body=query,
+  )
   (response.status, response.json())
 }
 
@@ -84,7 +84,8 @@ fn journal_shown(json : Json) -> Json {
 
 ///|
 /// Sends `<meth> <target>` as raw bytes on a new connection to the plain
-/// port, with `headers` and `body`, and reads the response.
+/// port, with `headers` and `body` and no Host field but the one `headers`
+/// may hold, and reads the response.
 async fn Smock::request(
   self : Smock,
   meth : String,
@@ -94,15 +95,7 @@ async fn Smock::request(
 ) -> String {
   let conn = self.connect()
   defer conn.close()
-  let request = StringBuilder()
-  request.write_string("\{meth} \{target} HTTP/1.1\r\n")
-  for header in headers {
-    request.write_string("\{header.0}: \{header.1}\r\n")
-  }
-  request.write_string(
-    "Content-Length: \{@utf8.encode(body).length()}\r\n\r\n\{body}",
-  )
-  conn.write(request.to_string())
+  conn.write(raw_request(meth, target, headers~, body~))
   read_response(conn)
 }
 
@@ -453,7 +446,6 @@ async test "a query that does not have the shape of the document is refused with
         Some("{\"filter\":{\"headers\":{\"X-Id\":{\"pattern\":\"(\"}}}}"),
       ] {
       let response = smock.admin("POST", "/v1/journal/query", body?)
-      conforms("POST", "/v1/journal/query", response)
       out.push("\{response.status} \{response.body}")
     }
     inspect(
@@ -564,20 +556,15 @@ async test "/metrics shows the Journal's entries, bytes and evictions, without l
             ("Host", "localhost"),
           ])
         }
-        let response = smock.admin("GET", "/metrics")
-        conforms("GET", "/metrics", response)
-        let lines = response.body
-          .split("\n")
-          .filter(line => line.contains("smock_journal_"))
-          .map(line => {
-            // The bytes depend on the request, not on what this test shows.
-            if line.has_prefix("smock_journal_bytes ") {
-              "smock_journal_bytes <bytes>"
-            } else {
-              line.to_owned()
-            }
-          })
-          .collect()
+        let text = smock.admin("GET", "/metrics").body
+        let lines = metric_lines(text, "smock_journal_", help=true).map(line => {
+          // The bytes depend on the request, not on what this test shows.
+          if line.has_prefix("smock_journal_bytes ") {
+            "smock_journal_bytes <bytes>"
+          } else {
+            line
+          }
+        })
         inspect(
           lines.join("\n"),
           content=(

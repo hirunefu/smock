@@ -1,11 +1,11 @@
 ///|
 /// Runs `smock serve`: listens on the admin port, loads the definitions and
-/// the TLS certificate files, or without them generates a self-signed
-/// certificate, then listens on the plain and the TLS port, and serves until
-/// SIGTERM, then drains. The plain and TLS ports serve the same Mocks; the
-/// admin port serves the Admin API and the probes, from before the
-/// definitions load, so that the startup probe can tell that they have not
-/// loaded yet, until the drain ends.
+/// the TLS certificate files, generating a self-signed default certificate
+/// without default files, then listens on the plain and the TLS port, and
+/// serves until SIGTERM, then drains. The plain and TLS ports serve the
+/// same Mocks; the admin port serves the Admin API and the probes, from
+/// before the definitions load, so that the startup probe can tell that
+/// they have not loaded yet, until the drain ends.
 ///
 /// Returns the exit status: 0 after the drain, and 1 when Admin API
 /// authentication is on and no token is set, the definition set is invalid,
@@ -35,18 +35,19 @@ pub async fn serve(
   // The directories of the certificate and key files are watched too, also
   // from before the first load.
   let tls_watches = []
-  if settings.tls is Some(files) {
-    let pairs = [files, ..settings.tls_mock_certs.values()]
-    for dir in tls_dirs(pairs) {
-      tls_watches.push((dir, @watch.Watch(dir)))
-    }
+  let pairs = match settings.tls {
+    Some(files) => [files, ..settings.tls_mock_certs.values()]
+    None => [..settings.tls_mock_certs.values()]
   }
-  defer tls_watches.each(watch => watch.1.close())
+  for dir in tls_dirs(pairs) {
+    tls_watches.push(@watch.Watch(dir))
+  }
+  defer tls_watches.each(watch => watch.close())
   // The process generator. Its seed is logged, so that a run can be
   // replayed with --seed.
   let seed = match settings.seed {
     Some(seed) => seed
-    None => random_seed()
+    None => @settings.random_seed()
   }
   let rand = @prng.Generator(seed)
   logger.info("random seed", fields={
@@ -67,8 +68,10 @@ pub async fn serve(
     token~,
     replica=replica_name(),
     replicas=settings.replicas,
-    session_header=settings.session_header,
-    session_member=settings.session_member,
+    sessions={
+      header: settings.session_header,
+      member_name: settings.session_member,
+    },
   )
   guard listen(logger, "admin", settings.admin_port) is Some(admin_listener) else {
     return 1
@@ -143,7 +146,7 @@ async fn run(
   admin_listener : @socket.TcpServer,
   metrics~ : @metrics.Registry,
   watch~ : @watch.Watch?,
-  tls_watches~ : Array[(String, @watch.Watch)],
+  tls_watches~ : Array[@watch.Watch],
   rand~ : @prng.Generator,
   reloads~ : @metrics.Counter,
   traffic~ : Traffic,
@@ -159,9 +162,9 @@ async fn run(
           serve_connection(
             conn,
             settings,
-            respond=(stream, request) => {
+            respond=(stream, request, _) => {
               @io.Writer::write(stream, admin.respond(request))
-              request.keep_alive
+              @http1.keeps_open(request~)
             },
             reject=status => admin.reject(status),
           )
@@ -192,30 +195,27 @@ async fn run(
       ),
     )
     lifecycle.started(engine)
-    let tls = match settings.tls {
-      None => None
-      Some(files) =>
-        match
-          Certificates::load(
-            files,
-            settings.tls_mock_certs,
-            engine~,
-            logger~,
-            metrics~,
-          ) {
-          Some(certificates) => Some((files, certificates))
-          None => return 1
-        }
+    let ports : MockPorts = {
+      engine,
+      rand,
+      settings,
+      sessions: admin.sessions,
+      traffic,
+      lifecycle,
+      logger,
     }
-    // Without certificate files, the TLS port presents a self-signed
-    // certificate generated for the Hosts served.
-    let certificate = match tls {
-      Some((_, certificates)) => Files(certificates)
-      None =>
-        match SelfSignedCertificate::generate(engine, logger) {
-          Some(certificate) => SelfSigned(certificate)
-          None => return 1
-        }
+    // Without default certificate files, the TLS port presents a
+    // self-signed certificate generated for the Hosts served, unless SNI
+    // chooses a Mock's own.
+    guard Certificates::load(
+        settings.tls,
+        settings.tls_mock_certs,
+        engine~,
+        logger~,
+        metrics~,
+      )
+      is Some(certificates) else {
+      return 1
     }
     guard listen(logger, "plain", settings.port) is Some(plain) else {
       return 1
@@ -233,9 +233,8 @@ async fn run(
       "listener": "tls",
       "address": Json::string("0.0.0.0:\{tls_listener.addr.port()}"),
     }
-    if tls is Some((files, _)) {
-      tls_fields["cert_file"] = Json::string(files.cert_file)
-      tls_fields["key_file"] = Json::string(files.key_file)
+    if settings.tls is Some(files) {
+      add_file_fields(tls_fields, files)
     }
     logger.info("listening", fields=tls_fields)
     if watch is Some(watch) && settings.dir is Some(dir) {
@@ -246,15 +245,12 @@ async fn run(
         logger,
         reloads,
         last_read: (snapshot.digest, []),
-        after_swap: () => certificate.after_swap(engine, logger),
+        after_swap: () => certificates.after_swap(),
       }
       group.spawn_bg(no_wait=true, () => reloader.run(watch))
     }
-    if tls is Some((_, certificates)) {
-      for watch in tls_watches {
-        let (dir, watch) = watch
-        group.spawn_bg(no_wait=true, () => certificates.run(dir, watch))
-      }
+    for watch in tls_watches {
+      group.spawn_bg(no_wait=true, () => certificates.run(watch))
     }
     let listening = group.spawn(() => {
       @async.with_task_group(listeners => {
@@ -262,10 +258,7 @@ async fn run(
           defer plain.close()
           accept_loop(plain, conn => {
             connections.serve(group, conn, connection => {
-              let _ = serve_mocks(
-                conn, conn, engine, rand, settings, traffic, lifecycle, connection,
-                logger,
-              )
+              let _ = ports.serve(conn, conn, connection)
             })
           })
         })
@@ -278,16 +271,13 @@ async fn run(
               // It gets the certificate presented when its handshake
               // starts: a later one is for later connections.
               let stream = @async.with_timeout_opt(settings.idle_timeout_ms, () => {
-                TlsStream::accept(conn, name => certificate.select(name))
+                TlsStream::accept(conn, name => certificates.select(name))
               })
               guard stream is Some(Some(stream)) else { return }
-              let reset = serve_mocks(
-                stream, conn, engine, rand, settings, traffic, lifecycle, connection,
-                logger,
-              )
+              let was_reset = ports.serve(stream, conn, connection)
               // A reset sends no close_notify: the RST alone ends the
               // connection.
-              if !reset {
+              if !was_reset {
                 stream.shutdown()
               }
             })
@@ -315,13 +305,6 @@ async fn run(
     })
     0
   })
-}
-
-///|
-/// A seed for the process generator from the platform's entropy: an integer
-/// from 0 to 2^53 - 1, like the seeds `--seed` takes.
-fn random_seed() -> UInt64 {
-  @random.Rand::new().uint64() & 0x1FFFFFFFFFFFFFUL
 }
 
 ///|
@@ -360,6 +343,24 @@ async fn accept_loop(
 }
 
 ///|
+/// What the plain and the TLS port serve the Mocks with, the same for every
+/// connection.
+priv struct MockPorts {
+  engine : @engine.Engine
+  /// The process generator, which Faults of Stubs without a seed of their
+  /// own draw from.
+  rand : @prng.Generator
+  settings : @settings.ServeSettings
+  /// Where requests carry their Session, as Admin API calls carry it.
+  sessions : SessionCarrier
+  /// Where each request is counted.
+  traffic : Traffic
+  /// Whether smock drains.
+  lifecycle : Lifecycle
+  logger : @log.Logger
+}
+
+///|
 /// Serves the requests for the Mocks that arrive on one connection of the
 /// plain or the TLS port: `stream`, which reads and writes through `tcp`,
 /// the connection's socket. Returns whether a reset Fault ended it: closing
@@ -371,8 +372,10 @@ async fn accept_loop(
 /// connections are served as usual. A connection Fault in the plan ends the
 /// connection instead of the response, or part of the way through it. A
 /// reset comes once the whole request, body included, has been read, and
-/// nothing is written before it; when it cannot be set up, the failure is
-/// logged to `logger` and the connection closes as for a close Fault.
+/// nothing is written before it but the `100 Continue` the request may
+/// have asked for, which comes before the Stub is known; when it cannot be
+/// set up, the failure is logged and the connection closes as for a close
+/// Fault.
 ///
 /// The request's Journal entry, if the engine returned one, is committed
 /// just before the response's last bytes are written, so that a client
@@ -382,51 +385,41 @@ async fn accept_loop(
 /// committed when it ends, before the connection closes. The entry's timing
 /// is filled in then.
 ///
-/// Each request is counted in `traffic` once its response is written, or
-/// once the connection ends before it is, with the time from the request
-/// being read in full to then. Nothing is counted before the response, so
-/// counting never holds one back.
+/// Each request is counted in the traffic metrics once its response is
+/// written, or once the connection ends before it is, with the time from
+/// the request being read in full to then: for a request pipelined behind
+/// others, its wait behind their responses counts. Nothing is counted
+/// before the response, so counting never holds one back.
 ///
 /// While smock drains, a response says `Connection: close`, and the
 /// connection closes after it.
-async fn[S : @io.Reader + @io.Writer] serve_mocks(
+async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
+  self : MockPorts,
   stream : S,
   tcp : @socket.Tcp,
-  engine : @engine.Engine,
-  rand : @prng.Generator,
-  settings : @settings.ServeSettings,
-  traffic : Traffic,
-  lifecycle : Lifecycle,
   connection : Connection,
-  logger : @log.Logger,
 ) -> Bool {
-  let reset = Ref(false)
+  let was_reset = Ref(false)
   serve_connection(
     stream,
-    settings,
+    self.settings,
     connection~,
-    respond=(stream, request) => {
-      // The request has just been read in full.
-      let read_at = @bench.monotonic_clock_start()
+    respond=(stream, request, stopwatch) => {
       let engine_request = to_engine_request(request)
-      let session = @engine.session_of(
-        engine_request.headers,
-        header=settings.session_header,
-        member_name=settings.session_member,
-      )
-      let outcome = engine.handle(
+      let session = self.sessions.session_of(engine_request.headers)
+      let outcome = self.engine.handle(
         engine_request,
         session~,
         now=@async.now(),
-        rand~,
+        rand=self.rand,
       )
-      defer traffic.record(outcome, @bench.monotonic_clock_end(read_at) / 1.0e6)
+      defer self.traffic.record(outcome, stopwatch.seconds())
       let plan = outcome.plan
       let pending = Ref(outcome.journal)
       let commit = () => {
         if pending.val is Some(entry) {
           pending.val = None
-          engine.commit(entry)
+          self.engine.commit(entry)
         }
       }
       // Deferred after the count, so it runs before it.
@@ -445,13 +438,13 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
             stream,
             plan,
             request,
-            close=lifecycle.is_draining(),
+            close=self.lifecycle.is_draining(),
             before_last=commit,
           )
         // Closing the connection sends an RST, once the Journal entry is
         // committed, so that a client that sees the reset finds it there.
         Some(Reset) => {
-          reset.val = reset_on_close(tcp, logger)
+          was_reset.val = reset_on_close(tcp, self.logger)
           false
         }
         // Closing the connection sends a FIN.
@@ -460,11 +453,11 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
       }
       // A response that began before the drain, such as a stream, and ends
       // during it closes its connection too.
-      keep_open && !lifecycle.is_draining()
+      keep_open && !self.lifecycle.is_draining()
     },
     reject=status => @http1.encode_response(status, [], b"", close=true),
   )
-  reset.val
+  was_reset.val
 }
 
 ///|
@@ -475,16 +468,20 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
 /// - the idle timeout, while the connection waits for a request: from when
 ///   it opens, then from each response;
 /// - the read timeout, while a request arrives: from its first byte until
-///   all of it, body included, has arrived.
+///   all of it, body included, has arrived. A request whose first bytes
+///   came before a response was written, as pipelined requests do, has it
+///   from when that response is written, since nothing is read meanwhile.
 ///
 /// It reads and writes only through `stream`, so the same loop serves any
 /// byte stream: a TCP connection, or a TLS session on top of one. Nothing is
 /// logged per request.
 ///
 /// - `respond` writes the response to each request to `stream`, or part of
-///   it, and returns whether the connection stays open after it. While it
-///   waits, the connection reads nothing, and other connections are served
-///   as usual.
+///   it, and returns whether the connection stays open after it. It also
+///   gets a stopwatch started when the request had been read in full: at
+///   the read that brought its last byte, which may be well before the
+///   response to a request pipelined after others. While it waits, the
+///   connection reads nothing, and other connections are served as usual.
 /// - `reject` gives the encoded response, with `Connection: close`, to
 ///   bytes that are not a valid request or are over a limit, with the status
 ///   the codec chose.
@@ -493,7 +490,7 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
 async fn[S : @io.Reader + @io.Writer] serve_connection(
   stream : S,
   settings : @settings.ServeSettings,
-  respond~ : async (S, @http1.Request) -> Bool,
+  respond~ : async (S, @http1.Request, Stopwatch) -> Bool,
   reject~ : (Int) -> Bytes,
   connection? : Connection,
 ) -> Unit {
@@ -507,22 +504,29 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
   let read_timeout = settings.read_timeout_ms.to_int64()
   let mut idle_deadline = @async.now() + idle_timeout
   let mut read_deadline : Int64? = None
-  let mut last_read = @async.now()
+  // When the bytes not yet parsed began to count against the read timeout:
+  // when they were read, or, for bytes read before a response, when it was
+  // written, since nothing is read while a response is written.
+  let mut read_since = @async.now()
+  // Started at the last read, which brought the last byte of every request
+  // the parser holds complete.
+  let mut last_read = Stopwatch::start()
   for ;; {
     match parser.next() {
       Complete(request) => {
-        if !respond(stream, request) {
+        if !respond(stream, request, last_read) {
           return
         }
         idle_deadline = @async.now() + idle_timeout
         read_deadline = None
+        read_since = @async.now()
       }
       Continue =>
         @io.Writer::write(stream, @http1.encode_response(100, [], b""))
       NeedMore => {
         let deadline = if parser.in_request() {
           // The request began with the bytes of the last read, or earlier.
-          let deadline = read_deadline.unwrap_or(last_read + read_timeout)
+          let deadline = read_deadline.unwrap_or(read_since + read_timeout)
           read_deadline = Some(deadline)
           deadline
         } else {
@@ -543,7 +547,8 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
           connection.idle = false
         }
         guard read is Some(n) && n > 0 else { return }
-        last_read = @async.now()
+        last_read = Stopwatch::start()
+        read_since = @async.now()
         parser.feed(buf.unsafe_reinterpret_as_bytes()[:n])
       }
       Invalid(status~) => {
@@ -565,11 +570,34 @@ fn to_engine_request(request : @http1.Request) -> @engine.Request {
       Http10 => "HTTP/1.0"
       Http11 => "HTTP/1.1"
     },
-    headers: request.headers.map(header => {
-      (header.name, @utf8.decode_lossy(header.value))
-    }),
+    headers: decoded_headers(request),
     body: request.body,
   }
+}
+
+///|
+/// The header fields of `request`, with their values decoded as UTF-8 and
+/// invalid bytes replaced by U+FFFD.
+fn decoded_headers(request : @http1.Request) -> Array[(String, String)] {
+  request.headers.map(header => (header.name, @utf8.decode_lossy(header.value)))
+}
+
+///|
+/// Where requests carry their Session: a member of a header in W3C Baggage
+/// form, as `--session-header` and `--session-member` name them. Requests
+/// to the Mocks and Admin API calls carry it the same way.
+priv struct SessionCarrier {
+  header : String
+  member_name : String
+}
+
+///|
+/// The Session `headers` carry, or `None` for the no-Session space.
+fn SessionCarrier::session_of(
+  self : SessionCarrier,
+  headers : Array[(String, String)],
+) -> String? {
+  @engine.session_of(headers, header=self.header, member_name=self.member_name)
 }
 
 ///|
@@ -577,14 +605,21 @@ fn to_engine_request(request : @http1.Request) -> @engine.Request {
 /// returns whether the connection stays open after it. With `close`, the
 /// response says `Connection: close`, and the connection closes after it.
 /// With `partial`, as a partial Fault, it writes the status line, the header
-/// fields and the first half of the body, and the connection closes.
+/// fields and the first half of the body, and the connection closes; a
+/// response with no body bytes loses the empty line that ends its head
+/// instead (`cut_short`).
 ///
 /// Server-Sent Events are streamed: the head at once, then each event after
 /// its delay. Waiting suspends only this connection's task, so the others
-/// are served meanwhile. A client that closes the connection mid-stream
-/// makes a later write fail, which ends the stream and the connection. The
-/// first half of a stream is the first half of its events, rounded down,
-/// and a stream cut short is not ended: a chunked one lacks its last chunk.
+/// are served meanwhile. A stream without a body, as in a response to HEAD,
+/// is its head alone, written at once: no event is waited for. A client
+/// that closes the connection mid-stream makes a later write fail, which
+/// ends the stream and the connection; the connection is not watched while
+/// an event's delay runs, since a client may close its sending side alone
+/// and still read the stream. The first half of a stream is the first half
+/// of its events, rounded down, and a stream cut short is not ended: a
+/// chunked one lacks its last chunk, while one to HTTP/1.0, which closing
+/// the connection ends, looks whole.
 ///
 /// `before_last` is called just before the response's last bytes are
 /// written: before the whole response when it is written at once, and
@@ -613,7 +648,7 @@ async fn[S : @io.Writer] write_response(
       }
       before_last()
       @io.Writer::write(stream, response)
-      request.keep_alive && !close
+      @http1.keeps_open(request~, close~)
     }
     Events(events) => {
       let response = @http1.ResponseStream(
@@ -622,6 +657,15 @@ async fn[S : @io.Writer] write_response(
         request~,
         close~,
       )
+      if !response.has_body() {
+        if partial {
+          @io.Writer::write(stream, cut_short(response.head()))
+          return false
+        }
+        before_last()
+        @io.Writer::write(stream, response.head())
+        return response.keeps_open()
+      }
       @io.Writer::write(stream, response.head())
       let count = if partial { events.length() / 2 } else { events.length() }
       for i, event in events[:count] {
@@ -661,12 +705,15 @@ async fn[S : @io.Writer] write_some(stream : S, bytes : Bytes) -> Unit {
 
 ///|
 /// The first part of the encoded `response`, as a partial Fault sends it:
-/// the status line, the header fields and the first half of the body. The
+/// the status line, the header fields and the first half of the body. A
+/// response with no body bytes, such as one to HEAD, would then be whole, so
+/// its head is cut short instead: without the empty line that ends it. The
 /// head ends at the first empty line, since header values hold no CR or LF.
 fn cut_short(response : Bytes) -> BytesView {
-  let head = match response[:].find(b"\r\n\r\n") {
-    Some(i) => i + 4
-    None => response.length()
+  guard response[:].find(b"\r\n\r\n") is Some(i) else { return response[:] }
+  let head = i + 4
+  if head == response.length() {
+    return response[:head - 2]
   }
   response[:head + (response.length() - head) / 2]
 }

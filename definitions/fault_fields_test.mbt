@@ -161,14 +161,21 @@ test "a Stub has at most one connection Fault kind" {
       stub_with(
         "b", "\"fault\": { \"connection\": { \"kind\": [\"close\", \"partial\"] } }",
       ),
-      // Duplicate keys in JSON: the last one wins, as for any member.
+    ]),
+    content=(
+      #|a.json: /stubs/0/fault/connection: must be an object
+      #|a.json: /stubs/1/fault/connection/kind: must be "reset", "close" or "partial"
+    ),
+  )
+  // A duplicate key makes the whole file ambiguous, as for any member.
+  inspect(
+    stub_problems([
       stub_with(
         "c", "\"fault\": { \"connection\": { \"kind\": \"close\", \"kind\": \"partial\" } }",
       ),
     ]),
     content=(
-      #|a.json: /stubs/0/fault/connection: must be an object
-      #|a.json: /stubs/1/fault/connection/kind: must be "reset", "close" or "partial"
+      #|a.json: /stubs/0/fault/connection/kind: duplicate key
     ),
   )
 }

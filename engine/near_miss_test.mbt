@@ -393,3 +393,68 @@ test "the Near miss explains a failed body condition: exact, pattern or json, wi
     ],
   )
 }
+
+///|
+test "the Near miss shows a body that is not UTF-8 with U+FFFD in place of what is not UTF-8" {
+  let h = harness([
+    (
+      "m.json",
+      (
+        #|{ "mocks": [{ "name": "m" }],
+        #|  "stubs": [{ "id": "exact", "mock": "m", "request": { "body": "name=Zoë" },
+        #|    "response": { "status": 200 } }] }
+      ),
+    ),
+  ])
+  let outcome = h.engine.handle(
+    {
+      meth: "POST",
+      target: "/",
+      version: "HTTP/1.1",
+      headers: [],
+      body: b"name=Zo\xeb",
+    },
+    session=None,
+    now=h.now,
+    rand=h.rand,
+  )
+  guard outcome.near_miss is Some(near_miss) else { fail("no Near miss") }
+  json_inspect(near_miss.to_json(), content={
+    "stub": "exact",
+    "failed": [
+      {
+        "condition": "body",
+        "expected": "name=Zoë",
+        "actual": ["name=Zo\u{FFFD}"],
+      },
+    ],
+  })
+}
+
+///|
+test "changing the expected JSON of a Near miss changes no later match: the snapshot stays as loaded" {
+  let h = harness([
+    (
+      "m.json",
+      (
+        #|{ "mocks": [{ "name": "m" }],
+        #|  "stubs": [{ "id": "tea", "mock": "m",
+        #|    "request": { "body": { "json": { "item": "tea" } } },
+        #|    "response": { "status": 201 } }] }
+      ),
+    ),
+  ])
+  let missed = h.send("POST", "/", body="{\"item\": \"coffee\"}")
+  guard missed.near_miss
+    is Some({ failed: [{ expected: Json(Object(expected)), .. }], .. }) else {
+    fail("no Near miss with a json condition")
+  }
+  expected["item"] = Json::string("coffee")
+  debug_inspect(
+    [
+      matched_id(h.send("POST", "/", body="{\"item\": \"coffee\"}")),
+      matched_id(h.send("POST", "/", body="{\"item\": \"tea\"}")),
+    ],
+    content="[None, Some(\"tea\")]",
+  )
+}

@@ -6,23 +6,7 @@ async fn check(
   args : Array[String],
   env? : Map[String, String] = Map([]),
 ) -> String {
-  build.wait()
-  let result = @async.with_timeout_opt(patience_ms, () => {
-    @process.collect_output(
-      binary,
-      ["check", ..args],
-      extra_env=env,
-      inherit_env=false,
-    )
-  })
-  guard result is Some((status, stdout, stderr)) else {
-    fail("smock check did not exit in time")
-  }
-  let out = "status \{status}\n\{stdout.text()}"
-  match stderr.text() {
-    "" => out
-    err => "\{out}stderr:\n\{err}"
-  }
+  exit_report(smock_output(["check", ..args], env~))
 }
 
 ///|
@@ -192,6 +176,75 @@ async test "smock check names the body-file subdirectory as smock serve does, by
       )
     },
   )
+}
+
+///|
+async test "a body file or directory that a symlink leads outside the body-file subdirectory is a problem, so that it is never read or served" {
+  with_definitions(
+    [
+      ("users.json", users_file),
+      ("files/users/1.json", "{}"),
+      ("secret.txt", "not a body file"),
+      ("shared/token", "not a body file"),
+    ],
+    dir => {
+      // Inside: a symlink to another body file.
+      @fs.symlink(target="users/1.json", "\{dir}/files/inner.json")
+      // Outside: a file and a directory of the definitions directory.
+      @fs.symlink(target="../secret.txt", "\{dir}/files/leak.txt")
+      @fs.symlink(target="../shared", "\{dir}/files/shared")
+      let inside = check([dir])
+      @fs.remove("\{dir}/files/leak.txt")
+      @fs.remove("\{dir}/files/shared")
+      inspect(
+        [inside, check([dir])].join("---\n"),
+        content=(
+          #|status 1
+          #|files/leak.txt: leads outside the body-file subdirectory files, which body files must stay inside
+          #|files/shared: leads outside the body-file subdirectory files, which body files must stay inside
+          #|---
+          #|status 0
+          #|
+        ),
+      )
+    },
+  )
+}
+
+///|
+async test "smock check names the definitions directory as given when the directory itself cannot be read" {
+  let files = [("defs/users.json", users_file), ("users.json", users_file)]
+  with_definitions(files, dir => {
+    @fs.chmod("\{dir}/defs", 0o000)
+    defer @fs.chmod("\{dir}/defs", 0o755)
+    let out = [check(["\{dir}/defs"]), check(["\{dir}/users.json"])]
+    inspect(
+      out.join("---\n").replace_all(old=dir, new="<dir>"),
+      content=(
+        #|status 1
+        #|<dir>/defs: cannot be read: OSError("@fs.readdir(): \"<dir>/defs\": Permission denied")
+        #|---
+        #|status 1
+        #|<dir>/users.json: the definitions directory is not a directory
+        #|
+      ),
+    )
+  })
+}
+
+///|
+async test "smock check passes a missing definitions directory, as smock serve loads it, and says on stderr that it does not exist" {
+  with_definitions([], dir => {
+    inspect(
+      check(["\{dir}/defz"]).replace_all(old=dir, new="<dir>"),
+      content=(
+        #|status 0
+        #|stderr:
+        #|smock check: the definitions directory <dir>/defz does not exist, so it is read as an empty definition set
+        #|
+      ),
+    )
+  })
 }
 
 ///|

@@ -24,7 +24,6 @@ pub(all) struct ServeSettings {
   tls : TlsFiles?
   /// The certificate and key files of single Mocks, by Mock name: a
   /// handshake whose SNI is a Host of one of these Mocks gets its pair.
-  /// Empty unless `tls` is set.
   tls_mock_certs : Map[String, TlsFiles]
   /// The admin port, where the Admin API, the probes and the metrics are
   /// served. 0 asks the system for a free port.
@@ -180,7 +179,7 @@ let serve_settings : Array[Setting] = [
   },
   {
     name: "tls-port",
-    about: "The HTTPS port. 0 picks a free port.",
+    about: "The HTTPS port, separate from the plain port. 0 picks a free port.",
     default: Some("8443"),
   },
   {
@@ -195,7 +194,7 @@ let serve_settings : Array[Setting] = [
   },
   {
     name: "tls-mock-certs",
-    about: "Certificates of single Mocks, chosen by SNI: a JSON object that maps each Mock name to its PEM files, such as {\"users\":{\"certFile\":\"/certs/users/tls.crt\",\"keyFile\":\"/certs/users/tls.key\"}}. A handshake whose SNI is a Host of a listed Mock gets that Mock's certificate; any other gets --tls-cert-file, which must be set. Empty by default.",
+    about: "Certificates of single Mocks, chosen by SNI: a JSON object that maps each Mock name to its PEM files, such as {\"users\":{\"certFile\":\"/certs/users/tls.crt\",\"keyFile\":\"/certs/users/tls.key\"}}. A handshake whose SNI is a Host of a listed Mock gets that Mock's certificate; any other gets the default certificate: --tls-cert-file, or without it the self-signed one. Empty by default.",
     default: None,
   },
   {
@@ -262,30 +261,35 @@ let serve_settings : Array[Setting] = [
   },
   {
     name: "seed",
-    about: "The seed of the process random generator, from 0 to 9007199254740991. Faults of Stubs without their own seed draw from it. Without it, smock picks a seed at startup and logs it.",
+    about: "The seed of the process random generator, from 0 to \{max_seed}. Faults of Stubs without their own seed draw from it. Without it, smock picks a seed at startup and logs it.",
     default: None,
   },
   {
     name: "journal",
     about: "Whether smock records the requests it receives in the Journal: on or off. Off, it records none, and Journal queries are refused.",
-    default: Some("on"),
+    default: Some(if journal_defaults.enabled { "on" } else { "off" }),
   },
   {
     name: "journal-max-entries",
     about: "The most entries the Journal holds. Beyond it, the oldest entries are evicted.",
-    default: Some("10000"),
+    default: Some(journal_defaults.max_entries.to_string()),
   },
   {
     name: "journal-max-bytes",
     about: "The most bytes the Journal's entries take: each counts 256, two per character of its request line, header fields, names and Near miss values, and the body bytes it keeps. Beyond it, the oldest entries are evicted.",
-    default: Some("67108864"),
+    default: Some(journal_defaults.max_bytes.to_string()),
   },
   {
     name: "journal-body-limit",
     about: "The most bytes of a request body a Journal entry keeps; the rest is cut.",
-    default: Some("4096"),
+    default: Some(journal_defaults.body_limit.to_string()),
   },
 ]
+
+///|
+/// The Journal settings the engine has by default, which the Journal
+/// settings default to.
+let journal_defaults : @engine.JournalSettings = @engine.JournalSettings()
 
 ///|
 /// The settings of `smock check`: those of `smock serve` that decide how
@@ -402,6 +406,13 @@ pub fn ServeSettings::from_matches(
   }
   let port = int_value(matches, "port", min=0, max=65535)
   let tls_port = int_value(matches, "tls-port", min=0, max=65535)
+  if tls_port != 0 && tls_port == port {
+    raise invalid(
+      "tls-port",
+      tls_port.to_string(),
+      "must differ from --port (SMOCK_PORT)",
+    )
+  }
   let tls = match
     (file_value(matches, "tls-cert-file"), file_value(matches, "tls-key-file")) {
     (Some(cert_file), Some(key_file)) => Some({ cert_file, key_file, })
@@ -419,7 +430,7 @@ pub fn ServeSettings::from_matches(
         "needs --tls-cert-file (\{env_name("tls-cert-file")}) as well",
       )
   }
-  let tls_mock_certs = mock_certs_value(matches, "tls-mock-certs", tls~)
+  let tls_mock_certs = mock_certs_value(matches, "tls-mock-certs")
   let admin_port = int_value(matches, "admin-port", min=0, max=65535)
   if admin_port != 0 && admin_port == port {
     raise invalid(
@@ -435,12 +446,7 @@ pub fn ServeSettings::from_matches(
       "must differ from --tls-port (SMOCK_TLS_PORT)",
     )
   }
-  let admin_auth = match value(matches, "admin-auth") {
-    Some("on") => true
-    Some("off") => false
-    other =>
-      raise invalid("admin-auth", other.unwrap_or(""), "must be on or off")
-  }
+  let admin_auth = on_off_value(matches, "admin-auth")
   let admin_token_file = file_value(matches, "admin-token-file")
   let log_format = match value(matches, "log-format") {
     Some("json") => Json
@@ -499,12 +505,7 @@ pub fn ServeSettings::from_matches(
       max=max_duration_ms,
     ),
     seed: seed_value(matches, "seed"),
-    journal: match value(matches, "journal") {
-      Some("on") => true
-      Some("off") => false
-      other =>
-        raise invalid("journal", other.unwrap_or(""), "must be on or off")
-    },
+    journal: on_off_value(matches, "journal"),
     journal_max_entries: int_value(
       matches,
       "journal-max-entries",
@@ -529,12 +530,10 @@ pub fn ServeSettings::from_matches(
 ///|
 /// The value of the per-Mock certificates setting: a JSON object that maps
 /// each Mock name to `{"certFile": <path>, "keyFile": <path>}`. Without it,
-/// no Mock has a certificate of its own. It needs the default certificate,
-/// `tls`, as well.
+/// no Mock has a certificate of its own.
 fn mock_certs_value(
   matches : @argparse.Matches,
   name : String,
-  tls~ : TlsFiles?,
 ) -> Map[String, TlsFiles] raise InvalidSetting {
   guard value(matches, name) is Some(text) else { return Map([]) }
   let entry_format = "{\"certFile\": <path>, \"keyFile\": <path>}"
@@ -562,20 +561,12 @@ fn mock_certs_value(
     }
     out[mock] = { cert_file, key_file, }
   }
-  if !out.is_empty() && tls is None {
-    raise invalid(
-      name,
-      text,
-      "needs --tls-cert-file (\{env_name("tls-cert-file")}) and --tls-key-file (\{env_name("tls-key-file")}) as well, for the default certificate",
-    )
-  }
   out
 }
 
 ///|
-/// The largest seed, 2^53 - 1, as in Definition files, where a seed is a
-/// JSON number that holds it exactly.
-let max_seed : UInt64 = 9007199254740991
+/// The largest seed, as in Definition files.
+let max_seed : UInt64 = @definitions.max_seed
 
 ///|
 /// The value of a seed setting, when given: a decimal integer from 0 to
@@ -601,21 +592,37 @@ fn seed_reason() -> String {
 /// The seed `text` gives: a decimal integer from 0 to 2^53 - 1, without a
 /// sign, prefix or separator. `None` when it is not one.
 pub fn parse_seed(text : String) -> UInt64? {
-  // Sixteen digits hold every seed, and a UInt64 every sixteen-digit
-  // number.
+  // Sixteen digits hold every seed.
+  match decimal(text, max_digits=16) {
+    Some(n) if n <= max_seed => Some(n)
+    _ => None
+  }
+}
+
+///|
+/// A fresh seed from the platform's entropy, from 0 to 2^53 - 1, like the
+/// seeds `--seed` takes: what `smock serve`, `smock render` and the Admin
+/// render operation use when no seed is given.
+pub fn random_seed() -> UInt64 {
+  // max_seed is 2^53 - 1, all ones in binary.
+  @random.Rand::new().uint64() & max_seed
+}
+
+///|
+/// The number `text` writes in at most `max_digits` decimal digits, without
+/// a sign, prefix or separator, or `None` when it is not one. A UInt64
+/// holds every number of up to 19 digits.
+fn decimal(text : String, max_digits~ : Int) -> UInt64? {
   if text == "" ||
-    text.length() > 16 ||
+    text.length() > max_digits ||
     !text.iter().all(c => c >= '0' && c <= '9') {
     return None
   }
-  let n = text.fold(init=0UL, (n, c) => {
-    n * 10UL + (c.to_int() - '0'.to_int()).to_uint64()
-  })
-  if n > max_seed {
-    None
-  } else {
-    Some(n)
-  }
+  Some(
+    text.fold(init=0UL, (n, c) => {
+      n * 10UL + (c.to_int() - '0'.to_int()).to_uint64()
+    }),
+  )
 }
 
 ///|
@@ -719,16 +726,7 @@ fn token_value(
   reason : String,
 ) -> String raise InvalidSetting {
   let text = value(matches, name).unwrap_or("")
-  let token = text != "" &&
-    text
-    .iter()
-    .all(c => {
-      (c >= 'a' && c <= 'z') ||
-      (c >= 'A' && c <= 'Z') ||
-      (c >= '0' && c <= '9') ||
-      "!#$%&'*+-.^_`|~".contains_char(c)
-    })
-  if !token {
+  if !@http1.is_token(text) {
     raise invalid(name, text, reason)
   }
   text
@@ -754,21 +752,24 @@ fn int_value(
   max~ : Int,
 ) -> Int raise InvalidSetting {
   let text = value(matches, name).unwrap_or("")
-  let reason = "must be an integer from \{min} to \{max}"
-  // Decimal digits only: no sign, prefix or separator. Ten digits hold
-  // every Int, and an Int64 holds every ten-digit number.
-  if text == "" ||
-    text.length() > 10 ||
-    !text.iter().all(c => c >= '0' && c <= '9') {
-    raise invalid(name, text, reason)
+  // Ten digits hold every Int.
+  match decimal(text, max_digits=10).map(n => n.reinterpret_as_int64()) {
+    Some(n) if n >= min.to_int64() && n <= max.to_int64() => n.to_int()
+    _ => raise invalid(name, text, "must be an integer from \{min} to \{max}")
   }
-  let n = text.fold(init=0L, (n, c) => {
-    n * 10L + (c.to_int() - '0'.to_int()).to_int64()
-  })
-  if n < min.to_int64() || n > max.to_int64() {
-    raise invalid(name, text, reason)
+}
+
+///|
+/// The value of a setting that is `on` or `off`, as true or false.
+fn on_off_value(
+  matches : @argparse.Matches,
+  name : String,
+) -> Bool raise InvalidSetting {
+  match value(matches, name) {
+    Some("on") => true
+    Some("off") => false
+    other => raise invalid(name, other.unwrap_or(""), "must be on or off")
   }
-  n.to_int()
 }
 
 ///|

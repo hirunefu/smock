@@ -7,8 +7,18 @@
 /// document, read as the Prometheus text format.
 async fn Smock::metrics(self : Smock) -> (String, Array[Sample]) {
   let response = self.admin("GET", "/metrics", token=None)
-  conforms("GET", "/metrics", response)
   (response.body, parse_prometheus(response.body))
+}
+
+///|
+/// The lines of `/metrics` about the metrics whose names start with
+/// `prefix`, as `metric_lines` picks them, one per line.
+async fn Smock::metric(
+  self : Smock,
+  prefix : String,
+  help? : Bool = false,
+) -> String {
+  metric_lines(self.admin("GET", "/metrics").body, prefix, help~).join("\n")
 }
 
 ///|
@@ -67,8 +77,8 @@ fn ephemeral_get(path : String) -> String {
 }
 
 ///|
-/// The status line of each response in `responses`, as `exchange` renders
-/// them.
+/// The status line of each response in `responses`, as `exchange_each`
+/// renders them.
 fn statuses(responses : String) -> String {
   responses
   .split("\n---\n")
@@ -87,11 +97,10 @@ async test "after a matched request, two Ephemeral Stub matches, an unmatched re
         for path in ["/a", "/b"] {
           let stubs = "/v1/mocks/orders/stubs"
           let response = smock.admin("POST", stubs, body=ephemeral_get(path))
-          conforms("POST", stubs, response)
           out.push("add GET \{path} to orders: \{response.status}")
         }
         for over in [Plain, Tls(certs)] {
-          let responses = exchange(smock, over, [
+          let responses = exchange_each(smock, over, [
             "GET /x HTTP/1.1\r\nHost: users.example.com\r\n\r\n", "GET /a HTTP/1.1\r\nHost: orders.example.com\r\n\r\n",
             "GET /b HTTP/1.1\r\nHost: orders.example.com\r\n\r\n", "GET /nope HTTP/1.1\r\nHost: users.example.com\r\n\r\n",
             "GET /x HTTP/1.1\r\nHost: elsewhere.example.com\r\n\r\n",
@@ -137,7 +146,7 @@ async test "after a matched request, two Ephemeral Stub matches, an unmatched re
 async test "a request the Default Mock answers because no Mock lists its Host is labelled with the Default Mock's name" {
   with_definitions(two_mocks(default=true), dir => {
     let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
-      let responses = exchange(smock, Plain, [
+      let responses = exchange_each(smock, Plain, [
         "GET /x HTTP/1.1\r\nHost: usres.example.com\r\n\r\n", "GET /y HTTP/1.1\r\nHost: usres.example.com\r\n\r\n",
         "GET /x HTTP/1.0\r\n\r\n",
       ])
@@ -212,14 +221,17 @@ async test "Admin API, probe and /metrics requests on the admin port are not req
 }
 
 ///|
-/// A Mock whose `/delayed` answers after a delay of 1 s, and whose
-/// `/stream` sends one event at once and the last one 1 s later.
+/// A Mock whose `/delayed` answers after a delay of 1 s, whose `/quick`
+/// answers at once, and whose `/stream` sends one event at once and the
+/// last one 1 s later.
 let slow : String =
   #|{ "mocks": [{ "name": "slow" }],
   #|  "stubs": [
   #|    { "id": "delayed", "mock": "slow", "request": { "path": "/delayed" },
   #|      "fault": { "delay": { "fixed": 1000 } },
   #|      "response": { "status": 200, "body": "late" } },
+  #|    { "id": "quick", "mock": "slow", "request": { "path": "/quick" },
+  #|      "response": { "status": 200, "body": "quick" } },
   #|    { "id": "stream", "mock": "slow", "request": { "path": "/stream" },
   #|      "response": { "status": 200,
   #|        "events": [{ "data": "first" }, { "delay": 1000, "data": "last" }] } } ] }
@@ -297,6 +309,31 @@ async test "the latency histogram runs from the request to the last byte of its 
 }
 
 ///|
+async test "the latency of a request pipelined behind a slow response runs from when it was read, so its wait behind that response counts" {
+  with_definitions([("slow.json", slow)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let conn = smock.connect()
+      defer conn.close()
+      conn.write(
+        "GET /delayed HTTP/1.1\r\nHost: localhost\r\n\r\nGET /quick HTTP/1.1\r\nHost: localhost\r\n\r\n",
+      )
+      let delayed = read_response(conn)
+      let quick = read_response(conn)
+      inspect(
+        [
+          "answers: \{statuses(delayed)}, \{statuses(quick)}",
+          "/quick: \{latency(smock.metrics().1, "quick")}",
+        ].join("\n"),
+        content=(
+          #|answers: HTTP/1.1 200 OK, HTTP/1.1 200 OK
+          #|/quick: up to 0.5 s: 0, up to 5 s: 1, count 1
+        ),
+      )
+    })
+  })
+}
+
+///|
 async test "the latency buckets resolve sub-millisecond latencies and reach long delays" {
   with_definitions([("users.json", users)], dir => {
     let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
@@ -321,7 +358,7 @@ async test "smock writes no log line per request: traffic on the plain and TLS p
         let before = smock.logs.length()
         let out = []
         for over in [Plain, Tls(certs)] {
-          let responses = exchange(smock, over, [
+          let responses = exchange_each(smock, over, [
             "GET /users/1 HTTP/1.1\r\nHost: localhost\r\n\r\n", "POST /users/1 HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\n{}",
             "GET /users/1 HTTP/1.1\r\nHost: elsewhere.example.com\r\n\r\n", "GET /users/1 HTTP/1.1\r\nHost : bad\r\n\r\n",
           ])
@@ -343,7 +380,7 @@ async test "smock writes no log line per request: traffic on the plain and TLS p
           fail("the Admin API change was not logged")
         }
         out.push("logged since the traffic began:")
-        out.push(entries(smock.logs[before:].to_owned()))
+        out.push(log_entries(smock.logs[before:].to_owned()))
         inspect(
           out.join("\n"),
           content=(

@@ -73,7 +73,7 @@ pub struct Snapshot {
   priv default_index : Int?
   /// Where each Stub is declared, by its ID: the Definition file and the
   /// JSON Pointer to the Stub in it.
-  priv stub_locations : Map[String, (String, String)]
+  priv stub_locations : Map[String, Location]
   /// The definition set digest of the set the snapshot was built from, as
   /// `DefinitionSet::digest` gives it.
   digest : String
@@ -123,9 +123,19 @@ pub struct Fault {
   delay : Delay?
   /// A connection Fault, injected instead of the response.
   connection : ConnectionFault?
-  /// The seed of the Stub's own generator, from 0 to 2^53 - 1.
+  /// The seed of the Stub's own generator, from 0 to `max_seed`.
   seed : UInt64?
 } derive(Debug, Eq)
+
+///|
+/// The longest duration a Definition file can give, in milliseconds, such
+/// as a delay: the largest `Int`, about 24 days.
+pub let max_milliseconds : Int = @int.MAX_VALUE
+
+///|
+/// The largest seed, 2^53 - 1: up to it, a JSON number holds every integer
+/// exactly.
+pub let max_seed : UInt64 = 9007199254740991
 
 ///|
 /// A delay drawn from a distribution, applied to a share of the matched
@@ -170,6 +180,23 @@ pub enum ConnectionKind {
   /// then close the connection.
   Partial
 } derive(Debug, Eq)
+
+///|
+/// The kind's name, as Definition files and the Journal write it: `reset`,
+/// `close` or `partial`.
+pub fn ConnectionKind::name(self : ConnectionKind) -> String {
+  match self {
+    Reset => "reset"
+    Close => "close"
+    Partial => "partial"
+  }
+}
+
+///|
+/// The kind with the name `name`, if any.
+fn connection_kind(name : String) -> ConnectionKind? {
+  [Reset, Close, Partial].iter().find_first(kind => kind.name() == name)
+}
 
 ///|
 /// The conditions a request must meet for a Stub to match it. An omitted
@@ -239,12 +266,215 @@ pub enum BodyCondition {
   Exact(Bytes)
   /// The pattern matches the whole body.
   Pattern(Pattern)
-  /// The body parses as JSON and contains this value: an object has each
-  /// listed key, with a value that contains the listed one; an array has
-  /// the same length, and each element contains the listed one; any other
-  /// value is equal, numbers by their value.
-  Json(Json)
+  /// The body parses as JSON and contains the condition's value.
+  Json(JsonCondition)
 } derive(Debug, Eq)
+
+///|
+/// A `json` condition on the request body: a JSON value the body must
+/// contain. The value is the condition's own copy, which nothing outside
+/// can change, so the snapshot stays as it was loaded.
+pub struct JsonCondition {
+  priv value : Json
+}
+
+///|
+/// A condition on `value`, which it copies.
+fn JsonCondition::new(value : Json) -> JsonCondition {
+  { value: deep_copy(value), }
+}
+
+///|
+/// Whether `actual` contains the condition's value: an object has each
+/// listed key, with a value that contains the listed one; an array has the
+/// same length, and each element contains the listed one; any other value
+/// is equal, numbers by their value (see `same_number`).
+pub fn JsonCondition::matches(self : JsonCondition, actual : Json) -> Bool {
+  contains(actual, self.value)
+}
+
+///|
+fn contains(actual : Json, expected : Json) -> Bool {
+  match (expected, actual) {
+    (Object(expected), Object(actual)) =>
+      expected
+      .iter()
+      .all(entry => {
+        actual.get(entry.0) is Some(value) && contains(value, entry.1)
+      })
+    (Array(expected), Array(actual)) => {
+      if expected.length() != actual.length() {
+        return false
+      }
+      for i, value in expected {
+        if !contains(actual[i], value) {
+          return false
+        }
+      }
+      true
+    }
+    (Number(expected, repr=expected_text), Number(actual, repr=actual_text)) =>
+      same_number(expected, expected_text, actual, actual_text)
+    (String(expected), String(actual)) => expected == actual
+    (True, True) | (False, False) | (Null, Null) => true
+    _ => false
+  }
+}
+
+///|
+/// Whether `a` and `b` are the same JSON value: objects with the same keys
+/// and the same value for each, arrays of the same values in the same
+/// order, and scalars as `contains` compares them.
+fn same_value(a : Json, b : Json) -> Bool {
+  match (a, b) {
+    (Object(a), Object(b)) =>
+      a.length() == b.length() &&
+      a
+      .iter()
+      .all(entry => b.get(entry.0) is Some(value) && same_value(entry.1, value))
+    (Array(a), Array(b)) => {
+      if a.length() != b.length() {
+        return false
+      }
+      for i, value in a {
+        if !same_value(value, b[i]) {
+          return false
+        }
+      }
+      true
+    }
+    (Number(a, repr=a_text), Number(b, repr=b_text)) =>
+      same_number(a, a_text, b, b_text)
+    _ => a == b
+  }
+}
+
+///|
+/// Whether two parsed JSON numbers, `a` and `b`, have the same value.
+///
+/// The parser keeps a number's source text, `a_text` or `b_text`, when its
+/// Double cannot hold it: an integer above 2^53, or a number beyond a
+/// Double's range, which becomes an infinity. Two such numbers are compared
+/// by their text, as exact decimals, so that two 64-bit IDs that differ in
+/// their last digit differ. Any other pair is compared by their Doubles.
+fn same_number(
+  a : Double,
+  a_text : String?,
+  b : Double,
+  b_text : String?,
+) -> Bool {
+  match (a_text, b_text) {
+    (Some(a_text), Some(b_text)) =>
+      canonical_number(a_text) == canonical_number(b_text)
+    _ => a == b
+  }
+}
+
+///|
+/// The JSON number `text` written so that two numbers whose exponents have
+/// at most 18 digits have the same canonical text exactly when they have
+/// the same value: `0`, or an optional `-`, the significant digits without
+/// leading or trailing zeros, `e` and the power of ten of the last digit.
+/// It takes time linear in the length of `text`, however large its
+/// exponent.
+fn canonical_number(text : String) -> String {
+  let negative = text.has_prefix("-")
+  let digits = StringBuilder()
+  let mut fraction_digits = 0
+  let mut in_fraction = false
+  let exponent = StringBuilder()
+  let mut exponent_negative = false
+  let mut in_exponent = false
+  for c in text {
+    match c {
+      '-' if in_exponent => exponent_negative = true
+      '-' | '+' => ()
+      '.' => in_fraction = true
+      'e' | 'E' => in_exponent = true
+      _ if in_exponent => exponent.write_char(c)
+      _ => {
+        digits.write_char(c)
+        if in_fraction {
+          fraction_digits += 1
+        }
+      }
+    }
+  }
+  let digits = digits.to_string()
+  let mut start = 0
+  while start < digits.length() && digits[start] == '0' {
+    start += 1
+  }
+  if start == digits.length() {
+    return "0"
+  }
+  let mut end = digits.length()
+  while digits[end - 1] == '0' {
+    end -= 1
+  }
+  let significant = digits[start:end].to_owned()
+  // The power of ten of the last significant digit is the exponent plus
+  // `shift`, which the length of `text` bounds.
+  let shift = digits.length() - end - fraction_digits
+  let exponent = exponent.to_string()
+  let mut first = 0
+  while first < exponent.length() && exponent[first] == '0' {
+    first += 1
+  }
+  let exponent = exponent[first:].to_owned()
+  let sign = if negative { "-" } else { "" }
+  // An Int64 holds any exponent of at most 18 digits plus the shift. A
+  // longer one is kept as written, with the shift apart: such numbers are
+  // equal only when written alike.
+  if exponent.length() <= 18 {
+    let mut power = 0L
+    for c in exponent {
+      power = power * 10L + (c.to_int() - '0'.to_int()).to_int64()
+    }
+    if exponent_negative {
+      power = -power
+    }
+    "\{sign}\{significant}e\{power + shift.to_int64()}"
+  } else {
+    let exponent_sign = if exponent_negative { "-" } else { "" }
+    "\{sign}\{significant}e\{exponent_sign}\{exponent}+\{shift}"
+  }
+}
+
+///|
+/// The condition's value, as a copy of its own.
+pub impl ToJson for JsonCondition with fn to_json(self) {
+  deep_copy(self.value)
+}
+
+///|
+/// Conditions are equal when their values are, with numbers compared as
+/// matching compares them.
+pub impl Eq for JsonCondition with fn equal(self, other) {
+  same_value(self.value, other.value)
+}
+
+///|
+/// Shows the condition's value.
+pub impl Debug for JsonCondition with fn to_repr(self) {
+  Repr::ctor("JsonCondition", [(None, Debug::to_repr(self.value))])
+}
+
+///|
+/// A copy of `json` that shares no object or array with it.
+fn deep_copy(json : Json) -> Json {
+  match json {
+    Object(members) => {
+      let out = Map([])
+      for key, value in members {
+        out[key] = deep_copy(value)
+      }
+      Json::object(out)
+    }
+    Array(items) => Json::array(items.map(deep_copy))
+    other => other
+  }
+}
 
 ///|
 /// A Stub's response.
@@ -389,10 +619,10 @@ pub fn load(
   }
   let host_index = Map([])
   for host, claim in reader.hosts {
-    host_index[host] = index_of[claim.0]
+    host_index[host] = index_of[claim.mock]
   }
   let default_index = match reader.default_mock {
-    Some((name, _)) => Some(index_of[name])
+    Some(claim) => Some(index_of[claim.mock])
     None if mocks.length() == 1 => Some(0)
     None => None
   }
@@ -412,14 +642,27 @@ pub fn load(
 fn in_matching_order(stubs : Array[Stub]) -> Array[Stub] {
   let indexed = stubs.mapi((i, stub) => (i, stub))
   indexed.sort_by((a, b) => {
-    match (a.1.priority, b.1.priority) {
-      (Some(p), Some(q)) if p != q => p.compare(q)
-      (Some(_), None) => -1
-      (None, Some(_)) => 1
-      _ => a.0.compare(b.0)
+    match a.1.compare_priority(b.1) {
+      0 => a.0.compare(b.0)
+      order => order
     }
   })
   indexed.map(entry => entry.1)
+}
+
+///|
+/// How the priorities of two Stubs order them: negative when `self` is
+/// tried before `other`, positive when after, and 0 when their priorities
+/// do not decide. A lower number is tried first, and a Stub without a
+/// priority after every Stub with one. Stubs from Definition files and
+/// Ephemeral Stubs are each ordered by this rule.
+pub fn Stub::compare_priority(self : Stub, other : Stub) -> Int {
+  match (self.priority, other.priority) {
+    (Some(p), Some(q)) => p.compare(q)
+    (Some(_), None) => -1
+    (None, Some(_)) => 1
+    (None, None) => 0
+  }
 }
 
 ///|

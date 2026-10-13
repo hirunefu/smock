@@ -1,7 +1,7 @@
-// The Journal on the admin port: the query operation, scoped to the calling
-// Session, and the metrics of the Journal's size and evictions. The metrics
-// are read from the engine when /metrics is scraped, so recording a request
-// costs nothing for them.
+// The Journal on the admin port: the query, verify and unmatched
+// operations, each scoped to the calling Session, and the metrics of the
+// Journal's size and evictions. The metrics are read from the engine when
+// /metrics is scraped, so recording a request costs nothing for them.
 
 ///|
 /// The metrics of the Journal: its size and the entries its bound evicted.
@@ -58,13 +58,9 @@ fn JournalMetrics::update(
 ///|
 /// Queries the calling Session's Journal entries with the filter and the
 /// limit in the body, oldest first.
-fn query_journal(
-  admin : Admin,
-  request : @http1.Request,
-  body : Json?,
-) -> Reply {
-  let session = admin.session(request)
-  guard body is Some(body) else {
+fn query_journal(admin : Admin, call : Call) -> Reply {
+  let session = admin.session(call.request)
+  guard call.body is Some(body) else {
     return admin.error(
       400, "invalid_request", "the body must be a Journal query: a JSON object, such as {\"filter\":{\"path\":\"/users/1\"},\"limit\":10}",
     )
@@ -80,29 +76,16 @@ fn query_journal(
   let page = admin.engine().query_journal(query, session~) catch {
       error => return admin.refused(error, session)
     }
-  admin.page(page)
-}
-
-///|
-/// The reply that carries a Journal page.
-fn Admin::page(self : Admin, page : @engine.JournalPage) -> Reply {
-  guard ToJson::to_json(page) is Object(members) else {
-    abort("a Journal page is a JSON object")
-  }
-  self.json(200, members)
+  admin.result(page)
 }
 
 ///|
 /// Counts the calling Session's Journal entries that pass the filter in
 /// the body, and checks the count exactly, at least or at most N. A failed
 /// check is still a 200 reply, with `ok` false.
-fn verify_journal(
-  admin : Admin,
-  request : @http1.Request,
-  body : Json?,
-) -> Reply {
-  let session = admin.session(request)
-  guard body is Some(body) else {
+fn verify_journal(admin : Admin, call : Call) -> Reply {
+  let session = admin.session(call.request)
+  guard call.body is Some(body) else {
     return admin.error(
       400, "invalid_request", "the body must be a verification: a JSON object, such as {\"filter\":{\"path\":\"/users/1\"},\"exactly\":1}",
     )
@@ -118,26 +101,19 @@ fn verify_journal(
   let verification = admin.engine().verify(verify, session~) catch {
       error => return admin.refused(error, session)
     }
-  guard ToJson::to_json(verification) is Object(members) else {
-    abort("a verification is a JSON object")
-  }
-  admin.json(200, members)
+  admin.result(verification)
 }
 
 ///|
 /// Lists the calling Session's Journal entries that no Stub answered,
 /// oldest first, each with its Near miss, at most as many as the `limit`
 /// query parameter says.
-fn list_unmatched(
-  admin : Admin,
-  request : @http1.Request,
-  _body : Json?,
-) -> Reply {
-  let session = admin.session(request)
+fn list_unmatched(admin : Admin, call : Call) -> Reply {
+  let session = admin.session(call.request)
   let invalid = (message : String) => {
     admin.error(400, "invalid_request", message)
   }
-  let limit = match query_parameter(request.target, "limit") {
+  let limit = match query_parameter(call.request.target, "limit") {
     Err(message) => return invalid(message)
     Ok(None) => None
     Ok(Some(text)) =>
@@ -152,7 +128,7 @@ fn list_unmatched(
   let page = admin.engine().unmatched(session~, limit?) catch {
       error => return admin.refused(error, session)
     }
-  admin.page(page)
+  admin.result(page)
 }
 
 ///|

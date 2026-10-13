@@ -98,7 +98,7 @@ test "Hosts are compared case-insensitively, without the port and without a trai
 }
 
 ///|
-test "Hosts are exact names: a parent domain, a subdomain or a near miss of a Host does not reach its Mock" {
+test "Hosts are exact names: a parent domain, a subdomain or a name close to a Host does not reach its Mock" {
   let h = harness([
     mock_file("users", "\"hosts\": [\"users.example.com\"]"),
     mock_file("orders", "\"hosts\": [\"orders.example.com\"]"),

@@ -1,7 +1,7 @@
 ///|
 /// Ends the process with `code`, through libc's `exit` (no C source).
 /// Usage errors, including invalid settings, exit with 2.
-extern "c" fn exit(code : Int) = "exit"
+extern "C" fn exit(code : Int) = "exit"
 
 ///|
 async fn main {
@@ -89,14 +89,8 @@ async fn render(settings : @settings.RenderSettings) -> Int {
   let file = settings.request_file
   let text = @fs.read_file(file).text() catch {
     err => {
-      let reason = match err {
-        @os_error.OSError(_) as err if err.is_ENOENT() => "no such file"
-        @os_error.OSError(_) as err if err.is_EACCES() => "permission denied"
-        @os_error.OSError(_) => err.to_string()
-        _ => "it is not UTF-8 text"
-      }
       eprintln(
-        "smock render: cannot read the sample request \{file}: \{reason}",
+        "smock render: cannot read the sample request \{file}: \{@server.read_failure(err)}",
       )
       return 1
     }
@@ -119,7 +113,7 @@ async fn render(settings : @settings.RenderSettings) -> Int {
   }
   let seed = match settings.seed {
     Some(seed) => seed
-    None => @random.Rand::new().uint64() & 0x1FFFFFFFFFFFFFUL
+    None => @settings.random_seed()
   }
   let rendering = @engine.Engine(snapshot).render(
     settings.stub,
@@ -142,8 +136,19 @@ async fn render(settings : @settings.RenderSettings) -> Int {
 /// is valid, every warning, such as a Stub that can never match. Returns the
 /// exit status: 0 when the definition set is valid, with or without
 /// warnings, 1 when it is not.
+///
+/// A missing directory is an empty definition set, which is valid, as for
+/// `smock serve`. Since a mistyped path then passes too, `check` says on
+/// stderr that the directory does not exist.
 async fn check(settings : @settings.CheckSettings) -> Int {
-  match @defdir.load(Some(settings.dir), body_file_dir=settings.body_file_dir) {
+  let dir = settings.dir
+  // When the directory cannot be looked at, loading it reports why.
+  if !(@fs.exists(dir) catch { _ => true }) {
+    eprintln(
+      "smock check: the definitions directory \{dir} does not exist, so it is read as an empty definition set",
+    )
+  }
+  match @defdir.load(Some(dir), body_file_dir=settings.body_file_dir) {
     Ok(snapshot) => {
       for warning in snapshot.warnings() {
         println(warning.to_string())
