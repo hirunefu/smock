@@ -40,29 +40,6 @@ fn load_pair(
 }
 
 ///|
-/// The contents of a file, or why it cannot be read, such as
-/// `no such file`.
-async fn read_file(path : String) -> Result[Bytes, String] {
-  // Such as a Secret volume's directory given instead of a file in it.
-  let is_dir = try @fs.kind(path) catch {
-    _ => false
-  } noraise {
-    kind => kind is Directory
-  }
-  if is_dir {
-    return Err("is a directory")
-  }
-  try @fs.read_file(path).binary() catch {
-    @os_error.OSError(_, ..) as err if err.is_ENOENT() => Err("no such file")
-    @os_error.OSError(_, ..) as err if err.is_EACCES() =>
-      Err("permission denied")
-    err => Err(err.to_string())
-  } noraise {
-    bytes => Ok(bytes)
-  }
-}
-
-///|
 /// One TLS connection on top of a TCP connection: the byte stream that
 /// `serve_connection` reads requests from and writes responses to. OpenSSL
 /// works on memory buffers only, so this moves the bytes between it and the

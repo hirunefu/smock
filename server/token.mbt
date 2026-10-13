@@ -33,18 +33,10 @@ async fn read_admin_token(
     (None, Some(token)) => Some(token)
     (Some(file), None) => {
       let text = @fs.read_file(file).text() catch {
-        err => {
-          let reason = match err {
-            @os_error.OSError(_) as err if err.is_ENOENT() => "no such file"
-            @os_error.OSError(_) as err if err.is_EACCES() =>
-              "permission denied"
-            @os_error.OSError(_) => err.to_string()
-            _ => "it is not UTF-8 text"
-          }
+        err =>
           return refuse(
-            "cannot read the token file \{file.escape()}: \{reason}",
+            "cannot read the token file \{file.escape()}: \{read_failure(err)}",
           )
-        }
       }
       match text.trim() {
         "" => refuse("the token file \{file.escape()} is empty")

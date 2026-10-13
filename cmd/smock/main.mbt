@@ -89,14 +89,8 @@ async fn render(settings : @settings.RenderSettings) -> Int {
   let file = settings.request_file
   let text = @fs.read_file(file).text() catch {
     err => {
-      let reason = match err {
-        @os_error.OSError(_) as err if err.is_ENOENT() => "no such file"
-        @os_error.OSError(_) as err if err.is_EACCES() => "permission denied"
-        @os_error.OSError(_) => err.to_string()
-        _ => "it is not UTF-8 text"
-      }
       eprintln(
-        "smock render: cannot read the sample request \{file}: \{reason}",
+        "smock render: cannot read the sample request \{file}: \{@server.read_failure(err)}",
       )
       return 1
     }
