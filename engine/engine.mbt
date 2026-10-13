@@ -275,11 +275,9 @@ pub fn Engine::handle(
   let matched_ephemeral = ephemeral.bind(list => {
     list.iter().find_first(e => incoming.meets(e.stub.request))
   })
-  // The Stub that matched, with its own generator if it has one, and
-  // whether it is an Ephemeral Stub.
-  let matched : (@definitions.Stub, @prng.Generator?, Bool)? = match
-    (mock, matched_ephemeral) {
-    (_, Some(e)) => Some((e.stub, e.generator, true))
+  let matched : Match? = match (mock, matched_ephemeral) {
+    (_, Some(e)) =>
+      Some({ stub: e.stub, generator: e.generator, source: Ephemeral(e.id), })
     (Some(mock), None) => {
       let candidates = if self.match_index {
         mock.candidates(request.meth, incoming.path)
@@ -288,13 +286,17 @@ pub fn Engine::handle(
       }
       candidates
       .find_first(stub => incoming.meets(stub.request))
-      .map(stub => (stub, self.generators.get(stub.id), false))
+      .map(stub => {
+        stub,
+        generator: self.generators.get(stub.id),
+        source: FromFile(stub.id),
+      })
     }
     (None, None) => None
   }
   let (plan, near_miss) : (ResponsePlan, NearMiss?) = match (mock, matched) {
     (None, _) => (no_mock(host, self.snapshot.hosts()), None)
-    (Some(_), Some((stub, generator, _))) => {
+    (Some(_), Some({ stub, generator, .. })) => {
       let (delay_ms, fault) = decide_faults(stub, generator.unwrap_or(rand))
       ({ ..stub_response(stub.response), delay_ms, fault, }, None)
     }
@@ -312,7 +314,7 @@ pub fn Engine::handle(
   if resolution is ViaDefault(name) {
     plan.headers.push(("Smock-Mock", "\{header_safe(name)}; via=default"))
   }
-  let stub = matched.map(matched => matched.0.id)
+  let stub = matched.map(matched => matched.stub.id)
   let journal = if self.journal.records(mock) {
     Some(
       self.journal.entry(
@@ -335,15 +337,18 @@ pub fn Engine::handle(
     plan,
     journal,
     near_miss,
-    matched: matched.map(matched => {
-      let (stub, _, ephemeral) = matched
-      if ephemeral {
-        Ephemeral(stub.id)
-      } else {
-        FromFile(stub.id)
-      }
-    }),
+    matched: matched.map(matched => matched.source),
   }
+}
+
+///|
+/// The Stub that matched a request, with the generator its Fault decisions
+/// draw from when it has a seed, and where it comes from.
+priv struct Match {
+  stub : @definitions.Stub
+  /// Its own generator, when it has a seed.
+  generator : @prng.Generator?
+  source : MatchedStub
 }
 
 ///|
