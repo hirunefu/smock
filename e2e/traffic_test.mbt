@@ -11,6 +11,17 @@ async fn Smock::metrics(self : Smock) -> (String, Array[Sample]) {
 }
 
 ///|
+/// The lines of `/metrics` about the metrics whose names start with
+/// `prefix`, as `metric_lines` picks them, one per line.
+async fn Smock::metric(
+  self : Smock,
+  prefix : String,
+  help? : Bool = false,
+) -> String {
+  metric_lines(self.admin("GET", "/metrics").body, prefix, help~).join("\n")
+}
+
+///|
 /// Whether `name` is the name of a sample of the request traffic metrics.
 fn is_traffic(name : String) -> Bool {
   name.has_prefix("smock_request_duration_seconds") ||

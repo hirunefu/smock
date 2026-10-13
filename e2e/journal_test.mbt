@@ -556,19 +556,15 @@ async test "/metrics shows the Journal's entries, bytes and evictions, without l
             ("Host", "localhost"),
           ])
         }
-        let response = smock.admin("GET", "/metrics")
-        let lines = response.body
-          .split("\n")
-          .filter(line => line.contains("smock_journal_"))
-          .map(line => {
-            // The bytes depend on the request, not on what this test shows.
-            if line.has_prefix("smock_journal_bytes ") {
-              "smock_journal_bytes <bytes>"
-            } else {
-              line.to_owned()
-            }
-          })
-          .collect()
+        let text = smock.admin("GET", "/metrics").body
+        let lines = metric_lines(text, "smock_journal_", help=true).map(line => {
+          // The bytes depend on the request, not on what this test shows.
+          if line.has_prefix("smock_journal_bytes ") {
+            "smock_journal_bytes <bytes>"
+          } else {
+            line
+          }
+        })
         inspect(
           lines.join("\n"),
           content=(

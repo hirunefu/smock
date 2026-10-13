@@ -31,6 +31,26 @@ fn Sample::label(self : Sample, name : String) -> String? {
 }
 
 ///|
+/// The lines of `text`, in the Prometheus text format, about the metrics
+/// whose names start with `prefix`: their samples and, with `help`, their
+/// `# HELP` and `# TYPE` lines, in the order they come.
+fn metric_lines(
+  text : String,
+  prefix : String,
+  help? : Bool = false,
+) -> Array[String] {
+  let about = (line : StringView) => {
+    for comment in ["# HELP ", "# TYPE "] {
+      if line.strip_prefix(comment) is Some(rest) {
+        return help && rest.has_prefix(prefix)
+      }
+    }
+    line.has_prefix(prefix)
+  }
+  text.split("\n").filter(about).map(line => line.to_owned()).collect()
+}
+
+///|
 /// Parses `text` in the Prometheus text exposition format, version 0.0.4,
 /// and returns its samples, in order. Raises at the first thing Prometheus
 /// would reject:

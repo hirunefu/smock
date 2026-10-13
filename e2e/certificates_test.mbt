@@ -34,29 +34,6 @@ async fn Smock::presented(
 }
 
 ///|
-/// The lines of the metric `name`: its samples, and also its HELP and TYPE
-/// lines with `help`.
-async fn Smock::metric(
-  self : Smock,
-  name : String,
-  help? : Bool = false,
-) -> String {
-  let response = self.admin("GET", "/metrics")
-  response.body
-  .split("\n")
-  .filter(line => {
-    line.has_prefix(name) ||
-    (
-      help &&
-      (line.has_prefix("# HELP \{name} ") || line.has_prefix("# TYPE \{name} "))
-    )
-  })
-  .map(line => line.to_owned())
-  .collect()
-  .join("\n")
-}
-
-///|
 /// Whether a log line is about a TLS certificate.
 fn is_certificate_entry(line : String) -> Bool {
   let entry = @json.parse(line) catch { _ => return false }

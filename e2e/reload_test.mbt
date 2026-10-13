@@ -171,18 +171,6 @@ fn reload_entries(
 }
 
 ///|
-/// The lines of the reload metric.
-async fn Smock::reload_metric(self : Smock) -> String {
-  let response = self.admin("GET", "/metrics")
-  response.body
-  .split("\n")
-  .filter(line => line.contains("smock_definition_reloads_total"))
-  .map(line => line.to_owned())
-  .collect()
-  .join("\n")
-}
-
-///|
 async test "an invalid set keeps the current one serving and is reported in status, a log entry and the reload metric; fixing it swaps" {
   with_definitions(
     [
@@ -215,7 +203,7 @@ async test "an invalid set keeps the current one serving and is reported in stat
             $|digest kept: \{kept}; /users/1: \{served}
             $|fixed: \{last_reload(fixed)}
             $|digest changed: \{changed}; /users/1: \{smock.brief("/users/1")}
-            $|\{smock.reload_metric()}
+            $|\{smock.metric("smock_definition_reloads_total", help=true)}
           ),
           content=(
             #|broken: "failed"
@@ -327,7 +315,7 @@ async test "without a definitions directory, nothing is watched and no reload ha
       (
         $|digest: \{status.get("digest").map_or("missing", d => d.stringify())}
         $|lastReload: \{last_reload(status)}
-        $|\{smock.reload_metric()}
+        $|\{smock.metric("smock_definition_reloads_total", help=true)}
       ),
       content=(
         #|digest: "e3b0c44298fc"

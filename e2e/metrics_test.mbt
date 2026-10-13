@@ -26,17 +26,13 @@ async test "the build-info metric carries the version, commit and toolchain smoc
   let build_info = "smock_build_info{version=\"\{version}\",commit=\"\{commit}\",toolchain=\"\{toolchain}\"} 1"
   let _ = with_smock(["--port", "0"], smock => {
     let response = smock.admin("GET", "/metrics")
-    let lines = response.body
-      .split("\n")
-      .filter(line => line.contains("smock_build_info"))
-      .map(line => {
-        if line == build_info {
-          "<build info>"
-        } else {
-          line.to_owned()
-        }
-      })
-      .collect()
+    let lines = metric_lines(response.body, "smock_build_info", help=true).map(line => {
+      if line == build_info {
+        "<build info>"
+      } else {
+        line
+      }
+    })
     inspect(
       "\{response.status} \{response.header("Content-Type").unwrap_or("")}\n\{lines.join("\n")}",
       content=(
