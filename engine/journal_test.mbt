@@ -92,6 +92,7 @@ test "a committed entry records the request, its Session, Host and Mock, the Stu
         "nearMiss": Json::null(),
         "status": 200,
         "fault": Json::null(),
+        "templateError": Json::null(),
       },
     ],
     "more": false,

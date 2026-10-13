@@ -463,8 +463,9 @@ fn liveness_probe(admin : Admin, _call : Call) -> Reply {
 /// request in the body, against the snapshot this replica serves now, as
 /// `smock render` does. The `time` and `seed` query parameters give the
 /// time the sample is received at and the seed of the random source the
-/// rendering draws from; without them, the time is now and the seed is a
-/// fresh one. Rendering changes nothing.
+/// rendering draws from; without them, the time is now and the seed is the
+/// Stub's `fault.seed`, or a fresh one when it has none. The rendering
+/// shows the time and the seed it used. Rendering changes nothing.
 fn render(admin : Admin, call : Call) -> Reply {
   let invalid = (message : String) => {
     admin.error(400, "invalid_request", message)
@@ -490,10 +491,10 @@ fn render(admin : Admin, call : Call) -> Reply {
   }
   let seed = match query_parameter(request.target, "seed") {
     Err(message) => return invalid(message)
-    Ok(None) => @settings.random_seed()
+    Ok(None) => None
     Ok(Some(text)) =>
       match @settings.parse_seed(text) {
-        Some(seed) => seed
+        Some(seed) => Some(seed)
         None =>
           return invalid(
             "the seed query parameter must be an integer from 0 to \{@definitions.max_seed}",
@@ -508,7 +509,7 @@ fn render(admin : Admin, call : Call) -> Reply {
   }
   let rendering = admin
     .engine()
-    .render(id, sample, now~, rand=@prng.Generator(seed)) catch {
+    .render(id, sample, now~, seed?, fresh_seed=@settings.random_seed) catch {
       err => return admin.error(404, "unknown_stub", err.message())
     }
   admin.result(rendering)

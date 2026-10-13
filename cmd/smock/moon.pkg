@@ -9,7 +9,6 @@ import {
   "smock/smock/defdir",
   "smock/smock/engine",
   "smock/smock/log",
-  "smock/smock/prng",
   "smock/smock/server",
   "smock/smock/settings",
 }

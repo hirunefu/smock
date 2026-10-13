@@ -480,8 +480,58 @@ fn deep_copy(json : Json) -> Json {
 /// A Stub's response.
 pub struct Response {
   status : Int
+  /// The header fields, in the order written. A `json` body adds
+  /// `Content-Type: application/json` at the end unless one is given.
   headers : ReadOnlyArray[(String, String)]
+  /// The body, when the response is not a template.
   body : ResponseBody
+  /// With `template` on: the response's templates, parsed when the
+  /// definition set was loaded or the Stub was added. They give the header
+  /// values and the body or events of each response, rendered for its
+  /// request, instead of `headers` and `body`.
+  template : ResponseTemplate?
+} derive(Debug, Eq)
+
+///|
+/// The templates of a response with `template` on.
+pub struct ResponseTemplate {
+  /// The header fields, their values text templates, in the order written.
+  /// `Content-Type` is never templated.
+  headers : ReadOnlyArray[(String, @template.Text)]
+  body : BodyTemplate
+} derive(Debug, Eq)
+
+///|
+/// The body of a response with `template` on.
+pub enum BodyTemplate {
+  /// `body` or `bodyFile`: a text template, escaped by the media type of
+  /// the response's `Content-Type`. An empty body is an empty text.
+  Text(@template.Text)
+  /// `json`: a structured template.
+  Json(@template.Structured)
+  /// `events`: Server-Sent Events, each templated.
+  Events(ReadOnlyArray[EventTemplate])
+} derive(Debug, Eq)
+
+///|
+/// A Server-Sent Event of a response with `template` on.
+pub struct EventTemplate {
+  /// How long to wait before writing the event, in milliseconds.
+  delay_ms : Int
+  /// The event type.
+  event : @template.Text?
+  /// The event ID.
+  id : @template.Text?
+  data : EventData
+} derive(Debug, Eq)
+
+///|
+/// The data of a templated Server-Sent Event.
+pub enum EventData {
+  /// `data`: a text template, which may give several lines.
+  Text(@template.Text)
+  /// `json`: a structured template, sent as one line of compact JSON.
+  Json(@template.Structured)
 } derive(Debug, Eq)
 
 ///|
@@ -507,6 +557,17 @@ pub struct SseEvent {
   /// The data, which may span several lines.
   data : String
 } derive(Debug, Eq)
+
+///|
+/// An event with these fields: one rendered from an `EventTemplate`.
+pub fn SseEvent::SseEvent(
+  delay_ms~ : Int,
+  event~ : String?,
+  id~ : String?,
+  data~ : String,
+) -> SseEvent {
+  { delay_ms, event, id, data, }
+}
 
 ///|
 /// The Mock whose Hosts include `host`, a Host normalised by

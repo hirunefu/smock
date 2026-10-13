@@ -170,11 +170,21 @@ pub(all) struct Rendering {
   stub : String
   /// The Stub's Mock.
   mock : String
+  /// The time the sample was received at, in milliseconds since the Unix
+  /// epoch.
+  time : Int64
+  /// The seed the rendering used: the one given, or else the Stub's
+  /// `fault.seed`, or else a fresh one. Given again, it repeats the
+  /// rendering.
+  seed : UInt64
   status : Int
   /// The header fields smock sends, in order, without those that depend on
   /// the connection, such as Content-Length.
   headers : Array[(String, String)]
   body : Body
+  /// Why the Stub's template could not be rendered, when it could not: the
+  /// response is then the 500 a request would get.
+  template_error : TemplateError?
   /// The conditions the sample fails, as in a Near miss, in the order
   /// method, path, query parameters, headers, body. Empty when it meets
   /// them all.
@@ -201,28 +211,45 @@ pub fn UnknownStub::message(self : UnknownStub) -> String {
 ///
 /// - `now` is the time the sample is received at, in milliseconds since the
 ///   Unix epoch.
-/// - `rand` is the random source the rendering draws from.
+/// - `seed` seeds the random source of the rendering: the output a matched
+///   request takes from its Stub's source is the first output of a
+///   generator seeded with it. So the rendering shows what the first
+///   matched request of a Stub with `fault.seed` set to `seed` gets.
+///   Without it, the rendering uses the Stub's `fault.seed`, or, when it
+///   has none, `fresh_seed()`.
 ///
-/// Rendering changes nothing in the engine: no generator advances.
+/// Rendering decides no Fault, and changes nothing in the engine: no
+/// generator advances.
 pub fn Engine::render(
   self : Engine,
   id : String,
   sample : SampleRequest,
   now~ : Int64,
-  rand~ : @prng.Generator,
+  seed? : UInt64,
+  fresh_seed~ : () -> UInt64,
 ) -> Rendering raise UnknownStub {
   guard self.file_stub(id) is Some(stub) else { raise UnknownStub(id) }
-  // A static response depends on neither the time nor the random source.
-  ignore(now)
-  ignore(rand)
+  let seed = match (seed, stub.fault) {
+    (Some(seed), _) => seed
+    (None, Some({ seed: Some(seed), .. })) => seed
+    (None, _) => fresh_seed()
+  }
   let incoming = Incoming::new(sample.to_request())
-  let plan = stub_response(stub.response)
+  let (plan, template_error) = respond(
+    stub,
+    incoming,
+    now~,
+    draw=@prng.Generator(seed).uint64(),
+  )
   {
     stub: stub.id,
     mock: stub.mock,
+    time: now,
+    seed,
     status: plan.status,
     headers: plan.headers,
     body: plan.body,
+    template_error,
     failed: incoming
     .failed(stub.request)
     .map(failed => incoming.explain(failed)),
@@ -253,6 +280,8 @@ pub impl ToJson for Rendering with fn to_json(self) {
   {
     "stub": Json::string(self.stub),
     "mock": Json::string(self.mock),
+    "time": Json::string(@log.format_time(self.time)),
+    "seed": Json::number(self.seed.to_double()),
     "response": {
       "status": Json::number(self.status.to_double()),
       "headers": Json::array(
@@ -264,6 +293,9 @@ pub impl ToJson for Rendering with fn to_json(self) {
       "body": body,
       "events": events,
     },
+    "templateError": self.template_error.map_or(Json::null(), error => {
+      ToJson::to_json(error)
+    }),
     "failed": Json::array(self.failed.map(failed => ToJson::to_json(failed))),
   }
 }

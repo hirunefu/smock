@@ -46,7 +46,7 @@ fn Harness::render(self : Harness, id : String, sample : Json) -> String raise {
     id,
     @engine.SampleRequest::from_json(sample),
     now=self.now,
-    rand=self.rand,
+    fresh_seed=() => 7,
   )
   rendering.to_json().stringify(indent=2)
 }
@@ -66,6 +66,8 @@ test "a sample request that meets every condition renders the Stub's status, hea
       #|{
       #|  "stub": "create-user",
       #|  "mock": "users",
+      #|  "time": "2026-10-12T14:30:05.123Z",
+      #|  "seed": 7,
       #|  "response": {
       #|    "status": 201,
       #|    "headers": [
@@ -86,6 +88,7 @@ test "a sample request that meets every condition renders the Stub's status, hea
       #|    },
       #|    "events": null
       #|  },
+      #|  "templateError": null,
       #|  "failed": []
       #|}
     ),
@@ -106,6 +109,8 @@ test "a sample request that fails several conditions still renders the Stub's re
       #|{
       #|  "stub": "create-user",
       #|  "mock": "users",
+      #|  "time": "2026-10-12T14:30:05.123Z",
+      #|  "seed": 7,
       #|  "response": {
       #|    "status": 201,
       #|    "headers": [
@@ -126,6 +131,7 @@ test "a sample request that fails several conditions still renders the Stub's re
       #|    },
       #|    "events": null
       #|  },
+      #|  "templateError": null,
       #|  "failed": [
       #|    {
       #|      "condition": "method",
@@ -184,6 +190,8 @@ test "a Stub that answers from a body file renders the bytes of the file, as tex
       #|{
       #|  "stub": "get-user",
       #|  "mock": "users",
+      #|  "time": "2026-10-12T14:30:05.123Z",
+      #|  "seed": 7,
       #|  "response": {
       #|    "status": 200,
       #|    "headers": [
@@ -200,11 +208,14 @@ test "a Stub that answers from a body file renders the bytes of the file, as tex
       #|    },
       #|    "events": null
       #|  },
+      #|  "templateError": null,
       #|  "failed": []
       #|}
       #|{
       #|  "stub": "logo",
       #|  "mock": "users",
+      #|  "time": "2026-10-12T14:30:05.123Z",
+      #|  "seed": 7,
       #|  "response": {
       #|    "status": 200,
       #|    "headers": [],
@@ -216,6 +227,7 @@ test "a Stub that answers from a body file renders the bytes of the file, as tex
       #|    },
       #|    "events": null
       #|  },
+      #|  "templateError": null,
       #|  "failed": []
       #|}
     ),
@@ -266,7 +278,7 @@ fn Harness::failed(self : Harness, id : String, sample : Json) -> String raise {
     id,
     @engine.SampleRequest::from_json(sample),
     now=self.now,
-    rand=self.rand,
+    fresh_seed=() => 7,
   )
   rendering.failed
   .map(failed => {
@@ -379,6 +391,8 @@ test "a Stub with Faults renders its plain response: rendering decides no Fault"
       #|{
       #|  "stub": "seeded",
       #|  "mock": "m",
+      #|  "time": "2026-10-12T14:30:05.123Z",
+      #|  "seed": 42,
       #|  "response": {
       #|    "status": 200,
       #|    "headers": [],
@@ -390,6 +404,7 @@ test "a Stub with Faults renders its plain response: rendering decides no Fault"
       #|    },
       #|    "events": null
       #|  },
+      #|  "templateError": null,
       #|  "failed": []
       #|}
     ),
@@ -452,6 +467,8 @@ test "a Stub that streams Server-Sent Events renders its events, with the Conten
       #|{
       #|  "stub": "stream",
       #|  "mock": "m",
+      #|  "time": "2026-10-12T14:30:05.123Z",
+      #|  "seed": 7,
       #|  "response": {
       #|    "status": 200,
       #|    "headers": [
@@ -478,6 +495,7 @@ test "a Stub that streams Server-Sent Events renders its events, with the Conten
       #|      }
       #|    ]
       #|  },
+      #|  "templateError": null,
       #|  "failed": []
       #|}
     ),

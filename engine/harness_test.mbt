@@ -125,6 +125,11 @@ fn describe(outcome : @engine.Outcome) -> String {
       out.write_string("  stub: \{@debug.to_string(journal.stub)}\n")
       out.write_string("  status: \{@debug.to_string(journal.status)}\n")
       out.write_string("  fault: \{@debug.to_string(journal.fault)}\n")
+      if journal.template_error is Some(error) {
+        out.write_string(
+          "  template_error: at \{error.at}: \{error.message.escape()}\n",
+        )
+      }
       out.write_string("  received_at: \{journal.received_at}\n")
     }
   }

@@ -350,7 +350,7 @@ test "a body-file path that would leave the body-file subdirectory is a diagnost
 }
 
 ///|
-test "a response gives at most one of body, bodyFile and events" {
+test "a response gives at most one of body, bodyFile, json and events" {
   let response = (i : Int, fields : String) => {
     "{ \"id\": \"s\{i}\", \"mock\": \"m\", \"response\": { \"status\": 200, \{fields} } }"
   }
@@ -358,14 +358,18 @@ test "a response gives at most one of body, bodyFile and events" {
     stub_problems(
       [
         "\"body\": \"x\", \"bodyFile\": \"x.json\"", "\"bodyFile\": \"x.json\", \"events\": [{ \"data\": \"x\" }]",
-        "\"body\": \"x\", \"events\": [{ \"data\": \"x\" }]",
+        "\"body\": \"x\", \"events\": [{ \"data\": \"x\" }]", "\"json\": {}, \"body\": \"x\"",
+        "\"bodyFile\": \"x.json\", \"json\": null", "\"events\": [], \"json\": [1]",
       ].mapi(response),
       body_files=[("x.json", b"x")],
     ),
     content=(
-      #|a.json: /stubs/0/response: has "body" and "bodyFile"; give at most one of "body", "bodyFile" and "events"
-      #|a.json: /stubs/1/response: has "bodyFile" and "events"; give at most one of "body", "bodyFile" and "events"
-      #|a.json: /stubs/2/response: has "body" and "events"; give at most one of "body", "bodyFile" and "events"
+      #|a.json: /stubs/0/response: has "body" and "bodyFile"; give at most one of "body", "bodyFile", "json" and "events"
+      #|a.json: /stubs/1/response: has "bodyFile" and "events"; give at most one of "body", "bodyFile", "json" and "events"
+      #|a.json: /stubs/2/response: has "body" and "events"; give at most one of "body", "bodyFile", "json" and "events"
+      #|a.json: /stubs/3/response: has "body" and "json"; give at most one of "body", "bodyFile", "json" and "events"
+      #|a.json: /stubs/4/response: has "bodyFile" and "json"; give at most one of "body", "bodyFile", "json" and "events"
+      #|a.json: /stubs/5/response: has "json" and "events"; give at most one of "body", "bodyFile", "json" and "events"
     ),
   )
 }
@@ -417,13 +421,14 @@ test "a malformed event is a diagnostic at its JSON Pointer" {
           #|  { "id": "a\u0000b", "data": "x" }, { "id": 2, "data": "x" }]
         ),
         "[{ \"data\": \"x\", \"retry\": 1000 }]",
+        "[{ \"data\": \"x\", \"json\": { \"x\": 1 } }, { \"json\": null }]",
       ].mapi(events_stub),
     ),
     content=(
       #|a.json: /stubs/0/response/events: must be an array
       #|a.json: /stubs/1/response/events/0: must be an object
       #|a.json: /stubs/1/response/events/1: must be an object
-      #|a.json: /stubs/2/response/events/0: needs "data"
+      #|a.json: /stubs/2/response/events/0: needs "data" or "json"
       #|a.json: /stubs/2/response/events/1/data: must be a string
       #|a.json: /stubs/2/response/events/2/data: must be a string
       #|a.json: /stubs/3/response/events/0/delay: must be an integer from 0 to 2147483647
@@ -438,6 +443,7 @@ test "a malformed event is a diagnostic at its JSON Pointer" {
       #|a.json: /stubs/5/response/events/2/id: must be one line without NUL characters
       #|a.json: /stubs/5/response/events/3/id: must be a string
       #|a.json: /stubs/6/response/events/0/retry: is not a known field
+      #|a.json: /stubs/7/response/events/0: has "data" and "json"; give exactly one of them
     ),
   )
 }

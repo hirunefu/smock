@@ -114,15 +114,12 @@ async fn render(settings : @settings.RenderSettings) -> Int {
       return 1
     }
   }
-  let seed = match settings.seed {
-    Some(seed) => seed
-    None => @settings.random_seed()
-  }
   let rendering = @engine.Engine(snapshot).render(
     settings.stub,
     sample,
     now=settings.time.unwrap_or(@async.now()),
-    rand=@prng.Generator(seed),
+    seed?=settings.seed,
+    fresh_seed=@settings.random_seed,
   ) catch {
     err => {
       eprintln("smock render: \{err.message()}")
