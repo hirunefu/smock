@@ -394,7 +394,7 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
     connection~,
     respond=(stream, request) => {
       // The request has just been read in full.
-      let read_at = @bench.monotonic_clock_start()
+      let stopwatch = Stopwatch::start()
       let engine_request = to_engine_request(request)
       let session = @engine.session_of(
         engine_request.headers,
@@ -407,7 +407,7 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
         now=@async.now(),
         rand~,
       )
-      defer traffic.record(outcome, @bench.monotonic_clock_end(read_at) / 1.0e6)
+      defer traffic.record(outcome, stopwatch.seconds())
       let plan = outcome.plan
       let pending = Ref(outcome.journal)
       let commit = () => {

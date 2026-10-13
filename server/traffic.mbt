@@ -14,6 +14,27 @@ let latency_buckets : Array[Double] = [
 ]
 
 ///|
+/// Measures a request's latency on a monotonic clock, which adjustments of
+/// the system clock do not move. `@async.now()` is wall-clock milliseconds,
+/// too coarse for buckets from 100 µs; core's benchmarking package has the
+/// only public monotonic clock.
+priv struct Stopwatch {
+  started : @bench.Timestamp
+}
+
+///|
+/// A stopwatch that starts now.
+fn Stopwatch::start() -> Stopwatch {
+  { started: @bench.monotonic_clock_start(), }
+}
+
+///|
+/// The seconds since the stopwatch started.
+fn Stopwatch::seconds(self : Stopwatch) -> Double {
+  @bench.monotonic_clock_end(self.started) / 1.0e6
+}
+
+///|
 /// The request traffic metrics of one process.
 priv struct Traffic {
   /// `smock_requests_total`, by Mock and Stub.
