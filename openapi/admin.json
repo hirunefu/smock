@@ -993,7 +993,8 @@
             "type": ["string", "null"]
           }
         },
-        "required": ["id", "mock", "session"]
+        "required": ["id", "mock", "session"],
+        "unevaluatedProperties": false
       },
       "EphemeralStubAdded": {
         "description": "The Ephemeral Stub that was added.",

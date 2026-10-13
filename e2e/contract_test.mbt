@@ -401,6 +401,20 @@ fn Contract::validate(
             }
           }
         }
+      ("unevaluatedProperties", _) =>
+        if value is Object(object) {
+          let seen : Set[String] = Set([])
+          for other, other_argument in members {
+            if other != keyword {
+              self.evaluated_by(other, other_argument, file, value, seen)
+            }
+          }
+          for name, v in object {
+            if !seen.contains(name) {
+              self.validate(sub(argument), v, "\{at}/\{name}", problems)
+            }
+          }
+        }
       ("propertyNames", _) =>
         if value is Object(object) {
           for name, _ in object {
@@ -484,6 +498,63 @@ fn Contract::validate(
           "\{at}: the contract checker does not know the keyword \{keyword} in \{file}",
         )
     }
+  }
+}
+
+///|
+/// Adds to `seen` the names of the properties of `value`, an object, that
+/// the keyword `keyword` with `argument`, in a schema in `file`, evaluates:
+/// those `properties` names, every one for `additionalProperties` and
+/// `unevaluatedProperties`, and those that the subschemas applied in place
+/// evaluate (`$ref`, `allOf`, the passing ones of `anyOf` and `oneOf`, and
+/// `dependentSchemas`). The properties no keyword evaluates are the ones
+/// `unevaluatedProperties` applies to.
+fn Contract::evaluated_by(
+  self : Contract,
+  keyword : String,
+  argument : Json,
+  file : String,
+  value : Json,
+  seen : Set[String],
+) -> Unit raise {
+  guard value is Object(object) else { return }
+  let in_place = (schema : Located) => {
+    if schema.json is Object(members) {
+      for k, a in members {
+        self.evaluated_by(k, a, schema.file, value, seen)
+      }
+    }
+  }
+  let sub = (json : Json) => Located::{ file, json, }
+  match (keyword, argument) {
+    ("properties", Object(properties)) =>
+      for name, _ in object {
+        if properties.contains(name) {
+          seen.add(name)
+        }
+      }
+    ("additionalProperties" | "unevaluatedProperties", _) =>
+      for name, _ in object {
+        seen.add(name)
+      }
+    ("$ref", String(reference)) => in_place(self.resolve(file, reference))
+    ("allOf", Array(schemas)) =>
+      for s in schemas {
+        in_place(sub(s))
+      }
+    ("anyOf" | "oneOf", Array(schemas)) =>
+      for s in schemas {
+        if self.passes(sub(s), value) {
+          in_place(sub(s))
+        }
+      }
+    ("dependentSchemas", Object(dependents)) =>
+      for name, dependent in dependents {
+        if object.contains(name) {
+          in_place(sub(dependent))
+        }
+      }
+    _ => ()
   }
 }
 
@@ -819,6 +890,18 @@ async test "the contract checker rejects responses that break the document" {
       },
     ),
     (
+      "a listed Ephemeral Stub with an undocumented field",
+      "GET",
+      "/v1/mocks/users/stubs",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"stubs":[{"id":"eph-1","mock":"users","session":"s","response":{"status":200},"addedAt":1}],"warnings":[]}
+        ),
+      },
+    ),
+    (
       "a deleted Ephemeral Stub with its Mock",
       "DELETE",
       "/v1/mocks/users/stubs/eph-1",
@@ -1080,6 +1163,7 @@ async test "the contract checker rejects responses that break the document" {
       #|an Ephemeral Stub ID that is not eph-<n>: /stub/id: "eph-0" does not match ^eph-[1-9][0-9]*$
       #|an added Ephemeral Stub without its Session: /stub: session is missing
       #|a listed Ephemeral Stub with a status out of range: /stubs/0/response/status: 99 is below 200
+      #|a listed Ephemeral Stub with an undocumented field: /stubs/0/addedAt: no value is allowed here
       #|a deleted Ephemeral Stub with its Mock: /mock: no value is allowed here
       #|an unknown Ephemeral Stub: conforms
       #|a reset without the count of Journal entries: /removed: journalEntries is missing
