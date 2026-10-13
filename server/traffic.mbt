@@ -19,19 +19,28 @@ let latency_buckets : Array[Double] = [
 /// too coarse for buckets from 100 µs; core's benchmarking package has the
 /// only public monotonic clock.
 priv struct Stopwatch {
-  started : @bench.Timestamp
+  /// When it started, in microseconds since `clock_origin`.
+  started : Double
 }
+
+///|
+/// The one timestamp of core's monotonic clock that smock takes, when it
+/// starts; every reading is the time since it. Each timestamp the clock
+/// gives is an object that is never freed (about 32 bytes with moonc
+/// v0.10.14), so taking one per request would grow the process without
+/// bound.
+let clock_origin : @bench.Timestamp = @bench.monotonic_clock_start()
 
 ///|
 /// A stopwatch that starts now.
 fn Stopwatch::start() -> Stopwatch {
-  { started: @bench.monotonic_clock_start(), }
+  { started: @bench.monotonic_clock_end(clock_origin), }
 }
 
 ///|
 /// The seconds since the stopwatch started.
 fn Stopwatch::seconds(self : Stopwatch) -> Double {
-  @bench.monotonic_clock_end(self.started) / 1.0e6
+  (@bench.monotonic_clock_end(clock_origin) - self.started) / 1.0e6
 }
 
 ///|
