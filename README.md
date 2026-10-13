@@ -740,21 +740,24 @@ included, because link flags in a library's own `moon.pkg` do not reach the
 packages that import it. It also compiles every executable that holds the
 engine with `-ffp-contract=off`, so that a release build on arm64 does not
 fuse floating-point multiply-adds and a seeded delay is the same as on
-wasm-gc; CI tests the engine in a release build to check it.
+wasm-gc; CI tests the engine in a release build to check it. And it brings
+the build information that `smock --version` reports up to date, so every
+native build, release or not, names the commit checked out and the
+toolchain in use.
 
 Most tests drive the engine through its public interface, with in-memory
 Definition files, a fixed clock and a seeded random source
 (`engine/harness_test.mbt`). The tests in `e2e/` run the binary itself: each
 one first runs `moon build --target native cmd/smock`, then starts smock with
 its own temporary definitions directory and port 0 for each port, so they
-run in parallel (`e2e/harness_test.mbt`). They need `moon`, `kill` and
-`openssl` on `PATH`. The HTTPS tests use clients that trust only the root CA
-of `testcerts`, and the HTTP/1.1 tests run on both the plain and the TLS
-port. The tests of the generated certificate (`e2e/self_signed_test.mbt`)
+run in parallel (`e2e/harness_test.mbt`). They need `moon`, `moonc`, `git`,
+`kill` and `openssl` on `PATH`. The HTTPS tests use clients that trust only
+the root CA of `testcerts`, and the HTTP/1.1 tests run on both the plain and
+the TLS port. The tests of the generated certificate (`e2e/self_signed_test.mbt`)
 read it from the handshake with `openssl s_client` and then trust only it.
 
-`SMOCK_VERSION` and `SMOCK_COMMIT` set the version and the commit that
-`scripts/build-release.sh` records in the binary.
+`SMOCK_VERSION` and `SMOCK_COMMIT` set the version and the commit that a
+native build, such as `scripts/build-release.sh`, records in the binary.
 
 ## Benchmark
 

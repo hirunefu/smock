@@ -1,9 +1,10 @@
 #!/bin/sh
 # Prints build_info.mbt: the version, the commit and the MoonBit toolchain this
-# build is made from. moon runs it (see moon.pkg) when build_info.mbt is
-# missing or this script changes. It does not track environment variables or
-# new commits, so delete build_info.mbt to refresh it; scripts/build-release.sh
-# does that.
+# build is made from. prebuild.py runs it before every native build and
+# rewrites build_info.mbt when the output differs, so a new commit, a new
+# toolchain or a change to the variables below reaches the next build. moon
+# also runs it (see moon.pkg) when build_info.mbt is missing, as for a
+# wasm-gc build in a fresh checkout.
 #
 # SMOCK_VERSION overrides the version (default 0.0.0-dev).
 # SMOCK_COMMIT overrides the commit (default: the checked-out commit).

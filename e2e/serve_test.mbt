@@ -165,3 +165,33 @@ async test "logs start with the startup entry, then the random seed, the listeni
     )
   })
 }
+
+///|
+/// The output of `command args`, without the whitespace around it, or
+/// `None` when it fails.
+async fn command_output(command : String, args : Array[String]) -> String? {
+  let (status, out) = @process.collect_stdout(command, args) catch {
+    _ => return None
+  }
+  guard status == 0 else { return None }
+  Some(out.text().trim().to_owned())
+}
+
+///|
+async test "smock --version names the commit checked out and the toolchain in use, however long ago the binary was first built" {
+  // As buildinfo/gen_build_info.sh documents it: SMOCK_COMMIT, or else the
+  // checked-out commit, or else `unknown`.
+  let commit = match @env.get_env_var("SMOCK_COMMIT") {
+    Some(commit) => commit
+    None =>
+      command_output("git", ["rev-parse", "--short=12", "HEAD"]).unwrap_or(
+        "unknown",
+      )
+  }
+  let moonc = command_output("moonc", ["-v"]).unwrap_or("")
+  let toolchain = "moonc \{moonc[:moonc.find(" ").unwrap_or(moonc.length())]}"
+  let (_, version_line) = smock_stdout(["--version"])
+  let (_, built_commit, built_toolchain) = version_parts(version_line)
+  assert_eq(built_commit, commit)
+  assert_eq(built_toolchain, toolchain)
+}

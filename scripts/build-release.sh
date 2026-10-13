@@ -7,8 +7,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-# moon regenerates the build information only when the file is missing.
-rm -f buildinfo/build_info.mbt
+# prebuild.py brings the build information up to date first.
 moon build --target native --release
 mkdir -p dist
 install -m 755 _build/native/release/build/smock/smock/cmd/smock/smock.exe dist/smock
