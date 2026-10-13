@@ -172,6 +172,23 @@ pub enum ConnectionKind {
 } derive(Debug, Eq)
 
 ///|
+/// The kind's name, as Definition files and the Journal write it: `reset`,
+/// `close` or `partial`.
+pub fn ConnectionKind::name(self : ConnectionKind) -> String {
+  match self {
+    Reset => "reset"
+    Close => "close"
+    Partial => "partial"
+  }
+}
+
+///|
+/// The kind with the name `name`, if any.
+fn connection_kind(name : String) -> ConnectionKind? {
+  [Reset, Close, Partial].iter().find_first(kind => kind.name() == name)
+}
+
+///|
 /// The conditions a request must meet for a Stub to match it. An omitted
 /// condition matches anything.
 pub struct Conditions {

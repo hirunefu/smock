@@ -72,7 +72,7 @@ pub struct JournalEntry {
   /// request before a status was written.
   status : Int?
   /// The connection Fault injected instead of the response, if any.
-  fault : ConnectionFault?
+  fault : @definitions.ConnectionKind?
   /// The bytes the entry counts against the Journal's byte bound.
   priv size : Int
 } derive(Debug)
@@ -665,11 +665,6 @@ pub impl ToJson for JournalEntry with fn to_json(self) {
     "status": self.status.map_or(Json::null(), status => {
       Json::number(status.to_double())
     }),
-    "fault": match self.fault {
-      None => Json::null()
-      Some(Reset) => Json::string("reset")
-      Some(Close) => Json::string("close")
-      Some(Partial) => Json::string("partial")
-    },
+    "fault": self.fault.map_or(Json::null(), kind => Json::string(kind.name())),
   }
 }

@@ -140,7 +140,7 @@ fn text(bytes : Bytes) -> String {
 ///|
 /// A Server-Sent Event of a response plan: its delay, then its type, ID
 /// and data as given, with strings escaped.
-fn sse_event(event : @engine.SseEvent) -> String {
+fn sse_event(event : @definitions.SseEvent) -> String {
   let field = (value : String?) => value.map_or("-", value => value.escape())
   "after \{event.delay_ms} ms: event \{field(event.event)}, id \{field(event.id)}, data \{event.data.escape()}"
 }

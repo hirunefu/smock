@@ -253,7 +253,8 @@ fn Engine::file_stub(self : Engine, id : String) -> @definitions.Stub? {
 pub impl ToJson for Rendering with fn to_json(self) {
   let (body, events) = match self.body {
     Bytes(bytes) => (body_json(bytes), Json::null())
-    Events(events) => (Json::null(), Json::array(events.map(event_json)))
+    Events(events) =>
+      (Json::null(), Json::array(events.iter().map(event_json).collect()))
   }
   {
     "stub": self.stub.to_json(),
@@ -294,7 +295,7 @@ fn body_json(bytes : Bytes, size? : Int = bytes.length()) -> Json {
 ///|
 /// A Server-Sent Event as Definition files write it: its delay, its type
 /// and ID when it has them, and its data.
-fn event_json(event : SseEvent) -> Json {
+fn event_json(event : @definitions.SseEvent) -> Json {
   let out : Map[String, Json] = { "delay": event.delay_ms.to_json() }
   if event.event is Some(event) {
     out["event"] = event.to_json()

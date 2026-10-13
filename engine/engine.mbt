@@ -80,35 +80,15 @@ pub(all) struct ResponsePlan {
   /// How long to wait, in milliseconds, before writing the status line.
   delay_ms : Int
   /// A connection Fault to inject instead of a normal response.
-  fault : ConnectionFault?
+  fault : @definitions.ConnectionKind?
 } derive(Debug)
 
 ///|
-/// A response body: bytes sent at once, or a stream of Server-Sent Events.
+/// A response body: bytes sent at once, or a stream of Server-Sent Events,
+/// each written after waiting its `delay_ms` milliseconds.
 pub(all) enum Body {
   Bytes(Bytes)
-  Events(Array[SseEvent])
-} derive(Debug)
-
-///|
-/// One Server-Sent Event, written after waiting `delay_ms` milliseconds.
-pub(all) struct SseEvent {
-  delay_ms : Int
-  event : String?
-  id : String?
-  data : String
-} derive(Debug)
-
-///|
-/// A connection-level Fault.
-pub(all) enum ConnectionFault {
-  /// Reset the connection after reading the request.
-  Reset
-  /// Close the connection without writing anything.
-  Close
-  /// Write the status line, the headers and the first half of the body,
-  /// then close the connection.
-  Partial
+  Events(ReadOnlyArray[@definitions.SseEvent])
 } derive(Debug)
 
 ///|
@@ -378,17 +358,7 @@ fn stub_response(response : @definitions.Response) -> ResponsePlan {
       if !response.headers.iter().any(h => h.0.to_lower() == "content-type") {
         headers.push(("Content-Type", "text/event-stream"))
       }
-      Events(
-        events
-        .iter()
-        .map(event => SseEvent::{
-          delay_ms: event.delay_ms,
-          event: event.event,
-          id: event.id,
-          data: event.data,
-        })
-        .collect(),
-      )
+      Events(events)
     }
   }
   headers.push_iter(response.headers.iter())

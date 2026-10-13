@@ -21,7 +21,7 @@ fn seeded_generators(
 
 ///|
 /// The Fault decisions for one request that `stub` matched: the delay, in
-/// milliseconds, and the connection Fault, if any. They draw from `source`:
+/// milliseconds, and the kind of connection Fault, if any. They draw from `source`:
 /// the Stub's own generator, or else the process generator.
 ///
 /// The source advances exactly once per matched request: every draw for
@@ -31,7 +31,7 @@ fn seeded_generators(
 fn decide_faults(
   stub : @definitions.Stub,
   source : @prng.Generator,
-) -> (Int, ConnectionFault?) {
+) -> (Int, @definitions.ConnectionKind?) {
   guard stub.fault is Some(fault) &&
     (fault.delay is Some(_) || fault.connection is Some(_)) else {
     return (0, None)
@@ -44,11 +44,7 @@ fn decide_faults(
   }
   let connection = match fault.connection {
     Some(connection) if draws.double() < connection.probability =>
-      match connection.kind {
-        Reset => Some(Reset)
-        Close => Some(Close)
-        Partial => Some(Partial)
-      }
+      Some(connection.kind)
     _ => None
   }
   (delay_ms, connection)
