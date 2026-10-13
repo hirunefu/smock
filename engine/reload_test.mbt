@@ -402,3 +402,11 @@ test "after a reload removes a Mock, its Hosts resolve like any unknown Host" {
     ),
   )
 }
+
+///|
+test "the reload outcomes are named as the Admin API's lastReload.result names them" {
+  inspect(
+    @engine.ReloadOutcome::all().map(outcome => outcome.name()).join(", "),
+    content="swapped, unchanged, failed",
+  )
+}

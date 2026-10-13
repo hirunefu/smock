@@ -352,7 +352,7 @@ fn status(admin : Admin, _request : @http1.Request, _body : Json?) -> Reply {
       Some(reload) =>
         {
           "at": Json::string(@log.format_time(reload.at)),
-          "result": Json::string(outcome_name(reload.result)),
+          "result": Json::string(reload.result.name()),
           "errors": diagnostics_json(reload.errors),
         }
     },

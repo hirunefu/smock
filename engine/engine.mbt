@@ -196,6 +196,23 @@ pub(all) enum ReloadOutcome {
 } derive(Debug, Eq)
 
 ///|
+/// Every way a reload can end.
+pub fn ReloadOutcome::all() -> Array[ReloadOutcome] {
+  [Swapped, Unchanged, Failed]
+}
+
+///|
+/// The outcome's name, as the Admin API, the logs and the reload metric
+/// give it: `swapped`, `unchanged` or `failed`.
+pub fn ReloadOutcome::name(self : ReloadOutcome) -> String {
+  match self {
+    Swapped => "swapped"
+    Unchanged => "unchanged"
+    Failed => "failed"
+  }
+}
+
+///|
 /// Reloads the definitions from `set`, read with the problems
 /// `read_problems`, at the time `at` (milliseconds since the Unix epoch).
 /// Every file is validated and a whole new snapshot is built:
