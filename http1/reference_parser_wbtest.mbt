@@ -87,9 +87,9 @@ fn RefParser::next(self : RefParser) -> Parsed {
     Some(head) => head
     None => {
       let head_end = match self.scan_head() {
-        Ended(head_end) => head_end
-        Partial => return NeedMore
-        Rejected(status) => {
+        RefEnded(head_end) => head_end
+        RefPartial => return NeedMore
+        RefRejected(status) => {
           self.invalid = Some(status)
           return Invalid(status~)
         }
@@ -168,9 +168,9 @@ priv enum RefFraming {
 
 ///|
 priv enum RefHeadEnd {
-  Ended(Int)
-  Partial
-  Rejected(Int)
+  RefEnded(Int)
+  RefPartial
+  RefRejected(Int)
 }
 
 ///|
@@ -183,10 +183,10 @@ fn RefParser::scan_head(self : RefParser) -> RefHeadEnd {
       self.fields += 1
     }
     match self.scan {
-      Broken => return Rejected(400)
+      Broken => return RefRejected(400)
       _ if self.scanned > self.header_size_limit ||
-        self.fields > self.header_count_limit => return Rejected(431)
-      Fields(Ended) => return Ended(self.start + self.scanned)
+        self.fields > self.header_count_limit => return RefRejected(431)
+      Fields(Ended) => return RefEnded(self.start + self.scanned)
       EmptyLine => {
         self.start += self.scanned
         self.scanned = 0
@@ -195,7 +195,7 @@ fn RefParser::scan_head(self : RefParser) -> RefHeadEnd {
       _ => ()
     }
   }
-  Partial
+  RefPartial
 }
 
 ///|

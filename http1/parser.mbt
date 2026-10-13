@@ -31,9 +31,13 @@ pub struct Parser {
   priv mut start : Int
   priv mut end : Int
   /// How many bytes after `start` the head scan has looked at, and where in
-  /// the head they leave it, so the scan resumes there.
+  /// the head they leave it, so the scan resumes there: the part of the
+  /// head, how many bytes of the method, the target or the version it has
+  /// seen, and where in the header section it is.
   priv mut scanned : Int
   priv mut scan : HeadScan
+  priv mut scan_count : Int
+  priv mut section : Section
   /// How many header fields the head scan has seen begin.
   priv mut fields : Int
   /// The head of the next request, once parsed. Its bytes are consumed.
@@ -155,7 +159,9 @@ pub fn Parser::Parser(
     start: 0,
     end: 0,
     scanned: 0,
-    scan: Method(0),
+    scan: Method,
+    scan_count: 0,
+    section: FieldStart,
     fields: 0,
     head: None,
     chunks: Chunks(limit=body_limit),
@@ -224,7 +230,8 @@ pub fn Parser::next(self : Parser) -> Parsed {
           self.head = Some(head)
           self.start = head_end
           self.scanned = 0
-          self.scan = Method(0)
+          self.scan = Method
+          self.scan_count = 0
           self.fields = 0
           if head.expects_continue {
             return Continue
@@ -315,29 +322,121 @@ priv enum HeadEnd {
 /// Each byte is checked as it arrives, so bytes that cannot be part of a
 /// request head, and heads over the limits, are rejected at once instead of
 /// waiting for an empty line that may never come.
+///
+/// The scan runs on local variables and allocates nothing, since it looks at
+/// every byte of every head. The bytes of a field value, most of a head,
+/// are taken in an inner loop: up to the header size limit, so that the
+/// byte past it still gets 431 or 400 as it would alone.
 fn Parser::scan_head(self : Parser) -> HeadEnd {
-  while self.start + self.scanned < self.end {
-    let before = self.scan
-    self.scan = before.after(self.buf[self.start + self.scanned])
-    self.scanned += 1
-    if (before, self.scan) is (Fields(FieldStart), Fields(FieldName)) {
-      self.fields += 1
-    }
-    match self.scan {
-      Broken => return Rejected(400)
-      _ if self.scanned > self.header_size_limit ||
-        self.fields > self.header_count_limit => return Rejected(431)
-      Fields(Ended) => return Ended(self.start + self.scanned)
-      EmptyLine => {
-        // An empty line before the request line is consumed and ignored.
-        self.start += self.scanned
-        self.scanned = 0
-        self.scan = Method(0)
+  let buf = self.buf
+  let end = self.end
+  let size_limit = self.header_size_limit
+  let count_limit = self.header_count_limit
+  let mut start = self.start
+  let mut at = self.start + self.scanned
+  let mut scan = self.scan
+  let mut count = self.scan_count
+  let mut section = self.section
+  let mut fields = self.fields
+  let mut result : HeadEnd = Partial
+  while at < end {
+    let c = buf[at]
+    at += 1
+    match scan {
+      EmptyLineLf => scan = if c == b'\n' { EmptyLine } else { Broken }
+      Method =>
+        if is_tchar(c) {
+          count += 1
+        } else if c == b' ' && count > 0 {
+          scan = Target
+          count = 0
+        } else if c == b'\r' && count == 0 {
+          scan = EmptyLineLf
+        } else {
+          scan = Broken
+        }
+      Target =>
+        if c > b' ' && c < b'\x7f' {
+          count += 1
+        } else if c == b' ' && count > 0 {
+          scan = Version
+          count = 0
+        } else {
+          scan = Broken
+        }
+      Version => {
+        let expected = match count {
+          0 => c == b'H'
+          1 | 2 => c == b'T'
+          3 => c == b'P'
+          4 => c == b'/'
+          5 | 7 => is_digit(c)
+          6 => c == b'.'
+          _ => c == b'\r'
+        }
+        if !expected {
+          scan = Broken
+        } else if count == 8 {
+          scan = VersionLf
+        } else {
+          count += 1
+        }
       }
-      _ => ()
+      VersionLf =>
+        if c == b'\n' {
+          scan = Fields
+          section = FieldStart
+        } else {
+          scan = Broken
+        }
+      Fields => {
+        let before = section
+        section = before.after(c)
+        match section {
+          Broken => scan = Broken
+          FieldName if before is FieldStart => fields += 1
+          _ => ()
+        }
+      }
+      EmptyLine | Broken => scan = Broken
+    }
+    if scan is Broken {
+      result = Rejected(400)
+      break
+    }
+    if at - start > size_limit || fields > count_limit {
+      result = Rejected(431)
+      break
+    }
+    if scan is EmptyLine {
+      // An empty line before the request line is consumed and ignored.
+      start = at
+      scan = Method
+      count = 0
+    } else if scan is Fields {
+      if section is Ended {
+        result = Ended(at)
+        break
+      }
+      if section is FieldValue {
+        let stop = if end - start < size_limit {
+          end
+        } else {
+          start + size_limit
+        }
+        while at < stop && is_field_value_byte(buf[at]) {
+          at += 1
+        }
+      }
     }
   }
-  Partial
+  self.start = start
+  self.scanned = at - start
+  self.scan = scan
+  self.scan_count = count
+  self.section = section
+  self.fields = fields
+  result
 }
 
 ///|
@@ -349,67 +448,18 @@ priv enum HeadScan {
   /// An empty line before the request line has ended; servers ignore it
   /// (RFC 9112, section 2.2).
   EmptyLine
-  /// In the method, after that many bytes of it.
-  Method(Int)
-  /// In the request target, after that many bytes of it.
-  Target(Int)
-  /// In the HTTP version, after that many bytes of `HTTP/D.D`.
-  Version(Int)
+  /// In the method.
+  Method
+  /// In the request target.
+  Target
+  /// In the HTTP version, `HTTP/D.D`, then the CR that ends the line.
+  Version
   /// The LF ending the request line is next.
   VersionLf
   /// In the header section.
-  Fields(Section)
+  Fields
   /// The bytes so far cannot begin a request.
   Broken
-}
-
-///|
-/// The scan after the byte `c`.
-fn HeadScan::after(self : HeadScan, c : Byte) -> HeadScan {
-  match self {
-    EmptyLineLf => if c == b'\n' { EmptyLine } else { Broken }
-    Method(n) =>
-      if is_tchar(c) {
-        Method(n + 1)
-      } else if c == b' ' && n > 0 {
-        Target(0)
-      } else if c == b'\r' && n == 0 {
-        EmptyLineLf
-      } else {
-        Broken
-      }
-    Target(n) =>
-      if c > b' ' && c < b'\x7f' {
-        Target(n + 1)
-      } else if c == b' ' && n > 0 {
-        Version(0)
-      } else {
-        Broken
-      }
-    Version(n) => {
-      let expected = match n {
-        0 => c == b'H'
-        1 | 2 => c == b'T'
-        3 => c == b'P'
-        4 => c == b'/'
-        5 | 7 => is_digit(c)
-        6 => c == b'.'
-        _ => c == b'\r'
-      }
-      match (expected, n) {
-        (false, _) => Broken
-        (true, 8) => VersionLf
-        (true, _) => Version(n + 1)
-      }
-    }
-    VersionLf => if c == b'\n' { Fields(FieldStart) } else { Broken }
-    Fields(section) =>
-      match section.after(c) {
-        Broken => Broken
-        section => Fields(section)
-      }
-    EmptyLine | Broken => Broken
-  }
 }
 
 ///|
