@@ -72,8 +72,8 @@ pub(all) enum Expected {
 /// document.
 pub impl ToJson for NearMiss with fn to_json(self) {
   {
-    "stub": self.stub.to_json(),
-    "stubSource": self.stub_source.name().to_json(),
+    "stub": Json::string(self.stub),
+    "stubSource": Json::string(self.stub_source.name()),
     "failed": Json::array(self.failed.map(failed => ToJson::to_json(failed))),
   }
 }
@@ -81,9 +81,9 @@ pub impl ToJson for NearMiss with fn to_json(self) {
 ///|
 pub impl ToJson for FailedCondition with fn to_json(self) {
   {
-    "condition": self.condition.to_string().to_json(),
+    "condition": Json::string(self.condition.to_string()),
     "expected": ToJson::to_json(self.expected),
-    "actual": Json::array(self.actual.map(value => value.to_json())),
+    "actual": Json::array(self.actual.map(Json::string)),
   }
 }
 
@@ -92,8 +92,8 @@ pub impl ToJson for FailedCondition with fn to_json(self) {
 /// condition `{"json": ...}`, as in Definition files.
 pub impl ToJson for Expected with fn to_json(self) {
   match self {
-    Exact(text) => text.to_json()
-    Pattern(source) => { "pattern": source.to_json() }
+    Exact(text) => Json::string(text)
+    Pattern(source) => { "pattern": Json::string(source) }
     Json(value) => { "json": value }
   }
 }
