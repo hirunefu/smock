@@ -158,6 +158,7 @@ async test "a query returns the calling Session's entries, oldest first, as the 
       json_inspect(journal_shown(page), content={
         "entries": [
           {
+            "seq": 1,
             "receivedAt": "<time>",
             "durationMs": "<ms>",
             "session": "shown",
@@ -191,6 +192,7 @@ async test "a query returns the calling Session's entries, oldest first, as the 
             "fault": Json::null(),
           },
           {
+            "seq": 2,
             "receivedAt": "<time>",
             "durationMs": "<ms>",
             "session": "shown",
@@ -230,6 +232,7 @@ async test "a query returns the calling Session's entries, oldest first, as the 
             "fault": Json::null(),
           },
           {
+            "seq": 3,
             "receivedAt": "<time>",
             "durationMs": "<ms>",
             "session": "shown",
@@ -365,6 +368,7 @@ async test "a request ended by a reset Fault is in the Journal, body included, a
       json_inspect(journal_shown(page), content={
         "entries": [
           {
+            "seq": 1,
             "receivedAt": "<time>",
             "durationMs": "<ms>",
             "session": "resets",

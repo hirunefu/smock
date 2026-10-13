@@ -295,7 +295,7 @@
         "operationId": "queryJournal",
         "tags": ["Journal"],
         "summary": "Query the calling Session's Journal entries",
-        "description": "The calling Session's entries that pass the filter, oldest first, at most `limit` of them. A request is in the Journal as soon as its client has received the whole response.",
+        "description": "The calling Session's entries that pass the filter, oldest first, after the entry whose sequence number `after` gives, at most `limit` of them. A request is in the Journal as soon as its client has received the whole response.",
         "requestBody": {
           "required": true,
           "content": {
@@ -399,10 +399,13 @@
         "operationId": "listUnmatched",
         "tags": ["Journal"],
         "summary": "List the calling Session's unmatched requests with their Near misses",
-        "description": "The calling Session's Journal entries that no Stub answered, oldest first, at most `limit` of them. Each carries its full Near miss, when there was a candidate Stub. A request for a Host that no Mock lists, with no Default Mock, is among them with no Mock and no Near miss.",
+        "description": "The calling Session's Journal entries that no Stub answered, oldest first, after the entry whose sequence number `after` gives, at most `limit` of them. Each carries its full Near miss, when there was a candidate Stub. A request for a Host that no Mock lists, with no Default Mock, is among them with no Mock and no Near miss.",
         "parameters": [
           {
             "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/After"
           }
         ],
         "responses": {
@@ -671,6 +674,15 @@
         "description": "The most entries to return. Default 100.",
         "schema": {
           "$ref": "#/components/schemas/Limit"
+        }
+      },
+      "After": {
+        "name": "after",
+        "in": "query",
+        "required": false,
+        "description": "Only entries after the one with this sequence number (`seq`): to fetch the next page, the `seq` of the last entry of the page before. Without it, the entries start from the oldest.",
+        "schema": {
+          "$ref": "#/components/schemas/After"
         }
       }
     },
@@ -1128,6 +1140,12 @@
         "maximum": 10000,
         "default": 100
       },
+      "After": {
+        "description": "Only entries after the one with this sequence number: to fetch the next page, the `seq` of the last entry of the page before. 0, like no value, starts from the oldest entry.",
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
       "JournalFilter": {
         "description": "Which Journal entries to take. Every condition given must hold; an omitted one passes every entry. Method, path and headers have the semantics of Stub conditions.",
         "type": "object",
@@ -1168,6 +1186,9 @@
           },
           "limit": {
             "$ref": "#/components/schemas/Limit"
+          },
+          "after": {
+            "$ref": "#/components/schemas/After"
           }
         },
         "additionalProperties": false
@@ -1184,7 +1205,7 @@
             }
           },
           "more": {
-            "description": "Whether more entries passed than `limit` let through. The next ones can be fetched with a `since` after the last entry's `receivedAt`.",
+            "description": "Whether more entries passed than `limit` let through. The next page is fetched with `after` set to the `seq` of this page's last entry, with the same filter: it loses no entry and repeats none, even among entries received in the same millisecond.",
             "type": "boolean"
           },
           "evicted": {
@@ -1203,6 +1224,12 @@
         "description": "One request smock received, and how it answered.",
         "type": "object",
         "properties": {
+          "seq": {
+            "description": "The entry's sequence number: 1 for the first entry the replica recorded, then one more for each entry after it, whatever its Session. Entries come in this order; numbers are never reused, and the numbers between two entries of a page belong to entries of other Sessions, entries the filter left out, or entries evicted or reset. A page resumes after it with `after`.",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
           "receivedAt": {
             "description": "When the request was received.",
             "type": "string",
@@ -1267,7 +1294,7 @@
             "enum": ["reset", "close", "partial", null]
           }
         },
-        "required": ["receivedAt", "durationMs", "session", "host", "mock", "viaDefault", "digest", "request", "stub", "stubSource", "nearMiss", "status", "fault"],
+        "required": ["seq", "receivedAt", "durationMs", "session", "host", "mock", "viaDefault", "digest", "request", "stub", "stubSource", "nearMiss", "status", "fault"],
         "additionalProperties": false
       },
       "RecordedRequest": {

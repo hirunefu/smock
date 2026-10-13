@@ -531,6 +531,11 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   (excluded), as RFC 3339 date-times. Every member is optional. Entries
   come oldest first, at most `limit` of them (100 by default, at most
   10000); `more` says whether more passed the filter.
+- Each entry has a sequence number, `seq`: 1 for the first entry the
+  process records, then one more for each entry after it, whatever its
+  Session. To fetch the next page, a query gives `"after"` the `seq` of the
+  last entry it got, with the same filter; no entry is lost or repeated,
+  even among requests received in the same millisecond.
 - The Journal is one ring buffer per process, bounded by entry count and by
   bytes (`--journal-max-entries`, `--journal-max-bytes`), and keeps at most
   4 KiB of each body (`--journal-body-limit`), cut at a character boundary
@@ -575,7 +580,8 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
 
 `GET /v1/journal/unmatched` lists the calling Session's requests that no
 Stub answered, oldest first, at most `limit` of them (a query parameter,
-100 by default, at most 10000), in the same form as a query's entries. Each
+100 by default, at most 10000), in the same form as a query's entries; the
+`after` query parameter pages through them as a query's `after` does. Each
 carries its full Near miss: the closest Stub, and every condition it
 failed with what the Stub expects and what the request sent. A request for
 a Host that no Mock answers is among them, with no Mock and no Near miss.
