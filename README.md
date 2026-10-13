@@ -781,7 +781,7 @@ latency for each case, and checks the provisional performance targets.
 | File | What it is |
 |---|---|
 | `bench/bench.py` | Runs the benchmark. |
-| `bench/definitions/` | The definition set smock serves: four Mocks, one of them the Default Mock, and 1161 Stubs with exact, pattern and `json` conditions. `bench/gen_definitions.py` writes it. |
+| `bench/definitions/` | The definition set smock serves: four Mocks, one of them the Default Mock, and about 1,200 Stubs with exact, pattern and `json` conditions (`e2e/bench_test.mbt` pins the exact count). `bench/gen_definitions.py` writes it. |
 | `bench/requests.json` | The request mix: nine kinds of request, with weights, realistic headers, a Session in `baggage`, and bodies. |
 | `bench/plan.json` | The cases, the CPU limits, and the rates and durations. |
 | `bench/targets.json` | The provisional targets, the one place to change them. |

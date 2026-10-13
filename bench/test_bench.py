@@ -329,7 +329,7 @@ class IdleRss(unittest.TestCase):
         # The last sample, taken once smock was ready and had settled.
         self.assertGreaterEqual(samples[-1][0], 1.5)
         self.assertEqual(idle["rss_kib"], samples[-1][1])
-        # 1161 Stubs take more than a bare process and far less than 1 GiB.
+        # About 1,200 Stubs take more than a bare process and far less than 1 GiB.
         self.assertTrue(2048 < idle["rss_kib"] < 1024 * 1024, idle)
         self.assertEqual(idle["digest"], definition_set_digest(BENCH / "definitions"))
 
