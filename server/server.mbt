@@ -193,6 +193,14 @@ async fn run(
       ),
     )
     lifecycle.started(engine)
+    let ports : MockPorts = {
+      engine,
+      rand,
+      settings,
+      traffic,
+      lifecycle,
+      logger,
+    }
     // Without default certificate files, the TLS port presents a
     // self-signed certificate generated for the Hosts served, unless SNI
     // chooses a Mock's own.
@@ -248,10 +256,7 @@ async fn run(
           defer plain.close()
           accept_loop(plain, conn => {
             connections.serve(group, conn, connection => {
-              let _ = serve_mocks(
-                conn, conn, engine, rand, settings, traffic, lifecycle, connection,
-                logger,
-              )
+              let _ = ports.serve(conn, conn, connection)
             })
           })
         })
@@ -267,10 +272,7 @@ async fn run(
                 TlsStream::accept(conn, name => certificates.select(name))
               })
               guard stream is Some(Some(stream)) else { return }
-              let was_reset = serve_mocks(
-                stream, conn, engine, rand, settings, traffic, lifecycle, connection,
-                logger,
-              )
+              let was_reset = ports.serve(stream, conn, connection)
               // A reset sends no close_notify: the RST alone ends the
               // connection.
               if !was_reset {
@@ -346,6 +348,22 @@ async fn accept_loop(
 }
 
 ///|
+/// What the plain and the TLS port serve the Mocks with, the same for every
+/// connection.
+priv struct MockPorts {
+  engine : @engine.Engine
+  /// The process generator, which Faults of Stubs without a seed of their
+  /// own draw from.
+  rand : @prng.Generator
+  settings : @settings.ServeSettings
+  /// Where each request is counted.
+  traffic : Traffic
+  /// Whether smock drains.
+  lifecycle : Lifecycle
+  logger : @log.Logger
+}
+
+///|
 /// Serves the requests for the Mocks that arrive on one connection of the
 /// plain or the TLS port: `stream`, which reads and writes through `tcp`,
 /// the connection's socket. Returns whether a reset Fault ended it: closing
@@ -358,7 +376,7 @@ async fn accept_loop(
 /// connection instead of the response, or part of the way through it. A
 /// reset comes once the whole request, body included, has been read, and
 /// nothing is written before it; when it cannot be set up, the failure is
-/// logged to `logger` and the connection closes as for a close Fault.
+/// logged and the connection closes as for a close Fault.
 ///
 /// The request's Journal entry, if the engine returned one, is committed
 /// just before the response's last bytes are written, so that a client
@@ -368,28 +386,23 @@ async fn accept_loop(
 /// committed when it ends, before the connection closes. The entry's timing
 /// is filled in then.
 ///
-/// Each request is counted in `traffic` once its response is written, or
-/// once the connection ends before it is, with the time from the request
-/// being read in full to then. Nothing is counted before the response, so
-/// counting never holds one back.
+/// Each request is counted in the traffic metrics once its response is
+/// written, or once the connection ends before it is, with the time from
+/// the request being read in full to then. Nothing is counted before the
+/// response, so counting never holds one back.
 ///
 /// While smock drains, a response says `Connection: close`, and the
 /// connection closes after it.
-async fn[S : @io.Reader + @io.Writer] serve_mocks(
+async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
+  self : MockPorts,
   stream : S,
   tcp : @socket.Tcp,
-  engine : @engine.Engine,
-  rand : @prng.Generator,
-  settings : @settings.ServeSettings,
-  traffic : Traffic,
-  lifecycle : Lifecycle,
   connection : Connection,
-  logger : @log.Logger,
 ) -> Bool {
   let was_reset = Ref(false)
   serve_connection(
     stream,
-    settings,
+    self.settings,
     connection~,
     respond=(stream, request) => {
       // The request has just been read in full.
@@ -397,22 +410,22 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
       let engine_request = to_engine_request(request)
       let session = @engine.session_of(
         engine_request.headers,
-        header=settings.session_header,
-        member_name=settings.session_member,
+        header=self.settings.session_header,
+        member_name=self.settings.session_member,
       )
-      let outcome = engine.handle(
+      let outcome = self.engine.handle(
         engine_request,
         session~,
         now=@async.now(),
-        rand~,
+        rand=self.rand,
       )
-      defer traffic.record(outcome, stopwatch.seconds())
+      defer self.traffic.record(outcome, stopwatch.seconds())
       let plan = outcome.plan
       let pending = Ref(outcome.journal)
       let commit = () => {
         if pending.val is Some(entry) {
           pending.val = None
-          engine.commit(entry)
+          self.engine.commit(entry)
         }
       }
       // Deferred after the count, so it runs before it.
@@ -431,13 +444,13 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
             stream,
             plan,
             request,
-            close=lifecycle.is_draining(),
+            close=self.lifecycle.is_draining(),
             before_last=commit,
           )
         // Closing the connection sends an RST, once the Journal entry is
         // committed, so that a client that sees the reset finds it there.
         Some(Reset) => {
-          was_reset.val = reset_on_close(tcp, logger)
+          was_reset.val = reset_on_close(tcp, self.logger)
           false
         }
         // Closing the connection sends a FIN.
@@ -446,7 +459,7 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
       }
       // A response that began before the drain, such as a stream, and ends
       // during it closes its connection too.
-      keep_open && !lifecycle.is_draining()
+      keep_open && !self.lifecycle.is_draining()
     },
     reject=status => @http1.encode_response(status, [], b"", close=true),
   )
