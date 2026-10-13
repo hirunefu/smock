@@ -393,3 +393,31 @@ test "the Near miss explains a failed body condition: exact, pattern or json, wi
     ],
   )
 }
+
+///|
+test "changing the expected JSON of a Near miss changes no later match: the snapshot stays as loaded" {
+  let h = harness([
+    (
+      "m.json",
+      (
+        #|{ "mocks": [{ "name": "m" }],
+        #|  "stubs": [{ "id": "tea", "mock": "m",
+        #|    "request": { "body": { "json": { "item": "tea" } } },
+        #|    "response": { "status": 201 } }] }
+      ),
+    ),
+  ])
+  let missed = h.send("POST", "/", body="{\"item\": \"coffee\"}")
+  guard missed.near_miss
+    is Some({ failed: [{ expected: Json(Object(expected)), .. }], .. }) else {
+    fail("no Near miss with a json condition")
+  }
+  expected["item"] = Json::string("coffee")
+  debug_inspect(
+    [
+      matched_id(h.send("POST", "/", body="{\"item\": \"coffee\"}")),
+      matched_id(h.send("POST", "/", body="{\"item\": \"tea\"}")),
+    ],
+    content="[None, Some(\"tea\")]",
+  )
+}

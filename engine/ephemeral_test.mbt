@@ -802,3 +802,38 @@ test "the outcome names the Stub that matched and whether it comes from a Defini
     ),
   )
 }
+
+///|
+test "changing the JSON an Ephemeral Stub was added from changes no later match" {
+  let h = harness(shop)
+  let stub = @json.parse(
+    (
+      #|{ "request": { "method": "POST", "path": "/orders",
+      #|    "body": { "json": { "item": "tea" } } },
+      #|  "response": { "status": 201 } }
+    ),
+  )
+  let added = h.engine.add_ephemeral_stub(mock="users", session=None, stub)
+  // Both the JSON given and the JSON the Ephemeral Stub shows.
+  for json in [stub, Json::object(added.added)] {
+    guard json
+      is Object(
+        {
+          "request": Object(
+            { "body": Object({ "json": Object(item), .. }), .. }
+          ),
+          ..
+        }
+      ) else {
+      fail("the Stub has no json condition")
+    }
+    item["item"] = Json::string("coffee")
+  }
+  debug_inspect(
+    [
+      matched_id(h.send("POST", "/orders", body="{\"item\": \"coffee\"}")),
+      matched_id(h.send("POST", "/orders", body="{\"item\": \"tea\"}")),
+    ],
+    content="[None, Some(\"eph-1\")]",
+  )
+}

@@ -239,12 +239,93 @@ pub enum BodyCondition {
   Exact(Bytes)
   /// The pattern matches the whole body.
   Pattern(Pattern)
-  /// The body parses as JSON and contains this value: an object has each
-  /// listed key, with a value that contains the listed one; an array has
-  /// the same length, and each element contains the listed one; any other
-  /// value is equal, numbers by their value.
-  Json(Json)
+  /// The body parses as JSON and contains the condition's value.
+  Json(JsonCondition)
 } derive(Debug, Eq)
+
+///|
+/// A `json` condition on the request body: a JSON value the body must
+/// contain. The value is the condition's own copy, which nothing outside
+/// can change, so the snapshot stays as it was loaded.
+pub struct JsonCondition {
+  priv value : Json
+}
+
+///|
+/// A condition on `value`, which it copies.
+fn JsonCondition::new(value : Json) -> JsonCondition {
+  { value: deep_copy(value), }
+}
+
+///|
+/// Whether `actual` contains the condition's value: an object has each
+/// listed key, with a value that contains the listed one; an array has the
+/// same length, and each element contains the listed one; any other value
+/// is equal, numbers by their value.
+pub fn JsonCondition::matches(self : JsonCondition, actual : Json) -> Bool {
+  contains(actual, self.value)
+}
+
+///|
+fn contains(actual : Json, expected : Json) -> Bool {
+  match (expected, actual) {
+    (Object(expected), Object(actual)) =>
+      expected
+      .iter()
+      .all(entry => {
+        actual.get(entry.0) is Some(value) && contains(value, entry.1)
+      })
+    (Array(expected), Array(actual)) => {
+      if expected.length() != actual.length() {
+        return false
+      }
+      for i, value in expected {
+        if !contains(actual[i], value) {
+          return false
+        }
+      }
+      true
+    }
+    (Number(expected, ..), Number(actual, ..)) => expected == actual
+    (String(expected), String(actual)) => expected == actual
+    (True, True) | (False, False) | (Null, Null) => true
+    _ => false
+  }
+}
+
+///|
+/// The condition's value, as a copy of its own.
+pub impl ToJson for JsonCondition with fn to_json(self) {
+  deep_copy(self.value)
+}
+
+///|
+/// Conditions are equal when their values are.
+pub impl Eq for JsonCondition with fn equal(self, other) {
+  self.value == other.value
+}
+
+///|
+/// Shows the condition's value.
+pub impl Debug for JsonCondition with fn to_repr(self) {
+  Repr::ctor("JsonCondition", [(None, Debug::to_repr(self.value))])
+}
+
+///|
+/// A copy of `json` that shares no object or array with it.
+fn deep_copy(json : Json) -> Json {
+  match json {
+    Object(members) => {
+      let out = Map([])
+      for key, value in members {
+        out[key] = deep_copy(value)
+      }
+      Json::object(out)
+    }
+    Array(items) => Json::array(items.map(deep_copy))
+    other => other
+  }
+}
 
 ///|
 /// A Stub's response.

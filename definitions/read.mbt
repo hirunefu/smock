@@ -714,7 +714,7 @@ fn File::read_body_condition(
   for key, value in condition {
     let field = child(pointer, key)
     match key {
-      "json" => out = Some(Json(value))
+      "json" => out = Some(Json(JsonCondition::new(value)))
       "pattern" =>
         if self.string(field, value) is Some(source) &&
           self.compile(field, source) is Some(pattern) {
