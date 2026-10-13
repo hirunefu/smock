@@ -622,8 +622,36 @@ directory:
 }
 ```
 
+For YAML Definition files, the YAML extension by Red Hat (which runs
+yaml-language-server) takes the Schema the same way, in `yaml.schemas`:
+
+```json
+{
+  "yaml.schemas": {
+    "https://hirunefu.github.io/smock/schema/v1/definitions.json": [
+      "defs/*.yaml",
+      "defs/*.yml"
+    ]
+  }
+}
+```
+
 Do not add a `$schema` field to the files themselves: smock rejects fields
-the Schema does not define.
+the Schema does not define. In a YAML file, a comment can name the Schema
+instead, since comments are not fields:
+
+```yaml
+# yaml-language-server: $schema=https://hirunefu.github.io/smock/schema/v1/definitions.json
+mocks:
+  - name: users
+stubs:
+  - id: get-user
+    mock: users
+    request: { method: GET, path: /users/1 }
+    response:
+      status: 200
+      body: '{"id":1,"name":"Alice"}'
+```
 
 ## Writing Definition files in another configuration language
 
