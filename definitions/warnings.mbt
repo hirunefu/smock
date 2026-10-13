@@ -36,12 +36,12 @@ pub fn Snapshot::warnings(self : Snapshot) -> Array[Warning] {
         }
       }
       guard shadowing is Some(earlier) else { continue }
-      let (file, pointer) = self.stub_locations[stub.id]
-      let (earlier_file, earlier_pointer) = self.stub_locations[earlier.id]
+      let { file, pointer, } = self.stub_locations[stub.id]
+      let earlier_at = self.stub_locations[earlier.id]
       out.push({
         file,
         pointer,
-        message: "the Stub \{stub.id.escape()} can never match: the Stub \{earlier.id.escape()} at \{earlier_file}: \{earlier_pointer} is tried first and matches every request this one would",
+        message: "the Stub \{stub.id.escape()} can never match: the Stub \{earlier.id.escape()} at \{earlier_at} is tried first and matches every request this one would",
       })
     }
   }

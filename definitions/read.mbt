@@ -6,32 +6,34 @@
 
 ///|
 /// Parses a Definition file, JSON or YAML, into its top-level object, or
-/// the problem that stops it from being read, as a JSON Pointer and a
-/// message. A YAML file gives the tree of the equivalent JSON file, so
-/// everything after parsing is shared.
+/// the problem that stops it from being read. A YAML file gives the tree of
+/// the equivalent JSON file, so everything after parsing is shared.
 fn parse_file(
   name : String,
   bytes : Bytes,
-) -> Result[Map[String, Json], (String, String)] {
+) -> Result[Map[String, Json], Diagnostic] {
+  let problem = (pointer : String, message : String) => {
+    Err(Diagnostic::{ file: name, pointer, message, })
+  }
   let yaml = name.has_suffix(".yaml") || name.has_suffix(".yml")
   if !yaml && !name.has_suffix(".json") {
-    return Err(("", "a Definition file name ends in .json, .yaml or .yml"))
+    return problem("", "a Definition file name ends in .json, .yaml or .yml")
   }
   let text = @utf8.decode(bytes) catch {
-    _ => return Err(("", "not valid UTF-8"))
+    _ => return problem("", "not valid UTF-8")
   }
   let json = if yaml {
     @yaml.parse(text) catch {
-      ParseError(pointer~, message~) => return Err((pointer, message))
+      ParseError(pointer~, message~) => return problem(pointer, message)
     }
   } else {
     @json.parse(text) catch {
-      err => return Err(("", "not valid JSON: \{err}"))
+      err => return problem("", "not valid JSON: \{err}")
     }
   }
   match json {
     Object(top) => Ok(top)
-    _ => Err(("", "must be an object"))
+    _ => problem("", "must be an object")
   }
 }
 
@@ -39,7 +41,7 @@ fn parse_file(
 /// The names of the Mocks the parsed files declare, so that a Stub may name
 /// a Mock declared in any file, earlier or later.
 fn declared_mocks(
-  files : Array[(String, Result[Map[String, Json], (String, String)])],
+  files : Array[(String, Result[Map[String, Json], Diagnostic])],
 ) -> Set[String] {
   let names = Set([])
   for file in files {
@@ -56,6 +58,28 @@ fn declared_mocks(
 }
 
 ///|
+/// Where a value is in a definition set: the Definition file it is in, and
+/// the JSON Pointer to it within that file.
+priv struct Location {
+  file : String
+  pointer : String
+} derive(Debug, Eq)
+
+///|
+/// `<file>: <pointer>`, as problems name a place.
+impl Show for Location with fn output(self, logger) {
+  logger.write_string("\{self.file}: \{self.pointer}")
+}
+
+///|
+/// A Mock's claim to what only one Mock may have, such as a Host: the
+/// Mock's name and where the claim is made.
+priv struct Claim {
+  mock : String
+  at : Location
+}
+
+///|
 /// Reads Definition files one after another, collecting what they declare
 /// and every problem in them.
 priv struct Reader {
@@ -64,21 +88,18 @@ priv struct Reader {
   declared : Set[String]
   /// The Mocks read so far.
   mocks : Array[MockDecl]
-  /// Where each Mock name was first declared, as `<file>: <pointer>`.
-  mock_names : Map[String, String]
-  /// Each Host claimed so far, normalised, with the name of the Mock that
-  /// claims it and where, as `<file>: <pointer>`.
-  hosts : Map[String, (String, String)]
-  /// The Mock marked `default` so far, if any, and where, as
-  /// `<file>: <pointer>`.
-  mut default_mock : (String, String)?
+  /// Where each Mock name was first declared.
+  mock_names : Map[String, Location]
+  /// Each Host claimed so far, normalised, with its claim.
+  hosts : Map[String, Claim]
+  /// The claim of the Mock marked `default` so far, if any.
+  mut default_mock : Claim?
   /// The Stubs read so far.
   stubs : Array[Stub]
-  /// Where each Stub ID was first used, as `<file>: <pointer>`.
-  stub_ids : Map[String, String]
-  /// Where each Stub read so far is declared, by its ID: the file and the
-  /// JSON Pointer to the Stub.
-  stub_locations : Map[String, (String, String)]
+  /// Where each Stub ID was first used: the Stub's `id` member.
+  stub_ids : Map[String, Location]
+  /// Where each Stub read so far is declared, by its ID: the Stub itself.
+  stub_locations : Map[String, Location]
   /// The body files, by their name relative to the body-file subdirectory.
   body_files : Map[String, Bytes]
 }
@@ -136,30 +157,30 @@ fn Reader::declare_mock(
     )
     return
   }
-  self.mock_names[name] = "\{file.name}: \{name_pointer}"
+  self.mock_names[name] = file.at(name_pointer)
   self.mocks.push(mock)
   for declared in mock.hosts {
     let (host, host_pointer) = declared
     let host = normalize_host(host)
     match self.hosts.get(host) {
-      Some((owner, _)) if owner == name => ()
-      Some((owner, earlier)) =>
+      Some({ mock: owner, .. }) if owner == name => ()
+      Some({ mock: owner, at: earlier, }) =>
         file.error(
           host_pointer,
           "the Host \{host.escape()} is already claimed by the Mock \{owner.escape()} at \{earlier}",
         )
-      None => self.hosts[host] = (name, "\{file.name}: \{host_pointer}")
+      None => self.hosts[host] = { mock: name, at: file.at(host_pointer), }
     }
   }
   if mock.default is Some(default_pointer) {
     match self.default_mock {
-      Some((owner, earlier)) =>
+      Some({ mock: owner, at: earlier, }) =>
         file.error(
           default_pointer,
           "the Default Mock is already \{owner.escape()}, marked at \{earlier}",
         )
       None =>
-        self.default_mock = Some((name, "\{file.name}: \{default_pointer}"))
+        self.default_mock = Some({ mock: name, at: file.at(default_pointer), })
     }
   }
 }
@@ -184,7 +205,7 @@ fn Reader::declare_stub(
         )
         ok = false
       }
-      None => self.stub_ids[stub.id] = "\{file.name}: \{id_pointer}"
+      None => self.stub_ids[stub.id] = file.at(id_pointer)
     }
   }
   if stub.mock != "" && !self.declared.contains(stub.mock) {
@@ -196,7 +217,7 @@ fn Reader::declare_stub(
   }
   if ok {
     self.stubs.push(stub)
-    self.stub_locations[stub.id] = (file.name, pointer)
+    self.stub_locations[stub.id] = file.at(pointer)
   }
 }
 
@@ -205,7 +226,7 @@ fn Reader::declare_stub(
 fn Reader::read_file(
   self : Reader,
   name : String,
-  parsed : Result[Map[String, Json], (String, String)],
+  parsed : Result[Map[String, Json], Diagnostic],
 ) -> Unit {
   let file = File::{
     name,
@@ -214,8 +235,8 @@ fn Reader::read_file(
   }
   let top = match parsed {
     Ok(top) => top
-    Err((pointer, message)) => {
-      file.error(pointer, message)
+    Err(problem) => {
+      self.diagnostics.push(problem)
       return
     }
   }
@@ -263,6 +284,12 @@ priv struct File {
   /// The body files of the set, which Stubs refer to, or `None` for an
   /// Ephemeral Stub, whose body must be inline.
   body_files : Map[String, Bytes]?
+}
+
+///|
+/// Where the value at `pointer` in the file is.
+fn File::at(self : File, pointer : String) -> Location {
+  { file: self.name, pointer, }
 }
 
 ///|

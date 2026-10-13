@@ -73,7 +73,7 @@ pub struct Snapshot {
   priv default_index : Int?
   /// Where each Stub is declared, by its ID: the Definition file and the
   /// JSON Pointer to the Stub in it.
-  priv stub_locations : Map[String, (String, String)]
+  priv stub_locations : Map[String, Location]
   /// The definition set digest of the set the snapshot was built from, as
   /// `DefinitionSet::digest` gives it.
   digest : String
@@ -497,10 +497,10 @@ pub fn load(
   }
   let host_index = Map([])
   for host, claim in reader.hosts {
-    host_index[host] = index_of[claim.0]
+    host_index[host] = index_of[claim.mock]
   }
   let default_index = match reader.default_mock {
-    Some((name, _)) => Some(index_of[name])
+    Some(claim) => Some(index_of[claim.mock])
     None if mocks.length() == 1 => Some(0)
     None => None
   }
