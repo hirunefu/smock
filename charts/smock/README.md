@@ -205,11 +205,70 @@ runtime default seccomp profile. The Pod mounts no service account token
 and gets no Service-link variables, which would collide with smock's
 `SMOCK_*` settings. Mounted Secrets are readable by smock's group only.
 
+## Resources
+
+By default smock's container requests and limits one CPU core and 1 GiB of
+memory (`resources`). Requests equal to limits give the Pod the Guaranteed
+QoS class: it never uses more than the scheduler reserved for it, and it is
+among the last Pods evicted when a node runs short of memory. With
+`definitions.source=gitSync`, the git-sync containers, whose memory limit
+is above their request, make the Pod Burstable.
+
+The defaults are valid on GKE Autopilot as they are. A general-purpose
+Autopilot Pod needs a CPU:memory ratio from 1:1 to 1:6.5 (GiB per vCPU), and
+Autopilot raises the CPU or the memory of a Pod outside that range; 1 CPU
+to 1 GiB is 1:1. Autopilot bills a Pod for its requests, and on clusters
+without bursting it sets each limit to its request: that changes nothing
+for smock's container, but it lowers git-sync's memory limit to its
+request, so raise `definitions.gitSync.resources.requests.memory` there if
+git-sync runs out of memory. On a Standard cluster, each Pod needs a node
+with one CPU and 1 GiB that no other Pod requests.
+
+Values merge with these defaults, so a smaller Pod sets both requests and
+limits: requests alone keep the limits of 1 CPU and 1 GiB. For the smallest
+general-purpose Autopilot Pod on a cluster without bursting:
+
+```yaml
+resources:
+  requests: { cpu: 250m, memory: 512Mi }
+  limits: { cpu: 250m, memory: 512Mi }
+```
+
+### Sizing
+
+Measured on an M1 MacBook Air, not on GKE, with `python3 bench/bench.py run
+--plan bench/plan-autopilot.json` in smock's repository: smock ran under each
+row's CPU quota and memory limit, with the 1161 Stubs of
+`bench/definitions`, the request mix of `bench/requests.json`, the Journal
+on, and 64 keep-alive connections over loopback, plain HTTP and HTTPS alike.
+On GKE the CPU and the Pod network differ, so compare the rows with each
+other rather than take them as GKE's numbers.
+
+| Requests and limits | Which Pod | Kept up with, p99 about 2 ms | Most served | Peak memory | Journal bound |
+|---|---|---|---|---|---|
+| 50m, 52Mi | The smallest on Autopilot with bursting | 1,000 requests/s | about 2,000 requests/s | 42 MiB | 13 MiB |
+| 250m, 512Mi | The smallest on Autopilot without bursting | 5,000 requests/s | about 10,000 requests/s | 46 MiB | 64 MiB |
+| 1, 1Gi | The chart's default | 20,000 requests/s | about 40,000 requests/s | 66 MiB, under a 4 GiB limit | 64 MiB |
+
+- Throughput grows with the CPU limit, at about 40,000 requests a second
+  per CPU, or about 25 µs of CPU per request. The rates went up in
+  doublings, so the most a Pod keeps up with lies between the two columns.
+  Most of the 2 ms p99 is the load generator's timer, but near the top a
+  small CPU quota shows in the slowest requests: at 50m and 1,000
+  requests/s, p99.9 was 12 ms over HTTP and 55 ms over HTTPS.
+- Peak memory is the most the container's cgroup used under load, socket
+  buffers included; smock's RSS was 15 to 16 MiB after startup. 52Mi leaves
+  little room: more Stubs, more connections or larger bodies in the Journal
+  take more, and the kernel kills a container that goes over its limit.
+- smock bounds its Journal by default at the smaller of 64 MiB and a
+  quarter of its memory limit, the last column, so a small Pod keeps a
+  small Journal. The benchmark ran before that rule, with 64 MiB in every
+  row. `SMOCK_JOURNAL_MAX_BYTES` in `env` sets another bound.
+
 ## Scaling and shutdown
 
-Each Pod runs one single-threaded smock process, so the Pod requests about
-one CPU core, and a CPU limit above one core would not make it faster: scale
-with `replicas` instead
+Each Pod runs one single-threaded smock process, so a CPU limit above one
+core would not make it faster: scale with `replicas` instead
 ([ADR 0003](https://github.com/hirunefu/smock/blob/main/docs/adr/0003-one-process-per-pod.md)).
 Replicas share no state: tests that use Ephemeral Stubs or the Journal need
 one replica, or session affinity from a gateway or mesh.
@@ -306,7 +365,7 @@ among them, and names the value to use instead.
 | `lifecycle.preStopSleepSeconds` | `5` | How long smock's container sleeps in its preStop hook before SIGTERM, in seconds, while Services stop sending it connections. Needs Kubernetes 1.30 or later. 0: no hook. |
 | `drainTimeoutMs` | `20000` | How long smock drains after SIGTERM, in milliseconds (`SMOCK_DRAIN_TIMEOUT_MS`). |
 | `terminationGracePeriodSeconds` | `null` | The Pod's grace period, which the preStop sleep and the drain share; must be above their sum. Empty: the sleep plus the drain timeout plus 10 s. |
-| `resources` | `{"requests":{"cpu":"1","memory":"128Mi"},"limits":{"memory":"512Mi"}}` | Resources of the smock container: about one CPU core. Scale with `replicas`, not with a larger CPU limit. |
+| `resources` | `{"requests":{"cpu":"1","memory":"1Gi"},"limits":{"cpu":"1","memory":"1Gi"}}` | Resources of the smock container: one CPU core and 1 GiB, requests equal to limits, valid on GKE Autopilot as they are ([Resources](#resources)). Scale with `replicas`, not with a larger CPU limit. |
 | `env` | `{}` | Other smock settings, as `SMOCK_<NAME>` variables. |
 | `podAnnotations` | `{}` | Annotations of the Pods. |
 | `nodeSelector` | `{}` | The Pods' node selector. |
