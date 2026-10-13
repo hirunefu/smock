@@ -268,24 +268,29 @@ let serve_settings : Array[Setting] = [
   {
     name: "journal",
     about: "Whether smock records the requests it receives in the Journal: on or off. Off, it records none, and Journal queries are refused.",
-    default: Some("on"),
+    default: Some(if journal_defaults.enabled { "on" } else { "off" }),
   },
   {
     name: "journal-max-entries",
     about: "The most entries the Journal holds. Beyond it, the oldest entries are evicted.",
-    default: Some("10000"),
+    default: Some(journal_defaults.max_entries.to_string()),
   },
   {
     name: "journal-max-bytes",
     about: "The most bytes the Journal's entries take: each counts 256, two per character of its request line, header fields, names and Near miss values, and the body bytes it keeps. Beyond it, the oldest entries are evicted.",
-    default: Some("67108864"),
+    default: Some(journal_defaults.max_bytes.to_string()),
   },
   {
     name: "journal-body-limit",
     about: "The most bytes of a request body a Journal entry keeps; the rest is cut.",
-    default: Some("4096"),
+    default: Some(journal_defaults.body_limit.to_string()),
   },
 ]
+
+///|
+/// The Journal settings the engine has by default, which the Journal
+/// settings default to.
+let journal_defaults : @engine.JournalSettings = @engine.JournalSettings()
 
 ///|
 /// The settings of `smock check`: those of `smock serve` that decide how
@@ -435,12 +440,7 @@ pub fn ServeSettings::from_matches(
       "must differ from --tls-port (SMOCK_TLS_PORT)",
     )
   }
-  let admin_auth = match value(matches, "admin-auth") {
-    Some("on") => true
-    Some("off") => false
-    other =>
-      raise invalid("admin-auth", other.unwrap_or(""), "must be on or off")
-  }
+  let admin_auth = on_off_value(matches, "admin-auth")
   let admin_token_file = file_value(matches, "admin-token-file")
   let log_format = match value(matches, "log-format") {
     Some("json") => Json
@@ -499,12 +499,7 @@ pub fn ServeSettings::from_matches(
       max=max_duration_ms,
     ),
     seed: seed_value(matches, "seed"),
-    journal: match value(matches, "journal") {
-      Some("on") => true
-      Some("off") => false
-      other =>
-        raise invalid("journal", other.unwrap_or(""), "must be on or off")
-    },
+    journal: on_off_value(matches, "journal"),
     journal_max_entries: int_value(
       matches,
       "journal-max-entries",
@@ -600,21 +595,28 @@ fn seed_reason() -> String {
 /// The seed `text` gives: a decimal integer from 0 to 2^53 - 1, without a
 /// sign, prefix or separator. `None` when it is not one.
 pub fn parse_seed(text : String) -> UInt64? {
-  // Sixteen digits hold every seed, and a UInt64 every sixteen-digit
-  // number.
+  // Sixteen digits hold every seed.
+  match decimal(text, max_digits=16) {
+    Some(n) if n <= max_seed => Some(n)
+    _ => None
+  }
+}
+
+///|
+/// The number `text` writes in at most `max_digits` decimal digits, without
+/// a sign, prefix or separator, or `None` when it is not one. A UInt64
+/// holds every number of up to 19 digits.
+fn decimal(text : String, max_digits~ : Int) -> UInt64? {
   if text == "" ||
-    text.length() > 16 ||
+    text.length() > max_digits ||
     !text.iter().all(c => c >= '0' && c <= '9') {
     return None
   }
-  let n = text.fold(init=0UL, (n, c) => {
-    n * 10UL + (c.to_int() - '0'.to_int()).to_uint64()
-  })
-  if n > max_seed {
-    None
-  } else {
-    Some(n)
-  }
+  Some(
+    text.fold(init=0UL, (n, c) => {
+      n * 10UL + (c.to_int() - '0'.to_int()).to_uint64()
+    }),
+  )
 }
 
 ///|
@@ -744,21 +746,24 @@ fn int_value(
   max~ : Int,
 ) -> Int raise InvalidSetting {
   let text = value(matches, name).unwrap_or("")
-  let reason = "must be an integer from \{min} to \{max}"
-  // Decimal digits only: no sign, prefix or separator. Ten digits hold
-  // every Int, and an Int64 holds every ten-digit number.
-  if text == "" ||
-    text.length() > 10 ||
-    !text.iter().all(c => c >= '0' && c <= '9') {
-    raise invalid(name, text, reason)
+  // Ten digits hold every Int.
+  match decimal(text, max_digits=10).map(n => n.reinterpret_as_int64()) {
+    Some(n) if n >= min.to_int64() && n <= max.to_int64() => n.to_int()
+    _ => raise invalid(name, text, "must be an integer from \{min} to \{max}")
   }
-  let n = text.fold(init=0L, (n, c) => {
-    n * 10L + (c.to_int() - '0'.to_int()).to_int64()
-  })
-  if n < min.to_int64() || n > max.to_int64() {
-    raise invalid(name, text, reason)
+}
+
+///|
+/// The value of a setting that is `on` or `off`, as true or false.
+fn on_off_value(
+  matches : @argparse.Matches,
+  name : String,
+) -> Bool raise InvalidSetting {
+  match value(matches, name) {
+    Some("on") => true
+    Some("off") => false
+    other => raise invalid(name, other.unwrap_or(""), "must be on or off")
   }
-  n.to_int()
 }
 
 ///|
