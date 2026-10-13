@@ -1,20 +1,30 @@
 ///|
-/// Whether `target` is a request target in one of the four forms of
-/// RFC 9112, section 3.2: origin-form (`/users/1?x=y`), absolute-form
-/// (`http://a.example/users/1`), authority-form (`a.example:443`) or
-/// asterisk-form (`*`). A fragment (`#`) is part of none of them.
+/// Whether `target` is a request target, for the method `meth`, in one of
+/// the four forms of RFC 9112, section 3.2: origin-form (`/users/1?x=y`),
+/// absolute-form (`http://a.example/users/1`), authority-form
+/// (`a.example:443`) or asterisk-form (`*`). A fragment (`#`) is part of
+/// none of them.
+///
+/// The form must suit the method (RFC 9112, sections 3.2.3 and 3.2.4):
+/// authority-form is only for CONNECT, which takes no other form, and
+/// asterisk-form only for OPTIONS. A target that has the shape of
+/// authority-form is read as authority-form, even when it could also be an
+/// absolute-URI, such as `a.example:80` with the scheme `a.example`.
 ///
 /// Only the form is checked. The characters of a path or a query are only
 /// checked to be visible ASCII, which the head scan does: clients send some
 /// that RFC 3986 leaves out, such as `|` and `^`.
-fn is_request_target(target : StringView) -> Bool {
-  !target.contains_char('#') &&
-  (
-    target.has_prefix("/") ||
-    target == "*" ||
-    has_scheme(target) ||
-    is_host_and_port(target, port_required=true)
-  )
+fn is_request_target(target : StringView, meth~ : StringView) -> Bool {
+  if target.contains_char('#') {
+    return false
+  }
+  let authority_form = is_host_and_port(target, port_required=true)
+  if meth == "CONNECT" || authority_form {
+    return meth == "CONNECT" && authority_form
+  }
+  target.has_prefix("/") ||
+  (target == "*" && meth == "OPTIONS") ||
+  has_scheme(target)
 }
 
 ///|

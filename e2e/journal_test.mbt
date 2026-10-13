@@ -158,6 +158,7 @@ async test "a query returns the calling Session's entries, oldest first, as the 
       json_inspect(journal_shown(page), content={
         "entries": [
           {
+            "seq": 1,
             "receivedAt": "<time>",
             "durationMs": "<ms>",
             "session": "shown",
@@ -185,11 +186,13 @@ async test "a query returns the calling Session's entries, oldest first, as the 
               },
             },
             "stub": "get-user",
+            "stubSource": "file",
             "nearMiss": Json::null(),
             "status": 200,
             "fault": Json::null(),
           },
           {
+            "seq": 2,
             "receivedAt": "<time>",
             "durationMs": "<ms>",
             "session": "shown",
@@ -217,8 +220,10 @@ async test "a query returns the calling Session's entries, oldest first, as the 
               },
             },
             "stub": Json::null(),
+            "stubSource": Json::null(),
             "nearMiss": {
               "stub": "get-user",
+              "stubSource": "file",
               "failed": [
                 { "condition": "method", "expected": "GET", "actual": ["POST"] },
               ],
@@ -227,6 +232,7 @@ async test "a query returns the calling Session's entries, oldest first, as the 
             "fault": Json::null(),
           },
           {
+            "seq": 3,
             "receivedAt": "<time>",
             "durationMs": "<ms>",
             "session": "shown",
@@ -254,6 +260,7 @@ async test "a query returns the calling Session's entries, oldest first, as the 
               },
             },
             "stub": Json::null(),
+            "stubSource": Json::null(),
             "nearMiss": Json::null(),
             "status": 404,
             "fault": Json::null(),
@@ -361,6 +368,7 @@ async test "a request ended by a reset Fault is in the Journal, body included, a
       json_inspect(journal_shown(page), content={
         "entries": [
           {
+            "seq": 1,
             "receivedAt": "<time>",
             "durationMs": "<ms>",
             "session": "resets",
@@ -385,6 +393,7 @@ async test "a request ended by a reset Fault is in the Journal, body included, a
               },
             },
             "stub": "reset",
+            "stubSource": "file",
             "nearMiss": null,
             "status": null,
             "fault": "reset",

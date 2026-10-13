@@ -22,8 +22,9 @@ that.
 
 Packages of `smock/smock`:
 
-- `cmd/smock`: the `smock` binary. It binds libc's `exit` to end with a
-  status, since neither core nor `moonbitlang/async` exposes one.
+- `cmd/smock`: the `smock` binary. It ends with a status through
+  `moonbitlang/x`'s `@sys.exit`, since neither core nor
+  `moonbitlang/async` exposes one; smock itself binds no C for it.
 - `settings`: the settings of `smock serve`, each a flag with a matching
   `SMOCK_<NAME>` environment variable, and the arguments of `smock check`
   and `smock render`.
@@ -115,7 +116,10 @@ It watches the directory and swaps in the new definition set when the files
 change, ConfigMap updates included; an invalid set is reported and the
 current one keeps serving
 ([docs/definition-files.md](docs/definition-files.md#reloading)). Logs go
-to stderr, one JSON object per line. `smock serve --help` lists the
+to stderr, one JSON object per line; JSON is the only log format. A usage
+error, such as an unknown flag, a missing argument or an invalid setting
+value, is not a log entry: smock writes it to stderr as plain text, before
+any log entry, and exits with status 2. `smock serve --help` lists the
 settings:
 
 | Flag | Variable | Default |
@@ -132,7 +136,7 @@ settings:
 | `--replicas` | `SMOCK_REPLICAS` | 1: above 1, every Admin API response warns that state is per replica |
 | `--session-header` | `SMOCK_SESSION_HEADER` | `baggage`: the W3C Baggage header that carries the [Session](#sessions-and-ephemeral-stubs) |
 | `--session-member` | `SMOCK_SESSION_MEMBER` | `smock-session`: the member of that header whose value is the Session key |
-| `--log-format` | `SMOCK_LOG_FORMAT` | `json` |
+| `--log-format` | `SMOCK_LOG_FORMAT` | `json`, the only format |
 | `--body-file-dir` | `SMOCK_BODY_FILE_DIR` | `files` |
 | `--header-size-limit` | `SMOCK_HEADER_SIZE_LIMIT` | 16384 bytes (16 KiB): larger request heads get 431 |
 | `--header-count-limit` | `SMOCK_HEADER_COUNT_LIMIT` | 100 header fields: more get 431 |
@@ -152,7 +156,8 @@ Neither is logged.
 
 On SIGTERM, smock drains instead of dropping requests, so that a rolling
 update does not fail the tests running against the old Pod. SIGINT and
-SIGHUP do the same.
+SIGHUP do not drain: they end smock at once, cutting whatever is in
+flight, so that Ctrl-C stops a local smock promptly.
 
 - `/readyz` fails from the moment the signal arrives. The plain and TLS
   listeners close, so new connections are refused, and idle keep-alive
@@ -165,7 +170,9 @@ SIGHUP do the same.
 - smock exits with status 0 as soon as nothing is in flight, and at the
   latest when the drain timeout (`--drain-timeout-ms`) expires: what is still
   running then is cut. Keep the Pod's `terminationGracePeriodSeconds` above
-  it.
+  it. On Kubernetes, also delay SIGTERM with a preStop sleep, so that
+  Services stop sending new connections before the listeners close; the
+  Helm chart does both.
 - The admin port serves until exit, so the probes can be read during the
   drain. Log entries mark the start of the drain (`drain started`, with
   `timeoutMs`) and its end (`drain ended`, with `connectionsCut`, the number
@@ -276,7 +283,9 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   from the file `--admin-token-file` names, or from the environment variable
   `SMOCK_ADMIN_TOKEN` (it has no flag, so it never shows in the process
   list), without the whitespace around it. With authentication on and no
-  token, or with both, `smock serve` logs why and exits with status 1. A
+  token, `smock serve` logs why and exits with status 1. Setting both the
+  token file and `SMOCK_ADMIN_TOKEN` is refused the same way, at startup,
+  rather than one of them silently winning. A
   missing or wrong token gets 401 with `WWW-Authenticate: Bearer`; the token
   is compared in constant time. `--admin-auth off` turns authentication off
   for local use. The `smock starting` log entry says whether it is on
@@ -322,11 +331,14 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   `mock`. A Stub from a Definition file is labelled by its ID, every
   Ephemeral Stub by `stub="ephemeral"`, and a request that matched no Stub
   by `stub=""`. A request is labelled with the Mock that answered it, the
-  Default Mock included, or `mock=""` when no Mock did. Labels never carry a
-  path, Host, method or Session, so the number of series stays bounded by
-  the Definition files. A request is counted once its response is written;
-  the Admin API, probes and `/metrics` are not counted. No request is
-  logged.
+  Default Mock included, or `mock=""` when no Mock did. A request the
+  HTTP/1.1 codec rejects (400, 413, 431, 501 or 505, such as a malformed
+  head or a body over `--body-limit`) counts with `mock=""` and `stub=""`,
+  timed from the read that brought it; it is not an unmatched request, and
+  the Journal does not record it. Labels never carry a path, Host, method,
+  status or Session, so the number of series stays bounded by the
+  Definition files. A request is counted once its response is written; the
+  Admin API, probes and `/metrics` are not counted. No request is logged.
 - `POST /v1/stubs/{id}/render` renders a Stub's response for the sample
   request in the body, against the definitions the replica serves now, as
   `smock render` does (below). The optional `time` and `seed` query
@@ -509,10 +521,13 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
 - Each entry records the Session, the Host, the Mock and whether the
   Default Mock answered; the method, target, HTTP version, header fields
   and body; the Stub that answered, or the Near miss with what each failed
-  condition expects and what the request sent; the status, or the
+  condition expects and what the request sent, each with `stubSource`:
+  `file` for a Stub from a Definition file, `ephemeral` for an Ephemeral
+  Stub, so that equal IDs cannot be confused; the status, or the
   connection Fault; when the request was received and how long the response
   took; and the digest of the definition set that answered. A request for
-  a Host that no Mock answers is recorded too, with no Mock.
+  a Host that no Mock answers is recorded too, with no Mock; one the
+  HTTP/1.1 codec rejects (400, 413, 431, 501 or 505) is not.
 - A request is in the Journal as soon as its client has the whole
   response: smock records it just before it writes the response's last
   bytes, so a query made right after a call always finds it. A stream of
@@ -524,19 +539,29 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   (excluded), as RFC 3339 date-times. Every member is optional. Entries
   come oldest first, at most `limit` of them (100 by default, at most
   10000); `more` says whether more passed the filter.
+- Each entry has a sequence number, `seq`: 1 for the first entry the
+  process records, then one more for each entry after it, whatever its
+  Session. To fetch the next page, a query gives `"after"` the `seq` of the
+  last entry it got, with the same filter; no entry is lost or repeated,
+  even among requests received in the same millisecond.
 - The Journal is one ring buffer per process, bounded by entry count and by
   bytes (`--journal-max-entries`, `--journal-max-bytes`), and keeps at most
   4 KiB of each body (`--journal-body-limit`), cut at a character boundary
   when the body is UTF-8. When it is full, the oldest entries are evicted,
   and smock counts the evicted entries of each Session: `evicted` in the
   query's result says how many of the calling Session's entries may be
-  missing. Requests without a Session have their own count.
+  missing. Requests without a Session have their own count. A Session's
+  count is kept until that Session, or everything, is reset (a reset of
+  one Mock keeps it), so the counts grow with the number of Sessions whose
+  entries were evicted.
 - `--journal off` records nothing, and a Mock with `"journal": false`
   ([docs/definition-files.md](docs/definition-files.md#turning-the-journal-off-for-a-mock))
   records none of its requests, so that a high-rate load test pays nothing
   for recording. A query while the Journal is off, or whose filter names
   such a Mock, gets 409 `journal_off` rather than entries that cannot be
-  trusted.
+  trusted. Only those are refused: a filter that names no Mock is answered
+  from the requests that were recorded, which leave out those of Mocks
+  whose Journal is off.
 - The Journal survives a [reload](docs/definition-files.md#reloading) of
   the Definition files; each entry keeps the digest of the set that
   answered it. It lives in the process that received the requests, until a
@@ -564,20 +589,27 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   whatever the count. `atLeast` is still decided by the count, because
   eviction can only lower it. A Session reset clears the eviction count.
 - Like a query, verification while the Journal is off, or whose filter
-  names a Mock whose Journal is off, gets 409 `journal_off`.
+  names a Mock whose Journal is off, gets 409 `journal_off`. A filter that
+  names no Mock counts only the requests that were recorded, so none of
+  such a Mock's.
 
 `GET /v1/journal/unmatched` lists the calling Session's requests that no
 Stub answered, oldest first, at most `limit` of them (a query parameter,
-100 by default, at most 10000), in the same form as a query's entries. Each
+100 by default, at most 10000), in the same form as a query's entries; the
+`after` query parameter pages through them as a query's `after` does. Each
 carries its full Near miss: the closest Stub, and every condition it
 failed with what the Stub expects and what the request sent. A request for
 a Host that no Mock answers is among them, with no Mock and no Near miss.
-It gets 409 `journal_off` while the Journal is off.
+It gets 409 `journal_off` while the Journal is off globally; the unmatched
+requests of a Mock whose Journal is off were not recorded, so they are not
+listed.
 
 ## Container image and release binaries
 
 Each release publishes the image `ghcr.io/hirunefu/smock:<version>` for
-linux/amd64 and linux/arm64. It is distroless
+linux/amd64 and linux/arm64. The image of each architecture it is made of
+also keeps a tag of its own, `<version>-amd64` and `<version>-arm64`; use
+`<version>`, which picks the one for the machine. The image is distroless
 (`gcr.io/distroless/base-debian13`): it holds the smock binary and what the
 binary links dynamically, glibc and OpenSSL 3, and has no shell. smock runs
 as UID 65532 and writes nothing to the filesystem, so the root filesystem can
@@ -616,7 +648,11 @@ update reaches the running smock through its reload, without a restart
 git-sync sidecar or an OCI image volume can deliver them instead. The Pods
 meet the Restricted Pod Security Standard, run one replica with about one
 CPU core by default, and get the Admin API token and the TLS certificates,
-the default one and those of single Mocks, from Secrets. [charts/smock/README.md](charts/smock/README.md) describes the
+the default one and those of single Mocks, from Secrets. Before SIGTERM,
+smock's container sleeps in a preStop hook (5 s by default) while the Pod
+leaves its Services' endpoints, and the Pod's grace period covers that sleep
+and the drain; the hook's `sleep` action needs Kubernetes 1.30 or later.
+[charts/smock/README.md](charts/smock/README.md) describes the
 chart and lists every value with its default.
 
 ### Verify the image

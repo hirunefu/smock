@@ -50,7 +50,7 @@ test "an events Stub plans Content-Type: text/event-stream with its status and h
 }
 
 ///|
-test "an events Stub that gives its own Content-Type keeps it instead of text/event-stream" {
+test "an events Stub's own Content-Type is replaced by text/event-stream" {
   let h = harness([
     (
       "m.json",
@@ -58,7 +58,7 @@ test "an events Stub that gives its own Content-Type keeps it instead of text/ev
         #|{ "mocks": [{ "name": "m" }],
         #|  "stubs": [{ "id": "stream", "mock": "m",
         #|    "response": { "status": 200,
-        #|      "headers": { "content-type": "text/event-stream; charset=utf-8" },
+        #|      "headers": { "content-type": "application/json", "X-Trace": "a" },
         #|      "events": [{ "data": "x" }] } }] }
       ),
     ),
@@ -67,7 +67,8 @@ test "an events Stub that gives its own Content-Type keeps it instead of text/ev
     response(h.send("GET", "/events")),
     content=(
       #|200
-      #|content-type: text/event-stream; charset=utf-8
+      #|Content-Type: text/event-stream
+      #|X-Trace: a
       #|Smock-Mock: m; via=default
       #|after 0 ms: event -, id -, data "x"
       #|

@@ -64,6 +64,7 @@ test "a committed entry records the request, its Session, Host and Mock, the Stu
   json_inspect(h.query(Some("test-a")), content={
     "entries": [
       {
+        "seq": 1,
         "receivedAt": "2026-10-12T14:30:05.123Z",
         "durationMs": 7,
         "session": "test-a",
@@ -87,6 +88,7 @@ test "a committed entry records the request, its Session, Host and Mock, the Stu
           },
         },
         "stub": "get-user",
+        "stubSource": "file",
         "nearMiss": Json::null(),
         "status": 200,
         "fault": Json::null(),
@@ -424,6 +426,7 @@ test "an unmatched request's entry holds the Near miss with expected and actual 
     "stub": Json::null(),
     "nearMiss": {
       "stub": "create-order",
+      "stubSource": "file",
       "failed": [
         {
           "condition": "header:x-api-key",
@@ -912,4 +915,190 @@ test "an entry records the connection Fault injected; one that resets or closes 
       "fault": "partial",
     },
   ])
+}
+
+///|
+test "an entry and its Near miss say whether the Stub comes from a Definition file or is an Ephemeral Stub, whatever its ID" {
+  let h = harness([
+    (
+      "payments.json",
+      (
+        #|{ "mocks": [{ "name": "payments", "hosts": ["payments.svc"] }],
+        #|  "stubs": [{ "id": "eph-1", "mock": "payments",
+        #|    "request": { "method": "GET", "path": "/refunds" },
+        #|    "response": { "status": 200, "body": "none" } }] }
+      ),
+    ),
+  ])
+  let added = h.add("payments", Some("s"), get_stub("/orders/42", 503, "down"))
+  inspect(added, content="eph-1")
+  for
+    request in [
+      ("GET", "/refunds"),
+      ("GET", "/orders/42"),
+      ("GET", "/orders/43"),
+      ("POST", "/refunds"),
+    ] {
+    let _ = h.record(request.0, "http://payments.svc\{request.1}", session="s")
+  }
+  guard h.query(Some("s")) is Object({ "entries": Array(entries), .. }) else {
+    fail("no entries")
+  }
+  // Each entry's target, Stub and Stub source, and its Near miss's.
+  let pick = (json : Json, names : Array[String]) => {
+    guard json is Object(members) else { return json }
+    let out = Map([])
+    for name in names {
+      out[name] = members.get(name).unwrap_or("missing")
+    }
+    Json::object(out)
+  }
+  json_inspect(
+    Json::array(
+      entries.map(entry => {
+        guard entry
+          is Object(
+            {
+              "request": Object({ "target": target, .. }),
+              "nearMiss": near_miss,
+              ..
+            } as members
+          ) else {
+          return entry
+        }
+        {
+          "target": target,
+          "stub": members["stub"],
+          "stubSource": members.get("stubSource").unwrap_or("missing"),
+          "nearMiss": pick(near_miss, ["stub", "stubSource"]),
+        }
+      }),
+    ),
+    content=[
+      {
+        "target": "http://payments.svc/refunds",
+        "stub": "eph-1",
+        "stubSource": "file",
+        "nearMiss": Json::null(),
+      },
+      {
+        "target": "http://payments.svc/orders/42",
+        "stub": "eph-1",
+        "stubSource": "ephemeral",
+        "nearMiss": Json::null(),
+      },
+      {
+        "target": "http://payments.svc/orders/43",
+        "stub": Json::null(),
+        "stubSource": Json::null(),
+        "nearMiss": { "stub": "eph-1", "stubSource": "ephemeral" },
+      },
+      {
+        "target": "http://payments.svc/refunds",
+        "stub": Json::null(),
+        "stubSource": Json::null(),
+        "nearMiss": { "stub": "eph-1", "stubSource": "file" },
+      },
+    ],
+  )
+}
+
+///|
+/// Pages through `fetch` from the start, each page after the last entry of
+/// the page before, until `more` is false, and renders each page as its
+/// entries' sequence numbers and targets, then `more`.
+fn paged(fetch : (Int64?) -> Json raise) -> String raise {
+  let pages = []
+  let mut after : Int64? = None
+  for _ in 0..<10 {
+    guard fetch(after)
+      is Object({ "entries": Array(entries), "more": more, .. }) else {
+      fail("not a Journal page")
+    }
+    let lines = []
+    for entry in entries {
+      guard entry
+        is Object(
+          {
+            "seq": Number(seq, ..),
+            "request": Object({ "target": String(target), .. }),
+            ..
+          }
+        ) else {
+        fail("an entry without a sequence number: \{entry.stringify()}")
+      }
+      lines.push("\{seq.to_int64()} \{target}")
+      after = Some(seq.to_int64())
+    }
+    lines.push("more: \{more.stringify()}")
+    pages.push(lines.join("\n"))
+    if more is False {
+      break
+    }
+  }
+  pages.join("\n--\n")
+}
+
+///|
+test "each entry has a sequence number, and a query or the unmatched list pages after the last one it returned, losing and repeating none, even within one millisecond" {
+  let h = harness([("users.json", journal_users)])
+  // Every request is received in the same millisecond; one of another
+  // Session comes between them.
+  let _ = h.record("GET", "/users/1", session="s")
+  let _ = h.record("GET", "/users/1", session="other")
+  let _ = h.record("GET", "/a", session="s")
+  let _ = h.record("GET", "/users/1?x=2", session="s")
+  let _ = h.record("GET", "/b", session="s")
+  let _ = h.record("GET", "/users/1?x=3", session="s")
+  let query = (after : Int64?) => {
+    let after = after.map_or("", after => ", \"after\": \{after}")
+    h.query(Some("s"), query="{ \"limit\": 2\{after} }")
+  }
+  let unmatched = fn(after : Int64?) -> Json raise {
+    ToJson::to_json(h.engine.unmatched(session=Some("s"), limit=1, after?))
+  }
+  inspect(
+    "query:\n\{paged(query)}\nunmatched:\n\{paged(unmatched)}",
+    content=(
+      #|query:
+      #|1 /users/1
+      #|3 /a
+      #|more: true
+      #|--
+      #|4 /users/1?x=2
+      #|5 /b
+      #|more: true
+      #|--
+      #|6 /users/1?x=3
+      #|more: false
+      #|unmatched:
+      #|3 /a
+      #|more: true
+      #|--
+      #|5 /b
+      #|more: false
+    ),
+  )
+  let read = fn(query : String) -> Int64? raise @engine.InvalidQuery {
+    let json = @json.parse(query) catch { _ => abort("not JSON") }
+    @engine.JournalQuery::from_json(json).after
+  }
+  inspect(
+    [
+      "{ \"after\": 0 }", "{ \"after\": 9007199254740991 }", "{ \"after\": -1 }",
+      "{ \"after\": 1.5 }", "{ \"after\": \"3\" }",
+    ]
+    .map(query => {
+      let read = @debug.to_string(read(query)) catch { err => err.message() }
+      "\{query}: \{read}"
+    })
+    .join("\n"),
+    content=(
+      #|{ "after": 0 }: Some(0)
+      #|{ "after": 9007199254740991 }: Some(9007199254740991)
+      #|{ "after": -1 }: /after: must be an integer from 0 to 9007199254740991
+      #|{ "after": 1.5 }: /after: must be an integer from 0 to 9007199254740991
+      #|{ "after": "3" }: /after: must be an integer from 0 to 9007199254740991
+    ),
+  )
 }

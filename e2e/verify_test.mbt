@@ -250,6 +250,7 @@ async test "the unmatched requests list the calling Session's requests that no S
       json_inspect(journal_shown(page), content={
         "entries": [
           {
+            "seq": 1,
             "receivedAt": "<time>",
             "durationMs": "<ms>",
             "session": "unmatched",
@@ -277,8 +278,10 @@ async test "the unmatched requests list the calling Session's requests that no S
               },
             },
             "stub": Json::null(),
+            "stubSource": Json::null(),
             "nearMiss": {
               "stub": "get-user",
+              "stubSource": "file",
               "failed": [
                 { "condition": "method", "expected": "GET", "actual": ["POST"] },
               ],
@@ -287,6 +290,7 @@ async test "the unmatched requests list the calling Session's requests that no S
             "fault": Json::null(),
           },
           {
+            "seq": 3,
             "receivedAt": "<time>",
             "durationMs": "<ms>",
             "session": "unmatched",
@@ -314,6 +318,7 @@ async test "the unmatched requests list the calling Session's requests that no S
               },
             },
             "stub": Json::null(),
+            "stubSource": Json::null(),
             "nearMiss": Json::null(),
             "status": 404,
             "fault": Json::null(),
@@ -369,6 +374,80 @@ async test "the unmatched requests come at most limit at a time; a limit that is
           #|limit=%31: 200 /nope/1, more: true
           #|limit=1&limit=2: 400 {"error":"invalid_request","message":"the limit query parameter is given more than once","warnings":[]}
           #|limit=: 400 {"error":"invalid_request","message":"the limit query parameter must be an integer from 1 to 10000","warnings":[]}
+        ),
+      )
+    })
+  })
+}
+
+///|
+/// The entries of a Journal page, `body`, as their sequence numbers and
+/// targets, then `more`; or the status and body of a refusal.
+fn page_of(status : Int, body : Json) -> String {
+  guard status == 200 &&
+    body is Object({ "entries": Array(entries), "more": more, .. }) else {
+    return "\{status} \{body.stringify()}"
+  }
+  let shown = entries.map(entry => {
+    guard entry
+      is Object(
+        {
+          "seq": Number(seq, ..),
+          "request": Object({ "target": String(target), .. }),
+          ..
+        }
+      ) else {
+      return "?"
+    }
+    "\{seq.to_int64()} \{target}"
+  })
+  let shown = if shown.is_empty() { "none" } else { shown.join(", ") }
+  "\{shown}, more: \{more.stringify()}"
+}
+
+///|
+async test "a query and the unmatched requests page after the last entry of the page before; an after that is not an integer from 0 to 2^53 - 1 is refused with invalid_request" {
+  with_definitions([("users.json", journal_defs)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      for target in ["/nope/1", "/users/1", "/nope/2", "/nope/3"] {
+        smock.get_user(target, "paged")
+      }
+      let out = []
+      for after in ["", "&after=0", "&after=1", "&after=3", "&after=4"] {
+        let (status, body) = smock.unmatched("paged", limit="2\{after}")
+        out.push("unmatched, limit=2\{after}: \{page_of(status, body)}")
+      }
+      for after in ["", ",\"after\":2"] {
+        let response = smock.admin(
+          "POST",
+          "/v1/journal/query",
+          headers=[baggage("paged")],
+          body="{\"limit\":2\{after}}",
+        )
+        out.push(
+          "query {\"limit\":2\{after}}: \{page_of(response.status, response.json())}",
+        )
+      }
+      for after in ["-1", "x", "1.5", "9007199254740992", "", "1&after=2"] {
+        let (status, body) = smock.unmatched("paged", limit="2&after=\{after}")
+        out.push("after=\{after}: \{page_of(status, body)}")
+      }
+      inspect(
+        out.join("\n"),
+        content=(
+          #|unmatched, limit=2: 1 /nope/1, 3 /nope/2, more: true
+          #|unmatched, limit=2&after=0: 1 /nope/1, 3 /nope/2, more: true
+          #|unmatched, limit=2&after=1: 3 /nope/2, 4 /nope/3, more: false
+          #|unmatched, limit=2&after=3: 4 /nope/3, more: false
+          #|unmatched, limit=2&after=4: none, more: false
+          #|query {"limit":2}: 1 /nope/1, 2 /users/1, more: true
+          #|query {"limit":2,"after":2}: 3 /nope/2, 4 /nope/3, more: false
+          #|after=-1: 400 {"error":"invalid_request","message":"the after query parameter must be an integer from 0 to 9007199254740991","warnings":[]}
+          #|after=x: 400 {"error":"invalid_request","message":"the after query parameter must be an integer from 0 to 9007199254740991","warnings":[]}
+          #|after=1.5: 400 {"error":"invalid_request","message":"the after query parameter must be an integer from 0 to 9007199254740991","warnings":[]}
+          #|after=9007199254740992: 400 {"error":"invalid_request","message":"the after query parameter must be an integer from 0 to 9007199254740991","warnings":[]}
+          #|after=: 400 {"error":"invalid_request","message":"the after query parameter must be an integer from 0 to 9007199254740991","warnings":[]}
+          #|after=1&after=2: 400 {"error":"invalid_request","message":"the after query parameter is given more than once","warnings":[]}
         ),
       )
     })

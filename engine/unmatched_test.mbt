@@ -102,6 +102,7 @@ test "the unmatched requests are the calling Session's entries that no Stub answ
         "stub": Json::null(),
         "nearMiss": {
           "stub": "create-order",
+          "stubSource": "file",
           "failed": [
             { "condition": "query:dry", "expected": "no", "actual": ["yes"] },
             {
@@ -120,6 +121,7 @@ test "the unmatched requests are the calling Session's entries that no Stub answ
         "stub": Json::null(),
         "nearMiss": {
           "stub": "get-order",
+          "stubSource": "file",
           "failed": [
             {
               "condition": "path",

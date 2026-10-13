@@ -260,6 +260,12 @@ and what the request sent. A test lists its Session's unmatched requests
 with `GET /v1/journal/unmatched`
 ([README](../README.md#verifying-calls-and-unmatched-requests)).
 
+What the request sent is shown as text. A body that is not valid UTF-8 is
+shown with U+FFFD in place of each sequence that is not, so a failed exact
+`body` condition can show an expected and an actual value that look the
+same. The Journal entry itself keeps the body's bytes, in base64, up to
+`--journal-body-limit`.
+
 ### Turning the Journal off for a Mock
 
 smock records every request a Mock answers in the Journal, unless the Mock
@@ -270,9 +276,13 @@ off, so that recording costs nothing:
 { "mocks": [{ "name": "load-target", "hosts": ["api.example.com"], "journal": false }] }
 ```
 
-A Journal query whose filter names such a Mock is refused with
-`journal_off`, rather than answered with no entries. `--journal off`
-turns the Journal off for every Mock.
+A Journal query or verification whose filter names such a Mock is refused
+with `journal_off`, rather than answered with no entries. Only such a
+filter is refused: a filter that names no Mock is answered from the
+requests that were recorded, which leave out this Mock's, and the
+unmatched requests leave them out too. `--journal off` turns the Journal
+off for every Mock, and then every query, verification and list of
+unmatched requests is refused.
 
 ## Responses
 
@@ -316,9 +326,9 @@ Instead of a body, a response can stream `events`, to mock a streaming API:
 }
 ```
 
-smock sends the status and the headers at once, with
-`Content-Type: text/event-stream` unless the Stub gives its own
-`Content-Type`. Then, for each event, it waits the event's `delay` (in
+smock sends the status and the headers at once, always with
+`Content-Type: text/event-stream`: a `Content-Type` the Stub gives is
+replaced. Then, for each event, it waits the event's `delay` (in
 milliseconds, counted from the previous event or, for the first one, from
 the headers; 0 by default) and writes the event:
 

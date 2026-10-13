@@ -4,7 +4,7 @@
     "title": "smock Admin API",
     "version": "1",
     "summary": "Inspect and change a running smock: Ephemeral Stubs, the Journal, verification, rendering and status.",
-    "description": "The Admin API is JSON over HTTP/1.1 on smock's admin port (`--admin-port`, 9090 by default), separate from the plain and TLS ports.\n\n- **Authentication.** Every operation needs `Authorization: Bearer <token>`. smock reads the token from the file named by `--admin-token-file` (`SMOCK_ADMIN_TOKEN_FILE`) or from the environment variable `SMOCK_ADMIN_TOKEN`, and refuses to start when authentication is on and neither gives a token. A missing or wrong token gets 401 with `WWW-Authenticate: Bearer`. `--admin-auth off` (`SMOCK_ADMIN_AUTH=off`) turns authentication off for local use; then no operation needs a token. The probes (`/startupz`, `/readyz`, `/livez`) and `/metrics` never need one.\n- **Replicas.** Every response, errors included, names the replica that handled it in the `Smock-Replica` header: the Pod's hostname, or the host name outside Kubernetes. Replicas share no state: each one keeps its own Ephemeral Stubs and Journal. When smock is told that its deployment runs more than one replica (`--replicas`, `SMOCK_REPLICAS`, default 1), every JSON response carries a `per_replica_state` warning.\n- **Warnings.** Every JSON response, errors included, has a `warnings` array, empty when there is nothing to warn about.\n- **Errors.** Every error is a JSON object `{error, message, warnings}`: `error` is a code from the ErrorCode schema and `message` says what went wrong. A request for a path this document does not list gets 404 with `not_found`; a method a path does not support gets 405 with `method_not_allowed` and an `Allow` header. Request bodies are JSON: a body that is not valid JSON gets 400 with `malformed_json`. Requests over the size limits of `smock serve` (`--header-size-limit`, `--header-count-limit`, `--body-limit`) get 431 or 413 in the same form, and the connection closes.\n- **Sessions.** Session-scoped operations name their Session the way mocked requests do: by default the `smock-session` member of the W3C `baggage` header. The header and the member are `smock serve` settings. Without a Session, an operation acts on the no-Session space: the requests and Ephemeral Stubs that carry no Session.\n- **Mocks** come only from Definition files. The Admin API adds Ephemeral Stubs to existing Mocks.",
+    "description": "The Admin API is JSON over HTTP/1.1 on smock's admin port (`--admin-port`, 9090 by default), separate from the plain and TLS ports.\n\n- **Authentication.** Every operation needs `Authorization: Bearer <token>`. smock reads the token from the file named by `--admin-token-file` (`SMOCK_ADMIN_TOKEN_FILE`) or from the environment variable `SMOCK_ADMIN_TOKEN`, and refuses to start when authentication is on and neither gives a token, or when both the file and the variable are set. A missing or wrong token gets 401 with `WWW-Authenticate: Bearer`. `--admin-auth off` (`SMOCK_ADMIN_AUTH=off`) turns authentication off for local use; then no operation needs a token. The probes (`/startupz`, `/readyz`, `/livez`) and `/metrics` never need one.\n- **Replicas.** Every response, errors included, names the replica that handled it in the `Smock-Replica` header: the Pod's hostname, or the host name outside Kubernetes. Replicas share no state: each one keeps its own Ephemeral Stubs and Journal. When smock is told that its deployment runs more than one replica (`--replicas`, `SMOCK_REPLICAS`, default 1), every JSON response carries a `per_replica_state` warning.\n- **Warnings.** Every JSON response, errors included, has a `warnings` array, empty when there is nothing to warn about.\n- **Errors.** Every error is a JSON object `{error, message, warnings}`: `error` is a code from the ErrorCode schema and `message` says what went wrong. A request for a path this document does not list gets 404 with `not_found`; a method a path does not support gets 405 with `method_not_allowed` and an `Allow` header. Request bodies are JSON: a body that is not valid JSON gets 400 with `malformed_json`. Requests over the size limits of `smock serve` (`--header-size-limit`, `--header-count-limit`, `--body-limit`) get 431 or 413 in the same form, and the connection closes.\n- **Sessions.** Session-scoped operations name their Session the way mocked requests do: by default the `smock-session` member of the W3C `baggage` header. The header and the member are `smock serve` settings. Without a Session, an operation acts on the no-Session space: the requests and Ephemeral Stubs that carry no Session.\n- **Mocks** come only from Definition files. The Admin API adds Ephemeral Stubs to existing Mocks.",
     "license": {
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
@@ -295,7 +295,7 @@
         "operationId": "queryJournal",
         "tags": ["Journal"],
         "summary": "Query the calling Session's Journal entries",
-        "description": "The calling Session's entries that pass the filter, oldest first, at most `limit` of them. A request is in the Journal as soon as its client has received the whole response.",
+        "description": "The calling Session's entries that pass the filter, oldest first, after the entry whose sequence number `after` gives, at most `limit` of them. A request is in the Journal as soon as its client has received the whole response. A filter that names a Mock whose Journal is off gets `journal_off`; a filter that names no Mock leaves out the requests of such Mocks, since none of them were recorded.",
         "requestBody": {
           "required": true,
           "content": {
@@ -347,7 +347,7 @@
         "operationId": "verifyJournal",
         "tags": ["Journal"],
         "summary": "Verify how many of the calling Session's requests pass a filter",
-        "description": "Counts the calling Session's Journal entries that pass the filter and checks the count: exactly, at least or at most N. Verification never trusts a count that may be wrong: when the Journal bound has evicted any of the Session's entries, `exactly` and `atMost` fail with reason `evicted`, whatever the count. `atLeast` is still decided by the count, because eviction can only lower it.",
+        "description": "Counts the calling Session's Journal entries that pass the filter and checks the count: exactly, at least or at most N. Verification never trusts a count that may be wrong: when the Journal bound has evicted any of the Session's entries, `exactly` and `atMost` fail with reason `evicted`, whatever the count. `atLeast` is still decided by the count, because eviction can only lower it. As with a query, a filter that names a Mock whose Journal is off gets `journal_off`, and a filter that names no Mock counts only the requests that were recorded, so none of such a Mock's.",
         "requestBody": {
           "required": true,
           "content": {
@@ -399,10 +399,13 @@
         "operationId": "listUnmatched",
         "tags": ["Journal"],
         "summary": "List the calling Session's unmatched requests with their Near misses",
-        "description": "The calling Session's Journal entries that no Stub answered, oldest first, at most `limit` of them. Each carries its full Near miss, when there was a candidate Stub. A request for a Host that no Mock lists, with no Default Mock, is among them with no Mock and no Near miss.",
+        "description": "The calling Session's Journal entries that no Stub answered, oldest first, after the entry whose sequence number `after` gives, at most `limit` of them. Each carries its full Near miss, when there was a candidate Stub. A request for a Host that no Mock lists, with no Default Mock, is among them with no Mock and no Near miss. The unmatched requests of a Mock whose Journal is off were not recorded, so they are not among them; only `--journal off` gets `journal_off` here.",
         "parameters": [
           {
             "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/After"
           }
         ],
         "responses": {
@@ -672,6 +675,15 @@
         "schema": {
           "$ref": "#/components/schemas/Limit"
         }
+      },
+      "After": {
+        "name": "after",
+        "in": "query",
+        "required": false,
+        "description": "Only entries after the one with this sequence number (`seq`): to fetch the next page, the `seq` of the last entry of the page before. Without it, the entries start from the oldest.",
+        "schema": {
+          "$ref": "#/components/schemas/After"
+        }
       }
     },
     "responses": {
@@ -739,7 +751,7 @@
         }
       },
       "JournalOff": {
-        "description": "The Journal is off globally, or for a Mock the request touches (`journal_off`), so there is no count or entry to trust.",
+        "description": "The Journal is off (`journal_off`), so there is no count or entry to trust: globally (`--journal off`), or for the Mock that the filter of a query or a verification names (`\"journal\": false` in the Definition files). Only a filter that names such a Mock is refused: a filter that names no Mock is answered from the requests that were recorded, which leave out those of Mocks whose Journal is off.",
         "headers": {
           "Smock-Replica": {
             "$ref": "#/components/headers/Smock-Replica"
@@ -827,7 +839,7 @@
         "additionalProperties": false
       },
       "ErrorCode": {
-        "description": "What kind of error it is:\n\n- `unauthorized` (401): no bearer token, or the wrong one.\n- `not_found` (404): no operation at this path.\n- `method_not_allowed` (405): the path does not take this method.\n- `malformed_json` (400): the body is not valid JSON.\n- `invalid_request` (400): the body or a parameter does not have the shape the operation takes.\n- `invalid_stub` (400): an Ephemeral Stub is not valid; the message is the one `smock check` gives.\n- `unknown_mock` (404): no Mock has this name.\n- `unknown_stub` (404): no Stub has this ID, or the calling Session has no Ephemeral Stub with it.\n- `journal_off` (409): the Journal is off for what the request touches.\n- `not_started` (503): the first definition set has not loaded yet.\n- `not_ready` (503): smock is not ready to serve, such as while it drains after SIGTERM.\n- `bad_request` (400): the HTTP request itself is malformed.\n- `content_too_large` (413): the body is over `--body-limit`.\n- `header_fields_too_large` (431): the request head is over `--header-size-limit` or `--header-count-limit`.\n- `not_implemented` (501): this build does not implement the operation, or the request uses a transfer coding other than chunked.\n- `http_version_not_supported` (505): the request is not HTTP/1.x.",
+        "description": "What kind of error it is:\n\n- `unauthorized` (401): no bearer token, or the wrong one.\n- `not_found` (404): no operation at this path.\n- `method_not_allowed` (405): the path does not take this method.\n- `malformed_json` (400): the body is not valid JSON.\n- `invalid_request` (400): the body or a parameter does not have the shape the operation takes.\n- `invalid_stub` (400): an Ephemeral Stub is not valid; the message is the one `smock check` gives.\n- `unknown_mock` (404): no Mock has this name.\n- `unknown_stub` (404): no Stub has this ID, or the calling Session has no Ephemeral Stub with it.\n- `journal_off` (409): the Journal is off globally, or for the Mock that the request's filter names.\n- `not_started` (503): the first definition set has not loaded yet.\n- `not_ready` (503): smock is not ready to serve, such as while it drains after SIGTERM.\n- `bad_request` (400): the HTTP request itself is malformed.\n- `content_too_large` (413): the body is over `--body-limit`.\n- `header_fields_too_large` (431): the request head is over `--header-size-limit` or `--header-count-limit`.\n- `not_implemented` (501): this build does not implement the operation, or the request uses a transfer coding other than chunked.\n- `http_version_not_supported` (505): the request is not HTTP/1.x.",
         "enum": [
           "unauthorized",
           "not_found",
@@ -1062,7 +1074,7 @@
             "type": "object",
             "properties": {
               "scope": {
-                "description": "Every Session's Ephemeral Stubs and Journal entries of one Mock.",
+                "description": "Every Session's Ephemeral Stubs and Journal entries of one Mock. The eviction counts, which are per Session, stay.",
                 "const": "mock"
               },
               "mock": {
@@ -1128,12 +1140,18 @@
         "maximum": 10000,
         "default": 100
       },
+      "After": {
+        "description": "Only entries after the one with this sequence number: to fetch the next page, the `seq` of the last entry of the page before. 0, like no value, starts from the oldest entry.",
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
       "JournalFilter": {
         "description": "Which Journal entries to take. Every condition given must hold; an omitted one passes every entry. Method, path and headers have the semantics of Stub conditions.",
         "type": "object",
         "properties": {
           "mock": {
-            "description": "Only entries of this Mock. It may name a Mock the definitions served no longer declare: the entries it recorded before a reload removed it remain.",
+            "description": "Only entries of this Mock. It may name a Mock the definitions served no longer declare: the entries it recorded before a reload removed it remain. A Mock of the served definitions whose Journal is off gets `journal_off`.",
             "type": "string",
             "minLength": 1
           },
@@ -1168,6 +1186,9 @@
           },
           "limit": {
             "$ref": "#/components/schemas/Limit"
+          },
+          "after": {
+            "$ref": "#/components/schemas/After"
           }
         },
         "additionalProperties": false
@@ -1184,11 +1205,11 @@
             }
           },
           "more": {
-            "description": "Whether more entries passed than `limit` let through. The next ones can be fetched with a `since` after the last entry's `receivedAt`.",
+            "description": "Whether more entries passed than `limit` let through. The next page is fetched with `after` set to the `seq` of this page's last entry, with the same filter: it loses no entry and repeats none, even among entries received in the same millisecond.",
             "type": "boolean"
           },
           "evicted": {
-            "description": "How many of the calling Session's entries the Journal bound has evicted since its last reset. Results may be missing that many entries.",
+            "description": "How many of the calling Session's entries the Journal bound has evicted since the last reset of that Session or of everything (a reset of one Mock keeps the count). Results may be missing that many entries. Each Session's count is kept until then, so the counts grow with the number of Sessions whose entries were evicted.",
             "type": "integer",
             "minimum": 0
           },
@@ -1203,6 +1224,12 @@
         "description": "One request smock received, and how it answered.",
         "type": "object",
         "properties": {
+          "seq": {
+            "description": "The entry's sequence number: 1 for the first entry the replica recorded, then one more for each entry after it, whatever its Session. Entries come in this order; numbers are never reused, and the numbers between two entries of a page belong to entries of other Sessions, entries the filter left out, or entries evicted or reset. A page resumes after it with `after`.",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
           "receivedAt": {
             "description": "When the request was received.",
             "type": "string",
@@ -1238,8 +1265,12 @@
             "$ref": "#/components/schemas/RecordedRequest"
           },
           "stub": {
-            "description": "The ID of the Stub that answered, or null when none matched. Ephemeral Stubs have their `eph-<n>` IDs.",
+            "description": "The ID of the Stub that answered, or null when none matched. Ephemeral Stubs have their `eph-<n>` IDs, which a Stub from a Definition file may also have: `stubSource` tells them apart.",
             "type": ["string", "null"]
+          },
+          "stubSource": {
+            "description": "Where the Stub that answered comes from: `file` for a Stub from a Definition file, `ephemeral` for an Ephemeral Stub. null when none matched.",
+            "enum": ["file", "ephemeral", null]
           },
           "nearMiss": {
             "description": "When no Stub matched and the Mock had candidate Stubs: the Near miss. Otherwise null. The actual value of a failed body condition is truncated as the recorded request body is.",
@@ -1263,7 +1294,7 @@
             "enum": ["reset", "close", "partial", null]
           }
         },
-        "required": ["receivedAt", "durationMs", "session", "host", "mock", "viaDefault", "digest", "request", "stub", "nearMiss", "status", "fault"],
+        "required": ["seq", "receivedAt", "durationMs", "session", "host", "mock", "viaDefault", "digest", "request", "stub", "stubSource", "nearMiss", "status", "fault"],
         "additionalProperties": false
       },
       "RecordedRequest": {
@@ -1345,6 +1376,10 @@
             "description": "The Stub's ID.",
             "type": "string"
           },
+          "stubSource": {
+            "description": "Where the Stub comes from: `file` for a Stub from a Definition file, `ephemeral` for an Ephemeral Stub.",
+            "enum": ["file", "ephemeral"]
+          },
           "failed": {
             "description": "The conditions it failed, in the order method, path, query parameters, headers, body.",
             "type": "array",
@@ -1353,7 +1388,7 @@
             }
           }
         },
-        "required": ["stub", "failed"],
+        "required": ["stub", "stubSource", "failed"],
         "additionalProperties": false
       },
       "FailedCondition": {
@@ -1430,7 +1465,7 @@
             "minimum": 0
           },
           "evicted": {
-            "description": "How many of the calling Session's entries the Journal bound has evicted since its last reset.",
+            "description": "How many of the calling Session's entries the Journal bound has evicted since the last reset of that Session or of everything (a reset of one Mock keeps the count).",
             "type": "integer",
             "minimum": 0
           },

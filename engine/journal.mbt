@@ -38,6 +38,12 @@ pub fn JournalSettings::JournalSettings(
 /// One request the engine handled, and how it answered. Its JSON form is
 /// the `JournalEntry` schema of the Admin API document.
 pub struct JournalEntry {
+  /// Its sequence number, which the Journal gives it when it is committed:
+  /// 1 for the first entry the process commits, then one more for each
+  /// entry after it, whatever its Session. The Journal holds its entries in
+  /// this order, so a page can resume after the last entry of the one
+  /// before. 0 until the entry is committed.
+  priv mut seq : Int64
   /// When the request was received, in milliseconds since the Unix epoch.
   received_at : Int64
   /// How long the response took, in milliseconds, from the request being
@@ -61,6 +67,8 @@ pub struct JournalEntry {
   body_size : Int
   /// The ID of the Stub that matched, if any.
   stub : String?
+  /// Where the Stub that matched comes from, if one did.
+  stub_source : StubSource?
   /// The Near miss, when no Stub matched and the Mock had candidates.
   near_miss : NearMiss?
   /// The response status, or `None` when a connection Fault ended the
@@ -93,6 +101,8 @@ priv struct Journal {
   evicted : Map[String?, Int]
   /// How many entries the bound has evicted since the process started.
   mut evictions : Int64
+  /// The sequence number of the last entry committed, 0 before the first.
+  mut last_seq : Int64
 }
 
 ///|
@@ -103,6 +113,7 @@ fn Journal::new(settings : JournalSettings) -> Journal {
     bytes: 0,
     evicted: Map([]),
     evictions: 0L,
+    last_seq: 0L,
   }
 }
 
@@ -121,7 +132,7 @@ fn Journal::entry(
   session~ : String?,
   host~ : String?,
   resolution~ : Resolution,
-  stub~ : String?,
+  stub~ : (String, StubSource)?,
   near_miss~ : NearMiss?,
   plan~ : ResponsePlan,
   digest~ : String,
@@ -158,6 +169,10 @@ fn Journal::entry(
   for header in request.headers {
     text += header.0.length() + header.1.length()
   }
+  let (stub, stub_source) = match stub {
+    Some((id, source)) => (Some(id), Some(source))
+    None => (None, None)
+  }
   for name in [session, host, mock, stub] {
     text += name.map_or(0, name => name.length())
   }
@@ -170,6 +185,7 @@ fn Journal::entry(
     }
   }
   {
+    seq: 0L,
     received_at: now,
     duration_ms: None,
     session,
@@ -180,6 +196,7 @@ fn Journal::entry(
     request: { ..request, body, },
     body_size: request.body.length(),
     stub,
+    stub_source,
     near_miss,
     status,
     fault: plan.fault,
@@ -208,6 +225,7 @@ fn truncate(body : Bytes, limit : Int) -> Bytes {
 /// entry must not stay reachable from its old slot, or the Journal would
 /// hold more than its bound says.
 let vacated : JournalEntry = {
+  seq: 0L,
   received_at: 0L,
   duration_ms: None,
   session: None,
@@ -218,6 +236,7 @@ let vacated : JournalEntry = {
   request: { meth: "", target: "", version: "", headers: [], body: b"", },
   body_size: 0,
   stub: None,
+  stub_source: None,
   near_miss: None,
   status: None,
   fault: None,
@@ -225,11 +244,13 @@ let vacated : JournalEntry = {
 }
 
 ///|
-/// Appends `entry`, then evicts the oldest entries while the Journal is
-/// over either of its bounds, counting them per Session. An entry that
-/// alone takes more bytes than the bound is evicted at once instead, and
-/// the entries before it stay.
+/// Gives `entry` the next sequence number and appends it, then evicts the
+/// oldest entries while the Journal is over either of its bounds, counting
+/// them per Session. An entry that alone takes more bytes than the bound is
+/// evicted at once instead, and the entries before it stay.
 fn Journal::append(self : Journal, entry : JournalEntry) -> Unit {
+  self.last_seq += 1L
+  entry.seq = self.last_seq
   if entry.size > self.settings.max_bytes {
     self.count_eviction(entry)
     return
@@ -468,13 +489,22 @@ fn no_conditions() -> @definitions.Conditions {
 }
 
 ///|
-/// A Journal query: the filter, and the most entries to return. Its JSON
-/// form is the `JournalQuery` schema of the Admin API document.
+/// A Journal query: the filter, the most entries to return, and the
+/// sequence number of the entry to resume after. Its JSON form is the
+/// `JournalQuery` schema of the Admin API document.
 pub(all) struct JournalQuery {
   filter : JournalFilter
   /// The most entries to return.
   limit : Int
+  /// Only entries after the one with this sequence number: the last entry
+  /// of the page before. `None` starts from the oldest entry.
+  after : Int64?
 }
+
+///|
+/// The largest sequence number a query takes: the largest integer a JSON
+/// number holds exactly, 2^53 - 1.
+let max_seq : Int64 = 9_007_199_254_740_991L
 
 ///|
 /// The default limit of a query.
@@ -482,8 +512,9 @@ let default_limit : Int = 100
 
 ///|
 /// Reads a query from its JSON form, the `JournalQuery` schema: an object
-/// with an optional `filter`, as `JournalFilter::from_json` reads it, and
-/// an optional `limit`, an integer from 1 to 10,000, by default 100.
+/// with an optional `filter`, as `JournalFilter::from_json` reads it, an
+/// optional `limit`, an integer from 1 to 10,000, by default 100, and an
+/// optional `after`, a sequence number from 0 to 2^53 - 1.
 ///
 /// Raises `InvalidQuery` with every problem, each with a JSON Pointer into
 /// `json`.
@@ -496,6 +527,7 @@ pub fn JournalQuery::from_json(json : Json) -> JournalQuery raise InvalidQuery {
   }
   let mut filter = None
   let mut limit = default_limit
+  let mut after = None
   for name, value in members {
     let pointer = @definitions.child_pointer("", name)
     match name {
@@ -511,6 +543,18 @@ pub fn JournalQuery::from_json(json : Json) -> JournalQuery raise InvalidQuery {
               message: "must be an integer from 1 to 10000",
             })
         }
+      "after" =>
+        match value {
+          Number(n, ..) if n == n.floor() &&
+            n >= 0.0 &&
+            n <= max_seq.to_double() => after = Some(n.to_int64())
+          _ =>
+            problems.push({
+              file: "",
+              pointer,
+              message: "must be an integer from 0 to \{max_seq}",
+            })
+        }
       _ =>
         problems.push({ file: "", pointer, message: "is not a known field", })
     }
@@ -518,7 +562,7 @@ pub fn JournalQuery::from_json(json : Json) -> JournalQuery raise InvalidQuery {
   if problems.length() > 0 {
     raise InvalidQuery(problems)
   }
-  { filter: filter.unwrap_or_else(every_entry), limit, }
+  { filter: filter.unwrap_or_else(every_entry), limit, after, }
 }
 
 ///|
@@ -526,7 +570,8 @@ pub fn JournalQuery::from_json(json : Json) -> JournalQuery raise InvalidQuery {
 /// `JournalPage` schema of the Admin API document, without `warnings`.
 pub struct JournalPage {
   entries : Array[JournalEntry]
-  /// Whether more entries passed than the limit let through.
+  /// Whether more entries passed than the limit let through: the next page
+  /// starts after the last entry of this one.
   more : Bool
   /// How many of the Session's entries the bound has evicted since its
   /// last reset.
@@ -535,7 +580,8 @@ pub struct JournalPage {
 
 ///|
 /// The entries of `session`, or of the no-Session space for `None`, that
-/// pass the query's filter, oldest first, at most the query's limit of
+/// pass the query's filter, oldest first, after the entry whose sequence
+/// number the query gives, if it gives one, at most the query's limit of
 /// them, with how many of that Session's entries the bound evicted.
 ///
 /// Raises `JournalOff` while the Journal is off globally, or when the
@@ -548,13 +594,16 @@ pub fn Engine::query_journal(
   session~ : String?,
 ) -> JournalPage raise AdminError {
   self.check_journal(query.filter)
-  self.journal.page(session, query.limit, entry => query.filter.passes(entry))
+  self.journal.page(session, query.limit, after=query.after, entry => {
+    query.filter.passes(entry)
+  })
 }
 
 ///|
 /// The entries of `session`, or of the no-Session space for `None`, that no
-/// Stub answered, oldest first, at most `limit` of them, with how many of
-/// that Session's entries the bound evicted. Each carries its full Near
+/// Stub answered, oldest first, after the entry with the sequence number
+/// `after`, if given, at most `limit` of them, with how many of that
+/// Session's entries the bound evicted. Each carries its full Near
 /// miss, when its Mock had candidate Stubs. A request for a Host that no
 /// Mock lists, with no Default Mock, is among them with no Mock and no Near
 /// miss.
@@ -565,25 +614,28 @@ pub fn Engine::unmatched(
   self : Engine,
   session~ : String?,
   limit? : Int = default_limit,
+  after? : Int64,
 ) -> JournalPage raise AdminError {
   self.check_journal(every_entry())
-  self.journal.page(session, limit, entry => entry.stub is None)
+  self.journal.page(session, limit, after~, entry => entry.stub is None)
 }
 
 ///|
-/// The entries of `session` for which `takes` holds, oldest first, at most
-/// `limit` of them, with how many of that Session's entries the bound
-/// evicted.
+/// The entries of `session` for which `takes` holds, oldest first, after
+/// the entry with the sequence number `after`, if given, at most `limit` of
+/// them, with how many of that Session's entries the bound evicted.
 fn Journal::page(
   self : Journal,
   session : String?,
   limit : Int,
+  after~ : Int64?,
   takes : (JournalEntry) -> Bool,
 ) -> JournalPage {
   let entries = []
   let mut more = false
+  let after = after.unwrap_or(0L)
   for entry in self.entries {
-    if entry.session != session || !takes(entry) {
+    if entry.seq <= after || entry.session != session || !takes(entry) {
       continue
     }
     if entries.length() >= limit {
@@ -628,6 +680,7 @@ pub impl ToJson for JournalEntry with fn to_json(self) {
     value.map_or(Json::null(), value => Json::string(value))
   }
   {
+    "seq": Json::number(self.seq.to_double()),
     "receivedAt": Json::string(@log.format_time(self.received_at)),
     "durationMs": self.duration_ms.map_or(Json::null(), ms => {
       Json::number(ms.to_double())
@@ -650,6 +703,7 @@ pub impl ToJson for JournalEntry with fn to_json(self) {
       "body": body_json(self.request.body, size=self.body_size),
     },
     "stub": optional(self.stub),
+    "stubSource": optional(self.stub_source.map(source => source.name())),
     "nearMiss": self.near_miss.map_or(Json::null(), near_miss => {
       ToJson::to_json(near_miss)
     }),

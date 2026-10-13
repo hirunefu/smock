@@ -106,7 +106,8 @@ fn verify_journal(admin : Admin, call : Call) -> Reply {
 
 ///|
 /// Lists the calling Session's Journal entries that no Stub answered,
-/// oldest first, each with its Near miss, at most as many as the `limit`
+/// oldest first, each with its Near miss, after the entry whose sequence
+/// number the `after` query parameter gives, at most as many as the `limit`
 /// query parameter says.
 fn list_unmatched(admin : Admin, call : Call) -> Reply {
   let session = admin.session(call.request)
@@ -125,10 +126,46 @@ fn list_unmatched(admin : Admin, call : Call) -> Reply {
           )
       }
   }
-  let page = admin.engine().unmatched(session~, limit?) catch {
+  let after = match query_parameter(call.request.target, "after") {
+    Err(message) => return invalid(message)
+    Ok(None) => None
+    Ok(Some(text)) =>
+      match parse_after(text) {
+        Some(after) => Some(after)
+        None =>
+          return invalid(
+            "the after query parameter must be an integer from 0 to \{max_after}",
+          )
+      }
+  }
+  let page = admin.engine().unmatched(session~, limit?, after?) catch {
       error => return admin.refused(error, session)
     }
   admin.result(page)
+}
+
+///|
+/// The largest sequence number `after` takes: 2^53 - 1, the largest
+/// integer a JSON number holds exactly.
+let max_after : Int64 = 9_007_199_254_740_991L
+
+///|
+/// The sequence number `text` gives: a decimal integer from 0 to 2^53 - 1,
+/// without a sign, prefix or separator. `None` when it is not one.
+fn parse_after(text : String) -> Int64? {
+  if text == "" ||
+    text.length() > 16 ||
+    !text.iter().all(c => c >= '0' && c <= '9') {
+    return None
+  }
+  let n = text.fold(init=0L, (n, c) => {
+    n * 10L + (c.to_int() - '0'.to_int()).to_int64()
+  })
+  if n <= max_after {
+    Some(n)
+  } else {
+    None
+  }
 }
 
 ///|

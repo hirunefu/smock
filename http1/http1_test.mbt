@@ -253,6 +253,11 @@ fn first_verdict(stream : String) -> String {
 
 ///|
 test "a request target in one of the four forms of RFC 9112 is accepted; any other target, or one with a fragment, gets 400" {
+  // Sent with OPTIONS, which takes every form but authority-form, which is
+  // sent with CONNECT.
+  let authority_form = [
+    "a.example:443", "127.0.0.1:8080", "[::1]:80", "[v1.x]:80",
+  ]
   let targets = [
     // origin-form, absolute-form, authority-form and asterisk-form
     "/", "/users/1?x=y", "/a|b^c", "http://a.example", "http://a.example:8080/x?y",
@@ -264,7 +269,12 @@ test "a request target in one of the four forms of RFC 9112 is accepted; any oth
   inspect(
     targets
     .map(target => {
-      "\{target} -> \{first_verdict("OPTIONS \{target} HTTP/1.1\r\nHost: a\r\n\r\n")}"
+      let meth = if authority_form.contains(target) {
+        "CONNECT"
+      } else {
+        "OPTIONS"
+      }
+      "\{target} -> \{first_verdict("\{meth} \{target} HTTP/1.1\r\nHost: a\r\n\r\n")}"
     })
     .join("\n"),
     content=(
@@ -293,6 +303,62 @@ test "a request target in one of the four forms of RFC 9112 is accepted; any oth
       #|/#frag -> invalid 400
       #|/a?x# -> invalid 400
       #|http://a.example/#x -> invalid 400
+    ),
+  )
+}
+
+///|
+test "asterisk-form is only for OPTIONS and authority-form only for CONNECT, which takes no other form; a target in the wrong form gets 400" {
+  let requests = [
+    ("OPTIONS", "*"),
+    ("GET", "*"),
+    ("POST", "*"),
+    ("CONNECT", "*"),
+    ("options", "*"),
+    ("CONNECT", "a.example:443"),
+    ("CONNECT", "127.0.0.1:8080"),
+    ("CONNECT", "[::1]:80"),
+    ("GET", "a.example:443"),
+    ("OPTIONS", "a.example:443"),
+    ("GET", "127.0.0.1:80"),
+    ("POST", "[::1]:80"),
+    ("connect", "a.example:443"),
+    ("CONNECT", "/"),
+    ("CONNECT", "http://a.example:443/"),
+    ("CONNECT", "a.example"),
+    ("GET", "/"),
+    ("OPTIONS", "/"),
+    ("GET", "http://a.example/"),
+    ("GET", "urn:a"),
+  ]
+  inspect(
+    requests
+    .map(request => {
+      let (meth, target) = request
+      "\{meth} \{target} -> \{first_verdict("\{meth} \{target} HTTP/1.1\r\nHost: a\r\n\r\n")}"
+    })
+    .join("\n"),
+    content=(
+      #|OPTIONS * -> accepted
+      #|GET * -> invalid 400
+      #|POST * -> invalid 400
+      #|CONNECT * -> invalid 400
+      #|options * -> invalid 400
+      #|CONNECT a.example:443 -> accepted
+      #|CONNECT 127.0.0.1:8080 -> accepted
+      #|CONNECT [::1]:80 -> accepted
+      #|GET a.example:443 -> invalid 400
+      #|OPTIONS a.example:443 -> invalid 400
+      #|GET 127.0.0.1:80 -> invalid 400
+      #|POST [::1]:80 -> invalid 400
+      #|connect a.example:443 -> invalid 400
+      #|CONNECT / -> invalid 400
+      #|CONNECT http://a.example:443/ -> invalid 400
+      #|CONNECT a.example -> invalid 400
+      #|GET / -> accepted
+      #|OPTIONS / -> accepted
+      #|GET http://a.example/ -> accepted
+      #|GET urn:a -> accepted
     ),
   )
 }

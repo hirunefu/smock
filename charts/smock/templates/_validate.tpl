@@ -3,9 +3,16 @@ Fails rendering, with a message that says what to change, for values that
 would make a Pod that cannot start or does not do what they ask.
 */}}
 {{- define "smock.validate" -}}
+{{- $sleep := .Values.lifecycle.preStopSleepSeconds -}}
+{{- if not (and (or (kindIs "int64" $sleep) (kindIs "int" $sleep) (kindIs "float64" $sleep))
+  (eq (float64 (int64 $sleep)) (float64 $sleep)) (ge (int64 $sleep) 0)) -}}
+{{- fail (printf "lifecycle.preStopSleepSeconds must be a whole number of seconds, 0 or more, not %s: it is how long Kubernetes sleeps in smock's preStop hook before SIGTERM, and 0 leaves the hook out" (toJson $sleep)) -}}
+{{- end -}}
+{{- /* Kubernetes runs the preStop sleep, then sends SIGTERM, and kills the
+container when the grace period, counted from the start, runs out. */ -}}
 {{- if not (kindIs "invalid" .Values.terminationGracePeriodSeconds) -}}
-{{- if le (mul (int64 .Values.terminationGracePeriodSeconds) 1000) (int64 .Values.drainTimeoutMs) -}}
-{{- fail (printf "terminationGracePeriodSeconds (%s) must be above the drain timeout, drainTimeoutMs (%s ms), or Kubernetes kills smock before it has drained: raise it, or leave it empty for the drain timeout plus 10 s" (include "smock.string" .Values.terminationGracePeriodSeconds) (include "smock.string" .Values.drainTimeoutMs)) -}}
+{{- if le (mul (int64 .Values.terminationGracePeriodSeconds) 1000) (add (mul (int64 $sleep) 1000) (int64 .Values.drainTimeoutMs)) -}}
+{{- fail (printf "terminationGracePeriodSeconds (%s) must be above the preStop sleep, lifecycle.preStopSleepSeconds (%s s), plus the drain timeout, drainTimeoutMs (%s ms), or Kubernetes kills smock before it has drained: raise it, or leave it empty for their sum plus 10 s" (include "smock.string" .Values.terminationGracePeriodSeconds) (include "smock.string" $sleep) (include "smock.string" .Values.drainTimeoutMs)) -}}
 {{- end -}}
 {{- end -}}
 {{- /* The variables the chart sets itself, and the values that set them.

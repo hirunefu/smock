@@ -2,7 +2,8 @@
 /// Runs `smock serve`: listens on the admin port, loads the definitions and
 /// the TLS certificate files, generating a self-signed default certificate
 /// without default files, then listens on the plain and the TLS port, and
-/// serves until SIGTERM, then drains. The plain and TLS ports serve the
+/// serves until SIGTERM, then drains. SIGINT and SIGHUP end the process at
+/// once, without a drain, so that Ctrl-C stops a local smock promptly. The plain and TLS ports serve the
 /// same Mocks; the admin port serves the Admin API and the probes, from
 /// before the definitions load, so that the startup probe can tell that
 /// they have not loaded yet, until the drain ends.
@@ -16,6 +17,9 @@ pub async fn serve(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
 ) -> Int {
+  // Only SIGTERM cancels the program, which starts the drain below. SIGINT
+  // and SIGHUP keep their default action: the process ends at once.
+  @signal.set_global_cancellation_signals([SIGTERM])
   let token = if settings.admin_auth {
     match read_admin_token(settings, logger) {
       Some(token) => Some(token)
@@ -81,12 +85,12 @@ pub async fn serve(
     "listener": "admin",
     "address": Json::string("0.0.0.0:\{admin_listener.addr.port()}"),
   })
-  // The runtime cancels the whole program on SIGTERM, as on SIGINT and
-  // SIGHUP. The watcher below notices that and starts the drain, while the
-  // server runs protected from the cancellation, so that it can drain and
-  // then return its exit status. Catching the cancellation keeps the runtime
-  // from ending the process with the signal, so that it exits with that
-  // status.
+  // The runtime cancels the whole program on SIGTERM, the one cancellation
+  // signal set above. The watcher below notices that and starts the drain,
+  // while the server runs protected from the cancellation, so that it can
+  // drain and then return its exit status. Catching the cancellation keeps
+  // the runtime from ending the process with the signal, so that it exits
+  // with that status.
   let status = Ref(0)
   let _ = @async.handle_cancellation(() => {
     @async.with_task_group(group => {
@@ -166,7 +170,9 @@ async fn run(
               @io.Writer::write(stream, admin.respond(request))
               @http1.keeps_open(request~)
             },
-            reject=status => admin.reject(status),
+            reject=(stream, status, _) => {
+              @io.Writer::write(stream, admin.reject(status))
+            },
           )
         })
       })
@@ -389,7 +395,10 @@ priv struct MockPorts {
 /// written, or once the connection ends before it is, with the time from
 /// the request being read in full to then: for a request pipelined behind
 /// others, its wait behind their responses counts. Nothing is counted
-/// before the response, so counting never holds one back.
+/// before the response, so counting never holds one back. Bytes the codec
+/// rejects count as a request no Mock answered and no Stub matched, timed
+/// from the read that brought them, but they are neither unmatched requests
+/// nor recorded in the Journal: the engine never sees them.
 ///
 /// While smock drains, a response says `Connection: close`, and the
 /// connection closes after it.
@@ -455,7 +464,13 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
       // during it closes its connection too.
       keep_open && !self.lifecycle.is_draining()
     },
-    reject=status => @http1.encode_response(status, [], b"", close=true),
+    reject=(stream, status, stopwatch) => {
+      defer self.traffic.record_rejected(stopwatch.seconds())
+      @io.Writer::write(
+        stream,
+        @http1.encode_response(status, [], b"", close=true),
+      )
+    },
   )
   was_reset.val
 }
@@ -482,16 +497,17 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
 ///   the read that brought its last byte, which may be well before the
 ///   response to a request pipelined after others. While it waits, the
 ///   connection reads nothing, and other connections are served as usual.
-/// - `reject` gives the encoded response, with `Connection: close`, to
-///   bytes that are not a valid request or are over a limit, with the status
-///   the codec chose.
+/// - `reject` writes the response, with `Connection: close`, to bytes that
+///   are not a valid request or are over a limit, with the status the codec
+///   chose. It gets a stopwatch started at the read that brought them, or
+///   that brought the last byte of the requests before them.
 /// - `connection`, when given, is kept told whether the connection is idle,
 ///   so that a drain can close it.
 async fn[S : @io.Reader + @io.Writer] serve_connection(
   stream : S,
   settings : @settings.ServeSettings,
   respond~ : async (S, @http1.Request, Stopwatch) -> Bool,
-  reject~ : (Int) -> Bytes,
+  reject~ : async (S, Int, Stopwatch) -> Unit,
   connection? : Connection,
 ) -> Unit {
   let parser = @http1.Parser(
@@ -552,7 +568,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
         parser.feed(buf.unsafe_reinterpret_as_bytes()[:n])
       }
       Invalid(status~) => {
-        @io.Writer::write(stream, reject(status))
+        reject(stream, status, last_read)
         return
       }
     }

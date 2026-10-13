@@ -61,6 +61,33 @@ pub(all) enum MatchedStub {
 } derive(Debug, Eq)
 
 ///|
+/// Where the Stub comes from.
+pub fn MatchedStub::source(self : MatchedStub) -> StubSource {
+  match self {
+    FromFile(_) => File
+    Ephemeral(_) => Ephemeral
+  }
+}
+
+///|
+/// Where a Stub comes from: a Definition file, or the Admin API as an
+/// Ephemeral Stub. The Journal and the Near miss record it, since a Stub
+/// from a Definition file may have an ID that looks like one smock assigns.
+pub(all) enum StubSource {
+  File
+  Ephemeral
+} derive(Debug, Eq)
+
+///|
+/// The source's name, as the Admin API gives it: `file` or `ephemeral`.
+pub fn StubSource::name(self : StubSource) -> String {
+  match self {
+    File => "file"
+    Ephemeral => "ephemeral"
+  }
+}
+
+///|
 /// Which Mock answered a request, and how the engine chose it.
 pub(all) enum Resolution {
   /// The Mock whose Hosts include the request's Host.
@@ -320,10 +347,14 @@ pub fn Engine::handle(
     (Some(mock), None) => {
       // Only now, when every candidate has failed, are conditions counted.
       let ephemeral = match ephemeral {
-        Some(list) => list.iter().map(e => e.stub)
+        Some(list) => list.iter().map(e => (e.stub, StubSource::Ephemeral))
         None => Iter::empty()
       }
-      let near_miss = incoming.near_miss(ephemeral.concat(mock.stubs.iter()))
+      let near_miss = incoming.near_miss(
+        ephemeral.concat(
+          mock.stubs.iter().map(stub => (stub, StubSource::File)),
+        ),
+      )
       (no_match(mock, near_miss), near_miss)
     }
   }
@@ -331,7 +362,7 @@ pub fn Engine::handle(
   if resolution is ViaDefault(name) {
     plan.headers.push(("Smock-Mock", "\{header_safe(name)}; via=default"))
   }
-  let stub = matched.map(matched => matched.stub.id)
+  let stub = matched.map(matched => (matched.stub.id, matched.source.source()))
   let journal = if self.journal.records(mock) {
     Some(
       self.journal.entry(
@@ -369,21 +400,24 @@ priv struct Match {
 }
 
 ///|
-/// The plan of a Stub's `response`. Server-Sent Events are sent with
-/// `Content-Type: text/event-stream`, unless the Stub gives its own
-/// Content-Type.
+/// The plan of a Stub's `response`. Server-Sent Events are always sent with
+/// `Content-Type: text/event-stream`, which replaces a Content-Type the Stub
+/// gives.
 fn stub_response(response : @definitions.Response) -> ResponsePlan {
   let headers = []
   let body : Body = match response.body {
-    Bytes(bytes) => Bytes(bytes)
+    Bytes(bytes) => {
+      headers.push_iter(response.headers.iter())
+      Bytes(bytes)
+    }
     Events(events) => {
-      if !response.headers.iter().any(h => h.0.to_lower() == "content-type") {
-        headers.push(("Content-Type", "text/event-stream"))
-      }
+      headers.push(("Content-Type", "text/event-stream"))
+      headers.push_iter(
+        response.headers.iter().filter(h => h.0.to_lower() != "content-type"),
+      )
       Events(events)
     }
   }
-  headers.push_iter(response.headers.iter())
   { status: response.status, headers, body, delay_ms: 0, fault: None, }
 }
 

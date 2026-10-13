@@ -120,6 +120,21 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- /*
+          Kubernetes takes a stopping Pod out of its Services' endpoints,
+          but kube-proxy and load balancers notice a moment later. The sleep
+          runs before SIGTERM, so smock keeps accepting the connections that
+          still arrive; only then does it close its listeners and drain. The
+          sleep action needs Kubernetes 1.30 or later. 0 leaves the hook out,
+          since some versions refuse a sleep of 0 s.
+          */}}
+          {{- $sleep := int64 .Values.lifecycle.preStopSleepSeconds }}
+          {{- if gt $sleep 0 }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ $sleep }}
+          {{- end }}
           ports:
             - name: plain
               containerPort: {{ include "smock.string" .Values.ports.plain }}

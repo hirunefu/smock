@@ -15,14 +15,12 @@ server/reset.c"
 reset=server/reset.c
 
 # MoonBit files that bind C functions directly (extern "C"), each with how
-# many bindings it may hold, "*" for any: the OpenSSL bindings, the reset
-# Fault's function, and libc's exit, which cmd/smock binds because neither
-# core nor moonbitlang/async exposes an exit with a status. A binding
-# anywhere else fails, so that no call into C goes unnoticed.
+# many bindings it may hold, "*" for any: the OpenSSL bindings and the reset
+# Fault's function. A binding anywhere else fails, so that no call into C
+# goes unnoticed.
 bindings="openssl/openssl.mbt *
 openssl/client.mbt *
-server/reset.mbt 1
-cmd/smock/main.mbt 1"
+server/reset.mbt 1"
 
 # The C libraries linked, sorted, one per line: OpenSSL's two. prebuild.py
 # names them for moon, because link flags in a library's own moon.pkg do not
