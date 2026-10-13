@@ -567,8 +567,9 @@ header, a path segment past the end, a body path that leads nowhere, or
 `body` when the body is not JSON. A missing value in `${…}` or in `$each` is
 an error unless `??` gives a fallback (`${query.lang ?? 'en'}`,
 `${body.note ?? null}`); a loop over an absent query parameter or header
-runs zero times, and in `$if` a missing value is simply false. A call with a
-missing argument is missing too.
+runs zero times, and in `$if` a missing value is never an error: it is
+false, and it equals no literal (so `query.x != 'a'` holds when `x` is
+absent). A call with a missing argument is missing too.
 
 Type errors are errors as well: a loop over what is not an array,
 `number(x)` of text that is not a JSON number, an object or an array in
