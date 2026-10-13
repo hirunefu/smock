@@ -346,6 +346,39 @@ test "a repeated header matches when any of its values does, whatever the case o
 }
 
 ///|
+test "each header field line is one value: a line that joins values with commas matches only as a whole" {
+  let h = stubs([
+    (
+      #|{ "id": "tagged", "mock": "m", "request": { "headers": { "x-tag": "a" } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "both", "mock": "m", "request": { "headers": { "x-tag": "b, a" } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "listed", "mock": "m",
+      #|  "request": { "headers": { "x-tag": { "pattern": "(.*, )?a(, .*)?" } } },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  inspect(
+    winners(h, [
+      ("GET", "/", [("X-Tag", "b"), ("X-Tag", "a")], ""),
+      ("GET", "/", [("X-Tag", "b, a")], ""),
+      ("GET", "/", [("X-Tag", "a, b")], ""),
+      ("GET", "/", [("X-Tag", "ab, c")], ""),
+    ]),
+    content=(
+      #|GET / [X-Tag: b] [X-Tag: a] -> tagged
+      #|GET / [X-Tag: b, a] -> both
+      #|GET / [X-Tag: a, b] -> listed
+      #|GET / [X-Tag: ab, c] -> none
+    ),
+  )
+}
+
+///|
 test "an exact body condition matches only a body of exactly that text in UTF-8" {
   let h = stubs([
     (

@@ -95,7 +95,10 @@ Stub without `request` matches every request of its Mock.
 Query parameters are decoded as HTML forms encode them: `%20` and `+` both
 stand for a space, so `?q=a+b` meets `"query": { "q": "a b" }`. A parameter
 without `=` has the empty value. When a parameter or a header is repeated,
-the condition holds when any one of its values matches.
+the condition holds when any one of its values matches. Each header field
+line is one value: a client or proxy that joins repeated values into one
+line, such as `X-Tag: b, a`, sends the value `b, a`, which `"X-Tag": "a"`
+does not match; a pattern such as `{ "pattern": "(.*, )?a(, .*)?" }` does.
 
 A `json` condition is a subset match:
 
