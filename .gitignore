@@ -7,3 +7,7 @@ buildinfo/build_info.mbt
 # Written by bench/bench.py run
 bench/results/
 __pycache__/
+
+# Agent skills installed from skills-lock.json; restore them with `npx skills experimental_install`
+/.agents/skills/
+/.claude/skills/
