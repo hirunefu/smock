@@ -515,53 +515,87 @@ async fn Smock::admin(
   headers? : Array[(String, String)] = [],
   body? : String,
 ) -> AdminResponse {
-  let conn = @socket.Tcp::connect(
-    @socket.Addr::parse("127.0.0.1:\{self.admin_port}"),
+  let conn = PlainConn(
+    @socket.Tcp::connect(@socket.Addr::parse("127.0.0.1:\{self.admin_port}")),
   )
   defer conn.close()
-  let request = StringBuilder()
-  request.write_string("\{meth} \{path} HTTP/1.1\r\nHost: localhost\r\n")
-  if token is Some(token) {
-    request.write_string("Authorization: Bearer \{token}\r\n")
+  let authorization = match token {
+    Some(token) => [("Authorization", "Bearer \{token}")]
+    None => []
   }
-  for header in headers {
-    request.write_string("\{header.0}: \{header.1}\r\n")
-  }
-  match body {
-    Some(body) => {
-      let length = @utf8.encode(body).length()
-      request.write_string("Content-Length: \{length}\r\n\r\n\{body}")
-    }
-    None => request.write_string("\r\n")
-  }
-  conn.write(request.to_string())
+  conn.write(
+    raw_request(
+      meth,
+      path,
+      host="localhost",
+      headers=[..authorization, ..headers],
+      body?,
+    ),
+  )
   let response = read_admin_response(conn)
   conforms(meth, path, response)
   response
 }
 
 ///|
-/// Reads one response, framed by its Content-Length.
-async fn read_admin_response(conn : @socket.Tcp) -> AdminResponse {
+/// Reads one response and parses its status and header fields.
+async fn read_admin_response(conn : Conn) -> AdminResponse {
+  guard read_framed(conn) is Some((head, body)) else {
+    fail("the connection closed without a response")
+  }
+  let lines = head.split("\r\n").collect()
+  let status = @string.parse_int(lines[0].split(" ").nth(1).unwrap())
+  let headers = []
+  for line in lines[1:] {
+    guard line.find(":") is Some(colon) else { continue }
+    headers.push((line[:colon].to_owned(), line[colon + 1:].trim().to_owned()))
+  }
+  AdminResponse::{ status, headers, body: @utf8.decode(body), }
+}
+
+///|
+/// A request as raw HTTP/1.1 bytes: the request line, `Host: <host>` when
+/// `host` is given, `headers` in order, then, when `body` is given, its
+/// Content-Length and the body.
+fn raw_request(
+  meth : String,
+  target : String,
+  host? : String,
+  headers? : Array[(String, String)] = [],
+  body? : String,
+) -> String {
+  let out = StringBuilder()
+  out.write_string("\{meth} \{target} HTTP/1.1\r\n")
+  if host is Some(host) {
+    out.write_string("Host: \{host}\r\n")
+  }
+  for header in headers {
+    out.write_string("\{header.0}: \{header.1}\r\n")
+  }
+  match body {
+    Some(body) =>
+      out.write_string(
+        "Content-Length: \{@utf8.encode(body).length()}\r\n\r\n\{body}",
+      )
+    None => out.write_string("\r\n")
+  }
+  out.to_string()
+}
+
+///|
+/// Reads one response, framed by its Content-Length: its head, without the
+/// empty line that ends it, and its body. `None` when the connection ends
+/// first.
+async fn read_framed(conn : Conn) -> (String, Bytes)? {
   let result = @async.with_timeout_opt(patience_ms, () => {
-    guard conn.read_until("\r\n\r\n") is Some(head) else {
-      fail("the connection closed without a response")
-    }
-    let lines = head.split("\r\n").collect()
-    let status = @string.parse_int(lines[0].split(" ").nth(1).unwrap())
-    let headers = []
+    guard conn.read_until("\r\n\r\n") is Some(head) else { return None }
     let mut length = 0
-    for line in lines[1:] {
-      guard line.find(":") is Some(colon) else { continue }
-      let name = line[:colon].to_owned()
-      let value = line[colon + 1:].trim().to_owned()
-      if name.to_lower() == "content-length" {
-        length = @string.parse_int(value)
+    for line in head.split("\r\n") {
+      if line.to_lower().has_prefix("content-length:") {
+        length = @string.parse_int(line["content-length:".length():].trim())
       }
-      headers.push((name, value))
     }
-    let body = @utf8.decode(conn.read_exactly(length))
-    AdminResponse::{ status, headers, body, }
+    Some((head, conn.read_exactly(length)))
   })
   guard result is Some(response) else { fail("no response in time") }
   response
@@ -595,19 +629,11 @@ async fn Smock::connect(self : Smock, over? : Over = Plain) -> Conn {
 /// Reads one response, framed by its Content-Length, and renders it with
 /// `\r\n` shown as `\n`. Returns `"closed"` when the connection ends first.
 async fn read_response(conn : Conn) -> String {
-  let result = @async.with_timeout_opt(patience_ms, () => {
-    guard conn.read_until("\r\n\r\n") is Some(head) else { return "closed" }
-    let mut length = 0
-    for line in head.split("\r\n") {
-      if line.to_lower().has_prefix("content-length:") {
-        length = @string.parse_int(line["content-length:".length():].trim())
-      }
-    }
-    let body = conn.read_exactly(length)
-    head.replace_all(old="\r\n", new="\n") + "\n\n" + @utf8.decode_lossy(body)
-  })
-  guard result is Some(response) else { fail("no response in time") }
-  response
+  match read_framed(conn) {
+    Some((head, body)) =>
+      head.replace_all(old="\r\n", new="\n") + "\n\n" + @utf8.decode_lossy(body)
+    None => "closed"
+  }
 }
 
 ///|

@@ -38,11 +38,12 @@ async fn Smock::journal(
   session? : String,
   query? : String = "{}",
 ) -> (Int, Json) {
-  let headers = match session {
-    Some(session) => [baggage(session)]
-    None => []
-  }
-  let response = self.admin("POST", "/v1/journal/query", headers~, body=query)
+  let response = self.admin(
+    "POST",
+    "/v1/journal/query",
+    headers=session_headers(session),
+    body=query,
+  )
   (response.status, response.json())
 }
 
@@ -83,7 +84,8 @@ fn journal_shown(json : Json) -> Json {
 
 ///|
 /// Sends `<meth> <target>` as raw bytes on a new connection to the plain
-/// port, with `headers` and `body`, and reads the response.
+/// port, with `headers` and `body` and no Host field but the one `headers`
+/// may hold, and reads the response.
 async fn Smock::request(
   self : Smock,
   meth : String,
@@ -93,15 +95,7 @@ async fn Smock::request(
 ) -> String {
   let conn = self.connect()
   defer conn.close()
-  let request = StringBuilder()
-  request.write_string("\{meth} \{target} HTTP/1.1\r\n")
-  for header in headers {
-    request.write_string("\{header.0}: \{header.1}\r\n")
-  }
-  request.write_string(
-    "Content-Length: \{@utf8.encode(body).length()}\r\n\r\n\{body}",
-  )
-  conn.write(request.to_string())
+  conn.write(raw_request(meth, target, headers~, body~))
   read_response(conn)
 }
 

@@ -89,21 +89,13 @@ async fn read_mix() -> Array[MixRequest] {
 /// The request as raw bytes: the request line, `Host`, the mix's headers
 /// and, with a body, its `Content-Length` and the body.
 fn MixRequest::raw(self : MixRequest) -> String {
-  let out = StringBuilder()
-  out.write_string(
-    "\{self.meth} \{self.target} HTTP/1.1\r\nHost: \{self.host}\r\n",
+  raw_request(
+    self.meth,
+    self.target,
+    host=self.host,
+    headers=self.headers,
+    body?=self.body,
   )
-  for header in self.headers {
-    out.write_string("\{header.0}: \{header.1}\r\n")
-  }
-  match self.body {
-    Some(body) =>
-      out.write_string(
-        "Content-Length: \{@utf8.encode(body).length()}\r\n\r\n\{body}",
-      )
-    None => out.write_string("\r\n")
-  }
-  out.to_string()
 }
 
 ///|

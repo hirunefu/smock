@@ -10,6 +10,16 @@ fn baggage(session : String) -> (String, String) {
 }
 
 ///|
+/// The `baggage` header that carries `session`, when it is given; none
+/// without.
+fn session_headers(session : String?) -> Array[(String, String)] {
+  match session {
+    Some(session) => [baggage(session)]
+    None => []
+  }
+}
+
+///|
 /// Calls the Admin API with the test token, as `session` when it is given,
 /// checks the response against the document, and returns its status and
 /// body.
@@ -20,11 +30,7 @@ async fn Smock::call(
   session? : String,
   body? : String,
 ) -> String {
-  let headers = match session {
-    Some(session) => [baggage(session)]
-    None => []
-  }
-  let response = self.admin(meth, path, headers~, body?)
+  let response = self.admin(meth, path, headers=session_headers(session), body?)
   "\{response.status} \{response.body}"
 }
 
@@ -37,11 +43,7 @@ async fn Smock::user(
   session? : String,
   meth? : String = "GET",
 ) -> String {
-  let headers = match session {
-    Some(session) => [baggage(session)]
-    None => []
-  }
-  let response = self.send(meth, "/users/1", headers~)
+  let response = self.send(meth, "/users/1", headers=session_headers(session))
   let lines = response.split("\n").collect()
   let near_miss = lines
     .iter()
