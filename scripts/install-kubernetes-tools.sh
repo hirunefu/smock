@@ -12,6 +12,8 @@ set -eu
 
 helm_version=v4.3.0
 kubectl_version=v1.37.1
+# scripts/test-helm-chart-on-kind.sh pins the node image this kind release
+# was made with: change both together.
 kind_version=v0.33.0
 
 case $(uname -m) in

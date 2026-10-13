@@ -1,0 +1,41 @@
+# The steps every native job takes before it builds smock: build-test.yml,
+# benchmark.yml and release.yml. A job checks out the repository first.
+name: Native build setup
+description: >-
+  Checks that the runner is the machine the job's matrix names, installs
+  OpenSSL and MoonBit, and updates the mooncakes registry index.
+
+inputs:
+  machine:
+    description: "What `uname -m` must print on the runner: x86_64 or aarch64"
+    required: true
+  toolchain:
+    description: "pinned (the version in .moonbit-version) or latest (the latest stable MoonBit)"
+    required: false
+    default: pinned
+
+runs:
+  using: composite
+  steps:
+    - name: Check that the runner is ${{ inputs.machine }}
+      shell: bash
+      env:
+        MACHINE: ${{ inputs.machine }}
+      run: test "$(uname -m)" = "$MACHINE"
+
+    # The native build links OpenSSL, the one C library ADR 0001 allows
+    # (prebuild.py adds -lssl -lcrypto). The TLS tests and the benchmark
+    # also use the openssl command line tool.
+    - name: Install OpenSSL
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libssl-dev openssl
+
+    - name: Install MoonBit (${{ inputs.toolchain }})
+      shell: bash
+      env:
+        TOOLCHAIN: ${{ inputs.toolchain }}
+      run: scripts/install-moonbit.sh "$TOOLCHAIN"
+
+    - name: Update the mooncakes registry index
+      shell: bash
+      run: moon update

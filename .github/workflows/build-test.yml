@@ -33,22 +33,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Check that the runner is ${{ matrix.machine }}
-        run: test "$(uname -m)" = "${{ matrix.machine }}"
-
-      # The native build links OpenSSL, the one C library ADR 0001 allows
-      # (prebuild.py adds -lssl -lcrypto). The TLS tests also use the
-      # openssl command line tool as an independent TLS client.
-      - name: Install OpenSSL
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libssl-dev openssl
-
-      - name: Install MoonBit (${{ inputs.toolchain }})
-        run: scripts/install-moonbit.sh "${{ inputs.toolchain }}"
+      # The runner check, OpenSSL, MoonBit and moon update.
+      - uses: ./.github/actions/native-setup
+        with:
+          machine: ${{ matrix.machine }}
+          toolchain: ${{ inputs.toolchain }}
 
       - run: moon version --all
-
-      - name: Update the mooncakes registry index
-        run: moon update
 
       - name: Check formatting
         if: inputs.toolchain == 'pinned'
