@@ -195,6 +195,27 @@ async test "smock check names the body-file subdirectory as smock serve does, by
 }
 
 ///|
+async test "smock check names the definitions directory as given when the directory itself cannot be read" {
+  let files = [("defs/users.json", users_file), ("users.json", users_file)]
+  with_definitions(files, dir => {
+    @fs.chmod("\{dir}/defs", 0o000)
+    defer @fs.chmod("\{dir}/defs", 0o755)
+    let out = [check(["\{dir}/defs"]), check(["\{dir}/users.json"])]
+    inspect(
+      out.join("---\n").replace_all(old=dir, new="<dir>"),
+      content=(
+        #|status 1
+        #|<dir>/defs: cannot be read: OSError("@fs.readdir(): \"<dir>/defs\": Permission denied")
+        #|---
+        #|status 1
+        #|<dir>/users.json: the definitions directory is not a directory
+        #|
+      ),
+    )
+  })
+}
+
+///|
 async test "smock check needs the definitions directory as its argument" {
   inspect(
     check([]),

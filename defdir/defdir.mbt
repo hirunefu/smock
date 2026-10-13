@@ -28,111 +28,121 @@ pub async fn load(
 ///   files, named relative to it.
 /// - A missing directory gives an empty definition set.
 ///
-/// Problems reading the directory come back as diagnostics, with the file
-/// named relative to `dir`.
+/// Problems reading the directory come back as diagnostics. A problem with
+/// `dir` itself names it as given; a problem with a file or a directory in
+/// it names that relative to `dir`.
 pub async fn read(
   dir : String,
   body_file_dir~ : String,
 ) -> (@definitions.DefinitionSet, Array[@definitions.Diagnostic]) {
-  let diagnostics : Array[@definitions.Diagnostic] = []
+  let reader : DirReader = { root: dir, diagnostics: [], }
   let set : @definitions.DefinitionSet = { files: [], body_files: [], }
   let exists = @fs.exists(dir) catch {
     err => {
-      diagnostics.push({
-        file: dir,
-        pointer: "",
-        message: "cannot be read: \{err}",
-      })
-      return (set, diagnostics)
+      reader.problem("", "cannot be read: \{err}")
+      return (set, reader.diagnostics)
     }
   }
   if !exists {
-    return (set, diagnostics)
+    return (set, reader.diagnostics)
   }
-  if kind(dir) is Some(kind) && !(kind is Directory) {
-    diagnostics.push({
-      file: dir,
-      pointer: "",
-      message: "the definitions directory is not a directory",
-    })
-    return (set, diagnostics)
+  if reader.kind("") is Some(kind) && !(kind is Directory) {
+    reader.problem("", "the definitions directory is not a directory")
+    return (set, reader.diagnostics)
   }
-  for name in visible_entries(dir, "", diagnostics) {
+  for name in reader.visible_entries("") {
     if !(name.has_suffix(".json") ||
       name.has_suffix(".yaml") ||
       name.has_suffix(".yml")) {
       continue
     }
-    if kind("\{dir}/\{name}") is Some(Regular) &&
-      read_file(dir, name, diagnostics) is Some(bytes) {
+    if reader.kind(name) is Some(Regular) &&
+      reader.read_file(name) is Some(bytes) {
       set.files.push((name, bytes))
     }
   }
-  if kind("\{dir}/\{body_file_dir}") is Some(Directory) {
-    read_body_files(
-      dir,
-      body_file_dir,
-      set.body_files,
-      diagnostics,
-      base=body_file_dir,
-      visited=[],
-    )
+  if reader.kind(body_file_dir) is Some(Directory) {
+    reader.read_body_files(body_file_dir, set.body_files, base=body_file_dir, visited=[])
   }
-  (set, diagnostics)
+  (set, reader.diagnostics)
 }
 
 ///|
-/// Reads the regular files under `root/relative` into `out`, recursively,
-/// named relative to `root/base`. Problems name files relative to `root`.
-async fn read_body_files(
-  root : String,
+/// Reading one definitions directory: the directory, as given, and the
+/// problems found so far. Every path it takes is relative to the
+/// directory, and `""` is the directory itself.
+priv struct DirReader {
+  root : String
+  diagnostics : Array[@definitions.Diagnostic]
+}
+
+///|
+/// The path of `relative` on the file system.
+fn DirReader::path(self : DirReader, relative : String) -> String {
+  if relative == "" {
+    self.root
+  } else {
+    "\{self.root}/\{relative}"
+  }
+}
+
+///|
+/// Reports a problem with `relative`, named relative to the directory, or
+/// as given when it is the directory itself.
+fn DirReader::problem(
+  self : DirReader,
+  relative : String,
+  message : String,
+) -> Unit {
+  self.diagnostics.push({
+    file: if relative == "" {
+      self.root
+    } else {
+      relative
+    },
+    pointer: "",
+    message,
+  })
+}
+
+///|
+/// Reads the regular files under `relative` into `out`, recursively, named
+/// relative to `base`.
+async fn DirReader::read_body_files(
+  self : DirReader,
   relative : String,
   out : Array[(String, Bytes)],
-  diagnostics : Array[@definitions.Diagnostic],
   base~ : String,
   visited~ : Array[String],
 ) -> Unit {
-  let dir = if relative == "" { root } else { "\{root}/\{relative}" }
   // A symlink may lead back to a directory read already.
-  let real = @fs.realpath(dir) catch { _ => return }
+  let real = @fs.realpath(self.path(relative)) catch { _ => return }
   if visited.contains(real) {
     return
   }
   visited.push(real)
-  for name in visible_entries(root, relative, diagnostics) {
+  for name in self.visible_entries(relative) {
     let path = if relative == "" { name } else { "\{relative}/\{name}" }
-    match kind("\{root}/\{path}") {
+    match self.kind(path) {
       Some(Regular) =>
-        if read_file(root, path, diagnostics) is Some(bytes) {
+        if self.read_file(path) is Some(bytes) {
           out.push((path[base.length() + 1:].to_owned(), bytes))
         }
-      Some(Directory) =>
-        read_body_files(root, path, out, diagnostics, base~, visited~)
+      Some(Directory) => self.read_body_files(path, out, base~, visited~)
       _ => ()
     }
   }
 }
 
 ///|
-/// The names in `root/relative` that do not start with `.`, in byte-wise
-/// order.
-async fn visible_entries(
-  root : String,
+/// The names in `relative` that do not start with `.`, in byte-wise order.
+async fn DirReader::visible_entries(
+  self : DirReader,
   relative : String,
-  diagnostics : Array[@definitions.Diagnostic],
 ) -> Array[String] {
-  let dir = if relative == "" { root } else { "\{root}/\{relative}" }
-  let names = @fs.readdir(dir) catch {
+  let names = @fs.readdir(self.path(relative)) catch {
     err => {
-      diagnostics.push({
-        file: if relative == "" {
-          "."
-        } else {
-          relative
-        },
-        pointer: "",
-        message: "cannot be read: \{err}",
-      })
+      self.problem(relative, "cannot be read: \{err}")
       return []
     }
   }
@@ -142,10 +152,10 @@ async fn visible_entries(
 }
 
 ///|
-/// The kind of the file at `path`, following symlinks, or `None` when it
-/// cannot be found, such as a symlink to a missing file.
-async fn kind(path : String) -> @fs.FileKind? {
-  try @fs.kind(path) catch {
+/// The kind of the file at `relative`, following symlinks, or `None` when
+/// it cannot be found, such as a symlink to a missing file.
+async fn DirReader::kind(self : DirReader, relative : String) -> @fs.FileKind? {
+  try @fs.kind(self.path(relative)) catch {
     _ => None
   } noraise {
     kind => Some(kind)
@@ -153,18 +163,10 @@ async fn kind(path : String) -> @fs.FileKind? {
 }
 
 ///|
-async fn read_file(
-  root : String,
-  path : String,
-  diagnostics : Array[@definitions.Diagnostic],
-) -> Bytes? {
-  try @fs.read_file("\{root}/\{path}").binary() catch {
+async fn DirReader::read_file(self : DirReader, relative : String) -> Bytes? {
+  try @fs.read_file(self.path(relative)).binary() catch {
     err => {
-      diagnostics.push({
-        file: path,
-        pointer: "",
-        message: "cannot be read: \{err}",
-      })
+      self.problem(relative, "cannot be read: \{err}")
       None
     }
   } noraise {
