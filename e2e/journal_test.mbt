@@ -43,7 +43,6 @@ async fn Smock::journal(
     None => []
   }
   let response = self.admin("POST", "/v1/journal/query", headers~, body=query)
-  conforms("POST", "/v1/journal/query", response)
   (response.status, response.json())
 }
 
@@ -453,7 +452,6 @@ async test "a query that does not have the shape of the document is refused with
         Some("{\"filter\":{\"headers\":{\"X-Id\":{\"pattern\":\"(\"}}}}"),
       ] {
       let response = smock.admin("POST", "/v1/journal/query", body?)
-      conforms("POST", "/v1/journal/query", response)
       out.push("\{response.status} \{response.body}")
     }
     inspect(
@@ -565,7 +563,6 @@ async test "/metrics shows the Journal's entries, bytes and evictions, without l
           ])
         }
         let response = smock.admin("GET", "/metrics")
-        conforms("GET", "/metrics", response)
         let lines = response.body
           .split("\n")
           .filter(line => line.contains("smock_journal_"))

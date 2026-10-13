@@ -42,7 +42,6 @@ async fn Smock::metric(
   help? : Bool = false,
 ) -> String {
   let response = self.admin("GET", "/metrics")
-  conforms("GET", "/metrics", response)
   response.body
   .split("\n")
   .filter(line => {

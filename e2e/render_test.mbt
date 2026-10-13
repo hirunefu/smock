@@ -275,7 +275,6 @@ async fn Smock::render(
   }
   let path = "/v1/stubs/\{@percent.encode(id)}/render\{query}"
   let response = self.admin("POST", path, body?, token~)
-  conforms("POST", path, response)
   response
 }
 

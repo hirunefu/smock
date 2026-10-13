@@ -25,7 +25,6 @@ async fn Smock::call(
     None => []
   }
   let response = self.admin(meth, path, headers~, body?)
-  conforms(meth, path, response)
   "\{response.status} \{response.body}"
 }
 
@@ -72,7 +71,6 @@ async test "over the authenticated Admin API, Ephemeral Stubs are added, listed,
         "without a token",
         {
           let response = smock.admin("GET", stubs, token=None)
-          conforms("GET", stubs, response)
           response.status.to_string()
         },
       )
@@ -208,7 +206,6 @@ async test "an invalid Ephemeral Stub gets 400 invalid_stub with the problems sm
       "/v1/mocks/default/stubs",
       body=invalid_stub,
     )
-    conforms("POST", "/v1/mocks/default/stubs", response)
     guard response.json() is Object(error) &&
       error.get("message") is Some(String(message)) else {
       fail(response.body)
@@ -426,7 +423,6 @@ async test "the Session header and member are settings, by flag or SMOCK_ variab
           headers=context,
           body=ephemeral_user(503, "t1"),
         )
-        conforms("POST", "/v1/mocks/users/stubs", added)
         out.push("\{name}: added \{added.status}")
         for
           request in [

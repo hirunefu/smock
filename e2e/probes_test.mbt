@@ -13,7 +13,6 @@ async fn Smock::probes(self : Smock) -> String {
   let out = []
   for path in probes {
     let response = self.admin("GET", path, token=None)
-    conforms("GET", path, response)
     out.push("\{path}: \{response.status} \{response.body}")
   }
   out.join("\n")
@@ -88,7 +87,6 @@ async fn Smock::startup_state(self : Smock) -> String {
   for path in [..probes, "/v1/status"] {
     let token = if path == "/v1/status" { Some(test_token) } else { None }
     let response = self.admin("GET", path, token~)
-    conforms("GET", path, response)
     let code = match response.json() {
       Object(body) =>
         match body.get("error") {

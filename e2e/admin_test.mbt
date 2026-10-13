@@ -18,7 +18,6 @@ async test "status shows the build smock --version prints, and the Mocks with th
   with_definitions([("mocks.yaml", status_mocks)], dir => {
     let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
       let response = smock.admin("GET", "/v1/status")
-      conforms("GET", "/v1/status", response)
       guard response.json() is Object(status) &&
         status.get("version") is Some(String(version)) &&
         status.get("commit") is Some(String(commit)) &&
@@ -47,7 +46,6 @@ async test "status shows the build smock --version prints, and the Mocks with th
 async test "without Definition files, status shows the one empty Default Mock" {
   let _ = with_smock(["--port", "0"], smock => {
     let response = smock.admin("GET", "/v1/status")
-    conforms("GET", "/v1/status", response)
     guard response.json() is Object(status) else { fail(response.body) }
     json_inspect(status.get("mocks").unwrap_or(Json::null()), content=[
       { "name": "default", "hosts": [], "default": true },
@@ -94,11 +92,9 @@ async test "a missing or wrong bearer token gets 401 with WWW-Authenticate: Bear
     let out = []
     for call in calls {
       let (name, response) = call
-      conforms("GET", "/v1/status", response)
       out.push("\{name}: \{summary(response)}")
     }
     let right = smock.admin("GET", "/v1/status")
-    conforms("GET", "/v1/status", right)
     out.push("the right token: \{right.status}")
     inspect(
       out.join("\n"),
@@ -134,7 +130,6 @@ async test "with --admin-auth off, no operation needs a token, and the startup e
       for call in [("no token", None), ("any token", Some("anything"))] {
         let (name, token) = call
         let response = smock.admin("GET", "/v1/status", token~)
-        conforms("GET", "/v1/status", response)
         out.push("\{name}: \{response.status}")
       }
     },
@@ -286,7 +281,6 @@ async test "errors take the form {error, message, warnings}: a missing token, an
     let out = []
     for call in each_kind(smock)[1:] {
       let (meth, path, response) = call
-      conforms(meth, path, response)
       out.push("\{meth} \{path}: \{summary(response)}")
     }
     inspect(
@@ -316,8 +310,7 @@ async test "with more than one replica, every JSON response, errors included, wa
   let warnings = []
   let _ = with_smock(["--port", "0"], env={ "SMOCK_REPLICAS": "3" }, smock => {
     for call in each_kind(smock) {
-      let (meth, path, response) = call
-      conforms(meth, path, response)
+      let (_, _, response) = call
       guard response.json() is Object(body) && body.get("warnings") is Some(w) else {
         fail("no warnings in \{response.body}")
       }

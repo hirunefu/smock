@@ -7,7 +7,6 @@
 /// The status, checked against the document.
 async fn Smock::status(self : Smock) -> Map[String, Json] {
   let response = self.admin("GET", "/v1/status")
-  conforms("GET", "/v1/status", response)
   guard response.json() is Object(status) else { fail(response.body) }
   status
 }
@@ -175,7 +174,6 @@ fn reload_entries(
 /// The lines of the reload metric.
 async fn Smock::reload_metric(self : Smock) -> String {
   let response = self.admin("GET", "/metrics")
-  conforms("GET", "/metrics", response)
   response.body
   .split("\n")
   .filter(line => line.contains("smock_definition_reloads_total"))

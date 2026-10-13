@@ -436,7 +436,9 @@ async fn Smock::get(self : Smock, path : String) -> String {
 }
 
 ///|
-/// Sends one request to the Admin API and reads the whole response.
+/// Sends one request to the Admin API and reads the whole response. It fails
+/// the test unless the response conforms to the OpenAPI document
+/// (`conforms`), so every Admin API response a test gets is checked.
 ///
 /// - `token` goes in `Authorization: Bearer <token>`; `None` sends no
 ///   Authorization field. The default is the token the harness gives smock.
@@ -470,7 +472,9 @@ async fn Smock::admin(
     None => request.write_string("\r\n")
   }
   conn.write(request.to_string())
-  read_admin_response(conn)
+  let response = read_admin_response(conn)
+  conforms(meth, path, response)
+  response
 }
 
 ///|

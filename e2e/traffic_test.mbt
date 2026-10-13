@@ -7,7 +7,6 @@
 /// document, read as the Prometheus text format.
 async fn Smock::metrics(self : Smock) -> (String, Array[Sample]) {
   let response = self.admin("GET", "/metrics", token=None)
-  conforms("GET", "/metrics", response)
   (response.body, parse_prometheus(response.body))
 }
 
@@ -87,7 +86,6 @@ async test "after a matched request, two Ephemeral Stub matches, an unmatched re
         for path in ["/a", "/b"] {
           let stubs = "/v1/mocks/orders/stubs"
           let response = smock.admin("POST", stubs, body=ephemeral_get(path))
-          conforms("POST", stubs, response)
           out.push("add GET \{path} to orders: \{response.status}")
         }
         for over in [Plain, Tls(certs)] {
