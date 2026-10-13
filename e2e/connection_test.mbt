@@ -59,16 +59,8 @@ fn status_line(response : String) -> String {
 /// after `since` that was and what smock sent until then. A reset ends the
 /// connection too.
 async fn ended(conn : Conn, since : Int64) -> (Int64, String) {
-  let received = StringBuilder()
-  let result = @async.with_timeout_opt(patience_ms, () => {
-    for ;; {
-      let more = conn.read_some() catch { _ => None }
-      guard more is Some(bytes) else { break }
-      received.write_string(@utf8.decode_lossy(bytes))
-    }
-  })
-  guard result is Some(_) else { fail("the connection stayed open") }
-  (@async.now() - since, received.to_string())
+  let (_, end, received) = received_until_end(conn, since)
+  (end, @utf8.decode_lossy(received))
 }
 
 ///|

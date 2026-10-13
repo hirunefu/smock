@@ -645,6 +645,28 @@ async fn closed(conn : Conn) -> Bool {
 }
 
 ///|
+/// Reads `conn` until smock ends it, by a FIN or a reset alike, and returns
+/// when the last bytes came (-1 if none did) and when the end came, in
+/// milliseconds after `since`, and every byte received.
+async fn received_until_end(
+  conn : Conn,
+  since : Int64,
+) -> (Int64, Int64, Bytes) {
+  let received = @buffer.Buffer()
+  let mut last = -1L
+  let result = @async.with_timeout_opt(patience_ms, () => {
+    for ;; {
+      let more = conn.read_some() catch { _ => None }
+      guard more is Some(bytes) else { break }
+      last = @async.now() - since
+      received.write_bytes(bytes)
+    }
+  })
+  guard result is Some(_) else { fail("the connection stayed open") }
+  (last, @async.now() - since, received.to_bytes())
+}
+
+///|
 fn render_response(response : @http.Response, body : String) -> String {
   let out = StringBuilder()
   out.write_string("\{response.code} \{response.reason}\n")
