@@ -476,6 +476,57 @@ async test "read timeout: a request that has begun but has not all arrived withi
 }
 
 ///|
+async test "read timeout: a request pipelined behind a slow response has the read timeout from when that response is written, since smock reads nothing while it writes" {
+  let defs =
+    #|{ "mocks": [{ "name": "users" }],
+    #|  "stubs": [
+    #|    { "id": "slow", "mock": "users", "request": { "path": "/slow" },
+    #|      "response": { "status": 200, "body": "slow" },
+    #|      "fault": { "delay": { "fixed": 600 } } },
+    #|    { "id": "user", "mock": "users", "request": { "path": "/users/1" },
+    #|      "response": { "status": 200, "body": "Alice" } } ] }
+  let stopped = on_both_ports(
+    files=[("users.json", defs)],
+    args=["--read-timeout-ms", "300", "--idle-timeout-ms", "10000"],
+    (smock, over) => {
+      let out = []
+      // The next request begins in the same write as the slow one, and its
+      // rest comes once the slow response, 600 ms later, is in.
+      let rest_later = smock.connect(over~)
+      defer rest_later.close()
+      rest_later.write(
+        "GET /slow HTTP/1.1\r\nHost: localhost\r\n\r\nGET /users/1 HTTP/1.1\r\nHost: local",
+      )
+      out.push("slow: \{status_line(read_response(rest_later))}")
+      rest_later.write("host\r\n\r\n")
+      out.push("pipelined: \{status_line(read_response(rest_later))}")
+      // A rest that never comes still ends the connection, the read timeout
+      // after the slow response (give or take the time it takes to read).
+      let no_rest = smock.connect(over~)
+      defer no_rest.close()
+      no_rest.write(
+        "GET /slow HTTP/1.1\r\nHost: localhost\r\n\r\nGET /users/1 HTTP/1.1\r\nHost: local",
+      )
+      let _ = read_response(no_rest)
+      let since = @async.now()
+      let (elapsed, rest) = ended(no_rest, since)
+      out.push(
+        "no rest: \{rest.escape()}, ended about 300 ms after the slow response: \{elapsed >= 200 && elapsed < 1000}",
+      )
+      inspect(
+        out.join("\n"),
+        content=(
+          #|slow: HTTP/1.1 200 OK
+          #|pipelined: HTTP/1.1 200 OK
+          #|no rest: "", ended about 300 ms after the slow response: true
+        ),
+      )
+    },
+  )
+  inspect(entries(stopped.logs), content=startup_only)
+}
+
+///|
 async test "idle timeout: a connection that receives no request bytes for the idle timeout is closed, whether it is new or kept alive; requests within it keep the connection open" {
   let stopped = on_both_ports(
     files=[("users.json", any_method)],

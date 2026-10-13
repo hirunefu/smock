@@ -467,7 +467,9 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
 /// - the idle timeout, while the connection waits for a request: from when
 ///   it opens, then from each response;
 /// - the read timeout, while a request arrives: from its first byte until
-///   all of it, body included, has arrived.
+///   all of it, body included, has arrived. A request whose first bytes
+///   came before a response was written, as pipelined requests do, has it
+///   from when that response is written, since nothing is read meanwhile.
 ///
 /// It reads and writes only through `stream`, so the same loop serves any
 /// byte stream: a TCP connection, or a TLS session on top of one. Nothing is
@@ -499,7 +501,10 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
   let read_timeout = settings.read_timeout_ms.to_int64()
   let mut idle_deadline = @async.now() + idle_timeout
   let mut read_deadline : Int64? = None
-  let mut last_read = @async.now()
+  // When the bytes not yet parsed began to count against the read timeout:
+  // when they were read, or, for bytes read before a response, when it was
+  // written, since nothing is read while a response is written.
+  let mut read_since = @async.now()
   for ;; {
     match parser.next() {
       Complete(request) => {
@@ -508,13 +513,14 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
         }
         idle_deadline = @async.now() + idle_timeout
         read_deadline = None
+        read_since = @async.now()
       }
       Continue =>
         @io.Writer::write(stream, @http1.encode_response(100, [], b""))
       NeedMore => {
         let deadline = if parser.in_request() {
           // The request began with the bytes of the last read, or earlier.
-          let deadline = read_deadline.unwrap_or(last_read + read_timeout)
+          let deadline = read_deadline.unwrap_or(read_since + read_timeout)
           read_deadline = Some(deadline)
           deadline
         } else {
@@ -535,7 +541,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
           connection.idle = false
         }
         guard read is Some(n) && n > 0 else { return }
-        last_read = @async.now()
+        read_since = @async.now()
         parser.feed(buf.unsafe_reinterpret_as_bytes()[:n])
       }
       Invalid(status~) => {
