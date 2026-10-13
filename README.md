@@ -717,8 +717,8 @@ scripts/check-schema.sh dist/smock   # the JSON Schema and smock agree
 scripts/check-openapi.sh       # the Admin API document is valid OpenAPI 3.1
 docker build --tag smock:dev .
 scripts/smoke-test-image.sh smock:dev 0.0.0-dev <commit> "moonc <version>"   # the container image
-scripts/check-release-workflow.sh    # the release workflow publishes only for tags (needs yq)
-scripts/check-benchmark-workflow.sh  # the benchmark workflow runs only by hand (needs yq)
+scripts/check-release-workflow.sh    # the release workflow publishes only for tags (needs yq and jq)
+scripts/check-benchmark-workflow.sh  # the benchmark workflow runs only by hand (needs yq and jq)
 scripts/test-helm-chart.sh           # rendering tests of the Helm chart (needs helm, yq and jq)
 scripts/test-helm-chart-on-kind.sh smock:dev   # the chart on a kind cluster (needs kind, kubectl and helm)
 ```
