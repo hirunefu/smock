@@ -6,23 +6,7 @@ async fn check(
   args : Array[String],
   env? : Map[String, String] = Map([]),
 ) -> String {
-  build.wait()
-  let result = @async.with_timeout_opt(patience_ms, () => {
-    @process.collect_output(
-      binary,
-      ["check", ..args],
-      extra_env=env,
-      inherit_env=false,
-    )
-  })
-  guard result is Some((status, stdout, stderr)) else {
-    fail("smock check did not exit in time")
-  }
-  let out = "status \{status}\n\{stdout.text()}"
-  match stderr.text() {
-    "" => out
-    err => "\{out}stderr:\n\{err}"
-  }
+  exit_report(smock_output(["check", ..args], env~))
 }
 
 ///|

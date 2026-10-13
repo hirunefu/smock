@@ -92,7 +92,13 @@ struct Smock {
 ///|
 /// Sends smock SIGTERM, which makes it drain and exit.
 async fn Smock::terminate(self : Smock) -> Unit {
-  let _ = @process.run("kill", ["-TERM", self.pid.to_string()])
+  terminate(self.pid)
+}
+
+///|
+/// Sends the process `pid` SIGTERM.
+async fn terminate(pid : Int) -> Unit {
+  let _ = @process.run("kill", ["-TERM", pid.to_string()])
 }
 
 ///|
@@ -264,65 +270,131 @@ async fn with_smock(
   cwd? : String = ".",
   f : async (Smock) -> Unit,
 ) -> Stopped {
-  build.wait()
   @async.with_task_group(group => {
-    let (stderr, stderr_end) = @process.read_from_process()
-    let process = @process.spawn(
-      group,
-      @fs.realpath(binary),
-      ["serve", ..args],
-      extra_env=smock_env(env),
-      inherit_env=false,
-      stderr=stderr_end,
-      cwd~,
-      no_wait=true,
-    )
-    let logs = []
-    let lines : @async.Queue[String?] = @async.Queue(kind=Unbounded)
-    let reader = group.spawn(() => {
-      defer stderr.close()
-      for ;; {
-        let line = stderr.read_until("\n")
-        if line is Some(line) {
-          logs.push(line)
-        }
-        lines.put(line)
-        if line is None {
-          break
-        }
-      }
-    })
-    let ports : Map[String, Int] = Map([])
-    let expected = ["plain", "tls", "admin"]
-    let listening = @async.with_timeout_opt(patience_ms, () => {
-      while !expected.iter().all(listener => ports.contains(listener)) {
-        guard lines.get() is Some(line) else {
-          fail("smock exited before listening:\n\{logs.join("\n")}")
-        }
-        if listening(line) is Some((listener, port)) {
-          ports[listener] = port
-        }
-      }
-    })
-    guard listening is Some(_) else {
-      fail("smock did not listen in time:\n\{logs.join("\n")}")
+    let serving = Serving::start(group, args, env~, cwd~)
+    guard serving.listening_on(["plain", "tls", "admin"]) is Some(ports) else {
+      fail("smock exited before listening:\n\{serving.logs.join("\n")}")
     }
-    f({
-      port: ports.get("plain").unwrap(),
-      tls_port: ports.get("tls").unwrap(),
-      admin_port: ports.get("admin").unwrap(),
-      pid: process.pid,
-      logs,
-      process,
-    })
-    if process.try_wait() is None {
-      let _ = @process.run("kill", ["-TERM", process.pid.to_string()])
-    }
-    let status = @async.with_timeout_opt(patience_ms, () => process.wait())
-    guard status is Some(status) else { fail("smock did not stop in time") }
-    reader.wait()
-    { status, logs, }
+    f(serving.smock(ports))
+    let status = serving.stop()
+    { status, logs: serving.logs, }
   })
+}
+
+///|
+/// A `smock serve` process the harness started, while it runs.
+struct Serving {
+  process : @process.Process
+  /// The log lines it has written so far: they keep coming while it runs.
+  logs : Array[String]
+  /// Each log line as it comes, then `None` once smock has closed stderr,
+  /// which it does when it exits.
+  lines : @async.Queue[String?]
+  /// Reads the log lines, until smock closes stderr.
+  reader : @async.Task[Unit]
+}
+
+///|
+/// Starts `smock serve <args>` in `group`, with only `smock_env(env)` as
+/// its environment, in the working directory `cwd`, and reads its log lines
+/// as they come.
+async fn[X] Serving::start(
+  group : @async.TaskGroup[X],
+  args : Array[String],
+  env? : Map[String, String] = Map([]),
+  cwd? : String = ".",
+) -> Serving {
+  build.wait()
+  let (stderr, stderr_end) = @process.read_from_process()
+  let process = @process.spawn(
+    group,
+    @fs.realpath(binary),
+    ["serve", ..args],
+    extra_env=smock_env(env),
+    inherit_env=false,
+    stderr=stderr_end,
+    cwd~,
+    no_wait=true,
+  )
+  let logs = []
+  let lines : @async.Queue[String?] = @async.Queue(kind=Unbounded)
+  let reader = group.spawn(() => {
+    defer stderr.close()
+    for ;; {
+      let line = stderr.read_until("\n")
+      if line is Some(line) {
+        logs.push(line)
+      }
+      lines.put(line)
+      if line is None {
+        break
+      }
+    }
+  })
+  { process, logs, lines, reader, }
+}
+
+///|
+/// Waits until smock listens on each of `listeners` (`"plain"`, `"tls"`,
+/// `"admin"`) and returns their ports, or `None` when smock exits first.
+async fn Serving::listening_on(
+  self : Serving,
+  listeners : Array[String],
+) -> Map[String, Int]? {
+  let ports : Map[String, Int] = Map([])
+  let listened = @async.with_timeout_opt(patience_ms, () => {
+    for ;; {
+      if listeners.iter().all(listener => ports.contains(listener)) {
+        break true
+      }
+      guard self.lines.get() is Some(line) else { break false }
+      if listening(line) is Some((listener, port)) {
+        ports[listener] = port
+      }
+    }
+  })
+  guard listened is Some(listened) else {
+    fail("smock did not listen in time:\n\{self.logs.join("\n")}")
+  }
+  if listened {
+    Some(ports)
+  } else {
+    None
+  }
+}
+
+///|
+/// The running smock, with the ports it listens on from `ports`; a port it
+/// has not opened yet is 0.
+fn Serving::smock(self : Serving, ports : Map[String, Int]) -> Smock {
+  {
+    port: ports.get("plain").unwrap_or(0),
+    tls_port: ports.get("tls").unwrap_or(0),
+    admin_port: ports.get("admin").unwrap_or(0),
+    pid: self.process.pid,
+    logs: self.logs,
+    process: self.process,
+  }
+}
+
+///|
+/// Waits for smock to exit and for its last log line, and returns its exit
+/// status (minus the signal number when a signal ended it).
+async fn Serving::wait(self : Serving) -> Int {
+  let status = @async.with_timeout_opt(patience_ms, () => self.process.wait())
+  guard status is Some(status) else { fail("smock did not stop in time") }
+  self.reader.wait()
+  status
+}
+
+///|
+/// Stops smock with SIGTERM, unless it has exited, and waits for it as
+/// `wait` does.
+async fn Serving::stop(self : Serving) -> Int {
+  if self.process.try_wait() is None {
+    terminate(self.process.pid)
+  }
+  self.wait()
 }
 
 ///|
@@ -331,35 +403,14 @@ async fn with_smock(
 /// then stopped), or `"exits with status <n>"` when it stops by itself
 /// first.
 async fn serve_verdict(args : Array[String]) -> String {
-  build.wait()
   @async.with_task_group(group => {
-    let (stderr, stderr_end) = @process.read_from_process()
-    defer stderr.close()
-    let process = @process.spawn(
-      group,
-      binary,
-      ["serve", "--port", "0", ..args],
-      extra_env=smock_env(Map([])),
-      inherit_env=false,
-      stderr=stderr_end,
-      no_wait=true,
-    )
-    let verdict = @async.with_timeout_opt(patience_ms, () => {
-      for ;; {
-        guard stderr.read_until("\n") is Some(line) else {
-          break "exits with status \{process.wait()}"
-        }
-        if listening(line) is Some(("plain", _)) {
-          let _ = @process.run("kill", ["-TERM", process.pid.to_string()])
-          let _ = process.wait()
-          break "serves"
-        }
-      }
-    })
-    guard verdict is Some(verdict) else {
-      fail("smock serve neither listened nor stopped in time")
+    let serving = Serving::start(group, ["--port", "0", ..args])
+    if serving.listening_on(["plain"]) is Some(_) {
+      let _ = serving.stop()
+      "serves"
+    } else {
+      "exits with status \{serving.wait()}"
     }
-    verdict
   })
 }
 
@@ -389,20 +440,8 @@ async fn run_smock(
   args : Array[String],
   env? : Map[String, String] = Map([]),
 ) -> Stopped {
-  build.wait()
-  let result = @async.with_timeout_opt(patience_ms, () => {
-    @process.collect_stderr(
-      binary,
-      args,
-      extra_env=smock_env(env),
-      inherit_env=false,
-    )
-  })
-  guard result is Some((status, stderr)) else {
-    fail("smock did not exit in time")
-  }
+  let (status, _, stderr) = smock_output(args, env=smock_env(env))
   let logs = stderr
-    .text()
     .split("\n")
     .filter(line => line != "")
     .map(line => line.to_owned())
@@ -414,14 +453,38 @@ async fn run_smock(
 /// Runs `smock <args>` until it exits, and returns its exit status and what
 /// it wrote to stdout, such as help text.
 async fn smock_stdout(args : Array[String]) -> (Int, String) {
+  let (status, stdout, _) = smock_output(args)
+  (status, stdout)
+}
+
+///|
+/// Runs `smock <args>` with only `env` as its environment until it exits by
+/// itself, and returns its exit status and what it wrote to stdout and to
+/// stderr.
+async fn smock_output(
+  args : Array[String],
+  env? : Map[String, String] = Map([]),
+) -> (Int, String, String) {
   build.wait()
   let result = @async.with_timeout_opt(patience_ms, () => {
-    @process.collect_stdout(binary, args, inherit_env=false)
+    @process.collect_output(binary, args, extra_env=env, inherit_env=false)
   })
-  guard result is Some((status, stdout)) else {
-    fail("smock did not exit in time")
+  guard result is Some((status, stdout, stderr)) else {
+    fail("smock \{args.join(" ")} did not exit in time")
   }
-  (status, stdout.text())
+  (status, stdout.text(), stderr.text())
+}
+
+///|
+/// Renders how a run of smock ended, as `smock_output` returns it: the exit
+/// status, then what smock wrote to stdout and, if anything, to stderr.
+fn exit_report(output : (Int, String, String)) -> String {
+  let (status, stdout, stderr) = output
+  let out = "status \{status}\n\{stdout}"
+  match stderr {
+    "" => out
+    err => "\{out}stderr:\n\{err}"
+  }
 }
 
 ///|
