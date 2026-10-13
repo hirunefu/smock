@@ -346,7 +346,7 @@ pub fn Engine::handle(
       // source, whatever it then draws: the Fault decisions draw from a
       // generator seeded with it, and the helpers from another.
       let draw = generator.unwrap_or(rand).uint64()
-      let (delay_ms, fault) = decide_faults(stub, @prng.Generator(draw))
+      let (delay_ms, fault) = decide_faults(stub, draw)
       let (response, error) = respond(stub, incoming, now~, draw~)
       template_error = error
       ({ ..response, delay_ms, fault, }, None)

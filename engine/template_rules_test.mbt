@@ -391,6 +391,41 @@ test "a template draws from its own generator: the Stub's source still advances 
 }
 
 ///|
+test "every matched request takes exactly one output from the process generator, with or without Faults or a template" {
+  let file = faults_file([
+    coin_flips("/flips"),
+    (
+      #|{ "id": "plain", "mock": "m", "request": { "path": "/plain" },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "templated", "mock": "m", "request": { "path": "/templated" },
+      #|  "response": { "status": 200, "template": true, "body": "${fake.words(50)}" } }
+    ),
+  ])
+  let alone = decisions(harness([file]), "/flips", 6)
+  // A request that matches nothing takes no output; a matched one takes
+  // one, however many values its template draws.
+  let mixed = harness([file])
+  let interleaved = [decision(mixed.send("GET", "/flips"))]
+  for other in ["/nothing", "/plain", "/templated"] {
+    ignore(mixed.send("GET", other))
+    interleaved.push(decision(mixed.send("GET", "/flips")))
+  }
+  inspect(
+    "alone: \{alone.join(" | ")}\ninterleaved: \{interleaved.join(" | ")}",
+    content=(
+      #|alone: delay 913, Close | delay 0 | delay 75 | delay 0 | delay 542 | delay 348, Close
+      #|interleaved: delay 913, Close | delay 0 | delay 0 | delay 348, Close
+    ),
+  )
+  inspect(
+    interleaved == [alone[0], alone[1], alone[3], alone[5]],
+    content="true",
+  )
+}
+
+///|
 test "fake.int and fake.bool draw each value about equally often" {
   let h = one_response(
     (

@@ -21,22 +21,22 @@ fn seeded_generators(
 
 ///|
 /// The Fault decisions for one request that `stub` matched: the delay, in
-/// milliseconds, and the kind of connection Fault, if any. They draw from
-/// `draws`, a generator seeded with the one output the request took from
-/// its Stub's source: the Stub's own generator, or else the process
-/// generator.
+/// milliseconds, and the kind of connection Fault, if any. They draw from a
+/// generator seeded with `draw`, the one output the request took from its
+/// Stub's source: the Stub's own generator, or else the process generator.
 ///
 /// So the n-th matched request of a seeded Stub gets the same decisions in
 /// every run, whatever other Stubs do, whatever earlier requests drew, and
 /// however many values its template draws.
 fn decide_faults(
   stub : @definitions.Stub,
-  draws : @prng.Generator,
+  draw : UInt64,
 ) -> (Int, @definitions.ConnectionKind?) {
   guard stub.fault is Some(fault) &&
     (fault.delay is Some(_) || fault.connection is Some(_)) else {
     return (0, None)
   }
+  let draws = @prng.Generator(draw)
   let delay_ms = match fault.delay {
     Some(delay) if draws.double() < delay.probability =>
       sample(delay.distribution, draws)
