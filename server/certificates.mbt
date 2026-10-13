@@ -226,20 +226,15 @@ fn Certificates::warn_undeclared(self : Certificates) -> Unit {
 }
 
 ///|
-/// Checks every pair on each check of `watch`, the watch of `dir`, a
-/// directory that holds certificate or key files, until the task is
-/// cancelled. Logs a warning when the directory cannot be watched, and is
-/// only polled.
-async fn Certificates::run(
-  self : Certificates,
-  dir : String,
-  watch : @watch.Watch,
-) -> Unit {
+/// Checks every pair on each check of `watch`, the watch of a directory
+/// that holds certificate or key files, until the task is cancelled. Logs
+/// a warning when the directory cannot be watched, and is only polled.
+async fn Certificates::run(self : Certificates, watch : @watch.Watch) -> Unit {
   watch.run(async fn(_) { self.check() }, on_error=err => {
     self.logger.warn(
       "cannot watch the TLS certificate directory, only polling it",
       fields={
-        "dir": Json::string(dir),
+        "dir": Json::string(watch.dir()),
         "error": Json::string(err.to_string()),
       },
     )

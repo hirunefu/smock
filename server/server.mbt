@@ -40,9 +40,9 @@ pub async fn serve(
     None => [..settings.tls_mock_certs.values()]
   }
   for dir in tls_dirs(pairs) {
-    tls_watches.push((dir, @watch.Watch(dir)))
+    tls_watches.push(@watch.Watch(dir))
   }
-  defer tls_watches.each(watch => watch.1.close())
+  defer tls_watches.each(watch => watch.close())
   // The process generator. Its seed is logged, so that a run can be
   // replayed with --seed.
   let seed = match settings.seed {
@@ -144,7 +144,7 @@ async fn run(
   admin_listener : @socket.TcpServer,
   metrics~ : @metrics.Registry,
   watch~ : @watch.Watch?,
-  tls_watches~ : Array[(String, @watch.Watch)],
+  tls_watches~ : Array[@watch.Watch],
   rand~ : @prng.Generator,
   reloads~ : @metrics.Counter,
   traffic~ : Traffic,
@@ -240,8 +240,7 @@ async fn run(
       group.spawn_bg(no_wait=true, () => reloader.run(watch))
     }
     for watch in tls_watches {
-      let (dir, watch) = watch
-      group.spawn_bg(no_wait=true, () => certificates.run(dir, watch))
+      group.spawn_bg(no_wait=true, () => certificates.run(watch))
     }
     let listening = group.spawn(() => {
       @async.with_task_group(listeners => {

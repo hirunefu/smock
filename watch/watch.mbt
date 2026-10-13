@@ -122,3 +122,9 @@ pub fn Watch::close(self : Watch) -> Unit {
     self.watcher = None
   }
 }
+
+///|
+/// The directory watched, as given to `Watch::Watch`.
+pub fn Watch::dir(self : Watch) -> String {
+  self.dir
+}
