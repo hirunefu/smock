@@ -62,7 +62,7 @@ pub fn SampleRequest::from_json(
   let mut body = ""
   let mut session = None
   for name, value in members {
-    let at = "/" + pointer_token(name)
+    let at = @definitions.child_pointer("", name)
     match name {
       "method" =>
         match value {
@@ -115,7 +115,7 @@ fn values(
   }
   let out = []
   for name, value in members {
-    let at = "\{at}/\{pointer_token(name)}"
+    let at = @definitions.child_pointer(at, name)
     match value {
       String(value) => out.push((name, value))
       Array(items) =>
@@ -136,12 +136,6 @@ fn values(
     }
   }
   out
-}
-
-///|
-/// `name` as a reference token of a JSON Pointer: `~` as `~0`, `/` as `~1`.
-fn pointer_token(name : String) -> String {
-  name.replace_all(old="~", new="~0").replace_all(old="/", new="~1")
 }
 
 ///|

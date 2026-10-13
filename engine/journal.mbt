@@ -397,7 +397,7 @@ fn read_filter(
   match json {
     Object(members) =>
       for name, value in members {
-        let pointer = "\{at}/\{pointer_token(name)}"
+        let pointer = @definitions.child_pointer(at, name)
         let time = () => {
           match value {
             String(text) if @log.parse_time(text) is Some(time) => Some(time)
@@ -486,7 +486,7 @@ pub fn JournalQuery::from_json(json : Json) -> JournalQuery raise InvalidQuery {
   let mut filter = None
   let mut limit = default_limit
   for name, value in members {
-    let pointer = "/" + pointer_token(name)
+    let pointer = @definitions.child_pointer("", name)
     match name {
       "filter" => filter = Some(read_filter(value, pointer, problems))
       "limit" =>

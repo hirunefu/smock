@@ -82,7 +82,7 @@ pub fn VerifyRequest::from_json(
   let mut filter = None
   let mut check = None
   for name, value in members {
-    let pointer = "/" + pointer_token(name)
+    let pointer = @definitions.child_pointer("", name)
     match name {
       "filter" => filter = Some(read_filter(value, pointer, problems))
       "exactly" | "atLeast" | "atMost" =>

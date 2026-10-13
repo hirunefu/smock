@@ -128,7 +128,7 @@ fn Reader::declare_mock(
   mock : MockDecl,
 ) -> Unit {
   let name = mock.name
-  let name_pointer = child(pointer, "name")
+  let name_pointer = child_pointer(pointer, "name")
   if self.mock_names.get(name) is Some(earlier) {
     file.error(
       name_pointer,
@@ -175,7 +175,7 @@ fn Reader::declare_stub(
 ) -> Unit {
   let mut ok = stub.id != "" && stub.mock != ""
   if stub.id != "" {
-    let id_pointer = child(pointer, "id")
+    let id_pointer = child_pointer(pointer, "id")
     match self.stub_ids.get(stub.id) {
       Some(earlier) => {
         file.error(
@@ -189,7 +189,7 @@ fn Reader::declare_stub(
   }
   if stub.mock != "" && !self.declared.contains(stub.mock) {
     file.error(
-      child(pointer, "mock"),
+      child_pointer(pointer, "mock"),
       "no file declares the Mock \{stub.mock.escape()}",
     )
     ok = false
@@ -229,19 +229,19 @@ fn Reader::read_file(
     }
   }
   for key, value in top {
-    let pointer = child("", key)
+    let pointer = child_pointer("", key)
     match key {
       "version" => ()
       "mocks" =>
         for i, mock in file.array(pointer, value) {
-          let mock_pointer = child(pointer, i.to_string())
+          let mock_pointer = child_pointer(pointer, i.to_string())
           if file.read_mock(mock_pointer, mock) is Some(mock) {
             self.declare_mock(file, mock_pointer, mock)
           }
         }
       "stubs" =>
         for i, stub in file.array(pointer, value) {
-          let stub_pointer = child(pointer, i.to_string())
+          let stub_pointer = child_pointer(pointer, i.to_string())
           if file.read_stub(stub_pointer, stub) is Some(stub) {
             self.declare_stub(file, stub_pointer, stub)
           }
@@ -308,7 +308,7 @@ fn File::read_mock(self : File, pointer : String, json : Json) -> MockDecl? {
   let mut no_match_status = 404
   let mut journal = true
   for key, value in mock {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "name" => name = self.name(field, value)
       "hosts" => hosts = self.read_hosts(field, value)
@@ -341,7 +341,7 @@ fn File::read_hosts(
 ) -> Array[(String, String)] {
   let out = []
   for i, host in self.array(pointer, json) {
-    let field = child(pointer, i.to_string())
+    let field = child_pointer(pointer, i.to_string())
     match host {
       String(host) if is_host(host) => out.push((host, field))
       String(host) if host.contains("*") =>
@@ -364,7 +364,7 @@ fn File::read_no_match(self : File, pointer : String, json : Json) -> Int {
     return status
   }
   for key, value in fields {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "status" => status = self.read_status(field, value)
       _ => self.unknown_field(field)
@@ -403,7 +403,7 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
   }
   let mut fault = None
   for key, value in stub {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "id" => id = self.name(field, value).unwrap_or("")
       "mock" => mock = self.name(field, value).unwrap_or("")
@@ -431,7 +431,7 @@ fn File::read_fault(self : File, pointer : String, json : Json) -> Fault? {
   let mut connection = None
   let mut seed = None
   for key, value in fault {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "delay" => delay = self.read_delay(field, value)
       "connection" => connection = self.read_connection_fault(field, value)
@@ -452,7 +452,7 @@ fn File::read_delay(self : File, pointer : String, json : Json) -> Delay? {
   let mut distribution = None
   let mut probability = 1.0
   for key, value in delay {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "fixed" =>
         distribution = self.read_milliseconds(field, value).map(ms => Fixed(ms))
@@ -497,7 +497,7 @@ fn File::read_uniform(
   let mut min = None
   let mut max = None
   for key, value in uniform {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "min" => min = self.read_milliseconds(field, value)
       "max" => max = self.read_milliseconds(field, value)
@@ -528,7 +528,7 @@ fn File::read_lognormal(
   let mut median = None
   let mut sigma = None
   for key, value in lognormal {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "median" => median = self.read_milliseconds(field, value)
       "sigma" =>
@@ -559,7 +559,7 @@ fn File::read_connection_fault(
   let mut kind = None
   let mut probability = 1.0
   for key, value in connection {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "kind" =>
         match value {
@@ -657,7 +657,7 @@ fn File::read_conditions(
   let mut headers = []
   let mut body = None
   for key, value in request {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "method" =>
         match value {
@@ -711,7 +711,7 @@ fn File::read_body_condition(
   }
   let mut out = None
   for key, value in condition {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "json" => out = Some(Json(JsonCondition::new(value)))
       "pattern" =>
@@ -747,7 +747,7 @@ fn File::read_value_conditions(
     return out
   }
   for name, value in conditions {
-    let field = child(pointer, name)
+    let field = child_pointer(pointer, name)
     if header_names && !@http1.is_token(name) {
       self.error(field, "is not a valid header name")
       continue
@@ -775,7 +775,7 @@ fn File::read_pattern(
 ) -> Pattern? {
   let mut out = None
   for key, value in condition {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "pattern" =>
         if self.string(field, value) is Some(source) {
@@ -812,7 +812,7 @@ fn File::read_response(self : File, pointer : String, json : Json) -> Response {
     return { status, headers: ReadOnlyArray::from_array(headers), body, }
   }
   for key, value in response {
-    let field = child(pointer, key)
+    let field = child_pointer(pointer, key)
     match key {
       "status" => status = self.read_status(field, value)
       "headers" => headers = self.read_headers(field, value)
@@ -847,7 +847,7 @@ fn File::read_events(
 ) -> ReadOnlyArray[SseEvent] {
   let events = []
   for i, event in self.array(pointer, json) {
-    let event_pointer = child(pointer, i.to_string())
+    let event_pointer = child_pointer(pointer, i.to_string())
     guard event is Object(fields) else {
       self.error(event_pointer, "must be an object")
       continue
@@ -857,7 +857,7 @@ fn File::read_events(
     let mut id = None
     let mut data = ""
     for key, value in fields {
-      let field = child(event_pointer, key)
+      let field = child_pointer(event_pointer, key)
       match key {
         "delay" => delay_ms = self.read_milliseconds(field, value).unwrap_or(0)
         "event" =>
@@ -944,7 +944,7 @@ fn File::read_headers(
     return out
   }
   for name, value in headers {
-    let field = child(pointer, name)
+    let field = child_pointer(pointer, name)
     if !@http1.is_token(name) {
       self.error(field, "is not a valid header name")
     } else if name.to_lower()
@@ -1002,8 +1002,11 @@ fn File::array(self : File, pointer : String, json : Json) -> Array[Json] {
 }
 
 ///|
-/// The JSON Pointer to member or element `key` of the value at `pointer`.
-fn child(pointer : String, key : String) -> String {
+/// The JSON Pointer (RFC 6901) to member or element `key` of the value at
+/// `pointer`, with `key` escaped: `~` as `~0` and `/` as `~1`. The
+/// pointers of Diagnostics are built with it, so a pointer built with it
+/// elsewhere joins theirs.
+pub fn child_pointer(pointer : String, key : String) -> String {
   let escaped = key
     .replace_all(old="~", new="~0")
     .replace_all(old="/", new="~1")
