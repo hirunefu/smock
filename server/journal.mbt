@@ -1,7 +1,7 @@
-// The Journal on the admin port: the query operation, scoped to the calling
-// Session, and the metrics of the Journal's size and evictions. The metrics
-// are read from the engine when /metrics is scraped, so recording a request
-// costs nothing for them.
+// The Journal on the admin port: the query, verify and unmatched
+// operations, each scoped to the calling Session, and the metrics of the
+// Journal's size and evictions. The metrics are read from the engine when
+// /metrics is scraped, so recording a request costs nothing for them.
 
 ///|
 /// The metrics of the Journal: its size and the entries its bound evicted.
