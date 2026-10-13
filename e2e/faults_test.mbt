@@ -190,6 +190,30 @@ async test "a reset Fault reads the whole request, body included, then ends the 
 }
 
 ///|
+async test "a client that waits for 100 Continue gets it before a close or reset Fault, which comes once the body is read: the Stub is not known before then" {
+  let _ = on_both_ports(files=[("m.json", faults)], (smock, over) => {
+    let out = []
+    for path in ["/close", "/reset"] {
+      let conn = smock.connect(over~)
+      defer conn.close()
+      conn.write(
+        "POST \{path} HTTP/1.1\r\nHost: localhost\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n",
+      )
+      let interim = read_head(conn).trim_end(chars="\n")
+      conn.write("body")
+      out.push("\{path}: \{interim}, then \{how_it_ends(conn)}")
+    }
+    inspect(
+      out.join("\n"),
+      content=(
+        #|/close: HTTP/1.1 100 Continue, then 0 bytes, then a FIN
+        #|/reset: HTTP/1.1 100 Continue, then 0 bytes, then an RST
+      ),
+    )
+  })
+}
+
+///|
 async test "a reset Fault with a probability resets only the requests its seeded generator draws, and the others get the Stub's whole response" {
   with_definitions([("m.json", faults)], dir => {
     let _ = with_smock(["--dir", dir, "--port", "0"], smock => {

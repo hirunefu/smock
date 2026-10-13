@@ -411,6 +411,13 @@ of getting its response:
 without it, every matched request fails. A Stub with both a delay and a
 connection Fault waits first, then fails.
 
+A request that asks for `100 Continue` (`Expect: 100-continue`) gets it
+before its body is read, as HTTP/1.1 requires of a client that waits for
+it, and so before smock knows which Stub, and which Fault, applies. Its
+`reset` or `close` then comes after that interim response, which is all
+the client receives. smock sends `100 Continue` also when the body arrives
+without waiting for it.
+
 ### Seeds
 
 Each matched request draws whether its delay and its connection Fault

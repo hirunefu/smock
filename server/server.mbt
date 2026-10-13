@@ -372,8 +372,10 @@ priv struct MockPorts {
 /// connections are served as usual. A connection Fault in the plan ends the
 /// connection instead of the response, or part of the way through it. A
 /// reset comes once the whole request, body included, has been read, and
-/// nothing is written before it; when it cannot be set up, the failure is
-/// logged and the connection closes as for a close Fault.
+/// nothing is written before it but the `100 Continue` the request may
+/// have asked for, which comes before the Stub is known; when it cannot be
+/// set up, the failure is logged and the connection closes as for a close
+/// Fault.
 ///
 /// The request's Journal entry, if the engine returned one, is committed
 /// just before the response's last bytes are written, so that a client
