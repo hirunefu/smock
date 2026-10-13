@@ -207,7 +207,8 @@ smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /et
 - A handshake whose SNI is one of the Hosts of a listed Mock, compared as
   Hosts are (case-insensitively, without a trailing dot), gets that Mock's
   certificate. A handshake without SNI, or whose SNI is no Host of a listed
-  Mock, gets the default certificate, which must be configured.
+  Mock, gets the default certificate: `--tls-cert-file`, or without it the
+  generated self-signed certificate (below).
 - SNI follows the Hosts of the definition set served, reloads included. It
   only chooses the certificate: the Host header still chooses the Mock.
   Definition files never refer to certificates.
@@ -218,8 +219,8 @@ smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /et
   missing, at startup included.
 - Each pair is loaded at startup, and one that cannot be loaded stops
   `smock serve` with exit status 1, as for the default pair. A value that is
-  not such a JSON object, an entry without both files, or the setting without
-  `--tls-cert-file` and `--tls-key-file` exits with status 2.
+  not such a JSON object, or an entry without both files, exits with
+  status 2.
 - Each pair rotates as the default certificate does.
 
 The metric `smock_tls_certificate_expiry_timestamp_seconds` gives when each
@@ -228,8 +229,11 @@ the Unix epoch: `mock=""` for the default certificate and `mock="<name>"` for
 a Mock's own. It follows rotations, so an alert on it notices a renewal that
 stopped working before clients fail.
 
-Without certificate files, smock still serves HTTPS on the TLS port, with a
-self-signed certificate it generates at startup, for local use:
+Without default certificate files, smock still serves HTTPS on the TLS
+port, with a self-signed certificate it generates at startup, for local
+use. It is the default certificate, so with `--tls-mock-certs` the listed
+Mocks' Hosts get their own certificates by SNI and every other handshake
+gets this one:
 
 - The certificate covers `localhost`, `127.0.0.1`, `::1` and every Host of
   every Mock. Hosts that are IP addresses are IP address names, the others
@@ -248,7 +252,7 @@ self-signed certificate it generates at startup, for local use:
   `openssl s_client -connect 127.0.0.1:8443 </dev/null | openssl x509 >smock.pem`
   and `curl --cacert smock.pem https://localhost:8443/`, and check its
   fingerprint against the log with `openssl x509 -in smock.pem -noout -fingerprint -sha256`.
-- With certificate files configured, nothing is generated.
+- With default certificate files configured, nothing is generated.
 
 The Admin API is JSON over HTTP/1.1 on the admin port, as
 [openapi/admin.json](openapi/admin.json) describes it:

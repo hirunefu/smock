@@ -1,52 +1,12 @@
-// The certificate the TLS port presents: the configured certificate files,
-// or, without them, a self-signed certificate smock generates in memory for
-// local use.
+// The self-signed certificate the TLS port presents by default when no
+// default certificate files are configured: smock generates it in memory,
+// for local use, for the Hosts it serves.
 
 ///|
 /// How many days a generated certificate is valid. smock generates a new
 /// one at every start, and clients limit how long a server certificate may
 /// be valid (398 days for some).
 const SELF_SIGNED_DAYS = 365
-
-///|
-/// What the TLS port presents to each new connection. A connection keeps
-/// the certificate it started its handshake with.
-priv enum TlsCertificate {
-  /// The configured certificate files: the default pair and the pairs of
-  /// single Mocks, which SNI chooses and which rotate.
-  Files(Certificates)
-  /// A self-signed certificate smock generated for the Hosts it serves.
-  SelfSigned(SelfSignedCertificate)
-}
-
-///|
-/// The configuration a new handshake gets when the client asks for
-/// `server_name` by SNI, or for no name.
-fn TlsCertificate::select(
-  self : TlsCertificate,
-  server_name : String?,
-) -> @openssl.ServerConfig {
-  match self {
-    Files(certificates) => certificates.select(server_name)
-    SelfSigned(certificate) => certificate.config
-  }
-}
-
-///|
-/// Follows a reload that swapped in a new definition set served by
-/// `engine`: warns about the Mocks with certificate files of their own that
-/// it does not declare, or replaces a self-signed certificate whose names no
-/// longer match its Hosts.
-fn TlsCertificate::after_swap(
-  self : TlsCertificate,
-  engine : @engine.Engine,
-  logger : @log.Logger,
-) -> Unit {
-  match self {
-    Files(certificates) => certificates.warn_undeclared()
-    SelfSigned(certificate) => certificate.follow_hosts(engine, logger)
-  }
-}
 
 ///|
 /// A self-signed certificate smock generated, loaded for the TLS port.

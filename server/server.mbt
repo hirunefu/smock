@@ -1,11 +1,11 @@
 ///|
 /// Runs `smock serve`: listens on the admin port, loads the definitions and
-/// the TLS certificate files, or without them generates a self-signed
-/// certificate, then listens on the plain and the TLS port, and serves until
-/// SIGTERM, then drains. The plain and TLS ports serve the same Mocks; the
-/// admin port serves the Admin API and the probes, from before the
-/// definitions load, so that the startup probe can tell that they have not
-/// loaded yet, until the drain ends.
+/// the TLS certificate files, generating a self-signed default certificate
+/// without default files, then listens on the plain and the TLS port, and
+/// serves until SIGTERM, then drains. The plain and TLS ports serve the
+/// same Mocks; the admin port serves the Admin API and the probes, from
+/// before the definitions load, so that the startup probe can tell that
+/// they have not loaded yet, until the drain ends.
 ///
 /// Returns the exit status: 0 after the drain, and 1 when Admin API
 /// authentication is on and no token is set, the definition set is invalid,
@@ -35,11 +35,12 @@ pub async fn serve(
   // The directories of the certificate and key files are watched too, also
   // from before the first load.
   let tls_watches = []
-  if settings.tls is Some(files) {
-    let pairs = [files, ..settings.tls_mock_certs.values()]
-    for dir in tls_dirs(pairs) {
-      tls_watches.push((dir, @watch.Watch(dir)))
-    }
+  let pairs = match settings.tls {
+    Some(files) => [files, ..settings.tls_mock_certs.values()]
+    None => [..settings.tls_mock_certs.values()]
+  }
+  for dir in tls_dirs(pairs) {
+    tls_watches.push((dir, @watch.Watch(dir)))
   }
   defer tls_watches.each(watch => watch.1.close())
   // The process generator. Its seed is logged, so that a run can be
@@ -192,30 +193,18 @@ async fn run(
       ),
     )
     lifecycle.started(engine)
-    let tls = match settings.tls {
-      None => None
-      Some(files) =>
-        match
-          Certificates::load(
-            files,
-            settings.tls_mock_certs,
-            engine~,
-            logger~,
-            metrics~,
-          ) {
-          Some(certificates) => Some((files, certificates))
-          None => return 1
-        }
-    }
-    // Without certificate files, the TLS port presents a self-signed
-    // certificate generated for the Hosts served.
-    let certificate = match tls {
-      Some((_, certificates)) => Files(certificates)
-      None =>
-        match SelfSignedCertificate::generate(engine, logger) {
-          Some(certificate) => SelfSigned(certificate)
-          None => return 1
-        }
+    // Without default certificate files, the TLS port presents a
+    // self-signed certificate generated for the Hosts served, unless SNI
+    // chooses a Mock's own.
+    guard Certificates::load(
+        settings.tls,
+        settings.tls_mock_certs,
+        engine~,
+        logger~,
+        metrics~,
+      )
+      is Some(certificates) else {
+      return 1
     }
     guard listen(logger, "plain", settings.port) is Some(plain) else {
       return 1
@@ -233,7 +222,7 @@ async fn run(
       "listener": "tls",
       "address": Json::string("0.0.0.0:\{tls_listener.addr.port()}"),
     }
-    if tls is Some((files, _)) {
+    if settings.tls is Some(files) {
       tls_fields["cert_file"] = Json::string(files.cert_file)
       tls_fields["key_file"] = Json::string(files.key_file)
     }
@@ -246,15 +235,13 @@ async fn run(
         logger,
         reloads,
         last_read: (snapshot.digest, []),
-        after_swap: () => certificate.after_swap(engine, logger),
+        after_swap: () => certificates.after_swap(),
       }
       group.spawn_bg(no_wait=true, () => reloader.run(watch))
     }
-    if tls is Some((_, certificates)) {
-      for watch in tls_watches {
-        let (dir, watch) = watch
-        group.spawn_bg(no_wait=true, () => certificates.run(dir, watch))
-      }
+    for watch in tls_watches {
+      let (dir, watch) = watch
+      group.spawn_bg(no_wait=true, () => certificates.run(dir, watch))
     }
     let listening = group.spawn(() => {
       @async.with_task_group(listeners => {
@@ -278,7 +265,7 @@ async fn run(
               // It gets the certificate presented when its handshake
               // starts: a later one is for later connections.
               let stream = @async.with_timeout_opt(settings.idle_timeout_ms, () => {
-                TlsStream::accept(conn, name => certificate.select(name))
+                TlsStream::accept(conn, name => certificates.select(name))
               })
               guard stream is Some(Some(stream)) else { return }
               let reset = serve_mocks(
