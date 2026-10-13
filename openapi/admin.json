@@ -864,8 +864,8 @@
             "type": "string"
           },
           "digest": {
-            "description": "The definition set digest of the definition set this replica serves: the first 12 hex digits of SHA-256 over the sorted relative names and bytes of every Definition file and body file. Replicas that serve the same files report the same digest. null when this replica does not compute it.",
-            "type": ["string", "null"],
+            "description": "The definition set digest of the definition set this replica serves: the first 12 hex digits of SHA-256 over the sorted relative names and bytes of every Definition file and body file. Replicas that serve the same files report the same digest. Every definition set has one, the one served at startup and the empty one served without a definitions directory included.",
+            "type": "string",
             "pattern": "^[0-9a-f]{12}$"
           },
           "lastReload": {
@@ -1230,7 +1230,7 @@
           },
           "digest": {
             "description": "The digest of the definition set that answered the request, as in the status.",
-            "type": ["string", "null"],
+            "type": "string",
             "pattern": "^[0-9a-f]{12}$"
           },
           "request": {
