@@ -251,14 +251,14 @@ pub impl ToJson for Rendering with fn to_json(self) {
       (Json::null(), Json::array(events.iter().map(event_json).collect()))
   }
   {
-    "stub": self.stub.to_json(),
-    "mock": self.mock.to_json(),
+    "stub": Json::string(self.stub),
+    "mock": Json::string(self.mock),
     "response": {
-      "status": self.status.to_json(),
+      "status": Json::number(self.status.to_double()),
       "headers": Json::array(
         self.headers.map(header => {
-          "name": header.0.to_json(),
-          "value": header.1.to_json(),
+          "name": Json::string(header.0),
+          "value": Json::string(header.1),
         }),
       ),
       "body": body,
@@ -279,9 +279,9 @@ fn body_json(bytes : Bytes, size? : Int = bytes.length()) -> Json {
     text => ("utf-8", text)
   }
   {
-    "encoding": encoding.to_json(),
-    "data": data.to_json(),
-    "size": size.to_json(),
+    "encoding": Json::string(encoding),
+    "data": Json::string(data),
+    "size": Json::number(size.to_double()),
     "truncated": Json::boolean(bytes.length() < size),
   }
 }
@@ -290,13 +290,15 @@ fn body_json(bytes : Bytes, size? : Int = bytes.length()) -> Json {
 /// A Server-Sent Event as Definition files write it: its delay, its type
 /// and ID when it has them, and its data.
 fn event_json(event : @definitions.SseEvent) -> Json {
-  let out : Map[String, Json] = { "delay": event.delay_ms.to_json() }
+  let out : Map[String, Json] = {
+    "delay": Json::number(event.delay_ms.to_double()),
+  }
   if event.event is Some(event) {
-    out["event"] = event.to_json()
+    out["event"] = Json::string(event)
   }
   if event.id is Some(id) {
-    out["id"] = id.to_json()
+    out["id"] = Json::string(id)
   }
-  out["data"] = event.data.to_json()
+  out["data"] = Json::string(event.data)
   Json::object(out)
 }

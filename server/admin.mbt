@@ -130,7 +130,7 @@ fn Admin::new(
     logger,
     token: token.map(token => @utf8.encode(token)),
     replica,
-    warnings: @engine.admin_warnings(replicas~, replica~).to_json(),
+    warnings: Json(@engine.admin_warnings(replicas~, replica~)),
     sessions,
   }
 }
