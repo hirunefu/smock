@@ -52,6 +52,11 @@ Packages of `smock/smock`:
   the name chooses the certificate without a C callback. Its one C
   function, in `server/reset.c`, sets `SO_LINGER` so that the reset Fault
   ends a connection with an RST, the exception ADR 0001 makes for it.
+- `watch`: watches a directory, with the async runtime's file watcher
+  (inotify) and polling in case an event is missed, so that `server` can
+  reload the definitions directory and the certificate directories
+  (native). Its `Schedule`, which coalesces a burst of events into one
+  check and keeps the poll interval, does no I/O and reads no clock.
 - `metrics`: the metrics registry: counters, gauges and histograms with
   fixed label names, rendered in the Prometheus text format. Features
   register their metrics in the one registry `smock serve` keeps.
