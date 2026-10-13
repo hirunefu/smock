@@ -143,6 +143,58 @@ async test "after a matched request, two Ephemeral Stub matches, an unmatched re
 }
 
 ///|
+async test "requests the codec rejects are counted on each port with an empty Mock and Stub label, but not as unmatched, and the Journal records none of them" {
+  with_definitions([("users.json", users)], dir => {
+    with_certificates(certs => {
+      let args = [
+        "--dir",
+        dir,
+        "--port",
+        "0",
+        "--body-limit",
+        "4",
+        ..certs.args(),
+      ]
+      let _ = with_smock(args, smock => {
+        let out = []
+        for over in [Plain, Tls(certs)] {
+          let responses = exchange_each(smock, over, [
+            "GET users/1 HTTP/1.1\r\nHost: localhost\r\n\r\n", "GET /users/1 HTTP/2.0\r\nHost: localhost\r\n\r\n",
+            "POST /users/1 HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello",
+          ])
+          let port = if over is Plain { "plain" } else { "TLS" }
+          out.push("\{port}: \{statuses(responses)}")
+        }
+        let (text, samples) = smock.metrics()
+        out.push(traffic(text, samples))
+        let journal = smock.admin("POST", "/v1/journal/query", body="{}")
+        out.push("Journal: \{journal.status} \{journal.body}")
+        let unmatched = smock.admin("GET", "/v1/journal/unmatched")
+        out.push("unmatched: \{unmatched.status} \{unmatched.body}")
+        inspect(
+          out.join("\n"),
+          content=(
+            #|plain: HTTP/1.1 400 Bad Request, HTTP/1.1 505 HTTP Version Not Supported, HTTP/1.1 413 Content Too Large
+            #|TLS: HTTP/1.1 400 Bad Request, HTTP/1.1 505 HTTP Version Not Supported, HTTP/1.1 413 Content Too Large
+            #|# TYPE smock_requests_total counter
+            #|# TYPE smock_request_duration_seconds histogram
+            #|# TYPE smock_unmatched_requests_total counter
+            #|smock_request_duration_seconds_count{mock="",stub=""} 6
+            #|smock_requests_total{mock="",stub=""} 6
+            #|labels of smock_requests_total: mock, stub
+            #|labels of smock_request_duration_seconds_bucket: mock, stub, le
+            #|labels of smock_request_duration_seconds_sum: mock, stub
+            #|labels of smock_request_duration_seconds_count: mock, stub
+            #|Journal: 200 {"entries":[],"more":false,"evicted":0,"warnings":[]}
+            #|unmatched: 200 {"entries":[],"more":false,"evicted":0,"warnings":[]}
+          ),
+        )
+      })
+    })
+  })
+}
+
+///|
 async test "a request the Default Mock answers because no Mock lists its Host is labelled with the Default Mock's name" {
   with_definitions(two_mocks(default=true), dir => {
     let _ = with_smock(["--dir", dir, "--port", "0"], smock => {

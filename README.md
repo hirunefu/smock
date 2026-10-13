@@ -323,11 +323,14 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   `mock`. A Stub from a Definition file is labelled by its ID, every
   Ephemeral Stub by `stub="ephemeral"`, and a request that matched no Stub
   by `stub=""`. A request is labelled with the Mock that answered it, the
-  Default Mock included, or `mock=""` when no Mock did. Labels never carry a
-  path, Host, method or Session, so the number of series stays bounded by
-  the Definition files. A request is counted once its response is written;
-  the Admin API, probes and `/metrics` are not counted. No request is
-  logged.
+  Default Mock included, or `mock=""` when no Mock did. A request the
+  HTTP/1.1 codec rejects (400, 413, 431, 501 or 505, such as a malformed
+  head or a body over `--body-limit`) counts with `mock=""` and `stub=""`,
+  timed from the read that brought it; it is not an unmatched request, and
+  the Journal does not record it. Labels never carry a path, Host, method,
+  status or Session, so the number of series stays bounded by the
+  Definition files. A request is counted once its response is written; the
+  Admin API, probes and `/metrics` are not counted. No request is logged.
 - `POST /v1/stubs/{id}/render` renders a Stub's response for the sample
   request in the body, against the definitions the replica serves now, as
   `smock render` does (below). The optional `time` and `seed` query
@@ -515,7 +518,8 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   Stub, so that equal IDs cannot be confused; the status, or the
   connection Fault; when the request was received and how long the response
   took; and the digest of the definition set that answered. A request for
-  a Host that no Mock answers is recorded too, with no Mock.
+  a Host that no Mock answers is recorded too, with no Mock; one the
+  HTTP/1.1 codec rejects (400, 413, 431, 501 or 505) is not.
 - A request is in the Journal as soon as its client has the whole
   response: smock records it just before it writes the response's last
   bytes, so a query made right after a call always finds it. A stream of

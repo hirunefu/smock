@@ -59,18 +59,18 @@ fn Traffic::register(metrics : @metrics.Registry) -> Traffic {
   {
     requests: metrics.counter(
       "smock_requests_total",
-      help="Requests served on the plain and TLS ports, by the Mock that answered (mock=\"\" for none) and the Stub that matched: its ID for a Stub from a Definition file, stub=\"ephemeral\" for every Ephemeral Stub, stub=\"\" for none.",
+      help="Requests served on the plain and TLS ports, by the Mock that answered (mock=\"\" for none) and the Stub that matched: its ID for a Stub from a Definition file, stub=\"ephemeral\" for every Ephemeral Stub, stub=\"\" for none. Requests the HTTP/1.1 codec rejects (400, 413, 431, 501, 505) count with mock=\"\" and stub=\"\".",
       labels=["mock", "stub"],
     ),
     latency: metrics.histogram(
       "smock_request_duration_seconds",
-      help="Time from a request being read in full to the last byte of its response being written, injected delays and Server-Sent Event streams included, in seconds, labelled as smock_requests_total.",
+      help="Time from a request being read in full (for a request the HTTP/1.1 codec rejects, from the read that brought what it rejects) to the last byte of its response being written, injected delays and Server-Sent Event streams included, in seconds, labelled as smock_requests_total.",
       labels=["mock", "stub"],
       buckets=latency_buckets,
     ),
     unmatched: metrics.counter(
       "smock_unmatched_requests_total",
-      help="Requests served on the plain and TLS ports that matched no Stub, by the Mock that answered them (mock=\"\" for a Host no Mock answers).",
+      help="Requests served on the plain and TLS ports that matched no Stub, by the Mock that answered them (mock=\"\" for a Host no Mock answers). Requests the HTTP/1.1 codec rejects are not among them.",
       labels=["mock"],
     ),
     series: Map([]),
@@ -95,6 +95,37 @@ fn Traffic::record(
     Some(Ephemeral(_)) => "ephemeral"
     None => ""
   }
+  self.count(mock, stub, seconds)
+  if outcome.matched is None {
+    let unmatched = match self.unmatched_series.get(mock) {
+      Some(series) => series
+      None => {
+        let series = self.unmatched.labels([mock])
+        self.unmatched_series[mock] = series
+        series
+      }
+    }
+    unmatched.inc()
+  }
+}
+
+///|
+/// Counts bytes the HTTP/1.1 codec rejected as a request, with `mock=""`
+/// and `stub=""`, which took `seconds` from the read that brought them to
+/// the last byte of the error response. They are not an unmatched request:
+/// no Mock or Stub was tried.
+fn Traffic::record_rejected(self : Traffic, seconds : Double) -> Unit {
+  self.count("", "", seconds)
+}
+
+///|
+/// Counts a request with the labels `mock` and `stub` that took `seconds`.
+fn Traffic::count(
+  self : Traffic,
+  mock : String,
+  stub : String,
+  seconds : Double,
+) -> Unit {
   let by_stub = match self.series.get(mock) {
     Some(by_stub) => by_stub
     None => {
@@ -116,15 +147,4 @@ fn Traffic::record(
   }
   requests.inc()
   latency.observe(seconds)
-  if outcome.matched is None {
-    let unmatched = match self.unmatched_series.get(mock) {
-      Some(series) => series
-      None => {
-        let series = self.unmatched.labels([mock])
-        self.unmatched_series[mock] = series
-        series
-      }
-    }
-    unmatched.inc()
-  }
 }

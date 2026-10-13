@@ -166,7 +166,9 @@ async fn run(
               @io.Writer::write(stream, admin.respond(request))
               @http1.keeps_open(request~)
             },
-            reject=status => admin.reject(status),
+            reject=(stream, status, _) => {
+              @io.Writer::write(stream, admin.reject(status))
+            },
           )
         })
       })
@@ -389,7 +391,10 @@ priv struct MockPorts {
 /// written, or once the connection ends before it is, with the time from
 /// the request being read in full to then: for a request pipelined behind
 /// others, its wait behind their responses counts. Nothing is counted
-/// before the response, so counting never holds one back.
+/// before the response, so counting never holds one back. Bytes the codec
+/// rejects count as a request no Mock answered and no Stub matched, timed
+/// from the read that brought them, but they are neither unmatched requests
+/// nor recorded in the Journal: the engine never sees them.
 ///
 /// While smock drains, a response says `Connection: close`, and the
 /// connection closes after it.
@@ -455,7 +460,13 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
       // during it closes its connection too.
       keep_open && !self.lifecycle.is_draining()
     },
-    reject=status => @http1.encode_response(status, [], b"", close=true),
+    reject=(stream, status, stopwatch) => {
+      defer self.traffic.record_rejected(stopwatch.seconds())
+      @io.Writer::write(
+        stream,
+        @http1.encode_response(status, [], b"", close=true),
+      )
+    },
   )
   was_reset.val
 }
@@ -482,16 +493,17 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
 ///   the read that brought its last byte, which may be well before the
 ///   response to a request pipelined after others. While it waits, the
 ///   connection reads nothing, and other connections are served as usual.
-/// - `reject` gives the encoded response, with `Connection: close`, to
-///   bytes that are not a valid request or are over a limit, with the status
-///   the codec chose.
+/// - `reject` writes the response, with `Connection: close`, to bytes that
+///   are not a valid request or are over a limit, with the status the codec
+///   chose. It gets a stopwatch started at the read that brought them, or
+///   that brought the last byte of the requests before them.
 /// - `connection`, when given, is kept told whether the connection is idle,
 ///   so that a drain can close it.
 async fn[S : @io.Reader + @io.Writer] serve_connection(
   stream : S,
   settings : @settings.ServeSettings,
   respond~ : async (S, @http1.Request, Stopwatch) -> Bool,
-  reject~ : (Int) -> Bytes,
+  reject~ : async (S, Int, Stopwatch) -> Unit,
   connection? : Connection,
 ) -> Unit {
   let parser = @http1.Parser(
@@ -552,7 +564,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
         parser.feed(buf.unsafe_reinterpret_as_bytes()[:n])
       }
       Invalid(status~) => {
-        @io.Writer::write(stream, reject(status))
+        reject(stream, status, last_read)
         return
       }
     }
