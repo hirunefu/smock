@@ -526,10 +526,12 @@ async test "idle timeout: a connection that receives no request bytes for the id
     (smock, over) => {
       let out = []
       // A new connection that never sends anything: the read timeout does
-      // not apply to it.
+      // not apply to it. Each wait is timed from before smock can have
+      // started its idle timeout, so that a scheduling delay cannot make it
+      // look short.
+      let since = @async.now()
       let silent = smock.connect(over~)
       defer silent.close()
-      let since = @async.now()
       let (elapsed, rest) = ended(silent, since)
       out.push(
         "new and silent: \{rest.escape()}, ended after at least 1500 ms: \{elapsed >= 1500}",
@@ -537,9 +539,9 @@ async test "idle timeout: a connection that receives no request bytes for the id
       // A kept-alive connection, after its response.
       let kept = smock.connect(over~)
       defer kept.close()
+      let since = @async.now()
       kept.write("GET /users/1 HTTP/1.1\r\nHost: localhost\r\n\r\n")
       let response = read_response(kept)
-      let since = @async.now()
       let (elapsed, rest) = ended(kept, since)
       out.push(
         "kept alive: \{status_line(response)}, then \{rest.escape()}, ended after at least 1500 ms: \{elapsed >= 1500}",

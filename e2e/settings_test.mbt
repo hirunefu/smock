@@ -68,8 +68,10 @@ async test "limits and timeouts can come from SMOCK_ environment variables" {
         "SMOCK_HEADER_SIZE_LIMIT": "100",
         "SMOCK_HEADER_COUNT_LIMIT": "2",
         "SMOCK_BODY_LIMIT": "4",
-        "SMOCK_READ_TIMEOUT_MS": "200",
-        "SMOCK_IDLE_TIMEOUT_MS": "200",
+        // Long enough that connecting and writing each request below fits
+        // well within them on a busy machine.
+        "SMOCK_READ_TIMEOUT_MS": "1000",
+        "SMOCK_IDLE_TIMEOUT_MS": "1000",
       },
       smock => {
         let out = []
@@ -84,12 +86,12 @@ async test "limits and timeouts can come from SMOCK_ environment variables" {
           conn.write(request)
           out.push(status_line(read_response(conn)))
         }
+        let since = @async.now()
         let idle = smock.connect()
         defer idle.close()
-        let since = @async.now()
         let (elapsed, _) = ended(idle, since)
         out.push(
-          "idle connection ended after at least 200 ms: \{elapsed >= 200}",
+          "idle connection ended after at least 1000 ms: \{elapsed >= 1000}",
         )
         inspect(
           out.join("\n"),
@@ -97,7 +99,7 @@ async test "limits and timeouts can come from SMOCK_ environment variables" {
             #|HTTP/1.1 431 Request Header Fields Too Large
             #|HTTP/1.1 431 Request Header Fields Too Large
             #|HTTP/1.1 413 Content Too Large
-            #|idle connection ended after at least 200 ms: true
+            #|idle connection ended after at least 1000 ms: true
           ),
         )
       },
