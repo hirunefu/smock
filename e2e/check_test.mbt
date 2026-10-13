@@ -151,6 +151,7 @@ async test "smock check names the body-file subdirectory as smock serve does, by
     ],
     dir => {
       @fs.chmod("\{dir}/bodies/a.json", 0o000)
+      guard !still_readable("\{dir}/bodies/a.json") else { return }
       let out = [
         check([dir]),
         check(["--body-file-dir", "bodies", dir]),
@@ -217,6 +218,7 @@ async test "smock check names the definitions directory as given when the direct
   with_definitions(files, dir => {
     @fs.chmod("\{dir}/defs", 0o000)
     defer @fs.chmod("\{dir}/defs", 0o755)
+    guard !still_readable("\{dir}/defs", directory=true) else { return }
     let out = [check(["\{dir}/defs"]), check(["\{dir}/users.json"])]
     inspect(
       out.join("---\n").replace_all(old=dir, new="<dir>"),
@@ -343,4 +345,21 @@ async test "a definitions directory that passes smock check loads in smock serve
       #|check: status 1, serve: exits with status 1
     ),
   )
+}
+
+///|
+/// Whether `path` can still be read after a test removed its permissions.
+/// Root ignores file permissions (as in a container that runs as root), so
+/// such a test cannot make a path unreadable there and skips its checks.
+async fn still_readable(path : String, directory? : Bool = false) -> Bool {
+  try {
+    if directory {
+      ignore(@fs.readdir(path))
+    } else {
+      ignore(@fs.read_file(path).binary())
+    }
+    true
+  } catch {
+    _ => false
+  }
 }
