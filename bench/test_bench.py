@@ -262,9 +262,11 @@ class Conditions(unittest.TestCase):
         connections = next(c["connections"] for c in plan["cases"] if c["name"] == "http-keep-alive")
         self.assertEqual(conditions["cases"], [{
             "id": "http-keep-alive@1",
+            "profile": "1",
             "protocol": "http",
             "connection": "keep-alive",
             "cpu_limit": "1",
+            "memory_limit": None,
             "rate": 200,
             "ramp_s": 0.5,
             "duration_s": 4,
@@ -345,14 +347,16 @@ class Cases(unittest.TestCase):
 
 
 class IdleRss(unittest.TestCase):
-    """Idle RSS is measured after startup with the benchmark's definitions."""
+    """Idle RSS is measured after startup with the benchmark's definitions,
+    under the profiles the plan names for it: in bench/plan.json, a 1-CPU
+    limit and no memory limit."""
 
     def test_smocks_rss_once_it_has_loaded_the_definitions_and_settled_before_any_load(self):
-        out = bench(self, "--cases", "http-keep-alive", "--cpu-limits", "1", "--rate", "100",
+        out = bench(self, "--cases", "http-keep-alive", "--cpu-limits", "250m", "--rate", "100",
                     "--ramp", "0.5", "--duration", "1", "--tail", "1", "--settle", "1.5")
-        idle = read(out, "summary.json")["idle_rss"]
-        samples = read(out / "raw", "idle-rss.json")["samples"]
-        self.assertEqual(idle["cpu_limit"], "1")
+        [idle] = read(out, "summary.json")["idle_rss"]
+        samples = read(out / "raw" / "1", "idle-rss.json")["samples"]
+        self.assertEqual((idle["profile"], idle["cpu_limit"], idle["memory_limit"]), ("1", "1", None))
         self.assertEqual(idle["settle_s"], 1.5)
         # The last sample, taken once smock was ready and had settled.
         self.assertGreaterEqual(samples[-1][0], 1.5)
@@ -360,6 +364,176 @@ class IdleRss(unittest.TestCase):
         # About 1,200 Stubs take more than a bare process and far less than 1 GiB.
         self.assertTrue(2048 < idle["rss_kib"] < 1024 * 1024, idle)
         self.assertEqual(idle["digest"], definition_set_digest(BENCH / "definitions"))
+
+
+def plan_file(test, profiles, rates, **changes):
+    """Writes a plan into a new directory, and returns its path: bench/plan.json
+    with `profiles` instead of its CPU limits, only its http-keep-alive
+    case, at `rates` (by profile name), and `changes` to its top level."""
+    plan = read(BENCH, "plan.json")
+    plan.pop("cpu_limits")
+    case = next(c for c in plan["cases"] if c["name"] == "http-keep-alive")
+    plan.update(profiles=profiles, cases=[{**case, "rates": rates}], **changes)
+    directory = Path(tempfile.mkdtemp(prefix="smock-bench-test-plan-"))
+    test.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+    path = directory / "plan.json"
+    path.write_text(json.dumps(plan))
+    return path
+
+
+MiB = 1024 * 1024
+
+
+class MemoryLimits(unittest.TestCase):
+    """A resource profile can limit smock's memory as well as its CPU, as a
+    Kubernetes memory limit does: smock's cgroup gets the limit and may not
+    swap, and the run records smock's peak memory and whether the kernel
+    OOM-killed it."""
+
+    def test_a_memory_limit_applies_to_smocks_cgroup_without_swap_and_the_case_records_peak_memory(self):
+        plan = plan_file(self, [{"name": "small", "cpu_limit": "1", "memory_limit": "256Mi"}], {"small": 200},
+                         idle_rss={"settle_s": 5})
+        out = bench(self, "--plan", str(plan), *SHORT)
+        result = case(out, "http-keep-alive@small")
+        self.assertEqual((result["profile"], result["cpu_limit"], result["memory_limit"]), ("small", "1", "256Mi"))
+        # What smock's cgroup had in memory.max and memory.swap.max while it
+        # ran, in bytes.
+        self.assertEqual(result["pinning"]["smock_memory_max"], "268435456")
+        self.assertEqual(result["pinning"]["smock_memory_swap_max"], "0")
+        self.assertEqual(result["memory"]["oom_kills"], 0)
+        # About 1,200 Stubs and a Journal of 800 entries take more than a
+        # bare process and far less than the limit.
+        self.assertTrue(4 * MiB < result["memory"]["peak_bytes"] < 256 * MiB, result["memory"])
+        self.assertEqual(result["errors"], 0)
+
+    def test_smock_oom_killed_under_a_memory_limit_too_small_for_it_is_recorded_and_the_run_goes_on(self):
+        plan = plan_file(self, [{"name": "tiny", "cpu_limit": "1", "memory_limit": "4Mi"},
+                                {"name": "roomy", "cpu_limit": "1", "memory_limit": "256Mi"}],
+                         {"tiny": 200, "roomy": 200}, idle_rss={"settle_s": 5})
+        out = bench(self, "--plan", str(plan), *SHORT)
+        summary = read(out, "summary.json")
+        self.assertTrue(summary["complete"])
+
+        idle = {i["profile"]: i for i in summary["idle_rss"]}
+        self.assertFalse(idle["tiny"]["smock_ready"])
+        self.assertGreaterEqual(idle["tiny"]["memory"]["oom_kills"], 1)
+        self.assertIsNone(idle["tiny"]["rss_kib"])
+        self.assertTrue(idle["roomy"]["smock_ready"])
+        self.assertEqual(idle["roomy"]["memory"]["oom_kills"], 0)
+
+        # smock never got ready, so no load was sent: each of the about 800
+        # requests due in the window (200 a second for 4 s) is an error.
+        tiny = case(out, "http-keep-alive@tiny")
+        self.assertFalse(tiny["smock_ready"])
+        self.assertGreaterEqual(tiny["memory"]["oom_kills"], 1)
+        self.assertEqual(tiny["achieved_rate"], 0)
+        self.assertAlmostEqual(tiny["errors"], 800, delta=9)
+        self.assertEqual(tiny["requests"]["no_response"], tiny["errors"])
+
+        roomy = case(out, "http-keep-alive@roomy")
+        self.assertEqual(roomy["memory"]["oom_kills"], 0)
+        self.assertEqual(roomy["errors"], 0)
+
+
+class Ladders(unittest.TestCase):
+    """A case may run at a ladder of rates under a profile: one step for each
+    rate, from the lowest, each with results of its own."""
+
+    def test_a_case_runs_once_for_each_rate_of_its_ladder_from_the_lowest(self):
+        plan = plan_file(self, [{"name": "small", "cpu_limit": "1"}], {"small": [300, 100]},
+                         idle_rss={"settle_s": 5})
+        out = bench(self, "--plan", str(plan), *SHORT)
+        cases = read(out, "summary.json")["cases"]
+        self.assertEqual([(c["id"], c["rate"]) for c in cases],
+                         [("http-keep-alive@small@100", 100), ("http-keep-alive@small@300", 300)])
+        for result in cases:
+            self.assertAlmostEqual(result["achieved_rate"], result["rate"], delta=result["rate"] * 0.05)
+            # A profile without a memory limit leaves smock's memory unlimited.
+            self.assertEqual(result["pinning"]["smock_memory_max"], "max")
+            histogram = read(out / "raw" / "small" / f"http-keep-alive@{result['rate']}", "latency.json")
+            self.assertEqual(sum(count for _, count in histogram["counts"]), result["requests"]["ok"])
+
+
+def markdown_sections(text):
+    """The `## ` sections of a Markdown text: {heading: [line, ...]}."""
+    sections, lines = {}, None
+    for line in text.splitlines():
+        if line.startswith("## "):
+            lines = sections.setdefault(line[3:], [])
+        elif lines is not None:
+            lines.append(line)
+    return sections
+
+
+def markdown_table(lines):
+    """The rows of the first table among `lines`, as dicts by column."""
+    rows = [[cell.strip() for cell in line.strip().strip("|").split("|")] for line in lines if line.startswith("|")]
+    return [dict(zip(rows[0], row, strict=True)) for row in rows[2:]]
+
+
+class SummaryByProfile(unittest.TestCase):
+    """summary.md shows each profile apart, with its limits: smock's idle
+    RSS under it, and for each case at each rate the achieved rate, the
+    latencies, the errors, how long smock was throttled, its peak memory
+    and its OOM kills. It says what the plan says about reading them."""
+
+    def test_the_summary_shows_each_profile_with_its_limits_and_what_smock_used_under_it(self):
+        note = "Absolute numbers on this machine differ from those on GKE's CPUs."
+        plan = plan_file(self, [{"name": "small", "cpu_limit": "1", "memory_limit": "256Mi"},
+                                {"name": "tiny", "cpu_limit": "250m", "memory_limit": "4Mi"}],
+                         {"small": [100, 200], "tiny": 100}, idle_rss={"settle_s": 5}, note=note)
+        out = bench(self, "--plan", str(plan), *SHORT)
+        text = (out / "summary.md").read_text()
+        self.assertIn(note, text)
+        summary = read(out, "summary.json")
+        sections = markdown_sections(text)
+        headings = {heading.split(":")[0]: heading for heading in sections}
+        self.assertIn("CPU limit 1, memory limit 256Mi", headings["small"])
+        self.assertIn("CPU limit 250m, memory limit 4Mi", headings["tiny"])
+
+        rows = markdown_table(sections[headings["small"]])
+        for row, result in zip(rows, [c for c in summary["cases"] if c["profile"] == "small"], strict=True):
+            # A step whose load generator fell behind says so.
+            name = "http-keep-alive" + (" (late)" if result["load_generator_late"] else "")
+            self.assertEqual((row["Case"], row["Rate"], row["Achieved"]),
+                             (name, str(result["rate"]), str(result["achieved_rate"])))
+            self.assertEqual([row[f"{name} ms"] for name in ("p50", "p99", "p99.9", "Max")],
+                             [str(result["latency_ms"][name]) for name in ("p50", "p99", "p99_9", "max")])
+            self.assertEqual(row["Errors"], "0")
+            self.assertEqual(row["Throttled s"], str(result["smock_cpu"]["throttled_s"]))
+            self.assertEqual(row["Peak memory MiB"], f"{result['memory']['peak_bytes'] / MiB:.1f}")
+            self.assertEqual(row["OOM kills"], "0")
+        # Idle RSS under the profile, in MiB.
+        idle = next(i for i in summary["idle_rss"] if i["profile"] == "small")
+        self.assertTrue([line for line in sections[headings["small"]]
+                         if line.startswith("Idle RSS") and f"{idle['rss_kib'] / 1024:.1f} MiB" in line])
+
+        [row] = markdown_table(sections[headings["tiny"]])
+        self.assertIn("OOM-killed before it was ready", row["Case"])
+        self.assertGreaterEqual(int(row["OOM kills"]), 1)
+        self.assertTrue([line for line in sections[headings["tiny"]]
+                         if line.startswith("Idle RSS") and "OOM-killed before it was ready" in line])
+
+
+class Estimate(unittest.TestCase):
+    """Before it starts smock, a run says how long it will take."""
+
+    def test_a_run_says_how_long_it_will_take_before_it_starts(self):
+        plan = plan_file(self, [{"name": "small", "cpu_limit": "1"}], {"small": [100, 200]},
+                         idle_rss={"settle_s": 5})
+        lines = []
+        started = time.monotonic()
+        bench(self, "--plan", str(plan), *SHORT, on_line=lines.append)
+        elapsed = time.monotonic() - started
+        estimates = [i for i, line in enumerate(lines) if re.search(r"about [\d.]+ minutes \(\d+ s\)", line)]
+        self.assertEqual(len(estimates), 1, lines)
+        first_smock = next(i for i, line in enumerate(lines) if "idle RSS:" in line)
+        self.assertLess(estimates[0], first_smock)
+        estimate_s = int(re.search(r"\((\d+) s\)", lines[estimates[0]]).group(1))
+        # At least what the plan runs: 0.5 s of idling, then two steps of
+        # 0.5 + 4 + 2 s; and near what the run took.
+        self.assertGreaterEqual(estimate_s, 13.5)
+        self.assertLessEqual(abs(estimate_s - elapsed), elapsed / 2, (estimate_s, elapsed))
 
 
 def targets_file(test, targets):
@@ -423,7 +597,7 @@ class Targets(unittest.TestCase):
         result = case(out, "http-keep-alive@1")
         self.assertEqual(targets["loose-p99"]["measured"], result["latency_ms"]["p99"])
         self.assertEqual(targets["tight-p99.9"]["measured"], result["latency_ms"]["p99_9"])
-        self.assertEqual(targets["tight-idle-rss"]["measured"], round(summary["idle_rss"]["rss_kib"] / 1024, 2))
+        self.assertEqual(targets["tight-idle-rss"]["measured"], round(summary["idle_rss"][0]["rss_kib"] / 1024, 2))
         # The human-readable summary states each verdict too.
         lines = (out / "summary.md").read_text().splitlines()
         for target in targets.values():
