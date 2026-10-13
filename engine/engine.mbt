@@ -503,11 +503,17 @@ pub fn header_safe(text : String) -> String {
 fn host_of(request : Request) -> String? {
   let raw = match authority_of(request.target) {
     Some(authority) => authority
-    None =>
-      match request.headers.search_by(h => h.0.to_lower() == "host") {
-        Some(i) => request.headers[i].1
-        None => ""
+    None => {
+      let headers = request.headers
+      let mut host = ""
+      for i in 0..<headers.length() {
+        if is_name(headers[i].0, "host") {
+          host = headers[i].1
+          break
+        }
       }
+      host
+    }
   }
   match @definitions.normalize_host(raw) {
     "" => None

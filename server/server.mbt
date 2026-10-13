@@ -166,7 +166,7 @@ async fn run(
           serve_connection(
             conn,
             settings,
-            respond=(stream, request, _) => {
+            respond=(stream, request, _, _) => {
               @io.Writer::write(stream, admin.respond(request))
               @http1.keeps_open(request~)
             },
@@ -413,13 +413,13 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
     stream,
     self.settings,
     connection~,
-    respond=(stream, request, stopwatch) => {
+    respond=(stream, request, stopwatch, now) => {
       let engine_request = to_engine_request(request)
       let session = self.sessions.session_of(engine_request.headers)
       let outcome = self.engine.handle(
         engine_request,
         session~,
-        now=@async.now(),
+        now~,
         rand=self.rand,
       )
       defer self.traffic.record(outcome, stopwatch.seconds())
@@ -495,8 +495,9 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
 ///   it, and returns whether the connection stays open after it. It also
 ///   gets a stopwatch started when the request had been read in full: at
 ///   the read that brought its last byte, which may be well before the
-///   response to a request pipelined after others. While it waits, the
-///   connection reads nothing, and other connections are served as usual.
+///   response to a request pipelined after others; and the time it is
+///   called, as `@async.now()` gives it. While it waits, the connection
+///   reads nothing, and other connections are served as usual.
 /// - `reject` writes the response, with `Connection: close`, to bytes that
 ///   are not a valid request or are over a limit, with the status the codec
 ///   chose. It gets a stopwatch started at the read that brought them, or
@@ -506,7 +507,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
 async fn[S : @io.Reader + @io.Writer] serve_connection(
   stream : S,
   settings : @settings.ServeSettings,
-  respond~ : async (S, @http1.Request, Stopwatch) -> Bool,
+  respond~ : async (S, @http1.Request, Stopwatch, Int64) -> Bool,
   reject~ : async (S, Int, Stopwatch) -> Unit,
   connection? : Connection,
 ) -> Unit {
@@ -520,27 +521,34 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
   let read_timeout = settings.read_timeout_ms.to_int64()
   @async.with_task_group(group => {
     let watch = ReadWatch::new(group)
-    let mut idle_deadline = @async.now() + idle_timeout
+    // The time, as `@async.now()` gives it, read again after each wait: for
+    // reading, for writing a response or a 100 Continue. Between waits only
+    // the parser runs, so it stays the time until the next wait.
+    let mut now = @async.now()
+    let mut idle_deadline = now + idle_timeout
     let mut read_deadline : Int64? = None
     // When the bytes not yet parsed began to count against the read timeout:
     // when they were read, or, for bytes read before a response, when it was
     // written, since nothing is read while a response is written.
-    let mut read_since = @async.now()
+    let mut read_since = now
     // Started at the last read, which brought the last byte of every request
     // the parser holds complete.
     let mut last_read = Stopwatch::start()
     for ;; {
       match parser.next() {
         Complete(request) => {
-          if !respond(stream, request, last_read) {
+          if !respond(stream, request, last_read, now) {
             return
           }
-          idle_deadline = @async.now() + idle_timeout
+          now = @async.now()
+          idle_deadline = now + idle_timeout
           read_deadline = None
-          read_since = @async.now()
+          read_since = now
         }
-        Continue =>
+        Continue => {
           @io.Writer::write(stream, @http1.encode_response(100, [], b""))
+          now = @async.now()
+        }
         NeedMore => {
           let deadline = if parser.in_request() {
             // The request began with the bytes of the last read, or earlier.
@@ -551,7 +559,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
             read_deadline = None
             idle_deadline
           }
-          let remaining = deadline - @async.now()
+          let remaining = deadline - now
           if remaining <= 0L {
             return
           }
@@ -568,7 +576,8 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
           }
           guard n > 0 else { return }
           last_read = Stopwatch::start()
-          read_since = @async.now()
+          now = @async.now()
+          read_since = now
           parser.feed(buf.unsafe_reinterpret_as_bytes()[:n])
         }
         Invalid(status~) => {
