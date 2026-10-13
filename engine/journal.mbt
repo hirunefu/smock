@@ -226,8 +226,14 @@ let vacated : JournalEntry = {
 
 ///|
 /// Appends `entry`, then evicts the oldest entries while the Journal is
-/// over either of its bounds, counting them per Session.
+/// over either of its bounds, counting them per Session. An entry that
+/// alone takes more bytes than the bound is evicted at once instead, and
+/// the entries before it stay.
 fn Journal::append(self : Journal, entry : JournalEntry) -> Unit {
+  if entry.size > self.settings.max_bytes {
+    self.count_eviction(entry)
+    return
+  }
   self.entries.push_back(entry)
   self.bytes += entry.size
   while self.entries.length() > self.settings.max_entries ||
@@ -236,10 +242,15 @@ fn Journal::append(self : Journal, entry : JournalEntry) -> Unit {
     self.entries[0] = vacated
     self.entries.pop_front() |> ignore
     self.bytes -= oldest.size
-    self.evicted[oldest.session] = self.evicted.get(oldest.session).unwrap_or(0) +
-      1
-    self.evictions += 1L
+    self.count_eviction(oldest)
   }
+}
+
+///|
+/// Counts `entry` as evicted by the bound, for its Session.
+fn Journal::count_eviction(self : Journal, entry : JournalEntry) -> Unit {
+  self.evicted[entry.session] = self.evicted.get(entry.session).unwrap_or(0) + 1
+  self.evictions += 1L
 }
 
 ///|

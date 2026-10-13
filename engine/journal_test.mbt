@@ -299,6 +299,32 @@ test "when the byte bound is reached, the oldest entries are evicted; an entry o
 }
 
 ///|
+test "an entry over the whole byte bound is evicted alone: the older entries, of any Session, stay" {
+  let h = harness(
+    [("users.json", journal_users)],
+    journal=@engine.JournalSettings(max_bytes=2000),
+  )
+  let _ = h.record("GET", "/users/1", session="test-a")
+  let _ = h.record("GET", "/users/2", session="test-a")
+  // The two entries take 332 and 348 bytes; the third, over 3000.
+  let _ = h.record("POST", "/users/3", body="x".repeat(3000), session="test-b")
+  inspect(
+    [h.listed(Some("test-a")), h.listed(Some("test-b")), h.stats()].join(
+      "\n--\n",
+    ),
+    content=(
+      #|GET /users/1 (test-a)
+      #|GET /users/2 (test-a)
+      #|more: false, evicted: 0
+      #|--
+      #|more: false, evicted: 1
+      #|--
+      #|2 entries, 680 bytes, 1 evicted
+    ),
+  )
+}
+
+///|
 test "a body over the body limit is truncated, at the start of a UTF-8 sequence it would split; a body that is not UTF-8 is shown in base64" {
   let h = harness(
     [("users.json", journal_users)],
