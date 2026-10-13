@@ -234,8 +234,7 @@ async fn run(
       "address": Json::string("0.0.0.0:\{tls_listener.addr.port()}"),
     }
     if settings.tls is Some(files) {
-      tls_fields["cert_file"] = Json::string(files.cert_file)
-      tls_fields["key_file"] = Json::string(files.key_file)
+      add_file_fields(tls_fields, files)
     }
     logger.info("listening", fields=tls_fields)
     if watch is Some(watch) && settings.dir is Some(dir) {

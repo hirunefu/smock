@@ -128,17 +128,32 @@ async fn Pair::load(
       Some(pair)
     }
     Err(reason) => {
-      let fields : Map[String, Json] = Map([])
-      if mock != "" {
-        fields["mock"] = Json::string(mock)
-      }
-      fields["cert_file"] = Json::string(files.cert_file)
-      fields["key_file"] = Json::string(files.key_file)
+      let fields = pair_fields(mock, files)
       fields["error"] = Json::string(reason)
       logger.error("cannot load the TLS certificate", fields~)
       None
     }
   }
+}
+
+///|
+/// The fields that name the pair of `mock` ("" for the default
+/// certificate), with the files `files`, in each log entry about it.
+fn pair_fields(mock : String, files : @settings.TlsFiles) -> Map[String, Json] {
+  let fields : Map[String, Json] = { "mock": Json::string(mock) }
+  add_file_fields(fields, files)
+  fields
+}
+
+///|
+/// Adds the fields that name the certificate and key files `files` to
+/// `fields`, the fields of a log entry.
+fn add_file_fields(
+  fields : Map[String, Json],
+  files : @settings.TlsFiles,
+) -> Unit {
+  fields["cert_file"] = Json::string(files.cert_file)
+  fields["key_file"] = Json::string(files.key_file)
 }
 
 ///|
@@ -215,11 +230,10 @@ fn Certificates::warn_undeclared(self : Certificates) -> Unit {
     }
     undeclared.push(mock)
     if !self.undeclared.contains(mock) {
-      self.logger.warn("TLS certificate for a Mock that is not declared", fields={
-        "mock": Json::string(mock),
-        "cert_file": Json::string(pair.files.cert_file),
-        "key_file": Json::string(pair.files.key_file),
-      })
+      self.logger.warn(
+        "TLS certificate for a Mock that is not declared",
+        fields=pair_fields(mock, pair.files),
+      )
     }
   }
   self.undeclared = undeclared
@@ -253,13 +267,11 @@ async fn Certificates::check(self : Certificates) -> Unit {
   }
   for pair in pairs {
     self.check_pair(pair) catch {
-      err =>
-        self.logger.error("TLS certificate reload failed", fields={
-          "mock": Json::string(pair.mock),
-          "cert_file": Json::string(pair.files.cert_file),
-          "key_file": Json::string(pair.files.key_file),
-          "error": Json::string(err.to_string()),
-        })
+      err => {
+        let fields = pair_fields(pair.mock, pair.files)
+        fields["error"] = Json::string(err.to_string())
+        self.logger.error("TLS certificate reload failed", fields~)
+      }
     }
   }
 }
@@ -278,14 +290,10 @@ async fn Certificates::check_pair(self : Certificates, pair : Pair) -> Unit {
     Ok((cert, key)) => (load_pair(cert, key), certificate_expiry(cert))
     Err(reason) => (Err(reason), None)
   }
-  let fields : Map[String, Json] = {
-    "mock": Json::string(pair.mock),
-    "cert_file": Json::string(pair.files.cert_file),
-    "key_file": Json::string(pair.files.key_file),
-    "expiry": match expiry {
-      Some(ms) => Json::string(@log.format_time(ms))
-      None => Json::null()
-    },
+  let fields = pair_fields(pair.mock, pair.files)
+  fields["expiry"] = match expiry {
+    Some(ms) => Json::string(@log.format_time(ms))
+    None => Json::null()
   }
   match loaded {
     Ok(config) => {

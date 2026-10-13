@@ -119,61 +119,61 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/missing.pem","key_file":"*/rsa-key.pem","error":"cannot read the certificate file: no such file"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","cert_file":"*/missing.pem","key_file":"*/rsa-key.pem","error":"cannot read the certificate file: no such file"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/rsa-chain.pem","key_file":"*/missing.pem","error":"cannot read the key file: no such file"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","cert_file":"*/rsa-chain.pem","key_file":"*/missing.pem","error":"cannot read the key file: no such file"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/secret","key_file":"*/rsa-key.pem","error":"cannot read the certificate file: is a directory"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","cert_file":"*/secret","key_file":"*/rsa-key.pem","error":"cannot read the certificate file: is a directory"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/notes.txt","key_file":"*/rsa-key.pem","error":"certificate file: no PEM certificate found"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","cert_file":"*/notes.txt","key_file":"*/rsa-key.pem","error":"certificate file: no PEM certificate found"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/rsa-key.pem","key_file":"*/rsa-key.pem","error":"certificate file: no PEM certificate found"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","cert_file":"*/rsa-key.pem","key_file":"*/rsa-key.pem","error":"certificate file: no PEM certificate found"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/rsa-chain.pem","key_file":"*/notes.txt","error":"key file: no PEM private key found"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","cert_file":"*/rsa-chain.pem","key_file":"*/notes.txt","error":"key file: no PEM private key found"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/rsa-chain.pem","key_file":"*/rsa-chain.pem","error":"key file: no PEM private key found"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","cert_file":"*/rsa-chain.pem","key_file":"*/rsa-chain.pem","error":"key file: no PEM private key found"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/rsa-chain.pem","key_file":"*/other-key.pem","error":"the private key does not match the leaf certificate"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","cert_file":"*/rsa-chain.pem","key_file":"*/other-key.pem","error":"the private key does not match the leaf certificate"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/rsa-chain.pem","key_file":"*/ecdsa-key.pem","error":"the private key does not match the leaf certificate"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","cert_file":"*/rsa-chain.pem","key_file":"*/ecdsa-key.pem","error":"the private key does not match the leaf certificate"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","cert_file":"*/ecdsa-chain.pem","key_file":"*/rsa-key.pem","error":"the private key does not match the leaf certificate"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","cert_file":"*/ecdsa-chain.pem","key_file":"*/rsa-key.pem","error":"the private key does not match the leaf certificate"}
       ),
     )
   })
