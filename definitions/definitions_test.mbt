@@ -434,6 +434,46 @@ test "hosts are host names or IP addresses, optionally with a port, and default 
 }
 
 ///|
+test "a Host must be one a request can carry: a port is digits, a bracketed IP literal ends the name, and the name is not empty once normalised" {
+  inspect(
+    problems([
+      (
+        "a.json",
+        (
+          #|{ "mocks": [
+          #|  { "name": "a", "hosts": ["users:", "[::1]:", "[fe80::1]", "fe80::1", "10.0.0.7:80"] } ] }
+        ),
+      ),
+    ]),
+    content="valid",
+  )
+  inspect(
+    problems([
+      (
+        "a.json",
+        (
+          #|{ "mocks": [
+          #|  { "name": "a", "hosts": [":8080", ".", "[::1]junk", "users:http", "[]", "[::1",
+          #|      "a]b", "users:8080:9090", "[zz]", "[::1]:x"] } ] }
+        ),
+      ),
+    ]),
+    content=(
+      #|a.json: /mocks/0/hosts/0: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/0/hosts/1: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/0/hosts/2: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/0/hosts/3: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/0/hosts/4: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/0/hosts/5: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/0/hosts/6: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/0/hosts/7: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/0/hosts/8: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|a.json: /mocks/0/hosts/9: must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+    ),
+  )
+}
+
+///|
 test "two Mocks that claim the same Host after normalisation are rejected at the later claim, naming the earlier one" {
   inspect(
     problems([

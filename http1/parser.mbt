@@ -499,10 +499,7 @@ fn parse_head(
     let name = header.name.to_lower()
     if name == "host" {
       // A Host field with an invalid value gets 400 (RFC 9112, section 3.2).
-      if !is_host_and_port(
-          @utf8.decode_lossy(header.value),
-          port_required=false,
-        ) {
+      if !is_host_value(@utf8.decode_lossy(header.value)) {
         return Err(400)
       }
       hosts += 1

@@ -370,7 +370,8 @@ fn File::read_hosts(
   for i, host in self.array(pointer, json) {
     let field = child_pointer(pointer, i.to_string())
     match host {
-      String(host) if is_host(host) => out.push((host, field))
+      String(host) if is_host(host) && is_reachable_host(host) =>
+        out.push((host, field))
       String(host) if host.contains("*") =>
         self.error(field, "must be an exact name: Hosts have no wildcards")
       _ =>
@@ -1044,6 +1045,21 @@ pub fn child_pointer(pointer : String, key : String) -> String {
     .replace_all(old="~", new="~0")
     .replace_all(old="/", new="~1")
   "\{pointer}/\{escaped}"
+}
+
+///|
+/// Whether `host`, which `is_host` accepts, is a Host a request can carry,
+/// so that it can match: the value of a Host field, or an IPv6 address
+/// without brackets, which then has no port; and not one that normalises
+/// to no name, such as `.` or `:8080`. The JSON Schema cannot tell these
+/// apart from the rest.
+fn is_reachable_host(host : String) -> Bool {
+  let value = if !host.contains("[") && host.find(":") != host.rev_find(":") {
+    "[\{host}]"
+  } else {
+    host
+  }
+  @http1.is_host_value(value) && normalize_host(host) != ""
 }
 
 ///|

@@ -33,6 +33,24 @@ fn has_scheme(target : StringView) -> Bool {
 }
 
 ///|
+/// Whether `s` can be the value of a Host field (RFC 9110, section 7.2):
+/// `uri-host [":" port]` (RFC 3986, sections 3.2.2 and 3.2.3), where an
+/// IPv6 address is in brackets. The host and the port may be empty. The
+/// parser answers 400 to a request whose Host field is not one.
+///
+/// ```mbt check
+/// test {
+///   inspect(@http1.is_host_value("users.example.com:8080"), content="true")
+///   inspect(@http1.is_host_value("[::1]:8080"), content="true")
+///   inspect(@http1.is_host_value("users:http"), content="false")
+///   inspect(@http1.is_host_value("[::1]x"), content="false")
+/// }
+/// ```
+pub fn is_host_value(s : StringView) -> Bool {
+  is_host_and_port(s, port_required=false)
+}
+
+///|
 /// Whether `s` is `uri-host [":" port]` (RFC 3986, sections 3.2.2 and
 /// 3.2.3), as the value of a Host field is (RFC 9110, section 7.2). With
 /// `port_required`, it is `uri-host ":" port`, the authority-form of a
