@@ -111,7 +111,7 @@ fn Harness::listed(
   )
   let lines = page.entries.map(entry => {
     let session = entry.session.unwrap_or("no Session")
-    "\{entry.meth} \{entry.target} (\{session})"
+    "\{entry.request.meth} \{entry.request.target} (\{session})"
   })
   lines.push("more: \{page.more}, evicted: \{page.evicted}")
   lines.join("\n")
@@ -515,7 +515,9 @@ test "the filter takes a Mock, a method, a path and headers with the semantics o
       @engine.JournalQuery::from_json(@json.parse("{ \"filter\": \{filter} }")),
       session=Some("s"),
     )
-    let targets = page.entries.map(entry => "\{entry.meth} \{entry.target}")
+    let targets = page.entries.map(entry => {
+      "\{entry.request.meth} \{entry.request.target}"
+    })
     let listed = if targets.is_empty() { "none" } else { targets.join(", ") }
     out.push("\{filter} -> \{listed}")
   }

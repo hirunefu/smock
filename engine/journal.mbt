@@ -54,14 +54,9 @@ pub struct JournalEntry {
   via_default : Bool
   /// The digest of the definition set that answered.
   digest : String
-  meth : String
-  /// The request target as sent.
-  target : String
-  version : String
-  /// The header fields, in the order they were sent.
-  headers : Array[(String, String)]
-  /// The first bytes of the body, as many as the Journal keeps.
-  body : Bytes
+  /// The request as it was received, except that its body is only the
+  /// first bytes, as many as the Journal keeps.
+  request : Request
   /// The length of the whole body, in bytes.
   body_size : Int
   /// The ID of the Stub that matched, if any.
@@ -182,11 +177,7 @@ fn Journal::entry(
     mock,
     via_default,
     digest,
-    meth: request.meth,
-    target: request.target,
-    version: request.version,
-    headers: request.headers,
-    body,
+    request: { ..request, body, },
     body_size: request.body.length(),
     stub,
     near_miss,
@@ -224,11 +215,7 @@ let vacated : JournalEntry = {
   mock: None,
   via_default: false,
   digest: "",
-  meth: "",
-  target: "",
-  version: "",
-  headers: [],
-  body: b"",
+  request: { meth: "", target: "", version: "", headers: [], body: b"", },
   body_size: 0,
   stub: None,
   near_miss: None,
@@ -355,14 +342,7 @@ fn JournalFilter::passes(self : JournalFilter, entry : JournalEntry) -> Bool {
   if self.until is Some(until) && entry.received_at >= until {
     return false
   }
-  let request = {
-    meth: entry.meth,
-    target: entry.target,
-    version: entry.version,
-    headers: entry.headers,
-    body: entry.body,
-  }
-  Incoming::new(request).meets(self.conditions)
+  Incoming::new(entry.request).meets(self.conditions)
 }
 
 ///|
@@ -647,16 +627,16 @@ pub impl ToJson for JournalEntry with fn to_json(self) {
     "viaDefault": Json::boolean(self.via_default),
     "digest": Json::string(self.digest),
     "request": {
-      "method": Json::string(self.meth),
-      "target": Json::string(self.target),
-      "version": Json::string(self.version),
+      "method": Json::string(self.request.meth),
+      "target": Json::string(self.request.target),
+      "version": Json::string(self.request.version),
       "headers": Json::array(
-        self.headers.map(header => {
+        self.request.headers.map(header => {
           "name": Json::string(header.0),
           "value": Json::string(header.1),
         }),
       ),
-      "body": body_json(self.body, size=self.body_size),
+      "body": body_json(self.request.body, size=self.body_size),
     },
     "stub": optional(self.stub),
     "nearMiss": self.near_miss.map_or(Json::null(), near_miss => {

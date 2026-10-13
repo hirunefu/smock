@@ -116,12 +116,12 @@ fn describe(outcome : @engine.Outcome) -> String {
       out.write_string("  mock: \{@debug.to_string(journal.mock)}\n")
       out.write_string("  via_default: \{journal.via_default}\n")
       out.write_string(
-        "  request: \{journal.meth} \{journal.target} \{journal.version}\n",
+        "  request: \{journal.request.meth} \{journal.request.target} \{journal.request.version}\n",
       )
-      for header in journal.headers {
+      for header in journal.request.headers {
         out.write_string("  header: \{header.0}: \{header.1}\n")
       }
-      out.write_string("  body: \{text(journal.body)}\n")
+      out.write_string("  body: \{text(journal.request.body)}\n")
       out.write_string("  stub: \{@debug.to_string(journal.stub)}\n")
       out.write_string("  status: \{@debug.to_string(journal.status)}\n")
       out.write_string("  fault: \{@debug.to_string(journal.fault)}\n")
