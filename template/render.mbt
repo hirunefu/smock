@@ -93,16 +93,13 @@ fn Context::count(
   at : String,
 ) -> Unit raise RenderError {
   self.output += bytes
-  self.check_output(self.output, at)
+  check_output(self.output, at)
 }
 
 ///|
-fn Context::check_output(
-  self : Context,
-  total : Int,
-  at : String,
-) -> Unit raise RenderError {
-  ignore(self)
+/// Raises a render error at `at` when `total` bytes of output are more than
+/// the bound.
+fn check_output(total : Int, at : String) -> Unit raise RenderError {
   if total > max_output {
     raise RenderError(
       at~,
@@ -529,7 +526,7 @@ fn Context::write_node(
     Static(json) => write_json(out, json)
     Single(expr, at) => {
       write_json(out, self.value(expr, frames, at).json)
-      self.check_output(start + out.length(), at)
+      check_output(start + out.length(), at)
     }
     Interpolated(parts, at) => {
       let text = StringBuilder()
@@ -543,7 +540,7 @@ fn Context::write_node(
         }
       }
       write_json(out, Json::string(text.to_string()))
-      self.check_output(start + out.length(), at)
+      check_output(start + out.length(), at)
     }
     Members(members) => {
       out.write_byte(b'{')

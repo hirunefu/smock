@@ -725,7 +725,7 @@ async test "smock render --help names its argument, its inputs and the settings 
       #|status 0
       #|Usage: smock render --dir <dir> --request <request> [options] <stub-id>
       #|
-      #|Render a Stub's response for a sample request, as the Admin API render operation does, and print it as JSON: the status, the headers and the body, and the Stub's conditions the sample fails, with expected and actual values. Exits with status 1 if the definitions directory is invalid, no Stub has the ID, or the sample request is not valid.
+      #|Render a Stub's response for a sample request, as the Admin API render operation does, and print it as JSON: the time and the seed it used, the status, the headers and the body or events, rendered from the Stub's templates when it has them, and the Stub's conditions the sample fails, with expected and actual values. Exits with status 1 if the definitions directory is invalid, no Stub has the ID, or the sample request is not valid.
       #|
       #|Arguments:
       #|  stub-id  The ID of a Stub from the Definition files.
@@ -736,7 +736,7 @@ async test "smock render --help names its argument, its inputs and the settings 
       #|  --body-file-dir <body-file-dir>  The body-file subdirectory of the definitions directory. [env: SMOCK_BODY_FILE_DIR] [default: files]
       #|  --request <request>              A file that holds the sample request as JSON: {method, path, query, headers, body, session}, each optional.
       #|  --time <time>                    The time the sample request is received at, as an RFC 3339 date-time such as 2026-10-12T14:30:05Z. Default: now.
-      #|  --seed <seed>                    The seed of the random source the rendering draws from, from 0 to 9007199254740991. Default: a fresh seed.
+      #|  --seed <seed>                    The seed of the random source the rendering draws from, from 0 to 9007199254740991. Default: the Stub's fault.seed, or a fresh seed when it has none.
       #|
     ),
   )

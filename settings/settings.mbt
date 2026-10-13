@@ -338,7 +338,7 @@ pub fn check_command() -> @argparse.Command {
 pub fn render_command() -> @argparse.Command {
   @argparse.Command(
     "render",
-    about="Render a Stub's response for a sample request, as the Admin API render operation does, and print it as JSON: the status, the headers and the body, and the Stub's conditions the sample fails, with expected and actual values. Exits with status 1 if the definitions directory is invalid, no Stub has the ID, or the sample request is not valid.",
+    about="Render a Stub's response for a sample request, as the Admin API render operation does, and print it as JSON: the time and the seed it used, the status, the headers and the body or events, rendered from the Stub's templates when it has them, and the Stub's conditions the sample fails, with expected and actual values. Exits with status 1 if the definitions directory is invalid, no Stub has the ID, or the sample request is not valid.",
     positionals=[
       @argparse.PositionArg(
         "stub-id",
@@ -369,7 +369,7 @@ pub fn render_command() -> @argparse.Command {
       @argparse.OptionArg(
         "seed",
         long="seed",
-        about="The seed of the random source the rendering draws from, from 0 to \{max_seed}. Default: a fresh seed.",
+        about="The seed of the random source the rendering draws from, from 0 to \{max_seed}. Default: the Stub's fault.seed, or a fresh seed when it has none.",
       ),
     ],
   )

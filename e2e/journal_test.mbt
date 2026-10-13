@@ -190,6 +190,7 @@ async test "a query returns the calling Session's entries, oldest first, as the 
             "nearMiss": Json::null(),
             "status": 200,
             "fault": Json::null(),
+            "templateError": Json::null(),
           },
           {
             "seq": 2,
@@ -230,6 +231,7 @@ async test "a query returns the calling Session's entries, oldest first, as the 
             },
             "status": 404,
             "fault": Json::null(),
+            "templateError": Json::null(),
           },
           {
             "seq": 3,
@@ -264,6 +266,7 @@ async test "a query returns the calling Session's entries, oldest first, as the 
             "nearMiss": Json::null(),
             "status": 404,
             "fault": Json::null(),
+            "templateError": Json::null(),
           },
         ],
         "more": false,
@@ -397,6 +400,7 @@ async test "a request ended by a reset Fault is in the Journal, body included, a
             "nearMiss": null,
             "status": null,
             "fault": "reset",
+            "templateError": null,
           },
         ],
         "more": false,
