@@ -228,9 +228,10 @@ smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /et
 
 The metric `smock_tls_certificate_expiry_timestamp_seconds` gives when each
 certificate the TLS port presents expires (its notAfter), in seconds since
-the Unix epoch: `mock=""` for the default certificate and `mock="<name>"` for
-a Mock's own. It follows rotations, so an alert on it notices a renewal that
-stopped working before clients fail.
+the Unix epoch: `mock=""` for the default certificate, the generated
+self-signed one included, and `mock="<name>"` for a Mock's own. It follows
+rotations and new self-signed certificates, so an alert on it notices a
+renewal that stopped working before clients fail.
 
 Without default certificate files, smock still serves HTTPS on the TLS
 port, with a self-signed certificate it generates at startup, for local

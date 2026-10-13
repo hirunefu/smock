@@ -53,7 +53,8 @@ priv struct Certificates {
 ///|
 /// Loads the default pair, `default`, or without it generates a
 /// self-signed certificate for the Hosts `engine` serves; loads the pair of
-/// each Mock in `by_mock`; and registers the expiry metric in `metrics`.
+/// each Mock in `by_mock`; and registers the expiry metric in `metrics`,
+/// with a series for each of these certificates.
 /// When a pair cannot be loaded, or the certificate cannot be generated, it
 /// logs why and returns `None`: smock then does not start. Warns about each
 /// Mock in `by_mock` that `engine` does not serve.
@@ -76,7 +77,8 @@ async fn Certificates::load(
         None => return None
       }
     None =>
-      match SelfSignedCertificate::generate(engine, logger) {
+      match
+        SelfSignedCertificate::generate(engine, logger, expiry.labels([""])) {
         Some(certificate) => SelfSigned(certificate)
         None => return None
       }

@@ -15,17 +15,25 @@ priv struct SelfSignedCertificate {
   mut config : @openssl.ServerConfig
   /// The names it covers.
   mut names : Array[String]
+  /// Its series of the expiry metric, the default certificate's.
+  expiry : @metrics.GaugeSeries
 }
 
 ///|
-/// A self-signed certificate for the Hosts `engine` serves. Returns `None`
-/// when it cannot be generated, which is logged.
+/// A self-signed certificate for the Hosts `engine` serves, whose expiry
+/// `expiry`, the default certificate's series of the expiry metric,
+/// reports. Returns `None` when it cannot be generated, which is logged.
 fn SelfSignedCertificate::generate(
   engine : @engine.Engine,
   logger : @log.Logger,
+  expiry : @metrics.GaugeSeries,
 ) -> SelfSignedCertificate? {
   let names = self_signed_names(engine.status())
-  generate_self_signed(names, logger).map(config => { config, names, })
+  generate_self_signed(names, logger).map(generated => {
+    let (config, certificate) = generated
+    set_self_signed_expiry(expiry, certificate)
+    { config, names, expiry, }
+  })
 }
 
 ///|
@@ -42,9 +50,22 @@ fn SelfSignedCertificate::follow_hosts(
   if names == self.names {
     return
   }
-  if generate_self_signed(names, logger) is Some(config) {
+  if generate_self_signed(names, logger) is Some((config, certificate)) {
     self.config = config
     self.names = names
+    set_self_signed_expiry(self.expiry, certificate)
+  }
+}
+
+///|
+/// Sets `expiry` to when `certificate`, a generated certificate in PEM,
+/// expires.
+fn set_self_signed_expiry(
+  expiry : @metrics.GaugeSeries,
+  certificate : Bytes,
+) -> Unit {
+  if certificate_expiry(certificate) is Some(ms) {
+    expiry.set(ms.to_double() / 1000.0)
   }
 }
 
@@ -76,11 +97,12 @@ fn self_signed_names(status : @engine.Status) -> Array[String] {
 ///|
 /// Generates a self-signed certificate for `names` and loads it for the TLS
 /// port, and logs that it is in use, with its SHA-256 fingerprint and its
-/// names. Returns `None` when it cannot, which is logged instead.
+/// names. Returns the configuration that presents it and the certificate,
+/// in PEM, or `None` when it cannot, which is logged instead.
 fn generate_self_signed(
   names : Array[String],
   logger : @log.Logger,
-) -> @openssl.ServerConfig? {
+) -> (@openssl.ServerConfig, Bytes)? {
   try {
     let generated = @openssl.SelfSigned::generate(names, days=SELF_SIGNED_DAYS)
     let config = @openssl.ServerConfig(
@@ -88,7 +110,7 @@ fn generate_self_signed(
       private_key=generated.private_key,
       alpn~,
     )
-    (config, generated.sha256_fingerprint)
+    (config, generated.certificate, generated.sha256_fingerprint)
   } catch {
     err => {
       logger.error("cannot generate a self-signed certificate", fields={
@@ -97,12 +119,12 @@ fn generate_self_signed(
       None
     }
   } noraise {
-    (config, fingerprint) => {
+    (config, certificate, fingerprint) => {
       logger.info("self-signed certificate in use", fields={
         "sha256Fingerprint": Json::string(fingerprint),
         "names": Json::array(names.map(name => Json::string(name))),
       })
-      Some(config)
+      Some((config, certificate))
     }
   }
 }
