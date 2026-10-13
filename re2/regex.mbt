@@ -8,6 +8,19 @@
 pub struct Regex {
   /// The compiled program.
   priv insts : FixedArray[Inst]
+  /// The DFA that `full_match` builds from the program as inputs need it.
+  priv mut dfa : DfaSlot
+}
+
+///|
+/// Where a regex is with its DFA.
+priv enum DfaSlot {
+  /// Not built yet: no `full_match` has run.
+  Unbuilt
+  Built(Dfa)
+  /// Dropped: the program needs more states than the budget allows, so
+  /// `full_match` runs the Pike VM.
+  TooLarge
 }
 
 ///|
@@ -45,7 +58,7 @@ pub impl Show for CompileError with fn output(self, logger) {
 /// of more than 100 000 instructions, or groups nested more than 100 deep.
 pub fn compile(pattern : String) -> Regex raise CompileError {
   let node = parse(pattern)
-  { insts: compile_node(node), }
+  { insts: compile_node(node), dfa: Unbuilt, }
 }
 
 ///|
@@ -58,6 +71,21 @@ pub fn compile(pattern : String) -> Regex raise CompileError {
 /// character: nothing in a pattern consumes it, so input that contains one
 /// never matches as a whole.
 pub fn Regex::full_match(self : Regex, input : BytesView) -> Bool {
+  let dfa = match self.dfa {
+    Built(dfa) => Some(dfa)
+    Unbuilt => {
+      let dfa = Dfa::new(self.insts)
+      self.dfa = Built(dfa)
+      Some(dfa)
+    }
+    TooLarge => None
+  }
+  if dfa is Some(dfa) {
+    match dfa.full_match(input) {
+      Some(matched) => return matched
+      None => self.dfa = TooLarge
+    }
+  }
   run(self.insts, input, Full).0 is Some(_)
 }
 
@@ -76,7 +104,8 @@ pub fn Regex::search(self : Regex, input : BytesView) -> Match? {
 }
 
 ///|
-/// The number of steps `full_match` takes on `input`. A step is one visit of
+/// The number of steps the Pike VM takes to decide `full_match` on `input`,
+/// as `full_match` does when its DFA is over budget. A step is one visit of
 /// one instruction of the compiled program, so the count grows linearly with
 /// the length of the input. It is a measure of work that does not depend on
 /// the machine, for tests and benchmarks.

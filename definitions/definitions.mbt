@@ -276,12 +276,42 @@ pub enum BodyCondition {
 /// can change, so the snapshot stays as it was loaded.
 pub struct JsonCondition {
   priv value : Json
+  /// The value, read into arrays, so that matching it walks no map.
+  priv expected : Expected
+}
+
+///|
+/// A JSON value as a condition expects it: an object as its keys and the
+/// values expected under them, in order; an array as the values expected
+/// in it; any other value as itself.
+priv enum Expected {
+  Object(FixedArray[String], FixedArray[Expected])
+  Array(FixedArray[Expected])
+  Scalar(Json)
 }
 
 ///|
 /// A condition on `value`, which it copies.
 fn JsonCondition::new(value : Json) -> JsonCondition {
-  { value: deep_copy(value), }
+  { value: deep_copy(value), expected: expected_of(value), }
+}
+
+///|
+/// `value` as a condition expects it.
+fn expected_of(value : Json) -> Expected {
+  match value {
+    Object(members) => {
+      let keys = []
+      let values = []
+      for key, item in members {
+        keys.push(key)
+        values.push(expected_of(item))
+      }
+      Object(FixedArray::from_array(keys), FixedArray::from_array(values))
+    }
+    Array(items) => Array(FixedArray::from_array(items.map(expected_of)))
+    _ => Scalar(value)
+  }
 }
 
 ///|
@@ -290,33 +320,37 @@ fn JsonCondition::new(value : Json) -> JsonCondition {
 /// same length, and each element contains the listed one; any other value
 /// is equal, numbers by their value (see `same_number`).
 pub fn JsonCondition::matches(self : JsonCondition, actual : Json) -> Bool {
-  contains(actual, self.value)
+  contains(actual, self.expected)
 }
 
 ///|
-fn contains(actual : Json, expected : Json) -> Bool {
+fn contains(actual : Json, expected : Expected) -> Bool {
   match (expected, actual) {
-    (Object(expected), Object(actual)) =>
-      expected
-      .iter()
-      .all(entry => {
-        actual.get(entry.0) is Some(value) && contains(value, entry.1)
-      })
-    (Array(expected), Array(actual)) => {
-      if expected.length() != actual.length() {
-        return false
-      }
-      for i, value in expected {
-        if !contains(actual[i], value) {
+    (Object(keys, values), Object(actual)) => {
+      for i in 0..<keys.length() {
+        guard actual.get(keys[i]) is Some(value) && contains(value, values[i]) else {
           return false
         }
       }
       true
     }
-    (Number(expected, repr=expected_text), Number(actual, repr=actual_text)) =>
-      same_number(expected, expected_text, actual, actual_text)
-    (String(expected), String(actual)) => expected == actual
-    (True, True) | (False, False) | (Null, Null) => true
+    (Array(expected), Array(actual)) => {
+      if expected.length() != actual.length() {
+        return false
+      }
+      for i in 0..<expected.length() {
+        if !contains(actual[i], expected[i]) {
+          return false
+        }
+      }
+      true
+    }
+    (
+      Scalar(Number(expected, repr=expected_text)),
+      Number(actual, repr=actual_text),
+    ) => same_number(expected, expected_text, actual, actual_text)
+    (Scalar(String(expected)), String(actual)) => expected == actual
+    (Scalar(True), True) | (Scalar(False), False) | (Scalar(Null), Null) => true
     _ => false
   }
 }

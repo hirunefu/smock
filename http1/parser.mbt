@@ -31,13 +31,24 @@ pub struct Parser {
   priv mut start : Int
   priv mut end : Int
   /// How many bytes after `start` the head scan has looked at, and where in
-  /// the head they leave it, so the scan resumes there.
+  /// the head they leave it, so the scan resumes there: the part of the
+  /// head, how many bytes of the method, the target or the version it has
+  /// seen, and where in the header section it is.
   priv mut scanned : Int
   priv mut scan : HeadScan
+  priv mut scan_count : Int
+  priv mut section : Section
+  /// Where each line of the head being scanned ends, as the index of its
+  /// CR counted from `start`: the request line, then each field line.
+  priv line_ends : Array[Int]
   /// How many header fields the head scan has seen begin.
   priv mut fields : Int
   /// The head of the next request, once parsed. Its bytes are consumed.
   priv mut head : Head?
+  /// The head parsed last. A client tends to send the same method, target
+  /// and header fields on a connection again and again, so the next head
+  /// reuses its strings and fields where they are the same.
+  priv mut previous : Head?
   /// How far the chunked body of the next request is decoded.
   priv chunks : Chunks
   /// The status of the error that stopped the parser.
@@ -155,9 +166,13 @@ pub fn Parser::Parser(
     start: 0,
     end: 0,
     scanned: 0,
-    scan: Method(0),
+    scan: Method,
+    scan_count: 0,
+    section: FieldStart,
+    line_ends: [],
     fields: 0,
     head: None,
+    previous: None,
     chunks: Chunks(limit=body_limit),
     invalid: None,
     header_size_limit,
@@ -219,12 +234,22 @@ pub fn Parser::next(self : Parser) -> Parsed {
           return Invalid(status~)
         }
       }
-      match parse_head(self.buf, self.start, head_end, self.body_limit) {
+      let parsed = parse_head(
+        self.buf,
+        self.start,
+        self.line_ends,
+        self.body_limit,
+        self.previous,
+      )
+      self.line_ends.clear()
+      match parsed {
         Ok(head) => {
           self.head = Some(head)
+          self.previous = Some(head)
           self.start = head_end
           self.scanned = 0
-          self.scan = Method(0)
+          self.scan = Method
+          self.scan_count = 0
           self.fields = 0
           if head.expects_continue {
             return Continue
@@ -315,29 +340,132 @@ priv enum HeadEnd {
 /// Each byte is checked as it arrives, so bytes that cannot be part of a
 /// request head, and heads over the limits, are rejected at once instead of
 /// waiting for an empty line that may never come.
+///
+/// The scan runs on local variables and allocates nothing, since it looks at
+/// every byte of every head. The bytes of a target, a field name or a field
+/// value, most of a head, are taken in an inner loop: up to the header size
+/// limit, so that the byte past it still gets 431 or 400 as it would alone.
+/// It records where each line ends, for `parse_head`.
 fn Parser::scan_head(self : Parser) -> HeadEnd {
-  while self.start + self.scanned < self.end {
-    let before = self.scan
-    self.scan = before.after(self.buf[self.start + self.scanned])
-    self.scanned += 1
-    if (before, self.scan) is (Fields(FieldStart), Fields(FieldName)) {
-      self.fields += 1
-    }
-    match self.scan {
-      Broken => return Rejected(400)
-      _ if self.scanned > self.header_size_limit ||
-        self.fields > self.header_count_limit => return Rejected(431)
-      Fields(Ended) => return Ended(self.start + self.scanned)
-      EmptyLine => {
-        // An empty line before the request line is consumed and ignored.
-        self.start += self.scanned
-        self.scanned = 0
-        self.scan = Method(0)
+  let buf = self.buf
+  let end = self.end
+  let size_limit = self.header_size_limit
+  let count_limit = self.header_count_limit
+  let mut start = self.start
+  let mut at = self.start + self.scanned
+  let mut scan = self.scan
+  let mut count = self.scan_count
+  let mut section = self.section
+  let mut fields = self.fields
+  let line_ends = self.line_ends
+  let mut result : HeadEnd = Partial
+  while at < end {
+    let c = buf[at]
+    at += 1
+    match scan {
+      EmptyLineLf => scan = if c == b'\n' { EmptyLine } else { Broken }
+      Method =>
+        if is_tchar(c) {
+          count += 1
+        } else if c == b' ' && count > 0 {
+          scan = Target
+          count = 0
+        } else if c == b'\r' && count == 0 {
+          scan = EmptyLineLf
+        } else {
+          scan = Broken
+        }
+      Target =>
+        if c > b' ' && c < b'\x7f' {
+          count += 1
+        } else if c == b' ' && count > 0 {
+          scan = Version
+          count = 0
+        } else {
+          scan = Broken
+        }
+      Version => {
+        let expected = match count {
+          0 => c == b'H'
+          1 | 2 => c == b'T'
+          3 => c == b'P'
+          4 => c == b'/'
+          5 | 7 => is_digit(c)
+          6 => c == b'.'
+          _ => c == b'\r'
+        }
+        if !expected {
+          scan = Broken
+        } else if count == 8 {
+          scan = VersionLf
+          line_ends.push(at - 1 - start)
+        } else {
+          count += 1
+        }
       }
-      _ => ()
+      VersionLf =>
+        if c == b'\n' {
+          scan = Fields
+          section = FieldStart
+        } else {
+          scan = Broken
+        }
+      Fields => {
+        let before = section
+        section = before.after(c)
+        match section {
+          Broken => scan = Broken
+          FieldName if before is FieldStart => fields += 1
+          FieldLf => line_ends.push(at - 1 - start)
+          _ => ()
+        }
+      }
+      EmptyLine | Broken => scan = Broken
+    }
+    if scan is Broken {
+      result = Rejected(400)
+      break
+    }
+    if at - start > size_limit || fields > count_limit {
+      result = Rejected(431)
+      break
+    }
+    // The rest of a run of bytes that leave the scan where it is.
+    let stop = if end - start < size_limit { end } else { start + size_limit }
+    if scan is EmptyLine {
+      // An empty line before the request line is consumed and ignored.
+      start = at
+      scan = Method
+      count = 0
+    } else if scan is Fields {
+      if section is Ended {
+        result = Ended(at)
+        break
+      }
+      if section is FieldValue {
+        while at < stop && is_field_value_byte(buf[at]) {
+          at += 1
+        }
+      } else if section is FieldName {
+        while at < stop && is_tchar(buf[at]) {
+          at += 1
+        }
+      }
+    } else if scan is Target {
+      let from = at
+      while at < stop && buf[at] > b' ' && buf[at] < b'\x7f' {
+        at += 1
+      }
+      count += at - from
     }
   }
-  Partial
+  self.start = start
+  self.scanned = at - start
+  self.scan = scan
+  self.scan_count = count
+  self.section = section
+  self.fields = fields
+  result
 }
 
 ///|
@@ -349,67 +477,18 @@ priv enum HeadScan {
   /// An empty line before the request line has ended; servers ignore it
   /// (RFC 9112, section 2.2).
   EmptyLine
-  /// In the method, after that many bytes of it.
-  Method(Int)
-  /// In the request target, after that many bytes of it.
-  Target(Int)
-  /// In the HTTP version, after that many bytes of `HTTP/D.D`.
-  Version(Int)
+  /// In the method.
+  Method
+  /// In the request target.
+  Target
+  /// In the HTTP version, `HTTP/D.D`, then the CR that ends the line.
+  Version
   /// The LF ending the request line is next.
   VersionLf
   /// In the header section.
-  Fields(Section)
+  Fields
   /// The bytes so far cannot begin a request.
   Broken
-}
-
-///|
-/// The scan after the byte `c`.
-fn HeadScan::after(self : HeadScan, c : Byte) -> HeadScan {
-  match self {
-    EmptyLineLf => if c == b'\n' { EmptyLine } else { Broken }
-    Method(n) =>
-      if is_tchar(c) {
-        Method(n + 1)
-      } else if c == b' ' && n > 0 {
-        Target(0)
-      } else if c == b'\r' && n == 0 {
-        EmptyLineLf
-      } else {
-        Broken
-      }
-    Target(n) =>
-      if c > b' ' && c < b'\x7f' {
-        Target(n + 1)
-      } else if c == b' ' && n > 0 {
-        Version(0)
-      } else {
-        Broken
-      }
-    Version(n) => {
-      let expected = match n {
-        0 => c == b'H'
-        1 | 2 => c == b'T'
-        3 => c == b'P'
-        4 => c == b'/'
-        5 | 7 => is_digit(c)
-        6 => c == b'.'
-        _ => c == b'\r'
-      }
-      match (expected, n) {
-        (false, _) => Broken
-        (true, 8) => VersionLf
-        (true, _) => Version(n + 1)
-      }
-    }
-    VersionLf => if c == b'\n' { Fields(FieldStart) } else { Broken }
-    Fields(section) =>
-      match section.after(c) {
-        Broken => Broken
-        section => Fields(section)
-      }
-    EmptyLine | Broken => Broken
-  }
 }
 
 ///|
@@ -476,18 +555,27 @@ fn is_field_value_byte(c : Byte) -> Bool {
 }
 
 ///|
-/// Parses the head in `buf[start:end]`, which the head scan has checked and
-/// which ends with an empty line, and decides how the body is framed.
+/// Parses the head that starts at `buf[start]`, which the head scan has
+/// checked and which ends with an empty line, and decides how the body is
+/// framed. `line_ends` are where its lines end, as the head scan recorded
+/// them. The method, the target and each header field that are the same as
+/// in the `previous` head, field by field in order, are its own strings and
+/// fields.
 fn parse_head(
   buf : FixedArray[Byte],
   start : Int,
-  end : Int,
+  line_ends : Array[Int],
   body_limit : Int,
+  previous : Head?,
 ) -> Result[Head, Int] {
-  let lines = split_lines(buf, start, end)
-  let (meth, target, version) = match parse_request_line(buf, lines[0]) {
+  let (meth, target, version) = match
+    parse_request_line(buf, start, start + line_ends[0], previous) {
     Ok(line) => line
     Err(status) => return Err(status)
+  }
+  let previous_headers = match previous {
+    Some(previous) => previous.headers
+    None => []
   }
   let headers = []
   let content_lengths = []
@@ -496,21 +584,26 @@ fn parse_head(
   let mut expect_continue = false
   let mut hosts = 0
   let transfer_encodings = []
-  for line in lines[1:] {
-    let header = parse_field(buf, line)
+  for line in 1..<line_ends.length() {
+    let header = parse_field(
+      buf,
+      start + line_ends[line - 1] + 2,
+      start + line_ends[line],
+      previous_headers.get(line - 1),
+    )
     headers.push(header)
-    let name = header.name.to_lower()
-    if name == "host" {
+    let name = header.name
+    if is_name(name, "host") {
       // A Host field with an invalid value gets 400 (RFC 9112, section 3.2).
       if !is_host_value(@utf8.decode_lossy(header.value)) {
         return Err(400)
       }
       hosts += 1
-    } else if name == "transfer-encoding" {
+    } else if is_name(name, "transfer-encoding") {
       transfer_encodings.push(header.value)
-    } else if name == "content-length" {
+    } else if is_name(name, "content-length") {
       content_lengths.push(header.value)
-    } else if name == "connection" {
+    } else if is_name(name, "connection") {
       for token in list_elements(header.value) {
         match token.to_lower() {
           "close" => close = true
@@ -518,7 +611,7 @@ fn parse_head(
           _ => ()
         }
       }
-    } else if name == "expect" {
+    } else if is_name(name, "expect") {
       for expectation in list_elements(header.value) {
         if expectation.to_lower() == "100-continue" {
           expect_continue = true
@@ -634,25 +727,6 @@ fn list_elements(value : Bytes) -> Iter[StringView] {
 }
 
 ///|
-/// The `(start, end)` of each line of the head in `buf[start:end]`, without
-/// its CRLF and without the final empty line.
-fn split_lines(
-  buf : FixedArray[Byte],
-  start : Int,
-  end : Int,
-) -> Array[(Int, Int)] {
-  let lines = []
-  let mut line_start = start
-  for i in start..<(end - 2) {
-    if buf[i] == b'\r' && buf[i + 1] == b'\n' {
-      lines.push((line_start, i))
-      line_start = i + 2
-    }
-  }
-  lines
-}
-
-///|
 /// Reads `method SP request-target SP HTTP-version` from the line
 /// `buf[start:end]`, which the head scan has checked. A version whose major
 /// number is not 1 gets 505; a later minor version than 1 is read as
@@ -660,9 +734,10 @@ fn split_lines(
 /// request target, or in a form its method does not take, gets 400.
 fn parse_request_line(
   buf : FixedArray[Byte],
-  line : (Int, Int),
+  start : Int,
+  end : Int,
+  previous : Head?,
 ) -> Result[(String, String, Version), Int] {
-  let (start, end) = line
   // The method holds no space, and the version is the last 8 bytes,
   // `HTTP/D.D`.
   let mut space = start
@@ -674,8 +749,14 @@ fn parse_request_line(
     (b'1', _) => Http11
     _ => return Err(505)
   }
-  let meth = ascii(buf, start, space)
-  let target = ascii(buf, space + 1, end - 9)
+  let (meth, target) = match previous {
+    Some(previous) =>
+      (
+        ascii_reusing(buf, start, space, previous.meth),
+        ascii_reusing(buf, space + 1, end - 9, previous.target),
+      )
+    None => (ascii(buf, start, space), ascii(buf, space + 1, end - 9))
+  }
   if !is_request_target(target, meth~) {
     return Err(400)
   }
@@ -689,9 +770,14 @@ fn is_digit(c : Byte) -> Bool {
 
 ///|
 /// Reads `field-name ":" OWS field-value OWS` from the line
-/// `buf[start:end]`, which the head scan has checked.
-fn parse_field(buf : FixedArray[Byte], line : (Int, Int)) -> Header {
-  let (start, end) = line
+/// `buf[start:end]`, which the head scan has checked. It is `previous`, or
+/// has its name, when that is the same.
+fn parse_field(
+  buf : FixedArray[Byte],
+  start : Int,
+  end : Int,
+  previous : Header?,
+) -> Header {
   let mut colon = start
   while buf[colon] != b':' {
     colon += 1
@@ -704,34 +790,37 @@ fn parse_field(buf : FixedArray[Byte], line : (Int, Int)) -> Header {
   while value_end > value_start && is_ows(buf[value_end - 1]) {
     value_end -= 1
   }
-  {
-    name: ascii(buf, start, colon),
-    value: buf.unsafe_reinterpret_as_bytes()[value_start:value_end].to_owned(),
+  let value = buf.unsafe_reinterpret_as_bytes()[value_start:value_end]
+  match previous {
+    Some(previous) => {
+      let name = ascii_reusing(buf, start, colon, previous.name)
+      if physical_equal(name, previous.name) && value == previous.value[:] {
+        previous
+      } else {
+        { name, value: value.to_owned(), }
+      }
+    }
+    None => { name: ascii(buf, start, colon), value: value.to_owned(), }
   }
 }
 
 ///|
 /// Whether `c` may appear in a token, such as a method or a field name.
 fn is_tchar(c : Byte) -> Bool {
-  (c >= b'a' && c <= b'z') ||
-  (c >= b'A' && c <= b'Z') ||
-  (c >= b'0' && c <= b'9') ||
-  c
-  is (b'!'
-  | b'#'
-  | b'$'
-  | b'%'
-  | b'&'
-  | b'\''
-  | b'*'
-  | b'+'
-  | b'-'
-  | b'.'
-  | b'^'
-  | b'_'
-  | b'`'
-  | b'|'
-  | b'~')
+  tchars[c.to_int()]
+}
+
+///|
+/// Whether each byte may appear in a token: ASCII letters, digits and
+/// ``!#$%&'*+-.^_`|~``, looked up since the head scan asks for every byte of
+/// every method and field name.
+let tchars : FixedArray[Bool] = {
+  let table = FixedArray::make(256, false)
+  for
+    c in b"!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" {
+    table[c.to_int()] = true
+  }
+  table
 }
 
 ///|
@@ -740,11 +829,46 @@ fn is_ows(c : Byte) -> Bool {
 }
 
 ///|
-/// `buf[start:end]`, which holds only ASCII, as a string.
+/// `buf[start:end]`, which holds only ASCII, as a string. ASCII is UTF-8, so
+/// it is decoded as UTF-8, all at once.
 fn ascii(buf : FixedArray[Byte], start : Int, end : Int) -> String {
-  let out = StringBuilder()
-  for i in start..<end {
-    out.write_char(buf[i].to_char())
+  @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[start:end])
+}
+
+///|
+/// `buf[start:end]`, which holds only ASCII, as a string: `same` itself when
+/// it is that text, so that text sent again shares one string.
+fn ascii_reusing(
+  buf : FixedArray[Byte],
+  start : Int,
+  end : Int,
+  same : String,
+) -> String {
+  if same.length() == end - start {
+    let mut i = 0
+    while i < end - start && same[i].to_int() == buf[start + i].to_int() {
+      i += 1
+    }
+    if i == end - start {
+      return same
+    }
   }
-  out.to_string()
+  ascii(buf, start, end)
+}
+
+///|
+/// Whether the field name `name` is `lower`, which is in lower case, in any
+/// case. Field names are ASCII.
+fn is_name(name : String, lower : String) -> Bool {
+  if name.length() != lower.length() {
+    return false
+  }
+  for i in 0..<name.length() {
+    let c = name[i]
+    let c = if c >= 'A' && c <= 'Z' { c + 0x20 } else { c }
+    if c != lower[i] {
+      return false
+    }
+  }
+  true
 }

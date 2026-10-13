@@ -160,8 +160,16 @@ grows linearly with the length of the input for every pattern, including
 patterns such as `(a+)+$` that take exponential time in backtracking
 matchers.
 
+`full_match` only needs to know whether some way spans the input, so it
+runs a DFA instead: each set of places the Pike VM's threads can be at is
+one state, built from the program the first time an input reaches it and
+then looked up, so that most characters cost one table lookup. The states a
+regex keeps are bounded (128 KiB); a pattern that would need more, such as
+`(a|b)*a(a|b){14}`, drops its DFA and runs the Pike VM from then on. Either
+way the time stays linear in the length of the input.
+
 `Regex::search_steps(input)` and `Regex::full_match_steps(input)` count the
-steps the matcher takes (one per instruction visited). The tests use them to
+steps the Pike VM takes (one per instruction visited). The tests use them to
 check linear growth on pathological patterns without timing anything.
 
 ## Differences from RE2

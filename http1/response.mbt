@@ -40,17 +40,168 @@ pub fn encode_response(
   request? : Request,
   close? : Bool = false,
 ) -> Bytes {
-  let out = @buffer.Buffer(size_hint=128 + body.length())
-  write_status_and_headers(out, status, headers)
-  write_connection(out, keeps_open(request?, close~), request)
-  if has_content(status) {
-    out.write_string_utf8("Content-Length: \{body.length()}\r\n")
+  // Every response goes through here, so it is written straight into one
+  // array of its exact length, which becomes the Bytes without a copy.
+  let reason = reason_phrase(status)
+  let connection = connection_field(keeps_open(request?, close~), request)
+  let content = has_content(status)
+  let with_body = writes_body(status, request)
+  let mut length = 9 + decimal_length(status) + 1 + reason.length() + 2
+  for header in headers {
+    length += utf8_length(header.0) + 2 + utf8_length(header.1) + 2
   }
-  out.write_bytes(b"\r\n")
-  if writes_body(status, request) {
-    out.write_bytes(body)
+  length += connection.length() + 2
+  if content {
+    length += 16 + decimal_length(body.length()) + 2
   }
-  out.to_bytes()
+  if with_body {
+    length += body.length()
+  }
+  let out = FixedArray::make(length, b'\x00')
+  let mut at = write_ascii_bytes(out, 0, b"HTTP/1.1 ")
+  at = write_decimal(out, at, status)
+  out[at] = b' '
+  at = write_utf8(out, at + 1, reason)
+  at = write_ascii_bytes(out, at, b"\r\n")
+  for header in headers {
+    at = write_utf8(out, at, header.0)
+    at = write_ascii_bytes(out, at, b": ")
+    at = write_utf8(out, at, header.1)
+    at = write_ascii_bytes(out, at, b"\r\n")
+  }
+  at = write_ascii_bytes(out, at, connection)
+  if content {
+    at = write_ascii_bytes(out, at, b"Content-Length: ")
+    at = write_decimal(out, at, body.length())
+    at = write_ascii_bytes(out, at, b"\r\n")
+  }
+  at = write_ascii_bytes(out, at, b"\r\n")
+  if with_body {
+    out.blit_from_bytesview(at, body)
+  }
+  out.unsafe_reinterpret_as_bytes()
+}
+
+///|
+/// The Connection field of a response to `request` whose connection stays
+/// open after it when `keep_open`, as `write_connection` writes it.
+fn connection_field(keep_open : Bool, request : Request?) -> Bytes {
+  if !keep_open {
+    b"Connection: close\r\n"
+  } else if request is Some({ version: Http10, .. }) {
+    b"Connection: keep-alive\r\n"
+  } else {
+    b""
+  }
+}
+
+///|
+/// The number of characters of `n` in decimal, its sign included.
+fn decimal_length(n : Int) -> Int {
+  if n < 0 {
+    return n.to_string().length()
+  }
+  let mut length = 1
+  let mut rest = n / 10
+  while rest > 0 {
+    length += 1
+    rest = rest / 10
+  }
+  length
+}
+
+///|
+/// Writes `n` in decimal at `at` in `out`, and returns the index after it.
+fn write_decimal(out : FixedArray[Byte], at : Int, n : Int) -> Int {
+  if n < 0 {
+    return write_utf8(out, at, n.to_string())
+  }
+  let end = at + decimal_length(n)
+  let mut rest = n
+  let mut i = end
+  while i > at {
+    i -= 1
+    out[i] = (rest % 10 + 0x30).to_byte()
+    rest = rest / 10
+  }
+  end
+}
+
+///|
+/// Writes `bytes` at `at` in `out`, and returns the index after them.
+fn write_ascii_bytes(out : FixedArray[Byte], at : Int, bytes : Bytes) -> Int {
+  out.blit_from_bytes(at, bytes, 0, bytes.length())
+  at + bytes.length()
+}
+
+///|
+/// The length of `s` in UTF-8, as `write_utf8` writes it.
+fn utf8_length(s : String) -> Int {
+  let n = s.length()
+  let mut length = 0
+  let mut i = 0
+  while i < n {
+    let u = s[i].to_int()
+    if u < 0x80 {
+      length += 1
+    } else if u < 0x800 {
+      length += 2
+    } else if is_pair(s, i) {
+      length += 4
+      i += 1
+    } else {
+      length += 3
+    }
+    i += 1
+  }
+  length
+}
+
+///|
+/// Whether a surrogate pair starts at index `i` of `s`.
+fn is_pair(s : String, i : Int) -> Bool {
+  let u = s[i].to_int()
+  u >= 0xD800 &&
+  u <= 0xDBFF &&
+  i + 1 < s.length() &&
+  s[i + 1].to_int() >= 0xDC00 &&
+  s[i + 1].to_int() <= 0xDFFF
+}
+
+///|
+/// Writes `s` as UTF-8 at `at` in `out`, and returns the index after it. A
+/// surrogate that is not part of a pair is written as the three bytes of
+/// its code unit, as `@buffer.Buffer::write_string_utf8` writes it.
+fn write_utf8(out : FixedArray[Byte], at : Int, s : String) -> Int {
+  let n = s.length()
+  let mut at = at
+  let mut i = 0
+  while i < n {
+    let u = s[i].to_int()
+    if u < 0x80 {
+      out[at] = u.to_byte()
+      at += 1
+    } else if u < 0x800 {
+      out[at] = (0xC0 | (u >> 6)).to_byte()
+      out[at + 1] = (0x80 | (u & 0x3F)).to_byte()
+      at += 2
+    } else if is_pair(s, i) {
+      let c = 0x10000 + ((u - 0xD800) << 10) + (s[i + 1].to_int() - 0xDC00)
+      out[at] = (0xF0 | (c >> 18)).to_byte()
+      out[at + 1] = (0x80 | ((c >> 12) & 0x3F)).to_byte()
+      out[at + 2] = (0x80 | ((c >> 6) & 0x3F)).to_byte()
+      out[at + 3] = (0x80 | (c & 0x3F)).to_byte()
+      at += 4
+      i += 1
+    } else {
+      out[at] = (0xE0 | (u >> 12)).to_byte()
+      out[at + 1] = (0x80 | ((u >> 6) & 0x3F)).to_byte()
+      out[at + 2] = (0x80 | (u & 0x3F)).to_byte()
+      at += 3
+    }
+    i += 1
+  }
+  at
 }
 
 ///|
@@ -83,11 +234,7 @@ fn write_connection(
   keep_open : Bool,
   request : Request?,
 ) -> Unit {
-  if !keep_open {
-    out.write_bytes(b"Connection: close\r\n")
-  } else if request is Some({ version: Http10, .. }) {
-    out.write_bytes(b"Connection: keep-alive\r\n")
-  }
+  out.write_bytes(connection_field(keep_open, request))
 }
 
 ///|

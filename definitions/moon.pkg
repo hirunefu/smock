@@ -8,3 +8,7 @@ import {
   "moonbitlang/core/int",
   "moonbitlang/core/json",
 }
+
+import {
+  "moonbitlang/core/random",
+} for "wbtest"
