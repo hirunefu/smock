@@ -1,0 +1,37 @@
+mocks:
+  - name: users
+  - name: orders
+stubs:
+  - id: get-user
+    mock: users
+    request: { method: GET, path: { pattern: "/users/[0-9]+" } }
+    response:
+      status: 200
+      template: true
+      headers:
+        X-Request-Id: ${header.x-request-id ?? 'none'}
+      json:
+        id: ${path[1]}
+        lang: ${query.lang ?? 'en'}
+        requestId: ${header.x-request-id ?? 'none'}
+  - id: create-order
+    mock: orders
+    request: { method: POST, path: /orders }
+    response:
+      status: 201
+      template: true
+      json:
+        orderId: ${fake.uuid()}
+        customer: ${body.customer.name}
+        lines:
+          $each: body.items
+          as: item
+          do:
+            sku: ${item.sku}
+            qty: ${item.qty}
+            status:
+              $if: item.qty == 0
+              then: backordered
+              else: reserved
+        $$id: literal key
+        sample: { $each: "range(1, 3)", as: i, do: "${loop.index}: ${i} ${fake.word()}" }

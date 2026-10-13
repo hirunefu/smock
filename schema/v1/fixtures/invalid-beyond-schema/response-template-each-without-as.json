@@ -1,0 +1,14 @@
+{
+  "mocks": [{ "name": "orders" }],
+  "stubs": [
+    {
+      "id": "list-lines",
+      "mock": "orders",
+      "response": {
+        "status": 200,
+        "template": true,
+        "json": { "lines": { "$each": "body.items", "do": "${item.sku}" } }
+      }
+    }
+  ]
+}

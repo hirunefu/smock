@@ -20,7 +20,7 @@
 # - do not leave out wasm-gc in supported_targets, so CI tests them there.
 #
 # A new protocol module is added to `modules` below, and a new no-I/O package
-# of smock/smock (templates, for one) to `packages`.
+# of smock/smock to `packages`.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -28,7 +28,7 @@ modules="http1 re2 yaml"
 
 # The packages of smock/smock that decide a response, and the packages of
 # smock/smock they import.
-packages="definitions engine prng log"
+packages="definitions engine template prng log"
 
 # Prints every quoted string inside the import blocks of a moon.mod or moon.pkg.
 imports() {

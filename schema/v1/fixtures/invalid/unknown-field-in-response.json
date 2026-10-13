@@ -10,7 +10,7 @@
       "mock": "users",
       "response": {
         "status": 200,
-        "json": {}
+        "bodyJson": {}
       }
     }
   ]

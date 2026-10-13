@@ -1,0 +1,10 @@
+{
+  "mocks": [{ "name": "users" }],
+  "stubs": [
+    {
+      "id": "echo",
+      "mock": "users",
+      "response": { "status": 200, "template": true, "json": { "echo": "${json(body)}" } }
+    }
+  ]
+}
