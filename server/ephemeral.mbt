@@ -53,7 +53,7 @@ fn Admin::refused(
         "unknown_mock",
         "no Mock is named \{mock.escape()}: Mocks come only from Definition files",
       )
-    UnknownStub(mock~, id~) => {
+    UnknownEphemeralStub(mock~, id~) => {
       let caller = match session {
         Some(_) => "the calling Session"
         None => "the no-Session space"

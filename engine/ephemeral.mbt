@@ -44,21 +44,6 @@ pub impl ToJson for EphemeralStub with fn to_json(self) {
 }
 
 ///|
-/// Why the engine refused an Admin API operation.
-pub suberror AdminError {
-  /// No Mock has this name. Mocks come only from Definition files.
-  UnknownMock(String)
-  /// The calling Session has no Ephemeral Stub with this ID in the Mock.
-  UnknownStub(mock~ : String, id~ : String)
-  /// The Ephemeral Stub to add is not valid. The problems have no file;
-  /// their JSON Pointers point into the Stub as it was given.
-  InvalidStub(Array[@definitions.Diagnostic])
-  /// The Journal is off for what the operation touches: globally for
-  /// `None`, or for the Mock with this name.
-  JournalOff(String?)
-} derive(Debug)
-
-///|
 /// Ephemeral Stubs, by Mock, then by Session (`None` for the no-Session
 /// space), each list in the order its Stubs are tried. No list is empty,
 /// and no Mock is without one, so that Sessions that come and go leave
@@ -198,8 +183,8 @@ pub fn Engine::ephemeral_stubs(
 /// `session`, or for the no-Session space when it is `None`. Another
 /// Session's Ephemeral Stubs are unknown here.
 ///
-/// Raises `UnknownMock` when no Mock has the name `mock`, and `UnknownStub`
-/// when `session` has no Ephemeral Stub `id` in it.
+/// Raises `UnknownMock` when no Mock has the name `mock`, and
+/// `UnknownEphemeralStub` when `session` has no Ephemeral Stub `id` in it.
 pub fn Engine::delete_ephemeral_stub(
   self : Engine,
   mock~ : String,
@@ -209,7 +194,7 @@ pub fn Engine::delete_ephemeral_stub(
   self.check_mock(mock)
   guard self.ephemeral.of(mock, session) is Some(list) &&
     list.search_by(stub => stub.id == id) is Some(i) else {
-    raise UnknownStub(mock~, id~)
+    raise UnknownEphemeralStub(mock~, id~)
   }
   list.remove(i) |> ignore
   if list.is_empty() {

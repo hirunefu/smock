@@ -352,14 +352,14 @@ test "delete removes only one of the calling Session's Ephemeral Stubs of the Mo
   inspect(
     out.join("\n"),
     content=(
-      #|test-b deletes test-a's eph-1: UnknownStub(mock="payments", id="eph-1")
-      #|no Session deletes test-a's eph-1: UnknownStub(mock="payments", id="eph-1")
-      #|test-a deletes eph-1 from users: UnknownStub(mock="users", id="eph-1")
+      #|test-b deletes test-a's eph-1: UnknownEphemeralStub(mock="payments", id="eph-1")
+      #|no Session deletes test-a's eph-1: UnknownEphemeralStub(mock="payments", id="eph-1")
+      #|test-a deletes eph-1 from users: UnknownEphemeralStub(mock="users", id="eph-1")
       #|test-a deletes eph-1 from orders: UnknownMock("orders")
       #|test-a: 503 a (eph-1)
       #|test-a deletes eph-1: deleted
       #|test-a: 200 pending (p-order)
-      #|test-a deletes eph-1 again: UnknownStub(mock="payments", id="eph-1")
+      #|test-a deletes eph-1 again: UnknownEphemeralStub(mock="payments", id="eph-1")
       #|test-b: 503 b (eph-2)
       #|test-b deletes eph-2: deleted
       #|test-b: 200 pending (p-order)
