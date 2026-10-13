@@ -20,8 +20,11 @@ spec:
       labels:
         {{- include "smock.labels" . | nindent 8 }}
       {{- /*
-      Nothing here depends on the Definition files, so a ConfigMap update
-      restarts no Pod: smock reloads the files Kubernetes swaps in.
+      Nothing here depends on the content of the Definition files, so a
+      ConfigMap update restarts no Pod: smock reloads the files Kubernetes
+      swaps in. Only the definitions volume's items, which exist with body
+      files, name the files: adding, removing or renaming one changes this
+      template and so restarts the Pods.
       */}}
       {{- with .Values.podAnnotations }}
       annotations:

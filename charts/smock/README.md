@@ -40,11 +40,11 @@ the Admin API through `smock-admin` (port 9090): for example
 
 The ConfigMap is mounted as a whole volume at the definitions directory,
 never with `subPath`, so Kubernetes swaps updated files in and smock reloads
-them, without a restart: `helm upgrade` with new files changes the ConfigMap
-and leaves the Deployment as it is. The kubelet refreshes mounted ConfigMaps
-periodically, so an update takes up to a minute or two to arrive. The
-definition set digest in each replica's `GET /v1/status` shows which files
-it serves.
+them, without a restart: `helm upgrade` with new Definition files changes
+the ConfigMap and leaves the Deployment as it is. The kubelet refreshes
+mounted ConfigMaps periodically, so an update takes up to a minute or two to
+arrive. The definition set digest in each replica's `GET /v1/status` shows
+which files it serves.
 
 The values can carry the files, by name in `definitions.configMap.files`,
 and the body files, by path in `definitions.configMap.bodyFiles`. Body files
@@ -73,6 +73,14 @@ start with `.`; body file paths must stay inside the body-file
 subdirectory. The chart refuses others, since smock would not read them.
 Values hold text only, and a ConfigMap holds at most 1 MiB.
 
+ConfigMap keys cannot hold `/`, so with body files the volume lists every
+file in its `items`, and those are part of the Pod template. New content for
+the same files still reaches smock by reload, but adding, removing or
+renaming a file, a Definition file included, changes the Pod template:
+`helm upgrade` then rolls out new Pods, which start without the Ephemeral
+Stubs and the Journal of the old ones. Without body files there are no
+items, and any change reloads in place.
+
 Or `definitions.configMap.name` names a ConfigMap you manage yourself, and
 the chart mounts it. Each of its keys is then a file at the top level of the
 definitions directory. To place body files under the body-file
@@ -87,6 +95,10 @@ definitions:
       - { key: users.yaml, path: users.yaml }
       - { key: user-1, path: files/users/1.json }
 ```
+
+As with body files in the values, `items` are part of the Pod template:
+changing them restarts the Pods, while new content for the listed keys
+reloads in place.
 
 ### From a Git repository (git-sync)
 
@@ -214,9 +226,9 @@ instead.
 | `definitions.source` | `"configMap"` | Where the Definition files come from: `configMap`, `gitSync` or `image`. |
 | `definitions.bodyFileDir` | `"files"` | The body-file subdirectory of the definitions directory (smock's `SMOCK_BODY_FILE_DIR`). |
 | `definitions.configMap.name` | `""` | An existing ConfigMap to mount. Empty: the chart makes one from `files` and `bodyFiles`. |
-| `definitions.configMap.items` | `[]` | With `name`: where its keys go (`key`, `path`), as in a ConfigMap volume. Empty: every key at the top level. |
+| `definitions.configMap.items` | `[]` | With `name`: where its keys go (`key`, `path`), as in a ConfigMap volume. Empty: every key at the top level. A change to it restarts the Pods. |
 | `definitions.configMap.files` | `{}` | Definition files, by file name. |
-| `definitions.configMap.bodyFiles` | `{}` | Body files, by path inside `definitions.bodyFileDir`. |
+| `definitions.configMap.bodyFiles` | `{}` | Body files, by path inside `definitions.bodyFileDir`. With them, a file added, removed or renamed restarts the Pods. |
 | `definitions.gitSync.repo` | `""` | The Git repository URL. Required with `source: gitSync`. |
 | `definitions.gitSync.ref` | `"HEAD"` | The branch, tag or commit to sync. |
 | `definitions.gitSync.path` | `""` | The definitions directory inside the repository. Empty: its top. |

@@ -47,7 +47,9 @@ path, and the volume's items put it back at its path.
 The items of the definitions volume, as a YAML list, or nothing when the
 whole ConfigMap is mounted as it is. The ConfigMap the chart makes needs
 items only for body files, which go under the body-file subdirectory; once
-there are items, every Definition file needs one too.
+there are items, every Definition file needs one too. The items are part of
+the Pod template, so with them a file added, removed or renamed restarts
+the Pods; new content for the same files still reaches smock by reload.
 */}}
 {{- define "smock.definitionsItems" -}}
 {{- $cm := .Values.definitions.configMap -}}

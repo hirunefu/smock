@@ -2,7 +2,8 @@
 The Definition files given in the values. The Deployment does not depend on
 their content, so an update reaches the running smock through its file
 reload: Kubernetes swaps the files in the mounted volume, and no Pod
-restarts.
+restarts. With body files, the volume's items name every file, so a file
+added, removed or renamed changes the Deployment (smock.definitionsItems).
 */ -}}
 {{- if and (eq .Values.definitions.source "configMap") (not .Values.definitions.configMap.name) }}
 apiVersion: v1

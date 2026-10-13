@@ -136,6 +136,12 @@ refuse() {
   fi
 }
 
+# same_deployment <name> <name>: the manifests rendered as the two names have
+# the same Deployment, so an upgrade from one to the other restarts no Pod.
+same_deployment() {
+  [ "$(jq -S "$defs [deployment]" "$tmp/$1.json")" = "$(jq -S "$defs [deployment]" "$tmp/$2.json")" ]
+}
+
 # --- Default delivery: a ConfigMap ------------------------------------------
 
 cat >"$tmp/values-files.yaml" <<'YAML'
@@ -164,8 +170,7 @@ definitions:
       users.json: '{"mocks":[{"name":"users","hosts":["users.example.com"]}]}'
 YAML
 render configmap-updated --values "$tmp/values-token.yaml" --values "$tmp/values-files-updated.yaml"
-if [ "$(jq -S '[.[] | select(.kind == "Deployment")]' "$tmp/configmap.json")" = \
-  "$(jq -S '[.[] | select(.kind == "Deployment")]' "$tmp/configmap-updated.json")" ]; then
+if same_deployment configmap configmap-updated; then
   pass "configmap-updated: new Definition files leave the Deployment as it was, so no Pod restarts"
 else
   fail "configmap-updated: new Definition files change the Deployment, which restarts the Pods"
@@ -201,6 +206,34 @@ check body-files "smock reads body files from that subdirectory" \
   'env("SMOCK_BODY_FILE_DIR").value == "files"'
 check body-files "the volume is still mounted whole, without subPath" \
   'mount("smock"; "definitions") == {"name": "definitions", "mountPath": "/definitions", "readOnly": true}'
+
+# With body files, the volume's items name every file. New content for the
+# same files leaves the Deployment as it was, so smock reloads it. A file
+# added, removed or renamed changes the Pod template, so the Pods restart
+# and lose their Ephemeral Stubs and Journal; the chart's README says so.
+cat >"$tmp/values-body-files-edited.yaml" <<'YAML'
+definitions:
+  configMap:
+    files:
+      users.json: '{"stubs":[{"id":"x"}]}'
+    bodyFiles:
+      users/1.json: '{"id":2}'
+      README.txt: 'still not a Definition file'
+YAML
+render body-files-edited --values "$tmp/values-token.yaml" --values "$tmp/values-body-files-edited.yaml"
+if same_deployment body-files body-files-edited; then
+  pass "body-files-edited: new content for the same files leaves the Deployment as it was, so no Pod restarts"
+else
+  fail "body-files-edited: new content for the same files changes the Deployment, which restarts the Pods"
+fi
+printf 'definitions:\n  configMap:\n    files:\n      orders.json: "{}"\n' >"$tmp/values-body-files-added.yaml"
+render body-files-added --values "$tmp/values-token.yaml" --values "$tmp/values-body-files.yaml" \
+  --values "$tmp/values-body-files-added.yaml"
+if ! same_deployment body-files body-files-added; then
+  pass "body-files-added: with body files, a new file changes the Pod template, which restarts the Pods"
+else
+  fail "body-files-added: with body files, a new file leaves the Pod template as it was, so no Pod shows it"
+fi
 
 render body-file-dir --values "$tmp/values-token.yaml" --values "$tmp/values-body-files.yaml" --set definitions.bodyFileDir=bodies
 check body-file-dir "the body-file subdirectory follows definitions.bodyFileDir" \

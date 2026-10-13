@@ -611,7 +611,8 @@ helm install smock oci://ghcr.io/hirunefu/charts/smock --version <version> \
 ```
 
 The Definition files come from a ConfigMap by default, and a ConfigMap
-update reaches the running smock through its reload, without a restart; a
+update reaches the running smock through its reload, without a restart
+(with body files, a file added, removed or renamed restarts the Pods); a
 git-sync sidecar or an OCI image volume can deliver them instead. The Pods
 meet the Restricted Pod Security Standard, run one replica with about one
 CPU core by default, and get the Admin API token and the TLS certificate
