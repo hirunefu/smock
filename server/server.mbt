@@ -268,13 +268,13 @@ async fn run(
                 TlsStream::accept(conn, name => certificates.select(name))
               })
               guard stream is Some(Some(stream)) else { return }
-              let reset = serve_mocks(
+              let was_reset = serve_mocks(
                 stream, conn, engine, rand, settings, traffic, lifecycle, connection,
                 logger,
               )
               // A reset sends no close_notify: the RST alone ends the
               // connection.
-              if !reset {
+              if !was_reset {
                 stream.shutdown()
               }
             })
@@ -387,7 +387,7 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
   connection : Connection,
   logger : @log.Logger,
 ) -> Bool {
-  let reset = Ref(false)
+  let was_reset = Ref(false)
   serve_connection(
     stream,
     settings,
@@ -438,7 +438,7 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
         // Closing the connection sends an RST, once the Journal entry is
         // committed, so that a client that sees the reset finds it there.
         Some(Reset) => {
-          reset.val = reset_on_close(tcp, logger)
+          was_reset.val = reset_on_close(tcp, logger)
           false
         }
         // Closing the connection sends a FIN.
@@ -451,7 +451,7 @@ async fn[S : @io.Reader + @io.Writer] serve_mocks(
     },
     reject=status => @http1.encode_response(status, [], b"", close=true),
   )
-  reset.val
+  was_reset.val
 }
 
 ///|
