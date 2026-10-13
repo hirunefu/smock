@@ -1,0 +1,10 @@
+{
+  "mocks": [{ "name": "news" }],
+  "stubs": [
+    {
+      "id": "stream",
+      "mock": "news",
+      "response": { "status": 200, "events": [{ "data": "x", "json": { "x": 1 } }] }
+    }
+  ]
+}

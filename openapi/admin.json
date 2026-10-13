@@ -456,7 +456,7 @@
         "operationId": "renderStub",
         "tags": ["Render"],
         "summary": "Render a Stub's response for a sample request",
-        "description": "Renders the named Stub from the definition set this replica serves now, as `smock render` does from a definitions directory. The Stub is rendered even when the sample request fails its conditions; the failed conditions are listed, with their expected and actual values. Rendering changes nothing.",
+        "description": "Renders the named Stub from the definition set this replica serves now, as `smock render` does from a definitions directory. The Stub is rendered even when the sample request fails its conditions; the failed conditions are listed, with their expected and actual values. A templated response is rendered for the sample, at the time and with the seed the rendering shows; a template that fails gives the 500 a request would get, with the error in `templateError`. Rendering decides no Fault and changes nothing.",
         "parameters": [
           {
             "name": "time",
@@ -472,7 +472,7 @@
             "name": "seed",
             "in": "query",
             "required": false,
-            "description": "The seed of the random source the rendering draws from, so that a rendering can be repeated exactly. Default: a fresh seed.",
+            "description": "The seed of the random source the rendering draws from, so that a rendering can be repeated exactly: a template's helpers draw what the first request matched by a Stub with this `fault.seed` draws. Default: the Stub's `fault.seed`, or a fresh seed when it has none. The rendering shows the seed it used.",
             "schema": {
               "type": "integer",
               "minimum": 0,
@@ -1292,9 +1292,13 @@
           "fault": {
             "description": "The connection Fault injected instead of the response, or null.",
             "enum": ["reset", "close", "partial", null]
+          },
+          "templateError": {
+            "description": "Why the Stub's template could not be rendered for the request, when it could not: the client then got status 500 and the error in the body. Otherwise null.",
+            "oneOf": [{ "$ref": "#/components/schemas/TemplateError" }, { "type": "null" }]
           }
         },
-        "required": ["seq", "receivedAt", "durationMs", "session", "host", "mock", "viaDefault", "digest", "request", "stub", "stubSource", "nearMiss", "status", "fault"],
+        "required": ["seq", "receivedAt", "durationMs", "session", "host", "mock", "viaDefault", "digest", "request", "stub", "stubSource", "nearMiss", "status", "fault", "templateError"],
         "additionalProperties": false
       },
       "RecordedRequest": {
@@ -1549,8 +1553,23 @@
             "description": "The Stub's Mock.",
             "type": "string"
           },
+          "time": {
+            "description": "The time the sample request was received at: the `time` given, or else when the rendering was made. `now()` and `nowMillis()` in a template read it.",
+            "type": "string",
+            "format": "date-time"
+          },
+          "seed": {
+            "description": "The seed the rendering used: the `seed` given, or else the Stub's `fault.seed`, or else a fresh one. Given again with the same time, it gives the same rendering.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
           "response": {
             "$ref": "#/components/schemas/RenderedResponse"
+          },
+          "templateError": {
+            "description": "Why the Stub's template could not be rendered for the sample, when it could not: `response` is then the 500 a request would get. Otherwise null.",
+            "oneOf": [{ "$ref": "#/components/schemas/TemplateError" }, { "type": "null" }]
           },
           "failed": {
             "description": "The Stub's conditions the sample request fails, as in a Near miss. Empty when it meets them all.",
@@ -1563,7 +1582,23 @@
             "$ref": "#/components/schemas/Warnings"
           }
         },
-        "required": ["stub", "mock", "response", "failed", "warnings"],
+        "required": ["stub", "mock", "time", "seed", "response", "templateError", "failed", "warnings"],
+        "additionalProperties": false
+      },
+      "TemplateError": {
+        "description": "A response template that could not be rendered for a request.",
+        "type": "object",
+        "properties": {
+          "at": {
+            "description": "The JSON Pointer of the field within the Stub, such as `/response/json/customer`.",
+            "type": "string"
+          },
+          "message": {
+            "description": "What went wrong, such as `body.customer.name is missing`.",
+            "type": "string"
+          }
+        },
+        "required": ["at", "message"],
         "additionalProperties": false
       },
       "RenderedResponse": {

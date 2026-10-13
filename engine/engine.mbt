@@ -338,11 +338,18 @@ pub fn Engine::handle(
     }
     (None, None) => None
   }
+  let mut template_error = None
   let (plan, near_miss) : (ResponsePlan, NearMiss?) = match (mock, matched) {
     (None, _) => (no_mock(host, self.snapshot.hosts()), None)
     (Some(_), Some({ stub, generator, .. })) => {
-      let (delay_ms, fault) = decide_faults(stub, generator.unwrap_or(rand))
-      ({ ..stub_response(stub.response), delay_ms, fault, }, None)
+      // Every matched request takes exactly one output from its Stub's
+      // source, whatever it then draws: the Fault decisions draw from a
+      // generator seeded with it, and the helpers from another.
+      let draw = generator.unwrap_or(rand).uint64()
+      let (delay_ms, fault) = decide_faults(stub, draw)
+      let (response, error) = respond(stub, incoming, now~, draw~)
+      template_error = error
+      ({ ..response, delay_ms, fault, }, None)
     }
     (Some(mock), None) => {
       // Only now, when every candidate has failed, are conditions counted.
@@ -373,6 +380,7 @@ pub fn Engine::handle(
         stub~,
         near_miss~,
         plan~,
+        template_error~,
         digest=self.snapshot.digest,
         now~,
       ),

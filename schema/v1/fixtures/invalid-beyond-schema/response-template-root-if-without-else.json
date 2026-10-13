@@ -1,0 +1,14 @@
+{
+  "mocks": [{ "name": "users" }],
+  "stubs": [
+    {
+      "id": "get-user",
+      "mock": "users",
+      "response": {
+        "status": 200,
+        "template": true,
+        "json": { "$if": "query.verbose", "then": { "id": 1 } }
+      }
+    }
+  ]
+}

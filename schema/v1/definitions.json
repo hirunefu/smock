@@ -173,7 +173,7 @@
       "additionalProperties": false
     },
     "response": {
-      "description": "The response to return when the Stub matches. Its body is given inline (body), read from a body file (bodyFile), or streamed as Server-Sent Events (events). Give at most one of them; without any, the body is empty.",
+      "description": "The response to return when the Stub matches. Its body is given inline (body), read from a body file (bodyFile), given as JSON (json), or streamed as Server-Sent Events (events). Give at most one of them; without any, the body is empty. With template true, the header values, the body and the events are templates, parsed when the definitions are loaded and rendered for each request: see docs/definition-files.md, Templates.",
       "type": "object",
       "properties": {
         "status": {
@@ -205,8 +205,11 @@
           "type": "string",
           "pattern": "^(?!\\.)[^/]+(/(?!\\.)[^/]+)*$"
         },
+        "json": {
+          "description": "The body as JSON: any JSON value, sent as compact JSON in UTF-8, with Content-Type: application/json unless headers gives a Content-Type. smock writes every number in its shortest form (9.90 is sent as 9.9); use body when the exact bytes matter. With template true, it is a structured template: a string that is exactly one ${expr} gives the value with its own type, an object with $each gives an array, and an object with $if gives its then or else."
+        },
         "template": {
-          "description": "Whether the body, the header values and the events are templates, rendered for each request. Default false.",
+          "description": "Whether the header values (except Content-Type, which cannot contain ${), the body (body, bodyFile or json) and the events are templates, rendered for each request. With template false, nothing is parsed or rendered: ${ is plain text and $each a plain key. Default false.",
           "type": "boolean",
           "default": false
         },
@@ -219,16 +222,19 @@
       "required": ["status"],
       "dependentSchemas": {
         "body": {
-          "properties": { "bodyFile": false, "events": false }
+          "properties": { "bodyFile": false, "json": false, "events": false }
         },
         "bodyFile": {
+          "properties": { "json": false, "events": false }
+        },
+        "json": {
           "properties": { "events": false }
         }
       },
       "additionalProperties": false
     },
     "event": {
-      "description": "One Server-Sent Event.",
+      "description": "One Server-Sent Event. Give exactly one of data and json.",
       "type": "object",
       "properties": {
         "delay": {
@@ -249,9 +255,15 @@
         "data": {
           "description": "The event data. Each of its lines is sent as its own data field.",
           "type": "string"
+        },
+        "json": {
+          "description": "The event data as JSON: any JSON value, sent as one data field of compact JSON, its numbers in their shortest form. With template true, it is a structured template, as the json of a response is."
         }
       },
-      "required": ["data"],
+      "oneOf": [
+        { "description": "The data as text.", "required": ["data"] },
+        { "description": "The data as JSON.", "required": ["json"] }
+      ],
       "additionalProperties": false
     },
     "fault": {

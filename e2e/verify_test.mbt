@@ -288,6 +288,7 @@ async test "the unmatched requests list the calling Session's requests that no S
             },
             "status": 404,
             "fault": Json::null(),
+            "templateError": Json::null(),
           },
           {
             "seq": 3,
@@ -322,6 +323,7 @@ async test "the unmatched requests list the calling Session's requests that no S
             "nearMiss": Json::null(),
             "status": 404,
             "fault": Json::null(),
+            "templateError": Json::null(),
           },
         ],
         "more": false,

@@ -76,6 +76,9 @@ pub struct JournalEntry {
   status : Int?
   /// The connection Fault injected instead of the response, if any.
   fault : @definitions.ConnectionKind?
+  /// Why the Stub's template could not be rendered, when it could not: the
+  /// client then got a 500.
+  template_error : TemplateError?
   /// The bytes the entry counts against the Journal's byte bound.
   priv size : Int
 } derive(Debug)
@@ -135,6 +138,7 @@ fn Journal::entry(
   stub~ : (String, StubSource)?,
   near_miss~ : NearMiss?,
   plan~ : ResponsePlan,
+  template_error~ : TemplateError?,
   digest~ : String,
   now~ : Int64,
 ) -> JournalEntry {
@@ -176,6 +180,9 @@ fn Journal::entry(
   for name in [session, host, mock, stub] {
     text += name.map_or(0, name => name.length())
   }
+  if template_error is Some(error) {
+    text += error.at.length() + error.message.length()
+  }
   if near_miss is Some(near_miss) {
     text += near_miss.stub.length()
     for failed in near_miss.failed {
@@ -200,6 +207,7 @@ fn Journal::entry(
     near_miss,
     status,
     fault: plan.fault,
+    template_error,
     size: 256 + 2 * text + body.length(),
   }
 }
@@ -240,6 +248,7 @@ let vacated : JournalEntry = {
   near_miss: None,
   status: None,
   fault: None,
+  template_error: None,
   size: 0,
 }
 
@@ -711,5 +720,8 @@ pub impl ToJson for JournalEntry with fn to_json(self) {
       Json::number(status.to_double())
     }),
     "fault": self.fault.map_or(Json::null(), kind => Json::string(kind.name())),
+    "templateError": self.template_error.map_or(Json::null(), error => {
+      ToJson::to_json(error)
+    }),
   }
 }

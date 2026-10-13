@@ -1,0 +1,16 @@
+{
+  "mocks": [{ "name": "web" }],
+  "stubs": [
+    {
+      "id": "greeting",
+      "mock": "web",
+      "request": { "method": "GET", "path": "/greeting" },
+      "response": {
+        "status": 200,
+        "template": true,
+        "headers": { "Content-Type": "text/html", "X-Name": "${query.name ?? 'guest'}" },
+        "bodyFile": "greeting.html"
+      }
+    }
+  ]
+}

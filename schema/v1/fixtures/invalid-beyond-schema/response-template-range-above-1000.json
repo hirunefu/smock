@@ -1,0 +1,14 @@
+{
+  "mocks": [{ "name": "users" }],
+  "stubs": [
+    {
+      "id": "list-users",
+      "mock": "users",
+      "response": {
+        "status": 200,
+        "template": true,
+        "json": { "$each": "range(1, 1001)", "as": "n", "do": "${n}" }
+      }
+    }
+  ]
+}

@@ -360,6 +360,262 @@ data: line 2
   the connection meanwhile, since a client may close its sending side once
   its request is sent and still read the stream.
 
+### JSON bodies
+
+A body can also be given as JSON, with `json`: any JSON value. smock sends
+it as compact JSON in UTF-8, with `Content-Type: application/json` unless
+`headers` gives a Content-Type:
+
+```json
+"response": { "status": 200, "json": { "id": 1, "price": 9.90 } }
+```
+
+sends `{"id":1,"price":9.9}`. smock writes every number itself, in the
+shortest form that reads back as the same 64-bit float: `9.90` is sent as
+`9.9` and `1e3` as `1000`, and an integer beyond 2^53 keeps its digits. When
+the exact bytes matter, use `body`. A response gives at most one of `body`,
+`bodyFile`, `json` and `events`, and an event gives exactly one of `data`
+and `json`, which is sent as one `data:` line of compact JSON.
+
+## Templates
+
+With `template: true`, a response is rendered for each request: its body
+and header values can take values from the request, loop over them, branch
+on them and include fake data. Templates are parsed when the Definition
+files are loaded, so a syntax error is reported by `smock check`, stops
+`smock serve` at startup, and makes a reload keep the definitions it
+serves, like any other problem; an Ephemeral Stub with one is refused with
+400.
+
+```yaml
+- id: get-user
+  mock: users
+  request: { method: GET, path: { pattern: "/users/[0-9]+" } }
+  response:
+    status: 200
+    template: true
+    headers:
+      X-Request-Id: ${header.x-request-id ?? 'none'}
+    json:
+      id: ${path[1]}
+      lang: ${query.lang ?? 'en'}
+      requestId: ${header.x-request-id ?? 'none'}
+```
+
+`GET /users/42?lang=ja` with `X-Request-Id: req-7` gets `X-Request-Id:
+req-7`, `Content-Type: application/json` and
+`{"id":"42","lang":"ja","requestId":"req-7"}`; without the query and the
+header, `X-Request-Id: none` and `{"id":"42","lang":"en","requestId":"none"}`.
+
+What is a template with `template: true`:
+
+- `json` is a structured template, and so is the `json` of each event.
+- `body`, a body file (`bodyFile`, which must then be UTF-8) and the
+  `data`, `id` and `event` of each event are text templates.
+- Header values are text templates, except `Content-Type`, which must not
+  contain `${`.
+- `status` and an event's `delay` are never templated.
+
+With `template` off, nothing is parsed or rendered: `${` is plain text and
+`$each` a plain key.
+
+### Inserting values
+
+`${ expr }` inserts a value, and `$${` writes a literal `${`; a `$` before
+anything else is plain text. In YAML, a value can start with `${` in block
+style without quotes (`id: ${path[1]}`); quote it in flow style
+(`{ id: "${path[1]}" }`) and when the expression contains `: ` or ` #`. In
+JSON, `${…}` sits in an ordinary string; string literals in an expression
+may use single quotes (`"${query.lang ?? 'en'}"`).
+
+An expression is a value, a request field, a literal (`'text'` or `"text"`
+with the escapes `\'`, `\"` and `\\`, a JSON number, `true`, `false` or
+`null`) or a helper call, optionally followed by fallbacks: `a ?? b` is `a`
+when `a` is present, otherwise `b`. There is no arithmetic, no string
+operator and no user-defined function. The words `for`, `if`, `else`,
+`end`, `each` and `params` are reserved.
+
+| Name | Value |
+|---|---|
+| `method` | The request method, such as `GET`. |
+| `path` | The percent-decoded path without the query, as conditions compare it. |
+| `path[n]` | Segment `n` of that path, counted from 0 after the leading `/`: for `/users/42`, `path[0]` is `users` and `path[1]` is `42`. |
+| `query.NAME` | The first decoded value of the query parameter. |
+| `header.NAME` | The first value of the header, its name compared case-insensitively; each field line is one value. |
+| `body` | The body parsed as JSON. `body.a.b`, `body.items[0]` and `body['odd.key']` walk into it. |
+| `bodyText` | The body as text; bytes that are not UTF-8 become U+FFFD. |
+| `loop.index` | The position in the innermost `$each`, from 0. |
+| a loop variable | The current element of the `$each` that names it with `as`. |
+
+A name in a reference is ASCII letters, digits, `_` and `-`; write any other
+name as `['…']`, such as `query['page size']`.
+
+### Structured templates
+
+In `json`:
+
+- A string that is exactly one `${expr}` gives the value with its own type:
+  a number stays a number and an object stays an object. Any other string
+  gives a string, each value written as text.
+- `{ "$each": expr, "as": name, "do": template }` gives an array, one
+  element per item. It walks an array (from `body` or a loop variable),
+  every value of a query parameter or a header (none when it is absent), or
+  `range(a, b)`.
+- `{ "$if": cond, "then": template, "else": template }` gives `then` or
+  `else`. Without `else`, a false condition leaves the member or the array
+  element out; at the root of `json`, `else` is required. A condition is
+  an expression, optionally negated with `!` and compared with a literal
+  with `==` or `!=`. It is true when the value is present and neither
+  `null` nor `false`; strings compare exactly and numbers by value, and a
+  string never equals a number.
+- An object with `$each` or `$if` has only the keys listed for it. Other
+  keys that start with `$` are reserved: write `$$name` for the key
+  `$name`. Keys are never templated.
+- The output is compact JSON in UTF-8, members in the order written, with
+  numbers written as for a [JSON body](#json-bodies).
+
+```yaml
+json:
+  orderId: ${fake.uuid()}
+  customer: ${body.customer.name}
+  lines:
+    $each: body.items
+    as: item
+    do:
+      sku: ${item.sku}
+      qty: ${item.qty}
+      status:
+        $if: item.qty == 0
+        then: backordered
+        else: reserved
+```
+
+Text templates have no loops and no conditionals.
+
+### Helpers
+
+| Helper | Arguments | Output |
+|---|---|---|
+| `fake.uuid()` | none | A version 4 UUID in lower case. |
+| `fake.int(min, max)` | integer literals from -(2^53 - 1) to 2^53 - 1 | An integer from `min` to `max`, both included, each equally likely. |
+| `fake.decimal(min, max, places)` | integer literals from -10^9 to 10^9; `places` from 1 to 6 | A number from `min` to `max` in steps of 10^-places, written with exactly `places` decimals, such as `104.30`. |
+| `fake.bool()` | none | `true` or `false`. |
+| `fake.pick(v1, …, vn)` | 1 to 100 literals | One of them, with its type. |
+| `fake.hex(n)` | `n` from 1 to 64 | `n` lower-case hex digits. |
+| `fake.word()`, `fake.words(n)` | `n` from 1 to 100 | One word, or `n` words separated by spaces, from a built-in list of 256 lower-case English words. |
+| `fake.firstName()`, `fake.lastName()`, `fake.name()` | none | A first name, a last name, or both, from built-in lists of 128 ASCII names each. |
+| `fake.email()` | none | `<first>.<last><nn>@example.com` in lower case. |
+| `now()`, `now(s)` | `s`: an integer literal, seconds, may be negative | The time of the request plus `s` seconds, RFC 3339 in UTC with milliseconds. |
+| `nowMillis()`, `nowMillis(s)` | as for `now` | The same instant in milliseconds since the Unix epoch. |
+| `number(x)` | a string or a number | `x` as a number. |
+| `range(a, b)` | integer literals or `number(…)` | The integers from `a` to `b`, for `$each`; none when `a > b`. |
+| `json(x)` | any value | Text templates only: `x` written as JSON. |
+| `raw(x)` | a string, number, boolean or null | Text templates only: `x` without escaping. |
+
+The word and name lists are part of format version 1. A matched request
+takes exactly one 64-bit output from its Stub's random source (its own
+generator with `fault.seed`, otherwise the process generator, see
+[Seeds](#seeds)), whatever its template draws: the Fault decisions draw
+from a generator seeded with it, and the helpers from another one seeded
+with it XOR a fixed constant, in render order (header values in the order
+written, then the body, members and loop iterations in order, or the
+events in order, each event's `event`, `id`, then `data` or `json`). So a
+seeded Stub repeats its helper output on every run, on native and on
+wasm-gc alike, and adding fake data never changes its Faults.
+
+`now()` and `nowMillis()` read the time smock received the request at,
+never the clock while rendering; in an event, they add the delays of the
+events up to and including it:
+
+```yaml
+response:
+  status: 200
+  template: true
+  headers: { Cache-Control: no-cache }
+  events:
+    - { event: price, id: "1", json: { symbol: "${query.symbol}", price: "${fake.decimal(90, 110, 2)}", at: "${now()}" } }
+    - { delay: 500, event: price, id: "2", json: { symbol: "${query.symbol}", price: "${fake.decimal(90, 110, 2)}", at: "${now()}" } }
+    - { delay: 500, event: done, data: "[DONE]" }
+fault: { seed: 7 }
+```
+
+### Escaping and line breaks
+
+- In `json`, smock writes the JSON itself, so every string is escaped.
+- In `body` and a body file, inserted values are escaped by the media type
+  of the response's `Content-Type`, compared case-insensitively and
+  without its parameters: for `application/json` and `*/*+json`, as the
+  content of a JSON string (write `json(x)` for a value outside a string,
+  which is not escaped again); for `text/html`, `text/xml`,
+  `application/xml` and `*/*+xml`, `&`, `<`, `>`, `"` and `'` become
+  character references (also in the output of `json(x)`); for any other
+  type, or none, not at all. `raw(x)` is never escaped. A `text/html` body
+  file with `<p>Hello, ${query.name ?? 'guest'}</p>` answers
+  `?name=<b>Ann</b>` with `<p>Hello, &lt;b&gt;Ann&lt;/b&gt;</p>`.
+- In text, a string is written as it is, a number as in `json`, and `true`,
+  `false` and `null` as those words; an object or an array needs `json(x)`.
+- In a header value, every control character except tab, CR and LF
+  included, becomes a space after rendering, so a value never adds a line
+  to the response head. In an event's `id` and `event`, every control
+  character becomes a space. An event's `data` is written as rendered, so
+  a value with line breaks gives several `data:` lines.
+
+### Missing values and render errors
+
+A reference is missing when it names nothing: an absent query parameter or
+header, a path segment past the end, a body path that leads nowhere, or
+`body` when the body is not JSON. A missing value in `${…}` or in `$each` is
+an error unless `??` gives a fallback (`${query.lang ?? 'en'}`,
+`${body.note ?? null}`); a loop over an absent query parameter or header
+runs zero times, and in `$if` a missing value is never an error: it is
+false, and it equals no literal (so `query.x != 'a'` holds when `x` is
+absent). A call with a missing argument is missing too.
+
+Type errors are errors as well: a loop over what is not an array,
+`number(x)` of text that is not a JSON number, an object or an array in
+text, and a bound exceeded. `range` gives at most 1000 values, one response
+runs at most 10,000 loop iterations in all, and a rendered body, or all the
+events of a response together, takes at most 1 MiB. Bounds that literals
+give are checked when the files are loaded.
+
+When a template cannot be rendered for a request, the client gets status
+500, `Content-Type: application/json` and
+`{"error":"template failed","stub":"<id>","at":"<JSON Pointer within the Stub>","message":"<what>"}`,
+such as `"at":"/response/json/customer","message":"body.customer.name is missing"`.
+A delay Fault still applies first, and a connection Fault still replaces
+the response. A stream is rendered whole before its head is sent, so a
+failed event also gives this 500 and no stream. The Journal entry records
+the 500 and `templateError`, and no log line is written.
+
+### Errors when loading
+
+A template problem found when the files are loaded is reported with the
+file and the JSON Pointer of the field (for a body file, of `bodyFile`), and
+a message that starts with `template:` and gives the column of the problem
+in a one-line string, or its line and column in a text of several lines:
+
+```text
+users.yaml: /stubs/0/response/json/id: template: column 3: unknown helper "fake.phone": not one of the helpers smock has
+users.yaml: /stubs/1/response/bodyFile: template: line 3, column 5: unknown helper "fake.nickname": not one of the helpers smock has
+```
+
+Every name, loop variable and helper, the number and the literal arguments
+of each call, the keys of `$each` and `$if` objects, reserved keys, `${` in
+a key or in `Content-Type`, `json()` and `raw()` in `json`, and a templated
+body file that is not UTF-8 are checked then.
+
+### Rendering a template
+
+`smock render` and the Admin render operation render a Stub for a sample
+request, templates included, and show the time and the seed they used.
+`--time` (the Admin API's `time`) is the time of the request; `--seed`
+(`seed`) gives the output the request takes from its Stub's source as the
+first output of a generator seeded with it, so a rendering with seed `S`
+shows what the first matched request of a Stub with `fault.seed: S` gets.
+Without a seed they use the Stub's `fault.seed`, or a fresh seed when it
+has none. With the same time and seed, a rendering is the same on every
+run. A template that fails for the sample shows the 500 and the error.
+
 ## Faults
 
 A Stub can inject Faults, to test how a client handles slow and failing
@@ -466,10 +722,11 @@ and that URL is also its `$id`. Its source is
 [`schema/v1/definitions.json`](../schema/v1/definitions.json). A file
 without `version` is read as version 1; any other version is rejected.
 
-The Schema describes every field of format version 1, including fields smock
-does not implement yet. smock rejects those with a message saying they are
-not supported yet, so a file never means something smock silently ignores.
-smock also rejects any field the Schema does not define.
+The Schema describes every field of format version 1, and smock implements
+them all. A field the Schema defines but smock does not implement yet would
+be rejected with a message saying it is not supported yet, so that a file
+never means something smock silently ignores. smock also rejects any field
+the Schema does not define.
 
 ## Reloading
 

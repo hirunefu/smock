@@ -330,7 +330,7 @@ test "a field the Schema does not define is rejected wherever it appears" {
 }
 
 ///|
-test "a field the Schema defines but smock does not implement yet is rejected as not supported yet" {
+test "a Stub may use the fields the Schema defines for Mocks, Stubs and responses, template included" {
   inspect(
     problems([
       (
@@ -344,9 +344,7 @@ test "a field the Schema defines but smock does not implement yet is rejected as
         ),
       ),
     ]),
-    content=(
-      #|a.json: /stubs/0/response/template: is not supported yet
-    ),
+    content="valid",
   )
 }
 

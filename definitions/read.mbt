@@ -307,13 +307,6 @@ fn File::unknown_field(self : File, pointer : String) -> Unit {
 }
 
 ///|
-/// Reports a field the JSON Schema defines but smock does not implement
-/// yet. Such a field is never ignored.
-fn File::not_supported(self : File, pointer : String) -> Unit {
-  self.error(pointer, "is not supported yet")
-}
-
-///|
 /// Reports `key` missing from `object`, the value at `pointer`.
 fn File::require(
   self : File,
@@ -449,6 +442,7 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
     status: 0,
     headers: ReadOnlyArray::from_array([]),
     body: Bytes(b""),
+    template: None,
   }
   let mut fault = None
   for key, value in stub {
@@ -457,7 +451,7 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
       "id" => id = self.name(field, value).unwrap_or("")
       "mock" => mock = self.name(field, value).unwrap_or("")
       "request" => request = self.read_conditions(field, value)
-      "response" => response = self.read_response(field, value)
+      "response" => response = self.read_response(pointer, field, value)
       "priority" => priority = self.read_priority(field, value)
       "fault" => fault = self.read_fault(field, value)
       _ => self.unknown_field(field)
@@ -751,7 +745,7 @@ fn File::read_body_condition(
   for key, value in condition {
     let field = child_pointer(pointer, key)
     match key {
-      "json" => out = Some(Json(JsonCondition::new(value)))
+      "json" => out = Some(BodyCondition::Json(JsonCondition::new(value)))
       "pattern" =>
         if self.string(field, value) is Some(source) &&
           self.compile(field, source) is Some(pattern) {
@@ -838,82 +832,6 @@ fn File::compile(self : File, pointer : String, source : String) -> Pattern? {
   } noraise {
     regex => Some({ source, regex, })
   }
-}
-
-///|
-fn File::read_response(self : File, pointer : String, json : Json) -> Response {
-  let mut status = 0
-  let mut headers = []
-  let mut body : ResponseBody = Bytes(b"")
-  guard json is Object(response) else {
-    self.error(pointer, "must be an object")
-    return { status, headers: ReadOnlyArray::from_array(headers), body, }
-  }
-  for key, value in response {
-    let field = child_pointer(pointer, key)
-    match key {
-      "status" => status = self.read_status(field, value)
-      "headers" => headers = self.read_headers(field, value)
-      "body" =>
-        body = Bytes(@utf8.encode(self.string(field, value).unwrap_or("")))
-      "bodyFile" => body = Bytes(self.read_body_file(field, value))
-      "events" => body = Events(self.read_events(field, value))
-      "template" => self.not_supported(field)
-      _ => self.unknown_field(field)
-    }
-  }
-  self.require(response, pointer, "status")
-  let bodies = ["body", "bodyFile", "events"].filter(key => {
-    response.contains(key)
-  })
-  if bodies.length() > 1 {
-    let given = bodies.map(key => "\"\{key}\"").join(" and ")
-    self.error(
-      pointer,
-      "has \{given}; give at most one of \"body\", \"bodyFile\" and \"events\"",
-    )
-  }
-  { status, headers: ReadOnlyArray::from_array(headers), body, }
-}
-
-///|
-/// Reads the Server-Sent Events of a response.
-fn File::read_events(
-  self : File,
-  pointer : String,
-  json : Json,
-) -> ReadOnlyArray[SseEvent] {
-  let events = []
-  for i, event in self.array(pointer, json) {
-    let event_pointer = child_pointer(pointer, i.to_string())
-    guard event is Object(fields) else {
-      self.error(event_pointer, "must be an object")
-      continue
-    }
-    let mut delay_ms = 0
-    let mut event_type = None
-    let mut id = None
-    let mut data = ""
-    for key, value in fields {
-      let field = child_pointer(event_pointer, key)
-      match key {
-        "delay" => delay_ms = self.read_milliseconds(field, value).unwrap_or(0)
-        "event" =>
-          event_type = self.string_without(
-            field, value, "\r\n", "must be one line",
-          )
-        "id" =>
-          id = self.string_without(
-            field, value, "\u{0}\r\n", "must be one line without NUL characters",
-          )
-        "data" => data = self.string(field, value).unwrap_or("")
-        _ => self.unknown_field(field)
-      }
-    }
-    self.require(fields, event_pointer, "data")
-    events.push({ delay_ms, event: event_type, id, data, })
-  }
-  ReadOnlyArray::from_array(events)
 }
 
 ///|
