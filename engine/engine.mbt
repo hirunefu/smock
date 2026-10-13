@@ -412,17 +412,23 @@ priv struct Match {
 /// `Content-Type: text/event-stream`, which replaces a Content-Type the Stub
 /// gives.
 fn stub_response(response : @definitions.Response) -> ResponsePlan {
-  let headers = []
+  // Room for the Smock-Mock field the Default Mock adds.
+  let headers = Array(capacity=response.headers.length() + 2)
   let body : Body = match response.body {
     Bytes(bytes) => {
-      headers.push_iter(response.headers.iter())
+      for i in 0..<response.headers.length() {
+        headers.push(response.headers[i])
+      }
       Bytes(bytes)
     }
     Events(events) => {
       headers.push(("Content-Type", "text/event-stream"))
-      headers.push_iter(
-        response.headers.iter().filter(h => h.0.to_lower() != "content-type"),
-      )
+      for i in 0..<response.headers.length() {
+        let header = response.headers[i]
+        if header.0.to_lower() != "content-type" {
+          headers.push(header)
+        }
+      }
       Events(events)
     }
   }
