@@ -4,5 +4,6 @@ import {
   "smock/yaml",
   "moonbitlang/core/buffer",
   "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/int",
   "moonbitlang/core/json",
 }

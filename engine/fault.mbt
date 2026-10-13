@@ -82,13 +82,13 @@ fn standard_normal(g : @prng.Generator) -> Double {
 
 ///|
 /// `ms` rounded to whole milliseconds, from 0 to the longest delay a
-/// Definition file can give, 2147483647.
+/// Definition file can give, `@definitions.max_milliseconds`.
 fn milliseconds(ms : Double) -> Int {
   if ms.is_nan() || ms <= 0.0 {
     // NaN comes only from a median of 0 times an infinite factor.
     0
-  } else if ms >= 2147483647.0 {
-    2147483647
+  } else if ms >= @definitions.max_milliseconds.to_double() {
+    @definitions.max_milliseconds
   } else {
     ms.round().to_int()
   }

@@ -1,5 +1,6 @@
 import {
   "smock/http1",
+  "smock/smock/definitions",
   "smock/smock/log",
   "moonbitlang/core/argparse",
   "moonbitlang/core/json",

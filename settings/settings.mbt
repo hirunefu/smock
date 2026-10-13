@@ -262,7 +262,7 @@ let serve_settings : Array[Setting] = [
   },
   {
     name: "seed",
-    about: "The seed of the process random generator, from 0 to 9007199254740991. Faults of Stubs without their own seed draw from it. Without it, smock picks a seed at startup and logs it.",
+    about: "The seed of the process random generator, from 0 to \{max_seed}. Faults of Stubs without their own seed draw from it. Without it, smock picks a seed at startup and logs it.",
     default: None,
   },
   {
@@ -573,9 +573,8 @@ fn mock_certs_value(
 }
 
 ///|
-/// The largest seed, 2^53 - 1, as in Definition files, where a seed is a
-/// JSON number that holds it exactly.
-let max_seed : UInt64 = 9007199254740991
+/// The largest seed, as in Definition files.
+let max_seed : UInt64 = @definitions.max_seed
 
 ///|
 /// The value of a seed setting, when given: a decimal integer from 0 to

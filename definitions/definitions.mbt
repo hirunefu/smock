@@ -123,9 +123,19 @@ pub struct Fault {
   delay : Delay?
   /// A connection Fault, injected instead of the response.
   connection : ConnectionFault?
-  /// The seed of the Stub's own generator, from 0 to 2^53 - 1.
+  /// The seed of the Stub's own generator, from 0 to `max_seed`.
   seed : UInt64?
 } derive(Debug, Eq)
+
+///|
+/// The longest duration a Definition file can give, in milliseconds, such
+/// as a delay: the largest `Int`, about 24 days.
+pub let max_milliseconds : Int = @int.MAX_VALUE
+
+///|
+/// The largest seed, 2^53 - 1: up to it, a JSON number holds every integer
+/// exactly.
+pub let max_seed : UInt64 = 9007199254740991
 
 ///|
 /// A delay drawn from a distribution, applied to a share of the matched

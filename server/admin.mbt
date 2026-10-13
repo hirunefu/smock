@@ -475,7 +475,7 @@ fn render(admin : Admin, request : @http1.Request, body : Json?) -> Reply {
         Some(seed) => seed
         None =>
           return invalid(
-            "the seed query parameter must be an integer from 0 to 9007199254740991",
+            "the seed query parameter must be an integer from 0 to \{@definitions.max_seed}",
           )
       }
   }

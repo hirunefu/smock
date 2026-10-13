@@ -376,11 +376,28 @@ fn File::read_no_match(self : File, pointer : String, json : Json) -> Int {
 ///|
 /// Reads a response status: an integer from 200 to 599.
 fn File::read_status(self : File, pointer : String, json : Json) -> Int {
+  self
+  .read_integer(pointer, json, min=200L, max=599L)
+  .map_or(0, n => n.to_int())
+}
+
+///|
+/// Reads an integer from `min` to `max`, which a JSON number holds exactly,
+/// or reports that the value must be one.
+fn File::read_integer(
+  self : File,
+  pointer : String,
+  json : Json,
+  min~ : Int64,
+  max~ : Int64,
+) -> Int64? {
   match json {
-    Number(n, ..) if n == n.floor() && n >= 200.0 && n <= 599.0 => n.to_int()
+    Number(n, ..) if n == n.floor() &&
+      n >= min.to_double() &&
+      n <= max.to_double() => Some(n.to_int64())
     _ => {
-      self.error(pointer, "must be an integer from 200 to 599")
-      0
+      self.error(pointer, "must be an integer from \{min} to \{max}")
+      None
     }
   }
 }
@@ -589,30 +606,19 @@ fn File::read_probability(self : File, pointer : String, json : Json) -> Double 
 
 ///|
 /// Reads a duration in whole milliseconds: an integer from 0 to
-/// 2147483647.
+/// `max_milliseconds`.
 fn File::read_milliseconds(self : File, pointer : String, json : Json) -> Int? {
-  match json {
-    Number(n, ..) if n == n.floor() && n >= 0.0 && n <= 2147483647.0 =>
-      Some(n.to_int())
-    _ => {
-      self.error(pointer, "must be an integer from 0 to 2147483647")
-      None
-    }
-  }
+  self
+  .read_integer(pointer, json, min=0L, max=max_milliseconds.to_int64())
+  .map(n => n.to_int())
 }
 
 ///|
-/// Reads a seed: an integer from 0 to 2^53 - 1, which a JSON number holds
-/// exactly.
+/// Reads a seed: an integer from 0 to `max_seed`.
 fn File::read_seed(self : File, pointer : String, json : Json) -> UInt64? {
-  match json {
-    Number(n, ..) if n == n.floor() && n >= 0.0 && n <= 9007199254740991.0 =>
-      Some(n.to_uint64())
-    _ => {
-      self.error(pointer, "must be an integer from 0 to 9007199254740991")
-      None
-    }
-  }
+  self
+  .read_integer(pointer, json, min=0L, max=max_seed.reinterpret_as_int64())
+  .map(n => n.reinterpret_as_uint64())
 }
 
 ///|
@@ -631,14 +637,14 @@ fn no_conditions() -> Conditions {
 ///|
 /// Reads a priority: a 32-bit integer.
 fn File::read_priority(self : File, pointer : String, json : Json) -> Int? {
-  match json {
-    Number(n, ..) if n == n.floor() && n >= -2147483648.0 && n <= 2147483647.0 =>
-      Some(n.to_int())
-    _ => {
-      self.error(pointer, "must be an integer from -2147483648 to 2147483647")
-      None
-    }
-  }
+  self
+  .read_integer(
+    pointer,
+    json,
+    min=@int.MIN_VALUE.to_int64(),
+    max=@int.MAX_VALUE.to_int64(),
+  )
+  .map(n => n.to_int())
 }
 
 ///|
