@@ -1,7 +1,10 @@
 ///|
-/// Ends the process with `code`, through libc's `exit` (no C source).
-/// Usage errors, including invalid settings, exit with 2.
-extern "C" fn exit(code : Int) = "exit"
+/// Ends the process with `code`, through `moonbitlang/x`'s supported exit:
+/// neither core nor `moonbitlang/async` exposes one with a status. Usage
+/// errors, including invalid settings, exit with 2.
+fn exit(code : Int) -> Unit {
+  @sys.exit(code)
+}
 
 ///|
 async fn main {

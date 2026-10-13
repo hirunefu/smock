@@ -13,6 +13,7 @@ import {
   "smock/re2@0.1.0",
   "smock/yaml@0.1.0",
   "moonbitlang/async@0.22.4",
+  "moonbitlang/x@0.5.5",
 }
 
 options(

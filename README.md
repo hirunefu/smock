@@ -22,8 +22,9 @@ that.
 
 Packages of `smock/smock`:
 
-- `cmd/smock`: the `smock` binary. It binds libc's `exit` to end with a
-  status, since neither core nor `moonbitlang/async` exposes one.
+- `cmd/smock`: the `smock` binary. It ends with a status through
+  `moonbitlang/x`'s `@sys.exit`, since neither core nor
+  `moonbitlang/async` exposes one; smock itself binds no C for it.
 - `settings`: the settings of `smock serve`, each a flag with a matching
   `SMOCK_<NAME>` environment variable, and the arguments of `smock check`
   and `smock render`.
