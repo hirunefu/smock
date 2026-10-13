@@ -568,3 +568,90 @@ async test "idle timeout: a connection that receives no request bytes for the id
   )
   inspect(log_entries(stopped.logs), content=startup_only)
 }
+
+///|
+/// A Mock whose `/slow` answers after a delay of 1000 ms and whose
+/// `/events` streams three events over 1200 ms: both outlast the timeouts
+/// of the test below.
+let outlasting : String =
+  #|{ "mocks": [{ "name": "users" }],
+  #|  "stubs": [
+  #|    { "id": "slow", "mock": "users", "request": { "path": "/slow" },
+  #|      "response": { "status": 200, "body": "slow" },
+  #|      "fault": { "delay": { "fixed": 1000 } } },
+  #|    { "id": "stream", "mock": "users", "request": { "path": "/events" },
+  #|      "response": { "status": 200,
+  #|        "events": [
+  #|          { "delay": 400, "data": "first" },
+  #|          { "delay": 400, "data": "second" },
+  #|          { "delay": 400, "data": "last" } ] } } ] }
+
+///|
+async test "timeouts: neither timeout runs while smock writes a response, however long it takes; the idle timeout starts after it" {
+  let stopped = on_both_ports(
+    files=[("users.json", outlasting)],
+    args=["--read-timeout-ms", "300", "--idle-timeout-ms", "500"],
+    (smock, over) => {
+      let out = []
+      // A response delayed past both timeouts, on a connection that then
+      // stays open for the idle timeout.
+      let delayed = smock.connect(over~)
+      defer delayed.close()
+      delayed.write("GET /slow HTTP/1.1\r\nHost: localhost\r\n\r\n")
+      let response = read_response(delayed)
+      let since = @async.now()
+      let (elapsed, rest) = ended(delayed, since)
+      out.push(
+        "delayed: \{response.escape()}, then \{rest.escape()}, ended about 500 ms after it: \{elapsed >= 300 && elapsed < 2000}",
+      )
+      // A stream longer than both timeouts.
+      let stream = smock.connect(over~)
+      defer stream.close()
+      stream.write(
+        "GET /events HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+      )
+      let (_, streamed) = ended(stream, @async.now())
+      out.push("streamed: \{streamed.escape()}")
+      inspect(
+        out.join("\n"),
+        content=(
+          #|delayed: "HTTP/1.1 200 OK\nSmock-Mock: users; via=default\nContent-Length: 4\n\nslow", then "", ended about 500 ms after it: true
+          #|streamed: "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nSmock-Mock: users; via=default\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\nd\r\ndata: first\n\n\r\ne\r\ndata: second\n\n\r\nc\r\ndata: last\n\n\r\n0\r\n\r\n"
+        ),
+      )
+    },
+  )
+  // Timeouts are not logged one by one.
+  inspect(log_entries(stopped.logs), content=startup_only)
+}
+
+///|
+async test "timeouts: a read timeout longer than the idle timeout gives a request that has begun the whole read timeout to arrive" {
+  let stopped = on_both_ports(
+    files=[("users.json", any_method)],
+    args=["--read-timeout-ms", "1500", "--idle-timeout-ms", "300"],
+    (smock, over) => {
+      let out = []
+      let conn = smock.connect(over~)
+      defer conn.close()
+      conn.write("GET /users/1 HTTP/1.1\r\n")
+      @async.sleep(800)
+      conn.write("Host: localhost\r\n\r\n")
+      out.push("the rest 800 ms later: \{status_line(read_response(conn))}")
+      let since = @async.now()
+      conn.write("GET /users/1 HTTP/1.1\r\nHost: local")
+      let (elapsed, rest) = ended(conn, since)
+      out.push(
+        "a rest that never comes: \{rest.escape()}, ended after at least 1500 ms: \{elapsed >= 1500}, before 3000 ms: \{elapsed < 3000}",
+      )
+      inspect(
+        out.join("\n"),
+        content=(
+          #|the rest 800 ms later: HTTP/1.1 200 OK
+          #|a rest that never comes: "", ended after at least 1500 ms: true, before 3000 ms: true
+        ),
+      )
+    },
+  )
+  inspect(log_entries(stopped.logs), content=startup_only)
+}

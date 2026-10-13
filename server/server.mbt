@@ -518,59 +518,147 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
   let buf = FixedArray::make(16 * 1024, b'\x00')
   let idle_timeout = settings.idle_timeout_ms.to_int64()
   let read_timeout = settings.read_timeout_ms.to_int64()
-  let mut idle_deadline = @async.now() + idle_timeout
-  let mut read_deadline : Int64? = None
-  // When the bytes not yet parsed began to count against the read timeout:
-  // when they were read, or, for bytes read before a response, when it was
-  // written, since nothing is read while a response is written.
-  let mut read_since = @async.now()
-  // Started at the last read, which brought the last byte of every request
-  // the parser holds complete.
-  let mut last_read = Stopwatch::start()
-  for ;; {
-    match parser.next() {
-      Complete(request) => {
-        if !respond(stream, request, last_read) {
-          return
-        }
-        idle_deadline = @async.now() + idle_timeout
-        read_deadline = None
-        read_since = @async.now()
-      }
-      Continue =>
-        @io.Writer::write(stream, @http1.encode_response(100, [], b""))
-      NeedMore => {
-        let deadline = if parser.in_request() {
-          // The request began with the bytes of the last read, or earlier.
-          let deadline = read_deadline.unwrap_or(read_since + read_timeout)
-          read_deadline = Some(deadline)
-          deadline
-        } else {
+  @async.with_task_group(group => {
+    let watch = ReadWatch::new(group)
+    let mut idle_deadline = @async.now() + idle_timeout
+    let mut read_deadline : Int64? = None
+    // When the bytes not yet parsed began to count against the read timeout:
+    // when they were read, or, for bytes read before a response, when it was
+    // written, since nothing is read while a response is written.
+    let mut read_since = @async.now()
+    // Started at the last read, which brought the last byte of every request
+    // the parser holds complete.
+    let mut last_read = Stopwatch::start()
+    for ;; {
+      match parser.next() {
+        Complete(request) => {
+          if !respond(stream, request, last_read) {
+            return
+          }
+          idle_deadline = @async.now() + idle_timeout
           read_deadline = None
-          idle_deadline
+          read_since = @async.now()
         }
-        let remaining = deadline - @async.now()
-        if remaining <= 0L {
+        Continue =>
+          @io.Writer::write(stream, @http1.encode_response(100, [], b""))
+        NeedMore => {
+          let deadline = if parser.in_request() {
+            // The request began with the bytes of the last read, or earlier.
+            let deadline = read_deadline.unwrap_or(read_since + read_timeout)
+            read_deadline = Some(deadline)
+            deadline
+          } else {
+            read_deadline = None
+            idle_deadline
+          }
+          let remaining = deadline - @async.now()
+          if remaining <= 0L {
+            return
+          }
+          if connection is Some(connection) {
+            connection.idle = !parser.in_request()
+          }
+          // Past the deadline, the watch ends the task group, and with it
+          // this read and the connection.
+          watch.start(deadline)
+          let n = @io.Reader::read(stream, buf)
+          watch.stop()
+          if connection is Some(connection) {
+            connection.idle = false
+          }
+          guard n > 0 else { return }
+          last_read = Stopwatch::start()
+          read_since = @async.now()
+          parser.feed(buf.unsafe_reinterpret_as_bytes()[:n])
+        }
+        Invalid(status~) => {
+          reject(stream, status, last_read)
           return
         }
-        if connection is Some(connection) {
-          connection.idle = !parser.in_request()
-        }
-        let read = @async.with_timeout_opt(remaining.to_int(), () => {
-          @io.Reader::read(stream, buf)
-        })
-        if connection is Some(connection) {
-          connection.idle = false
-        }
-        guard read is Some(n) && n > 0 else { return }
-        last_read = Stopwatch::start()
-        read_since = @async.now()
-        parser.feed(buf.unsafe_reinterpret_as_bytes()[:n])
       }
-      Invalid(status~) => {
-        reject(stream, status, last_read)
-        return
+    }
+  })
+  // A read that timed out ended the task group while the connection waited.
+  if connection is Some(connection) {
+    connection.idle = false
+  }
+}
+
+///|
+/// The timeout of the reads of one connection. Rather than each read setting
+/// up a timer of its own, which costs a task group, a task and a timer per
+/// read, one watchdog task per connection sleeps until the deadline of the
+/// read in progress and, when that read is still waiting at its deadline,
+/// ends the connection's task group, which cancels the read. A read whose
+/// deadline is later than the watchdog's wake-up only moves the deadline,
+/// and the watchdog goes back to sleep until it when it wakes; only a read
+/// whose deadline is earlier starts a new watchdog. While no read waits, as
+/// while a response is written, the watchdog never ends the group.
+priv struct ReadWatch {
+  /// The task group the connection is served in.
+  group : @async.TaskGroup[Unit]
+  /// Whether a read waits.
+  mut reading : Bool
+  /// When the read that waits times out, in `@async.now()` milliseconds.
+  mut deadline : Int64
+  /// When the current watchdog wakes next: `forever` while it waits for a
+  /// read to start a new one, or when there is none.
+  mut wakes_at : Int64
+  /// The current watchdog, by its number: a watchdog that a newer one
+  /// replaced does nothing more.
+  mut watchdog : (Int, @async.Task[Unit])?
+}
+
+///|
+/// A wake-up time that never comes.
+let forever : Int64 = 0x7fffffffffffffffL
+
+///|
+fn ReadWatch::new(group : @async.TaskGroup[Unit]) -> ReadWatch {
+  { group, reading: false, deadline: 0L, wakes_at: forever, watchdog: None, }
+}
+
+///|
+/// A read starts waiting, until `deadline` at the latest.
+fn ReadWatch::start(self : ReadWatch, deadline : Int64) -> Unit {
+  self.deadline = deadline
+  self.reading = true
+  if deadline < self.wakes_at {
+    // The current watchdog would wake too late.
+    let number = match self.watchdog {
+      Some((number, task)) => {
+        task.cancel()
+        number + 1
       }
+      None => 0
+    }
+    self.wakes_at = deadline
+    let task = self.group.spawn(no_wait=true, () => self.watch(number))
+    self.watchdog = Some((number, task))
+  }
+}
+
+///|
+/// The read has stopped waiting.
+fn ReadWatch::stop(self : ReadWatch) -> Unit {
+  self.reading = false
+}
+
+///|
+/// The watchdog numbered `number`.
+async fn ReadWatch::watch(self : ReadWatch, number : Int) -> Unit {
+  while self.watchdog is Some((current, _)) && current == number {
+    let now = @async.now()
+    if self.reading && now >= self.deadline {
+      self.group.return_immediately(())
+      return
+    }
+    if self.reading {
+      self.wakes_at = self.deadline
+      @async.sleep((self.deadline - now).to_int())
+    } else {
+      self.wakes_at = forever
+      @async.sleep(0x7fffffff)
     }
   }
 }
