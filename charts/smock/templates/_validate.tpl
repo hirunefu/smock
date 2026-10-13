@@ -8,7 +8,9 @@ would make a Pod that cannot start or does not do what they ask.
 {{- fail (printf "terminationGracePeriodSeconds (%s) must be above the drain timeout, drainTimeoutMs (%s ms), or Kubernetes kills smock before it has drained: raise it, or leave it empty for the drain timeout plus 10 s" (include "smock.string" .Values.terminationGracePeriodSeconds) (include "smock.string" .Values.drainTimeoutMs)) -}}
 {{- end -}}
 {{- end -}}
-{{- /* The variables the chart sets itself, and the values that set them. */ -}}
+{{- /* The variables the chart sets itself, and the values that set them.
+A variable added to the Deployment's env is added here too:
+scripts/test-helm-chart.sh fails until it is. */ -}}
 {{- $own := dict
   "SMOCK_DIR" "definitions.source"
   "SMOCK_BODY_FILE_DIR" "definitions.bodyFileDir"

@@ -429,7 +429,18 @@ check env "each variable is set once" 'envs | length == (unique | length)'
 refuse env-name "a variable that is not a smock setting" \
   'env: "HTTP_PROXY" is not a smock setting: its name must be SMOCK_ and the setting' \
   --values "$tmp/values-token.yaml" --set env.HTTP_PROXY=x
-for name in SMOCK_REPLICAS SMOCK_DIR SMOCK_ADMIN_TOKEN SMOCK_DRAIN_TIMEOUT_MS SMOCK_TLS_CERT_FILE; do
+# Every variable the Deployment sets in any of the chart's own modes (the
+# token as a file or as a variable, with and without TLS) is refused in
+# env, so the list _validate.tpl refuses cannot fall behind the Deployment.
+own=$(for name in token-file token-env tls; do
+  jq -r "$defs envs | .[]" "$tmp/$name.json"
+done | sort -u)
+if [ -n "$own" ]; then
+  pass "env-chart: the Deployment sets variables of its own: $(echo $own)"
+else
+  fail "env-chart: no variables found in the Deployment"
+fi
+for name in $own; do
   refuse env-chart "$name, which the chart sets from its own values" \
     "env: the chart sets $name itself" \
     --values "$tmp/values-token.yaml" --set "env.$name=1"
