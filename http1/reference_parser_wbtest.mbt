@@ -526,8 +526,14 @@ fn ref_stream(rand : @random.Rand) -> Bytes {
   if rand.int(limit=4) == 0 {
     out.write_string_utf8("\r\n")
   }
-  for _ in 0..<(1 + rand.int(limit=3)) {
-    if rand.int(limit=4) == 0 {
+  // A client often sends the same request again on a connection, so the
+  // parser's reuse of the strings and fields of the last head is tried with
+  // repeats, which the changes below then vary.
+  let mut last = None
+  for _ in 0..<(1 + rand.int(limit=4)) {
+    if last is Some(request) && rand.int(limit=2) == 0 {
+      out.write_bytes(request)
+    } else if rand.int(limit=4) == 0 {
       // Loose pieces of heads, in any order.
       for _ in 0..<(1 + rand.int(limit=8)) {
         let items = match rand.int(limit=3) {
@@ -538,15 +544,18 @@ fn ref_stream(rand : @random.Rand) -> Bytes {
         out.write_string_utf8(pick(items))
       }
     } else {
-      out.write_string_utf8(pick(ref_request_lines))
+      let request = @buffer.Buffer()
+      request.write_string_utf8(pick(ref_request_lines))
       if rand.int(limit=5) != 0 {
-        out.write_string_utf8("Host: a.example\r\n")
+        request.write_string_utf8("Host: a.example\r\n")
       }
       for _ in 0..<rand.int(limit=6) {
-        out.write_string_utf8(pick(ref_fields))
+        request.write_string_utf8(pick(ref_fields))
       }
-      out.write_string_utf8("\r\n")
-      out.write_string_utf8(pick(ref_bodies))
+      request.write_string_utf8("\r\n")
+      request.write_string_utf8(pick(ref_bodies))
+      last = Some(request.to_bytes())
+      out.write_bytes(request.to_bytes())
     }
   }
   let bytes = out.to_bytes().to_array()

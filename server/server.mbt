@@ -409,12 +409,13 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
   connection : Connection,
 ) -> Bool {
   let was_reset = Ref(false)
+  let headers = DecodedHeaders::new()
   serve_connection(
     stream,
     self.settings,
     connection~,
     respond=(stream, request, stopwatch, now) => {
-      let engine_request = to_engine_request(request)
+      let engine_request = to_engine_request(request, headers.of(request))
       let session = self.sessions.session_of(engine_request.headers)
       let outcome = self.engine.handle(
         engine_request,
@@ -673,9 +674,12 @@ async fn ReadWatch::watch(self : ReadWatch, number : Int) -> Unit {
 }
 
 ///|
-/// The engine's view of a parsed request. Header values are decoded as
-/// UTF-8, with invalid bytes replaced by U+FFFD.
-fn to_engine_request(request : @http1.Request) -> @engine.Request {
+/// The engine's view of a parsed request, with its header fields `headers`
+/// as `decoded_headers` decodes them.
+fn to_engine_request(
+  request : @http1.Request,
+  headers : Array[(String, String)],
+) -> @engine.Request {
   {
     meth: request.meth,
     target: request.target,
@@ -683,9 +687,54 @@ fn to_engine_request(request : @http1.Request) -> @engine.Request {
       Http10 => "HTTP/1.0"
       Http11 => "HTTP/1.1"
     },
-    headers: decoded_headers(request),
+    headers,
     body: request.body,
   }
+}
+
+///|
+/// The header fields of the requests of one connection, decoded as
+/// `decoded_headers` decodes them. The parser gives a request the very
+/// field of the request before it when the field is sent again the same,
+/// so such a field keeps its decoded value: a field a client sends with
+/// every request is decoded once per connection.
+priv struct DecodedHeaders {
+  /// The fields decoded last, by their place in their request.
+  fields : Array[@http1.Header]
+  /// Each of them, decoded.
+  decoded : Array[(String, String)]
+}
+
+///|
+fn DecodedHeaders::new() -> DecodedHeaders {
+  { fields: [], decoded: [], }
+}
+
+///|
+/// The header fields of `request`, decoded.
+fn DecodedHeaders::of(
+  self : DecodedHeaders,
+  request : @http1.Request,
+) -> Array[(String, String)] {
+  let headers = request.headers
+  let out = Array(capacity=headers.length())
+  for i in 0..<headers.length() {
+    let header = headers[i]
+    if i < self.fields.length() && physical_equal(header, self.fields[i]) {
+      out.push(self.decoded[i])
+      continue
+    }
+    let field = (header.name, @utf8.decode_lossy(header.value))
+    if i < self.fields.length() {
+      self.fields[i] = header
+      self.decoded[i] = field
+    } else {
+      self.fields.push(header)
+      self.decoded.push(field)
+    }
+    out.push(field)
+  }
+  out
 }
 
 ///|

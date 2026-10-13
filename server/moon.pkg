@@ -27,6 +27,10 @@ import {
 
 supported_targets = "native"
 
+import {
+  "moonbitlang/core/buffer",
+} for "wbtest"
+
 options(
   "native-stub": [ "reset.c" ],
 )

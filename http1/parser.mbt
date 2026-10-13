@@ -42,6 +42,10 @@ pub struct Parser {
   priv mut fields : Int
   /// The head of the next request, once parsed. Its bytes are consumed.
   priv mut head : Head?
+  /// The head parsed last. A client tends to send the same method, target
+  /// and header fields on a connection again and again, so the next head
+  /// reuses its strings and fields where they are the same.
+  priv mut previous : Head?
   /// How far the chunked body of the next request is decoded.
   priv chunks : Chunks
   /// The status of the error that stopped the parser.
@@ -164,6 +168,7 @@ pub fn Parser::Parser(
     section: FieldStart,
     fields: 0,
     head: None,
+    previous: None,
     chunks: Chunks(limit=body_limit),
     invalid: None,
     header_size_limit,
@@ -225,9 +230,17 @@ pub fn Parser::next(self : Parser) -> Parsed {
           return Invalid(status~)
         }
       }
-      match parse_head(self.buf, self.start, head_end, self.body_limit) {
+      match
+        parse_head(
+          self.buf,
+          self.start,
+          head_end,
+          self.body_limit,
+          self.previous,
+        ) {
         Ok(head) => {
           self.head = Some(head)
+          self.previous = Some(head)
           self.start = head_end
           self.scanned = 0
           self.scan = Method
@@ -527,18 +540,25 @@ fn is_field_value_byte(c : Byte) -> Bool {
 
 ///|
 /// Parses the head in `buf[start:end]`, which the head scan has checked and
-/// which ends with an empty line, and decides how the body is framed.
+/// which ends with an empty line, and decides how the body is framed. The
+/// method, the target and each header field that are the same as in the
+/// `previous` head, field by field in order, are its own strings and fields.
 fn parse_head(
   buf : FixedArray[Byte],
   start : Int,
   end : Int,
   body_limit : Int,
+  previous : Head?,
 ) -> Result[Head, Int] {
   let lines = split_lines(buf, start, end)
   let (meth, target, version) = match
-    parse_request_line(buf, lines[0], lines[1]) {
+    parse_request_line(buf, lines[0], lines[1], previous) {
     Ok(line) => line
     Err(status) => return Err(status)
+  }
+  let previous_headers = match previous {
+    Some(previous) => previous.headers
+    None => []
   }
   let headers = []
   let content_lengths = []
@@ -548,7 +568,12 @@ fn parse_head(
   let mut hosts = 0
   let transfer_encodings = []
   for line in 1..<(lines.length() / 2) {
-    let header = parse_field(buf, lines[2 * line], lines[2 * line + 1])
+    let header = parse_field(
+      buf,
+      lines[2 * line],
+      lines[2 * line + 1],
+      previous_headers.get(line - 1),
+    )
     headers.push(header)
     let name = header.name
     if is_name(name, "host") {
@@ -712,6 +737,7 @@ fn parse_request_line(
   buf : FixedArray[Byte],
   start : Int,
   end : Int,
+  previous : Head?,
 ) -> Result[(String, String, Version), Int] {
   // The method holds no space, and the version is the last 8 bytes,
   // `HTTP/D.D`.
@@ -724,8 +750,14 @@ fn parse_request_line(
     (b'1', _) => Http11
     _ => return Err(505)
   }
-  let meth = ascii(buf, start, space)
-  let target = ascii(buf, space + 1, end - 9)
+  let (meth, target) = match previous {
+    Some(previous) =>
+      (
+        ascii_reusing(buf, start, space, previous.meth),
+        ascii_reusing(buf, space + 1, end - 9, previous.target),
+      )
+    None => (ascii(buf, start, space), ascii(buf, space + 1, end - 9))
+  }
   if !is_request_target(target, meth~) {
     return Err(400)
   }
@@ -739,8 +771,14 @@ fn is_digit(c : Byte) -> Bool {
 
 ///|
 /// Reads `field-name ":" OWS field-value OWS` from the line
-/// `buf[start:end]`, which the head scan has checked.
-fn parse_field(buf : FixedArray[Byte], start : Int, end : Int) -> Header {
+/// `buf[start:end]`, which the head scan has checked. It is `previous`, or
+/// has its name, when that is the same.
+fn parse_field(
+  buf : FixedArray[Byte],
+  start : Int,
+  end : Int,
+  previous : Header?,
+) -> Header {
   let mut colon = start
   while buf[colon] != b':' {
     colon += 1
@@ -753,9 +791,17 @@ fn parse_field(buf : FixedArray[Byte], start : Int, end : Int) -> Header {
   while value_end > value_start && is_ows(buf[value_end - 1]) {
     value_end -= 1
   }
-  {
-    name: ascii(buf, start, colon),
-    value: buf.unsafe_reinterpret_as_bytes()[value_start:value_end].to_owned(),
+  let value = buf.unsafe_reinterpret_as_bytes()[value_start:value_end]
+  match previous {
+    Some(previous) => {
+      let name = ascii_reusing(buf, start, colon, previous.name)
+      if physical_equal(name, previous.name) && value == previous.value[:] {
+        previous
+      } else {
+        { name, value: value.to_owned(), }
+      }
+    }
+    None => { name: ascii(buf, start, colon), value: value.to_owned(), }
   }
 }
 
@@ -793,6 +839,27 @@ fn is_ows(c : Byte) -> Bool {
 /// it is decoded as UTF-8, all at once.
 fn ascii(buf : FixedArray[Byte], start : Int, end : Int) -> String {
   @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[start:end])
+}
+
+///|
+/// `buf[start:end]`, which holds only ASCII, as a string: `same` itself when
+/// it is that text, so that text sent again shares one string.
+fn ascii_reusing(
+  buf : FixedArray[Byte],
+  start : Int,
+  end : Int,
+  same : String,
+) -> String {
+  if same.length() == end - start {
+    let mut i = 0
+    while i < end - start && same[i].to_int() == buf[start + i].to_int() {
+      i += 1
+    }
+    if i == end - start {
+      return same
+    }
+  }
+  ascii(buf, start, end)
 }
 
 ///|
