@@ -27,7 +27,8 @@ Packages of `smock/smock`:
   `moonbitlang/async` exposes one; smock itself binds no C for it.
 - `settings`: the settings of `smock serve`, each a flag with a matching
   `SMOCK_<NAME>` environment variable, and the arguments of `smock check`
-  and `smock render`.
+  and `smock render`; also the rule that derives the Journal's byte bound
+  from a memory limit, which `server` reads from the cgroup at startup.
 - `definitions`: reads a definition set, given as (name, bytes) pairs of
   JSON and YAML files, into an immutable snapshot, or into diagnostics
   (file, JSON Pointer, message). Its validation is written by hand and
@@ -154,7 +155,7 @@ settings:
 | `--seed` | `SMOCK_SEED` | none: smock picks the seed of its random generator, from 0 to 9007199254740991, and logs it ([Faults](docs/definition-files.md#seeds)) |
 | `--journal` | `SMOCK_JOURNAL` | `on`: requests are recorded in the [Journal](#the-journal); `off` records none |
 | `--journal-max-entries` | `SMOCK_JOURNAL_MAX_ENTRIES` | 10000: beyond it, the oldest entries are evicted |
-| `--journal-max-bytes` | `SMOCK_JOURNAL_MAX_BYTES` | 67108864 bytes (64 MiB): beyond it, the oldest entries are evicted |
+| `--journal-max-bytes` | `SMOCK_JOURNAL_MAX_BYTES` | a quarter of smock's memory limit (cgroup v2 `memory.max`), at least 1048576 bytes (1 MiB) and at most 67108864 (64 MiB); 64 MiB without a limit ([The Journal](#the-journal)): beyond it, the oldest entries are evicted |
 | `--journal-body-limit` | `SMOCK_JOURNAL_BODY_LIMIT` | 4096 bytes (4 KiB): the most of a request body an entry keeps |
 
 A request over a limit gets its status with `Connection: close`, then the
@@ -579,6 +580,27 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   the Definition files; each entry keeps the digest of the set that
   answered it. It lives in the process that received the requests, until a
   reset or a restart.
+- The byte bound follows smock's memory limit, so that the Journal fits a
+  small Pod ([ADR 0004](docs/adr/0004-journal-byte-bound-follows-the-memory-limit.md)).
+  `--journal-max-bytes` or `SMOCK_JOURNAL_MAX_BYTES` always wins. Without
+  either, smock reads the memory limit of its own cgroup at startup:
+  `memory.max` of the cgroup v2 that `/proc/self/cgroup` names, under
+  `/sys/fs/cgroup`, which in a container on a Kubernetes node with cgroup
+  v2 is the container's memory limit. The bound is a quarter of that
+  limit, rounded down, at least 1 MiB, so that a tiny limit still records
+  something, and at most 64 MiB. Without a limit (`max`), or when it
+  cannot be read, as on a cgroup v1 host, the bound is 64 MiB. Under a
+  52Mi limit it is 13 MiB, which holds about 8,400 entries of the
+  benchmark's request mix (each counts about 1.6 KB); from a 256Mi limit
+  up, it is 64 MiB.
+- smock logs the bound it uses at startup, with its `source`: `flag`,
+  `variable`, `memoryLimit` (a quarter of the limit), `minimum` (1 MiB) or
+  `default` (64 MiB), and the `memoryLimit` it read, in bytes or `max`, or
+  `memoryLimitError`, why it could not read one:
+
+  ```json
+  {"time":"2026-10-14T09:00:00.000Z","level":"info","msg":"journal byte bound","maxBytes":13631488,"source":"memoryLimit","memoryLimit":54525952}
+  ```
 
 ### Verifying calls and unmatched requests
 
@@ -820,6 +842,12 @@ run in parallel (`e2e/harness_test.mbt`). They need `moon`, `moonc`, `git`,
 the root CA of `testcerts`, and the HTTP/1.1 tests run on both the plain and
 the TLS port. The tests of the generated certificate (`e2e/self_signed_test.mbt`)
 read it from the handshake with `openssl s_client` and then trust only it.
+The test of the Journal's byte bound under a memory limit
+(`e2e/journal_bound_test.mbt`) starts smock in a systemd user scope with
+`MemoryMax`, as the benchmark does, so it needs `systemd-run` and a systemd
+user manager with the `memory` controller delegated to it (see
+[Run it on your machine](#run-it-on-your-machine)). Where a scope cannot
+get the limit, it prints why it skipped and passes.
 
 `SMOCK_VERSION` and `SMOCK_COMMIT` set the version and the commit that a
 native build, such as `scripts/build-release.sh`, records in the binary.
@@ -887,13 +915,14 @@ cgroup limits:
 
 A CPU limit equal to the request is a CFS quota over a 100 ms period, as
 here: under 50m, smock may run 5 ms in every 100 ms. smock runs with its
-defaults, the Journal's bounds included, so if they do not fit a memory
-limit, the run shows OOM kills rather than hiding them. Each profile
-measures idle RSS, then plain HTTP and TLS with keep-alive connections, each
-at a ladder of six fixed rates from 2,500 to 80,000 requests a second per
-CPU (125 to 4,000 under 50m), 20 seconds a step, so that the top of each
-ladder is beyond what smock sustains under the limit. A full run takes
-about 18 minutes; it prints its estimate before it starts.
+defaults, so if they do not fit a memory limit, the run shows OOM kills
+rather than hiding them; the Journal's byte bound follows the memory limit
+([The Journal](#the-journal)): 13 MiB under 52Mi, 64 MiB under the others.
+Each profile measures idle RSS, then plain HTTP and TLS with keep-alive
+connections, each at a ladder of six fixed rates from 2,500 to 80,000
+requests a second per CPU (125 to 4,000 under 50m), 20 seconds a step, so
+that the top of each ladder is beyond what smock sustains under the limit.
+A full run takes about 18 minutes; it prints its estimate before it starts.
 
 Before a full run:
 

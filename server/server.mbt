@@ -57,6 +57,14 @@ pub async fn serve(
   logger.info("random seed", fields={
     "seed": Json::number(seed.to_double(), repr=seed.to_string()),
   })
+  let journal_bound = journal_byte_bound(settings)
+  logger.info("journal byte bound", fields=journal_bound.log_fields())
+  let journal = @engine.JournalSettings(
+    enabled=settings.journal,
+    max_entries=settings.journal_max_entries,
+    max_bytes=journal_bound.max_bytes,
+    body_limit=settings.journal_body_limit,
+  )
   let metrics = @metrics.Registry()
   let build = @buildinfo.current()
   build.register_metric(metrics)
@@ -106,6 +114,7 @@ pub async fn serve(
             lifecycle,
             admin,
             admin_listener,
+            journal~,
             metrics~,
             watch~,
             tls_watches~,
@@ -131,7 +140,8 @@ async fn sleep_forever() -> Unit {
 ///|
 /// Serves the Admin API on `admin_listener`, from now until it returns;
 /// loads the definitions and the TLS certificates; listens on the plain and
-/// the TLS port; serves the Mocks there until the drain starts; and drains.
+/// the TLS port; serves the Mocks there, recording them in a Journal with
+/// the settings `journal`, until the drain starts; and drains.
 /// Returns the exit status: 0 after the drain, or 1 when the definition set
 /// is invalid, a TLS certificate cannot be loaded or generated, or a port
 /// cannot be listened on.
@@ -148,6 +158,7 @@ async fn run(
   lifecycle : Lifecycle,
   admin : Admin,
   admin_listener : @socket.TcpServer,
+  journal~ : @engine.JournalSettings,
   metrics~ : @metrics.Registry,
   watch~ : @watch.Watch?,
   tls_watches~ : Array[@watch.Watch],
@@ -191,15 +202,7 @@ async fn run(
         return 1
       }
     }
-    let engine = @engine.Engine(
-      snapshot,
-      journal=@engine.JournalSettings(
-        enabled=settings.journal,
-        max_entries=settings.journal_max_entries,
-        max_bytes=settings.journal_max_bytes,
-        body_limit=settings.journal_body_limit,
-      ),
-    )
+    let engine = @engine.Engine(snapshot, journal~)
     lifecycle.started(engine)
     let ports : MockPorts = {
       engine,

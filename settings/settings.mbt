@@ -67,8 +67,11 @@ pub(all) struct ServeSettings {
   journal : Bool
   /// The most entries the Journal holds.
   journal_max_entries : Int
-  /// The most bytes the Journal's entries take, as they count them.
-  journal_max_bytes : Int
+  /// The most bytes the Journal's entries take, as they count them, when
+  /// `--journal-max-bytes` or `SMOCK_JOURNAL_MAX_BYTES` sets it. `None`
+  /// leaves it to the memory limit, which `smock serve` reads at startup
+  /// (`JournalByteBound::from_memory_limit`).
+  journal_max_bytes : JournalByteBound?
   /// The most bytes of a request body a Journal entry keeps.
   journal_body_limit : Int
 } derive(Debug)
@@ -276,8 +279,8 @@ let serve_settings : Array[Setting] = [
   },
   {
     name: "journal-max-bytes",
-    about: "The most bytes the Journal's entries take: each counts 256, two per character of its request line, header fields, names and Near miss values, and the body bytes it keeps. Beyond it, the oldest entries are evicted.",
-    default: Some(journal_defaults.max_bytes.to_string()),
+    about: "The most bytes the Journal's entries take: each counts 256, two per character of its request line, header fields, names and Near miss values, and the body bytes it keeps. Beyond it, the oldest entries are evicted. Default: a quarter of the memory limit of smock's cgroup (cgroup v2 memory.max), at least \{min_journal_byte_bound} (1 MiB) and at most \{journal_defaults.max_bytes} (64 MiB); \{journal_defaults.max_bytes} when there is no limit or it cannot be read.",
+    default: None,
   },
   {
     name: "journal-body-limit",
@@ -512,12 +515,7 @@ pub fn ServeSettings::from_matches(
       min=1,
       max=max_size,
     ),
-    journal_max_bytes: int_value(
-      matches,
-      "journal-max-bytes",
-      min=1,
-      max=max_size,
-    ),
+    journal_max_bytes: journal_max_bytes_value(matches, "journal-max-bytes"),
     journal_body_limit: int_value(
       matches,
       "journal-body-limit",
@@ -525,6 +523,22 @@ pub fn ServeSettings::from_matches(
       max=max_size,
     ),
   }
+}
+
+///|
+/// The Journal's byte bound when the flag or the variable sets it, with
+/// which of them did.
+fn journal_max_bytes_value(
+  matches : @argparse.Matches,
+  name : String,
+) -> JournalByteBound? raise InvalidSetting {
+  guard value(matches, name) is Some(_) else { return None }
+  let max_bytes = int_value(matches, name, min=1, max=max_size)
+  let source : JournalByteBoundSource = match matches.sources.get(name) {
+    Some(Env) => Variable
+    _ => Flag
+  }
+  Some({ max_bytes, source, })
 }
 
 ///|

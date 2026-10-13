@@ -132,7 +132,7 @@ async test "a missing or empty definitions directory, or none at all, gives an e
         #|
         #|{"error":"no Stub matched"}
         #|---
-        #|8 log entries
+        #|9 log entries
         #|---
         #|404 Not Found
         #|Content-Type: application/json
@@ -141,7 +141,7 @@ async test "a missing or empty definitions directory, or none at all, gives an e
         #|
         #|{"error":"no Stub matched"}
         #|---
-        #|8 log entries
+        #|9 log entries
         #|---
         #|404 Not Found
         #|Content-Type: application/json
@@ -150,7 +150,7 @@ async test "a missing or empty definitions directory, or none at all, gives an e
         #|
         #|{"error":"no Stub matched"}
         #|---
-        #|8 log entries
+        #|9 log entries
       ),
     )
   })

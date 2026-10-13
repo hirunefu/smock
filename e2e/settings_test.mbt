@@ -34,7 +34,7 @@ async test "every serve setting is a flag with a matching SMOCK_ environment var
       #|  --seed <seed>                                The seed of the process random generator, from 0 to 9007199254740991. Faults of Stubs without their own seed draw from it. Without it, smock picks a seed at startup and logs it. [env: SMOCK_SEED]
       #|  --journal <journal>                          Whether smock records the requests it receives in the Journal: on or off. Off, it records none, and Journal queries are refused. [env: SMOCK_JOURNAL] [default: on]
       #|  --journal-max-entries <journal-max-entries>  The most entries the Journal holds. Beyond it, the oldest entries are evicted. [env: SMOCK_JOURNAL_MAX_ENTRIES] [default: 10000]
-      #|  --journal-max-bytes <journal-max-bytes>      The most bytes the Journal's entries take: each counts 256, two per character of its request line, header fields, names and Near miss values, and the body bytes it keeps. Beyond it, the oldest entries are evicted. [env: SMOCK_JOURNAL_MAX_BYTES] [default: 67108864]
+      #|  --journal-max-bytes <journal-max-bytes>      The most bytes the Journal's entries take: each counts 256, two per character of its request line, header fields, names and Near miss values, and the body bytes it keeps. Beyond it, the oldest entries are evicted. Default: a quarter of the memory limit of smock's cgroup (cgroup v2 memory.max), at least 1048576 (1 MiB) and at most 67108864 (64 MiB); 67108864 when there is no limit or it cannot be read. [env: SMOCK_JOURNAL_MAX_BYTES]
       #|  --journal-body-limit <journal-body-limit>    The most bytes of a request body a Journal entry keeps; the rest is cut. [env: SMOCK_JOURNAL_BODY_LIMIT] [default: 4096]
       #|
     ),
