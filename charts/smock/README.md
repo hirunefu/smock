@@ -106,9 +106,12 @@ With `definitions.source=gitSync`, a [git-sync](https://github.com/kubernetes/gi
 init container clones `definitions.gitSync.repo` before smock starts, so
 smock never starts without its files, and a git-sync sidecar then checks for
 new commits every `definitions.gitSync.period`. git-sync publishes each new
-commit by swapping a symlink, and smock reloads the files it finds there.
-`definitions.gitSync.path` is the definitions directory inside the
-repository.
+commit by swapping a symlink and removing the worktree it replaced, and smock
+reloads the files it finds there as soon as that worktree goes. A
+`--stale-worktree-timeout` in `definitions.gitSync.extraArgs` keeps old
+worktrees for a while; smock then finds each new commit with its poll of the
+directory, within 10 s. `definitions.gitSync.path` is the definitions
+directory inside the repository.
 
 ```yaml
 definitions:

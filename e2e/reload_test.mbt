@@ -358,27 +358,35 @@ async test "a definitions directory that does not exist yet is polled every 10 s
         ),
       )
     })
-    // The warnings and errors, and the reloads: no warning about watching.
-    let messages = stopped.logs.filter_map(line => {
-      let entry = @json.parse(line) catch { _ => return Some(line) }
-      guard entry is Object(fields) &&
-        fields.get("level") is Some(String(level)) &&
-        fields.get("msg") is Some(String(msg)) else {
-        return Some(line)
-      }
-      if level != "info" || msg.contains("reload") {
-        Some("\{level}: \{msg}")
-      } else {
-        None
-      }
-    })
+    // No warning about watching.
     inspect(
-      messages.join("\n"),
+      warnings_and_reloads(stopped.logs),
       content=(
         #|info: definitions reloaded
       ),
     )
   })
+}
+
+///|
+/// The level and message of each warning, error and reload in `logs`, one
+/// per line, and any line that is not a log entry.
+fn warnings_and_reloads(logs : Array[String]) -> String {
+  logs
+  .filter_map(line => {
+    let entry = @json.parse(line) catch { _ => return Some(line) }
+    guard entry is Object(fields) &&
+      fields.get("level") is Some(String(level)) &&
+      fields.get("msg") is Some(String(msg)) else {
+      return Some(line)
+    }
+    if level != "info" || msg.contains("reload") {
+      Some("\{level}: \{msg}")
+    } else {
+      None
+    }
+  })
+  .join("\n")
 }
 
 ///|
@@ -437,5 +445,89 @@ async test "a ConfigMap update, which swaps the ..data symlink and keeps the vis
         ),
       )
     })
+  })
+}
+
+///|
+/// Writes `files` into `root` the way git-sync publishes a commit: into a
+/// new worktree `.worktrees/<commit>`, then points the symlink `current` at
+/// it with an atomic rename, then removes the worktree it replaced, if any,
+/// as git-sync does by default.
+async fn git_sync_update(
+  root : String,
+  commit : String,
+  files : Array[(String, String)],
+  replaces? : String,
+) -> Unit {
+  for file in files {
+    write(root, ".worktrees/\{commit}/\{file.0}", file.1)
+  }
+  @fs.symlink(target=".worktrees/\{commit}", "\{root}/current_tmp")
+  @fs.rename("\{root}/current_tmp", "\{root}/current")
+  if replaces is Some(old) {
+    @fs.rmdir("\{root}/.worktrees/\{old}", recursive=true)
+  }
+}
+
+///|
+async test "a git-sync update, which points the symlink that --dir goes through at a new worktree and removes the old one, reloads the definitions" {
+  with_definitions([], root => {
+    git_sync_update(root, "c1", [
+      ("mocks/mocks.json", reload_mock),
+      ("mocks/users.json", user_stub),
+      ("mocks/files/users/1.json", "Alice"),
+    ])
+    let stopped = with_smock(
+      ["--dir", "\{root}/current/mocks", "--port", "0"],
+      smock => {
+        let before = smock.status()
+        let served_before = smock.brief("/users/1")
+        git_sync_update(
+          root,
+          "c2",
+          [
+            ("mocks/mocks.json", reload_mock),
+            ("mocks/users.json", user_stub),
+            ("mocks/files/users/1.json", "Bob"),
+          ],
+          replaces="c1",
+        )
+        let after = smock.reloaded(before)
+        let served_after = smock.brief("/users/1")
+        // The watch has moved on to the new worktree, so the next commit
+        // is seen too.
+        git_sync_update(
+          root,
+          "c3",
+          [
+            ("mocks/mocks.json", reload_mock),
+            ("mocks/users.json", user_stub),
+            ("mocks/files/users/1.json", "Carol"),
+          ],
+          replaces="c2",
+        )
+        let next = smock.reloaded(after)
+        inspect(
+          (
+            $|before: \{served_before}
+            $|\{last_reload(after)}: \{served_after}
+            $|\{last_reload(next)}: \{smock.brief("/users/1")}
+          ),
+          content=(
+            #|before: 200 Alice
+            #|"swapped": 200 Bob
+            #|"swapped": 200 Carol
+          ),
+        )
+      },
+    )
+    // A reload for each commit, and no warning about watching.
+    inspect(
+      warnings_and_reloads(stopped.logs),
+      content=(
+        #|info: definitions reloaded
+        #|info: definitions reloaded
+      ),
+    )
   })
 }

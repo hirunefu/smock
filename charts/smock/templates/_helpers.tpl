@@ -88,8 +88,9 @@ seccompProfile:
 {{/*
 Where smock's container mounts the definitions volume, and the definitions
 directory smock reads, for each delivery mode. git-sync publishes each
-commit it syncs by swapping the symlink "current" under its root, which
-smock's file reload follows.
+commit it syncs by swapping the symlink "current" under its root and then
+removing the worktree it replaced, which leads smock's file reload to the
+new one (e2e/reload_test.mbt has a test of that).
 */}}
 {{- define "smock.definitionsMountPath" -}}
 {{- if eq .Values.definitions.source "gitSync" -}}/git{{- else -}}/definitions{{- end -}}

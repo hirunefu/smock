@@ -471,6 +471,13 @@ restart:
   triggers a reload. So does a Kubernetes ConfigMap update, which swaps the
   `..data` symlink and keeps the visible names. Any change in the directory
   counts, so a reload can also find nothing new.
+- When `--dir` goes through a symlink that is pointed at a new directory,
+  as git-sync does for each commit (`--dir /git/current/mocks`), smock goes
+  on watching the directory it found at first until that one changes or is
+  removed. git-sync removes the directory it replaced at once by default,
+  so the new commit is reloaded right away and watched from then on. When
+  the old directory stays, as with git-sync's `--stale-worktree-timeout`,
+  the new commit is found by the next poll, within 10 s.
 - Changes are coalesced: smock reloads once they have been quiet for
   250 ms, so a burst of changes gives one reload. It also polls the
   directory every 10 s, in case a change went unnoticed, and reloads when
