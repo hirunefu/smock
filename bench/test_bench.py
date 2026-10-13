@@ -536,6 +536,60 @@ class Estimate(unittest.TestCase):
         self.assertLessEqual(abs(estimate_s - elapsed), elapsed / 2, (estimate_s, elapsed))
 
 
+class AutopilotProfiles(unittest.TestCase):
+    """bench/plan-autopilot.json simulates the smallest general-purpose GKE
+    Autopilot Pods on this machine: 50m CPU and 52 MiB where Pods may burst,
+    250m and 512 MiB where they may not, and 1 CPU and 4 GiB, the smallest
+    machine of a series. smock runs with its defaults under each."""
+
+    PLAN = str(BENCH / "plan-autopilot.json")
+
+    def test_each_profile_runs_smock_under_its_cpu_quota_and_memory_limit_and_measures_idle_rss(self):
+        out = bench(self, "--plan", self.PLAN, "--cases", "http-keep-alive", "--rate", "100", *SHORT)
+        summary = read(out, "summary.json")
+        cases = {c["profile"]: c for c in summary["cases"]}
+        # cpu.max: the quota per 100 ms period in microseconds; memory.max
+        # in bytes.
+        self.assertEqual({name: (c["pinning"]["smock_cpu_max"], c["pinning"]["smock_memory_max"],
+                                 c["pinning"]["smock_memory_swap_max"]) for name, c in cases.items()}, {
+            "autopilot-burst-min": ("5000 100000", "54525952", "0"),
+            "autopilot-min": ("25000 100000", "536870912", "0"),
+            "machine-min": ("100000 100000", "4294967296", "0"),
+        })
+        for result in cases.values():
+            self.assertEqual(result["errors"], 0, result["id"])
+            self.assertEqual(result["memory"]["oom_kills"], 0, result["id"])
+            self.assertIsNotNone(result["smock_cpu"]["throttled_s"], result["id"])
+        self.assertEqual([idle["profile"] for idle in summary["idle_rss"]],
+                         ["autopilot-burst-min", "autopilot-min", "machine-min"])
+        # smock's defaults, whatever SMOCK_* variables the shell has: no
+        # argument shrinks the Journal.
+        args = read(out, "conditions.json")["smock"]["args"]
+        self.assertFalse([arg for arg in args if arg.startswith("--journal")], args)
+
+    def test_each_case_climbs_a_ladder_of_rates_scaled_to_the_cpu_limit_beyond_what_it_can_sustain(self):
+        plan = read(BENCH, "plan-autopilot.json")
+        cpu = {profile["name"]: profile["cpu_limit"] for profile in plan["profiles"]}
+        self.assertEqual({c["name"]: (c["protocol"], c["connection"]) for c in plan["cases"]}, {
+            "http-keep-alive": ("http", "keep-alive"),
+            "https-keep-alive": ("https", "keep-alive"),
+        })
+        for case in plan["cases"]:
+            for name, rates in case["rates"].items():
+                self.assertEqual(rates, sorted(rates), (case["name"], name))
+                self.assertGreaterEqual(len(rates), 3, (case["name"], name))
+            # The same ladder for each profile, in proportion to its CPU
+            # limit: 50m gets a twentieth of what 1 CPU gets.
+            ladder = case["rates"]["machine-min"]
+            self.assertEqual(case["rates"]["autopilot-burst-min"], [rate // 20 for rate in ladder])
+            self.assertEqual(case["rates"]["autopilot-min"], [rate // 4 for rate in ladder])
+            self.assertEqual(cpu, {"autopilot-burst-min": "50m", "autopilot-min": "250m", "machine-min": "1"})
+            # Under 50m smock answers at most about 1,600 requests a second
+            # on this kind of machine (spent all of its quota on fewer); the
+            # top of the ladder is well beyond it.
+            self.assertGreaterEqual(case["rates"]["autopilot-burst-min"][-1], 3200)
+
+
 def targets_file(test, targets):
     """Writes a targets file with `targets` into a new directory, and
     returns its path."""
