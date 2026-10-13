@@ -87,6 +87,23 @@ jobs:
           "${GITHUB_SHA::12}"
           "moonc $(moonc -v | cut -d' ' -f1)"
 
+      - id: syft
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          syft-version: v1.54.1
+
+      # The release workflow makes the published image's SBOM the same way,
+      # but only for a tag: this checks on every push that smock and its
+      # MoonBit modules get into it.
+      - name: Make the image's SBOM as the release workflow does
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+        run: |
+          "$SYFT" scan docker:smock:ci --output spdx-json=sbom.spdx.json
+          scripts/add-smock-to-sbom.sh sbom.spdx.json "$SMOCK_VERSION" "$GITHUB_SHA"
+          jq -e --arg version "$SMOCK_VERSION" \
+            'any(.packages[]; .name == "smock" and .versionInfo == $version)' sbom.spdx.json
+
       - name: Install helm, kubectl and kind
         run: scripts/install-kubernetes-tools.sh "$RUNNER_TEMP/bin"
 

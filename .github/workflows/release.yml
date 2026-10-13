@@ -8,8 +8,10 @@
 # 2. publish-image: pushes both images to ghcr.io/hirunefu/smock, combines
 #    them into one multi-architecture image tagged with the version, signs
 #    it and each architecture with cosign (keyless, with the workflow's
-#    GitHub OIDC identity), attests an SPDX SBOM for each architecture, and
-#    verifies all of that as the README does (scripts/verify-image.sh).
+#    GitHub OIDC identity), attests an SPDX SBOM for each architecture (the
+#    base's packages, which syft finds, and smock with its MoonBit modules,
+#    which scripts/add-smock-to-sbom.sh adds), and verifies all of that as
+#    the README does (scripts/verify-image.sh).
 # 3. chart and publish-chart: packages the Helm chart with the version as its
 #    version and app version, so it runs the image published in step 2
 #    (scripts/package-helm-chart.sh), and pushes it as an OCI artifact to
@@ -203,6 +205,8 @@ jobs:
           digest=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)
           cosign sign --yes --recursive "$IMAGE@$digest"
 
+      # syft finds the packages of the distroless base but not the MoonBit
+      # binary, so smock and its modules are added to what it finds.
       - name: Make and attest the SBOM of each architecture
         env:
           SYFT: ${{ steps.syft.outputs.cmd }}
@@ -213,6 +217,7 @@ jobs:
               '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest')
             sbom="sbom/smock-$VERSION-linux-$arch.spdx.json"
             "$SYFT" scan "registry:$IMAGE@$digest" --output "spdx-json=$sbom"
+            scripts/add-smock-to-sbom.sh "$sbom" "$VERSION" "$GITHUB_SHA"
             cosign attest --yes --type spdxjson --predicate "$sbom" "$IMAGE@$digest"
           done
 

@@ -632,8 +632,11 @@ cosign verify ghcr.io/hirunefu/smock:<version> \
 ```
 
 The image of each architecture has an SPDX SBOM, attached as a signed
-attestation. To verify the SBOM of the linux/arm64 image and save it as
-`smock.spdx.json` (use `amd64` for linux/amd64):
+attestation. It lists the packages of the distroless base and smock itself:
+the binary with the release's version, the commit and MoonBit toolchain it
+was built from, the MoonBit modules compiled into it, and its dynamic link
+to the base's OpenSSL. To verify the SBOM of the linux/arm64 image and save
+it as `smock.spdx.json` (use `amd64` for linux/amd64):
 
 ```sh
 digest=$(docker buildx imagetools inspect --raw ghcr.io/hirunefu/smock:<version> |
