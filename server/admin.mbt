@@ -20,10 +20,9 @@ priv struct Admin {
   replica : String
   /// The warnings every JSON response carries.
   warnings : Json
-  /// The header that carries the calling Session, as W3C Baggage, and the
-  /// member whose value is the Session key, as on mocked requests.
-  session_header : String
-  session_member : String
+  /// Where calls carry the calling Session, as requests to the Mocks
+  /// carry theirs.
+  sessions : SessionCarrier
 }
 
 ///|
@@ -110,8 +109,7 @@ fn route(
 ///   authentication off.
 /// - `replica` is the replica's name, such as the Pod's hostname.
 /// - `replicas` is how many replicas the deployment runs.
-/// - `session_header` and `session_member` name the calling Session's
-///   header and its W3C Baggage member.
+/// - `sessions` says where calls carry the calling Session.
 fn Admin::new(
   lifecycle : Lifecycle,
   build : @buildinfo.BuildInfo,
@@ -121,8 +119,7 @@ fn Admin::new(
   token~ : String?,
   replica~ : String,
   replicas~ : Int,
-  session_header~ : String,
-  session_member~ : String,
+  sessions~ : SessionCarrier,
 ) -> Admin {
   let replica = @engine.header_safe(replica)
   let warnings : Array[Json] = if replicas > 1 {
@@ -144,8 +141,7 @@ fn Admin::new(
     token: token.map(token => @utf8.encode(token)),
     replica,
     warnings: Json::array(warnings),
-    session_header,
-    session_member,
+    sessions,
   }
 }
 

@@ -6,13 +6,7 @@
 /// The calling Session of `request`: the member of the Session header that
 /// mocked requests carry it in, or `None` for the no-Session space.
 fn Admin::session(self : Admin, request : @http1.Request) -> String? {
-  @engine.session_of(
-    request.headers.map(header => {
-      (header.name, @utf8.decode_lossy(header.value))
-    }),
-    header=self.session_header,
-    member_name=self.session_member,
-  )
+  self.sessions.session_of(decoded_headers(request))
 }
 
 ///|

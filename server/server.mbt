@@ -68,8 +68,10 @@ pub async fn serve(
     token~,
     replica=replica_name(),
     replicas=settings.replicas,
-    session_header=settings.session_header,
-    session_member=settings.session_member,
+    sessions={
+      header: settings.session_header,
+      member_name: settings.session_member,
+    },
   )
   guard listen(logger, "admin", settings.admin_port) is Some(admin_listener) else {
     return 1
@@ -197,6 +199,7 @@ async fn run(
       engine,
       rand,
       settings,
+      sessions: admin.sessions,
       traffic,
       lifecycle,
       logger,
@@ -356,6 +359,8 @@ priv struct MockPorts {
   /// own draw from.
   rand : @prng.Generator
   settings : @settings.ServeSettings
+  /// Where requests carry their Session, as Admin API calls carry it.
+  sessions : SessionCarrier
   /// Where each request is counted.
   traffic : Traffic
   /// Whether smock drains.
@@ -408,11 +413,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
       // The request has just been read in full.
       let stopwatch = Stopwatch::start()
       let engine_request = to_engine_request(request)
-      let session = @engine.session_of(
-        engine_request.headers,
-        header=self.settings.session_header,
-        member_name=self.settings.session_member,
-      )
+      let session = self.sessions.session_of(engine_request.headers)
       let outcome = self.engine.handle(
         engine_request,
         session~,
@@ -564,11 +565,34 @@ fn to_engine_request(request : @http1.Request) -> @engine.Request {
       Http10 => "HTTP/1.0"
       Http11 => "HTTP/1.1"
     },
-    headers: request.headers.map(header => {
-      (header.name, @utf8.decode_lossy(header.value))
-    }),
+    headers: decoded_headers(request),
     body: request.body,
   }
+}
+
+///|
+/// The header fields of `request`, with their values decoded as UTF-8 and
+/// invalid bytes replaced by U+FFFD.
+fn decoded_headers(request : @http1.Request) -> Array[(String, String)] {
+  request.headers.map(header => (header.name, @utf8.decode_lossy(header.value)))
+}
+
+///|
+/// Where requests carry their Session: a member of a header in W3C Baggage
+/// form, as `--session-header` and `--session-member` name them. Requests
+/// to the Mocks and Admin API calls carry it the same way.
+priv struct SessionCarrier {
+  header : String
+  member_name : String
+}
+
+///|
+/// The Session `headers` carry, or `None` for the no-Session space.
+fn SessionCarrier::session_of(
+  self : SessionCarrier,
+  headers : Array[(String, String)],
+) -> String? {
+  @engine.session_of(headers, header=self.header, member_name=self.member_name)
 }
 
 ///|
