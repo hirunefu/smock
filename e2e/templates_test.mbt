@@ -100,6 +100,7 @@ async test "smock serve logs a template syntax error with its file and JSON Poin
           #|status 1
           #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
           #|{"level":"info","msg":"random seed","seed":"*"}
+          #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
           #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
           #|{"level":"error","msg":"invalid definitions","file":"users.json","pointer":"/stubs/0/response/body","error":"template: column 3: for is reserved"}
         ),

@@ -792,8 +792,9 @@ class Run:
             "--dir", str(BENCH / "definitions"), "--port", "0", "--tls-port", "0", "--admin-port", "0",
             "--admin-auth", "off", "--tls-cert-file", str(cert), "--tls-key-file", str(key),
         ]
-        # smock runs with its defaults, the Journal's bound included, whatever
-        # SMOCK_* variables the shell has.
+        # smock runs with its defaults, the Journal's bounds included, whatever
+        # SMOCK_* variables the shell has: its byte bound then follows the
+        # profile's memory limit (a quarter of it, at most 64 MiB).
         self.smock_env = {name: value for name, value in os.environ.items() if not name.startswith("SMOCK_")}
         # Every connection is a file descriptor, in smock and in oha.
         _, hard = resource.getrlimit(resource.RLIMIT_NOFILE)

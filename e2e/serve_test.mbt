@@ -112,6 +112,7 @@ async test "with an invalid definition set, smock logs every error with its file
           #|status 1
           #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
           #|{"level":"info","msg":"random seed","seed":"*"}
+          #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
           #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
           #|{"level":"error","msg":"invalid definitions","file":"broken.json","pointer":"/stubs/0/id","error":"must be a non-empty string"}
           #|{"level":"error","msg":"invalid definitions","file":"broken.json","pointer":"/stubs/0","error":"needs \"response\""}
@@ -134,6 +135,7 @@ async test "when the port is taken, smock logs that it cannot listen and exits w
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
+        #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"info","msg":"self-signed certificate in use","sha256Fingerprint":"*","names":["localhost","127.0.0.1","::1"]}
         #|{"level":"error","msg":"cannot listen","listener":"plain","address":"0.0.0.0:*","error":"OSError(\"@socket.TcpServer::new(): Address already in use\")"}
@@ -143,7 +145,7 @@ async test "when the port is taken, smock logs that it cannot listen and exits w
 }
 
 ///|
-async test "logs start with the startup entry, then the random seed, the listening addresses and the TLS certificate, end with the drain, and have no per-request lines" {
+async test "logs start with the startup entry, then the random seed, the Journal's byte bound, the listening addresses and the TLS certificate, end with the drain, and have no per-request lines" {
   with_definitions([("users.json", users)], dir => {
     let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
       let _ = smock.get("/users/1")
@@ -155,6 +157,7 @@ async test "logs start with the startup entry, then the random seed, the listeni
         #|status 0
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
+        #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"info","msg":"self-signed certificate in use","sha256Fingerprint":"*","names":["localhost","127.0.0.1","::1"]}
         #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}

@@ -263,15 +263,18 @@ struct Stopped {
 /// environment, in the working directory `cwd` (by default the test's own),
 /// waits until it listens on the plain, the TLS and the admin port, runs
 /// `f`, then stops it with SIGTERM, unless `f` has, and waits for it to
-/// exit.
+/// exit. `under`, when given, is a command that runs smock as its last
+/// arguments and becomes smock by exec, such as `systemd-run --scope ...
+/// --`, so that the signal still reaches smock.
 async fn with_smock(
   args : Array[String],
   env? : Map[String, String] = Map([]),
   cwd? : String = ".",
+  under? : Array[String] = [],
   f : async (Smock) -> Unit,
 ) -> Stopped {
   @async.with_task_group(group => {
-    let serving = Serving::start(group, args, env~, cwd~)
+    let serving = Serving::start(group, args, env~, cwd~, under~)
     guard serving.listening_on(["plain", "tls", "admin"]) is Some(ports) else {
       fail("smock exited before listening:\n\{serving.logs.join("\n")}")
     }
@@ -296,20 +299,24 @@ struct Serving {
 
 ///|
 /// Starts `smock serve <args>` in `group`, with only `smock_env(env)` as
-/// its environment, in the working directory `cwd`, and reads its log lines
-/// as they come.
+/// its environment, in the working directory `cwd`, under the command
+/// `under` when given (see `with_smock`), and reads its log lines as they
+/// come.
 async fn[X] Serving::start(
   group : @async.TaskGroup[X],
   args : Array[String],
   env? : Map[String, String] = Map([]),
   cwd? : String = ".",
+  under? : Array[String] = [],
 ) -> Serving {
   build.wait()
   let (stderr, stderr_end) = @process.read_from_process()
+  let smock = [@fs.realpath(binary), "serve", ..args]
+  let command = [..under, ..smock]
   let process = @process.spawn(
     group,
-    @fs.realpath(binary),
-    ["serve", ..args],
+    command[0],
+    command[1:],
     extra_env=smock_env(env),
     inherit_env=false,
     stderr=stderr_end,
@@ -707,16 +714,26 @@ fn render_response(response : @http.Response, body : String) -> String {
 
 ///|
 /// The log lines as JSON objects without their time, with the values that
-/// differ from build to build and run to run replaced by `*`.
+/// differ from build to build and run to run replaced by `*`. The Journal's
+/// byte bound differs from machine to machine unless a flag or a variable
+/// sets it: it follows the memory limit of smock's cgroup. Then its bound,
+/// its source and the memory limit, or why it could not be read, are all
+/// `*`, as `memoryLimit`.
 fn log_entries(logs : Array[String]) -> String {
   logs
   .map(line => {
     let entry = @json.parse(line) catch { _ => return "not JSON: \{line}" }
     guard entry is Object(fields) else { return "not an object: \{line}" }
+    let from_memory_limit = fields.get("msg")
+      is Some(String("journal byte bound")) &&
+      !(fields.get("source") is Some(String("flag" | "variable")))
     let out : Map[String, Json] = Map([])
     for key, value in fields {
       match key {
         "time" => ()
+        "maxBytes" | "source" if from_memory_limit => out[key] = "*"
+        "memoryLimit" | "memoryLimitError" if from_memory_limit =>
+          out["memoryLimit"] = "*"
         "version" | "commit" | "toolchain" | "seed" | "sha256Fingerprint" =>
           out[key] = "*"
         "certFile" | "keyFile" =>
