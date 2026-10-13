@@ -47,7 +47,7 @@ pub async fn serve(
   // replayed with --seed.
   let seed = match settings.seed {
     Some(seed) => seed
-    None => random_seed()
+    None => @settings.random_seed()
   }
   let rand = @prng.Generator(seed)
   logger.info("random seed", fields={
@@ -306,13 +306,6 @@ async fn run(
     })
     0
   })
-}
-
-///|
-/// A seed for the process generator from the platform's entropy: an integer
-/// from 0 to 2^53 - 1, like the seeds `--seed` takes.
-fn random_seed() -> UInt64 {
-  @random.Rand::new().uint64() & 0x1FFFFFFFFFFFFFUL
 }
 
 ///|

@@ -500,7 +500,7 @@ fn render(admin : Admin, call : Call) -> Reply {
   }
   let seed = match query_parameter(request.target, "seed") {
     Err(message) => return invalid(message)
-    Ok(None) => random_seed()
+    Ok(None) => @settings.random_seed()
     Ok(Some(text)) =>
       match @settings.parse_seed(text) {
         Some(seed) => seed

@@ -600,6 +600,15 @@ pub fn parse_seed(text : String) -> UInt64? {
 }
 
 ///|
+/// A fresh seed from the platform's entropy, from 0 to 2^53 - 1, like the
+/// seeds `--seed` takes: what `smock serve`, `smock render` and the Admin
+/// render operation use when no seed is given.
+pub fn random_seed() -> UInt64 {
+  // max_seed is 2^53 - 1, all ones in binary.
+  @random.Rand::new().uint64() & max_seed
+}
+
+///|
 /// The number `text` writes in at most `max_digits` decimal digits, without
 /// a sign, prefix or separator, or `None` when it is not one. A UInt64
 /// holds every number of up to 19 digits.

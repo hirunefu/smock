@@ -119,7 +119,7 @@ async fn render(settings : @settings.RenderSettings) -> Int {
   }
   let seed = match settings.seed {
     Some(seed) => seed
-    None => @random.Rand::new().uint64() & 0x1FFFFFFFFFFFFFUL
+    None => @settings.random_seed()
   }
   let rendering = @engine.Engine(snapshot).render(
     settings.stub,
