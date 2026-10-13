@@ -223,7 +223,8 @@ MOONBIT_FFI_EXPORT int32_t smock_openssl_ctx_check_key(smock_ctx *self) {
 }
 
 // Adds every PEM certificate in `pem` to the certificates a client trusts.
-// Returns how many it added, or -1 when one cannot be used.
+// Returns how many it added, or -1 when one cannot be used. Client side:
+// only the bindings' tests use it (see client.mbt).
 MOONBIT_FFI_EXPORT int32_t smock_openssl_ctx_trust(smock_ctx *self,
                                                    moonbit_bytes_t pem) {
   ERR_clear_error();
@@ -350,7 +351,8 @@ MOONBIT_FFI_EXPORT int32_t smock_openssl_ssl_is_null(smock_ssl *self) {
 }
 
 // Sets the name a client sends by SNI and checks the server's certificate
-// against. Returns 1, or 0 on failure.
+// against. Returns 1, or 0 on failure. Client side: only the bindings' tests
+// use it (see client.mbt).
 MOONBIT_FFI_EXPORT int32_t smock_openssl_ssl_set_server_name(
     smock_ssl *self, moonbit_bytes_t name) {
   char *copy = OPENSSL_strndup((const char *)name, Moonbit_array_length(name));
@@ -446,7 +448,8 @@ MOONBIT_FFI_EXPORT void smock_openssl_ssl_shutdown(smock_ssl *self) {
   ERR_clear_error();
 }
 
-// The protocol ALPN selected, or empty when none was.
+// The protocol ALPN selected, or empty when none was. Only the bindings'
+// tests ask (see client.mbt).
 MOONBIT_FFI_EXPORT moonbit_bytes_t smock_openssl_ssl_alpn(smock_ssl *self) {
   const unsigned char *protocol = NULL;
   unsigned int length = 0;
