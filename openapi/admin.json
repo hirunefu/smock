@@ -1238,8 +1238,12 @@
             "$ref": "#/components/schemas/RecordedRequest"
           },
           "stub": {
-            "description": "The ID of the Stub that answered, or null when none matched. Ephemeral Stubs have their `eph-<n>` IDs.",
+            "description": "The ID of the Stub that answered, or null when none matched. Ephemeral Stubs have their `eph-<n>` IDs, which a Stub from a Definition file may also have: `stubSource` tells them apart.",
             "type": ["string", "null"]
+          },
+          "stubSource": {
+            "description": "Where the Stub that answered comes from: `file` for a Stub from a Definition file, `ephemeral` for an Ephemeral Stub. null when none matched.",
+            "enum": ["file", "ephemeral", null]
           },
           "nearMiss": {
             "description": "When no Stub matched and the Mock had candidate Stubs: the Near miss. Otherwise null. The actual value of a failed body condition is truncated as the recorded request body is.",
@@ -1263,7 +1267,7 @@
             "enum": ["reset", "close", "partial", null]
           }
         },
-        "required": ["receivedAt", "durationMs", "session", "host", "mock", "viaDefault", "digest", "request", "stub", "nearMiss", "status", "fault"],
+        "required": ["receivedAt", "durationMs", "session", "host", "mock", "viaDefault", "digest", "request", "stub", "stubSource", "nearMiss", "status", "fault"],
         "additionalProperties": false
       },
       "RecordedRequest": {
@@ -1345,6 +1349,10 @@
             "description": "The Stub's ID.",
             "type": "string"
           },
+          "stubSource": {
+            "description": "Where the Stub comes from: `file` for a Stub from a Definition file, `ephemeral` for an Ephemeral Stub.",
+            "enum": ["file", "ephemeral"]
+          },
           "failed": {
             "description": "The conditions it failed, in the order method, path, query parameters, headers, body.",
             "type": "array",
@@ -1353,7 +1361,7 @@
             }
           }
         },
-        "required": ["stub", "failed"],
+        "required": ["stub", "stubSource", "failed"],
         "additionalProperties": false
       },
       "FailedCondition": {

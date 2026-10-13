@@ -263,6 +263,7 @@ test "the Near miss explains each failed method, path, query and header conditio
     ]),
     content={
       "stub": "exact",
+      "stubSource": "file",
       "failed": [
         { "condition": "method", "expected": "PUT", "actual": ["GET"] },
         { "condition": "path", "expected": "/users/1", "actual": ["/users/10"] },
@@ -285,6 +286,7 @@ test "the Near miss explains each failed method, path, query and header conditio
     ]),
     content={
       "stub": "patterns",
+      "stubSource": "file",
       "failed": [
         {
           "condition": "path",
@@ -346,6 +348,7 @@ test "the Near miss explains a failed body condition: exact, pattern or json, wi
     content=[
       {
         "stub": "exact",
+        "stubSource": "file",
         "failed": [
           {
             "condition": "body",
@@ -356,12 +359,14 @@ test "the Near miss explains a failed body condition: exact, pattern or json, wi
       },
       {
         "stub": "exact",
+        "stubSource": "file",
         "failed": [
           { "condition": "body", "expected": "name=Zoë", "actual": [""] },
         ],
       },
       {
         "stub": "pattern",
+        "stubSource": "file",
         "failed": [
           {
             "condition": "body",
@@ -372,6 +377,7 @@ test "the Near miss explains a failed body condition: exact, pattern or json, wi
       },
       {
         "stub": "json",
+        "stubSource": "file",
         "failed": [
           {
             "condition": "body",
@@ -382,6 +388,7 @@ test "the Near miss explains a failed body condition: exact, pattern or json, wi
       },
       {
         "stub": "json",
+        "stubSource": "file",
         "failed": [
           {
             "condition": "body",
@@ -421,6 +428,7 @@ test "the Near miss shows a body that is not UTF-8 with U+FFFD in place of what 
   guard outcome.near_miss is Some(near_miss) else { fail("no Near miss") }
   json_inspect(near_miss.to_json(), content={
     "stub": "exact",
+    "stubSource": "file",
     "failed": [
       {
         "condition": "body",

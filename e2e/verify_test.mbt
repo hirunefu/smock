@@ -277,8 +277,10 @@ async test "the unmatched requests list the calling Session's requests that no S
               },
             },
             "stub": Json::null(),
+            "stubSource": Json::null(),
             "nearMiss": {
               "stub": "get-user",
+              "stubSource": "file",
               "failed": [
                 { "condition": "method", "expected": "GET", "actual": ["POST"] },
               ],
@@ -314,6 +316,7 @@ async test "the unmatched requests list the calling Session's requests that no S
               },
             },
             "stub": Json::null(),
+            "stubSource": Json::null(),
             "nearMiss": Json::null(),
             "status": 404,
             "fault": Json::null(),

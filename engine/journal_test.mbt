@@ -87,6 +87,7 @@ test "a committed entry records the request, its Session, Host and Mock, the Stu
           },
         },
         "stub": "get-user",
+        "stubSource": "file",
         "nearMiss": Json::null(),
         "status": 200,
         "fault": Json::null(),
@@ -424,6 +425,7 @@ test "an unmatched request's entry holds the Near miss with expected and actual 
     "stub": Json::null(),
     "nearMiss": {
       "stub": "create-order",
+      "stubSource": "file",
       "failed": [
         {
           "condition": "header:x-api-key",
@@ -912,4 +914,90 @@ test "an entry records the connection Fault injected; one that resets or closes 
       "fault": "partial",
     },
   ])
+}
+
+///|
+test "an entry and its Near miss say whether the Stub comes from a Definition file or is an Ephemeral Stub, whatever its ID" {
+  let h = harness([
+    (
+      "payments.json",
+      (
+        #|{ "mocks": [{ "name": "payments", "hosts": ["payments.svc"] }],
+        #|  "stubs": [{ "id": "eph-1", "mock": "payments",
+        #|    "request": { "method": "GET", "path": "/refunds" },
+        #|    "response": { "status": 200, "body": "none" } }] }
+      ),
+    ),
+  ])
+  let added = h.add("payments", Some("s"), get_stub("/orders/42", 503, "down"))
+  inspect(added, content="eph-1")
+  for
+    request in [
+      ("GET", "/refunds"),
+      ("GET", "/orders/42"),
+      ("GET", "/orders/43"),
+      ("POST", "/refunds"),
+    ] {
+    let _ = h.record(request.0, "http://payments.svc\{request.1}", session="s")
+  }
+  guard h.query(Some("s")) is Object({ "entries": Array(entries), .. }) else {
+    fail("no entries")
+  }
+  // Each entry's target, Stub and Stub source, and its Near miss's.
+  let pick = (json : Json, names : Array[String]) => {
+    guard json is Object(members) else { return json }
+    let out = Map([])
+    for name in names {
+      out[name] = members.get(name).unwrap_or("missing")
+    }
+    Json::object(out)
+  }
+  json_inspect(
+    Json::array(
+      entries.map(entry => {
+        guard entry
+          is Object(
+            {
+              "request": Object({ "target": target, .. }),
+              "nearMiss": near_miss,
+              ..
+            } as members
+          ) else {
+          return entry
+        }
+        {
+          "target": target,
+          "stub": members["stub"],
+          "stubSource": members.get("stubSource").unwrap_or("missing"),
+          "nearMiss": pick(near_miss, ["stub", "stubSource"]),
+        }
+      }),
+    ),
+    content=[
+      {
+        "target": "http://payments.svc/refunds",
+        "stub": "eph-1",
+        "stubSource": "file",
+        "nearMiss": Json::null(),
+      },
+      {
+        "target": "http://payments.svc/orders/42",
+        "stub": "eph-1",
+        "stubSource": "ephemeral",
+        "nearMiss": Json::null(),
+      },
+      {
+        "target": "http://payments.svc/orders/43",
+        "stub": Json::null(),
+        "stubSource": Json::null(),
+        "nearMiss": { "stub": "eph-1", "stubSource": "ephemeral" },
+      },
+      {
+        "target": "http://payments.svc/refunds",
+        "stub": Json::null(),
+        "stubSource": Json::null(),
+        "nearMiss": { "stub": "eph-1", "stubSource": "file" },
+      },
+    ],
+  )
 }

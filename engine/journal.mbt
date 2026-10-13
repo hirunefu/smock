@@ -61,6 +61,8 @@ pub struct JournalEntry {
   body_size : Int
   /// The ID of the Stub that matched, if any.
   stub : String?
+  /// Where the Stub that matched comes from, if one did.
+  stub_source : StubSource?
   /// The Near miss, when no Stub matched and the Mock had candidates.
   near_miss : NearMiss?
   /// The response status, or `None` when a connection Fault ended the
@@ -121,7 +123,7 @@ fn Journal::entry(
   session~ : String?,
   host~ : String?,
   resolution~ : Resolution,
-  stub~ : String?,
+  stub~ : (String, StubSource)?,
   near_miss~ : NearMiss?,
   plan~ : ResponsePlan,
   digest~ : String,
@@ -158,6 +160,10 @@ fn Journal::entry(
   for header in request.headers {
     text += header.0.length() + header.1.length()
   }
+  let (stub, stub_source) = match stub {
+    Some((id, source)) => (Some(id), Some(source))
+    None => (None, None)
+  }
   for name in [session, host, mock, stub] {
     text += name.map_or(0, name => name.length())
   }
@@ -180,6 +186,7 @@ fn Journal::entry(
     request: { ..request, body, },
     body_size: request.body.length(),
     stub,
+    stub_source,
     near_miss,
     status,
     fault: plan.fault,
@@ -218,6 +225,7 @@ let vacated : JournalEntry = {
   request: { meth: "", target: "", version: "", headers: [], body: b"", },
   body_size: 0,
   stub: None,
+  stub_source: None,
   near_miss: None,
   status: None,
   fault: None,
@@ -650,6 +658,7 @@ pub impl ToJson for JournalEntry with fn to_json(self) {
       "body": body_json(self.request.body, size=self.body_size),
     },
     "stub": optional(self.stub),
+    "stubSource": optional(self.stub_source.map(source => source.name())),
     "nearMiss": self.near_miss.map_or(Json::null(), near_miss => {
       ToJson::to_json(near_miss)
     }),

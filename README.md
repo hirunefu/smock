@@ -509,7 +509,9 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
 - Each entry records the Session, the Host, the Mock and whether the
   Default Mock answered; the method, target, HTTP version, header fields
   and body; the Stub that answered, or the Near miss with what each failed
-  condition expects and what the request sent; the status, or the
+  condition expects and what the request sent, each with `stubSource`:
+  `file` for a Stub from a Definition file, `ephemeral` for an Ephemeral
+  Stub, so that equal IDs cannot be confused; the status, or the
   connection Fault; when the request was received and how long the response
   took; and the digest of the definition set that answered. A request for
   a Host that no Mock answers is recorded too, with no Mock.

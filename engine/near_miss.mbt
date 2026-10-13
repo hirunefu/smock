@@ -11,6 +11,8 @@
 pub(all) struct NearMiss {
   /// The Stub's ID.
   stub : String
+  /// Where the Stub comes from.
+  stub_source : StubSource
   /// The conditions it failed, in the order method, path, query
   /// parameters, headers, body.
   failed : Array[FailedCondition]
@@ -71,6 +73,7 @@ pub(all) enum Expected {
 pub impl ToJson for NearMiss with fn to_json(self) {
   {
     "stub": self.stub.to_json(),
+    "stubSource": self.stub_source.name().to_json(),
     "failed": Json::array(self.failed.map(failed => ToJson::to_json(failed))),
   }
 }
@@ -126,24 +129,30 @@ priv enum Failed {
 }
 
 ///|
-/// The Near miss among `candidates`, in matching order, none of which the
-/// request meets: the one with the fewest failed conditions, the earlier
-/// one on a tie. There is none without candidates.
+/// The Near miss among `candidates`, each with where it comes from, in
+/// matching order, none of which the request meets: the one with the
+/// fewest failed conditions, the earlier one on a tie. There is none
+/// without candidates.
 fn Incoming::near_miss(
   self : Incoming,
-  candidates : Iter[@definitions.Stub],
+  candidates : Iter[(@definitions.Stub, StubSource)],
 ) -> NearMiss? {
-  let mut best : (@definitions.Stub, Array[Failed])? = None
-  for stub in candidates {
+  let mut best : (@definitions.Stub, StubSource, Array[Failed])? = None
+  for candidate in candidates {
+    let (stub, source) = candidate
     let failed = self.failed(stub.request)
     match best {
-      Some((_, fewest)) if fewest.length() <= failed.length() => ()
-      _ => best = Some((stub, failed))
+      Some((_, _, fewest)) if fewest.length() <= failed.length() => ()
+      _ => best = Some((stub, source, failed))
     }
   }
   best.map(best => {
-    let (stub, failed) = best
-    { stub: stub.id, failed: failed.map(failed => self.explain(failed)), }
+    let (stub, stub_source, failed) = best
+    {
+      stub: stub.id,
+      stub_source,
+      failed: failed.map(failed => self.explain(failed)),
+    }
   })
 }
 

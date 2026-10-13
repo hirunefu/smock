@@ -123,6 +123,7 @@ test "when no Stub matches, the Mock answers 404 with a JSON body saying so" {
       #|near_miss: Some(
       #|  {
       #|    stub: "get-user",
+      #|    stub_source: File,
       #|    failed: [{ condition: Path, expected: Exact("/users/1"), actual: ["/users/2"] }],
       #|  },
       #|)

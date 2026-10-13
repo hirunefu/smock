@@ -254,11 +254,11 @@ test "Ephemeral Stubs are Near miss candidates in the order they are tried, and 
     out.join("\n"),
     content=(
       #|test-a: eph-1; failed=method
-      #|  {"stub":"eph-1","failed":[{"condition":"method","expected":"POST","actual":["DELETE"]}]}
+      #|  {"stub":"eph-1","stubSource":"ephemeral","failed":[{"condition":"method","expected":"POST","actual":["DELETE"]}]}
       #|test-a: eph-2; failed=header:x-api-key
-      #|  {"stub":"eph-2","failed":[{"condition":"header:x-api-key","expected":"k","actual":[]}]}
+      #|  {"stub":"eph-2","stubSource":"ephemeral","failed":[{"condition":"header:x-api-key","expected":"k","actual":[]}]}
       #|test-b: p-order; failed=method
-      #|  {"stub":"p-order","failed":[{"condition":"method","expected":"GET","actual":["DELETE"]}]}
+      #|  {"stub":"p-order","stubSource":"file","failed":[{"condition":"method","expected":"GET","actual":["DELETE"]}]}
     ),
   )
 }
