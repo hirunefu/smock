@@ -33,7 +33,7 @@ Packages of `smock/smock`:
   (file, JSON Pointer, message). Its validation is written by hand and
   follows the JSON Schema. The snapshot holds each Mock's Stubs in matching
   order and their match index, which finds the Stubs a request can match
-  by its method and exact path.
+  by its method and exact path, and each response's templates, parsed.
 - `engine`: decides the response to each request from the snapshot,
   including its Faults, and renders a named Stub's response for a sample
   request, for `smock render` and the Admin render operation. It also holds
@@ -42,8 +42,15 @@ Packages of `smock/smock`:
   them (verification and the unmatched requests included), and reads the Session a request carries in its W3C Baggage header. `Engine(snapshot, match_index=false)` tries every Stub in
   matching order instead of using the index; tests check the index against
   it.
-- `prng`: the seeded pseudo-random generator that Fault decisions draw
-  from. Its sequence for a seed is fixed, the same on every target.
+- `template`: response templates: text templates (`${ expr }` in a body,
+  a body file, a header value or an event field) and structured templates
+  (`json` with `$each` and `$if`), the expression grammar, the fake-data
+  helpers and their word and name lists, and escaping by media type. It
+  parses a template once and renders it for a request, the time and one
+  64-bit draw, and writes JSON with smock's own number form.
+- `prng`: the seeded pseudo-random generator that Fault decisions and
+  template helpers draw from. Its sequence for a seed is fixed, the same on
+  every target.
 - `defdir`: reads the definitions directory and loads it, for
   `smock serve`, `smock check` and `smock render` (native).
 - `server`: the listeners, the connection loop and the Admin API (native).
@@ -80,8 +87,8 @@ Packages of `smock/smock`:
 
 A package that does I/O or uses FFI declares `supported_targets = "native"`.
 Every other package also builds for `wasm-gc`, and CI tests it there. The
-packages that decide a response, `definitions` and `engine`, and the ones
-they import, `prng` and `log`, must stay that way: `scripts/check-no-io.sh`
+packages that decide a response, `definitions`, `engine` and `template`,
+and the ones they import, `prng` and `log`, must stay that way: `scripts/check-no-io.sh`
 fails if one of them leaves out `wasm-gc`, reads the environment, binds C
 or imports a package that does I/O.
 
@@ -342,7 +349,8 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
 - `POST /v1/stubs/{id}/render` renders a Stub's response for the sample
   request in the body, against the definitions the replica serves now, as
   `smock render` does (below). The optional `time` and `seed` query
-  parameters give the time (RFC 3339) and the seed of the random source.
+  parameters give the time (RFC 3339) and the seed of the random source;
+  the rendering shows those it used.
 - `/v1/mocks/{mock}/stubs` adds, lists and deletes Ephemeral Stubs, and
   `POST /v1/reset` clears them and Journal entries
   ([below](#sessions-and-ephemeral-stubs)).
@@ -408,9 +416,13 @@ rendering as JSON, the same as the Admin render operation's result without
 its `warnings`: the Stub's status, headers and body (`utf-8` text, or
 `base64`) or its Server-Sent Events, and the conditions the sample fails,
 with expected and actual values as in a Near miss (empty when it meets them
-all). The Stub is rendered even when the sample fails them. `--time` (RFC
-3339) and `--seed` fix the clock and the random source of the rendering;
-a static response depends on neither. An invalid definitions directory
+all). The Stub is rendered even when the sample fails them, and a
+[templated](docs/definition-files.md#templates) response is rendered for
+the sample. `--time` (RFC 3339) and `--seed` fix the clock and the random
+source of the rendering; without a seed, it uses the Stub's `fault.seed`,
+or a fresh one. The rendering shows the `time` and the `seed` it used, so
+it can be repeated exactly, and a template that fails for the sample shows
+the 500 a request would get and its `templateError`. An invalid definitions directory
 prints the messages `smock check` prints, and it, an unknown Stub ID and a
 sample that cannot be read or is not valid exit with status 1, with the
 problem on stderr.
@@ -419,8 +431,9 @@ problem on stderr.
 how Stubs match requests (method, path, query parameters, headers and
 body, exactly, by RE2 pattern or as JSON), the order they are tried in (priority, then
 file-name order), what a Mock answers when nothing matches, responses with
-inline bodies, body files or Server-Sent Events, the JSON Schema, editor
-support and writing Definition files in another configuration language.
+inline bodies, body files, JSON or Server-Sent Events, response templates,
+Faults, the JSON Schema, editor support and writing Definition files in
+another configuration language.
 
 Definition files can also be YAML (`.yaml` or `.yml`), mixed with JSON files
 in one directory. A YAML file means exactly what the equivalent JSON file

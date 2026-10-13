@@ -55,6 +55,23 @@ test "worked example: a JSON body built from the request, with a templated heade
 }
 
 ///|
+test "in a JSON Definition file, ${…} sits in an ordinary string, with single quotes for string literals, and means what the YAML file means" {
+  let json =
+    #|{ "mocks": [{ "name": "users" }],
+    #|  "stubs": [{ "id": "get-user", "mock": "users",
+    #|    "request": { "method": "GET", "path": { "pattern": "/users/[0-9]+" } },
+    #|    "response": { "status": 200, "template": true,
+    #|      "headers": { "X-Request-Id": "${header.x-request-id ?? 'none'}" },
+    #|      "json": { "id": "${path[1]}", "lang": "${query.lang ?? 'en'}",
+    #|        "requestId": "${header.x-request-id ?? 'none'}" } } }] }
+  inspect(
+    load_one("users.json", json) ==
+    load_one(get_user_example.0, get_user_example.1),
+    content="true",
+  )
+}
+
+///|
 /// The second worked example: a loop and a conditional.
 let create_order_example : (String, String) = (
   "orders.yaml",
