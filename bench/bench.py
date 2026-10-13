@@ -111,6 +111,17 @@ def cpu_quota_percent(limit):
     return int(float(limit) * 100)
 
 
+def cpus_needed(limit):
+    """How many CPUs a Kubernetes-style CPU limit can keep busy: 250m needs
+    one, 2 needs two."""
+    return math.ceil(cpu_quota_percent(limit) / 100)
+
+
+def override(value, default):
+    """`value`, from the command line, when it was given; else `default`."""
+    return value if value is not None else default
+
+
 def cpus_allowed(pid):
     """The CPUs process `pid` may run on, or None once it has gone."""
     try:
@@ -511,9 +522,9 @@ class Run:
         self.processes = []
         self.started_at = now()
         self.smock_status = None
-        self.ramp_s = args.ramp if args.ramp is not None else self.plan["ramp_s"]
-        self.duration_s = args.duration if args.duration is not None else self.plan["duration_s"]
-        self.tail_s = args.tail if args.tail is not None else self.plan["tail_s"]
+        self.ramp_s = override(args.ramp, self.plan["ramp_s"])
+        self.duration_s = override(args.duration, self.plan["duration_s"])
+        self.tail_s = override(args.tail, self.plan["tail_s"])
         self.rate = args.rate
         self.cpu_limits = args.cpu_limits.split(",") if args.cpu_limits else self.plan["cpu_limits"]
         names = [case["name"] for case in self.plan["cases"]]
@@ -521,15 +532,15 @@ class Run:
         for name in self.cases:
             if name not in names:
                 raise BenchError(f"no case {name} in bench/plan.json")
-        self.cooldown_s = args.cooldown if args.cooldown is not None else self.plan["cooldown_s"]
-        self.settle_s = args.settle if args.settle is not None else self.plan["idle_rss"]["settle_s"]
+        self.cooldown_s = override(args.cooldown, self.plan["cooldown_s"])
+        self.settle_s = override(args.settle, self.plan["idle_rss"]["settle_s"])
         self.targets_path = Path(args.targets).resolve()
         self.targets = read_targets(self.targets_path)
         ordered = cpus_by_speed()
         # smock gets as many CPUs as the largest limit of the plan needs,
         # whichever limits this run has, so that runs compare.
         limits = [*self.plan["cpu_limits"], *self.cpu_limits]
-        needed = max(math.ceil(cpu_quota_percent(limit) / 100) for limit in limits)
+        needed = max(cpus_needed(limit) for limit in limits)
         self.smock_cpus = parse_cpu_list(args.smock_cpus) if args.smock_cpus else ordered[:needed]
         self.generator_cpus = (parse_cpu_list(args.generator_cpus) if args.generator_cpus
                                else [cpu for cpu in ordered if cpu not in self.smock_cpus])
@@ -537,7 +548,7 @@ class Run:
             raise BenchError("smock and the load generator need CPUs of their own: "
                              f"smock has {self.smock_cpus}, the load generator {self.generator_cpus}")
         for limit in self.cpu_limits:
-            if len(self.smock_cpus) < math.ceil(cpu_quota_percent(limit) / 100):
+            if len(self.smock_cpus) < cpus_needed(limit):
                 raise BenchError(f"a CPU limit of {limit} needs as many CPUs for smock, "
                                  f"but it has {self.smock_cpus}")
         # A case runs under the limits it has a rate for.
@@ -644,8 +655,8 @@ class Run:
 
 
 def case_spec(run, case, cpu_limit):
-    rate = run.rate if run.rate is not None else case["rates"][cpu_limit]
-    duration_s = run.args.duration if run.args.duration is not None else case.get("duration_s", run.duration_s)
+    rate = override(run.rate, case["rates"][cpu_limit])
+    duration_s = override(run.args.duration, case.get("duration_s", run.duration_s))
     return {
         "id": f"{case['name']}@{cpu_limit}",
         "case": case["name"],
