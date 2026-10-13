@@ -615,8 +615,8 @@ update reaches the running smock through its reload, without a restart
 (with body files, a file added, removed or renamed restarts the Pods); a
 git-sync sidecar or an OCI image volume can deliver them instead. The Pods
 meet the Restricted Pod Security Standard, run one replica with about one
-CPU core by default, and get the Admin API token and the TLS certificate
-from Secrets. [charts/smock/README.md](charts/smock/README.md) describes the
+CPU core by default, and get the Admin API token and the TLS certificates,
+the default one and those of single Mocks, from Secrets. [charts/smock/README.md](charts/smock/README.md) describes the
 chart and lists every value with its default.
 
 ### Verify the image

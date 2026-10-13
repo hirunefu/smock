@@ -162,6 +162,20 @@ each change. The files in the image must be readable by UID 65532.
   and passed to smock's certificate settings, so a renewed certificate
   reaches smock without a restart. Without it, smock serves HTTPS with a
   self-signed certificate it generates.
+- `tls.mockSecrets` gives single Mocks certificates of their own, chosen by
+  SNI: it maps each Mock name to a `kubernetes.io/tls` Secret. Each Secret
+  is mounted as a whole volume of its own and passed to smock's
+  `SMOCK_TLS_MOCK_CERTS`, so its renewals reach smock without a restart
+  too. A handshake whose SNI is a Host of a listed Mock gets that Mock's
+  certificate; any other gets the default one, from `tls.secretName` or
+  self-signed.
+
+  ```yaml
+  tls:
+    mockSecrets:
+      users: users-tls
+      orders: orders-tls
+  ```
 
 ## Ports, Services and probes
 
@@ -211,8 +225,8 @@ env:
   SMOCK_SEED: "42"
 ```
 
-The chart refuses the variables it sets itself and names the value to use
-instead.
+The chart refuses the variables it sets itself, `SMOCK_TLS_MOCK_CERTS`
+among them, and names the value to use instead.
 
 ## Values
 
@@ -250,6 +264,7 @@ instead.
 | `adminAuth.tokenSecret.key` | `"token"` | The key of the token in that Secret. |
 | `adminAuth.tokenAs` | `"file"` | How smock gets the token: `file` (mounted) or `env` (`SMOCK_ADMIN_TOKEN`). |
 | `tls.secretName` | `""` | A `kubernetes.io/tls` Secret for the TLS port. Empty: a generated self-signed certificate. |
+| `tls.mockSecrets` | `{}` | Certificates of single Mocks, chosen by SNI: a `kubernetes.io/tls` Secret by Mock name. |
 | `ports.plain` | `8080` | smock's plain port. |
 | `ports.tls` | `8443` | smock's TLS port. |
 | `ports.admin` | `9090` | smock's admin port: the Admin API, probes and metrics. |

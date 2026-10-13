@@ -368,7 +368,8 @@ check auth-off "a value turns authentication off through smock's setting, and no
 render no-tls --values "$tmp/values-token.yaml"
 check no-tls "without a TLS Secret, smock gets no certificate files and generates its own" \
   'env("SMOCK_TLS_CERT_FILE") == null and env("SMOCK_TLS_KEY_FILE") == null
-   and ([pod | .volumes[] | select(.name == "tls")] == [])'
+   and env("SMOCK_TLS_MOCK_CERTS") == null
+   and [pod | .volumes[] | select(.secret) | .name] == ["admin-token"]'
 
 render tls --values "$tmp/values-token.yaml" --set tls.secretName=smock-tls
 check tls "the TLS Secret is mounted read-only as a whole volume, so renewals reach smock" \
@@ -377,6 +378,45 @@ check tls "the TLS Secret is mounted read-only as a whole volume, so renewals re
 check tls "smock's certificate settings name the Secret's tls.crt and tls.key" \
   'env("SMOCK_TLS_CERT_FILE").value == "/etc/smock/tls/tls.crt"
    and env("SMOCK_TLS_KEY_FILE").value == "/etc/smock/tls/tls.key"'
+
+# Certificates of single Mocks, chosen by SNI, each from a Secret of its own.
+cat >"$tmp/values-tls-mocks.yaml" <<'YAML'
+tls:
+  mockSecrets:
+    users: users-tls
+    orders.v2: orders-tls
+YAML
+render tls-mocks --values "$tmp/values-token.yaml" --values "$tmp/values-tls-mocks.yaml"
+# The volume of the Secret named $s, and where the smock container mounts it.
+secret_mount='def secret_mount($s):
+  [pod | .volumes[] | select(.secret.secretName == $s)] as $v
+  | {volume: $v, mount: [smock | .volumeMounts[]? | select(.name == $v[0].name)]};'
+check tls-mocks "each Mock's Secret is mounted read-only as a whole volume of its own, so renewals reach smock" \
+  "$secret_mount"'
+   [secret_mount("users-tls", "orders-tls")] as $m
+   | volume("admin-token").secret.defaultMode as $mode
+   | all($m[]; (.volume | length) == 1 and .volume[0].secret.defaultMode == $mode
+       and (.volume[0].secret | has("items") | not)
+       and (.mount | length) == 1 and .mount[0].readOnly == true and (.mount[0] | has("subPath") | not))
+   and ([$m[].mount[0].mountPath, "/etc/smock/tls"] | unique | length) == 3'
+check tls-mocks "SMOCK_TLS_MOCK_CERTS maps each Mock to the tls.crt and tls.key of its Secret" \
+  "$secret_mount"'
+   . as $manifests
+   | (env("SMOCK_TLS_MOCK_CERTS").value | fromjson) as $certs
+   | ($certs | keys) == ["orders.v2", "users"]
+   and all({"users": "users-tls", "orders.v2": "orders-tls"} | to_entries[];
+       .key as $mock | .value as $secret | ($manifests | secret_mount($secret).mount[0].mountPath) as $dir
+       | $certs[$mock] == {"certFile": "\($dir)/tls.crt", "keyFile": "\($dir)/tls.key"})'
+check tls-mocks "without tls.secretName, the default certificate is still the self-signed one" \
+  'env("SMOCK_TLS_CERT_FILE") == null and env("SMOCK_TLS_KEY_FILE") == null'
+render tls-mocks-and-default --values "$tmp/values-token.yaml" --values "$tmp/values-tls-mocks.yaml" \
+  --set tls.secretName=smock-tls
+check tls-mocks-and-default "the Mocks' certificates go with a default certificate from tls.secretName" \
+  'env("SMOCK_TLS_CERT_FILE").value == "/etc/smock/tls/tls.crt"
+   and (env("SMOCK_TLS_MOCK_CERTS").value | fromjson | keys) == ["orders.v2", "users"]'
+refuse tls-mocks-no-secret "a Mock without the name of its Secret" \
+  'tls.mockSecrets: the Mock "users" has no Secret name' \
+  --values "$tmp/values-token.yaml" --set tls.mockSecrets.users=
 
 # --- Ports, Services and probes ---------------------------------------------
 
@@ -465,7 +505,7 @@ refuse env-name "a variable that is not a smock setting" \
 # Every variable the Deployment sets in any of the chart's own modes (the
 # token as a file or as a variable, with and without TLS) is refused in
 # env, so the list _validate.tpl refuses cannot fall behind the Deployment.
-own=$(for name in token-file token-env tls; do
+own=$(for name in token-file token-env tls tls-mocks; do
   jq -r "$defs envs | .[]" "$tmp/$name.json"
 done | sort -u)
 if [ -n "$own" ]; then
@@ -591,7 +631,7 @@ render image-tls --set definitions.source=image --set definitions.image.referenc
   --set adminAuth.tokenSecret.name=smock-admin-token --set adminAuth.tokenAs=env --set tls.secretName=smock-tls
 render image-off --set definitions.source=image --set definitions.image.reference=ghcr.io/team/mocks:v1 \
   --set adminAuth.enabled=false
-for name in configmap body-files existing-configmap-items token-file token-env auth-off tls pod \
+for name in configmap body-files existing-configmap-items token-file token-env auth-off tls tls-mocks pod \
   git-sync git-sync-tls git-sync-env git-sync-off image image-tls image-off; do
   restricted "$name"
 done

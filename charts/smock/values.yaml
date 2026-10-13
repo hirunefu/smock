@@ -98,6 +98,11 @@ tls:
   # makes). Renewed files reach smock without a restart. Empty: smock
   # generates a self-signed certificate.
   secretName: ""
+  # Certificates of single Mocks, chosen by SNI: each Mock name maps to a
+  # kubernetes.io/tls Secret, such as users: users-tls. Each is mounted as a
+  # whole volume, so renewed files reach smock without a restart. Any other
+  # handshake gets the default certificate above.
+  mockSecrets: {}
 
 # smock's container ports.
 ports:

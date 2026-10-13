@@ -22,6 +22,7 @@ scripts/test-helm-chart.sh fails until it is. */ -}}
   "SMOCK_ADMIN_TOKEN_FILE" "adminAuth.tokenSecret"
   "SMOCK_TLS_CERT_FILE" "tls.secretName"
   "SMOCK_TLS_KEY_FILE" "tls.secretName"
+  "SMOCK_TLS_MOCK_CERTS" "tls.mockSecrets"
   "SMOCK_REPLICAS" "replicas"
   "SMOCK_DRAIN_TIMEOUT_MS" "drainTimeoutMs" -}}
 {{- range $name, $_ := .Values.env -}}
@@ -38,6 +39,11 @@ scripts/test-helm-chart.sh fails until it is. */ -}}
 {{- end -}}
 {{- if not (has $auth.tokenAs (list "file" "env")) -}}
 {{- fail (printf "adminAuth.tokenAs must be \"file\" or \"env\", not %q" (toString $auth.tokenAs)) -}}
+{{- end -}}
+{{- range $mock, $secret := .Values.tls.mockSecrets -}}
+{{- if not $secret -}}
+{{- fail (printf "tls.mockSecrets: the Mock %q has no Secret name: name the kubernetes.io/tls Secret that holds its tls.crt and tls.key" $mock) -}}
+{{- end -}}
 {{- end -}}
 {{- $d := .Values.definitions -}}
 {{- if not (has $d.source (list "configMap" "gitSync" "image")) -}}

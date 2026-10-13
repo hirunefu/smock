@@ -149,6 +149,32 @@ the init container, which syncs once so that smock starts with its files
 {{- end -}}
 
 {{/*
+The volume of the Secret with a Mock's own certificate, and the directory
+where the smock container mounts it, given the Mock's name. Both are named
+after a hash of it, since a Mock name may hold any character.
+*/}}
+{{- define "smock.tlsMockVolume" -}}
+{{- printf "tls-mock-%s" (sha256sum . | trunc 20) -}}
+{{- end -}}
+
+{{- define "smock.tlsMockDir" -}}
+{{- printf "/etc/smock/tls-mocks/%s" (sha256sum . | trunc 20) -}}
+{{- end -}}
+
+{{/*
+smock's --tls-mock-certs: the tls.crt and tls.key of each Mock's Secret, as
+the JSON object smock reads.
+*/}}
+{{- define "smock.tlsMockCerts" -}}
+{{- $certs := dict -}}
+{{- range $mock, $secret := .Values.tls.mockSecrets -}}
+{{- $dir := include "smock.tlsMockDir" $mock -}}
+{{- $_ := set $certs $mock (dict "certFile" (printf "%s/tls.crt" $dir) "keyFile" (printf "%s/tls.key" $dir)) -}}
+{{- end -}}
+{{- toJson $certs -}}
+{{- end -}}
+
+{{/*
 A value as the text of an environment variable. Numbers from values files
 reach templates as floating point, which Go would write as 1.048576e+07;
 whole ones are written out in full.
