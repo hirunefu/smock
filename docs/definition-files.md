@@ -339,6 +339,9 @@ data: line 2
   with chunked framing, so the connection carries the next request. An
   HTTP/1.0 client gets it unframed, and smock closes the connection to end
   it.
+- A response with no body, to a `HEAD` request or with status 204 or 304,
+  is the status and the headers alone. smock sends them at once and waits
+  for no event.
 - While a stream waits, smock serves every other connection. A client that
   closes the connection mid-stream ends that stream: smock notices when it
   next writes an event.

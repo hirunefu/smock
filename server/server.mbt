@@ -596,7 +596,8 @@ fn SessionCarrier::session_of(
 ///
 /// Server-Sent Events are streamed: the head at once, then each event after
 /// its delay. Waiting suspends only this connection's task, so the others
-/// are served meanwhile. A client that closes the connection mid-stream
+/// are served meanwhile. A stream without a body, as in a response to HEAD,
+/// is its head alone, written at once: no event is waited for. A client that closes the connection mid-stream
 /// makes a later write fail, which ends the stream and the connection. The
 /// first half of a stream is the first half of its events, rounded down,
 /// and a stream cut short is not ended: a chunked one lacks its last chunk.
@@ -637,6 +638,11 @@ async fn[S : @io.Writer] write_response(
         request~,
         close~,
       )
+      if !partial && !response.has_body() {
+        before_last()
+        @io.Writer::write(stream, response.head())
+        return response.keeps_open()
+      }
       @io.Writer::write(stream, response.head())
       let count = if partial { events.length() / 2 } else { events.length() }
       for i, event in events[:count] {

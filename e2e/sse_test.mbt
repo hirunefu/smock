@@ -266,3 +266,50 @@ async test "a client that closes the connection mid-stream ends that stream, and
     )
   })
 }
+
+///|
+async test "a response to HEAD from an events Stub is its head alone: smock writes it at once, records it in the Journal and reads the next request without waiting out the events' delays" {
+  with_definitions([("news.json", news)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let conn = smock.connect()
+      defer conn.close()
+      let start = @async.now()
+      // `/slow` has one event, due 1000 ms after the head.
+      conn.write(
+        "HEAD /slow HTTP/1.1\r\nHost: localhost\r\nbaggage: smock-session=head-of-stream\r\n\r\nGET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n",
+      )
+      let head = read_head(conn)
+      let recorded = smock.journal_count(
+        "head-of-stream", "{ \"filter\": { \"method\": \"HEAD\" } }",
+      )
+      let hello = read_response(conn)
+      let elapsed = @async.now() - start
+      inspect(
+        [
+          head,
+          "in the Journal right after: \{recorded}",
+          if elapsed < 1000L {
+            "the next request answered before the event was due:"
+          } else {
+            "the next request answered at \{elapsed} ms, after the event was due:"
+          },
+          hello,
+        ].join("\n"),
+        content=(
+          #|HTTP/1.1 200 OK
+          #|Content-Type: text/event-stream
+          #|Smock-Mock: news; via=default
+          #|Transfer-Encoding: chunked
+          #|
+          #|in the Journal right after: 1
+          #|the next request answered before the event was due:
+          #|HTTP/1.1 200 OK
+          #|Smock-Mock: news; via=default
+          #|Content-Length: 5
+          #|
+          #|hello
+        ),
+      )
+    })
+  })
+}

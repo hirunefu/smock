@@ -105,6 +105,25 @@ pub fn ResponseStream::head(self : ResponseStream) -> Bytes {
 }
 
 ///|
+/// Whether the response has a body: not when it answers HEAD, nor when its
+/// status is 1xx, 204 or 304. Without one, `head` is the whole response:
+/// the parts and `end` are empty, so the caller need not wait to write
+/// them.
+///
+/// ```mbt check
+/// test {
+///   let parser = @http1.Parser()
+///   parser.feed(b"HEAD /events HTTP/1.1\r\nHost: a\r\n\r\n")
+///   guard parser.next() is Complete(request) else { fail("no request") }
+///   inspect(@http1.ResponseStream(200, [], request~).has_body(), content="false")
+///   inspect(@http1.ResponseStream(200, []).has_body(), content="true")
+/// }
+/// ```
+pub fn ResponseStream::has_body(self : ResponseStream) -> Bool {
+  !(self.body is NoBody)
+}
+
+///|
 /// The bytes that carry `data`, the next part of the body: one chunk, or
 /// `data` itself when the body is not chunked. An empty `data` gives no
 /// bytes, so it cannot end a chunked body early.
