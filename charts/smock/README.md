@@ -162,8 +162,10 @@ each change. The files in the image must be readable by UID 65532.
 
 - The token Secret (`adminAuth.tokenSecret`) reaches smock as a mounted file
   (`adminAuth.tokenAs=file`, the default) or as the variable
-  `SMOCK_ADMIN_TOKEN` (`adminAuth.tokenAs=env`). smock reads it at startup,
-  so after rotating it, restart the Pods
+  `SMOCK_ADMIN_TOKEN` (`adminAuth.tokenAs=env`), never both: smock refuses
+  to start when both are set, so the chart also refuses
+  `SMOCK_ADMIN_TOKEN` and `SMOCK_ADMIN_TOKEN_FILE` in `env`. smock reads
+  the token at startup, so after rotating it, restart the Pods
   (`kubectl rollout restart deployment/smock`).
 - `tls.secretName` names a `kubernetes.io/tls` Secret (`tls.crt` and
   `tls.key`), such as cert-manager makes. It is mounted as a whole volume
@@ -232,6 +234,13 @@ The sleep and the drain both run within `terminationGracePeriodSeconds`,
 which is always above their sum: by default it is the sleep plus the drain
 timeout plus 10 s (35 s), and the chart refuses a shorter one, so that
 Kubernetes does not kill a draining Pod.
+
+## Logs
+
+smock writes its logs to stderr, one JSON object per line: JSON is its only
+log format, so a log collector can parse every entry. Only a usage error,
+such as an invalid value in `env`, is plain text: smock writes it before
+any log entry and exits with status 2.
 
 ## Other settings
 

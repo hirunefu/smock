@@ -5,13 +5,14 @@
 #    architecture without emulation, it builds smock with the MoonBit
 #    toolchain in .moonbit-version, packs the binary into the distroless image
 #    (Dockerfile) and smoke-tests the image (scripts/smoke-test-image.sh).
-# 2. publish-image: pushes both images to ghcr.io/hirunefu/smock, combines
-#    them into one multi-architecture image tagged with the version, signs
-#    it and each architecture with cosign (keyless, with the workflow's
-#    GitHub OIDC identity), attests an SPDX SBOM for each architecture (the
-#    base's packages, which syft finds, and smock with its MoonBit modules,
-#    which scripts/add-smock-to-sbom.sh adds), and verifies all of that as
-#    the README does (scripts/verify-image.sh).
+# 2. publish-image: pushes both images to ghcr.io/hirunefu/smock, tagged
+#    <version>-amd64 and <version>-arm64 (these tags stay published),
+#    combines them into one multi-architecture image tagged with the
+#    version, signs it and each architecture with cosign (keyless, with the
+#    workflow's GitHub OIDC identity), attests an SPDX SBOM for each
+#    architecture (the base's packages, which syft finds, and smock with its
+#    MoonBit modules, which scripts/add-smock-to-sbom.sh adds), and verifies
+#    all of that as the README does (scripts/verify-image.sh).
 # 3. chart and publish-chart: packages the Helm chart with the version as its
 #    version and app version, so it runs the image published in step 2
 #    (scripts/package-helm-chart.sh), and pushes it as an OCI artifact to

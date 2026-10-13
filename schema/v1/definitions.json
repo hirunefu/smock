@@ -120,7 +120,7 @@
           "additionalProperties": { "$ref": "#/$defs/valueCondition" }
         },
         "headers": {
-          "description": "Header fields, by name. Names are compared case-insensitively. Each listed header must be present, and its value must equal the given string or match the given pattern as a whole. When a header is repeated, any of its values may match. Headers that are not listed are ignored.",
+          "description": "Header fields, by name. Names are compared case-insensitively. Each listed header must be present, and its value must equal the given string or match the given pattern as a whole. When a header is repeated, any of its values may match. Each header field line is one value: a line that joins values with commas, such as `b, a`, matches only as a whole. Headers that are not listed are ignored.",
           "type": "object",
           "propertyNames": { "$ref": "#/$defs/headerName" },
           "additionalProperties": { "$ref": "#/$defs/valueCondition" }

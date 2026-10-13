@@ -260,6 +260,12 @@ and what the request sent. A test lists its Session's unmatched requests
 with `GET /v1/journal/unmatched`
 ([README](../README.md#verifying-calls-and-unmatched-requests)).
 
+What the request sent is shown as text. A body that is not valid UTF-8 is
+shown with U+FFFD in place of each sequence that is not, so a failed exact
+`body` condition can show an expected and an actual value that look the
+same. The Journal entry itself keeps the body's bytes, in base64, up to
+`--journal-body-limit`.
+
 ### Turning the Journal off for a Mock
 
 smock records every request a Mock answers in the Journal, unless the Mock

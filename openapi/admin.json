@@ -4,7 +4,7 @@
     "title": "smock Admin API",
     "version": "1",
     "summary": "Inspect and change a running smock: Ephemeral Stubs, the Journal, verification, rendering and status.",
-    "description": "The Admin API is JSON over HTTP/1.1 on smock's admin port (`--admin-port`, 9090 by default), separate from the plain and TLS ports.\n\n- **Authentication.** Every operation needs `Authorization: Bearer <token>`. smock reads the token from the file named by `--admin-token-file` (`SMOCK_ADMIN_TOKEN_FILE`) or from the environment variable `SMOCK_ADMIN_TOKEN`, and refuses to start when authentication is on and neither gives a token. A missing or wrong token gets 401 with `WWW-Authenticate: Bearer`. `--admin-auth off` (`SMOCK_ADMIN_AUTH=off`) turns authentication off for local use; then no operation needs a token. The probes (`/startupz`, `/readyz`, `/livez`) and `/metrics` never need one.\n- **Replicas.** Every response, errors included, names the replica that handled it in the `Smock-Replica` header: the Pod's hostname, or the host name outside Kubernetes. Replicas share no state: each one keeps its own Ephemeral Stubs and Journal. When smock is told that its deployment runs more than one replica (`--replicas`, `SMOCK_REPLICAS`, default 1), every JSON response carries a `per_replica_state` warning.\n- **Warnings.** Every JSON response, errors included, has a `warnings` array, empty when there is nothing to warn about.\n- **Errors.** Every error is a JSON object `{error, message, warnings}`: `error` is a code from the ErrorCode schema and `message` says what went wrong. A request for a path this document does not list gets 404 with `not_found`; a method a path does not support gets 405 with `method_not_allowed` and an `Allow` header. Request bodies are JSON: a body that is not valid JSON gets 400 with `malformed_json`. Requests over the size limits of `smock serve` (`--header-size-limit`, `--header-count-limit`, `--body-limit`) get 431 or 413 in the same form, and the connection closes.\n- **Sessions.** Session-scoped operations name their Session the way mocked requests do: by default the `smock-session` member of the W3C `baggage` header. The header and the member are `smock serve` settings. Without a Session, an operation acts on the no-Session space: the requests and Ephemeral Stubs that carry no Session.\n- **Mocks** come only from Definition files. The Admin API adds Ephemeral Stubs to existing Mocks.",
+    "description": "The Admin API is JSON over HTTP/1.1 on smock's admin port (`--admin-port`, 9090 by default), separate from the plain and TLS ports.\n\n- **Authentication.** Every operation needs `Authorization: Bearer <token>`. smock reads the token from the file named by `--admin-token-file` (`SMOCK_ADMIN_TOKEN_FILE`) or from the environment variable `SMOCK_ADMIN_TOKEN`, and refuses to start when authentication is on and neither gives a token, or when both the file and the variable are set. A missing or wrong token gets 401 with `WWW-Authenticate: Bearer`. `--admin-auth off` (`SMOCK_ADMIN_AUTH=off`) turns authentication off for local use; then no operation needs a token. The probes (`/startupz`, `/readyz`, `/livez`) and `/metrics` never need one.\n- **Replicas.** Every response, errors included, names the replica that handled it in the `Smock-Replica` header: the Pod's hostname, or the host name outside Kubernetes. Replicas share no state: each one keeps its own Ephemeral Stubs and Journal. When smock is told that its deployment runs more than one replica (`--replicas`, `SMOCK_REPLICAS`, default 1), every JSON response carries a `per_replica_state` warning.\n- **Warnings.** Every JSON response, errors included, has a `warnings` array, empty when there is nothing to warn about.\n- **Errors.** Every error is a JSON object `{error, message, warnings}`: `error` is a code from the ErrorCode schema and `message` says what went wrong. A request for a path this document does not list gets 404 with `not_found`; a method a path does not support gets 405 with `method_not_allowed` and an `Allow` header. Request bodies are JSON: a body that is not valid JSON gets 400 with `malformed_json`. Requests over the size limits of `smock serve` (`--header-size-limit`, `--header-count-limit`, `--body-limit`) get 431 or 413 in the same form, and the connection closes.\n- **Sessions.** Session-scoped operations name their Session the way mocked requests do: by default the `smock-session` member of the W3C `baggage` header. The header and the member are `smock serve` settings. Without a Session, an operation acts on the no-Session space: the requests and Ephemeral Stubs that carry no Session.\n- **Mocks** come only from Definition files. The Admin API adds Ephemeral Stubs to existing Mocks.",
     "license": {
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
@@ -1074,7 +1074,7 @@
             "type": "object",
             "properties": {
               "scope": {
-                "description": "Every Session's Ephemeral Stubs and Journal entries of one Mock.",
+                "description": "Every Session's Ephemeral Stubs and Journal entries of one Mock. The eviction counts, which are per Session, stay.",
                 "const": "mock"
               },
               "mock": {
@@ -1209,7 +1209,7 @@
             "type": "boolean"
           },
           "evicted": {
-            "description": "How many of the calling Session's entries the Journal bound has evicted since its last reset. Results may be missing that many entries.",
+            "description": "How many of the calling Session's entries the Journal bound has evicted since the last reset of that Session or of everything (a reset of one Mock keeps the count). Results may be missing that many entries. Each Session's count is kept until then, so the counts grow with the number of Sessions whose entries were evicted.",
             "type": "integer",
             "minimum": 0
           },
@@ -1465,7 +1465,7 @@
             "minimum": 0
           },
           "evicted": {
-            "description": "How many of the calling Session's entries the Journal bound has evicted since its last reset.",
+            "description": "How many of the calling Session's entries the Journal bound has evicted since the last reset of that Session or of everything (a reset of one Mock keeps the count).",
             "type": "integer",
             "minimum": 0
           },

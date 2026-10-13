@@ -116,7 +116,10 @@ It watches the directory and swaps in the new definition set when the files
 change, ConfigMap updates included; an invalid set is reported and the
 current one keeps serving
 ([docs/definition-files.md](docs/definition-files.md#reloading)). Logs go
-to stderr, one JSON object per line. `smock serve --help` lists the
+to stderr, one JSON object per line; JSON is the only log format. A usage
+error, such as an unknown flag, a missing argument or an invalid setting
+value, is not a log entry: smock writes it to stderr as plain text, before
+any log entry, and exits with status 2. `smock serve --help` lists the
 settings:
 
 | Flag | Variable | Default |
@@ -133,7 +136,7 @@ settings:
 | `--replicas` | `SMOCK_REPLICAS` | 1: above 1, every Admin API response warns that state is per replica |
 | `--session-header` | `SMOCK_SESSION_HEADER` | `baggage`: the W3C Baggage header that carries the [Session](#sessions-and-ephemeral-stubs) |
 | `--session-member` | `SMOCK_SESSION_MEMBER` | `smock-session`: the member of that header whose value is the Session key |
-| `--log-format` | `SMOCK_LOG_FORMAT` | `json` |
+| `--log-format` | `SMOCK_LOG_FORMAT` | `json`, the only format |
 | `--body-file-dir` | `SMOCK_BODY_FILE_DIR` | `files` |
 | `--header-size-limit` | `SMOCK_HEADER_SIZE_LIMIT` | 16384 bytes (16 KiB): larger request heads get 431 |
 | `--header-count-limit` | `SMOCK_HEADER_COUNT_LIMIT` | 100 header fields: more get 431 |
@@ -280,7 +283,9 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   from the file `--admin-token-file` names, or from the environment variable
   `SMOCK_ADMIN_TOKEN` (it has no flag, so it never shows in the process
   list), without the whitespace around it. With authentication on and no
-  token, or with both, `smock serve` logs why and exits with status 1. A
+  token, `smock serve` logs why and exits with status 1. Setting both the
+  token file and `SMOCK_ADMIN_TOKEN` is refused the same way, at startup,
+  rather than one of them silently winning. A
   missing or wrong token gets 401 with `WWW-Authenticate: Bearer`; the token
   is compared in constant time. `--admin-auth off` turns authentication off
   for local use. The `smock starting` log entry says whether it is on
@@ -545,7 +550,10 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   when the body is UTF-8. When it is full, the oldest entries are evicted,
   and smock counts the evicted entries of each Session: `evicted` in the
   query's result says how many of the calling Session's entries may be
-  missing. Requests without a Session have their own count.
+  missing. Requests without a Session have their own count. A Session's
+  count is kept until that Session, or everything, is reset (a reset of
+  one Mock keeps it), so the counts grow with the number of Sessions whose
+  entries were evicted.
 - `--journal off` records nothing, and a Mock with `"journal": false`
   ([docs/definition-files.md](docs/definition-files.md#turning-the-journal-off-for-a-mock))
   records none of its requests, so that a high-rate load test pays nothing
@@ -599,7 +607,9 @@ listed.
 ## Container image and release binaries
 
 Each release publishes the image `ghcr.io/hirunefu/smock:<version>` for
-linux/amd64 and linux/arm64. It is distroless
+linux/amd64 and linux/arm64. The image of each architecture it is made of
+also keeps a tag of its own, `<version>-amd64` and `<version>-arm64`; use
+`<version>`, which picks the one for the machine. The image is distroless
 (`gcr.io/distroless/base-debian13`): it holds the smock binary and what the
 binary links dynamically, glibc and OpenSSL 3, and has no shell. smock runs
 as UID 65532 and writes nothing to the filesystem, so the root filesystem can
