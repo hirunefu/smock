@@ -25,18 +25,12 @@ pub struct Watch {
 
 ///|
 /// Starts watching `dir`. Changes from then on lead to a check once `run`
-/// runs, even those made before it does.
-///
-/// `quiet_ms` and `poll_ms` are as for `Schedule`: 250 ms and 10 s by
-/// default.
-pub async fn Watch::Watch(
-  dir : String,
-  quiet_ms? : Int = 250,
-  poll_ms? : Int = 10_000,
-) -> Watch {
+/// runs, even those made before it does. The quiet period and the poll
+/// interval are those `Schedule` has by default.
+pub async fn Watch::Watch(dir : String) -> Watch {
   let watch = {
     dir,
-    schedule: Schedule(now=@async.now(), quiet_ms~, poll_ms~),
+    schedule: Schedule(now=@async.now()),
     watcher: None,
     failing: false,
     unreported: None,
