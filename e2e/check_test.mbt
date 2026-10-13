@@ -195,6 +195,39 @@ async test "smock check names the body-file subdirectory as smock serve does, by
 }
 
 ///|
+async test "a body file or directory that a symlink leads outside the body-file subdirectory is a problem, so that it is never read or served" {
+  with_definitions(
+    [
+      ("users.json", users_file),
+      ("files/users/1.json", "{}"),
+      ("secret.txt", "not a body file"),
+      ("shared/token", "not a body file"),
+    ],
+    dir => {
+      // Inside: a symlink to another body file.
+      @fs.symlink(target="users/1.json", "\{dir}/files/inner.json")
+      // Outside: a file and a directory of the definitions directory.
+      @fs.symlink(target="../secret.txt", "\{dir}/files/leak.txt")
+      @fs.symlink(target="../shared", "\{dir}/files/shared")
+      let inside = check([dir])
+      @fs.remove("\{dir}/files/leak.txt")
+      @fs.remove("\{dir}/files/shared")
+      inspect(
+        [inside, check([dir])].join("---\n"),
+        content=(
+          #|status 1
+          #|files/leak.txt: leads outside the body-file subdirectory files, which body files must stay inside
+          #|files/shared: leads outside the body-file subdirectory files, which body files must stay inside
+          #|---
+          #|status 0
+          #|
+        ),
+      )
+    },
+  )
+}
+
+///|
 async test "smock check names the definitions directory as given when the directory itself cannot be read" {
   let files = [("defs/users.json", users_file), ("users.json", users_file)]
   with_definitions(files, dir => {

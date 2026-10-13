@@ -25,7 +25,8 @@ pub async fn load(
 ///   covers the `..data` entries of ConfigMap volumes.
 /// - Files come in byte-wise name order.
 /// - The files under `body_file_dir`, a subdirectory of `dir`, are the body
-///   files, named relative to it.
+///   files, named relative to it. Symlinks are followed while they stay
+///   inside it: a file or a directory that one leads outside is a problem.
 /// - A missing directory gives an empty definition set.
 ///
 /// Problems reading the directory come back as diagnostics. A problem with
@@ -62,7 +63,13 @@ pub async fn read(
     }
   }
   if reader.kind(body_file_dir) is Some(Directory) {
-    reader.read_body_files(body_file_dir, set.body_files, base=body_file_dir, visited=[])
+    reader.read_body_files(
+      body_file_dir,
+      set.body_files,
+      base=body_file_dir,
+      inside=None,
+      visited=[],
+    )
   }
   (set, reader.diagnostics)
 }
@@ -107,16 +114,24 @@ fn DirReader::problem(
 
 ///|
 /// Reads the regular files under `relative` into `out`, recursively, named
-/// relative to `base`.
+/// relative to `base`, the body-file subdirectory. `inside` is where `base`
+/// really is, once symlinks are resolved, or `None` when `relative` is
+/// `base` itself. A file or a directory whose real path is not inside it
+/// is reported instead: a symlink leads it outside `base`.
 async fn DirReader::read_body_files(
   self : DirReader,
   relative : String,
   out : Array[(String, Bytes)],
   base~ : String,
+  inside~ : String?,
   visited~ : Array[String],
 ) -> Unit {
-  // A symlink may lead back to a directory read already.
   let real = @fs.realpath(self.path(relative)) catch { _ => return }
+  let inside = inside.unwrap_or(real)
+  if !self.stays_inside(relative, real~, inside~, base~) {
+    return
+  }
+  // A symlink may lead back to a directory read already.
   if visited.contains(real) {
     return
   }
@@ -124,14 +139,40 @@ async fn DirReader::read_body_files(
   for name in self.visible_entries(relative) {
     let path = if relative == "" { name } else { "\{relative}/\{name}" }
     match self.kind(path) {
-      Some(Regular) =>
-        if self.read_file(path) is Some(bytes) {
+      Some(Regular) => {
+        let real = @fs.realpath(self.path(path)) catch { _ => continue }
+        if self.stays_inside(path, real~, inside~, base~) &&
+          self.read_file(path) is Some(bytes) {
           out.push((path[base.length() + 1:].to_owned(), bytes))
         }
-      Some(Directory) => self.read_body_files(path, out, base~, visited~)
+      }
+      Some(Directory) =>
+        self.read_body_files(path, out, base~, inside=Some(inside), visited~)
       _ => ()
     }
   }
+}
+
+///|
+/// Whether `real`, the real path of `relative`, is `inside` or within it,
+/// `inside` being the real path of the body-file subdirectory `base`.
+/// Reports `relative` when it is not.
+fn DirReader::stays_inside(
+  self : DirReader,
+  relative : String,
+  real~ : String,
+  inside~ : String,
+  base~ : String,
+) -> Bool {
+  let prefix = if inside.has_suffix("/") { inside } else { "\{inside}/" }
+  if real == inside || real.has_prefix(prefix) {
+    return true
+  }
+  self.problem(
+    relative,
+    "leads outside the body-file subdirectory \{base}, which body files must stay inside",
+  )
+  false
 }
 
 ///|

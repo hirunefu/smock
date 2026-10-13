@@ -15,7 +15,9 @@ in a definitions directory, such as `defs/`, that `smock serve --dir` and
   file declares.
 - Body files live in the body-file subdirectory, `files/` by default
   (`--body-file-dir`, `SMOCK_BODY_FILE_DIR`). smock reads them when it
-  loads the Definition files, and serves them from memory.
+  loads the Definition files, and serves them from memory. Symlinks inside
+  it are followed while they stay inside it; one that leads a file or a
+  directory outside it is a problem, so that nothing outside is served.
 
 ## Hosts and the Default Mock
 
