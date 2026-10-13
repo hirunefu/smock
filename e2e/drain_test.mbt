@@ -227,3 +227,39 @@ async test "Server-Sent Event streams and delays still running when the drain ti
     )
   })
 }
+
+///|
+async test "SIGINT and SIGHUP end smock at once, without a drain: a response still delayed is cut, and nothing about a drain is logged" {
+  with_definitions([("m.json", drain_defs)], dir => {
+    let out = []
+    for signal in ["INT", "HUP"] {
+      let stopped = with_smock(
+        ["--dir", dir, "--port", "0", "--drain-timeout-ms", "10000"],
+        smock => {
+          let stalled = smock.connect()
+          defer stalled.close()
+          stalled.write("GET /stalled HTTP/1.1\r\nHost: localhost\r\n\r\n")
+          @async.sleep(settle_ms)
+          let start = @async.now()
+          let _ = @process.run("kill", ["-\{signal}", smock.pid.to_string()])
+          let (_, end, response) = until_end(stalled, start)
+          let status = smock.exited()
+          let exited = @async.now() - start
+          out.push(
+            "SIG\{signal}: the delayed response was cut at once: \{end < 2000 && response == ""}; exit status \{status}, at once: \{exited < 2000}",
+          )
+        },
+      )
+      out.push("a drain logged: \{drain_entries(stopped.logs) != ""}")
+    }
+    inspect(
+      out.join("\n"),
+      content=(
+        #|SIGINT: the delayed response was cut at once: true; exit status -2, at once: true
+        #|a drain logged: false
+        #|SIGHUP: the delayed response was cut at once: true; exit status -1, at once: true
+        #|a drain logged: false
+      ),
+    )
+  })
+}

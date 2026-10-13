@@ -2,7 +2,8 @@
 /// Runs `smock serve`: listens on the admin port, loads the definitions and
 /// the TLS certificate files, generating a self-signed default certificate
 /// without default files, then listens on the plain and the TLS port, and
-/// serves until SIGTERM, then drains. The plain and TLS ports serve the
+/// serves until SIGTERM, then drains. SIGINT and SIGHUP end the process at
+/// once, without a drain, so that Ctrl-C stops a local smock promptly. The plain and TLS ports serve the
 /// same Mocks; the admin port serves the Admin API and the probes, from
 /// before the definitions load, so that the startup probe can tell that
 /// they have not loaded yet, until the drain ends.
@@ -16,6 +17,9 @@ pub async fn serve(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
 ) -> Int {
+  // Only SIGTERM cancels the program, which starts the drain below. SIGINT
+  // and SIGHUP keep their default action: the process ends at once.
+  @signal.set_global_cancellation_signals([SIGTERM])
   let token = if settings.admin_auth {
     match read_admin_token(settings, logger) {
       Some(token) => Some(token)
@@ -81,12 +85,12 @@ pub async fn serve(
     "listener": "admin",
     "address": Json::string("0.0.0.0:\{admin_listener.addr.port()}"),
   })
-  // The runtime cancels the whole program on SIGTERM, as on SIGINT and
-  // SIGHUP. The watcher below notices that and starts the drain, while the
-  // server runs protected from the cancellation, so that it can drain and
-  // then return its exit status. Catching the cancellation keeps the runtime
-  // from ending the process with the signal, so that it exits with that
-  // status.
+  // The runtime cancels the whole program on SIGTERM, the one cancellation
+  // signal set above. The watcher below notices that and starts the drain,
+  // while the server runs protected from the cancellation, so that it can
+  // drain and then return its exit status. Catching the cancellation keeps
+  // the runtime from ending the process with the signal, so that it exits
+  // with that status.
   let status = Ref(0)
   let _ = @async.handle_cancellation(() => {
     @async.with_task_group(group => {

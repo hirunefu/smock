@@ -153,7 +153,8 @@ Neither is logged.
 
 On SIGTERM, smock drains instead of dropping requests, so that a rolling
 update does not fail the tests running against the old Pod. SIGINT and
-SIGHUP do the same.
+SIGHUP do not drain: they end smock at once, cutting whatever is in
+flight, so that Ctrl-C stops a local smock promptly.
 
 - `/readyz` fails from the moment the signal arrives. The plain and TLS
   listeners close, so new connections are refused, and idle keep-alive
