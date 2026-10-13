@@ -551,7 +551,9 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   records none of its requests, so that a high-rate load test pays nothing
   for recording. A query while the Journal is off, or whose filter names
   such a Mock, gets 409 `journal_off` rather than entries that cannot be
-  trusted.
+  trusted. Only those are refused: a filter that names no Mock is answered
+  from the requests that were recorded, which leave out those of Mocks
+  whose Journal is off.
 - The Journal survives a [reload](docs/definition-files.md#reloading) of
   the Definition files; each entry keeps the digest of the set that
   answered it. It lives in the process that received the requests, until a
@@ -579,7 +581,9 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   whatever the count. `atLeast` is still decided by the count, because
   eviction can only lower it. A Session reset clears the eviction count.
 - Like a query, verification while the Journal is off, or whose filter
-  names a Mock whose Journal is off, gets 409 `journal_off`.
+  names a Mock whose Journal is off, gets 409 `journal_off`. A filter that
+  names no Mock counts only the requests that were recorded, so none of
+  such a Mock's.
 
 `GET /v1/journal/unmatched` lists the calling Session's requests that no
 Stub answered, oldest first, at most `limit` of them (a query parameter,
@@ -588,7 +592,9 @@ Stub answered, oldest first, at most `limit` of them (a query parameter,
 carries its full Near miss: the closest Stub, and every condition it
 failed with what the Stub expects and what the request sent. A request for
 a Host that no Mock answers is among them, with no Mock and no Near miss.
-It gets 409 `journal_off` while the Journal is off.
+It gets 409 `journal_off` while the Journal is off globally; the unmatched
+requests of a Mock whose Journal is off were not recorded, so they are not
+listed.
 
 ## Container image and release binaries
 

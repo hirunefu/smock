@@ -12,8 +12,8 @@ pub suberror AdminError {
   /// The Ephemeral Stub to add is not valid. The problems have no file;
   /// their JSON Pointers point into the Stub as it was given.
   InvalidStub(Array[@definitions.Diagnostic])
-  /// The Journal is off for what the operation touches: globally for
-  /// `None`, or for the Mock with this name.
+  /// The Journal is off: globally for `None`, or for the Mock with this
+  /// name, which the operation's filter names.
   JournalOff(String?)
 } derive(Debug)
 

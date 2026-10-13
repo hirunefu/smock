@@ -295,7 +295,7 @@
         "operationId": "queryJournal",
         "tags": ["Journal"],
         "summary": "Query the calling Session's Journal entries",
-        "description": "The calling Session's entries that pass the filter, oldest first, after the entry whose sequence number `after` gives, at most `limit` of them. A request is in the Journal as soon as its client has received the whole response.",
+        "description": "The calling Session's entries that pass the filter, oldest first, after the entry whose sequence number `after` gives, at most `limit` of them. A request is in the Journal as soon as its client has received the whole response. A filter that names a Mock whose Journal is off gets `journal_off`; a filter that names no Mock leaves out the requests of such Mocks, since none of them were recorded.",
         "requestBody": {
           "required": true,
           "content": {
@@ -347,7 +347,7 @@
         "operationId": "verifyJournal",
         "tags": ["Journal"],
         "summary": "Verify how many of the calling Session's requests pass a filter",
-        "description": "Counts the calling Session's Journal entries that pass the filter and checks the count: exactly, at least or at most N. Verification never trusts a count that may be wrong: when the Journal bound has evicted any of the Session's entries, `exactly` and `atMost` fail with reason `evicted`, whatever the count. `atLeast` is still decided by the count, because eviction can only lower it.",
+        "description": "Counts the calling Session's Journal entries that pass the filter and checks the count: exactly, at least or at most N. Verification never trusts a count that may be wrong: when the Journal bound has evicted any of the Session's entries, `exactly` and `atMost` fail with reason `evicted`, whatever the count. `atLeast` is still decided by the count, because eviction can only lower it. As with a query, a filter that names a Mock whose Journal is off gets `journal_off`, and a filter that names no Mock counts only the requests that were recorded, so none of such a Mock's.",
         "requestBody": {
           "required": true,
           "content": {
@@ -399,7 +399,7 @@
         "operationId": "listUnmatched",
         "tags": ["Journal"],
         "summary": "List the calling Session's unmatched requests with their Near misses",
-        "description": "The calling Session's Journal entries that no Stub answered, oldest first, after the entry whose sequence number `after` gives, at most `limit` of them. Each carries its full Near miss, when there was a candidate Stub. A request for a Host that no Mock lists, with no Default Mock, is among them with no Mock and no Near miss.",
+        "description": "The calling Session's Journal entries that no Stub answered, oldest first, after the entry whose sequence number `after` gives, at most `limit` of them. Each carries its full Near miss, when there was a candidate Stub. A request for a Host that no Mock lists, with no Default Mock, is among them with no Mock and no Near miss. The unmatched requests of a Mock whose Journal is off were not recorded, so they are not among them; only `--journal off` gets `journal_off` here.",
         "parameters": [
           {
             "$ref": "#/components/parameters/Limit"
@@ -751,7 +751,7 @@
         }
       },
       "JournalOff": {
-        "description": "The Journal is off globally, or for a Mock the request touches (`journal_off`), so there is no count or entry to trust.",
+        "description": "The Journal is off (`journal_off`), so there is no count or entry to trust: globally (`--journal off`), or for the Mock that the filter of a query or a verification names (`\"journal\": false` in the Definition files). Only a filter that names such a Mock is refused: a filter that names no Mock is answered from the requests that were recorded, which leave out those of Mocks whose Journal is off.",
         "headers": {
           "Smock-Replica": {
             "$ref": "#/components/headers/Smock-Replica"
@@ -839,7 +839,7 @@
         "additionalProperties": false
       },
       "ErrorCode": {
-        "description": "What kind of error it is:\n\n- `unauthorized` (401): no bearer token, or the wrong one.\n- `not_found` (404): no operation at this path.\n- `method_not_allowed` (405): the path does not take this method.\n- `malformed_json` (400): the body is not valid JSON.\n- `invalid_request` (400): the body or a parameter does not have the shape the operation takes.\n- `invalid_stub` (400): an Ephemeral Stub is not valid; the message is the one `smock check` gives.\n- `unknown_mock` (404): no Mock has this name.\n- `unknown_stub` (404): no Stub has this ID, or the calling Session has no Ephemeral Stub with it.\n- `journal_off` (409): the Journal is off for what the request touches.\n- `not_started` (503): the first definition set has not loaded yet.\n- `not_ready` (503): smock is not ready to serve, such as while it drains after SIGTERM.\n- `bad_request` (400): the HTTP request itself is malformed.\n- `content_too_large` (413): the body is over `--body-limit`.\n- `header_fields_too_large` (431): the request head is over `--header-size-limit` or `--header-count-limit`.\n- `not_implemented` (501): this build does not implement the operation, or the request uses a transfer coding other than chunked.\n- `http_version_not_supported` (505): the request is not HTTP/1.x.",
+        "description": "What kind of error it is:\n\n- `unauthorized` (401): no bearer token, or the wrong one.\n- `not_found` (404): no operation at this path.\n- `method_not_allowed` (405): the path does not take this method.\n- `malformed_json` (400): the body is not valid JSON.\n- `invalid_request` (400): the body or a parameter does not have the shape the operation takes.\n- `invalid_stub` (400): an Ephemeral Stub is not valid; the message is the one `smock check` gives.\n- `unknown_mock` (404): no Mock has this name.\n- `unknown_stub` (404): no Stub has this ID, or the calling Session has no Ephemeral Stub with it.\n- `journal_off` (409): the Journal is off globally, or for the Mock that the request's filter names.\n- `not_started` (503): the first definition set has not loaded yet.\n- `not_ready` (503): smock is not ready to serve, such as while it drains after SIGTERM.\n- `bad_request` (400): the HTTP request itself is malformed.\n- `content_too_large` (413): the body is over `--body-limit`.\n- `header_fields_too_large` (431): the request head is over `--header-size-limit` or `--header-count-limit`.\n- `not_implemented` (501): this build does not implement the operation, or the request uses a transfer coding other than chunked.\n- `http_version_not_supported` (505): the request is not HTTP/1.x.",
         "enum": [
           "unauthorized",
           "not_found",
@@ -1151,7 +1151,7 @@
         "type": "object",
         "properties": {
           "mock": {
-            "description": "Only entries of this Mock. It may name a Mock the definitions served no longer declare: the entries it recorded before a reload removed it remain.",
+            "description": "Only entries of this Mock. It may name a Mock the definitions served no longer declare: the entries it recorded before a reload removed it remain. A Mock of the served definitions whose Journal is off gets `journal_off`.",
             "type": "string",
             "minLength": 1
           },

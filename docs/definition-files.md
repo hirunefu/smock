@@ -270,9 +270,13 @@ off, so that recording costs nothing:
 { "mocks": [{ "name": "load-target", "hosts": ["api.example.com"], "journal": false }] }
 ```
 
-A Journal query whose filter names such a Mock is refused with
-`journal_off`, rather than answered with no entries. `--journal off`
-turns the Journal off for every Mock.
+A Journal query or verification whose filter names such a Mock is refused
+with `journal_off`, rather than answered with no entries. Only such a
+filter is refused: a filter that names no Mock is answered from the
+requests that were recorded, which leave out this Mock's, and the
+unmatched requests leave them out too. `--journal off` turns the Journal
+off for every Mock, and then every query, verification and list of
+unmatched requests is refused.
 
 ## Responses
 
