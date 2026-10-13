@@ -137,7 +137,7 @@ async test "rewriting the certificate files rotates the certificate without a re
                 #|open connection: HTTP/1.1 200 OK
                 #|before: smock-test-rsa
                 #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4922899200
-                #|{"level":"info","msg":"TLS certificate reloaded","mock":"","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
+                #|{"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
                 #|after: smock-test-ecdsa
                 #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4891363200
                 #|open connection after the rotation: HTTP/1.1 200 OK
@@ -153,8 +153,8 @@ async test "rewriting the certificate files rotates the certificate without a re
             #|{"level":"info","msg":"random seed","seed":"*"}
             #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
             #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
-            #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","cert_file":"*/tls.crt","key_file":"*/tls.key"}
-            #|{"level":"info","msg":"TLS certificate reloaded","mock":"","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
+            #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","certFile":"*/tls.crt","keyFile":"*/tls.key"}
+            #|{"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
             #|{"level":"info","msg":"drain started","timeoutMs":20000}
             #|{"level":"info","msg":"drain ended","connectionsCut":0}
           ),
@@ -213,7 +213,7 @@ async test "a Secret-style update, which swaps the ..data symlink and keeps the 
               ),
               content=(
                 #|before: smock-test-rsa
-                #|{"level":"info","msg":"TLS certificate reloaded","mock":"","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
+                #|{"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
                 #|after: smock-test-ecdsa
                 #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4891363200
               ),
@@ -270,19 +270,19 @@ async test "a changed pair that cannot be used is not swapped in: smock keeps pr
               out.join("\n"),
               content=(
                 #|a certificate file that is not PEM:
-                #|{"level":"error","msg":"TLS certificate reload failed","mock":"","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":null,"error":"certificate file: no PEM certificate found"}
+                #|{"level":"error","msg":"TLS certificate reload failed","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":null,"error":"certificate file: no PEM certificate found"}
                 #|presented: smock-test-rsa
                 #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4922899200
                 #|a certificate the key does not belong to:
-                #|{"level":"error","msg":"TLS certificate reload failed","mock":"","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z","error":"the private key does not match the leaf certificate"}
+                #|{"level":"error","msg":"TLS certificate reload failed","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z","error":"the private key does not match the leaf certificate"}
                 #|presented: smock-test-rsa
                 #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4922899200
                 #|a key file that cannot be read:
-                #|{"level":"error","msg":"TLS certificate reload failed","mock":"","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":null,"error":"cannot read the key file: no such file"}
+                #|{"level":"error","msg":"TLS certificate reload failed","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":null,"error":"cannot read the key file: no such file"}
                 #|presented: smock-test-rsa
                 #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4922899200
                 #|the key of the new certificate:
-                #|{"level":"info","msg":"TLS certificate reloaded","mock":"","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
+                #|{"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
                 #|presented: smock-test-ecdsa
                 #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4891363200
               ),
@@ -458,7 +458,7 @@ async test "without default certificate files, a Mock's own certificate is chose
                 #|SNI unknown.example.com: smock self-signed
                 #|no SNI: smock self-signed
                 #|self-signed names: ["localhost","127.0.0.1","::1","orders.example.com","users.example.com"]
-                #|{"level":"info","msg":"TLS certificate reloaded","mock":"users","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":"2124-07-01T00:00:00.000Z"}
+                #|{"level":"info","msg":"TLS certificate reloaded","mock":"users","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2124-07-01T00:00:00.000Z"}
                 #|SNI users.example.com: smock-test-users-renewed
                 #|SNI orders.example.com: smock self-signed
                 #|SNI unknown.example.com: smock self-signed
@@ -569,13 +569,13 @@ async test "a Mock's certificate rotates the same way as the default certificate
                   #|SNI users.example.com: smock-test-users
                   #|no SNI: smock-test-rsa
                   #|a Secret-style update of the Mock's pair:
-                  #|{"level":"info","msg":"TLS certificate reloaded","mock":"users","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":"2124-07-01T00:00:00.000Z"}
+                  #|{"level":"info","msg":"TLS certificate reloaded","mock":"users","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2124-07-01T00:00:00.000Z"}
                   #|SNI users.example.com: smock-test-users-renewed
                   #|no SNI: smock-test-rsa
                   #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4922899200
                   #|smock_tls_certificate_expiry_timestamp_seconds{mock="users"} 4875465600
                   #|rewriting the default pair:
-                  #|{"level":"info","msg":"TLS certificate reloaded","mock":"","cert_file":"*/tls.crt","key_file":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
+                  #|{"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
                   #|SNI users.example.com: smock-test-users-renewed
                   #|no SNI: smock-test-ecdsa
                   #|smock_tls_certificate_expiry_timestamp_seconds{mock=""} 4891363200
@@ -650,13 +650,13 @@ async test "smock serve refuses to start when a Mock's certificate pair cannot b
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","mock":"users","cert_file":"*/missing.pem","key_file":"*/rsa-key.pem","error":"cannot read the certificate file: no such file"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","mock":"users","certFile":"*/missing.pem","keyFile":"*/rsa-key.pem","error":"cannot read the certificate file: no such file"}
         #|---
         #|status 1
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
-        #|{"level":"error","msg":"cannot load the TLS certificate","mock":"users","cert_file":"*/rsa-chain.pem","key_file":"*/other-key.pem","error":"the private key does not match the leaf certificate"}
+        #|{"level":"error","msg":"cannot load the TLS certificate","mock":"users","certFile":"*/rsa-chain.pem","keyFile":"*/other-key.pem","error":"the private key does not match the leaf certificate"}
         #|---
         #|status 2
         #|not JSON: smock serve: invalid value "not JSON" for --tls-mock-certs (SMOCK_TLS_MOCK_CERTS): must be a JSON object that maps each Mock name to {"certFile": <path>, "keyFile": <path>}
@@ -749,8 +749,8 @@ async test "SNI follows the Hosts of the current definition set, and a Mock with
           inspect(
             entries(stopped.logs.filter(is_certificate_entry)),
             content=(
-              #|{"level":"warn","msg":"TLS certificate for a Mock that is not declared","mock":"orders","cert_file":"*/tls.crt","key_file":"*/tls.key"}
-              #|{"level":"warn","msg":"TLS certificate for a Mock that is not declared","mock":"orders","cert_file":"*/tls.crt","key_file":"*/tls.key"}
+              #|{"level":"warn","msg":"TLS certificate for a Mock that is not declared","mock":"orders","certFile":"*/tls.crt","keyFile":"*/tls.key"}
+              #|{"level":"warn","msg":"TLS certificate for a Mock that is not declared","mock":"orders","certFile":"*/tls.crt","keyFile":"*/tls.key"}
             ),
           )
         })

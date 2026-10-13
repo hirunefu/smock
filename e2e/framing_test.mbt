@@ -157,7 +157,7 @@ async test "after malformed or ambiguous framing, smock answers what came before
       #|{"level":"info","msg":"random seed","seed":"*"}
       #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
       #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
-      #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","cert_file":"*/rsa-chain.pem","key_file":"*/rsa-key.pem"}
+      #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","certFile":"*/rsa-chain.pem","keyFile":"*/rsa-key.pem"}
       #|{"level":"info","msg":"drain started","timeoutMs":20000}
       #|{"level":"info","msg":"drain ended","connectionsCut":0}
     ),

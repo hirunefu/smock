@@ -577,7 +577,7 @@ fn entries(logs : Array[String]) -> String {
         "time" => ()
         "version" | "commit" | "toolchain" | "seed" | "sha256Fingerprint" =>
           out[key] = "*"
-        "cert_file" | "key_file" =>
+        "certFile" | "keyFile" =>
           out[key] = match value {
             String(path) =>
               Json::string(

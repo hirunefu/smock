@@ -147,13 +147,14 @@ fn pair_fields(mock : String, files : @settings.TlsFiles) -> Map[String, Json] {
 
 ///|
 /// Adds the fields that name the certificate and key files `files` to
-/// `fields`, the fields of a log entry.
+/// `fields`, the fields of a log entry, with the keys `--tls-mock-certs`
+/// gives them.
 fn add_file_fields(
   fields : Map[String, Json],
   files : @settings.TlsFiles,
 ) -> Unit {
-  fields["cert_file"] = Json::string(files.cert_file)
-  fields["key_file"] = Json::string(files.key_file)
+  fields["certFile"] = Json::string(files.cert_file)
+  fields["keyFile"] = Json::string(files.key_file)
 }
 
 ///|

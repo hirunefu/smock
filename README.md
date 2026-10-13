@@ -190,8 +190,8 @@ presenting the previous one. Either way one log entry names the pair
 (`"mock":""` for the default certificate) and the new certificate's expiry:
 
 ```json
-{"time":"…","level":"info","msg":"TLS certificate reloaded","mock":"","cert_file":"/etc/smock/tls/tls.crt","key_file":"/etc/smock/tls/tls.key","expiry":"2027-01-01T00:00:00.000Z"}
-{"time":"…","level":"error","msg":"TLS certificate reload failed","mock":"","cert_file":"/etc/smock/tls/tls.crt","key_file":"/etc/smock/tls/tls.key","expiry":null,"error":"certificate file: no PEM certificate found"}
+{"time":"…","level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"/etc/smock/tls/tls.crt","keyFile":"/etc/smock/tls/tls.key","expiry":"2027-01-01T00:00:00.000Z"}
+{"time":"…","level":"error","msg":"TLS certificate reload failed","mock":"","certFile":"/etc/smock/tls/tls.crt","keyFile":"/etc/smock/tls/tls.key","expiry":null,"error":"certificate file: no PEM certificate found"}
 ```
 
 By default every handshake gets that one certificate, usually with a SAN for
