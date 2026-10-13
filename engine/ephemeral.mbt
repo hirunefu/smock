@@ -165,20 +165,9 @@ pub fn Engine::add_ephemeral_stub(
   }
   // The newest is tried first among equal priorities: it goes before every
   // Stub whose priority is not lower.
-  let at = list.search_by(other => !tried_before(other.stub, compiled))
+  let at = list.search_by(other => other.stub.compare_priority(compiled) >= 0)
   list.insert(at.unwrap_or(list.length()), added)
   added
-}
-
-///|
-/// Whether `a` has a lower priority number than `b`, where a Stub without
-/// a priority comes after every Stub with one.
-fn tried_before(a : @definitions.Stub, b : @definitions.Stub) -> Bool {
-  match (a.priority, b.priority) {
-    (Some(p), Some(q)) => p < q
-    (Some(_), None) => true
-    (None, _) => false
-  }
 }
 
 ///|

@@ -412,14 +412,27 @@ pub fn load(
 fn in_matching_order(stubs : Array[Stub]) -> Array[Stub] {
   let indexed = stubs.mapi((i, stub) => (i, stub))
   indexed.sort_by((a, b) => {
-    match (a.1.priority, b.1.priority) {
-      (Some(p), Some(q)) if p != q => p.compare(q)
-      (Some(_), None) => -1
-      (None, Some(_)) => 1
-      _ => a.0.compare(b.0)
+    match a.1.compare_priority(b.1) {
+      0 => a.0.compare(b.0)
+      order => order
     }
   })
   indexed.map(entry => entry.1)
+}
+
+///|
+/// How the priorities of two Stubs order them: negative when `self` is
+/// tried before `other`, positive when after, and 0 when their priorities
+/// do not decide. A lower number is tried first, and a Stub without a
+/// priority after every Stub with one. Stubs from Definition files and
+/// Ephemeral Stubs are each ordered by this rule.
+pub fn Stub::compare_priority(self : Stub, other : Stub) -> Int {
+  match (self.priority, other.priority) {
+    (Some(p), Some(q)) => p.compare(q)
+    (Some(_), None) => -1
+    (None, Some(_)) => 1
+    (None, None) => 0
+  }
 }
 
 ///|
