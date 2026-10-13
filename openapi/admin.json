@@ -1369,7 +1369,7 @@
             "$ref": "../schema/v1/definitions.json#/$defs/request/properties/body"
           },
           "actual": {
-            "description": "The values the request carries for the condition, in order: one for method, path and body; every value of a query parameter or header, which may be repeated; none when it is absent.",
+            "description": "The values the request carries for the condition, in order: one for method, path and body; every value of a query parameter or header, which may be repeated; none when it is absent. A body that is not UTF-8 is shown with U+FFFD in place of each sequence that is not; the Journal entry's request body keeps its bytes.",
             "type": "array",
             "items": {
               "type": "string"
