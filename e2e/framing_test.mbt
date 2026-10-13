@@ -99,6 +99,15 @@ let rejected : Array[(String, Bytes)] = [
     "a fragment in the request target", b"GET /users/1#x HTTP/1.1\r\nHost: localhost\r\n\r\n",
   ),
   (
+    "an asterisk-form target with a method other than OPTIONS", b"GET * HTTP/1.1\r\nHost: localhost\r\n\r\n",
+  ),
+  (
+    "an authority-form target with a method other than CONNECT", b"GET localhost:80 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+  ),
+  (
+    "CONNECT with a target that is not authority-form", b"CONNECT /users/1 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+  ),
+  (
     "a Host with a space in it", b"GET /users/1 HTTP/1.1\r\nHost: local host\r\n\r\n",
   ),
   (
@@ -143,6 +152,9 @@ async test "after malformed or ambiguous framing, smock answers what came before
         #|bare LF line ends: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
         #|a request target without a leading /: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
         #|a fragment in the request target: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
+        #|an asterisk-form target with a method other than OPTIONS: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
+        #|an authority-form target with a method other than CONNECT: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
+        #|CONNECT with a target that is not authority-form: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
         #|a Host with a space in it: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
         #|a Host with a / and an @ in it: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
         #|a TLS handshake: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed

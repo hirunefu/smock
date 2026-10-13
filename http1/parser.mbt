@@ -70,11 +70,14 @@ pub(all) enum Parsed {
   ///
   /// - 400 for a malformed request line or header field (RFC 9112), such as
   ///   a request target in none of the four forms of RFC 9112, section 3.2,
-  ///   or with a fragment, or a Host field whose value is not a host and an
-  ///   optional port; and for framing that is broken or ambiguous: a bad
-  ///   chunk size, broken chunk framing, both Content-Length and
-  ///   Transfer-Encoding, Content-Length values that disagree or are not
-  ///   numbers, or Transfer-Encoding in an HTTP/1.0 request;
+  ///   or with a fragment, or in a form its method does not take
+  ///   (asterisk-form is only for OPTIONS, authority-form only for CONNECT,
+  ///   and CONNECT takes no other form), or a Host field whose value is not
+  ///   a host and an optional port; and for framing that is broken or
+  ///   ambiguous: a bad chunk size, broken chunk framing, both
+  ///   Content-Length and Transfer-Encoding, Content-Length values that
+  ///   disagree or are not numbers, or Transfer-Encoding in an HTTP/1.0
+  ///   request;
   /// - 413 for a body over the body limit;
   /// - 431 for a head over the header size limit or the header count limit;
   /// - 501 for a transfer coding other than `chunked`;
@@ -654,7 +657,7 @@ fn split_lines(
 /// `buf[start:end]`, which the head scan has checked. A version whose major
 /// number is not 1 gets 505; a later minor version than 1 is read as
 /// HTTP/1.1 (RFC 9110, section 2.5). A target in none of the forms of a
-/// request target gets 400.
+/// request target, or in a form its method does not take, gets 400.
 fn parse_request_line(
   buf : FixedArray[Byte],
   line : (Int, Int),
@@ -671,11 +674,12 @@ fn parse_request_line(
     (b'1', _) => Http11
     _ => return Err(505)
   }
+  let meth = ascii(buf, start, space)
   let target = ascii(buf, space + 1, end - 9)
-  if !is_request_target(target) {
+  if !is_request_target(target, meth~) {
     return Err(400)
   }
-  Ok((ascii(buf, start, space), target, version))
+  Ok((meth, target, version))
 }
 
 ///|
