@@ -189,13 +189,14 @@ whole ones are written out in full.
 {{- end -}}
 
 {{/*
-How long Kubernetes waits after SIGTERM before it kills the Pod: the value,
-or else the drain timeout rounded up to a second, plus 10 s. It is always
-above the drain timeout (smock.validate), so that smock can drain.
+How long Kubernetes waits, once it starts stopping the Pod, before it kills
+it: the value, or else the preStop sleep plus the drain timeout rounded up
+to a second, plus 10 s. It is always above the sleep plus the drain timeout
+(smock.validate), so that smock can drain after the sleep.
 */}}
 {{- define "smock.terminationGracePeriodSeconds" -}}
 {{- if kindIs "invalid" .Values.terminationGracePeriodSeconds -}}
-{{- add (div (add (int64 .Values.drainTimeoutMs) 999) 1000) 10 -}}
+{{- add (int64 .Values.lifecycle.preStopSleepSeconds) (div (add (int64 .Values.drainTimeoutMs) 999) 1000) 10 -}}
 {{- else -}}
 {{- int64 .Values.terminationGracePeriodSeconds -}}
 {{- end -}}

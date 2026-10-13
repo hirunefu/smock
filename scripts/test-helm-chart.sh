@@ -464,10 +464,14 @@ check defaults "the Pod requests about one CPU core, and no CPU limit above it" 
   'smock | .resources.requests.cpu == "1" and ((.resources.limits.cpu // "1") | tostring | IN("1", "1000m"))'
 check defaults "smock is told the replica count, for the Admin API replica warning" \
   'env("SMOCK_REPLICAS").value == "1"'
-check defaults "smock drains for 20 s, and Kubernetes waits longer before it kills the Pod" \
-  'env("SMOCK_DRAIN_TIMEOUT_MS").value == "20000" and pod.terminationGracePeriodSeconds == 30'
+check defaults "Kubernetes sleeps 5 s in smock's preStop hook, so endpoints are gone before SIGTERM closes the listeners" \
+  'smock.lifecycle == {"preStop": {"sleep": {"seconds": 5}}}'
+check defaults "smock drains for 20 s after the sleep, and Kubernetes waits longer than both before it kills the Pod" \
+  'env("SMOCK_DRAIN_TIMEOUT_MS").value == "20000" and pod.terminationGracePeriodSeconds == 35'
 check defaults "no Service-link variables reach the environment, where smock reads its settings" \
   'pod.enableServiceLinks == false'
+check git-sync "only smock's container sleeps before SIGTERM; git-sync stops at once" \
+  '[containers | select(has("lifecycle")) | .name] == ["smock"]'
 
 render replicas --values "$tmp/values-token.yaml" --set replicas=3
 check replicas "the replicas value sets the Deployment and smock's replica count" \
@@ -475,18 +479,47 @@ check replicas "the replicas value sets the Deployment and smock's replica count
 
 render drain --values "$tmp/values-token.yaml" --set drainTimeoutMs=45500
 check drain "a longer drain timeout reaches smock and lengthens the grace period" \
-  'env("SMOCK_DRAIN_TIMEOUT_MS").value == "45500" and pod.terminationGracePeriodSeconds == 56'
+  'env("SMOCK_DRAIN_TIMEOUT_MS").value == "45500" and pod.terminationGracePeriodSeconds == 61'
 printf 'drainTimeoutMs: 1200000\n' >"$tmp/values-drain.yaml"
 render drain-long --values "$tmp/values-token.yaml" --values "$tmp/values-drain.yaml"
 check drain-long "a drain timeout from a values file is written out in full" \
-  'env("SMOCK_DRAIN_TIMEOUT_MS").value == "1200000" and pod.terminationGracePeriodSeconds == 1210'
+  'env("SMOCK_DRAIN_TIMEOUT_MS").value == "1200000" and pod.terminationGracePeriodSeconds == 1215'
+render pre-stop --values "$tmp/values-token.yaml" --set lifecycle.preStopSleepSeconds=15
+check pre-stop "a longer preStop sleep reaches smock's container and lengthens the grace period" \
+  'smock.lifecycle.preStop.sleep.seconds == 15 and pod.terminationGracePeriodSeconds == 45'
+printf 'lifecycle:\n  preStopSleepSeconds: 1000000\n' >"$tmp/values-pre-stop.yaml"
+render pre-stop-long --values "$tmp/values-token.yaml" --values "$tmp/values-pre-stop.yaml"
+check pre-stop-long "a preStop sleep from a values file is written out in full" \
+  'smock.lifecycle.preStop.sleep.seconds == 1000000 and pod.terminationGracePeriodSeconds == 1000030'
+render pre-stop-off --values "$tmp/values-token.yaml" --set lifecycle.preStopSleepSeconds=0
+check pre-stop-off "a preStop sleep of 0 leaves the hook out, so the chart also runs before Kubernetes 1.30" \
+  '(smock | has("lifecycle") | not) and pod.terminationGracePeriodSeconds == 30'
+for value in -1 2.5 soon; do
+  refuse pre-stop-invalid "a preStop sleep of $value" \
+    "lifecycle.preStopSleepSeconds must be a whole number of seconds, 0 or more" \
+    --values "$tmp/values-token.yaml" --set lifecycle.preStopSleepSeconds="$value"
+done
+printf 'lifecycle:\n  preStopSleepSeconds: 2.5\n' >"$tmp/values-pre-stop-fraction.yaml"
+refuse pre-stop-invalid "a preStop sleep of 2.5 from a values file" \
+  "lifecycle.preStopSleepSeconds must be a whole number of seconds, 0 or more, not 2.5" \
+  --values "$tmp/values-token.yaml" --values "$tmp/values-pre-stop-fraction.yaml"
 render grace --values "$tmp/values-token.yaml" --set terminationGracePeriodSeconds=90
-check grace "a grace period above the drain timeout is kept" 'pod.terminationGracePeriodSeconds == 90'
-for seconds in 20 5; do
-  refuse grace-too-short "a grace period of ${seconds} s, not above the drain timeout of 20 s" \
-    "terminationGracePeriodSeconds ($seconds) must be above the drain timeout, drainTimeoutMs (20000 ms)" \
+check grace "a grace period above the sleep plus the drain timeout is kept" 'pod.terminationGracePeriodSeconds == 90'
+render grace-tight --values "$tmp/values-token.yaml" --set terminationGracePeriodSeconds=26
+check grace-tight "a grace period 1 s above the sleep plus the drain timeout is kept" \
+  'pod.terminationGracePeriodSeconds == 26'
+for seconds in 25 20 5; do
+  refuse grace-too-short "a grace period of ${seconds} s, not above the 5 s sleep plus the 20 s drain timeout" \
+    "terminationGracePeriodSeconds ($seconds) must be above the preStop sleep, lifecycle.preStopSleepSeconds (5 s), plus the drain timeout, drainTimeoutMs (20000 ms)" \
     --values "$tmp/values-token.yaml" --set terminationGracePeriodSeconds="$seconds"
 done
+refuse grace-long-sleep "a grace period of 45 s, not above a 30 s sleep plus the 20 s drain timeout" \
+  "terminationGracePeriodSeconds (45) must be above the preStop sleep, lifecycle.preStopSleepSeconds (30 s), plus the drain timeout, drainTimeoutMs (20000 ms)" \
+  --values "$tmp/values-token.yaml" --set terminationGracePeriodSeconds=45 --set lifecycle.preStopSleepSeconds=30
+render grace-no-sleep --values "$tmp/values-token.yaml" --set terminationGracePeriodSeconds=21 \
+  --set lifecycle.preStopSleepSeconds=0
+check grace-no-sleep "without the sleep, a grace period 1 s above the drain timeout is kept" \
+  'pod.terminationGracePeriodSeconds == 21'
 
 cat >"$tmp/values-env.yaml" <<'YAML'
 env:

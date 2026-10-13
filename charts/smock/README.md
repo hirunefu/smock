@@ -11,6 +11,11 @@ Each release of smock publishes the chart at
 `oci://ghcr.io/hirunefu/charts/smock`, with the release's version as both its
 version and its app version, so it runs `ghcr.io/hirunefu/smock:<version>`.
 
+The chart needs Kubernetes 1.30 or later, for the `sleep` action of the
+preStop hook that smock's container runs before it stops (see
+[Scaling and shutdown](#scaling-and-shutdown)). On an older cluster, set
+`lifecycle.preStopSleepSeconds=0` to leave the hook out.
+
 ## Install
 
 The Admin API needs a token, from a Secret:
@@ -212,10 +217,21 @@ Admin API response warns when state is per replica. The value goes stale
 when something else changes the replica count, such as a
 HorizontalPodAutoscaler or `kubectl scale`.
 
-On SIGTERM smock drains for at most `drainTimeoutMs`.
-`terminationGracePeriodSeconds` is always above it (by default the drain
-timeout plus 10 s, and the chart refuses a shorter one), so that Kubernetes
-does not kill a draining Pod.
+When Kubernetes stops a Pod, during a rolling update for example, it takes
+the Pod out of its Services' endpoints, but kube-proxy and load balancers
+notice a moment later and may still send it new connections. So Kubernetes
+first runs smock's preStop hook, which sleeps for
+`lifecycle.preStopSleepSeconds` (5 s by default) while smock keeps serving
+and accepting connections. Only then does Kubernetes send SIGTERM, and
+smock closes its listeners and drains for at most `drainTimeoutMs`. The
+hook uses the Kubernetes `sleep` action, which needs Kubernetes 1.30 or
+later; `lifecycle.preStopSleepSeconds=0` leaves the hook out, so SIGTERM
+comes at once.
+
+The sleep and the drain both run within `terminationGracePeriodSeconds`,
+which is always above their sum: by default it is the sleep plus the drain
+timeout plus 10 s (35 s), and the chart refuses a shorter one, so that
+Kubernetes does not kill a draining Pod.
 
 ## Other settings
 
@@ -278,8 +294,9 @@ among them, and names the value to use instead.
 | `adminService.type` | `"ClusterIP"` | The admin Service type. |
 | `adminService.port` | `9090` | The admin Service's port. |
 | `adminService.annotations` | `{}` | Annotations of the admin Service. |
+| `lifecycle.preStopSleepSeconds` | `5` | How long smock's container sleeps in its preStop hook before SIGTERM, in seconds, while Services stop sending it connections. Needs Kubernetes 1.30 or later. 0: no hook. |
 | `drainTimeoutMs` | `20000` | How long smock drains after SIGTERM, in milliseconds (`SMOCK_DRAIN_TIMEOUT_MS`). |
-| `terminationGracePeriodSeconds` | `null` | The Pod's grace period; must be above the drain timeout. Empty: the drain timeout plus 10 s. |
+| `terminationGracePeriodSeconds` | `null` | The Pod's grace period, which the preStop sleep and the drain share; must be above their sum. Empty: the sleep plus the drain timeout plus 10 s. |
 | `resources` | `{"requests":{"cpu":"1","memory":"128Mi"},"limits":{"memory":"512Mi"}}` | Resources of the smock container: about one CPU core. Scale with `replicas`, not with a larger CPU limit. |
 | `env` | `{}` | Other smock settings, as `SMOCK_<NAME>` variables. |
 | `podAnnotations` | `{}` | Annotations of the Pods. |

@@ -123,10 +123,20 @@ adminService:
   port: 9090
   annotations: {}
 
+# How Kubernetes stops smock's container.
+lifecycle:
+  # How long the container sleeps in its preStop hook, in seconds, before
+  # Kubernetes sends SIGTERM. Services and load balancers take a moment to
+  # stop sending new connections to a Pod that is stopping; smock keeps
+  # accepting them meanwhile. The hook uses the Kubernetes sleep action,
+  # which needs Kubernetes 1.30 or later. 0: no hook.
+  preStopSleepSeconds: 5
+
 # How long smock drains after SIGTERM, in milliseconds.
 drainTimeoutMs: 20000
-# How long Kubernetes waits after SIGTERM before it kills the Pod. It must
-# be above the drain timeout. Empty: the drain timeout plus 10 s.
+# How long Kubernetes waits, once it starts stopping a Pod, before it kills
+# it. The preStop sleep and then the drain run within it, so it must be
+# above their sum. Empty: the sleep plus the drain timeout plus 10 s.
 terminationGracePeriodSeconds: null
 
 # About one CPU core per Pod: smock is single-threaded, so a CPU limit above

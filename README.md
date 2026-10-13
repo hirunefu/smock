@@ -167,7 +167,9 @@ flight, so that Ctrl-C stops a local smock promptly.
 - smock exits with status 0 as soon as nothing is in flight, and at the
   latest when the drain timeout (`--drain-timeout-ms`) expires: what is still
   running then is cut. Keep the Pod's `terminationGracePeriodSeconds` above
-  it.
+  it. On Kubernetes, also delay SIGTERM with a preStop sleep, so that
+  Services stop sending new connections before the listeners close; the
+  Helm chart does both.
 - The admin port serves until exit, so the probes can be read during the
   drain. Log entries mark the start of the drain (`drain started`, with
   `timeoutMs`) and its end (`drain ended`, with `connectionsCut`, the number
@@ -630,7 +632,11 @@ update reaches the running smock through its reload, without a restart
 git-sync sidecar or an OCI image volume can deliver them instead. The Pods
 meet the Restricted Pod Security Standard, run one replica with about one
 CPU core by default, and get the Admin API token and the TLS certificates,
-the default one and those of single Mocks, from Secrets. [charts/smock/README.md](charts/smock/README.md) describes the
+the default one and those of single Mocks, from Secrets. Before SIGTERM,
+smock's container sleeps in a preStop hook (5 s by default) while the Pod
+leaves its Services' endpoints, and the Pod's grace period covers that sleep
+and the drain; the hook's `sleep` action needs Kubernetes 1.30 or later.
+[charts/smock/README.md](charts/smock/README.md) describes the
 chart and lists every value with its default.
 
 ### Verify the image
