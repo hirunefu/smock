@@ -535,7 +535,8 @@ fn parse_head(
   body_limit : Int,
 ) -> Result[Head, Int] {
   let lines = split_lines(buf, start, end)
-  let (meth, target, version) = match parse_request_line(buf, lines[0]) {
+  let (meth, target, version) = match
+    parse_request_line(buf, lines[0], lines[1]) {
     Ok(line) => line
     Err(status) => return Err(status)
   }
@@ -546,21 +547,21 @@ fn parse_head(
   let mut expect_continue = false
   let mut hosts = 0
   let transfer_encodings = []
-  for line in lines[1:] {
-    let header = parse_field(buf, line)
+  for line in 1..<(lines.length() / 2) {
+    let header = parse_field(buf, lines[2 * line], lines[2 * line + 1])
     headers.push(header)
-    let name = header.name.to_lower()
-    if name == "host" {
+    let name = header.name
+    if is_name(name, "host") {
       // A Host field with an invalid value gets 400 (RFC 9112, section 3.2).
       if !is_host_value(@utf8.decode_lossy(header.value)) {
         return Err(400)
       }
       hosts += 1
-    } else if name == "transfer-encoding" {
+    } else if is_name(name, "transfer-encoding") {
       transfer_encodings.push(header.value)
-    } else if name == "content-length" {
+    } else if is_name(name, "content-length") {
       content_lengths.push(header.value)
-    } else if name == "connection" {
+    } else if is_name(name, "connection") {
       for token in list_elements(header.value) {
         match token.to_lower() {
           "close" => close = true
@@ -568,7 +569,7 @@ fn parse_head(
           _ => ()
         }
       }
-    } else if name == "expect" {
+    } else if is_name(name, "expect") {
       for expectation in list_elements(header.value) {
         if expectation.to_lower() == "100-continue" {
           expect_continue = true
@@ -684,19 +685,18 @@ fn list_elements(value : Bytes) -> Iter[StringView] {
 }
 
 ///|
-/// The `(start, end)` of each line of the head in `buf[start:end]`, without
-/// its CRLF and without the final empty line.
-fn split_lines(
-  buf : FixedArray[Byte],
-  start : Int,
-  end : Int,
-) -> Array[(Int, Int)] {
+/// The start and the end of each line of the head in `buf[start:end]`,
+/// without its CRLF and without the final empty line, one after the other:
+/// `[start0, end0, start1, end1, ...]`. The head scan has checked that every
+/// LF in a head ends a CRLF, so each LF ends a line.
+fn split_lines(buf : FixedArray[Byte], start : Int, end : Int) -> Array[Int] {
   let lines = []
   let mut line_start = start
   for i in start..<(end - 2) {
-    if buf[i] == b'\r' && buf[i + 1] == b'\n' {
-      lines.push((line_start, i))
-      line_start = i + 2
+    if buf[i] == b'\n' {
+      lines.push(line_start)
+      lines.push(i - 1)
+      line_start = i + 1
     }
   }
   lines
@@ -710,9 +710,9 @@ fn split_lines(
 /// request target, or in a form its method does not take, gets 400.
 fn parse_request_line(
   buf : FixedArray[Byte],
-  line : (Int, Int),
+  start : Int,
+  end : Int,
 ) -> Result[(String, String, Version), Int] {
-  let (start, end) = line
   // The method holds no space, and the version is the last 8 bytes,
   // `HTTP/D.D`.
   let mut space = start
@@ -740,8 +740,7 @@ fn is_digit(c : Byte) -> Bool {
 ///|
 /// Reads `field-name ":" OWS field-value OWS` from the line
 /// `buf[start:end]`, which the head scan has checked.
-fn parse_field(buf : FixedArray[Byte], line : (Int, Int)) -> Header {
-  let (start, end) = line
+fn parse_field(buf : FixedArray[Byte], start : Int, end : Int) -> Header {
   let mut colon = start
   while buf[colon] != b':' {
     colon += 1
@@ -790,11 +789,25 @@ fn is_ows(c : Byte) -> Bool {
 }
 
 ///|
-/// `buf[start:end]`, which holds only ASCII, as a string.
+/// `buf[start:end]`, which holds only ASCII, as a string. ASCII is UTF-8, so
+/// it is decoded as UTF-8, all at once.
 fn ascii(buf : FixedArray[Byte], start : Int, end : Int) -> String {
-  let out = StringBuilder()
-  for i in start..<end {
-    out.write_char(buf[i].to_char())
+  @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[start:end])
+}
+
+///|
+/// Whether the field name `name` is `lower`, which is in lower case, in any
+/// case. Field names are ASCII.
+fn is_name(name : String, lower : String) -> Bool {
+  if name.length() != lower.length() {
+    return false
   }
-  out.to_string()
+  for i in 0..<name.length() {
+    let c = name[i]
+    let c = if c >= 'A' && c <= 'Z' { c + 0x20 } else { c }
+    if c != lower[i] {
+      return false
+    }
+  }
+  true
 }
