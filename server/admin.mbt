@@ -46,9 +46,28 @@ priv struct Route {
   open : Bool
   /// Whether it takes a JSON request body.
   takes_body : Bool
-  /// What answers a call, given the request and its body, parsed as JSON
-  /// when there is one.
-  answer : (Admin, @http1.Request, Json?) -> Reply
+  /// What answers a call.
+  answer : (Admin, Call) -> Reply
+}
+
+///|
+/// One call of an operation.
+priv struct Call {
+  request : @http1.Request
+  /// Each `{name}` of the route's path, with the segment of the request's
+  /// path it stands for, as sent: still percent-encoded.
+  params : Map[String, String]
+  /// The body, parsed as JSON, for an operation that takes one and a
+  /// request that has one.
+  body : Json?
+}
+
+///|
+/// The path parameter `name` of the call, percent-decoded, with bytes that
+/// are not UTF-8 as U+FFFD: such as the Mock name `users api` in
+/// `/v1/mocks/users%20api/stubs`.
+fn Call::param(self : Call, name : String) -> String {
+  @percent.decode_lossy(self.params[name])
 }
 
 ///|
@@ -74,7 +93,7 @@ let routes : Array[Route] = [
 fn route(
   path : String,
   meth : String,
-  answer : (Admin, @http1.Request, Json?) -> Reply,
+  answer : (Admin, Call) -> Reply,
   open? : Bool = false,
   takes_body? : Bool = false,
 ) -> Route {
@@ -198,8 +217,13 @@ fn Admin::error(
 /// the JSON body, for an operation that takes one.
 fn Admin::handle(self : Admin, request : @http1.Request) -> Reply {
   let path = path_of(request.target)
-  let at_path = routes.filter(route => path_matches(route.path, path))
-  let open = at_path.length() > 0 && at_path.iter().all(route => route.open)
+  let at_path = []
+  for route in routes {
+    if path_params(route.path, path) is Some(params) {
+      at_path.push((route, params))
+    }
+  }
+  let open = at_path.length() > 0 && at_path.iter().all(at => at.0.open)
   if !open && self.token is Some(token) {
     match bearer_token(request) {
       None =>
@@ -216,9 +240,10 @@ fn Admin::handle(self : Admin, request : @http1.Request) -> Reply {
   }
   // HEAD is GET without the body, which the codec leaves out.
   let meth = if request.meth == "HEAD" { "GET" } else { request.meth }
-  guard at_path.search_by(route => route.meth == meth) is Some(i) else {
+  guard at_path.search_by(at => at.0.meth == meth) is Some(i) else {
     let allowed = []
-    for route in at_path {
+    for at in at_path {
+      let (route, _) = at
       allowed.push(route.meth)
       if route.meth == "GET" {
         allowed.push("HEAD")
@@ -233,7 +258,7 @@ fn Admin::handle(self : Admin, request : @http1.Request) -> Reply {
     reply.headers.push(("Allow", allow))
     return reply
   }
-  let route = at_path[i]
+  let (route, params) = at_path[i]
   // Every operation but the probes and the metrics needs the definitions.
   if !route.open && self.lifecycle.engine is None {
     return self.not_started()
@@ -257,23 +282,29 @@ fn Admin::handle(self : Admin, request : @http1.Request) -> Reply {
   } else {
     None
   }
-  (route.answer)(self, request, body)
+  (route.answer)(self, { request, params, body, })
 }
 
 ///|
-/// Whether `path` fits the route path `template`, where `{name}` stands
-/// for any one non-empty path segment.
-fn path_matches(template : String, path : String) -> Bool {
+/// The path parameters of `path` when it fits the route path `template`,
+/// where `{name}` stands for any one non-empty path segment: each name with
+/// its segment, as sent. `None` when it does not fit.
+fn path_params(template : String, path : String) -> Map[String, String]? {
   let expected = template.split("/").collect()
   let actual = path.split("/").collect()
-  expected.length() == actual.length() &&
-  expected
-  .iter()
-  .zip(actual.iter())
-  .all(pair => {
-    let (t, a) = pair
-    (t.has_prefix("{") && t.has_suffix("}") && a != "") || t == a
-  })
+  if expected.length() != actual.length() {
+    return None
+  }
+  let params = Map([])
+  for i, t in expected {
+    let a = actual[i]
+    if t.has_prefix("{") && t.has_suffix("}") && a != "" {
+      params[t[1:t.length() - 1].to_owned()] = a.to_owned()
+    } else if t != a {
+      return None
+    }
+  }
+  Some(params)
 }
 
 ///|
@@ -357,7 +388,7 @@ fn[T : ToJson] Admin::result(self : Admin, value : T) -> Reply {
 
 ///|
 /// Shows what this replica runs and serves.
-fn status(admin : Admin, _request : @http1.Request, _body : Json?) -> Reply {
+fn status(admin : Admin, _call : Call) -> Reply {
   let status = admin.engine().status()
   admin.json(200, {
     "version": Json::string(admin.build.version),
@@ -409,11 +440,7 @@ fn Admin::probe_ok(self : Admin) -> Reply {
 
 ///|
 /// The startup probe: it passes once the first definition set has loaded.
-fn startup_probe(
-  admin : Admin,
-  _request : @http1.Request,
-  _body : Json?,
-) -> Reply {
+fn startup_probe(admin : Admin, _call : Call) -> Reply {
   match admin.lifecycle.engine {
     Some(_) => admin.probe_ok()
     None => admin.not_started()
@@ -424,11 +451,7 @@ fn startup_probe(
 /// The readiness probe: it passes while smock serves, also after a reload
 /// that failed, since the previous definition set still serves. It fails
 /// before startup completes and from the moment smock starts to drain.
-fn readiness_probe(
-  admin : Admin,
-  _request : @http1.Request,
-  _body : Json?,
-) -> Reply {
+fn readiness_probe(admin : Admin, _call : Call) -> Reply {
   match (admin.lifecycle.phase, admin.lifecycle.engine) {
     (Serving, _) => admin.probe_ok()
     (Starting, None) => admin.not_started()
@@ -445,11 +468,7 @@ fn readiness_probe(
 /// The liveness probe: it passes whenever the event loop answers it,
 /// including while smock drains, so that a draining process is not killed
 /// early.
-fn liveness_probe(
-  admin : Admin,
-  _request : @http1.Request,
-  _body : Json?,
-) -> Reply {
+fn liveness_probe(admin : Admin, _call : Call) -> Reply {
   admin.probe_ok()
 }
 
@@ -460,13 +479,12 @@ fn liveness_probe(
 /// time the sample is received at and the seed of the random source the
 /// rendering draws from; without them, the time is now and the seed is a
 /// fresh one. Rendering changes nothing.
-fn render(admin : Admin, request : @http1.Request, body : Json?) -> Reply {
+fn render(admin : Admin, call : Call) -> Reply {
   let invalid = (message : String) => {
     admin.error(400, "invalid_request", message)
   }
-  let path = path_of(request.target)
-  let segment = path["/v1/stubs/".length():path.length() - "/render".length()]
-  let id = @percent.decode(segment) catch {
+  let request = call.request
+  let id = @percent.decode(call.params["id"]) catch {
     _ =>
       return invalid(
         "the Stub ID in the path is not valid percent-encoded UTF-8",
@@ -496,7 +514,7 @@ fn render(admin : Admin, request : @http1.Request, body : Json?) -> Reply {
           )
       }
   }
-  guard body is Some(json) else {
+  guard call.body is Some(json) else {
     return invalid("the body must be a sample request: a JSON object")
   }
   let sample = @engine.SampleRequest::from_json(json) catch {
@@ -544,7 +562,7 @@ fn query_parameter(target : String, name : String) -> Result[String?, String] {
 ///|
 /// Serves every metric in the Prometheus text format. The Journal's are
 /// brought up to date first, once the definitions have loaded.
-fn metrics(admin : Admin, _request : @http1.Request, _body : Json?) -> Reply {
+fn metrics(admin : Admin, _call : Call) -> Reply {
   if admin.lifecycle.engine is Some(engine) {
     admin.journal_metrics.update(engine.journal_stats())
   }

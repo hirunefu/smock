@@ -58,13 +58,9 @@ fn JournalMetrics::update(
 ///|
 /// Queries the calling Session's Journal entries with the filter and the
 /// limit in the body, oldest first.
-fn query_journal(
-  admin : Admin,
-  request : @http1.Request,
-  body : Json?,
-) -> Reply {
-  let session = admin.session(request)
-  guard body is Some(body) else {
+fn query_journal(admin : Admin, call : Call) -> Reply {
+  let session = admin.session(call.request)
+  guard call.body is Some(body) else {
     return admin.error(
       400, "invalid_request", "the body must be a Journal query: a JSON object, such as {\"filter\":{\"path\":\"/users/1\"},\"limit\":10}",
     )
@@ -87,13 +83,9 @@ fn query_journal(
 /// Counts the calling Session's Journal entries that pass the filter in
 /// the body, and checks the count exactly, at least or at most N. A failed
 /// check is still a 200 reply, with `ok` false.
-fn verify_journal(
-  admin : Admin,
-  request : @http1.Request,
-  body : Json?,
-) -> Reply {
-  let session = admin.session(request)
-  guard body is Some(body) else {
+fn verify_journal(admin : Admin, call : Call) -> Reply {
+  let session = admin.session(call.request)
+  guard call.body is Some(body) else {
     return admin.error(
       400, "invalid_request", "the body must be a verification: a JSON object, such as {\"filter\":{\"path\":\"/users/1\"},\"exactly\":1}",
     )
@@ -116,16 +108,12 @@ fn verify_journal(
 /// Lists the calling Session's Journal entries that no Stub answered,
 /// oldest first, each with its Near miss, at most as many as the `limit`
 /// query parameter says.
-fn list_unmatched(
-  admin : Admin,
-  request : @http1.Request,
-  _body : Json?,
-) -> Reply {
-  let session = admin.session(request)
+fn list_unmatched(admin : Admin, call : Call) -> Reply {
+  let session = admin.session(call.request)
   let invalid = (message : String) => {
     admin.error(400, "invalid_request", message)
   }
-  let limit = match query_parameter(request.target, "limit") {
+  let limit = match query_parameter(call.request.target, "limit") {
     Err(message) => return invalid(message)
     Ok(None) => None
     Ok(Some(text)) =>
