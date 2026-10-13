@@ -91,14 +91,8 @@ fn generate_self_signed(
     (config, generated.sha256_fingerprint)
   } catch {
     err => {
-      let reason = match err {
-        Failed(reason)
-        | InvalidCertificate(reason)
-        | InvalidPrivateKey(reason) => reason
-        KeyMismatch => "the private key does not match the certificate"
-      }
       logger.error("cannot generate a self-signed certificate", fields={
-        "error": Json::string(reason),
+        "error": Json::string(err.message()),
       })
       None
     }

@@ -30,10 +30,9 @@ fn load_pair(
   try
     @openssl.ServerConfig(certificate_chain=cert, private_key=key, alpn~)
   catch {
-    InvalidCertificate(reason) => Err("certificate file: \{reason}")
-    InvalidPrivateKey(reason) => Err("key file: \{reason}")
-    KeyMismatch => Err("the private key does not match the leaf certificate")
-    Failed(reason) => Err(reason)
+    InvalidCertificate(_) as err => Err("certificate file: \{err.message()}")
+    InvalidPrivateKey(_) as err => Err("key file: \{err.message()}")
+    err => Err(err.message())
   } noraise {
     config => Ok(config)
   }

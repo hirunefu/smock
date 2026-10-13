@@ -20,6 +20,18 @@ pub suberror TlsError {
 } derive(Debug, Eq)
 
 ///|
+/// Why it failed, without the file or the connection it is about, such as
+/// `no PEM certificate found` or `the private key does not match the leaf
+/// certificate`: the caller adds what it was loading.
+pub fn TlsError::message(self : TlsError) -> String {
+  match self {
+    InvalidCertificate(reason) | InvalidPrivateKey(reason) | Failed(reason) =>
+      reason
+    KeyMismatch => "the private key does not match the leaf certificate"
+  }
+}
+
+///|
 /// What reading plaintext from a Connection gave.
 pub(all) enum ReadResult {
   /// This many bytes were read into the buffer.
