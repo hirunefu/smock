@@ -837,6 +837,7 @@ latency for each case, and checks the provisional performance targets.
 | `bench/definitions/` | The definition set smock serves: four Mocks, one of them the Default Mock, and about 1,200 Stubs with exact, pattern and `json` conditions (`e2e/bench_test.mbt` pins the exact count). `bench/gen_definitions.py` writes it. |
 | `bench/requests.json` | The request mix: nine kinds of request, with weights, realistic headers, a Session in `baggage`, and bodies. |
 | `bench/plan.json` | The cases, the CPU limits, and the rates and durations. |
+| `bench/plan-autopilot.json` | Another plan: smock under the smallest GKE Autopilot Pods' CPU and memory limits, at ladders of rates. |
 | `bench/targets.json` | The provisional targets, the one place to change them. |
 
 `e2e/bench_test.mbt` checks on every test run that each request of the mix
@@ -849,41 +850,105 @@ and lands in the Journal under its Session. CI checks that
 It needs Linux on amd64 or arm64 with at least three CPUs, python3 3.10 or
 later, `openssl`, `taskset` and `lscpu` (util-linux), oha 1.16.0 on `PATH`
 (`scripts/install-oha.sh` installs it into `~/.local/bin`, checked against
-its digest), and a systemd user manager that can set CPU quotas: `cpu` must
-be in `/sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/cgroup.controllers`.
-Recent systemd delegates it by default; otherwise add a drop-in for
+its digest), and a systemd user manager that can set CPU quotas and memory
+limits: `cpu` and `memory` must be in
+`/sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/cgroup.controllers`.
+Recent systemd delegates them by default; otherwise add a drop-in for
 `user@.service` with `Delegate=cpu cpuset io memory pids`.
 
 ```sh
 scripts/build-release.sh                 # dist/smock, which the benchmark runs
 python3 bench/bench.py run               # the whole plan, about 20 minutes
 python3 bench/bench.py run --cases http-keep-alive --cpu-limits 1   # one case under one limit
+python3 bench/bench.py run --plan bench/plan-autopilot.json            # the GKE Autopilot profiles, about 18 minutes
+python3 bench/bench.py run --plan bench/plan-autopilot.json --profiles autopilot-burst-min   # one profile
 python3 bench/bench.py run --rate 500 --ramp 1 --duration 3 --tail 1 --settle 1 --cooldown 0   # a check of the setup, about 2 minutes
-python3 -m unittest discover -s bench -v # the harness's own tests, about 2 minutes
+python3 -m unittest discover -s bench -v # the harness's own tests, about 4 minutes
 ```
 
-`python3 bench/bench.py run --help` lists the options. A run writes to
-`bench/results/<date>-<time>/` unless `--out` says otherwise. Options that
-change the plan's rates or durations are for checking the setup: the run
-records them, and the summary says it was not a full run. For numbers worth
-comparing, close other programs and plug a laptop in; the conditions
-record the CPU frequency governor.
+`python3 bench/bench.py run --help` lists the options. A run first prints
+how long it will take, then writes to `bench/results/<date>-<time>/` unless
+`--out` says otherwise. Options that change the plan's rates or durations
+are for checking the setup: the run records them, and the summary says it
+was not a full run. For numbers worth comparing, close other programs and
+plug a laptop in; the conditions record the CPU frequency governor.
+
+### GKE Autopilot profiles
+
+`bench/plan-autopilot.json` runs smock as it would run in the smallest
+general-purpose GKE Autopilot Pods, simulated on your machine with the same
+cgroup limits:
+
+| Profile | CPU limit | Memory limit | What it is |
+|---|---|---|---|
+| `autopilot-burst-min` | 50m | 52 MiB | The smallest Pod where Pods may burst. |
+| `autopilot-min` | 250m | 512 MiB | The smallest Pod where they may not. |
+| `machine-min` | 1 | 4 GiB | The smallest machine of a series, such as `c4a-standard-1`. |
+
+A CPU limit equal to the request is a CFS quota over a 100 ms period, as
+here: under 50m, smock may run 5 ms in every 100 ms. smock runs with its
+defaults, the Journal's bounds included, so if they do not fit a memory
+limit, the run shows OOM kills rather than hiding them. Each profile
+measures idle RSS, then plain HTTP and TLS with keep-alive connections, each
+at a ladder of six fixed rates from 2,500 to 80,000 requests a second per
+CPU (125 to 4,000 under 50m), 20 seconds a step, so that the top of each
+ladder is beyond what smock sustains under the limit. A full run takes
+about 18 minutes; it prints its estimate before it starts.
+
+Before a full run:
+
+- Plug the laptop in, and close heavy programs (browsers, builds, other
+  benchmarks): smock and the load generator share this machine.
+- Set the CPU frequency governor to `performance`, in a terminal of your
+  own, since it needs root, and set it back afterwards (to the one
+  `scaling_governor` had, such as `schedutil`):
+
+  ```sh
+  echo performance | sudo tee /sys/devices/system/cpu/cpufreq/policy*/scaling_governor
+  scripts/build-release.sh
+  python3 bench/bench.py run --plan bench/plan-autopilot.json
+  echo schedutil | sudo tee /sys/devices/system/cpu/cpufreq/policy*/scaling_governor
+  ```
+
+The numbers are this machine's: the quota and the memory limit are the
+Pod's, but the CPU is not the one GKE schedules the Pod on, and the load
+comes over loopback, not a Pod network. Absolute numbers differ from GKE's;
+compare profiles with each other, and runs on the same machine. The summary
+says so too.
 
 ### What a run does
 
-- **Idle RSS.** smock starts with the benchmark's definitions under a 1-CPU
-  limit. Once it is ready and has idled for 5 seconds, its RSS is the idle
-  RSS.
-- **Cases.** Each case of `bench/plan.json` runs under each CPU limit it
-  has a rate for: 250m, 500m, 1 and 2 cores. The cases are plain HTTP and
-  TLS with keep-alive connections, plain HTTP and TLS with a new connection
-  per request, plain HTTP with 1000 idle connections held open during the
-  load, and a 10-minute run under 1 CPU that records RSS every second.
+- **Profiles.** A resource profile is a CPU limit and, optionally, a
+  memory limit. In `bench/plan.json` each CPU limit is a profile, named by
+  it, with no memory limit; `bench/plan-autopilot.json` names its profiles
+  and gives each a memory limit. `--profiles` and `--cpu-limits` select some.
+- **Idle RSS.** smock starts with the benchmark's definitions under a
+  profile: in `bench/plan.json` the 1-CPU one, in
+  `bench/plan-autopilot.json` each. Once it is ready and has idled for 5
+  seconds, its RSS is the idle RSS.
+- **Cases.** Each case of the plan runs under each profile it has a rate
+  for, or a ladder of rates, one step for each from the lowest. In
+  `bench/plan.json`, the profiles are 250m, 500m, 1 and 2 cores, and the
+  cases are plain HTTP and TLS with keep-alive connections, plain HTTP and
+  TLS with a new connection per request, plain HTTP with 1000 idle
+  connections held open during the load, and a 10-minute run under 1 CPU
+  that records RSS every second.
 - **CPU limits and pinning.** smock runs in its own systemd scope with a
-  CPU quota over the 100 ms period Kubernetes also uses, pinned to the two
-  fastest CPUs. The load generator and the harness run on the other CPUs.
-  The run reads the quota back from smock's cgroup and stops if it did not
-  take effect.
+  CPU quota over the 100 ms period Kubernetes also uses, pinned to the
+  fastest CPUs, as many as the largest CPU limit of the plan needs (two for
+  `bench/plan.json`). The load generator and the harness run on the other
+  CPUs. The run reads the quota back from smock's cgroup and stops if it
+  did not take effect.
+- **Memory limits and OOM kills.** Under a profile with a memory limit, the
+  scope also gets `MemoryMax` and `MemorySwapMax=0`, so smock cannot swap,
+  as in a Kubernetes container. The run reads `memory.max` and
+  `memory.swap.max` back and stops if they did not take effect. It records
+  smock's peak memory (`memory.peak`, all that `memory.max` counts: the
+  Journal, socket buffers and page cache included) and how many times the
+  kernel OOM-killed it, from `memory.events` of a slice that holds only
+  smock's scope, which outlives it. An OOM kill does not stop the run: a
+  case whose smock was killed before it was ready sends no load, and each
+  request of its window counts as an error.
 - **Fixed arrival rate.** oha sends each kind of request at its weight's
   share of the case's rate and connections. Its schedule releases request
   `i` at `i / rate` whether or not a connection is free to send it, and a
@@ -915,29 +980,36 @@ record the CPU frequency governor.
   measured, by the latency counted from the scheduled send times. A latency
   target holds for one case under one CPU limit at one rate. A run that did
   not run that case at that rate does not measure it, nor does one whose
-  load generator fell behind; any error misses it.
+  load generator fell behind; any error or OOM kill misses it. The idle
+  RSS target holds under every profile idle RSS was measured under.
 
 ### What a run writes
 
 - `conditions.json`: what ran where. The smock version, commit, toolchain
   and binary digest; the definition set digest and the Mocks; the request
-  mix; the architecture, CPU model, kernel and CPU governors; the CPU limits
-  and the CPUs of smock and of the load generator; each case's rate,
-  durations and connection counts; oha and its version; the targets file;
-  any options that changed the plan.
-- `summary.json`: for each case, the latency from the scheduled send times
-  and the latency from release (each p50, p90, p99, p99.9, max), the
-  generator lag (p50, p99, p99.9, max) and whether the load generator fell
-  behind, the achieved rate, the errors by kind, smock's CPU use and
-  throttling, the quota and CPUs read while it ran, smock's RSS (first,
-  last, max), the TCP connections the machine accepted during the load, and
-  the idle connections still open at its end. Then the idle RSS, and each
-  target with its verdict. `format` numbers the layout.
-- `summary.md`: the same for people.
-- `raw/<cpu limit>/<case>/`: `latency.json`, a histogram of the latencies
-  from the scheduled send times in microseconds to three significant digits; `rss.json`, smock's RSS
-  over time; smock's log; and oha's own report for each kind of request.
-  `raw/idle-rss.json` has the RSS samples of the idle measurement.
+  mix; the plan file; the architecture, CPU model, kernel and CPU
+  governors; the profiles with their CPU and memory limits, the CPU limits
+  and the CPUs of smock and of the load generator; each case's profile,
+  rate, durations and connection counts; oha and its version; the targets
+  file; any options that changed the plan.
+- `summary.json`: for each case at each rate (its `id` is
+  `<case>@<profile>`, and `@<rate>` when it climbs a ladder), the latency
+  from the scheduled send times and the latency from release (each p50,
+  p90, p99, p99.9, max), the generator lag (p50, p99, p99.9, max) and
+  whether the load generator fell behind, the achieved rate, the errors by
+  kind, smock's CPU use and throttling, the quota, memory limit and CPUs
+  read while it ran, smock's peak memory and OOM kills (`memory`), whether
+  smock got ready, smock's RSS (first, last, max), the TCP connections the
+  machine accepted during the load, and the idle connections still open at
+  its end. Then the idle RSS under each profile, with peak memory and OOM
+  kills, and each target with its verdict. `format` numbers the layout.
+- `summary.md`: the same for people, a section for each profile.
+- `raw/<profile>/<case>/` (`<case>@<rate>` for a ladder's steps):
+  `latency.json`, a histogram of the latencies from the scheduled send
+  times in microseconds to three significant digits; `rss.json`, smock's
+  RSS over time; smock's log; and oha's own report for each kind of
+  request. `raw/<profile>/idle-rss.json` has the RSS samples of the idle
+  measurement.
 
 ### In CI
 
