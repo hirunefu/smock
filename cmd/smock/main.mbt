@@ -1,7 +1,7 @@
 ///|
 /// Ends the process with `code`, through libc's `exit` (no C source).
 /// Usage errors, including invalid settings, exit with 2.
-extern "c" fn exit(code : Int) = "exit"
+extern "C" fn exit(code : Int) = "exit"
 
 ///|
 async fn main {
