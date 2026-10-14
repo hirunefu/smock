@@ -96,11 +96,12 @@ pre-merge run compares with them.
 
   Only the maintainer starts a run with `--yes`, since it costs money. It
   must end with `nothing is left`. A profile whose traffic ports did not
-  answer, or one of whose steps got no response at all, ends early: the
-  run says `profile <name> ended early` and why, goes on to the next
-  profile, and exits 1. Look at `raw/<profile>/smock.log` and
-  `raw/<profile>/service.json` in the results directory to find out why,
-  and run again once it is understood. If it says what is left instead, or
+  answer, before its first step or after a step that got no response at
+  all, ends early: the run says `profile <name> ended early` and why, goes
+  on to the next profile, and exits 1. Look at `raw/<profile>/smock.log`
+  and `raw/<profile>/service.json` in the results directory, and at the
+  address the load generator checked in `raw/<profile>/generator.log`, to
+  find out why, and run again once it is understood. If it says what is left instead, or
   was killed, delete what it names (it prints the commands), and check
   `watchdog.log` in the results directory: the watchdog deletes the
   cluster and the repository at the time limit even when the script was

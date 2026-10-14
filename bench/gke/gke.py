@@ -43,8 +43,10 @@ DNS_LABEL = re.compile(r"[a-z]([-a-z0-9]{0,61}[a-z0-9])?")
 
 def smock_name(profile_name):
     """The name of smock's Pod and Service under a profile: each profile has
-    its own, so that none reuses the ClusterIP or the datapath entries of
-    the previous profile's Service, deleted just before."""
+    its own, so that a lookup of its name cannot get the address of the
+    previous profile's Service, deleted just before, as under autopilot-min
+    on 2026-10-14 (its load went to the address of autopilot-burst-min's
+    Service, and nothing answered)."""
     return f"smock-{profile_name}"
 
 
@@ -69,10 +71,13 @@ SMOCK_EPHEMERAL_STORAGE = "64Mi"
 
 # How long the load generator may take for each step beyond its load (to
 # read oha's databases), to start and wait for smock, and for smock's
-# traffic ports to answer before the first step.
+# traffic ports to answer: before the first step, and once more after a
+# step with no response (a check that passes after such a step takes about
+# as long as one request).
 STEP_ANALYSIS_S = 15
 GENERATOR_START_S = 300
 TRAFFIC_CHECK_S = 60
+TRAFFIC_CHECKS = 2
 
 
 # What a run costs: on-demand prices of general-purpose (x86) Autopilot
@@ -175,7 +180,8 @@ def load_s(plan, specs):
 
 def job_deadline_s(plan, specs):
     """The load generator Job's activeDeadlineSeconds."""
-    return round(load_s(plan, specs) + len(specs) * STEP_ANALYSIS_S + GENERATOR_START_S + TRAFFIC_CHECK_S)
+    return round(load_s(plan, specs) + len(specs) * STEP_ANALYSIS_S + GENERATOR_START_S +
+                 TRAFFIC_CHECKS * TRAFFIC_CHECK_S)
 
 
 # The compute class of each architecture's Pods: the built-in autopilot-arm
@@ -529,7 +535,8 @@ def profile_results(out, plan, profile, cases, arch):
     planned = [spec["id"] for spec in steps(plan, profile, cases)]
     done = any(line["kind"] == "done" for line in lines)
     start = next((line for line in lines if line["kind"] == "start"), None)
-    check = next((line for line in lines if line["kind"] == "traffic-check"), None)
+    # The check before the first step, not one after a step.
+    check = next((line for line in lines if line["kind"] == "traffic-check" and "after" not in line), None)
     stopped = next((line for line in lines if line["kind"] == "stopped"), None)
     cpu_request = next((pod["cpu_request"] for pod in pods["generator"] if pod.get("cpu_request")), None)
     return {"steps": results, "complete": done and [result["id"] for result in results] == planned,

@@ -22,8 +22,8 @@
 #    of the time limit at the latest, so that they stop being billed even if
 #    nothing is left to delete the cluster; the next profile starts once
 #    they are gone, also after a profile that the load generator stopped
-#    early because smock's traffic ports did not answer or a step got no
-#    response;
+#    early because smock's traffic ports did not answer, before the first
+#    step or after a step that got no response;
 # 4. writes the load generator's lines, the Pods' state, smock's log and
 #    its Service with the Service's EndpointSlices under the results
 #    directory, and summary.json, summary.md and conditions.json, which
@@ -97,6 +97,12 @@ for repository in json.loads(sys.stdin.read() or "[]"):
 SMOCK_RESTARTS='
 import json, sys
 print(next(pod["restarts"] for pod in json.load(open(sys.argv[1]))["smock"] if pod["name"] == sys.argv[2]))
+'
+# Prints the profiles of summary.json (the argument) that are not complete,
+# space-separated.
+INCOMPLETE_PROFILES='
+import json, sys
+print(*(name for name, profile in json.load(open(sys.argv[1]))["gke"]["profiles"].items() if not profile["complete"]))
 '
 PROJECT=${GKE_BENCH_PROJECT:-}
 REGION=${GKE_BENCH_REGION:-}
@@ -959,10 +965,14 @@ wait_for_job() {
 
 # Keeps what smock left under a profile while its Pod and Service are still
 # there, masked: its log as smock.log (when it restarted, or that is not
-# known, its container before the last restart first), and its Service
-# with the Service's EndpointSlices as service.json.
+# known, its container before the last restart first), with kubectl's
+# errors in their place, and its Service with the Service's EndpointSlices
+# as service.json.
 keep_smock_state() {
   local smock_pod=$1 raw=$2 restarts
+  # kubectl itself, not the function kube, so that its errors stay in order
+  # with what it prints.
+  local logs=("$KUBECTL" --kubeconfig="$kubeconfig" --namespace="$NAMESPACE" logs)
   if [ "$dry_run" = 1 ]; then
     say "would keep smock's log as $raw/smock.log, and its Service and EndpointSlices as $raw/service.json"
     return 0
@@ -971,30 +981,32 @@ keep_smock_state() {
   refresh_token
   restarts=$("$PYTHON" -c "$SMOCK_RESTARTS" "$raw/pods.json" "$smock_pod" 2>/dev/null) || restarts=unknown
   if [ "$restarts" = 0 ]; then
-    kube logs "pod/$smock_pod" 2>>"$work/kubectl.log" | masked >"$raw/smock.log"
+    "${logs[@]}" "pod/$smock_pod" 2>&1 | masked >"$raw/smock.log"
   else
     {
       printf '# kubectl logs --previous: the container before the last restart (restarts: %s)\n' "$restarts"
-      kube logs --previous "pod/$smock_pod" 2>>"$work/kubectl.log"
+      "${logs[@]}" --previous "pod/$smock_pod"
       printf '# kubectl logs: the container at the end\n'
-      kube logs "pod/$smock_pod" 2>>"$work/kubectl.log"
-    } | masked >"$raw/smock.log"
+      "${logs[@]}" "pod/$smock_pod"
+    } 2>&1 | masked >"$raw/smock.log"
   fi
-  kube get service,endpointslices --output=json 2>>"$work/kubectl.log" | masked >"$raw/service.json"
+  kube get service,endpointslices --output=json | masked >"$raw/service.json" ||
+    say "cannot read smock's Service and its EndpointSlices; $raw/service.json may be empty"
 }
 
 # Runs one profile: smock, then the load generator, then what they left,
 # then deletes both. Fails when smock or the load generator could not start
 # (which the next profile would hit too). Returns 3 when the profile ran
 # but not all of its steps (its Job did not complete, or the load generator
-# stopped it early), and 4 when smock's Pod and Service were not deleted,
-# so that no later profile may run beside them.
+# stopped it early), and 4 when the load generator's Job or smock's Pod and
+# Service were not deleted, so that no later profile may run beside them.
 run_profile() {
   local name=$1 deadline_s=$2 job=generator-$1 manifests=$work/manifests/$1 raw=$out/raw/$1 status=0 waited ended
+  local left=""
   local smock_ref_shown=${smock_ref:-} generator_ref_shown=${generator_ref:-}
   # smock's Pod and Service, as gke.py names them: their own under each
-  # profile, so that none reuses the ClusterIP or the datapath entries of
-  # the previous profile's Service.
+  # profile, so that a lookup of the name cannot get the address of the
+  # previous profile's Service.
   local smock_pod=smock-$1
   # smock's Pod ends by itself at the time limit, counted from when its
   # node accepts it.
@@ -1045,11 +1057,14 @@ run_profile() {
     fi
   fi
   keep_smock_state "$smock_pod" "$raw"
+  # The next profile starts once the load generator's Job and Pod, and
+  # smock's Pod and Service, are gone.
   kube_run delete --filename="$manifests/generator.json" --ignore-not-found --cascade=foreground --wait=true \
-    --timeout=300s
-  # The next profile starts once smock's Pod and Service are gone.
-  if ! kube_run delete --filename="$manifests/smock.json" --ignore-not-found --wait=true --timeout=300s; then
-    say "smock's Pod and Service under $name were not deleted in 5 minutes: no later profile runs beside them"
+    --timeout=300s || left="the load generator's Job"
+  kube_run delete --filename="$manifests/smock.json" --ignore-not-found --wait=true --timeout=300s ||
+    left="${left:+$left, and }smock's Pod and Service"
+  if [ -n "$left" ]; then
+    say "not deleted in 5 minutes under $name: $left; no later profile runs beside them"
     return 4
   fi
   return "$status"
@@ -1126,6 +1141,13 @@ else
     ${ZONE:+--zone "$ZONE"} --arch "$arch" --started-at "$started_at" --finished-at "$finished_at" \
     --cluster-version "$cluster_version" --smock-image "${smock_ref##*@}" --generator-image "${generator_ref##*@}" \
     --smock-sha256 "$smock_sha256" "$out" || run_status=1
+  # Whatever the Jobs said: a log that lost lines leaves steps unmeasured.
+  if ! incomplete=$("$PYTHON" -c "$INCOMPLETE_PROFILES" "$out/summary.json" 2>/dev/null); then
+    run_status=1
+  elif [ -n "$incomplete" ]; then
+    say "not every step was measured under: $incomplete (summary.md says why)"
+    run_status=1
+  fi
   say "results: $out (summary.md, summary.json, conditions.json, raw/)"
   say "compare them with the previous pre-merge run's: python3 bench/compare.py <previous> $out"
 fi

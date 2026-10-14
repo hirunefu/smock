@@ -308,8 +308,13 @@ if tool == "kubectl":
     if words[:1] == ["delete"]:
         items = record["document"].get("items", [record["document"]])
         if config.get("delete_fails_on") and config["delete_fails_on"] in options["filename"]:
+            # As kubectl does: each object is marked deleted, and is still
+            # there when the wait gives up, which names the last one.
             time.sleep(0.2)
-            sys.stderr.write(f"error: timed out waiting for the condition on pods/{items[-1]['metadata']['name']}\n")
+            sys.stdout.write("".join(f'{item["kind"].lower()} "{item["metadata"]["name"]}" deleted\n'
+                                     for item in items))
+            sys.stderr.write(f"error: timed out waiting for the condition on {items[-1]['kind'].lower()}s/"
+                             f"{items[-1]['metadata']['name']}\n")
             answer("", 1)
         state(lambda value: [value.setdefault("objects", {}).pop(f"{item['kind']}/{item['metadata']['name']}", None)
                              for item in items])
@@ -803,6 +808,24 @@ class Diagnostics(Script):
         self.assertTrue(self.made(["logs", "pod/smock-small"]))
         self.assertTrue([call for call in self.calls("kubectl") if "--previous" in call["argv"]])
 
+    def test_a_smock_that_never_became_ready_keeps_its_log_with_kubectls_errors_and_its_service(self):
+        # Its restarts are not known then: the log of a container before the
+        # last restart is asked for too, and kubectl's answer that there is
+        # none is kept in its place.
+        self.configure(smock_ready={"status": 1, "stderr": "error: timed out waiting for the condition on "
+                                                           "pods/smock-small\n"})
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        self.assertIn("smock did not become ready under small", output)
+        log = (self.out / "raw" / "small" / "smock.log").read_text()
+        self.assertIn('Error from server (BadRequest): previous terminated container "smock" in pod "smock-small" '
+                      'not found', log)
+        self.assertTrue(log.endswith(SMOCK_LOG), log)
+        kept = json.loads((self.out / "raw" / "small" / "service.json").read_text())
+        self.assertEqual([item["metadata"]["name"] for item in kept["items"] if item["kind"] == "Service"],
+                         ["smock-small"])
+        self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
+
     def test_a_dry_run_says_what_it_would_keep(self):
         status, output = self.run_script("--dry-run")
         self.assertEqual(status, 0, output)
@@ -876,6 +899,29 @@ class Profiles(Script):
         self.assertFalse(summary["complete"])
         self.assertEqual({case["profile"] for case in summary["cases"]}, {"small"})
         self.assertEqual(self.state_now()["clusters"], {})
+        self.assertIn("nothing is left", output)
+
+    def test_a_load_generator_not_deleted_in_time_stops_the_later_profiles_too(self):
+        # Its Pod could hold the node, or the quota, the next one needs.
+        self.configure(delete_fails_on="manifests/small/generator.json")
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        self.assertIn("not deleted in 5 minutes under small: the load generator's Job; no later profile runs", output)
+        self.assertEqual([(verb, name) for verb, name, _ in self.smock_calls()],
+                         [("apply", "smock-small"), ("delete", "smock-small")])
+        self.assertFalse(json.loads((self.out / "summary.json").read_text())["complete"])
+        self.assertIn("nothing is left", output)
+
+    def test_a_log_that_lost_steps_fails_the_run_although_every_job_completed(self):
+        # The Job completed, and its log has the step at 500 requests/s
+        # only: no stopped line says why the other is missing.
+        (self.tmp / "generator-small.log").write_text(generator_log(rates=(500,)).replace(
+            '{"kind": "done", "profile": "small"}\n', ""))
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        self.assertNotIn("ended early", output)
+        self.assertIn("not every step was measured under: small (summary.md says why)", output)
+        self.assertFalse(json.loads((self.out / "summary.json").read_text())["complete"])
         self.assertIn("nothing is left", output)
 
     def test_a_profile_the_load_generator_stopped_early_is_reported_and_the_next_one_runs(self):

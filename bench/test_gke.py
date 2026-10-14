@@ -11,6 +11,7 @@ needs what the benchmark's own tests need: a release build of smock
 usage: python3 -m unittest discover -s bench -v
 """
 
+import importlib.util
 import json
 import os
 import platform
@@ -720,21 +721,29 @@ class Generator(Helper):
                          ["http-keep-alive@small", "https-keep-alive@small"])
         self.assertIn(f"small ended early: {stopped['reason']}.", markdown)
 
-    def test_a_step_with_no_response_at_all_stops_the_profiles_remaining_steps(self):
+    def test_a_step_with_no_response_at_all_stops_the_profiles_remaining_steps_when_smock_is_gone(self):
         # The plain port answers the traffic check, then hangs up on every
-        # connection.
+        # connection: the step and the check after it get no response.
         plan_path = self.generator_plan()
         with LocalSmock() as smock, SilentPort(answer_first=True) as gate:
             status, lines, output = self.generate(plan_path, smock, plain=gate.port)
         self.assertEqual(status, 0, output)
         self.assertEqual([line["kind"] for line in lines],
-                         ["start", "traffic-check", "metrics-before", "step", "stopped", "metrics-after", "done"])
+                         ["start", "traffic-check", "metrics-before", "step", "traffic-check", "stopped",
+                          "metrics-after", "done"])
         self.assertTrue(lines[1]["ok"], lines[1])
+        self.assertEqual(lines[1]["address"], "127.0.0.1")
         step = lines[3]["result"]
         self.assertEqual((step["id"], step["requests"]["ok"]), ("http-keep-alive@small", 0))
         self.assertEqual(step["requests"]["no_response"], step["requests"]["scheduled"])
-        stopped = lines[4]
+        check = lines[4]
+        self.assertEqual((check["after"], check["ok"], check["ports"]["plain"]["answered"]),
+                         ("http-keep-alive@small", False, False))
+        self.assertEqual(check["resolves_now"], "127.0.0.1")
+        stopped = lines[5]
         self.assertRegex(stopped["reason"], r"^http-keep-alive@small got no response to any of its \d+ requests")
+        self.assertIn(f", and smock did not answer through its Service in 2 s after it: plain port {gate.port} (",
+                      stopped["reason"])
         self.assertEqual((stopped["after"], stopped["steps"]), ("http-keep-alive@small", ["https-keep-alive@small"]))
 
         summary, conditions, markdown = self.summarize(plan_path, output)
@@ -745,6 +754,82 @@ class Generator(Helper):
                           "not_measured": ["https-keep-alive@small"]})
         self.assertIn("Not measured: https-keep-alive@small.", markdown)
 
+
+
+def load_generator_module():
+    """bench/gke/generator.py as a module, for its functions."""
+    spec = importlib.util.spec_from_file_location("generator", BENCH / "gke" / "generator.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def no_response_step(step_id, scheduled=12500, ok=0, errors=None):
+    """A step's result as the load generator reports it, with `ok` of its
+    `scheduled` requests answered and the others not."""
+    return {"id": step_id, "smock_ready": True,
+            "requests": {"scheduled": scheduled, "ok": ok, "unexpected_status": 0, "no_response": scheduled - ok},
+            "per_request": [{"oha_errors": errors or {}}]}
+
+
+def check_result(ok, address="34.118.229.110", resolves_now=None):
+    """A traffic check's result: both ports answered, or the TLS port did
+    not."""
+    tls = ({"port": 443, "answered": True, "status": 200, "attempts": 1, "seconds": 0.01, "error": None} if ok
+           else {"port": 443, "answered": False, "status": None, "attempts": 12, "seconds": 60.1, "error": "timed out"})
+    return {"ok": ok, "address": address, **({} if ok else {"resolves_now": resolves_now or address}),
+            "host": "catalog.bench.internal", "method": "GET", "target": "/catalog/items/SKU-00317", "window_s": 60,
+            "ports": {"plain": {"port": 80, "answered": True, "status": 200, "attempts": 1, "seconds": 0.01,
+                                "error": None}, "tls": tls}}
+
+
+class StopAfterAStep(unittest.TestCase):
+    """A step with no response stops the rest of its profile only when
+    smock does not answer a traffic check right after it: an overloaded
+    smock can answer none of a step's measured requests, busy with those of
+    its ramp until the step ends (https-keep-alive@autopilot-burst-min@4000
+    answered 1,271 of 80,000 on 2026-10-14), and still be there."""
+
+    generator = load_generator_module()
+    spec = {"id": "http-keep-alive@autopilot-min@4000"}
+    later = [{"id": "https-keep-alive@autopilot-min@625"}, {"id": "https-keep-alive@autopilot-min@1250"}]
+
+    def stop_after(self, result, later, check):
+        checks = []
+
+        def check_again():
+            checks.append(check)
+            return check
+
+        stopped, made = self.generator.stop_after(self.spec, result, later, check_again)
+        return stopped, made, len(checks)
+
+    def test_an_overloaded_smock_that_still_answers_goes_on(self):
+        stopped, check, checks = self.stop_after(no_response_step(self.spec["id"]), self.later, check_result(True))
+        self.assertIsNone(stopped)
+        self.assertEqual((check["ok"], checks), (True, 1))
+
+    def test_a_smock_that_does_not_answer_after_the_step_stops_the_rest(self):
+        stopped, check, _ = self.stop_after(no_response_step(self.spec["id"], errors={"timeout": 12500}),
+                                            self.later, check_result(False))
+        self.assertFalse(check["ok"])
+        self.assertEqual(stopped["reason"],
+                         "http-keep-alive@autopilot-min@4000 got no response to any of its 12,500 requests "
+                         "(oha: timeout), and smock did not answer through its Service in 60 s after it: "
+                         "TLS port 443 (timed out)")
+        self.assertEqual((stopped["after"], stopped["steps"]),
+                         (self.spec["id"], ["https-keep-alive@autopilot-min@625", "https-keep-alive@autopilot-min@1250"]))
+
+    def test_a_name_that_now_resolves_elsewhere_is_named(self):
+        stopped, _, _ = self.stop_after(no_response_step(self.spec["id"]), self.later,
+                                        check_result(False, resolves_now="34.118.228.162"))
+        self.assertTrue(stopped["reason"].endswith("; the address checked was 34.118.229.110, and smock's name now "
+                                                   "resolves to 34.118.228.162"), stopped["reason"])
+
+    def test_a_step_with_a_response_or_the_last_step_checks_nothing(self):
+        for result, later in ((no_response_step(self.spec["id"], ok=1), self.later),
+                              (no_response_step(self.spec["id"]), [])):
+            self.assertEqual(self.stop_after(result, later, check_result(False)), (None, None, 0))
 
 def elf_header(machine, elf_class=2, data=1, elf_type=2):
     """The first 20 bytes of an ELF file: its identification, type and
