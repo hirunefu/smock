@@ -1,0 +1,592 @@
+#!/usr/bin/env python3
+"""The parts of the GKE Autopilot run of the release benchmark that need no
+cloud: scripts/gke-bench.sh calls it, and so does the load generator
+(bench/gke/generator.py) for the steps of its profile.
+
+usage:
+  python3 bench/gke/gke.py plan [options]        the profiles a run runs, with their steps
+  python3 bench/gke/gke.py estimate [options]    how long a run takes and what it costs
+  python3 bench/gke/gke.py manifests [options]   the Kubernetes objects of one profile
+  python3 bench/gke/gke.py pod-info PODS NODES    what to keep of the Pods and their nodes
+  python3 bench/gke/gke.py summarize [options] OUT   summary.json, summary.md and conditions.json
+"""
+
+import argparse
+import importlib.util
+import json
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+GKE = Path(__file__).resolve().parent
+BENCH = GKE.parent
+
+# bench/bench.py, for the plan's profiles, cases and steps.
+_spec = importlib.util.spec_from_file_location("bench_harness", BENCH / "bench.py")
+harness = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(harness)
+
+# The namespace everything of the run lives in, and the name of smock's
+# Pod and Service in it.
+NAMESPACE = "smock-bench"
+SMOCK = "smock-bench"
+
+# The load generator's Pod: oha used at most about 1 vCPU at 50,000
+# requests a second over plain HTTP in the probe of 2026-10-14; TLS needs
+# more. Its ephemeral storage holds oha's databases of one step.
+GENERATOR_RESOURCES = {"cpu": "4", "memory": "4Gi", "ephemeral-storage": "2Gi"}
+
+# What smock may write: nothing but its log.
+SMOCK_EPHEMERAL_STORAGE = "64Mi"
+
+# How long the load generator may take for each step beyond its load (to
+# read oha's databases), and to start and wait for smock.
+STEP_ANALYSIS_S = 15
+GENERATOR_START_S = 300
+
+
+# What a run costs: on-demand prices of general-purpose Autopilot Pods,
+# which are billed for their requests, in USD an hour before tax, from
+# https://cloud.google.com/kubernetes-engine/pricing on 2026-10-14, and the
+# cluster management fee, the same in every region. A billing account's
+# free tier ($74.40 a month) covers the fee of one Autopilot or zonal
+# cluster. Arm Pods are priced here as x86 ones.
+PRICES_DATE = "2026-10-14"
+PRICES_URL = "https://cloud.google.com/kubernetes-engine/pricing"
+CLUSTER_FEE_PER_HOUR = 0.10
+POD_PRICES_PER_HOUR = {
+    "us-central1": {"vcpu": 0.0445, "memory_gib": 0.0049225, "ephemeral_gib": 0.0001389},
+    "asia-northeast1": {"vcpu": 0.0571, "memory_gib": 0.0063215, "ephemeral_gib": 0.0001784},
+}
+UNKNOWN_REGION_MARGIN = 1.3
+
+# How long the parts of a run take, from the probe of 2026-10-14: creating
+# the cluster took 9 minutes and deleting it 4; a new node was ready about
+# 75 s after its Pod was made; reading oha's databases took a few seconds a
+# step.
+CLUSTER_CREATE_S = 540
+CLUSTER_DELETE_S = 300
+PROFILE_START_S = 180
+EXPECTED_ANALYSIS_S = 5
+# A run must be done this long before its time limit.
+TIME_LIMIT_MARGIN_S = 600
+
+
+class GkeError(Exception):
+    """A problem with the plan or the files, with what to change."""
+
+
+def read_json(path):
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError) as error:
+        raise GkeError(f"cannot read {path}: {error}") from error
+
+
+def plan_profiles(plan, names=None):
+    """The profiles of the plan to run, all of them by default, in the
+    plan's order. A Pod on GKE needs a memory limit."""
+    profiles = harness.plan_profiles(plan)
+    for name in names or []:
+        if name not in [profile["name"] for profile in profiles]:
+            raise GkeError(f"the plan has no profile {name}")
+    profiles = [profile for profile in profiles if names is None or profile["name"] in names]
+    for profile in profiles:
+        if profile["memory_limit"] is None:
+            raise GkeError(f"profile {profile['name']} has no memory limit, which a Pod on GKE Autopilot needs: "
+                           "run a plan whose profiles have one, such as bench/plan-autopilot.json")
+    return profiles
+
+
+def plan_cases(plan, names=None):
+    """The cases of the plan to run, all of them by default. Only the
+    harness on one machine can hold idle connections."""
+    for name in names or []:
+        if name not in [case["name"] for case in plan["cases"]]:
+            raise GkeError(f"the plan has no case {name}")
+    cases = [case for case in plan["cases"] if names is None or case["name"] in names]
+    for case in cases:
+        if case.get("idle_connections"):
+            raise GkeError(f"case {case['name']} holds idle connections, which the GKE run cannot: "
+                           "leave it out with --cases")
+    return cases
+
+
+def comma_list(text):
+    """The items of a comma-separated list from the command line, or None."""
+    return text.split(",") if text else None
+
+
+def steps(plan, profile, cases):
+    """The steps of `cases` under `profile`, in the order bench/bench.py runs
+    them: each case of the plan, each rate of its ladder from the lowest,
+    with the same ids."""
+    run = SimpleNamespace(args=SimpleNamespace(duration=None), ramp_s=plan["ramp_s"],
+                          duration_s=plan["duration_s"], tail_s=plan["tail_s"], plan=plan)
+    specs = []
+    for case in cases:
+        rates = case["rates"].get(profile["name"]) if isinstance(case["rates"], dict) else None
+        if rates is None:
+            continue
+        ladder = sorted(rates) if isinstance(rates, list) else [rates]
+        specs += [harness.case_spec(run, case, profile, rate, ladder) for rate in ladder]
+    return specs
+
+
+def load_s(plan, specs):
+    """How long the steps' load lasts, with the pauses between them."""
+    return sum(spec["ramp_s"] + spec["duration_s"] + spec["tail_s"] for spec in specs) + \
+        max(0, len(specs) - 1) * plan["cooldown_s"]
+
+
+def job_deadline_s(plan, specs):
+    """The load generator Job's activeDeadlineSeconds."""
+    return round(load_s(plan, specs) + len(specs) * STEP_ANALYSIS_S + GENERATOR_START_S)
+
+
+def node_selector(arch, zone):
+    """Pins a Pod to the zone and to the architecture. Arm Pods run in the
+    built-in autopilot-arm compute class; amd64 Pods in Autopilot's default
+    general-purpose one."""
+    selector = {"kubernetes.io/arch": arch, "topology.kubernetes.io/zone": zone}
+    if arch == "arm64":
+        selector["cloud.google.com/compute-class"] = "autopilot-arm"
+    return selector
+
+
+def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, smock_deadline_s):
+    """The objects of one profile: {file name: object}. namespace.json holds
+    the namespace and its quota, smock.json smock's Service and Pod,
+    generator.json the load generator's Job.
+
+    smock runs in a Pod of its own, not a Deployment, so that it can have a
+    deadline (`smock_deadline_s`, the time left until the run's time limit,
+    which counts from when its node accepts it): like the load generator's
+    Job, it stops being billed by itself even when neither the run nor its
+    watchdog is left to delete the cluster."""
+    if smock_deadline_s < 1:
+        raise GkeError(f"smock's Pod needs a deadline of at least 1 s, not {smock_deadline_s}")
+    labels = {"app": SMOCK}
+    limits = {"cpu": profile["cpu_limit"], "memory": profile["memory_limit"],
+              "ephemeral-storage": SMOCK_EPHEMERAL_STORAGE}
+    pod_security = {"runAsNonRoot": True, "runAsUser": 65532, "runAsGroup": 65532,
+                    "seccompProfile": {"type": "RuntimeDefault"}}
+    container_security = {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
+                          "capabilities": {"drop": ["ALL"]}}
+    namespace = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": NAMESPACE}}
+    # Nothing billed apart from the Pods: no load balancer, node port or
+    # volume claim, and no more Pods than the run needs.
+    quota = {
+        "apiVersion": "v1", "kind": "ResourceQuota",
+        "metadata": {"name": "smock-bench", "namespace": NAMESPACE},
+        "spec": {"hard": {"services.loadbalancers": "0", "services.nodeports": "0", "persistentvolumeclaims": "0",
+                          "pods": "4"}},
+    }
+    service = {
+        "apiVersion": "v1", "kind": "Service",
+        "metadata": {"name": SMOCK, "namespace": NAMESPACE, "labels": labels},
+        "spec": {"type": "ClusterIP", "selector": labels,
+                 "ports": [{"name": "plain", "port": 80, "targetPort": 8080},
+                           {"name": "tls", "port": 443, "targetPort": 8443},
+                           {"name": "admin", "port": 9090, "targetPort": 9090}]},
+    }
+    pod = {
+        "apiVersion": "v1", "kind": "Pod",
+        "metadata": {"name": SMOCK, "namespace": NAMESPACE, "labels": {**labels, "profile": profile["name"]}},
+        "spec": {
+            # Restarted in place after an OOM kill, as a Deployment's Pod
+            # would be, until the deadline.
+            "restartPolicy": "Always",
+            "activeDeadlineSeconds": smock_deadline_s,
+            "nodeSelector": node_selector(arch, zone),
+            "enableServiceLinks": False,
+            "automountServiceAccountToken": False,
+            "terminationGracePeriodSeconds": 5,
+            "securityContext": pod_security,
+            "containers": [{
+                "name": "smock", "image": smock_image, "args": ["serve"],
+                "env": [{"name": "SMOCK_DIR", "value": "/definitions"},
+                        {"name": "SMOCK_ADMIN_AUTH", "value": "off"}],
+                "ports": [{"name": "plain", "containerPort": 8080}, {"name": "tls", "containerPort": 8443},
+                          {"name": "admin", "containerPort": 9090}],
+                "resources": {"requests": limits, "limits": limits},
+                "readinessProbe": {"httpGet": {"path": "/readyz", "port": 9090}, "periodSeconds": 5,
+                                   "failureThreshold": 2},
+                "securityContext": container_security,
+            }],
+        },
+    }
+    specs = steps(plan, profile, cases)
+    job = {
+        "apiVersion": "batch/v1", "kind": "Job",
+        "metadata": {"name": f"generator-{profile['name']}", "namespace": NAMESPACE,
+                     "labels": {"app": "smock-bench-generator", "profile": profile["name"]}},
+        "spec": {
+            "backoffLimit": 0,
+            "activeDeadlineSeconds": job_deadline_s(plan, specs),
+            "template": {
+                "metadata": {"labels": {"app": "smock-bench-generator", "profile": profile["name"]}},
+                "spec": {
+                    "restartPolicy": "Never",
+                    "nodeSelector": node_selector(arch, zone),
+                    "enableServiceLinks": False,
+                    "automountServiceAccountToken": False,
+                    "securityContext": pod_security,
+                    # Never on smock's node, so that smock's CPU is its own
+                    # and the load crosses the Pod network.
+                    "affinity": {"podAntiAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": [{
+                        "labelSelector": {"matchLabels": labels},
+                        "topologyKey": "kubernetes.io/hostname"}]}},
+                    "containers": [{
+                        "name": "generator", "image": generator_image,
+                        "env": [{"name": "TARGET", "value": f"{SMOCK}.{NAMESPACE}.svc.cluster.local"},
+                                {"name": "PROFILE", "value": profile["name"]},
+                                {"name": "CASES", "value": ",".join(case["name"] for case in cases)}],
+                        "resources": {"requests": GENERATOR_RESOURCES, "limits": GENERATOR_RESOURCES},
+                        "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}},
+                    }],
+                },
+            },
+        },
+    }
+    return {
+        "namespace.json": {"apiVersion": "v1", "kind": "List", "items": [namespace, quota]},
+        "smock.json": {"apiVersion": "v1", "kind": "List", "items": [service, pod]},
+        "generator.json": job,
+    }
+
+
+def cpus(limit):
+    return int(limit[:-1]) / 1000 if limit.endswith("m") else float(limit)
+
+
+def gib(limit):
+    return harness.memory_bytes(limit) / (1 << 30)
+
+
+def pod_price(prices, cpu, memory, ephemeral):
+    """What a Pod with these requests costs an hour."""
+    return cpus(cpu) * prices["vcpu"] + gib(memory) * prices["memory_gib"] + gib(ephemeral) * prices["ephemeral_gib"]
+
+
+def region_prices(region):
+    """The Pod prices of a region, and how they were found."""
+    if region in POD_PRICES_PER_HOUR:
+        return POD_PRICES_PER_HOUR[region], f"{region}, on-demand prices of {PRICES_DATE}, before tax"
+    base = POD_PRICES_PER_HOUR["us-central1"]
+    prices = {name: price * UNKNOWN_REGION_MARGIN for name, price in base.items()}
+    margin = round((UNKNOWN_REGION_MARGIN - 1) * 100)
+    return prices, (f"{region}: us-central1's prices plus {margin}%, on-demand prices of {PRICES_DATE}, before tax; "
+                    "this region's own are not here")
+
+
+def estimate(plan, profiles, cases, region, time_limit_s):
+    """How long a run takes and what it costs, for people, and why it does
+    not fit in its time limit, or None."""
+    prices, source = region_prices(region)
+    generator_price = pod_price(prices, GENERATOR_RESOURCES["cpu"], GENERATOR_RESOURCES["memory"],
+                                GENERATOR_RESOURCES["ephemeral-storage"])
+    smock_prices = {profile["name"]: pod_price(prices, profile["cpu_limit"], profile["memory_limit"],
+                                               SMOCK_EPHEMERAL_STORAGE) for profile in profiles}
+    smock_cost = generator_cost = generator_s = profiles_s = 0
+    for profile in profiles:
+        specs = steps(plan, profile, cases)
+        if not specs:
+            continue
+        load = load_s(plan, specs) + len(specs) * EXPECTED_ANALYSIS_S + 60
+        generator_s += load
+        profiles_s += PROFILE_START_S + load
+        smock_cost += smock_prices[profile["name"]] * (PROFILE_START_S + load) / 3600
+        generator_cost += generator_price * load / 3600
+    lifetime_s = CLUSTER_CREATE_S + profiles_s + CLUSTER_DELETE_S
+    fee = CLUSTER_FEE_PER_HOUR * lifetime_s / 3600
+    expected = fee + smock_cost + generator_cost
+    at_most = (CLUSTER_FEE_PER_HOUR + generator_price + max(smock_prices.values())) * \
+        (time_limit_s + CLUSTER_DELETE_S) / 3600
+    text = "\n".join([
+        f"Cost estimate ({source}; {PRICES_URL}):",
+        f"- The cluster: about {round(lifetime_s / 60)} minutes, from its creation to its deletion. Its management "
+        f"fee of ${CLUSTER_FEE_PER_HOUR:.2f} an hour comes to ${fee:.2f}, or $0 while the billing account's free "
+        "tier covers it (one Autopilot or zonal cluster).",
+        f"- smock's Pods, {len(profiles)} profile{'' if len(profiles) == 1 else 's'} one after the other: "
+        f"${smock_cost:.2f}.",
+        f"- The load generator's Pod ({GENERATOR_RESOURCES['cpu']} vCPU, {GENERATOR_RESOURCES['memory']}): about "
+        f"{round(generator_s / 60)} minutes, ${generator_cost:.2f}.",
+        "- Artifact Registry: two images of about 100 MB for under an hour, within the free 0.5 GB a month.",
+        "- No load balancer, static IP or volume: the run never makes one.",
+        f"Expected: about ${expected:.2f}, the cluster existing for about {round(lifetime_s / 60)} minutes.",
+        f"At most: ${at_most:.2f}, if it ran until the time limit ({round(time_limit_s / 60)} minutes), when the "
+        "watchdog deletes the cluster, and during the deletion.",
+        "If neither the run nor its watchdog could delete the cluster (the machine running them went down), its "
+        f"Pods still stop within minutes of the time limit, and the cluster costs its fee, "
+        f"${CLUSTER_FEE_PER_HOUR:.2f} an hour, "
+        "until it is deleted: the next run's checks name it.",
+        "Arm Pods are priced here as general-purpose x86 Pods: see the pricing page for autopilot-arm.",
+    ])
+    needed_s = lifetime_s + TIME_LIMIT_MARGIN_S
+    if needed_s <= time_limit_s:
+        return text, None
+    return text, (f"the run needs about {round(needed_s / 60)} minutes with a margin, more than the time limit of "
+                  f"{round(time_limit_s / 60)} minutes: run fewer profiles or cases, or raise the limit")
+
+
+# The labels of a node that say what it is and where.
+NODE_LABELS = {"instance_type": "node.kubernetes.io/instance-type", "arch": "kubernetes.io/arch",
+               "zone": "topology.kubernetes.io/zone", "machine_family": "cloud.google.com/machine-family",
+               "compute_class": "cloud.google.com/compute-class"}
+
+
+def pod_info(pod_list, node_list):
+    """What a run keeps of its Pods and of the nodes they ran on: where and
+    how they ran, and nothing that names the project, such as image
+    references or provider IDs."""
+    info = {"smock": [], "generator": [], "nodes": {}}
+    for pod in pod_list["items"]:
+        app = pod["metadata"].get("labels", {}).get("app")
+        status = pod.get("status", {})
+        if app == SMOCK:
+            container = (status.get("containerStatuses") or [{}])[0]
+            terminated = container.get("lastState", {}).get("terminated") or {}
+            info["smock"].append({
+                "name": pod["metadata"]["name"], "node": pod["spec"].get("nodeName"),
+                "ready": any(condition["type"] == "Ready" and condition["status"] == "True"
+                             for condition in status.get("conditions", [])),
+                "restarts": container.get("restartCount", 0), "last_termination": terminated.get("reason")})
+        elif app == "smock-bench-generator":
+            info["generator"].append({"name": pod["metadata"]["name"], "node": pod["spec"].get("nodeName"),
+                                      "phase": status.get("phase"), "reason": status.get("reason")})
+    used = {pod["node"] for pod in [*info["smock"], *info["generator"]]}
+    for node in node_list["items"]:
+        if node["metadata"]["name"] not in used:
+            continue
+        labels, status = node["metadata"].get("labels", {}), node["status"]
+        info["nodes"][node["metadata"]["name"]] = {
+            **{name: labels.get(label) for name, label in NODE_LABELS.items()},
+            "kernel": status["nodeInfo"]["kernelVersion"], "kubelet": status["nodeInfo"]["kubeletVersion"],
+            "os_image": status["nodeInfo"]["osImage"], "cpus": status["capacity"]["cpu"],
+            "allocatable_cpu": status["allocatable"]["cpu"]}
+    return info
+
+
+def generator_lines(path):
+    """The JSON lines of the load generator's log, without its progress
+    messages."""
+    lines = []
+    try:
+        text = Path(path).read_text()
+    except OSError:
+        return lines
+    for line in text.splitlines():
+        try:
+            value = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(value, dict) and "kind" in value:
+            lines.append(value)
+    return lines
+
+
+def profile_results(out, plan, profile, cases):
+    """What one profile's run left: its steps, whether it ran each step of
+    the plan, what the load generator said at its start, and its Pods."""
+    raw = Path(out) / "raw" / profile["name"]
+    lines = generator_lines(raw / "generator.log")
+    pods = read_json(raw / "pods.json") if (raw / "pods.json").exists() else {"smock": [], "generator": [],
+                                                                               "nodes": {}}
+    results = [line["result"] for line in lines if line["kind"] == "step"]
+    # smock's container restarts after an OOM kill: with none, the kernel
+    # never killed it; with some, which step they came in is unknown.
+    smock = pods["smock"]
+    oom_kills = 0 if len(smock) == 1 and smock[0]["restarts"] == 0 else None
+    for result in results:
+        result["memory"]["oom_kills"] = oom_kills
+    planned = [spec["id"] for spec in steps(plan, profile, cases)]
+    done = any(line["kind"] == "done" for line in lines)
+    start = next((line for line in lines if line["kind"] == "start"), None)
+    return {"steps": results, "complete": done and [result["id"] for result in results] == planned,
+            "start": start, "pods": pods}
+
+
+def node_text(node):
+    if node is None:
+        return "-"
+    return f"{node['instance_type']} ({node['arch']}, {node['zone']})"
+
+
+def gke_markdown(results):
+    """The part of summary.md that only a GKE run has: where each profile
+    ran, and smock's restarts."""
+    lines = ["", "## GKE Autopilot", "", "| Profile | smock's node | Load generator's node | smock restarts |",
+             "|---|---|---|---|"]
+    notes = []
+    for name, result in results.items():
+        pods = result["pods"]
+        smock = pods["smock"][0] if pods["smock"] else None
+        generator = pods["generator"][0] if pods["generator"] else None
+        restarts = "-" if smock is None else smock["restarts"]
+        lines.append(f"| {name} | {node_text(smock and pods['nodes'].get(smock['node']))} | "
+                     f"{node_text(generator and pods['nodes'].get(generator['node']))} | {restarts} |")
+        if smock and smock["restarts"]:
+            times = "time" if smock["restarts"] == 1 else "times"
+            notes.append(f"smock restarted {smock['restarts']} {times} under {name} "
+                         f"(last: {smock['last_termination']}): which steps its OOM kills came in is unknown, "
+                         "so they are not measured.")
+    if notes:
+        lines += ["", *notes]
+    return "\n".join(lines) + "\n"
+
+
+def command_summarize(args):
+    plan_path, targets_path = Path(args.plan), Path(args.targets)
+    plan = read_json(plan_path)
+    profiles = plan_profiles(plan, comma_list(args.profiles))
+    cases = plan_cases(plan, comma_list(args.cases))
+    out = Path(args.out)
+    results = {profile["name"]: profile_results(out, plan, profile, cases) for profile in profiles}
+    summary = {"format": harness.FORMAT, "complete": all(result["complete"] for result in results.values()),
+               "idle_rss": [], "cases": [step for result in results.values() for step in result["steps"]],
+               "targets": []}
+    summary["targets"] = [harness.check_target(target, summary) for target in harness.read_targets(targets_path)]
+    start = next((result["start"] for result in results.values() if result["start"]), None) or {}
+    status = start.get("status") or {}
+    first = next((result["pods"] for result in results.values() if result["pods"]["smock"]), None)
+    node = first["nodes"].get(first["smock"][0]["node"]) if first else None
+    mix = BENCH / "requests.json"
+    compute_class = node_selector(args.arch, args.zone).get("cloud.google.com/compute-class", "general-purpose")
+    conditions = {
+        "format": harness.FORMAT,
+        "started_at": args.started_at,
+        "finished_at": args.finished_at,
+        "smock": {"version": status.get("version"), "commit": status.get("commit"),
+                  "toolchain": status.get("toolchain"), "image": args.smock_image},
+        "definitions": {"directory": "bench/definitions", "digest": status.get("digest"),
+                        "mocks": status.get("mocks")},
+        "request_mix": {"file": harness.shown_path(mix), "sha256": harness.sha256_file(mix),
+                        "weights": {request["name"]: request["weight"] for request in read_json(mix)["requests"]}},
+        "plan": {"file": harness.shown_path(plan_path), "sha256": harness.sha256_file(plan_path)},
+        "targets": {"file": harness.shown_path(targets_path), "sha256": harness.sha256_file(targets_path)},
+        "note": (f"Measured on GKE Autopilot in {args.zone}: smock in a {compute_class} Pod with each profile's "
+                 "limits as its requests, and oha in a Pod on another node, over the Pod network. A GKE run does not "
+                 "measure idle RSS, peak memory or CPU throttling; OOM kills come from smock's restarts."),
+        "machine": {"architecture": args.arch,
+                    "cpu_model": f"GKE Autopilot {node['instance_type'] if node else 'node'}",
+                    "cpus": int(node["cpus"]) if node and str(node["cpus"]).isdigit() else None,
+                    "kernel": node["kernel"] if node else None},
+        "gke": {"region": args.region, "zone": args.zone, "compute_class": compute_class,
+                "cluster_version": args.cluster_version,
+                "profiles": {name: {"complete": result["complete"], **result["pods"]}
+                             for name, result in results.items()}},
+        "load_generator": {"name": "oha", "version": start.get("oha"), "image": args.generator_image,
+                           "resources": GENERATOR_RESOURCES},
+        "profiles": profiles,
+        "cases": [{key: spec[key] for key in (
+            "id", "profile", "protocol", "connection", "cpu_limit", "memory_limit", "rate", "ramp_s",
+            "duration_s", "tail_s", "connections", "idle_connections")}
+            for profile in profiles for spec in steps(plan, profile, cases)],
+        "overrides": {},
+    }
+    harness.write_json(out / "summary.json", summary)
+    harness.write_json(out / "conditions.json", conditions)
+    (out / "summary.md").write_text(harness.summary_markdown(summary, conditions) + gke_markdown(results))
+    return 0
+
+
+def command_plan(args):
+    plan = read_json(args.plan)
+    profiles = plan_profiles(plan, comma_list(args.profiles))
+    cases = plan_cases(plan, comma_list(args.cases))
+    for profile in profiles:
+        specs = steps(plan, profile, cases)
+        if specs:
+            print(profile["name"], len(specs), job_deadline_s(plan, specs))
+    return 0
+
+
+def command_estimate(args):
+    plan = read_json(args.plan)
+    profiles = plan_profiles(plan, comma_list(args.profiles))
+    cases = plan_cases(plan, comma_list(args.cases))
+    text, problem = estimate(plan, profiles, cases, args.region, args.time_limit_s)
+    print(text)
+    if problem:
+        raise GkeError(problem)
+    return 0
+
+
+def command_manifests(args):
+    plan = read_json(args.plan)
+    [profile] = plan_profiles(plan, [args.profile])
+    cases = plan_cases(plan, comma_list(args.cases))
+    rendered = manifests(plan, profile, cases, args.arch, args.zone, args.smock_image, args.generator_image,
+                         args.smock_deadline_s)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    for name, document in rendered.items():
+        (out / name).write_text(json.dumps(document, indent=2) + "\n")
+    return 0
+
+
+def command_pod_info(args):
+    print(json.dumps(pod_info(read_json(args.pods), read_json(args.nodes)), indent=2))
+    return 0
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(prog="gke.py", description=__doc__.split("\n\n")[0])
+    commands = parser.add_subparsers(dest="command", required=True)
+    planning = commands.add_parser("plan", help="list the profiles a run runs: name, steps, the Job's deadline (s)")
+    planning.add_argument("--plan", required=True, help="the plan, such as bench/plan-autopilot.json")
+    planning.add_argument("--profiles", help="only these profiles, comma-separated (default: every profile)")
+    planning.add_argument("--cases", help="only these cases, comma-separated (default: every case)")
+    planning.set_defaults(handler=command_plan)
+    estimating = commands.add_parser("estimate", help="say how long a run takes and what it costs")
+    estimating.add_argument("--plan", required=True, help="the plan, such as bench/plan-autopilot.json")
+    estimating.add_argument("--profiles", help="only these profiles, comma-separated (default: every profile)")
+    estimating.add_argument("--cases", help="only these cases, comma-separated (default: every case)")
+    estimating.add_argument("--region", required=True, help="the region, such as us-central1")
+    estimating.add_argument("--time-limit-s", type=int, required=True,
+                            help="seconds after which the watchdog deletes the cluster")
+    estimating.set_defaults(handler=command_estimate)
+    rendering = commands.add_parser("manifests", help="write the Kubernetes objects of one profile")
+    rendering.add_argument("--plan", required=True, help="the plan, such as bench/plan-autopilot.json")
+    rendering.add_argument("--profile", required=True, help="the profile")
+    rendering.add_argument("--cases", help="only these cases, comma-separated (default: every case)")
+    rendering.add_argument("--arch", required=True, choices=("arm64", "amd64"), help="the nodes' architecture")
+    rendering.add_argument("--zone", required=True, help="the zone smock and the load generator run in")
+    rendering.add_argument("--smock-image", required=True, help="smock's image, by digest")
+    rendering.add_argument("--generator-image", required=True, help="the load generator's image, by digest")
+    rendering.add_argument("--smock-deadline-s", type=int, required=True,
+                           help="how long smock's Pod may run, in seconds: the time left until the run's time limit")
+    rendering.add_argument("--out", required=True, help="the directory to write them to")
+    rendering.set_defaults(handler=command_manifests)
+    info = commands.add_parser("pod-info", help="print what to keep of the Pods and their nodes")
+    info.add_argument("pods", help="kubectl get pods -o json")
+    info.add_argument("nodes", help="kubectl get nodes -o json")
+    info.set_defaults(handler=command_pod_info)
+    summarizing = commands.add_parser("summarize", help="write summary.json, summary.md and conditions.json")
+    summarizing.add_argument("--plan", required=True, help="the plan the run ran")
+    summarizing.add_argument("--targets", default=str(BENCH / "targets.json"),
+                             help="the targets to check (default: bench/targets.json)")
+    summarizing.add_argument("--profiles",
+                             help="the profiles the run ran, comma-separated (default: every profile)")
+    summarizing.add_argument("--cases", help="the cases the run ran, comma-separated (default: every case)")
+    summarizing.add_argument("--region", required=True)
+    summarizing.add_argument("--zone", required=True)
+    summarizing.add_argument("--arch", required=True, choices=("arm64", "amd64"))
+    summarizing.add_argument("--started-at", required=True)
+    summarizing.add_argument("--finished-at", required=True)
+    summarizing.add_argument("--cluster-version")
+    summarizing.add_argument("--smock-image", help="smock's image digest")
+    summarizing.add_argument("--generator-image", help="the load generator's image digest")
+    summarizing.add_argument("out", help="the run's results: raw/<profile>/generator.log and pods.json")
+    summarizing.set_defaults(handler=command_summarize)
+    args = parser.parse_args(argv)
+    try:
+        return args.handler(args)
+    except (GkeError, harness.BenchError) as error:
+        print(f"gke: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,5 +1,10 @@
 {
   "about": "smock's provisional performance targets, as the maintainer decided them, which bench/bench.py checks on every run. They come from a one-off probe on GKE Autopilot: smock in arm64 general-purpose Pods on e4a nodes in us-central1, under each profile's CPU and memory limits, loaded by oha from a Pod on another node over the Pod network, with the request mix and http-keep-alive's ladders of bench/plan-autopilot.json (all but 30,000 a second per CPU, added since). Under each profile, smock kept up there with a rate at or above its target's. Runs of that plan on a laptop over loopback, such as an M1, typically do better than them. They are to be revisited after more measurements: changing one is a change to this file alone. Each entry holds under one resource profile of bench/plan-autopilot.json, by its name and its CPU and memory limits, and gives the most smock may reach there (at_most). The latency targets (p50_ms, p90_ms, p99_ms, p99_9_ms, max_ms), peak_memory_mib (memory.peak) and oom_kills hold at one load: the entry's case at its rate. idle_rss_mib holds for smock's RSS after startup under the profile, before any load. Latency counts from each request's scheduled send time, as the harness measures it: the load generator, oha with its 1 ms timer, adds about 2 ms at p99, which these values absorb. A run that did not run the profile with these limits, the case or the rate does not measure the target; a step whose load generator fell behind does not measure its latency targets; an OOM kill misses every target of its step, and failed requests miss its latency targets.",
+  "regression": {
+    "about": "When bench/compare.py calls a step a regression: its p99 or p99.9 got worse than in the older run by more than more_than_percent and by more than more_than_ms, at the same profile, case and rate. A change of at most 1 ms is within the resolution of oha's timer, which adds about 2 ms at p99 to every latency, so it is not counted as a regression however many percent it is.",
+    "more_than_percent": 20,
+    "more_than_ms": 1
+  },
   "profiles": [
     {
       "profile": "chart-default",

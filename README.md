@@ -109,7 +109,9 @@ on GitHub Pages, and `schema/v1/fixtures/` holds the Definition files that
 CI checks with both the Schema and smock.
 
 `bench/` is the release benchmark, and `.github/workflows/benchmark.yml`
-runs it when started by hand (see [Benchmark](#benchmark)).
+runs it when started by hand; `scripts/gke-bench.sh` runs it on GKE
+Autopilot before an integration branch is merged into `main` (see
+[Benchmark](#benchmark)).
 
 ## Run
 
@@ -867,12 +869,22 @@ latency for each case, and checks the provisional performance targets.
 | `bench/requests.json` | The request mix: nine kinds of request, with weights, realistic headers, a Session in `baggage`, and bodies. |
 | `bench/plan.json` | The cases, the CPU limits, and the rates and durations. |
 | `bench/plan-autopilot.json` | Another plan: smock under the CPU and memory limits of the smallest GKE Autopilot Pods and of the Helm chart's default, at ladders of rates. The targets hold under its profiles. |
-| `bench/targets.json` | The provisional targets, the one place to change them. |
+| `bench/targets.json` | The provisional targets, the one place to change them, and the rule that calls a change between two runs a regression. |
+| `bench/compare.py` | Compares two runs: p99 and p99.9 at each step both ran, and the targets the newer one missed. |
+| `bench/gke/` | The GKE Autopilot run's helper (`gke.py`: its plan, cost estimate, manifests and summary), its load generator (`generator.py`), and what its two images add. |
+| `scripts/gke-bench.sh` | Runs the benchmark on GKE Autopilot, end to end. |
 
 `e2e/bench_test.mbt` checks on every test run that each request of the mix
 reaches the Mock and the Stub it names, on the plain and on the TLS port,
 and lands in the Journal under its Session. CI checks that
 `bench/definitions/` is what `bench/gen_definitions.py` writes.
+
+The benchmark runs on a developer's machine. The full run of
+`bench/plan-autopilot.json`, a run on GKE Autopilot, and their comparison
+with the previous ones are part of the checklist before an integration
+branch is merged into `main`,
+[docs/merging-into-main.md](docs/merging-into-main.md). Nothing runs it on
+a schedule.
 
 ### Run it on your machine
 
@@ -892,7 +904,7 @@ python3 bench/bench.py run --cases http-keep-alive --cpu-limits 1   # one case u
 python3 bench/bench.py run --plan bench/plan-autopilot.json            # the profiles the targets hold under, about 20 minutes
 python3 bench/bench.py run --plan bench/plan-autopilot.json --profiles autopilot-burst-min   # one profile
 python3 bench/bench.py run --rate 500 --ramp 1 --duration 3 --tail 1 --settle 1 --cooldown 0   # a check of the setup, about 2 minutes
-python3 -m unittest discover -s bench -v # the harness's own tests, about 4 minutes
+python3 -m unittest discover -s bench -v # the harness's own tests, about 5 minutes
 ```
 
 `python3 bench/bench.py run --help` lists the options. A run first prints
@@ -1092,6 +1104,147 @@ target as not measured.
   request. `raw/<profile>/idle-rss.json` has the RSS samples of the idle
   measurement.
 
+### Comparing runs
+
+```sh
+python3 bench/compare.py <older> <newer>   # each a results directory, or its summary.json
+```
+
+`bench/compare.py` reads two runs' `summary.json` and prints a report in
+Markdown, ready to post. For each step both runs ran, a case under a
+profile at a rate, it shows p99 and p99.9 in each and how they changed.
+A step is a **regression** when either got worse by more than 20% and by
+more than 1 ms: a change within a millisecond is within what oha's 1 ms
+timer resolves, whatever its percentage. The rule is the `regression`
+entry of `bench/targets.json`, next to the targets.
+
+- A step is not compared where the older run did not measure smock: when
+  requests failed in it (past smock's capacity, the latencies measure the
+  queue), or the load generator fell behind, or smock was not ready. Nor
+  when the newer run's load generator fell behind, or the profile ran under
+  other limits.
+- Requests the newer run failed at a step the older one measured are a
+  regression, and so is a smock that was not ready.
+- Steps only one run has are listed, not compared.
+- A step the older run measured and the newer one did not, because the
+  newer run left it out or stopped before it, or its load generator fell
+  behind, fails the comparison: nothing says how smock did there.
+- It lists each target the newer run missed, with what it measured and
+  what the older run did, and the targets it did not measure.
+- From each run's `conditions.json`, it names the runs (smock's version and
+  commit, the machine, the plan) and lists the conditions besides smock
+  that differ, such as the CPU model, the plan or oha. Compare runs of the
+  same kind: a GKE run with a GKE run, a run on a machine with a run on the
+  same machine. It says so when one run is on GKE and the other is not.
+
+It exits with 1 when it finds a regression, a missed target or a step the
+newer run did not measure, and with 2 when it cannot compare, such as for a
+summary of another `format`.
+
+### On GKE Autopilot
+
+`scripts/gke-bench.sh` runs `bench/plan-autopilot.json` on real GKE
+Autopilot: smock in a Pod with each profile's limits as its requests, the
+load from another node over the Pod network. It is part of the
+[checklist before merging into main](docs/merging-into-main.md), and costs
+money: about $0.20 a run (2026-10-14 prices, us-central1), which it
+estimates before it makes anything.
+
+```sh
+export GKE_BENCH_PROJECT=<project ID> GKE_BENCH_REGION=us-central1
+scripts/gke-bench.sh --dry-run    # the checks, the estimate, and every command it would run; reads only
+scripts/gke-bench.sh              # the checks and the estimate; makes nothing
+scripts/gke-bench.sh --yes        # runs it, about 50 minutes
+```
+
+It needs gcloud (logged in), docker, kubectl, python3, setsid, and to
+build the release binary the MoonBit toolchain (or `--smock` with a
+binary). `GCLOUD`, `KUBECTL`, `DOCKER` and `PYTHON` name other commands
+than those on `PATH`. `scripts/gke-bench.sh --help` lists its options: some
+profiles or cases only, another plan, the results directory, the time
+limit.
+
+- **Checks, before anything is made.** It reads the project, checks that
+  the Artifact Registry, Compute Engine and Kubernetes Engine APIs are
+  enabled (it prints the command that enables them; `--enable-apis` runs
+  it), that the zone is in the region, that `CPUS_ALL_REGIONS` and the
+  region's `CPUS` quota have 32 vCPUs free (`GKE_BENCH_NEEDED_CPUS`), for
+  four nodes of 8 vCPUs: Autopilot's first node, its system node, smock's
+  and the load generator's (in the probe, a quota of 24 held the load
+  generator's node back), and that no cluster or repository of an earlier
+  run is left. Then it prints
+  how long the run takes and what it costs, expected and at most, and
+  stops unless `--yes` says to go on.
+- **Images.** It builds the release binary, and two images for this
+  machine's architecture: the release image with `bench/definitions/`
+  (`bench/gke/smock-definitions.dockerfile`), and the load generator's
+  (`bench/gke/generator.Dockerfile`: Python, the pinned oha, `bench.py`,
+  the plan and `bench/gke/`). It pushes them to a new Artifact Registry
+  repository, and lets the nodes' service account (the project's Compute
+  Engine default one, or `GKE_BENCH_NODE_SERVICE_ACCOUNT`, which the nodes
+  then run as) read that repository only.
+- **Cluster.** A new Autopilot cluster on the Regular channel. The cluster
+  and the repository are named `smock-bench-<date>-<time>` and labelled
+  `purpose=smock-bench`. kubectl authenticates with an access token from
+  gcloud, in a kubeconfig of the run's own (mode 600, deleted at the end),
+  so gke-gcloud-auth-plugin is not needed and `~/.kube/config` is not
+  touched.
+- **Profiles.** For each profile: smock in a Pod, with the profile's CPU
+  and memory limits as its requests, behind a ClusterIP Service, then the
+  load generator (`bench/gke/generator.py`) in a Job with 4 vCPU and 4 GiB
+  and a required anti-affinity that keeps it off smock's node. Both have an
+  `activeDeadlineSeconds` that ends them within minutes of the time limit
+  at the latest, so that they stop being billed even if nothing is left to
+  delete the cluster (smock is a Pod, not a Deployment, to have one). Both
+  are pinned to one zone (`GKE_BENCH_ZONE`, by default `<region>-a`) and to
+  this machine's architecture: the built-in `autopilot-arm` compute class
+  on arm64, Autopilot's default general-purpose Pods on amd64. The load
+  generator sends each step the way `bench/bench.py` does, with its
+  functions, and prints one JSON line for each step, a case as
+  `summary.json` has it.
+  The namespace's quota allows no LoadBalancer, NodePort or volume claim,
+  and the run makes no static IP.
+- **Always deleted.** When the run ends, fails or is stopped (Ctrl-C,
+  SIGTERM, a closed terminal), it deletes the cluster and the repository;
+  after a closed terminal it logs that to `after-hangup.log` in the results
+  directory. A watchdog in its own session deletes them at the time limit
+  (`--time-limit` with its unit, 80m by default and at most 240m) even if
+  the script was killed; nothing is made until the watchdog has started.
+  At the end it lists the project's clusters, repositories, VM instances,
+  disks, addresses and forwarding rules, and fails, naming them, if any is
+  new since the start.
+- **When the machine goes away.** The watchdog runs on the machine that
+  runs the script: if that machine sleeps, loses its network or shuts down,
+  nothing deletes the cluster until it is back. Keep it awake and on power
+  for the run (on Linux, for example, under `systemd-inhibit`). The Pods
+  still end soon after the time limit, so a cluster left this way costs
+  its fee, $0.10 an hour, until deleted (the free tier covers one
+  cluster); a later `scripts/gke-bench.sh --dry-run` names it.
+- **Architectures.** The images are built for the machine that runs the
+  script. To measure the other architecture, run it on a machine of that
+  one, such as GitHub's `ubuntu-24.04-arm` runner in a workflow of your own
+  that logs gcloud in (for example with Workload Identity Federation); this
+  repository has none, since a pre-merge run is the maintainer's. A runner
+  takes the watchdog with it when the job is cancelled or times out, so
+  such a workflow needs a last step that always runs and deletes the
+  clusters and repositories named `smock-bench-*`.
+
+It writes to `bench/results/gke-<date>-<time>/` unless `--out` says
+otherwise: `raw/<profile>/generator.log`, the load generator's lines;
+`raw/<profile>/pods.json`, the nodes the Pods ran on and smock's restarts;
+`summary.json` in the layout of a run on a machine, which
+`bench/compare.py` reads; `summary.md`; `conditions.json`; and
+`watchdog.log`. A GKE run does not measure idle RSS, peak memory or CPU
+throttling, so their targets are not measured; OOM kills come from smock's
+restarts. Nothing it writes names the account or the project, and what it
+prints shows the project as `$GKE_BENCH_PROJECT` and gcloud's account as
+`<account>`.
+
+`python3 -m unittest discover -s bench` tests the helper, the load
+generator against smock on this machine, and the script against fake
+gcloud, kubectl and docker commands, including that every way a run ends
+deletes what it made.
+
 ### In CI
 
 `.github/workflows/benchmark.yml` runs the benchmark on linux/amd64 and
@@ -1101,9 +1254,11 @@ the runner's systemd user manager set CPU quotas, runs the harness's tests
 and then the whole of `bench/plan.json`, whose profiles have no memory
 limits, so it reports the [targets](#targets) as not measured. The output
 of each architecture is a workflow artifact, `benchmark-linux-amd64` and
-`benchmark-linux-arm64`, and the run's page shows the summaries. It never runs on pull requests or pushes;
-`scripts/check-benchmark-workflow.sh` checks that in CI. GitHub's shared
-runners vary from run to run, so a single run is a rough measure.
+`benchmark-linux-arm64`, and the run's page shows the summaries. It never
+runs on a schedule, on pull requests or on pushes:
+`scripts/check-benchmark-workflow.sh` checks in CI that it has no trigger
+but `workflow_dispatch`. GitHub's shared runners vary from run to run, so a
+single run is a rough measure.
 
 ## Licence
 

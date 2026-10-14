@@ -1,8 +1,9 @@
 #!/bin/sh
 # Checks the rules of the benchmark workflow (.github/workflows/benchmark.yml):
 #
-# - it runs only when started by hand (workflow_dispatch), so never on pull
-#   requests or pushes;
+# - it runs only when started by hand (workflow_dispatch), so never on a
+#   schedule, on pull requests or on pushes: benchmarks run before an
+#   integration branch is merged into main (docs/merging-into-main.md);
 # - its permissions are read-only, and it uses no secrets;
 # - it runs the benchmark (bench/bench.py run) on linux/amd64 and on
 #   linux/arm64;
