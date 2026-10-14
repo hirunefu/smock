@@ -9,6 +9,7 @@ usage:
   python3 bench/gke/gke.py manifests [options]   the Kubernetes objects of one profile
   python3 bench/gke/gke.py pod-info PODS NODES    what to keep of the Pods and their nodes
   python3 bench/gke/gke.py summarize [options] OUT   summary.json, summary.md and conditions.json
+  python3 bench/gke/gke.py stopped LOG            why the load generator stopped its profile early, if it did
   python3 bench/gke/gke.py elf-arch FILE          the architecture of an executable, amd64 or arm64
   python3 bench/gke/gke.py names-commit FILE COMMIT   fail if smock's build information does not name COMMIT
   python3 bench/gke/gke.py check-dockerfiles FILE...   fail if a Dockerfile has a RUN instruction
@@ -31,23 +32,47 @@ _spec = importlib.util.spec_from_file_location("bench_harness", BENCH / "bench.p
 harness = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(harness)
 
-# The namespace everything of the run lives in, and the name of smock's
-# Pod and Service in it.
+# The namespace everything of the run lives in, and the label of smock's
+# Pods in it.
 NAMESPACE = "smock-bench"
 SMOCK = "smock-bench"
 
-# The load generator's Pod: oha used at most about 1 vCPU at 50,000
-# requests a second over plain HTTP in the probe of 2026-10-14; TLS needs
-# more. Its ephemeral storage holds oha's databases of one step.
-GENERATOR_RESOURCES = {"cpu": "4", "memory": "4Gi", "ephemeral-storage": "2Gi"}
+# What a name in Kubernetes may be: a Service's (a DNS label of RFC 1035).
+DNS_LABEL = re.compile(r"[a-z]([-a-z0-9]{0,61}[a-z0-9])?")
+
+
+def smock_name(profile_name):
+    """The name of smock's Pod and Service under a profile: each profile has
+    its own, so that none reuses the ClusterIP or the datapath entries of
+    the previous profile's Service, deleted just before."""
+    return f"smock-{profile_name}"
+
+
+# The load generator's Pod, by the nodes' architecture: oha used at most
+# about 1 vCPU at 50,000 requests a second over plain HTTP in the arm64
+# probe of 2026-10-14; TLS needs more. On x86 a vCPU is a hyperthread, and
+# with 4 the load generator fell behind its schedule at 20,000 requests a
+# second and above (the amd64 run of 2026-10-14), so it has 6 there. Either
+# fits an 8-vCPU node (7910m allocatable on ek-standard-8 and
+# e4a-standard-8 in those runs) with at least 1 vCPU left for Autopilot's
+# own Pods on it, so that the run's CPU quota of three such nodes holds.
+# oha's worker threads and the split of the connections between the
+# requests of the mix do not depend on the number of CPUs. Its ephemeral
+# storage holds oha's databases of one step.
+GENERATOR_RESOURCES = {
+    "amd64": {"cpu": "6", "memory": "6Gi", "ephemeral-storage": "2Gi"},
+    "arm64": {"cpu": "4", "memory": "4Gi", "ephemeral-storage": "2Gi"},
+}
 
 # What smock may write: nothing but its log.
 SMOCK_EPHEMERAL_STORAGE = "64Mi"
 
 # How long the load generator may take for each step beyond its load (to
-# read oha's databases), and to start and wait for smock.
+# read oha's databases), to start and wait for smock, and for smock's
+# traffic ports to answer before the first step.
 STEP_ANALYSIS_S = 15
 GENERATOR_START_S = 300
+TRAFFIC_CHECK_S = 60
 
 
 # What a run costs: on-demand prices of general-purpose (x86) Autopilot
@@ -97,6 +122,10 @@ def plan_profiles(plan, names=None):
             raise GkeError(f"the plan has no profile {name}")
     profiles = [profile for profile in profiles if names is None or profile["name"] in names]
     for profile in profiles:
+        if not DNS_LABEL.fullmatch(smock_name(profile["name"])) or \
+                not DNS_LABEL.fullmatch(f"generator-{profile['name']}"):
+            raise GkeError(f"profile {profile['name']} cannot name a Kubernetes Service ({smock_name(profile['name'])}) "
+                           "or Job: name it with lowercase letters, digits and hyphens, in 53 characters at most")
         if profile["memory_limit"] is None:
             raise GkeError(f"profile {profile['name']} has no memory limit, which a Pod on GKE Autopilot needs: "
                            "run a plan whose profiles have one, such as bench/plan-autopilot.json")
@@ -146,7 +175,7 @@ def load_s(plan, specs):
 
 def job_deadline_s(plan, specs):
     """The load generator Job's activeDeadlineSeconds."""
-    return round(load_s(plan, specs) + len(specs) * STEP_ANALYSIS_S + GENERATOR_START_S)
+    return round(load_s(plan, specs) + len(specs) * STEP_ANALYSIS_S + GENERATOR_START_S + TRAFFIC_CHECK_S)
 
 
 # The compute class of each architecture's Pods: the built-in autopilot-arm
@@ -180,6 +209,7 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
     watchdog is left to delete the cluster."""
     if smock_deadline_s < 1:
         raise GkeError(f"smock's Pod needs a deadline of at least 1 s, not {smock_deadline_s}")
+    name = smock_name(profile["name"])
     labels = {"app": SMOCK}
     limits = {"cpu": profile["cpu_limit"], "memory": profile["memory_limit"],
               "ephemeral-storage": SMOCK_EPHEMERAL_STORAGE}
@@ -198,15 +228,15 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
     }
     service = {
         "apiVersion": "v1", "kind": "Service",
-        "metadata": {"name": SMOCK, "namespace": NAMESPACE, "labels": labels},
-        "spec": {"type": "ClusterIP", "selector": labels,
+        "metadata": {"name": name, "namespace": NAMESPACE, "labels": labels},
+        "spec": {"type": "ClusterIP", "selector": {**labels, "profile": profile["name"]},
                  "ports": [{"name": "plain", "port": 80, "targetPort": 8080},
                            {"name": "tls", "port": 443, "targetPort": 8443},
                            {"name": "admin", "port": 9090, "targetPort": 9090}]},
     }
     pod = {
         "apiVersion": "v1", "kind": "Pod",
-        "metadata": {"name": SMOCK, "namespace": NAMESPACE, "labels": {**labels, "profile": profile["name"]}},
+        "metadata": {"name": name, "namespace": NAMESPACE, "labels": {**labels, "profile": profile["name"]}},
         "spec": {
             # Restarted in place after an OOM kill, as a Deployment's Pod
             # would be, until the deadline.
@@ -260,10 +290,10 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
                     },
                     "containers": [{
                         "name": "generator", "image": generator_image,
-                        "env": [{"name": "TARGET", "value": f"{SMOCK}.{NAMESPACE}.svc.cluster.local"},
+                        "env": [{"name": "TARGET", "value": f"{name}.{NAMESPACE}.svc.cluster.local"},
                                 {"name": "PROFILE", "value": profile["name"]},
                                 {"name": "CASES", "value": ",".join(case["name"] for case in cases)}],
-                        "resources": {"requests": GENERATOR_RESOURCES, "limits": GENERATOR_RESOURCES},
+                        "resources": {"requests": GENERATOR_RESOURCES[arch], "limits": GENERATOR_RESOURCES[arch]},
                         "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}},
                     }],
                 },
@@ -309,8 +339,8 @@ def estimate(plan, profiles, cases, region, arch, time_limit_s):
     """How long a run on `arch` takes and what it costs, for people, and why
     it does not fit in its time limit, or None."""
     prices, source = region_prices(region)
-    generator_price = pod_price(prices, GENERATOR_RESOURCES["cpu"], GENERATOR_RESOURCES["memory"],
-                                GENERATOR_RESOURCES["ephemeral-storage"])
+    generator = GENERATOR_RESOURCES[arch]
+    generator_price = pod_price(prices, generator["cpu"], generator["memory"], generator["ephemeral-storage"])
     smock_prices = {profile["name"]: pod_price(prices, profile["cpu_limit"], profile["memory_limit"],
                                                SMOCK_EPHEMERAL_STORAGE) for profile in profiles}
     smock_cost = generator_cost = generator_s = profiles_s = 0
@@ -335,7 +365,7 @@ def estimate(plan, profiles, cases, region, arch, time_limit_s):
         "tier covers it (one Autopilot or zonal cluster).",
         f"- smock's Pods, {len(profiles)} profile{'' if len(profiles) == 1 else 's'} one after the other: "
         f"${smock_cost:.2f}.",
-        f"- The load generator's Pod ({GENERATOR_RESOURCES['cpu']} vCPU, {GENERATOR_RESOURCES['memory']}): about "
+        f"- The load generator's Pod ({generator['cpu']} vCPU, {generator['memory']}): about "
         f"{round(generator_s / 60)} minutes, ${generator_cost:.2f}.",
         "- Artifact Registry: two images of about 100 MB for under an hour, within the free 0.5 GB a month.",
         "- No load balancer, static IP or volume: the run never makes one.",
@@ -428,8 +458,8 @@ NODE_LABELS = {"instance_type": "node.kubernetes.io/instance-type", "arch": "kub
 
 def pod_info(pod_list, node_list):
     """What a run keeps of its Pods and of the nodes they ran on: where and
-    how they ran, and nothing that names the project, such as image
-    references or provider IDs."""
+    how they ran, the load generator's CPU request, and nothing that names
+    the project, such as image references or provider IDs."""
     info = {"smock": [], "generator": [], "nodes": {}}
     for pod in pod_list["items"]:
         app = pod["metadata"].get("labels", {}).get("app")
@@ -443,8 +473,10 @@ def pod_info(pod_list, node_list):
                              for condition in status.get("conditions", [])),
                 "restarts": container.get("restartCount", 0), "last_termination": terminated.get("reason")})
         elif app == "smock-bench-generator":
+            container = (pod["spec"].get("containers") or [{}])[0]
             info["generator"].append({"name": pod["metadata"]["name"], "node": pod["spec"].get("nodeName"),
-                                      "phase": status.get("phase"), "reason": status.get("reason")})
+                                      "phase": status.get("phase"), "reason": status.get("reason"),
+                                      "cpu_request": container.get("resources", {}).get("requests", {}).get("cpu")})
     used = {pod["node"] for pod in [*info["smock"], *info["generator"]]}
     for node in node_list["items"]:
         if node["metadata"]["name"] not in used:
@@ -476,9 +508,13 @@ def generator_lines(path):
     return lines
 
 
-def profile_results(out, plan, profile, cases):
+def profile_results(out, plan, profile, cases, arch):
     """What one profile's run left: its steps, whether it ran each step of
-    the plan, what the load generator said at its start, and its Pods."""
+    the plan, what the load generator said at its start, its Pods, whether
+    smock's traffic ports answered before the first step, whether the load
+    generator stopped the profile early and which steps it did not run,
+    and the load generator Pod's CPU request (as the Pod had it, else as
+    the run asked)."""
     raw = Path(out) / "raw" / profile["name"]
     lines = generator_lines(raw / "generator.log")
     pods = read_json(raw / "pods.json") if (raw / "pods.json").exists() else {"smock": [], "generator": [],
@@ -493,8 +529,36 @@ def profile_results(out, plan, profile, cases):
     planned = [spec["id"] for spec in steps(plan, profile, cases)]
     done = any(line["kind"] == "done" for line in lines)
     start = next((line for line in lines if line["kind"] == "start"), None)
+    check = next((line for line in lines if line["kind"] == "traffic-check"), None)
+    stopped = next((line for line in lines if line["kind"] == "stopped"), None)
+    cpu_request = next((pod["cpu_request"] for pod in pods["generator"] if pod.get("cpu_request")), None)
     return {"steps": results, "complete": done and [result["id"] for result in results] == planned,
-            "start": start, "pods": pods}
+            "start": start, "pods": pods,
+            "traffic_check": check and {key: value for key, value in check.items() if key not in ("kind", "profile")},
+            "ended_early": stopped and {"reason": stopped["reason"], "after": stopped.get("after"),
+                                        "not_measured": stopped["steps"]},
+            "generator_cpu_request": cpu_request or GENERATOR_RESOURCES[arch]["cpu"]}
+
+
+def profile_record(result):
+    """What summary.json and conditions.json record of a profile beyond its
+    steps."""
+    return {"complete": result["complete"], "traffic_check": result["traffic_check"],
+            "ended_early": result["ended_early"], "generator_cpu_request": result["generator_cpu_request"]}
+
+
+def explain_not_run(targets, plan, profiles, cases, results):
+    """Gives each target that is not measured because its step was not run
+    after the load generator stopped its profile early that reason."""
+    not_run = {step: result["ended_early"]["reason"] for result in results.values() if result["ended_early"]
+               for step in result["ended_early"]["not_measured"]}
+    step_ids = {(spec["profile"], spec["case"], spec["rate"]): spec["id"]
+                for profile in profiles for spec in steps(plan, profile, cases)}
+    for target in targets:
+        step = step_ids.get((target["profile"], target["case"], target["rate"]))
+        if target["verdict"] == "not measured" and step in not_run:
+            target["reason"] = f"{step} was not run: {not_run[step]}"
+    return targets
 
 
 def node_text(node):
@@ -503,19 +567,37 @@ def node_text(node):
     return f"{node['instance_type']} ({node['arch']}, {node['zone']})"
 
 
+def traffic_check_text(check):
+    """What the traffic check found, for people: `-` when the load generator
+    did none."""
+    if check is None:
+        return "-"
+    names = {"plain": "plain", "tls": "TLS"}
+    return ", ".join(f"{names[name]} HTTP {port['status']}" if port["answered"]
+                     else f"{names[name]} no answer ({port['error']})" for name, port in check["ports"].items())
+
+
 def gke_markdown(results):
     """The part of summary.md that only a GKE run has: where each profile
-    ran, and smock's restarts."""
-    lines = ["", "## GKE Autopilot", "", "| Profile | smock's node | Load generator's node | smock restarts |",
-             "|---|---|---|---|"]
+    ran, the load generator's CPU, whether smock's traffic ports answered,
+    smock's restarts, and whether the profile ended early."""
+    lines = ["", "## GKE Autopilot", "",
+             "| Profile | smock's node | Load generator's node | Load generator's vCPUs | Traffic check | "
+             "smock restarts | Ended early |",
+             "|---|---|---|---|---|---|---|"]
     notes = []
     for name, result in results.items():
         pods = result["pods"]
         smock = pods["smock"][0] if pods["smock"] else None
         generator = pods["generator"][0] if pods["generator"] else None
         restarts = "-" if smock is None else smock["restarts"]
+        ended = result["ended_early"]
         lines.append(f"| {name} | {node_text(smock and pods['nodes'].get(smock['node']))} | "
-                     f"{node_text(generator and pods['nodes'].get(generator['node']))} | {restarts} |")
+                     f"{node_text(generator and pods['nodes'].get(generator['node']))} | "
+                     f"{result['generator_cpu_request']} | {traffic_check_text(result['traffic_check'])} | "
+                     f"{restarts} | {'yes' if ended else 'no'} |")
+        if ended:
+            notes.append(f"{name} ended early: {ended['reason']}. Not measured: {', '.join(ended['not_measured'])}.")
         if smock and smock["restarts"]:
             times = "time" if smock["restarts"] == 1 else "times"
             notes.append(f"smock restarted {smock['restarts']} {times} under {name} "
@@ -549,11 +631,13 @@ def command_summarize(args):
     profiles = plan_profiles(plan, comma_list(args.profiles))
     cases = plan_cases(plan, comma_list(args.cases))
     out = Path(args.out)
-    results = {profile["name"]: profile_results(out, plan, profile, cases) for profile in profiles}
+    results = {profile["name"]: profile_results(out, plan, profile, cases, args.arch) for profile in profiles}
     summary = {"format": harness.FORMAT, "complete": all(result["complete"] for result in results.values()),
                "idle_rss": [], "cases": [step for result in results.values() for step in result["steps"]],
-               "targets": []}
-    summary["targets"] = [harness.check_target(target, summary) for target in harness.read_targets(targets_path)]
+               "targets": [], "gke": {"profiles": {name: profile_record(result) for name, result in results.items()}}}
+    summary["targets"] = explain_not_run(
+        [harness.check_target(target, summary) for target in harness.read_targets(targets_path)],
+        plan, profiles, cases, results)
     start = next((result["start"] for result in results.values() if result["start"]), None) or {}
     status = start.get("status") or {}
     smock_nodes, generator_nodes = nodes_of(results, "smock"), nodes_of(results, "generator")
@@ -589,10 +673,10 @@ def command_summarize(args):
                 "compute_class": compute_class, "machine_type": machine_type,
                 "generator_machine_type": distinct(node["instance_type"] for node in generator_nodes),
                 "cluster_version": args.cluster_version,
-                "profiles": {name: {"complete": result["complete"], **result["pods"]}
+                "profiles": {name: {**profile_record(result), **result["pods"]}
                              for name, result in results.items()}},
         "load_generator": {"name": "oha", "version": start.get("oha"), "image": args.generator_image,
-                           "resources": GENERATOR_RESOURCES},
+                           "resources": GENERATOR_RESOURCES[args.arch]},
         "profiles": profiles,
         "cases": [{key: spec[key] for key in (
             "id", "profile", "protocol", "connection", "cpu_limit", "memory_limit", "rate", "ramp_s",
@@ -603,6 +687,14 @@ def command_summarize(args):
     harness.write_json(out / "summary.json", summary)
     harness.write_json(out / "conditions.json", conditions)
     (out / "summary.md").write_text(harness.summary_markdown(summary, conditions) + gke_markdown(results))
+    return 0
+
+
+def command_stopped(args):
+    stopped = next((line for line in generator_lines(args.log) if line["kind"] == "stopped"), None)
+    if stopped:
+        count = len(stopped["steps"])
+        print(f"{stopped['reason']}; {count} step{'' if count == 1 else 's'} not measured")
     return 0
 
 
@@ -720,6 +812,10 @@ def main(argv):
     summarizing.add_argument("--generator-image", help="the load generator's image digest")
     summarizing.add_argument("out", help="the run's results: raw/<profile>/generator.log and pods.json")
     summarizing.set_defaults(handler=command_summarize)
+    stopping = commands.add_parser("stopped", help="print why the load generator stopped its profile early and how "
+                                                    "many steps it did not run; nothing when it did not")
+    stopping.add_argument("log", help="the load generator's log: raw/<profile>/generator.log")
+    stopping.set_defaults(handler=command_stopped)
     reading = commands.add_parser("elf-arch", help="print the architecture of an ELF executable: amd64 or arm64")
     reading.add_argument("file", help="the executable, which is not run")
     reading.set_defaults(handler=command_elf_arch)

@@ -15,14 +15,19 @@
 #    Autopilot cluster, both labelled purpose=smock-bench, and runs each
 #    profile of the plan (bench/plan-autopilot.json by default): smock in a
 #    Pod with the profile's limits as its requests behind a ClusterIP
-#    Service, the load generator (bench/gke/generator.py) in a Job on
-#    another node in smock's zone, both on nodes of the run's architecture
-#    and in GKE_BENCH_ZONE when it is set, and both with a deadline that
-#    ends them within minutes of the time limit at the latest, so that they
-#    stop being billed even if nothing is left to delete the cluster;
-# 4. writes the load generator's lines and the Pods' state under the
-#    results directory, and summary.json, summary.md and conditions.json,
-#    which bench/compare.py compares;
+#    Service, both named for the profile (smock-<profile>), the load
+#    generator (bench/gke/generator.py) in a Job on another node in smock's
+#    zone, both on nodes of the run's architecture and in GKE_BENCH_ZONE
+#    when it is set, and both with a deadline that ends them within minutes
+#    of the time limit at the latest, so that they stop being billed even if
+#    nothing is left to delete the cluster; the next profile starts once
+#    they are gone, also after a profile that the load generator stopped
+#    early because smock's traffic ports did not answer or a step got no
+#    response;
+# 4. writes the load generator's lines, the Pods' state, smock's log and
+#    its Service with the Service's EndpointSlices under the results
+#    directory, and summary.json, summary.md and conditions.json, which
+#    bench/compare.py compares;
 # 5. always deletes the cluster and the repository: when it ends, fails or
 #    is interrupted, and from a watchdog in its own session when the time
 #    limit (80 minutes by default) has passed, even if this script was
@@ -66,8 +71,8 @@
 #   GCLOUD, KUBECTL, DOCKER, PYTHON
 #                           the commands to use (default: gcloud, kubectl, docker, python3 on PATH)
 #
-# Exit status: 0 when every profile ran and nothing is left, 1 otherwise, 2
-# for a wrong command line or environment.
+# Exit status: 0 when every profile ran all of its steps and nothing is
+# left, 1 otherwise, 2 for a wrong command line or environment.
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -85,6 +90,13 @@ import json, sys
 for repository in json.loads(sys.stdin.read() or "[]"):
     parts = repository["name"].split("/")
     print("repository", parts[-1], parts[3] if len(parts) == 6 else "", sep="\t")
+'
+# Prints how many times smock's Pod (the second argument) restarted, from
+# what gke.py pod-info kept of the Pods (the first); fails when that is not
+# known.
+SMOCK_RESTARTS='
+import json, sys
+print(next(pod["restarts"] for pod in json.load(open(sys.argv[1]))["smock"] if pod["name"] == sys.argv[2]))
 '
 PROJECT=${GKE_BENCH_PROJECT:-}
 REGION=${GKE_BENCH_REGION:-}
@@ -945,13 +957,45 @@ wait_for_job() {
   done
 }
 
+# Keeps what smock left under a profile while its Pod and Service are still
+# there, masked: its log as smock.log (when it restarted, or that is not
+# known, its container before the last restart first), and its Service
+# with the Service's EndpointSlices as service.json.
+keep_smock_state() {
+  local smock_pod=$1 raw=$2 restarts
+  if [ "$dry_run" = 1 ]; then
+    say "would keep smock's log as $raw/smock.log, and its Service and EndpointSlices as $raw/service.json"
+    return 0
+  fi
+  mkdir -p "$raw"
+  refresh_token
+  restarts=$("$PYTHON" -c "$SMOCK_RESTARTS" "$raw/pods.json" "$smock_pod" 2>/dev/null) || restarts=unknown
+  if [ "$restarts" = 0 ]; then
+    kube logs "pod/$smock_pod" 2>>"$work/kubectl.log" | masked >"$raw/smock.log"
+  else
+    {
+      printf '# kubectl logs --previous: the container before the last restart (restarts: %s)\n' "$restarts"
+      kube logs --previous "pod/$smock_pod" 2>>"$work/kubectl.log"
+      printf '# kubectl logs: the container at the end\n'
+      kube logs "pod/$smock_pod" 2>>"$work/kubectl.log"
+    } | masked >"$raw/smock.log"
+  fi
+  kube get service,endpointslices --output=json 2>>"$work/kubectl.log" | masked >"$raw/service.json"
+}
+
 # Runs one profile: smock, then the load generator, then what they left,
 # then deletes both. Fails when smock or the load generator could not start
-# (which the next profile would hit too), and returns 3 when the profile ran
-# but its Job did not complete.
+# (which the next profile would hit too). Returns 3 when the profile ran
+# but not all of its steps (its Job did not complete, or the load generator
+# stopped it early), and 4 when smock's Pod and Service were not deleted,
+# so that no later profile may run beside them.
 run_profile() {
-  local name=$1 deadline_s=$2 job=generator-$1 manifests=$work/manifests/$1 raw=$out/raw/$1 status=0 waited
+  local name=$1 deadline_s=$2 job=generator-$1 manifests=$work/manifests/$1 raw=$out/raw/$1 status=0 waited ended
   local smock_ref_shown=${smock_ref:-} generator_ref_shown=${generator_ref:-}
+  # smock's Pod and Service, as gke.py names them: their own under each
+  # profile, so that none reuses the ClusterIP or the datapath entries of
+  # the previous profile's Service.
+  local smock_pod=smock-$1
   # smock's Pod ends by itself at the time limit, counted from when its
   # node accepts it.
   local smock_deadline_s=$((deadline - $(now)))
@@ -961,8 +1005,9 @@ run_profile() {
     --smock-deadline-s "$smock_deadline_s" --out "$manifests" || die "rendering the manifests of $name failed"
   kube_run apply --filename="$manifests/namespace.json" || die "applying the namespace failed"
   kube_run apply --filename="$manifests/smock.json" || die "applying smock's Pod failed"
-  kube_run wait --for=condition=Ready pod/smock-bench --timeout="${READY_LIMIT_S}s" || {
+  kube_run wait --for=condition=Ready "pod/$smock_pod" --timeout="${READY_LIMIT_S}s" || {
     kube get events --field-selector=involvedObject.kind=Pod | masked >&2
+    keep_smock_state "$smock_pod" "$raw"
     die "smock did not become ready under $name"
   }
   kube_run apply --filename="$manifests/generator.json" || die "applying the load generator's Job failed"
@@ -993,10 +1038,20 @@ run_profile() {
     if kube get pods --output=json >"$work/pods.json" && kube get nodes --output=json >"$work/nodes.json"; then
       "$PYTHON" "$GKE_PY" pod-info "$work/pods.json" "$work/nodes.json" >"$raw/pods.json"
     fi
+    ended=$("$PYTHON" "$GKE_PY" stopped "$raw/generator.log")
+    if [ -n "$ended" ]; then
+      say "profile $name ended early: $ended"
+      status=3
+    fi
   fi
+  keep_smock_state "$smock_pod" "$raw"
   kube_run delete --filename="$manifests/generator.json" --ignore-not-found --cascade=foreground --wait=true \
     --timeout=300s
-  kube_run delete --filename="$manifests/smock.json" --ignore-not-found --wait=true --timeout=300s
+  # The next profile starts once smock's Pod and Service are gone.
+  if ! kube_run delete --filename="$manifests/smock.json" --ignore-not-found --wait=true --timeout=300s; then
+    say "smock's Pod and Service under $name were not deleted in 5 minutes: no later profile runs beside them"
+    return 4
+  fi
   return "$status"
 }
 
@@ -1055,6 +1110,10 @@ while read -r name steps deadline_s <&3; do
   case $? in
   0) ;;
   3) run_status=1 ;;
+  4)
+    run_status=1
+    break
+    ;;
   *) exit 1 ;;
   esac
 done 3<<<"$profile_lines"

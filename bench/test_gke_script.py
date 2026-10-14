@@ -94,7 +94,7 @@ if tool == "kubectl" and "kubeconfig" in options:
     record["kubeconfig_mode"] = oct(stat.S_IMODE(path.stat().st_mode)) if path.exists() else None
 if tool == "docker" and "login" in words:
     record["stdin"] = sys.stdin.read()
-if tool == "kubectl" and words[:1] == ["apply"]:
+if tool == "kubectl" and words[:1] in (["apply"], ["delete"]):
     record["document"] = json.loads(Path(options["filename"]).read_text())
 with (state_dir / "calls.jsonl").open("a") as calls:
     fcntl.flock(calls, fcntl.LOCK_EX)
@@ -209,6 +209,91 @@ if tool == "docker":
         answer(f"{words[1].rsplit(':', 1)[1]}: digest: sha256:{'ab' * 32} size: 1234\n")
     answer()
 
+def objects():
+    """The objects applied and not yet deleted, by kind/name, in order."""
+    return state().get("objects", {})
+
+
+def restarts(pod):
+    return config.get("restarts", {}).get(pod, 0)
+
+
+def pod_list():
+    """The namespace's Pods, as kubectl get pods -o json lists them: smock's
+    Pod as applied, and one Pod for each Job, from its template."""
+    items = []
+    for item in objects().values():
+        if item["kind"] == "Pod":
+            name = item["metadata"]["name"]
+            items.append({**item, "spec": {**item["spec"], "nodeName": "node-a"}, "status": {
+                "phase": "Running", "podIP": "10.20.0.7",
+                "conditions": [{"type": "Ready", "status": "True"}],
+                "containerStatuses": [{"name": "smock", "ready": True, "restartCount": restarts(name),
+                                       "lastState": {"terminated": {"reason": "OOMKilled", "exitCode": 137}}
+                                       if restarts(name) else {}}]}})
+        elif item["kind"] == "Job":
+            template = item["spec"]["template"]
+            items.append({"apiVersion": "v1", "kind": "Pod",
+                          "metadata": {"name": item["metadata"]["name"] + "-x7k2p", "namespace": "smock-bench",
+                                       "labels": {**template["metadata"]["labels"],
+                                                  "job-name": item["metadata"]["name"]}},
+                          "spec": {**template["spec"], "nodeName": "node-b"},
+                          "status": {"phase": config.get("job_pod_phase", "Succeeded")}})
+    return {"apiVersion": "v1", "kind": "List", "items": items, "metadata": {"resourceVersion": ""}}
+
+
+def services_and_endpoint_slices():
+    """kubectl get service,endpointslices -o json: each Service, then an
+    EndpointSlice for each with the Pods it selects."""
+    services = [item for item in objects().values() if item["kind"] == "Service"]
+    pods = [item for item in objects().values() if item["kind"] == "Pod"]
+    items = []
+    for number, service in enumerate(services):
+        items.append({**service, "metadata": {**service["metadata"], "uid": f"5e1c-{number}",
+                                              "resourceVersion": "1001", "creationTimestamp": "2026-10-14T09:00:00Z"},
+                      "spec": {**service["spec"], "clusterIP": f"34.118.229.{102 + number}",
+                               "clusterIPs": [f"34.118.229.{102 + number}"], "ipFamilies": ["IPv4"],
+                               "ipFamilyPolicy": "SingleStack", "sessionAffinity": "None",
+                               "internalTrafficPolicy": "Cluster",
+                               "ports": [{**port, "protocol": "TCP"} for port in service["spec"]["ports"]]},
+                      "status": {"loadBalancer": {}}})
+    for service in services:
+        name = service["metadata"]["name"]
+        selected = [pod for pod in pods
+                    if service["spec"]["selector"].items() <= pod["metadata"].get("labels", {}).items()]
+        items.append({
+            "apiVersion": "discovery.k8s.io/v1", "kind": "EndpointSlice", "addressType": "IPv4",
+            "metadata": {"name": f"{name}-8xq2v", "namespace": "smock-bench", "generateName": f"{name}-",
+                         "labels": {"kubernetes.io/service-name": name,
+                                    "endpointslice.kubernetes.io/managed-by": "endpointslice-controller.k8s.io"},
+                         "ownerReferences": [{"apiVersion": "v1", "kind": "Service", "name": name,
+                                              "controller": True, "blockOwnerDeletion": True}]},
+            "endpoints": [{"addresses": ["10.20.0.7"], "conditions": {"ready": True, "serving": True,
+                                                                     "terminating": False},
+                           "nodeName": "node-a", "zone": "us-central1-a",
+                           "targetRef": {"kind": "Pod", "name": pod["metadata"]["name"],
+                                         "namespace": "smock-bench"}} for pod in selected],
+            "ports": [{"name": port["name"], "port": port["targetPort"], "protocol": "TCP"}
+                      for port in service["spec"]["ports"]]})
+    return {"apiVersion": "v1", "kind": "List", "items": items, "metadata": {"resourceVersion": ""}}
+
+
+def logs(target, previous):
+    """kubectl logs [--previous] job/<name> or pod/<name>."""
+    kind, name = target.split("/", 1)
+    known = config.get("logs", {})
+    if kind == "pod" and f"Pod/{name}" not in objects():
+        sys.stderr.write(f'Error from server (NotFound): pods "{name}" not found\n')
+        answer("", 1)
+    if previous:
+        if not restarts(name):
+            sys.stderr.write(f'Error from server (BadRequest): previous terminated container "smock" in pod '
+                             f'"{name}" not found\n')
+            answer("", 1)
+        name += "/previous"
+    answer(Path(known[name]).read_text() if name in known else "")
+
+
 if tool == "kubectl":
     if words[:1] == ["version"] and config.get("kubectl_broken"):
         sys.stderr.write("mise ERROR No version is set for shim: kubectl\n")
@@ -216,10 +301,22 @@ if tool == "kubectl":
     if words[:1] == ["apply"]:
         if config.get("apply_fails_on") and config["apply_fails_on"] in options.get("filename", ""):
             answer("", 1)
-        answer("applied\n")
+        items = record["document"].get("items", [record["document"]])
+        state(lambda value: value.setdefault("objects", {}).update(
+            {f"{item['kind']}/{item['metadata']['name']}": item for item in items}))
+        answer("".join(f"{item['kind'].lower()}/{item['metadata']['name']} created\n" for item in items))
+    if words[:1] == ["delete"]:
+        items = record["document"].get("items", [record["document"]])
+        if config.get("delete_fails_on") and config["delete_fails_on"] in options["filename"]:
+            time.sleep(0.2)
+            sys.stderr.write(f"error: timed out waiting for the condition on pods/{items[-1]['metadata']['name']}\n")
+            answer("", 1)
+        state(lambda value: [value.setdefault("objects", {}).pop(f"{item['kind']}/{item['metadata']['name']}", None)
+                             for item in items])
+        answer("".join(f'{item["kind"].lower()} "{item["metadata"]["name"]}" deleted\n' for item in items))
     if words[:1] == ["wait"]:
         rule("smock_ready")
-        answer("pod/smock-bench condition met\n")
+        answer(f"{words[1]} condition met\n")
     if words[:2] == ["get", "events"]:
         answer(config.get("events", ""))
     if words[:2] == ["get", "pods"] and "selector" in options:
@@ -227,10 +324,11 @@ if tool == "kubectl":
     if words[:2] == ["get", "job"]:
         answer(config.get("job_state", "Complete=True "))
     if words[:1] == ["logs"]:
-        job = words[1].removeprefix("job/")
-        answer(Path(config["logs"][job]).read_text() if job in config.get("logs", {}) else "")
+        logs(words[1], "--previous" in argv)
     if words[:2] == ["get", "pods"]:
-        answer(json.dumps(config.get("pods", {"items": []})))
+        answer(json.dumps(pod_list()))
+    if words[:2] == ["get", "service,endpointslices"]:
+        answer(json.dumps(services_and_endpoint_slices()))
     if words[:2] == ["get", "nodes"]:
         answer(json.dumps({"items": []}))
     answer()
@@ -270,16 +368,35 @@ SMALL_PLAN = {
 }
 
 
-def generator_log():
-    """What the load generator writes for the small plan."""
-    lines = [{"kind": "start", "profile": "small", "oha": "oha 1.16.0",
+# A plan of two profiles, one after the other.
+TWO_PROFILES_PLAN = {
+    **SMALL_PLAN,
+    "profiles": [*SMALL_PLAN["profiles"], {"name": "large", "cpu_limit": "1", "memory_limit": "1Gi"}],
+    "cases": [{**SMALL_PLAN["cases"][0], "rates": {"small": [500, 1000], "large": [1000, 2000]}}],
+}
+
+# The reason the load generator gives when smock's TLS port never answered.
+SILENT_TLS = "smock did not answer through its Service in 60 s: TLS port 443 (timed out)"
+
+
+def generator_log(profile="small", cpu_limit="250m", memory_limit="512Mi", rates=(500, 1000), tls_answers=True):
+    """What the load generator writes for a profile of the small plans: when
+    smock's TLS port does not answer, it runs no step."""
+    lines = [{"kind": "start", "profile": profile, "oha": "oha 1.16.0",
               "status": {"version": "0.2.0", "commit": "a21fe97d59c6", "toolchain": "moonc", "digest": "48f7ce9715f0",
-                         "mocks": []}}]
-    for rate in (500, 1000):
+                         "mocks": []}},
+             {"kind": "traffic-check", "profile": profile, "ok": tls_answers, "host": "catalog.bench.internal",
+              "method": "GET", "target": "/catalog/items/SKU-00317", "window_s": 60,
+              "ports": {"plain": {"port": 80, "answered": True, "status": 200, "attempts": 1, "seconds": 0.004,
+                                  "error": None},
+                        "tls": {"port": 443, "answered": tls_answers, "status": 200 if tls_answers else None,
+                                "attempts": 1 if tls_answers else 12, "seconds": 0.011 if tls_answers else 60.2,
+                                "error": None if tls_answers else "timed out"}}}]
+    for rate in rates if tls_answers else ():
         lines.append({"kind": "step", "result": {
-            "id": f"http-keep-alive@small@{rate}", "case": "http-keep-alive", "profile": "small", "cpu_limit": "250m",
-            "memory_limit": "512Mi", "rate": rate, "ramp_s": 2, "duration_s": 20, "tail_s": 3, "connections": 64,
-            "protocol": "http", "connection": "keep-alive", "idle_connections": 0,
+            "id": f"http-keep-alive@{profile}@{rate}", "case": "http-keep-alive", "profile": profile,
+            "cpu_limit": cpu_limit, "memory_limit": memory_limit, "rate": rate, "ramp_s": 2, "duration_s": 20,
+            "tail_s": 3, "connections": 64, "protocol": "http", "connection": "keep-alive", "idle_connections": 0,
             "achieved_rate": rate, "errors": 0,
             "latency_ms": {"p50": 1.2, "p90": 1.6, "p99": 2.0, "p99_9": 2.5, "max": 4.0},
             "latency_from_release_ms": {"p50": 0.3, "p90": 0.5, "p99": 1.0, "p99_9": 1.5, "max": 3.0},
@@ -287,14 +404,16 @@ def generator_log():
             "requests": {"scheduled": rate * 20, "ok": rate * 20, "unexpected_status": 0, "no_response": 0},
             "smock_cpu": None, "memory": {"peak_bytes": None, "oom_kills": None},
             "rss_kib": {"first": None, "last": None, "max": None}, "smock_ready": True}})
-    lines.append({"kind": "done", "profile": "small"})
+    if not tls_answers:
+        lines.append({"kind": "stopped", "profile": profile, "reason": SILENT_TLS, "after": None,
+                      "steps": [f"http-keep-alive@{profile}@{rate}" for rate in rates]})
+    lines.append({"kind": "done", "profile": profile})
     return "".join(json.dumps(line) + "\n" for line in lines)
 
 
-PODS = {"items": [{"metadata": {"name": "smock-bench-1", "labels": {"app": "smock-bench"}},
-                   "spec": {"nodeName": "node-a"},
-                   "status": {"conditions": [{"type": "Ready", "status": "True"}],
-                              "containerStatuses": [{"restartCount": 0, "lastState": {}}]}}]}
+# What smock logs, as JSON lines.
+SMOCK_LOG = ('{"time":"2026-10-14T09:00:01.000Z","level":"info","msg":"listening","listener":"plain",'
+             '"address":"0.0.0.0:8080"}\n')
 
 # What only reads: the gcloud commands that list, describe or print.
 READ_ONLY = {"list", "describe", "version", "print-access-token", "get-value"}
@@ -317,6 +436,7 @@ class Script(unittest.TestCase):
         self.plan = self.tmp / "plan.json"
         self.plan.write_text(json.dumps(SMALL_PLAN))
         (self.tmp / "generator-small.log").write_text(generator_log())
+        (self.tmp / "smock-small.log").write_text(SMOCK_LOG)
         self.configure()
         # Binaries of this machine's architecture: smock says the commit
         # checked out.
@@ -362,8 +482,8 @@ class Script(unittest.TestCase):
         self.time_scale = str(scale)
 
     def configure(self, **config):
-        config.setdefault("logs", {"generator-small": str(self.tmp / "generator-small.log")})
-        config.setdefault("pods", PODS)
+        config.setdefault("logs", {"generator-small": str(self.tmp / "generator-small.log"),
+                                   "smock-small": str(self.tmp / "smock-small.log")})
         config.setdefault("account", ACCOUNT)
         (self.state / "config.json").write_text(json.dumps(config))
 
@@ -434,8 +554,10 @@ class Script(unittest.TestCase):
         return [call for call in self.calls() if call["words"][:len(words)] == words]
 
     def state_now(self):
+        """The fake cloud's clusters and repositories."""
         path = self.state / "state.json"
-        return json.loads(path.read_text()) if path.exists() else {"clusters": {}, "repositories": []}
+        value = json.loads(path.read_text()) if path.exists() else {}
+        return {"clusters": value.get("clusters", {}), "repositories": value.get("repositories", [])}
 
     def wait_for_nothing_left(self, timeout=60):
         deadline = time.monotonic() + timeout
@@ -606,7 +728,7 @@ class Run(Script):
         [pod] = [item for item in apply["document"]["items"] if item["kind"] == "Pod"]
         self.assertGreater(pod["spec"]["activeDeadlineSeconds"], 70 * 60)
         self.assertLessEqual(pod["spec"]["activeDeadlineSeconds"], 80 * 60)
-        self.assertEqual(self.made(["wait"])[0]["words"][1:], ["pod/smock-bench"])
+        self.assertEqual(self.made(["wait"])[0]["words"][1:], ["pod/smock-small"])
 
     def test_kubectl_uses_its_own_kubeconfig_with_an_access_token_deleted_at_the_end(self):
         status, output = self.run_script("--yes")
@@ -634,6 +756,147 @@ class Run(Script):
         self.assertTrue(self.made(["container", "clusters", "delete"]))
         self.assertTrue(self.made(["artifacts", "repositories", "delete"]))
         self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
+
+
+class Diagnostics(Script):
+    """Before smock's Pod is deleted, the run keeps its log and its Service
+    with the Service's EndpointSlices, masked."""
+
+    def test_smocks_log_and_its_service_with_its_endpoint_slices_are_kept_before_it_is_deleted(self):
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 0, output)
+        raw = self.out / "raw" / "small"
+        self.assertEqual((raw / "smock.log").read_text(), SMOCK_LOG)
+        kept = json.loads((raw / "service.json").read_text())
+        [service] = [item for item in kept["items"] if item["kind"] == "Service"]
+        [endpoints] = [item for item in kept["items"] if item["kind"] == "EndpointSlice"]
+        self.assertEqual(service["metadata"]["name"], "smock-small")
+        self.assertEqual(endpoints["metadata"]["labels"]["kubernetes.io/service-name"], "smock-small")
+        self.assertEqual([endpoint["targetRef"]["name"] for endpoint in endpoints["endpoints"]], ["smock-small"])
+        # Read while smock's Pod and Service were there, before they were
+        # deleted; smock never restarted, so it had no previous container.
+        kubectl = self.calls("kubectl")
+        deleted = next(index for index, call in enumerate(kubectl)
+                       if call["words"][:1] == ["delete"] and any(item["kind"] == "Pod"
+                                                                   for item in call["document"].get("items", [])))
+        for read in (["logs", "pod/smock-small"], ["get", "service,endpointslices"]):
+            self.assertLess([call["words"] for call in kubectl].index(read), deleted, read)
+        self.assertEqual([call for call in self.calls("kubectl") if "--previous" in call["argv"]], [])
+
+    def test_a_smock_that_restarted_keeps_its_previous_containers_log_too_masked(self):
+        # What smock logged names whatever reached it; here the project and
+        # the account.
+        (self.tmp / "smock-previous.log").write_text(
+            f'{{"level":"info","msg":"request","host":"{PROJECT}.example","user":"{ACCOUNT}"}}\n')
+        self.configure(restarts={"smock-small": 1},
+                       logs={"generator-small": str(self.tmp / "generator-small.log"),
+                             "smock-small": str(self.tmp / "smock-small.log"),
+                             "smock-small/previous": str(self.tmp / "smock-previous.log")})
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 0, output)
+        log = (self.out / "raw" / "small" / "smock.log").read_text()
+        self.assertNotIn(PROJECT, log)
+        self.assertNotIn(ACCOUNT, log)
+        self.assertIn('"host":"$GKE_BENCH_PROJECT.example","user":"<account>"', log)
+        # The previous container's first, then the one at the end.
+        self.assertLess(log.index("$GKE_BENCH_PROJECT"), log.index('"msg":"listening"'))
+        self.assertTrue(self.made(["logs", "pod/smock-small"]))
+        self.assertTrue([call for call in self.calls("kubectl") if "--previous" in call["argv"]])
+
+    def test_a_dry_run_says_what_it_would_keep(self):
+        status, output = self.run_script("--dry-run")
+        self.assertEqual(status, 0, output)
+        self.assertIn("smock.log", output)
+        self.assertIn("service.json", output)
+
+
+class Profiles(Script):
+    """Each profile has its own smock, by name, which is gone before the next
+    profile's starts; a profile that the load generator stopped early is
+    reported, and the next one still runs."""
+
+    def setUp(self):
+        super().setUp()
+        self.plan.write_text(json.dumps(TWO_PROFILES_PLAN))
+        (self.tmp / "generator-large.log").write_text(generator_log("large", "1", "1Gi", (1000, 2000)))
+
+    def configure(self, **config):
+        config.setdefault("logs", {"generator-small": str(self.tmp / "generator-small.log"),
+                                   "generator-large": str(self.tmp / "generator-large.log"),
+                                   "smock-small": str(self.tmp / "smock-small.log")})
+        super().configure(**config)
+
+    def smock_calls(self):
+        """The applies and deletes of smock's Pod and Service, in order:
+        (verb, the Pod's name, the call)."""
+        calls = []
+        for call in self.calls("kubectl"):
+            items = call.get("document", {}).get("items", [])
+            if call["words"][:1] in (["apply"], ["delete"]) and any(item["kind"] == "Pod" for item in items):
+                [pod] = [item for item in items if item["kind"] == "Pod"]
+                calls.append((call["words"][0], pod["metadata"]["name"], call))
+        return calls
+
+    def test_each_profile_has_its_own_smock_and_the_next_starts_once_the_previous_is_gone(self):
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 0, output)
+        calls = self.smock_calls()
+        self.assertEqual([(verb, name) for verb, name, _ in calls],
+                         [("apply", "smock-small"), ("delete", "smock-small"), ("apply", "smock-large"),
+                          ("delete", "smock-large")])
+        # Deleting waits until the Pod and the Service are gone, for a time.
+        for verb, _, call in calls:
+            if verb == "delete":
+                self.assertIn("--wait=true", call["argv"])
+                self.assertTrue(any(arg.startswith("--timeout=") for arg in call["argv"]), call["argv"])
+        # Each load generator targets its profile's Service.
+        targets = {}
+        for call in self.made(["apply"]):
+            if call["document"]["kind"] == "Job":
+                env = call["document"]["spec"]["template"]["spec"]["containers"][0]["env"]
+                targets[call["document"]["metadata"]["name"]] = next(v["value"] for v in env if v["name"] == "TARGET")
+        self.assertEqual(targets, {"generator-small": "smock-small.smock-bench.svc.cluster.local",
+                                   "generator-large": "smock-large.smock-bench.svc.cluster.local"})
+        self.assertEqual([wait["words"][1] for wait in self.made(["wait"])], ["pod/smock-small", "pod/smock-large"])
+        summary = json.loads((self.out / "summary.json").read_text())
+        self.assertTrue(summary["complete"])
+        self.assertEqual({name: profile["generator_cpu_request"]
+                          for name, profile in summary["gke"]["profiles"].items()},
+                         {"small": {"amd64": "6", "arm64": "4"}[HOST_ARCH],
+                          "large": {"amd64": "6", "arm64": "4"}[HOST_ARCH]})
+
+    def test_a_smock_not_deleted_in_time_stops_the_later_profiles_and_the_run_still_cleans_up(self):
+        self.configure(delete_fails_on="manifests/small/smock.json")
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        self.assertIn("timed out waiting for the condition", output)
+        self.assertEqual([(verb, name) for verb, name, _ in self.smock_calls()],
+                         [("apply", "smock-small"), ("delete", "smock-small")])
+        summary = json.loads((self.out / "summary.json").read_text())
+        self.assertFalse(summary["complete"])
+        self.assertEqual({case["profile"] for case in summary["cases"]}, {"small"})
+        self.assertEqual(self.state_now()["clusters"], {})
+        self.assertIn("nothing is left", output)
+
+    def test_a_profile_the_load_generator_stopped_early_is_reported_and_the_next_one_runs(self):
+        (self.tmp / "generator-small.log").write_text(generator_log(tls_answers=False))
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        self.assertIn(f"profile small ended early: {SILENT_TLS}; 2 steps not measured", output)
+        self.assertEqual([(verb, name) for verb, name, _ in self.smock_calls()],
+                         [("apply", "smock-small"), ("delete", "smock-small"), ("apply", "smock-large"),
+                          ("delete", "smock-large")])
+        summary = json.loads((self.out / "summary.json").read_text())
+        self.assertFalse(summary["complete"])
+        self.assertEqual([case["id"] for case in summary["cases"]],
+                         ["http-keep-alive@large@1000", "http-keep-alive@large@2000"])
+        self.assertEqual(summary["gke"]["profiles"]["small"]["ended_early"]["reason"], SILENT_TLS)
+        self.assertIsNone(summary["gke"]["profiles"]["large"]["ended_early"])
+        self.assertFalse(summary["gke"]["profiles"]["small"]["traffic_check"]["ok"])
+        # smock's log and Service under the profile are kept all the same.
+        self.assertTrue((self.out / "raw" / "small" / "smock.log").exists())
+        self.assertTrue((self.out / "raw" / "small" / "service.json").exists())
+        self.assertIn("nothing is left", output)
 
 
 def copy_repository(destination):

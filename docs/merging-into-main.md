@@ -81,10 +81,11 @@ pre-merge run compares with them.
   It checks the APIs, the CPU quota (32 vCPUs free in `CPUS_ALL_REGIONS`
   and in the region's `CPUS`; ask for more on the console's Quotas page if
   not), and that nothing is left from an earlier run, and prints every
-  command it would run and the cost estimate. A full run is expected to
-  cost about $0.20, and at most about $0.50 if it ran until its time limit
-  of 80 minutes, before tax (about $0.60 in asia-northeast1); the free
-  tier usually covers the cluster's management fee. When the checks pass
+  command it would run and the cost estimate. A full amd64 run is
+  expected to cost about $0.22, and at most about $0.63 if it ran until
+  its time limit of 80 minutes, before tax (about $0.26 and $0.77 in
+  asia-northeast1); the free tier usually covers the cluster's management
+  fee. When the checks pass
   and the estimate is acceptable, run it (about 50 minutes), with the
   machine kept awake, on power and online for the whole run, since the
   watchdog that deletes the cluster at the time limit runs on it:
@@ -94,7 +95,12 @@ pre-merge run compares with them.
   ```
 
   Only the maintainer starts a run with `--yes`, since it costs money. It
-  must end with `nothing is left`. If it says what is left instead, or
+  must end with `nothing is left`. A profile whose traffic ports did not
+  answer, or one of whose steps got no response at all, ends early: the
+  run says `profile <name> ended early` and why, goes on to the next
+  profile, and exits 1. Look at `raw/<profile>/smock.log` and
+  `raw/<profile>/service.json` in the results directory to find out why,
+  and run again once it is understood. If it says what is left instead, or
   was killed, delete what it names (it prints the commands), and check
   `watchdog.log` in the results directory: the watchdog deletes the
   cluster and the repository at the time limit even when the script was

@@ -1174,7 +1174,7 @@ compare, such as for a summary of another `format`.
 Autopilot: smock in a Pod with each profile's limits as its requests, the
 load from another node over the Pod network. It is part of the
 [checklist before merging into main](docs/merging-into-main.md), and costs
-money: about $0.20 a run (2026-10-14 prices, us-central1 or
+money: about $0.20 to $0.25 a run (2026-10-14 prices, us-central1 or
 asia-northeast1), which it estimates before it makes anything.
 
 ```sh
@@ -1256,9 +1256,13 @@ that run's linux/amd64 build and tests passed.
   so gke-gcloud-auth-plugin is not needed and `~/.kube/config` is not
   touched.
 - **Profiles.** For each profile: smock in a Pod, with the profile's CPU
-  and memory limits as its requests, behind a ClusterIP Service, then the
-  load generator (`bench/gke/generator.py`) in a Job with 4 vCPU and 4 GiB
-  and a required anti-affinity that keeps it off smock's node. Both have
+  and memory limits as its requests, behind a ClusterIP Service, both
+  named for the profile (`smock-<profile>`), so that no profile reuses the
+  ClusterIP of the previous one's Service; then the load generator
+  (`bench/gke/generator.py`) in a Job with 6 vCPU and 6 GiB on amd64 (an
+  x86 vCPU is a hyperthread, and 4 fell behind at 20,000 requests a
+  second), 4 vCPU and 4 GiB on arm64, either within an 8-vCPU node, and a
+  required anti-affinity that keeps it off smock's node. Both have
   an `activeDeadlineSeconds` that ends them within minutes of the time
   limit at the latest, so that they stop being billed even if nothing is
   left to delete the cluster (smock is a Pod, not a Deployment, to have
@@ -1268,9 +1272,15 @@ that run's linux/amd64 build and tests passed.
   required Pod affinity keeps the load generator in it; `GKE_BENCH_ZONE`
   pins both to one zone instead. The load generator sends each step the
   way `bench/bench.py` does, with its functions, and prints one JSON line
-  for each step, a case as `summary.json` has it. The namespace's quota
-  allows no LoadBalancer, NodePort or volume claim, and the run makes no
-  static IP.
+  for each step, a case as `summary.json` has it. Before the first step it
+  sends the first request of the mix to the plain and the TLS port through
+  the Service, for up to 60 s each until it gets a response. When a port
+  never answers, or a step gets no response at all, it runs no further
+  step of the profile: the summary marks the steps it did not run as not
+  measured, with the reason, and the run goes on to the next profile once
+  smock's Pod and Service are deleted (it waits for that), and exits 1.
+  The namespace's quota allows no LoadBalancer, NodePort or volume claim,
+  and the run makes no static IP.
 - **Always deleted.** When the run ends, fails or is stopped (Ctrl-C,
   SIGTERM, a closed terminal), it deletes the cluster and the repository;
   after a closed terminal it logs that to `after-hangup.log` in the results
@@ -1297,10 +1307,16 @@ that run's linux/amd64 build and tests passed.
 
 It writes to `bench/results/gke-<date>-<time>/` unless `--out` says
 otherwise: `raw/<profile>/generator.log`, the load generator's lines;
-`raw/<profile>/pods.json`, the nodes the Pods ran on and smock's restarts;
+`raw/<profile>/pods.json`, the nodes the Pods ran on, smock's restarts and
+the load generator's CPU request; `raw/<profile>/smock.log`, smock's log
+(and the log of its container before its last restart, when it
+restarted), and `raw/<profile>/service.json`, its Service with the
+Service's EndpointSlices, both kept before smock's Pod is deleted;
 `summary.json` in the layout of a run on a machine, which
 `bench/compare.py` reads; `summary.md`; `conditions.json`; and
-`watchdog.log`. A GKE run does not measure idle RSS, peak memory or CPU
+`watchdog.log`. The summary and the conditions record, for each profile,
+whether the traffic ports answered, whether the profile ended early and
+why, and the load generator's CPU request. A GKE run does not measure idle RSS, peak memory or CPU
 throttling, so their targets are not measured; OOM kills come from smock's
 restarts. Nothing it writes names the account or the project, and what it
 prints shows the project as `$GKE_BENCH_PROJECT` and gcloud's account as
