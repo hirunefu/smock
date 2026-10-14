@@ -44,11 +44,13 @@ class Helper(unittest.TestCase):
         self.addCleanup(shutil.rmtree, path, ignore_errors=True)
         return path
 
-    def manifests(self, profile="autopilot-min", arch="arm64", plan=BENCH / "plan-autopilot.json", cases=None):
+    def manifests(self, profile="autopilot-min", arch="arm64", plan=BENCH / "plan-autopilot.json", cases=None,
+                  smock_deadline_s=3000):
         """The manifests rendered for one profile: {file name: objects}."""
         out = self.directory()
         args = ["manifests", "--plan", plan, "--profile", profile, "--arch", arch, "--zone", "us-central1-a",
-                "--smock-image", SMOCK_IMAGE, "--generator-image", GENERATOR_IMAGE, "--out", out]
+                "--smock-image", SMOCK_IMAGE, "--generator-image", GENERATOR_IMAGE,
+                "--smock-deadline-s", smock_deadline_s, "--out", out]
         if cases:
             args += ["--cases", cases]
         status, stdout, stderr = helper(*args)
@@ -65,33 +67,47 @@ def objects(rendered, kind):
 
 
 def pod_spec(item):
-    return item["spec"]["template"]["spec"]
+    """The Pod spec of a Pod, or of a Job's Pods."""
+    return item["spec"] if item["kind"] == "Pod" else item["spec"]["template"]["spec"]
 
 
 class Manifests(Helper):
-    """Each profile runs smock in a Deployment whose requests are its
-    limits, behind a ClusterIP Service, and the load generator in a Job on
-    another node, both pinned to one zone, in a namespace that cannot have a
-    LoadBalancer or a volume claim."""
+    """Each profile runs smock in a Pod whose requests are its limits, with
+    a deadline, behind a ClusterIP Service, and the load generator in a Job
+    with a deadline on another node, both pinned to one zone, in a namespace
+    that cannot have a LoadBalancer or a volume claim."""
 
     def test_smock_runs_under_the_profiles_limits_as_requests_behind_a_cluster_ip_service(self):
         rendered = self.manifests(profile="autopilot-burst-min")
-        [deployment] = objects(rendered, "Deployment")
-        [container] = pod_spec(deployment)["containers"]
+        [pod] = objects(rendered, "Pod")
+        [container] = pod_spec(pod)["containers"]
         self.assertEqual(container["image"], SMOCK_IMAGE)
         resources = container["resources"]
         self.assertEqual((resources["limits"]["cpu"], resources["limits"]["memory"]), ("50m", "52Mi"))
         self.assertEqual(resources["requests"], resources["limits"])
-        self.assertEqual(deployment["spec"]["replicas"], 1)
+        self.assertEqual(pod_spec(pod)["restartPolicy"], "Always")
         [service] = objects(rendered, "Service")
         self.assertEqual(service["spec"]["type"], "ClusterIP")
         self.assertEqual({port["port"]: port["targetPort"] for port in service["spec"]["ports"]},
                          {80: 8080, 443: 8443, 9090: 9090})
-        self.assertEqual(service["spec"]["selector"], deployment["spec"]["selector"]["matchLabels"])
+        # The Service selects smock's Pod.
+        self.assertLessEqual(service["spec"]["selector"].items(), pod["metadata"]["labels"].items())
+
+    def test_smocks_pod_stops_by_itself_at_the_deadline_it_is_given(self):
+        # Even when neither the run nor its watchdog is left to delete the
+        # cluster, smock is billed until the run's time limit at most.
+        [pod] = objects(self.manifests(smock_deadline_s=2400), "Pod")
+        self.assertEqual(pod_spec(pod)["activeDeadlineSeconds"], 2400)
+        status, _, stderr = helper("manifests", "--plan", BENCH / "plan-autopilot.json", "--profile", "autopilot-min",
+                                   "--arch", "arm64", "--zone", "us-central1-a", "--smock-image", SMOCK_IMAGE,
+                                   "--generator-image", GENERATOR_IMAGE, "--smock-deadline-s", 0,
+                                   "--out", self.directory())
+        self.assertEqual(status, 1)
+        self.assertIn("deadline of at least 1 s", stderr)
 
     def test_the_load_generator_is_a_job_with_a_deadline_on_another_node_than_smock(self):
         rendered = self.manifests(profile="chart-default")
-        [deployment] = objects(rendered, "Deployment")
+        [pod] = objects(rendered, "Pod")
         [job] = objects(rendered, "Job")
         self.assertEqual(job["spec"]["backoffLimit"], 0)
         # 8 steps of plain HTTP and 6 of TLS, each of 2 + 20 + 3 s, with a
@@ -104,7 +120,7 @@ class Manifests(Helper):
         self.assertEqual(spec["restartPolicy"], "Never")
         [term] = spec["affinity"]["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]
         self.assertEqual(term["topologyKey"], "kubernetes.io/hostname")
-        self.assertEqual(term["labelSelector"]["matchLabels"], deployment["spec"]["selector"]["matchLabels"])
+        self.assertLessEqual(term["labelSelector"]["matchLabels"].items(), pod["metadata"]["labels"].items())
         [container] = spec["containers"]
         self.assertEqual(container["image"], GENERATOR_IMAGE)
         self.assertEqual(container["resources"]["requests"], container["resources"]["limits"])
@@ -114,7 +130,7 @@ class Manifests(Helper):
     def test_both_are_pinned_to_the_zone_and_to_the_compute_class_of_the_architecture(self):
         for arch, compute_class in (("arm64", "autopilot-arm"), ("amd64", None)):
             rendered = self.manifests(arch=arch)
-            for item in [*objects(rendered, "Deployment"), *objects(rendered, "Job")]:
+            for item in [*objects(rendered, "Pod"), *objects(rendered, "Job")]:
                 selector = pod_spec(item)["nodeSelector"]
                 self.assertEqual(selector["topology.kubernetes.io/zone"], "us-central1-a")
                 self.assertEqual(selector["kubernetes.io/arch"], arch)
@@ -123,8 +139,8 @@ class Manifests(Helper):
     def test_nothing_billed_outside_the_pods_can_be_made_in_the_namespace(self):
         rendered = self.manifests()
         kinds = {item["kind"] for items in rendered.values() for item in items}
-        self.assertEqual(kinds, {"Namespace", "ResourceQuota", "Service", "Deployment", "Job"})
-        for item in [*objects(rendered, "Deployment"), *objects(rendered, "Job")]:
+        self.assertEqual(kinds, {"Namespace", "ResourceQuota", "Service", "Pod", "Job"})
+        for item in [*objects(rendered, "Pod"), *objects(rendered, "Job")]:
             for volume in pod_spec(item).get("volumes", []):
                 self.assertEqual(set(volume) - {"name"}, {"emptyDir"}, volume)
         [quota] = objects(rendered, "ResourceQuota")
@@ -329,6 +345,9 @@ class Estimate(Helper):
         # 2Gi of ephemeral storage at $0.0001389) and the largest smock (1
         # vCPU, 1Gi, 64Mi), $0.3474 an hour for 65 minutes.
         self.assertIn("At most: $0.38, if it ran until the time limit (60 minutes)", stdout)
+        # What is billed when nothing is left to delete the cluster.
+        self.assertIn("its Pods still stop within minutes of the time limit, and the cluster costs its fee, "
+                      "$0.10 an hour", stdout)
 
     def test_a_region_without_prices_here_is_estimated_from_us_central1s_with_a_margin(self):
         status, stdout, _ = self.estimate(region="europe-west4")

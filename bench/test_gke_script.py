@@ -52,6 +52,8 @@ if tool == "kubectl" and "kubeconfig" in options:
     record["kubeconfig_mode"] = oct(stat.S_IMODE(path.stat().st_mode)) if path.exists() else None
 if tool == "docker" and "login" in words:
     record["stdin"] = sys.stdin.read()
+if tool == "kubectl" and words[:1] == ["apply"]:
+    record["document"] = json.loads(Path(options["filename"]).read_text())
 with (state_dir / "calls.jsonl").open("a") as calls:
     fcntl.flock(calls, fcntl.LOCK_EX)
     calls.write(json.dumps(record) + "\n")
@@ -89,6 +91,8 @@ if tool == "gcloud":
     command = tuple(words[:3])
     if words[:1] == ["version"]:
         answer("Google Cloud SDK 589.0.0\n")
+    if words[:2] == ["config", "get-value"]:
+        answer(config.get("account", "") + "\n")
     if words[:2] == ["projects", "describe"]:
         answer(config.get("project_number", "''' + PROJECT_NUMBER + r'''") + "\n")
     if words[:2] == ["services", "list"]:
@@ -102,10 +106,9 @@ if tool == "gcloud":
     if command == ("compute", "zones", "describe"):
         answer(words[3].rsplit("-", 1)[0] + "\n")
     if command == ("container", "clusters", "list"):
-        wanted = options.get("filter", "").removeprefix("name=")
         clusters = state()["clusters"]
         if "status" in options.get("format", ""):
-            answer("".join(f"{status}\n" for name, status in clusters.items() if name == wanted))
+            answer("".join(f"{name}\t{status}\n" for name, status in clusters.items()))
         answer("".join(f"{name}\tus-central1\n" for name in clusters))
     if command == ("container", "clusters", "create-auto"):
         state(lambda value: value["clusters"].update({words[3]: "PROVISIONING"}))
@@ -144,9 +147,11 @@ if tool == "kubectl":
         if config.get("apply_fails_on") and config["apply_fails_on"] in options.get("filename", ""):
             answer("", 1)
         answer("applied\n")
-    if words[:2] == ["rollout", "status"]:
-        rule("rollout")
-        answer("successfully rolled out\n")
+    if words[:1] == ["wait"]:
+        rule("smock_ready")
+        answer("pod/smock-bench condition met\n")
+    if words[:2] == ["get", "events"]:
+        answer(config.get("events", ""))
     if words[:2] == ["get", "pods"] and "selector" in options:
         answer(config.get("job_pod_phase", "Succeeded"))
     if words[:2] == ["get", "job"]:
@@ -222,7 +227,10 @@ PODS = {"items": [{"metadata": {"name": "smock-bench-1", "labels": {"app": "smoc
                               "containerStatuses": [{"restartCount": 0, "lastState": {}}]}}]}
 
 # What only reads: the gcloud commands that list, describe or print.
-READ_ONLY = {"list", "describe", "version", "print-access-token"}
+READ_ONLY = {"list", "describe", "version", "print-access-token", "get-value"}
+
+# The account gcloud is logged in as, in the fakes.
+ACCOUNT = "someone.else+bench@example.com"
 
 
 class Script(unittest.TestCase):
@@ -271,6 +279,7 @@ class Script(unittest.TestCase):
     def configure(self, **config):
         config.setdefault("logs", {"generator-small": str(self.tmp / "generator-small.log")})
         config.setdefault("pods", PODS)
+        config.setdefault("account", ACCOUNT)
         (self.state / "config.json").write_text(json.dumps(config))
 
     def environment(self, **changes):
@@ -373,6 +382,16 @@ class BeforeAnything(Script):
         self.assertIn("Nothing was made. To make these and run the benchmark, run it again with --yes.", output)
         self.assertEqual(self.changing_calls(), [])
 
+    def test_a_time_limit_without_its_unit_or_past_four_hours_is_refused(self):
+        # 4800 meant as seconds would be 80 hours as minutes.
+        for limit, expected in (("4800", "with their unit"), ("241m", "at most 240m"), ("14401s", "at most 240m")):
+            status, output = self.run_script("--dry-run", "--time-limit", limit)
+            self.assertEqual(status, 2, output)
+            self.assertIn(expected, output)
+        self.assertEqual(self.calls(), [])
+        status, output = self.run_script("--dry-run", "--time-limit", "240m")
+        self.assertEqual(status, 0, output)
+
     def test_too_little_cpu_quota_stops_it_with_what_the_run_needs(self):
         self.configure(cpus_all_regions=24.0)
         status, output = self.run_script("--yes")
@@ -457,6 +476,19 @@ class Run(Script):
         for path in self.out.rglob("*"):
             if path.is_file():
                 self.assertNotIn(PROJECT, path.read_text(), path)
+        # Whether the cluster is gone is read from the region's clusters, by
+        # name; VM instances are among what is checked at the end.
+        for call in self.made(["container", "clusters", "list"]):
+            if "status" in " ".join(call["argv"]):
+                self.assertIn("--region=us-central1", call["argv"])
+        self.assertTrue(self.made(["compute", "instances", "list"]))
+        # smock runs in a Pod that ends by itself by the time limit (80
+        # minutes by default), as the load generator's Job does.
+        [apply] = [call for call in self.made(["apply"]) if call["argv"][-1].endswith("smock.json")]
+        [pod] = [item for item in apply["document"]["items"] if item["kind"] == "Pod"]
+        self.assertGreater(pod["spec"]["activeDeadlineSeconds"], 70 * 60)
+        self.assertLessEqual(pod["spec"]["activeDeadlineSeconds"], 80 * 60)
+        self.assertEqual(self.made(["wait"])[0]["words"][1:], ["pod/smock-bench"])
 
     def test_kubectl_uses_its_own_kubeconfig_with_an_access_token_deleted_at_the_end(self):
         status, output = self.run_script("--yes")
@@ -509,15 +541,23 @@ class Interrupted(Script):
         output = self.interrupt(lambda process: process.send_signal(signal.SIGTERM))
         self.assertIn("stopped by SIGTERM", output)
 
+    def test_a_closed_terminal_deletes_what_the_run_made_and_logs_it_to_a_file(self):
+        # Writing to a terminal that has gone fails; the clean-up writes to
+        # a file instead.
+        self.interrupt(lambda process: os.killpg(process.pid, signal.SIGHUP))
+        log = (self.out / "after-hangup.log").read_text()
+        self.assertIn("stopped by SIGHUP", log)
+        self.assertIn("nothing is left", log)
+
     def test_the_watchdog_deletes_them_at_the_time_limit_when_the_script_was_killed(self):
         # 40 minutes pass in 20 s; smock never becomes ready, and the script
         # is killed, so that no trap of its own runs.
         self.fake_time(120)
-        self.configure(rollout={"sleep": 300})
+        self.configure(smock_ready={"sleep": 300})
         process = self.start_script("--yes", "--time-limit", "40m")
-        self.wait_for_call(["rollout", "status"])
-        [rollout] = self.made(["rollout", "status"])
-        work = Path(rollout["argv"][0].split("=", 1)[1]).parent
+        self.wait_for_call(["wait"])
+        [ready] = self.made(["wait"])
+        work = Path(ready["argv"][0].split("=", 1)[1]).parent
         os.killpg(process.pid, signal.SIGKILL)
         # Reaped, as a shell would.
         process.wait()
@@ -530,6 +570,66 @@ class Interrupted(Script):
         # The kubeconfig and the registry login went with the script's
         # temporary directory.
         self.assertFalse(work.exists())
+
+
+class Watchdog(Script):
+    def test_nothing_is_made_when_the_watchdog_cannot_start(self):
+        # Its log cannot be written.
+        (self.out / "watchdog.log").mkdir(parents=True)
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        self.assertIn("the watchdog did not start", output)
+        self.assertEqual(self.made(["artifacts", "repositories", "create"]), [])
+        self.assertEqual(self.made(["container", "clusters", "create-auto"]), [])
+        (self.out / "watchdog.log").rmdir()
+
+    def test_the_watchdog_stops_no_process_but_the_run_that_started_it(self):
+        # The run has ended, and its process number now belongs to another
+        # process; the run left its cluster, its repository and its
+        # temporary directory.
+        stranger = subprocess.Popen(["sleep", "60"])
+        self.addCleanup(stranger.wait)
+        self.addCleanup(stranger.kill)
+        (self.state / "state.json").write_text(json.dumps({"clusters": {"smock-bench-20261014-010101": "RUNNING"},
+                                                           "repositories": ["smock-bench-20261014-010101"]}))
+        work = self.tmpdir / "smock-gke-bench.abc123"
+        work.mkdir()
+        (work / "kubeconfig").write_text("token: fake-access-token\n")
+        environment = self.environment(
+            GKE_BENCH_WATCHDOG_DEADLINE=str(int(time.time())), GKE_BENCH_WATCHDOG_PARENT=str(stranger.pid),
+            GKE_BENCH_WATCHDOG_STOP=str(self.tmp / "stop"), GKE_BENCH_CLUSTER="smock-bench-20261014-010101",
+            GKE_BENCH_REPOSITORY="smock-bench-20261014-010101", GKE_BENCH_WORK=str(work))
+        result = subprocess.run([str(SCRIPT), "--watchdog"], env=environment, capture_output=True, text=True,
+                                timeout=60)
+        self.assertIn("watchdog: done", result.stderr)
+        self.assertIsNone(stranger.poll(), "the watchdog stopped a process that was not the run")
+        self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
+        self.assertFalse(work.exists())
+
+
+class Privacy(Script):
+    def test_kubernetes_events_and_errors_show_neither_the_project_nor_the_account(self):
+        # smock never becomes ready, and the events name its image, in the
+        # project's registry, and the account.
+        image = f"us-central1-docker.pkg.dev/{PROJECT}/smock-bench-1/smock@sha256:" + "1" * 64
+        self.configure(smock_ready={"status": 1, "stderr": f'error: User "{ACCOUNT}" cannot get pods\n'},
+                       events=f"Warning  Failed  pod/smock-bench  Failed to pull image \"{image}\"\n")
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        self.assertIn("Failed to pull image", output)
+        self.assertIn("cannot get pods", output)
+        self.assertNotIn(PROJECT, output)
+        self.assertNotIn(ACCOUNT, output)
+        self.assertIn("<account>", output)
+
+    def test_the_nodes_service_account_runs_the_nodes_and_may_read_the_images(self):
+        account = f"smock-bench-nodes@{PROJECT}.iam.gserviceaccount.com"
+        status, output = self.run_script("--yes", GKE_BENCH_NODE_SERVICE_ACCOUNT=account)
+        self.assertEqual(status, 0, output)
+        [grant] = self.made(["artifacts", "repositories", "add-iam-policy-binding"])
+        self.assertIn(f"--member=serviceAccount:{account}", grant["argv"])
+        [cluster] = self.made(["container", "clusters", "create-auto"])
+        self.assertIn(f"--service-account={account}", cluster["argv"])
 
 
 class Leftovers(Script):

@@ -27,7 +27,7 @@ harness = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(harness)
 
 # The namespace everything of the run lives in, and the name of smock's
-# Deployment and Service in it.
+# Pod and Service in it.
 NAMESPACE = "smock-bench"
 SMOCK = "smock-bench"
 
@@ -154,10 +154,18 @@ def node_selector(arch, zone):
     return selector
 
 
-def manifests(plan, profile, cases, arch, zone, smock_image, generator_image):
+def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, smock_deadline_s):
     """The objects of one profile: {file name: object}. namespace.json holds
-    the namespace and its quota, smock.json smock's Service and Deployment,
-    generator.json the load generator's Job."""
+    the namespace and its quota, smock.json smock's Service and Pod,
+    generator.json the load generator's Job.
+
+    smock runs in a Pod of its own, not a Deployment, so that it can have a
+    deadline (`smock_deadline_s`, the time left until the run's time limit,
+    which counts from when its node accepts it): like the load generator's
+    Job, it stops being billed by itself even when neither the run nor its
+    watchdog is left to delete the cluster."""
+    if smock_deadline_s < 1:
+        raise GkeError(f"smock's Pod needs a deadline of at least 1 s, not {smock_deadline_s}")
     labels = {"app": SMOCK}
     limits = {"cpu": profile["cpu_limit"], "memory": profile["memory_limit"],
               "ephemeral-storage": SMOCK_EPHEMERAL_STORAGE}
@@ -182,34 +190,30 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image):
                            {"name": "tls", "port": 443, "targetPort": 8443},
                            {"name": "admin", "port": 9090, "targetPort": 9090}]},
     }
-    deployment = {
-        "apiVersion": "apps/v1", "kind": "Deployment",
+    pod = {
+        "apiVersion": "v1", "kind": "Pod",
         "metadata": {"name": SMOCK, "namespace": NAMESPACE, "labels": {**labels, "profile": profile["name"]}},
         "spec": {
-            "replicas": 1,
-            "strategy": {"type": "Recreate"},
-            "selector": {"matchLabels": labels},
-            "template": {
-                "metadata": {"labels": {**labels, "profile": profile["name"]}},
-                "spec": {
-                    "nodeSelector": node_selector(arch, zone),
-                    "enableServiceLinks": False,
-                    "automountServiceAccountToken": False,
-                    "terminationGracePeriodSeconds": 5,
-                    "securityContext": pod_security,
-                    "containers": [{
-                        "name": "smock", "image": smock_image, "args": ["serve"],
-                        "env": [{"name": "SMOCK_DIR", "value": "/definitions"},
-                                {"name": "SMOCK_ADMIN_AUTH", "value": "off"}],
-                        "ports": [{"name": "plain", "containerPort": 8080}, {"name": "tls", "containerPort": 8443},
-                                  {"name": "admin", "containerPort": 9090}],
-                        "resources": {"requests": limits, "limits": limits},
-                        "readinessProbe": {"httpGet": {"path": "/readyz", "port": 9090}, "periodSeconds": 5,
-                                           "failureThreshold": 2},
-                        "securityContext": container_security,
-                    }],
-                },
-            },
+            # Restarted in place after an OOM kill, as a Deployment's Pod
+            # would be, until the deadline.
+            "restartPolicy": "Always",
+            "activeDeadlineSeconds": smock_deadline_s,
+            "nodeSelector": node_selector(arch, zone),
+            "enableServiceLinks": False,
+            "automountServiceAccountToken": False,
+            "terminationGracePeriodSeconds": 5,
+            "securityContext": pod_security,
+            "containers": [{
+                "name": "smock", "image": smock_image, "args": ["serve"],
+                "env": [{"name": "SMOCK_DIR", "value": "/definitions"},
+                        {"name": "SMOCK_ADMIN_AUTH", "value": "off"}],
+                "ports": [{"name": "plain", "containerPort": 8080}, {"name": "tls", "containerPort": 8443},
+                          {"name": "admin", "containerPort": 9090}],
+                "resources": {"requests": limits, "limits": limits},
+                "readinessProbe": {"httpGet": {"path": "/readyz", "port": 9090}, "periodSeconds": 5,
+                                   "failureThreshold": 2},
+                "securityContext": container_security,
+            }],
         },
     }
     specs = steps(plan, profile, cases)
@@ -247,7 +251,7 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image):
     }
     return {
         "namespace.json": {"apiVersion": "v1", "kind": "List", "items": [namespace, quota]},
-        "smock.json": {"apiVersion": "v1", "kind": "List", "items": [service, deployment]},
+        "smock.json": {"apiVersion": "v1", "kind": "List", "items": [service, pod]},
         "generator.json": job,
     }
 
@@ -313,6 +317,10 @@ def estimate(plan, profiles, cases, region, time_limit_s):
         f"Expected: about ${expected:.2f}, the cluster existing for about {round(lifetime_s / 60)} minutes.",
         f"At most: ${at_most:.2f}, if it ran until the time limit ({round(time_limit_s / 60)} minutes), when the "
         "watchdog deletes the cluster, and during the deletion.",
+        "If neither the run nor its watchdog could delete the cluster (the machine running them went down), its "
+        f"Pods still stop within minutes of the time limit, and the cluster costs its fee, "
+        f"${CLUSTER_FEE_PER_HOUR:.2f} an hour, "
+        "until it is deleted: the next run's checks name it.",
         "Arm Pods are priced here as general-purpose x86 Pods: see the pricing page for autopilot-arm.",
     ])
     needed_s = lifetime_s + TIME_LIMIT_MARGIN_S
@@ -509,7 +517,8 @@ def command_manifests(args):
     plan = read_json(args.plan)
     [profile] = plan_profiles(plan, [args.profile])
     cases = plan_cases(plan, comma_list(args.cases))
-    rendered = manifests(plan, profile, cases, args.arch, args.zone, args.smock_image, args.generator_image)
+    rendered = manifests(plan, profile, cases, args.arch, args.zone, args.smock_image, args.generator_image,
+                         args.smock_deadline_s)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     for name, document in rendered.items():
@@ -546,6 +555,8 @@ def main(argv):
     rendering.add_argument("--zone", required=True, help="the zone smock and the load generator run in")
     rendering.add_argument("--smock-image", required=True, help="smock's image, by digest")
     rendering.add_argument("--generator-image", required=True, help="the load generator's image, by digest")
+    rendering.add_argument("--smock-deadline-s", type=int, required=True,
+                           help="how long smock's Pod may run, in seconds: the time left until the run's time limit")
     rendering.add_argument("--out", required=True, help="the directory to write them to")
     rendering.set_defaults(handler=command_manifests)
     info = commands.add_parser("pod-info", help="print what to keep of the Pods and their nodes")

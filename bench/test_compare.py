@@ -174,28 +174,38 @@ class NotCompared(Comparison):
     are compared."""
 
     def test_steps_that_only_one_run_has_are_listed_but_not_compared(self):
-        older = self.summary([step(rate=1000), step(rate=2000, p99=1.0)])
+        # The older run did not measure smock at 8,000 a second.
+        older = self.summary([step(rate=1000), step(rate=8000, p99=900.0, errors=5)])
         newer = self.summary([step(rate=1000), step(rate=4000), step(profile="other", rate=2000, p99=50.0)])
         status, report = self.compare(older, newer)
         self.assertEqual(status, 0, report)
-        self.assertIn("Only in the older run: http-keep-alive@small@2000.", report)
+        self.assertIn("Only in the older run: http-keep-alive@small@8000.", report)
         self.assertIn("Only in the newer run: http-keep-alive@small@4000, http-keep-alive@other@2000.", report)
 
     def test_a_step_where_the_older_run_failed_requests_or_a_load_generator_fell_behind_is_not_compared(self):
         # Past its capacity, a run's latencies are its queue: they say how
         # far over capacity the step was, not how fast smock is.
-        older = self.summary([step(rate=1000, p99=10.0, errors=5), step(rate=2000, p99=10.0, late=True),
-                              step(rate=4000, p99=10.0)])
-        newer = self.summary([step(rate=1000, p99=500.0, errors=900), step(rate=2000, p99=50.0),
-                              step(rate=4000, p99=50.0, late=True)])
+        older = self.summary([step(rate=1000, p99=10.0, errors=5), step(rate=2000, p99=10.0, late=True)])
+        newer = self.summary([step(rate=1000, p99=500.0, errors=900), step(rate=2000, p99=50.0)])
         status, report = self.compare(older, newer)
         self.assertEqual(status, 0, report)
         self.assertEqual(self.row(report, "small", "http-keep-alive", 1000)["Verdict"],
                          "not compared: 5 of 20000 requests failed in the older run")
         self.assertEqual(self.row(report, "small", "http-keep-alive", 2000)["Verdict"],
                          "not compared: the load generator fell behind in the older run")
-        self.assertEqual(self.row(report, "small", "http-keep-alive", 4000)["Verdict"],
+
+    def test_a_step_the_older_run_measured_and_the_newer_did_not_fails_the_comparison(self):
+        # The newer run's load generator fell behind at 2,000 a second, and
+        # the run stopped before 4,000: nothing says how smock did there.
+        older = self.summary([step(rate=1000), step(rate=2000), step(rate=4000)])
+        newer = self.summary([step(rate=1000), step(rate=2000, p99=50.0, late=True)], complete=False)
+        status, report = self.compare(older, newer)
+        self.assertEqual(status, 1, report)
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 2000)["Verdict"],
                          "not compared: the load generator fell behind in the newer run")
+        self.assertIn("Only in the older run: http-keep-alive@small@4000.", report)
+        self.assertIn("**Result:** No regression, no target missed, 2 steps the older run measured not measured "
+                      "in the newer one.", report)
 
     def test_a_profile_run_under_other_limits_is_not_compared(self):
         older = self.summary([step(profile="chart-default", cpu_limit="1", memory_limit="4Gi", p99=2.0)])

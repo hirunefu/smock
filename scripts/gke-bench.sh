@@ -11,17 +11,20 @@
 # 3. pushes them to a new Artifact Registry repository, makes a new
 #    Autopilot cluster, both labelled purpose=smock-bench, and runs each
 #    profile of the plan (bench/plan-autopilot.json by default): smock in a
-#    Deployment with the profile's limits as its requests behind a
-#    ClusterIP Service, the load generator (bench/gke/generator.py) in a
-#    Job with a deadline on another node, both pinned to one zone;
+#    Pod with the profile's limits as its requests behind a ClusterIP
+#    Service, the load generator (bench/gke/generator.py) in a Job on
+#    another node, both pinned to one zone, and both with a deadline that
+#    ends them within minutes of the time limit at the latest, so that they
+#    stop being billed even if nothing is left to delete the cluster;
 # 4. writes the load generator's lines and the Pods' state under the
 #    results directory, and summary.json, summary.md and conditions.json,
 #    which bench/compare.py compares;
 # 5. always deletes the cluster and the repository: when it ends, fails or
 #    is interrupted, and from a watchdog in its own session when the time
 #    limit (80 minutes by default) has passed, even if this script was
-#    killed; then lists clusters, repositories, disks, addresses and
-#    forwarding rules, and fails if anything the run made is left.
+#    killed; then lists clusters, repositories, VM instances, disks,
+#    addresses and forwarding rules, and fails if anything the run made is
+#    left.
 #
 # It never makes a LoadBalancer, a static IP or a volume claim: the
 # namespace's quota forbids them. kubectl authenticates with an access token
@@ -38,7 +41,7 @@
 #   --cases A,B      only these cases of the plan
 #   --targets FILE   the targets to check (default: bench/targets.json)
 #   --out DIR        where the results go (default: bench/results/gke-<date>-<time>)
-#   --time-limit T   when the watchdog deletes the cluster, such as 80m (default) or 4800s
+#   --time-limit T   when the watchdog deletes the cluster, with its unit: 80m (default), 4800s; at most 240m
 #   --smock FILE     use this release binary instead of building one
 #   --oha FILE       use this oha (of this machine's architecture) instead of the pinned one
 #
@@ -48,7 +51,7 @@
 #   GKE_BENCH_ZONE          the zone smock and the load generator run in (default: <region>-a)
 #   GKE_BENCH_NEEDED_CPUS   the vCPUs of quota the run needs (default: 32, four nodes of 8)
 #   GKE_BENCH_NODE_SERVICE_ACCOUNT
-#                           the nodes' service account, which may read the images
+#                           the service account the nodes run as, which may read the images
 #                           (default: the project's Compute Engine default service account)
 #   GCLOUD, KUBECTL, DOCKER, PYTHON
 #                           the commands to use (default: gcloud, kubectl, docker, python3 on PATH)
@@ -76,18 +79,21 @@ APIS=(artifactregistry.googleapis.com compute.googleapis.com container.googleapi
 # The regions with the built-in autopilot-arm compute class, as GKE's
 # documentation listed them on 2026-10-09.
 ARM_REGIONS=" us-central1 us-east1 us-west1 europe-west1 europe-west2 europe-west4 asia-southeast1 "
-# How long the load generator's Pod may wait for a node, smock for its
-# rollout, and an access token may be used before a new one is fetched.
+# How long the load generator's Pod may wait for a node, smock to become
+# ready, and an access token may be used before a new one is fetched.
 PENDING_LIMIT_S=900
-ROLLOUT_LIMIT_S=900
+READY_LIMIT_S=900
 TOKEN_REFRESH_S=2700
 # How long deleting the cluster may take before the script gives up on it.
 DELETE_LIMIT_S=1800
+# The longest time limit: a full run takes under an hour, and a limit far
+# beyond it, such as 4800 taken as minutes, would keep a stuck run billed.
+MAX_TIME_LIMIT_S=14400
 
 dry_run=0 yes=0 enable_apis=0
 plan="$ROOT/bench/plan-autopilot.json" targets="$ROOT/bench/targets.json"
 profiles="" cases="" out="" time_limit=80m smock_binary="" oha_binary=""
-project_number="" problems=() apis_to_enable=()
+project_number="" account_pattern="" problems=() apis_to_enable=()
 work="" resources_may_exist=0 watchdog_pid="" built_images=() log_pid="" token_at=0
 
 say() {
@@ -127,9 +133,33 @@ shown() {
 }
 
 # Copies its input with the project and its number replaced by the
-# variables that hold them, as gcloud names them in its messages.
+# variables that hold them, and gcloud's account by <account>, as gcloud and
+# kubectl name them in their messages.
 masked() {
-  sed -u -e "s/$PROJECT/\$GKE_BENCH_PROJECT/g" ${project_number:+-e "s/$project_number/\$PROJECT_NUMBER/g"}
+  local rules=(-e "s/$PROJECT/\$GKE_BENCH_PROJECT/g")
+  [ -z "$project_number" ] || rules+=(-e "s/$project_number/\$PROJECT_NUMBER/g")
+  [ -z "$account_pattern" ] || rules+=(-e "s/$account_pattern/<account>/g")
+  sed -u "${rules[@]}"
+}
+
+# Learns the account gcloud uses, for masked: Kubernetes names it when it
+# forbids something, and gcloud in some of its errors.
+learn_account() {
+  local account
+  account=$("$GCLOUD" config get-value account 2>/dev/null) || account=""
+  account_pattern=$(printf '%s' "$account" | sed 's/[][\.*^$/]/\\&/g')
+}
+
+# Whether process $1 is still a run of this script (its watchdog when $2 is
+# --watchdog): a process that has ended may have left its number to another.
+is_this_script() {
+  local args
+  if [ -r "/proc/$1/cmdline" ]; then
+    args=$(tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null)
+  else
+    args=$(ps -o args= -p "$1" 2>/dev/null)
+  fi
+  [[ $args == *gke-bench.sh* && $args == *"${2:-}"* ]]
 }
 
 # Runs a command that changes something, in the background so that a signal
@@ -172,21 +202,27 @@ problem() {
 # Deletes the cluster, waiting while it is being made or deleted, until it
 # is gone or DELETE_LIMIT_S has passed.
 delete_cluster() {
-  local status deadline=$(($(now) + DELETE_LIMIT_S))
+  local listing status deadline=$(($(now) + DELETE_LIMIT_S))
   if [ "$dry_run" = 1 ]; then
     changes "$GCLOUD" container clusters delete "$cluster" --region="$REGION" --project="$PROJECT" --quiet --async
     return 0
   fi
   while :; do
-    if ! status=$("$GCLOUD" container clusters list --project="$PROJECT" --filter="name=$cluster" \
-      --format='value(status)'); then
+    # The region's clusters, by their whole names: a listing of every
+    # location leaves out those of a zone that does not answer, and
+    # succeeds.
+    if ! listing=$(reads "$GCLOUD" container clusters list --project="$PROJECT" --region="$REGION" \
+      --format='value(name,status)'); then
       say "cannot list the clusters; trying again"
-    elif [ -z "$status" ]; then
-      say "cluster $cluster: deleted"
-      return 0
-    elif [ "$status" != STOPPING ]; then
-      changes "$GCLOUD" container clusters delete "$cluster" --region="$REGION" --project="$PROJECT" --quiet \
-        --async || say "cluster $cluster ($status) could not be deleted yet; trying again"
+    else
+      status=$(awk -F '\t' -v name="$cluster" '$1 == name { print $2 }' <<<"$listing")
+      if [ -z "$status" ]; then
+        say "cluster $cluster: deleted"
+        return 0
+      elif [ "$status" != STOPPING ]; then
+        changes "$GCLOUD" container clusters delete "$cluster" --region="$REGION" --project="$PROJECT" --quiet \
+          --async || say "cluster $cluster ($status) could not be deleted yet; trying again"
+      fi
     fi
     if [ "$(now)" -ge "$deadline" ]; then
       say "cluster $cluster still exists after $((DELETE_LIMIT_S / 60)) minutes"
@@ -203,7 +239,7 @@ delete_repository() {
     return 0
   fi
   for attempt in 1 2 3 4 5; do
-    if ! names=$("$GCLOUD" artifacts repositories list --project="$PROJECT" --location="$REGION" \
+    if ! names=$(reads "$GCLOUD" artifacts repositories list --project="$PROJECT" --location="$REGION" \
       --format='value(name)'); then
       say "cannot list the repositories; trying again"
     elif ! grep -q "/repositories/$repository\$" <<<"$names"; then
@@ -241,10 +277,13 @@ watchdog() {
     exit 0
   fi
   say "watchdog: the time limit has passed; stopping the run and deleting what it made"
-  kill -TERM "$parent" 2>/dev/null
+  learn_account
+  if is_this_script "$parent"; then
+    kill -TERM "$parent" 2>/dev/null
+  fi
   delete_cluster
   delete_repository
-  if ! kill -0 "$parent" 2>/dev/null; then
+  if ! is_this_script "$parent" && [[ $GKE_BENCH_WORK == */smock-gke-bench.* ]]; then
     rm -rf "$GKE_BENCH_WORK"
   fi
   say "watchdog: done"
@@ -301,12 +340,20 @@ if ! [[ $PROJECT =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]] || ! [[ $REGION =~ ^[a-z]+
   say "GKE_BENCH_PROJECT, GKE_BENCH_REGION or GKE_BENCH_ZONE is not a project ID, a region and a zone in it"
   exit 2
 fi
-if ! [[ $time_limit =~ ^0*([1-9][0-9]{0,5})(m|s)?$ ]]; then
-  say "--time-limit takes minutes or seconds, such as 80m or 4800s"
+if ! [[ $time_limit =~ ^0*([1-9][0-9]{0,5})(m|s)$ ]]; then
+  say "--time-limit takes minutes or seconds with their unit, such as 80m or 4800s"
   exit 2
 fi
 time_limit_s=${BASH_REMATCH[1]}
 [ "${BASH_REMATCH[2]}" = s ] || time_limit_s=$((time_limit_s * 60))
+if [ "$time_limit_s" -gt "$MAX_TIME_LIMIT_S" ]; then
+  say "--time-limit is at most $((MAX_TIME_LIMIT_S / 60))m: a full run takes under an hour"
+  exit 2
+fi
+if ! [[ $NEEDED_CPUS =~ ^[1-9][0-9]{0,3}$ ]]; then
+  say "GKE_BENCH_NEEDED_CPUS is a number of vCPUs, such as 32"
+  exit 2
+fi
 case $(uname -m) in
 aarch64 | arm64) arch=arm64 ;;
 x86_64 | amd64) arch=amd64 ;;
@@ -358,6 +405,8 @@ take_inventory() {
     sed 's/^/cluster\t/' >>"$file" || status=1
   reads "$GCLOUD" artifacts repositories list --project="$PROJECT" --format='value(name)' |
     sed -E 's#^projects/[^/]+/locations/([^/]+)/repositories/(.*)$#repository\t\2\t\1#' >>"$file" || status=1
+  reads "$GCLOUD" compute instances list --project="$PROJECT" --format='value(name,zone.basename())' |
+    sed 's/^/instance\t/' >>"$file" || status=1
   reads "$GCLOUD" compute disks list --project="$PROJECT" --format='value(name,zone.basename())' |
     sed 's/^/disk\t/' >>"$file" || status=1
   reads "$GCLOUD" compute addresses list --project="$PROJECT" --format='value(name,region.basename())' |
@@ -370,22 +419,23 @@ take_inventory() {
 }
 
 # Checks that the project has nothing billable the run did not find there
-# before it: no cluster, repository, disk, address or forwarding rule.
+# before it: no cluster, repository, VM instance, disk, address or
+# forwarding rule. The cluster's nodes may take a little longer to go.
 # shellcheck disable=SC2329,SC2016 # Called by on_exit; prints the variable's name.
 verify_nothing_left() {
   local attempt left
-  for attempt in 1 2 3; do
+  for attempt in 1 2 3 4 5 6; do
     if take_inventory "$work/inventory-after"; then
       left=$(comm -13 "$work/inventory-before" "$work/inventory-after")
       if [ -z "$left" ]; then
-        say "nothing is left: the project has the clusters, repositories, disks, addresses and forwarding rules" \
-          "it had before the run ($(wc -l <"$work/inventory-after") of them)"
+        say "nothing is left: the project has the clusters, repositories, VM instances, disks, addresses and" \
+          "forwarding rules it had before the run ($(wc -l <"$work/inventory-after") of them)"
         return 0
       fi
     else
       left="(the listing failed)"
     fi
-    [ "$attempt" = 3 ] || pause
+    [ "$attempt" = 6 ] || pause
   done
   say "LEFT AFTER THE RUN, still billed until deleted:"
   printf '  %s\n' "$left" | tr '\t' ' ' >&2
@@ -399,7 +449,9 @@ verify_nothing_left() {
 stop_watchdog() {
   if [ -n "$watchdog_pid" ]; then
     : >"$out/.watchdog-stop"
-    kill "$watchdog_pid" 2>/dev/null
+    if is_this_script "$watchdog_pid" --watchdog; then
+      kill "$watchdog_pid" 2>/dev/null
+    fi
     watchdog_pid=""
   fi
 }
@@ -419,8 +471,8 @@ on_exit() {
     "$DOCKER" image rm "$image" >/dev/null 2>&1
   done
   if [ "$resources_may_exist" = 1 ] && [ ! -f "$work/inventory-before" ]; then
-    say "would list the clusters, repositories, disks, addresses and forwarding rules, and compare them with" \
-      "what the project had before"
+    say "would list the clusters, repositories, VM instances, disks, addresses and forwarding rules, and compare" \
+      "them with what the project had before"
   elif [ "$resources_may_exist" = 1 ]; then
     if verify_nothing_left; then
       stop_watchdog
@@ -435,6 +487,16 @@ on_exit() {
 
 # shellcheck disable=SC2329 # The trap of INT, TERM and HUP.
 on_signal() {
+  if [ "$1" = HUP ]; then
+    # The terminal has gone, and writing to it fails: what the clean-up
+    # prints goes to a file instead, so that none of its commands stops
+    # early for want of somewhere to write.
+    if [ -d "$out" ]; then
+      exec >>"$out/after-hangup.log" 2>&1
+    else
+      exec >/dev/null 2>&1
+    fi
+  fi
   say "stopped by SIG$1"
   exit "$2"
 }
@@ -497,7 +559,8 @@ check_project() {
     esac
   done <"$work/inventory-before"
   line=$(grep -c . "$work/inventory-before")
-  say "the project has $line clusters, repositories, disks, addresses and forwarding rules before the run"
+  say "the project has $line clusters, repositories, VM instances, disks, addresses and forwarding rules before" \
+    "the run"
 }
 
 preflight() {
@@ -512,6 +575,7 @@ preflight() {
     problem "curl is not on PATH to download oha: install it, or give --oha"
   fi
   [ ${#problems[@]} -eq 0 ] || return
+  learn_account
   if ! project_number=$(reads "$GCLOUD" projects describe "$PROJECT" --format='value(projectNumber)') ||
     [ -z "$project_number" ]; then
     problem "cannot read the project \$GKE_BENCH_PROJECT: log in with gcloud auth login, and check the project ID"
@@ -574,20 +638,28 @@ build_images() {
 }
 
 start_watchdog() {
-  local deadline=$(($(now) + time_limit_s))
+  local deadline=$(($(now) + time_limit_s)) tenths
   if [ "$dry_run" = 1 ]; then
     say "would start the watchdog, which deletes the cluster and the repository $cluster after" \
       "$((time_limit_s / 60)) minutes"
     return
   fi
-  mkdir -p "$out"
+  mkdir -p "$out" || die "cannot make the results directory $out"
   rm -f "$out/.watchdog-stop"
   GKE_BENCH_WATCHDOG_DEADLINE=$deadline GKE_BENCH_WATCHDOG_PARENT=$$ GKE_BENCH_WATCHDOG_STOP=$out/.watchdog-stop \
     GKE_BENCH_CLUSTER=$cluster GKE_BENCH_REPOSITORY=$repository GKE_BENCH_WORK=$work \
     setsid "$SCRIPT" --watchdog </dev/null >>"$out/watchdog.log" 2>&1 &
   watchdog_pid=$!
-  say "the watchdog (process $watchdog_pid, log $out/watchdog.log) deletes the cluster and the repository at" \
-    "$(date -u -d "@$deadline" +%FT%TZ) if they still exist"
+  # Nothing is made until the watchdog says that it is waiting.
+  for ((tenths = 0; tenths < 100; tenths++)); do
+    if grep -q 'watchdog: deletes' "$out/watchdog.log" 2>/dev/null; then
+      say "the watchdog (process $watchdog_pid, log $out/watchdog.log) deletes the cluster and the repository at" \
+        "$(date -u -d "@$deadline" +%FT%TZ) if they still exist"
+      return
+    fi
+    sleep 0.1
+  done
+  die "the watchdog did not start (see $out/watchdog.log), so nothing was made"
 }
 
 push_image() {
@@ -598,8 +670,12 @@ push_image() {
     printf '%s@sha256:<digest>' "${remote%:*}"
     return
   fi
-  changes env DOCKER_CONFIG="$work/docker" "$DOCKER" push "$remote" >"$work/push-$name.txt" ||
-    die "pushing $image failed"
+  # Not through changes: its output, masked by another process, may still
+  # be on its way to the file when docker has ended.
+  say "+ $(shown env DOCKER_CONFIG="$work/docker" "$DOCKER" push "$remote")"
+  env DOCKER_CONFIG="$work/docker" "$DOCKER" push "$remote" >"$work/push-$name.txt" 2> >(masked >&2) &
+  wait $! || die "pushing $image failed"
+  masked <"$work/push-$name.txt" >&2
   digest=$(grep -o 'digest: sha256:[0-9a-f]\{64\}' "$work/push-$name.txt" | head -n 1 | cut -d ' ' -f 2)
   [ -n "$digest" ] || die "docker push did not say the digest of $image"
   printf '%s@%s' "${remote%:*}" "$digest"
@@ -621,7 +697,7 @@ push_images() {
   else
     say "+ $(shown "$GCLOUD" auth print-access-token) | $(shown env DOCKER_CONFIG="$work/docker" "$DOCKER" login \
       --username=oauth2accesstoken --password-stdin "https://$registry")"
-    { "$GCLOUD" auth print-access-token | env DOCKER_CONFIG="$work/docker" "$DOCKER" login \
+    { "$GCLOUD" auth print-access-token 2> >(masked >&2) | env DOCKER_CONFIG="$work/docker" "$DOCKER" login \
       --username=oauth2accesstoken --password-stdin "https://$registry" >/dev/null; } &
     wait $! || die "logging in to $registry failed"
   fi
@@ -635,7 +711,7 @@ push_images() {
 # from gcloud, readable by this user only.
 write_kubeconfig() {
   local token
-  token=$("$GCLOUD" auth print-access-token) || die "gcloud auth print-access-token failed"
+  token=$("$GCLOUD" auth print-access-token 2> >(masked >&2)) || die "gcloud auth print-access-token failed"
   (
     umask 077
     cat >"$kubeconfig" <<EOF
@@ -673,7 +749,7 @@ refresh_token() {
 }
 
 kube() {
-  "$KUBECTL" --kubeconfig="$kubeconfig" --namespace="$NAMESPACE" "$@"
+  "$KUBECTL" --kubeconfig="$kubeconfig" --namespace="$NAMESPACE" "$@" 2> >(masked >&2)
 }
 
 # A kubectl command that changes something or waits long: in the
@@ -684,15 +760,19 @@ kube_run() {
 }
 
 make_cluster() {
-  local info
+  local info service_account=()
+  # The account the run let read the repository, when it is not the
+  # default one.
+  [ -z "${GKE_BENCH_NODE_SERVICE_ACCOUNT:-}" ] ||
+    service_account=(--service-account="$GKE_BENCH_NODE_SERVICE_ACCOUNT")
   changes "$GCLOUD" container clusters create-auto "$cluster" --region="$REGION" --project="$PROJECT" \
-    --release-channel=regular --labels="$labels" --quiet || die "making the cluster failed"
+    --release-channel=regular --labels="$labels" "${service_account[@]}" --quiet || die "making the cluster failed"
   if [ "$dry_run" = 1 ]; then
     say "would write a kubeconfig (mode 600) with the cluster's endpoint and an access token: $kubeconfig"
     cluster_version="<version>"
     return
   fi
-  info=$("$GCLOUD" container clusters describe "$cluster" --region="$REGION" --project="$PROJECT" \
+  info=$(reads "$GCLOUD" container clusters describe "$cluster" --region="$REGION" --project="$PROJECT" \
     --format='value(endpoint,masterAuth.clusterCaCertificate,currentMasterVersion)') ||
     die "cannot read the cluster's endpoint"
   IFS=$'\t' read -r endpoint ca cluster_version <<<"$info"
@@ -710,7 +790,7 @@ wait_for_generator() {
     esac
     if [ $(($(now) - since)) -ge "$PENDING_LIMIT_S" ]; then
       say "the load generator's Pod is ${phase:-not made} after $((PENDING_LIMIT_S / 60)) minutes; its events:"
-      kube get events --field-selector=involvedObject.kind=Pod >&2
+      kube get events --field-selector=involvedObject.kind=Pod | masked >&2
       return 1
     fi
     pause
@@ -745,14 +825,17 @@ wait_for_job() {
 run_profile() {
   local name=$1 deadline_s=$2 job=generator-$1 manifests=$work/manifests/$1 raw=$out/raw/$1 status=0 waited
   local smock_ref_shown=${smock_ref:-} generator_ref_shown=${generator_ref:-}
+  # smock's Pod ends by itself at the time limit, counted from when its
+  # node accepts it.
+  local smock_deadline_s=$((deadline - $(now)))
   say "profile $name: $3 steps; the load generator's Job may take $((deadline_s / 60)) minutes"
   "$PYTHON" "$GKE_PY" manifests --plan "$plan" --profile "$name" ${cases:+--cases "$cases"} --arch "$arch" \
-    --zone "$ZONE" --smock-image "$smock_ref_shown" --generator-image "$generator_ref_shown" --out "$manifests" ||
-    die "rendering the manifests of $name failed"
+    --zone "$ZONE" --smock-image "$smock_ref_shown" --generator-image "$generator_ref_shown" \
+    --smock-deadline-s "$smock_deadline_s" --out "$manifests" || die "rendering the manifests of $name failed"
   kube_run apply --filename="$manifests/namespace.json" || die "applying the namespace failed"
-  kube_run apply --filename="$manifests/smock.json" || die "applying smock's Deployment failed"
-  kube_run rollout status deployment/smock-bench --timeout="${ROLLOUT_LIMIT_S}s" || {
-    kube get events --field-selector=involvedObject.kind=Pod >&2
+  kube_run apply --filename="$manifests/smock.json" || die "applying smock's Pod failed"
+  kube_run wait --for=condition=Ready pod/smock-bench --timeout="${READY_LIMIT_S}s" || {
+    kube get events --field-selector=involvedObject.kind=Pod | masked >&2
     die "smock did not become ready under $name"
   }
   kube_run apply --filename="$manifests/generator.json" || die "applying the load generator's Job failed"
@@ -762,7 +845,9 @@ run_profile() {
   else
     mkdir -p "$raw"
     wait_for_generator "$job" || die "the load generator's Pod did not start under $name"
-    kube logs --follow "job/$job" >"$raw/generator-stream.log" 2>>"$work/kubectl.log" &
+    # kubectl itself, not the function kube, so that log_pid is its own.
+    "$KUBECTL" --kubeconfig="$kubeconfig" --namespace="$NAMESPACE" logs --follow "job/$job" \
+      >"$raw/generator-stream.log" 2>>"$work/kubectl.log" &
     log_pid=$!
     wait_for_job "$job" $((deadline_s + 120)) || status=3
     for waited in 1 2 3 4 5 6; do

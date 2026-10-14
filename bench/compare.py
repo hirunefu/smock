@@ -7,7 +7,9 @@ reports, for each step both ran (a case under a profile at a rate), how p99
 and p99.9 changed. A step is a regression when either got worse by more
 than the rule of bench/targets.json (its `regression` entry). It also lists
 the targets the newer run missed. It exits with 1 when it finds a
-regression or a missed target, and 2 when it cannot compare.
+regression or a missed target, or when the newer run did not measure a step
+that the older one measured (it stopped early, left the step out, or its
+load generator fell behind), and 2 when it cannot compare.
 
 usage: python3 bench/compare.py <older> <newer> [--targets FILE]
 
@@ -118,8 +120,9 @@ def not_measured(step, run):
 
 
 def compare_step(older, newer, rule):
-    """The cells of the row of a step both runs ran, and whether it is a
-    regression. A step the older run did not measure is not compared.
+    """The cells of the row of a step both runs ran, whether it is a
+    regression, and whether the newer run left it unmeasured where the older
+    run measured it. A step the older run did not measure is not compared.
     Requests the newer run failed, where the older run measured the step,
     are a regression, and so is a p99 or p99.9 worse by more than the
     rule."""
@@ -130,17 +133,17 @@ def compare_step(older, newer, rule):
         cells[f"{name} change"] = change_text(before, after)
     if (older["cpu_limit"], older["memory_limit"]) != (newer["cpu_limit"], newer["memory_limit"]):
         why = f"the older run had {limits_text(older)}, the newer {limits_text(newer)}"
-        return {**cells, "Verdict": f"not compared: {why}"}, False
+        return {**cells, "Verdict": f"not compared: {why}"}, False, False
     why = not_measured(older, "older")
     if why:
-        return {**cells, "Verdict": f"not compared: {why}"}, False
+        return {**cells, "Verdict": f"not compared: {why}"}, False, False
     if not newer["smock_ready"] or newer["errors"]:
-        return {**cells, "Verdict": f"regression: {not_measured(newer, 'newer')}"}, True
+        return {**cells, "Verdict": f"regression: {not_measured(newer, 'newer')}"}, True, False
     why = not_measured(newer, "newer")
     if why:
-        return {**cells, "Verdict": f"not compared: {why}"}, False
+        return {**cells, "Verdict": f"not compared: {why}"}, False, True
     regression = any(worse(older["latency_ms"][metric], newer["latency_ms"][metric], rule) for metric, _ in LATENCIES)
-    return {**cells, "Verdict": "regression" if regression else "ok"}, regression
+    return {**cells, "Verdict": "regression" if regression else "ok"}, regression, False
 
 
 def where(conditions):
@@ -197,8 +200,8 @@ def runs_section(older, newer):
 
 
 def report(older_run, newer_run, rule):
-    """The comparison for people, in Markdown, and how many regressions and
-    missed targets it found."""
+    """The comparison for people, in Markdown, and how many regressions,
+    missed targets and steps the newer run left unmeasured it found."""
     (older, older_conditions), (newer, newer_conditions) = older_run, newer_run
     columns = ("Profile", "Case", "Rate", "p99 ms", "p99 change", "p99.9 ms", "p99.9 change", "Verdict")
     incomplete = [f"The {name} run is incomplete: it stopped before its last step."
@@ -208,17 +211,22 @@ def report(older_run, newer_run, rule):
              f"A step is a regression when p99 or p99.9 got worse by more than {rule['more_than_percent']}% "
              f"and by more than {rule['more_than_ms']} ms.", "", "## Latency", "",
              "| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
-    regressions = 0
+    regressions = unmeasured = 0
     older_steps = {step_key(step): step for step in older["cases"]}
     newer_keys = {step_key(step) for step in newer["cases"]}
     for step in newer["cases"]:
         if step_key(step) not in older_steps:
             continue
-        cells, regression = compare_step(older_steps[step_key(step)], step, rule)
+        cells, regression, left_unmeasured = compare_step(older_steps[step_key(step)], step, rule)
         regressions += regression
+        unmeasured += left_unmeasured
         row = {"Profile": step["profile"], "Case": step["case"], "Rate": f"{step['rate']:,}", **cells}
         lines.append("| " + " | ".join(row[column] for column in columns) + " |")
     only_older = [step_name(step) for step in older["cases"] if step_key(step) not in newer_keys]
+    # A step the older run measured and the newer did not run says nothing
+    # of how smock did there: a run cut short must not pass.
+    unmeasured += sum(1 for step in older["cases"]
+                      if step_key(step) not in newer_keys and not not_measured(step, "older"))
     only_newer = [step_name(step) for step in newer["cases"] if step_key(step) not in older_steps]
     if only_older or only_newer:
         lines.append("")
@@ -227,8 +235,8 @@ def report(older_run, newer_run, rule):
     if only_newer:
         lines.append(f"Only in the newer run: {', '.join(only_newer)}.")
     missed, target_lines = targets_section(older, newer)
-    lines += ["", "## Targets", "", *target_lines, "", result_line(regressions, missed)]
-    return "\n".join(lines) + "\n", regressions + missed
+    lines += ["", "## Targets", "", *target_lines, "", result_line(regressions, missed, unmeasured)]
+    return "\n".join(lines) + "\n", regressions + missed + unmeasured
 
 
 def measured_text(target):
@@ -268,10 +276,12 @@ def plural(count, noun):
     return f"{count} {noun}" + ("" if count == 1 else "s")
 
 
-def result_line(regressions, missed):
+def result_line(regressions, missed, unmeasured):
     found = plural(regressions, "regression") if regressions else "no regression"
     targets = f"{plural(missed, 'target')} missed" if missed else "no target missed"
-    return f"**Result:** {found[0].upper()}{found[1:]}, {targets}."
+    steps = f", {plural(unmeasured, 'step')} the older run measured not measured in the newer one" \
+        if unmeasured else ""
+    return f"**Result:** {found[0].upper()}{found[1:]}, {targets}{steps}."
 
 
 def main(argv):

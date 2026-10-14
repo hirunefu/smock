@@ -1126,6 +1126,9 @@ entry of `bench/targets.json`, next to the targets.
 - Requests the newer run failed at a step the older one measured are a
   regression, and so is a smock that was not ready.
 - Steps only one run has are listed, not compared.
+- A step the older run measured and the newer one did not, because the
+  newer run left it out or stopped before it, or its load generator fell
+  behind, fails the comparison: nothing says how smock did there.
 - It lists each target the newer run missed, with what it measured and
   what the older run did, and the targets it did not measure.
 - From each run's `conditions.json`, it names the runs (smock's version and
@@ -1134,8 +1137,9 @@ entry of `bench/targets.json`, next to the targets.
   same kind: a GKE run with a GKE run, a run on a machine with a run on the
   same machine. It says so when one run is on GKE and the other is not.
 
-It exits with 1 when it finds a regression or a missed target, and with 2
-when it cannot compare, such as for a summary of another `format`.
+It exits with 1 when it finds a regression, a missed target or a step the
+newer run did not measure, and with 2 when it cannot compare, such as for a
+summary of another `format`.
 
 ### On GKE Autopilot
 
@@ -1177,37 +1181,53 @@ limit.
   (`bench/gke/generator.Dockerfile`: Python, the pinned oha, `bench.py`,
   the plan and `bench/gke/`). It pushes them to a new Artifact Registry
   repository, and lets the nodes' service account (the project's Compute
-  Engine default one, or `GKE_BENCH_NODE_SERVICE_ACCOUNT`) read that
-  repository only.
+  Engine default one, or `GKE_BENCH_NODE_SERVICE_ACCOUNT`, which the nodes
+  then run as) read that repository only.
 - **Cluster.** A new Autopilot cluster on the Regular channel. The cluster
   and the repository are named `smock-bench-<date>-<time>` and labelled
   `purpose=smock-bench`. kubectl authenticates with an access token from
   gcloud, in a kubeconfig of the run's own (mode 600, deleted at the end),
   so gke-gcloud-auth-plugin is not needed and `~/.kube/config` is not
   touched.
-- **Profiles.** For each profile: smock in a Deployment, with the
-  profile's CPU and memory limits as its requests, behind a ClusterIP
-  Service, then the load generator (`bench/gke/generator.py`) in a Job
-  with 4 vCPU and 4 GiB, an `activeDeadlineSeconds`, and a required
-  anti-affinity that keeps it off smock's node. Both are pinned to one zone
-  (`GKE_BENCH_ZONE`, by default `<region>-a`) and to this machine's
-  architecture: the built-in `autopilot-arm` compute class on arm64,
-  Autopilot's default general-purpose Pods on amd64. The load generator
-  sends each step the way `bench/bench.py` does, with its functions, and
-  prints one JSON line for each step, a case as `summary.json` has it.
+- **Profiles.** For each profile: smock in a Pod, with the profile's CPU
+  and memory limits as its requests, behind a ClusterIP Service, then the
+  load generator (`bench/gke/generator.py`) in a Job with 4 vCPU and 4 GiB
+  and a required anti-affinity that keeps it off smock's node. Both have an
+  `activeDeadlineSeconds` that ends them within minutes of the time limit
+  at the latest, so that they stop being billed even if nothing is left to
+  delete the cluster (smock is a Pod, not a Deployment, to have one). Both
+  are pinned to one zone (`GKE_BENCH_ZONE`, by default `<region>-a`) and to
+  this machine's architecture: the built-in `autopilot-arm` compute class
+  on arm64, Autopilot's default general-purpose Pods on amd64. The load
+  generator sends each step the way `bench/bench.py` does, with its
+  functions, and prints one JSON line for each step, a case as
+  `summary.json` has it.
   The namespace's quota allows no LoadBalancer, NodePort or volume claim,
   and the run makes no static IP.
 - **Always deleted.** When the run ends, fails or is stopped (Ctrl-C,
-  SIGTERM), it deletes the cluster and the repository. A watchdog in its
-  own session deletes them at the time limit (`--time-limit`, 80 minutes
-  by default) even if the script was killed. At the end it lists the
-  project's clusters, repositories, disks, addresses and forwarding rules,
-  and fails, naming them, if any is new since the start.
+  SIGTERM, a closed terminal), it deletes the cluster and the repository;
+  after a closed terminal it logs that to `after-hangup.log` in the results
+  directory. A watchdog in its own session deletes them at the time limit
+  (`--time-limit` with its unit, 80m by default and at most 240m) even if
+  the script was killed; nothing is made until the watchdog has started.
+  At the end it lists the project's clusters, repositories, VM instances,
+  disks, addresses and forwarding rules, and fails, naming them, if any is
+  new since the start.
+- **When the machine goes away.** The watchdog runs on the machine that
+  runs the script: if that machine sleeps, loses its network or shuts down,
+  nothing deletes the cluster until it is back. Keep it awake and on power
+  for the run (on Linux, for example, under `systemd-inhibit`). The Pods
+  still end soon after the time limit, so a cluster left this way costs
+  its fee, $0.10 an hour, until deleted (the free tier covers one
+  cluster); a later `scripts/gke-bench.sh --dry-run` names it.
 - **Architectures.** The images are built for the machine that runs the
   script. To measure the other architecture, run it on a machine of that
   one, such as GitHub's `ubuntu-24.04-arm` runner in a workflow of your own
   that logs gcloud in (for example with Workload Identity Federation); this
-  repository has none, since a pre-merge run is the maintainer's.
+  repository has none, since a pre-merge run is the maintainer's. A runner
+  takes the watchdog with it when the job is cancelled or times out, so
+  such a workflow needs a last step that always runs and deletes the
+  clusters and repositories named `smock-bench-*`.
 
 It writes to `bench/results/gke-<date>-<time>/` unless `--out` says
 otherwise: `raw/<profile>/generator.log`, the load generator's lines;
@@ -1217,7 +1237,8 @@ otherwise: `raw/<profile>/generator.log`, the load generator's lines;
 `watchdog.log`. A GKE run does not measure idle RSS, peak memory or CPU
 throttling, so their targets are not measured; OOM kills come from smock's
 restarts. Nothing it writes names the account or the project, and what it
-prints shows the project as `$GKE_BENCH_PROJECT`.
+prints shows the project as `$GKE_BENCH_PROJECT` and gcloud's account as
+`<account>`.
 
 `python3 -m unittest discover -s bench` tests the helper, the load
 generator against smock on this machine, and the script against fake

@@ -41,7 +41,8 @@ pre-merge run compares with them.
   ```
 
   It exits with 1 when p99 or p99.9 got more than 20% (and more than 1 ms)
-  worse at a profile, case and rate, or when a target was missed
+  worse at a profile, case and rate, when a target was missed, or when the
+  newer run did not measure a step the older one measured
   ([Comparing runs](../README.md#comparing-runs)). Its first lines say
   whether the machine, the plan or anything else besides smock differed.
 - [ ] **Run the benchmark on GKE Autopilot** with `scripts/gke-bench.sh`
@@ -62,10 +63,12 @@ pre-merge run compares with them.
   cost about $0.20, and at most about $0.50 if it ran until its time limit
   of 80 minutes, before tax; the free tier usually covers the cluster's
   management fee. When the checks pass and the estimate is acceptable, run
-  it (about 50 minutes):
+  it (about 50 minutes), with the machine kept awake, on power and online
+  for the whole run, since the watchdog that deletes the cluster at the
+  time limit runs on it:
 
   ```sh
-  scripts/gke-bench.sh --yes
+  systemd-inhibit --what=sleep:idle:handle-lid-switch scripts/gke-bench.sh --yes
   ```
 
   Only the maintainer starts a run with `--yes`, since it costs money. It
@@ -73,7 +76,10 @@ pre-merge run compares with them.
   was killed, delete what it names (it prints the commands), and check
   `watchdog.log` in the results directory: the watchdog deletes the
   cluster and the repository at the time limit even when the script was
-  killed. The billing report shows the actual cost a day or so later.
+  killed. If the machine slept, lost its network or shut down during the
+  run, the watchdog may not have run: run `scripts/gke-bench.sh --dry-run`,
+  which names any cluster or repository left by an earlier run, and delete
+  them. The billing report shows the actual cost a day or so later.
 - [ ] **Compare the GKE run with the previous pre-merge GKE run**:
 
   ```sh
