@@ -607,7 +607,10 @@ pub fn SseEvent::SseEvent(
 /// The Mock whose Hosts include `host`, a Host normalised by
 /// `normalize_host`.
 pub fn Snapshot::mock_for_host(self : Snapshot, host : String) -> Mock? {
-  self.host_index.get(host).map(i => self.mocks[i])
+  match self.host_index.get(host) {
+    Some(i) => Some(self.mocks[i])
+    None => None
+  }
 }
 
 ///|

@@ -300,14 +300,24 @@ pub fn Engine::handle(
   now~ : Int64,
   rand~ : @prng.Generator,
 ) -> Outcome {
+  // Every request comes here, so it is written with plain matches and
+  // loops, which allocate no closures, iterators or tuples.
   let host = host_of(request)
-  let (resolution, mock) = match
-    host.bind(host => self.snapshot.mock_for_host(host)) {
-    Some(mock) => (ByHost(mock.name), Some(mock))
+  let by_host = match host {
+    Some(host) => self.snapshot.mock_for_host(host)
+    None => None
+  }
+  let mut resolution : Resolution = NoMock
+  let mut mock : @definitions.Mock? = None
+  match by_host {
+    Some(found) => {
+      resolution = ByHost(found.name)
+      mock = Some(found)
+    }
     None =>
-      match self.snapshot.default_mock() {
-        Some(mock) => (ViaDefault(mock.name), Some(mock))
-        None => (NoMock, None)
+      if self.snapshot.default_mock() is Some(found) {
+        resolution = ViaDefault(found.name)
+        mock = Some(found)
       }
   }
   let incoming = Incoming::new(request)
@@ -315,61 +325,104 @@ pub fn Engine::handle(
   // own order, then the Stubs from Definition files. The match index only
   // narrows the search among the latter. The Near miss of a request that
   // matched nothing is chosen among every candidate, in that order.
-  let ephemeral = mock.bind(mock => self.ephemeral.of(mock.name, session))
-  let matched_ephemeral = ephemeral.bind(list => {
-    list.iter().find_first(e => incoming.meets(e.stub.request))
-  })
-  let matched : Match? = match (mock, matched_ephemeral) {
-    (_, Some(e)) =>
-      Some({ stub: e.stub, generator: e.generator, source: Ephemeral(e.id), })
-    (Some(mock), None) => {
-      let candidates = if self.match_index {
-        mock.candidates(request.meth, incoming.path)
-      } else {
-        mock.stubs.iter()
+  let ephemeral = match mock {
+    Some(mock) => self.ephemeral.of(mock.name, session)
+    None => None
+  }
+  let mut matched : Match? = None
+  if ephemeral is Some(list) {
+    for i in 0..<list.length() {
+      let e = list[i]
+      if incoming.meets(e.stub.request) {
+        matched = Some({
+          stub: e.stub,
+          generator: e.generator,
+          source: Ephemeral(e.id),
+        })
+        break
       }
-      candidates
-      .find_first(stub => incoming.meets(stub.request))
-      .map(stub => {
+    }
+  }
+  if matched is None && mock is Some(mock) {
+    let found = if self.match_index {
+      mock.first_candidate(request.meth, incoming.path, stub => {
+        incoming.meets(stub.request)
+      })
+    } else {
+      let stubs = mock.stubs
+      let mut found = None
+      for i in 0..<stubs.length() {
+        if incoming.meets(stubs[i].request) {
+          found = Some(stubs[i])
+          break
+        }
+      }
+      found
+    }
+    if found is Some(stub) {
+      matched = Some({
         stub,
-        generator: self.generators.get(stub.id),
+        // Only Stubs with a seed have a generator of their own.
+        generator: if self.generators.is_empty() {
+          None
+        } else {
+          self.generators.get(stub.id)
+        },
         source: FromFile(stub.id),
       })
     }
-    (None, None) => None
   }
   let mut template_error = None
-  let (plan, near_miss) : (ResponsePlan, NearMiss?) = match (mock, matched) {
-    (None, _) => (no_mock(host, self.snapshot.hosts()), None)
-    (Some(_), Some({ stub, generator, .. })) => {
-      // Every matched request takes exactly one output from its Stub's
-      // source, whatever it then draws: the Fault decisions draw from a
-      // generator seeded with it, and the helpers from another.
-      let draw = generator.unwrap_or(rand).uint64()
-      let (delay_ms, fault) = decide_faults(stub, draw)
-      let (response, error) = respond(stub, incoming, now~, draw~)
-      template_error = error
-      ({ ..response, delay_ms, fault, }, None)
-    }
-    (Some(mock), None) => {
-      // Only now, when every candidate has failed, are conditions counted.
-      let ephemeral = match ephemeral {
-        Some(list) => list.iter().map(e => (e.stub, StubSource::Ephemeral))
-        None => Iter::empty()
+  let mut near_miss = None
+  let plan : ResponsePlan = match mock {
+    None => no_mock(host, self.snapshot.hosts())
+    Some(mock) =>
+      match matched {
+        Some({ stub, generator, .. }) => {
+          // Every matched request takes exactly one output from its Stub's
+          // source, whatever it then draws: the Fault decisions draw from a
+          // generator seeded with it, and the helpers from another.
+          let draw = generator.unwrap_or(rand).uint64()
+          let response = if stub.response.template is None {
+            stub_response(stub.response)
+          } else {
+            let (response, error) = respond(stub, incoming, now~, draw~)
+            template_error = error
+            response
+          }
+          // A response comes without a delay or a Fault, and gets the
+          // Stub's.
+          if stub.fault is None {
+            response
+          } else {
+            let (delay_ms, fault) = decide_faults(stub, draw)
+            { ..response, delay_ms, fault, }
+          }
+        }
+        None => {
+          // Only now, when every candidate has failed, are conditions
+          // counted.
+          let ephemeral = match ephemeral {
+            Some(list) => list.iter().map(e => (e.stub, StubSource::Ephemeral))
+            None => Iter::empty()
+          }
+          near_miss = incoming.near_miss(
+            ephemeral.concat(
+              mock.stubs.iter().map(stub => (stub, StubSource::File)),
+            ),
+          )
+          no_match(mock, near_miss)
+        }
       }
-      let near_miss = incoming.near_miss(
-        ephemeral.concat(
-          mock.stubs.iter().map(stub => (stub, StubSource::File)),
-        ),
-      )
-      (no_match(mock, near_miss), near_miss)
-    }
   }
   // A mistyped Host must not silently succeed.
   if resolution is ViaDefault(name) {
     plan.headers.push(("Smock-Mock", "\{header_safe(name)}; via=default"))
   }
-  let stub = matched.map(matched => (matched.stub.id, matched.source.source()))
+  let source = match matched {
+    Some(matched) => Some(matched.source)
+    None => None
+  }
   let journal = if self.journal.records(mock) {
     Some(
       self.journal.entry(
@@ -377,7 +430,7 @@ pub fn Engine::handle(
         session~,
         host~,
         resolution~,
-        stub~,
+        matched=source,
         near_miss~,
         plan~,
         template_error~,
@@ -388,13 +441,7 @@ pub fn Engine::handle(
   } else {
     None
   }
-  {
-    resolution,
-    plan,
-    journal,
-    near_miss,
-    matched: matched.map(matched => matched.source),
-  }
+  { resolution, plan, journal, near_miss, matched: source, }
 }
 
 ///|

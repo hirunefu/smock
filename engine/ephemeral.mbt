@@ -91,7 +91,10 @@ fn EphemeralStubs::of(
   mock : String,
   session : String?,
 ) -> Array[EphemeralStub]? {
-  self.by_mock.get(mock).bind(by_session => by_session.get(session))
+  match self.by_mock.get(mock) {
+    Some(by_session) => by_session.get(session)
+    None => None
+  }
 }
 
 ///|
