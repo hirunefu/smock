@@ -1,32 +1,29 @@
 {
-  "about": "smock's provisional performance targets, from spec #1, which bench/bench.py checks on every run. They are revisited after the first runs on the real path: changing one is a change to this file alone. A latency target holds for one case of bench/plan.json under one CPU limit at one rate; a run that did not run that case at that rate does not measure it, and one whose requests failed misses it. metric is p50, p90, p99, p99_9 or max (unit ms) or idle_rss (unit MiB).",
-  "targets": [
+  "about": "smock's provisional performance targets, as the maintainer decided them, which bench/bench.py checks on every run. They are to be revisited after measuring on real GKE or CI runners: changing one is a change to this file alone. Each entry holds under one resource profile of bench/plan-autopilot.json, by its name and its CPU and memory limits, and gives the most smock may reach there (at_most). The latency targets (p50_ms, p90_ms, p99_ms, p99_9_ms, max_ms), peak_memory_mib (memory.peak) and oom_kills hold at one load: the entry's case at its rate. idle_rss_mib holds for smock's RSS after startup under the profile, before any load. Latency counts from each request's scheduled send time, as the harness measures it: the load generator, oha with its 1 ms timer, adds about 2 ms at p99, which these values absorb. A run that did not run the profile with these limits, the case or the rate does not measure the target; a step whose load generator fell behind does not measure its latency targets; an OOM kill misses every target of its step, and failed requests miss its latency targets.",
+  "profiles": [
     {
-      "id": "p99",
-      "about": "p99 latency at 50k requests/s under a 1-CPU limit",
-      "case": "http-keep-alive",
+      "profile": "chart-default",
       "cpu_limit": "1",
+      "memory_limit": "1Gi",
+      "case": "http-keep-alive",
       "rate": 50000,
-      "metric": "p99",
-      "max": 1,
-      "unit": "ms"
+      "at_most": { "p99_ms": 3, "p99_9_ms": 5, "peak_memory_mib": 32, "idle_rss_mib": 20 }
     },
     {
-      "id": "p99.9",
-      "about": "p99.9 latency at 50k requests/s under a 1-CPU limit",
+      "profile": "autopilot-min",
+      "cpu_limit": "250m",
+      "memory_limit": "512Mi",
       "case": "http-keep-alive",
-      "cpu_limit": "1",
-      "rate": 50000,
-      "metric": "p99_9",
-      "max": 5,
-      "unit": "ms"
+      "rate": 10000,
+      "at_most": { "p99_ms": 3, "p99_9_ms": 5, "peak_memory_mib": 32, "idle_rss_mib": 20 }
     },
     {
-      "id": "idle-rss",
-      "about": "idle RSS after startup with the benchmark's definitions",
-      "metric": "idle_rss",
-      "max": 20,
-      "unit": "MiB"
+      "profile": "autopilot-burst-min",
+      "cpu_limit": "50m",
+      "memory_limit": "52Mi",
+      "case": "http-keep-alive",
+      "rate": 1000,
+      "at_most": { "p99_ms": 3, "p99_9_ms": 10, "oom_kills": 0, "peak_memory_mib": 32, "idle_rss_mib": 20 }
     }
   ]
 }
