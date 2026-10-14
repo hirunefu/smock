@@ -889,7 +889,7 @@ Recent systemd delegates them by default; otherwise add a drop-in for
 scripts/build-release.sh                 # dist/smock, which the benchmark runs
 python3 bench/bench.py run               # the whole plan, about 20 minutes
 python3 bench/bench.py run --cases http-keep-alive --cpu-limits 1   # one case under one limit
-python3 bench/bench.py run --plan bench/plan-autopilot.json            # the profiles the targets hold under, about 19 minutes
+python3 bench/bench.py run --plan bench/plan-autopilot.json            # the profiles the targets hold under, about 20 minutes
 python3 bench/bench.py run --plan bench/plan-autopilot.json --profiles autopilot-burst-min   # one profile
 python3 bench/bench.py run --rate 500 --ramp 1 --duration 3 --tail 1 --settle 1 --cooldown 0   # a check of the setup, about 2 minutes
 python3 -m unittest discover -s bench -v # the harness's own tests, about 4 minutes
@@ -923,8 +923,10 @@ Each profile measures idle RSS, then plain HTTP and TLS with keep-alive
 connections, each at a ladder of fixed rates from 2,500 to 80,000 requests
 a second per CPU (125 to 4,000 under 50m), 20 seconds a step. The top of
 each ladder is about where smock uses up its CPU over TLS. Plain HTTP's
-ladder also has 50,000 a second per CPU, so that it has the rate of each
-profile's [targets](#targets). A full run takes about 19 minutes; it prints
+ladder also has 30,000 a second per CPU, so that it has the rate of each
+profile's [targets](#targets) (250, 5,000 and 30,000), and 50,000 a second
+per CPU, by which smock had used up its CPU under each profile in the GKE
+probe the targets come from. A full run takes about 20 minutes; it prints
 its estimate before it starts.
 
 Before a full run:
@@ -950,21 +952,34 @@ says so too.
 
 ### Targets
 
-smock's performance targets are provisional, to be revisited after
-measuring on GKE or on CI runners. `bench/targets.json` holds them, and
-every run checks them. Each holds under a profile of
-`bench/plan-autopilot.json`, with plain HTTP over keep-alive connections at
-one rate:
+smock's performance targets are provisional. They come from a one-off
+probe on GKE Autopilot: smock ran in arm64 general-purpose Pods on e4a
+nodes in us-central1, under each profile's requests and limits, and oha
+sent it the request mix from a Pod on another node, over the Pod network,
+at the plain HTTP rates of `bench/plan-autopilot.json` (all but 30,000 a
+second per CPU, added since), latency counted from each request's
+scheduled send time as here. Under each profile, smock kept up with a rate
+at or above its target's. `bench/targets.json` holds the targets, and every
+run checks them. Each holds under a profile of `bench/plan-autopilot.json`,
+with plain HTTP over keep-alive connections at one rate:
 
 | Profile | CPU and memory limits | Rate | p99 at most | p99.9 at most |
 |---|---|---|---|---|
-| `chart-default` | 1, 1 GiB | 50,000 requests/s | 3 ms | 5 ms |
-| `autopilot-min` | 250m, 512 MiB | 10,000 requests/s | 3 ms | 5 ms |
-| `autopilot-burst-min` | 50m, 52 MiB | 1,000 requests/s | 3 ms | 10 ms |
+| `chart-default` | 1, 1 GiB | 30,000 requests/s | 3 ms | 10 ms |
+| `autopilot-min` | 250m, 512 MiB | 5,000 requests/s | 3 ms | 5 ms |
+| `autopilot-burst-min` | 50m, 52 MiB | 250 requests/s | 3 ms | 50 ms |
 
 Under every profile, smock's idle RSS is at most 20 MiB, and its peak
 memory at the target's rate (`memory.peak`) at most 32 MiB. Under
 `autopilot-burst-min`, the kernel may not OOM-kill it at that rate.
+
+Runs on a laptop typically do better than the targets: on an M1 MacBook
+Air over loopback, p99 and p99.9 stay about 2 ms around each target's rate,
+and each profile keeps up with more than twice it. On GKE, each profile ran
+out of CPU at roughly half the rate it served on the M1, and under 50m the
+slowest requests took tens of milliseconds even at light load, hence that
+profile's p99.9 of 50 ms. The [chart's sizing
+table](charts/smock/README.md#sizing) has both sets of numbers.
 
 Latency counts from each request's scheduled send time, as the harness
 measures it, so it includes the load generator's floor: oha's timer has a
