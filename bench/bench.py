@@ -950,34 +950,43 @@ def window(spec, rate):
     return math.ceil(spec["ramp_s"] * rate), math.ceil((spec["ramp_s"] + spec["duration_s"]) * rate)
 
 
+def oha_command(oha, spec, request, rate, connections, report, database, address, port):
+    """The command line of the oha process that sends one request of the
+    mix in a step, at `rate` (as request_rates gives it) over `connections`,
+    to smock at `address` and `port`, for the step's whole load. It writes
+    its report to `report` and each request's times to `database`."""
+    https = spec["protocol"] == "https"
+    total_ms = round((spec["ramp_s"] + spec["duration_s"] + spec["tail_s"]) * 1000)
+    command = [
+        oha, "--no-tui", "--output-format", "json", "-o", str(report), "--db-url", str(database),
+        "-z", f"{total_ms}ms", "-q", rate, "--latency-correction", "-w",
+        "-c", str(connections), "--worker-threads", "1", "-t", "30s", "--disable-compression",
+        "--connect-to", f"{request['host']}:{443 if https else 80}:{address}:{port}",
+        "-m", request["method"],
+    ]
+    for name, value in request["headers"]:
+        command += ["-H", f"{name}: {value}"]
+    if request["body"] is not None:
+        command += ["-d", request["body"]]
+    if https:
+        command.append("--insecure")
+    if spec["connection"] == "new-per-request":
+        command.append("--disable-keepalive")
+    command.append(f"{'https' if https else 'http'}://{request['host']}{request['target']}")
+    return command
+
+
 def start_load(run, smock, spec, raw):
     """Starts one oha process per request of the mix, and returns them with
     the rate each was given."""
-    https = spec["protocol"] == "https"
-    port = smock.ports["tls" if https else "plain"]
-    total_ms = round((spec["ramp_s"] + spec["duration_s"] + spec["tail_s"]) * 1000)
+    port = smock.ports["tls" if spec["protocol"] == "https" else "plain"]
     weights = [request["weight"] for request in run.mix]
     load = []
     for (request, rate), connections in zip(request_rates(run, spec), split(spec["connections"], weights),
                                             strict=True):
-        command = [
-            "taskset", "-c", cpu_list(run.generator_cpus), run.oha,
-            "--no-tui", "--output-format", "json", "-o", str(raw / f"oha-{request['name']}.json"),
-            "--db-url", str(run.tmp / f"{request['name']}.sqlite"),
-            "-z", f"{total_ms}ms", "-q", rate, "--latency-correction", "-w",
-            "-c", str(connections), "--worker-threads", "1", "-t", "30s", "--disable-compression",
-            "--connect-to", f"{request['host']}:{443 if https else 80}:127.0.0.1:{port}",
-            "-m", request["method"],
-        ]
-        for name, value in request["headers"]:
-            command += ["-H", f"{name}: {value}"]
-        if request["body"] is not None:
-            command += ["-d", request["body"]]
-        if https:
-            command.append("--insecure")
-        if spec["connection"] == "new-per-request":
-            command.append("--disable-keepalive")
-        command.append(f"{'https' if https else 'http'}://{request['host']}{request['target']}")
+        command = ["taskset", "-c", cpu_list(run.generator_cpus),
+                   *oha_command(run.oha, spec, request, rate, connections, raw / f"oha-{request['name']}.json",
+                                run.tmp / f"{request['name']}.sqlite", "127.0.0.1", port)]
         stderr = (raw / f"oha-{request['name']}.log").open("w")
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=stderr)
         stderr.close()
@@ -1095,17 +1104,7 @@ def run_case(run, spec):
         cpu_after = smock.cpu_stat() or smock.last_cpu_stat
         opens = tcp_passive_opens() - opens_before
         idle_open = idle.open_count()
-    kinds = []
-    latencies, release_latencies, lags = array.array("d"), array.array("d"), array.array("d")
-    for item in load:
-        kind, kind_latencies, kind_release_latencies, kind_lags = analyze_request(run, item, spec, raw)
-        kinds.append(kind)
-        latencies.extend(kind_latencies)
-        release_latencies.extend(kind_release_latencies)
-        lags.extend(kind_lags)
-    latencies = sorted(latencies)
-    release_latencies = sorted(release_latencies)
-    lags = sorted(lags)
+    kinds, latencies, release_latencies, lags = analyze_load(run, load, spec, raw)
     write_json(raw / "latency.json", {
         "about": "Latencies of the requests scheduled in the measured window that got a response, "
                  "from the times the fixed-rate schedule had them due, all request kinds together: "
@@ -1121,25 +1120,9 @@ def run_case(run, spec):
         "interval_s": spec["rss_interval_s"],
         "samples": rss.samples,
     })
-    scheduled = sum(kind["scheduled"] for kind in kinds)
-    ok = sum(kind["ok"] for kind in kinds)
-    errors = scheduled - ok
-    lag = percentiles_ms(lags, ("p50", "p99", "p99_9", "max"))
     result = {
         **spec,
-        "achieved_rate": round(ok / spec["duration_s"], 1),
-        "errors": errors,
-        "latency_ms": percentiles_ms(latencies, LATENCY_METRICS),
-        "latency_from_release_ms": percentiles_ms(release_latencies, LATENCY_METRICS),
-        "generator_lag_ms": lag,
-        "load_generator_late": any(lag[name] is not None and lag[name] > limit
-                                   for name, limit in GENERATOR_LAG_LIMITS_MS.items()),
-        "requests": {
-            "scheduled": scheduled,
-            "ok": ok,
-            "unexpected_status": sum(kind["unexpected_status"] for kind in kinds),
-            "no_response": sum(kind["no_response"] for kind in kinds),
-        },
+        **load_result(spec, kinds, latencies, release_latencies, lags),
         "tcp_passive_opens": opens,
         "idle_connections_open_at_end": idle_open,
         "pinning": pinning,
@@ -1154,11 +1137,51 @@ def run_case(run, spec):
         "smock_exit_status": smock.exit_status,
         "per_request": kinds,
     }
+    lag = result["generator_lag_ms"]
     log(f"{spec['id']}: p99 {result['latency_ms']['p99']} ms, p99.9 {result['latency_ms']['p99_9']} ms, "
-        f"{result['achieved_rate']} requests/s, {errors} errors, "
+        f"{result['achieved_rate']} requests/s, {result['errors']} errors, "
         f"generator lag p99.9 {lag['p99_9']} ms, max {lag['max']} ms, "
         f"peak memory {smock.peak_bytes} bytes, {smock.oom_kills} OOM kills")
     return result
+
+
+def analyze_load(run, load, spec, raw):
+    """What the oha processes of a step measured: each request kind's
+    counts, and the latencies from the due times and from release and the
+    generator lags of every request kind together, sorted."""
+    kinds = []
+    latencies, release_latencies, lags = array.array("d"), array.array("d"), array.array("d")
+    for item in load:
+        kind, kind_latencies, kind_release_latencies, kind_lags = analyze_request(run, item, spec, raw)
+        kinds.append(kind)
+        latencies.extend(kind_latencies)
+        release_latencies.extend(kind_release_latencies)
+        lags.extend(kind_lags)
+    return kinds, sorted(latencies), sorted(release_latencies), sorted(lags)
+
+
+def load_result(spec, kinds, latencies, release_latencies, lags):
+    """What a step's load measured, from analyze_load: the achieved rate,
+    the errors, the percentiles, and whether the load generator fell
+    behind."""
+    scheduled = sum(kind["scheduled"] for kind in kinds)
+    ok = sum(kind["ok"] for kind in kinds)
+    lag = percentiles_ms(lags, ("p50", "p99", "p99_9", "max"))
+    return {
+        "achieved_rate": round(ok / spec["duration_s"], 1),
+        "errors": scheduled - ok,
+        "latency_ms": percentiles_ms(latencies, LATENCY_METRICS),
+        "latency_from_release_ms": percentiles_ms(release_latencies, LATENCY_METRICS),
+        "generator_lag_ms": lag,
+        "load_generator_late": any(lag[name] is not None and lag[name] > limit
+                                   for name, limit in GENERATOR_LAG_LIMITS_MS.items()),
+        "requests": {
+            "scheduled": scheduled,
+            "ok": ok,
+            "unexpected_status": sum(kind["unexpected_status"] for kind in kinds),
+            "no_response": sum(kind["no_response"] for kind in kinds),
+        },
+    }
 
 
 def not_ready_result(run, spec, oom_kills):
