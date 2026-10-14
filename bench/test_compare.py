@@ -17,16 +17,21 @@ from pathlib import Path
 
 BENCH = Path(__file__).resolve().parent
 
-# The rule of the tests: worse by more than 20% and by more than 1 ms.
-RULE = {"more_than_percent": 20, "more_than_ms": 1}
+# The rule of the tests: worse by more than 20% and by more than 1 ms, and
+# p99.9 only where both runs measured at least 10,000 requests.
+RULE = {"more_than_percent": 20, "more_than_ms": 1, "p99_9_min_requests": 10000}
+
+# The heading of the steps shown for reference.
+REFERENCE = "## For reference: steps above the target rate"
 
 
 def step(profile="small", case="http-keep-alive", rate=1000, p99=10.0, p99_9=20.0, errors=0, late=False,
-         cpu_limit="250m", memory_limit="512Mi", smock_ready=True):
+         cpu_limit="250m", memory_limit="512Mi", smock_ready=True, requests=None):
     """One step of a summary: a case under a profile at a rate, with these
-    latencies (ms), failed requests, and whether the load generator fell
-    behind."""
-    scheduled = rate * 20
+    latencies (ms), failed requests, whether the load generator fell
+    behind, and the requests it scheduled (20 seconds' worth unless
+    given)."""
+    scheduled = rate * 20 if requests is None else requests
     return {
         "id": f"{case}@{profile}@{rate}", "case": case, "profile": profile, "cpu_limit": cpu_limit,
         "memory_limit": memory_limit, "rate": rate, "achieved_rate": (scheduled - errors) / 20, "errors": errors,
@@ -37,6 +42,12 @@ def step(profile="small", case="http-keep-alive", rate=1000, p99=10.0, p99_9=20.
         "memory": {"peak_bytes": None, "oom_kills": 0},
         "smock_ready": smock_ready,
     }
+
+
+def capacity(profile="small", rate=1000, case="http-keep-alive"):
+    """A profile's entry of a targets file, whose target holds at `rate`."""
+    return {"profile": profile, "cpu_limit": "250m", "memory_limit": "512Mi", "case": case, "rate": rate,
+            "at_most": {"p99_ms": 3}}
 
 
 def target(target_id="small/p99", verdict="met", measured=2.0, maximum=3, reason=None, about=None):
@@ -64,18 +75,21 @@ class Comparison(unittest.TestCase):
             (path / "conditions.json").write_text(json.dumps(conditions))
         return path
 
-    def compare(self, older, newer, rule=RULE):
+    def compare(self, older, newer, rule=RULE, profiles=()):
         """Runs bench/compare.py on two results directories, with a targets
-        file that holds `rule`. Returns the exit status and the report."""
+        file that holds `rule` and the entries of `profiles`. Returns the
+        exit status and the report."""
         targets = self.directory() / "targets.json"
-        targets.write_text(json.dumps({"regression": rule, "profiles": []}))
+        targets.write_text(json.dumps({"regression": rule, "profiles": list(profiles)}))
         result = subprocess.run([sys.executable, str(BENCH / "compare.py"), str(older), str(newer),
                                  "--targets", str(targets)], capture_output=True, text=True)
         return result.returncode, result.stdout + result.stderr
 
-    def row(self, report, profile, case, rate):
-        """The cells of the latency table's row for one step, by column."""
-        lines = [line for line in report.splitlines() if line.startswith("|")]
+    def row(self, report, profile, case, rate, heading="## Latency"):
+        """The cells of the row for one step of the table under `heading`,
+        by column."""
+        section = report.split(f"\n{heading}\n", 1)[1].split("\n## ", 1)[0]
+        lines = [line for line in section.splitlines() if line.startswith("|")]
         header = [cell.strip() for cell in lines[0].strip("|").split("|")]
         for line in lines[2:]:
             cells = [cell.strip() for cell in line.strip("|").split("|")]
@@ -131,6 +145,99 @@ class Regressions(Comparison):
         self.assertEqual(not_ready["Verdict"], "regression: smock was not ready in the newer run")
         self.assertEqual(not_ready["p99 ms"], "10.0 → -")
         self.assertIn("2 regressions", report)
+
+
+class CountedSteps(Comparison):
+    """Only steps at or below their profile's target rate count. Above it,
+    smock may be past its capacity, and the latencies of a queue swing from
+    run to run: those steps are shown for reference, never counted."""
+
+    def test_a_step_above_its_profiles_target_rate_is_shown_for_reference_and_does_not_fail(self):
+        older = self.summary([step(rate=1000, p99=10.0), step(rate=2000, p99=10.0)])
+        newer = self.summary([step(rate=1000, p99=10.5), step(rate=2000, p99=40.0)])
+        status, report = self.compare(older, newer, profiles=[capacity("small", 1000)])
+        self.assertEqual(status, 0, report)
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 1000)["Verdict"], "ok")
+        above = self.row(report, "small", "http-keep-alive", 2000, heading=REFERENCE)
+        self.assertEqual((above["p99 ms"], above["p99 change"], above["Verdict"]), ("10.0 → 40.0", "+300%", "worse"))
+        self.assertNotIn("| 2,000 |", report.split(REFERENCE)[0])
+        self.assertIn("**Result:** No regression, no target missed.", report)
+
+    def test_a_step_at_its_profiles_target_rate_counts_whatever_its_case_and_a_profile_with_no_target_counts_at_every_rate(self):
+        # small's target is http-keep-alive at 1,000 a second; its rate
+        # holds for every case of small. other has no target.
+        older = self.summary([step(rate=1000, p99=10.0), step(case="http-close", rate=2000, p99=10.0),
+                              step(profile="other", rate=50000, p99=10.0)])
+        newer = self.summary([step(rate=1000, p99=15.0), step(case="http-close", rate=2000, p99=40.0),
+                              step(profile="other", rate=50000, p99=15.0)])
+        status, report = self.compare(older, newer, profiles=[capacity("small", 1000)])
+        self.assertEqual(status, 1, report)
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 1000)["Verdict"], "regression")
+        self.assertEqual(self.row(report, "other", "http-keep-alive", 50000)["Verdict"], "regression")
+        self.assertEqual(self.row(report, "small", "http-close", 2000, heading=REFERENCE)["Verdict"], "worse")
+        self.assertIn("**Result:** 2 regressions, no target missed.", report)
+
+    def test_above_the_target_rate_failed_requests_and_steps_the_newer_run_did_not_measure_do_not_fail(self):
+        # The newer run failed requests at 2,000 a second, its load
+        # generator fell behind at 4,000, and it stopped before 8,000.
+        older = self.summary([step(rate=1000), step(rate=2000), step(rate=4000), step(rate=8000)])
+        newer = self.summary([step(rate=1000), step(rate=2000, errors=300), step(rate=4000, p99=50.0, late=True)],
+                             complete=False)
+        status, report = self.compare(older, newer, profiles=[capacity("small", 1000)])
+        self.assertEqual(status, 0, report)
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 2000, heading=REFERENCE)["Verdict"],
+                         "300 of 40000 requests failed in the newer run")
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 4000, heading=REFERENCE)["Verdict"],
+                         "not compared: the load generator fell behind in the newer run")
+        self.assertIn("Only in the older run: http-keep-alive@small@8000.", report.split(REFERENCE)[1])
+        self.assertIn("**Result:** No regression, no target missed.", report)
+
+    def test_the_report_says_which_steps_count(self):
+        # unused has a target but neither run ran it.
+        runs = [step(rate=1000), step(rate=2000), step(profile="other", rate=4000)]
+        _, report = self.compare(self.summary(runs), self.summary(runs),
+                                 profiles=[capacity("small", 1000), capacity("unused", 50)])
+        self.assertIn("\nA step counts when its rate is at most its profile's target rate (small 1,000 requests/s), "
+                      "or its profile has no target (other); steps above it are shown for reference and do not count. "
+                      "A step is a regression when p99 or p99.9 got worse by more than 20% and by more than 1 ms; "
+                      "p99.9 counts only where both runs measured at least 10,000 requests at the step.\n", report)
+        _, report = self.compare(self.summary(runs), self.summary(runs))
+        self.assertIn("\nEvery step counts. A step is a regression when", report)
+        self.assertNotIn(REFERENCE, report)
+
+
+class FewRequests(Comparison):
+    """p99.9 counts only where both runs measured at least the rule's number
+    of requests: with fewer, it rests on a few of the slowest requests and
+    swings from run to run. Its change is still shown, for reference, and
+    p99 still counts."""
+
+    def test_a_p99_9_worse_at_a_step_with_fewer_requests_is_shown_for_reference_and_p99_still_counts(self):
+        # At 250 a second for 20 seconds, a step measures 5,000 requests:
+        # its p99.9 is the fifth slowest.
+        older = self.summary([step(rate=250, p99=10.0, p99_9=20.0), step(rate=400, p99=10.0, p99_9=20.0)])
+        newer = self.summary([step(rate=250, p99=10.0, p99_9=30.0), step(rate=400, p99=15.0, p99_9=20.0)])
+        status, report = self.compare(older, newer)
+        self.assertEqual(status, 1, report)
+        few = self.row(report, "small", "http-keep-alive", 250)
+        self.assertEqual((few["p99.9 ms"], few["p99.9 change"], few["Verdict"]),
+                         ("20.0 → 30.0", "+50% (for reference)", "ok"))
+        p99 = self.row(report, "small", "http-keep-alive", 400)
+        self.assertEqual((p99["p99 change"], p99["p99.9 change"], p99["Verdict"]),
+                         ("+50%", "0% (for reference)", "regression"))
+        self.assertIn("**Result:** 1 regression, no target missed.", report)
+
+    def test_p99_9_counts_where_both_runs_measured_at_least_the_rules_number_of_requests(self):
+        older = self.summary([step(rate=1000, p99_9=20.0), step(rate=2000, p99_9=20.0, requests=10000)])
+        newer = self.summary([step(rate=1000, p99_9=30.0, requests=8000), step(rate=2000, p99_9=30.0, requests=10000)])
+        status, report = self.compare(older, newer)
+        self.assertEqual(status, 1, report)
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 1000)["Verdict"], "ok")
+        at_least = self.row(report, "small", "http-keep-alive", 2000)
+        self.assertEqual((at_least["p99.9 change"], at_least["Verdict"]), ("+50%", "regression"))
+        # The number is the rule's: with 5,000, both steps count.
+        status, report = self.compare(older, newer, rule={**RULE, "p99_9_min_requests": 5000})
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 1000)["Verdict"], "regression")
 
 
 class MissedTargets(Comparison):
@@ -276,13 +383,14 @@ class Inputs(Comparison):
             status, report = self.compare(older, good)
             self.assertEqual(status, 2, report)
             self.assertIn(expected, report)
-        status, report = self.compare(good, good, rule=None)
-        self.assertEqual(status, 2, report)
-        self.assertIn("no regression rule", report)
+        for rule in (None, {"more_than_percent": 20, "more_than_ms": 1}):
+            status, report = self.compare(good, good, rule=rule)
+            self.assertEqual(status, 2, report)
+            self.assertIn("no regression rule", report)
 
     def test_the_rule_is_the_maintainers_decision_kept_with_the_targets(self):
         rule = json.loads((BENCH / "targets.json").read_text())["regression"]
-        self.assertEqual((rule["more_than_percent"], rule["more_than_ms"]), (20, 1))
+        self.assertEqual((rule["more_than_percent"], rule["more_than_ms"], rule["p99_9_min_requests"]), (20, 1, 10000))
 
 
 if __name__ == "__main__":

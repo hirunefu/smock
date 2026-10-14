@@ -42,9 +42,14 @@ pre-merge run compares with them.
 
   It exits with 1 when p99 or p99.9 got more than 20% (and more than 1 ms)
   worse at a profile, case and rate, when a target was missed, or when the
-  newer run did not measure a step the older one measured
+  newer run did not measure a step the older one measured. Only steps at
+  or below their profile's target rate in `bench/targets.json` count, and
+  p99.9 only where both runs measured at least 10,000 requests at the
+  step: the rest swing from run to run, and the report shows them for
+  reference without failing
   ([Comparing runs](../README.md#comparing-runs)). Its first lines say
-  whether the machine, the plan or anything else besides smock differed.
+  whether the machine, the plan or anything else besides smock differed,
+  and which steps count.
 - [ ] **Run the benchmark on GKE Autopilot** with `scripts/gke-bench.sh`
   ([On GKE Autopilot](../README.md#on-gke-autopilot)). It needs gcloud
   logged in (`gcloud auth login`), docker, kubectl and the MoonBit
