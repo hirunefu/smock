@@ -6,14 +6,15 @@ run writes it on this machine and scripts/gke-bench.sh on GKE Autopilot, and
 reports, for each step both ran (a case under a profile at a rate), how p99
 and p99.9 changed. A step is a regression when either got worse by more
 than the rule of bench/targets.json (its `regression` entry). Only steps at
-or below the rate of their profile's entry in that file count: above it
-smock may be past its capacity, and the latencies of a queue swing from run
-to run, so those steps are shown for reference. p99.9 counts only where both
-runs measured at least the rule's number of requests at the step. It also
-lists the targets the newer run missed. It exits with 1 when it finds a
-regression or a missed target, or when the newer run did not measure a step
-that counts and that the older one measured (it stopped early, left the
-step out, or its load generator fell behind), and 2 when it cannot compare.
+or below the rate of their profile's entry in that file, for the newer
+run's CPU architecture, count: above it smock may be past its capacity, and
+the latencies of a queue swing from run to run, so those steps are shown
+for reference. p99.9 counts only where both runs measured at least the
+rule's number of requests at the step. It also lists the targets the newer
+run missed. It exits with 1 when it finds a regression or a missed target,
+or when the newer run did not measure a step that counts and that the older
+one measured (it stopped early, left the step out, or its load generator
+fell behind), and 2 when it cannot compare.
 
 usage: python3 bench/compare.py <older> <newer> [--targets FILE]
 
@@ -70,20 +71,24 @@ RULE_KEYS = ("more_than_percent", "more_than_ms", "p99_9_min_requests")
 def read_targets(path):
     """The regression rule of a targets file, by how many percent and how
     many milliseconds p99 or p99.9 may get worse at most and how many
-    requests p99.9 needs to count, and the target rate of each profile it
-    has an entry for: the highest, when it has entries at several rates,
-    so that no step a target holds at is left out."""
+    requests p99.9 needs to count, and for each architecture it has
+    targets for, the target rate of each profile it has an entry for
+    ({architecture: {profile: rate}}): the highest, when it has entries at
+    several rates, so that no step a target holds at is left out."""
     targets = read_json(path)
     rule = targets.get("regression")
     if not isinstance(rule, dict) or not all(isinstance(rule.get(key), (int, float)) for key in RULE_KEYS):
         raise CompareError(f"{path} has no regression rule (regression, with {', '.join(RULE_KEYS[:-1])} "
                            f"and {RULE_KEYS[-1]})")
-    rates = {}
-    for entry in targets.get("profiles") or []:
-        if isinstance(entry, dict) and isinstance(entry.get("profile"), str) and \
-                isinstance(entry.get("rate"), (int, float)):
-            rates[entry["profile"]] = max(entry["rate"], rates.get(entry["profile"], entry["rate"]))
-    return rule, rates
+    by_architecture = {}
+    architectures = targets.get("architectures")
+    for name, value in (architectures if isinstance(architectures, dict) else {}).items():
+        rates = by_architecture[name] = {}
+        for entry in (value.get("profiles") if isinstance(value, dict) else None) or []:
+            if isinstance(entry, dict) and isinstance(entry.get("profile"), str) and \
+                    isinstance(entry.get("rate"), (int, float)):
+                rates[entry["profile"]] = max(entry["rate"], rates.get(entry["profile"], entry["rate"]))
+    return rule, by_architecture
 
 
 def number(value):
@@ -180,15 +185,10 @@ def compare_step(older, newer, rule, counted, architectures=None):
     return {**cells, "Verdict": ("regression" if counted else "worse") if regression else "ok"}, regression, False
 
 
-# How a run names its CPU architecture: as Go and Kubernetes do (a GKE run),
-# or as the kernel does (a run on a machine).
-ARCHITECTURES = {"x86_64": "amd64", "aarch64": "arm64"}
-
-
 def architecture(conditions):
-    """The CPU architecture a run ran on, as Kubernetes names it."""
-    name = conditions["machine"]["architecture"]
-    return ARCHITECTURES.get(name, name)
+    """The CPU architecture a run ran on, as Kubernetes names it: a GKE run
+    names it so, a run on a machine as the kernel does."""
+    return harness.kubernetes_architecture(conditions["machine"]["architecture"])
 
 
 def different_architectures(older, newer):
@@ -264,14 +264,31 @@ def counts(step, rates):
     return step["profile"] not in rates or step["rate"] <= rates[step["profile"]]
 
 
-def rule_line(rule, rates, steps):
-    """Which of `steps` count, and when one is a regression, for people."""
+def target_rates(by_architecture, newer_conditions):
+    """The target rate of each profile ({profile: rate}) that decides which
+    steps count: those of the newer run's architecture, or none when the
+    targets file has none for it or the architecture is unknown. Then,
+    for people, why there are none, or None."""
+    if newer_conditions is None:
+        return {}, ("The newer run's architecture is unknown, with no conditions.json beside its summary: every "
+                    "step counts.")
+    name = architecture(newer_conditions)
+    if name not in by_architecture:
+        return {}, f"The targets file has no targets for {name}, the newer run's architecture: every step counts."
+    return by_architecture[name], None
+
+
+def rule_line(rule, rates, steps, architecture_name, no_rates):
+    """Which of `steps` count, by the target `rates` of the newer run's
+    architecture (`architecture_name`), or why none apply (`no_rates`), and
+    when a step is a regression, for people."""
     profiles = list(dict.fromkeys(step["profile"] for step in steps))
     with_rate = [f"{profile} {rates[profile]:,} requests/s" for profile in profiles if profile in rates]
     without = [profile for profile in profiles if profile not in rates]
-    which = "Every step counts."
+    which = no_rates or "Every step counts."
     if with_rate:
-        which = (f"A step counts when its rate is at most its profile's target rate ({', '.join(with_rate)})"
+        which = (f"A step counts when its rate is at most its profile's target rate for {architecture_name}, the "
+                 f"newer run's architecture ({', '.join(with_rate)})"
                  + (f", or its profile has no target ({', '.join(without)})" if without else "")
                  + "; steps above it are shown for reference and do not count.")
     return (f"{which} A step is a regression when p99 or p99.9 got worse by more than {rule['more_than_percent']}% "
@@ -315,16 +332,20 @@ def latency_table(older, newer, rule, rates, counted, architectures):
     return lines, regressions, unmeasured
 
 
-def report(older_run, newer_run, rule, rates):
+def report(older_run, newer_run, rule, rates_by_architecture):
     """The comparison for people, in Markdown, and how many regressions,
     missed targets and steps the newer run left unmeasured it found among
-    the steps that count."""
+    the steps that count. The target rates of the newer run's architecture
+    (from `rates_by_architecture`) decide which steps count."""
     (older, older_conditions), (newer, newer_conditions) = older_run, newer_run
+    rates, no_rates = target_rates(rates_by_architecture, newer_conditions)
+    newer_architecture = architecture(newer_conditions) if newer_conditions else None
     incomplete = [f"The {name} run is incomplete: it stopped before its last step."
                   for name, summary in (("older", older), ("newer", newer)) if not summary["complete"]]
     lines = ["# Benchmark comparison", "", *runs_section(older_conditions, newer_conditions), "",
              *(line for text in incomplete for line in (text, "")),
-             rule_line(rule, rates, [*older["cases"], *newer["cases"]]), "", "## Latency", ""]
+             rule_line(rule, rates, [*older["cases"], *newer["cases"]], newer_architecture, no_rates), "",
+             "## Latency", ""]
     architectures = different_architectures(older_conditions, newer_conditions)
     table, regressions, unmeasured = latency_table(older, newer, rule, rates, True, architectures)
     lines += table
@@ -341,9 +362,21 @@ def measured_text(target):
     return "nothing measured" if target["measured"] is None else f"{target['measured']} {target['unit']}"
 
 
+def same_target(target, other):
+    """Whether two runs' targets are one: the same id, at the same load,
+    for the same architecture when both name it (a summary written before
+    the targets were by architecture does not). Under one id, each
+    architecture may have its own rate and bounds."""
+    def load(one):
+        return one["id"], one.get("case"), one.get("rate")
+
+    architectures = target.get("architecture"), other.get("architecture")
+    return load(target) == load(other) and (None in architectures or architectures[0] == architectures[1])
+
+
 def older_verdict(target, older):
     """What the older run did for a target the newer one missed."""
-    before = next((other for other in older["targets"] if other["id"] == target["id"]), None)
+    before = next((other for other in older["targets"] if same_target(target, other)), None)
     if before is None:
         return "not in the older run"
     if before["verdict"] == "met":
@@ -364,7 +397,8 @@ def targets_section(older, newer):
             reason = f": {target['reason']}" if target["reason"] else ""
             lines.append(f"- {target['id']} ({target['about']}): {measured_text(target)}, "
                          f"at most {target['max']} {target['unit']}{reason}; {older_verdict(target, older)}")
-    unmeasured = [target["id"] for target in newer["targets"] if target["verdict"] == "not measured"]
+    unmeasured = list(dict.fromkeys(target["id"] for target in newer["targets"]
+                                    if target["verdict"] == "not measured"))
     if unmeasured:
         lines += ["", f"Not measured in the newer run: {', '.join(unmeasured)}."]
     return len(missed), lines
@@ -387,12 +421,12 @@ def main(argv):
     parser.add_argument("older", help="the older run's summary.json, or its directory")
     parser.add_argument("newer", help="the newer run's summary.json, or its directory")
     parser.add_argument("--targets", default=str(BENCH / "targets.json"),
-                        help="the targets file whose regression rule and target rates apply "
-                             "(default: bench/targets.json)")
+                        help="the targets file whose regression rule, and whose target rates for the newer run's "
+                             "architecture, apply (default: bench/targets.json)")
     args = parser.parse_args(argv)
     try:
-        rule, rates = read_targets(args.targets)
-        text, found = report(read_run(args.older), read_run(args.newer), rule, rates)
+        rule, rates_by_architecture = read_targets(args.targets)
+        text, found = report(read_run(args.older), read_run(args.newer), rule, rates_by_architecture)
     except CompareError as error:
         print(f"compare: {error}", file=sys.stderr)
         return 2

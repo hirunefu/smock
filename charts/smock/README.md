@@ -236,7 +236,7 @@ resources:
 
 ### Sizing
 
-Two sets of measurements follow, both under the profiles of
+Three sets of measurements follow, all under the profiles of
 `bench/plan-autopilot.json` in smock's repository: smock ran under each
 row's CPU quota and memory limit, with the 1161 Stubs of
 `bench/definitions`, the request mix of `bench/requests.json`, the Journal
@@ -245,7 +245,7 @@ step. Latency counts from each
 request's scheduled send time, so it includes about 2 ms at p99 from the
 load generator's timer.
 
-**On GKE Autopilot**, one run in October 2026: smock ran in us-central1,
+**On GKE Autopilot, Arm**, one run in October 2026: smock ran in us-central1,
 in arm64 general-purpose Pods on e4a nodes, each with the row's requests
 and limits, and the load generator (oha) ran in a Pod on another node,
 sending plain HTTP over the Pod network to smock's Service.
@@ -275,6 +275,27 @@ sending plain HTTP over the Pod network to smock's Service.
   on Autopilot; idle, it was 8 MiB. Under 52Mi the Journal filled its
   13 MiB bound and evicted its oldest entries, and the kernel never killed
   smock.
+
+**On GKE Autopilot, x86**, two runs in October 2026: as above, but in
+general-purpose x86 Pods on ek-standard-8 nodes in us-central1-a, where a
+vCPU is a hyperthread, and the load generator sent HTTPS as well as plain
+HTTP (the rows are plain HTTP unless they say HTTPS); the 250m row is from
+one of the runs. smock's x86 performance targets (`bench/targets.json`)
+come from these runs.
+
+| Requests and limits | Kept up with | Ran out of CPU at | OOM kills |
+|---|---|---|---|
+| 50m, 52Mi | 125 requests/s: p99 18 to 45 ms, p99.9 80 to 138 ms | about 500 requests/s | None |
+| 250m, 512Mi | 1,250 requests/s: p99 3.7 ms, p99.9 8.3 ms | about 3,500 requests/s | None |
+| 1, 1Gi | 5,000 requests/s: p99 3.0 ms, p99.9 3.5 to 4.5 ms | about 19,000 requests/s over plain HTTP, 14,000 over HTTPS | None |
+
+- Per vCPU, Arm served about 2.5 times what x86 did under 1 CPU (50,000
+  against 19,000 requests/s), and 3 to 4 times under 250m and 50m: size
+  x86 Pods by these rows.
+- The CFS quota shows more on x86: under 250m, p99 was 69 ms at 625
+  requests/s and 3.7 ms at 1,250; under 50m p99.9 was 80 to 138 ms at 125
+  requests/s, and varied from run to run. The advice above holds: 50m for
+  light traffic only, 250m or more for latency-sensitive tests.
 
 **On a laptop**: smock ran on an M1 MacBook Air, and the load generator on
 the same machine sent plain HTTP and HTTPS alike over loopback, at rates

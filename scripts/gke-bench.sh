@@ -48,7 +48,7 @@
 #   --plan FILE      the plan (default: bench/plan-autopilot.json)
 #   --profiles A,B   only these profiles of the plan
 #   --cases A,B      only these cases of the plan
-#   --targets FILE   the targets to check (default: bench/targets.json)
+#   --targets FILE   the targets to check, those of --arch (default: bench/targets.json)
 #   --out DIR        where the results go (default: bench/results/gke-<date>-<time>)
 #   --time-limit T   when the watchdog deletes the cluster, with its unit: 80m (default), 4800s; at most 240m
 #   --arch ARCH      the nodes' architecture, amd64 or arm64 (default: this machine's)

@@ -554,20 +554,6 @@ def profile_record(result):
             "ended_early": result["ended_early"], "generator_cpu_request": result["generator_cpu_request"]}
 
 
-def explain_not_run(targets, plan, profiles, cases, results):
-    """Gives each target that is not measured because its step was not run
-    after the load generator stopped its profile early that reason."""
-    not_run = {step: result["ended_early"]["reason"] for result in results.values() if result["ended_early"]
-               for step in result["ended_early"]["not_measured"]}
-    step_ids = {(spec["profile"], spec["case"], spec["rate"]): spec["id"]
-                for profile in profiles for spec in steps(plan, profile, cases)}
-    for target in targets:
-        step = step_ids.get((target["profile"], target["case"], target["rate"]))
-        if target["verdict"] == "not measured" and step in not_run:
-            target["reason"] = f"{step} was not run: {not_run[step]}"
-    return targets
-
-
 def node_text(node):
     if node is None:
         return "-"
@@ -642,9 +628,9 @@ def command_summarize(args):
     summary = {"format": harness.FORMAT, "complete": all(result["complete"] for result in results.values()),
                "idle_rss": [], "cases": [step for result in results.values() for step in result["steps"]],
                "targets": [], "gke": {"profiles": {name: profile_record(result) for name, result in results.items()}}}
-    summary["targets"] = explain_not_run(
-        [harness.check_target(target, summary) for target in harness.read_targets(targets_path)],
-        plan, profiles, cases, results)
+    planned = [spec for profile in profiles for spec in steps(plan, profile, cases)]
+    summary["targets"] = harness.explain_steps_not_run(
+        harness.check_targets(harness.read_targets(targets_path), args.arch, summary), summary, planned)
     start = next((result["start"] for result in results.values() if result["start"]), None) or {}
     status = start.get("status") or {}
     smock_nodes, generator_nodes = nodes_of(results, "smock"), nodes_of(results, "generator")
@@ -687,8 +673,7 @@ def command_summarize(args):
         "profiles": profiles,
         "cases": [{key: spec[key] for key in (
             "id", "profile", "protocol", "connection", "cpu_limit", "memory_limit", "rate", "ramp_s",
-            "duration_s", "tail_s", "connections", "idle_connections")}
-            for profile in profiles for spec in steps(plan, profile, cases)],
+            "duration_s", "tail_s", "connections", "idle_connections")} for spec in planned],
         "overrides": {},
     }
     harness.write_json(out / "summary.json", summary)
@@ -804,13 +789,14 @@ def main(argv):
     summarizing = commands.add_parser("summarize", help="write summary.json, summary.md and conditions.json")
     summarizing.add_argument("--plan", required=True, help="the plan the run ran")
     summarizing.add_argument("--targets", default=str(BENCH / "targets.json"),
-                             help="the targets to check (default: bench/targets.json)")
+                             help="the targets to check, those of --arch (default: bench/targets.json)")
     summarizing.add_argument("--profiles",
                              help="the profiles the run ran, comma-separated (default: every profile)")
     summarizing.add_argument("--cases", help="the cases the run ran, comma-separated (default: every case)")
     summarizing.add_argument("--region", required=True)
     summarizing.add_argument("--zone", help="the zone the run pinned its Pods to, if it did")
-    summarizing.add_argument("--arch", required=True, choices=("arm64", "amd64"))
+    summarizing.add_argument("--arch", required=True, choices=("arm64", "amd64"),
+                             help="the nodes' architecture, whose targets are checked")
     summarizing.add_argument("--started-at", required=True)
     summarizing.add_argument("--finished-at", required=True)
     summarizing.add_argument("--cluster-version")

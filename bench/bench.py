@@ -17,6 +17,8 @@ targets of bench/targets.json, each under one of those profiles.
 
 usage:
   python3 bench/bench.py run [options]    run the benchmark (--help lists the options)
+  python3 bench/bench.py check-targets RESULTS [--targets FILE]
+                                          check a run's summary against the targets as they are now
 
 It needs Linux, python3 (3.10 or later), oha, openssl, taskset, and a systemd
 user manager that may set CPU quotas and memory limits. The README's
@@ -263,6 +265,18 @@ def read_first(*paths):
         except OSError:
             continue
     return None
+
+
+# The kernel's names of the CPU architectures smock is built for, and the
+# names Go and Kubernetes give them, which GKE runs and the targets file use.
+KERNEL_ARCHITECTURES = {"x86_64": "amd64", "aarch64": "arm64"}
+
+
+def kubernetes_architecture(name):
+    """A CPU architecture as Kubernetes names it, from the kernel's name or
+    its own: amd64 for x86_64, arm64 for aarch64; any other name as it
+    is."""
+    return KERNEL_ARCHITECTURES.get(name, name)
 
 
 def machine():
@@ -729,6 +743,7 @@ class Run:
             self.idle_profiles = [profile for profile in all_profiles if profile["name"] in idle_names]
         self.targets_path = Path(args.targets).resolve()
         self.targets = read_targets(self.targets_path)
+        self.architecture = kubernetes_architecture(platform.machine())
         ordered = cpus_by_speed()
         # smock gets as many CPUs as the largest limit of the plan needs,
         # whichever limits this run has, so that runs compare.
@@ -1240,38 +1255,84 @@ TARGET_METRICS = {
 
 
 def read_targets(path):
-    """The targets of a targets file, one for each limit of each profile's
-    entry: its id (<profile>/<metric>), what it is for people, the profile
-    with its limits, the case and the rate of a target that holds at a load
-    (None for one at idle), the metric, the most it may be and its unit."""
-    entries = read_json(path).get("profiles")
+    """The targets of a targets file, by the CPU architecture they are for
+    ({architecture: targets}), each set in the file's order."""
+    try:
+        architectures = read_json(path).get("architectures")
+    except (OSError, ValueError) as error:
+        raise BenchError(f"cannot read {path}: {error}") from error
+    if not isinstance(architectures, dict) or not architectures:
+        raise BenchError(f"{path}: needs the targets of each architecture (architectures), such as "
+                         '{"architectures": {"arm64": {"profiles": [...]}, "amd64": {"profiles": [...]}}}')
+    return {architecture: architecture_targets(path, architecture, value.get("profiles") if isinstance(value, dict)
+                                               else None)
+            for architecture, value in architectures.items()}
+
+
+def architecture_targets(path, architecture, entries):
+    """The targets of one architecture of a targets file, one for each limit
+    of each profile's entry: its id (<profile>/<metric>), what it is for
+    people, the architecture, the profile with its limits, the case and the
+    rate of a target that holds at a load (None for one at idle), the
+    metric, the most it may be and its unit."""
+    where = f"{path}: {architecture}"
     if not isinstance(entries, list) or not entries:
-        raise BenchError(f"{path}: needs a list of profiles, each with the most smock may reach under it (at_most)")
+        raise BenchError(f"{where}: needs a list of profiles, each with the most smock may reach under it (at_most)")
     targets = []
     for entry in entries:
         name = entry.get("profile")
         limits = entry.get("at_most")
         if not isinstance(name, str) or not isinstance(entry.get("cpu_limit"), str) or not limits:
-            raise BenchError(f"{path}: each profile needs its name (profile), its cpu_limit, and at_most")
+            raise BenchError(f"{where}: each profile needs its name (profile), its cpu_limit, and at_most")
         if entry.get("memory_limit") is not None:
             memory_bytes(entry["memory_limit"])
         for key, value in limits.items():
             if key not in TARGET_METRICS:
-                raise BenchError(f"{path}: {name}: {key} cannot be checked; use one of {', '.join(TARGET_METRICS)}")
+                raise BenchError(f"{where}: {name}: {key} cannot be checked; use one of {', '.join(TARGET_METRICS)}")
             if not isinstance(value, (int, float)) or value < 0:
-                raise BenchError(f"{path}: {name}: {key} must be a number, at least 0")
+                raise BenchError(f"{where}: {name}: {key} must be a number, at least 0")
             metric, unit, what, scope = TARGET_METRICS[key]
-            target = {"id": f"{name}/{metric}", "about": what, "profile": name, "cpu_limit": entry["cpu_limit"],
-                      "memory_limit": entry.get("memory_limit"), "case": None, "rate": None, "metric": metric,
-                      "max": value, "unit": unit}
+            target = {"id": f"{name}/{metric}", "about": what, "architecture": architecture, "profile": name,
+                      "cpu_limit": entry["cpu_limit"], "memory_limit": entry.get("memory_limit"), "case": None,
+                      "rate": None, "metric": metric, "max": value, "unit": unit}
             if scope == "load":
                 if not isinstance(entry.get("case"), str) or not isinstance(entry.get("rate"), (int, float)):
-                    raise BenchError(f"{path}: {name}: {key} holds at a load: give the case and the rate")
+                    raise BenchError(f"{where}: {name}: {key} holds at a load: give the case and the rate")
                 target.update(case=entry["case"], rate=entry["rate"],
                               about=f"{what}, {entry['case']} at {entry['rate']:,} requests/s")
             if target["id"] in [other["id"] for other in targets]:
-                raise BenchError(f"{path}: {name} limits {metric} twice")
+                raise BenchError(f"{where}: {name} limits {metric} twice")
             targets.append(target)
+    return targets
+
+
+def check_targets(targets, architecture, summary):
+    """The targets of `targets` (by architecture, as read_targets gives
+    them) for a run on `architecture`, each checked against its summary:
+    those of its architecture, each met, missed or not measured; or, when
+    there are none for it, every target of every architecture, not
+    measured, since each is for another one."""
+    if architecture in targets:
+        return [check_target(target, summary) for target in targets[architecture]]
+    return [{**target, "verdict": "not measured", "measured": None,
+             "reason": f"a target for {target['architecture']}, and the run ran on {architecture}, which has none"}
+            for other in targets.values() for target in other]
+
+
+def explain_steps_not_run(targets, summary, steps):
+    """Gives each target that is not measured because its step was not run,
+    after the load generator of a GKE run stopped its profile early (as
+    summary.json records it under gke), that reason. `steps` are the steps
+    the run planned, each with its id, profile and rate, as conditions.json
+    lists them; a step's id starts with its case's name and an @."""
+    profiles = (summary.get("gke") or {}).get("profiles") or {}
+    not_run = {step: record["ended_early"]["reason"] for record in profiles.values() if record.get("ended_early")
+               for step in record["ended_early"]["not_measured"]}
+    step_ids = {(step["profile"], step["id"].split("@", 1)[0], step["rate"]): step["id"] for step in steps}
+    for target in targets:
+        step = step_ids.get((target["profile"], target["case"], target["rate"]))
+        if target["verdict"] == "not measured" and step in not_run:
+            target["reason"] = f"{step} was not run: {not_run[step]}"
     return targets
 
 
@@ -1417,6 +1478,25 @@ def case_row(case):
     return "| " + " | ".join(shown(cell) for cell in cells) + " |"
 
 
+def targets_section(targets, run_architecture, targets_file):
+    """The Targets section of summary.md: which architecture's targets of
+    `targets_file` were checked, those of `run_architecture` that the run
+    ran on or none, and a row for each checked target."""
+    if any(target["architecture"] == run_architecture for target in targets):
+        which = f"The targets of {targets_file} for {run_architecture}, the architecture the run ran on."
+    else:
+        which = (f"{targets_file} has no targets for {run_architecture}, the architecture the run ran on: each "
+                 "target below is for another architecture, and not measured.")
+    lines = ["## Targets", "", which, "", "| Profile | Target | At most | Measured | Verdict |",
+             "|---|---|---|---|---|"]
+    for target in targets:
+        profile = f"{target['profile']} ({target['cpu_limit']} CPU, {target['memory_limit'] or 'no memory limit'})"
+        measured = "-" if target["measured"] is None else f"{target['measured']} {target['unit']}"
+        verdict = target["verdict"] + (f": {target['reason']}" if target["reason"] else "")
+        lines.append(f"| {profile} | {target['about']} | {target['max']} {target['unit']} | {measured} | {verdict} |")
+    return lines
+
+
 def summary_markdown(summary, conditions):
     """The summary for people: the targets, then for each profile idle RSS
     and the cases."""
@@ -1436,12 +1516,8 @@ def summary_markdown(summary, conditions):
         lines += ["", f"**Not a full run:** the command line changed the plan ({shown_overrides})."]
     if not summary["complete"]:
         lines += ["", "**Incomplete:** the run stopped before its last case."]
-    lines += ["", "## Targets", "", "| Profile | Target | At most | Measured | Verdict |", "|---|---|---|---|---|"]
-    for target in summary["targets"]:
-        profile = f"{target['profile']} ({target['cpu_limit']} CPU, {target['memory_limit'] or 'no memory limit'})"
-        measured = "-" if target["measured"] is None else f"{target['measured']} {target['unit']}"
-        verdict = target["verdict"] + (f": {target['reason']}" if target["reason"] else "")
-        lines.append(f"| {profile} | {target['about']} | {target['max']} {target['unit']} | {measured} | {verdict} |")
+    lines += ["", *targets_section(summary["targets"], kubernetes_architecture(machine["architecture"]),
+                                   conditions["targets"]["file"])]
     lines += ["", "## Reading the cases", "",
               "Each profile is a CPU limit, a CFS quota over a 100 ms period, and a memory limit, memory.max "
               "with no swap. Latency counts from each request's scheduled send time. *From release* counts "
@@ -1465,9 +1541,51 @@ def summary_markdown(summary, conditions):
 
 
 def write_summary(run, summary, conditions):
-    summary["targets"] = [check_target(target, summary) for target in run.targets]
+    summary["targets"] = check_targets(run.targets, run.architecture, summary)
     write_json(run.out / "summary.json", summary)
     (run.out / "summary.md").write_text(summary_markdown(summary, conditions))
+
+
+def command_check_targets(args):
+    """Checks a finished run's summary.json against the targets file as it
+    is now, for the architecture its conditions.json names, and prints the
+    Targets section of summary.md; reads the run's files and writes none.
+    Returns 1 when a target is missed. A run on an architecture the file
+    has no targets for cannot be checked, so it never passes."""
+    path = Path(args.results)
+    if path.is_dir():
+        path = path / "summary.json"
+    conditions_path = path.parent / "conditions.json"
+    summary = read_json_file(path)
+    if not isinstance(summary, dict) or summary.get("format") != FORMAT:
+        shown_format = summary.get("format") if isinstance(summary, dict) else None
+        raise BenchError(f"{path} has format {shown_format}; this checks summaries of format {FORMAT}, as "
+                         "bench/bench.py writes them now")
+    if not conditions_path.exists():
+        raise BenchError(f"no conditions.json beside {path}: it names the architecture the run ran on")
+    conditions = read_json_file(conditions_path)
+    name = ((conditions.get("machine") if isinstance(conditions, dict) else None) or {}).get("architecture")
+    if not isinstance(name, str) or not name:
+        raise BenchError(f"{conditions_path} names no architecture (machine.architecture): it is the one whose "
+                         "targets are checked")
+    targets_path = Path(args.targets).resolve()
+    run_architecture = kubernetes_architecture(name)
+    by_architecture = read_targets(targets_path)
+    if run_architecture not in by_architecture:
+        raise BenchError(f"{shown_path(targets_path)} has no targets for {run_architecture}, the architecture the "
+                         f"run ran on (only for {', '.join(by_architecture)}): nothing to check")
+    targets = explain_steps_not_run(check_targets(by_architecture, run_architecture, summary), summary,
+                                    conditions.get("cases") or [])
+    print("\n".join(targets_section(targets, run_architecture, shown_path(targets_path))))
+    return 1 if any(target["verdict"] == "missed" for target in targets) else 0
+
+
+def read_json_file(path):
+    """The JSON value of the file at `path`, or a BenchError naming it."""
+    try:
+        return read_json(path)
+    except (OSError, ValueError) as error:
+        raise BenchError(f"cannot read {path}: {error}") from error
 
 
 def command_run(args):
@@ -1531,8 +1649,20 @@ def main(argv):
     run.add_argument("--smock-cpus", help="the CPUs smock runs on, such as 4,5 (default: the fastest, as many as "
                      "the largest CPU limit of the plan needs)")
     run.add_argument("--generator-cpus", help="the CPUs oha runs on (default: every other CPU)")
+    check = commands.add_parser("check-targets", help="check a run's summary against the targets as they are now, "
+                                "and print its Targets table (exits with 1 when a target is missed)")
+    check.add_argument("results", help="the run's results directory, or its summary.json, with conditions.json "
+                                       "beside it; nothing in it is changed")
+    check.add_argument("--targets", default=str(BENCH / "targets.json"),
+                       help="the targets to check (default: bench/targets.json)")
     args = parser.parse_args(argv)
-    if args.command == "run" and not args.out:
+    if args.command == "check-targets":
+        try:
+            return command_check_targets(args)
+        except BenchError as error:
+            log(str(error))
+            return 2
+    if not args.out:
         args.out = str(BENCH / "results" / time.strftime("%Y%m%d-%H%M%S"))
     try:
         return command_run(args)

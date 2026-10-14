@@ -6,8 +6,9 @@ files it writes. They need what a benchmark run needs (see the README): a
 release build of smock (dist/smock, or SMOCK_BENCH_SMOCK), oha (on PATH, or
 OHA), openssl, taskset, and a systemd user manager that can set CPU quotas.
 The tests of the targets read a targets file with bench.py's read_targets and
-check each target against a summary as summary.json has it, with
-check_target; they need nothing else.
+check its targets against a summary as summary.json has it, with
+check_targets, or run `bench.py check-targets` on a results directory they
+write; they need nothing else.
 
 usage: python3 -m unittest discover -s bench -v
 """
@@ -38,6 +39,11 @@ _spec.loader.exec_module(harness)
 
 SMOCK = os.environ.get("SMOCK_BENCH_SMOCK", str(ROOT / "dist" / "smock"))
 OHA = os.environ.get("OHA", "oha")
+
+# This machine's CPU architecture as Kubernetes and the targets file name it,
+# and the other one smock is built for.
+LOCAL_ARCHITECTURE = {"x86_64": "amd64", "aarch64": "arm64"}.get(platform.machine(), platform.machine())
+OTHER_ARCHITECTURE = "amd64" if LOCAL_ARCHITECTURE == "arm64" else "arm64"
 
 # A short run: smock idles for half a second before its idle RSS is read;
 # in each case, requests scheduled in the first half second are not counted,
@@ -609,9 +615,10 @@ class AutopilotProfiles(unittest.TestCase):
             # a second over HTTPS on this kind of machine; the top of the
             # ladder reaches it.
             self.assertGreaterEqual(case["rates"]["autopilot-burst-min"][-1], 4000)
-        # Each target is measured by a full run: its profile has its
-        # limits, and its case climbs through its rate under it.
-        for target in harness.read_targets(BENCH / "targets.json"):
+        # Each target of each architecture is measured by a full run: its
+        # profile has its limits, and its case climbs through its rate
+        # under it.
+        for target in [t for targets in harness.read_targets(BENCH / "targets.json").values() for t in targets]:
             profile = profiles[target["profile"]]
             self.assertEqual((profile["cpu_limit"], profile["memory_limit"]),
                              (target["cpu_limit"], target["memory_limit"]), target["id"])
@@ -619,13 +626,17 @@ class AutopilotProfiles(unittest.TestCase):
                 self.assertIn(target["rate"], cases[target["case"]]["rates"][target["profile"]], target["id"])
 
 
-def targets_file(test, profiles):
-    """Writes a targets file with the entries `profiles` into a new
-    directory, and returns its path."""
+def targets_file(test, profiles=(), architectures=None):
+    """Writes a targets file into a new directory, and returns its path: the
+    entries `profiles` as the targets of arm64, or the entries of each
+    architecture of `architectures` ({architecture: entries}) as its
+    targets."""
     directory = Path(tempfile.mkdtemp(prefix="smock-bench-test-targets-"))
     test.addCleanup(shutil.rmtree, directory, ignore_errors=True)
     path = directory / "targets.json"
-    path.write_text(json.dumps({"profiles": profiles}))
+    by_architecture = architectures if architectures is not None else {"arm64": list(profiles)}
+    path.write_text(json.dumps({"architectures": {architecture: {"profiles": entries}
+                                                  for architecture, entries in by_architecture.items()}}))
     return path
 
 
@@ -640,7 +651,8 @@ class Targets(unittest.TestCase):
         out = bench(self, "--cases", "http-keep-alive", "--cpu-limits", "1", "--rate", "200",
                     "--ramp", "0.5", "--duration", "2", "--tail", "1", "--settle", "0.5")
         targets = read(out, "summary.json")["targets"]
-        self.assertEqual({t["id"] for t in targets}, {t["id"] for t in harness.read_targets(BENCH / "targets.json")})
+        self.assertEqual({t["id"] for t in targets},
+                         {t["id"] for t in harness.read_targets(BENCH / "targets.json")[LOCAL_ARCHITECTURE]})
         for target in targets:
             self.assertEqual(target["verdict"], "not measured", target["id"])
             self.assertIn(f"did not run profile {target['profile']}", target["reason"])
@@ -648,10 +660,13 @@ class Targets(unittest.TestCase):
     def test_a_run_under_a_targets_profile_states_each_verdict_in_both_summaries(self):
         plan = plan_file(self, [{"name": "small", "cpu_limit": "1", "memory_limit": "256Mi"}], {"small": 200},
                          idle_rss={"settle_s": 5})
-        path = targets_file(self, [{
-            "profile": "small", "cpu_limit": "1", "memory_limit": "256Mi", "case": "http-keep-alive", "rate": 200,
-            "at_most": {"p99_ms": 1000, "p99_9_ms": 0.001, "oom_kills": 0, "peak_memory_mib": 1,
-                        "idle_rss_mib": 1024}}])
+        entry = {"profile": "small", "cpu_limit": "1", "memory_limit": "256Mi", "case": "http-keep-alive", "rate": 200,
+                 "at_most": {"p99_ms": 1000, "p99_9_ms": 0.001, "oom_kills": 0, "peak_memory_mib": 1,
+                             "idle_rss_mib": 1024}}
+        # The other architecture's p99.9 would be met: the run checks its
+        # own architecture's.
+        other = {**entry, "at_most": {**entry["at_most"], "p99_9_ms": 1000}}
+        path = targets_file(self, architectures={OTHER_ARCHITECTURE: [other], LOCAL_ARCHITECTURE: [entry]})
         out = bench(self, "--plan", str(plan), "--targets", str(path), *SHORT)
         summary = read(out, "summary.json")
         targets = {t["id"]: t for t in summary["targets"]}
@@ -662,60 +677,92 @@ class Targets(unittest.TestCase):
             "small/peak_memory": "missed",
             "small/idle_rss": "met",
         })
+        self.assertEqual({t["architecture"] for t in summary["targets"]}, {LOCAL_ARCHITECTURE})
         result = case(out, "http-keep-alive@small")
         self.assertEqual(targets["small/p99"]["measured"], result["latency_ms"]["p99"])
         self.assertEqual(targets["small/peak_memory"]["measured"], round(result["memory"]["peak_bytes"] / MiB, 2))
         self.assertEqual(targets["small/idle_rss"]["measured"], round(summary["idle_rss"][0]["rss_kib"] / 1024, 2))
-        # summary.md has a row for each, with its profile, what it is and
-        # its verdict.
-        rows = markdown_table(markdown_sections((out / "summary.md").read_text())["Targets"])
+        # summary.md says which architecture's targets it checked, and has
+        # a row for each, with its profile, what it is and its verdict.
+        section = markdown_sections((out / "summary.md").read_text())["Targets"]
+        targets_path = read(out, "conditions.json")["targets"]["file"]
+        self.assertIn(f"The targets of {targets_path} for {LOCAL_ARCHITECTURE}, the architecture the run ran on.",
+                      section)
+        rows = markdown_table(section)
         self.assertEqual([(row["Profile"], row["Target"], row["Verdict"]) for row in rows],
                          [("small (1 CPU, 256Mi)", t["about"], t["verdict"]) for t in summary["targets"]])
 
 
 class TargetsFile(unittest.TestCase):
-    """bench/targets.json holds the maintainer's provisional targets, one
-    entry for each resource profile of bench/plan-autopilot.json: the load
-    its latency targets hold at, and the most smock may use under it."""
+    """bench/targets.json holds the maintainer's provisional targets for each
+    CPU architecture, one entry for each resource profile of
+    bench/plan-autopilot.json: the load its latency targets hold at, and the
+    most smock may use under it."""
 
-    def test_the_targets_are_the_maintainers_decision_for_each_profile(self):
-        targets = {t["id"]: t for t in harness.read_targets(BENCH / "targets.json")}
-        shown = {i: (t["profile"], t["cpu_limit"], t["memory_limit"], t["case"], t["rate"], t["metric"], t["max"],
-                     t["unit"]) for i, t in targets.items()}
-        # Set from the GKE Autopilot probe: each profile's rate, and the
-        # most p99.9 may be at it.
-        load = {"chart-default": ("1", "1Gi", "http-keep-alive", 30000, 10),
-                "autopilot-min": ("250m", "512Mi", "http-keep-alive", 5000, 5),
-                "autopilot-burst-min": ("50m", "52Mi", "http-keep-alive", 250, 50)}
-        expected = {}
-        for profile, (cpu, memory, case_name, rate, p99_9) in load.items():
-            expected |= {
-                f"{profile}/p99": (profile, cpu, memory, case_name, rate, "p99", 3, "ms"),
-                f"{profile}/p99_9": (profile, cpu, memory, case_name, rate, "p99_9", p99_9, "ms"),
-                f"{profile}/peak_memory": (profile, cpu, memory, case_name, rate, "peak_memory", 32, "MiB"),
-                f"{profile}/idle_rss": (profile, cpu, memory, None, None, "idle_rss", 20, "MiB"),
-            }
-        expected["autopilot-burst-min/oom_kills"] = ("autopilot-burst-min", "50m", "52Mi", "http-keep-alive", 250,
-                                                     "oom_kills", 0, "OOM kills")
-        self.assertEqual(shown, expected)
+    def test_the_targets_are_the_maintainers_decision_for_each_architecture_and_profile(self):
+        targets = harness.read_targets(BENCH / "targets.json")
+        # Each profile's rate, and the most p99 and p99.9 may be at it: for
+        # arm64 from the GKE Autopilot probe on Arm, for amd64 from the runs
+        # on x86 nodes, where a vCPU is a hyperthread and the CFS quota of
+        # 250m and 50m shows in the slowest requests at any load.
+        loads = {
+            "arm64": {"chart-default": ("1", "1Gi", 30000, 3, 10),
+                      "autopilot-min": ("250m", "512Mi", 5000, 3, 5),
+                      "autopilot-burst-min": ("50m", "52Mi", 250, 3, 50)},
+            "amd64": {"chart-default": ("1", "1Gi", 5000, 5, 20),
+                      "autopilot-min": ("250m", "512Mi", 1250, 100, 200),
+                      "autopilot-burst-min": ("50m", "52Mi", 125, 100, 300)},
+        }
+        self.assertEqual(list(targets), ["arm64", "amd64"])
+        for architecture, load in loads.items():
+            shown = {t["id"]: (t["architecture"], t["profile"], t["cpu_limit"], t["memory_limit"], t["case"],
+                               t["rate"], t["metric"], t["max"], t["unit"]) for t in targets[architecture]}
+            expected = {}
+            for profile, (cpu, memory, rate, p99, p99_9) in load.items():
+                at_load = (architecture, profile, cpu, memory, "http-keep-alive", rate)
+                expected |= {
+                    f"{profile}/p99": (*at_load, "p99", p99, "ms"),
+                    f"{profile}/p99_9": (*at_load, "p99_9", p99_9, "ms"),
+                    f"{profile}/peak_memory": (*at_load, "peak_memory", 32, "MiB"),
+                    f"{profile}/idle_rss": (architecture, profile, cpu, memory, None, None, "idle_rss", 20, "MiB"),
+                }
+                if profile == "autopilot-burst-min":
+                    expected[f"{profile}/oom_kills"] = (*at_load, "oom_kills", 0, "OOM kills")
+            self.assertEqual(shown, expected, architecture)
+
+    def test_each_set_says_where_it_comes_from_and_that_it_is_provisional(self):
+        document = read(BENCH, "targets.json")
+        self.assertIn("provisional", document["about"])
+        self.assertIn("regression", document)
+        for architecture, words in (("arm64", ("arm64", "e4a")), ("amd64", ("x86", "ek-standard-8"))):
+            about = document["architectures"][architecture]["about"]
+            for word in words:
+                self.assertIn(word, about, architecture)
+            self.assertIn("provisional", about.lower(), architecture)
 
     def test_a_targets_file_that_cannot_be_checked_is_refused_with_what_to_change(self):
         idle_only = {"profile": "small", "cpu_limit": "250m", "memory_limit": "512Mi", "at_most": {"idle_rss_mib": 20}}
         harness.read_targets(targets_file(self, [idle_only]))
         for entry, expected in (
-                ({**SMALL, "at_most": {"p95_ms": 3}}, "p95_ms cannot be checked"),
+                ({**SMALL, "at_most": {"p95_ms": 3}}, "arm64: small: p95_ms cannot be checked"),
                 ({**idle_only, "at_most": {"p99_ms": 3}}, "give the case and the rate"),
                 ({**SMALL, "memory_limit": "52MB"}, "memory limit '52MB'"),
                 ({**SMALL, "at_most": {"p99_ms": "3"}}, "must be a number")):
             with self.assertRaises(harness.BenchError) as raised:
                 harness.read_targets(targets_file(self, [entry]))
             self.assertIn(expected, str(raised.exception))
-        # The layout before profiles: a flat list of targets.
-        old = targets_file(self, [])
-        old.write_text(json.dumps({"targets": [{"id": "p99", "metric": "p99", "max": 1, "unit": "ms"}]}))
+        # An architecture with no entries, and the layouts before
+        # architectures: one set of entries for every architecture, and
+        # before that a flat list of targets.
         with self.assertRaises(harness.BenchError) as raised:
-            harness.read_targets(old)
-        self.assertIn("needs a list of profiles", str(raised.exception))
+            harness.read_targets(targets_file(self, architectures={"arm64": [SMALL], "amd64": []}))
+        self.assertIn("amd64: needs a list of profiles", str(raised.exception))
+        for layout in ({"profiles": [SMALL]}, {"targets": [{"id": "p99", "metric": "p99", "max": 1, "unit": "ms"}]}):
+            old = targets_file(self, [])
+            old.write_text(json.dumps(layout))
+            with self.assertRaises(harness.BenchError) as raised:
+                harness.read_targets(old)
+            self.assertIn("needs the targets of each architecture", str(raised.exception))
 
 
 # A profile's entry of a targets file, as the tests of the targets use it:
@@ -750,15 +797,54 @@ def step_measured(profile="small", cpu_limit="250m", memory_limit="512Mi", case_
     }
 
 
+def summary_of(idle=(), steps=()):
+    """A summary as summary.json has it, with these idle measurements and
+    steps, before its targets are checked."""
+    return {"format": harness.FORMAT, "complete": True, "idle_rss": list(idle), "cases": list(steps), "targets": []}
+
+
 def checked(test, entry, idle=(), steps=()):
-    """Each target of a targets file with `entry`, checked against a
-    summary with these idle measurements and steps: {id: (verdict,
-    measured, reason)}."""
-    summary = {"format": harness.FORMAT, "complete": True, "idle_rss": list(idle), "cases": list(steps),
-               "targets": []}
-    results = [harness.check_target(target, summary)
-               for target in harness.read_targets(targets_file(test, [entry]))]
+    """Each target of a targets file with `entry` for arm64, checked against
+    a summary of a run on arm64 with these idle measurements and steps:
+    {id: (verdict, measured, reason)}."""
+    results = harness.check_targets(harness.read_targets(targets_file(test, [entry])), "arm64",
+                                    summary_of(idle, steps))
     return {result["id"]: (result["verdict"], result["measured"], result["reason"]) for result in results}
+
+
+class TargetsByArchitecture(unittest.TestCase):
+    """A targets file holds a set of targets for each CPU architecture, as
+    Kubernetes names it (arm64, amd64): a run is checked against the set of
+    the architecture it ran on, and one on an architecture with no set
+    measures none of them."""
+
+    # Under small, arm64's p99 is at most 3 ms and amd64's at most 100 ms.
+    FILE = {"arm64": [SMALL], "amd64": [{**SMALL, "at_most": {**SMALL["at_most"], "p99_ms": 100}}]}
+
+    def test_a_run_is_checked_against_the_targets_of_its_architecture(self):
+        summary = summary_of(idle=[idle_measured()], steps=[step_measured(p99=50)])
+        targets = harness.read_targets(targets_file(self, architectures=self.FILE))
+        for architecture, verdict, maximum in (("arm64", "missed", 3), ("amd64", "met", 100)):
+            checked_targets = {t["id"]: t for t in harness.check_targets(targets, architecture, summary)}
+            self.assertEqual(set(checked_targets), {"small/p99", "small/p99_9", "small/oom_kills",
+                                                    "small/peak_memory", "small/idle_rss"}, architecture)
+            p99 = checked_targets["small/p99"]
+            self.assertEqual((p99["architecture"], p99["max"], p99["verdict"], p99["measured"]),
+                             (architecture, maximum, verdict, 50), architecture)
+            self.assertEqual(checked_targets["small/p99_9"]["verdict"], "met", architecture)
+
+    def test_a_run_on_an_architecture_with_no_targets_measures_none_and_says_why(self):
+        summary = summary_of(idle=[idle_measured()], steps=[step_measured(p99=1.0)])
+        targets = harness.read_targets(targets_file(self, architectures=self.FILE))
+        checked_targets = harness.check_targets(targets, "riscv64", summary)
+        # Each target of each architecture, in the file's order.
+        self.assertEqual([(t["architecture"], t["id"]) for t in checked_targets],
+                         [(architecture, f"small/{metric}") for architecture in ("arm64", "amd64")
+                          for metric in ("p99", "p99_9", "oom_kills", "peak_memory", "idle_rss")])
+        for target in checked_targets:
+            self.assertEqual((target["verdict"], target["measured"]), ("not measured", None), target["id"])
+            self.assertEqual(target["reason"],
+                             f"a target for {target['architecture']}, and the run ran on riscv64, which has none")
 
 
 class TargetVerdicts(unittest.TestCase):
@@ -873,6 +959,133 @@ class TargetVerdicts(unittest.TestCase):
         verdict, measured, reason = empty["small/p99"]
         self.assertEqual((verdict, measured), ("not measured", None))
         self.assertIn("no latencies", reason)
+
+
+def check_targets_command(*args):
+    """Runs `bench.py check-targets` with `args`: its exit status, stdout and
+    stderr."""
+    result = subprocess.run([sys.executable, str(BENCH / "bench.py"), "check-targets", *map(str, args)],
+                            capture_output=True, text=True)
+    return result.returncode, result.stdout, result.stderr
+
+
+def snapshot(directory):
+    """Every file under `directory` with its content and modification time."""
+    return {path.relative_to(directory): (path.read_bytes(), path.stat().st_mtime_ns)
+            for path in sorted(Path(directory).rglob("*")) if path.is_file()}
+
+
+class CheckTargets(unittest.TestCase):
+    """`bench.py check-targets` checks a finished run's summary.json against
+    the targets file as it is now, for the architecture the run ran on, and
+    prints the Targets section of summary.md, without running anything or
+    changing the run's directory. It exits with 1 when a target is missed,
+    and with 2 when it cannot check."""
+
+    def results(self, architecture="aarch64", steps=None, idle=None, fmt=None, conditions=True, **summary):
+        """A results directory as a run leaves it, of a run on `architecture`
+        (as the kernel or Kubernetes names it) with these steps and idle
+        measurements, by default http-keep-alive under small at 1,000
+        requests/s with p99 1.9 ms and p99.9 2.1 ms."""
+        out = Path(tempfile.mkdtemp(prefix="smock-bench-test-results-"))
+        self.addCleanup(shutil.rmtree, out, ignore_errors=True)
+        steps = [step_measured()] if steps is None else steps
+        content = {**summary_of([idle_measured()] if idle is None else idle, steps), **summary}
+        if fmt is not None:
+            content["format"] = fmt
+        (out / "summary.json").write_text(json.dumps(content))
+        (out / "summary.md").write_text("# smock benchmark\n")
+        if conditions:
+            (out / "conditions.json").write_text(json.dumps({
+                "machine": {"architecture": architecture},
+                "targets": {"file": "bench/targets.json", "sha256": "aa"},
+                "cases": [{"id": step["id"], "profile": step["profile"], "rate": step["rate"]} for step in steps]}))
+        return out
+
+    def test_a_run_is_checked_against_the_targets_as_they_are_now_and_its_directory_is_left_as_it_was(self):
+        out = self.results()
+        before = snapshot(out)
+        status, stdout, stderr = check_targets_command(out, "--targets", targets_file(self, [SMALL]))
+        self.assertEqual(status, 0, stderr)
+        lines = stdout.splitlines()
+        self.assertEqual(lines[:2], ["## Targets", ""])
+        self.assertTrue(lines[2].endswith("targets.json for arm64, the architecture the run ran on."), lines[2])
+        self.assertEqual(lines[3:], [
+            "",
+            "| Profile | Target | At most | Measured | Verdict |",
+            "|---|---|---|---|---|",
+            "| small (250m CPU, 512Mi) | p99 latency, http-keep-alive at 1,000 requests/s | 3 ms | 1.9 ms | met |",
+            "| small (250m CPU, 512Mi) | p99.9 latency, http-keep-alive at 1,000 requests/s | 10 ms | 2.1 ms | met |",
+            "| small (250m CPU, 512Mi) | OOM kills, http-keep-alive at 1,000 requests/s | 0 OOM kills | 0 OOM kills | "
+            "met |",
+            "| small (250m CPU, 512Mi) | peak memory, http-keep-alive at 1,000 requests/s | 32 MiB | 20.0 MiB | met |",
+            "| small (250m CPU, 512Mi) | idle RSS after startup | 20 MiB | 16.0 MiB | met |",
+        ])
+        # Tighter targets now: p99 is missed. The summary.json itself, as
+        # well as its directory, will do.
+        tighter = {**SMALL, "at_most": {**SMALL["at_most"], "p99_ms": 1.5}}
+        status, stdout, stderr = check_targets_command(out / "summary.json", "--targets",
+                                                       targets_file(self, [tighter]))
+        self.assertEqual(status, 1, stderr)
+        self.assertIn("| small (250m CPU, 512Mi) | p99 latency, http-keep-alive at 1,000 requests/s | 1.5 ms | 1.9 ms "
+                      "| missed |", stdout)
+        self.assertEqual(snapshot(out), before)
+
+    def test_the_targets_of_the_architecture_the_run_ran_on_are_checked_and_none_for_another(self):
+        # amd64's p99 is at most 1.5 ms, which the run's 1.9 ms misses;
+        # arm64's 3 ms, which it meets.
+        path = targets_file(self, architectures={
+            "arm64": [SMALL], "amd64": [{**SMALL, "at_most": {**SMALL["at_most"], "p99_ms": 1.5}}]})
+        for architecture, expected in (("x86_64", 1), ("amd64", 1), ("aarch64", 0), ("arm64", 0)):
+            status, stdout, stderr = check_targets_command(self.results(architecture), "--targets", path)
+            self.assertEqual(status, expected, (architecture, stdout, stderr))
+        # A run on an architecture with no targets cannot be checked: it
+        # does not pass, whatever it measured.
+        status, stdout, stderr = check_targets_command(self.results("riscv64"), "--targets", path)
+        self.assertEqual((status, stdout), (2, ""), stderr)
+        self.assertIn("targets.json has no targets for riscv64, the architecture the run ran on (only for arm64, "
+                      "amd64): nothing to check", stderr)
+
+    def test_a_step_a_gke_run_did_not_run_after_its_profile_ended_early_says_why(self):
+        reason = "http-keep-alive@small@500 got no response to any of its 10,000 requests (oha: timeout)"
+        ended = {"reason": reason, "after": "http-keep-alive@small@500", "not_measured": ["http-keep-alive@small@1000"]}
+        out = self.results("amd64", steps=[step_measured(rate=500, errors=10000)], idle=[],
+                           gke={"profiles": {"small": {"complete": False, "traffic_check": None, "ended_early": ended,
+                                                       "generator_cpu_request": "6"}}})
+        conditions = read(out, "conditions.json")
+        conditions["cases"].append({"id": "http-keep-alive@small@1000", "profile": "small", "rate": 1000})
+        (out / "conditions.json").write_text(json.dumps(conditions))
+        status, stdout, stderr = check_targets_command(out, "--targets", targets_file(self, architectures={
+            "amd64": [SMALL]}))
+        self.assertEqual(status, 0, stderr)
+        verdicts = {row["Target"]: row["Verdict"] for row in markdown_table(stdout.splitlines())}
+        for about in ("p99 latency", "p99.9 latency", "OOM kills", "peak memory"):
+            self.assertEqual(verdicts[f"{about}, http-keep-alive at 1,000 requests/s"],
+                             f"not measured: http-keep-alive@small@1000 was not run: {reason}")
+        self.assertEqual(verdicts["idle RSS after startup"],
+                         "not measured: the run did not measure idle RSS under small")
+
+    def test_what_it_cannot_check_stops_it_with_status_2(self):
+        targets = targets_file(self, [SMALL])
+        missing = Path(tempfile.mkdtemp(prefix="smock-bench-test-results-"))
+        self.addCleanup(shutil.rmtree, missing, ignore_errors=True)
+        broken = targets_file(self, [])
+        broken.write_text(json.dumps({"profiles": [SMALL]}))
+        unreadable = self.results()
+        (unreadable / "conditions.json").write_text("{")
+        nameless = self.results()
+        (nameless / "conditions.json").write_text(json.dumps({"machine": {}}))
+        for results, path, expected in (
+                (missing, targets, "cannot read"),
+                (self.results(fmt=3), targets, "has format 3"),
+                (self.results(conditions=False), targets, "no conditions.json"),
+                (unreadable, targets, "cannot read " + str(unreadable / "conditions.json")),
+                (nameless, targets, "conditions.json names no architecture (machine.architecture)"),
+                (self.results(), broken, "needs the targets of each architecture"),
+                (self.results(), missing / "targets.json", "cannot read")):
+            status, stdout, stderr = check_targets_command(results, "--targets", path)
+            self.assertEqual((status, stdout), (2, ""), stderr)
+            self.assertIn(expected, stderr)
 
 
 if __name__ == "__main__":

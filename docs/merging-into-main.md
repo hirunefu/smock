@@ -31,7 +31,10 @@ pre-merge run compares with them.
   python3 bench/bench.py run --plan bench/plan-autopilot.json --out bench/results/premerge-local-<date>
   ```
 
-  Read the *Targets* table of its `summary.md`. A missed target is a
+  Read the *Targets* table of its `summary.md`. Targets are checked per
+  CPU architecture: `bench/targets.json` has a set for arm64 and one for
+  amd64, a run checks the set of the architecture it ran on (arm64 on the
+  M1), and the line above the table says which. A missed target is a
   finding to resolve or to record before the merge.
 - [ ] **Compare it with the previous pre-merge local run**, from the same
   machine:
@@ -43,7 +46,8 @@ pre-merge run compares with them.
   It exits with 1 when p99 or p99.9 got more than 20% (and more than 1 ms)
   worse at a profile, case and rate, when a target was missed, or when the
   newer run did not measure a step the older one measured. Only steps at
-  or below their profile's target rate in `bench/targets.json` count, and
+  or below their profile's target rate in `bench/targets.json`, for the
+  newer run's architecture, count, and
   p99.9 only where both runs measured at least 10,000 requests at the
   step: the rest swing from run to run, and the report shows them for
   reference without failing
@@ -57,11 +61,13 @@ pre-merge run compares with them.
   environment. The pre-merge run is on x86 (amd64) nodes in Tokyo
   (asia-northeast1), whatever machine starts it: Autopilot has x86 Pods in
   every region, and plenty of them. Keep to one architecture from run to
-  run, so that each compares with the previous one. From an arm64
-  machine, which cannot build smock for amd64, take the release binary CI
-  built for linux/amd64 on the push of the commit checked out (check that
-  the run's `headSha` is `git rev-parse HEAD`; CI keeps it for 7 days; the
-  script refuses a binary whose build information names another commit).
+  run, so that each compares with the previous one; its summary checks
+  the targets of that architecture, the amd64 ones on x86 nodes. From an
+  arm64 machine, which cannot build smock for amd64, take the release
+  binary CI built for linux/amd64 on the push of the commit checked out
+  (check that the run's `headSha` is `git rev-parse HEAD`; CI keeps it for
+  7 days; the script refuses a binary whose build information names
+  another commit).
   First a dry run, which only reads:
 
   ```sh
@@ -121,7 +127,10 @@ pre-merge run compares with them.
   architectures are not compared as regressions: the comparison says that
   they differ, compares no step, and still fails on a missed target. When
   the previous pre-merge GKE run was on the other architecture, this run is
-  the first of its own and the baseline of the next.
+  the first of its own and the baseline of the next. When the targets have
+  changed since a run, `python3 bench/bench.py check-targets <results>`
+  checks it against them as they are now, without running anything or
+  changing its directory.
 - [ ] **Post the summary on the pull request or the merge record**: both
   runs' `summary.md` and both comparisons. They name the machine, the
   architecture, region, zone and node types, never the account or the
