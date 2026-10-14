@@ -1118,17 +1118,37 @@ more than 1 ms: a change within a millisecond is within what oha's 1 ms
 timer resolves, whatever its percentage. The rule is the `regression`
 entry of `bench/targets.json`, next to the targets.
 
+Only numbers that hold still from run to run count; where they do not, two
+runs of the same smock can differ by more than 20%:
+
+- **Only steps at or below the target rate count.** The rate of a
+  profile's entry in `bench/targets.json` (5,000 requests/s for
+  `autopilot-min`; the highest, if a profile has several) holds for every
+  case of that profile. Above it smock
+  may be past its capacity, and the latencies of a queue swing from run to
+  run: those steps are listed under *For reference*, with the same
+  columns, and never fail the comparison. A profile with no entry counts
+  at every rate.
+- **p99.9 counts only on at least 10,000 requests**, measured at the step
+  in both runs (`p99_9_min_requests` in the rule). With fewer, it rests on
+  the few slowest requests: the 3rd slowest of 2,500, the 5th of 5,000.
+  Its change is still shown, marked *for reference*, and p99 still counts.
+
+The line above the table says which steps count.
+
 - A step is not compared where the older run did not measure smock: when
   requests failed in it (past smock's capacity, the latencies measure the
   queue), or the load generator fell behind, or smock was not ready. Nor
   when the newer run's load generator fell behind, or the profile ran under
   other limits.
 - Requests the newer run failed at a step the older one measured are a
-  regression, and so is a smock that was not ready.
+  regression, and so is a smock that was not ready. Above the target rate
+  they are listed for reference.
 - Steps only one run has are listed, not compared.
 - A step the older run measured and the newer one did not, because the
   newer run left it out or stopped before it, or its load generator fell
-  behind, fails the comparison: nothing says how smock did there.
+  behind, fails the comparison: nothing says how smock did there. Above
+  the target rate it is listed and does not fail it.
 - It lists each target the newer run missed, with what it measured and
   what the older run did, and the targets it did not measure.
 - From each run's `conditions.json`, it names the runs (smock's version and
@@ -1137,9 +1157,9 @@ entry of `bench/targets.json`, next to the targets.
   same kind: a GKE run with a GKE run, a run on a machine with a run on the
   same machine. It says so when one run is on GKE and the other is not.
 
-It exits with 1 when it finds a regression, a missed target or a step the
-newer run did not measure, and with 2 when it cannot compare, such as for a
-summary of another `format`.
+It exits with 1 when it finds a regression, a missed target or a step that
+counts and the newer run did not measure, and with 2 when it cannot
+compare, such as for a summary of another `format`.
 
 ### On GKE Autopilot
 
