@@ -75,12 +75,19 @@ class Comparison(unittest.TestCase):
             (path / "conditions.json").write_text(json.dumps(conditions))
         return path
 
-    def compare(self, older, newer, rule=RULE, profiles=()):
+    def arm64_summary(self, steps, **changes):
+        """A results directory of a run on arm64, with conditions.json."""
+        return self.summary(steps, conditions=conditions(), **changes)
+
+    def compare(self, older, newer, rule=RULE, profiles=(), architectures=None):
         """Runs bench/compare.py on two results directories, with a targets
-        file that holds `rule` and the entries of `profiles`. Returns the
-        exit status and the report."""
+        file that holds `rule` and the entries of `profiles` for arm64, or
+        those of each architecture of `architectures` ({architecture:
+        entries}). Returns the exit status and the report."""
         targets = self.directory() / "targets.json"
-        targets.write_text(json.dumps({"regression": rule, "profiles": list(profiles)}))
+        by_architecture = architectures if architectures is not None else {"arm64": list(profiles)}
+        targets.write_text(json.dumps({"regression": rule, "architectures": {
+            architecture: {"profiles": entries} for architecture, entries in by_architecture.items()}}))
         result = subprocess.run([sys.executable, str(BENCH / "compare.py"), str(older), str(newer),
                                  "--targets", str(targets)], capture_output=True, text=True)
         return result.returncode, result.stdout + result.stderr
@@ -153,8 +160,8 @@ class CountedSteps(Comparison):
     run to run: those steps are shown for reference, never counted."""
 
     def test_a_step_above_its_profiles_target_rate_is_shown_for_reference_and_does_not_fail(self):
-        older = self.summary([step(rate=1000, p99=10.0), step(rate=2000, p99=10.0)])
-        newer = self.summary([step(rate=1000, p99=10.5), step(rate=2000, p99=40.0)])
+        older = self.arm64_summary([step(rate=1000, p99=10.0), step(rate=2000, p99=10.0)])
+        newer = self.arm64_summary([step(rate=1000, p99=10.5), step(rate=2000, p99=40.0)])
         status, report = self.compare(older, newer, profiles=[capacity("small", 1000)])
         self.assertEqual(status, 0, report)
         self.assertEqual(self.row(report, "small", "http-keep-alive", 1000)["Verdict"], "ok")
@@ -166,9 +173,9 @@ class CountedSteps(Comparison):
     def test_a_step_at_its_profiles_target_rate_counts_whatever_its_case_and_a_profile_with_no_target_counts_at_every_rate(self):
         # small's target is http-keep-alive at 1,000 a second; its rate
         # holds for every case of small. other has no target.
-        older = self.summary([step(rate=1000, p99=10.0), step(case="http-close", rate=2000, p99=10.0),
+        older = self.arm64_summary([step(rate=1000, p99=10.0), step(case="http-close", rate=2000, p99=10.0),
                               step(profile="other", rate=50000, p99=10.0)])
-        newer = self.summary([step(rate=1000, p99=15.0), step(case="http-close", rate=2000, p99=40.0),
+        newer = self.arm64_summary([step(rate=1000, p99=15.0), step(case="http-close", rate=2000, p99=40.0),
                               step(profile="other", rate=50000, p99=15.0)])
         status, report = self.compare(older, newer, profiles=[capacity("small", 1000)])
         self.assertEqual(status, 1, report)
@@ -180,8 +187,8 @@ class CountedSteps(Comparison):
     def test_above_the_target_rate_failed_requests_and_steps_the_newer_run_did_not_measure_do_not_fail(self):
         # The newer run failed requests at 2,000 a second, its load
         # generator fell behind at 4,000, and it stopped before 8,000.
-        older = self.summary([step(rate=1000), step(rate=2000), step(rate=4000), step(rate=8000)])
-        newer = self.summary([step(rate=1000), step(rate=2000, errors=300), step(rate=4000, p99=50.0, late=True)],
+        older = self.arm64_summary([step(rate=1000), step(rate=2000), step(rate=4000), step(rate=8000)])
+        newer = self.arm64_summary([step(rate=1000), step(rate=2000, errors=300), step(rate=4000, p99=50.0, late=True)],
                              complete=False)
         status, report = self.compare(older, newer, profiles=[capacity("small", 1000)])
         self.assertEqual(status, 0, report)
@@ -193,8 +200,8 @@ class CountedSteps(Comparison):
         self.assertIn("**Result:** No regression, no target missed.", report)
 
     def test_a_profile_with_entries_at_several_rates_counts_up_to_the_highest(self):
-        older = self.summary([step(rate=1000, p99=10.0), step(rate=2000, p99=10.0), step(rate=4000, p99=10.0)])
-        newer = self.summary([step(rate=1000, p99=10.0), step(rate=2000, p99=40.0), step(rate=4000, p99=40.0)])
+        older = self.arm64_summary([step(rate=1000, p99=10.0), step(rate=2000, p99=10.0), step(rate=4000, p99=10.0)])
+        newer = self.arm64_summary([step(rate=1000, p99=10.0), step(rate=2000, p99=40.0), step(rate=4000, p99=40.0)])
         for entries in ([capacity("small", 2000), capacity("small", 1000, case="https-keep-alive")],
                         [capacity("small", 1000, case="https-keep-alive"), capacity("small", 2000)]):
             status, report = self.compare(older, newer, profiles=entries)
@@ -207,14 +214,52 @@ class CountedSteps(Comparison):
     def test_the_report_says_which_steps_count(self):
         # unused has a target but neither run ran it.
         runs = [step(rate=1000), step(rate=2000), step(profile="other", rate=4000)]
-        _, report = self.compare(self.summary(runs), self.summary(runs),
+        _, report = self.compare(self.arm64_summary(runs), self.arm64_summary(runs),
                                  profiles=[capacity("small", 1000), capacity("unused", 50)])
-        self.assertIn("\nA step counts when its rate is at most its profile's target rate (small 1,000 requests/s), "
+        self.assertIn("\nA step counts when its rate is at most its profile's target rate for arm64, the newer run's "
+                      "architecture (small 1,000 requests/s), "
                       "or its profile has no target (other); steps above it are shown for reference and do not count. "
                       "A step is a regression when p99 or p99.9 got worse by more than 20% and by more than 1 ms; "
                       "p99.9 counts only where both runs measured at least 10,000 requests at the step.\n", report)
-        _, report = self.compare(self.summary(runs), self.summary(runs))
+        _, report = self.compare(self.arm64_summary(runs), self.arm64_summary(runs))
         self.assertIn("\nEvery step counts. A step is a regression when", report)
+        self.assertNotIn(REFERENCE, report)
+
+    def test_the_target_rates_are_those_of_the_newer_runs_architecture(self):
+        # small's target rate is 1,000 requests/s on arm64 and 2,000 on
+        # amd64: the step at 2,000 counts in a comparison of amd64 runs.
+        targets = {"arm64": [capacity("small", 1000)], "amd64": [capacity("small", 2000)]}
+        runs = {name: [step(rate=1000, p99=p99), step(rate=2000, p99=p99), step(rate=4000, p99=p99)]
+                for name, p99 in (("older", 10.0), ("newer", 40.0))}
+        for architecture, counted in (("amd64", [1000, 2000]), ("x86_64", [1000, 2000]), ("arm64", [1000]),
+                                      ("aarch64", [1000])):
+            older = self.summary(runs["older"], conditions=conditions(architecture=architecture))
+            newer = self.summary(runs["newer"], conditions=conditions(architecture=architecture))
+            status, report = self.compare(older, newer, architectures=targets)
+            self.assertEqual(status, 1, report)
+            for rate in (1000, 2000, 4000):
+                heading = "## Latency" if rate in counted else REFERENCE
+                expected = "regression" if rate in counted else "worse"
+                self.assertEqual(self.row(report, "small", "http-keep-alive", rate, heading=heading)["Verdict"],
+                                 expected, (architecture, rate))
+        # The newer run's architecture decides, when the runs differ.
+        older = self.summary(runs["older"], conditions=conditions(architecture="arm64"))
+        newer = self.summary(runs["newer"], conditions=conditions(architecture="amd64"))
+        _, report = self.compare(older, newer, architectures=targets)
+        self.assertIn("target rate for amd64, the newer run's architecture (small 2,000 requests/s)", report)
+
+    def test_with_no_targets_for_the_newer_runs_architecture_or_none_known_every_step_counts(self):
+        runs = [step(rate=1000), step(rate=4000)]
+        targets = {"arm64": [capacity("small", 1000)]}
+        _, report = self.compare(self.summary(runs, conditions=conditions(architecture="riscv64")),
+                                 self.summary(runs, conditions=conditions(architecture="riscv64")),
+                                 architectures=targets)
+        self.assertIn("\nThe targets file has no targets for riscv64, the newer run's architecture: every step counts. "
+                      "A step is a regression when", report)
+        self.assertNotIn(REFERENCE, report)
+        _, report = self.compare(self.summary(runs), self.summary(runs), architectures=targets)
+        self.assertIn("\nThe newer run's architecture is unknown, with no conditions.json beside its summary: every "
+                      "step counts. A step is a regression when", report)
         self.assertNotIn(REFERENCE, report)
 
 

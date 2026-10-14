@@ -276,11 +276,20 @@ def small_plan(directory, rates=(500, 1000)):
     return path
 
 
-def small_targets(directory):
+# The targets of profile small, at http-keep-alive's 1,000 requests/s.
+SMALL_TARGETS = {"profile": "small", "cpu_limit": "250m", "memory_limit": "512Mi", "case": "http-keep-alive",
+                 "rate": 1000,
+                 "at_most": {"p99_ms": 3, "p99_9_ms": 5, "oom_kills": 0, "peak_memory_mib": 32, "idle_rss_mib": 20}}
+
+
+def small_targets(directory, architectures=None):
+    """A targets file with the entries of each architecture of
+    `architectures` ({architecture: entries}); by default, small's targets
+    for arm64 and for amd64 alike."""
     path = directory / "targets.json"
-    path.write_text(json.dumps({"profiles": [{
-        "profile": "small", "cpu_limit": "250m", "memory_limit": "512Mi", "case": "http-keep-alive", "rate": 1000,
-        "at_most": {"p99_ms": 3, "p99_9_ms": 5, "oom_kills": 0, "peak_memory_mib": 32, "idle_rss_mib": 20}}]}))
+    by_architecture = architectures or {"arm64": [SMALL_TARGETS], "amd64": [SMALL_TARGETS]}
+    path.write_text(json.dumps({"architectures": {architecture: {"profiles": entries}
+                                                  for architecture, entries in by_architecture.items()}}))
     return path
 
 
@@ -342,9 +351,11 @@ class Summary(Helper):
     checked, and the conditions it ran under."""
 
     def results(self, lines, pod_info, rates=(500, 1000), where=("--region", "us-central1", "--zone", "us-central1-a",
-                                                                 "--arch", "arm64")):
+                                                                 "--arch", "arm64"), targets=None):
         """A results directory as scripts/gke-bench.sh leaves it, with the
-        load generator's log and the Pods of profile small, summarized."""
+        load generator's log and the Pods of profile small, summarized
+        against `targets` ({architecture: entries}, by default small's
+        targets for both)."""
         out = self.directory()
         raw = out / "raw" / "small"
         raw.mkdir(parents=True)
@@ -352,8 +363,8 @@ class Summary(Helper):
         (raw / "generator.log").write_text(text)
         (raw / "pods.json").write_text(json.dumps(pod_info))
         status, _, stderr = helper(
-            "summarize", "--plan", small_plan(self.directory(), rates), "--targets", small_targets(self.directory()),
-            *where,
+            "summarize", "--plan", small_plan(self.directory(), rates),
+            "--targets", small_targets(self.directory(), targets), *where,
             "--started-at", "2026-10-14T03:28:50+00:00", "--finished-at", "2026-10-14T04:01:56+00:00",
             "--cluster-version", "1.35.8-gke.1225000", "--smock-image", "sha256:" + "1" * 64,
             "--generator-image", "sha256:" + "2" * 64, out)
@@ -381,6 +392,26 @@ class Summary(Helper):
         compared = subprocess.run([sys.executable, str(BENCH / "compare.py"), str(out), str(out)],
                                   capture_output=True, text=True)
         self.assertIn("| small | http-keep-alive | 1,000 | 2.5 → 2.5 | 0% |", compared.stdout, compared.stderr)
+
+    def test_the_targets_of_the_runs_architecture_are_checked(self):
+        # amd64's p99 at 1,000 requests/s is at most 2 ms, which the run's
+        # 2.5 ms misses; arm64's is at most 3 ms.
+        amd64 = {**SMALL_TARGETS, "at_most": {**SMALL_TARGETS["at_most"], "p99_ms": 2}}
+        lines = [START, generator_step(500), generator_step(1000, p99=2.5, p99_9=4.0), {"kind": "done"}]
+        for arch, verdict, maximum in (("amd64", "missed", 2), ("arm64", "met", 3)):
+            out = self.results(lines, pods(), where=("--region", "us-central1", "--arch", arch),
+                               targets={"arm64": [SMALL_TARGETS], "amd64": [amd64]})
+            summary = json.loads((out / "summary.json").read_text())
+            p99 = next(target for target in summary["targets"] if target["id"] == "small/p99")
+            self.assertEqual((p99["architecture"], p99["max"], p99["verdict"]), (arch, maximum, verdict))
+            self.assertIn(f"for {arch}, the architecture the run ran on.", (out / "summary.md").read_text())
+        # A targets file with none for the run's architecture: none is
+        # measured, and the summary says so.
+        out = self.results(lines, pods(), where=("--region", "us-central1", "--arch", "amd64"),
+                           targets={"arm64": [SMALL_TARGETS]})
+        summary = json.loads((out / "summary.json").read_text())
+        self.assertEqual({target["verdict"] for target in summary["targets"]}, {"not measured"})
+        self.assertIn("has no targets for amd64, the architecture the run ran on", (out / "summary.md").read_text())
 
     def test_the_conditions_say_what_ran_where_without_the_project(self):
         out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}], pods())
