@@ -192,6 +192,18 @@ class CountedSteps(Comparison):
         self.assertIn("Only in the older run: http-keep-alive@small@8000.", report.split(REFERENCE)[1])
         self.assertIn("**Result:** No regression, no target missed.", report)
 
+    def test_a_profile_with_entries_at_several_rates_counts_up_to_the_highest(self):
+        older = self.summary([step(rate=1000, p99=10.0), step(rate=2000, p99=10.0), step(rate=4000, p99=10.0)])
+        newer = self.summary([step(rate=1000, p99=10.0), step(rate=2000, p99=40.0), step(rate=4000, p99=40.0)])
+        for entries in ([capacity("small", 2000), capacity("small", 1000, case="https-keep-alive")],
+                        [capacity("small", 1000, case="https-keep-alive"), capacity("small", 2000)]):
+            status, report = self.compare(older, newer, profiles=entries)
+            self.assertEqual(status, 1, report)
+            self.assertEqual(self.row(report, "small", "http-keep-alive", 2000)["Verdict"], "regression")
+            self.assertEqual(self.row(report, "small", "http-keep-alive", 4000, heading=REFERENCE)["Verdict"],
+                             "worse")
+            self.assertIn("**Result:** 1 regression, no target missed.", report)
+
     def test_the_report_says_which_steps_count(self):
         # unused has a target but neither run ran it.
         runs = [step(rate=1000), step(rate=2000), step(profile="other", rate=4000)]

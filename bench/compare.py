@@ -70,14 +70,18 @@ def read_targets(path):
     """The regression rule of a targets file, by how many percent and how
     many milliseconds p99 or p99.9 may get worse at most and how many
     requests p99.9 needs to count, and the target rate of each profile it
-    has an entry for."""
+    has an entry for: the highest, when it has entries at several rates,
+    so that no step a target holds at is left out."""
     targets = read_json(path)
     rule = targets.get("regression")
     if not isinstance(rule, dict) or not all(isinstance(rule.get(key), (int, float)) for key in RULE_KEYS):
         raise CompareError(f"{path} has no regression rule (regression, with {', '.join(RULE_KEYS[:-1])} "
                            f"and {RULE_KEYS[-1]})")
-    rates = {entry["profile"]: entry["rate"] for entry in targets.get("profiles") or []
-             if isinstance(entry.get("profile"), str) and isinstance(entry.get("rate"), (int, float))}
+    rates = {}
+    for entry in targets.get("profiles") or []:
+        if isinstance(entry, dict) and isinstance(entry.get("profile"), str) and \
+                isinstance(entry.get("rate"), (int, float)):
+            rates[entry["profile"]] = max(entry["rate"], rates.get(entry["profile"], entry["rate"]))
     return rule, rates
 
 

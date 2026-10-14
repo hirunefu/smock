@@ -1123,7 +1123,8 @@ runs of the same smock can differ by more than 20%:
 
 - **Only steps at or below the target rate count.** The rate of a
   profile's entry in `bench/targets.json` (5,000 requests/s for
-  `autopilot-min`) holds for every case of that profile. Above it smock
+  `autopilot-min`; the highest, if a profile has several) holds for every
+  case of that profile. Above it smock
   may be past its capacity, and the latencies of a queue swing from run to
   run: those steps are listed under *For reference*, with the same
   columns, and never fail the comparison. A profile with no entry counts
