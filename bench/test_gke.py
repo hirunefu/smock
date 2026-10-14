@@ -11,15 +11,18 @@ needs what the benchmark's own tests need: a release build of smock
 usage: python3 -m unittest discover -s bench -v
 """
 
+import importlib.util
 import json
 import os
 import platform
 import shutil
+import socket
 import struct
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -96,6 +99,33 @@ class Manifests(Helper):
         # The Service selects smock's Pod.
         self.assertLessEqual(service["spec"]["selector"].items(), pod["metadata"]["labels"].items())
 
+    def test_each_profile_has_its_own_service_and_pod_which_the_load_generator_targets(self):
+        # A new name for each profile: no ClusterIP or datapath entry of the
+        # previous profile's Service, just deleted, is reused.
+        for profile in ("autopilot-min", "chart-default"):
+            rendered = self.manifests(profile=profile)
+            [pod] = objects(rendered, "Pod")
+            [service] = objects(rendered, "Service")
+            self.assertEqual((pod["metadata"]["name"], service["metadata"]["name"]),
+                             (f"smock-{profile}", f"smock-{profile}"))
+            # The Service selects this profile's Pod only.
+            self.assertEqual(service["spec"]["selector"]["profile"], profile)
+            self.assertLessEqual(service["spec"]["selector"].items(), pod["metadata"]["labels"].items())
+            [job] = objects(rendered, "Job")
+            [container] = pod_spec(job)["containers"]
+            env = {variable["name"]: variable["value"] for variable in container["env"]}
+            self.assertEqual(env["TARGET"], f"smock-{profile}.smock-bench.svc.cluster.local")
+
+    def test_a_profile_whose_name_cannot_name_a_service_is_refused(self):
+        plan = json.loads((BENCH / "plan-autopilot.json").read_text())
+        plan["profiles"][0]["name"] = "Burst_Min"
+        plan["cases"] = [{**case, "rates": {"Burst_Min": [125]}} for case in plan["cases"]]
+        path = self.directory() / "plan.json"
+        path.write_text(json.dumps(plan))
+        status, _, stderr = helper("plan", "--plan", path)
+        self.assertEqual(status, 1)
+        self.assertIn("profile Burst_Min cannot name a Kubernetes Service", stderr)
+
     def test_smocks_pod_stops_by_itself_at_the_deadline_it_is_given(self):
         # Even when neither the run nor its watchdog is left to delete the
         # cluster, smock is billed until the run's time limit at most.
@@ -129,6 +159,20 @@ class Manifests(Helper):
         self.assertEqual(container["resources"]["requests"], container["resources"]["limits"])
         env = {variable["name"]: variable["value"] for variable in container["env"]}
         self.assertEqual((env["PROFILE"], env["CASES"]), ("chart-default", "http-keep-alive,https-keep-alive"))
+
+    def test_the_load_generator_has_6_vcpus_on_amd64_and_4_on_arm64_and_fits_an_8_vcpu_node(self):
+        # An x86 vCPU is a hyperthread: 4 of them fell behind the schedule
+        # at 20,000 requests a second and above.
+        for arch, expected in (("amd64", ("6", "6Gi")), ("arm64", ("4", "4Gi"))):
+            [job] = objects(self.manifests(arch=arch), "Job")
+            [container] = pod_spec(job)["containers"]
+            resources = container["resources"]
+            self.assertEqual((resources["requests"]["cpu"], resources["requests"]["memory"]), expected)
+            self.assertEqual(resources["requests"], resources["limits"])
+            # An 8-vCPU Autopilot node had 7910m allocatable in the runs of
+            # 2026-10-14 (ek-standard-8, e4a-standard-8); at least 1 vCPU of
+            # it stays for Autopilot's own Pods there.
+            self.assertLessEqual(float(resources["requests"]["cpu"]) + 1, 7.910)
 
     def test_both_are_pinned_to_the_zone_and_to_the_compute_class_of_the_architecture(self):
         # arm64 in the built-in autopilot-arm compute class; amd64 in
@@ -273,12 +317,23 @@ X86_NODE = {**NODE, "instance_type": "ek-standard-8", "arch": "amd64", "zone": "
             "machine_family": "ek", "compute_class": None}
 
 
-def pods(restarts=0, reason=None, node=NODE, generator_node=None):
+def pods(restarts=0, reason=None, node=NODE, generator_node=None, generator_cpu="4"):
     """What gke.py pod-info keeps of the profile's Pods and their nodes."""
-    return {"smock": [{"name": "smock-bench-1", "node": "node-a", "ready": True, "restarts": restarts,
+    return {"smock": [{"name": "smock-small", "node": "node-a", "ready": True, "restarts": restarts,
                        "last_termination": reason}],
-            "generator": [{"name": "generator-small-1", "node": "node-b", "phase": "Succeeded", "reason": None}],
+            "generator": [{"name": "generator-small-1", "node": "node-b", "phase": "Succeeded", "reason": None,
+                           "cpu_request": generator_cpu}],
             "nodes": {"node-a": node, "node-b": generator_node or node}}
+
+
+# What the load generator says of the traffic ports before the first step:
+# both answered.
+TRAFFIC_CHECK = {"kind": "traffic-check", "profile": "small", "ok": True, "host": "catalog.bench.internal",
+                 "method": "GET", "target": "/catalog/items/SKU-00317", "window_s": 60,
+                 "ports": {"plain": {"port": 80, "answered": True, "status": 200, "attempts": 1, "seconds": 0.004,
+                                     "error": None},
+                           "tls": {"port": 443, "answered": True, "status": 200, "attempts": 1, "seconds": 0.011,
+                                   "error": None}}}
 
 
 class Summary(Helper):
@@ -368,6 +423,69 @@ class Summary(Helper):
         self.assertFalse(summary["complete"])
         self.assertEqual([case["rate"] for case in summary["cases"]], [500])
 
+    def test_steps_a_profile_did_not_run_after_it_stopped_early_are_not_measured_with_the_reason(self):
+        # The step at 500 got no response at all, so the load generator ran
+        # none after it.
+        reason = "http-keep-alive@small@500 got no response to any of its 10,000 requests (oha: timeout)"
+        out = self.results([START, TRAFFIC_CHECK, generator_step(500, errors=10000),
+                            {"kind": "stopped", "profile": "small", "reason": reason,
+                             "after": "http-keep-alive@small@500", "steps": ["http-keep-alive@small@1000"]},
+                            {"kind": "done", "profile": "small"}], pods())
+        summary = json.loads((out / "summary.json").read_text())
+        self.assertFalse(summary["complete"])
+        self.assertEqual([case["rate"] for case in summary["cases"]], [500])
+        # The targets at 1000 requests/s say why they were not measured.
+        for target in summary["targets"]:
+            if target["metric"] in ("p99", "p99_9", "oom_kills"):
+                self.assertEqual(target["verdict"], "not measured")
+                self.assertEqual(target["reason"], f"http-keep-alive@small@1000 was not run: {reason}")
+        ended = {"reason": reason, "after": "http-keep-alive@small@500", "not_measured": ["http-keep-alive@small@1000"]}
+        self.assertEqual(summary["gke"]["profiles"]["small"]["ended_early"], ended)
+        conditions = json.loads((out / "conditions.json").read_text())
+        self.assertEqual(conditions["gke"]["profiles"]["small"]["ended_early"], ended)
+        markdown = (out / "summary.md").read_text()
+        self.assertIn(f"small ended early: {reason}. Not measured: http-keep-alive@small@1000.", markdown)
+
+    def test_a_profile_whose_traffic_ports_did_not_answer_measures_nothing_and_says_why(self):
+        check = {**TRAFFIC_CHECK, "ok": False, "ports": {
+            "plain": TRAFFIC_CHECK["ports"]["plain"],
+            "tls": {"port": 443, "answered": False, "status": None, "attempts": 12, "seconds": 60.2,
+                    "error": "timed out"}}}
+        reason = "smock did not answer through its Service in 60 s: TLS port 443 (timed out)"
+        steps = ["http-keep-alive@small@500", "http-keep-alive@small@1000"]
+        out = self.results([START, check, {"kind": "stopped", "profile": "small", "reason": reason, "after": None,
+                                           "steps": steps}, {"kind": "done", "profile": "small"}], pods())
+        summary = json.loads((out / "summary.json").read_text())
+        self.assertEqual((summary["complete"], summary["cases"]), (False, []))
+        verdict = next(target for target in summary["targets"] if target["id"] == "small/p99")
+        self.assertEqual((verdict["verdict"], verdict["reason"]),
+                         ("not measured", f"http-keep-alive@small@1000 was not run: {reason}"))
+        recorded = json.loads((out / "conditions.json").read_text())["gke"]["profiles"]["small"]
+        self.assertEqual(recorded["traffic_check"]["ports"]["tls"]["error"], "timed out")
+        self.assertFalse(recorded["traffic_check"]["ok"])
+        self.assertEqual(recorded["ended_early"]["not_measured"], steps)
+        markdown = (out / "summary.md").read_text()
+        self.assertIn("| small | e4a-standard-8 (arm64, us-central1-a) | e4a-standard-8 (arm64, us-central1-a) | 4 | "
+                      "plain HTTP 200, TLS no answer (timed out) | 0 | yes |", markdown)
+
+    def test_the_traffic_check_and_the_load_generators_cpu_request_are_recorded_for_each_profile(self):
+        out = self.results([START, TRAFFIC_CHECK, generator_step(500), generator_step(1000), {"kind": "done"}],
+                           pods(generator_cpu="6"))
+        summary = json.loads((out / "summary.json").read_text())
+        conditions = json.loads((out / "conditions.json").read_text())
+        for recorded in (summary["gke"]["profiles"]["small"], conditions["gke"]["profiles"]["small"]):
+            self.assertEqual(recorded["traffic_check"], {key: value for key, value in TRAFFIC_CHECK.items()
+                                                         if key not in ("kind", "profile")})
+            self.assertIsNone(recorded["ended_early"])
+            # As the Pod had it.
+            self.assertEqual(recorded["generator_cpu_request"], "6")
+        self.assertIn("| 6 | plain HTTP 200, TLS HTTP 200 | 0 | no |", (out / "summary.md").read_text())
+        # From an earlier load generator, which checked nothing: unknown.
+        out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}], pods())
+        recorded = json.loads((out / "summary.json").read_text())["gke"]["profiles"]["small"]
+        self.assertIsNone(recorded["traffic_check"])
+        self.assertIn("| 4 | - | 0 | no |", (out / "summary.md").read_text())
+
     def test_a_smock_that_restarted_measures_no_oom_kills_and_the_summary_says_why(self):
         out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}],
                            pods(restarts=1, reason="OOMKilled"))
@@ -406,11 +524,12 @@ class Estimate(Helper):
         status, stdout, stderr = self.estimate(region="asia-northeast1", arch="amd64", time_limit_s=3600)
         self.assertEqual(status, 0, stderr)
         self.assertIn("Cost estimate for amd64 (x86) Pods (asia-northeast1, on-demand prices of 2026-10-14", stdout)
-        # The fee ($0.10 an hour), the load generator (4 vCPU and 4Gi at
-        # $0.0571 and $0.0063215 an hour, 2Gi of ephemeral storage at
-        # $0.0001784) and the largest smock (1 vCPU, 1Gi, 64Mi): $0.4175 an
+        # The fee ($0.10 an hour), the load generator on amd64 (6 vCPU and
+        # 6Gi at $0.0571 and $0.0063215 an hour, 2Gi of ephemeral storage at
+        # $0.0001784) and the largest smock (1 vCPU, 1Gi, 64Mi): $0.5443 an
         # hour for 65 minutes.
-        self.assertIn("At most: $0.45, if it ran until the time limit (60 minutes)", stdout)
+        self.assertIn("At most: $0.59, if it ran until the time limit (60 minutes)", stdout)
+        self.assertIn("The load generator's Pod (6 vCPU, 6Gi)", stdout)
         self.assertNotIn("Arm", stdout)
         _, stdout, _ = self.estimate(region="asia-southeast1", arch="arm64")
         self.assertIn("Arm Pods are priced here as general-purpose x86 Pods", stdout)
@@ -461,31 +580,105 @@ class LocalSmock:
         self.process.stderr.close()
 
 
+class SilentPort:
+    """A port on this machine that takes connections and answers nothing on
+    them. With `answer_first`, it answers the first request it gets with an
+    empty 200, then closes every connection unanswered: no response either,
+    without oha waiting for its requests to time out."""
+
+    def __init__(self, answer_first=False):
+        self.answer_first = answer_first
+
+    def __enter__(self):
+        self.listener = socket.socket()
+        self.listener.bind(("127.0.0.1", 0))
+        # Room for every connection of a step, never accepted.
+        self.listener.listen(256)
+        self.port = self.listener.getsockname()[1]
+        if self.answer_first:
+            threading.Thread(target=self.answer_first_only, daemon=True).start()
+        return self
+
+    def answer_first_only(self):
+        connection, _ = self.listener.accept()
+        with connection:
+            request = b""
+            while b"\r\n\r\n" not in request:
+                chunk = connection.recv(65536)
+                if not chunk:
+                    break
+                request += chunk
+            connection.sendall(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+        while True:
+            try:
+                connection, _ = self.listener.accept()
+            except OSError:
+                return
+            connection.close()
+
+    def __exit__(self, *_):
+        self.listener.close()
+
+
 class Generator(Helper):
     """The load generator sends a profile's steps the way bench/bench.py
     does, and reports each as summarize reads it."""
 
-    def test_each_step_of_the_profile_is_reported_and_summarized_as_a_case(self):
-        plan = json.loads(small_plan(self.directory(), rates=(200,)).read_text())
+    def generator_plan(self, rates=(200,)):
+        """The small plan with short steps, at `rates`, over plain HTTP and
+        then TLS."""
+        plan = json.loads(small_plan(self.directory(), rates=rates).read_text())
         plan.update(ramp_s=0.5, duration_s=2, tail_s=1, cooldown_s=0)
         plan["cases"].append({**plan["cases"][0], "name": "https-keep-alive", "protocol": "https"})
-        plan_path = self.directory() / "plan.json"
-        plan_path.write_text(json.dumps(plan))
+        path = self.directory() / "plan.json"
+        path.write_text(json.dumps(plan))
+        return path
+
+    def generate(self, plan_path, smock, **ports):
+        """Runs the load generator for profile small against `smock`, with
+        `ports` instead of smock's own; returns its exit status, its JSON
+        lines and its output."""
+        environment = {**os.environ, "TARGET": "localhost", "PROFILE": "small",
+                       "CASES": "http-keep-alive,https-keep-alive", "PLAN": str(plan_path),
+                       "PLAIN_PORT": str(ports.get("plain", smock.ports["plain"])),
+                       "TLS_PORT": str(ports.get("tls", smock.ports["tls"])),
+                       "ADMIN_PORT": smock.ports["admin"], "OHA": shutil.which(OHA) or OHA, "TRAFFIC_CHECK_S": "2"}
+        generator = subprocess.run([sys.executable, str(BENCH / "gke" / "generator.py")], env=environment,
+                                   capture_output=True, text=True, timeout=120)
+        lines = [json.loads(line) for line in generator.stdout.splitlines()]
+        return generator.returncode, lines, generator.stdout + generator.stderr
+
+    def summarize(self, plan_path, log):
+        """summarize's summary and conditions of a run of profile small whose
+        load generator wrote `log`."""
         out = self.directory()
         raw = out / "raw" / "small"
         raw.mkdir(parents=True)
+        (raw / "generator.log").write_text(log)
+        (raw / "pods.json").write_text(json.dumps(pods()))
+        status, _, stderr = helper(
+            "summarize", "--plan", plan_path, "--targets", small_targets(self.directory()), "--region", "us-central1",
+            "--zone", "us-central1-a", "--arch", "arm64", "--started-at", "2026-10-14T03:28:50+00:00",
+            "--finished-at", "2026-10-14T04:01:56+00:00", out)
+        self.assertEqual(status, 0, stderr)
+        return (json.loads((out / "summary.json").read_text()), json.loads((out / "conditions.json").read_text()),
+                (out / "summary.md").read_text())
+
+    def test_each_step_of_the_profile_is_reported_and_summarized_as_a_case(self):
+        plan_path = self.generator_plan()
         with LocalSmock() as smock:
-            environment = {**os.environ, "TARGET": "localhost", "PROFILE": "small",
-                           "CASES": "http-keep-alive,https-keep-alive", "PLAN": str(plan_path),
-                           "PLAIN_PORT": smock.ports["plain"], "TLS_PORT": smock.ports["tls"],
-                           "ADMIN_PORT": smock.ports["admin"], "OHA": shutil.which(OHA) or OHA}
-            generator = subprocess.run([sys.executable, str(BENCH / "gke" / "generator.py")], env=environment,
-                                       capture_output=True, text=True, timeout=120)
-        self.assertEqual(generator.returncode, 0, generator.stderr)
-        lines = [json.loads(line) for line in generator.stdout.splitlines()]
+            status, lines, output = self.generate(plan_path, smock)
+        self.assertEqual(status, 0, output)
         self.assertEqual([line["kind"] for line in lines],
-                         ["start", "metrics-before", "step", "step", "metrics-after", "done"])
+                         ["start", "traffic-check", "metrics-before", "step", "step", "metrics-after", "done"])
         self.assertRegex(lines[0]["status"]["digest"], "^[0-9a-f]{12}$")
+        # Both traffic ports answered the first request of the mix before
+        # the first step.
+        check = lines[1]
+        self.assertTrue(check["ok"], check)
+        self.assertEqual((check["host"], check["target"]), ("catalog.bench.internal", "/catalog/items/SKU-00317"))
+        for port in ("plain", "tls"):
+            self.assertEqual((check["ports"][port]["answered"], check["ports"][port]["status"]), (True, 200))
         for step, protocol in zip([line["result"] for line in lines if line["kind"] == "step"], ("http", "https")):
             self.assertEqual((step["profile"], step["protocol"], step["rate"]), ("small", protocol, 200))
             self.assertEqual((step["errors"], step["smock_ready"]), (0, True))
@@ -494,17 +687,149 @@ class Generator(Helper):
             self.assertIsNotNone(step["latency_ms"]["p99_9"])
             self.assertEqual(len(step["per_request"]), 9)
 
-        (raw / "generator.log").write_text(generator.stdout + generator.stderr)
-        (raw / "pods.json").write_text(json.dumps(pods()))
-        status, _, stderr = helper(
-            "summarize", "--plan", plan_path, "--targets", small_targets(self.directory()), "--region", "us-central1",
-            "--zone", "us-central1-a", "--arch", "arm64", "--started-at", "2026-10-14T03:28:50+00:00",
-            "--finished-at", "2026-10-14T04:01:56+00:00", out)
-        self.assertEqual(status, 0, stderr)
-        summary = json.loads((out / "summary.json").read_text())
+        summary, conditions, _ = self.summarize(plan_path, output)
         self.assertTrue(summary["complete"])
         self.assertEqual([case["id"] for case in summary["cases"]], ["http-keep-alive@small", "https-keep-alive@small"])
+        self.assertTrue(conditions["gke"]["profiles"]["small"]["traffic_check"]["ok"])
+        self.assertIsNone(conditions["gke"]["profiles"]["small"]["ended_early"])
 
+    def test_a_traffic_port_that_never_answers_stops_the_profile_before_its_first_step(self):
+        # As smock's Service did under autopilot-min: connections open, and
+        # no request gets a response.
+        plan_path = self.generator_plan()
+        with LocalSmock() as smock, SilentPort() as silent:
+            started = time.monotonic()
+            status, lines, output = self.generate(plan_path, smock, tls=silent.port)
+        self.assertEqual(status, 0, output)
+        self.assertLess(time.monotonic() - started, 30)
+        self.assertEqual([line["kind"] for line in lines],
+                         ["start", "traffic-check", "metrics-before", "stopped", "metrics-after", "done"])
+        check = lines[1]
+        self.assertFalse(check["ok"])
+        self.assertEqual((check["ports"]["plain"]["answered"], check["ports"]["plain"]["status"]), (True, 200))
+        self.assertEqual((check["ports"]["tls"]["answered"], check["ports"]["tls"]["port"]), (False, silent.port))
+        self.assertEqual(check["ports"]["tls"]["error"], "timed out")
+        stopped = lines[3]
+        self.assertEqual(stopped["reason"], f"smock did not answer through its Service in 2 s: TLS port {silent.port} "
+                                            "(timed out)")
+        self.assertEqual((stopped["after"], stopped["steps"]),
+                         (None, ["http-keep-alive@small", "https-keep-alive@small"]))
+
+        summary, conditions, markdown = self.summarize(plan_path, output)
+        self.assertEqual((summary["complete"], summary["cases"]), (False, []))
+        self.assertEqual(conditions["gke"]["profiles"]["small"]["ended_early"]["not_measured"],
+                         ["http-keep-alive@small", "https-keep-alive@small"])
+        self.assertIn(f"small ended early: {stopped['reason']}.", markdown)
+
+    def test_a_step_with_no_response_at_all_stops_the_profiles_remaining_steps_when_smock_is_gone(self):
+        # The plain port answers the traffic check, then hangs up on every
+        # connection: the step and the check after it get no response.
+        plan_path = self.generator_plan()
+        with LocalSmock() as smock, SilentPort(answer_first=True) as gate:
+            status, lines, output = self.generate(plan_path, smock, plain=gate.port)
+        self.assertEqual(status, 0, output)
+        self.assertEqual([line["kind"] for line in lines],
+                         ["start", "traffic-check", "metrics-before", "step", "traffic-check", "stopped",
+                          "metrics-after", "done"])
+        self.assertTrue(lines[1]["ok"], lines[1])
+        self.assertEqual(lines[1]["address"], "127.0.0.1")
+        step = lines[3]["result"]
+        self.assertEqual((step["id"], step["requests"]["ok"]), ("http-keep-alive@small", 0))
+        self.assertEqual(step["requests"]["no_response"], step["requests"]["scheduled"])
+        check = lines[4]
+        self.assertEqual((check["after"], check["ok"], check["ports"]["plain"]["answered"]),
+                         ("http-keep-alive@small", False, False))
+        self.assertEqual(check["resolves_now"], "127.0.0.1")
+        stopped = lines[5]
+        self.assertRegex(stopped["reason"], r"^http-keep-alive@small got no response to any of its \d+ requests")
+        self.assertIn(f", and smock did not answer through its Service in 2 s after it: plain port {gate.port} (",
+                      stopped["reason"])
+        self.assertEqual((stopped["after"], stopped["steps"]), ("http-keep-alive@small", ["https-keep-alive@small"]))
+
+        summary, conditions, markdown = self.summarize(plan_path, output)
+        self.assertFalse(summary["complete"])
+        self.assertEqual([case["id"] for case in summary["cases"]], ["http-keep-alive@small"])
+        self.assertEqual(summary["gke"]["profiles"]["small"]["ended_early"],
+                         {"reason": stopped["reason"], "after": "http-keep-alive@small",
+                          "not_measured": ["https-keep-alive@small"]})
+        self.assertIn("Not measured: https-keep-alive@small.", markdown)
+
+
+
+def load_generator_module():
+    """bench/gke/generator.py as a module, for its functions."""
+    spec = importlib.util.spec_from_file_location("generator", BENCH / "gke" / "generator.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def no_response_step(step_id, scheduled=12500, ok=0, errors=None):
+    """A step's result as the load generator reports it, with `ok` of its
+    `scheduled` requests answered and the others not."""
+    return {"id": step_id, "smock_ready": True,
+            "requests": {"scheduled": scheduled, "ok": ok, "unexpected_status": 0, "no_response": scheduled - ok},
+            "per_request": [{"oha_errors": errors or {}}]}
+
+
+def check_result(ok, address="34.118.229.110", resolves_now=None):
+    """A traffic check's result: both ports answered, or the TLS port did
+    not."""
+    tls = ({"port": 443, "answered": True, "status": 200, "attempts": 1, "seconds": 0.01, "error": None} if ok
+           else {"port": 443, "answered": False, "status": None, "attempts": 12, "seconds": 60.1, "error": "timed out"})
+    return {"ok": ok, "address": address, **({} if ok else {"resolves_now": resolves_now or address}),
+            "host": "catalog.bench.internal", "method": "GET", "target": "/catalog/items/SKU-00317", "window_s": 60,
+            "ports": {"plain": {"port": 80, "answered": True, "status": 200, "attempts": 1, "seconds": 0.01,
+                                "error": None}, "tls": tls}}
+
+
+class StopAfterAStep(unittest.TestCase):
+    """A step with no response stops the rest of its profile only when
+    smock does not answer a traffic check right after it: an overloaded
+    smock can answer none of a step's measured requests, busy with those of
+    its ramp until the step ends (https-keep-alive@autopilot-burst-min@4000
+    answered 1,271 of 80,000 on 2026-10-14), and still be there."""
+
+    generator = load_generator_module()
+    spec = {"id": "http-keep-alive@autopilot-min@4000"}
+    later = [{"id": "https-keep-alive@autopilot-min@625"}, {"id": "https-keep-alive@autopilot-min@1250"}]
+
+    def stop_after(self, result, later, check):
+        checks = []
+
+        def check_again():
+            checks.append(check)
+            return check
+
+        stopped, made = self.generator.stop_after(self.spec, result, later, check_again)
+        return stopped, made, len(checks)
+
+    def test_an_overloaded_smock_that_still_answers_goes_on(self):
+        stopped, check, checks = self.stop_after(no_response_step(self.spec["id"]), self.later, check_result(True))
+        self.assertIsNone(stopped)
+        self.assertEqual((check["ok"], checks), (True, 1))
+
+    def test_a_smock_that_does_not_answer_after_the_step_stops_the_rest(self):
+        stopped, check, _ = self.stop_after(no_response_step(self.spec["id"], errors={"timeout": 12500}),
+                                            self.later, check_result(False))
+        self.assertFalse(check["ok"])
+        self.assertEqual(stopped["reason"],
+                         "http-keep-alive@autopilot-min@4000 got no response to any of its 12,500 requests "
+                         "(oha: timeout), and smock did not answer through its Service in 60 s after it: "
+                         "TLS port 443 (timed out)")
+        self.assertEqual((stopped["after"], stopped["steps"]),
+                         (self.spec["id"], ["https-keep-alive@autopilot-min@625", "https-keep-alive@autopilot-min@1250"]))
+
+    def test_a_name_that_now_resolves_elsewhere_is_named(self):
+        stopped, _, _ = self.stop_after(no_response_step(self.spec["id"]), self.later,
+                                        check_result(False, resolves_now="34.118.228.162"))
+        self.assertTrue(stopped["reason"].endswith("; the address checked was 34.118.229.110, and smock's name now "
+                                                   "resolves to 34.118.228.162"), stopped["reason"])
+
+    def test_a_step_with_a_response_or_the_last_step_checks_nothing(self):
+        for result, later in ((no_response_step(self.spec["id"], ok=1), self.later),
+                              (no_response_step(self.spec["id"]), [])):
+            self.assertEqual(self.stop_after(result, later, check_result(False)), (None, None, 0))
 
 def elf_header(machine, elf_class=2, data=1, elf_type=2):
     """The first 20 bytes of an ELF file: its identification, type and
@@ -622,7 +947,9 @@ class PodInfo(Helper):
                         "containerStatuses": [{"image": image, "imageID": image, "restartCount": 2,
                                                "lastState": {"terminated": {"reason": "OOMKilled"}}}]}},
             {"metadata": {"name": "generator-small-1", "labels": {"app": "smock-bench-generator"}},
-             "spec": {"nodeName": "node-b", "containers": [{"image": image}]},
+             "spec": {"nodeName": "node-b", "containers": [{"image": image, "resources": {
+                 "requests": {"cpu": "6", "memory": "6Gi", "ephemeral-storage": "2Gi"},
+                 "limits": {"cpu": "6", "memory": "6Gi", "ephemeral-storage": "2Gi"}}}]},
              "status": {"phase": "Failed", "reason": "DeadlineExceeded", "containerStatuses": []}}]}
         labels = {"node.kubernetes.io/instance-type": "e4a-standard-8", "kubernetes.io/arch": "arm64",
                   "topology.kubernetes.io/zone": "us-central1-a", "cloud.google.com/machine-family": "e4a",
@@ -643,7 +970,7 @@ class PodInfo(Helper):
         self.assertEqual(info["smock"], [{"name": "smock-bench-1", "node": "node-a", "ready": True, "restarts": 2,
                                           "last_termination": "OOMKilled"}])
         self.assertEqual(info["generator"], [{"name": "generator-small-1", "node": "node-b", "phase": "Failed",
-                                              "reason": "DeadlineExceeded"}])
+                                              "reason": "DeadlineExceeded", "cpu_request": "6"}])
         self.assertEqual(info["nodes"], {"node-a": NODE})
 
 
