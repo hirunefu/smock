@@ -5,15 +5,19 @@
 # 1. checks, reading only: the tools, the project, the APIs it needs, the
 #    CPU quota for the nodes of the run, and nothing left by an earlier run;
 #    then prints how long the run takes and what it costs;
-# 2. with --yes, builds the release binary and two images on this machine
-#    (smock with the benchmark's definitions, and the load generator), for
-#    this machine's architecture;
+# 2. with --yes, builds two images on this machine (smock with the
+#    benchmark's definitions, and the load generator) for the architecture
+#    of the run (--arch, this machine's by default), with the release binary
+#    it builds or is given: the images only copy files, so this machine
+#    builds them for the other architecture too, with no emulation, from
+#    binaries of that architecture (the one CI built for smock);
 # 3. pushes them to a new Artifact Registry repository, makes a new
 #    Autopilot cluster, both labelled purpose=smock-bench, and runs each
 #    profile of the plan (bench/plan-autopilot.json by default): smock in a
 #    Pod with the profile's limits as its requests behind a ClusterIP
 #    Service, the load generator (bench/gke/generator.py) in a Job on
-#    another node, both pinned to one zone, and both with a deadline that
+#    another node in smock's zone, both on nodes of the run's architecture
+#    and in GKE_BENCH_ZONE when it is set, and both with a deadline that
 #    ends them within minutes of the time limit at the latest, so that they
 #    stop being billed even if nothing is left to delete the cluster;
 # 4. writes the load generator's lines and the Pods' state under the
@@ -42,13 +46,19 @@
 #   --targets FILE   the targets to check (default: bench/targets.json)
 #   --out DIR        where the results go (default: bench/results/gke-<date>-<time>)
 #   --time-limit T   when the watchdog deletes the cluster, with its unit: 80m (default), 4800s; at most 240m
-#   --smock FILE     use this release binary instead of building one
-#   --oha FILE       use this oha (of this machine's architecture) instead of the pinned one
+#   --arch ARCH      the nodes' architecture, amd64 or arm64 (default: this machine's)
+#   --smock FILE     use this release binary, built from the commit checked out, instead of
+#                    building one; needed for another architecture than this machine's:
+#                    gh run download <run-id> -R hirunefu/smock -n smock-linux-<arch> gets the
+#                    one CI built (CI's run on the push of that commit)
+#   --oha FILE       use this oha (of the run's architecture) instead of the pinned one
 #
 # Environment:
 #   GKE_BENCH_PROJECT       the Google Cloud project (required)
-#   GKE_BENCH_REGION        the region, such as us-central1 (required)
-#   GKE_BENCH_ZONE          the zone smock and the load generator run in (default: <region>-a)
+#   GKE_BENCH_REGION        the region, such as us-central1 or asia-northeast1 (required); an
+#                           arm64 run needs one with Arm Pods (ARM_REGIONS below)
+#   GKE_BENCH_ZONE          the zone smock and the load generator run in (default: the one
+#                           Autopilot chooses for smock, which the load generator follows)
 #   GKE_BENCH_NEEDED_CPUS   the vCPUs of quota the run needs (default: 32, four nodes of 8)
 #   GKE_BENCH_NODE_SERVICE_ACCOUNT
 #                           the service account the nodes run as, which may read the images
@@ -78,15 +88,18 @@ for repository in json.loads(sys.stdin.read() or "[]"):
 '
 PROJECT=${GKE_BENCH_PROJECT:-}
 REGION=${GKE_BENCH_REGION:-}
-ZONE=${GKE_BENCH_ZONE:-${REGION:+$REGION-a}}
+ZONE=${GKE_BENCH_ZONE:-}
 NEEDED_CPUS=${GKE_BENCH_NEEDED_CPUS:-32}
 POLL_S=${GKE_BENCH_POLL_S:-10}
 
 NAMESPACE=smock-bench
 APIS=(artifactregistry.googleapis.com compute.googleapis.com container.googleapis.com)
-# The regions with the built-in autopilot-arm compute class, as GKE's
-# documentation listed them on 2026-10-09.
+# The regions where Autopilot runs Arm Pods (the built-in autopilot-arm
+# compute class), as GKE's documentation listed them on 2026-10-14. x86
+# Pods run in every region.
 ARM_REGIONS=" us-central1 us-east1 us-west1 europe-west1 europe-west2 europe-west4 asia-southeast1 "
+# The Dockerfiles of the two images, from the repository's root.
+DOCKERFILES=(Dockerfile bench/gke/smock-definitions.dockerfile bench/gke/generator.Dockerfile)
 # How long the load generator's Pod may wait for a node, smock to become
 # ready, and an access token may be used before a new one is fetched.
 PENDING_LIMIT_S=900
@@ -100,7 +113,7 @@ MAX_TIME_LIMIT_S=14400
 
 dry_run=0 yes=0 enable_apis=0
 plan="$ROOT/bench/plan-autopilot.json" targets="$ROOT/bench/targets.json"
-profiles="" cases="" out="" time_limit=80m smock_binary="" oha_binary=""
+profiles="" cases="" out="" time_limit=80m smock_binary="" oha_binary="" arch="" smock_sha256=""
 project_number="" account_pattern="" problems=() apis_to_enable=()
 work="" resources_may_exist=0 watchdog_pid="" built_images=() log_pid="" token_at=0
 
@@ -321,9 +334,10 @@ while [ $# -gt 0 ]; do
   --dry-run) dry_run=1 ;;
   --yes) yes=1 ;;
   --enable-apis) enable_apis=1 ;;
-  --plan | --profiles | --cases | --targets | --out | --time-limit | --smock | --oha)
+  --plan | --profiles | --cases | --targets | --out | --time-limit | --arch | --smock | --oha)
     option_value "$@"
     case $1 in
+    --arch) arch=$2 ;;
     --plan) plan=$2 ;;
     --profiles) profiles=$2 ;;
     --cases) cases=$2 ;;
@@ -349,7 +363,7 @@ if [ -z "$PROJECT" ] || [ -z "$REGION" ]; then
   exit 2
 fi
 if ! [[ $PROJECT =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]] || ! [[ $REGION =~ ^[a-z]+-[a-z]+[0-9]+$ ]] ||
-  ! [[ $ZONE =~ ^$REGION-[a-z]$ ]]; then
+  { [ -n "$ZONE" ] && ! [[ $ZONE =~ ^$REGION-[a-z]$ ]]; }; then
   say "GKE_BENCH_PROJECT, GKE_BENCH_REGION or GKE_BENCH_ZONE is not a project ID, a region and a zone in it"
   exit 2
 fi
@@ -368,13 +382,28 @@ if ! [[ $NEEDED_CPUS =~ ^[1-9][0-9]{0,3}$ ]]; then
   exit 2
 fi
 case $(uname -m) in
-aarch64 | arm64) arch=arm64 ;;
-x86_64 | amd64) arch=amd64 ;;
+aarch64 | arm64) host_arch=arm64 ;;
+x86_64 | amd64) host_arch=amd64 ;;
+*) host_arch="" ;;
+esac
+arch=${arch:-$host_arch}
+case $arch in
+amd64 | arm64) ;;
+"")
+  say "this machine ($(uname -m)) is neither amd64 nor arm64: give --arch"
+  exit 2
+  ;;
 *)
-  say "unsupported machine $(uname -m): the images are built for this machine's architecture, arm64 or amd64"
+  say "--arch is amd64 or arm64, not $arch"
   exit 2
   ;;
 esac
+if [ "$arch" != "$host_arch" ] && [ -z "$smock_binary" ]; then
+  say "this machine ($(uname -m)) cannot build smock for $arch: give --smock with the release binary that CI" \
+    "built for linux/$arch from the commit to measure (CI's run on its push), such as:" \
+    "gh run download <run-id> -R hirunefu/smock -n smock-linux-$arch"
+  exit 2
+fi
 for file in "$plan" "$targets" ${smock_binary:+"$smock_binary"} ${oha_binary:+"$oha_binary"}; do
   [ -f "$file" ] || {
     say "no file $file"
@@ -557,8 +586,10 @@ EOF
 # and what the project has before the run.
 check_project() {
   local region line
-  region=$(reads "$GCLOUD" compute zones describe "$ZONE" --project="$PROJECT" --format='value(region.basename())')
-  [ "$region" = "$REGION" ] || problem "zone $ZONE is not a zone of $REGION: set GKE_BENCH_ZONE"
+  if [ -n "$ZONE" ]; then
+    region=$(reads "$GCLOUD" compute zones describe "$ZONE" --project="$PROJECT" --format='value(region.basename())')
+    [ "$region" = "$REGION" ] || problem "zone $ZONE is not a zone of $REGION: set GKE_BENCH_ZONE to one, or unset it"
+  fi
   if reads "$GCLOUD" compute project-info describe --project="$PROJECT" --format=json >"$work/project-info.json"; then
     check_quota "$work/project-info.json" CPUS_ALL_REGIONS CPUS_ALL_REGIONS
   else
@@ -584,8 +615,70 @@ check_project() {
     "the run"
 }
 
+# Why FILE, the binary NAME, cannot go into an image for the run's
+# architecture; nothing when it can. Its ELF header says: it is not run.
+binary_problem() {
+  local name=$1 file=$2 found
+  if ! found=$("$PYTHON" "$GKE_PY" elf-arch "$file" 2>&1); then
+    printf '%s: %s; give one for linux/%s' "$name" "${found#gke: }" "$arch"
+  elif [ "$found" != "$arch" ]; then
+    printf '%s: %s is for %s, not for linux/%s, which the run is for' "$name" "$file" "$found" "$arch"
+  fi
+}
+
+# Checks the binaries given for the images: that they are for the run's
+# architecture, and that smock is built from the commit checked out: as it
+# says (smock --version) when this machine can run it, else as its build
+# information names it, read without running it. Of a smock this machine
+# cannot run, it prints the SHA-256 too, which the conditions record.
+check_binaries() {
+  local text version commit head
+  if [ -n "$smock_binary" ]; then
+    text=$(binary_problem smock "$smock_binary")
+    if [ -n "$text" ]; then
+      problem "$text"
+    elif ! head=$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null); then
+      problem "cannot read the commit checked out, which smock should be built from: is $ROOT a git checkout?"
+    elif [ "$arch" != "$host_arch" ]; then
+      if text=$("$PYTHON" "$GKE_PY" names-commit "$smock_binary" "$head" 2>&1); then
+        say "smock: $smock_binary is for $arch, which this machine cannot run; its build information names" \
+          "commit $head, which is checked out; its SHA-256 is $(sha256sum "$smock_binary" | cut -d ' ' -f 1)"
+      else
+        problem "smock: ${text#gke: }: take the release binary CI built for linux/$arch on the push of $head," \
+          "or check out the commit it is built from"
+      fi
+    elif [ ! -x "$smock_binary" ]; then
+      problem "smock: $smock_binary is not executable, so its commit cannot be checked: chmod +x it"
+    elif ! version=$("$smock_binary" --version 2>&1); then
+      problem "smock: \`$smock_binary --version\` failed: $version"
+    else
+      commit=$(sed -n 's/.*(commit \([0-9a-f]*\),.*/\1/p' <<<"$version")
+      [ "$commit" = "$head" ] || problem "smock: $smock_binary is built from commit ${commit:-unknown}, not from" \
+        "$head, which is checked out: build it from this commit, or check out the one it is built from"
+    fi
+  fi
+  if [ -n "$oha_binary" ]; then
+    text=$(binary_problem oha "$oha_binary")
+    [ -z "$text" ] || problem "$text"
+  fi
+}
+
+# Checks that the images only copy: an image for another architecture than
+# this machine's cannot RUN anything here, with no emulation.
+check_dockerfiles() {
+  local found
+  if ! found=$(cd "$ROOT" && "$PYTHON" "$GKE_PY" check-dockerfiles "${DOCKERFILES[@]}" 2>&1); then
+    problem "this machine ($(uname -m)) cannot build images for $arch that run anything:" \
+      "$(paste -sd ' ' <<<"${found//gke: /}")"
+  fi
+}
+
 preflight() {
-  local tool enabled api missing=()
+  local tool enabled api missing=() arm_regions=${ARM_REGIONS:1:-1}
+  if [ "$arch" = arm64 ] && [[ $ARM_REGIONS != *" $REGION "* ]]; then
+    say "warning: $REGION is not among the regions with Arm Pods (${arm_regions// /, } in GKE's documentation" \
+      "of 2026-10-14), so its Pods may not start: run in one of them, or with --arch amd64"
+  fi
   for tool in "$GCLOUD" "$KUBECTL" "$DOCKER" "$PYTHON" setsid; do
     command -v "$tool" >/dev/null 2>&1 || problem "$tool is not on PATH (GCLOUD, KUBECTL, DOCKER and PYTHON name others)"
   done
@@ -603,6 +696,8 @@ preflight() {
   if [ -z "$oha_binary" ] && ! command -v curl >/dev/null 2>&1; then
     problem "curl is not on PATH to download oha: install it, or give --oha"
   fi
+  check_binaries
+  [ "$arch" = "$host_arch" ] || check_dockerfiles
   [ ${#problems[@]} -eq 0 ] || return
   learn_account
   if ! project_number=$(reads "$GCLOUD" projects describe "$PROJECT" --format='value(projectNumber)') ||
@@ -629,9 +724,6 @@ preflight() {
   else
     say "the zone, the CPU quota and what the project has are checked once the APIs are enabled"
   fi
-  if [ "$arch" = arm64 ] && [[ $ARM_REGIONS != *" $REGION "* ]]; then
-    say "note: GKE's documentation did not list $REGION among the regions of autopilot-arm; its Pods may not start"
-  fi
 }
 
 # --- The run -----------------------------------------------------------------
@@ -639,15 +731,21 @@ preflight() {
 build_images() {
   smock_image=smock-gke-bench/smock:$run_id
   generator_image=smock-gke-bench/generator:$run_id
+  local text
   if [ -z "$smock_binary" ]; then
     changes "$ROOT/scripts/build-release.sh" || die "the release build failed"
     smock_binary=$ROOT/dist/smock
   fi
   if [ -z "$oha_binary" ]; then
-    changes "$ROOT/scripts/install-oha.sh" "$work/bin" || die "installing oha failed"
+    changes "$ROOT/scripts/install-oha.sh" "$work/bin" "$arch" || die "installing oha failed"
     oha_binary=$work/bin/oha
+    if [ "$dry_run" = 0 ]; then
+      text=$(binary_problem oha "$oha_binary")
+      [ -z "$text" ] || die "$text"
+    fi
   fi
   if [ "$dry_run" = 0 ]; then
+    smock_sha256=$(sha256sum "$smock_binary" | cut -d ' ' -f 1)
     mkdir -p "$work/smock-image/dist" "$work/generator-image/bench/gke"
     cat "$ROOT/Dockerfile" "$ROOT/bench/gke/smock-definitions.dockerfile" >"$work/smock.Dockerfile"
     cp "$smock_binary" "$work/smock-image/dist/smock"
@@ -660,10 +758,10 @@ build_images() {
   [ "$dry_run" = 1 ] || built_images=("$smock_image" "$generator_image")
   [ "$dry_run" = 0 ] || say "would write $work/smock.Dockerfile: the repository's Dockerfile and" \
     "bench/gke/smock-definitions.dockerfile"
-  changes "$DOCKER" build --file="$work/smock.Dockerfile" --tag="$smock_image" "$work/smock-image" ||
-    die "building smock's image failed"
-  changes "$DOCKER" build --file="$ROOT/bench/gke/generator.Dockerfile" --tag="$generator_image" \
-    "$work/generator-image" || die "building the load generator's image failed"
+  changes "$DOCKER" build --platform="linux/$arch" --file="$work/smock.Dockerfile" --tag="$smock_image" \
+    "$work/smock-image" || die "building smock's image failed"
+  changes "$DOCKER" build --platform="linux/$arch" --file="$ROOT/bench/gke/generator.Dockerfile" \
+    --tag="$generator_image" "$work/generator-image" || die "building the load generator's image failed"
 }
 
 start_watchdog() {
@@ -859,7 +957,7 @@ run_profile() {
   local smock_deadline_s=$((deadline - $(now)))
   say "profile $name: $3 steps; the load generator's Job may take $((deadline_s / 60)) minutes"
   "$PYTHON" "$GKE_PY" manifests --plan "$plan" --profile "$name" ${cases:+--cases "$cases"} --arch "$arch" \
-    --zone "$ZONE" --smock-image "$smock_ref_shown" --generator-image "$generator_ref_shown" \
+    ${ZONE:+--zone "$ZONE"} --smock-image "$smock_ref_shown" --generator-image "$generator_ref_shown" \
     --smock-deadline-s "$smock_deadline_s" --out "$manifests" || die "rendering the manifests of $name failed"
   kube_run apply --filename="$manifests/namespace.json" || die "applying the namespace failed"
   kube_run apply --filename="$manifests/smock.json" || die "applying smock's Pod failed"
@@ -907,9 +1005,11 @@ run_profile() {
 if ! profile_lines=$("$PYTHON" "$GKE_PY" plan --plan "$plan" "${selection[@]}"); then
   exit 1
 fi
-say "run $run_id: project \$GKE_BENCH_PROJECT, $REGION, zone $ZONE, $arch, plan ${plan#"$ROOT"/}"
+say "run $run_id: project \$GKE_BENCH_PROJECT, $REGION, zone ${ZONE:-chosen by Autopilot}, $arch, plan" \
+  "${plan#"$ROOT"/}"
 preflight
-"$PYTHON" "$GKE_PY" estimate --plan "$plan" "${selection[@]}" --region "$REGION" --time-limit-s "$time_limit_s" \
+"$PYTHON" "$GKE_PY" estimate --plan "$plan" "${selection[@]}" --region "$REGION" --arch "$arch" \
+  --time-limit-s "$time_limit_s" \
   >&2 2>"$work/estimate.txt" || problem "$(sed 's/^gke: //' "$work/estimate.txt")"
 if [ ${#problems[@]} -gt 0 ]; then
   say "the run cannot start:"
@@ -964,9 +1064,9 @@ if [ "$dry_run" = 1 ]; then
   say "would write summary.json, summary.md and conditions.json into $out"
 else
   "$PYTHON" "$GKE_PY" summarize --plan "$plan" --targets "$targets" "${selection[@]}" --region "$REGION" \
-    --zone "$ZONE" --arch "$arch" --started-at "$started_at" --finished-at "$finished_at" \
+    ${ZONE:+--zone "$ZONE"} --arch "$arch" --started-at "$started_at" --finished-at "$finished_at" \
     --cluster-version "$cluster_version" --smock-image "${smock_ref##*@}" --generator-image "${generator_ref##*@}" \
-    "$out" || run_status=1
+    --smock-sha256 "$smock_sha256" "$out" || run_status=1
   say "results: $out (summary.md, summary.json, conditions.json, raw/)"
   say "compare them with the previous pre-merge run's: python3 bench/compare.py <previous> $out"
 fi

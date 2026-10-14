@@ -1,7 +1,10 @@
 # The smock container image. It packs a binary already built natively on the
 # machine that builds the image (scripts/build-release.sh writes dist/smock),
 # so the image holds exactly the release binary of its architecture. Nothing
-# is compiled here. See .github/workflows/release.yml.
+# is compiled or run here, so a machine of another architecture can build
+# the image with no emulation from a binary of the image's architecture, as
+# the GKE benchmark does (bench/test_gke.py checks that nothing is RUN). See
+# .github/workflows/release.yml.
 #
 # The base is distroless and provides what the binary links dynamically:
 # glibc and OpenSSL 3, which smock uses for TLS. It has no shell and no

@@ -1,6 +1,8 @@
 # Builds and tests every module. ci.yml runs it with the pinned toolchain on
 # each push and pull request; latest-toolchain.yml runs it weekly with the
-# latest stable MoonBit.
+# latest stable MoonBit. With the pinned toolchain, it keeps the release
+# binary of each architecture as a workflow artifact for 7 days,
+# smock-linux-amd64 and smock-linux-arm64.
 name: Build and test
 
 on:
@@ -122,6 +124,21 @@ jobs:
       # document; this checks the document itself.
       - name: Check that the Admin API document is valid OpenAPI
         run: scripts/check-openapi.sh
+
+      # The release binary that scripts/build-release.sh made above and the
+      # image packs, kept once every check passed, for a machine that cannot
+      # build one of this architecture: the GKE benchmark of amd64 from an
+      # arm64 machine takes it (scripts/gke-bench.sh --arch amd64 --smock).
+      # Its --version names this run's commit. scripts/check-ci-artifacts.sh
+      # checks this step.
+      - name: Keep the release binary
+        if: inputs.toolchain == 'pinned'
+        uses: actions/upload-artifact@v7
+        with:
+          name: smock-linux-${{ matrix.arch }}
+          path: dist/smock
+          retention-days: 7
+          if-no-files-found: error
 
   wasm-gc:
     name: wasm-gc (no-I/O packages)

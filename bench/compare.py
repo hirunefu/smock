@@ -19,7 +19,8 @@ usage: python3 bench/compare.py <older> <newer> [--targets FILE]
 
 <older> and <newer> are summary.json files or the directories that hold
 them. Compare runs of the same kind: two runs on the same machine, or two
-GKE runs.
+GKE runs. Runs on different CPU architectures are not compared step by
+step: their latencies differ by more than smock.
 """
 
 import argparse
@@ -141,16 +142,18 @@ def measured_requests(step):
     return step["requests"]["ok"] + step["requests"]["unexpected_status"]
 
 
-def compare_step(older, newer, rule, counted):
+def compare_step(older, newer, rule, counted, architectures=None):
     """The cells of the row of a step both runs ran, whether it is a
     regression, and whether the newer run left it unmeasured where the older
-    run measured it. A step the older run did not measure is not compared.
-    Requests the newer run failed, where the older run measured the step,
-    are a regression, and so is a p99 or p99.9 worse by more than the
-    rule. p99.9 counts only where both runs measured at least the rule's
-    number of requests; elsewhere its change is marked for reference. The
-    verdict of a step that does not count, shown for reference, says what
-    happened without calling it a regression."""
+    run measured it. A step the older run did not measure is not compared,
+    nor one the runs ran on different architectures (`architectures`, the
+    older's and the newer's, when they differ). Requests the newer run
+    failed, where the older run measured the step, are a regression, and so
+    is a p99 or p99.9 worse by more than the rule. p99.9 counts only where
+    both runs measured at least the rule's number of requests; elsewhere its
+    change is marked for reference. The verdict of a step that does not
+    count, shown for reference, says what happened without calling it a
+    regression."""
     enough = min(measured_requests(older), measured_requests(newer)) >= rule["p99_9_min_requests"]
     metrics = [metric for metric, _ in LATENCIES if metric != "p99_9" or enough]
     cells = {}
@@ -159,6 +162,9 @@ def compare_step(older, newer, rule, counted):
         change = change_text(before, after)
         cells[f"{name} ms"] = f"{number(before)} → {number(after)}"
         cells[f"{name} change"] = change if metric in metrics or change == "-" else f"{change} (for reference)"
+    if architectures:
+        why = f"the older run ran on {architectures[0]}, the newer on {architectures[1]}"
+        return {**cells, "Verdict": f"not compared: {why}"}, False, False
     if (older["cpu_limit"], older["memory_limit"]) != (newer["cpu_limit"], newer["memory_limit"]):
         why = f"the older run had {limits_text(older)}, the newer {limits_text(newer)}"
         return {**cells, "Verdict": f"not compared: {why}"}, False, False
@@ -174,13 +180,32 @@ def compare_step(older, newer, rule, counted):
     return {**cells, "Verdict": ("regression" if counted else "worse") if regression else "ok"}, regression, False
 
 
+# How a run names its CPU architecture: as Go and Kubernetes do (a GKE run),
+# or as the kernel does (a run on a machine).
+ARCHITECTURES = {"x86_64": "amd64", "aarch64": "arm64"}
+
+
+def architecture(conditions):
+    """The CPU architecture a run ran on, as Kubernetes names it."""
+    name = conditions["machine"]["architecture"]
+    return ARCHITECTURES.get(name, name)
+
+
+def different_architectures(older, newer):
+    """The older and the newer run's architectures when both are known and
+    differ, else None."""
+    if older is None or newer is None or architecture(older) == architecture(newer):
+        return None
+    return architecture(older), architecture(newer)
+
+
 def where(conditions):
     """Where a run ran, for people."""
     machine = conditions["machine"]
     place = f"{machine['architecture']} ({machine['cpu_model']}, {machine['cpus']} CPUs)"
     gke = conditions.get("gke")
     if gke:
-        place = f"GKE Autopilot ({gke['zone']}, {gke['compute_class']}), {place}"
+        place = f"GKE Autopilot ({gke.get('zone') or gke['region']}, {gke['compute_class']}), {place}"
     return place
 
 
@@ -195,6 +220,7 @@ def run_line(name, conditions):
 # The conditions besides smock that change what a run measures: for each, a
 # name and how a run shows it.
 CONDITIONS = (
+    ("architecture", architecture),
     ("machine", where),
     ("plan", lambda conditions: (conditions["plan"]["file"], conditions["plan"]["sha256"])),
     ("request mix", lambda conditions: conditions["request_mix"]["sha256"]),
@@ -218,6 +244,10 @@ def runs_section(older, newer):
         return lines
     if bool(older.get("gke")) != bool(newer.get("gke")):
         lines += ["", "One run is on GKE Autopilot and the other is not: compare runs of the same kind."]
+    architectures = different_architectures(older, newer)
+    if architectures:
+        lines += ["", f"The runs ran on different architectures ({architectures[0]} → {architectures[1]}): no step is "
+                      "compared as a regression."]
     differences = [difference(name, shown(older), shown(newer)) for name, shown in CONDITIONS
                    if shown(older) != shown(newer)]
     if differences:
@@ -252,17 +282,18 @@ def rule_line(rule, rates, steps):
 COLUMNS = ("Profile", "Case", "Rate", "p99 ms", "p99 change", "p99.9 ms", "p99.9 change", "Verdict")
 
 
-def latency_table(older, newer, rule, rates, counted):
+def latency_table(older, newer, rule, rates, counted, architectures):
     """The table of the steps that count (or of those that do not), with
     the steps of them only one run has under it, and how many regressions
-    and steps the newer run left unmeasured it found among them."""
+    and steps the newer run left unmeasured it found among them. Runs on
+    different architectures (`architectures`) are not compared."""
     older_steps = {step_key(step): step for step in older["cases"] if counts(step, rates) == counted}
     newer_steps = {step_key(step): step for step in newer["cases"] if counts(step, rates) == counted}
     rows, regressions, unmeasured = [], 0, 0
     for key, step in newer_steps.items():
         if key not in older_steps:
             continue
-        cells, regression, left_unmeasured = compare_step(older_steps[key], step, rule, counted)
+        cells, regression, left_unmeasured = compare_step(older_steps[key], step, rule, counted, architectures)
         regressions += regression
         unmeasured += left_unmeasured
         rows.append({"Profile": step["profile"], "Case": step["case"], "Rate": f"{step['rate']:,}", **cells})
@@ -270,9 +301,10 @@ def latency_table(older, newer, rule, rates, counted):
              *("| " + " | ".join(row[column] for column in COLUMNS) + " |" for row in rows)]
     only_older = [step_name(step) for key, step in older_steps.items() if key not in newer_steps]
     # A step the older run measured and the newer did not run says nothing
-    # of how smock did there: a run cut short must not pass.
-    unmeasured += sum(1 for key, step in older_steps.items()
-                      if key not in newer_steps and not not_measured(step, "older"))
+    # of how smock did there: a run cut short must not pass, unless the
+    # runs are not compared at all.
+    unmeasured += sum(1 for key, step in older_steps.items() if not architectures
+                      and key not in newer_steps and not not_measured(step, "older"))
     only_newer = [step_name(step) for key, step in newer_steps.items() if key not in older_steps]
     if only_older or only_newer:
         lines.append("")
@@ -293,11 +325,12 @@ def report(older_run, newer_run, rule, rates):
     lines = ["# Benchmark comparison", "", *runs_section(older_conditions, newer_conditions), "",
              *(line for text in incomplete for line in (text, "")),
              rule_line(rule, rates, [*older["cases"], *newer["cases"]]), "", "## Latency", ""]
-    table, regressions, unmeasured = latency_table(older, newer, rule, rates, True)
+    architectures = different_architectures(older_conditions, newer_conditions)
+    table, regressions, unmeasured = latency_table(older, newer, rule, rates, True, architectures)
     lines += table
     if not all(counts(step, rates) for step in [*older["cases"], *newer["cases"]]):
         # They are listed, and what the newer run did there does not fail it.
-        table, _, _ = latency_table(older, newer, rule, rates, False)
+        table, _, _ = latency_table(older, newer, rule, rates, False, architectures)
         lines += ["", "## For reference: steps above the target rate", "", *table]
     missed, target_lines = targets_section(older, newer)
     lines += ["", "## Targets", "", *target_lines, "", result_line(regressions, missed, unmeasured)]

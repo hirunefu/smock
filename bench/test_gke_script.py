@@ -8,10 +8,13 @@ asks. Nothing reaches a cloud. They need bash, python3 and setsid.
 usage: python3 -m unittest discover -s bench -v
 """
 
+import hashlib
 import json
 import os
+import platform
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import tempfile
@@ -22,6 +25,45 @@ from pathlib import Path
 BENCH = Path(__file__).resolve().parent
 ROOT = BENCH.parent
 SCRIPT = ROOT / "scripts" / "gke-bench.sh"
+
+# This machine's architecture, as the script names it, and the other one.
+HOST_ARCH = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}[platform.machine()]
+OTHER_ARCH = {"amd64": "arm64", "arm64": "amd64"}[HOST_ARCH]
+
+# The commit checked out, which a release binary built here names.
+HEAD = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short=12", "HEAD"], capture_output=True, text=True,
+                      check=True).stdout.strip()
+
+
+def elf_executable(arch, text):
+    """The smallest static Linux executable for `arch` that writes `text`
+    to stdout and exits 0: an ELF header, one loadable segment, the code
+    of write(1, text, length) and exit(0), and the text."""
+    message = text.encode()
+    base, headers = 0x400000, 64 + 56
+    if arch == "amd64":
+        machine = 62
+        after_lea = (b"\xba" + struct.pack("<I", len(message)) + b"\x0f\x05"  # mov edx, length; syscall
+                     + b"\xb8\x3c\x00\x00\x00" + b"\x31\xff" + b"\x0f\x05")  # mov eax, 60; xor edi, edi; syscall
+        code = (b"\xb8\x01\x00\x00\x00" + b"\xbf\x01\x00\x00\x00"  # mov eax, 1; mov edi, 1
+                + b"\x48\x8d\x35" + struct.pack("<i", len(after_lea)) + after_lea)  # lea rsi, [rip + to the text]
+    else:
+        machine = 183
+        # mov x0, 1; adr x1, text; mov x2, length; mov x8, 64; svc 0;
+        # mov x0, 0; mov x8, 93; svc 0. The text is 7 instructions after
+        # the adr.
+        words = [0xD2800020, 0x10000000 | (7 << 5) | 1, 0xD2800002 | (len(message) << 5), 0xD2800808,
+                 0xD4000001, 0xD2800000, 0xD2800BA8, 0xD4000001]
+        code = b"".join(struct.pack("<I", word) for word in words)
+    size = headers + len(code) + len(message)
+    header = b"\x7fELF" + bytes([2, 1, 1]) + bytes(9) + struct.pack(
+        "<HHIQQQIHHHHHH", 2, machine, 1, base + headers, 64, 0, 0, 64, 56, 1, 0, 0, 0)
+    segment = struct.pack("<IIQQQQQQ", 1, 5, 0, base, base, size, size, 0x1000)
+    return header + segment + code + message
+
+
+def smock_version(commit=HEAD):
+    return f"smock 0.0.0-dev (commit {commit}, moonc v0.10.14+7d59c7ec9)\n"
 
 # A project that does not exist: the fakes accept any.
 PROJECT = "fake-project-123456"
@@ -46,7 +88,7 @@ words = [arg for arg in argv if not arg.startswith("-")]
 options = dict(arg[2:].split("=", 1) for arg in argv if arg.startswith("--") and "=" in arg)
 
 record = {"tool": tool, "argv": argv, "words": words, "time": time.time(),
-          "kubeconfig_env": os.environ.get("KUBECONFIG")}
+          "kubeconfig_env": os.environ.get("KUBECONFIG"), "platform": options.get("platform")}
 if tool == "kubectl" and "kubeconfig" in options:
     path = Path(options["kubeconfig"])
     record["kubeconfig_mode"] = oct(stat.S_IMODE(path.stat().st_mode)) if path.exists() else None
@@ -154,6 +196,15 @@ if tool == "gcloud":
     answer()
 
 if tool == "docker":
+    if words[:1] == ["build"]:
+        # As a builder without emulation: an image of another architecture
+        # than this machine's cannot RUN anything.
+        machine = {"x86_64": "amd64", "aarch64": "arm64"}.get(os.uname().machine, os.uname().machine)
+        dockerfile = Path(options["file"]).read_text()
+        runs = any(line.strip().upper().startswith("RUN") for line in dockerfile.splitlines())
+        if runs and options.get("platform", f"linux/{machine}") != f"linux/{machine}":
+            sys.stderr.write("exec /bin/sh: exec format error\n")
+            answer("", 1)
     if words[:1] == ["push"]:
         answer(f"{words[1].rsplit(':', 1)[1]}: digest: sha256:{'ab' * 32} size: 1234\n")
     answer()
@@ -267,14 +318,29 @@ class Script(unittest.TestCase):
         self.plan.write_text(json.dumps(SMALL_PLAN))
         (self.tmp / "generator-small.log").write_text(generator_log())
         self.configure()
-        self.smock = self.tmp / "smock"
-        self.smock.write_text("not a real binary")
-        self.oha = self.tmp / "oha"
-        self.oha.write_text("not a real binary")
+        # Binaries of this machine's architecture: smock says the commit
+        # checked out.
+        self.smock = self.smock_for(HOST_ARCH)
+        self.oha = self.binary("oha", HOST_ARCH, "oha 1.16.0\n")
         self.out = self.tmp / "out"
         self.tmpdir = self.tmp / "tmp"
         self.tmpdir.mkdir()
         self.addCleanup(self.stop_watchdog)
+
+    def binary(self, name, arch, text, data=b""):
+        """An executable for `arch` that prints `text`, followed by `data`,
+        in a directory of its own."""
+        directory = Path(tempfile.mkdtemp(prefix=f"{name}-{arch}-", dir=self.tmp))
+        path = directory / name
+        path.write_bytes(elf_executable(arch, text) + data)
+        path.chmod(0o755)
+        return path
+
+    def smock_for(self, arch, commit=HEAD):
+        """A release binary of smock for `arch`, built from `commit`: it says
+        the commit when run, and holds it in its build information as a
+        native MoonBit build does, in UTF-16."""
+        return self.binary("smock", arch, smock_version(commit), commit.encode("utf-16-le"))
 
     def stop_watchdog(self):
         """Stops a watchdog that a test left waiting, before the fakes and its
@@ -397,7 +463,8 @@ class BeforeAnything(Script):
     def test_without_yes_it_prints_the_estimate_and_makes_nothing(self):
         status, output = self.run_script()
         self.assertEqual(status, 0, output)
-        self.assertIn("Cost estimate (us-central1", output)
+        self.assertIn(f"Cost estimate for {HOST_ARCH}", output)
+        self.assertIn("(us-central1, on-demand prices", output)
         self.assertIn("At most: $", output)
         self.assertIn("Nothing was made. To make these and run the benchmark, run it again with --yes.", output)
         self.assertEqual(self.changing_calls(), [])
@@ -487,7 +554,7 @@ class DryRun(Script):
                          "--labels=purpose=smock-bench,run=", "would run: kubectl", "apply --filename=",
                          "would run: gcloud container clusters delete smock-bench-",
                          "would run: gcloud artifacts repositories delete smock-bench-",
-                         "Cost estimate (us-central1"):
+                         f"--platform=linux/{HOST_ARCH}", "(us-central1, on-demand prices"):
             self.assertIn(expected, output)
         # The project shows as the variable that holds it.
         self.assertNotIn(PROJECT, output)
@@ -567,6 +634,180 @@ class Run(Script):
         self.assertTrue(self.made(["container", "clusters", "delete"]))
         self.assertTrue(self.made(["artifacts", "repositories", "delete"]))
         self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
+
+
+def copy_repository(destination):
+    """The files of the repository that a GKE run reads, copied, so that a
+    test can change them."""
+    for name in ("scripts/gke-bench.sh", "scripts/install-oha.sh", "scripts/build-release.sh", "Dockerfile",
+                 "bench/bench.py", "bench/requests.json", "bench/targets.json", "bench/plan-autopilot.json"):
+        (destination / name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / name, destination / name)
+    shutil.copytree(ROOT / "bench" / "gke", destination / "bench" / "gke",
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(ROOT / "bench" / "definitions", destination / "bench" / "definitions")
+    return destination / "scripts" / "gke-bench.sh"
+
+
+class Architectures(Script):
+    """A run is for one architecture, this machine's by default. Its images
+    are built for it with no emulation: they only copy, and the binaries
+    they copy, smock and oha, are checked to be for it before anything is
+    made."""
+
+    def built_platforms(self):
+        return [call["platform"] for call in self.made(["build"])]
+
+    def nodes_architectures(self):
+        selectors = []
+        for call in self.made(["apply"]):
+            for item in call["document"].get("items", [call["document"]]):
+                spec = item.get("spec", {})
+                spec = spec.get("template", {}).get("spec", spec)
+                if "nodeSelector" in spec:
+                    selectors.append(spec["nodeSelector"]["kubernetes.io/arch"])
+        return selectors
+
+    def test_a_run_is_for_this_machines_architecture_by_default(self):
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(self.built_platforms(), [f"linux/{HOST_ARCH}"] * 2)
+        self.assertEqual(set(self.nodes_architectures()), {HOST_ARCH})
+        conditions = json.loads((self.out / "conditions.json").read_text())
+        self.assertEqual(conditions["gke"]["arch"], HOST_ARCH)
+        self.assertEqual(conditions["smock"]["sha256"], hashlib.sha256(self.smock.read_bytes()).hexdigest())
+
+    def test_a_run_for_the_other_architecture_builds_and_runs_everything_for_it(self):
+        smock = self.smock_for(OTHER_ARCH)
+        oha = self.binary("oha", OTHER_ARCH, "oha 1.16.0\n")
+        status, output = self.run_script("--yes", "--arch", OTHER_ARCH, "--smock", smock, "--oha", oha)
+        self.assertEqual(status, 0, output)
+        self.assertEqual(self.built_platforms(), [f"linux/{OTHER_ARCH}"] * 2)
+        self.assertEqual(set(self.nodes_architectures()), {OTHER_ARCH})
+        # This machine cannot run smock to ask its commit: it reads it from
+        # the binary, and says which binary it took.
+        digest = hashlib.sha256(smock.read_bytes()).hexdigest()
+        self.assertIn(f"its build information names commit {HEAD}, which is checked out; its SHA-256 is {digest}",
+                      output)
+        conditions = json.loads((self.out / "conditions.json").read_text())
+        self.assertEqual((conditions["gke"]["arch"], conditions["smock"]["sha256"]), (OTHER_ARCH, digest))
+
+    def test_the_other_architecture_needs_the_release_binary_ci_built_for_it(self):
+        status, output = self.run_script("--dry-run", "--arch", OTHER_ARCH, "--smock", "")
+        self.assertEqual(status, 2, output)
+        self.assertIn(f"gh run download <run-id> -R hirunefu/smock -n smock-linux-{OTHER_ARCH}", output)
+        self.assertEqual(self.calls(), [])
+        status, output = self.run_script("--dry-run", "--arch", "riscv64")
+        self.assertEqual(status, 2, output)
+        self.assertEqual(self.calls(), [])
+
+    def test_the_pinned_oha_of_the_other_architecture_is_installed_for_it(self):
+        smock = self.smock_for(OTHER_ARCH)
+        status, output = self.run_script("--dry-run", "--arch", OTHER_ARCH, "--smock", smock, "--oha", "")
+        self.assertEqual(status, 0, output)
+        self.assertRegex(output, rf"would run: \S+/scripts/install-oha.sh \S+/bin {OTHER_ARCH}\n")
+
+    def test_binaries_not_for_the_runs_architecture_are_refused_before_anything_is_made(self):
+        script = self.tmp / "smock.sh"
+        script.write_text("#!/bin/sh\necho smock\n")
+        script.chmod(0o755)
+        for args, expected in (
+                (["--arch", OTHER_ARCH], f"is for {HOST_ARCH}, not for linux/{OTHER_ARCH}"),
+                (["--smock", script], "smock: " + str(script) + " is not an ELF file"),
+                (["--oha", self.binary("oha", OTHER_ARCH, "oha 1.16.0\n")],
+                 f"oha: {self.tmp}")):
+            status, output = self.run_script("--yes", *args)
+            self.assertEqual(status, 1, output)
+            self.assertIn(expected, output)
+            self.assertEqual(self.changing_calls(), [])
+
+    def test_a_smock_of_this_machine_must_say_the_commit_checked_out(self):
+        smock = self.smock_for(HOST_ARCH, "0123456789ab")
+        status, output = self.run_script("--yes", "--smock", smock)
+        self.assertEqual(status, 1, output)
+        self.assertIn(f"smock: {smock} is built from commit 0123456789ab, not from {HEAD}, which is checked out",
+                      output)
+        self.assertEqual(self.changing_calls(), [])
+
+    def test_a_smock_of_the_other_architecture_must_name_the_commit_checked_out(self):
+        # Such as one CI built for a pull request, from its merge commit.
+        smock = self.smock_for(OTHER_ARCH, "0123456789ab")
+        oha = self.binary("oha", OTHER_ARCH, "oha 1.16.0\n")
+        status, output = self.run_script("--yes", "--arch", OTHER_ARCH, "--smock", smock, "--oha", oha)
+        self.assertEqual(status, 1, output)
+        self.assertIn(f"smock: {smock} does not name commit {HEAD} in its build information", output)
+        self.assertEqual(self.changing_calls(), [])
+
+    def test_images_that_run_something_are_refused_for_the_other_architecture(self):
+        script = copy_repository(self.tmp / "repository")
+        dockerfile = self.tmp / "repository" / "bench" / "gke" / "generator.Dockerfile"
+        dockerfile.write_text(dockerfile.read_text() + "RUN pip install something\n")
+        smock = self.smock_for(OTHER_ARCH)
+        oha = self.binary("oha", OTHER_ARCH, "oha 1.16.0\n")
+        command = [str(script), *self.arguments("--yes", "--arch", OTHER_ARCH, "--smock", smock, "--oha", oha)[1:]]
+        result = subprocess.run(command, env=self.environment(), capture_output=True, text=True, timeout=120)
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 1, output)
+        self.assertIn("bench/gke/generator.Dockerfile:", output)
+        self.assertIn("RUN pip install something", output)
+        self.assertEqual(self.changing_calls(), [])
+        # A builder without emulation would have failed it anyway, as the
+        # fake docker does.
+        fake = subprocess.run([str(self.bin / "docker"), "build", f"--platform=linux/{OTHER_ARCH}",
+                               f"--file={dockerfile}", str(self.tmp)], env=self.environment(), capture_output=True,
+                              text=True)
+        self.assertEqual(fake.returncode, 1)
+        self.assertIn("exec format error", fake.stderr)
+
+
+class Zones(Script):
+    """Autopilot chooses the zone unless GKE_BENCH_ZONE pins one."""
+
+    def selectors(self):
+        selectors = []
+        for call in self.made(["apply"]):
+            for item in call["document"].get("items", [call["document"]]):
+                spec = item.get("spec", {})
+                spec = spec.get("template", {}).get("spec", spec)
+                if "nodeSelector" in spec:
+                    selectors.append(spec["nodeSelector"])
+        return selectors
+
+    def test_without_a_zone_none_is_pinned(self):
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(len(self.selectors()), 2)
+        for selector in self.selectors():
+            self.assertNotIn("topology.kubernetes.io/zone", selector)
+        self.assertEqual(self.made(["compute", "zones", "describe"]), [])
+        self.assertIn("zone chosen by Autopilot", output)
+
+    def test_a_zone_given_pins_both_pods_to_it_once_it_is_found_in_the_region(self):
+        status, output = self.run_script("--yes", GKE_BENCH_ZONE="us-central1-f")
+        self.assertEqual(status, 0, output)
+        self.assertEqual({selector["topology.kubernetes.io/zone"] for selector in self.selectors()},
+                         {"us-central1-f"})
+        self.assertEqual(self.made(["compute", "zones", "describe"])[0]["words"][3], "us-central1-f")
+        status, output = self.run_script("--dry-run", GKE_BENCH_ZONE="europe-west4-a")
+        self.assertEqual(status, 2, output)
+
+
+class Regions(Script):
+    def test_only_an_arm64_run_is_warned_of_a_region_without_arm_pods(self):
+        smock = self.smock_for("amd64")
+        oha = self.binary("oha", "amd64", "oha 1.16.0\n")
+        status, output = self.run_script("--dry-run", "--arch", "amd64", "--smock", smock, "--oha", oha,
+                                         GKE_BENCH_REGION="asia-northeast1")
+        self.assertEqual(status, 0, output)
+        self.assertIn("Cost estimate for amd64 (x86) Pods (asia-northeast1, on-demand prices", output)
+        self.assertNotIn("Arm", output)
+        smock = self.smock_for("arm64")
+        oha = self.binary("oha", "arm64", "oha 1.16.0\n")
+        status, output = self.run_script("--dry-run", "--arch", "arm64", "--smock", smock, "--oha", oha,
+                                         GKE_BENCH_REGION="asia-northeast1")
+        self.assertEqual(status, 0, output)
+        self.assertIn("warning: asia-northeast1 is not among the regions with Arm Pods", output)
+        self.assertIn("--arch amd64", output)
 
 
 class Interrupted(Script):
