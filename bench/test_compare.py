@@ -318,6 +318,31 @@ class MissedTargets(Comparison):
         self.assertIn("Not measured in the newer run: small/peak_memory.", report)
         self.assertIn("2 targets missed", report)
 
+    def test_the_older_runs_verdict_is_shown_only_for_the_same_target_at_the_same_load_and_architecture(self):
+        # The older run checked small/p99 at 2,000 requests/s, or for arm64
+        # (as a run checked before the targets were by architecture, or on
+        # another one): that verdict is on another target.
+        newer = self.summary([step()], targets=[{**target("small/p99", "missed", 3.4), "architecture": "amd64"}])
+        missed = "- small/p99 (p99 latency, http-keep-alive at 1,000 requests/s): 3.4 ms, at most 3 ms; "
+        for before in ({**target("small/p99", "met", 2.0), "rate": 2000},
+                       {**target("small/p99", "met", 2.0), "architecture": "arm64"}):
+            status, report = self.compare(self.summary([step()], targets=[before]), newer)
+            self.assertEqual(status, 1, report)
+            self.assertIn(missed + "not in the older run", report)
+        for before in (target("small/p99", "met", 2.0), {**target("small/p99", "met", 2.0), "architecture": "amd64"}):
+            status, report = self.compare(self.summary([step()], targets=[before]), newer)
+            self.assertEqual(status, 1, report)
+            self.assertIn(missed + "met in the older run (2.0 ms)", report)
+
+    def test_a_target_not_measured_for_several_architectures_is_listed_once(self):
+        # A run on an architecture with no targets has each target of each
+        # architecture, not measured.
+        newer = self.summary([step()], targets=[
+            {**target("small/p99", "not measured", None), "architecture": architecture}
+            for architecture in ("arm64", "amd64")])
+        _, report = self.compare(self.summary([step()]), newer)
+        self.assertIn("Not measured in the newer run: small/p99.\n", report)
+
     def test_a_target_missed_for_failed_requests_says_why(self):
         newer = self.summary([step()], targets=[target("small/p99", "missed", 2.0, reason="300 errors")])
         status, report = self.compare(self.summary([step()]), newer)

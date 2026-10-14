@@ -1039,15 +1039,12 @@ class CheckTargets(unittest.TestCase):
         for architecture, expected in (("x86_64", 1), ("amd64", 1), ("aarch64", 0), ("arm64", 0)):
             status, stdout, stderr = check_targets_command(self.results(architecture), "--targets", path)
             self.assertEqual(status, expected, (architecture, stdout, stderr))
+        # A run on an architecture with no targets cannot be checked: it
+        # does not pass, whatever it measured.
         status, stdout, stderr = check_targets_command(self.results("riscv64"), "--targets", path)
-        self.assertEqual(status, 0, stderr)
-        self.assertIn("targets.json has no targets for riscv64, the architecture the run ran on: each target below "
-                      "is for another architecture, and not measured.", stdout)
-        rows = markdown_table(stdout.splitlines())
-        self.assertEqual(len(rows), 10)
-        for row in rows:
-            self.assertRegex(row["Verdict"], r"^not measured: a target for (arm64|amd64), and the run ran on "
-                                             r"riscv64, which has none$")
+        self.assertEqual((status, stdout), (2, ""), stderr)
+        self.assertIn("targets.json has no targets for riscv64, the architecture the run ran on (only for arm64, "
+                      "amd64): nothing to check", stderr)
 
     def test_a_step_a_gke_run_did_not_run_after_its_profile_ended_early_says_why(self):
         reason = "http-keep-alive@small@500 got no response to any of its 10,000 requests (oha: timeout)"
@@ -1074,10 +1071,16 @@ class CheckTargets(unittest.TestCase):
         self.addCleanup(shutil.rmtree, missing, ignore_errors=True)
         broken = targets_file(self, [])
         broken.write_text(json.dumps({"profiles": [SMALL]}))
+        unreadable = self.results()
+        (unreadable / "conditions.json").write_text("{")
+        nameless = self.results()
+        (nameless / "conditions.json").write_text(json.dumps({"machine": {}}))
         for results, path, expected in (
                 (missing, targets, "cannot read"),
                 (self.results(fmt=3), targets, "has format 3"),
                 (self.results(conditions=False), targets, "no conditions.json"),
+                (unreadable, targets, "cannot read " + str(unreadable / "conditions.json")),
+                (nameless, targets, "conditions.json names no architecture (machine.architecture)"),
                 (self.results(), broken, "needs the targets of each architecture"),
                 (self.results(), missing / "targets.json", "cannot read")):
             status, stdout, stderr = check_targets_command(results, "--targets", path)

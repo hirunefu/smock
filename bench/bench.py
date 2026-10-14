@@ -1550,27 +1550,42 @@ def command_check_targets(args):
     """Checks a finished run's summary.json against the targets file as it
     is now, for the architecture its conditions.json names, and prints the
     Targets section of summary.md; reads the run's files and writes none.
-    Returns 1 when a target is missed."""
+    Returns 1 when a target is missed. A run on an architecture the file
+    has no targets for cannot be checked, so it never passes."""
     path = Path(args.results)
     if path.is_dir():
         path = path / "summary.json"
     conditions_path = path.parent / "conditions.json"
-    try:
-        summary = read_json(path)
-        conditions = read_json(conditions_path) if conditions_path.exists() else None
-    except (OSError, ValueError) as error:
-        raise BenchError(f"cannot read {path}: {error}") from error
-    if summary.get("format") != FORMAT:
-        raise BenchError(f"{path} has format {summary.get('format')}; this checks summaries of format {FORMAT}, as "
+    summary = read_json_file(path)
+    if not isinstance(summary, dict) or summary.get("format") != FORMAT:
+        shown_format = summary.get("format") if isinstance(summary, dict) else None
+        raise BenchError(f"{path} has format {shown_format}; this checks summaries of format {FORMAT}, as "
                          "bench/bench.py writes them now")
-    if conditions is None:
+    if not conditions_path.exists():
         raise BenchError(f"no conditions.json beside {path}: it names the architecture the run ran on")
+    conditions = read_json_file(conditions_path)
+    name = ((conditions.get("machine") if isinstance(conditions, dict) else None) or {}).get("architecture")
+    if not isinstance(name, str) or not name:
+        raise BenchError(f"{conditions_path} names no architecture (machine.architecture): it is the one whose "
+                         "targets are checked")
     targets_path = Path(args.targets).resolve()
-    run_architecture = kubernetes_architecture(conditions["machine"]["architecture"])
-    targets = explain_steps_not_run(check_targets(read_targets(targets_path), run_architecture, summary), summary,
+    run_architecture = kubernetes_architecture(name)
+    by_architecture = read_targets(targets_path)
+    if run_architecture not in by_architecture:
+        raise BenchError(f"{shown_path(targets_path)} has no targets for {run_architecture}, the architecture the "
+                         f"run ran on (only for {', '.join(by_architecture)}): nothing to check")
+    targets = explain_steps_not_run(check_targets(by_architecture, run_architecture, summary), summary,
                                     conditions.get("cases") or [])
     print("\n".join(targets_section(targets, run_architecture, shown_path(targets_path))))
     return 1 if any(target["verdict"] == "missed" for target in targets) else 0
+
+
+def read_json_file(path):
+    """The JSON value of the file at `path`, or a BenchError naming it."""
+    try:
+        return read_json(path)
+    except (OSError, ValueError) as error:
+        raise BenchError(f"cannot read {path}: {error}") from error
 
 
 def command_run(args):

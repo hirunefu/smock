@@ -362,9 +362,21 @@ def measured_text(target):
     return "nothing measured" if target["measured"] is None else f"{target['measured']} {target['unit']}"
 
 
+def same_target(target, other):
+    """Whether two runs' targets are one: the same id, at the same load,
+    for the same architecture when both name it (a summary written before
+    the targets were by architecture does not). Under one id, each
+    architecture may have its own rate and bounds."""
+    def load(one):
+        return one["id"], one.get("case"), one.get("rate")
+
+    architectures = target.get("architecture"), other.get("architecture")
+    return load(target) == load(other) and (None in architectures or architectures[0] == architectures[1])
+
+
 def older_verdict(target, older):
     """What the older run did for a target the newer one missed."""
-    before = next((other for other in older["targets"] if other["id"] == target["id"]), None)
+    before = next((other for other in older["targets"] if same_target(target, other)), None)
     if before is None:
         return "not in the older run"
     if before["verdict"] == "met":
@@ -385,7 +397,8 @@ def targets_section(older, newer):
             reason = f": {target['reason']}" if target["reason"] else ""
             lines.append(f"- {target['id']} ({target['about']}): {measured_text(target)}, "
                          f"at most {target['max']} {target['unit']}{reason}; {older_verdict(target, older)}")
-    unmeasured = [target["id"] for target in newer["targets"] if target["verdict"] == "not measured"]
+    unmeasured = list(dict.fromkeys(target["id"] for target in newer["targets"]
+                                    if target["verdict"] == "not measured"))
     if unmeasured:
         lines += ["", f"Not measured in the newer run: {', '.join(unmeasured)}."]
     return len(missed), lines

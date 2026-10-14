@@ -974,8 +974,9 @@ says where each comes from, and is the one place to change them. A run
 checks the set of the architecture it ran on: a run on a machine, the
 machine's (an M1 is arm64); a GKE run, its nodes' (`--arch`). A run on an
 architecture with no set reports every target as not measured, and says
-why. Each target holds under a profile of `bench/plan-autopilot.json`, with
-plain HTTP over keep-alive connections at one rate:
+why; `check-targets` (below) refuses to pass it. Each target holds under a
+profile of `bench/plan-autopilot.json`, with plain HTTP over keep-alive
+connections at one rate:
 
 | Architecture | Profile | CPU and memory limits | Rate | p99 at most | p99.9 at most |
 |---|---|---|---|---|---|
@@ -1004,10 +1005,10 @@ peak memory at the target's rate (`memory.peak`) at most 32 MiB. Under
   since): under each profile, smock kept up with a rate at or above its
   target's, and under 50m the slowest requests took tens of milliseconds
   even at light load, hence its p99.9 of 50 ms. Per vCPU, Arm served about
-  2.5 times what x86 did on GKE (about 50,000 against 19,000 requests/s
-  under 1 CPU). Runs on an M1 MacBook Air over loopback do better still:
-  p99 and p99.9 stay about 2 ms around each target's rate, and each profile
-  keeps up with more than twice it.
+  2.5 times what x86 did on GKE under 1 CPU (about 50,000 against 19,000
+  requests/s), and 3 to 4 times under 250m and 50m. Runs on an M1 MacBook
+  Air over loopback do better still: p99 and p99.9 stay about 2 ms around
+  each target's rate, and each profile keeps up with more than twice it.
 
 The [chart's sizing table](charts/smock/README.md#sizing) has the numbers
 of each.
@@ -1036,8 +1037,9 @@ It reads the run's `summary.json`, and the architecture it ran on from
 `conditions.json` beside it, checks the set of that architecture (of
 `--targets FILE` if given), and prints the *Targets* section of
 `summary.md` to stdout. It changes nothing in the run's directory. It exits
-with 1 when a target is missed, and with 2 when it cannot check, such as
-for a summary of another `format`.
+with 1 when a target is missed, and with 2 when it cannot check: a summary
+of another `format`, no `conditions.json` beside it, or a run on an
+architecture the targets file has no set for.
 
 ### What a run does
 
@@ -1189,7 +1191,8 @@ The line above the table says which steps count.
   behind, fails the comparison: nothing says how smock did there. Above
   the target rate it is listed and does not fail it.
 - It lists each target the newer run missed, with what it measured and
-  what the older run did, and the targets it did not measure.
+  what the older run did for the same target (the same id at the same
+  load, for the same architecture), and the targets it did not measure.
 - From each run's `conditions.json`, it names the runs (smock's version and
   commit, the machine, the plan) and lists the conditions besides smock
   that differ, such as the architecture, the CPU model, the plan or oha.

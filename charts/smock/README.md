@@ -278,8 +278,10 @@ sending plain HTTP over the Pod network to smock's Service.
 
 **On GKE Autopilot, x86**, two runs in October 2026: as above, but in
 general-purpose x86 Pods on ek-standard-8 nodes in us-central1-a, where a
-vCPU is a hyperthread; the 250m row is from one of them. smock's x86
-performance targets (`bench/targets.json`) come from these runs.
+vCPU is a hyperthread, and the load generator sent HTTPS as well as plain
+HTTP (the rows are plain HTTP unless they say HTTPS); the 250m row is from
+one of the runs. smock's x86 performance targets (`bench/targets.json`)
+come from these runs.
 
 | Requests and limits | Kept up with | Ran out of CPU at | OOM kills |
 |---|---|---|---|
@@ -287,13 +289,13 @@ performance targets (`bench/targets.json`) come from these runs.
 | 250m, 512Mi | 1,250 requests/s: p99 3.7 ms, p99.9 8.3 ms | about 3,500 requests/s | None |
 | 1, 1Gi | 5,000 requests/s: p99 3.0 ms, p99.9 3.5 to 4.5 ms | about 19,000 requests/s over plain HTTP, 14,000 over HTTPS | None |
 
-- Per vCPU, Arm served about 2.5 times what x86 did (under 1 CPU, 50,000
-  against 19,000 requests/s): size x86 Pods by these rows.
+- Per vCPU, Arm served about 2.5 times what x86 did under 1 CPU (50,000
+  against 19,000 requests/s), and 3 to 4 times under 250m and 50m: size
+  x86 Pods by these rows.
 - The CFS quota shows more on x86: under 250m, p99 was 69 ms at 625
-  requests/s and 3.7 ms at 1,250; under 50m the slowest requests took 80
-  to 140 ms at 125 requests/s, and varied from run to run. The advice
-  above holds: 50m for light traffic only, 250m or more for
-  latency-sensitive tests.
+  requests/s and 3.7 ms at 1,250; under 50m p99.9 was 80 to 138 ms at 125
+  requests/s, and varied from run to run. The advice above holds: 50m for
+  light traffic only, 250m or more for latency-sensitive tests.
 
 **On a laptop**: smock ran on an M1 MacBook Air, and the load generator on
 the same machine sent plain HTTP and HTTPS alike over loopback, at rates
