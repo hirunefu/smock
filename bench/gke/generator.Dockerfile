@@ -5,7 +5,9 @@
 # build context holds oha, and bench/ with bench.py, requests.json, the
 # plan as plan.json, gke/gke.py and gke/generator.py. The base is
 # python:3.13-slim (3.13.16 on Debian trixie), pinned by the digest of its
-# multi-architecture index.
+# multi-architecture index. It only copies, with no RUN, so that a machine
+# of another architecture builds it with no emulation (bench/test_gke.py
+# checks).
 FROM python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
 COPY --chmod=0755 oha /usr/local/bin/oha
 COPY bench /bench

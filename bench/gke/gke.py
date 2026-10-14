@@ -9,11 +9,15 @@ usage:
   python3 bench/gke/gke.py manifests [options]   the Kubernetes objects of one profile
   python3 bench/gke/gke.py pod-info PODS NODES    what to keep of the Pods and their nodes
   python3 bench/gke/gke.py summarize [options] OUT   summary.json, summary.md and conditions.json
+  python3 bench/gke/gke.py elf-arch FILE          the architecture of an executable, amd64 or arm64
+  python3 bench/gke/gke.py check-dockerfiles FILE...   fail if a Dockerfile has a RUN instruction
 """
 
 import argparse
 import importlib.util
 import json
+import re
+import struct
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -45,8 +49,8 @@ STEP_ANALYSIS_S = 15
 GENERATOR_START_S = 300
 
 
-# What a run costs: on-demand prices of general-purpose Autopilot Pods,
-# which are billed for their requests, in USD an hour before tax, from
+# What a run costs: on-demand prices of general-purpose (x86) Autopilot
+# Pods, which are billed for their requests, in USD an hour before tax, from
 # https://cloud.google.com/kubernetes-engine/pricing on 2026-10-14, and the
 # cluster management fee, the same in every region. A billing account's
 # free tier ($74.40 a month) covers the fee of one Autopilot or zonal
@@ -144,20 +148,29 @@ def job_deadline_s(plan, specs):
     return round(load_s(plan, specs) + len(specs) * STEP_ANALYSIS_S + GENERATOR_START_S)
 
 
-def node_selector(arch, zone):
-    """Pins a Pod to the zone and to the architecture. Arm Pods run in the
-    built-in autopilot-arm compute class; amd64 Pods in Autopilot's default
-    general-purpose one."""
-    selector = {"kubernetes.io/arch": arch, "topology.kubernetes.io/zone": zone}
+# The compute class of each architecture's Pods: the built-in autopilot-arm
+# for arm64, and Autopilot's default general-purpose x86 Pods for amd64,
+# which no class selects.
+COMPUTE_CLASSES = {"arm64": "autopilot-arm", "amd64": "general-purpose"}
+
+
+def node_selector(arch, zone=None):
+    """Pins a Pod to the architecture, its compute class, and the zone
+    when there is one."""
+    selector = {"kubernetes.io/arch": arch}
     if arch == "arm64":
-        selector["cloud.google.com/compute-class"] = "autopilot-arm"
+        selector["cloud.google.com/compute-class"] = COMPUTE_CLASSES[arch]
+    if zone:
+        selector["topology.kubernetes.io/zone"] = zone
     return selector
 
 
 def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, smock_deadline_s):
     """The objects of one profile: {file name: object}. namespace.json holds
     the namespace and its quota, smock.json smock's Service and Pod,
-    generator.json the load generator's Job.
+    generator.json the load generator's Job. Both Pods run on nodes of
+    `arch`, in `zone` when it is given; else Autopilot chooses smock's zone,
+    and the load generator runs in the same one, on another node.
 
     smock runs in a Pod of its own, not a Deployment, so that it can have a
     deadline (`smock_deadline_s`, the time left until the run's time limit,
@@ -233,10 +246,17 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
                     "automountServiceAccountToken": False,
                     "securityContext": pod_security,
                     # Never on smock's node, so that smock's CPU is its own
-                    # and the load crosses the Pod network.
-                    "affinity": {"podAntiAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": [{
-                        "labelSelector": {"matchLabels": labels},
-                        "topologyKey": "kubernetes.io/hostname"}]}},
+                    # and the load crosses the Pod network; in smock's zone,
+                    # which the zone given or this affinity sees to, so
+                    # that the load does not cross zones.
+                    "affinity": {
+                        **({} if zone else {"podAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": [{
+                            "labelSelector": {"matchLabels": labels},
+                            "topologyKey": "topology.kubernetes.io/zone"}]}}),
+                        "podAntiAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": [{
+                            "labelSelector": {"matchLabels": labels},
+                            "topologyKey": "kubernetes.io/hostname"}]},
+                    },
                     "containers": [{
                         "name": "generator", "image": generator_image,
                         "env": [{"name": "TARGET", "value": f"{SMOCK}.{NAMESPACE}.svc.cluster.local"},
@@ -280,9 +300,13 @@ def region_prices(region):
                     "this region's own are not here")
 
 
-def estimate(plan, profiles, cases, region, time_limit_s):
-    """How long a run takes and what it costs, for people, and why it does
-    not fit in its time limit, or None."""
+# The Pods of each architecture, for people.
+POD_KINDS = {"amd64": "amd64 (x86) Pods", "arm64": "arm64 Pods"}
+
+
+def estimate(plan, profiles, cases, region, arch, time_limit_s):
+    """How long a run on `arch` takes and what it costs, for people, and why
+    it does not fit in its time limit, or None."""
     prices, source = region_prices(region)
     generator_price = pod_price(prices, GENERATOR_RESOURCES["cpu"], GENERATOR_RESOURCES["memory"],
                                 GENERATOR_RESOURCES["ephemeral-storage"])
@@ -304,7 +328,7 @@ def estimate(plan, profiles, cases, region, time_limit_s):
     at_most = (CLUSTER_FEE_PER_HOUR + generator_price + max(smock_prices.values())) * \
         (time_limit_s + CLUSTER_DELETE_S) / 3600
     text = "\n".join([
-        f"Cost estimate ({source}; {PRICES_URL}):",
+        f"Cost estimate for {POD_KINDS[arch]} ({source}; {PRICES_URL}):",
         f"- The cluster: about {round(lifetime_s / 60)} minutes, from its creation to its deletion. Its management "
         f"fee of ${CLUSTER_FEE_PER_HOUR:.2f} an hour comes to ${fee:.2f}, or $0 while the billing account's free "
         "tier covers it (one Autopilot or zonal cluster).",
@@ -321,13 +345,66 @@ def estimate(plan, profiles, cases, region, time_limit_s):
         f"Pods still stop within minutes of the time limit, and the cluster costs its fee, "
         f"${CLUSTER_FEE_PER_HOUR:.2f} an hour, "
         "until it is deleted: the next run's checks name it.",
-        "Arm Pods are priced here as general-purpose x86 Pods: see the pricing page for autopilot-arm.",
+        *(["Arm Pods are priced here as general-purpose x86 Pods: see the pricing page for autopilot-arm."]
+          if arch == "arm64" else []),
     ])
     needed_s = lifetime_s + TIME_LIMIT_MARGIN_S
     if needed_s <= time_limit_s:
         return text, None
     return text, (f"the run needs about {round(needed_s / 60)} minutes with a margin, more than the time limit of "
                   f"{round(time_limit_s / 60)} minutes: run fewer profiles or cases, or raise the limit")
+
+
+# The e_machine of an ELF executable of each architecture.
+ELF_MACHINES = {62: "amd64", 183: "arm64"}
+
+
+def elf_arch(path):
+    """The architecture an executable is for, from its ELF header, without
+    running it: amd64 or arm64."""
+    try:
+        with open(path, "rb") as file:
+            header = file.read(20)
+    except OSError as error:
+        raise GkeError(f"cannot read {path}: {error}") from error
+    if len(header) < 20 or header[:4] != b"\x7fELF":
+        raise GkeError(f"{path} is not an ELF file")
+    if header[4:6] != b"\x02\x01":
+        raise GkeError(f"{path} is not a 64-bit little-endian ELF file")
+    elf_type, machine = struct.unpack("<HH", header[16:20])
+    if elf_type not in (2, 3):
+        raise GkeError(f"{path} is an ELF file but not an executable (type {elf_type})")
+    if machine not in ELF_MACHINES:
+        raise GkeError(f"{path} is an ELF executable for machine {machine}, neither amd64 nor arm64")
+    return ELF_MACHINES[machine]
+
+
+def run_instructions(path):
+    """The RUN instructions of a Dockerfile (ONBUILD RUN among them), as
+    (line number, text): what a build for another architecture than the
+    builder's could not run without emulation. Comments and the lines that
+    continue an instruction are not instructions."""
+    try:
+        lines = Path(path).read_text().splitlines()
+    except OSError as error:
+        raise GkeError(f"cannot read {path}: {error}") from error
+    escape = "\\"
+    for line in lines:
+        directive = re.match(r"#\s*(\w+)\s*=\s*(\S+)\s*$", line)
+        if not directive:
+            break
+        if directive[1].lower() == "escape":
+            escape = directive[2]
+    found, continuing = [], False
+    for number, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        words = stripped.upper().split()
+        if not continuing and (words[0] == "RUN" or words[:2] == ["ONBUILD", "RUN"]):
+            found.append((number, stripped))
+        continuing = stripped.endswith(escape)
+    return found
 
 
 # The labels of a node that say what it is and where.
@@ -436,6 +513,23 @@ def gke_markdown(results):
     return "\n".join(lines) + "\n"
 
 
+def nodes_of(results, app):
+    """The nodes the Pods of `app` (smock or generator) ran on, over every
+    profile, as pod-info keeps them."""
+    nodes = []
+    for result in results.values():
+        pods = result["pods"]
+        nodes += [pods["nodes"][pod["node"]] for pod in pods[app] if pod["node"] in pods["nodes"]]
+    return nodes
+
+
+def distinct(values):
+    """The values that are known, in order, once each, comma-separated; or
+    None."""
+    known = list(dict.fromkeys(value for value in values if value))
+    return ", ".join(known) or None
+
+
 def command_summarize(args):
     plan_path, targets_path = Path(args.plan), Path(args.targets)
     plan = read_json(plan_path)
@@ -449,30 +543,38 @@ def command_summarize(args):
     summary["targets"] = [harness.check_target(target, summary) for target in harness.read_targets(targets_path)]
     start = next((result["start"] for result in results.values() if result["start"]), None) or {}
     status = start.get("status") or {}
-    first = next((result["pods"] for result in results.values() if result["pods"]["smock"]), None)
-    node = first["nodes"].get(first["smock"][0]["node"]) if first else None
+    smock_nodes, generator_nodes = nodes_of(results, "smock"), nodes_of(results, "generator")
+    node = smock_nodes[0] if smock_nodes else None
     mix = BENCH / "requests.json"
-    compute_class = node_selector(args.arch, args.zone).get("cloud.google.com/compute-class", "general-purpose")
+    compute_class = COMPUTE_CLASSES[args.arch]
+    # Where the Pods ran, as their nodes say; the zone the run pinned them
+    # to when the nodes are unknown.
+    zone = distinct(node["zone"] for node in [*smock_nodes, *generator_nodes]) or args.zone
+    machine_type = distinct(node["instance_type"] for node in smock_nodes)
     conditions = {
         "format": harness.FORMAT,
         "started_at": args.started_at,
         "finished_at": args.finished_at,
         "smock": {"version": status.get("version"), "commit": status.get("commit"),
-                  "toolchain": status.get("toolchain"), "image": args.smock_image},
+                  "toolchain": status.get("toolchain"), "image": args.smock_image, "sha256": args.smock_sha256},
         "definitions": {"directory": "bench/definitions", "digest": status.get("digest"),
                         "mocks": status.get("mocks")},
         "request_mix": {"file": harness.shown_path(mix), "sha256": harness.sha256_file(mix),
                         "weights": {request["name"]: request["weight"] for request in read_json(mix)["requests"]}},
         "plan": {"file": harness.shown_path(plan_path), "sha256": harness.sha256_file(plan_path)},
         "targets": {"file": harness.shown_path(targets_path), "sha256": harness.sha256_file(targets_path)},
-        "note": (f"Measured on GKE Autopilot in {args.zone}: smock in a {compute_class} Pod with each profile's "
-                 "limits as its requests, and oha in a Pod on another node, over the Pod network. A GKE run does not "
-                 "measure idle RSS, peak memory or CPU throttling; OOM kills come from smock's restarts."),
+        "note": (f"Measured on GKE Autopilot in {zone or args.region}, on {args.arch} nodes "
+                 f"({machine_type or 'of an unknown machine type'}): smock in a {compute_class} Pod with each "
+                 "profile's limits as its requests, and oha in a Pod on another node in its zone, over the Pod "
+                 "network. A GKE run does not measure idle RSS, peak memory or CPU throttling; OOM kills come from "
+                 "smock's restarts."),
         "machine": {"architecture": args.arch,
                     "cpu_model": f"GKE Autopilot {node['instance_type'] if node else 'node'}",
                     "cpus": int(node["cpus"]) if node and str(node["cpus"]).isdigit() else None,
                     "kernel": node["kernel"] if node else None},
-        "gke": {"region": args.region, "zone": args.zone, "compute_class": compute_class,
+        "gke": {"arch": args.arch, "region": args.region, "zone": zone, "pinned_zone": args.zone,
+                "compute_class": compute_class, "machine_type": machine_type,
+                "generator_machine_type": distinct(node["instance_type"] for node in generator_nodes),
                 "cluster_version": args.cluster_version,
                 "profiles": {name: {"complete": result["complete"], **result["pods"]}
                              for name, result in results.items()}},
@@ -506,7 +608,7 @@ def command_estimate(args):
     plan = read_json(args.plan)
     profiles = plan_profiles(plan, comma_list(args.profiles))
     cases = plan_cases(plan, comma_list(args.cases))
-    text, problem = estimate(plan, profiles, cases, args.region, args.time_limit_s)
+    text, problem = estimate(plan, profiles, cases, args.region, args.arch, args.time_limit_s)
     print(text)
     if problem:
         raise GkeError(problem)
@@ -531,6 +633,21 @@ def command_pod_info(args):
     return 0
 
 
+def command_elf_arch(args):
+    print(elf_arch(args.file))
+    return 0
+
+
+def command_check_dockerfiles(args):
+    found = [(path, number, text) for path in args.files for number, text in run_instructions(path)]
+    for path, number, text in found:
+        print(f"{path}:{number}: {text}", file=sys.stderr)
+    if found:
+        raise GkeError("the images may only copy: a RUN instruction would run programs of the image's architecture, "
+                       "which a build for another architecture than this machine's cannot run without emulation")
+    return 0
+
+
 def main(argv):
     parser = argparse.ArgumentParser(prog="gke.py", description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -544,6 +661,7 @@ def main(argv):
     estimating.add_argument("--profiles", help="only these profiles, comma-separated (default: every profile)")
     estimating.add_argument("--cases", help="only these cases, comma-separated (default: every case)")
     estimating.add_argument("--region", required=True, help="the region, such as us-central1")
+    estimating.add_argument("--arch", required=True, choices=("arm64", "amd64"), help="the nodes' architecture")
     estimating.add_argument("--time-limit-s", type=int, required=True,
                             help="seconds after which the watchdog deletes the cluster")
     estimating.set_defaults(handler=command_estimate)
@@ -552,7 +670,8 @@ def main(argv):
     rendering.add_argument("--profile", required=True, help="the profile")
     rendering.add_argument("--cases", help="only these cases, comma-separated (default: every case)")
     rendering.add_argument("--arch", required=True, choices=("arm64", "amd64"), help="the nodes' architecture")
-    rendering.add_argument("--zone", required=True, help="the zone smock and the load generator run in")
+    rendering.add_argument("--zone", help="the zone smock and the load generator run in (default: Autopilot "
+                                          "chooses smock's, and the load generator follows it)")
     rendering.add_argument("--smock-image", required=True, help="smock's image, by digest")
     rendering.add_argument("--generator-image", required=True, help="the load generator's image, by digest")
     rendering.add_argument("--smock-deadline-s", type=int, required=True,
@@ -571,15 +690,23 @@ def main(argv):
                              help="the profiles the run ran, comma-separated (default: every profile)")
     summarizing.add_argument("--cases", help="the cases the run ran, comma-separated (default: every case)")
     summarizing.add_argument("--region", required=True)
-    summarizing.add_argument("--zone", required=True)
+    summarizing.add_argument("--zone", help="the zone the run pinned its Pods to, if it did")
     summarizing.add_argument("--arch", required=True, choices=("arm64", "amd64"))
     summarizing.add_argument("--started-at", required=True)
     summarizing.add_argument("--finished-at", required=True)
     summarizing.add_argument("--cluster-version")
     summarizing.add_argument("--smock-image", help="smock's image digest")
+    summarizing.add_argument("--smock-sha256", help="the SHA-256 of the smock binary in the image")
     summarizing.add_argument("--generator-image", help="the load generator's image digest")
     summarizing.add_argument("out", help="the run's results: raw/<profile>/generator.log and pods.json")
     summarizing.set_defaults(handler=command_summarize)
+    reading = commands.add_parser("elf-arch", help="print the architecture of an ELF executable: amd64 or arm64")
+    reading.add_argument("file", help="the executable, which is not run")
+    reading.set_defaults(handler=command_elf_arch)
+    checking = commands.add_parser("check-dockerfiles", help="fail, naming them, if the Dockerfiles have a RUN "
+                                                             "instruction")
+    checking.add_argument("files", nargs="+", help="the Dockerfiles")
+    checking.set_defaults(handler=command_check_dockerfiles)
     args = parser.parse_args(argv)
     try:
         return args.handler(args)

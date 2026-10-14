@@ -13,7 +13,9 @@ usage: python3 -m unittest discover -s bench -v
 
 import json
 import os
+import platform
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -45,10 +47,10 @@ class Helper(unittest.TestCase):
         return path
 
     def manifests(self, profile="autopilot-min", arch="arm64", plan=BENCH / "plan-autopilot.json", cases=None,
-                  smock_deadline_s=3000):
+                  smock_deadline_s=3000, zone="us-central1-a"):
         """The manifests rendered for one profile: {file name: objects}."""
         out = self.directory()
-        args = ["manifests", "--plan", plan, "--profile", profile, "--arch", arch, "--zone", "us-central1-a",
+        args = ["manifests", "--plan", plan, "--profile", profile, "--arch", arch, *(["--zone", zone] if zone else []),
                 "--smock-image", SMOCK_IMAGE, "--generator-image", GENERATOR_IMAGE,
                 "--smock-deadline-s", smock_deadline_s, "--out", out]
         if cases:
@@ -74,8 +76,9 @@ def pod_spec(item):
 class Manifests(Helper):
     """Each profile runs smock in a Pod whose requests are its limits, with
     a deadline, behind a ClusterIP Service, and the load generator in a Job
-    with a deadline on another node, both pinned to one zone, in a namespace
-    that cannot have a LoadBalancer or a volume claim."""
+    with a deadline on another node in smock's zone, both on nodes of the
+    run's architecture, in a namespace that cannot have a LoadBalancer or a
+    volume claim."""
 
     def test_smock_runs_under_the_profiles_limits_as_requests_behind_a_cluster_ip_service(self):
         rendered = self.manifests(profile="autopilot-burst-min")
@@ -128,13 +131,34 @@ class Manifests(Helper):
         self.assertEqual((env["PROFILE"], env["CASES"]), ("chart-default", "http-keep-alive,https-keep-alive"))
 
     def test_both_are_pinned_to_the_zone_and_to_the_compute_class_of_the_architecture(self):
-        for arch, compute_class in (("arm64", "autopilot-arm"), ("amd64", None)):
+        # arm64 in the built-in autopilot-arm compute class; amd64 in
+        # Autopilot's default general-purpose Pods, which have no class to
+        # select.
+        for arch, expected in (
+                ("arm64", {"kubernetes.io/arch": "arm64", "cloud.google.com/compute-class": "autopilot-arm",
+                           "topology.kubernetes.io/zone": "us-central1-a"}),
+                ("amd64", {"kubernetes.io/arch": "amd64", "topology.kubernetes.io/zone": "us-central1-a"})):
             rendered = self.manifests(arch=arch)
             for item in [*objects(rendered, "Pod"), *objects(rendered, "Job")]:
-                selector = pod_spec(item)["nodeSelector"]
-                self.assertEqual(selector["topology.kubernetes.io/zone"], "us-central1-a")
-                self.assertEqual(selector["kubernetes.io/arch"], arch)
-                self.assertEqual(selector.get("cloud.google.com/compute-class"), compute_class)
+                self.assertEqual(pod_spec(item)["nodeSelector"], expected)
+            # The zone keeps them together; the load generator needs no
+            # affinity to smock's for that.
+            [job] = objects(rendered, "Job")
+            self.assertEqual(set(pod_spec(job)["affinity"]), {"podAntiAffinity"})
+
+    def test_without_a_zone_autopilot_chooses_it_and_the_load_generator_follows_smock_there(self):
+        rendered = self.manifests(arch="amd64", zone=None)
+        [pod] = objects(rendered, "Pod")
+        [job] = objects(rendered, "Job")
+        for item in (pod, job):
+            self.assertEqual(pod_spec(item)["nodeSelector"], {"kubernetes.io/arch": "amd64"})
+        affinity = pod_spec(job)["affinity"]
+        [term] = affinity["podAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]
+        self.assertEqual(term["topologyKey"], "topology.kubernetes.io/zone")
+        self.assertLessEqual(term["labelSelector"]["matchLabels"].items(), pod["metadata"]["labels"].items())
+        # And still on another node than smock.
+        [term] = affinity["podAntiAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]
+        self.assertEqual(term["topologyKey"], "kubernetes.io/hostname")
 
     def test_nothing_billed_outside_the_pods_can_be_made_in_the_namespace(self):
         rendered = self.manifests()
@@ -243,12 +267,18 @@ NODE = {"instance_type": "e4a-standard-8", "arch": "arm64", "zone": "us-central1
         "os_image": "Container-Optimized OS from Google", "cpus": "8", "allocatable_cpu": "7910m"}
 
 
-def pods(restarts=0, reason=None):
+# An amd64 node of Autopilot's general-purpose Pods, which have no compute
+# class label.
+X86_NODE = {**NODE, "instance_type": "ek-standard-8", "arch": "amd64", "zone": "asia-northeast1-b",
+            "machine_family": "ek", "compute_class": None}
+
+
+def pods(restarts=0, reason=None, node=NODE, generator_node=None):
     """What gke.py pod-info keeps of the profile's Pods and their nodes."""
     return {"smock": [{"name": "smock-bench-1", "node": "node-a", "ready": True, "restarts": restarts,
                        "last_termination": reason}],
             "generator": [{"name": "generator-small-1", "node": "node-b", "phase": "Succeeded", "reason": None}],
-            "nodes": {"node-a": NODE, "node-b": NODE}}
+            "nodes": {"node-a": node, "node-b": generator_node or node}}
 
 
 class Summary(Helper):
@@ -256,7 +286,8 @@ class Summary(Helper):
     a machine writes, which bench/compare.py reads, with its targets
     checked, and the conditions it ran under."""
 
-    def results(self, lines, pod_info, rates=(500, 1000)):
+    def results(self, lines, pod_info, rates=(500, 1000), where=("--region", "us-central1", "--zone", "us-central1-a",
+                                                                 "--arch", "arm64")):
         """A results directory as scripts/gke-bench.sh leaves it, with the
         load generator's log and the Pods of profile small, summarized."""
         out = self.directory()
@@ -267,7 +298,7 @@ class Summary(Helper):
         (raw / "pods.json").write_text(json.dumps(pod_info))
         status, _, stderr = helper(
             "summarize", "--plan", small_plan(self.directory(), rates), "--targets", small_targets(self.directory()),
-            "--region", "us-central1", "--zone", "us-central1-a", "--arch", "arm64",
+            *where,
             "--started-at", "2026-10-14T03:28:50+00:00", "--finished-at", "2026-10-14T04:01:56+00:00",
             "--cluster-version", "1.35.8-gke.1225000", "--smock-image", "sha256:" + "1" * 64,
             "--generator-image", "sha256:" + "2" * 64, out)
@@ -311,6 +342,26 @@ class Summary(Helper):
         self.assertIn("GKE Autopilot", markdown)
         self.assertIn("| http-keep-alive | 1000 |", markdown)
 
+    def test_the_conditions_record_the_architecture_region_zone_and_machine_types(self):
+        # An amd64 run with no zone pinned: Autopilot chose it.
+        generator_node = {**X86_NODE, "instance_type": "ek-standard-16"}
+        out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}],
+                           pods(node=X86_NODE, generator_node=generator_node),
+                           where=("--region", "asia-northeast1", "--arch", "amd64", "--smock-sha256", "3" * 64))
+        conditions = json.loads((out / "conditions.json").read_text())
+        # The binary in smock's image, such as one CI built.
+        self.assertEqual(conditions["smock"]["sha256"], "3" * 64)
+        gke = conditions["gke"]
+        self.assertEqual(
+            {key: gke[key] for key in ("arch", "region", "zone", "pinned_zone", "compute_class", "machine_type",
+                                       "generator_machine_type")},
+            {"arch": "amd64", "region": "asia-northeast1", "zone": "asia-northeast1-b", "pinned_zone": None,
+             "compute_class": "general-purpose", "machine_type": "ek-standard-8",
+             "generator_machine_type": "ek-standard-16"})
+        self.assertEqual(conditions["machine"]["architecture"], "amd64")
+        self.assertIn("asia-northeast1-b", conditions["note"])
+        self.assertIn("amd64", conditions["note"])
+
     def test_a_profile_cut_short_leaves_the_run_incomplete(self):
         out = self.results([START, generator_step(500), "generator: the deadline passed\n"], pods())
         summary = json.loads((out / "summary.json").read_text())
@@ -331,13 +382,15 @@ class Estimate(Helper):
     """Before anything is made, a run says how long it takes and what it
     costs, expected and at most."""
 
-    def estimate(self, *args, plan=BENCH / "plan-autopilot.json", region="us-central1", time_limit_s=4800):
-        return helper("estimate", "--plan", plan, "--region", region, "--time-limit-s", time_limit_s, *args)
+    def estimate(self, *args, plan=BENCH / "plan-autopilot.json", region="us-central1", time_limit_s=4800,
+                 arch="arm64"):
+        return helper("estimate", "--plan", plan, "--region", region, "--arch", arch, "--time-limit-s", time_limit_s,
+                      *args)
 
     def test_it_states_the_expected_cost_and_the_most_a_run_cut_off_at_the_time_limit_costs(self):
         status, stdout, stderr = self.estimate(time_limit_s=3600)
         self.assertEqual(status, 0, stderr)
-        self.assertIn("us-central1, on-demand prices of 2026-10-14, before tax", stdout)
+        self.assertIn("Cost estimate for arm64 Pods (us-central1, on-demand prices of 2026-10-14, before tax", stdout)
         self.assertRegex(stdout, r"Expected: about \$0\.\d\d, the cluster existing for about \d+ minutes\.")
         # Until the watchdog deletes it at the time limit, and for the 5
         # minutes the deletion takes: the cluster's fee ($0.10 an hour), the
@@ -348,6 +401,19 @@ class Estimate(Helper):
         # What is billed when nothing is left to delete the cluster.
         self.assertIn("its Pods still stop within minutes of the time limit, and the cluster costs its fee, "
                       "$0.10 an hour", stdout)
+
+    def test_x86_pods_in_tokyo_are_estimated_at_tokyos_prices(self):
+        status, stdout, stderr = self.estimate(region="asia-northeast1", arch="amd64", time_limit_s=3600)
+        self.assertEqual(status, 0, stderr)
+        self.assertIn("Cost estimate for amd64 (x86) Pods (asia-northeast1, on-demand prices of 2026-10-14", stdout)
+        # The fee ($0.10 an hour), the load generator (4 vCPU and 4Gi at
+        # $0.0571 and $0.0063215 an hour, 2Gi of ephemeral storage at
+        # $0.0001784) and the largest smock (1 vCPU, 1Gi, 64Mi): $0.4175 an
+        # hour for 65 minutes.
+        self.assertIn("At most: $0.45, if it ran until the time limit (60 minutes)", stdout)
+        self.assertNotIn("Arm", stdout)
+        _, stdout, _ = self.estimate(region="asia-southeast1", arch="arm64")
+        self.assertIn("Arm Pods are priced here as general-purpose x86 Pods", stdout)
 
     def test_a_region_without_prices_here_is_estimated_from_us_central1s_with_a_margin(self):
         status, stdout, _ = self.estimate(region="europe-west4")
@@ -438,6 +504,82 @@ class Generator(Helper):
         summary = json.loads((out / "summary.json").read_text())
         self.assertTrue(summary["complete"])
         self.assertEqual([case["id"] for case in summary["cases"]], ["http-keep-alive@small", "https-keep-alive@small"])
+
+
+def elf_header(machine, elf_class=2, data=1, elf_type=2):
+    """The first 20 bytes of an ELF file: its identification, type and
+    machine."""
+    order = "<" if data == 1 else ">"
+    return b"\x7fELF" + bytes([elf_class, data, 1]) + bytes(9) + struct.pack(order + "HH", elf_type, machine)
+
+
+class BinaryArchitecture(Helper):
+    """A binary that goes into an image is checked for the run's
+    architecture before anything is made, by its ELF header: a binary of
+    another architecture is not run to find out."""
+
+    def arch_of(self, content):
+        path = self.directory() / "binary"
+        path.write_bytes(content + bytes(64))
+        return helper("elf-arch", path)
+
+    def test_the_architecture_is_read_from_the_elf_header(self):
+        for machine, arch in ((62, "amd64"), (183, "arm64")):
+            for elf_type in (2, 3):  # an executable, a position-independent one
+                status, stdout, stderr = self.arch_of(elf_header(machine, elf_type=elf_type))
+                self.assertEqual((status, stdout), (0, f"{arch}\n"), stderr)
+        # This machine's python3, whatever it runs on.
+        status, stdout, _ = helper("elf-arch", Path(sys.executable).resolve())
+        self.assertEqual((status, stdout.strip()), (0, {"x86_64": "amd64", "aarch64": "arm64"}[platform.machine()]))
+
+    def test_what_is_not_a_64_bit_executable_of_either_architecture_is_refused(self):
+        for content, expected in ((b"#!/bin/sh\necho smock\n", "not an ELF file"),
+                                  (b"PK\x03\x04", "not an ELF file"),
+                                  (b"\x7fEL", "not an ELF file"),
+                                  (elf_header(40, elf_class=1), "not a 64-bit little-endian ELF file"),
+                                  (elf_header(62, data=2), "not a 64-bit little-endian ELF file"),
+                                  (elf_header(62, elf_type=1), "not an executable"),
+                                  (elf_header(243), "machine 243, neither amd64 nor arm64")):
+            status, stdout, stderr = self.arch_of(content)
+            self.assertEqual((status, stdout), (1, ""), content)
+            self.assertIn(expected, stderr)
+        status, _, stderr = helper("elf-arch", self.directory() / "missing")
+        self.assertEqual(status, 1)
+        self.assertIn("cannot read", stderr)
+
+
+class Dockerfiles(Helper):
+    """The images are built for the run's architecture, which may not be
+    this machine's: a RUN instruction would need emulation, which this
+    machine may not have, so the Dockerfiles may only copy."""
+
+    DOCKERFILES = (ROOT / "Dockerfile", BENCH / "gke" / "smock-definitions.dockerfile",
+                   BENCH / "gke" / "generator.Dockerfile")
+
+    def check(self, text):
+        path = self.directory() / "Dockerfile"
+        path.write_text(text)
+        return helper("check-dockerfiles", path)
+
+    def test_the_images_dockerfiles_have_no_run_instruction(self):
+        status, _, stderr = helper("check-dockerfiles", *self.DOCKERFILES)
+        self.assertEqual(status, 0, stderr)
+
+    def test_a_run_instruction_in_any_form_is_refused_with_its_line(self):
+        for text, line in (("FROM scratch\nRUN true\n", 2),
+                           ("FROM scratch\n  run apk add curl\n", 2),
+                           ("FROM scratch\nCOPY a /a\nRUN set -e; \\\n  make\n", 3),
+                           ("FROM scratch\nONBUILD RUN true\n", 2),
+                           ("# escape=`\nFROM scratch\nCOPY a `\n  /a\nRUN true\n", 5)):
+            status, _, stderr = self.check(text)
+            self.assertEqual(status, 1, text)
+            self.assertIn(f"Dockerfile:{line}: ", stderr)
+            self.assertIn("RUN", stderr)
+
+    def test_run_in_a_comment_or_in_another_instructions_arguments_is_no_instruction(self):
+        status, _, stderr = self.check("# RUN apt-get install curl\nFROM scratch\nLABEL note=\"RUN nothing\"\n"
+                                       "COPY a \\\n  # a comment in the middle\n  RUN /b\n")
+        self.assertEqual(status, 0, stderr)
 
 
 class PodInfo(Helper):

@@ -797,6 +797,7 @@ docker build --tag smock:dev .
 scripts/smoke-test-image.sh smock:dev 0.0.0-dev <commit> "moonc <version>"   # the container image
 scripts/check-release-workflow.sh    # the release workflow publishes only for tags (needs yq and jq)
 scripts/check-benchmark-workflow.sh  # the benchmark workflow runs only by hand (needs yq and jq)
+scripts/check-ci-artifacts.sh        # CI keeps the release binary of each architecture (needs yq and jq)
 scripts/test-helm-chart.sh           # rendering tests of the Helm chart (needs helm, yq and jq)
 scripts/test-helm-chart-on-kind.sh smock:dev   # the chart on a kind cluster (needs kind, kubectl and helm)
 ```
@@ -1133,9 +1134,15 @@ entry of `bench/targets.json`, next to the targets.
   what the older run did, and the targets it did not measure.
 - From each run's `conditions.json`, it names the runs (smock's version and
   commit, the machine, the plan) and lists the conditions besides smock
-  that differ, such as the CPU model, the plan or oha. Compare runs of the
-  same kind: a GKE run with a GKE run, a run on a machine with a run on the
-  same machine. It says so when one run is on GKE and the other is not.
+  that differ, such as the architecture, the CPU model, the plan or oha.
+  Compare runs of the same kind: a GKE run with a GKE run, a run on a
+  machine with a run on the same machine. It says so when one run is on
+  GKE and the other is not.
+- Runs on different CPU architectures, such as an arm64 GKE run and an
+  amd64 one, are not compared step by step: their latencies differ by more
+  than smock, so no step is a regression, nor a step the newer run left
+  out. The report says so, and still lists the targets the newer run
+  missed, which fail it.
 
 It exits with 1 when it finds a regression, a missed target or a step the
 newer run did not measure, and with 2 when it cannot compare, such as for a
@@ -1147,8 +1154,8 @@ summary of another `format`.
 Autopilot: smock in a Pod with each profile's limits as its requests, the
 load from another node over the Pod network. It is part of the
 [checklist before merging into main](docs/merging-into-main.md), and costs
-money: about $0.20 a run (2026-10-14 prices, us-central1), which it
-estimates before it makes anything.
+money: about $0.20 a run (2026-10-14 prices, us-central1 or
+asia-northeast1), which it estimates before it makes anything.
 
 ```sh
 export GKE_BENCH_PROJECT=<project ID> GKE_BENCH_REGION=us-central1
@@ -1160,29 +1167,65 @@ scripts/gke-bench.sh --yes        # runs it, about 50 minutes
 It needs gcloud (logged in), docker, kubectl, python3, setsid, and to
 build the release binary the MoonBit toolchain (or `--smock` with a
 binary). `GCLOUD`, `KUBECTL`, `DOCKER` and `PYTHON` name other commands
-than those on `PATH`. `scripts/gke-bench.sh --help` lists its options: some
-profiles or cases only, another plan, the results directory, the time
-limit.
+than those on `PATH`. `scripts/gke-bench.sh --help` lists its options: the
+nodes' architecture, some profiles or cases only, another plan, the results
+directory, the time limit.
 
-- **Checks, before anything is made.** It reads the project, checks that
-  the Artifact Registry, Compute Engine and Kubernetes Engine APIs are
-  enabled (it prints the command that enables them; `--enable-apis` runs
-  it), that the zone is in the region, that `CPUS_ALL_REGIONS` and the
-  region's `CPUS` quota have 32 vCPUs free (`GKE_BENCH_NEEDED_CPUS`), for
-  four nodes of 8 vCPUs: Autopilot's first node, its system node, smock's
-  and the load generator's (in the probe, a quota of 24 held the load
-  generator's node back), and that no cluster or repository of an earlier
-  run is left. Then it prints
-  how long the run takes and what it costs, expected and at most, and
-  stops unless `--yes` says to go on.
-- **Images.** It builds the release binary, and two images for this
-  machine's architecture: the release image with `bench/definitions/`
+A run is on nodes of one architecture, `--arch amd64` or `--arch arm64`,
+by default the machine's that runs the script. Autopilot runs x86 (amd64)
+Pods in every region, and Arm (arm64) Pods only in us-central1, us-east1,
+us-west1, europe-west1, europe-west2, europe-west4 and asia-southeast1
+(GKE's documentation, 2026-10-14): an arm64 run needs one of those, and
+the script warns when its region is not one. x86 capacity is plentiful,
+and an Arm run once failed for want of Arm nodes in its zone. To run on
+x86 nodes in Tokyo from an arm64 machine, which cannot build smock for
+amd64, take the release binary that CI built for linux/amd64 from the
+commit checked out, from CI's run on the push of that commit (CI keeps it
+for 7 days):
+
+```sh
+gh run list -R hirunefu/smock --workflow CI --branch integration/r1 --event push --limit 1 --json databaseId,headSha
+dir=$(mktemp -d)
+gh run download <run-id> -R hirunefu/smock -n smock-linux-amd64 --dir "$dir"   # writes $dir/smock
+export GKE_BENCH_PROJECT=<project ID> GKE_BENCH_REGION=asia-northeast1
+scripts/gke-bench.sh --dry-run --arch amd64 --smock "$dir/smock"
+scripts/gke-bench.sh --yes --arch amd64 --smock "$dir/smock"
+```
+
+The run's `headSha` must be the commit checked out. A run on a pull request
+builds its merge commit instead, so take the run on the push. The
+artifact is there only if that run's linux/amd64 build and tests passed.
+
+- **Checks, before anything is made.** It checks that smock and oha, when
+  given, are ELF executables of the run's architecture (from their
+  headers; they are not run), and that smock says the commit checked out
+  (`smock --version`) when the machine can run it; of a smock it cannot
+  run, it prints the SHA-256, which `conditions.json` records too. For
+  another architecture than the machine's, it checks that the images'
+  Dockerfiles only copy, since a `RUN` would need emulation. It reads the
+  project, checks that the Artifact Registry, Compute Engine and
+  Kubernetes Engine APIs are enabled (it prints the command that enables
+  them; `--enable-apis` runs it), that `GKE_BENCH_ZONE`, when set, is in
+  the region, that `CPUS_ALL_REGIONS` and the region's `CPUS` quota have
+  32 vCPUs free (`GKE_BENCH_NEEDED_CPUS`), for four nodes of 8 vCPUs:
+  Autopilot's first node, its system node, smock's and the load
+  generator's (in the probe, a quota of 24 held the load generator's node
+  back), and that no cluster or repository of an earlier run is left. Then
+  it prints how long the run takes and what it costs, expected and at
+  most, and stops unless `--yes` says to go on.
+- **Images.** It builds the release binary, unless given one, and two
+  images for the run's architecture (`docker build --platform`): the
+  release image with `bench/definitions/`
   (`bench/gke/smock-definitions.dockerfile`), and the load generator's
-  (`bench/gke/generator.Dockerfile`: Python, the pinned oha, `bench.py`,
-  the plan and `bench/gke/`). It pushes them to a new Artifact Registry
-  repository, and lets the nodes' service account (the project's Compute
-  Engine default one, or `GKE_BENCH_NODE_SERVICE_ACCOUNT`, which the nodes
-  then run as) read that repository only.
+  (`bench/gke/generator.Dockerfile`: Python, the pinned oha of that
+  architecture, `bench.py`, the plan and `bench/gke/`). Both only copy
+  files onto multi-architecture bases, so a machine of the other
+  architecture builds them with no emulation; `python3 -m unittest
+  discover -s bench` fails if a `RUN` appears. It pushes them to a new
+  Artifact Registry repository, and lets the nodes' service account (the
+  project's Compute Engine default one, or
+  `GKE_BENCH_NODE_SERVICE_ACCOUNT`, which the nodes then run as) read that
+  repository only.
 - **Cluster.** A new Autopilot cluster on the Regular channel. The cluster
   and the repository are named `smock-bench-<date>-<time>` and labelled
   `purpose=smock-bench`. kubectl authenticates with an access token from
@@ -1192,18 +1235,19 @@ limit.
 - **Profiles.** For each profile: smock in a Pod, with the profile's CPU
   and memory limits as its requests, behind a ClusterIP Service, then the
   load generator (`bench/gke/generator.py`) in a Job with 4 vCPU and 4 GiB
-  and a required anti-affinity that keeps it off smock's node. Both have an
-  `activeDeadlineSeconds` that ends them within minutes of the time limit
-  at the latest, so that they stop being billed even if nothing is left to
-  delete the cluster (smock is a Pod, not a Deployment, to have one). Both
-  are pinned to one zone (`GKE_BENCH_ZONE`, by default `<region>-a`) and to
-  this machine's architecture: the built-in `autopilot-arm` compute class
-  on arm64, Autopilot's default general-purpose Pods on amd64. The load
-  generator sends each step the way `bench/bench.py` does, with its
-  functions, and prints one JSON line for each step, a case as
-  `summary.json` has it.
-  The namespace's quota allows no LoadBalancer, NodePort or volume claim,
-  and the run makes no static IP.
+  and a required anti-affinity that keeps it off smock's node. Both have
+  an `activeDeadlineSeconds` that ends them within minutes of the time
+  limit at the latest, so that they stop being billed even if nothing is
+  left to delete the cluster (smock is a Pod, not a Deployment, to have
+  one). Both run on nodes of the run's architecture: the built-in
+  `autopilot-arm` compute class on arm64, Autopilot's default
+  general-purpose x86 Pods on amd64. Autopilot chooses smock's zone, and a
+  required Pod affinity keeps the load generator in it; `GKE_BENCH_ZONE`
+  pins both to one zone instead. The load generator sends each step the
+  way `bench/bench.py` does, with its functions, and prints one JSON line
+  for each step, a case as `summary.json` has it. The namespace's quota
+  allows no LoadBalancer, NodePort or volume claim, and the run makes no
+  static IP.
 - **Always deleted.** When the run ends, fails or is stopped (Ctrl-C,
   SIGTERM, a closed terminal), it deletes the cluster and the repository;
   after a closed terminal it logs that to `after-hangup.log` in the results
@@ -1220,14 +1264,13 @@ limit.
   still end soon after the time limit, so a cluster left this way costs
   its fee, $0.10 an hour, until deleted (the free tier covers one
   cluster); a later `scripts/gke-bench.sh --dry-run` names it.
-- **Architectures.** The images are built for the machine that runs the
-  script. To measure the other architecture, run it on a machine of that
-  one, such as GitHub's `ubuntu-24.04-arm` runner in a workflow of your own
-  that logs gcloud in (for example with Workload Identity Federation); this
-  repository has none, since a pre-merge run is the maintainer's. A runner
-  takes the watchdog with it when the job is cancelled or times out, so
-  such a workflow needs a last step that always runs and deletes the
-  clusters and repositories named `smock-bench-*`.
+- **Architectures.** The images are for `--arch`, whatever the machine
+  that runs the script: smock's binary for another architecture comes from
+  CI (`--smock`, above), and oha's is the pinned release of that
+  architecture (`scripts/install-oha.sh <directory> <arch>`). The run
+  records the architecture, the region, the zone and the nodes' machine
+  types in `conditions.json`; `bench/compare.py` says when two runs differ
+  in architecture, and does not compare their latencies as regressions.
 
 It writes to `bench/results/gke-<date>-<time>/` unless `--out` says
 otherwise: `raw/<profile>/generator.log`, the load generator's lines;

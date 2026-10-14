@@ -15,7 +15,8 @@ usage: python3 bench/compare.py <older> <newer> [--targets FILE]
 
 <older> and <newer> are summary.json files or the directories that hold
 them. Compare runs of the same kind: two runs on the same machine, or two
-GKE runs.
+GKE runs. Runs on different CPU architectures are not compared step by
+step: their latencies differ by more than smock.
 """
 
 import argparse
@@ -119,18 +120,22 @@ def not_measured(step, run):
     return None
 
 
-def compare_step(older, newer, rule):
+def compare_step(older, newer, rule, architectures=None):
     """The cells of the row of a step both runs ran, whether it is a
     regression, and whether the newer run left it unmeasured where the older
-    run measured it. A step the older run did not measure is not compared.
-    Requests the newer run failed, where the older run measured the step,
-    are a regression, and so is a p99 or p99.9 worse by more than the
-    rule."""
+    run measured it. A step the older run did not measure is not compared,
+    nor one the runs ran on different architectures (`architectures`, the
+    older's and the newer's, when they differ). Requests the newer run
+    failed, where the older run measured the step, are a regression, and so
+    is a p99 or p99.9 worse by more than the rule."""
     cells = {}
     for metric, name in LATENCIES:
         before, after = older["latency_ms"][metric], newer["latency_ms"][metric]
         cells[f"{name} ms"] = f"{number(before)} → {number(after)}"
         cells[f"{name} change"] = change_text(before, after)
+    if architectures:
+        why = f"the older run ran on {architectures[0]}, the newer on {architectures[1]}"
+        return {**cells, "Verdict": f"not compared: {why}"}, False, False
     if (older["cpu_limit"], older["memory_limit"]) != (newer["cpu_limit"], newer["memory_limit"]):
         why = f"the older run had {limits_text(older)}, the newer {limits_text(newer)}"
         return {**cells, "Verdict": f"not compared: {why}"}, False, False
@@ -146,13 +151,32 @@ def compare_step(older, newer, rule):
     return {**cells, "Verdict": "regression" if regression else "ok"}, regression, False
 
 
+# How a run names its CPU architecture: as Go and Kubernetes do (a GKE run),
+# or as the kernel does (a run on a machine).
+ARCHITECTURES = {"x86_64": "amd64", "aarch64": "arm64"}
+
+
+def architecture(conditions):
+    """The CPU architecture a run ran on, as Kubernetes names it."""
+    name = conditions["machine"]["architecture"]
+    return ARCHITECTURES.get(name, name)
+
+
+def different_architectures(older, newer):
+    """The older and the newer run's architectures when both are known and
+    differ, else None."""
+    if older is None or newer is None or architecture(older) == architecture(newer):
+        return None
+    return architecture(older), architecture(newer)
+
+
 def where(conditions):
     """Where a run ran, for people."""
     machine = conditions["machine"]
     place = f"{machine['architecture']} ({machine['cpu_model']}, {machine['cpus']} CPUs)"
     gke = conditions.get("gke")
     if gke:
-        place = f"GKE Autopilot ({gke['zone']}, {gke['compute_class']}), {place}"
+        place = f"GKE Autopilot ({gke.get('zone') or gke['region']}, {gke['compute_class']}), {place}"
     return place
 
 
@@ -167,6 +191,7 @@ def run_line(name, conditions):
 # The conditions besides smock that change what a run measures: for each, a
 # name and how a run shows it.
 CONDITIONS = (
+    ("architecture", architecture),
     ("machine", where),
     ("plan", lambda conditions: (conditions["plan"]["file"], conditions["plan"]["sha256"])),
     ("request mix", lambda conditions: conditions["request_mix"]["sha256"]),
@@ -190,6 +215,10 @@ def runs_section(older, newer):
         return lines
     if bool(older.get("gke")) != bool(newer.get("gke")):
         lines += ["", "One run is on GKE Autopilot and the other is not: compare runs of the same kind."]
+    architectures = different_architectures(older, newer)
+    if architectures:
+        lines += ["", f"The runs ran on different architectures ({architectures[0]} → {architectures[1]}): no step is "
+                      "compared as a regression."]
     differences = [difference(name, shown(older), shown(newer)) for name, shown in CONDITIONS
                    if shown(older) != shown(newer)]
     if differences:
@@ -212,21 +241,23 @@ def report(older_run, newer_run, rule):
              f"and by more than {rule['more_than_ms']} ms.", "", "## Latency", "",
              "| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
     regressions = unmeasured = 0
+    architectures = different_architectures(older_conditions, newer_conditions)
     older_steps = {step_key(step): step for step in older["cases"]}
     newer_keys = {step_key(step) for step in newer["cases"]}
     for step in newer["cases"]:
         if step_key(step) not in older_steps:
             continue
-        cells, regression, left_unmeasured = compare_step(older_steps[step_key(step)], step, rule)
+        cells, regression, left_unmeasured = compare_step(older_steps[step_key(step)], step, rule, architectures)
         regressions += regression
         unmeasured += left_unmeasured
         row = {"Profile": step["profile"], "Case": step["case"], "Rate": f"{step['rate']:,}", **cells}
         lines.append("| " + " | ".join(row[column] for column in columns) + " |")
     only_older = [step_name(step) for step in older["cases"] if step_key(step) not in newer_keys]
     # A step the older run measured and the newer did not run says nothing
-    # of how smock did there: a run cut short must not pass.
-    unmeasured += sum(1 for step in older["cases"]
-                      if step_key(step) not in newer_keys and not not_measured(step, "older"))
+    # of how smock did there: a run cut short must not pass, unless the
+    # runs are not compared at all.
+    unmeasured += sum(1 for step in older["cases"] if not architectures
+                      and step_key(step) not in newer_keys and not not_measured(step, "older"))
     only_newer = [step_name(step) for step in newer["cases"] if step_key(step) not in older_steps]
     if only_older or only_newer:
         lines.append("")

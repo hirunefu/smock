@@ -256,6 +256,35 @@ class Conditions(Comparison):
                       "arm64 (GKE Autopilot e4a-standard-8, 8 CPUs)", report)
         self.assertIn("One run is on GKE Autopilot and the other is not: compare runs of the same kind.", report)
 
+    def test_runs_on_different_architectures_are_not_compared_as_regressions(self):
+        # An arm64 GKE run and an amd64 one: the newer is far slower, which
+        # says nothing of smock. Its missed targets still count.
+        older_gke = {"region": "us-central1", "zone": "us-central1-a", "compute_class": "autopilot-arm",
+                     "arch": "arm64", "machine_type": "e4a-standard-8"}
+        newer_gke = {"region": "asia-northeast1", "zone": "asia-northeast1-b", "compute_class": "general-purpose",
+                     "arch": "amd64", "machine_type": "ek-standard-8"}
+        older = self.summary([step(p99=10.0)], conditions=conditions(cpu_model="GKE Autopilot e4a-standard-8",
+                                                                     gke=older_gke))
+        newer = self.summary([step(p99=30.0)], conditions=conditions(
+            architecture="amd64", cpu_model="GKE Autopilot ek-standard-8", gke=newer_gke))
+        status, report = self.compare(older, newer)
+        self.assertEqual(status, 0, report)
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 1000)["Verdict"],
+                         "not compared: the older run ran on arm64, the newer on amd64")
+        self.assertIn("The runs ran on different architectures (arm64 → amd64): no step is compared as a regression.",
+                      report)
+        self.assertIn("architecture (arm64 → amd64)", report)
+        self.assertIn("No regression", report)
+        # A step only the older run measured does not fail it either; a
+        # run on a machine names its architecture as the kernel does.
+        status, report = self.compare(self.summary([step(), step(rate=2000)], conditions=conditions()),
+                                      self.summary([step()], conditions=conditions(architecture="x86_64")))
+        self.assertEqual(status, 0, report)
+        self.assertIn("different architectures (arm64 → amd64)", report)
+        missed = self.summary([step()], targets=[target(verdict="missed", measured=4.0)],
+                              conditions=conditions(architecture="amd64"))
+        self.assertEqual(self.compare(older, missed)[0], 1)
+
     def test_a_run_that_stopped_before_its_last_step_is_called_incomplete(self):
         _, report = self.compare(self.summary([step()]), self.summary([step()], complete=False))
         self.assertIn("The newer run is incomplete: it stopped before its last step.", report)
