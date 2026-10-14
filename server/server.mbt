@@ -428,6 +428,37 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
       )
       defer self.traffic.record(outcome, stopwatch.seconds())
       let plan = outcome.plan
+      // Most responses are a body sent at once, without a delay or a Fault:
+      // written here as `write_response` writes them, without the layers of
+      // async calls it and `@io.Writer::write` add.
+      if plan.delay_ms == 0 && plan.fault is None && plan.body is Bytes(body) {
+        let close = self.lifecycle.is_draining()
+        let response = @http1.encode_response(
+          plan.status,
+          plan.headers,
+          body,
+          request~,
+          close~,
+        )
+        if outcome.journal is Some(entry) {
+          self.engine.commit(entry)
+        }
+        // Deferred after the count, so it runs before it.
+        defer (if outcome.journal is Some(entry) {
+          entry.finish(at=@async.now())
+        })
+        let mut written = 0
+        while written < response.length() {
+          written += @io.Writer::write_once(
+            stream,
+            response,
+            offset=written,
+            len=response.length() - written,
+          )
+        }
+        return @http1.keeps_open(request~, close~) &&
+          !self.lifecycle.is_draining()
+      }
       let pending = Ref(outcome.journal)
       let commit = () => {
         if pending.val is Some(entry) {
