@@ -1,15 +1,19 @@
-"""Tests of the release benchmark, bench/bench.py, through its command line.
+"""Tests of the release benchmark, bench/bench.py.
 
-Each test runs the benchmark against the real smock binary, at a few hundred
-requests per second for a few seconds, and reads the files it writes. They
-need what a benchmark run needs (see the README): a release build of smock
-(dist/smock, or SMOCK_BENCH_SMOCK), oha (on PATH, or OHA), openssl, taskset,
-and a systemd user manager that can set CPU quotas.
+Most tests run the benchmark through its command line against the real smock
+binary, at a few hundred requests per second for a few seconds, and read the
+files it writes. They need what a benchmark run needs (see the README): a
+release build of smock (dist/smock, or SMOCK_BENCH_SMOCK), oha (on PATH, or
+OHA), openssl, taskset, and a systemd user manager that can set CPU quotas.
+The tests of the targets read a targets file with bench.py's read_targets and
+check each target against a summary as summary.json has it, with
+check_target; they need nothing else.
 
 usage: python3 -m unittest discover -s bench -v
 """
 
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -26,6 +30,12 @@ from pathlib import Path
 
 BENCH = Path(__file__).resolve().parent
 ROOT = BENCH.parent
+
+# bench/bench.py, loaded from its path, however these tests are run.
+_spec = importlib.util.spec_from_file_location("bench_harness", BENCH / "bench.py")
+harness = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(harness)
+
 SMOCK = os.environ.get("SMOCK_BENCH_SMOCK", str(ROOT / "dist" / "smock"))
 OHA = os.environ.get("OHA", "oha")
 
@@ -537,10 +547,10 @@ class Estimate(unittest.TestCase):
 
 
 class AutopilotProfiles(unittest.TestCase):
-    """bench/plan-autopilot.json simulates the smallest general-purpose GKE
-    Autopilot Pods on this machine: 50m CPU and 52 MiB where Pods may burst,
-    250m and 512 MiB where they may not, and 1 CPU and 4 GiB, the smallest
-    machine of a series. smock runs with its defaults under each."""
+    """bench/plan-autopilot.json simulates on this machine the smallest
+    general-purpose GKE Autopilot Pods, 50m CPU and 52 MiB where Pods may
+    burst and 250m and 512 MiB where they may not, and the Helm chart's
+    default, 1 CPU and 1 GiB. smock runs with its defaults under each."""
 
     PLAN = str(BENCH / "plan-autopilot.json")
 
@@ -554,142 +564,314 @@ class AutopilotProfiles(unittest.TestCase):
                                  c["pinning"]["smock_memory_swap_max"]) for name, c in cases.items()}, {
             "autopilot-burst-min": ("5000 100000", "54525952", "0"),
             "autopilot-min": ("25000 100000", "536870912", "0"),
-            "machine-min": ("100000 100000", "4294967296", "0"),
+            "chart-default": ("100000 100000", "1073741824", "0"),
         })
         for result in cases.values():
             self.assertEqual(result["errors"], 0, result["id"])
             self.assertEqual(result["memory"]["oom_kills"], 0, result["id"])
             self.assertIsNotNone(result["smock_cpu"]["throttled_s"], result["id"])
         self.assertEqual([idle["profile"] for idle in summary["idle_rss"]],
-                         ["autopilot-burst-min", "autopilot-min", "machine-min"])
+                         ["autopilot-burst-min", "autopilot-min", "chart-default"])
         # smock's defaults, whatever SMOCK_* variables the shell has: no
         # argument shrinks the Journal.
         args = read(out, "conditions.json")["smock"]["args"]
         self.assertFalse([arg for arg in args if arg.startswith("--journal")], args)
+        # Idle RSS is measured against each profile's target; the run's
+        # rate of 100 is not the latency targets'.
+        idle_targets = [t for t in summary["targets"] if t["metric"] == "idle_rss"]
+        self.assertEqual(len(idle_targets), 3)
+        for target in idle_targets:
+            self.assertIn(target["verdict"], ("met", "missed"), target["id"])
 
-    def test_each_case_climbs_a_ladder_of_rates_scaled_to_the_cpu_limit_beyond_what_it_can_sustain(self):
+    def test_each_case_climbs_a_ladder_scaled_to_the_cpu_limit_through_the_rate_of_each_profiles_targets(self):
         plan = read(BENCH, "plan-autopilot.json")
-        cpu = {profile["name"]: profile["cpu_limit"] for profile in plan["profiles"]}
-        self.assertEqual({c["name"]: (c["protocol"], c["connection"]) for c in plan["cases"]}, {
+        profiles = {profile["name"]: profile for profile in plan["profiles"]}
+        self.assertEqual({name: (p["cpu_limit"], p["memory_limit"]) for name, p in profiles.items()}, {
+            "autopilot-burst-min": ("50m", "52Mi"),
+            "autopilot-min": ("250m", "512Mi"),
+            "chart-default": ("1", "1Gi"),
+        })
+        cases = {c["name"]: c for c in plan["cases"]}
+        self.assertEqual({name: (c["protocol"], c["connection"]) for name, c in cases.items()}, {
             "http-keep-alive": ("http", "keep-alive"),
             "https-keep-alive": ("https", "keep-alive"),
         })
-        for case in plan["cases"]:
+        for case in cases.values():
             for name, rates in case["rates"].items():
                 self.assertEqual(rates, sorted(rates), (case["name"], name))
                 self.assertGreaterEqual(len(rates), 3, (case["name"], name))
             # The same ladder for each profile, in proportion to its CPU
             # limit: 50m gets a twentieth of what 1 CPU gets.
-            ladder = case["rates"]["machine-min"]
+            ladder = case["rates"]["chart-default"]
             self.assertEqual(case["rates"]["autopilot-burst-min"], [rate // 20 for rate in ladder])
             self.assertEqual(case["rates"]["autopilot-min"], [rate // 4 for rate in ladder])
-            self.assertEqual(cpu, {"autopilot-burst-min": "50m", "autopilot-min": "250m", "machine-min": "1"})
-            # Under 50m smock answers at most about 1,600 requests a second
-            # on this kind of machine (spent all of its quota on fewer); the
-            # top of the ladder is well beyond it.
-            self.assertGreaterEqual(case["rates"]["autopilot-burst-min"][-1], 3200)
+            # Under 50m smock used up its CPU quota at about 4,000 requests
+            # a second over HTTPS on this kind of machine; the top of the
+            # ladder reaches it.
+            self.assertGreaterEqual(case["rates"]["autopilot-burst-min"][-1], 4000)
+        # Each target is measured by a full run: its profile has its
+        # limits, and its case climbs through its rate under it.
+        for target in harness.read_targets(BENCH / "targets.json"):
+            profile = profiles[target["profile"]]
+            self.assertEqual((profile["cpu_limit"], profile["memory_limit"]),
+                             (target["cpu_limit"], target["memory_limit"]), target["id"])
+            if target["rate"] is not None:
+                self.assertIn(target["rate"], cases[target["case"]]["rates"][target["profile"]], target["id"])
 
 
-def targets_file(test, targets):
-    """Writes a targets file with `targets` into a new directory, and
-    returns its path."""
+def targets_file(test, profiles):
+    """Writes a targets file with the entries `profiles` into a new
+    directory, and returns its path."""
     directory = Path(tempfile.mkdtemp(prefix="smock-bench-test-targets-"))
     test.addCleanup(shutil.rmtree, directory, ignore_errors=True)
     path = directory / "targets.json"
-    path.write_text(json.dumps({"targets": targets}))
+    path.write_text(json.dumps({"profiles": profiles}))
     return path
-
-
-def latency_target(target_id, metric, max_ms, rate):
-    return {"id": target_id, "about": f"{metric} at {rate} requests/s", "case": "http-keep-alive",
-            "cpu_limit": "1", "rate": rate, "metric": metric, "max": max_ms, "unit": "ms"}
-
-
-def rss_target(target_id, max_mib):
-    return {"id": target_id, "about": f"idle RSS at most {max_mib} MiB", "metric": "idle_rss",
-            "max": max_mib, "unit": "MiB"}
 
 
 class Targets(unittest.TestCase):
     """Each run checks the provisional targets, kept in bench/targets.json,
-    and states for each whether it was met."""
+    and states for each, in summary.json and summary.md, whether it was met,
+    missed or not measured, and why when that is not plain."""
 
-    ARGS = ["--cases", "http-keep-alive", "--cpu-limits", "1", "--rate", "200",
-            "--ramp", "0.5", "--duration", "2", "--tail", "1", "--settle", "0.5"]
+    def test_a_run_of_bench_plan_json_measures_none_of_the_targets_and_says_why(self):
+        # The targets hold under the profiles of bench/plan-autopilot.json;
+        # those of bench/plan.json, which CI runs, are CPU limits alone.
+        out = bench(self, "--cases", "http-keep-alive", "--cpu-limits", "1", "--rate", "200",
+                    "--ramp", "0.5", "--duration", "2", "--tail", "1", "--settle", "0.5")
+        targets = read(out, "summary.json")["targets"]
+        self.assertEqual({t["id"] for t in targets}, {t["id"] for t in harness.read_targets(BENCH / "targets.json")})
+        for target in targets:
+            self.assertEqual(target["verdict"], "not measured", target["id"])
+            self.assertIn(f"did not run profile {target['profile']}", target["reason"])
 
-    def test_the_targets_are_the_specs_and_a_run_at_another_rate_does_not_measure_the_latency_ones(self):
-        out = bench(self, *self.ARGS)
-        targets = {t["id"]: t for t in read(out, "summary.json")["targets"]}
-        self.assertEqual({i: (t.get("case"), t.get("cpu_limit"), t.get("rate"), t["metric"], t["max"], t["unit"])
-                          for i, t in targets.items()}, {
-            "p99": ("http-keep-alive", "1", 50000, "p99", 1, "ms"),
-            "p99.9": ("http-keep-alive", "1", 50000, "p99_9", 5, "ms"),
-            "idle-rss": (None, None, None, "idle_rss", 20, "MiB"),
-        })
-        for target_id in ("p99", "p99.9"):
-            self.assertEqual(targets[target_id]["verdict"], "not measured")
-            self.assertIn("200 requests/s", targets[target_id]["reason"])
-        # Idle RSS does not depend on the rate: every run measures it.
-        self.assertIn(targets["idle-rss"]["verdict"], ("met", "missed"))
-
-    def test_each_target_is_met_or_missed_by_what_the_run_measured(self):
-        path = targets_file(self, [
-            latency_target("loose-p99", "p99", 1000, 200),
-            latency_target("tight-p99.9", "p99_9", 0.001, 200),
-            rss_target("loose-idle-rss", 1024),
-            rss_target("tight-idle-rss", 1),
-        ])
-        out = bench(self, *self.ARGS, "--targets", str(path))
+    def test_a_run_under_a_targets_profile_states_each_verdict_in_both_summaries(self):
+        plan = plan_file(self, [{"name": "small", "cpu_limit": "1", "memory_limit": "256Mi"}], {"small": 200},
+                         idle_rss={"settle_s": 5})
+        path = targets_file(self, [{
+            "profile": "small", "cpu_limit": "1", "memory_limit": "256Mi", "case": "http-keep-alive", "rate": 200,
+            "at_most": {"p99_ms": 1000, "p99_9_ms": 0.001, "oom_kills": 0, "peak_memory_mib": 1,
+                        "idle_rss_mib": 1024}}])
+        out = bench(self, "--plan", str(plan), "--targets", str(path), *SHORT)
         summary = read(out, "summary.json")
         targets = {t["id"]: t for t in summary["targets"]}
         self.assertEqual({i: t["verdict"] for i, t in targets.items()}, {
-            "loose-p99": "met",
-            "tight-p99.9": "missed",
-            "loose-idle-rss": "met",
-            "tight-idle-rss": "missed",
+            "small/p99": "met",
+            "small/p99_9": "missed",
+            "small/oom_kills": "met",
+            "small/peak_memory": "missed",
+            "small/idle_rss": "met",
         })
-        result = case(out, "http-keep-alive@1")
-        self.assertEqual(targets["loose-p99"]["measured"], result["latency_ms"]["p99"])
-        self.assertEqual(targets["tight-p99.9"]["measured"], result["latency_ms"]["p99_9"])
-        self.assertEqual(targets["tight-idle-rss"]["measured"], round(summary["idle_rss"][0]["rss_kib"] / 1024, 2))
-        # The human-readable summary states each verdict too.
-        lines = (out / "summary.md").read_text().splitlines()
-        for target in targets.values():
-            self.assertTrue([line for line in lines if target["about"] in line and target["verdict"] in line],
-                            target["id"])
+        result = case(out, "http-keep-alive@small")
+        self.assertEqual(targets["small/p99"]["measured"], result["latency_ms"]["p99"])
+        self.assertEqual(targets["small/peak_memory"]["measured"], round(result["memory"]["peak_bytes"] / MiB, 2))
+        self.assertEqual(targets["small/idle_rss"]["measured"], round(summary["idle_rss"][0]["rss_kib"] / 1024, 2))
+        # summary.md has a row for each, with its profile, what it is and
+        # its verdict.
+        rows = markdown_table(markdown_sections((out / "summary.md").read_text())["Targets"])
+        self.assertEqual([(row["Profile"], row["Target"], row["Verdict"]) for row in rows],
+                         [("small (1 CPU, 256Mi)", t["about"], t["verdict"]) for t in summary["targets"]])
 
-    def test_a_latency_target_is_not_measured_when_the_load_generator_fell_behind(self):
-        path = targets_file(self, [latency_target("loose-p99", "p99", 1000, 200)])
-        threads = []
 
-        def on_line(line):
-            pids = load_started(line)
-            if pids:
-                threads.append(later(1, lambda: stall(pids[1], 0.025)))
+class TargetsFile(unittest.TestCase):
+    """bench/targets.json holds the maintainer's provisional targets, one
+    entry for each resource profile of bench/plan-autopilot.json: the load
+    its latency targets hold at, and the most smock may use under it."""
 
-        out = bench(self, *self.ARGS, "--targets", str(path), on_line=on_line)
-        for thread in threads:
-            thread.join()
-        target = read(out, "summary.json")["targets"][0]
-        self.assertEqual(target["verdict"], "not measured")
-        self.assertIn("fell behind", target["reason"])
-        self.assertIn("p99.9", target["reason"])
+    def test_the_targets_are_the_maintainers_decision_for_each_profile(self):
+        targets = {t["id"]: t for t in harness.read_targets(BENCH / "targets.json")}
+        shown = {i: (t["profile"], t["cpu_limit"], t["memory_limit"], t["case"], t["rate"], t["metric"], t["max"],
+                     t["unit"]) for i, t in targets.items()}
+        load = {"chart-default": ("1", "1Gi", "http-keep-alive", 50000),
+                "autopilot-min": ("250m", "512Mi", "http-keep-alive", 10000),
+                "autopilot-burst-min": ("50m", "52Mi", "http-keep-alive", 1000)}
+        expected = {}
+        for profile, (cpu, memory, case_name, rate) in load.items():
+            p99_9 = 10 if profile == "autopilot-burst-min" else 5
+            expected |= {
+                f"{profile}/p99": (profile, cpu, memory, case_name, rate, "p99", 3, "ms"),
+                f"{profile}/p99_9": (profile, cpu, memory, case_name, rate, "p99_9", p99_9, "ms"),
+                f"{profile}/peak_memory": (profile, cpu, memory, case_name, rate, "peak_memory", 32, "MiB"),
+                f"{profile}/idle_rss": (profile, cpu, memory, None, None, "idle_rss", 20, "MiB"),
+            }
+        expected["autopilot-burst-min/oom_kills"] = ("autopilot-burst-min", "50m", "52Mi", "http-keep-alive", 1000,
+                                                     "oom_kills", 0, "OOM kills")
+        self.assertEqual(shown, expected)
 
-    def test_a_latency_target_is_missed_when_requests_fail_whatever_the_latencies(self):
-        path = targets_file(self, [latency_target("loose-p99", "p99", 1000, 200)])
-        threads = []
+    def test_a_targets_file_that_cannot_be_checked_is_refused_with_what_to_change(self):
+        idle_only = {"profile": "small", "cpu_limit": "250m", "memory_limit": "512Mi", "at_most": {"idle_rss_mib": 20}}
+        harness.read_targets(targets_file(self, [idle_only]))
+        for entry, expected in (
+                ({**SMALL, "at_most": {"p95_ms": 3}}, "p95_ms cannot be checked"),
+                ({**idle_only, "at_most": {"p99_ms": 3}}, "give the case and the rate"),
+                ({**SMALL, "memory_limit": "52MB"}, "memory limit '52MB'"),
+                ({**SMALL, "at_most": {"p99_ms": "3"}}, "must be a number")):
+            with self.assertRaises(harness.BenchError) as raised:
+                harness.read_targets(targets_file(self, [entry]))
+            self.assertIn(expected, str(raised.exception))
+        # The layout before profiles: a flat list of targets.
+        old = targets_file(self, [])
+        old.write_text(json.dumps({"targets": [{"id": "p99", "metric": "p99", "max": 1, "unit": "ms"}]}))
+        with self.assertRaises(harness.BenchError) as raised:
+            harness.read_targets(old)
+        self.assertIn("needs a list of profiles", str(raised.exception))
 
-        def on_line(line):
-            pids = load_started(line)
-            if pids:
-                threads.append(later(1.5, lambda: os.kill(pids[0], signal.SIGKILL)))
 
-        out = bench(self, *self.ARGS, "--targets", str(path), on_line=on_line)
-        for thread in threads:
-            thread.join()
-        target = read(out, "summary.json")["targets"][0]
-        self.assertEqual(target["verdict"], "missed")
-        self.assertIn("errors", target["reason"])
+# A profile's entry of a targets file, as the tests of the targets use it:
+# 250m and 512Mi, http-keep-alive at 1,000 requests/s.
+SMALL = {"profile": "small", "cpu_limit": "250m", "memory_limit": "512Mi", "case": "http-keep-alive", "rate": 1000,
+         "at_most": {"p99_ms": 3, "p99_9_ms": 10, "oom_kills": 0, "peak_memory_mib": 32, "idle_rss_mib": 20}}
+
+
+def idle_measured(profile="small", cpu_limit="250m", memory_limit="512Mi", rss_kib=16 * 1024, oom_killed=False):
+    """What summary.json has for smock's idle RSS under a profile."""
+    return {"profile": profile, "cpu_limit": cpu_limit, "memory_limit": memory_limit, "settle_s": 5,
+            "smock_ready": not oom_killed, "digest": "48f7ce9715f0", "rss_kib": None if oom_killed else rss_kib,
+            "memory": {"peak_bytes": None if oom_killed else 9 * MiB, "oom_kills": 1 if oom_killed else 0}}
+
+
+def step_measured(profile="small", cpu_limit="250m", memory_limit="512Mi", case_name="http-keep-alive", rate=1000,
+                  p99=1.9, p99_9=2.1, peak_mib=20, oom_kills=0, errors=0, lag=(2.0, 2.1)):
+    """What summary.json has for one step: a case under a profile at a
+    rate, with these latencies (ms), peak memory (MiB), OOM kills, failed
+    requests, and generator lag (p99.9 and max, ms)."""
+    scheduled = rate * 20
+    late = lag[0] > 5 or lag[1] > 10
+    return {
+        "id": f"{case_name}@{profile}@{rate}", "case": case_name, "profile": profile, "cpu_limit": cpu_limit,
+        "memory_limit": memory_limit, "rate": rate, "achieved_rate": (scheduled - errors) / 20, "errors": errors,
+        "latency_ms": {"p50": 1.0, "p90": 1.5, "p99": p99, "p99_9": p99_9, "max": 9.0},
+        "generator_lag_ms": {"p50": 1.0, "p99": 2.0, "p99_9": lag[0], "max": lag[1]},
+        "load_generator_late": late,
+        "requests": {"scheduled": scheduled, "ok": scheduled - errors, "unexpected_status": 0, "no_response": errors},
+        "memory": {"peak_bytes": None if peak_mib is None else int(peak_mib * MiB), "oom_kills": oom_kills},
+        "smock_ready": True,
+    }
+
+
+def checked(test, entry, idle=(), steps=()):
+    """Each target of a targets file with `entry`, checked against a
+    summary with these idle measurements and steps: {id: (verdict,
+    measured, reason)}."""
+    summary = {"format": harness.FORMAT, "complete": True, "idle_rss": list(idle), "cases": list(steps),
+               "targets": []}
+    results = [harness.check_target(target, summary)
+               for target in harness.read_targets(targets_file(test, [entry]))]
+    return {result["id"]: (result["verdict"], result["measured"], result["reason"]) for result in results}
+
+
+class TargetVerdicts(unittest.TestCase):
+    """Each target is met, missed or not measured, by what the run measured
+    under its profile, and says why when that is not plain."""
+
+    def test_a_target_under_a_profile_the_run_did_not_run_is_not_measured(self):
+        # bench/plan.json's profiles are named by their CPU limits and have
+        # no memory limit.
+        verdicts = checked(self, SMALL, idle=[idle_measured(profile="1", cpu_limit="1", memory_limit=None)],
+                           steps=[step_measured(profile="1", cpu_limit="1", memory_limit=None, rate=50000)])
+        self.assertEqual(set(verdicts), {"small/p99", "small/p99_9", "small/oom_kills", "small/peak_memory",
+                                         "small/idle_rss"})
+        for verdict, measured, reason in verdicts.values():
+            self.assertEqual((verdict, measured), ("not measured", None))
+            self.assertIn("did not run profile small", reason)
+
+    def test_a_target_under_a_profile_the_run_ran_with_other_limits_is_not_measured(self):
+        # Before the targets, the 1-CPU profile of bench/plan-autopilot.json
+        # had a memory limit of 4Gi.
+        verdicts = checked(self, SMALL, idle=[idle_measured(memory_limit="4Gi")],
+                           steps=[step_measured(memory_limit="4Gi")])
+        for verdict, measured, reason in verdicts.values():
+            self.assertEqual((verdict, measured), ("not measured", None))
+            self.assertIn("a memory limit of 4Gi", reason)
+            self.assertIn("a memory limit of 512Mi", reason)
+
+    def test_each_target_is_met_or_missed_by_the_step_at_its_load_and_idle_rss_under_its_profile(self):
+        # The ladder's other steps and the other case are far worse, and
+        # do not count.
+        others = [step_measured(rate=2000, p99=50, p99_9=80, peak_mib=40),
+                  step_measured(case_name="https-keep-alive", p99=50, p99_9=80, peak_mib=40)]
+        within = checked(self, SMALL, idle=[idle_measured(rss_kib=16 * 1024)],
+                         steps=[step_measured(p99=1.9, p99_9=2.1, peak_mib=20), *others])
+        self.assertEqual(within, {
+            "small/p99": ("met", 1.9, None),
+            "small/p99_9": ("met", 2.1, None),
+            "small/oom_kills": ("met", 0, None),
+            "small/peak_memory": ("met", 20.0, None),
+            "small/idle_rss": ("met", 16.0, None),
+        })
+        over = checked(self, SMALL, idle=[idle_measured(rss_kib=21 * 1024)],
+                       steps=[step_measured(p99=3.5, p99_9=12, peak_mib=33), *others])
+        self.assertEqual(over, {
+            "small/p99": ("missed", 3.5, None),
+            "small/p99_9": ("missed", 12, None),
+            "small/oom_kills": ("met", 0, None),
+            "small/peak_memory": ("missed", 33.0, None),
+            "small/idle_rss": ("missed", 21.0, None),
+        })
+
+    def test_an_oom_kill_misses_every_target_of_its_step_and_one_before_smock_was_ready_misses_idle_rss(self):
+        verdicts = checked(self, SMALL, idle=[idle_measured(oom_killed=True)],
+                           steps=[step_measured(p99=1.9, p99_9=2.1, peak_mib=20, oom_kills=2)])
+        self.assertEqual(verdicts["small/oom_kills"], ("missed", 2, None))
+        for target_id in ("small/p99", "small/p99_9", "small/peak_memory"):
+            verdict, measured, reason = verdicts[target_id]
+            self.assertEqual(verdict, "missed", target_id)
+            self.assertIn("OOM-killed in http-keep-alive@small@1000", reason)
+        verdict, measured, reason = verdicts["small/idle_rss"]
+        self.assertEqual((verdict, measured), ("missed", None))
+        self.assertIn("OOM-killed before it was ready", reason)
+
+    def test_a_late_load_generator_leaves_the_latency_targets_not_measured_but_not_the_memory_ones(self):
+        # The generator released a request 25 ms late: the latencies hold
+        # its wait, but smock's memory under the load is still its own.
+        verdicts = checked(self, SMALL, steps=[step_measured(p99=1.9, p99_9=2.1, peak_mib=20, lag=(25, 26))],
+                           idle=[idle_measured()])
+        for target_id, measured in (("small/p99", 1.9), ("small/p99_9", 2.1)):
+            verdict, shown_measured, reason = verdicts[target_id]
+            self.assertEqual((verdict, shown_measured), ("not measured", measured), target_id)
+            self.assertIn("fell behind", reason)
+            self.assertIn("p99.9 25 ms", reason)
+        self.assertEqual(verdicts["small/peak_memory"], ("met", 20.0, None))
+        self.assertEqual(verdicts["small/oom_kills"], ("met", 0, None))
+
+    def test_failed_requests_miss_the_latency_targets_and_leave_memory_within_its_bound_not_measured(self):
+        # 5,000 of the 20,000 requests got no response: smock did not carry
+        # the load, so memory within its bound says nothing, and memory
+        # over it is a miss all the same.
+        verdicts = checked(self, SMALL, idle=[idle_measured()],
+                           steps=[step_measured(p99=1.9, p99_9=2.1, peak_mib=20, errors=5000)])
+        for target_id in ("small/p99", "small/p99_9"):
+            verdict, measured, reason = verdicts[target_id]
+            self.assertEqual(verdict, "missed", target_id)
+            self.assertIn("5000 of the 20000 requests got no expected response", reason)
+        for target_id in ("small/peak_memory", "small/oom_kills"):
+            verdict, measured, reason = verdicts[target_id]
+            self.assertEqual(verdict, "not measured", target_id)
+            self.assertIn("5000 of the 20000 requests got no expected response", reason)
+        over = checked(self, SMALL, steps=[step_measured(peak_mib=33, errors=5000)])
+        self.assertEqual(over["small/peak_memory"], ("missed", 33.0, None))
+
+    def test_a_run_without_the_targets_rate_or_without_memory_peak_does_not_measure_them(self):
+        ladder = checked(self, SMALL, steps=[step_measured(rate=500), step_measured(rate=2000)])
+        verdict, measured, reason = ladder["small/p99"]
+        self.assertEqual((verdict, measured), ("not measured", None))
+        self.assertIn("http-keep-alive@small ran at 500 and 2000 requests/s, the target is at 1000", reason)
+
+        # Kernels before 5.19 keep no memory.peak.
+        old_kernel = step_measured(peak_mib=None)
+        old_kernel["memory"]["oom_kills"] = None
+        verdicts = checked(self, SMALL, steps=[old_kernel])
+        for target_id, file in (("small/peak_memory", "memory.peak"), ("small/oom_kills", "memory.events")):
+            verdict, measured, reason = verdicts[target_id]
+            self.assertEqual((verdict, measured), ("not measured", None), target_id)
+            self.assertIn(file, reason)
+        self.assertEqual(verdicts["small/p99"], ("met", 1.9, None))
+
+        # A window too short to hold a request has no latencies.
+        empty = checked(self, SMALL, steps=[step_measured(p99=None, p99_9=None)])
+        verdict, measured, reason = empty["small/p99"]
+        self.assertEqual((verdict, measured), ("not measured", None))
+        self.assertIn("no latencies", reason)
 
 
 if __name__ == "__main__":

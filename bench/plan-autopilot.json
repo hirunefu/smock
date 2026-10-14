@@ -1,11 +1,11 @@
 {
-  "about": "What bench/bench.py runs with --plan bench/plan-autopilot.json: smock under the resources of the smallest general-purpose GKE Autopilot Pods, simulated on this machine with the same cgroup limits, and under the smallest machine of a series. Each profile is a CPU limit, a CFS quota over a 100 ms period as Kubernetes sets for a CPU limit equal to the request, and a memory limit, memory.max, with no swap. autopilot-burst-min is the smallest Pod where Pods may burst (50m CPU, 52 MiB); autopilot-min the smallest where they may not (250m, 512 MiB); machine-min the smallest machine of a series, such as c4a-standard-1 (1 vCPU, 4 GiB). smock runs with its defaults, the Journal's bounds included, so a profile too small for them shows as OOM kills. Each case climbs a ladder of fixed rates, one step each, from the lowest: the same ladder for each profile in proportion to its CPU limit (2,500 to 80,000 requests a second per CPU), whose top is well beyond what smock can sustain under the limit. Otherwise as bench/plan.json: the window, the request mix, the 64 connections. idle_rss is smock's RSS settle_s seconds after it is ready under each profile, before any load. The targets of bench/targets.json are for bench/plan.json; under this plan only idle RSS is measured against them.",
+  "about": "What bench/bench.py runs with --plan bench/plan-autopilot.json: smock under the resources of the smallest general-purpose GKE Autopilot Pods and of the Helm chart's default, simulated on this machine with the same cgroup limits. Each profile is a CPU limit, a CFS quota over a 100 ms period as Kubernetes sets for a CPU limit equal to the request, and a memory limit, memory.max, with no swap. autopilot-burst-min is the smallest Pod where Pods may burst (50m CPU, 52 MiB); autopilot-min the smallest where they may not (250m, 512 MiB); chart-default the Helm chart's default requests and limits (1 CPU, 1 GiB), which Autopilot accepts as they are. smock runs with its defaults, the Journal's bounds included, so a profile too small for them shows as OOM kills. Each case climbs a ladder of fixed rates, one step each, from the lowest: the same ladder for each profile in proportion to its CPU limit, 2,500 to 80,000 requests a second per CPU, whose top is about where smock uses up its CPU over HTTPS. http-keep-alive's ladder also has 50,000 a second per CPU, so that each profile's ladder has the rate of its targets in bench/targets.json (1,000 under 50m, 10,000 under 250m, 50,000 under 1 CPU). Otherwise as bench/plan.json: the window, the request mix, the 64 connections. idle_rss is smock's RSS settle_s seconds after it is ready under each profile, before any load. The targets of bench/targets.json hold under these profiles, by name and limits.",
   "note": "Simulated on this machine: smock's CPU quota and memory limit are those of the profile, but its CPU is this machine's, not the one GKE schedules the Pod on, and the load comes over loopback, not a Pod network. Absolute numbers differ from GKE's; compare profiles, and runs on the same machine.",
   "load_generator": { "name": "oha", "version": "1.16.0" },
   "profiles": [
     { "name": "autopilot-burst-min", "cpu_limit": "50m", "memory_limit": "52Mi" },
     { "name": "autopilot-min", "cpu_limit": "250m", "memory_limit": "512Mi" },
-    { "name": "machine-min", "cpu_limit": "1", "memory_limit": "4Gi" }
+    { "name": "chart-default", "cpu_limit": "1", "memory_limit": "1Gi" }
   ],
   "ramp_s": 2,
   "duration_s": 20,
@@ -20,9 +20,9 @@
       "connection": "keep-alive",
       "connections": 64,
       "rates": {
-        "autopilot-burst-min": [125, 250, 500, 1000, 2000, 4000],
-        "autopilot-min": [625, 1250, 2500, 5000, 10000, 20000],
-        "machine-min": [2500, 5000, 10000, 20000, 40000, 80000]
+        "autopilot-burst-min": [125, 250, 500, 1000, 2000, 2500, 4000],
+        "autopilot-min": [625, 1250, 2500, 5000, 10000, 12500, 20000],
+        "chart-default": [2500, 5000, 10000, 20000, 40000, 50000, 80000]
       }
     },
     {
@@ -33,7 +33,7 @@
       "rates": {
         "autopilot-burst-min": [125, 250, 500, 1000, 2000, 4000],
         "autopilot-min": [625, 1250, 2500, 5000, 10000, 20000],
-        "machine-min": [2500, 5000, 10000, 20000, 40000, 80000]
+        "chart-default": [2500, 5000, 10000, 20000, 40000, 80000]
       }
     }
   ]

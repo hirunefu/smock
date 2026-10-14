@@ -11,8 +11,9 @@ it, even when the load generator falls behind with it. The latency from the
 time the load generator released each request, and how late it released
 them, are reported beside it, and so are smock's peak memory and any OOM
 kills. A plan (bench/plan.json by default, or bench/plan-autopilot.json for
-the smallest GKE Autopilot Pods) says which profiles and cases run, at which
-rates and for how long.
+the smallest GKE Autopilot Pods and the Helm chart's default) says which
+profiles and cases run, at which rates and for how long. Each run checks the
+targets of bench/targets.json, each under one of those profiles.
 
 usage:
   python3 bench/bench.py run [options]    run the benchmark (--help lists the options)
@@ -51,8 +52,10 @@ ROOT = BENCH.parent
 # program reading them would notice increments it. 2: latency_ms counts
 # from each request's due time, latency_from_release_ms from its release.
 # 3: cases run under resource profiles, at ladders of rates, and idle_rss
-# is a list, one for each profile it was measured under.
-FORMAT = 3
+# is a list, one for each profile it was measured under. 4: each target
+# holds under a named profile with its limits, and may limit peak memory
+# and OOM kills at its load.
+FORMAT = 4
 
 # How long smock may take to start listening, and to exit after SIGTERM.
 START_TIMEOUT_S = 30
@@ -72,11 +75,11 @@ CFS_PERIOD_US = 100_000
 # few milliseconds now and then. A case whose generator was later than
 # this fell behind its schedule: smock did not get the fixed arrival rate,
 # and the generator's own wait is a large part of the latencies, so the
-# case's latency targets are not measured. p99.9 may be at most the p99.9
-# target, 5 ms. The maximum catches a single stop of the generator that
-# delays fewer than one request in a thousand: at a fixed rate, a stop
-# shorter than a thousandth of the window (20 ms of a 20 s window) does not
-# reach p99.9.
+# case's latency targets are not measured. p99.9 may be at most the
+# tightest p99.9 target, 5 ms. The maximum catches a single stop of the
+# generator that delays fewer than one request in a thousand: at a fixed
+# rate, a stop shorter than a thousandth of the window (20 ms of a 20 s
+# window) does not reach p99.9.
 GENERATOR_LAG_LIMITS_MS = {"p99_9": 5, "max": 10}
 
 
@@ -1202,15 +1205,50 @@ def lag_limits_text():
     return ", ".join(f"{name.replace('_', '.')} {limit} ms" for name, limit in GENERATOR_LAG_LIMITS_MS.items())
 
 
+# What a targets file may limit under a profile (the keys of at_most): for
+# each, the metric, its unit, its name for people, and whether it holds at
+# the entry's load (its case at its rate) or at idle.
+TARGET_METRICS = {
+    **{f"{metric}_ms": (metric, "ms", f"{metric.replace('_', '.')} latency", "load") for metric in LATENCY_METRICS},
+    "peak_memory_mib": ("peak_memory", "MiB", "peak memory", "load"),
+    "oom_kills": ("oom_kills", "OOM kills", "OOM kills", "load"),
+    "idle_rss_mib": ("idle_rss", "MiB", "idle RSS after startup", "idle"),
+}
+
+
 def read_targets(path):
-    """The targets of a targets file, checked for what this script can
-    check."""
-    targets = read_json(path)["targets"]
-    for target in targets:
-        metric, unit = target.get("metric"), target.get("unit")
-        if not (metric in LATENCY_METRICS and unit == "ms" or metric == "idle_rss" and unit == "MiB"):
-            raise BenchError(f"{path}: target {target.get('id')}: metric {metric} in {unit} cannot be checked; "
-                             f"use one of {', '.join(LATENCY_METRICS)} in ms, or idle_rss in MiB")
+    """The targets of a targets file, one for each limit of each profile's
+    entry: its id (<profile>/<metric>), what it is for people, the profile
+    with its limits, the case and the rate of a target that holds at a load
+    (None for one at idle), the metric, the most it may be and its unit."""
+    entries = read_json(path).get("profiles")
+    if not isinstance(entries, list) or not entries:
+        raise BenchError(f"{path}: needs a list of profiles, each with the most smock may reach under it (at_most)")
+    targets = []
+    for entry in entries:
+        name = entry.get("profile")
+        limits = entry.get("at_most")
+        if not isinstance(name, str) or not isinstance(entry.get("cpu_limit"), str) or not limits:
+            raise BenchError(f"{path}: each profile needs its name (profile), its cpu_limit, and at_most")
+        if entry.get("memory_limit") is not None:
+            memory_bytes(entry["memory_limit"])
+        for key, value in limits.items():
+            if key not in TARGET_METRICS:
+                raise BenchError(f"{path}: {name}: {key} cannot be checked; use one of {', '.join(TARGET_METRICS)}")
+            if not isinstance(value, (int, float)) or value < 0:
+                raise BenchError(f"{path}: {name}: {key} must be a number, at least 0")
+            metric, unit, what, scope = TARGET_METRICS[key]
+            target = {"id": f"{name}/{metric}", "about": what, "profile": name, "cpu_limit": entry["cpu_limit"],
+                      "memory_limit": entry.get("memory_limit"), "case": None, "rate": None, "metric": metric,
+                      "max": value, "unit": unit}
+            if scope == "load":
+                if not isinstance(entry.get("case"), str) or not isinstance(entry.get("rate"), (int, float)):
+                    raise BenchError(f"{path}: {name}: {key} holds at a load: give the case and the rate")
+                target.update(case=entry["case"], rate=entry["rate"],
+                              about=f"{what}, {entry['case']} at {entry['rate']:,} requests/s")
+            if target["id"] in [other["id"] for other in targets]:
+                raise BenchError(f"{path}: {name} limits {metric} twice")
+            targets.append(target)
     return targets
 
 
@@ -1218,50 +1256,93 @@ def check_target(target, summary):
     """Whether the run met `target`: the target with its verdict (met,
     missed or not measured), what was measured, and why when it is not
     plain."""
-    checked = {**target, "verdict": "not measured", "measured": None, "reason": None}
+    verdict, measured, reason = target_verdict(target, summary)
+    return {**target, "verdict": verdict, "measured": measured, "reason": reason}
+
+
+def target_verdict(target, summary):
+    """The verdict on `target`, what was measured, and why when it is not
+    plain. A target holds under its profile, by name and limits: a run
+    that did not run that profile, or ran it with other limits, does not
+    measure it."""
+    profile = target["profile"]
+    ran = [entry for entry in [*summary["idle_rss"], *summary["cases"]] if entry["profile"] == profile]
+    if not ran:
+        return "not measured", None, f"the run did not run profile {profile}"
+    if (ran[0]["cpu_limit"], ran[0]["memory_limit"]) != (target["cpu_limit"], target["memory_limit"]):
+        return "not measured", None, f"the run's {profile} had {limits_text(ran[0])}, the target's {limits_text(target)}"
     if target["metric"] == "idle_rss":
-        # Under every profile it was measured under.
-        measured = [idle["rss_kib"] for idle in summary["idle_rss"] if idle["rss_kib"] is not None]
-        if not measured:
-            checked["reason"] = "the run did not measure idle RSS"
-            return checked
-        checked["measured"] = round(max(measured) / 1024, 2)
+        return idle_verdict(target, summary)
+    return load_verdict(target, summary)
+
+
+def compared(measured, target):
+    return "met" if measured <= target["max"] else "missed"
+
+
+def idle_verdict(target, summary):
+    """The verdict on an idle RSS target: smock's idle RSS under the
+    target's profile."""
+    profile = target["profile"]
+    idle = next((idle for idle in summary["idle_rss"] if idle["profile"] == profile), None)
+    if idle is None:
+        return "not measured", None, f"the run did not measure idle RSS under {profile}"
+    if not idle["smock_ready"]:
+        return "missed", None, f"smock was OOM-killed before it was ready under {profile}"
+    if idle["rss_kib"] is None:
+        return "not measured", None, f"smock had gone when its idle RSS was read under {profile}"
+    measured = round(idle["rss_kib"] / 1024, 2)
+    return compared(measured, target), measured, None
+
+
+def load_verdict(target, summary):
+    """The verdict on a target that holds at a load: what the step of the
+    target's case at its rate under its profile measured. An OOM kill
+    misses every target of the step. A latency target is not measured when
+    the load generator fell behind, and missed when requests failed. Peak
+    memory and OOM kills do not depend on the generator's timing, but
+    within their bound they are not measured when requests failed."""
+    profile, metric = target["profile"], target["metric"]
+    case_id = f"{target['case']}@{profile}"
+    found = [case for case in summary["cases"] if (case["case"], case["profile"]) == (target["case"], profile)]
+    if not found:
+        return "not measured", None, f"the run did not run {case_id}"
+    case = next((case for case in found if case["rate"] == target["rate"]), None)
+    if case is None:
+        rates = " and ".join(str(case["rate"]) for case in found)
+        return "not measured", None, f"{case_id} ran at {rates} requests/s, the target is at {target['rate']} requests/s"
+    oom_kills, peak = case["memory"]["oom_kills"], case["memory"]["peak_bytes"]
+    if metric == "oom_kills":
+        if oom_kills is None:
+            return "not measured", None, f"the kernel counted no OOM kills in {case['id']} (no memory.events)"
+        measured = oom_kills
+    elif oom_kills:
+        return "missed", None, f"smock was OOM-killed in {case['id']}"
+    elif metric == "peak_memory":
+        if peak is None:
+            return "not measured", None, f"the kernel kept no peak memory in {case['id']} (no memory.peak)"
+        measured = round(peak / (1 << 20), 2)
     else:
-        profile = target.get("profile", target.get("cpu_limit"))
-        case_id = f"{target['case']}@{profile}"
-        found = [case for case in summary["cases"] if (case["case"], case["profile"]) == (target["case"], profile)]
-        if not found:
-            checked["reason"] = f"the run did not run {case_id}"
-            return checked
-        at_rate = [case for case in found if case["rate"] == target["rate"]]
-        if not at_rate:
-            rates = " and ".join(str(case["rate"]) for case in found)
-            checked["reason"] = (f"{case_id} ran at {rates} requests/s, "
-                                 f"the target is at {target['rate']} requests/s")
-            return checked
-        case = at_rate[0]
-        case_id = case["id"]
-        if case["memory"]["oom_kills"]:
-            checked["verdict"] = "missed"
-            checked["reason"] = f"smock was OOM-killed in {case_id}"
-            return checked
-        checked["measured"] = case["latency_ms"][target["metric"]]
+        measured = case["latency_ms"][metric]
         if case["load_generator_late"]:
             lag = case["generator_lag_ms"]
-            checked["reason"] = (f"the load generator fell behind its schedule in {case_id} "
-                                 f"(lag p99.9 {lag['p99_9']} ms, max {lag['max']} ms; "
-                                 f"at most {lag_limits_text()})")
-            return checked
+            return "not measured", measured, (f"the load generator fell behind its schedule in {case['id']} "
+                                              f"(lag p99.9 {lag['p99_9']} ms, max {lag['max']} ms; "
+                                              f"at most {lag_limits_text()})")
         if case["errors"]:
-            checked["verdict"] = "missed"
-            checked["reason"] = (f"{case['errors']} errors: {case['errors']} of the "
-                                 f"{case['requests']['scheduled']} requests got no expected response")
-            return checked
-        if checked["measured"] is None:
-            checked["reason"] = f"{case_id} has no latencies"
-            return checked
-    checked["verdict"] = "met" if checked["measured"] <= target["max"] else "missed"
-    return checked
+            # A request that failed is a latency over any target.
+            return "missed", measured, f"{case['errors']} errors: {failed_text(case)}"
+        if measured is None:
+            return "not measured", None, f"{case['id']} has no latencies"
+    if case["errors"] and measured <= target["max"]:
+        # smock did not carry the whole load, so what it used is not what
+        # the load takes.
+        return "not measured", measured, f"{failed_text(case)}: smock did not carry the load"
+    return compared(measured, target), measured, None
+
+
+def failed_text(case):
+    return f"{case['errors']} of the {case['requests']['scheduled']} requests got no expected response in {case['id']}"
 
 
 def shown(value):
@@ -1332,11 +1413,12 @@ def summary_markdown(summary, conditions):
         lines += ["", f"**Not a full run:** the command line changed the plan ({shown_overrides})."]
     if not summary["complete"]:
         lines += ["", "**Incomplete:** the run stopped before its last case."]
-    lines += ["", "## Targets", "", "| Target | At most | Measured | Verdict |", "|---|---|---|---|"]
+    lines += ["", "## Targets", "", "| Profile | Target | At most | Measured | Verdict |", "|---|---|---|---|---|"]
     for target in summary["targets"]:
+        profile = f"{target['profile']} ({target['cpu_limit']} CPU, {target['memory_limit'] or 'no memory limit'})"
         measured = "-" if target["measured"] is None else f"{target['measured']} {target['unit']}"
         verdict = target["verdict"] + (f": {target['reason']}" if target["reason"] else "")
-        lines.append(f"| {target['about']} | {target['max']} {target['unit']} | {measured} | {verdict} |")
+        lines.append(f"| {profile} | {target['about']} | {target['max']} {target['unit']} | {measured} | {verdict} |")
     lines += ["", "## Reading the cases", "",
               "Each profile is a CPU limit, a CFS quota over a 100 ms period, and a memory limit, memory.max "
               "with no swap. Latency counts from each request's scheduled send time. *From release* counts "
@@ -1410,7 +1492,7 @@ def main(argv):
     run.add_argument("--out", help="where to write the results (default: bench/results/<date>-<time>)")
     run.add_argument("--plan", default=str(BENCH / "plan.json"),
                      help="the plan to run (default: bench/plan.json; bench/plan-autopilot.json has the "
-                          "GKE Autopilot profiles)")
+                          "GKE Autopilot profiles and the Helm chart's default, which the targets hold under)")
     run.add_argument("--cases", help="only these cases of the plan, comma-separated")
     run.add_argument("--profiles", help="only these resource profiles of the plan, comma-separated")
     run.add_argument("--cpu-limits", help="only the profiles with these CPU limits, comma-separated, such as 250m,1")

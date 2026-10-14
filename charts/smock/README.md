@@ -236,40 +236,41 @@ resources:
 
 ### Sizing
 
-Measured on an M1 MacBook Air, not on GKE, with `python3 bench/bench.py run
---plan bench/plan-autopilot.json` in smock's repository: smock ran under each
-row's CPU quota and memory limit, with the 1161 Stubs of
-`bench/definitions`, the request mix of `bench/requests.json`, the Journal
-on, and 64 keep-alive connections over loopback, plain HTTP and HTTPS alike.
-On GKE the CPU and the Pod network differ, so compare the rows with each
-other rather than take them as GKE's numbers.
+Measured on an M1 MacBook Air over loopback, not on GKE, with `python3
+bench/bench.py run --plan bench/plan-autopilot.json` in smock's repository:
+smock ran under each row's CPU quota and memory limit, with the 1161 Stubs
+of `bench/definitions`, the request mix of `bench/requests.json`, the
+Journal on, and 64 keep-alive connections, plain HTTP and HTTPS alike, at
+rates that doubled from step to step. On GKE the CPU and the Pod network
+differ, so compare the rows with each other rather than take them as GKE's
+numbers.
 
-| Requests and limits | Which Pod | Kept up with, p99 about 2 ms | Most served | Peak memory | Journal bound |
-|---|---|---|---|---|---|
-| 50m, 52Mi | The smallest on Autopilot with bursting | 1,000 requests/s | about 2,000 requests/s | 42 MiB | 13 MiB |
-| 250m, 512Mi | The smallest on Autopilot without bursting | 5,000 requests/s | about 10,000 requests/s | 46 MiB | 64 MiB |
-| 1, 1Gi | The chart's default | 20,000 requests/s | about 40,000 requests/s | 66 MiB, under a 4 GiB limit | 64 MiB |
+| Requests and limits | Which Pod | Kept up with, p99 about 2 ms | Most served | Peak memory | Idle RSS | Journal bound |
+|---|---|---|---|---|---|---|
+| 50m, 52Mi | The smallest on Autopilot with bursting | 2,000 requests/s | 4,000 requests/s | 24 MiB | 14.5 MiB | 13 MiB |
+| 250m, 512Mi | The smallest on Autopilot without bursting | 10,000 requests/s; 20,000 over plain HTTP | 20,000 requests/s | 25 MiB | 16.4 MiB | 64 MiB |
+| 1, 1Gi | The chart's default | 40,000 requests/s; 80,000 over plain HTTP | 80,000 requests/s | 23 MiB, under a 4 GiB limit | 16.5 MiB | 64 MiB |
 
-- Throughput grows with the CPU limit, at about 40,000 requests a second
-  per CPU, or about 25 µs of CPU per request. The rates went up in
-  doublings, so the most a Pod keeps up with lies between the two columns.
-  Most of the 2 ms p99 is the load generator's timer, but near the top a
-  small CPU quota shows in the slowest requests: at 50m and 1,000
-  requests/s, p99.9 was 12 ms over HTTP and 55 ms over HTTPS.
-- Peak memory is the most the container's cgroup used under load, socket
-  buffers included; smock's RSS was 15 to 16 MiB after startup. 52Mi leaves
-  little room: more Stubs, more connections or larger bodies in the Journal
-  take more, and the kernel kills a container that goes over its limit.
+- Each Pod answered every request up to the highest rate it was sent, the
+  Most served column, but there it was at the limit of its CPU over HTTPS:
+  p99 was 109 ms at 50m, 21 ms at 250m and 458 ms at 1 CPU (18 ms, 2 ms
+  and 2 ms over plain HTTP). So the most a Pod keeps up with lies between
+  the two columns, and the most it serves is about the last. From 10,000
+  requests/s up, smock took about 10 µs of CPU per request over plain HTTP
+  and about 13 µs over HTTPS.
+- Most of the 2 ms p99 is the load generator's timer, but near the top a
+  small CPU quota shows in the slowest requests: at 50m and 2,000
+  requests/s, p99.9 was 29 ms over plain HTTP and 61 ms over HTTPS (2 ms
+  and 28 ms at 1,000 requests/s). Under 1 CPU at 80,000 requests/s over
+  plain HTTP, the load generator itself fell behind now and then.
+- Peak memory is the most the container's cgroup used under load
+  (`memory.peak`), the Journal at its bound and socket buffers included,
+  and Idle RSS is smock's resident memory 5 s after startup, before any
+  load. More Stubs, more connections or larger bodies in the Journal take
+  more, and the kernel kills a container that goes over its limit.
 - smock bounds its Journal by default at the smaller of 64 MiB and a
   quarter of its memory limit, the last column, so a small Pod keeps a
-  small Journal. The benchmark ran before that rule, with 64 MiB in every
-  row. `SMOCK_JOURNAL_MAX_BYTES` in `env` sets another bound.
-- The benchmark also ran before two later changes to smock. It now takes
-  about 10 µs of CPU per request instead of about 26, measured with the
-  same Stubs and request mix under one CPU at 20,000 requests/s. And it no
-  longer leaks about 33 bytes per request, which made its memory grow with
-  every request served. So these rows understate what a Pod serves and
-  overstate its peak memory.
+  small Journal. `SMOCK_JOURNAL_MAX_BYTES` in `env` sets another bound.
 
 ## Scaling and shutdown
 
