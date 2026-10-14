@@ -3,6 +3,7 @@ import {
   "smock/smock/definitions",
   "smock/smock/engine",
   "smock/smock/log",
+  "smock/smock/usage",
   "moonbitlang/core/argparse",
   "moonbitlang/core/env",
   "moonbitlang/core/json",

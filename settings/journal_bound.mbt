@@ -117,22 +117,12 @@ pub fn JournalByteBound::log_fields(
 }
 
 ///|
-/// Where cgroup v2 is mounted: the unified hierarchy, as systemd and
-/// Kubernetes nodes mount it.
-let cgroup_root : String = "/sys/fs/cgroup"
-
-///|
 /// The `memory.max` file of the cgroup v2 that `proc_self_cgroup`, the text
 /// of `/proc/self/cgroup`, names in its `0::<path>` line, under
-/// `/sys/fs/cgroup`. `None` when it names none, as on a cgroup v1 host.
+/// `/sys/fs/cgroup` (`@usage.cgroup_dir`). `None` when it names none, as on
+/// a cgroup v1 host.
 pub fn memory_max_file(proc_self_cgroup : String) -> String? {
-  for line in proc_self_cgroup.split("\n") {
-    if line.strip_prefix("0::") is Some(path) {
-      let dir = if path == "/" { "" } else { path.to_owned() }
-      return Some("\{cgroup_root}\{dir}/memory.max")
-    }
-  }
-  None
+  @usage.cgroup_dir(proc_self_cgroup).map(dir => "\{dir}/memory.max")
 }
 
 ///|

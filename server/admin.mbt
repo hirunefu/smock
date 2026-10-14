@@ -11,6 +11,8 @@ priv struct Admin {
   metrics : @metrics.Registry
   /// The metrics of the Journal, brought up to date on each scrape.
   journal_metrics : JournalMetrics
+  /// The process and cgroup metrics, brought up to date on each scrape.
+  process_metrics : ProcessMetrics
   /// Where changes made through the Admin API are logged.
   logger : @log.Logger
   /// The token every operation needs, as UTF-8, or `None` when
@@ -47,6 +49,9 @@ priv struct Route {
   takes_body : Bool
   /// What answers a call.
   answer : (Admin, Call) -> Reply
+  /// What brings what `answer` shows up to date first, reading it from
+  /// outside smock's own memory, as the metrics read files.
+  refresh : (async (Admin) -> Unit)?
 }
 
 ///|
@@ -85,7 +90,7 @@ let routes : Array[Route] = [
   route("/startupz", "GET", startup_probe, open=true),
   route("/readyz", "GET", readiness_probe, open=true),
   route("/livez", "GET", liveness_probe, open=true),
-  route("/metrics", "GET", metrics, open=true),
+  route("/metrics", "GET", metrics, open=true, refresh=refresh_metrics),
 ]
 
 ///|
@@ -95,15 +100,16 @@ fn route(
   answer : (Admin, Call) -> Reply,
   open? : Bool = false,
   takes_body? : Bool = false,
+  refresh? : async (Admin) -> Unit,
 ) -> Route {
-  { path, meth, open, takes_body, answer, }
+  { path, meth, open, takes_body, answer, refresh, }
 }
 
 ///|
 /// Creates the Admin API of a process whose life `lifecycle` follows.
 ///
 /// - `metrics` holds the metrics `/metrics` serves, among them
-///   `journal_metrics`.
+///   `journal_metrics` and `process_metrics`.
 /// - `logger` logs each change made through the Admin API.
 /// - `token` is the bearer token every operation needs, or `None` to turn
 ///   authentication off.
@@ -115,6 +121,7 @@ fn Admin::new(
   build : @buildinfo.BuildInfo,
   metrics~ : @metrics.Registry,
   journal_metrics~ : JournalMetrics,
+  process_metrics~ : ProcessMetrics,
   logger~ : @log.Logger,
   token~ : String?,
   replica~ : String,
@@ -127,6 +134,7 @@ fn Admin::new(
     build,
     metrics,
     journal_metrics,
+    process_metrics,
     logger,
     token: token.map(token => @utf8.encode(token)),
     replica,
@@ -137,7 +145,7 @@ fn Admin::new(
 
 ///|
 /// The encoded response to `request`.
-fn Admin::respond(self : Admin, request : @http1.Request) -> Bytes {
+async fn Admin::respond(self : Admin, request : @http1.Request) -> Bytes {
   self.encode(self.handle(request), request~)
 }
 
@@ -200,8 +208,10 @@ fn Admin::error(
 /// The reply to `request`. Checks, in this order: the token, unless the
 /// path is served without one; the path; the method; that the first
 /// definition set has loaded, unless the path is served without a token;
-/// the JSON body, for an operation that takes one.
-fn Admin::handle(self : Admin, request : @http1.Request) -> Reply {
+/// the JSON body, for an operation that takes one. Then it brings what the
+/// operation shows up to date, when it reads that from outside smock's own
+/// memory, and answers.
+async fn Admin::handle(self : Admin, request : @http1.Request) -> Reply {
   let path = path_of(request.target)
   let at_path = []
   for route in routes {
@@ -267,6 +277,9 @@ fn Admin::handle(self : Admin, request : @http1.Request) -> Reply {
     }
   } else {
     None
+  }
+  if route.refresh is Some(refresh) {
+    refresh(self)
   }
   (route.answer)(self, { request, params, body, })
 }
@@ -547,12 +560,20 @@ fn query_parameter(target : String, name : String) -> Result[String?, String] {
 }
 
 ///|
-/// Serves every metric in the Prometheus text format. The Journal's are
-/// brought up to date first, once the definitions have loaded.
-fn metrics(admin : Admin, _call : Call) -> Reply {
+/// Brings the metrics that are read, not counted, up to date before a
+/// scrape: the Journal's, once the definitions have loaded, and the process
+/// and cgroup metrics, from their files.
+async fn refresh_metrics(admin : Admin) -> Unit {
   if admin.lifecycle.engine is Some(engine) {
     admin.journal_metrics.update(engine.journal_stats())
   }
+  admin.process_metrics.update()
+}
+
+///|
+/// Serves every metric in the Prometheus text format, as `refresh_metrics`
+/// has just brought them up to date.
+fn metrics(admin : Admin, _call : Call) -> Reply {
   {
     status: 200,
     headers: [("Content-Type", "text/plain; version=0.0.4; charset=utf-8")],

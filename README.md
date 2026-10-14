@@ -69,6 +69,12 @@ Packages of `smock/smock`:
 - `metrics`: the metrics registry: counters, gauges and histograms with
   fixed label names, rendered in the Prometheus text format. Features
   register their metrics in the one registry `smock serve` keeps.
+- `usage`: understands what Linux says a process and its cgroup use, in
+  `/proc/self/stat`, `/proc/self/status` and a cgroup v2's `cpu.stat` and
+  `memory.peak`, for the process and cgroup metrics, and where
+  `/proc/self/cgroup` puts the process's cgroup, for those and for the
+  memory limit the Journal's bound follows. It does no I/O: `server` reads
+  the files and hands it their text.
 - `openssl`: smock's own bindings to OpenSSL, the one C library ADR 0001
   allows (native). A TLS connection there does no I/O: it takes the bytes
   that arrive from the peer and hands out the bytes to send, and `server`
@@ -332,6 +338,26 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   certificate expires; `smock_journal_entries`, `smock_journal_bytes` and
   `smock_journal_evictions_total` show the [Journal](#the-journal)'s size
   and evictions, without labels.
+- What smock's process and its cgroup use is read when `/metrics` is
+  scraped, so serving requests costs nothing for it. The standard process
+  metrics of Prometheus's client libraries: `process_cpu_seconds_total`
+  (user and system, from `/proc/self/stat`, to the hundredth of a second),
+  `process_resident_memory_bytes` (`VmRSS` of `/proc/self/status`) and
+  `process_start_time_seconds`. On cgroup v2, the metrics of smock's own
+  cgroup, the one `/proc/self/cgroup` names: from its `cpu.stat`,
+  `smock_cgroup_cpu_usage_seconds_total` (to the microsecond) and, with a
+  CPU limit, `smock_cgroup_cpu_periods_total`,
+  `smock_cgroup_cpu_throttled_periods_total` and
+  `smock_cgroup_cpu_throttled_seconds_total`, how often and how long the
+  CFS quota held it back; from its `memory.peak`,
+  `smock_cgroup_memory_peak_bytes`, the most memory it has used, all that
+  `memory.max` limits. In a Kubernetes container the cgroup is the
+  container's, so they show smock's CPU, throttling and peak memory where
+  nothing outside the Pod can read its cgroup, as on GKE Autopilot; outside
+  one, the cgroup may hold other processes too. A metric whose file smock
+  cannot read when it starts is left out; one whose file it cannot read
+  or understand at a scrape keeps the value it last read, and `/metrics`
+  answers all the same.
 - The request traffic on the plain and TLS ports is in
   `smock_requests_total` and the latency histogram
   `smock_request_duration_seconds` (from the request being read in full to

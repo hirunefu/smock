@@ -90,6 +90,17 @@ pub fn CounterSeries::inc(self : CounterSeries, by? : Double = 1.0) -> Unit {
 }
 
 ///|
+/// Sets the counter to `total`, a running total that something else keeps,
+/// such as the CPU time the kernel counts for the process, when `total` is
+/// above its value. A total below it, or NaN, leaves it as it is: a counter
+/// never goes down.
+pub fn CounterSeries::advance_to(self : CounterSeries, total : Double) -> Unit {
+  if total > self.series.value {
+    self.series.value = total
+  }
+}
+
+///|
 /// A gauge: a value that goes up and down, such as a number of entries
 /// held.
 pub struct Gauge {
