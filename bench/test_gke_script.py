@@ -468,10 +468,13 @@ class Run(Script):
         # Deleted, and checked.
         self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
         self.assertIn("nothing is left", output)
+        # The watchdog stops either on the run's TERM or, if it sees the
+        # stop file first, by itself; both mean the run stopped it.
+        stopped = ("watchdog: stopped by the run", "watchdog: the run cleaned up; stopping")
         deadline = time.monotonic() + 5
-        while "stopped by the run" not in self.watchdog_log() and time.monotonic() < deadline:
+        while not any(s in self.watchdog_log() for s in stopped) and time.monotonic() < deadline:
             time.sleep(0.05)
-        self.assertIn("watchdog: stopped by the run", self.watchdog_log())
+        self.assertTrue(any(s in self.watchdog_log() for s in stopped), self.watchdog_log())
         # The project is nowhere in what the run wrote.
         for path in self.out.rglob("*"):
             if path.is_file():
