@@ -10,6 +10,7 @@ usage:
   python3 bench/gke/gke.py pod-info PODS NODES    what to keep of the Pods and their nodes
   python3 bench/gke/gke.py summarize [options] OUT   summary.json, summary.md and conditions.json
   python3 bench/gke/gke.py elf-arch FILE          the architecture of an executable, amd64 or arm64
+  python3 bench/gke/gke.py names-commit FILE COMMIT   fail if smock's build information does not name COMMIT
   python3 bench/gke/gke.py check-dockerfiles FILE...   fail if a Dockerfile has a RUN instruction
 """
 
@@ -379,6 +380,18 @@ def elf_arch(path):
     return ELF_MACHINES[machine]
 
 
+def names_commit(path, commit):
+    """Whether a smock binary names `commit` in its build information, the
+    commit `smock --version` says, without running it: a native build keeps
+    it as a MoonBit string literal, in UTF-16 (or in UTF-8, should that
+    change)."""
+    try:
+        data = Path(path).read_bytes()
+    except OSError as error:
+        raise GkeError(f"cannot read {path}: {error}") from error
+    return any(commit.encode(encoding) in data for encoding in ("utf-16-le", "utf-8"))
+
+
 def run_instructions(path):
     """The RUN instructions of a Dockerfile (ONBUILD RUN among them), as
     (line number, text): what a build for another architecture than the
@@ -638,6 +651,13 @@ def command_elf_arch(args):
     return 0
 
 
+def command_names_commit(args):
+    if not names_commit(args.file, args.commit):
+        raise GkeError(f"{args.file} does not name commit {args.commit} in its build information, so it is built "
+                       "from another commit")
+    return 0
+
+
 def command_check_dockerfiles(args):
     found = [(path, number, text) for path in args.files for number, text in run_instructions(path)]
     for path, number, text in found:
@@ -703,6 +723,11 @@ def main(argv):
     reading = commands.add_parser("elf-arch", help="print the architecture of an ELF executable: amd64 or arm64")
     reading.add_argument("file", help="the executable, which is not run")
     reading.set_defaults(handler=command_elf_arch)
+    naming = commands.add_parser("names-commit", help="fail if a smock binary's build information does not "
+                                                       "name the commit (the binary is not run)")
+    naming.add_argument("file", help="the smock binary")
+    naming.add_argument("commit", help="the commit, as `git rev-parse --short=12` prints it")
+    naming.set_defaults(handler=command_names_commit)
     checking = commands.add_parser("check-dockerfiles", help="fail, naming them, if the Dockerfiles have a RUN "
                                                              "instruction")
     checking.add_argument("files", nargs="+", help="the Dockerfiles")

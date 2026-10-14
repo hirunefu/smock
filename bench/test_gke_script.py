@@ -320,21 +320,27 @@ class Script(unittest.TestCase):
         self.configure()
         # Binaries of this machine's architecture: smock says the commit
         # checked out.
-        self.smock = self.binary("smock", HOST_ARCH, smock_version())
+        self.smock = self.smock_for(HOST_ARCH)
         self.oha = self.binary("oha", HOST_ARCH, "oha 1.16.0\n")
         self.out = self.tmp / "out"
         self.tmpdir = self.tmp / "tmp"
         self.tmpdir.mkdir()
         self.addCleanup(self.stop_watchdog)
 
-    def binary(self, name, arch, text):
-        """An executable for `arch` that prints `text`, in a directory of
-        its own."""
+    def binary(self, name, arch, text, data=b""):
+        """An executable for `arch` that prints `text`, followed by `data`,
+        in a directory of its own."""
         directory = Path(tempfile.mkdtemp(prefix=f"{name}-{arch}-", dir=self.tmp))
         path = directory / name
-        path.write_bytes(elf_executable(arch, text))
+        path.write_bytes(elf_executable(arch, text) + data)
         path.chmod(0o755)
         return path
+
+    def smock_for(self, arch, commit=HEAD):
+        """A release binary of smock for `arch`, built from `commit`: it says
+        the commit when run, and holds it in its build information as a
+        native MoonBit build does, in UTF-16."""
+        return self.binary("smock", arch, smock_version(commit), commit.encode("utf-16-le"))
 
     def stop_watchdog(self):
         """Stops a watchdog that a test left waiting, before the fakes and its
@@ -672,16 +678,17 @@ class Architectures(Script):
         self.assertEqual(conditions["smock"]["sha256"], hashlib.sha256(self.smock.read_bytes()).hexdigest())
 
     def test_a_run_for_the_other_architecture_builds_and_runs_everything_for_it(self):
-        smock = self.binary("smock", OTHER_ARCH, smock_version("0123456789ab"))
+        smock = self.smock_for(OTHER_ARCH)
         oha = self.binary("oha", OTHER_ARCH, "oha 1.16.0\n")
         status, output = self.run_script("--yes", "--arch", OTHER_ARCH, "--smock", smock, "--oha", oha)
         self.assertEqual(status, 0, output)
         self.assertEqual(self.built_platforms(), [f"linux/{OTHER_ARCH}"] * 2)
         self.assertEqual(set(self.nodes_architectures()), {OTHER_ARCH})
-        # This machine cannot run smock to read its commit; the run says
-        # which binary it took instead.
+        # This machine cannot run smock to ask its commit: it reads it from
+        # the binary, and says which binary it took.
         digest = hashlib.sha256(smock.read_bytes()).hexdigest()
-        self.assertIn(f"its commit is not checked; its SHA-256 is {digest}", output)
+        self.assertIn(f"its build information names commit {HEAD}, which is checked out; its SHA-256 is {digest}",
+                      output)
         conditions = json.loads((self.out / "conditions.json").read_text())
         self.assertEqual((conditions["gke"]["arch"], conditions["smock"]["sha256"]), (OTHER_ARCH, digest))
 
@@ -695,7 +702,7 @@ class Architectures(Script):
         self.assertEqual(self.calls(), [])
 
     def test_the_pinned_oha_of_the_other_architecture_is_installed_for_it(self):
-        smock = self.binary("smock", OTHER_ARCH, smock_version())
+        smock = self.smock_for(OTHER_ARCH)
         status, output = self.run_script("--dry-run", "--arch", OTHER_ARCH, "--smock", smock, "--oha", "")
         self.assertEqual(status, 0, output)
         self.assertRegex(output, rf"would run: \S+/scripts/install-oha.sh \S+/bin {OTHER_ARCH}\n")
@@ -715,18 +722,27 @@ class Architectures(Script):
             self.assertEqual(self.changing_calls(), [])
 
     def test_a_smock_of_this_machine_must_say_the_commit_checked_out(self):
-        smock = self.binary("smock", HOST_ARCH, smock_version("0123456789ab"))
+        smock = self.smock_for(HOST_ARCH, "0123456789ab")
         status, output = self.run_script("--yes", "--smock", smock)
         self.assertEqual(status, 1, output)
         self.assertIn(f"smock: {smock} is built from commit 0123456789ab, not from {HEAD}, which is checked out",
                       output)
         self.assertEqual(self.changing_calls(), [])
 
+    def test_a_smock_of_the_other_architecture_must_name_the_commit_checked_out(self):
+        # Such as one CI built for a pull request, from its merge commit.
+        smock = self.smock_for(OTHER_ARCH, "0123456789ab")
+        oha = self.binary("oha", OTHER_ARCH, "oha 1.16.0\n")
+        status, output = self.run_script("--yes", "--arch", OTHER_ARCH, "--smock", smock, "--oha", oha)
+        self.assertEqual(status, 1, output)
+        self.assertIn(f"smock: {smock} does not name commit {HEAD} in its build information", output)
+        self.assertEqual(self.changing_calls(), [])
+
     def test_images_that_run_something_are_refused_for_the_other_architecture(self):
         script = copy_repository(self.tmp / "repository")
         dockerfile = self.tmp / "repository" / "bench" / "gke" / "generator.Dockerfile"
         dockerfile.write_text(dockerfile.read_text() + "RUN pip install something\n")
-        smock = self.binary("smock", OTHER_ARCH, smock_version())
+        smock = self.smock_for(OTHER_ARCH)
         oha = self.binary("oha", OTHER_ARCH, "oha 1.16.0\n")
         command = [str(script), *self.arguments("--yes", "--arch", OTHER_ARCH, "--smock", smock, "--oha", oha)[1:]]
         result = subprocess.run(command, env=self.environment(), capture_output=True, text=True, timeout=120)
@@ -778,14 +794,14 @@ class Zones(Script):
 
 class Regions(Script):
     def test_only_an_arm64_run_is_warned_of_a_region_without_arm_pods(self):
-        smock = self.binary("smock", "amd64", smock_version())
+        smock = self.smock_for("amd64")
         oha = self.binary("oha", "amd64", "oha 1.16.0\n")
         status, output = self.run_script("--dry-run", "--arch", "amd64", "--smock", smock, "--oha", oha,
                                          GKE_BENCH_REGION="asia-northeast1")
         self.assertEqual(status, 0, output)
         self.assertIn("Cost estimate for amd64 (x86) Pods (asia-northeast1, on-demand prices", output)
         self.assertNotIn("Arm", output)
-        smock = self.binary("smock", "arm64", smock_version())
+        smock = self.smock_for("arm64")
         oha = self.binary("oha", "arm64", "oha 1.16.0\n")
         status, output = self.run_script("--dry-run", "--arch", "arm64", "--smock", smock, "--oha", oha,
                                          GKE_BENCH_REGION="asia-northeast1")

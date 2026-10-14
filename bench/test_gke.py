@@ -548,6 +548,35 @@ class BinaryArchitecture(Helper):
         self.assertIn("cannot read", stderr)
 
 
+class BuildCommit(Helper):
+    """A smock binary that this machine cannot run is checked to be built
+    from the commit checked out by its build information, which holds the
+    commit that `smock --version` says."""
+
+    def names(self, content, commit="0123456789ab"):
+        path = self.directory() / "smock"
+        path.write_bytes(elf_header(62) + bytes(64) + content + bytes(16))
+        return helper("names-commit", path, commit)
+
+    def test_the_commit_is_found_as_a_native_moonbit_build_keeps_it(self):
+        for content in ("0123456789ab".encode("utf-16-le"), b"0123456789ab"):
+            status, _, stderr = self.names(content)
+            self.assertEqual(status, 0, stderr)
+        # A release binary built here, which says its commit when run.
+        version = subprocess.run([SMOCK, "--version"], capture_output=True, text=True, check=True).stdout
+        commit = version.split("(commit ", 1)[1].split(",", 1)[0]
+        status, _, stderr = helper("names-commit", SMOCK, commit)
+        self.assertEqual(status, 0, stderr)
+
+    def test_a_binary_of_another_commit_is_refused(self):
+        status, _, stderr = self.names("ba988d7938dc".encode("utf-16-le"))
+        self.assertEqual(status, 1)
+        self.assertIn("does not name commit 0123456789ab in its build information", stderr)
+        status, _, stderr = helper("names-commit", self.directory() / "missing", "0123456789ab")
+        self.assertEqual(status, 1)
+        self.assertIn("cannot read", stderr)
+
+
 class Dockerfiles(Helper):
     """The images are built for the run's architecture, which may not be
     this machine's: a RUN instruction would need emulation, which this

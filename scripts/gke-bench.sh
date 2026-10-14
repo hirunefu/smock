@@ -47,9 +47,10 @@
 #   --out DIR        where the results go (default: bench/results/gke-<date>-<time>)
 #   --time-limit T   when the watchdog deletes the cluster, with its unit: 80m (default), 4800s; at most 240m
 #   --arch ARCH      the nodes' architecture, amd64 or arm64 (default: this machine's)
-#   --smock FILE     use this release binary instead of building one; needed for another
-#                    architecture than this machine's: gh run download <run-id> -R hirunefu/smock
-#                    -n smock-linux-<arch> gets the one CI built (a run of CI on a push)
+#   --smock FILE     use this release binary, built from the commit checked out, instead of
+#                    building one; needed for another architecture than this machine's:
+#                    gh run download <run-id> -R hirunefu/smock -n smock-linux-<arch> gets the
+#                    one CI built (CI's run on the push of that commit)
 #   --oha FILE       use this oha (of the run's architecture) instead of the pinned one
 #
 # Environment:
@@ -626,20 +627,26 @@ binary_problem() {
 }
 
 # Checks the binaries given for the images: that they are for the run's
-# architecture, and that smock, when this machine can run it, says the
-# commit checked out. Of a smock this machine cannot run, it prints the
-# SHA-256 instead, which the conditions record too.
+# architecture, and that smock is built from the commit checked out: as it
+# says (smock --version) when this machine can run it, else as its build
+# information names it, read without running it. Of a smock this machine
+# cannot run, it prints the SHA-256 too, which the conditions record.
 check_binaries() {
   local text version commit head
   if [ -n "$smock_binary" ]; then
     text=$(binary_problem smock "$smock_binary")
     if [ -n "$text" ]; then
       problem "$text"
-    elif [ "$arch" != "$host_arch" ]; then
-      say "smock: $smock_binary is for $arch, which this machine cannot run, so its commit is not checked; its" \
-        "SHA-256 is $(sha256sum "$smock_binary" | cut -d ' ' -f 1)"
     elif ! head=$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null); then
       problem "cannot read the commit checked out, which smock should be built from: is $ROOT a git checkout?"
+    elif [ "$arch" != "$host_arch" ]; then
+      if text=$("$PYTHON" "$GKE_PY" names-commit "$smock_binary" "$head" 2>&1); then
+        say "smock: $smock_binary is for $arch, which this machine cannot run; its build information names" \
+          "commit $head, which is checked out; its SHA-256 is $(sha256sum "$smock_binary" | cut -d ' ' -f 1)"
+      else
+        problem "smock: ${text#gke: }: take the release binary CI built for linux/$arch on the push of $head," \
+          "or check out the commit it is built from"
+      fi
     elif [ ! -x "$smock_binary" ]; then
       problem "smock: $smock_binary is not executable, so its commit cannot be checked: chmod +x it"
     elif ! version=$("$smock_binary" --version 2>&1); then

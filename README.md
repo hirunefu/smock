@@ -1193,14 +1193,17 @@ scripts/gke-bench.sh --yes --arch amd64 --smock "$dir/smock"
 ```
 
 The run's `headSha` must be the commit checked out. A run on a pull request
-builds its merge commit instead, so take the run on the push. The
-artifact is there only if that run's linux/amd64 build and tests passed.
+builds its merge commit instead, so take the run on the push; the script
+refuses a binary built from another commit. The artifact is there only if
+that run's linux/amd64 build and tests passed.
 
 - **Checks, before anything is made.** It checks that smock and oha, when
   given, are ELF executables of the run's architecture (from their
-  headers; they are not run), and that smock says the commit checked out
-  (`smock --version`) when the machine can run it; of a smock it cannot
-  run, it prints the SHA-256, which `conditions.json` records too. For
+  headers; they are not run), and that smock is built from the commit
+  checked out: as it says (`smock --version`) when the machine can run
+  it, else as its build information names it, read from the binary
+  without running it; of a smock it cannot run, it also prints the
+  SHA-256, which `conditions.json` records too. For
   another architecture than the machine's, it checks that the images'
   Dockerfiles only copy, since a `RUN` would need emulation. It reads the
   project, checks that the Artifact Registry, Compute Engine and

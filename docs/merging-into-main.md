@@ -55,7 +55,8 @@ pre-merge run compares with them.
   run, so that each compares with the previous one. From an arm64
   machine, which cannot build smock for amd64, take the release binary CI
   built for linux/amd64 on the push of the commit checked out (check that
-  the run's `headSha` is `git rev-parse HEAD`; CI keeps it for 7 days).
+  the run's `headSha` is `git rev-parse HEAD`; CI keeps it for 7 days; the
+  script refuses a binary whose build information names another commit).
   First a dry run, which only reads:
 
   ```sh
