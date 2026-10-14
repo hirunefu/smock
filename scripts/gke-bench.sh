@@ -68,6 +68,14 @@ GCLOUD=${GCLOUD:-gcloud}
 KUBECTL=${KUBECTL:-kubectl}
 DOCKER=${DOCKER:-docker}
 PYTHON=${PYTHON:-python3}
+# Turns gcloud's JSON listing of repositories into one line each:
+# repository, its name and its location.
+REPOSITORY_LINES='
+import json, sys
+for repository in json.loads(sys.stdin.read() or "[]"):
+    parts = repository["name"].split("/")
+    print("repository", parts[-1], parts[3] if len(parts) == 6 else "", sep="\t")
+'
 PROJECT=${GKE_BENCH_PROJECT:-}
 REGION=${GKE_BENCH_REGION:-}
 ZONE=${GKE_BENCH_ZONE:-${REGION:+$REGION-a}}
@@ -232,22 +240,27 @@ delete_cluster() {
   done
 }
 
+# Deletes the repository. Whether it is gone is read from describing it by
+# name, which answers NOT_FOUND then: a listing would not do, since gcloud
+# shows repositories there by their short names, and lists a location that
+# fails with a server error as empty.
 delete_repository() {
-  local names attempt
+  local attempt answer
   if [ "$dry_run" = 1 ]; then
     changes "$GCLOUD" artifacts repositories delete "$repository" --location="$REGION" --project="$PROJECT" --quiet
     return 0
   fi
-  for attempt in 1 2 3 4 5; do
-    if ! names=$(reads "$GCLOUD" artifacts repositories list --project="$PROJECT" --location="$REGION" \
-      --format='value(name)'); then
-      say "cannot list the repositories; trying again"
-    elif ! grep -q "/repositories/$repository\$" <<<"$names"; then
+  for attempt in 1 2 3 4 5 6; do
+    if answer=$("$GCLOUD" artifacts repositories describe "$repository" --location="$REGION" --project="$PROJECT" \
+      --format='value(name)' 2>&1); then
+      changes "$GCLOUD" artifacts repositories delete "$repository" --location="$REGION" --project="$PROJECT" \
+        --quiet || say "repository $repository could not be deleted (attempt $attempt)"
+    elif [[ $answer == *NOT_FOUND* ]]; then
       say "repository $repository: deleted"
       return 0
     else
-      changes "$GCLOUD" artifacts repositories delete "$repository" --location="$REGION" --project="$PROJECT" \
-        --quiet || say "repository $repository could not be deleted (attempt $attempt)"
+      say "cannot read the repository $repository; trying again"
+      masked <<<"$answer" >&2
     fi
     pause
   done
@@ -403,8 +416,16 @@ take_inventory() {
   : >"$file"
   reads "$GCLOUD" container clusters list --project="$PROJECT" --format='value(name,location)' |
     sed 's/^/cluster\t/' >>"$file" || status=1
-  reads "$GCLOUD" artifacts repositories list --project="$PROJECT" --format='value(name)' |
-    sed -E 's#^projects/[^/]+/locations/([^/]+)/repositories/(.*)$#repository\t\2\t\1#' >>"$file" || status=1
+  # As JSON, whose names are whole (projects/<p>/locations/<l>/repositories/<r>),
+  # and failed when gcloud warns that a location could not be listed: it
+  # then lists that location as empty.
+  reads "$GCLOUD" artifacts repositories list --project="$PROJECT" --format=json 2>"$file.err" |
+    "$PYTHON" -c "$REPOSITORY_LINES" >>"$file" || status=1
+  if grep -q 'Failed to list' "$file.err"; then
+    status=1
+  fi
+  cat "$file.err" >&2
+  rm -f "$file.err"
   reads "$GCLOUD" compute instances list --project="$PROJECT" --format='value(name,zone.basename())' |
     sed 's/^/instance\t/' >>"$file" || status=1
   reads "$GCLOUD" compute disks list --project="$PROJECT" --format='value(name,zone.basename())' |
@@ -568,6 +589,14 @@ preflight() {
   for tool in "$GCLOUD" "$KUBECTL" "$DOCKER" "$PYTHON" setsid; do
     command -v "$tool" >/dev/null 2>&1 || problem "$tool is not on PATH (GCLOUD, KUBECTL, DOCKER and PYTHON name others)"
   done
+  [ ${#problems[@]} -eq 0 ] || return
+  # On PATH is not enough: a mise shim with no version set for the
+  # directory is on PATH and fails, which once stopped a run after its
+  # cluster was made.
+  "$KUBECTL" version --client >/dev/null 2>&1 ||
+    problem "$KUBECTL does not run (\`$KUBECTL version --client\` failed); with mise, give" \
+      "KUBECTL=\"\$(mise where kubectl@<version>)/bin/kubectl\""
+  "$DOCKER" version >/dev/null 2>&1 || problem "$DOCKER does not reach its daemon (\`$DOCKER version\` failed)"
   if [ -z "$smock_binary" ] && ! command -v moon >/dev/null 2>&1; then
     problem "moon is not on PATH to build the release binary: install the pinned MoonBit, or give --smock"
   fi

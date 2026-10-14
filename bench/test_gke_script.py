@@ -122,8 +122,24 @@ if tool == "gcloud":
         state(lambda value: value["clusters"].pop(words[3], None))
         answer("Deleting.\n")
     if command == ("artifacts", "repositories", "list"):
-        answer("".join(f"projects/{options['project']}/locations/us-central1/repositories/{name}\n"
-                       for name in state()["repositories"]))
+        # As the real gcloud: whole names in JSON, short ones in value(name),
+        # and a location that fails with a server error listed as empty,
+        # with a warning.
+        names = state()["repositories"]
+        if config.get("repositories_list_fails"):
+            sys.stderr.write(f"WARNING: Failed to list repositories for project {options['project']}\n")
+            names = []
+        if options.get("format") == "json":
+            answer(json.dumps([{"name": f"projects/{options['project']}/locations/us-central1/repositories/{name}"}
+                               for name in names]))
+        answer("".join(f"{name}\n" for name in names))
+    if command == ("artifacts", "repositories", "describe"):
+        rule("describe_repository")
+        if words[3] in state()["repositories"]:
+            answer(f"projects/{options['project']}/locations/us-central1/repositories/{words[3]}\n")
+        sys.stderr.write("ERROR: (gcloud.artifacts.repositories.describe) NOT_FOUND: Requested entity was not "
+                         "found.\n")
+        answer("", 1)
     if command == ("artifacts", "repositories", "create"):
         state(lambda value: value["repositories"].append(words[3]))
         answer()
@@ -143,6 +159,9 @@ if tool == "docker":
     answer()
 
 if tool == "kubectl":
+    if words[:1] == ["version"] and config.get("kubectl_broken"):
+        sys.stderr.write("mise ERROR No version is set for shim: kubectl\n")
+        answer("", 1)
     if words[:1] == ["apply"]:
         if config.get("apply_fails_on") and config["apply_fails_on"] in options.get("filename", ""):
             answer("", 1)
@@ -331,16 +350,17 @@ class Script(unittest.TestCase):
         self.fail(f"no call {words} in {[call['words'] for call in self.calls()]}")
 
     def changing_calls(self):
-        """The calls that change something: every docker and kubectl call but
-        `get` and `logs`, and the gcloud calls that do not only read."""
+        """The calls that change something: every docker call but `version`,
+        every kubectl call but `get`, `logs` and `version`, and the gcloud
+        calls that do not only read."""
         changing = []
         for call in self.calls():
             words = call["words"]
             if call["tool"] == "gcloud" and not READ_ONLY & set(words):
                 changing.append(call)
-            elif call["tool"] == "kubectl" and words[:1] not in (["get"], ["logs"]):
+            elif call["tool"] == "kubectl" and words[:1] not in (["get"], ["logs"], ["version"]):
                 changing.append(call)
-            elif call["tool"] == "docker":
+            elif call["tool"] == "docker" and words[:1] != ["version"]:
                 changing.append(call)
         return changing
 
@@ -425,6 +445,32 @@ class BeforeAnything(Script):
         self.assertEqual(self.changing_calls(), [])
 
 
+    def test_a_repository_left_by_an_earlier_run_stops_it(self):
+        (self.state / "state.json").write_text(json.dumps({"clusters": {},
+                                                           "repositories": ["smock-bench-20261013-101010"]}))
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        self.assertIn("repository smock-bench-20261013-101010 (us-central1) is left from an earlier run", output)
+        self.assertEqual(self.changing_calls(), [])
+
+    def test_a_listing_of_repositories_that_failed_somewhere_stops_it(self):
+        # gcloud lists a location that fails with a server error as empty,
+        # and warns.
+        self.configure(repositories_list_fails=True)
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        self.assertIn("cannot list what the project has", output)
+        self.assertEqual(self.changing_calls(), [])
+
+    def test_a_kubectl_that_does_not_run_stops_it_before_anything_is_made(self):
+        # As a mise shim with no version set for the directory.
+        self.configure(kubectl_broken=True)
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        self.assertIn("version --client` failed", output)
+        self.assertEqual(self.changing_calls(), [])
+
+
 class DryRun(Script):
     """--dry-run prints every command a run would run, and runs only those
     that read."""
@@ -433,7 +479,9 @@ class DryRun(Script):
         status, output = self.run_script("--dry-run")
         self.assertEqual(status, 0, output)
         self.assertEqual(self.changing_calls(), [])
-        self.assertEqual(self.calls("kubectl") + self.calls("docker"), [])
+        # kubectl and docker only say that they run.
+        self.assertEqual([call["words"] for call in self.calls("kubectl") + self.calls("docker")],
+                         [["version"], ["version"]])
         for expected in ("would run: docker build", "would run: gcloud artifacts repositories create smock-bench-",
                          "would run: gcloud container clusters create-auto smock-bench-",
                          "--labels=purpose=smock-bench,run=", "would run: kubectl", "apply --filename=",
@@ -496,7 +544,8 @@ class Run(Script):
     def test_kubectl_uses_its_own_kubeconfig_with_an_access_token_deleted_at_the_end(self):
         status, output = self.run_script("--yes")
         self.assertEqual(status, 0, output)
-        kubectl = self.calls("kubectl")
+        # Every call that reaches the cluster; `version --client` does not.
+        kubectl = [call for call in self.calls("kubectl") if call["words"][:1] != ["version"]]
         self.assertEqual({call["kubeconfig_mode"] for call in kubectl}, {"0o600"})
         kubeconfigs = {call["argv"][0] for call in kubectl}
         [kubeconfig] = kubeconfigs
@@ -646,6 +695,19 @@ class Leftovers(Script):
         [cluster] = self.made(["container", "clusters", "create-auto"])
         self.assertIn("LEFT AFTER THE RUN", output)
         self.assertIn(f"cluster {cluster['words'][3]} us-central1", output)
+
+
+    def test_a_repository_whose_state_cannot_be_read_is_not_taken_for_deleted(self):
+        # Describing it fails with a server error, never NOT_FOUND.
+        self.fake_time(600)
+        self.configure(describe_repository={"status": 1, "stderr": "ERROR: (gcloud.artifacts.repositories.describe) "
+                                                                   "UNAVAILABLE: try again\n"})
+        status, output = self.run_script("--yes", timeout=120)
+        self.assertEqual(status, 1, output)
+        [repository] = self.made(["artifacts", "repositories", "create"])
+        self.assertNotIn(f"repository {repository['words'][3]}: deleted", output)
+        self.assertIn("LEFT AFTER THE RUN", output)
+        self.assertIn(f"repository {repository['words'][3]} us-central1", output)
 
 
 if __name__ == "__main__":
