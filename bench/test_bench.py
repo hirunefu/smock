@@ -682,19 +682,20 @@ class TargetsFile(unittest.TestCase):
         targets = {t["id"]: t for t in harness.read_targets(BENCH / "targets.json")}
         shown = {i: (t["profile"], t["cpu_limit"], t["memory_limit"], t["case"], t["rate"], t["metric"], t["max"],
                      t["unit"]) for i, t in targets.items()}
-        load = {"chart-default": ("1", "1Gi", "http-keep-alive", 50000),
-                "autopilot-min": ("250m", "512Mi", "http-keep-alive", 10000),
-                "autopilot-burst-min": ("50m", "52Mi", "http-keep-alive", 1000)}
+        # Set from the GKE Autopilot probe: each profile's rate, and the
+        # most p99.9 may be at it.
+        load = {"chart-default": ("1", "1Gi", "http-keep-alive", 30000, 10),
+                "autopilot-min": ("250m", "512Mi", "http-keep-alive", 5000, 5),
+                "autopilot-burst-min": ("50m", "52Mi", "http-keep-alive", 250, 50)}
         expected = {}
-        for profile, (cpu, memory, case_name, rate) in load.items():
-            p99_9 = 10 if profile == "autopilot-burst-min" else 5
+        for profile, (cpu, memory, case_name, rate, p99_9) in load.items():
             expected |= {
                 f"{profile}/p99": (profile, cpu, memory, case_name, rate, "p99", 3, "ms"),
                 f"{profile}/p99_9": (profile, cpu, memory, case_name, rate, "p99_9", p99_9, "ms"),
                 f"{profile}/peak_memory": (profile, cpu, memory, case_name, rate, "peak_memory", 32, "MiB"),
                 f"{profile}/idle_rss": (profile, cpu, memory, None, None, "idle_rss", 20, "MiB"),
             }
-        expected["autopilot-burst-min/oom_kills"] = ("autopilot-burst-min", "50m", "52Mi", "http-keep-alive", 1000,
+        expected["autopilot-burst-min/oom_kills"] = ("autopilot-burst-min", "50m", "52Mi", "http-keep-alive", 250,
                                                      "oom_kills", 0, "OOM kills")
         self.assertEqual(shown, expected)
 
