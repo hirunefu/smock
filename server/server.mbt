@@ -546,77 +546,77 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
   reject~ : async (S, Int, Stopwatch) -> Unit,
   connection? : Connection,
 ) -> Unit {
-  let parser = @http1.Parser(
-    header_size_limit=settings.header_size_limit,
-    header_count_limit=settings.header_count_limit,
-    body_limit=settings.body_limit,
-  )
-  let buf = FixedArray::make(16 * 1024, b'\x00')
-  let idle_timeout = settings.idle_timeout_ms.to_int64()
-  let read_timeout = settings.read_timeout_ms.to_int64()
   @async.with_task_group(group => {
-    let watch = ReadWatch::new(group)
-    // The time, as `@async.now()` gives it, read again after each wait: for
-    // reading, for writing a response or a 100 Continue. Between waits only
-    // the parser runs, so it stays the time until the next wait.
-    let mut now = @async.now()
-    let mut idle_deadline = now + idle_timeout
-    let mut read_deadline : Int64? = None
-    // When the bytes not yet parsed began to count against the read timeout:
-    // when they were read, or, for bytes read before a response, when it was
-    // written, since nothing is read while a response is written.
-    let mut read_since = now
-    // Started at the last read, which brought the last byte of every request
-    // the parser holds complete.
-    let mut last_read = Stopwatch::start()
+    let now = @async.now()
+    // Every wait below keeps this one object, rather than each of its parts.
+    let state : ConnectionLoop = {
+      parser: @http1.Parser(
+        header_size_limit=settings.header_size_limit,
+        header_count_limit=settings.header_count_limit,
+        body_limit=settings.body_limit,
+      ),
+      buf: FixedArray::make(16 * 1024, b'\x00'),
+      watch: ReadWatch::new(group),
+      connection,
+      idle_timeout: settings.idle_timeout_ms.to_int64(),
+      read_timeout: settings.read_timeout_ms.to_int64(),
+      now,
+      idle_deadline: now + settings.idle_timeout_ms.to_int64(),
+      read_deadline: None,
+      read_since: now,
+      last_read: Stopwatch::start(),
+    }
     for ;; {
-      match parser.next() {
+      match state.parser.next() {
         Complete(request) => {
-          if !respond(stream, request, last_read, now) {
+          if !respond(stream, request, state.last_read, state.now) {
             return
           }
-          now = @async.now()
-          idle_deadline = now + idle_timeout
-          read_deadline = None
-          read_since = now
+          state.now = @async.now()
+          state.idle_deadline = state.now + state.idle_timeout
+          state.read_deadline = None
+          state.read_since = state.now
         }
         Continue => {
           @io.Writer::write(stream, @http1.encode_response(100, [], b""))
-          now = @async.now()
+          state.now = @async.now()
         }
         NeedMore => {
+          let parser = state.parser
           let deadline = if parser.in_request() {
             // The request began with the bytes of the last read, or earlier.
-            let deadline = read_deadline.unwrap_or(read_since + read_timeout)
-            read_deadline = Some(deadline)
+            let deadline = state.read_deadline.unwrap_or(
+              state.read_since + state.read_timeout,
+            )
+            state.read_deadline = Some(deadline)
             deadline
           } else {
-            read_deadline = None
-            idle_deadline
+            state.read_deadline = None
+            state.idle_deadline
           }
-          let remaining = deadline - now
+          let remaining = deadline - state.now
           if remaining <= 0L {
             return
           }
-          if connection is Some(connection) {
+          if state.connection is Some(connection) {
             connection.idle = !parser.in_request()
           }
           // Past the deadline, the watch ends the task group, and with it
           // this read and the connection.
-          watch.start(deadline)
-          let n = @io.Reader::read(stream, buf)
-          watch.stop()
-          if connection is Some(connection) {
+          state.watch.start(deadline)
+          let n = @io.Reader::read(stream, state.buf)
+          state.watch.stop()
+          if state.connection is Some(connection) {
             connection.idle = false
           }
           guard n > 0 else { return }
-          last_read = Stopwatch::start()
-          now = @async.now()
-          read_since = now
-          parser.feed(buf.unsafe_reinterpret_as_bytes()[:n])
+          state.last_read = Stopwatch::start()
+          state.now = @async.now()
+          state.read_since = state.now
+          state.parser.feed(state.buf.unsafe_reinterpret_as_bytes()[:n])
         }
         Invalid(status~) => {
-          reject(stream, status, last_read)
+          reject(stream, status, state.last_read)
           return
         }
       }
@@ -626,6 +626,31 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
   if connection is Some(connection) {
     connection.idle = false
   }
+}
+
+///|
+/// What the loop of `serve_connection` keeps between its waits.
+priv struct ConnectionLoop {
+  parser : @http1.Parser
+  /// What each read reads into.
+  buf : FixedArray[Byte]
+  watch : ReadWatch
+  connection : Connection?
+  idle_timeout : Int64
+  read_timeout : Int64
+  /// The time, as `@async.now()` gives it, read again after each wait: for
+  /// reading, for writing a response or a 100 Continue. Between waits only
+  /// the parser runs, so it stays the time until the next wait.
+  mut now : Int64
+  mut idle_deadline : Int64
+  mut read_deadline : Int64?
+  /// When the bytes not yet parsed began to count against the read timeout:
+  /// when they were read, or, for bytes read before a response, when it was
+  /// written, since nothing is read while a response is written.
+  mut read_since : Int64
+  /// Started at the last read, which brought the last byte of every request
+  /// the parser holds complete.
+  mut last_read : Stopwatch
 }
 
 ///|
