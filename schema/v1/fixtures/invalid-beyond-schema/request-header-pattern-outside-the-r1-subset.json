@@ -1,0 +1,23 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "get-user",
+      "mock": "users",
+      "request": {
+        "headers": {
+          "X-Region": {
+            "pattern": "\\p{Greek}+"
+          }
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

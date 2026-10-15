@@ -1,0 +1,14 @@
+import {
+  "smock/http1",
+  "smock/re2",
+  "smock/yaml",
+  "smock/smock/template",
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/int",
+  "moonbitlang/core/json",
+}
+
+import {
+  "moonbitlang/core/random",
+} for "wbtest"

@@ -1,0 +1,55 @@
+{
+   "mocks": [
+      {
+         "name": "users"
+      }
+   ],
+   "stubs": [
+      {
+         "id": "get-user-1",
+         "mock": "users",
+         "request": {
+            "method": "GET",
+            "path": "/users/1"
+         },
+         "response": {
+            "body": "{\"id\":1,\"name\":\"Alice\"}",
+            "headers": {
+               "Content-Type": "application/json"
+            },
+            "status": 200
+         }
+      },
+      {
+         "id": "get-user-2",
+         "mock": "users",
+         "request": {
+            "method": "GET",
+            "path": "/users/2"
+         },
+         "response": {
+            "body": "{\"id\":2,\"name\":\"Bob\"}",
+            "headers": {
+               "Content-Type": "application/json"
+            },
+            "status": 200
+         }
+      },
+      {
+         "id": "get-user-3",
+         "mock": "users",
+         "request": {
+            "method": "GET",
+            "path": "/users/3"
+         },
+         "response": {
+            "body": "{\"id\":3,\"name\":\"Carol\"}",
+            "headers": {
+               "Content-Type": "application/json"
+            },
+            "status": 200
+         }
+      }
+   ],
+   "version": 1
+}

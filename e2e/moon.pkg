@@ -1,0 +1,21 @@
+import {
+  "smock/smock/testcerts",
+  "moonbitlang/async",
+  "moonbitlang/async/fs",
+  "moonbitlang/async/http",
+  "moonbitlang/async/io",
+  "moonbitlang/async/os_error",
+  "moonbitlang/async/process",
+  "moonbitlang/async/socket",
+  "moonbitlang/async/tls",
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/double",
+  "moonbitlang/core/encoding/percent",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+  "moonbitlang/core/string",
+  "smock/re2",
+} for "test"
+
+supported_targets = "native"

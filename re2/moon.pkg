@@ -1,0 +1,12 @@
+import {
+  "moonbitlang/core/cmp",
+}
+
+import {
+  "moonbitlang/core/encoding/utf8",
+} for "test"
+
+import {
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/random",
+} for "wbtest"

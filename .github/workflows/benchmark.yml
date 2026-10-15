@@ -1,0 +1,100 @@
+# Runs the release benchmark (bench/bench.py) on linux/amd64 and
+# linux/arm64 and keeps what it writes as workflow artifacts. It runs only
+# when started by hand from the Actions tab, never on a schedule, on pull
+# requests or on pushes (scripts/check-benchmark-workflow.sh checks that):
+# benchmarks run on a developer's machine, and on GKE Autopilot before an
+# integration branch is merged into main (docs/merging-into-main.md). The
+# README's Benchmark section says what a run measures and writes.
+name: Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: "Only these cases of bench/plan.json, comma-separated (default: every case)"
+        type: string
+        default: ""
+      cpu-limits:
+        description: "Only these CPU limits, comma-separated, such as 250m,1 (default: every limit)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: benchmark (linux/${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            machine: x86_64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            machine: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      SMOCK_VERSION: 0.0.0-benchmark.${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # The runner check, OpenSSL (the benchmark also makes its TLS
+      # certificate with the openssl command line tool), the pinned MoonBit
+      # and moon update.
+      - uses: ./.github/actions/native-setup
+        with:
+          machine: ${{ matrix.machine }}
+
+      - name: Build the release binary
+        run: scripts/build-release.sh
+
+      - name: Install oha
+        run: scripts/install-oha.sh "$RUNNER_TEMP/bin"
+
+      # bench.py starts smock in a scope of the runner user's systemd
+      # manager, with a CPU quota. The manager must run although the runner
+      # user is not logged in, and needs the cpu controller delegated to it.
+      - name: Let the systemd user manager set CPU quotas
+        run: |
+          sudo mkdir -p /etc/systemd/system/user@.service.d
+          printf '[Service]\nDelegate=cpu cpuset io memory pids\n' |
+            sudo tee /etc/systemd/system/user@.service.d/delegate.conf
+          sudo systemctl daemon-reload
+          sudo loginctl enable-linger "$(id -un)"
+          sudo systemctl restart "user@$(id -u).service"
+          runtime_dir=/run/user/$(id -u)
+          for _ in $(seq 100); do
+            [ -S "$runtime_dir/systemd/private" ] && break
+            sleep 0.1
+          done
+          echo "XDG_RUNTIME_DIR=$runtime_dir" >>"$GITHUB_ENV"
+
+      # A short check of the harness on this runner before the long run. It
+      # also fails if the CPU quotas do not take effect.
+      - name: Test the benchmark harness
+        run: python3 -m unittest discover -s bench -v
+
+      - name: Run the benchmark
+        env:
+          CASES: ${{ inputs.cases }}
+          CPU_LIMITS: ${{ inputs.cpu-limits }}
+        run: >-
+          python3 bench/bench.py run --out "$RUNNER_TEMP/benchmark"
+          ${CASES:+--cases "$CASES"} ${CPU_LIMITS:+--cpu-limits "$CPU_LIMITS"}
+
+      - name: Show the summary
+        if: always()
+        run: |
+          summary=$RUNNER_TEMP/benchmark/summary.md
+          if [ -f "$summary" ]; then cat "$summary" >>"$GITHUB_STEP_SUMMARY"; fi
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: benchmark-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/benchmark
+          if-no-files-found: warn

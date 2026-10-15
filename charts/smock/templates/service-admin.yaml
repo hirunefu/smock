@@ -1,0 +1,25 @@
+{{- /*
+The admin port: the Admin API, the probes and the metrics. It is separate
+from the traffic Service, so that a network policy can admit only the tests
+and the monitoring that need it.
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "smock.adminServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "smock.labels" . | nindent 4 }}
+  {{- with .Values.adminService.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.adminService.type }}
+  selector:
+    {{- include "smock.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: admin
+      port: {{ .Values.adminService.port }}
+      targetPort: admin
+      protocol: TCP

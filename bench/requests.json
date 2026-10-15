@@ -1,0 +1,174 @@
+{
+  "about": "The request mix of the release benchmark (bench/bench.py). Each case sends every request below at its weight's share of the case's rate, with these exact headers and bodies. The Host chooses the Mock: legacy-payment names a Host no Mock lists, so the Default Mock (payments) answers it. Each request carries its own Session in the baggage header, so the Journal keeps it apart. `expect` is what smock must do with the request; e2e/bench_test.mbt checks it on every test run.",
+  "requests": [
+    {
+      "name": "catalog-item",
+      "weight": 30,
+      "method": "GET",
+      "host": "catalog.bench.internal",
+      "target": "/catalog/items/SKU-00317",
+      "headers": [
+        ["User-Agent", "storefront/3.8.1 okhttp/4.12.0"],
+        ["Accept", "application/json"],
+        ["Accept-Encoding", "gzip, deflate"],
+        ["Accept-Language", "en-GB,en;q=0.9"],
+        ["Authorization", "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzdG9yZWZyb250IiwiYXVkIjoiY2F0YWxvZyIsImV4cCI6MTkyNDk5MjAwMH0.bm90LWEtcmVhbC1zaWduYXR1cmUtYmVuY2htYXJrLW9ubHk"],
+        ["traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"],
+        ["tracestate", "congo=t61rcWkgMzE"],
+        ["baggage", "tenant=acme-eu,smock-session=bench-catalog-item,deployment=perf"],
+        ["X-Request-Id", "0f8fad5b-d9cb-469f-a165-70867728950e"]
+      ],
+      "body": null,
+      "expect": { "session": "bench-catalog-item", "status": 200, "mock": "catalog", "stub": "catalog-item-00317", "viaDefault": false }
+    },
+    {
+      "name": "catalog-search",
+      "weight": 10,
+      "method": "GET",
+      "host": "catalog.bench.internal",
+      "target": "/catalog/search?q=desk+lamp&page=2&sort=price",
+      "headers": [
+        ["User-Agent", "storefront/3.8.1 okhttp/4.12.0"],
+        ["Accept", "application/json"],
+        ["Accept-Encoding", "gzip, deflate"],
+        ["Accept-Language", "en-GB,en;q=0.9"],
+        ["Authorization", "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzdG9yZWZyb250IiwiYXVkIjoiY2F0YWxvZyIsImV4cCI6MTkyNDk5MjAwMH0.bm90LWEtcmVhbC1zaWduYXR1cmUtYmVuY2htYXJrLW9ubHk"],
+        ["traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-b7ad6b7169203331-01"],
+        ["baggage", "tenant=acme-eu,smock-session=bench-catalog-search,deployment=perf"],
+        ["X-Request-Id", "7c9e6679-7425-40de-944b-e07fc1f90ae7"]
+      ],
+      "body": null,
+      "expect": { "session": "bench-catalog-search", "status": 200, "mock": "catalog", "stub": "catalog-search", "viaDefault": false }
+    },
+    {
+      "name": "user-profile",
+      "weight": 20,
+      "method": "GET",
+      "host": "users.bench.internal",
+      "target": "/users/10042",
+      "headers": [
+        ["User-Agent", "checkout/2.14.3 reactor-netty/1.2.0"],
+        ["Accept", "application/json"],
+        ["Accept-Encoding", "gzip, deflate"],
+        ["Authorization", "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjaGVja291dCIsImF1ZCI6InVzZXJzIiwiZXhwIjoxOTI0OTkyMDAwfQ.bm90LWEtcmVhbC1zaWduYXR1cmUtYmVuY2htYXJrLW9ubHk"],
+        ["traceparent", "00-0af7651916cd43dd8448eb211c80319c-b9c7c989f97918e1-01"],
+        ["baggage", "tenant=acme-eu,smock-session=bench-user-profile,deployment=perf"],
+        ["X-Request-Id", "16fd2706-8baf-433b-82eb-8c7fada847da"]
+      ],
+      "body": null,
+      "expect": { "session": "bench-user-profile", "status": 200, "mock": "users", "stub": "user-10042", "viaDefault": false }
+    },
+    {
+      "name": "user-preferences",
+      "weight": 5,
+      "method": "GET",
+      "host": "users.bench.internal",
+      "target": "/users/10042/preferences",
+      "headers": [
+        ["User-Agent", "checkout/2.14.3 reactor-netty/1.2.0"],
+        ["Accept", "application/json"],
+        ["Accept-Encoding", "gzip, deflate"],
+        ["Authorization", "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjaGVja291dCIsImF1ZCI6InVzZXJzIiwiZXhwIjoxOTI0OTkyMDAwfQ.bm90LWEtcmVhbC1zaWduYXR1cmUtYmVuY2htYXJrLW9ubHk"],
+        ["traceparent", "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01"],
+        ["baggage", "tenant=acme-eu,smock-session=bench-user-preferences,deployment=perf"],
+        ["X-Request-Id", "886313e1-3b8a-5372-9b90-0c9aee199e5d"]
+      ],
+      "body": null,
+      "expect": { "session": "bench-user-preferences", "status": 200, "mock": "users", "stub": "user-preferences", "viaDefault": false }
+    },
+    {
+      "name": "create-order",
+      "weight": 15,
+      "method": "POST",
+      "host": "orders.bench.internal",
+      "target": "/orders?dryRun=false",
+      "headers": [
+        ["User-Agent", "checkout/2.14.3 reactor-netty/1.2.0"],
+        ["Accept", "application/json"],
+        ["Accept-Encoding", "gzip, deflate"],
+        ["Content-Type", "application/json"],
+        ["Authorization", "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjaGVja291dCIsImF1ZCI6Im9yZGVycyIsImV4cCI6MTkyNDk5MjAwMH0.bm90LWEtcmVhbC1zaWduYXR1cmUtYmVuY2htYXJrLW9ubHk"],
+        ["traceparent", "00-0af7651916cd43dd8448eb211c80319c-53995c3f42cd8ad8-01"],
+        ["baggage", "tenant=acme-eu,smock-session=bench-create-order,deployment=perf"],
+        ["X-Request-Id", "a8098c1a-f86e-11da-bd1a-00112444be1e"]
+      ],
+      "body": "{\"channel\":\"partner\",\"customer\":{\"id\":\"cust-58213\",\"tier\":\"gold\",\"email\":\"buyer@example.com\"},\"items\":[{\"sku\":\"SKU-00317\",\"quantity\":2,\"unitPrice\":{\"amount\":4299,\"currency\":\"EUR\"}},{\"sku\":\"SKU-00042\",\"quantity\":1,\"unitPrice\":{\"amount\":1999,\"currency\":\"EUR\"}}],\"shipping\":{\"method\":\"standard\",\"address\":{\"line1\":\"1 Example Street\",\"city\":\"Dublin\",\"postcode\":\"D02 X285\",\"country\":\"IE\"}},\"couponCode\":null}",
+      "expect": { "session": "bench-create-order", "status": 201, "mock": "orders", "stub": "create-order-partner-gold", "viaDefault": false }
+    },
+    {
+      "name": "get-order",
+      "weight": 5,
+      "method": "GET",
+      "host": "orders.bench.internal",
+      "target": "/orders/7f9c2ba4-e88f-4c1a-9c5b-2d3a1e8f6b10",
+      "headers": [
+        ["User-Agent", "storefront/3.8.1 okhttp/4.12.0"],
+        ["Accept", "application/json"],
+        ["Accept-Encoding", "gzip, deflate"],
+        ["Authorization", "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzdG9yZWZyb250IiwiYXVkIjoib3JkZXJzIiwiZXhwIjoxOTI0OTkyMDAwfQ.bm90LWEtcmVhbC1zaWduYXR1cmUtYmVuY2htYXJrLW9ubHk"],
+        ["traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-e457b5a2e4d86bd1-01"],
+        ["baggage", "tenant=acme-eu,smock-session=bench-get-order,deployment=perf"],
+        ["X-Request-Id", "e902893a-9d22-3c7e-a7b8-d6e313b71d9f"]
+      ],
+      "body": null,
+      "expect": { "session": "bench-get-order", "status": 200, "mock": "orders", "stub": "get-order", "viaDefault": false }
+    },
+    {
+      "name": "update-order-status",
+      "weight": 5,
+      "method": "PUT",
+      "host": "orders.bench.internal",
+      "target": "/orders/7f9c2ba4-e88f-4c1a-9c5b-2d3a1e8f6b10/status",
+      "headers": [
+        ["User-Agent", "fulfilment/1.9.0 python-httpx/0.28.1"],
+        ["Accept", "application/json"],
+        ["Accept-Encoding", "gzip, deflate"],
+        ["Content-Type", "application/json"],
+        ["Authorization", "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmdWxmaWxtZW50IiwiYXVkIjoib3JkZXJzIiwiZXhwIjoxOTI0OTkyMDAwfQ.bm90LWEtcmVhbC1zaWduYXR1cmUtYmVuY2htYXJrLW9ubHk"],
+        ["traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-a2fb4a1d1a96d312-01"],
+        ["baggage", "tenant=acme-eu,smock-session=bench-update-order-status,deployment=perf"],
+        ["X-Request-Id", "c56a4180-65aa-42ec-a945-5fd21dec0538"]
+      ],
+      "body": "{\"status\":\"shipped\",\"carrier\":\"dhl\",\"trackingNumber\":\"JD014600003828382930\",\"shippedAt\":\"2026-10-12T09:30:00Z\"}",
+      "expect": { "session": "bench-update-order-status", "status": 200, "mock": "orders", "stub": "update-order-status", "viaDefault": false }
+    },
+    {
+      "name": "create-payment",
+      "weight": 7,
+      "method": "POST",
+      "host": "payments.bench.internal",
+      "target": "/payments",
+      "headers": [
+        ["User-Agent", "checkout/2.14.3 reactor-netty/1.2.0"],
+        ["Accept", "application/json"],
+        ["Accept-Encoding", "gzip, deflate"],
+        ["Content-Type", "application/json"],
+        ["Authorization", "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjaGVja291dCIsImF1ZCI6InBheW1lbnRzIiwiZXhwIjoxOTI0OTkyMDAwfQ.bm90LWEtcmVhbC1zaWduYXR1cmUtYmVuY2htYXJrLW9ubHk"],
+        ["Idempotency-Key", "3f2504e0-4f89-11d3-9a0c-0305e82c3301"],
+        ["traceparent", "00-0af7651916cd43dd8448eb211c80319c-4c721bf33e3caf8f-01"],
+        ["baggage", "tenant=acme-eu,smock-session=bench-create-payment,deployment=perf"],
+        ["X-Request-Id", "9b2e9a62-1a5c-4f0e-8d1e-6d3d6f2a5c44"]
+      ],
+      "body": "{\"orderId\":\"7f9c2ba4-e88f-4c1a-9c5b-2d3a1e8f6b10\",\"amount\":{\"value\":10597,\"currency\":\"EUR\"},\"currency\":\"EUR\",\"method\":{\"type\":\"card\",\"card\":{\"token\":\"tok_4f8a9c2e1b7d\",\"last4\":\"4242\"}},\"captureMode\":\"automatic\"}",
+      "expect": { "session": "bench-create-payment", "status": 201, "mock": "payments", "stub": "create-payment-eur", "viaDefault": false }
+    },
+    {
+      "name": "legacy-payment",
+      "weight": 3,
+      "method": "GET",
+      "host": "payments-legacy.bench.internal",
+      "target": "/payments/PAY-000042",
+      "headers": [
+        ["User-Agent", "reconciliation/0.7.2 Go-http-client/1.1"],
+        ["Accept", "application/json"],
+        ["Accept-Encoding", "gzip"],
+        ["Authorization", "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJyZWNvbmNpbGlhdGlvbiIsImF1ZCI6InBheW1lbnRzIiwiZXhwIjoxOTI0OTkyMDAwfQ.bm90LWEtcmVhbC1zaWduYXR1cmUtYmVuY2htYXJrLW9ubHk"],
+        ["traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-5fb397be34d26b51-01"],
+        ["baggage", "tenant=acme-eu,smock-session=bench-legacy-payment,deployment=perf"],
+        ["X-Request-Id", "1b4e28ba-2fa1-11d2-883f-0016d3cca427"]
+      ],
+      "body": null,
+      "expect": { "session": "bench-legacy-payment", "status": 200, "mock": "payments", "stub": "payment-000042", "viaDefault": true }
+    }
+  ]
+}

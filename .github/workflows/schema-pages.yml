@@ -1,0 +1,60 @@
+# Publishes the Definition-file JSON Schemas on GitHub Pages whenever one
+# changes on main. schema/v<n>/definitions.json is served at
+# https://hirunefu.github.io/smock/schema/v<n>/definitions.json, which is
+# also its $id. Run it by hand from the Actions tab to publish again.
+#
+# One-time maintainer step: in the repository settings, under Pages, set
+# Source to "GitHub Actions". Until then the deploy step fails.
+name: Publish the JSON Schema
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "schema/v*/*.json"
+      - ".github/workflows/schema-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One Pages deployment at a time; a newer one waits instead of cancelling.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to GitHub Pages
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # With the check-jsonschema version scripts/check-schema.sh pins.
+      - name: Check that each Schema is a valid JSON Schema
+        run: |
+          version=$(sed -n 's/^validator_version=//p' scripts/check-schema.sh)
+          test -n "$version"
+          pipx run --spec "check-jsonschema==$version" check-jsonschema \
+            --check-metaschema schema/v*/*.json
+
+      # Only the Schemas are published, at their paths in the repository;
+      # the fixtures next to them are not.
+      - name: Lay out the site
+        run: |
+          for file in schema/v*/*.json; do
+            install -D -m 644 "$file" "_site/$file"
+          done
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v5

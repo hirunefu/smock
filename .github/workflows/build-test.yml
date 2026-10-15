@@ -1,0 +1,161 @@
+# Builds and tests every module. ci.yml runs it with the pinned toolchain on
+# each push and pull request; latest-toolchain.yml runs it weekly with the
+# latest stable MoonBit. With the pinned toolchain, it keeps the release
+# binary of each architecture as a workflow artifact for 7 days,
+# smock-linux-amd64 and smock-linux-arm64.
+name: Build and test
+
+on:
+  workflow_call:
+    inputs:
+      toolchain:
+        description: "pinned (the version in .moonbit-version) or latest (the latest stable MoonBit)"
+        type: string
+        default: pinned
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: native (linux/${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            machine: x86_64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            machine: aarch64
+    runs-on: ${{ matrix.runner }}
+    env:
+      SMOCK_VERSION: 0.0.0-ci.${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # The runner check, OpenSSL, MoonBit and moon update.
+      - uses: ./.github/actions/native-setup
+        with:
+          machine: ${{ matrix.machine }}
+          toolchain: ${{ inputs.toolchain }}
+
+      - run: moon version --all
+
+      - name: Check formatting
+        if: inputs.toolchain == 'pinned'
+        run: moon fmt --check
+
+      - name: Check every target
+        run: moon check --deny-warn --target all
+
+      - name: Check that the protocol modules and the packages that decide a response do no I/O
+        run: scripts/check-no-io.sh
+
+      - name: Check the C boundary (ADR 0001)
+        run: scripts/check-no-c.sh
+
+      - name: Test every module natively
+        run: moon test --target native
+
+      # A release build may fuse floating-point multiply-adds, so that a
+      # seeded log-normal delay differs from the one wasm-gc draws.
+      # prebuild.py turns that off, and the engine's tests check it.
+      - name: Test the engine in a release build
+        run: moon test --target native --release -p smock/smock/engine
+
+      - name: Test the OpenSSL bindings under AddressSanitizer and LeakSanitizer
+        run: scripts/test-openssl-asan.sh
+
+      - name: Build the release binary
+        run: scripts/build-release.sh
+
+      - name: Check smock --version
+        run: >-
+          scripts/check-version.sh dist/smock
+          "$SMOCK_VERSION"
+          "${GITHUB_SHA::12}"
+          "moonc $(moonc -v | cut -d' ' -f1)"
+
+      # The release workflow builds and smoke-tests the image the same way.
+      - name: Build the container image
+        run: docker build --provenance=false --tag smock:ci .
+
+      - name: Smoke-test the container image
+        run: >-
+          scripts/smoke-test-image.sh smock:ci
+          "$SMOCK_VERSION"
+          "${GITHUB_SHA::12}"
+          "moonc $(moonc -v | cut -d' ' -f1)"
+
+      - id: syft
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          syft-version: v1.54.1
+
+      # The release workflow makes the published image's SBOM the same way,
+      # but only for a tag: this checks on every push that smock and its
+      # MoonBit modules get into it.
+      - name: Make the image's SBOM as the release workflow does
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+        run: |
+          "$SYFT" scan docker:smock:ci --output spdx-json=sbom.spdx.json
+          scripts/add-smock-to-sbom.sh sbom.spdx.json "$SMOCK_VERSION" "$GITHUB_SHA"
+          jq -e --arg version "$SMOCK_VERSION" \
+            'any(.packages[]; .name == "smock" and .versionInfo == $version)' sbom.spdx.json
+
+      - name: Install helm, kubectl and kind
+        run: scripts/install-kubernetes-tools.sh "$RUNNER_TEMP/bin"
+
+      # Installs the chart with this image into a namespace that enforces
+      # the Restricted Pod Security Standard, and checks that a ConfigMap
+      # update reaches smock without a restart.
+      - name: Test the Helm chart on kind
+        run: scripts/test-helm-chart-on-kind.sh smock:ci
+
+      # An external JSON Schema validator and smock check must agree on
+      # every Definition-file fixture under schema/v1/fixtures/.
+      - name: Cross-check the JSON Schema with smock
+        run: scripts/check-schema.sh dist/smock
+
+      # The contract tests in e2e/ check smock's responses against the
+      # document; this checks the document itself.
+      - name: Check that the Admin API document is valid OpenAPI
+        run: scripts/check-openapi.sh
+
+      # The release binary that scripts/build-release.sh made above and the
+      # image packs, kept once every check passed, for a machine that cannot
+      # build one of this architecture: the GKE benchmark of amd64 from an
+      # arm64 machine takes it (scripts/gke-bench.sh --arch amd64 --smock).
+      # Its --version names this run's commit. scripts/check-ci-artifacts.sh
+      # checks this step.
+      - name: Keep the release binary
+        if: inputs.toolchain == 'pinned'
+        uses: actions/upload-artifact@v7
+        with:
+          name: smock-linux-${{ matrix.arch }}
+          path: dist/smock
+          retention-days: 7
+          if-no-files-found: error
+
+  wasm-gc:
+    name: wasm-gc (no-I/O packages)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install MoonBit (${{ inputs.toolchain }})
+        run: scripts/install-moonbit.sh "${{ inputs.toolchain }}"
+
+      - name: Update the mooncakes registry index
+        run: moon update
+
+      # moon skips every package whose supported_targets leave out wasm-gc,
+      # which is how packages that do I/O are marked. Every other package,
+      # including each new no-I/O package, is tested here with no change.
+      # scripts/check-no-io.sh keeps the packages that decide a response
+      # from leaving wasm-gc out.
+      - name: Test every no-I/O package on wasm-gc
+        run: moon test --target wasm-gc

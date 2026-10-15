@@ -1,0 +1,38 @@
+import {
+  "smock/http1",
+  "smock/smock/buildinfo",
+  "smock/smock/defdir",
+  "smock/smock/definitions",
+  "smock/smock/engine",
+  "smock/smock/log",
+  "smock/smock/metrics",
+  "smock/smock/openssl",
+  "smock/smock/prng",
+  "smock/smock/settings",
+  "smock/smock/usage",
+  "smock/smock/watch",
+  "moonbitlang/async",
+  "moonbitlang/async/fs",
+  "moonbitlang/async/io",
+  "moonbitlang/async/os_error",
+  "moonbitlang/async/process",
+  "moonbitlang/async/signal",
+  "moonbitlang/async/socket",
+  "moonbitlang/core/bench",
+  "moonbitlang/core/encoding/base64",
+  "moonbitlang/core/encoding/percent",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+}
+
+supported_targets = "native"
+
+import {
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/string",
+} for "wbtest"
+
+options(
+  "native-stub": [ "reset.c" ],
+)

@@ -1,0 +1,11 @@
+{
+  "mocks": [
+    {
+      "name": "users",
+      "noMatch": {
+        "status": 404,
+        "body": "x"
+      }
+    }
+  ]
+}

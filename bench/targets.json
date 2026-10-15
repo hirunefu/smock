@@ -1,0 +1,69 @@
+{
+  "about": "smock's provisional performance targets, as the maintainer decided them: one set for each CPU architecture, as Kubernetes names it (arm64, amd64), each saying below where it comes from. bench/bench.py checks on every run the set of the machine's architecture (the kernel's aarch64 is arm64, its x86_64 amd64), scripts/gke-bench.sh the set of its nodes' architecture (--arch), and bench/bench.py check-targets re-checks a run's summary.json against this file without running anything; a run on an architecture with no set here measures none of the targets. Every set is provisional, to be revisited after more measurements: changing one is a change to this file alone. Each entry holds under one resource profile of bench/plan-autopilot.json, by its name and its CPU and memory limits, and gives the most smock may reach there (at_most). The latency targets (p50_ms, p90_ms, p99_ms, p99_9_ms, max_ms), peak_memory_mib (memory.peak) and oom_kills hold at one load: the entry's case at its rate. idle_rss_mib holds for smock's RSS after startup under the profile, before any load. Latency counts from each request's scheduled send time, as the harness measures it: the load generator, oha with its 1 ms timer, adds about 2 ms at p99, which these values absorb. A run that did not run the profile with these limits, the case or the rate does not measure the target; a step whose load generator fell behind does not measure its latency targets; an OOM kill misses every target of its step, and failed requests miss its latency targets.",
+  "regression": {
+    "about": "When bench/compare.py calls a step a regression: its p99 or p99.9 got worse than in the older run by more than more_than_percent and by more than more_than_ms, at the same profile, case and rate. A change of at most 1 ms is within the resolution of oha's timer, which adds about 2 ms at p99 to every latency, so it is not counted as a regression however many percent it is. Only steps at or below the rate of their profile's entry for the newer run's architecture count (the highest, if a profile has several), for every case of the profile; above it smock may be past its capacity, the latencies are those of a queue and swing from run to run, so those steps are shown for reference. A profile with no entry for that architecture counts at every rate. p99.9 counts only where both runs measured at least p99_9_min_requests requests at the step: with fewer, it rests on a few of the slowest requests (the 3rd to the 5th slowest of 2,500 to 5,000), and its change is shown for reference while p99 still counts.",
+    "more_than_percent": 20,
+    "more_than_ms": 1,
+    "p99_9_min_requests": 10000
+  },
+  "architectures": {
+    "arm64": {
+      "about": "Provisional. From a one-off probe on GKE Autopilot on 2026-10-14: smock in arm64 general-purpose Pods on e4a nodes in us-central1, under each profile's CPU and memory limits, loaded by oha from a Pod on another node over the Pod network, with the request mix and http-keep-alive's ladders of bench/plan-autopilot.json (all but 30,000 a second per CPU, added since). Under each profile, smock kept up there with a rate at or above its target's. Runs of that plan on an arm64 laptop over loopback, such as an M1, typically do better than them.",
+      "profiles": [
+        {
+          "profile": "chart-default",
+          "cpu_limit": "1",
+          "memory_limit": "1Gi",
+          "case": "http-keep-alive",
+          "rate": 30000,
+          "at_most": { "p99_ms": 3, "p99_9_ms": 10, "peak_memory_mib": 32, "idle_rss_mib": 20 }
+        },
+        {
+          "profile": "autopilot-min",
+          "cpu_limit": "250m",
+          "memory_limit": "512Mi",
+          "case": "http-keep-alive",
+          "rate": 5000,
+          "at_most": { "p99_ms": 3, "p99_9_ms": 5, "peak_memory_mib": 32, "idle_rss_mib": 20 }
+        },
+        {
+          "profile": "autopilot-burst-min",
+          "cpu_limit": "50m",
+          "memory_limit": "52Mi",
+          "case": "http-keep-alive",
+          "rate": 250,
+          "at_most": { "p99_ms": 3, "p99_9_ms": 50, "oom_kills": 0, "peak_memory_mib": 32, "idle_rss_mib": 20 }
+        }
+      ]
+    },
+    "amd64": {
+      "about": "Provisional. From three runs of bench/plan-autopilot.json on GKE Autopilot, two on 2026-10-14 and one on 2026-10-15 with a smock that spends less CPU on each request, on x86, the architecture of the maintainer's production environment: smock in general-purpose x86 Pods on ek-standard-8 nodes in us-central1-a, where a vCPU is a hyperthread, under each profile's CPU and memory limits, loaded by oha from a Pod on another node over the Pod network. Under 1 CPU, smock kept up with plain HTTP up to about 19,000 to 21,000 requests a second (TLS about 14,000). At 10,000, p99 was 3.8 ms and p99.9 5.8 ms in the third run, with smock at 75% of its CPU limit, 4.2 and 11.7 ms in the second, and 12.9 and 22 ms in the first; at 20,000, close to that limit, requests queued for seconds. Under 250m and 50m, the CFS quota showed in the slowest requests even at light load, and they varied from run to run: under 250m, in the two runs that measured it, p99 was 3.7 and 2.8 ms at 1,250 a second, but 69 ms at 625 in one of them; under 50m at 125 a second, p99 was 3.3 to 45 ms and p99.9 41 to 138 ms. These targets leave room for that. Only the third run measured idle RSS and peak memory, from smock's process and cgroup metrics: idle RSS was 16.2 to 16.3 MiB under each profile, and peak memory at each target's rate at most 27.2 MiB, under 1 CPU. The bounds are those of arm64.",
+      "profiles": [
+        {
+          "profile": "chart-default",
+          "cpu_limit": "1",
+          "memory_limit": "1Gi",
+          "case": "http-keep-alive",
+          "rate": 10000,
+          "at_most": { "p99_ms": 10, "p99_9_ms": 20, "peak_memory_mib": 32, "idle_rss_mib": 20 }
+        },
+        {
+          "profile": "autopilot-min",
+          "cpu_limit": "250m",
+          "memory_limit": "512Mi",
+          "case": "http-keep-alive",
+          "rate": 1250,
+          "at_most": { "p99_ms": 100, "p99_9_ms": 200, "peak_memory_mib": 32, "idle_rss_mib": 20 }
+        },
+        {
+          "profile": "autopilot-burst-min",
+          "cpu_limit": "50m",
+          "memory_limit": "52Mi",
+          "case": "http-keep-alive",
+          "rate": 125,
+          "at_most": { "p99_ms": 100, "p99_9_ms": 300, "oom_kills": 0, "peak_memory_mib": 32, "idle_rss_mib": 20 }
+        }
+      ]
+    }
+  }
+}

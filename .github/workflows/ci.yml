@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Build and test (pinned MoonBit)
+    uses: ./.github/workflows/build-test.yml
+    with:
+      toolchain: pinned
+
+  release-workflow:
+    name: Check that the release workflow publishes only for tags
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - run: scripts/check-release-workflow.sh
+
+  # The benchmark itself runs only by hand (benchmark.yml); this checks its
+  # files. Its request mix and definitions are checked against smock by the
+  # tests in e2e/bench_test.mbt. The GKE run of another architecture than
+  # its machine's takes the release binary that build-test.yml keeps.
+  benchmark-files:
+    name: Check the benchmark workflow, definitions and kept binaries
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - run: scripts/check-benchmark-workflow.sh
+      - run: scripts/check-ci-artifacts.sh
+      - run: python3 bench/gen_definitions.py --check
+
+  # The chart on a cluster is tested in build-test.yml, with the image built
+  # there.
+  helm-chart:
+    name: Rendering tests of the Helm chart
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install helm
+        run: scripts/install-kubernetes-tools.sh "$RUNNER_TEMP/bin" helm
+
+      - name: Lint the chart
+        run: helm lint --strict charts/smock --set adminAuth.tokenSecret.name=smock-admin-token
+
+      - name: Render the chart for each delivery mode and option and check it
+        run: scripts/test-helm-chart.sh

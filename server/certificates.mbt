@@ -1,0 +1,312 @@
+// The certificates the TLS port presents: the default certificate, and the
+// certificates of single Mocks, which SNI chooses. The default certificate
+// comes from the configured files or, without them, is a self-signed one
+// smock generates for the Hosts it serves. Each certificate and key file
+// pair is read again when its directory changes, as the Definition files
+// are, and a new pair that can be used replaces the one presented: new
+// handshakes get it, while open connections keep the one they started
+// with. A new pair that cannot be used is not swapped in.
+
+///|
+/// The certificate a handshake gets unless its SNI chooses the certificate
+/// of a single Mock.
+priv enum DefaultCertificate {
+  /// The configured certificate and key files.
+  Files(Pair)
+  /// A self-signed certificate smock generated for the Hosts it serves.
+  SelfSigned(SelfSignedCertificate)
+}
+
+///|
+/// One certificate and key file pair that the TLS port presents.
+priv struct Pair {
+  /// The Mock it is for, or "" for the default certificate, as the expiry
+  /// metric and the log entries name it.
+  mock : String
+  files : @settings.TlsFiles
+  /// What new handshakes get: the pair as loaded last.
+  mut config : @openssl.ServerConfig
+  /// The files as read last, or why they could not be read, so that a pair
+  /// is loaded again only when its files change.
+  mut last_read : Result[(Bytes, Bytes), String]
+  /// Its series of the expiry metric.
+  expiry : @metrics.GaugeSeries
+}
+
+///|
+/// The certificates of the TLS port.
+priv struct Certificates {
+  default : DefaultCertificate
+  /// The pairs of single Mocks, by Mock name.
+  by_mock : Map[String, Pair]
+  /// Which Mock an SNI name belongs to comes from the definition set it
+  /// serves.
+  engine : @engine.Engine
+  logger : @log.Logger
+  /// Serialises the checks of the files, which several watches start.
+  checking : @async.Mutex
+  /// The Mocks of `by_mock` that the definition set served does not
+  /// declare, as last warned about.
+  mut undeclared : Array[String]
+}
+
+///|
+/// Loads the default pair, `default`, or without it generates a
+/// self-signed certificate for the Hosts `engine` serves; loads the pair of
+/// each Mock in `by_mock`; and registers the expiry metric in `metrics`,
+/// with a series for each of these certificates.
+/// When a pair cannot be loaded, or the certificate cannot be generated, it
+/// logs why and returns `None`: smock then does not start. Warns about each
+/// Mock in `by_mock` that `engine` does not serve.
+async fn Certificates::load(
+  default : @settings.TlsFiles?,
+  by_mock : Map[String, @settings.TlsFiles],
+  engine~ : @engine.Engine,
+  logger~ : @log.Logger,
+  metrics~ : @metrics.Registry,
+) -> Certificates? {
+  let expiry = metrics.gauge(
+    "smock_tls_certificate_expiry_timestamp_seconds",
+    help="When each certificate the TLS port presents expires (its notAfter), in seconds since the Unix epoch, by the Mock it is for: mock=\"\" for the default certificate.",
+    labels=["mock"],
+  )
+  let default = match default {
+    Some(files) =>
+      match Pair::load("", files, expiry, logger) {
+        Some(pair) => Files(pair)
+        None => return None
+      }
+    None =>
+      match
+        SelfSignedCertificate::generate(engine, logger, expiry.labels([""])) {
+        Some(certificate) => SelfSigned(certificate)
+        None => return None
+      }
+  }
+  let pairs = Map([])
+  for mock, files in by_mock {
+    guard Pair::load(mock, files, expiry, logger) is Some(pair) else {
+      return None
+    }
+    pairs[mock] = pair
+  }
+  let self = {
+    default,
+    by_mock: pairs,
+    engine,
+    logger,
+    checking: @async.Mutex(),
+    undeclared: [],
+  }
+  self.warn_undeclared()
+  Some(self)
+}
+
+///|
+/// Reads and loads the pair of `mock` ("" for the default certificate) from
+/// `files`, and sets its series of the expiry metric. Logs why it cannot be
+/// loaded, and returns `None`, when it cannot.
+async fn Pair::load(
+  mock : String,
+  files : @settings.TlsFiles,
+  expiry : @metrics.Gauge,
+  logger : @log.Logger,
+) -> Pair? {
+  let read = read_pair(files)
+  let loaded = match read {
+    Ok((cert, key)) => load_pair(cert, key)
+    Err(reason) => Err(reason)
+  }
+  match loaded {
+    Ok(config) => {
+      let pair = {
+        mock,
+        files,
+        config,
+        last_read: read,
+        expiry: expiry.labels([mock]),
+      }
+      pair.set_expiry()
+      Some(pair)
+    }
+    Err(reason) => {
+      let fields = pair_fields(mock, files)
+      fields["error"] = Json::string(reason)
+      logger.error("cannot load the TLS certificate", fields~)
+      None
+    }
+  }
+}
+
+///|
+/// The fields that name the pair of `mock` ("" for the default
+/// certificate), with the files `files`, in each log entry about it.
+fn pair_fields(mock : String, files : @settings.TlsFiles) -> Map[String, Json] {
+  let fields : Map[String, Json] = { "mock": Json::string(mock) }
+  add_file_fields(fields, files)
+  fields
+}
+
+///|
+/// Adds the fields that name the certificate and key files `files` to
+/// `fields`, the fields of a log entry, with the keys `--tls-mock-certs`
+/// gives them.
+fn add_file_fields(
+  fields : Map[String, Json],
+  files : @settings.TlsFiles,
+) -> Unit {
+  fields["certFile"] = Json::string(files.cert_file)
+  fields["keyFile"] = Json::string(files.key_file)
+}
+
+///|
+/// Sets the expiry metric to the expiry of the certificate as read last.
+fn Pair::set_expiry(self : Pair) -> Unit {
+  if self.last_read is Ok((cert, _)) && certificate_expiry(cert) is Some(expiry) {
+    self.expiry.set(expiry.to_double() / 1000.0)
+  }
+}
+
+///|
+/// The directories that hold the certificate and key files of `pairs`:
+/// each one is watched.
+fn tls_dirs(pairs : Array[@settings.TlsFiles]) -> Array[String] {
+  let dirs = []
+  for files in pairs {
+    for path in [files.cert_file, files.key_file] {
+      let dir = match path.rev_find("/") {
+        None => "."
+        Some(0) => "/"
+        Some(i) => path[:i].to_owned()
+      }
+      if !dirs.contains(dir) {
+        dirs.push(dir)
+      }
+    }
+  }
+  dirs
+}
+
+///|
+/// The configuration a new handshake gets when the client asks for
+/// `server_name` by SNI: the pair of the Mock whose Hosts include the name,
+/// compared as Host resolution compares Hosts, if that Mock has one, and
+/// the default certificate otherwise.
+fn Certificates::select(
+  self : Certificates,
+  server_name : String?,
+) -> @openssl.ServerConfig {
+  if !self.by_mock.is_empty() &&
+    server_name is Some(name) &&
+    self.engine.mock_for_host(name) is Some(mock) &&
+    self.by_mock.get(mock) is Some(pair) {
+    return pair.config
+  }
+  match self.default {
+    Files(pair) => pair.config
+    SelfSigned(certificate) => certificate.config
+  }
+}
+
+///|
+/// Follows a reload that swapped in a new definition set: warns about the
+/// Mocks with certificate files of their own that it does not declare, and
+/// replaces a self-signed default certificate whose names no longer match
+/// its Hosts.
+fn Certificates::after_swap(self : Certificates) -> Unit {
+  self.warn_undeclared()
+  if self.default is SelfSigned(certificate) {
+    certificate.follow_hosts(self.engine, self.logger)
+  }
+}
+
+///|
+/// Warns about each Mock with a pair of its own that the definition set
+/// served does not declare: its pair is chosen for nothing until a reload
+/// declares it. A Mock is warned about once each time it goes missing.
+fn Certificates::warn_undeclared(self : Certificates) -> Unit {
+  let declared = self.engine.status().mocks.map(mock => mock.name)
+  let undeclared = []
+  for mock, pair in self.by_mock {
+    if declared.contains(mock) {
+      continue
+    }
+    undeclared.push(mock)
+    if !self.undeclared.contains(mock) {
+      self.logger.warn(
+        "TLS certificate for a Mock that is not declared",
+        fields=pair_fields(mock, pair.files),
+      )
+    }
+  }
+  self.undeclared = undeclared
+}
+
+///|
+/// Checks every pair on each check of `watch`, the watch of a directory
+/// that holds certificate or key files, until the task is cancelled. Logs
+/// a warning when the directory cannot be watched, and is only polled.
+async fn Certificates::run(self : Certificates, watch : @watch.Watch) -> Unit {
+  watch.run(async fn(_) { self.check() }, on_error=err => {
+    self.logger.warn(
+      "cannot watch the TLS certificate directory, only polling it",
+      fields={
+        "dir": Json::string(watch.dir()),
+        "error": Json::string(err.to_string()),
+      },
+    )
+  })
+}
+
+///|
+/// Reads every pair again, and loads each one whose files changed. A check
+/// that fails in an unforeseen way is logged, and the next one tries again.
+async fn Certificates::check(self : Certificates) -> Unit {
+  self.checking.acquire()
+  defer self.checking.release()
+  let pairs = match self.default {
+    Files(pair) => [pair, ..self.by_mock.values()]
+    SelfSigned(_) => [..self.by_mock.values()]
+  }
+  for pair in pairs {
+    self.check_pair(pair) catch {
+      err => {
+        let fields = pair_fields(pair.mock, pair.files)
+        fields["error"] = Json::string(err.to_string())
+        self.logger.error("TLS certificate reload failed", fields~)
+      }
+    }
+  }
+}
+
+///|
+/// Reads `pair` again, and when its files changed, loads them and swaps
+/// them in, or keeps presenting the pair loaded before when they cannot be
+/// used. Either way, one log entry names the pair and the new expiry.
+async fn Certificates::check_pair(self : Certificates, pair : Pair) -> Unit {
+  let read = read_pair(pair.files)
+  if read == pair.last_read {
+    return
+  }
+  pair.last_read = read
+  let (loaded, expiry) = match read {
+    Ok((cert, key)) => (load_pair(cert, key), certificate_expiry(cert))
+    Err(reason) => (Err(reason), None)
+  }
+  let fields = pair_fields(pair.mock, pair.files)
+  fields["expiry"] = match expiry {
+    Some(ms) => Json::string(@log.format_time(ms))
+    None => Json::null()
+  }
+  match loaded {
+    Ok(config) => {
+      pair.config = config
+      pair.set_expiry()
+      self.logger.info("TLS certificate reloaded", fields~)
+    }
+    Err(reason) => {
+      fields["error"] = Json::string(reason)
+      self.logger.error("TLS certificate reload failed", fields~)
+    }
+  }
+}

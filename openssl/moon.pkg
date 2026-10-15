@@ -1,0 +1,14 @@
+import {
+  "moonbitlang/core/encoding/utf8",
+}
+
+import {
+  "smock/smock/testcerts",
+  "moonbitlang/core/encoding/utf8",
+} for "test"
+
+supported_targets = "native"
+
+options(
+  "native-stub": [ "openssl.c" ],
+)

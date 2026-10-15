@@ -1,0 +1,26 @@
+{
+  "mocks": [{ "name": "users" }],
+  "stubs": [
+    {
+      "id": "get-user",
+      "mock": "users",
+      "request": { "path": "/users/1" },
+      "response": {
+        "status": 200,
+        "json": { "id": 1, "price": 9.90, "tags": ["a", null, true], "$each": "plain key", "note": "${not a template}" }
+      }
+    },
+    {
+      "id": "list-users",
+      "mock": "users",
+      "request": { "path": "/users" },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/vnd.users+json" },
+        "template": false,
+        "json": []
+      }
+    },
+    { "id": "null-body", "mock": "users", "response": { "status": 200, "json": null } }
+  ]
+}

@@ -1,0 +1,1667 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "smock Admin API",
+    "version": "1",
+    "summary": "Inspect and change a running smock: Ephemeral Stubs, the Journal, verification, rendering and status.",
+    "description": "The Admin API is JSON over HTTP/1.1 on smock's admin port (`--admin-port`, 9090 by default), separate from the plain and TLS ports.\n\n- **Authentication.** Every operation needs `Authorization: Bearer <token>`. smock reads the token from the file named by `--admin-token-file` (`SMOCK_ADMIN_TOKEN_FILE`) or from the environment variable `SMOCK_ADMIN_TOKEN`, and refuses to start when authentication is on and neither gives a token, or when both the file and the variable are set. A missing or wrong token gets 401 with `WWW-Authenticate: Bearer`. `--admin-auth off` (`SMOCK_ADMIN_AUTH=off`) turns authentication off for local use; then no operation needs a token. The probes (`/startupz`, `/readyz`, `/livez`) and `/metrics` never need one.\n- **Replicas.** Every response, errors included, names the replica that handled it in the `Smock-Replica` header: the Pod's hostname, or the host name outside Kubernetes. Replicas share no state: each one keeps its own Ephemeral Stubs and Journal. When smock is told that its deployment runs more than one replica (`--replicas`, `SMOCK_REPLICAS`, default 1), every JSON response carries a `per_replica_state` warning.\n- **Warnings.** Every JSON response, errors included, has a `warnings` array, empty when there is nothing to warn about.\n- **Errors.** Every error is a JSON object `{error, message, warnings}`: `error` is a code from the ErrorCode schema and `message` says what went wrong. A request for a path this document does not list gets 404 with `not_found`; a method a path does not support gets 405 with `method_not_allowed` and an `Allow` header. Request bodies are JSON: a body that is not valid JSON gets 400 with `malformed_json`. Requests over the size limits of `smock serve` (`--header-size-limit`, `--header-count-limit`, `--body-limit`) get 431 or 413 in the same form, and the connection closes.\n- **Sessions.** Session-scoped operations name their Session the way mocked requests do: by default the `smock-session` member of the W3C `baggage` header. The header and the member are `smock serve` settings. Without a Session, an operation acts on the no-Session space: the requests and Ephemeral Stubs that carry no Session.\n- **Mocks** come only from Definition files. The Admin API adds Ephemeral Stubs to existing Mocks.",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:9090",
+      "description": "smock serve on this machine, with the default admin port"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Status",
+      "description": "What this replica runs and serves."
+    },
+    {
+      "name": "Ephemeral Stubs",
+      "description": "Stubs added to an existing Mock for one Session. They are tried before every Stub from Definition files, and the newest first among equal priority."
+    },
+    {
+      "name": "Reset",
+      "description": "Clearing Ephemeral Stubs and Journal entries."
+    },
+    {
+      "name": "Journal",
+      "description": "The bounded record of the requests this replica received: queries, verification and unmatched requests."
+    },
+    {
+      "name": "Render",
+      "description": "What a Stub returns for a sample request."
+    },
+    {
+      "name": "Probes",
+      "description": "Kubernetes startup, readiness and liveness probes. They need no token."
+    },
+    {
+      "name": "Metrics",
+      "description": "Prometheus metrics. They need no token."
+    }
+  ],
+  "paths": {
+    "/v1/status": {
+      "get": {
+        "operationId": "getStatus",
+        "tags": ["Status"],
+        "summary": "Show what this replica runs and serves",
+        "description": "The build of smock (version, commit and MoonBit toolchain, the same as `smock --version` and the build-info metric), the definition set it serves, the result of the last reload of the Definition files, and the Mocks with their Hosts.",
+        "responses": {
+          "200": {
+            "description": "The status.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/mocks/{mock}/stubs": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Mock"
+        },
+        {
+          "$ref": "#/components/parameters/Session"
+        }
+      ],
+      "get": {
+        "operationId": "listEphemeralStubs",
+        "tags": ["Ephemeral Stubs"],
+        "summary": "List the calling Session's Ephemeral Stubs of a Mock",
+        "description": "Only the Ephemeral Stubs of this Mock that were added with the calling Session, in the order they are tried: by priority, then the newest first.",
+        "responses": {
+          "200": {
+            "description": "The Ephemeral Stubs.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EphemeralStubList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/UnknownMock"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "operationId": "addEphemeralStub",
+        "tags": ["Ephemeral Stubs"],
+        "summary": "Add an Ephemeral Stub to a Mock for the calling Session",
+        "description": "The body is a Stub in the shape Definition files use, without `id` and `mock`: the path names the Mock, the Session header names the Session, and smock assigns the ID (`eph-<n>`). The Stub is validated and compiled like a Stub from a Definition file, and errors are reported with the same messages as `smock check`. Its body must be inline: `bodyFile` is rejected. It applies only to requests that carry the same Session; one added without a Session applies only to requests without one.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EphemeralStubInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The Ephemeral Stub was added.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EphemeralStubAdded"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/UnknownMock"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/mocks/{mock}/stubs/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Mock"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "description": "The ID of the Ephemeral Stub, as smock returned it, such as `eph-1`.",
+          "schema": {
+            "$ref": "#/components/schemas/EphemeralStubId"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/Session"
+        }
+      ],
+      "delete": {
+        "operationId": "deleteEphemeralStub",
+        "tags": ["Ephemeral Stubs"],
+        "summary": "Delete one of the calling Session's Ephemeral Stubs",
+        "description": "Only an Ephemeral Stub of this Mock that was added with the calling Session can be deleted. Another Session's Ephemeral Stub is unknown here.",
+        "responses": {
+          "200": {
+            "description": "The Ephemeral Stub was deleted.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EphemeralStubDeleted"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "The Mock does not exist (`unknown_mock`), or the calling Session has no Ephemeral Stub with this ID in it (`unknown_stub`).",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/reset": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Session"
+        }
+      ],
+      "post": {
+        "operationId": "reset",
+        "tags": ["Reset"],
+        "summary": "Clear Ephemeral Stubs and Journal entries for a Session, a Mock or everything",
+        "description": "- `session`: the calling Session's Ephemeral Stubs, Journal entries and eviction count, across all Mocks. Without a Session, the no-Session space.\n- `mock`: every Session's Ephemeral Stubs and Journal entries of one Mock.\n- `all`: every Ephemeral Stub, the whole Journal and every eviction count.\n\nWhat Definition files declare is never changed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What was cleared.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResetResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/UnknownMock"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/journal/query": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Session"
+        }
+      ],
+      "post": {
+        "operationId": "queryJournal",
+        "tags": ["Journal"],
+        "summary": "Query the calling Session's Journal entries",
+        "description": "The calling Session's entries that pass the filter, oldest first, after the entry whose sequence number `after` gives, at most `limit` of them. A request is in the Journal as soon as its client has received the whole response. A filter that names a Mock whose Journal is off gets `journal_off`; a filter that names no Mock leaves out the requests of such Mocks, since none of them were recorded.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JournalQuery"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The entries.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "409": {
+            "$ref": "#/components/responses/JournalOff"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/journal/verify": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Session"
+        }
+      ],
+      "post": {
+        "operationId": "verifyJournal",
+        "tags": ["Journal"],
+        "summary": "Verify how many of the calling Session's requests pass a filter",
+        "description": "Counts the calling Session's Journal entries that pass the filter and checks the count: exactly, at least or at most N. Verification never trusts a count that may be wrong: when the Journal bound has evicted any of the Session's entries, `exactly` and `atMost` fail with reason `evicted`, whatever the count. `atLeast` is still decided by the count, because eviction can only lower it. As with a query, a filter that names a Mock whose Journal is off gets `journal_off`, and a filter that names no Mock counts only the requests that were recorded, so none of such a Mock's.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The verdict. A failed check is still a 200 response, with `ok` false.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Verification"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "409": {
+            "$ref": "#/components/responses/JournalOff"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/journal/unmatched": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Session"
+        }
+      ],
+      "get": {
+        "operationId": "listUnmatched",
+        "tags": ["Journal"],
+        "summary": "List the calling Session's unmatched requests with their Near misses",
+        "description": "The calling Session's Journal entries that no Stub answered, oldest first, after the entry whose sequence number `after` gives, at most `limit` of them. Each carries its full Near miss, when there was a candidate Stub. A request for a Host that no Mock lists, with no Default Mock, is among them with no Mock and no Near miss. The unmatched requests of a Mock whose Journal is off were not recorded, so they are not among them; only `--journal off` gets `journal_off` here.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/After"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The unmatched requests.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "409": {
+            "$ref": "#/components/responses/JournalOff"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/stubs/{id}/render": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "description": "The ID of a Stub from the Definition files.",
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      ],
+      "post": {
+        "operationId": "renderStub",
+        "tags": ["Render"],
+        "summary": "Render a Stub's response for a sample request",
+        "description": "Renders the named Stub from the definition set this replica serves now, as `smock render` does from a definitions directory. The Stub is rendered even when the sample request fails its conditions; the failed conditions are listed, with their expected and actual values. A templated response is rendered for the sample, at the time and with the seed the rendering shows; a template that fails gives the 500 a request would get, with the error in `templateError`. Rendering decides no Fault and changes nothing.",
+        "parameters": [
+          {
+            "name": "time",
+            "in": "query",
+            "required": false,
+            "description": "The time the sample request is received at, for responses that depend on it. Default: now.",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "seed",
+            "in": "query",
+            "required": false,
+            "description": "The seed of the random source the rendering draws from, so that a rendering can be repeated exactly: a template's helpers draw what the first request matched by a Stub with this `fault.seed` draws. Default: the Stub's `fault.seed`, or a fresh seed when it has none. The rendering shows the seed it used.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SampleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The rendered response.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Rendering"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "No Stub from the Definition files has this ID (`unknown_stub`).",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/startupz": {
+      "get": {
+        "operationId": "startupProbe",
+        "tags": ["Probes"],
+        "summary": "Startup probe",
+        "description": "200 once the first definition set has loaded, 503 before.",
+        "security": [],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ProbeOk"
+          },
+          "503": {
+            "$ref": "#/components/responses/ProbeFailed"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "readinessProbe",
+        "tags": ["Probes"],
+        "summary": "Readiness probe",
+        "description": "200 while smock can serve, including after a failed reload, which keeps the previous definition set serving. 503 before startup completes and from the moment SIGTERM arrives.",
+        "security": [],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ProbeOk"
+          },
+          "503": {
+            "$ref": "#/components/responses/ProbeFailed"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/livez": {
+      "get": {
+        "operationId": "livenessProbe",
+        "tags": ["Probes"],
+        "summary": "Liveness probe",
+        "description": "200 while the event loop is responsive, including while smock drains after SIGTERM.",
+        "security": [],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ProbeOk"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "operationId": "getMetrics",
+        "tags": ["Metrics"],
+        "summary": "Prometheus metrics",
+        "description": "Every metric in the Prometheus text exposition format, version 0.0.4. Series are labelled at most by Mock and Stub ID, never by path, Host, method or Session. `smock_build_info` is always 1 and carries the build as labels: `version`, `commit` and `toolchain`, the same as `smock --version` and the status. `smock_requests_total` and the histogram `smock_request_duration_seconds`, labelled by `mock` and `stub`, and `smock_unmatched_requests_total`, labelled by `mock`, cover the requests served on the plain and TLS ports, not those on the admin port: every Ephemeral Stub is `stub=\"ephemeral\"`, no Stub `stub=\"\"`, and no Mock `mock=\"\"`. What smock's process and its cgroup use is read when the metrics are scraped: the standard process metrics `process_cpu_seconds_total`, `process_resident_memory_bytes` and `process_start_time_seconds`, from /proc, and on cgroup v2 the metrics of smock's own cgroup, from its cpu.stat and memory.peak: `smock_cgroup_cpu_usage_seconds_total`, with a CPU limit `smock_cgroup_cpu_periods_total`, `smock_cgroup_cpu_throttled_periods_total` and `smock_cgroup_cpu_throttled_seconds_total`, and `smock_cgroup_memory_peak_bytes`. A metric whose file smock cannot read when it starts is left out; one whose file it cannot read or understand at a scrape keeps the value it last read.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The metrics.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "# HELP smock_build_info The smock build: its version, commit and MoonBit toolchain, as labels. Always 1.\n# TYPE smock_build_info gauge\nsmock_build_info{version=\"0.1.0\",commit=\"0123456789ab\",toolchain=\"moonc v0.10.14+7d59c7ec9\"} 1\n"
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The token smock reads from `--admin-token-file` or `SMOCK_ADMIN_TOKEN`. smock compares it in constant time. Not needed when smock runs with `--admin-auth off`."
+      }
+    },
+    "headers": {
+      "Smock-Replica": {
+        "description": "The replica that handled the request: the Pod's hostname, or the host name outside Kubernetes. Bytes outside HTTP token characters are percent-encoded.",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "WWW-Authenticate": {
+        "description": "The authentication scheme the Admin API takes.",
+        "required": true,
+        "schema": {
+          "const": "Bearer"
+        }
+      }
+    },
+    "parameters": {
+      "Mock": {
+        "name": "mock",
+        "in": "path",
+        "required": true,
+        "description": "The name of a Mock from the Definition files.",
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "Session": {
+        "name": "baggage",
+        "in": "header",
+        "required": false,
+        "description": "The calling Session, carried as mocked requests carry it: by default the `smock-session` member of the W3C `baggage` header, such as `smock-session=checkout-test-42`. The header name and the member name are the Session settings of `smock serve`. Without a Session, the operation acts on the no-Session space.",
+        "schema": {
+          "type": "string"
+        },
+        "example": "smock-session=checkout-test-42"
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "The most entries to return. Default 100.",
+        "schema": {
+          "$ref": "#/components/schemas/Limit"
+        }
+      },
+      "After": {
+        "name": "after",
+        "in": "query",
+        "required": false,
+        "description": "Only entries after the one with this sequence number (`seq`): to fetch the next page, the `seq` of the last entry of the page before. Without it, the entries start from the oldest.",
+        "schema": {
+          "$ref": "#/components/schemas/After"
+        }
+      }
+    },
+    "responses": {
+      "Error": {
+        "description": "An error, such as a method the path does not support (`method_not_allowed`, with an `Allow` header), a request over a size limit (`content_too_large`, `header_fields_too_large`), or an operation this build does not implement (`not_implemented`).",
+        "headers": {
+          "Smock-Replica": {
+            "$ref": "#/components/headers/Smock-Replica"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "The request has no bearer token, or the wrong one (`unauthorized`).",
+        "headers": {
+          "Smock-Replica": {
+            "$ref": "#/components/headers/Smock-Replica"
+          },
+          "WWW-Authenticate": {
+            "$ref": "#/components/headers/WWW-Authenticate"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "BadRequest": {
+        "description": "The body is not valid JSON (`malformed_json`), it does not have the shape this operation takes (`invalid_request`), or it is a Stub that is not valid (`invalid_stub`, with the messages `smock check` gives).",
+        "headers": {
+          "Smock-Replica": {
+            "$ref": "#/components/headers/Smock-Replica"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "UnknownMock": {
+        "description": "No Mock has this name (`unknown_mock`). Mocks come only from Definition files.",
+        "headers": {
+          "Smock-Replica": {
+            "$ref": "#/components/headers/Smock-Replica"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "JournalOff": {
+        "description": "The Journal is off (`journal_off`), so there is no count or entry to trust: globally (`--journal off`), or for the Mock that the filter of a query or a verification names (`\"journal\": false` in the Definition files). Only a filter that names such a Mock is refused: a filter that names no Mock is answered from the requests that were recorded, which leave out those of Mocks whose Journal is off.",
+        "headers": {
+          "Smock-Replica": {
+            "$ref": "#/components/headers/Smock-Replica"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "ProbeOk": {
+        "description": "The probe passes.",
+        "headers": {
+          "Smock-Replica": {
+            "$ref": "#/components/headers/Smock-Replica"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ProbeOk"
+            }
+          }
+        }
+      },
+      "ProbeFailed": {
+        "description": "The probe fails: smock has not started yet (`not_started`), or is not ready to serve (`not_ready`).",
+        "headers": {
+          "Smock-Replica": {
+            "$ref": "#/components/headers/Smock-Replica"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Warnings": {
+        "description": "Warnings about this response. Empty when there is nothing to warn about.",
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/Warning"
+        }
+      },
+      "Warning": {
+        "description": "A warning.",
+        "type": "object",
+        "properties": {
+          "code": {
+            "description": "What the warning is about. `per_replica_state`: the deployment runs more than one replica (`--replicas`), each keeps its own Ephemeral Stubs and Journal, and this response comes from the replica in `Smock-Replica` alone.",
+            "enum": ["per_replica_state"]
+          },
+          "message": {
+            "description": "The warning, for people.",
+            "type": "string"
+          }
+        },
+        "required": ["code", "message"],
+        "additionalProperties": false
+      },
+      "Error": {
+        "description": "An error.",
+        "type": "object",
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "message": {
+            "description": "What went wrong, for people.",
+            "type": "string"
+          },
+          "warnings": {
+            "$ref": "#/components/schemas/Warnings"
+          }
+        },
+        "required": ["error", "message", "warnings"],
+        "additionalProperties": false
+      },
+      "ErrorCode": {
+        "description": "What kind of error it is:\n\n- `unauthorized` (401): no bearer token, or the wrong one.\n- `not_found` (404): no operation at this path.\n- `method_not_allowed` (405): the path does not take this method.\n- `malformed_json` (400): the body is not valid JSON.\n- `invalid_request` (400): the body or a parameter does not have the shape the operation takes.\n- `invalid_stub` (400): an Ephemeral Stub is not valid; the message is the one `smock check` gives.\n- `unknown_mock` (404): no Mock has this name.\n- `unknown_stub` (404): no Stub has this ID, or the calling Session has no Ephemeral Stub with it.\n- `journal_off` (409): the Journal is off globally, or for the Mock that the request's filter names.\n- `not_started` (503): the first definition set has not loaded yet.\n- `not_ready` (503): smock is not ready to serve, such as while it drains after SIGTERM.\n- `bad_request` (400): the HTTP request itself is malformed.\n- `content_too_large` (413): the body is over `--body-limit`.\n- `header_fields_too_large` (431): the request head is over `--header-size-limit` or `--header-count-limit`.\n- `not_implemented` (501): this build does not implement the operation, or the request uses a transfer coding other than chunked.\n- `http_version_not_supported` (505): the request is not HTTP/1.x.",
+        "enum": [
+          "unauthorized",
+          "not_found",
+          "method_not_allowed",
+          "malformed_json",
+          "invalid_request",
+          "invalid_stub",
+          "unknown_mock",
+          "unknown_stub",
+          "journal_off",
+          "not_started",
+          "not_ready",
+          "bad_request",
+          "content_too_large",
+          "header_fields_too_large",
+          "not_implemented",
+          "http_version_not_supported"
+        ]
+      },
+      "Status": {
+        "description": "What this replica runs and serves.",
+        "type": "object",
+        "properties": {
+          "version": {
+            "description": "The smock version, as `smock --version` prints it.",
+            "type": "string"
+          },
+          "commit": {
+            "description": "The commit smock was built from, as `smock --version` prints it.",
+            "type": "string"
+          },
+          "toolchain": {
+            "description": "The MoonBit toolchain smock was built with, as `smock --version` prints it, such as `moonc v0.10.14+7d59c7ec9`.",
+            "type": "string"
+          },
+          "digest": {
+            "description": "The definition set digest of the definition set this replica serves: the first 12 hex digits of SHA-256 over the sorted relative names and bytes of every Definition file and body file. Replicas that serve the same files report the same digest. Every definition set has one, the one served at startup and the empty one served without a definitions directory included.",
+            "type": "string",
+            "pattern": "^[0-9a-f]{12}$"
+          },
+          "lastReload": {
+            "description": "The result of the last reload of the Definition files. null until the first reload after startup, which is also the case without a definitions directory.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReloadResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mocks": {
+            "description": "The Mocks of the definition set this replica serves, in declaration order.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MockSummary"
+            }
+          },
+          "warnings": {
+            "$ref": "#/components/schemas/Warnings"
+          }
+        },
+        "required": ["version", "commit", "toolchain", "digest", "lastReload", "mocks", "warnings"],
+        "additionalProperties": false
+      },
+      "MockSummary": {
+        "description": "A Mock, its Hosts and whether it is the Default Mock.",
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "The Mock's name.",
+            "type": "string"
+          },
+          "hosts": {
+            "description": "The Hosts the Mock answers to, as its Definition file lists them.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "default": {
+            "description": "Whether this Mock is the Default Mock, which receives the requests whose Host no Mock lists. At most one Mock is.",
+            "type": "boolean"
+          }
+        },
+        "required": ["name", "hosts", "default"],
+        "additionalProperties": false
+      },
+      "ReloadResult": {
+        "description": "The result of a reload of the Definition files.",
+        "type": "object",
+        "properties": {
+          "at": {
+            "description": "When the reload finished.",
+            "type": "string",
+            "format": "date-time"
+          },
+          "result": {
+            "description": "`swapped`: the new definition set was valid and is served now. `unchanged`: its digest was the served one, so nothing was swapped. `failed`: it was invalid, and the previous definition set is still served.",
+            "enum": ["swapped", "unchanged", "failed"]
+          },
+          "errors": {
+            "description": "Every problem in the definition set, when the reload failed; otherwise empty.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Diagnostic"
+            }
+          }
+        },
+        "required": ["at", "result", "errors"],
+        "additionalProperties": false
+      },
+      "Diagnostic": {
+        "description": "A problem in a definition set, as `smock check` reports it.",
+        "type": "object",
+        "properties": {
+          "file": {
+            "description": "The Definition file, relative to the definitions directory.",
+            "type": "string"
+          },
+          "pointer": {
+            "description": "A JSON Pointer (RFC 6901) to the value the problem is about, within the file. Empty when it is about the whole file.",
+            "type": "string"
+          },
+          "message": {
+            "description": "The problem.",
+            "type": "string"
+          }
+        },
+        "required": ["file", "pointer", "message"],
+        "additionalProperties": false
+      },
+      "EphemeralStubId": {
+        "description": "The ID smock assigns an Ephemeral Stub.",
+        "type": "string",
+        "pattern": "^eph-[1-9][0-9]*$"
+      },
+      "EphemeralStubInput": {
+        "description": "An Ephemeral Stub to add: the Stub shape from the Definition-file JSON Schema, without `id` and `mock`, and with an inline body (no `bodyFile`).",
+        "$ref": "../schema/v1/definitions.json#/$defs/stub",
+        "properties": {
+          "response": {
+            "properties": {
+              "bodyFile": false
+            }
+          }
+        },
+        "unevaluatedProperties": false
+      },
+      "EphemeralStub": {
+        "description": "An Ephemeral Stub: the Stub as it was added, with the ID smock assigned, its Mock and its Session.",
+        "$ref": "../schema/v1/definitions.json#/$defs/stub",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EphemeralStubId"
+          },
+          "mock": {
+            "description": "The Mock the Ephemeral Stub belongs to.",
+            "type": "string"
+          },
+          "session": {
+            "description": "The Session the Ephemeral Stub applies to, or null for the no-Session space.",
+            "type": ["string", "null"]
+          }
+        },
+        "required": ["id", "mock", "session"],
+        "unevaluatedProperties": false
+      },
+      "EphemeralStubAdded": {
+        "description": "The Ephemeral Stub that was added.",
+        "type": "object",
+        "properties": {
+          "stub": {
+            "$ref": "#/components/schemas/EphemeralStub"
+          },
+          "warnings": {
+            "$ref": "#/components/schemas/Warnings"
+          }
+        },
+        "required": ["stub", "warnings"],
+        "additionalProperties": false
+      },
+      "EphemeralStubList": {
+        "description": "Ephemeral Stubs, in the order they are tried.",
+        "type": "object",
+        "properties": {
+          "stubs": {
+            "description": "The Ephemeral Stubs.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EphemeralStub"
+            }
+          },
+          "warnings": {
+            "$ref": "#/components/schemas/Warnings"
+          }
+        },
+        "required": ["stubs", "warnings"],
+        "additionalProperties": false
+      },
+      "EphemeralStubDeleted": {
+        "description": "The Ephemeral Stub that was deleted.",
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/EphemeralStubId"
+          },
+          "warnings": {
+            "$ref": "#/components/schemas/Warnings"
+          }
+        },
+        "required": ["id", "warnings"],
+        "additionalProperties": false
+      },
+      "ResetRequest": {
+        "description": "What to reset.",
+        "oneOf": [
+          {
+            "description": "The calling Session.",
+            "type": "object",
+            "properties": {
+              "scope": {
+                "description": "The calling Session's Ephemeral Stubs, Journal entries and eviction count, across all Mocks.",
+                "const": "session"
+              }
+            },
+            "required": ["scope"],
+            "additionalProperties": false
+          },
+          {
+            "description": "One Mock.",
+            "type": "object",
+            "properties": {
+              "scope": {
+                "description": "Every Session's Ephemeral Stubs and Journal entries of one Mock. The eviction counts, which are per Session, stay.",
+                "const": "mock"
+              },
+              "mock": {
+                "description": "The Mock's name. It may name a Mock the definitions served no longer declare, while the Journal holds entries it recorded before a reload removed it: the reset clears them.",
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": ["scope", "mock"],
+            "additionalProperties": false
+          },
+          {
+            "description": "Everything.",
+            "type": "object",
+            "properties": {
+              "scope": {
+                "description": "Every Ephemeral Stub, the whole Journal and every eviction count.",
+                "const": "all"
+              }
+            },
+            "required": ["scope"],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "ResetResult": {
+        "description": "What a reset cleared.",
+        "type": "object",
+        "properties": {
+          "scope": {
+            "description": "The scope of the reset.",
+            "enum": ["session", "mock", "all"]
+          },
+          "removed": {
+            "description": "How much was cleared.",
+            "type": "object",
+            "properties": {
+              "ephemeralStubs": {
+                "description": "How many Ephemeral Stubs were removed.",
+                "type": "integer",
+                "minimum": 0
+              },
+              "journalEntries": {
+                "description": "How many Journal entries were removed.",
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": ["ephemeralStubs", "journalEntries"],
+            "additionalProperties": false
+          },
+          "warnings": {
+            "$ref": "#/components/schemas/Warnings"
+          }
+        },
+        "required": ["scope", "removed", "warnings"],
+        "additionalProperties": false
+      },
+      "Limit": {
+        "description": "The most entries to return.",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 10000,
+        "default": 100
+      },
+      "After": {
+        "description": "Only entries after the one with this sequence number: to fetch the next page, the `seq` of the last entry of the page before. 0, like no value, starts from the oldest entry.",
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "JournalFilter": {
+        "description": "Which Journal entries to take. Every condition given must hold; an omitted one passes every entry. Method, path and headers have the semantics of Stub conditions.",
+        "type": "object",
+        "properties": {
+          "mock": {
+            "description": "Only entries of this Mock. It may name a Mock the definitions served no longer declare: the entries it recorded before a reload removed it remain. A Mock of the served definitions whose Journal is off gets `journal_off`.",
+            "type": "string",
+            "minLength": 1
+          },
+          "method": {
+            "$ref": "../schema/v1/definitions.json#/$defs/request/properties/method"
+          },
+          "path": {
+            "$ref": "../schema/v1/definitions.json#/$defs/request/properties/path"
+          },
+          "headers": {
+            "$ref": "../schema/v1/definitions.json#/$defs/request/properties/headers"
+          },
+          "since": {
+            "description": "Only entries received at or after this time.",
+            "type": "string",
+            "format": "date-time"
+          },
+          "until": {
+            "description": "Only entries received before this time.",
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "JournalQuery": {
+        "description": "A Journal query.",
+        "type": "object",
+        "properties": {
+          "filter": {
+            "$ref": "#/components/schemas/JournalFilter"
+          },
+          "limit": {
+            "$ref": "#/components/schemas/Limit"
+          },
+          "after": {
+            "$ref": "#/components/schemas/After"
+          }
+        },
+        "additionalProperties": false
+      },
+      "JournalPage": {
+        "description": "Journal entries, oldest first.",
+        "type": "object",
+        "properties": {
+          "entries": {
+            "description": "The entries.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JournalEntry"
+            }
+          },
+          "more": {
+            "description": "Whether more entries passed than `limit` let through. The next page is fetched with `after` set to the `seq` of this page's last entry, with the same filter: it loses no entry and repeats none, even among entries received in the same millisecond.",
+            "type": "boolean"
+          },
+          "evicted": {
+            "description": "How many of the calling Session's entries the Journal bound has evicted since the last reset of that Session or of everything (a reset of one Mock keeps the count). Results may be missing that many entries. Each Session's count is kept until then, so the counts grow with the number of Sessions whose entries were evicted.",
+            "type": "integer",
+            "minimum": 0
+          },
+          "warnings": {
+            "$ref": "#/components/schemas/Warnings"
+          }
+        },
+        "required": ["entries", "more", "evicted", "warnings"],
+        "additionalProperties": false
+      },
+      "JournalEntry": {
+        "description": "One request smock received, and how it answered.",
+        "type": "object",
+        "properties": {
+          "seq": {
+            "description": "The entry's sequence number: 1 for the first entry the replica recorded, then one more for each entry after it, whatever its Session. Entries come in this order; numbers are never reused, and the numbers between two entries of a page belong to entries of other Sessions, entries the filter left out, or entries evicted or reset. A page resumes after it with `after`.",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "receivedAt": {
+            "description": "When the request was received.",
+            "type": "string",
+            "format": "date-time"
+          },
+          "durationMs": {
+            "description": "How long the response took, in milliseconds, from the request being read to the last byte being written. null while it is not known yet.",
+            "type": ["number", "null"],
+            "minimum": 0
+          },
+          "session": {
+            "description": "The request's Session, or null when it had none.",
+            "type": ["string", "null"]
+          },
+          "host": {
+            "description": "The request's Host, normalised, or null when it had none.",
+            "type": ["string", "null"]
+          },
+          "mock": {
+            "description": "The Mock that answered, or null when no Mock lists the Host and there is no Default Mock.",
+            "type": ["string", "null"]
+          },
+          "viaDefault": {
+            "description": "Whether the Default Mock answered because no Mock lists the request's Host.",
+            "type": "boolean"
+          },
+          "digest": {
+            "description": "The digest of the definition set that answered the request, as in the status.",
+            "type": "string",
+            "pattern": "^[0-9a-f]{12}$"
+          },
+          "request": {
+            "$ref": "#/components/schemas/RecordedRequest"
+          },
+          "stub": {
+            "description": "The ID of the Stub that answered, or null when none matched. Ephemeral Stubs have their `eph-<n>` IDs, which a Stub from a Definition file may also have: `stubSource` tells them apart.",
+            "type": ["string", "null"]
+          },
+          "stubSource": {
+            "description": "Where the Stub that answered comes from: `file` for a Stub from a Definition file, `ephemeral` for an Ephemeral Stub. null when none matched.",
+            "enum": ["file", "ephemeral", null]
+          },
+          "nearMiss": {
+            "description": "When no Stub matched and the Mock had candidate Stubs: the Near miss. Otherwise null. The actual value of a failed body condition is truncated as the recorded request body is.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NearMiss"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "description": "The response status, or null when a connection Fault ended the request before a status was written.",
+            "type": ["integer", "null"],
+            "minimum": 100,
+            "maximum": 599
+          },
+          "fault": {
+            "description": "The connection Fault injected instead of the response, or null.",
+            "enum": ["reset", "close", "partial", null]
+          },
+          "templateError": {
+            "description": "Why the Stub's template could not be rendered for the request, when it could not: the client then got status 500 and the error in the body. Otherwise null.",
+            "oneOf": [{ "$ref": "#/components/schemas/TemplateError" }, { "type": "null" }]
+          }
+        },
+        "required": ["seq", "receivedAt", "durationMs", "session", "host", "mock", "viaDefault", "digest", "request", "stub", "stubSource", "nearMiss", "status", "fault", "templateError"],
+        "additionalProperties": false
+      },
+      "RecordedRequest": {
+        "description": "A request as the Journal records it.",
+        "type": "object",
+        "properties": {
+          "method": {
+            "description": "The method.",
+            "type": "string"
+          },
+          "target": {
+            "description": "The request target as sent, such as `/users/1?x=y`.",
+            "type": "string"
+          },
+          "version": {
+            "description": "The HTTP version.",
+            "enum": ["HTTP/1.0", "HTTP/1.1"]
+          },
+          "headers": {
+            "description": "The header fields, in the order they were sent.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Header"
+            }
+          },
+          "body": {
+            "$ref": "#/components/schemas/Body"
+          }
+        },
+        "required": ["method", "target", "version", "headers", "body"],
+        "additionalProperties": false
+      },
+      "Header": {
+        "description": "A header field.",
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "The field name, as sent.",
+            "type": "string"
+          },
+          "value": {
+            "description": "The field value, decoded as UTF-8; bytes that are not UTF-8 become U+FFFD.",
+            "type": "string"
+          }
+        },
+        "required": ["name", "value"],
+        "additionalProperties": false
+      },
+      "Body": {
+        "description": "A body.",
+        "type": "object",
+        "properties": {
+          "encoding": {
+            "description": "How `data` holds the bytes: `utf-8` when they are UTF-8 text, otherwise `base64` (standard alphabet, padded).",
+            "enum": ["utf-8", "base64"]
+          },
+          "data": {
+            "description": "The bytes, possibly truncated.",
+            "type": "string"
+          },
+          "size": {
+            "description": "The length of the whole body, in bytes.",
+            "type": "integer",
+            "minimum": 0
+          },
+          "truncated": {
+            "description": "Whether `data` holds only the first bytes of the body, as the Journal keeps them.",
+            "type": "boolean"
+          }
+        },
+        "required": ["encoding", "data", "size", "truncated"],
+        "additionalProperties": false
+      },
+      "NearMiss": {
+        "description": "The Stub that came closest to matching a request that matched nothing: the candidate with the fewest failed conditions, the earlier one in matching order on a tie. Each of method, path, each listed query parameter, each listed header, and body counts as one condition.",
+        "type": "object",
+        "properties": {
+          "stub": {
+            "description": "The Stub's ID.",
+            "type": "string"
+          },
+          "stubSource": {
+            "description": "Where the Stub comes from: `file` for a Stub from a Definition file, `ephemeral` for an Ephemeral Stub.",
+            "enum": ["file", "ephemeral"]
+          },
+          "failed": {
+            "description": "The conditions it failed, in the order method, path, query parameters, headers, body.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FailedCondition"
+            }
+          }
+        },
+        "required": ["stub", "stubSource", "failed"],
+        "additionalProperties": false
+      },
+      "FailedCondition": {
+        "description": "A Stub condition a request failed, with what the Stub expects and what the request carries.",
+        "type": "object",
+        "properties": {
+          "condition": {
+            "description": "The condition: `method`, `path`, `query:<name>`, `header:<name>` (in lower case) or `body`. Names are as the Stub gives them; the `Smock-Near-Miss` header carries the same conditions with each name percent-encoded. A query parameter name can be any text, even empty.",
+            "type": "string",
+            "pattern": "^(method|path|body|query:[\\s\\S]*|header:.+)$"
+          },
+          "expected": {
+            "description": "The condition as the Stub gives it: an exact string, a pattern, or a json condition.",
+            "$ref": "../schema/v1/definitions.json#/$defs/request/properties/body"
+          },
+          "actual": {
+            "description": "The values the request carries for the condition, in order: one for method, path and body; every value of a query parameter or header, which may be repeated; none when it is absent. A body that is not UTF-8 is shown with U+FFFD in place of each sequence that is not; the Journal entry's request body keeps its bytes.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["condition", "expected", "actual"],
+        "additionalProperties": false
+      },
+      "VerifyRequest": {
+        "description": "What to verify: a filter, and exactly one of `exactly`, `atLeast` and `atMost`.",
+        "type": "object",
+        "properties": {
+          "filter": {
+            "$ref": "#/components/schemas/JournalFilter"
+          },
+          "exactly": {
+            "description": "The count must be exactly this.",
+            "type": "integer",
+            "minimum": 0
+          },
+          "atLeast": {
+            "description": "The count must be at least this.",
+            "type": "integer",
+            "minimum": 0
+          },
+          "atMost": {
+            "description": "The count must be at most this.",
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "oneOf": [
+          {
+            "required": ["exactly"]
+          },
+          {
+            "required": ["atLeast"]
+          },
+          {
+            "required": ["atMost"]
+          }
+        ],
+        "additionalProperties": false
+      },
+      "Verification": {
+        "description": "The verdict of a verification.",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "description": "Whether the check passed.",
+            "type": "boolean"
+          },
+          "count": {
+            "description": "How many of the calling Session's Journal entries pass the filter.",
+            "type": "integer",
+            "minimum": 0
+          },
+          "evicted": {
+            "description": "How many of the calling Session's entries the Journal bound has evicted since the last reset of that Session or of everything (a reset of one Mock keeps the count).",
+            "type": "integer",
+            "minimum": 0
+          },
+          "reason": {
+            "description": "Why the check failed: `count`, the count is not what the check asks for; `evicted`, entries were evicted, so an `exactly` or `atMost` count cannot be trusted. null when it passed.",
+            "enum": ["count", "evicted", null]
+          },
+          "warnings": {
+            "$ref": "#/components/schemas/Warnings"
+          }
+        },
+        "required": ["ok", "count", "evicted", "reason", "warnings"],
+        "additionalProperties": false
+      },
+      "SampleRequest": {
+        "description": "A sample request to render a Stub for, the same JSON `smock render --request` reads.",
+        "type": "object",
+        "properties": {
+          "method": {
+            "description": "The method. Default GET.",
+            "type": "string",
+            "minLength": 1,
+            "default": "GET"
+          },
+          "path": {
+            "description": "The path, without the query. Default /.",
+            "type": "string",
+            "pattern": "^/",
+            "default": "/"
+          },
+          "query": {
+            "description": "Query parameters, by name: a value, or the values of a repeated parameter.",
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SampleValues"
+            }
+          },
+          "headers": {
+            "description": "Header fields, by name: a value, or the values of a repeated field.",
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SampleValues"
+            }
+          },
+          "body": {
+            "description": "The body, as text in UTF-8. Default empty.",
+            "type": "string",
+            "default": ""
+          },
+          "session": {
+            "description": "The request's Session, or null for none. Default null.",
+            "type": ["string", "null"],
+            "default": null
+          }
+        },
+        "additionalProperties": false
+      },
+      "SampleValues": {
+        "description": "One value, or several in order.",
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "Rendering": {
+        "description": "A Stub's response, rendered for a sample request.",
+        "type": "object",
+        "properties": {
+          "stub": {
+            "description": "The Stub's ID.",
+            "type": "string"
+          },
+          "mock": {
+            "description": "The Stub's Mock.",
+            "type": "string"
+          },
+          "time": {
+            "description": "The time the sample request was received at: the `time` given, or else when the rendering was made. `now()` and `nowMillis()` in a template read it.",
+            "type": "string",
+            "format": "date-time"
+          },
+          "seed": {
+            "description": "The seed the rendering used: the `seed` given, or else the Stub's `fault.seed`, or else a fresh one. Given again with the same time, it gives the same rendering.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "response": {
+            "$ref": "#/components/schemas/RenderedResponse"
+          },
+          "templateError": {
+            "description": "Why the Stub's template could not be rendered for the sample, when it could not: `response` is then the 500 a request would get. Otherwise null.",
+            "oneOf": [{ "$ref": "#/components/schemas/TemplateError" }, { "type": "null" }]
+          },
+          "failed": {
+            "description": "The Stub's conditions the sample request fails, as in a Near miss. Empty when it meets them all.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FailedCondition"
+            }
+          },
+          "warnings": {
+            "$ref": "#/components/schemas/Warnings"
+          }
+        },
+        "required": ["stub", "mock", "time", "seed", "response", "templateError", "failed", "warnings"],
+        "additionalProperties": false
+      },
+      "TemplateError": {
+        "description": "A response template that could not be rendered for a request.",
+        "type": "object",
+        "properties": {
+          "at": {
+            "description": "The JSON Pointer of the field within the Stub, such as `/response/json/customer`.",
+            "type": "string"
+          },
+          "message": {
+            "description": "What went wrong, such as `body.customer.name is missing`.",
+            "type": "string"
+          }
+        },
+        "required": ["at", "message"],
+        "additionalProperties": false
+      },
+      "RenderedResponse": {
+        "description": "A rendered response: a body, or Server-Sent Events.",
+        "type": "object",
+        "properties": {
+          "status": {
+            "description": "The status.",
+            "type": "integer",
+            "minimum": 200,
+            "maximum": 599
+          },
+          "headers": {
+            "description": "The header fields smock sends, in order, without Content-Length, Transfer-Encoding and Connection, which depend on the connection.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Header"
+            }
+          },
+          "body": {
+            "description": "The body, or null when the Stub streams Server-Sent Events.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Body"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "events": {
+            "description": "The Server-Sent Events, or null when the Stub sends a body.",
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "../schema/v1/definitions.json#/$defs/event"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": ["status", "headers", "body", "events"],
+        "additionalProperties": false
+      },
+      "ProbeOk": {
+        "description": "A probe that passes.",
+        "type": "object",
+        "properties": {
+          "status": {
+            "description": "Always `ok`.",
+            "const": "ok"
+          },
+          "warnings": {
+            "$ref": "#/components/schemas/Warnings"
+          }
+        },
+        "required": ["status", "warnings"],
+        "additionalProperties": false
+      }
+    }
+  }
+}

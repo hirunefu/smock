@@ -1,0 +1,22 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "get-user",
+      "mock": "users",
+      "fault": {
+        "delay": {
+          "fixed": 100,
+          "jitter": 10
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

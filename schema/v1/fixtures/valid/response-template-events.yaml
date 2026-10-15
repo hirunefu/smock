@@ -1,0 +1,23 @@
+mocks:
+  - name: market
+stubs:
+  - id: price-stream
+    mock: market
+    request: { method: GET, path: /v1/prices/stream, query: { symbol: { pattern: "[A-Z]{1,5}" } } }
+    response:
+      status: 200
+      template: true
+      headers: { Cache-Control: no-cache }
+      events:
+        - { event: price, id: "1", json: { symbol: "${query.symbol}", price: "${fake.decimal(90, 110, 2)}", at: "${now()}" } }
+        - { delay: 500, event: price, id: "2", json: { symbol: "${query.symbol}", price: "${fake.decimal(90, 110, 2)}", at: "${now()}" } }
+        - { delay: 500, event: done, data: "[DONE]" }
+    fault: { seed: 7 }
+  - id: static-json-events
+    mock: market
+    request: { path: /v1/status/stream }
+    response:
+      status: 200
+      events:
+        - { json: { up: true, latency: 1.50 } }
+        - { delay: 100, json: "${not a template}" }

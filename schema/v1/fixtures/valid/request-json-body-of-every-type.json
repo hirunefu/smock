@@ -1,0 +1,85 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "s0",
+      "mock": "users",
+      "request": {
+        "body": {
+          "json": {
+            "object": {},
+            "array": [],
+            "string": "",
+            "number": -1500.0,
+            "true": true,
+            "false": false,
+            "null": null
+          }
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    },
+    {
+      "id": "s1",
+      "mock": "users",
+      "request": {
+        "body": {
+          "json": [
+            1,
+            [
+              2,
+              {
+                "a": "b"
+              }
+            ]
+          ]
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    },
+    {
+      "id": "s2",
+      "mock": "users",
+      "request": {
+        "body": {
+          "json": "text"
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    },
+    {
+      "id": "s3",
+      "mock": "users",
+      "request": {
+        "body": {
+          "json": 0
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    },
+    {
+      "id": "s4",
+      "mock": "users",
+      "request": {
+        "body": {
+          "json": null
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

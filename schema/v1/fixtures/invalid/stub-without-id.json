@@ -1,0 +1,15 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "mock": "users",
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

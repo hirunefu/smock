@@ -1,0 +1,28 @@
+{{- /*
+Traffic: the plain and TLS ports. The admin port has a Service of its own
+(service-admin.yaml), so that each can get its own network policy.
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "smock.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "smock.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "smock.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.plainPort }}
+      targetPort: plain
+      protocol: TCP
+    - name: https
+      port: {{ .Values.service.tlsPort }}
+      targetPort: tls
+      protocol: TCP

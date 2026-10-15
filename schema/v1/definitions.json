@@ -1,0 +1,382 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hirunefu.github.io/smock/schema/v1/definitions.json",
+  "title": "smock Definition file, format version 1",
+  "description": "A Definition file declares Mocks, Stubs, or both. smock reads every Definition file of a definitions directory together, as one definition set, so a Stub may belong to a Mock declared in another file. Rules that span the set cannot be expressed in this Schema: Mock names and Stub IDs are unique across the set, and every Stub names a Mock that some file declares. `smock check <dir>` checks those as well.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "description": "The format version of this file. Version 1 is the only one. A file without version is read as version 1.",
+      "const": 1,
+      "default": 1
+    },
+    "mocks": {
+      "description": "The Mocks this file declares.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/mock" }
+    },
+    "stubs": {
+      "description": "The Stubs this file declares, in the order they are tried among Stubs of equal priority (after the Stubs of files whose names come earlier in byte-wise order).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/fileStub" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "mock": {
+      "description": "A Mock: a named set of Stubs that impersonates one dependency service. A request reaches a Mock by its Host.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The Mock's name, unique across the definition set. Stubs name their Mock by it.",
+          "$ref": "#/$defs/name"
+        },
+        "hosts": {
+          "description": "The Hosts this Mock answers to. A request reaches the Mock when its Host is one of them. Hosts are compared case-insensitively, without the port and without a trailing dot, and each one belongs to at most one Mock. Without hosts, the Mock is reached only as the Default Mock.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/host" }
+        },
+        "default": {
+          "description": "Whether this Mock is the Default Mock, which receives the requests whose Host matches no Mock. At most one Mock is marked default. When the definition set declares exactly one Mock, that Mock is the Default Mock without this. Default false.",
+          "type": "boolean",
+          "default": false
+        },
+        "noMatch": {
+          "description": "How the Mock answers a request that no Stub matches.",
+          "type": "object",
+          "properties": {
+            "status": {
+              "description": "The status of the response when no Stub matches. Default 404.",
+              "$ref": "#/$defs/status",
+              "default": 404
+            }
+          },
+          "additionalProperties": false
+        },
+        "journal": {
+          "description": "Whether the requests this Mock receives are recorded in the Journal. Turn it off so that a high-rate load test pays nothing for recording. Default true (on).",
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "required": ["name"],
+      "additionalProperties": false
+    },
+    "fileStub": {
+      "description": "A Stub declared in a Definition file: the Stub shape, plus the Stub's ID and the name of its Mock.",
+      "$ref": "#/$defs/stub",
+      "properties": {
+        "id": {
+          "description": "The Stub's ID, unique across the definition set. It names the Stub in the Journal, in metrics and in Near misses.",
+          "$ref": "#/$defs/name"
+        },
+        "mock": {
+          "description": "The name of the Mock this Stub belongs to. One of the Definition files of the set must declare a Mock with this name.",
+          "$ref": "#/$defs/name"
+        }
+      },
+      "required": ["id", "mock"],
+      "unevaluatedProperties": false
+    },
+    "stub": {
+      "description": "The shape of a Stub, without its ID and its Mock: the conditions a request must meet, the response to return, and the Faults to inject. A Stub in a Definition file adds id and mock to it (see fileStub). The Admin API adds Ephemeral Stubs in this shape, and gives the Mock and the Session itself. This definition does not close itself to other properties so that those two can extend it; each of them closes it with unevaluatedProperties: false.",
+      "type": "object",
+      "properties": {
+        "priority": {
+          "description": "The Stub's priority: Stubs with a lower number are tried first. A Stub without a priority is tried after every Stub with one. Stubs of equal priority are tried in file-name order (byte-wise), then by their position in the file.",
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "request": { "$ref": "#/$defs/request" },
+        "response": { "$ref": "#/$defs/response" },
+        "fault": { "$ref": "#/$defs/fault" }
+      },
+      "required": ["response"]
+    },
+    "request": {
+      "description": "The conditions a request must meet for the Stub to match it. Every condition given must hold. An omitted condition matches anything, so a Stub without request matches every request its Mock receives.",
+      "type": "object",
+      "properties": {
+        "method": {
+          "description": "The request method, compared exactly and case-sensitively, such as GET.",
+          "type": "string",
+          "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+        },
+        "path": {
+          "description": "The request path, percent-decoded and without the query: an exact path, or a pattern that must match the whole path.",
+          "anyOf": [
+            {
+              "description": "An exact path. It starts with /.",
+              "type": "string",
+              "pattern": "^/"
+            },
+            { "$ref": "#/$defs/pattern" }
+          ]
+        },
+        "query": {
+          "description": "Query parameters, by name. Each listed parameter must be present, and its percent-decoded value must equal the given string or match the given pattern as a whole. When a parameter is repeated, any of its values may match. Parameters that are not listed are ignored.",
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/valueCondition" }
+        },
+        "headers": {
+          "description": "Header fields, by name. Names are compared case-insensitively. Each listed header must be present, and its value must equal the given string or match the given pattern as a whole. When a header is repeated, any of its values may match. Each header field line is one value: a line that joins values with commas, such as `b, a`, matches only as a whole. Headers that are not listed are ignored.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/headerName" },
+          "additionalProperties": { "$ref": "#/$defs/valueCondition" }
+        },
+        "body": {
+          "description": "The request body: an exact string, a pattern that must match the whole body, or a json condition.",
+          "anyOf": [
+            {
+              "description": "The exact body, as text in UTF-8.",
+              "type": "string"
+            },
+            { "$ref": "#/$defs/pattern" },
+            { "$ref": "#/$defs/jsonCondition" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "valueCondition": {
+      "description": "A condition on a value: an exact string, or a pattern that must match the whole value.",
+      "anyOf": [
+        {
+          "description": "The exact value.",
+          "type": "string"
+        },
+        { "$ref": "#/$defs/pattern" }
+      ]
+    },
+    "pattern": {
+      "description": "A pattern condition, in RE2 syntax. The pattern must match the whole value, not only part of it. Patterns are compiled when the definitions are loaded, and a pattern that does not compile makes the definition set invalid.",
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "description": "The RE2 pattern.",
+          "type": "string"
+        }
+      },
+      "required": ["pattern"],
+      "additionalProperties": false
+    },
+    "jsonCondition": {
+      "description": "A json condition: the body parses as JSON and contains the given value.",
+      "type": "object",
+      "properties": {
+        "json": {
+          "description": "The JSON value the body must contain. An object needs each listed key, matched recursively, and may have others. An array needs the same length and is matched element by element. Any other value must be equal."
+        }
+      },
+      "required": ["json"],
+      "additionalProperties": false
+    },
+    "response": {
+      "description": "The response to return when the Stub matches. Its body is given inline (body), read from a body file (bodyFile), given as JSON (json), or streamed as Server-Sent Events (events). Give at most one of them; without any, the body is empty. With template true, the header values, the body and the events are templates, parsed when the definitions are loaded and rendered for each request: see docs/definition-files.md, Templates.",
+      "type": "object",
+      "properties": {
+        "status": {
+          "description": "The response status.",
+          "$ref": "#/$defs/status"
+        },
+        "headers": {
+          "description": "Header fields to send, by name. smock sets Content-Length, Transfer-Encoding and Connection itself, so they cannot be given.",
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/headerName",
+            "not": {
+              "description": "A header field smock sets itself.",
+              "pattern": "^([Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Ll][Ee][Nn][Gg][Tt][Hh]|[Tt][Rr][Aa][Nn][Ss][Ff][Ee][Rr]-[Ee][Nn][Cc][Oo][Dd][Ii][Nn][Gg]|[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn])$"
+            }
+          },
+          "additionalProperties": {
+            "description": "The field value. It contains no control characters other than tab.",
+            "type": "string",
+            "pattern": "^[^\\u0000-\\u0008\\u000a-\\u001f\\u007f]*$"
+          }
+        },
+        "body": {
+          "description": "The body, inline. It is sent as text in UTF-8.",
+          "type": "string"
+        },
+        "bodyFile": {
+          "description": "The body, read from a body file: a path relative to the body-file subdirectory of the definitions directory (files by default), such as users/1.json. The path cannot leave that subdirectory, and none of its names start with a dot, since smock skips such files. Body files are read when the definitions are loaded.",
+          "type": "string",
+          "pattern": "^(?!\\.)[^/]+(/(?!\\.)[^/]+)*$"
+        },
+        "json": {
+          "description": "The body as JSON: any JSON value, sent as compact JSON in UTF-8, with Content-Type: application/json unless headers gives a Content-Type. smock writes every number in its shortest form (9.90 is sent as 9.9); use body when the exact bytes matter. With template true, it is a structured template: a string that is exactly one ${expr} gives the value with its own type, an object with $each gives an array, and an object with $if gives its then or else."
+        },
+        "template": {
+          "description": "Whether the header values (except Content-Type, which cannot contain ${), the body (body, bodyFile or json) and the events are templates, rendered for each request. With template false, nothing is parsed or rendered: ${ is plain text and $each a plain key. Default false.",
+          "type": "boolean",
+          "default": false
+        },
+        "events": {
+          "description": "Server-Sent Events to stream instead of a body. smock sends the status and the headers at once, always with Content-Type: text/event-stream (a Content-Type in headers is replaced), then writes each event after its delay, and closes the stream after the last one.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/event" }
+        }
+      },
+      "required": ["status"],
+      "dependentSchemas": {
+        "body": {
+          "properties": { "bodyFile": false, "json": false, "events": false }
+        },
+        "bodyFile": {
+          "properties": { "json": false, "events": false }
+        },
+        "json": {
+          "properties": { "events": false }
+        }
+      },
+      "additionalProperties": false
+    },
+    "event": {
+      "description": "One Server-Sent Event. Give exactly one of data and json.",
+      "type": "object",
+      "properties": {
+        "delay": {
+          "description": "How long to wait before writing this event, in milliseconds, counted from the previous event or, for the first event, from the headers. Default 0.",
+          "$ref": "#/$defs/milliseconds",
+          "default": 0
+        },
+        "event": {
+          "description": "The event type, sent as the event field. Without it, clients see the type message. One line.",
+          "type": "string",
+          "pattern": "^[^\\r\\n]*$"
+        },
+        "id": {
+          "description": "The event ID, sent as the id field. One line, without NUL characters.",
+          "type": "string",
+          "pattern": "^[^\\u0000\\r\\n]*$"
+        },
+        "data": {
+          "description": "The event data. Each of its lines is sent as its own data field.",
+          "type": "string"
+        },
+        "json": {
+          "description": "The event data as JSON: any JSON value, sent as one data field of compact JSON, its numbers in their shortest form. With template true, it is a structured template, as the json of a response is."
+        }
+      },
+      "oneOf": [
+        { "description": "The data as text.", "required": ["data"] },
+        { "description": "The data as JSON.", "required": ["json"] }
+      ],
+      "additionalProperties": false
+    },
+    "fault": {
+      "description": "Faults the Stub injects when it matches. Their random draws come from the Stub's own generator when seed is given, otherwise from the process generator.",
+      "type": "object",
+      "properties": {
+        "delay": { "$ref": "#/$defs/delay" },
+        "connection": { "$ref": "#/$defs/connectionFault" },
+        "seed": {
+          "description": "The seed of the Stub's own pseudo-random generator, so that its random draws repeat on every run. The generator is created when the definitions are loaded and advances once per matched request.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "delay": {
+      "description": "A delay before the status line is written, drawn from one distribution: give exactly one of fixed, uniform and lognormal.",
+      "type": "object",
+      "properties": {
+        "fixed": {
+          "description": "Always this many milliseconds.",
+          "$ref": "#/$defs/milliseconds"
+        },
+        "uniform": {
+          "description": "A number of milliseconds drawn uniformly from min to max. min must not exceed max.",
+          "type": "object",
+          "properties": {
+            "min": {
+              "description": "The shortest delay, in milliseconds.",
+              "$ref": "#/$defs/milliseconds"
+            },
+            "max": {
+              "description": "The longest delay, in milliseconds.",
+              "$ref": "#/$defs/milliseconds"
+            }
+          },
+          "required": ["min", "max"],
+          "additionalProperties": false
+        },
+        "lognormal": {
+          "description": "A number of milliseconds drawn from a log-normal distribution, for a long tail of slow responses.",
+          "type": "object",
+          "properties": {
+            "median": {
+              "description": "The median delay, in milliseconds.",
+              "$ref": "#/$defs/milliseconds"
+            },
+            "sigma": {
+              "description": "The standard deviation of the delay's natural logarithm. The larger it is, the longer the tail.",
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "required": ["median", "sigma"],
+          "additionalProperties": false
+        },
+        "probability": { "$ref": "#/$defs/probability" }
+      },
+      "oneOf": [
+        { "required": ["fixed"] },
+        { "required": ["uniform"] },
+        { "required": ["lognormal"] }
+      ],
+      "additionalProperties": false
+    },
+    "connectionFault": {
+      "description": "A connection-level Fault, injected instead of the response.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "reset: read the request, then reset the connection (RST). close: close the connection without writing anything (FIN). partial: write the status line, the headers and the first half of the body, then close the connection. A request that asks for 100 Continue (Expect: 100-continue) gets it before its body is read, and so before any of these.",
+          "enum": ["reset", "close", "partial"]
+        },
+        "probability": { "$ref": "#/$defs/probability" }
+      },
+      "required": ["kind"],
+      "additionalProperties": false
+    },
+    "probability": {
+      "description": "The share of matched requests the Fault applies to, from 0 to 1. Default 1: every matched request.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 1
+    },
+    "milliseconds": {
+      "description": "A duration in whole milliseconds.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2147483647
+    },
+    "status": {
+      "description": "An HTTP status code from 200 to 599.",
+      "type": "integer",
+      "minimum": 200,
+      "maximum": 599
+    },
+    "name": {
+      "description": "A non-empty name.",
+      "type": "string",
+      "minLength": 1
+    },
+    "host": {
+      "description": "A host name or an IP address, optionally with a port, as clients send it in the Host header, such as users.example.com or [::1]:8080. Hosts are exact names: there are no wildcards.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:\\[\\]-]+$"
+    },
+    "headerName": {
+      "description": "A header field name: an HTTP token.",
+      "type": "string",
+      "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+    }
+  }
+}

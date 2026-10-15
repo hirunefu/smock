@@ -1,0 +1,58 @@
+{
+  "about": "What bench/bench.py runs, all provisional until the first runs on the real path. Each CPU limit is a resource profile, named by it, with no memory limit (bench/plan-autopilot.json shows profiles with memory limits). Each case runs under every CPU limit it has a rate for, as one oha process per request of bench/requests.json at its weight's share of the rate and of the connections. Requests scheduled in the first ramp_s seconds (while connections open) are not counted, nor those after duration_s more; tail_s more seconds let the last counted requests finish. A case may set its own duration_s and rss_interval_s. idle_connections are opened to the plain port before the load, each sends one request, and they stay open, idle, until the load ends. idle_rss is smock's RSS settle_s seconds after it is ready, before any load, under each profile it names, whichever profiles a run selects (without profiles, under each profile the run selects). The targets, in bench/targets.json, hold under the profiles of bench/plan-autopilot.json, with their memory limits: a run of this plan reports each as not measured.",
+  "load_generator": { "name": "oha", "version": "1.16.0" },
+  "cpu_limits": ["250m", "500m", "1", "2"],
+  "ramp_s": 2,
+  "duration_s": 20,
+  "tail_s": 3,
+  "cooldown_s": 2,
+  "rss_interval_s": 0.5,
+  "idle_rss": { "profiles": ["1"], "settle_s": 5 },
+  "cases": [
+    {
+      "name": "http-keep-alive",
+      "protocol": "http",
+      "connection": "keep-alive",
+      "connections": 64,
+      "rates": { "250m": 12500, "500m": 25000, "1": 50000, "2": 50000 }
+    },
+    {
+      "name": "https-keep-alive",
+      "protocol": "https",
+      "connection": "keep-alive",
+      "connections": 64,
+      "rates": { "250m": 12500, "500m": 25000, "1": 50000, "2": 50000 }
+    },
+    {
+      "name": "http-new-connection",
+      "protocol": "http",
+      "connection": "new-per-request",
+      "connections": 64,
+      "rates": { "250m": 1000, "500m": 2000, "1": 4000, "2": 4000 }
+    },
+    {
+      "name": "https-new-connection",
+      "protocol": "https",
+      "connection": "new-per-request",
+      "connections": 64,
+      "rates": { "250m": 250, "500m": 500, "1": 1000, "2": 1000 }
+    },
+    {
+      "name": "http-keep-alive-idle-connections",
+      "protocol": "http",
+      "connection": "keep-alive",
+      "connections": 64,
+      "idle_connections": 1000,
+      "rates": { "250m": 12500, "500m": 25000, "1": 50000, "2": 50000 }
+    },
+    {
+      "name": "long-run",
+      "protocol": "http",
+      "connection": "keep-alive",
+      "connections": 64,
+      "rates": { "1": 5000 },
+      "duration_s": 600,
+      "rss_interval_s": 1
+    }
+  ]
+}

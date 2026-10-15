@@ -1,0 +1,163 @@
+# Values of the smock chart. README.md lists each one with its default and
+# says more; scripts/test-helm-chart.sh checks that it lists them all.
+
+# How many smock Pods to run. Each Pod runs one single-threaded smock
+# process, so capacity grows with replicas, not with a larger CPU limit
+# (ADR 0003). smock is also told this number, for the Admin API's warning
+# that state is per replica; it goes stale under an autoscaler or
+# `kubectl scale`.
+replicas: 1
+
+image:
+  repository: ghcr.io/hirunefu/smock
+  # Empty: the chart's appVersion, the release the chart comes from.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Where the Definition files come from.
+definitions:
+  # configMap (the default), gitSync or image.
+  source: configMap
+  # The body-file subdirectory of the definitions directory.
+  bodyFileDir: files
+
+  # source: configMap. A ConfigMap mounted as a whole volume at the
+  # definitions directory: Kubernetes swaps updated files in, and smock
+  # reloads them without a restart. With bodyFiles or items, the Pod
+  # template names every file, so a file added, removed or renamed
+  # restarts the Pods.
+  configMap:
+    # An existing ConfigMap to mount. Empty: the chart makes one from files
+    # and bodyFiles.
+    name: ""
+    # Only with name: where the keys of that ConfigMap go, as in a
+    # ConfigMap volume ({key, path}). Empty: every key at the top level.
+    items: []
+    # Definition files, by file name, such as users.yaml.
+    files: {}
+    # Body files, by path inside bodyFileDir, such as users/1.json.
+    bodyFiles: {}
+
+  # source: gitSync. A git-sync sidecar syncs a Git repository into a
+  # volume the Pod shares, and smock reads the Definition files from it.
+  gitSync:
+    # The repository URL. Required.
+    repo: ""
+    # The branch, tag or commit to sync.
+    ref: HEAD
+    # The definitions directory inside the repository. Empty: its top.
+    path: ""
+    # How often to check the repository for a new commit.
+    period: 10s
+    # How many commits of history to fetch (0: all).
+    depth: 1
+    # Environment variables of the git-sync containers, such as
+    # GITSYNC_USERNAME and GITSYNC_PASSWORD from a Secret.
+    env: []
+    # More git-sync flags.
+    extraArgs: []
+    image:
+      repository: registry.k8s.io/git-sync/git-sync
+      tag: v4.7.1
+      digest: sha256:c5e1976da735bf0b53979f079a07475d77174c51863cd084e928ff6074480717
+      pullPolicy: IfNotPresent
+    # The numeric UID git-sync runs as: its image's own user.
+    uid: 65533
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        memory: 256Mi
+
+  # source: image. An OCI image mounted as a volume (Kubernetes 1.35 or
+  # later). A new reference rolls out new Pods.
+  image:
+    # The image reference, such as ghcr.io/team/mocks:1.4.0. Required.
+    reference: ""
+    pullPolicy: IfNotPresent
+    # The definitions directory inside the image. Empty: its top.
+    path: ""
+
+# The Admin API token.
+adminAuth:
+  # Whether the Admin API needs the token. Turn it off for local use only.
+  enabled: true
+  # The Secret that holds the token. Required while enabled.
+  tokenSecret:
+    name: ""
+    key: token
+  # How smock gets the token: file (a mounted file) or env (the variable
+  # SMOCK_ADMIN_TOKEN).
+  tokenAs: file
+
+tls:
+  # A Secret with the certificate chain and key for the TLS port, under
+  # tls.crt and tls.key (a kubernetes.io/tls Secret, such as cert-manager
+  # makes). Renewed files reach smock without a restart. Empty: smock
+  # generates a self-signed certificate.
+  secretName: ""
+  # Certificates of single Mocks, chosen by SNI: each Mock name maps to a
+  # kubernetes.io/tls Secret, such as users: users-tls. Each is mounted as a
+  # whole volume, so renewed files reach smock without a restart. Any other
+  # handshake gets the default certificate above.
+  mockSecrets: {}
+
+# smock's container ports.
+ports:
+  plain: 8080
+  tls: 8443
+  admin: 9090
+
+# The traffic Service: the plain and TLS ports.
+service:
+  type: ClusterIP
+  plainPort: 80
+  tlsPort: 443
+  annotations: {}
+
+# The admin Service: the Admin API, the probes and the metrics.
+adminService:
+  type: ClusterIP
+  port: 9090
+  annotations: {}
+
+# How Kubernetes stops smock's container.
+lifecycle:
+  # How long the container sleeps in its preStop hook, in seconds, before
+  # Kubernetes sends SIGTERM. Services and load balancers take a moment to
+  # stop sending new connections to a Pod that is stopping; smock keeps
+  # accepting them meanwhile. The hook uses the Kubernetes sleep action,
+  # which needs Kubernetes 1.30 or later. 0: no hook.
+  preStopSleepSeconds: 5
+
+# How long smock drains after SIGTERM, in milliseconds.
+drainTimeoutMs: 20000
+# How long Kubernetes waits, once it starts stopping a Pod, before it kills
+# it. The preStop sleep and then the drain run within it, so it must be
+# above their sum. Empty: the sleep plus the drain timeout plus 10 s.
+terminationGracePeriodSeconds: null
+
+# One CPU core and 1 GiB per Pod. smock is single-threaded, so a CPU limit
+# above one core does not make it faster: scale with replicas instead.
+# Requests equal to limits give the Pod the Guaranteed QoS class, and the
+# CPU:memory ratio, 1:1, is one GKE Autopilot accepts as it is (1:1 to 1:6.5
+# for general-purpose Pods). The README has a sizing table. Values merge
+# with these, so a smaller Pod sets both requests and limits.
+resources:
+  requests:
+    cpu: "1"
+    memory: 1Gi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+# Other smock settings, as SMOCK_<NAME> environment variables, such as
+# SMOCK_IDLE_TIMEOUT_MS: "120000" for --idle-timeout-ms.
+env: {}
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

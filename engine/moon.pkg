@@ -1,0 +1,25 @@
+import {
+  "smock/http1",
+  "smock/smock/definitions",
+  "smock/smock/log",
+  "smock/smock/prng",
+  "smock/smock/template",
+  "moonbitlang/core/deque",
+  "moonbitlang/core/encoding/base64",
+  "moonbitlang/core/encoding/percent",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/int",
+  "moonbitlang/core/json",
+  "moonbitlang/core/math",
+}
+
+import {
+  "smock/yaml",
+  "moonbitlang/core/bench",
+  "moonbitlang/core/debug",
+  "moonbitlang/core/random",
+} for "test"
+
+import {
+  "moonbitlang/core/random",
+} for "wbtest"

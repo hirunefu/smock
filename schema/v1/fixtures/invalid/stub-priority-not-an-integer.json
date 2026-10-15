@@ -1,0 +1,17 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "get-user",
+      "mock": "users",
+      "priority": 1.5,
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

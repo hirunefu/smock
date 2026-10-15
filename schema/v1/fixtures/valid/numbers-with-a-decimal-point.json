@@ -1,0 +1,3 @@
+{ "version": 1.0, "mocks": [{ "name": "users" }],
+  "stubs": [{ "id": "get-user", "mock": "users",
+    "response": { "status": 200.0 } }] }

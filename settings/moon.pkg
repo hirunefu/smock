@@ -1,0 +1,11 @@
+import {
+  "smock/http1",
+  "smock/smock/definitions",
+  "smock/smock/engine",
+  "smock/smock/log",
+  "smock/smock/usage",
+  "moonbitlang/core/argparse",
+  "moonbitlang/core/env",
+  "moonbitlang/core/json",
+  "moonbitlang/core/random",
+}

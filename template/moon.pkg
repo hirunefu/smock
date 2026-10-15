@@ -1,0 +1,11 @@
+import {
+  "smock/smock/log",
+  "smock/smock/prng",
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
+}
+
+import {
+  "moonbitlang/core/debug",
+} for "test"

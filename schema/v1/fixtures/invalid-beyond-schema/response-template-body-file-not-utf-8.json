@@ -1,0 +1,10 @@
+{
+  "mocks": [{ "name": "web" }],
+  "stubs": [
+    {
+      "id": "logo",
+      "mock": "web",
+      "response": { "status": 200, "template": true, "bodyFile": "logo.png" }
+    }
+  ]
+}

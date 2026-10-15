@@ -1,0 +1,33 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "get-user",
+      "mock": "users",
+      "response": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "text/event-stream; charset=utf-8"
+        },
+        "events": [
+          {
+            "delay": 0,
+            "event": "",
+            "id": "",
+            "data": ""
+          },
+          {
+            "delay": 2147483647,
+            "event": "update",
+            "id": "é 1",
+            "data": "a\r\nb\rc\n"
+          }
+        ]
+      }
+    }
+  ]
+}

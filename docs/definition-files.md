@@ -1,0 +1,966 @@
+# Definition files
+
+Definition files declare the Mocks smock serves and their Stubs. They live
+in a definitions directory, such as `defs/`, that `smock serve --dir` and
+`smock check` read:
+
+- The Definition files are the regular files at the top level whose names
+  end in `.json`, `.yaml` or `.yml`. Symlinks are followed. A YAML file
+  means exactly what the equivalent JSON file means; smock accepts only the
+  safe subset of YAML that the [README](../README.md) describes.
+- Names that start with `.` are skipped, which covers the `..data` entries
+  of Kubernetes ConfigMap volumes.
+- smock reads the files in byte-wise order of their names, and reads them
+  together, as one definition set: a Stub can belong to a Mock that another
+  file declares.
+- Body files live in the body-file subdirectory, `files/` by default
+  (`--body-file-dir`, `SMOCK_BODY_FILE_DIR`). smock reads them when it
+  loads the Definition files, and serves them from memory. Symlinks inside
+  it are followed while they stay inside it; one that leads a file or a
+  directory outside it is a problem, so that nothing outside is served.
+
+## Hosts and the Default Mock
+
+One smock can stand in for several services. Each Mock lists the Hosts it
+answers to, and a request goes to the Mock whose `hosts` include its Host:
+
+```yaml
+mocks:
+  - name: users
+    hosts: [users.example.com, "users:8080"]
+    default: true
+  - name: orders
+    hosts: [orders.example.com]
+```
+
+- A request's Host is the authority of an absolute-form target, such as
+  `GET http://orders.example.com/orders/1 HTTP/1.1`, or else its `Host`
+  header.
+- Hosts are exact names, with no wildcards. They are compared
+  case-insensitively, without the port and without a trailing dot, so
+  `Users.Example.com.:8080` is the Host `users.example.com`. An IPv6 address
+  is written in brackets, such as `[::1]:8080`.
+- A Host is written as a request's `Host` header carries it, so a port is
+  digits, and nothing but a port follows a bracketed address. A Host that
+  leaves no name once normalised, such as `.` or `:8080`, could never match
+  and is rejected.
+- Each Host belongs to at most one Mock. The same Host repeated within one
+  Mock is fine.
+
+A request whose Host no Mock lists, or that has none (HTTP/1.0 allows that),
+goes to the Default Mock:
+
+- the Mock marked `default: true`; at most one Mock may be marked;
+- otherwise the only Mock, when the definition set declares exactly one, so
+  a single Mock answers on `localhost` without any `hosts`;
+- with no Mock declared at all, including an empty or missing definitions
+  directory, smock serves one empty Default Mock named `default`, with no
+  Hosts.
+
+Every response the Default Mock sends because no Host matched, including
+its no-match response, carries a header that says so, so that a mistyped
+Host does not silently succeed:
+
+```http
+Smock-Mock: users; via=default
+```
+
+The header is ASCII: a Mock name that is not an HTTP token has its other
+bytes percent-encoded, as in `%E3%83%A6...%20API`. A request for one of the
+Default Mock's own Hosts gets no header.
+
+Without a Default Mock, such a request gets a 404 that names its Host and
+every Host the Mocks declare, both normalised:
+
+```json
+{"error":"no Mock for this Host","host":"usres.example.com","acceptedHosts":["users.example.com","users","orders.example.com"]}
+```
+
+`host` is `null` for a request without a Host.
+
+## How a Stub matches a request
+
+A Stub's `request` lists the conditions a request must meet. Every condition
+given must hold, and a condition that is left out matches anything, so a
+Stub without `request` matches every request of its Mock.
+
+| Condition | A request meets it when |
+|---|---|
+| `method` | its method is exactly this, case and all, such as `GET`. |
+| `path` | its path, percent-decoded and without the query, is exactly this. `/users/a%20b` meets `"/users/a b"`. `{ "pattern": … }`: the pattern matches the whole path. |
+| `query` | each listed parameter is present, and one of its values, decoded, is exactly the given value, or matches the given `{ "pattern": … }` as a whole. Parameters that are not listed are ignored. |
+| `headers` | each listed header is present, its name compared case-insensitively, and one of its values is exactly the given value, or matches the given `{ "pattern": … }` as a whole. Headers that are not listed are ignored. |
+| `body` | a string: the body is exactly this text in UTF-8. `{ "pattern": … }`: the pattern matches the whole body. `{ "json": … }`: the body parses as JSON and contains the given value. |
+
+Query parameters are decoded as HTML forms encode them: `%20` and `+` both
+stand for a space, so `?q=a+b` meets `"query": { "q": "a b" }`. A parameter
+without `=` has the empty value. When a parameter or a header is repeated,
+the condition holds when any one of its values matches. Each header field
+line is one value: a client or proxy that joins repeated values into one
+line, such as `X-Tag: b, a`, sends the value `b, a`, which `"X-Tag": "a"`
+does not match; a pattern such as `{ "pattern": "(.*, )?a(, .*)?" }` does.
+
+A `json` condition is a subset match:
+
+- an object needs each listed key, with a value that matches in turn, and
+  may have other keys;
+- an array needs the same length, matched element by element;
+- any other value must be equal: strings exactly, numbers by their value
+  (`1` and `1.0` are equal), and `true`, `false` and `null` themselves.
+  Integers are compared exactly however many digits they have, so a 64-bit
+  ID such as `9007199254740993` matches only itself; a number with a
+  fraction or an exponent is compared as closely as a 64-bit float holds it.
+
+A body that does not parse as JSON never meets a `json` condition.
+
+```json
+{
+  "id": "create-user",
+  "mock": "users",
+  "request": {
+    "method": "POST",
+    "path": "/users",
+    "query": { "dryRun": "true" },
+    "headers": { "Content-Type": "application/json" },
+    "body": { "json": { "name": "Alice", "roles": ["admin"] } }
+  },
+  "response": { "status": 201 }
+}
+```
+
+### Pattern conditions
+
+The path, a query parameter, a header and the body can each be given as a
+pattern instead of an exact value, in RE2 syntax:
+
+```json
+{
+  "id": "get-user",
+  "mock": "users",
+  "request": {
+    "method": "GET",
+    "path": { "pattern": "/users/[0-9]+" },
+    "query": { "fields": { "pattern": "[a-z]+(,[a-z]+)*" } },
+    "headers": { "Authorization": { "pattern": "Bearer [A-Za-z0-9._-]+" } }
+  },
+  "response": { "status": 200 }
+}
+```
+
+- A pattern must match the whole value, not only part of it, so it needs
+  no `^` or `$`: `/users/[0-9]+` meets `/users/42` but not
+  `/users/42/orders` or `/api/users/42`.
+- It is matched against the same value as an exact condition: the
+  percent-decoded path without the query, the decoded values of a query
+  parameter, the values of a header, and the body. When a parameter or a
+  header is repeated, any one of its values may match.
+- The body is matched as text in UTF-8. `.` does not match a line break
+  unless the pattern turns on the `s` flag, as in `(?s)BEGIN.*END`. A body
+  that is not valid UTF-8 never meets a pattern, not even `(?s).*`.
+- Exact, pattern and `json` conditions can be mixed on one Stub, which then
+  matches only when all of them hold. Stubs with patterns are tried in the
+  same order as any other Stub.
+
+smock supports a subset of RE2 syntax, which the
+[RE2 module's README](../re2/README.mbt.md#syntax-in-r1) lists: literals,
+`.`, bracket classes, `\d`, `\w` and `\s`, anchors and word boundaries,
+groups, alternation, repetitions (counts up to 1000) and the flags `i`, `s`
+and `m`. Matching takes time linear in the length of the value, whatever
+the pattern, so no pattern can stall smock.
+
+Patterns are compiled once, when smock loads the Definition files. A
+pattern that does not compile, or that uses RE2 syntax outside the subset,
+such as the Unicode class `\p{Greek}`, makes the definition set invalid.
+`smock check` reports it, and `smock serve` does not start, with the JSON
+Pointer of the `pattern` field and the position of the problem in the
+pattern, counted in characters from 0:
+
+```console
+users.json: /stubs/0/request/path/pattern: is not a valid pattern: position 7: missing closing )
+users.json: /stubs/1/request/headers/X-Region/pattern: is not a valid pattern: position 0: Unicode class \p{Greek} is not supported in R1
+```
+
+### Which Stub answers
+
+The first Stub that matches answers. Within a Mock, Stubs are tried in this
+order:
+
+1. By `priority`: a lower number is tried first. A Stub without a priority
+   is tried after every Stub with one.
+2. Among equal priorities, in declaration order: files in byte-wise order
+   of their names, then Stubs by their position in the file.
+
+So a specific Stub can win over a general one wherever it is declared, by
+giving it a lower priority number.
+
+A request that carries a Session tries the Ephemeral Stubs its Session added
+to the Mock through the Admin API before any of these, by their own
+`priority`, the newest first among equal priorities; a request without a
+Session, those added without one. Priority orders Stubs only within their
+source: an Ephemeral Stub without a priority still comes before a Stub from
+a Definition file with priority -2147483648.
+
+smock does not try every Stub in turn: an index, built when the Definition
+files are loaded, finds the Stubs whose `method` and exact `path` fit the
+request. The index never changes which Stub answers. A Stub with a
+`method` and no exact `path` is tried for every request with that method,
+and a Stub with neither, such as one with only a path pattern, for every
+request of its Mock, each in its place in the order. Large definition sets
+stay fast when most Stubs have an exact path.
+
+### When no Stub matches
+
+The Mock answers with its `noMatch.status`, 404 by default, and the body
+`{"error":"no Stub matched"}` with `Content-Type: application/json`. Give a
+Mock the status its real service returns for unknown requests:
+
+```json
+{ "mocks": [{ "name": "users", "noMatch": { "status": 501 } }] }
+```
+
+The response also names the *Near miss*: the Stub that came closest, and
+the conditions it failed, in a `Smock-Near-Miss` header. With this Stub:
+
+```json
+{
+  "id": "get-user",
+  "mock": "users",
+  "request": {
+    "method": "GET",
+    "path": "/users/1",
+    "headers": { "X-Api-Key": "secret" }
+  },
+  "response": { "status": 200 }
+}
+```
+
+`POST /users/1` without an `X-Api-Key` header gets
+
+```http
+Smock-Near-Miss: get-user; failed=method,header:x-api-key
+```
+
+The Near miss is the Stub of the Mock that failed the fewest conditions; on
+a tie, the one tried first. The request's Ephemeral Stubs are candidates
+too, in the order they are tried, and the header names them by their ID,
+such as `eph-3`. Each of these counts as one condition: the method, the
+path, each listed query parameter, each listed header, and the body. They are named `method`, `path`, `query:<name>`, `header:<name>` (in
+lower case) and `body`, in that order. The header is ASCII only and never
+carries what a condition expects or what the request sent: the Stub ID and
+query and header names are percent-encoded where they hold anything other
+than the characters of an HTTP token. A Mock without Stubs, and a request
+for a Host that no Mock answers, get no `Smock-Near-Miss` header.
+
+A request that matches pays nothing for this: smock counts failed
+conditions only once every Stub has failed to match.
+
+The [Journal](../README.md#the-journal) records the full Near miss of each
+unmatched request: every condition it failed, with what the Stub expects
+and what the request sent. A test lists its Session's unmatched requests
+with `GET /v1/journal/unmatched`
+([README](../README.md#verifying-calls-and-unmatched-requests)).
+
+What the request sent is shown as text. A body that is not valid UTF-8 is
+shown with U+FFFD in place of each sequence that is not, so a failed exact
+`body` condition can show an expected and an actual value that look the
+same. The Journal entry itself keeps the body's bytes, in base64, up to
+`--journal-body-limit`.
+
+### Turning the Journal off for a Mock
+
+smock records every request a Mock answers in the Journal, unless the Mock
+says `"journal": false`. A Mock that takes a high-rate load test can turn it
+off, so that recording costs nothing:
+
+```json
+{ "mocks": [{ "name": "load-target", "hosts": ["api.example.com"], "journal": false }] }
+```
+
+A Journal query or verification whose filter names such a Mock is refused
+with `journal_off`, rather than answered with no entries. Only such a
+filter is refused: a filter that names no Mock is answered from the
+requests that were recorded, which leave out this Mock's, and the
+unmatched requests leave them out too. `--journal off` turns the Journal
+off for every Mock, and then every query, verification and list of
+unmatched requests is refused.
+
+## Responses
+
+A Stub's `response` has a `status`, `headers`, and a body. smock sets
+`Content-Length` from the body; `Content-Length`, `Transfer-Encoding` and
+`Connection` cannot be given. The body is either inline, as text in UTF-8:
+
+```json
+"response": { "status": 200, "body": "{\"id\":1}" }
+```
+
+or read from a body file, by its path relative to the body-file
+subdirectory:
+
+```json
+"response": {
+  "status": 200,
+  "headers": { "Content-Type": "application/json" },
+  "bodyFile": "users/1.json"
+}
+```
+
+serves the bytes of `files/users/1.json` exactly as they are. The path
+cannot leave the body-file subdirectory, and none of its names may start
+with `.`. A path that breaks this rule, or names a file that does not
+exist, is reported with the file and JSON Pointer of the `bodyFile`, by
+`smock check` and when `smock serve` starts.
+
+### Server-Sent Events
+
+Instead of a body, a response can stream `events`, to mock a streaming API:
+
+```json
+"response": {
+  "status": 200,
+  "headers": { "Cache-Control": "no-cache" },
+  "events": [
+    { "data": "first" },
+    { "delay": 250, "event": "update", "id": "2", "data": "line 1\nline 2" }
+  ]
+}
+```
+
+smock sends the status and the headers at once, always with
+`Content-Type: text/event-stream`: a `Content-Type` the Stub gives is
+replaced. Then, for each event, it waits the event's `delay` (in
+milliseconds, counted from the previous event or, for the first one, from
+the headers; 0 by default) and writes the event:
+
+```text
+data: first
+
+event: update
+id: 2
+data: line 1
+data: line 2
+
+```
+
+- `data` is required. Each of its lines becomes its own `data:` line.
+- `event` (the event type) and `id` are written only when given. Each is
+  one line, and `id` has no NUL characters.
+- The stream ends after the last event. To an HTTP/1.1 client it is sent
+  with chunked framing, so the connection carries the next request. An
+  HTTP/1.0 client gets it unframed, and smock closes the connection to end
+  it.
+- A response with no body, to a `HEAD` request or with status 204 or 304,
+  is the status and the headers alone. smock sends them at once and waits
+  for no event.
+- While a stream waits, smock serves every other connection. A client that
+  closes the connection mid-stream ends that stream: smock notices when it
+  next writes an event. Until then, which an event's long delay can put
+  off, the stream keeps its connection, and a [drain](../README.md#run) on
+  SIGTERM waits for it as for any stream in progress. smock does not watch
+  the connection meanwhile, since a client may close its sending side once
+  its request is sent and still read the stream.
+
+### JSON bodies
+
+A body can also be given as JSON, with `json`: any JSON value. smock sends
+it as compact JSON in UTF-8, with `Content-Type: application/json` unless
+`headers` gives a Content-Type:
+
+```json
+"response": { "status": 200, "json": { "id": 1, "price": 9.90 } }
+```
+
+sends `{"id":1,"price":9.9}`. smock writes every number itself, in the
+shortest form that reads back as the same 64-bit float: `9.90` is sent as
+`9.9` and `1e3` as `1000`, and an integer beyond 2^53 keeps its digits. When
+the exact bytes matter, use `body`. A response gives at most one of `body`,
+`bodyFile`, `json` and `events`, and an event gives exactly one of `data`
+and `json`, which is sent as one `data:` line of compact JSON.
+
+## Templates
+
+With `template: true`, a response is rendered for each request: its body
+and header values can take values from the request, loop over them, branch
+on them and include fake data. Templates are parsed when the Definition
+files are loaded, so a syntax error is reported by `smock check`, stops
+`smock serve` at startup, and makes a reload keep the definitions it
+serves, like any other problem; an Ephemeral Stub with one is refused with
+400.
+
+```yaml
+- id: get-user
+  mock: users
+  request: { method: GET, path: { pattern: "/users/[0-9]+" } }
+  response:
+    status: 200
+    template: true
+    headers:
+      X-Request-Id: ${header.x-request-id ?? 'none'}
+    json:
+      id: ${path[1]}
+      lang: ${query.lang ?? 'en'}
+      requestId: ${header.x-request-id ?? 'none'}
+```
+
+`GET /users/42?lang=ja` with `X-Request-Id: req-7` gets `X-Request-Id:
+req-7`, `Content-Type: application/json` and
+`{"id":"42","lang":"ja","requestId":"req-7"}`; without the query and the
+header, `X-Request-Id: none` and `{"id":"42","lang":"en","requestId":"none"}`.
+
+What is a template with `template: true`:
+
+- `json` is a structured template, and so is the `json` of each event.
+- `body`, a body file (`bodyFile`, which must then be UTF-8) and the
+  `data`, `id` and `event` of each event are text templates.
+- Header values are text templates, except `Content-Type`, which must not
+  contain `${`.
+- `status` and an event's `delay` are never templated.
+
+With `template` off, nothing is parsed or rendered: `${` is plain text and
+`$each` a plain key.
+
+### Inserting values
+
+`${ expr }` inserts a value, and `$${` writes a literal `${`; a `$` before
+anything else is plain text. In YAML, a value can start with `${` in block
+style without quotes (`id: ${path[1]}`); quote it in flow style
+(`{ id: "${path[1]}" }`) and when the expression contains `: ` or ` #`. In
+JSON, `${…}` sits in an ordinary string; string literals in an expression
+may use single quotes (`"${query.lang ?? 'en'}"`).
+
+An expression is a value, a request field, a literal (`'text'` or `"text"`
+with the escapes `\'`, `\"` and `\\`, a JSON number, `true`, `false` or
+`null`) or a helper call, optionally followed by fallbacks: `a ?? b` is `a`
+when `a` is present, otherwise `b`. There is no arithmetic, no string
+operator and no user-defined function. The words `for`, `if`, `else`,
+`end`, `each` and `params` are reserved.
+
+| Name | Value |
+|---|---|
+| `method` | The request method, such as `GET`. |
+| `path` | The percent-decoded path without the query, as conditions compare it. |
+| `path[n]` | Segment `n` of that path, counted from 0 after the leading `/`: for `/users/42`, `path[0]` is `users` and `path[1]` is `42`. |
+| `query.NAME` | The first decoded value of the query parameter. |
+| `header.NAME` | The first value of the header, its name compared case-insensitively; each field line is one value. |
+| `body` | The body parsed as JSON. `body.a.b`, `body.items[0]` and `body['odd.key']` walk into it. |
+| `bodyText` | The body as text; bytes that are not UTF-8 become U+FFFD. |
+| `loop.index` | The position in the innermost `$each`, from 0. |
+| a loop variable | The current element of the `$each` that names it with `as`. |
+
+A name in a reference is ASCII letters, digits, `_` and `-`; write any other
+name as `['…']`, such as `query['page size']`.
+
+### Structured templates
+
+In `json`:
+
+- A string that is exactly one `${expr}` gives the value with its own type:
+  a number stays a number and an object stays an object. Any other string
+  gives a string, each value written as text.
+- `{ "$each": expr, "as": name, "do": template }` gives an array, one
+  element per item. It walks an array (from `body` or a loop variable),
+  every value of a query parameter or a header (none when it is absent), or
+  `range(a, b)`.
+- `{ "$if": cond, "then": template, "else": template }` gives `then` or
+  `else`. Without `else`, a false condition leaves the member or the array
+  element out; at the root of `json`, `else` is required. A condition is
+  an expression, optionally negated with `!` and compared with a literal
+  with `==` or `!=`. It is true when the value is present and neither
+  `null` nor `false`; strings compare exactly and numbers by value, and a
+  string never equals a number.
+- An object with `$each` or `$if` has only the keys listed for it. Other
+  keys that start with `$` are reserved: write `$$name` for the key
+  `$name`. Keys are never templated.
+- The output is compact JSON in UTF-8, members in the order written, with
+  numbers written as for a [JSON body](#json-bodies).
+
+```yaml
+json:
+  orderId: ${fake.uuid()}
+  customer: ${body.customer.name}
+  lines:
+    $each: body.items
+    as: item
+    do:
+      sku: ${item.sku}
+      qty: ${item.qty}
+      status:
+        $if: item.qty == 0
+        then: backordered
+        else: reserved
+```
+
+Text templates have no loops and no conditionals.
+
+### Helpers
+
+| Helper | Arguments | Output |
+|---|---|---|
+| `fake.uuid()` | none | A version 4 UUID in lower case. |
+| `fake.int(min, max)` | integer literals from -(2^53 - 1) to 2^53 - 1 | An integer from `min` to `max`, both included, each equally likely. |
+| `fake.decimal(min, max, places)` | integer literals from -10^9 to 10^9; `places` from 1 to 6 | A number from `min` to `max` in steps of 10^-places, written with exactly `places` decimals, such as `104.30`. |
+| `fake.bool()` | none | `true` or `false`. |
+| `fake.pick(v1, …, vn)` | 1 to 100 literals | One of them, with its type. |
+| `fake.hex(n)` | `n` from 1 to 64 | `n` lower-case hex digits. |
+| `fake.word()`, `fake.words(n)` | `n` from 1 to 100 | One word, or `n` words separated by spaces, from a built-in list of 256 lower-case English words. |
+| `fake.firstName()`, `fake.lastName()`, `fake.name()` | none | A first name, a last name, or both, from built-in lists of 128 ASCII names each. |
+| `fake.email()` | none | `<first>.<last><nn>@example.com` in lower case. |
+| `now()`, `now(s)` | `s`: an integer literal, seconds, may be negative | The time of the request plus `s` seconds, RFC 3339 in UTC with milliseconds. |
+| `nowMillis()`, `nowMillis(s)` | as for `now` | The same instant in milliseconds since the Unix epoch. |
+| `number(x)` | a string or a number | `x` as a number. |
+| `range(a, b)` | integer literals or `number(…)` | The integers from `a` to `b`, for `$each`; none when `a > b`. |
+| `json(x)` | any value | Text templates only: `x` written as JSON. |
+| `raw(x)` | a string, number, boolean or null | Text templates only: `x` without escaping. |
+
+The word and name lists are part of format version 1. A matched request
+takes exactly one 64-bit output from its Stub's random source (its own
+generator with `fault.seed`, otherwise the process generator, see
+[Seeds](#seeds)), whatever its template draws: the Fault decisions draw
+from a generator seeded with it, and the helpers from another one seeded
+with it XOR a fixed constant, in render order (header values in the order
+written, then the body, members and loop iterations in order, or the
+events in order, each event's `event`, `id`, then `data` or `json`). So a
+seeded Stub repeats its helper output on every run, on native and on
+wasm-gc alike, and adding fake data never changes its Faults.
+
+`now()` and `nowMillis()` read the time smock received the request at,
+never the clock while rendering; in an event, they add the delays of the
+events up to and including it:
+
+```yaml
+response:
+  status: 200
+  template: true
+  headers: { Cache-Control: no-cache }
+  events:
+    - { event: price, id: "1", json: { symbol: "${query.symbol}", price: "${fake.decimal(90, 110, 2)}", at: "${now()}" } }
+    - { delay: 500, event: price, id: "2", json: { symbol: "${query.symbol}", price: "${fake.decimal(90, 110, 2)}", at: "${now()}" } }
+    - { delay: 500, event: done, data: "[DONE]" }
+fault: { seed: 7 }
+```
+
+### Escaping and line breaks
+
+- In `json`, smock writes the JSON itself, so every string is escaped.
+- In `body` and a body file, inserted values are escaped by the media type
+  of the response's `Content-Type`, compared case-insensitively and
+  without its parameters: for `application/json` and `*/*+json`, as the
+  content of a JSON string (write `json(x)` for a value outside a string,
+  which is not escaped again); for `text/html`, `text/xml`,
+  `application/xml` and `*/*+xml`, `&`, `<`, `>`, `"` and `'` become
+  character references (also in the output of `json(x)`); for any other
+  type, or none, not at all. `raw(x)` is never escaped. A `text/html` body
+  file with `<p>Hello, ${query.name ?? 'guest'}</p>` answers
+  `?name=<b>Ann</b>` with `<p>Hello, &lt;b&gt;Ann&lt;/b&gt;</p>`.
+- In text, a string is written as it is, a number as in `json`, and `true`,
+  `false` and `null` as those words; an object or an array needs `json(x)`.
+- In a header value, every control character except tab, CR and LF
+  included, becomes a space after rendering, so a value never adds a line
+  to the response head. In an event's `id` and `event`, every control
+  character becomes a space. An event's `data` is written as rendered, so
+  a value with line breaks gives several `data:` lines.
+
+### Missing values and render errors
+
+A reference is missing when it names nothing: an absent query parameter or
+header, a path segment past the end, a body path that leads nowhere, or
+`body` when the body is not JSON. A missing value in `${…}` or in `$each` is
+an error unless `??` gives a fallback (`${query.lang ?? 'en'}`,
+`${body.note ?? null}`); a loop over an absent query parameter or header
+runs zero times, and in `$if` a missing value is never an error: it is
+false, and it equals no literal (so `query.x != 'a'` holds when `x` is
+absent). A call with a missing argument is missing too.
+
+Type errors are errors as well: a loop over what is not an array,
+`number(x)` of text that is not a JSON number, an object or an array in
+text, and a bound exceeded. `range` gives at most 1000 values, one response
+runs at most 10,000 loop iterations in all, and a rendered body, or all the
+events of a response together, takes at most 1 MiB. Bounds that literals
+give are checked when the files are loaded.
+
+When a template cannot be rendered for a request, the client gets status
+500, `Content-Type: application/json` and
+`{"error":"template failed","stub":"<id>","at":"<JSON Pointer within the Stub>","message":"<what>"}`,
+such as `"at":"/response/json/customer","message":"body.customer.name is missing"`.
+A delay Fault still applies first, and a connection Fault still replaces
+the response. A stream is rendered whole before its head is sent, so a
+failed event also gives this 500 and no stream. The Journal entry records
+the 500 and `templateError`, and no log line is written.
+
+### Errors when loading
+
+A template problem found when the files are loaded is reported with the
+file and the JSON Pointer of the field (for a body file, of `bodyFile`), and
+a message that starts with `template:` and gives the column of the problem
+in a one-line string, or its line and column in a text of several lines:
+
+```text
+users.yaml: /stubs/0/response/json/id: template: column 3: unknown helper "fake.phone": not one of the helpers smock has
+users.yaml: /stubs/1/response/bodyFile: template: line 3, column 5: unknown helper "fake.nickname": not one of the helpers smock has
+```
+
+Every name, loop variable and helper, the number and the literal arguments
+of each call, the keys of `$each` and `$if` objects, reserved keys, `${` in
+a key or in `Content-Type`, `json()` and `raw()` in `json`, and a templated
+body file that is not UTF-8 are checked then.
+
+### Rendering a template
+
+`smock render` and the Admin render operation render a Stub for a sample
+request, templates included, and show the time and the seed they used.
+`--time` (the Admin API's `time`) is the time of the request; `--seed`
+(`seed`) gives the output the request takes from its Stub's source as the
+first output of a generator seeded with it, so a rendering with seed `S`
+shows what the first matched request of a Stub with `fault.seed: S` gets.
+Without a seed they use the Stub's `fault.seed`, or a fresh seed when it
+has none. With the same time and seed, a rendering is the same on every
+run. A template that fails for the sample shows the 500 and the error.
+
+## Faults
+
+A Stub can inject Faults, to test how a client handles slow and failing
+calls. Its `fault` has a delay, a connection Fault, or both, and an optional
+seed:
+
+```json
+{
+  "id": "get-user",
+  "mock": "users",
+  "request": { "method": "GET", "path": "/users/1" },
+  "response": { "status": 200, "body": "{\"id\":1}" },
+  "fault": {
+    "delay": { "lognormal": { "median": 80, "sigma": 0.6 }, "probability": 0.5 },
+    "connection": { "kind": "close", "probability": 0.01 },
+    "seed": 42
+  }
+}
+```
+
+### Delays
+
+A `delay` makes smock wait before it writes the status line. Meanwhile it
+keeps serving other connections. The delay is drawn from one distribution,
+in whole milliseconds:
+
+| Distribution | Delay |
+|---|---|
+| `"fixed": 100` | always 100 ms. |
+| `"uniform": { "min": 50, "max": 150 }` | a whole number of milliseconds from `min` to `max`, both included, each equally likely. `min` must not exceed `max`. |
+| `"lognormal": { "median": 80, "sigma": 0.6 }` | log-normal: half the delays are below `median`, and `sigma`, the standard deviation of the delay's natural logarithm, sets how long the tail of slow responses is. |
+
+`probability`, from 0 to 1, is the share of matched requests that are
+delayed. Without it, every matched request is.
+
+### Connection Faults
+
+A `connection` Fault makes a request fail at the connection level, instead
+of getting its response:
+
+- `reset`: smock reads the whole request, body included, then resets the
+  connection (an RST) without writing anything. The client gets a
+  connection-reset error, not an empty response. On the TLS port, smock
+  sends no `close_notify` first. Should the operating system refuse the
+  reset, smock logs an error (`cannot reset the connection`) and closes the
+  connection with a FIN instead.
+- `close`: smock reads the request, then closes the connection (a FIN)
+  without writing anything.
+- `partial`: smock writes the status line, the headers, with the
+  `Content-Length` of the whole body, and the first half of the body, then
+  closes the connection. The client sees a response cut short. For
+  Server-Sent Events, the first half is the first half of the events,
+  rounded down, each after its delay, and the stream is not ended.
+  - A response with no body bytes to halve, such as an empty body or a
+    response to `HEAD`, would be whole that way. smock leaves out the empty
+    line that ends its headers instead, so the client still sees it cut
+    short.
+  - A stream of Server-Sent Events to an HTTP/1.0 client ends when the
+    connection closes, so a client cannot tell a partial one from a whole
+    stream with fewer events.
+
+`probability`, from 0 to 1, is the share of matched requests that fail;
+without it, every matched request fails. A Stub with both a delay and a
+connection Fault waits first, then fails.
+
+A request that asks for `100 Continue` (`Expect: 100-continue`) gets it
+before its body is read, as HTTP/1.1 requires of a client that waits for
+it, and so before smock knows which Stub, and which Fault, applies. Its
+`reset` or `close` then comes after that interim response, which is all
+the client receives. smock sends `100 Continue` also when the body arrives
+without waiting for it.
+
+### Seeds
+
+Each matched request draws whether its delay and its connection Fault
+apply, and how long the delay is.
+
+- A Stub with a `seed`, from 0 to 9007199254740991, has its own generator.
+  smock creates it when it loads the Definition files, and again from the
+  seed when a [reload](#reloading) swaps in a new definition set, and it
+  advances once per request the Stub matches. An Ephemeral Stub with a seed
+  gets its own generator when it is added, which a reload keeps. So the n-th
+  request a seeded Stub matches gets the same Faults in every run, whatever
+  requests other Stubs get. The generator is a fixed algorithm, the same on
+  every platform.
+- Stubs without a seed draw from the process generator, which they share.
+  smock picks its seed at startup and logs it:
+
+  ```json
+  {"time":"2026-10-13T09:12:44.512Z","level":"info","msg":"random seed","seed":5126750341862113}
+  ```
+
+  To replay a run, start smock with that seed (`--seed`, `SMOCK_SEED`): the
+  same requests in the same order then get the same Faults.
+
+## The JSON Schema
+
+The format of Definition files is published as a JSON Schema, one per
+format version. The Schema of version 1 is at
+
+<https://hirunefu.github.io/smock/schema/v1/definitions.json>
+
+and that URL is also its `$id`. Its source is
+[`schema/v1/definitions.json`](../schema/v1/definitions.json). A file
+without `version` is read as version 1; any other version is rejected.
+
+The Schema describes every field of format version 1, and smock implements
+them all. A field the Schema defines but smock does not implement yet would
+be rejected with a message saying it is not supported yet, so that a file
+never means something smock silently ignores. smock also rejects any field
+the Schema does not define.
+
+## Reloading
+
+`smock serve` watches the definitions directory, body-file subdirectory
+included, and reloads the definition set when its files change, without a
+restart:
+
+- Adding, editing, renaming or removing a Definition file or a body file
+  triggers a reload. So does a Kubernetes ConfigMap update, which swaps the
+  `..data` symlink and keeps the visible names. Any change in the directory
+  counts, so a reload can also find nothing new.
+- When `--dir` goes through a symlink that is pointed at a new directory,
+  as git-sync does for each commit (`--dir /git/current/mocks`), smock goes
+  on watching the directory it found at first until that one changes or is
+  removed. git-sync removes the directory it replaced at once by default,
+  so the new commit is reloaded right away and watched from then on. When
+  the old directory stays, as with git-sync's `--stale-worktree-timeout`,
+  the new commit is found by the next poll, within 10 s.
+- Changes are coalesced: smock reloads once they have been quiet for
+  250 ms, so a burst of changes gives one reload. It also polls the
+  directory every 10 s, in case a change went unnoticed, and reloads when
+  the files differ from those it read last. A definitions directory that
+  does not exist yet is polled until it appears. One that cannot be watched
+  for another reason, such as the inotify limits, is only polled, and smock
+  logs a warning.
+- A reload reads and validates every file, builds a whole new definition
+  set and swaps it in at once, so no request sees half of a change.
+  Requests already being handled finish with the set they started with,
+  body-file bytes included.
+- Ephemeral Stubs survive the swap. A Mock the new set no longer declares
+  is gone: its Ephemeral Stubs are dropped, and its Hosts resolve like any
+  unknown Host.
+- When the new set is invalid, smock keeps serving the current one and
+  reports every problem, as `smock check` would, in the Admin API status, in
+  a log entry and in the reload metric. Fix the files, and the next reload
+  swaps the fixed set in.
+- When the new set has the digest of the one served, nothing is swapped.
+- Without `--dir`, there is nothing to watch and nothing is reloaded.
+
+Each definition set has a *definition set digest*: a short content hash of
+its Definition files and body files, so that replicas serving the same files
+report the same digest. While a ConfigMap update rolls out, the digest in
+each replica's status shows which set it serves. The digest is the first 12
+hex digits of the SHA-256 of every file, framed one after another: the
+Definition files in byte-wise order of their names (relative to the
+definitions directory), then the body files in the same order (relative to
+the body-file subdirectory). Each file is framed as
+
+- one byte, `D` for a Definition file or `B` for a body file;
+- the length of its name in UTF-8 bytes, as an 8-byte big-endian number,
+  then the name;
+- the length of its contents, as an 8-byte big-endian number, then the
+  contents.
+
+Every part carries its length, so two different sets never frame to the
+same bytes. Files that are not part of the set, such as `notes.txt` or
+`.hidden.json`, do not change the digest.
+
+`GET /v1/status` on the Admin API shows the digest served and the result
+of the last reload (`null` until the first one), as
+[openapi/admin.json](../openapi/admin.json) defines them:
+
+```json
+{
+  "digest": "3f1c0a9b2e7d",
+  "lastReload": {
+    "at": "2026-10-13T09:12:44.317Z",
+    "result": "failed",
+    "errors": [
+      { "file": "users.json", "pointer": "/stubs/0/response/status",
+        "message": "must be an integer from 200 to 599" }
+    ]
+  }
+}
+```
+
+`result` is `swapped` (the new set is served now), `unchanged` (it had the
+digest served) or `failed` (it was invalid; the previous set is still
+served). Each reload also writes one log entry: `definitions reloaded` with
+`oldDigest` and `newDigest`, or `definitions reload failed` with the digest
+still served and every error. The Prometheus counter
+`smock_definition_reloads_total` counts reloads by `result`. A failed reload
+does not change readiness: `/readyz` on the admin port still passes, so one
+bad commit does not drain every Pod.
+
+## Checking a definitions directory
+
+`smock check <dir>` reads a definitions directory the way `smock serve`
+does, so a directory that passes `smock check` loads in `smock serve`, and
+the reverse. It prints every problem on its own line, with the file and a
+JSON Pointer to the value, and exits with status 1. A valid directory
+prints nothing, apart from [warnings](#warnings), and exits with status 0.
+A directory that does not exist is an empty definition set, as for
+`smock serve`, so it passes too; `smock check` then says on stderr that the
+directory does not exist, so that a mistyped path is noticed.
+
+```console
+$ smock check defs
+20-orders.json: /stubs/0/mock: no file declares the Mock "orders"
+20-orders.json: /stubs/1/request/path: must start with /
+$ echo $?
+1
+```
+
+`smock check` also checks the rules the Schema cannot express, because they
+span the Mocks and files of the set: Mock names and Stub IDs are unique, no
+two Mocks claim the same Host after normalisation, at most one Mock is
+marked `default`, and every Stub names a Mock that some file declares. A
+duplicate is reported where it occurs the second time, in file-name order,
+and the message names the first. It also compiles every
+[pattern](#pattern-conditions), which the Schema accepts as any string, and
+rejects a key repeated within one JSON object, as YAML files reject it:
+JSON parsers disagree on which of the two values counts, and the Schema
+sees only one of them.
+
+In CI, run it as a step that fails the build:
+
+```yaml
+- run: smock check defs
+```
+
+### Warnings
+
+For a valid directory, `smock check` also warns about Stubs that can never
+match, because an earlier Stub of the same Mock always matches first. Each
+warning is one line, marked `warning:`, with the file and JSON Pointer of
+the shadowed Stub, and names the Stub that shadows it. Warnings do not
+change the exit status:
+
+```console
+$ smock check defs
+users.json: /stubs/1: warning: the Stub "user-1" can never match: the Stub "any-user" at users.json: /stubs/0 is tried first and matches every request this one would
+$ echo $?
+0
+```
+
+"Earlier" means earlier in the order Stubs are [tried](#which-stub-answers).
+A Stub `s` is shadowed by an earlier Stub `t` when `t` has a subset of
+`s`'s conditions:
+
+- `t` has no method, or the same method as `s`;
+- `t` has no path, the same exact path as `s`, or a pattern that matches
+  `s`'s exact path;
+- each of `t`'s query, header and body conditions is also in `s`, written
+  the same way (header names in any case).
+
+smock does not compare two patterns, or a pattern or `json` condition with
+another condition: it warns only when the shadowing is certain, so a
+warning is never a false alarm, but some Stubs that can never match are
+not reported.
+
+## Editor support
+
+Editors that understand JSON Schema validate and complete Definition files
+once they are associated with the Schema. In Visual Studio Code, add this to
+the workspace's `.vscode/settings.json`, with the path of your definitions
+directory:
+
+```json
+{
+  "json.schemas": [
+    {
+      "fileMatch": ["defs/*.json"],
+      "url": "https://hirunefu.github.io/smock/schema/v1/definitions.json"
+    }
+  ]
+}
+```
+
+For YAML Definition files, the YAML extension by Red Hat (which runs
+yaml-language-server) takes the Schema the same way, in `yaml.schemas`:
+
+```json
+{
+  "yaml.schemas": {
+    "https://hirunefu.github.io/smock/schema/v1/definitions.json": [
+      "defs/*.yaml",
+      "defs/*.yml"
+    ]
+  }
+}
+```
+
+Do not add a `$schema` field to the files themselves: smock rejects fields
+the Schema does not define. In a YAML file, a comment can name the Schema
+instead, since comments are not fields:
+
+```yaml
+# yaml-language-server: $schema=https://hirunefu.github.io/smock/schema/v1/definitions.json
+mocks:
+  - name: users
+stubs:
+  - id: get-user
+    mock: users
+    request: { method: GET, path: /users/1 }
+    response:
+      status: 200
+      body: '{"id":1,"name":"Alice"}'
+```
+
+## Writing Definition files in another configuration language
+
+smock reads only JSON and YAML, but any configuration language that exports
+JSON works. This Jsonnet file,
+[`docs/examples/users.jsonnet`](examples/users.jsonnet), writes one Stub per
+user with a function:
+
+```jsonnet
+local getUser(id, name) = {
+  id: 'get-user-%d' % id,
+  mock: 'users',
+  request: { method: 'GET', path: '/users/%d' % id },
+  response: {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+    body: std.manifestJsonMinified({ id: id, name: name }),
+  },
+};
+
+{
+  version: 1,
+  mocks: [{ name: 'users' }],
+  stubs: [getUser(1, 'Alice'), getUser(2, 'Bob'), getUser(3, 'Carol')],
+}
+```
+
+Export it into the definitions directory, then check the result:
+
+```sh
+jsonnet users.jsonnet -o defs/users.json
+smock check defs
+```
+
+The exported file is committed as the fixture
+[`schema/v1/fixtures/valid/users-from-jsonnet.json`](../schema/v1/fixtures/valid/users-from-jsonnet.json),
+so CI checks it with the rest. CUE (`cue export --out json`) and Pkl
+(`pkl eval -f json`) work the same way.

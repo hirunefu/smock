@@ -1,0 +1,238 @@
+{{- include "smock.validate" . }}
+{{- $auth := .Values.adminAuth }}
+{{- $tokenFile := and $auth.enabled (eq $auth.tokenAs "file") }}
+{{- $source := .Values.definitions.source }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "smock.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "smock.labels" . | nindent 4 }}
+spec:
+  {{- /* One single-threaded smock per Pod: capacity grows with replicas (ADR 0003). */}}
+  replicas: {{ include "smock.string" .Values.replicas }}
+  selector:
+    matchLabels:
+      {{- include "smock.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "smock.labels" . | nindent 8 }}
+      {{- /*
+      Nothing here depends on the content of the Definition files, so a
+      ConfigMap update restarts no Pod: smock reloads the files Kubernetes
+      swaps in. Only the definitions volume's items, which exist with body
+      files, name the files: adding, removing or renaming one changes this
+      template and so restarts the Pods.
+      */}}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- /*
+      Service links would put variables such as SMOCK_PORT=tcp://... for a
+      Service named smock into the environment, where smock reads its
+      settings.
+      */}}
+      enableServiceLinks: false
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ include "smock.terminationGracePeriodSeconds" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ include "smock.uid" . }}
+        runAsGroup: {{ include "smock.uid" . }}
+        {{- /* Mounted Secrets are readable by this group only. */}}
+        fsGroup: {{ include "smock.uid" . }}
+        seccompProfile:
+          type: RuntimeDefault
+      {{- if eq $source "gitSync" }}
+      initContainers:
+        {{- include "smock.gitSyncContainer" (dict "root" . "oneTime" true) | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: smock
+          image: {{ include "smock.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve"]
+          securityContext:
+            {{- include "smock.containerSecurityContext" (include "smock.uid" .) | nindent 12 }}
+          env:
+            - name: SMOCK_DIR
+              value: {{ include "smock.definitionsDir" . | quote }}
+            - name: SMOCK_BODY_FILE_DIR
+              value: {{ .Values.definitions.bodyFileDir | quote }}
+            - name: SMOCK_PORT
+              value: {{ include "smock.string" .Values.ports.plain | quote }}
+            - name: SMOCK_TLS_PORT
+              value: {{ include "smock.string" .Values.ports.tls | quote }}
+            - name: SMOCK_ADMIN_PORT
+              value: {{ include "smock.string" .Values.ports.admin | quote }}
+            {{- /* The replica count goes stale under an autoscaler or kubectl scale. */}}
+            - name: SMOCK_REPLICAS
+              value: {{ include "smock.string" .Values.replicas | quote }}
+            - name: SMOCK_DRAIN_TIMEOUT_MS
+              value: {{ include "smock.string" .Values.drainTimeoutMs | quote }}
+            - name: SMOCK_ADMIN_AUTH
+              value: {{ ternary "on" "off" $auth.enabled | quote }}
+            {{- if $tokenFile }}
+            - name: SMOCK_ADMIN_TOKEN_FILE
+              value: {{ printf "/etc/smock/admin/%s" $auth.tokenSecret.key | quote }}
+            {{- else if $auth.enabled }}
+            - name: SMOCK_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $auth.tokenSecret.name | quote }}
+                  key: {{ $auth.tokenSecret.key | quote }}
+            {{- end }}
+            {{- if .Values.tls.secretName }}
+            - name: SMOCK_TLS_CERT_FILE
+              value: /etc/smock/tls/tls.crt
+            - name: SMOCK_TLS_KEY_FILE
+              value: /etc/smock/tls/tls.key
+            {{- end }}
+            {{- if .Values.tls.mockSecrets }}
+            - name: SMOCK_TLS_MOCK_CERTS
+              value: {{ include "smock.tlsMockCerts" . | quote }}
+            {{- end }}
+            {{- range $name, $value := .Values.env }}
+            - name: {{ $name }}
+              value: {{ include "smock.string" $value | quote }}
+            {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- /*
+          Kubernetes takes a stopping Pod out of its Services' endpoints,
+          but kube-proxy and load balancers notice a moment later. The sleep
+          runs before SIGTERM, so smock keeps accepting the connections that
+          still arrive; only then does it close its listeners and drain. The
+          sleep action needs Kubernetes 1.30 or later. 0 leaves the hook out,
+          since some versions refuse a sleep of 0 s.
+          */}}
+          {{- $sleep := int64 .Values.lifecycle.preStopSleepSeconds }}
+          {{- if gt $sleep 0 }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ $sleep }}
+          {{- end }}
+          ports:
+            - name: plain
+              containerPort: {{ include "smock.string" .Values.ports.plain }}
+              protocol: TCP
+            - name: tls
+              containerPort: {{ include "smock.string" .Values.ports.tls }}
+              protocol: TCP
+            - name: admin
+              containerPort: {{ include "smock.string" .Values.ports.admin }}
+              protocol: TCP
+          {{- /*
+          The probes need no token. /startupz passes once the first
+          definition set has loaded, /readyz while smock serves (also after a
+          failed reload, and no longer once SIGTERM arrives), and /livez while
+          the event loop answers, also during the drain.
+          */}}
+          startupProbe:
+            httpGet:
+              path: /startupz
+              port: admin
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: admin
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: admin
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: definitions
+              mountPath: {{ include "smock.definitionsMountPath" . }}
+              readOnly: true
+            {{- if $tokenFile }}
+            - name: admin-token
+              mountPath: /etc/smock/admin
+              readOnly: true
+            {{- end }}
+            {{- if .Values.tls.secretName }}
+            {{- /* A whole volume, not subPath: Kubernetes swaps renewed files in, and smock reloads them. */}}
+            - name: tls
+              mountPath: /etc/smock/tls
+              readOnly: true
+            {{- end }}
+            {{- range $mock, $_ := .Values.tls.mockSecrets }}
+            - name: {{ include "smock.tlsMockVolume" $mock }}
+              mountPath: {{ include "smock.tlsMockDir" $mock }}
+              readOnly: true
+            {{- end }}
+        {{- if eq $source "gitSync" }}
+        {{- include "smock.gitSyncContainer" (dict "root" . "oneTime" false) | nindent 8 }}
+        {{- end }}
+      volumes:
+        {{- if eq $source "gitSync" }}
+        - name: definitions
+          emptyDir: {}
+        - name: git-sync-home
+          emptyDir: {}
+        {{- else if eq $source "image" }}
+        {{- /*
+        Resolved when the Pod starts: a new reference changes the Pod template
+        and so rolls out new Pods, while a new image under the same tag
+        reaches only Pods created after it.
+        */}}
+        - name: definitions
+          image:
+            reference: {{ .Values.definitions.image.reference | quote }}
+            pullPolicy: {{ .Values.definitions.image.pullPolicy }}
+        {{- else }}
+        - name: definitions
+          configMap:
+            name: {{ include "smock.definitionsConfigMap" . }}
+            {{- with include "smock.definitionsItems" . }}
+            items:
+              {{- . | trim | nindent 14 }}
+            {{- end }}
+        {{- end }}
+        {{- if $tokenFile }}
+        - name: admin-token
+          secret:
+            secretName: {{ $auth.tokenSecret.name | quote }}
+            defaultMode: 0440
+        {{- end }}
+        {{- if .Values.tls.secretName }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.tls.secretName | quote }}
+            defaultMode: 0440
+        {{- end }}
+        {{- range $mock, $secret := .Values.tls.mockSecrets }}
+        - name: {{ include "smock.tlsMockVolume" $mock }}
+          secret:
+            secretName: {{ $secret | quote }}
+            defaultMode: 0440
+        {{- end }}
