@@ -24,11 +24,13 @@ does not answer, it runs no further step. A stopped line says why and
 which steps it did not run.
 
 What smock used during a step comes from smock's own /metrics, its process
-and cgroup metrics, scraped right before and right after the step, since
-nothing outside smock's Pod can read its cgroup: its CPU time and
-throttling, what the CPU time comes to a request and against the CPU
-limit, its RSS at the start and the end, and its cgroup's peak memory by
-the end, in the layout bench/bench.py reports them in from smock's cgroup.
+and cgroup metrics, scraped right before and right after the step, and a
+second into it, since nothing outside smock's Pod can read its cgroup: its
+CPU time and throttling, over the step and in its first second, what the
+CPU time comes to a request and against the CPU limit, how long it waited
+for a CPU and its node's steal time, its RSS at the start and the end, and
+its cgroup's peak memory by the end, in the layout bench/bench.py reports
+them in from smock's cgroup.
 
 Environment:
   TARGET      smock's host name (its Service)
@@ -255,7 +257,10 @@ def run_step(spec, mix, oha, address, ports, scrape_metrics):
     """Sends one step's load and returns what it measured, as a case of
     summary.json has it; what only a run on one machine measures is None.
     `scrape_metrics` scrapes smock's /metrics, right before and right
-    after the load, for what smock used between the two scrapes."""
+    after the load, for what smock used between the two scrapes, and a
+    second into the load, for what it used in the step's first second
+    (smock_cpu's first_second), when TLS handshakes and connections
+    opening come at once."""
     work = Path(tempfile.mkdtemp(prefix="step-"))
     run = SimpleNamespace(mix=mix, tmp=work)
     port = ports["tls" if spec["protocol"] == "https" else "plain"]
@@ -273,11 +278,13 @@ def run_step(spec, mix, oha, address, ports, scrape_metrics):
                 process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                            stderr=stderr)
             load.append({"request": request, "rate": float(rate), "connections": connections, "process": process})
+        time.sleep(max(0.0, started + 1 - time.monotonic()))
+        metrics_first, scraped_first = scrape_metrics(), time.monotonic()
         for item in load:
             item["process"].wait(total_s + 300)
         wall_s, cpu_s = time.monotonic() - started, cpu_children_s() - cpu_before
         metrics_after, scraped_after = scrape_metrics(), time.monotonic()
-        kinds, latencies, release_latencies, lags = harness.analyze_load(run, load, spec, work)
+        kinds, latencies, release_latencies, lags, seconds = harness.analyze_load(run, load, spec, work)
     finally:
         for item in load:
             if item["process"].poll() is None:
@@ -285,9 +292,12 @@ def run_step(spec, mix, oha, address, ports, scrape_metrics):
         shutil.rmtree(work, ignore_errors=True)
     smock_cpu, peak_bytes, rss_kib = harness.scraped_use(metrics_before, metrics_after, spec["cpu_limit"],
                                                          scraped_after - scraped_before)
+    if smock_cpu:
+        smock_cpu["first_second"], _, _ = harness.scraped_use(metrics_before, metrics_first, spec["cpu_limit"],
+                                                              scraped_first - scraped_before)
     return {
         **spec,
-        **harness.load_result(spec, kinds, latencies, release_latencies, lags),
+        **harness.load_result(spec, kinds, latencies, release_latencies, lags, seconds),
         "tcp_passive_opens": None,
         "idle_connections_open_at_end": None,
         "pinning": None,

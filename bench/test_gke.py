@@ -814,6 +814,29 @@ class Generator(Helper):
         self.assertGreater(cpu["periods"], 0)
         self.assertGreaterEqual(cpu["throttled_periods"], 0)
         self.assertGreaterEqual(cpu["throttled_s"], 0)
+        # How long smock waited for a CPU, from its /metrics: on this
+        # machine, which is no virtual machine, no steal.
+        self.assertGreaterEqual(cpu["scheduling_delay_s"], 0)
+        self.assertGreaterEqual(cpu["involuntary_context_switches"], 0)
+        self.assertGreaterEqual(cpu["node_steal_s"], 0)
+        # What smock used in the step's first second, from a scrape a
+        # second into the load, in the same layout: some of the requests,
+        # and some of the CPU time.
+        first = cpu["first_second"]
+        self.assertEqual(first["source"], "cgroup")
+        self.assertGreaterEqual(first["wall_s"], 1)
+        self.assertLess(first["wall_s"], 3)
+        self.assertGreater(first["requests"], 0)
+        self.assertLess(first["requests"], cpu["requests"])
+        self.assertGreater(first["usage_s"], 0)
+        self.assertLessEqual(first["usage_s"], cpu["usage_s"])
+        self.assertIsNotNone(first["scheduling_delay_s"])
+        # Each second of the load, ramp and tail included (3.5 s), with the
+        # requests due in it that got a response.
+        seconds = step["per_second"]
+        self.assertEqual(len(seconds["requests"]), 4)
+        self.assertGreaterEqual(sum(seconds["requests"]), step["requests"]["ok"])
+        self.assertEqual([p99 is None for p99 in seconds["p99_ms"]], [count == 0 for count in seconds["requests"]])
         rss = step["rss_kib"]
         self.assertGreater(rss["first"], 1024)
         self.assertEqual(rss["max"], max(rss["first"], rss["last"]))

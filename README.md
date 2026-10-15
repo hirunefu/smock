@@ -1171,12 +1171,22 @@ architecture the targets file has no set for.
   from the scheduled send times and the latency from release (each p50,
   p90, p99, p99.9, max), the generator lag (p50, p99, p99.9, max) and
   whether the load generator fell behind, the achieved rate, the errors by
-  kind, smock's CPU use and throttling (`smock_cpu`: from its cgroup's
-  `cpu.stat`, with the requests smock answered meanwhile, from
-  `smock_requests_total`, what the CPU time comes to a request,
-  `us_per_request`, and against the CPU limit, `utilization`, and the CPU
-  time its process counted, `process_s`, from its `/metrics`, as a
-  cross-check), the quota, memory limit and CPUs read while it ran,
+  kind, each second of the load from its start, ramp and tail included
+  (`per_second`: how many of the requests due in that second got a
+  response, `requests`, and their p99 from the scheduled send times,
+  `p99_ms`, so that a burst at the start, a stall now and then and a step
+  slow all through look apart), smock's CPU use and throttling
+  (`smock_cpu`: from its cgroup's `cpu.stat`, with the requests smock
+  answered meanwhile, from `smock_requests_total`, what the CPU time comes
+  to a request, `us_per_request`, and against the CPU limit,
+  `utilization`, the CPU time its process counted, `process_s`, from its
+  `/metrics`, as a cross-check, how long smock's main thread waited for a
+  CPU, `scheduling_delay_s`, how many times the kernel took the CPU from
+  it, `involuntary_context_switches`, and the machine's steal time,
+  `node_steal_s`, from its `/metrics`, and the same for the step's first
+  second, `first_second`, read a second into the load, when connections
+  open and TLS handshakes come at once), the quota, memory limit and CPUs
+  read while it ran,
   smock's peak memory and OOM kills (`memory`), whether smock got ready,
   smock's RSS (first, last, max), the TCP connections the machine accepted
   during the load, and the idle connections still open at its end. Then
@@ -1421,9 +1431,11 @@ why, and the load generator's CPU request. The summary checks the
 targets of the run's architecture (`--arch`). Nothing outside smock's Pod
 can read its cgroup on Autopilot, so what smock used comes from its own
 `/metrics`, its [process and cgroup metrics](#admin-api), which the load
-generator scrapes right before and right after each step: its CPU time and
-throttling during the step, from its container's cgroup, with the CPU time
-a request and against the CPU limit; its RSS at the step's start and end,
+generator scrapes right before and right after each step, and a second
+into it: its CPU time and throttling during the step and in its first
+second, from its container's cgroup, with the CPU time a request and
+against the CPU limit; how long it waited for a CPU, and its node's steal
+time; its RSS at the step's start and end,
 the larger as its max; and the most memory its container had used by the
 step's end (`memory.peak`), since smock started under the profile, so
 earlier steps count too. A smock without those metrics leaves them, idle
