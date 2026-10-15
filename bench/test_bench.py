@@ -348,8 +348,9 @@ class CpuPerRequest(unittest.TestCase):
             # smock's process is all its cgroup holds: the two agree, to the
             # process's ticks of 1/100 s.
             self.assertAlmostEqual(cpu["process_s"], cpu["usage_s"], delta=0.03)
-            # The step's first second, read a second into the load, in the
-            # same layout: some of the requests and of the CPU time.
+            # The step's first second, from smock's /metrics scraped a
+            # second into the load, in the same layout: some of the requests
+            # and of the CPU time, both until smock answered the scrape.
             first = cpu["first_second"]
             self.assertEqual(first["source"], "cgroup")
             self.assertGreaterEqual(first["wall_s"], 1)
@@ -358,6 +359,7 @@ class CpuPerRequest(unittest.TestCase):
             self.assertLess(first["requests"], cpu["requests"])
             self.assertGreater(first["usage_s"], 0)
             self.assertLessEqual(first["usage_s"], cpu["usage_s"])
+            self.assertAlmostEqual(first["process_s"], first["usage_s"], delta=0.03)
             # How long smock waited for a CPU, from its /metrics.
             self.assertGreaterEqual(cpu["scheduling_delay_s"], 0)
             self.assertGreaterEqual(first["involuntary_context_switches"], 0)
@@ -459,6 +461,29 @@ class ScrapedUse(unittest.TestCase):
         newer = harness.metric_values('smock_requests_total{mock="catalog",stub=""} 900\nsmock_journal_entries 900\n')
         self.assertEqual(harness.scraped_use(old, newer, "250m", 25.0),
                          (None, None, {"first": None, "last": None, "max": None}))
+
+
+class FirstSecond(unittest.TestCase):
+    """What smock used in a step's first second, when connections open and
+    TLS handshakes come at once, comes from its /metrics scraped a second
+    into the load: its CPU time, the requests it answered and how long it
+    waited, all from what smock read when it answered that scrape."""
+
+    def test_all_of_it_counts_until_smock_answered_the_scrape_however_late(self):
+        # Under a small CPU limit the scrape waits behind the load: smock
+        # answers it 0.7 s late, by when it has used 80 ms of CPU, 800 ms
+        # of it throttled, and answered 150 requests.
+        first = scrape(cpu=0.11, requests=(151,), usage=0.123131, periods=17, throttled_periods=15,
+                       throttled=0.857118, delay=1.012345678, switches=140, steal=12.34)
+        cpu = harness.first_second_use(lambda: first, "50m", scrape(), time.monotonic() - 1.7)
+        self.assertAlmostEqual(cpu.pop("wall_s"), 1.7, delta=0.05)
+        self.assertAlmostEqual(cpu.pop("utilization"), 0.08 / (1.7 * 0.05), delta=0.03)
+        self.assertEqual(cpu, {"usage_s": 0.08, "periods": 14, "throttled_periods": 14, "throttled_s": 0.8,
+                               "scheduling_delay_s": 1.0, "involuntary_context_switches": 100, "node_steal_s": 0.0,
+                               "source": "cgroup", "process_s": 0.08, "requests": 150, "us_per_request": 533.33})
+
+    def test_a_smock_that_did_not_answer_tells_nothing_of_it(self):
+        self.assertIsNone(harness.first_second_use(lambda: None, "50m", scrape(), time.monotonic() - 1))
 
 
 def oha_database(path, latencies_ms, rate):

@@ -1239,6 +1239,20 @@ def scraped_use(before, after, cpu_limit, wall_s):
                                                         "max": max(known) if len(known) == 2 else None}
 
 
+def first_second_use(scrape, cpu_limit, before, scraped_before):
+    """What smock used in a step's first second, when its connections open
+    and their TLS handshakes come at once: between `before`, its /metrics
+    scraped right before the load (as metric_values reads them), which
+    came back at `scraped_before` (time.monotonic()), and what `scrape`
+    returns a second later, as scraped_use's smock_cpu has it. The CPU
+    time, the requests and the waits all come from what smock read when it
+    answered that scrape: under a small CPU limit the scrape waits behind
+    the load, and the second then ends when smock answered it."""
+    time.sleep(max(0.0, scraped_before + 1 - time.monotonic()))
+    after = scrape()
+    return scraped_use(before, after, cpu_limit, time.monotonic() - scraped_before)[0]
+
+
 def run_case(run, spec):
     raw = run.out / spec["raw"]
     raw.mkdir(parents=True, exist_ok=True)
@@ -1251,7 +1265,7 @@ def run_case(run, spec):
             return not_ready_result(run, spec, killed.oom_kills)
         rss = stack.enter_context(RssSampler(smock, spec["rss_interval_s"]))
         idle = stack.enter_context(IdleConnections(smock.ports["plain"], spec["idle_connections"], run.mix[0]))
-        metrics_before = smock.metrics()
+        metrics_before, scraped_before = smock.metrics(), time.monotonic()
         cpu_before, cpu_before_at = smock.cpu_stat(), time.monotonic()
         opens_before = tcp_passive_opens()
         load = start_load(run, smock, spec, raw)
@@ -1267,11 +1281,7 @@ def run_case(run, spec):
             "smock_cpus": cpus_allowed(smock.pid),
             "load_generator_cpus": sorted(generator_cpus),
         }
-        # What smock used in the step's first second, when its connections
-        # open and their TLS handshakes come at once.
-        time.sleep(max(0.0, cpu_before_at + 1 - time.monotonic()))
-        cpu_first, cpu_first_at = smock.cpu_stat(), time.monotonic()
-        metrics_first = smock.metrics()
+        first_second = first_second_use(smock.metrics, spec["cpu_limit"], metrics_before, scraped_before)
         for item in load:
             item["process"].wait(total_s + 300)
             run.processes.remove(item["process"])
@@ -1286,8 +1296,7 @@ def run_case(run, spec):
     kinds, latencies, release_latencies, lags, seconds = analyze_load(run, load, spec, raw)
     smock_cpu = cpu_use(cpu_before, cpu_after, spec["cpu_limit"], wall_s, (metrics_before, metrics_after))
     if smock_cpu:
-        smock_cpu["first_second"] = cpu_use(cpu_before, cpu_first, spec["cpu_limit"], cpu_first_at - cpu_before_at,
-                                            (metrics_before, metrics_first))
+        smock_cpu["first_second"] = first_second
     write_json(raw / "latency.json", {
         "about": "Latencies of the requests scheduled in the measured window that got a response, "
                  "from the times the fixed-rate schedule had them due, all request kinds together: "

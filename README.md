@@ -1193,8 +1193,11 @@ architecture the targets file has no set for.
   CPU, `scheduling_delay_s`, how many times the kernel took the CPU from
   it, `involuntary_context_switches`, and the machine's steal time,
   `node_steal_s`, from its `/metrics`, and the same for the step's first
-  second, `first_second`, read a second into the load, when connections
-  open and TLS handshakes come at once), the quota, memory limit and CPUs
+  second, `first_second`, when connections open and TLS handshakes come at
+  once, all from its `/metrics` and its cgroup's metrics there, scraped a
+  second into the load: under a small CPU limit the scrape waits behind
+  the load, so that second ends when smock answers it, which can be a
+  second or more later), the quota, memory limit and CPUs
   read while it ran,
   smock's peak memory and OOM kills (`memory`), whether smock got ready,
   smock's RSS (first, last, max), the TCP connections the machine accepted
