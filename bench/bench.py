@@ -1019,12 +1019,14 @@ def start_load(run, smock, spec, raw):
 def analyze_request(run, item, spec, raw):
     """What one oha process measured for its request: the latencies of the
     requests scheduled in the window, counted from their due times and from
-    the times oha released them, how late it released them, and what went
-    wrong."""
+    the times oha released them, how late it released them, what went
+    wrong, and the latencies of all its requests that got a response by
+    the second of the load they were due in ({second: latencies})."""
     request, rate = item["request"], item["rate"]
     database = run.tmp / f"{request['name']}.sqlite"
     first, last = window(spec, rate)
     latencies, release_latencies, lags = array.array("d"), array.array("d"), array.array("d")
+    by_second = {}
     ok = unexpected = 0
     if database.exists():
         connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
@@ -1046,8 +1048,9 @@ def analyze_request(run, item, spec, raw):
         rows = connection.execute("SELECT start_latency_correction, end, status FROM oha "
                                   "ORDER BY start_latency_correction")
         for k, (released, ended, status) in enumerate(rows):
+            due = k / rate
+            by_second.setdefault(int(due), array.array("d")).append(ended - due)
             if first <= k < last:
-                due = k / rate
                 latencies.append(ended - due)
                 release_latencies.append(ended - released)
                 lags.append(released - due)
@@ -1075,7 +1078,7 @@ def analyze_request(run, item, spec, raw):
         "no_response": max(0, scheduled - ok - unexpected),
         "oha_errors": oha_errors,
         "oha_exit_status": item["process"].returncode,
-    }, latencies, release_latencies, lags
+    }, latencies, release_latencies, lags, by_second
 
 
 def metric_values(text):
@@ -1139,15 +1142,30 @@ def per_request(usage_s, requests, wall_s, cpu_limit):
     }
 
 
+def waited(before, after):
+    """How long smock's main thread waited for a CPU it was ready to run on
+    between two scrapes of its /metrics (as metric_values reads them), how
+    many times the kernel took the CPU from it while it could still run,
+    and how much of its node's CPU time the hypervisor gave to something
+    else (the node's, all its CPUs together, not smock's). Each is None when
+    either scrape has none of it, as a smock before those metrics."""
+    switches = grew(before, after, "smock_process_involuntary_context_switches_total")
+    return {
+        "scheduling_delay_s": rounded(grew(before, after, "smock_process_scheduling_delay_seconds_total"), 4),
+        "involuntary_context_switches": None if switches is None else round(switches),
+        "node_steal_s": rounded(grew(before, after, "smock_node_cpu_steal_seconds_total"), 2),
+    }
+
+
 def cpu_use(before, after, cpu_limit, wall_s=None, scrapes=(None, None)):
     """The CPU smock's cgroup used and was throttled for between two
     readings of its cpu.stat, `wall_s` seconds apart (None when unknown),
     or None when smock was gone at either. With smock's /metrics scraped
     around them (`scrapes`, before and after, as metric_values reads them):
     the requests smock answered in between, what the CPU time comes to a
-    request and against the CPU limit (per_request), and the CPU time
-    smock's process counted (process_s), a cross-check to the hundredth of
-    a second."""
+    request and against the CPU limit (per_request), how long smock waited
+    for a CPU (waited), and the CPU time smock's process counted
+    (process_s), a cross-check to the hundredth of a second."""
     if before is None or after is None:
         return None
     usage_s = (after["usage_usec"] - before["usage_usec"]) / 1e6
@@ -1156,6 +1174,7 @@ def cpu_use(before, after, cpu_limit, wall_s=None, scrapes=(None, None)):
         "periods": after["nr_periods"] - before["nr_periods"],
         "throttled_periods": after["nr_throttled"] - before["nr_throttled"],
         "throttled_s": round((after["throttled_usec"] - before["throttled_usec"]) / 1e6, 3),
+        **waited(*scrapes),
         "source": "cgroup",
         "process_s": rounded(grew(*scrapes, "process_cpu_seconds_total"), 2),
         **per_request(usage_s, grew(*scrapes, "smock_requests_total", labelled=True), wall_s, cpu_limit),
@@ -1172,7 +1191,8 @@ def scraped_use(before, after, cpu_limit, wall_s):
 
     - smock_cpu is cpu_use's, with the CPU time from smock's cgroup
       (`source` cgroup) when smock has its cgroup's metrics, else from its
-      process's (`source` process), and the CFS counts None without them.
+      process's (`source` process), and the CFS counts None without them;
+      how long smock waited for a CPU comes from its scheduling metrics.
       It is None without both scrapes, or when smock restarted between
       them, and then so is all the rest but the first RSS.
     - peak_bytes is the most memory smock's cgroup had used at the second
@@ -1193,6 +1213,7 @@ def scraped_use(before, after, cpu_limit, wall_s):
         "periods": None if periods is None else round(periods),
         "throttled_periods": None if throttled_periods is None else round(throttled_periods),
         "throttled_s": rounded(grew(before, after, "smock_cgroup_cpu_throttled_seconds_total"), 3),
+        **waited(before, after),
         "source": "cgroup" if cgroup is not None else "process",
         "process_s": rounded(process, 2),
         **per_request(usage_s, grew(before, after, "smock_requests_total", labelled=True), wall_s, cpu_limit),
@@ -1231,6 +1252,11 @@ def run_case(run, spec):
             "smock_cpus": cpus_allowed(smock.pid),
             "load_generator_cpus": sorted(generator_cpus),
         }
+        # What smock used in the step's first second, when its connections
+        # open and their TLS handshakes come at once.
+        time.sleep(max(0.0, cpu_before_at + 1 - time.monotonic()))
+        cpu_first, cpu_first_at = smock.cpu_stat(), time.monotonic()
+        metrics_first = smock.metrics()
         for item in load:
             item["process"].wait(total_s + 300)
             run.processes.remove(item["process"])
@@ -1242,7 +1268,11 @@ def run_case(run, spec):
         metrics_after = smock.metrics()
         opens = tcp_passive_opens() - opens_before
         idle_open = idle.open_count()
-    kinds, latencies, release_latencies, lags = analyze_load(run, load, spec, raw)
+    kinds, latencies, release_latencies, lags, seconds = analyze_load(run, load, spec, raw)
+    smock_cpu = cpu_use(cpu_before, cpu_after, spec["cpu_limit"], wall_s, (metrics_before, metrics_after))
+    if smock_cpu:
+        smock_cpu["first_second"] = cpu_use(cpu_before, cpu_first, spec["cpu_limit"], cpu_first_at - cpu_before_at,
+                                            (metrics_before, metrics_first))
     write_json(raw / "latency.json", {
         "about": "Latencies of the requests scheduled in the measured window that got a response, "
                  "from the times the fixed-rate schedule had them due, all request kinds together: "
@@ -1260,11 +1290,11 @@ def run_case(run, spec):
     })
     result = {
         **spec,
-        **load_result(spec, kinds, latencies, release_latencies, lags),
+        **load_result(spec, kinds, latencies, release_latencies, lags, seconds),
         "tcp_passive_opens": opens,
         "idle_connections_open_at_end": idle_open,
         "pinning": pinning,
-        "smock_cpu": cpu_use(cpu_before, cpu_after, spec["cpu_limit"], wall_s, (metrics_before, metrics_after)),
+        "smock_cpu": smock_cpu,
         "memory": {"peak_bytes": smock.peak_bytes, "oom_kills": smock.oom_kills},
         "rss_kib": {
             "first": rss_values[0] if rss_values else None,
@@ -1285,23 +1315,45 @@ def run_case(run, spec):
 
 def analyze_load(run, load, spec, raw):
     """What the oha processes of a step measured: each request kind's
-    counts, and the latencies from the due times and from release and the
-    generator lags of every request kind together, sorted."""
+    counts, the latencies from the due times and from release and the
+    generator lags of every request kind together, sorted, and each second
+    of the load (per_second)."""
     kinds = []
     latencies, release_latencies, lags = array.array("d"), array.array("d"), array.array("d")
+    by_second = {}
     for item in load:
-        kind, kind_latencies, kind_release_latencies, kind_lags = analyze_request(run, item, spec, raw)
+        kind, kind_latencies, kind_release_latencies, kind_lags, kind_seconds = analyze_request(run, item, spec, raw)
         kinds.append(kind)
         latencies.extend(kind_latencies)
         release_latencies.extend(kind_release_latencies)
         lags.extend(kind_lags)
-    return kinds, sorted(latencies), sorted(release_latencies), sorted(lags)
+        for second, values in kind_seconds.items():
+            by_second.setdefault(second, array.array("d")).extend(values)
+    return kinds, sorted(latencies), sorted(release_latencies), sorted(lags), per_second(spec, by_second)
 
 
-def load_result(spec, kinds, latencies, release_latencies, lags):
+def per_second(spec, by_second):
+    """For each second of a step's load from its start, ramp and tail
+    included, how many of the requests due in it got a response, of every
+    request kind together, and their p99 latency from the due times (None
+    when none did), from their latencies by second ({second: latencies}):
+    {"requests": [...], "p99_ms": [...]}, a second each. A burst at the
+    start, a stall now and then and a step slow all through look apart in
+    it, where the window's percentiles mix them."""
+    total_s = spec["ramp_s"] + spec["duration_s"] + spec["tail_s"]
+    seconds = max(math.ceil(total_s), max(by_second, default=-1) + 1)
+    requests, p99 = [], []
+    for second in range(seconds):
+        ordered = sorted(by_second.get(second, ()))
+        requests.append(len(ordered))
+        p99.append(ms(percentile(ordered, 0.99)))
+    return {"requests": requests, "p99_ms": p99}
+
+
+def load_result(spec, kinds, latencies, release_latencies, lags, seconds):
     """What a step's load measured, from analyze_load: the achieved rate,
-    the errors, the percentiles, and whether the load generator fell
-    behind."""
+    the errors, the percentiles, whether the load generator fell behind,
+    and each second of the load (per_second)."""
     scheduled = sum(kind["scheduled"] for kind in kinds)
     ok = sum(kind["ok"] for kind in kinds)
     lag = percentiles_ms(lags, ("p50", "p99", "p99_9", "max"))
@@ -1319,6 +1371,7 @@ def load_result(spec, kinds, latencies, release_latencies, lags):
             "unexpected_status": sum(kind["unexpected_status"] for kind in kinds),
             "no_response": sum(kind["no_response"] for kind in kinds),
         },
+        "per_second": seconds,
     }
 
 
@@ -1338,6 +1391,7 @@ def not_ready_result(run, spec, oom_kills):
         "generator_lag_ms": {metric: None for metric in ("p50", "p99", "p99_9", "max")},
         "load_generator_late": False,
         "requests": {"scheduled": scheduled, "ok": 0, "unexpected_status": 0, "no_response": scheduled},
+        "per_second": None,
         "tcp_passive_opens": None,
         "idle_connections_open_at_end": None,
         "pinning": None,

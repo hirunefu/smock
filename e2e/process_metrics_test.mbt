@@ -1,7 +1,8 @@
-// Seam 2 tests of the process metrics and of the metrics of smock's cgroup
-// on /metrics. Each is read when /metrics is scraped: the tests read the
-// same files themselves, apart from smock's reader, right before and right
-// after a scrape, and check that what /metrics says lies between the two.
+// Seam 2 tests of the process metrics, of smock's scheduling metrics and
+// of the metrics of smock's cgroup on /metrics. Each is read when /metrics
+// is scraped: the tests read the same files themselves, apart from smock's
+// reader, right before and right after a scrape, and check that what
+// /metrics says lies between the two.
 
 ///|
 /// The CPU time process `pid` has used, user and system, in clock ticks of
@@ -144,6 +145,85 @@ async test "process metrics: smock's CPU time and RSS as /proc has them when /me
         #|CPU time as /proc had it at the scrape: true
         #|RSS as /proc had it at the scrape: true
         #|started between the test starting it and its listening: true
+      ),
+    )
+  })
+}
+
+///|
+/// How long the main thread of process `pid` waited for a CPU, in
+/// nanoseconds: run_delay, the second field of /proc/<pid>/schedstat.
+async fn run_delay_ns(pid : Int) -> Double {
+  let text = @fs.read_file("/proc/\{pid}/schedstat").text()
+  let fields = text.trim(chars="\n").split(" ").collect()
+  guard fields.length() >= 2 else { fail("no run_delay in \{text}") }
+  @string.parse_double(fields[1])
+}
+
+///|
+/// How many times the kernel took the CPU from the main thread of process
+/// `pid` while it could still run: nonvoluntary_ctxt_switches of
+/// /proc/<pid>/status.
+async fn involuntary_switches(pid : Int) -> Double {
+  for line in @fs.read_file("/proc/\{pid}/status").text().split("\n") {
+    if line.strip_prefix("nonvoluntary_ctxt_switches:") is Some(rest) {
+      return @string.parse_double(rest.trim())
+    }
+  }
+  fail("no nonvoluntary_ctxt_switches in /proc/\{pid}/status")
+}
+
+///|
+/// The machine's steal time, in clock ticks of 1/100 s: the eighth count
+/// of the cpu line of /proc/stat.
+async fn steal_ticks() -> Double {
+  for line in @fs.read_file("/proc/stat").text().split("\n") {
+    if line.strip_prefix("cpu ") is Some(rest) {
+      let counts = rest.trim().split(" ").collect()
+      guard counts.length() >= 8 else { fail("no steal in \{line}") }
+      return @string.parse_double(counts[7])
+    }
+  }
+  fail("no cpu line in /proc/stat")
+}
+
+///|
+async test "scheduling metrics: smock's scheduling delay and involuntary context switches, and the machine's steal time, as /proc has them when /metrics is scraped" {
+  let _ = with_smock(["--port", "0"], smock => {
+    work_until(smock, "3 ticks of CPU time", () => cpu_ticks(smock.pid) >= 3)
+    let delay = run_delay_ns(smock.pid)
+    let switches = involuntary_switches(smock.pid)
+    let steal = steal_ticks()
+    let text = smock.admin("GET", "/metrics", token=None).body
+    let delay_after = run_delay_ns(smock.pid)
+    let switches_after = involuntary_switches(smock.pid)
+    let steal_after = steal_ticks()
+    let _ = parse_prometheus(text)
+    let delay_s = metric_value(
+      text, "smock_process_scheduling_delay_seconds_total",
+    )
+    let switched = metric_value(
+      text, "smock_process_involuntary_context_switches_total",
+    )
+    let stolen = metric_value(text, "smock_node_cpu_steal_seconds_total")
+    inspect(
+      [
+        about_lines(text, "smock_process_"),
+        about_lines(text, "smock_node_"),
+        "scheduling delay as /proc had it at the scrape: \{between(delay_s, delay / 1.0e9, delay_after / 1.0e9)}",
+        "involuntary context switches as /proc had them at the scrape: \{between(switched, switches, switches_after)}",
+        "steal time as /proc had it at the scrape: \{between(stolen, steal / 100.0, steal_after / 100.0)}",
+      ].join("\n"),
+      content=(
+        #|# HELP smock_process_scheduling_delay_seconds_total How long smock's main thread, which serves every request, was ready to run but waited for a CPU, in seconds, to the nanosecond (run_delay of /proc/self/schedstat).
+        #|# TYPE smock_process_scheduling_delay_seconds_total counter
+        #|# HELP smock_process_involuntary_context_switches_total Times the kernel took the CPU from smock's main thread, which serves every request, while it could still run (nonvoluntary_ctxt_switches of /proc/self/status).
+        #|# TYPE smock_process_involuntary_context_switches_total counter
+        #|# HELP smock_node_cpu_steal_seconds_total CPU time the hypervisor gave to something else while the CPUs of the machine smock runs on, all of them together, had something to run, in seconds, to the hundredth of a second (steal of the cpu line of /proc/stat): the machine's, not smock's, and 0 on bare metal.
+        #|# TYPE smock_node_cpu_steal_seconds_total counter
+        #|scheduling delay as /proc had it at the scrape: true
+        #|involuntary context switches as /proc had them at the scrape: true
+        #|steal time as /proc had it at the scrape: true
       ),
     )
   })

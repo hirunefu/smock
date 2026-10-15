@@ -965,16 +965,19 @@ wait_for_job() {
 
 # Keeps what smock left under a profile while its Pod and Service are still
 # there, masked: its log as smock.log (when it restarted, or that is not
-# known, its container before the last restart first), with kubectl's
-# errors in their place, and its Service with the Service's EndpointSlices
-# as service.json.
+# known, its container before the last restart first), and what its init
+# container printed of the CPU of its node as smock-node-cpu.log, each with
+# kubectl's errors in their place, and its Service with the Service's
+# EndpointSlices as service.json.
 keep_smock_state() {
   local smock_pod=$1 raw=$2 restarts
   # kubectl itself, not the function kube, so that its errors stay in order
-  # with what it prints.
-  local logs=("$KUBECTL" --kubeconfig="$kubeconfig" --namespace="$NAMESPACE" logs)
+  # with what it prints. smock's container by name: kubectl says on stderr
+  # which one it chose for a Pod with an init container.
+  local logs=("$KUBECTL" --kubeconfig="$kubeconfig" --namespace="$NAMESPACE" logs --container=smock)
   if [ "$dry_run" = 1 ]; then
-    say "would keep smock's log as $raw/smock.log, and its Service and EndpointSlices as $raw/service.json"
+    say "would keep smock's log as $raw/smock.log, what its init container printed of the CPU of its node as" \
+      "$raw/smock-node-cpu.log, and its Service and EndpointSlices as $raw/service.json"
     return 0
   fi
   mkdir -p "$raw"
@@ -990,6 +993,8 @@ keep_smock_state() {
       "${logs[@]}" "pod/$smock_pod"
     } 2>&1 | masked >"$raw/smock.log"
   fi
+  "$KUBECTL" --kubeconfig="$kubeconfig" --namespace="$NAMESPACE" logs --container=node-cpu "pod/$smock_pod" 2>&1 |
+    masked >"$raw/smock-node-cpu.log"
   kube get service,endpointslices --output=json | masked >"$raw/service.json" ||
     say "cannot read smock's Service and its EndpointSlices; $raw/service.json may be empty"
 }
