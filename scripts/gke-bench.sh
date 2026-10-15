@@ -101,6 +101,15 @@ SMOCK_RESTARTS='
 import json, sys
 print(next(pod["restarts"] for pod in json.load(open(sys.argv[1]))["smock"] if pod["name"] == sys.argv[2]))
 '
+# Prints why gcloud could not fetch the quotas of the region whose
+# description it printed (the argument, as JSON); fails when it could.
+QUOTA_WARNING='
+import json, sys
+warning = json.load(open(sys.argv[1])).get("quotaStatusWarning")
+if not warning:
+    sys.exit(1)
+print(warning.get("message") or warning.get("code") or "gcloud says no more")
+'
 # Prints the profiles of summary.json (the argument) that are not complete,
 # space-separated.
 INCOMPLETE_PROFILES='
@@ -609,10 +618,11 @@ trap 'on_signal HUP 129' HUP
 
 # Checks that quota METRIC of FILE (gcloud's description of the project or
 # of the region) has NEEDED free, and says how much: LABEL names the quota,
-# UNIT is its unit, and WHY what the run needs it for.
+# UNIT is its unit, and WHY what the run needs it for. A quota gcloud does
+# not list cannot be checked, which stops the run all the same.
 check_quota() {
-  local file=$1 metric=$2 label=$3 needed=$4 unit=$5 why=$6 text
-  if text=$("$PYTHON" - "$file" "$metric" "$label" "$needed" "$unit" "$why" <<'EOF'
+  local file=$1 metric=$2 label=$3 needed=$4 unit=$5 why=$6 text status
+  text=$("$PYTHON" - "$file" "$metric" "$label" "$needed" "$unit" "$why" <<'EOF'
 import json
 import sys
 
@@ -620,18 +630,20 @@ path, metric, label, needed, unit, why = sys.argv[1:7]
 quotas = {quota["metric"]: quota for quota in json.load(open(path)).get("quotas", [])}
 quota = quotas.get(metric)
 if quota is None:
-    print(f"{label}: the project has no such quota")
-    sys.exit(1)
+    print(f"{label}: not among the quotas gcloud lists, so the run cannot check it")
+    sys.exit(2)
 free = quota["limit"] - quota["usage"]
 print(f"{label}: {free:g} of {quota['limit']:g} {unit} free, the run needs {float(needed):g} {why}")
 sys.exit(0 if free >= float(needed) else 1)
 EOF
-  ); then
-    say "$text"
-  else
-    problem "$text: ask for more on the console's Quotas page (IAM & Admin), or, to accept that the load" \
-      "generator's node may wait for Autopilot to remove its first node, set GKE_BENCH_NEEDED_CPUS lower"
-  fi
+  )
+  status=$?
+  case $status in
+  0) say "$text" ;;
+  1) problem "$text: ask for more on the console's Quotas page (IAM & Admin), or, to accept that the load" \
+    "generator's node may wait for Autopilot to remove its first node, set GKE_BENCH_NEEDED_CPUS lower" ;;
+  *) problem "${text:-$label: cannot be read}" ;;
+  esac
 }
 
 # A number (the first argument) of a thing (the second), as people read
@@ -647,7 +659,7 @@ count() {
 # The checks that need the Compute Engine API: the zone, the quotas the
 # run's nodes draw on, and what the project has before the run.
 check_project() {
-  local region line nodes=$(((NEEDED_CPUS + NODE_CPUS - 1) / NODE_CPUS)) x86 x86_nodes arm arm_nodes
+  local region line warning nodes=$(((NEEDED_CPUS + NODE_CPUS - 1) / NODE_CPUS)) x86 x86_nodes arm arm_nodes
   # The x86 nodes: on amd64 every node; on arm64 Autopilot's own, the
   # others being Arm nodes.
   x86=$nodes x86_nodes="its $(count "$nodes" node)" arm=0
@@ -666,20 +678,24 @@ check_project() {
     problem "cannot read the project's CPU quota"
   fi
   if reads "$GCLOUD" compute regions describe "$REGION" --project="$PROJECT" --format=json >"$work/region.json"; then
-    check_quota "$work/region.json" CPUS "CPUS in $REGION" \
-      $((x86 * NODE_CPUS < NEEDED_CPUS ? x86 * NODE_CPUS : NEEDED_CPUS)) vCPUs "for $x86_nodes"
-    check_quota "$work/region.json" "${BOOT_DISK_QUOTAS[amd64]}" "${BOOT_DISK_QUOTAS[amd64]} in $REGION" \
-      $((x86 * NODE_BOOT_DISK_GB)) GB "for the boot disks of $x86_nodes, $NODE_BOOT_DISK_GB GB each"
-    if [ "$arm" -gt 0 ]; then
-      arm_nodes="its $(count "$arm" "Arm node")"
-      check_quota "$work/region.json" "${BOOT_DISK_QUOTAS[arm64]}" "${BOOT_DISK_QUOTAS[arm64]} in $REGION" \
-        $((arm * NODE_BOOT_DISK_GB)) GB "for the boot disks of $arm_nodes, $NODE_BOOT_DISK_GB GB each"
-      say "not checked: the CPU quota of the Arm nodes' machine family, of which the run needs" \
-        "$((arm * NODE_CPUS)) vCPUs for $arm_nodes, since gcloud does not list it: see the console's Quotas" \
-        "page (IAM & Admin)"
+    if warning=$("$PYTHON" -c "$QUOTA_WARNING" "$work/region.json" | masked); then
+      problem "cannot read the quotas of $REGION ($warning): try again"
+    else
+      check_quota "$work/region.json" CPUS "CPUS in $REGION" \
+        $((x86 * NODE_CPUS < NEEDED_CPUS ? x86 * NODE_CPUS : NEEDED_CPUS)) vCPUs "for $x86_nodes"
+      check_quota "$work/region.json" "${BOOT_DISK_QUOTAS[amd64]}" "${BOOT_DISK_QUOTAS[amd64]} in $REGION" \
+        $((x86 * NODE_BOOT_DISK_GB)) GB "for the boot disks of $x86_nodes, $NODE_BOOT_DISK_GB GB each"
+      if [ "$arm" -gt 0 ]; then
+        arm_nodes="its $(count "$arm" "Arm node")"
+        check_quota "$work/region.json" "${BOOT_DISK_QUOTAS[arm64]}" "${BOOT_DISK_QUOTAS[arm64]} in $REGION" \
+          $((arm * NODE_BOOT_DISK_GB)) GB "for the boot disks of $arm_nodes, $NODE_BOOT_DISK_GB GB each"
+        say "not checked: the CPU quota of the Arm nodes' machine family, of which the run needs" \
+          "$((arm * NODE_CPUS)) vCPUs for $arm_nodes, since gcloud does not list it: see the console's Quotas" \
+          "page (IAM & Admin)"
+      fi
+      check_quota "$work/region.json" IN_USE_ADDRESSES "IN_USE_ADDRESSES in $REGION" "$nodes" addresses \
+        "for the external IP addresses of its $(count "$nodes" node)"
     fi
-    check_quota "$work/region.json" IN_USE_ADDRESSES "IN_USE_ADDRESSES in $REGION" "$nodes" addresses \
-      "for the external IP addresses of its $(count "$nodes" node)"
   else
     problem "cannot read the quotas of $REGION"
   fi

@@ -144,11 +144,16 @@ if tool == "gcloud":
         answer(json.dumps({"quotas": [{"metric": "CPUS_ALL_REGIONS", "limit": config.get("cpus_all_regions", 32.0),
                                        "usage": 0.0}]}))
     if command == ("compute", "regions", "describe"):
-        # The region's quotas, each [limit, usage], as configured.
+        # As the real gcloud, when it could not fetch the region's quotas:
+        # a warning, and none.
+        if "region_quota_warning" in config:
+            answer(json.dumps({"name": "us-central1", "quotaStatusWarning": config["region_quota_warning"]}))
+        # The region's quotas, each [limit, usage], as configured; one
+        # configured as null is not listed.
         quotas = {"CPUS": [config.get("regional_cpus", 200.0), 0.0], "SSD_TOTAL_GB": [4096.0, 0.0],
                   "HDB_TOTAL_GB": [4096.0, 0.0], "IN_USE_ADDRESSES": [8.0, 0.0], **config.get("regional_quotas", {})}
         answer(json.dumps({"quotas": [{"metric": metric, "limit": quota[0], "usage": quota[1]}
-                                      for metric, quota in quotas.items()]}))
+                                      for metric, quota in quotas.items() if quota is not None]}))
     if command == ("compute", "zones", "describe"):
         answer(words[3].rsplit("-", 1)[0] + "\n")
     if command == ("container", "clusters", "list"):
@@ -716,6 +721,28 @@ class BeforeAnything(Script):
         self.configure(regional_quotas={"SSD_TOTAL_GB": [200.0, 0.0], "HDB_TOTAL_GB": [200.0, 0.0]})
         status, output = self.run_script(*self.for_arch("arm64"))
         self.assertEqual(status, 0, output)
+
+    def test_quotas_that_cannot_be_read_stop_it_with_their_own_reason(self):
+        # gcloud could not fetch the region's quotas: one problem, which
+        # more quota would not solve.
+        self.configure(region_quota_warning={"code": "QUOTA_STATUS_UNAVAILABLE",
+                                             "message": "Quota information is temporarily unavailable."})
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        self.assertIn("cannot read the quotas of us-central1 (Quota information is temporarily unavailable.): try "
+                      "again", output)
+        self.assertNotIn("in us-central1:", output)
+        self.assertNotIn("GKE_BENCH_NEEDED_CPUS lower", output)
+        self.assertEqual(self.changing_calls(), [])
+        # A quota the region does not list cannot be checked.
+        self.configure(regional_quotas={"IN_USE_ADDRESSES": None})
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        self.assertIn("IN_USE_ADDRESSES in us-central1: not among the quotas gcloud lists, so the run cannot check "
+                      "it", output)
+        self.assertNotIn("no such quota", output)
+        self.assertNotIn("GKE_BENCH_NEEDED_CPUS lower", output)
+        self.assertEqual(self.changing_calls(), [])
 
     def test_apis_not_enabled_stop_it_with_the_command_that_enables_them(self):
         self.configure(services=["compute.googleapis.com"])
