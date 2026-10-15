@@ -28,7 +28,8 @@
 # 4. writes the load generator's lines, the Pods' state, smock's log and
 #    its Service with the Service's EndpointSlices under the results
 #    directory, and summary.json, summary.md and conditions.json, which
-#    bench/compare.py compares;
+#    bench/compare.py compares: also when the run stops once a profile has
+#    started, from what it measured, with where and why it stopped;
 # 5. always deletes the cluster and the repository: when it ends, fails or
 #    is interrupted, and from a watchdog in its own session when the time
 #    limit (80 minutes by default) has passed, even if this script was
@@ -150,6 +151,8 @@ plan="$ROOT/bench/plan-autopilot.json" targets="$ROOT/bench/targets.json"
 profiles="" cases="" out="" time_limit=80m smock_binary="" oha_binary="" arch="" smock_sha256=""
 project_number="" account_pattern="" problems=() apis_to_enable=()
 work="" resources_may_exist=0 watchdog_pid="" built_images=() log_pid="" token_at=0
+# The profile running, why the run stopped, and whether the summary is written.
+current_profile="" stop_reason="" summarized=0
 
 say() {
   printf 'gke-bench: %s\n' "$*" >&2
@@ -157,6 +160,7 @@ say() {
 
 die() {
   say "$*"
+  stop_reason="$*"
   exit 1
 }
 
@@ -546,6 +550,7 @@ on_exit() {
   trap '' INT TERM HUP
   trap - EXIT
   stop_children
+  summarize_stopped "${stop_reason:-the script ended with status $status}"
   if [ "$resources_may_exist" = 1 ]; then
     say "deleting the cluster and the repository"
     delete_cluster || status=1
@@ -582,6 +587,7 @@ on_signal() {
     fi
   fi
   say "stopped by SIG$1"
+  stop_reason="stopped by SIG$1"
   exit "$2"
 }
 
@@ -1094,6 +1100,37 @@ run_profile() {
   return "$status"
 }
 
+# Writes summary.json, summary.md and conditions.json from what the profiles
+# left in the results directory, with the options of gke.py summarize given.
+summarize() {
+  local smock_image_ref=${smock_ref:-} generator_image_ref=${generator_ref:-}
+  summarized=1
+  "$PYTHON" "$GKE_PY" summarize --plan "$plan" --targets "$targets" "${selection[@]}" --region "$REGION" \
+    ${ZONE:+--zone "$ZONE"} --arch "$arch" --started-at "$started_at" --finished-at "$finished_at" \
+    --cluster-version "${cluster_version:-}" --smock-image "${smock_image_ref##*@}" \
+    --generator-image "${generator_image_ref##*@}" --smock-sha256 "$smock_sha256" "$@" "$out"
+}
+
+# When the run stops once a profile has started but before it wrote its
+# summary, writes the summary from what was measured, saying where it
+# stopped and why (the argument). Of the profile it was running, the load
+# generator's log may be only what was streamed.
+# shellcheck disable=SC2329 # Called by on_exit.
+summarize_stopped() {
+  local raw=$out/raw/$current_profile
+  if [ "$dry_run" = 1 ] || [ "$summarized" = 1 ] || [ -z "$current_profile" ]; then
+    return 0
+  fi
+  if [ ! -s "$raw/generator.log" ] && [ -f "$raw/generator-stream.log" ]; then
+    mv "$raw/generator-stream.log" "$raw/generator.log"
+  fi
+  finished_at=$(date -u +%FT%TZ)
+  say "the run stopped under profile $current_profile: writing summary.json, summary.md and conditions.json from" \
+    "what it measured"
+  summarize --stopped "$1" --stopped-under "$current_profile" &&
+    say "results: $out (summary.md says where and why the run stopped)"
+}
+
 # --- Main --------------------------------------------------------------------
 
 if ! profile_lines=$("$PYTHON" "$GKE_PY" plan --plan "$plan" "${selection[@]}"); then
@@ -1145,6 +1182,7 @@ while read -r name steps deadline_s <&3; do
     run_status=1
     break
   fi
+  current_profile=$name
   run_profile "$name" "$deadline_s" "$steps"
   case $? in
   0) ;;
@@ -1161,10 +1199,7 @@ finished_at=$(date -u +%FT%TZ)
 if [ "$dry_run" = 1 ]; then
   say "would write summary.json, summary.md and conditions.json into $out"
 else
-  "$PYTHON" "$GKE_PY" summarize --plan "$plan" --targets "$targets" "${selection[@]}" --region "$REGION" \
-    ${ZONE:+--zone "$ZONE"} --arch "$arch" --started-at "$started_at" --finished-at "$finished_at" \
-    --cluster-version "$cluster_version" --smock-image "${smock_ref##*@}" --generator-image "${generator_ref##*@}" \
-    --smock-sha256 "$smock_sha256" "$out" || run_status=1
+  summarize || run_status=1
   # Whatever the Jobs said: a log that lost lines leaves steps unmeasured.
   if ! incomplete=$("$PYTHON" -c "$INCOMPLETE_PROFILES" "$out/summary.json" 2>/dev/null); then
     run_status=1

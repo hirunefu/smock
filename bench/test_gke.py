@@ -371,11 +371,12 @@ class Summary(Helper):
     checked, and the conditions it ran under."""
 
     def results(self, lines, pod_info, rates=(500, 1000), where=("--region", "us-central1", "--zone", "us-central1-a",
-                                                                 "--arch", "arm64"), targets=None):
+                                                                 "--arch", "arm64"), targets=None, stopped=()):
         """A results directory as scripts/gke-bench.sh leaves it, with the
         load generator's log and the Pods of profile small, summarized
         against `targets` ({architecture: entries}, by default small's
-        targets for both)."""
+        targets for both); `stopped` says why and where the run stopped
+        early, if it did."""
         out = self.directory()
         raw = out / "raw" / "small"
         raw.mkdir(parents=True)
@@ -387,7 +388,7 @@ class Summary(Helper):
             "--targets", small_targets(self.directory(), targets), *where,
             "--started-at", "2026-10-14T03:28:50+00:00", "--finished-at", "2026-10-14T04:01:56+00:00",
             "--cluster-version", "1.35.8-gke.1225000", "--smock-image", "sha256:" + "1" * 64,
-            "--generator-image", "sha256:" + "2" * 64, out)
+            "--generator-image", "sha256:" + "2" * 64, *stopped, out)
         self.assertEqual(status, 0, stderr)
         return out
 
@@ -495,6 +496,31 @@ class Summary(Helper):
         summary = json.loads((out / "summary.json").read_text())
         self.assertFalse(summary["complete"])
         self.assertEqual([case["rate"] for case in summary["cases"]], [500])
+
+    def test_a_run_that_stopped_early_says_where_and_why_at_the_top_of_its_summary(self):
+        out = self.results([START, IDLE, generator_step(500)], pods(),
+                           stopped=("--stopped", "stopped by SIGTERM", "--stopped-under", "small"))
+        summary = json.loads((out / "summary.json").read_text())
+        self.assertFalse(summary["complete"])
+        self.assertEqual([case["rate"] for case in summary["cases"]], [500])
+        self.assertEqual(summary["gke"]["stopped"],
+                         {"reason": "stopped by SIGTERM", "profile": "small", "after": "http-keep-alive@small@500"})
+        markdown = (out / "summary.md").read_text()
+        note = ("**Stopped early:** the run stopped under profile small, after its step http-keep-alive@small@500: "
+                "stopped by SIGTERM. Nothing after that was measured.")
+        self.assertIn(note, markdown)
+        # Right below the line that says what ran.
+        self.assertLess(markdown.index("Started 2026-10-14T03:28:50+00:00"), markdown.index(note))
+        self.assertLess(markdown.index(note), markdown.index("## "))
+        # Before the profile's first step.
+        out = self.results([START, IDLE], pods(), stopped=("--stopped", "the load generator's Pod did not start "
+                                                           "under small", "--stopped-under", "small"))
+        self.assertIn("**Stopped early:** the run stopped under profile small, before its first step: the load "
+                      "generator's Pod did not start under small.", (out / "summary.md").read_text())
+        # A run that did not stop says nothing of it.
+        out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}], pods())
+        self.assertIsNone(json.loads((out / "summary.json").read_text())["gke"]["stopped"])
+        self.assertNotIn("Stopped early", (out / "summary.md").read_text())
 
     def test_steps_a_profile_did_not_run_after_it_stopped_early_are_not_measured_with_the_reason(self):
         # The step at 500 got no response at all, so the load generator ran

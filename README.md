@@ -1416,9 +1416,14 @@ EndpointSlices, both kept before smock's Pod is deleted;
 `bench/compare.py` reads; `summary.md`; `conditions.json`; and
 `watchdog.log`. The summary and the conditions record, for each profile,
 whether the traffic ports answered, whether the profile ended early and
-why, and the load generator's CPU request. The summary checks the
-targets of the run's architecture (`--arch`). Nothing outside smock's Pod
-can read its cgroup on Autopilot, so what smock used comes from its own
+why, and the load generator's CPU request. A run that stops once a
+profile has started, because something fails or it is stopped (Ctrl-C,
+SIGTERM, a closed terminal), still writes `summary.json`, `summary.md`
+and `conditions.json` from what it measured; `summary.md` then says,
+right below its first line, under which profile and after which step
+the run stopped, and why (`gke.stopped` in `summary.json`). The summary
+checks the targets of the run's architecture (`--arch`). Nothing outside
+smock's Pod can read its cgroup on Autopilot, so what smock used comes from its own
 `/metrics`, its [process and cgroup metrics](#admin-api), which the load
 generator scrapes right before and right after each step: its CPU time and
 throttling during the step, from its container's cgroup, with the CPU time

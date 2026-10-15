@@ -627,6 +627,25 @@ def gke_markdown(results):
     return "\n".join(lines) + "\n"
 
 
+def stopped_record(results, reason, profile):
+    """Where a run that stopped before its end stopped, and why: the
+    profile it was running and the last step it measured there; or None
+    when it did not stop."""
+    if not reason:
+        return None
+    steps = results[profile]["steps"] if profile in results else []
+    return {"reason": reason, "profile": profile, "after": steps[-1]["id"] if steps else None}
+
+
+def stopped_markdown(stopped):
+    """What summary.md says of a run that stopped before its end."""
+    where = ""
+    if stopped["profile"]:
+        step = f"after its step {stopped['after']}" if stopped["after"] else "before its first step"
+        where = f" under profile {stopped['profile']}, {step}"
+    return f"**Stopped early:** the run stopped{where}: {stopped['reason']}. Nothing after that was measured."
+
+
 def nodes_of(results, app):
     """The nodes the Pods of `app` (smock or generator) ran on, over every
     profile, as pod-info keeps them."""
@@ -651,10 +670,12 @@ def command_summarize(args):
     cases = plan_cases(plan, comma_list(args.cases))
     out = Path(args.out)
     results = {profile["name"]: profile_results(out, plan, profile, cases, args.arch) for profile in profiles}
+    stopped = stopped_record(results, args.stopped, args.stopped_under)
     summary = {"format": harness.FORMAT, "complete": all(result["complete"] for result in results.values()),
                "idle_rss": [idle for result in results.values() for idle in result["idle_rss"]],
                "cases": [step for result in results.values() for step in result["steps"]],
-               "targets": [], "gke": {"profiles": {name: profile_record(result) for name, result in results.items()}}}
+               "targets": [], "gke": {"profiles": {name: profile_record(result) for name, result in results.items()},
+                                      "stopped": stopped}}
     planned = [spec for profile in profiles for spec in steps(plan, profile, cases)]
     summary["targets"] = harness.explain_steps_not_run(
         harness.check_targets(harness.read_targets(targets_path), args.arch, summary), summary, planned)
@@ -709,7 +730,12 @@ def command_summarize(args):
     }
     harness.write_json(out / "summary.json", summary)
     harness.write_json(out / "conditions.json", conditions)
-    (out / "summary.md").write_text(harness.summary_markdown(summary, conditions) + gke_markdown(results))
+    markdown = harness.summary_markdown(summary, conditions)
+    if stopped:
+        # Right below the line that says what ran.
+        title, started, rest = markdown.split("\n\n", 2)
+        markdown = "\n\n".join([title, started, stopped_markdown(stopped), rest])
+    (out / "summary.md").write_text(markdown + gke_markdown(results))
     return 0
 
 
@@ -834,6 +860,8 @@ def main(argv):
     summarizing.add_argument("--smock-image", help="smock's image digest")
     summarizing.add_argument("--smock-sha256", help="the SHA-256 of the smock binary in the image")
     summarizing.add_argument("--generator-image", help="the load generator's image digest")
+    summarizing.add_argument("--stopped", help="why the run stopped before its end, when it did")
+    summarizing.add_argument("--stopped-under", help="the profile the run was running when it stopped")
     summarizing.add_argument("out", help="the run's results: raw/<profile>/generator.log and pods.json")
     summarizing.set_defaults(handler=command_summarize)
     stopping = commands.add_parser("stopped", help="print why the load generator stopped its profile early and how "
