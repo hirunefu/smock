@@ -25,7 +25,15 @@ async test "process metrics: read at each scrape; a file missing at startup leav
   let cgroup = "\{dir}/cgroup"
   @fs.mkdir(cgroup)
   @fs.write_file("\{dir}/stat", proc_stat(150, 25))
-  @fs.write_file("\{dir}/status", "Name:\tsmock\nVmRSS:\t    6896 kB\n")
+  @fs.write_file(
+    "\{dir}/status",
+    "Name:\tsmock\nVmRSS:\t    6896 kB\nvoluntary_ctxt_switches:\t1234\nnonvoluntary_ctxt_switches:\t56\n",
+  )
+  @fs.write_file("\{dir}/schedstat", "65958000 1500000 2\n")
+  @fs.write_file(
+    "\{dir}/system-stat",
+    "cpu  56507 6 13025 902483 799 3381 893 1234 0 0\ncpu0 7000 1 1600 112000 100 420 110 150 0 0\n",
+  )
   // A cgroup without the cpu controller, so no CFS counts, and without
   // memory.peak, as on Linux before 5.19.
   @fs.write_file(
@@ -36,13 +44,23 @@ async test "process metrics: read at each scrape; a file missing at startup leav
   let process = ProcessMetrics::register(registry, started_at=1791993354147L, files={
     stat: "\{dir}/stat",
     status: "\{dir}/status",
+    schedstat: "\{dir}/schedstat",
+    system_stat: "\{dir}/system-stat",
     cgroup_dir: Some(cgroup),
   })
   let out = ["At startup:", samples(registry)]
   // Every file says more, and the counts and the file that were not there
   // at startup appear: their metrics stay out.
   @fs.write_file("\{dir}/stat", proc_stat(310, 40))
-  @fs.write_file("\{dir}/status", "Name:\tsmock\nVmRSS:\t    7168 kB\n")
+  @fs.write_file(
+    "\{dir}/status",
+    "Name:\tsmock\nVmRSS:\t    7168 kB\nvoluntary_ctxt_switches:\t2000\nnonvoluntary_ctxt_switches:\t61\n",
+  )
+  @fs.write_file("\{dir}/schedstat", "131916000 4250000 9\n")
+  @fs.write_file(
+    "\{dir}/system-stat",
+    "cpu  60000 6 14000 910000 800 3400 900 1300 0 0\n",
+  )
   @fs.write_file(
     "\{cgroup}/cpu.stat",
     "usage_usec 3500000\nnr_periods 7\nnr_throttled 1\nthrottled_usec 2000\n",
@@ -54,11 +72,16 @@ async test "process metrics: read at each scrape; a file missing at startup leav
   // Files that say nothing it understands, then no files at all.
   @fs.write_file("\{dir}/stat", "4242 (smock) S\n")
   @fs.write_file("\{dir}/status", "Name:\tsmock\n")
+  @fs.write_file("\{dir}/schedstat", "\n")
+  @fs.write_file("\{dir}/system-stat", "intr 123\n")
   @fs.write_file("\{cgroup}/cpu.stat", "")
   process.update()
   out.push("Files it does not understand:")
   out.push(samples(registry))
-  for file in ["stat", "status", "cgroup/cpu.stat", "cgroup/memory.peak"] {
+  for
+    file in [
+      "stat", "status", "schedstat", "system-stat", "cgroup/cpu.stat", "cgroup/memory.peak",
+    ] {
     @fs.remove("\{dir}/\{file}")
   }
   process.update()
@@ -71,21 +94,33 @@ async test "process metrics: read at each scrape; a file missing at startup leav
       #|process_start_time_seconds 1791993354.147
       #|process_cpu_seconds_total 1.75
       #|process_resident_memory_bytes 7061504
+      #|smock_process_scheduling_delay_seconds_total 0.0015
+      #|smock_process_involuntary_context_switches_total 56
+      #|smock_node_cpu_steal_seconds_total 12.34
       #|smock_cgroup_cpu_usage_seconds_total 2.034567
       #|A scrape later:
       #|process_start_time_seconds 1791993354.147
       #|process_cpu_seconds_total 3.5
       #|process_resident_memory_bytes 7340032
+      #|smock_process_scheduling_delay_seconds_total 0.00425
+      #|smock_process_involuntary_context_switches_total 61
+      #|smock_node_cpu_steal_seconds_total 13
       #|smock_cgroup_cpu_usage_seconds_total 3.5
       #|Files it does not understand:
       #|process_start_time_seconds 1791993354.147
       #|process_cpu_seconds_total 3.5
       #|process_resident_memory_bytes 7340032
+      #|smock_process_scheduling_delay_seconds_total 0.00425
+      #|smock_process_involuntary_context_switches_total 61
+      #|smock_node_cpu_steal_seconds_total 13
       #|smock_cgroup_cpu_usage_seconds_total 3.5
       #|No files:
       #|process_start_time_seconds 1791993354.147
       #|process_cpu_seconds_total 3.5
       #|process_resident_memory_bytes 7340032
+      #|smock_process_scheduling_delay_seconds_total 0.00425
+      #|smock_process_involuntary_context_switches_total 61
+      #|smock_node_cpu_steal_seconds_total 13
       #|smock_cgroup_cpu_usage_seconds_total 3.5
     ),
   )
@@ -96,6 +131,8 @@ async test "cgroup metrics: with the cpu controller and memory.peak at startup, 
   let dir = @fs.tmpdir(prefix="smock-process-metrics-")
   defer @fs.rmdir(dir, recursive=true)
   @fs.write_file("\{dir}/stat", proc_stat(150, 25))
+  // No context switch counts, no schedstat (a kernel without
+  // CONFIG_SCHED_INFO) and no /proc/stat: their metrics are left out.
   @fs.write_file("\{dir}/status", "VmRSS:\t    6896 kB\n")
   // A container with a CPU limit, as cpu.stat has it on Linux 6.
   @fs.write_file(
@@ -117,6 +154,8 @@ async test "cgroup metrics: with the cpu controller and memory.peak at startup, 
   let process = ProcessMetrics::register(registry, started_at=1791993354147L, files={
     stat: "\{dir}/stat",
     status: "\{dir}/status",
+    schedstat: "\{dir}/schedstat",
+    system_stat: "\{dir}/system-stat",
     cgroup_dir: Some(dir),
   })
   let out = [samples(registry)]

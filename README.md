@@ -343,7 +343,19 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   metrics of Prometheus's client libraries: `process_cpu_seconds_total`
   (user and system, from `/proc/self/stat`, to the hundredth of a second),
   `process_resident_memory_bytes` (`VmRSS` of `/proc/self/status`) and
-  `process_start_time_seconds`. On cgroup v2, the metrics of smock's own
+  `process_start_time_seconds`. How long smock's main thread, which serves
+  every request, was ready to run but waited for a CPU,
+  `smock_process_scheduling_delay_seconds_total` (`run_delay` of
+  `/proc/self/schedstat`, to the nanosecond), and how many times the kernel
+  took the CPU from it while it could still run,
+  `smock_process_involuntary_context_switches_total`
+  (`nonvoluntary_ctxt_switches` of `/proc/self/status`). The CPU time the
+  hypervisor gave to something else while the machine's CPUs had something
+  to run, `smock_node_cpu_steal_seconds_total` (`steal` of `/proc/stat`, to
+  the hundredth of a second): the machine's, all its CPUs together, not
+  smock's, and 0 on bare metal; in a container, its node's. Together they
+  tell a smock that waited for a CPU on a busy node from one that needed
+  more CPU. On cgroup v2, the metrics of smock's own
   cgroup, the one `/proc/self/cgroup` names: from its `cpu.stat`,
   `smock_cgroup_cpu_usage_seconds_total` (to the microsecond) and, with a
   CPU limit, `smock_cgroup_cpu_periods_total`,
