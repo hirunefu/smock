@@ -178,10 +178,22 @@ def load_s(plan, specs):
         max(0, len(specs) - 1) * plan["cooldown_s"]
 
 
-def job_deadline_s(plan, specs):
-    """The load generator Job's activeDeadlineSeconds."""
+def idle_settle_s(plan, profile):
+    """How long the load generator lets smock idle, once it is ready, before
+    it reads smock's idle RSS under `profile`: the plan's settle time when
+    the plan measures idle RSS under the profile, as bench/bench.py does
+    (under each profile its idle_rss names, or each without names); else
+    None, and it does not read it."""
+    idle = plan.get("idle_rss")
+    if not idle or profile["name"] not in idle.get("profiles", [profile["name"]]):
+        return None
+    return idle["settle_s"]
+
+
+def job_deadline_s(plan, profile, specs):
+    """The load generator Job's activeDeadlineSeconds under `profile`."""
     return round(load_s(plan, specs) + len(specs) * STEP_ANALYSIS_S + GENERATOR_START_S +
-                 TRAFFIC_CHECKS * TRAFFIC_CHECK_S)
+                 (idle_settle_s(plan, profile) or 0) + TRAFFIC_CHECKS * TRAFFIC_CHECK_S)
 
 
 # The compute class of each architecture's Pods: the built-in autopilot-arm
@@ -273,7 +285,7 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
                      "labels": {"app": "smock-bench-generator", "profile": profile["name"]}},
         "spec": {
             "backoffLimit": 0,
-            "activeDeadlineSeconds": job_deadline_s(plan, specs),
+            "activeDeadlineSeconds": job_deadline_s(plan, profile, specs),
             "template": {
                 "metadata": {"labels": {"app": "smock-bench-generator", "profile": profile["name"]}},
                 "spec": {
@@ -354,7 +366,7 @@ def estimate(plan, profiles, cases, region, arch, time_limit_s):
         specs = steps(plan, profile, cases)
         if not specs:
             continue
-        load = load_s(plan, specs) + len(specs) * EXPECTED_ANALYSIS_S + 60
+        load = load_s(plan, specs) + len(specs) * EXPECTED_ANALYSIS_S + (idle_settle_s(plan, profile) or 0) + 60
         generator_s += load
         profiles_s += PROFILE_START_S + load
         smock_cost += smock_prices[profile["name"]] * (PROFILE_START_S + load) / 3600
@@ -515,22 +527,24 @@ def generator_lines(path):
 
 
 def profile_results(out, plan, profile, cases, arch):
-    """What one profile's run left: its steps, whether it ran each step of
-    the plan, what the load generator said at its start, its Pods, whether
-    smock's traffic ports answered before the first step, whether the load
-    generator stopped the profile early and which steps it did not run,
-    and the load generator Pod's CPU request (as the Pod had it, else as
-    the run asked)."""
+    """What one profile's run left: its steps, smock's idle RSS when the
+    load generator read it, whether it ran each step of the plan, what the
+    load generator said at its start, its Pods, whether smock's traffic
+    ports answered before the first step, whether the load generator
+    stopped the profile early and which steps it did not run, and the load
+    generator Pod's CPU request (as the Pod had it, else as the run
+    asked)."""
     raw = Path(out) / "raw" / profile["name"]
     lines = generator_lines(raw / "generator.log")
     pods = read_json(raw / "pods.json") if (raw / "pods.json").exists() else {"smock": [], "generator": [],
                                                                                "nodes": {}}
     results = [line["result"] for line in lines if line["kind"] == "step"]
+    idle = [line["idle"] for line in lines if line["kind"] == "idle-rss"]
     # smock's container restarts after an OOM kill: with none, the kernel
     # never killed it; with some, which step they came in is unknown.
     smock = pods["smock"]
     oom_kills = 0 if len(smock) == 1 and smock[0]["restarts"] == 0 else None
-    for result in results:
+    for result in [*results, *idle]:
         result["memory"]["oom_kills"] = oom_kills
     planned = [spec["id"] for spec in steps(plan, profile, cases)]
     done = any(line["kind"] == "done" for line in lines)
@@ -539,7 +553,7 @@ def profile_results(out, plan, profile, cases, arch):
     check = next((line for line in lines if line["kind"] == "traffic-check" and "after" not in line), None)
     stopped = next((line for line in lines if line["kind"] == "stopped"), None)
     cpu_request = next((pod["cpu_request"] for pod in pods["generator"] if pod.get("cpu_request")), None)
-    return {"steps": results, "complete": done and [result["id"] for result in results] == planned,
+    return {"steps": results, "idle_rss": idle, "complete": done and [result["id"] for result in results] == planned,
             "start": start, "pods": pods,
             "traffic_check": check and {key: value for key, value in check.items() if key not in ("kind", "profile")},
             "ended_early": stopped and {"reason": stopped["reason"], "after": stopped.get("after"),
@@ -626,7 +640,8 @@ def command_summarize(args):
     out = Path(args.out)
     results = {profile["name"]: profile_results(out, plan, profile, cases, args.arch) for profile in profiles}
     summary = {"format": harness.FORMAT, "complete": all(result["complete"] for result in results.values()),
-               "idle_rss": [], "cases": [step for result in results.values() for step in result["steps"]],
+               "idle_rss": [idle for result in results.values() for idle in result["idle_rss"]],
+               "cases": [step for result in results.values() for step in result["steps"]],
                "targets": [], "gke": {"profiles": {name: profile_record(result) for name, result in results.items()}}}
     planned = [spec for profile in profiles for spec in steps(plan, profile, cases)]
     summary["targets"] = harness.explain_steps_not_run(
@@ -656,8 +671,12 @@ def command_summarize(args):
         "note": (f"Measured on GKE Autopilot in {zone or args.region}, on {args.arch} nodes "
                  f"({machine_type or 'of an unknown machine type'}): smock in a {compute_class} Pod with each "
                  "profile's limits as its requests, and oha in a Pod on another node in its zone, over the Pod "
-                 "network. A GKE run does not measure idle RSS, peak memory or CPU throttling; OOM kills come from "
-                 "smock's restarts."),
+                 "network. What smock used comes from its own /metrics, its process and cgroup metrics, scraped "
+                 "right before and right after each step: its CPU time and throttling during the step, from its "
+                 "container's cgroup; its RSS at the step's start and end, the larger as its max; and the most "
+                 "memory its container had used by the step's end (memory.peak), since smock started under the "
+                 "profile, earlier steps included. Idle RSS is read once smock has been ready for the settle "
+                 "time, before any load. OOM kills come from smock's restarts."),
         "machine": {"architecture": args.arch,
                     "cpu_model": f"GKE Autopilot {node['instance_type'] if node else 'node'}",
                     "cpus": int(node["cpus"]) if node and str(node["cpus"]).isdigit() else None,
@@ -697,7 +716,7 @@ def command_plan(args):
     for profile in profiles:
         specs = steps(plan, profile, cases)
         if specs:
-            print(profile["name"], len(specs), job_deadline_s(plan, specs))
+            print(profile["name"], len(specs), job_deadline_s(plan, profile, specs))
     return 0
 
 

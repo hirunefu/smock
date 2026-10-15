@@ -405,6 +405,49 @@ class NotCompared(Comparison):
                          "not compared: the older run had 1 CPU and 4Gi, the newer 1 CPU and 1Gi")
 
 
+def with_cpu(one, us_per_request, utilization=0.5):
+    """`one`, a step, with smock's CPU time a request in microseconds and
+    the share of the CPU limit it used, as runs measure them since smock
+    has process and cgroup metrics."""
+    requests = one["rate"] * 25
+    usage_s = round(us_per_request * requests / 1e6, 3)
+    return {**one, "smock_cpu": {"usage_s": usage_s, "periods": 250, "throttled_periods": 0, "throttled_s": 0.0,
+                                 "source": "cgroup", "process_s": round(usage_s, 2), "wall_s": 25.0,
+                                 "requests": requests, "us_per_request": us_per_request,
+                                 "utilization": utilization}}
+
+
+class CpuPerRequest(Comparison):
+    """Where both runs measured smock's CPU time a request at a step, the
+    comparison shows how it changed, for information: no change of it is a
+    regression, whatever the rule."""
+
+    def test_the_cpu_time_a_request_and_against_the_limit_are_shown_and_fail_nothing(self):
+        older = self.summary([with_cpu(step(rate=1000), 30.0, 0.12), with_cpu(step(rate=2000), 28.0, 0.224),
+                              step(rate=4000)])
+        newer = self.summary([with_cpu(step(rate=1000), 45.0, 0.18), with_cpu(step(rate=2000), 21.0, 0.168),
+                              with_cpu(step(rate=4000), 20.0, 0.32)])
+        status, report = self.compare(older, newer)
+        self.assertEqual(status, 0, report)
+        heading = "## CPU per request"
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 1000, heading=heading),
+                         {"Profile": "small", "Case": "http-keep-alive", "Rate": "1,000",
+                          "CPU µs/request": "30.0 → 45.0", "Change": "+50%", "CPU % of limit": "12.0 → 18.0"})
+        better = self.row(report, "small", "http-keep-alive", 2000, heading=heading)
+        self.assertEqual((better["CPU µs/request"], better["Change"]), ("28.0 → 21.0", "-25%"))
+        # The older run did not measure it at 4,000 requests/s.
+        section = report.split(f"\n{heading}\n", 1)[1].split("\n## ", 1)[0]
+        self.assertNotIn("| 4,000 |", section)
+        self.assertIn("For information only", section)
+        # Before the targets.
+        self.assertLess(report.index(heading), report.index("## Targets"))
+
+    def test_runs_that_did_not_both_measure_it_show_no_cpu_section(self):
+        status, report = self.compare(self.summary([step()]), self.summary([with_cpu(step(), 30.0)]))
+        self.assertEqual(status, 0, report)
+        self.assertNotIn("CPU per request", report)
+
+
 def conditions(version="0.1.0", commit="a21fe97d59c6", architecture="arm64", cpu_model="Apple M1", cpus=8,
                plan_sha="aa", oha="oha 1.16.0", gke=None):
     """The parts of conditions.json the comparison reads."""

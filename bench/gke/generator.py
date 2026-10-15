@@ -11,14 +11,24 @@ stdout, in the layout of a case of bench/bench.py's summary.json, between a
 line about the start and one when it is done; progress goes to stderr.
 
 It looks up smock's address once smock answers by name, and sends the load
-there. Before the first step, it sends the first request of the mix once
-to each traffic port, plain and TLS, through the Service, until each
-answers or TRAFFIC_CHECK_S has passed (a traffic-check line). When one
-never answers, it runs no step of the profile. When a step gets no
-response at all, it checks the ports the same way again: an overloaded
-smock may answer none of a step's measured requests and still be there,
-and the profile goes on; when smock does not answer, it runs no further
-step. A stopped line says why and which steps it did not run.
+there. Once smock has been ready for the plan's idle settle time, it reads
+smock's idle RSS and peak memory from smock's /metrics (an idle-rss line,
+in the layout of an entry of summary.json's idle_rss). Before the first
+step, it sends the first request of the mix once to each traffic port,
+plain and TLS, through the Service, until each answers or TRAFFIC_CHECK_S
+has passed (a traffic-check line). When one never answers, it runs no step
+of the profile. When a step gets no response at all, it checks the ports
+the same way again: an overloaded smock may answer none of a step's
+measured requests and still be there, and the profile goes on; when smock
+does not answer, it runs no further step. A stopped line says why and
+which steps it did not run.
+
+What smock used during a step comes from smock's own /metrics, its process
+and cgroup metrics, scraped right before and right after the step, since
+nothing outside smock's Pod can read its cgroup: its CPU time and
+throttling, what the CPU time comes to a request and against the CPU
+limit, its RSS at the start and the end, and its cgroup's peak memory by
+the end, in the layout bench/bench.py reports them in from smock's cgroup.
 
 Environment:
   TARGET      smock's host name (its Service)
@@ -212,19 +222,46 @@ def no_response_reason(result):
             + (f" (oha: {', '.join(errors)})" if errors else ""))
 
 
+def scrape(target, port):
+    """smock's /metrics, as harness.metric_values reads it, or None when it
+    does not answer."""
+    status, body = admin(target, port, "/metrics")
+    return harness.metric_values(body) if status == 200 else None
+
+
+def idle_result(profile, settle_s, metrics, digest):
+    """What smock used idle under `profile`, from a scrape of its /metrics
+    (as harness.metric_values reads it) at least `settle_s` seconds after
+    it was ready, as an entry of summary.json's idle_rss: its RSS, and its
+    cgroup's peak memory when smock has it; OOM kills come later, from
+    smock's restarts. None, with why, when the scrape does not say smock's
+    RSS: smock did not answer, or it has no process metrics."""
+    if metrics is None:
+        return None, "smock's /metrics did not answer"
+    rss, peak = metrics.get("process_resident_memory_bytes"), metrics.get("smock_cgroup_memory_peak_bytes")
+    if rss is None:
+        return None, "smock's /metrics has no process_resident_memory_bytes"
+    return {"profile": profile["name"], "cpu_limit": profile["cpu_limit"], "memory_limit": profile["memory_limit"],
+            "settle_s": settle_s, "smock_ready": True, "digest": digest, "rss_kib": round(rss / 1024),
+            "memory": {"peak_bytes": None if peak is None else round(peak), "oom_kills": None}}, None
+
+
 def cpu_children_s():
     usage = resource.getrusage(resource.RUSAGE_CHILDREN)
     return usage.ru_utime + usage.ru_stime
 
 
-def run_step(spec, mix, oha, address, ports):
+def run_step(spec, mix, oha, address, ports, scrape_metrics):
     """Sends one step's load and returns what it measured, as a case of
-    summary.json has it; what only a run on one machine measures is None."""
+    summary.json has it; what only a run on one machine measures is None.
+    `scrape_metrics` scrapes smock's /metrics, right before and right
+    after the load, for what smock used between the two scrapes."""
     work = Path(tempfile.mkdtemp(prefix="step-"))
     run = SimpleNamespace(mix=mix, tmp=work)
     port = ports["tls" if spec["protocol"] == "https" else "plain"]
     weights = [request["weight"] for request in mix]
     total_s = spec["ramp_s"] + spec["duration_s"] + spec["tail_s"]
+    metrics_before, scraped_before = scrape_metrics(), time.monotonic()
     cpu_before, started = cpu_children_s(), time.monotonic()
     load = []
     try:
@@ -239,21 +276,24 @@ def run_step(spec, mix, oha, address, ports):
         for item in load:
             item["process"].wait(total_s + 300)
         wall_s, cpu_s = time.monotonic() - started, cpu_children_s() - cpu_before
+        metrics_after, scraped_after = scrape_metrics(), time.monotonic()
         kinds, latencies, release_latencies, lags = harness.analyze_load(run, load, spec, work)
     finally:
         for item in load:
             if item["process"].poll() is None:
                 item["process"].kill()
         shutil.rmtree(work, ignore_errors=True)
+    smock_cpu, peak_bytes, rss_kib = harness.scraped_use(metrics_before, metrics_after, spec["cpu_limit"],
+                                                         scraped_after - scraped_before)
     return {
         **spec,
         **harness.load_result(spec, kinds, latencies, release_latencies, lags),
         "tcp_passive_opens": None,
         "idle_connections_open_at_end": None,
         "pinning": None,
-        "smock_cpu": None,
-        "memory": {"peak_bytes": None, "oom_kills": None},
-        "rss_kib": {"first": None, "last": None, "max": None},
+        "smock_cpu": smock_cpu,
+        "memory": {"peak_bytes": peak_bytes, "oom_kills": None},
+        "rss_kib": rss_kib,
         "smock_ready": True,
         "smock_exit_status": None,
         "per_request": kinds,
@@ -291,9 +331,24 @@ def main():
     log(f"{target} is {address}")
     status, body = admin(target, admin_port, "/v1/status")
     oha_version = subprocess.run([oha, "--version"], capture_output=True, text=True, check=True).stdout.strip()
+    status_json = json.loads(body) if status == 200 else None
     emit({"kind": "start", "profile": profile_name, "address": address, "oha": oha_version,
           "cpus": os.cpu_count(), "affinity": len(os.sched_getaffinity(0)), "nofile": hard,
-          "status": json.loads(body) if status == 200 else None})
+          "status": status_json})
+    # As bench/bench.py measures idle RSS, under the profiles the plan
+    # names for it (each, when it names none): once smock has idled for the
+    # plan's settle time after it was ready, before any load. It has been
+    # ready at least since the wait above.
+    settle_s = gke.idle_settle_s(plan, profile)
+    if settle_s is not None:
+        log(f"idle RSS: {settle_s} s after smock was ready")
+        time.sleep(settle_s)
+        idle, why = idle_result(profile, settle_s, scrape(target, admin_port), (status_json or {}).get("digest"))
+        if idle:
+            emit({"kind": "idle-rss", "profile": profile_name, "idle": idle})
+            log(f"idle RSS: {idle['rss_kib']} KiB, peak memory {idle['memory']['peak_bytes']} bytes")
+        else:
+            log(f"idle RSS: not measured, {why}")
     check_s = float(os.environ.get("TRAFFIC_CHECK_S", gke.TRAFFIC_CHECK_S))
     # The traffic check, before the first step and after a step with no
     # response.
@@ -313,13 +368,17 @@ def main():
             time.sleep(plan["cooldown_s"])
         log(f"{spec['id']}: {spec['rate']} requests/s for {spec['duration_s']} s")
         if wait_ready(target, admin_port, READY_BEFORE_STEP_S):
-            result = run_step(spec, mix, oha, address, ports)
+            result = run_step(spec, mix, oha, address, ports, functools.partial(scrape, target, admin_port))
         else:
             result = harness.not_ready_result(SimpleNamespace(mix=mix), spec, None)
         emit({"kind": "step", "result": result})
+        cpu = result["smock_cpu"] or {}
+        per_request = "-" if cpu.get("us_per_request") is None else cpu["us_per_request"]
+        utilization = "-" if cpu.get("utilization") is None else f"{cpu['utilization'] * 100:.1f}%"
         log(f"{spec['id']}: p99 {result['latency_ms']['p99']} ms, p99.9 {result['latency_ms']['p99_9']} ms, "
             f"{result['achieved_rate']} requests/s, {result['errors']} errors, "
-            f"generator lag p99.9 {result['generator_lag_ms']['p99_9']} ms")
+            f"generator lag p99.9 {result['generator_lag_ms']['p99_9']} ms, "
+            f"smock CPU {per_request} µs a request, {utilization} of its limit")
         stopped, check = stop_after(spec, result, specs[index + 1:], check_again)
         if check:
             emit({"kind": "traffic-check", "profile": profile_name, "after": spec["id"], **check})

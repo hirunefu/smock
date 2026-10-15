@@ -384,12 +384,21 @@ TWO_PROFILES_PLAN = {
 SILENT_TLS = "smock did not answer through its Service in 60 s: TLS port 443 (timed out)"
 
 
+def limit_cpus(cpu_limit):
+    """The CPUs a Kubernetes-style CPU limit gives: 250m is 0.25."""
+    return int(cpu_limit[:-1]) / 1000 if cpu_limit.endswith("m") else float(cpu_limit)
+
+
 def generator_log(profile="small", cpu_limit="250m", memory_limit="512Mi", rates=(500, 1000), tls_answers=True):
     """What the load generator writes for a profile of the small plans: when
     smock's TLS port does not answer, it runs no step."""
     lines = [{"kind": "start", "profile": profile, "oha": "oha 1.16.0",
               "status": {"version": "0.2.0", "commit": "a21fe97d59c6", "toolchain": "moonc", "digest": "48f7ce9715f0",
                          "mocks": []}},
+             {"kind": "idle-rss", "profile": profile, "idle": {
+                 "profile": profile, "cpu_limit": cpu_limit, "memory_limit": memory_limit, "settle_s": 5,
+                 "smock_ready": True, "digest": "48f7ce9715f0", "rss_kib": 16384,
+                 "memory": {"peak_bytes": 15 << 20, "oom_kills": None}}},
              {"kind": "traffic-check", "profile": profile, "ok": tls_answers, "host": "catalog.bench.internal",
               "method": "GET", "target": "/catalog/items/SKU-00317", "window_s": 60,
               "ports": {"plain": {"port": 80, "answered": True, "status": 200, "attempts": 1, "seconds": 0.004,
@@ -407,8 +416,12 @@ def generator_log(profile="small", cpu_limit="250m", memory_limit="512Mi", rates
             "latency_from_release_ms": {"p50": 0.3, "p90": 0.5, "p99": 1.0, "p99_9": 1.5, "max": 3.0},
             "generator_lag_ms": {"p50": 1.0, "p99": 1.9, "p99_9": 2.0, "max": 3.1}, "load_generator_late": False,
             "requests": {"scheduled": rate * 20, "ok": rate * 20, "unexpected_status": 0, "no_response": 0},
-            "smock_cpu": None, "memory": {"peak_bytes": None, "oom_kills": None},
-            "rss_kib": {"first": None, "last": None, "max": None}, "smock_ready": True}})
+            "smock_cpu": {"usage_s": round(rate * 25 * 30e-6, 3), "periods": 250, "throttled_periods": 0,
+                          "throttled_s": 0.0, "source": "cgroup", "process_s": round(rate * 25 * 30e-6, 2),
+                          "wall_s": 25.004, "requests": rate * 25, "us_per_request": 30.0,
+                          "utilization": round(rate * 25 * 30e-6 / (25.004 * limit_cpus(cpu_limit)), 4)},
+            "memory": {"peak_bytes": 20 << 20, "oom_kills": None},
+            "rss_kib": {"first": 17000, "last": 18000, "max": 18000}, "smock_ready": True}})
     if not tls_answers:
         lines.append({"kind": "stopped", "profile": profile, "reason": SILENT_TLS, "after": None,
                       "steps": [f"http-keep-alive@{profile}@{rate}" for rate in rates]})
