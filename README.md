@@ -1023,7 +1023,7 @@ peak memory at the target's rate (`memory.peak`) at most 32 MiB. Under
   vCPU is a hyperthread. Under 1 CPU, smock kept up with about 19,000 to
   21,000 requests/s over plain HTTP and 14,000 over HTTPS. At 10,000, p99
   was 3.8 ms and p99.9 5.8 ms in the third run, with smock at 75% of its
-  CPU limit (p99 4.2 and 12.9 ms, p99.9 11.7 and 22 ms in the first two);
+  CPU limit (p99 12.9 and 4.2 ms, p99.9 22 and 11.7 ms in the first two);
   at 20,000, requests queued for seconds. Under 250m and 50m, the CFS quota
   showed in the slowest requests even at light load, and varied from run to
   run (p99 69 ms at 625 requests/s under 250m in one run; 3.3 to 45 ms at
@@ -1037,8 +1037,8 @@ peak memory at the target's rate (`memory.peak`) at most 32 MiB. Under
   target's, and under 50m the slowest requests took tens of milliseconds
   even at light load, hence its p99.9 of 50 ms. Per vCPU, Arm served about
   2.5 times what x86 did on GKE under 1 CPU (about 50,000 against 19,000
-  to 21,000 requests/s), and 2 to 4 times under 250m and 50m. Runs on an
-  M1 MacBook Air over loopback do better still: p99 and p99.9 stay about
+  to 21,000 requests/s), and 2 to 3.5 times under 250m and 50m. Runs on
+  an M1 MacBook Air over loopback do better still: p99 and p99.9 stay about
   2 ms around each target's rate, and each profile keeps up with more than
   twice it.
 

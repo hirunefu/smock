@@ -286,7 +286,7 @@ these runs.
 
 | Requests and limits | Kept up with | Ran out of CPU at | OOM kills |
 |---|---|---|---|
-| 50m, 52Mi | 125 requests/s: p99 3.3 to 45 ms, p99.9 41 to 138 ms | about 500 requests/s | None |
+| 50m, 52Mi | 125 requests/s: p99 3.3 to 45 ms, p99.9 41 to 138 ms | about 600 to 700 requests/s | None |
 | 250m, 512Mi | 1,250 requests/s: p99 2.8 to 3.7 ms, p99.9 3.2 to 8.3 ms | about 3,500 to 5,000 requests/s | None |
 | 1, 1Gi | 10,000 requests/s: p99 3.8 to 12.9 ms, p99.9 5.8 to 22 ms | about 19,000 to 21,000 requests/s over plain HTTP, 14,000 over HTTPS | None |
 
@@ -295,19 +295,22 @@ these runs.
   request); the first two had p99 12.9 and 4.2 ms. At 5,000, p99 was
   3.0 ms in all three.
 - Per vCPU, Arm served about 2.5 times what x86 did under 1 CPU (50,000
-  against 19,000 to 21,000 requests/s), and 2 to 4 times under 250m and
+  against 19,000 to 21,000 requests/s), and 2 to 3.5 times under 250m and
   50m: size x86 Pods by these rows.
 - The CFS quota shows more on x86, and the slowest requests under 250m and
-  50m varied from run to run and from node to node: under 250m, p99 at 625
-  requests/s was 69 ms in one run and 2.8 ms in the next; under 50m at 125
-  requests/s, p99.9 was 41 to 138 ms. HTTPS varied too: under 1 CPU at
-  5,000 requests/s, p99 was 3.0 and 3.3 ms in the first two runs and 43 ms
-  in the third. The advice above holds: 50m for light traffic only, 250m
-  or more for latency-sensitive tests.
+  50m varied from run to run: under 250m, p99 at 625 requests/s was 69 ms
+  in one run and 2.8 ms in the next; under 50m at 125 requests/s, p99.9
+  was 41 to 138 ms. The advice above holds: 50m for light traffic only,
+  250m or more for latency-sensitive tests.
+- HTTPS varied from run to run too: under 1 CPU at 5,000 requests/s, p99
+  was 3.0 and 3.3 ms in the first two runs and 43 ms in the third. On a
+  laptop the third run's smock spent less CPU over HTTPS than the
+  second's, so the nodes likely differed; the runs did not record their
+  CPU model.
 - Only the third run measured memory. smock's idle RSS was 16.2 to
   16.3 MiB under each row's limits, and its peak memory (`memory.peak`)
-  27 MiB under 1 CPU at 10,000 requests/s, and at most 31 MiB under any of
-  them at any rate, HTTPS included.
+  27 MiB under 1 CPU at 10,000 requests/s, and at most 31.1 MiB under any
+  of them at any rate, HTTPS included.
 
 **On a laptop**: smock ran on an M1 MacBook Air, and the load generator on
 the same machine sent plain HTTP and HTTPS alike over loopback, at rates
