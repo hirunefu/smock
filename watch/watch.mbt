@@ -8,8 +8,9 @@
 ///
 /// A poll does not check when nothing the caller reads can have changed:
 /// it first takes a `Stamp` of what the caller reads, and checks only when
-/// the stamp may differ from the last one, which the watch first takes when
-/// it starts. So a poll that finds nothing changed reads no file.
+/// the stamp may differ from the one taken before the last check, whatever
+/// caused that check, or when the watch started. So a poll that finds
+/// nothing changed reads no file.
 ///
 /// The events come from the async runtime's file watcher (inotify on
 /// Linux), so no C is needed (ADR 0001). A directory that does not exist
@@ -21,7 +22,8 @@ pub struct Watch {
   priv schedule : Schedule
   /// Notes in a stamp what the caller reads.
   priv stamp : async (Stamp) -> Unit
-  /// The stamp taken last, when the watch started or at the last poll.
+  /// The stamp taken last: when the watch started, or before the last
+  /// check.
   priv mut last : Stamp?
   /// The file watcher, while the directory is watched.
   priv mut watcher : @fs.Watcher?
@@ -96,7 +98,9 @@ fn Watch::failed(self : Watch, err : Error) -> Unit {
 ///|
 /// Calls `on_check` for each check, in turn, until the task is cancelled:
 /// for each check after events, and for each poll whose stamp may have
-/// changed. Events that come while `on_check` runs lead to another check.
+/// changed. A stamp is taken before every check, so that a poll compares
+/// with what the last check read. Events that come while `on_check` runs
+/// lead to another check.
 ///
 /// `on_error` is called with the reason when the directory exists but
 /// cannot be watched, or watching stops: it is only polled from then on.
@@ -138,7 +142,8 @@ pub async fn Watch::run(
       if self.watcher is None {
         self.start()
       }
-      if check is Changed || self.restamp() {
+      let changed = self.restamp()
+      if check is Changed || changed {
         on_check(check)
       }
     }
