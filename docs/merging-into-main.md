@@ -89,11 +89,13 @@ pre-merge run compares with them.
   failed when its zone had no Arm nodes left. Unless `GKE_BENCH_ZONE` pins
   one, Autopilot chooses the zone, and the load generator runs in smock's.
 
-  It checks the APIs, the quotas the run's four nodes draw on (32 vCPUs
-  free in `CPUS_ALL_REGIONS` and in the region's `CPUS`, 400 GB of boot
-  disk in `SSD_TOTAL_GB` on amd64 or `HDB_TOTAL_GB` on arm64, and 4
-  addresses in `IN_USE_ADDRESSES`; it names the one that is short, and
-  more can be asked for on the console's Quotas page), and that nothing is
+  It checks the APIs, the quotas the run's four nodes draw on (on amd64,
+  32 vCPUs free in `CPUS_ALL_REGIONS` and in the region's `CPUS`, 400 GB
+  of boot disk in `SSD_TOTAL_GB`, and 4 addresses in `IN_USE_ADDRESSES`;
+  on arm64, where only Autopilot's two nodes are x86, 16 of the vCPUs in
+  `CPUS` and 200 GB in each of `SSD_TOTAL_GB` and `HDB_TOTAL_GB`, and the
+  Arm nodes' own CPU quota is not checked; it names the one that is short,
+  and more can be asked for on the console's Quotas page), and that nothing is
   left from an earlier run, and prints every
   command it would run and the cost estimate. A full amd64 run is
   expected to cost about $0.22, and at most about $0.63 if it ran until

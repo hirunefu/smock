@@ -121,17 +121,26 @@ APIS=(artifactregistry.googleapis.com compute.googleapis.com container.googleapi
 ARM_REGIONS=" us-central1 us-east1 us-west1 europe-west1 europe-west2 europe-west4 asia-southeast1 "
 # What each node of the run takes of its region's quotas, by the metric of
 # Compute Engine that counts it (as gcloud compute regions describe names
-# them): 8 vCPUs (CPUS; the runs' nodes were ek-standard-8 and
-# e4a-standard-8), a boot disk of 100 GB (the probe's nodes had 94 GiB of
+# them): 8 vCPUs, a boot disk of 100 GB (the probe's nodes had 94 GiB of
 # ephemeral storage on it), and an ephemeral external IP address
-# (IN_USE_ADDRESSES), since the nodes are not private. The boot disk counts
-# against SSD_TOTAL_GB on amd64, as pd-balanced, the only boot disk type
-# GKE's documentation of compute classes allows on Autopilot, and against
-# HDB_TOTAL_GB on arm64, as hyperdisk-balanced, which the e4a-standard-8
-# nodes of the arm64 probe of 2026-10-14 had. The run needs as many nodes
-# as GKE_BENCH_NEEDED_CPUS makes nodes of 8 vCPUs.
+# (IN_USE_ADDRESSES), since the nodes are not private. The run needs as
+# many nodes as GKE_BENCH_NEEDED_CPUS makes nodes of 8 vCPUs, all of them
+# in CPUS_ALL_REGIONS. The first SYSTEM_NODES of them are Autopilot's own,
+# its first node and its system node, which are x86 (ek-standard-8) on
+# either architecture, as in the arm64 probe of 2026-10-14; the others,
+# smock's and the load generator's, are of the run's architecture
+# (e4a-standard-8 on arm64). An x86 node draws on the region's CPUS. GKE
+# boots a node from a balanced Persistent Disk (pd-balanced, in
+# SSD_TOTAL_GB) unless its machine series has only Hyperdisk (GKE's
+# documentation of custom boot disks, 2026-10-13): the arm64 probe's e4a
+# nodes booted from hyperdisk-balanced (HDB_TOTAL_GB). No run had recorded
+# an ek node's; pods.json now records each node's (boot_disk). An Arm
+# node's vCPUs draw on a CPU quota of its machine family, which gcloud
+# does not list (GKE's documentation of Arm workloads asks for quota of
+# the C4A, N4A or T2A machine types), so it is not checked.
 NODE_CPUS=8
 NODE_BOOT_DISK_GB=100
+SYSTEM_NODES=2
 declare -A BOOT_DISK_QUOTAS=([amd64]=SSD_TOTAL_GB [arm64]=HDB_TOTAL_GB)
 # The Dockerfiles of the two images, from the repository's root.
 DOCKERFILES=(Dockerfile bench/gke/smock-definitions.dockerfile bench/gke/generator.Dockerfile)
@@ -625,26 +634,52 @@ EOF
   fi
 }
 
+# A number (the first argument) of a thing (the second), as people read
+# it: "1 node", "4 nodes".
+count() {
+  if [ "$1" = 1 ]; then
+    printf '1 %s' "$2"
+  else
+    printf '%s %ss' "$1" "$2"
+  fi
+}
+
 # The checks that need the Compute Engine API: the zone, the quotas the
 # run's nodes draw on, and what the project has before the run.
 check_project() {
-  local region line nodes=$(((NEEDED_CPUS + NODE_CPUS - 1) / NODE_CPUS)) disk=${BOOT_DISK_QUOTAS[$arch]}
+  local region line nodes=$(((NEEDED_CPUS + NODE_CPUS - 1) / NODE_CPUS)) x86 x86_nodes arm arm_nodes
+  # The x86 nodes: on amd64 every node; on arm64 Autopilot's own, the
+  # others being Arm nodes.
+  x86=$nodes x86_nodes="its $(count "$nodes" node)" arm=0
+  if [ "$arch" = arm64 ]; then
+    x86=$((nodes < SYSTEM_NODES ? nodes : SYSTEM_NODES))
+    x86_nodes="Autopilot's $(count "$x86" "x86 node")" arm=$((nodes - x86))
+  fi
   if [ -n "$ZONE" ]; then
     region=$(reads "$GCLOUD" compute zones describe "$ZONE" --project="$PROJECT" --format='value(region.basename())')
     [ "$region" = "$REGION" ] || problem "zone $ZONE is not a zone of $REGION: set GKE_BENCH_ZONE to one, or unset it"
   fi
   if reads "$GCLOUD" compute project-info describe --project="$PROJECT" --format=json >"$work/project-info.json"; then
     check_quota "$work/project-info.json" CPUS_ALL_REGIONS CPUS_ALL_REGIONS "$NEEDED_CPUS" vCPUs \
-      "for its $nodes nodes"
+      "for its $(count "$nodes" node)"
   else
     problem "cannot read the project's CPU quota"
   fi
   if reads "$GCLOUD" compute regions describe "$REGION" --project="$PROJECT" --format=json >"$work/region.json"; then
-    check_quota "$work/region.json" CPUS "CPUS in $REGION" "$NEEDED_CPUS" vCPUs "for its $nodes nodes"
-    check_quota "$work/region.json" "$disk" "$disk in $REGION" $((nodes * NODE_BOOT_DISK_GB)) GB \
-      "for its $nodes nodes' boot disks of $NODE_BOOT_DISK_GB GB"
+    check_quota "$work/region.json" CPUS "CPUS in $REGION" \
+      $((x86 * NODE_CPUS < NEEDED_CPUS ? x86 * NODE_CPUS : NEEDED_CPUS)) vCPUs "for $x86_nodes"
+    check_quota "$work/region.json" "${BOOT_DISK_QUOTAS[amd64]}" "${BOOT_DISK_QUOTAS[amd64]} in $REGION" \
+      $((x86 * NODE_BOOT_DISK_GB)) GB "for the boot disks of $x86_nodes, $NODE_BOOT_DISK_GB GB each"
+    if [ "$arm" -gt 0 ]; then
+      arm_nodes="its $(count "$arm" "Arm node")"
+      check_quota "$work/region.json" "${BOOT_DISK_QUOTAS[arm64]}" "${BOOT_DISK_QUOTAS[arm64]} in $REGION" \
+        $((arm * NODE_BOOT_DISK_GB)) GB "for the boot disks of $arm_nodes, $NODE_BOOT_DISK_GB GB each"
+      say "not checked: the CPU quota of the Arm nodes' machine family, of which the run needs" \
+        "$((arm * NODE_CPUS)) vCPUs for $arm_nodes, since gcloud does not list it: see the console's Quotas" \
+        "page (IAM & Admin)"
+    fi
     check_quota "$work/region.json" IN_USE_ADDRESSES "IN_USE_ADDRESSES in $REGION" "$nodes" addresses \
-      "for its $nodes nodes' external IP addresses"
+      "for the external IP addresses of its $(count "$nodes" node)"
   else
     problem "cannot read the quotas of $REGION"
   fi
