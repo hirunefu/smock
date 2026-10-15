@@ -666,3 +666,61 @@ async test "a git-sync update that keeps the old worktree, so that no event repo
     })
   })
 }
+
+///|
+async test "a Definition file whose modification time is ahead of the clock is warned about once" {
+  with_definitions(
+    [
+      ("defs/mocks.json", reload_mock),
+      ("defs/users.json", user_stub),
+      ("defs/files/users/1.json", "Alice"),
+    ],
+    root => {
+      let dir = "\{root}/defs"
+      // A day ahead, as from an archive made on a host whose clock ran
+      // ahead.
+      let ahead = @async.now() / 1000 + 86_400
+      let status = @process.run("touch", [
+        "-m",
+        "-d",
+        "@\{ahead}",
+        "\{dir}/users.json",
+      ])
+      guard status == 0 else { fail("touch exited with \{status}") }
+      let (_, date) = @process.collect_stdout("date", [
+        "-u",
+        "-d",
+        "@\{ahead}",
+        "+%Y-%m-%dT%H:%M:%S.000Z",
+      ])
+      let expected = Json::string(date.text().trim().to_owned()).stringify()
+      let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
+        // Another check, whose stamp notes the same time.
+        let before = smock.status()
+        write(dir, "README.md", "")
+        let _ = smock.reloaded(before)
+      })
+      let warnings = stopped.logs.filter_map(line => {
+        guard @json.parse(line) is Object(fields) &&
+          fields.get("level") is Some(String("warn")) else {
+          return None
+        }
+        let file = fields
+          .get("file")
+          .map_or("?", file => file.stringify().replace(old=root, new="<root>"))
+        let time = fields.get("fileTime").map_or("?", time => time.stringify())
+        Some(
+          "\{fields.get("msg").map_or("?", msg => msg.stringify())} \{file} at the time set: \{time == expected}",
+        )
+      }) catch {
+        _ => fail("a log line is not JSON")
+      }
+      inspect(
+        warnings.join("\n"),
+        content=(
+          #|"a file in the definitions directory has a time ahead of the clock" "<root>/defs/users.json" at the time set: true
+        ),
+      )
+    },
+  )
+}

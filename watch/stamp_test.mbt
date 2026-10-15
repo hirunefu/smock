@@ -92,3 +92,45 @@ async test "a stamp changes when a noted file is written again, replaced through
     ),
   )
 }
+
+///|
+/// Sets the modification time of the file at `path` to `seconds` since the
+/// epoch, which also sets its change time to now: moonbitlang/async has no
+/// call for it.
+async fn set_modified(path : String, seconds~ : Int64) -> Unit {
+  let status = @process.run("touch", ["-m", "-d", "@\{seconds}", path])
+  guard status == 0 else { fail("touch exited with \{status}") }
+}
+
+///|
+async test "a modification time ahead of the clock does not keep a stamp from being trusted, and is told" {
+  let dir = @fs.tmpdir(prefix="smock-stamp-")
+  defer @fs.rmdir(dir, recursive=true)
+  let path = "\{dir}/users.json"
+  @fs.write_file(path, "{}")
+  // A day ahead, as from a host whose clock ran ahead.
+  let ahead = @async.now() / 1000 + 86_400
+  set_modified(path, seconds=ahead)
+  let changed = changed_at(path)
+  let last = stamp_of(path, at=changed + 2100)
+  let poll = stamp_of(path, at=changed + 12_000)
+  // Later than the coarsest clock tick, so that the write gets a time of
+  // its own.
+  @async.sleep(20)
+  @fs.write_file(path, "{}")
+  let written = stamp_of(path, at=changed + 12_000)
+  inspect(
+    (
+      $|nothing changed: unchanged \{poll.unchanged_since(last)}
+      $|written again: unchanged \{written.unchanged_since(poll)}
+      $|ahead of the clock: \{last.ahead() == Some((path, ahead * 1000))}
+      $|after the write, ahead of the clock: \{written.ahead() is Some(_)}
+    ),
+    content=(
+      #|nothing changed: unchanged true
+      #|written again: unchanged false
+      #|ahead of the clock: true
+      #|after the write, ahead of the clock: false
+    ),
+  )
+}

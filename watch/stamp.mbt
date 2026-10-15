@@ -20,16 +20,23 @@
 /// File times are coarse, though: a change made soon after another can get
 /// the same time. So a stamp is trusted only once it was taken a while
 /// after the newest time it notes (`settle_ms`): any change after that gets
-/// a later time.
+/// a later time. A modification time ahead of the clock by more than that
+/// does not count, so that one set into the future, as by an archive made
+/// on a host whose clock ran ahead, does not keep every stamp from being
+/// trusted: the call that set it set the change time to the time then, and
+/// that counts.
 pub struct Stamp {
   /// When it was taken, in milliseconds since the epoch: before the caller
   /// notes anything.
   priv taken_at : Int64
   /// What the caller noted, in order.
   priv notes : Array[String]
-  /// The newest file time noted, in milliseconds since the epoch, rounded
-  /// up, or 0 before any.
+  /// The newest file time noted that counts, in milliseconds since the
+  /// epoch, rounded up, or 0 before any.
   priv mut newest : Int64
+  /// The first file noted with a time ahead of the clock by more than
+  /// `settle_ms`, and that time.
+  priv mut ahead : (String, Int64)?
 }
 
 ///|
@@ -43,7 +50,7 @@ let settle_ms : Int64 = 2000
 /// Starts a stamp taken at `now`, in milliseconds since the epoch, before
 /// anything is noted.
 pub fn Stamp::Stamp(now~ : Int64) -> Stamp {
-  { taken_at: now, notes: [], newest: 0, }
+  { taken_at: now, notes: [], newest: 0, ahead: None, }
 }
 
 ///|
@@ -64,10 +71,19 @@ pub async fn Stamp::note_file(self : Stamp, path : String) -> Unit {
       self.notes.push(
         "\{path}: \{modified.0}.\{modified.1} \{changed.0}.\{changed.1}",
       )
-      for time in [modified, changed] {
-        if ms_up(time) > self.newest {
-          self.newest = ms_up(time)
-        }
+      let modified = ms_up(modified)
+      let changed = ms_up(changed)
+      // A time later than this was set by a clock ahead of this one.
+      let clock_ahead = self.taken_at + settle_ms
+      if modified <= clock_ahead && modified > self.newest {
+        self.newest = modified
+      }
+      if changed > self.newest {
+        self.newest = changed
+      }
+      let latest = if modified > changed { modified } else { changed }
+      if latest > clock_ahead && self.ahead is None {
+        self.ahead = Some((path, latest))
       }
     }
   }
@@ -77,6 +93,17 @@ pub async fn Stamp::note_file(self : Stamp, path : String) -> Unit {
 /// A file time, seconds and nanoseconds, in milliseconds, rounded up.
 fn ms_up(time : (Int64, Int)) -> Int64 {
   time.0 * 1000 + ((time.1 + 999_999) / 1_000_000).to_int64()
+}
+
+///|
+/// The first file noted whose modification or change time is ahead of the
+/// clock by more than `settle_ms`, as the caller named it, and that time,
+/// the later of the two, in milliseconds since the epoch. A modification
+/// time ahead does not keep the stamp from being trusted; a change time
+/// ahead, which only a clock set back since can give, does, until the
+/// clock passes it.
+pub fn Stamp::ahead(self : Stamp) -> (String, Int64)? {
+  self.ahead
 }
 
 ///|

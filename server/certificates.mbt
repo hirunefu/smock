@@ -261,15 +261,27 @@ fn Certificates::warn_undeclared(self : Certificates) -> Unit {
 /// a warning when the directory cannot be watched, and is only polled.
 async fn Certificates::run(self : Certificates, watch : @watch.Watch) -> Unit {
   let check = async fn(_) { if !self.check() { watch.forget() } }
-  watch.run(check, on_error=err => {
-    self.logger.warn(
-      "cannot watch the TLS certificate directory, only polling it",
-      fields={
-        "dir": Json::string(watch.dir()),
-        "error": Json::string(err.to_string()),
-      },
-    )
-  })
+  watch.run(
+    check,
+    on_error=err => {
+      self.logger.warn(
+        "cannot watch the TLS certificate directory, only polling it",
+        fields={
+          "dir": Json::string(watch.dir()),
+          "error": Json::string(err.to_string()),
+        },
+      )
+    },
+    on_ahead=(file, time) => {
+      self.logger.warn(
+        "a TLS certificate or key file has a time ahead of the clock",
+        fields={
+          "file": Json::string(file),
+          "fileTime": Json::string(@log.format_time(time)),
+        },
+      )
+    },
+  )
 }
 
 ///|

@@ -99,3 +99,51 @@ async test "a poll checks after a check whose read failed, though nothing change
     ),
   )
 }
+
+///|
+async test "a file time ahead of the clock is told once, and again only after a stamp noted none" {
+  let dir = @fs.tmpdir(prefix="smock-watch-")
+  defer @fs.rmdir(dir, recursive=true)
+  @fs.mkdir("\{dir}/watched")
+  let path = "\{dir}/users.json"
+  @fs.write_file(path, "{}")
+  let set_ahead = async fn() {
+    let ahead = @async.now() / 1000 + 86_400
+    let status = @process.run("touch", ["-m", "-d", "@\{ahead}", path])
+    guard status == 0 else { fail("touch exited with \{status}") }
+  }
+  set_ahead()
+  let out = []
+  @async.with_task_group(group => {
+    let watch = @watch.Watch("\{dir}/watched", stamp=stamp => {
+      stamp.note_file(path)
+    })
+    group.spawn_bg(no_wait=true, () => {
+      defer watch.close()
+      watch.run(check => out.push(@debug.to_string(check)), on_ahead=(file, _) => {
+        out.push("ahead: \{file == path}")
+      })
+    })
+    // Each step ends with an event, for a check.
+    let steps : Array[async () -> Unit] = [
+      () => (),
+      () => @fs.write_file(path, "{}"),
+      () => set_ahead(),
+    ]
+    for step in steps {
+      step()
+      @fs.write_file("\{dir}/watched/event", "")
+      @async.sleep(500)
+    }
+  })
+  inspect(
+    out.join("\n"),
+    content=(
+      #|ahead: true
+      #|Changed
+      #|Changed
+      #|Changed
+      #|ahead: true
+    ),
+  )
+}

@@ -57,15 +57,27 @@ async fn Reloader::run(self : Reloader, watch : @watch.Watch) -> Unit {
       watch.forget()
     }
   }
-  watch.run(check, on_error=err => {
-    self.logger.warn(
-      "cannot watch the definitions directory, only polling it",
-      fields={
-        "dir": Json::string(self.dir),
-        "error": Json::string(err.to_string()),
-      },
-    )
-  })
+  watch.run(
+    check,
+    on_error=err => {
+      self.logger.warn(
+        "cannot watch the definitions directory, only polling it",
+        fields={
+          "dir": Json::string(self.dir),
+          "error": Json::string(err.to_string()),
+        },
+      )
+    },
+    on_ahead=(file, time) => {
+      self.logger.warn(
+        "a file in the definitions directory has a time ahead of the clock",
+        fields={
+          "file": Json::string(file),
+          "fileTime": Json::string(@log.format_time(time)),
+        },
+      )
+    },
+  )
 }
 
 ///|

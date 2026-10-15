@@ -32,6 +32,11 @@ pub struct Watch {
   priv mut failing : Bool
   /// A failure that `run` has not reported yet.
   priv mut unreported : Error?
+  /// Whether the last stamp noted a file time ahead of the clock, so that
+  /// one that stays ahead is told once, not at every check.
+  priv mut ahead : Bool
+  /// A file time ahead of the clock that `run` has not told yet.
+  priv mut untold_ahead : (String, Int64)?
 }
 
 ///|
@@ -52,6 +57,8 @@ pub async fn Watch::Watch(
     watcher: None,
     failing: false,
     unreported: None,
+    ahead: false,
+    untold_ahead: None,
   }
   watch.start()
   let _ = watch.restamp()
@@ -66,6 +73,15 @@ async fn Watch::restamp(self : Watch) -> Bool {
   (self.stamp)(stamp)
   let changed = !(self.last is Some(last) && stamp.unchanged_since(last))
   self.last = Some(stamp)
+  match stamp.ahead() {
+    Some(ahead) => {
+      if !self.ahead {
+        self.untold_ahead = Some(ahead)
+      }
+      self.ahead = true
+    }
+    None => self.ahead = false
+  }
   changed
 }
 
@@ -105,15 +121,24 @@ fn Watch::failed(self : Watch, err : Error) -> Unit {
 /// `on_error` is called with the reason when the directory exists but
 /// cannot be watched, or watching stops: it is only polled from then on.
 /// It is called again only after watching has worked once more.
+///
+/// `on_ahead` is called with a file and its time, as `Stamp::ahead` gives
+/// them, when a stamp notes a file time ahead of the clock. It is called
+/// again only after a stamp noted none.
 pub async fn Watch::run(
   self : Watch,
   on_check : async (Check) -> Unit,
   on_error? : (Error) -> Unit = _ => (),
+  on_ahead? : (String, Int64) -> Unit = (_, _) => (),
 ) -> Unit {
   for ;; {
     if self.unreported is Some(err) {
       self.unreported = None
       on_error(err)
+    }
+    if self.untold_ahead is Some((file, time)) {
+      self.untold_ahead = None
+      on_ahead(file, time)
     }
     let wait = self.schedule.deadline() - @async.now()
     if wait > 0L {
