@@ -139,8 +139,9 @@ pre-merge run compares with them.
   another CPU under a profile, the comparison names how: a latency that
   changed with it may be the node's rather than smock's. Each step's
   `per_second` and `smock_cpu` in `summary.json` (its first second, how
-  long smock waited for a CPU, the node's steal time) help tell them
-  apart. When the targets have changed since a run,
+  long smock waited for a CPU beside how long its CPU limit held it back,
+  `throttled_s`, which that wait includes, the node's steal time) help
+  tell them apart. When the targets have changed since a run,
   `python3 bench/bench.py check-targets <results>` checks it against them
   as they are now, without running anything or changing its directory.
 - [ ] **Post the summary on the pull request or the merge record**: both

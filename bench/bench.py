@@ -1163,7 +1163,12 @@ def waited(before, after):
     many times the kernel took the CPU from it while it could still run,
     and how much of its node's CPU time the hypervisor gave to something
     else (the node's, all its CPUs together, not smock's). Each is None when
-    either scrape has none of it, as a smock before those metrics."""
+    either scrape has none of it, as a smock before those metrics.
+
+    With a CPU limit, the delay and the switches include the time the CFS
+    quota held smock back, its cgroup's throttled_s: a delay about that
+    long is a smock that needed more CPU, and one well beyond it, or steal
+    time, a busy node."""
     switches = grew(before, after, "smock_process_involuntary_context_switches_total")
     return {
         "scheduling_delay_s": rounded(grew(before, after, "smock_process_scheduling_delay_seconds_total"), 4),

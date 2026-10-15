@@ -791,8 +791,9 @@ def command_summarize(args):
                  "profile's limits as its requests, and oha in a Pod on another node in its zone, over the Pod "
                  "network. What smock used comes from its own /metrics, its process and cgroup metrics, scraped "
                  "right before and right after each step, and a second into it: its CPU time and throttling during "
-                 "the step and its first second, from its container's cgroup; how long it waited for a CPU, and its "
-                 "node's steal time; its RSS at the step's start and end, the larger as its max; and the most "
+                 "the step and its first second, from its container's cgroup; how long it waited for a CPU, the "
+                 "time the CFS quota held it back included, and its node's steal time; its RSS at the step's start "
+                 "and end, the larger as its max; and the most "
                  "memory its container had used by the step's end (memory.peak), since smock started under the "
                  "profile, earlier steps included. Idle RSS is read once smock has been ready for the settle "
                  "time, before any load. OOM kills come from smock's restarts."),

@@ -133,7 +133,7 @@ async fn ProcessMetrics::register(
       metrics
       .counter(
         "smock_process_scheduling_delay_seconds_total",
-        help="How long smock's main thread, which serves every request, was ready to run but waited for a CPU, in seconds, to the nanosecond (run_delay of /proc/self/schedstat).",
+        help="How long smock's main thread, which serves every request, was ready to run but waited for a CPU, in seconds, to the nanosecond (run_delay of /proc/self/schedstat); with a CPU limit, the time the CFS quota held it back included.",
       )
       .labels([]),
     )
@@ -148,7 +148,7 @@ async fn ProcessMetrics::register(
       metrics
       .counter(
         "smock_process_involuntary_context_switches_total",
-        help="Times the kernel took the CPU from smock's main thread, which serves every request, while it could still run (nonvoluntary_ctxt_switches of /proc/self/status).",
+        help="Times the kernel took the CPU from smock's main thread, which serves every request, while it could still run (nonvoluntary_ctxt_switches of /proc/self/status); with a CPU limit, the times the CFS quota held it back included.",
       )
       .labels([]),
     )
