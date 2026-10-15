@@ -817,7 +817,7 @@ class TargetsFile(unittest.TestCase):
             "arm64": {"chart-default": ("1", "1Gi", 30000, 3, 10),
                       "autopilot-min": ("250m", "512Mi", 5000, 3, 5),
                       "autopilot-burst-min": ("50m", "52Mi", 250, 3, 50)},
-            "amd64": {"chart-default": ("1", "1Gi", 5000, 5, 20),
+            "amd64": {"chart-default": ("1", "1Gi", 10000, 10, 20),
                       "autopilot-min": ("250m", "512Mi", 1250, 100, 200),
                       "autopilot-burst-min": ("50m", "52Mi", 125, 100, 300)},
         }

@@ -965,7 +965,7 @@ a second per CPU (125 to 4,000 under 50m), 20 seconds a step. The top of
 each ladder is about where smock uses up its CPU over TLS. Plain HTTP's
 ladder also has 30,000 a second per CPU, so that it has the rate of each
 profile's arm64 [targets](#targets) (250, 5,000 and 30,000; the amd64
-ones, 125, 1,250 and 5,000, are on every ladder), and 50,000 a second per
+ones, 125, 1,250 and 10,000, are on every ladder), and 50,000 a second per
 CPU, by which smock had used up its CPU under each profile in the arm64
 GKE probe those targets come from. A full run takes about 20 minutes; it
 prints its estimate before it starts.
@@ -1006,7 +1006,7 @@ connections at one rate:
 
 | Architecture | Profile | CPU and memory limits | Rate | p99 at most | p99.9 at most |
 |---|---|---|---|---|---|
-| amd64 | `chart-default` | 1, 1 GiB | 5,000 requests/s | 5 ms | 20 ms |
+| amd64 | `chart-default` | 1, 1 GiB | 10,000 requests/s | 10 ms | 20 ms |
 | amd64 | `autopilot-min` | 250m, 512 MiB | 1,250 requests/s | 100 ms | 200 ms |
 | amd64 | `autopilot-burst-min` | 50m, 52 MiB | 125 requests/s | 100 ms | 300 ms |
 | arm64 | `chart-default` | 1, 1 GiB | 30,000 requests/s | 3 ms | 10 ms |
@@ -1017,14 +1017,19 @@ On both, under every profile, smock's idle RSS is at most 20 MiB, and its
 peak memory at the target's rate (`memory.peak`) at most 32 MiB. Under
 `autopilot-burst-min`, the kernel may not OOM-kill it at that rate.
 
-- **amd64** comes from two runs on GKE Autopilot on 2026-10-14, in
+- **amd64** comes from three runs on GKE Autopilot, two on 2026-10-14 and
+  one on 2026-10-15 with a smock that spends less CPU on each request, in
   general-purpose x86 Pods on ek-standard-8 nodes in us-central1-a, where a
-  vCPU is a hyperthread. Under 1 CPU, smock kept up with about 19,000
-  requests/s over plain HTTP and 14,000 over HTTPS, with p99 3.0 ms at
-  5,000. Under 250m and 50m, the CFS quota showed in the slowest requests
-  even at light load, and varied from run to run (p99 69 ms at 625
-  requests/s under 250m; 18 to 45 ms at 125 under 50m), hence their loose
-  targets.
+  vCPU is a hyperthread. Under 1 CPU, smock kept up with about 19,000 to
+  21,000 requests/s over plain HTTP and 14,000 over HTTPS. At 10,000, p99
+  was 3.8 ms and p99.9 5.8 ms in the third run, with smock at 75% of its
+  CPU limit (p99 12.9 and 4.2 ms, p99.9 22 and 11.7 ms in the first two);
+  at 20,000, requests queued for seconds. Under 250m and 50m, the CFS quota
+  showed in the slowest requests even at light load, and varied from run to
+  run (p99 69 ms at 625 requests/s under 250m in one run; 3.3 to 45 ms at
+  125 under 50m), hence their loose targets. Only the third run measured
+  memory: idle RSS 16.2 to 16.3 MiB, and peak memory 27 MiB at 10,000
+  requests/s under 1 CPU.
 - **arm64** comes from a one-off probe on GKE Autopilot, in arm64
   general-purpose Pods on e4a nodes in us-central1, at the plain HTTP rates
   of `bench/plan-autopilot.json` (all but 30,000 a second per CPU, added
@@ -1032,9 +1037,10 @@ peak memory at the target's rate (`memory.peak`) at most 32 MiB. Under
   target's, and under 50m the slowest requests took tens of milliseconds
   even at light load, hence its p99.9 of 50 ms. Per vCPU, Arm served about
   2.5 times what x86 did on GKE under 1 CPU (about 50,000 against 19,000
-  requests/s), and 3 to 4 times under 250m and 50m. Runs on an M1 MacBook
-  Air over loopback do better still: p99 and p99.9 stay about 2 ms around
-  each target's rate, and each profile keeps up with more than twice it.
+  to 21,000 requests/s), and 2 to 3.5 times under 250m and 50m. Runs on
+  an M1 MacBook Air over loopback do better still: p99 and p99.9 stay about
+  2 ms around each target's rate, and each profile keeps up with more than
+  twice it.
 
 The [chart's sizing table](charts/smock/README.md#sizing) has the numbers
 of each.
