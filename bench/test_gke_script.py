@@ -144,7 +144,11 @@ if tool == "gcloud":
         answer(json.dumps({"quotas": [{"metric": "CPUS_ALL_REGIONS", "limit": config.get("cpus_all_regions", 32.0),
                                        "usage": 0.0}]}))
     if command == ("compute", "regions", "describe"):
-        answer(json.dumps({"quotas": [{"metric": "CPUS", "limit": config.get("regional_cpus", 200.0), "usage": 0.0}]}))
+        # The region's quotas, each [limit, usage], as configured.
+        quotas = {"CPUS": [config.get("regional_cpus", 200.0), 0.0], "SSD_TOTAL_GB": [4096.0, 0.0],
+                  "HDB_TOTAL_GB": [4096.0, 0.0], "IN_USE_ADDRESSES": [8.0, 0.0], **config.get("regional_quotas", {})}
+        answer(json.dumps({"quotas": [{"metric": metric, "limit": limit, "usage": usage}
+                                      for metric, (limit, usage) in quotas.items()]}))
     if command == ("compute", "zones", "describe"):
         answer(words[3].rsplit("-", 1)[0] + "\n")
     if command == ("container", "clusters", "list"):
@@ -439,6 +443,11 @@ READ_ONLY = {"list", "describe", "version", "print-access-token", "get-value"}
 # The account gcloud is logged in as, in the fakes.
 ACCOUNT = "someone.else+bench@example.com"
 
+# The quota of the region that a node's boot disk counts against, by the
+# nodes' architecture: pd-balanced (SSD_TOTAL_GB) on amd64, and
+# hyperdisk-balanced (HDB_TOTAL_GB) on arm64.
+BOOT_DISK_QUOTAS = {"amd64": "SSD_TOTAL_GB", "arm64": "HDB_TOTAL_GB"}
+
 
 class Script(unittest.TestCase):
     def setUp(self):
@@ -631,6 +640,22 @@ class BeforeAnything(Script):
         self.assertIn("CPUS in us-central1: 16 of 16 vCPUs free, the run needs 32", output)
         self.assertEqual(self.changing_calls(), [])
 
+    def test_a_short_regional_quota_the_nodes_draw_on_stops_it_and_is_named(self):
+        # Two of the 8 in-use addresses are free, and each of the 4 nodes
+        # takes one.
+        self.configure(regional_quotas={"IN_USE_ADDRESSES": [8.0, 6.0]})
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        self.assertIn("the run cannot start", output)
+        self.assertIn("IN_USE_ADDRESSES in us-central1: 2 of 8 addresses free, the run needs 4", output)
+        self.assertEqual(self.changing_calls(), [])
+        # The nodes' boot disks, of 100 GB each.
+        self.configure(regional_quotas={BOOT_DISK_QUOTAS[HOST_ARCH]: [500.0, 250.0]})
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        self.assertIn(f"{BOOT_DISK_QUOTAS[HOST_ARCH]} in us-central1: 250 of 500 GB free, the run needs 400", output)
+        self.assertEqual(self.changing_calls(), [])
+
     def test_apis_not_enabled_stop_it_with_the_command_that_enables_them(self):
         self.configure(services=["compute.googleapis.com"])
         status, output = self.run_script("--yes")
@@ -699,6 +724,21 @@ class DryRun(Script):
         # The project shows as the variable that holds it.
         self.assertNotIn(PROJECT, output)
         self.assertIn('--project="$GKE_BENCH_PROJECT"', output)
+
+    def test_it_names_each_regional_quota_the_nodes_draw_on_with_what_is_free_and_what_the_run_needs(self):
+        # Four nodes by default, each with 8 vCPUs, a boot disk of 100 GB
+        # and an external IP address; three for 24 vCPUs.
+        for arch, cpus, nodes in (("amd64", None, 4), ("arm64", None, 4), (HOST_ARCH, "24", 3)):
+            status, output = self.run_script("--dry-run", "--arch", arch, "--smock", self.smock_for(arch), "--oha",
+                                             self.binary("oha", arch, "oha 1.16.0\n"), GKE_BENCH_NEEDED_CPUS=cpus)
+            self.assertEqual(status, 0, output)
+            self.assertIn(f"CPUS in us-central1: 200 of 200 vCPUs free, the run needs {nodes * 8} for its {nodes} "
+                          "nodes", output)
+            self.assertIn(f"{BOOT_DISK_QUOTAS[arch]} in us-central1: 4096 of 4096 GB free, the run needs "
+                          f"{nodes * 100} for its {nodes} nodes' boot disks of 100 GB", output)
+            self.assertIn(f"IN_USE_ADDRESSES in us-central1: 8 of 8 addresses free, the run needs {nodes} for its "
+                          f"{nodes} nodes' external IP addresses", output)
+            self.assertNotIn(BOOT_DISK_QUOTAS[{"amd64": "arm64", "arm64": "amd64"}[arch]], output)
 
 
 class Run(Script):

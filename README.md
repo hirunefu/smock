@@ -1311,11 +1311,17 @@ that run's linux/amd64 build and tests passed.
   project, checks that the Artifact Registry, Compute Engine and
   Kubernetes Engine APIs are enabled (it prints the command that enables
   them; `--enable-apis` runs it), that `GKE_BENCH_ZONE`, when set, is in
-  the region, that `CPUS_ALL_REGIONS` and the region's `CPUS` quota have
-  32 vCPUs free (`GKE_BENCH_NEEDED_CPUS`), for four nodes of 8 vCPUs:
-  Autopilot's first node, its system node, smock's and the load
-  generator's (in the probe, a quota of 24 held the load generator's node
-  back), and that no cluster or repository of an earlier run is left. Then
+  the region, that the quotas the run's nodes draw on have enough free,
+  and that no cluster or repository of an earlier run is left. The run
+  needs four nodes of 8 vCPUs: Autopilot's first node, its system node,
+  smock's and the load generator's (in the probe, a quota of 24 vCPUs held
+  the load generator's node back). So it needs 32 vCPUs free in
+  `CPUS_ALL_REGIONS` and in the region's `CPUS` (`GKE_BENCH_NEEDED_CPUS`,
+  from which the number of nodes follows); 100 GB of boot disk a node, in
+  the region's `SSD_TOTAL_GB` on amd64 (pd-balanced) and `HDB_TOTAL_GB` on
+  arm64 (hyperdisk-balanced, as the probe's Arm nodes had); and an external
+  IP address a node, in `IN_USE_ADDRESSES`. It names each quota with how
+  much is free and how much the run needs, and says which is short. Then
   it prints how long the run takes and what it costs, expected and at
   most, and stops unless `--yes` says to go on.
 - **Images.** It builds the release binary, unless given one, and two

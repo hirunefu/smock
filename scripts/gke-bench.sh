@@ -3,8 +3,9 @@
 # integration branch is merged into main (docs/merging-into-main.md):
 #
 # 1. checks, reading only: the tools, the project, the APIs it needs, the
-#    CPU quota for the nodes of the run, and nothing left by an earlier run;
-#    then prints how long the run takes and what it costs;
+#    quotas of the region that the run's nodes draw on (vCPUs, boot disks,
+#    external IP addresses), and nothing left by an earlier run; then prints
+#    how long the run takes and what it costs;
 # 2. with --yes, builds two images on this machine (smock with the
 #    benchmark's definitions, and the load generator) for the architecture
 #    of the run (--arch, this machine's by default), with the release binary
@@ -64,7 +65,8 @@
 #                           arm64 run needs one with Arm Pods (ARM_REGIONS below)
 #   GKE_BENCH_ZONE          the zone smock and the load generator run in (default: the one
 #                           Autopilot chooses for smock, which the load generator follows)
-#   GKE_BENCH_NEEDED_CPUS   the vCPUs of quota the run needs (default: 32, four nodes of 8)
+#   GKE_BENCH_NEEDED_CPUS   the vCPUs of quota the run needs (default: 32, four nodes of 8); the
+#                           nodes' boot disks and external IP addresses it needs follow from it
 #   GKE_BENCH_NODE_SERVICE_ACCOUNT
 #                           the service account the nodes run as, which may read the images
 #                           (default: the project's Compute Engine default service account)
@@ -116,6 +118,20 @@ APIS=(artifactregistry.googleapis.com compute.googleapis.com container.googleapi
 # compute class), as GKE's documentation listed them on 2026-10-14. x86
 # Pods run in every region.
 ARM_REGIONS=" us-central1 us-east1 us-west1 europe-west1 europe-west2 europe-west4 asia-southeast1 "
+# What each node of the run takes of its region's quotas, by the metric of
+# Compute Engine that counts it (as gcloud compute regions describe names
+# them): 8 vCPUs (CPUS; the runs' nodes were ek-standard-8 and
+# e4a-standard-8), a boot disk of 100 GB (the probe's nodes had 94 GiB of
+# ephemeral storage on it), and an ephemeral external IP address
+# (IN_USE_ADDRESSES), since the nodes are not private. The boot disk counts
+# against SSD_TOTAL_GB on amd64, as pd-balanced, the only boot disk type
+# GKE's documentation of compute classes allows on Autopilot, and against
+# HDB_TOTAL_GB on arm64, as hyperdisk-balanced, which the e4a-standard-8
+# nodes of the arm64 probe of 2026-10-14 had. The run needs as many nodes
+# as GKE_BENCH_NEEDED_CPUS makes nodes of 8 vCPUs.
+NODE_CPUS=8
+NODE_BOOT_DISK_GB=100
+declare -A BOOT_DISK_QUOTAS=([amd64]=SSD_TOTAL_GB [arm64]=HDB_TOTAL_GB)
 # The Dockerfiles of the two images, from the repository's root.
 DOCKERFILES=(Dockerfile bench/gke/smock-definitions.dockerfile bench/gke/generator.Dockerfile)
 # How long the load generator's Pod may wait for a node, smock to become
@@ -576,20 +592,23 @@ trap 'on_signal HUP 129' HUP
 
 # --- Checks ----------------------------------------------------------------
 
+# Checks that quota METRIC of FILE (gcloud's description of the project or
+# of the region) has NEEDED free, and says how much: LABEL names the quota,
+# UNIT is its unit, and WHY what the run needs it for.
 check_quota() {
-  local file=$1 metric=$2 label=$3 text
-  if text=$("$PYTHON" - "$file" "$metric" "$label" "$NEEDED_CPUS" <<'EOF'
+  local file=$1 metric=$2 label=$3 needed=$4 unit=$5 why=$6 text
+  if text=$("$PYTHON" - "$file" "$metric" "$label" "$needed" "$unit" "$why" <<'EOF'
 import json
 import sys
 
-path, metric, label, needed = sys.argv[1:5]
+path, metric, label, needed, unit, why = sys.argv[1:7]
 quotas = {quota["metric"]: quota for quota in json.load(open(path)).get("quotas", [])}
 quota = quotas.get(metric)
 if quota is None:
     print(f"{label}: the project has no such quota")
     sys.exit(1)
 free = quota["limit"] - quota["usage"]
-print(f"{label}: {free:g} of {quota['limit']:g} vCPUs free, the run needs {float(needed):g}")
+print(f"{label}: {free:g} of {quota['limit']:g} {unit} free, the run needs {float(needed):g} {why}")
 sys.exit(0 if free >= float(needed) else 1)
 EOF
   ); then
@@ -600,23 +619,28 @@ EOF
   fi
 }
 
-# The checks that need the Compute Engine API: the zone, the CPU quota,
-# and what the project has before the run.
+# The checks that need the Compute Engine API: the zone, the quotas the
+# run's nodes draw on, and what the project has before the run.
 check_project() {
-  local region line
+  local region line nodes=$(((NEEDED_CPUS + NODE_CPUS - 1) / NODE_CPUS)) disk=${BOOT_DISK_QUOTAS[$arch]}
   if [ -n "$ZONE" ]; then
     region=$(reads "$GCLOUD" compute zones describe "$ZONE" --project="$PROJECT" --format='value(region.basename())')
     [ "$region" = "$REGION" ] || problem "zone $ZONE is not a zone of $REGION: set GKE_BENCH_ZONE to one, or unset it"
   fi
   if reads "$GCLOUD" compute project-info describe --project="$PROJECT" --format=json >"$work/project-info.json"; then
-    check_quota "$work/project-info.json" CPUS_ALL_REGIONS CPUS_ALL_REGIONS
+    check_quota "$work/project-info.json" CPUS_ALL_REGIONS CPUS_ALL_REGIONS "$NEEDED_CPUS" vCPUs \
+      "for its $nodes nodes"
   else
     problem "cannot read the project's CPU quota"
   fi
   if reads "$GCLOUD" compute regions describe "$REGION" --project="$PROJECT" --format=json >"$work/region.json"; then
-    check_quota "$work/region.json" CPUS "CPUS in $REGION"
+    check_quota "$work/region.json" CPUS "CPUS in $REGION" "$NEEDED_CPUS" vCPUs "for its $nodes nodes"
+    check_quota "$work/region.json" "$disk" "$disk in $REGION" $((nodes * NODE_BOOT_DISK_GB)) GB \
+      "for its $nodes nodes' boot disks of $NODE_BOOT_DISK_GB GB"
+    check_quota "$work/region.json" IN_USE_ADDRESSES "IN_USE_ADDRESSES in $REGION" "$nodes" addresses \
+      "for its $nodes nodes' external IP addresses"
   else
-    problem "cannot read the CPU quota of $REGION"
+    problem "cannot read the quotas of $REGION"
   fi
   if ! take_inventory "$work/inventory-before"; then
     problem "cannot list what the project has, which the end of the run compares with"
@@ -740,7 +764,7 @@ preflight() {
   if [ ${#missing[@]} -eq 0 ]; then
     check_project
   else
-    say "the zone, the CPU quota and what the project has are checked once the APIs are enabled"
+    say "the zone, the quotas and what the project has are checked once the APIs are enabled"
   fi
 }
 
