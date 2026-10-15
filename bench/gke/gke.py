@@ -81,18 +81,28 @@ TRAFFIC_CHECK_S = 60
 TRAFFIC_CHECKS = 2
 
 
-# What a run costs: on-demand prices of general-purpose (x86) Autopilot
-# Pods, which are billed for their requests, in USD an hour before tax, from
-# https://cloud.google.com/kubernetes-engine/pricing on 2026-10-14, and the
+# What a run costs: on-demand prices of Autopilot Pods, which are billed for
+# their requests, in USD an hour before tax, from PRICES_URL, for each
+# architecture of the nodes with the date they were read there; and the
 # cluster management fee, the same in every region. A billing account's
 # free tier ($74.40 a month) covers the fee of one Autopilot or zonal
-# cluster. Arm Pods are priced here as x86 ones.
-PRICES_DATE = "2026-10-14"
+# cluster. x86 Pods are general-purpose ones, read on 2026-10-14. The page
+# has no rates for the autopilot-arm compute class that the run's Arm Pods
+# use: its only Arm Pod rates are those of the Scale-Out compute class
+# ("Scale-Out Arm Pod" vCPU and memory, read on 2026-10-15), which price
+# them here, with ephemeral storage at the general-purpose rate, since the
+# Scale-Out class has none of its own. Arm Pods run in fewer regions than
+# x86 ones (ARM_REGIONS in scripts/gke-bench.sh), Tokyo not among them.
 PRICES_URL = "https://cloud.google.com/kubernetes-engine/pricing"
 CLUSTER_FEE_PER_HOUR = 0.10
-POD_PRICES_PER_HOUR = {
-    "us-central1": {"vcpu": 0.0445, "memory_gib": 0.0049225, "ephemeral_gib": 0.0001389},
-    "asia-northeast1": {"vcpu": 0.0571, "memory_gib": 0.0063215, "ephemeral_gib": 0.0001784},
+POD_PRICES = {
+    "amd64": {"date": "2026-10-14", "regions": {
+        "us-central1": {"vcpu": 0.0445, "memory_gib": 0.0049225, "ephemeral_gib": 0.0001389},
+        "asia-northeast1": {"vcpu": 0.0571, "memory_gib": 0.0063215, "ephemeral_gib": 0.0001784},
+    }},
+    "arm64": {"date": "2026-10-15", "regions": {
+        "us-central1": {"vcpu": 0.0356, "memory_gib": 0.003938, "ephemeral_gib": 0.0001389},
+    }},
 }
 UNKNOWN_REGION_MARGIN = 1.3
 
@@ -349,14 +359,16 @@ def pod_price(prices, cpu, memory, ephemeral):
     return cpus(cpu) * prices["vcpu"] + gib(memory) * prices["memory_gib"] + gib(ephemeral) * prices["ephemeral_gib"]
 
 
-def region_prices(region):
-    """The Pod prices of a region, and how they were found."""
-    if region in POD_PRICES_PER_HOUR:
-        return POD_PRICES_PER_HOUR[region], f"{region}, on-demand prices of {PRICES_DATE}, before tax"
-    base = POD_PRICES_PER_HOUR["us-central1"]
+def region_prices(region, arch):
+    """The prices of the Pods of `arch` in a region, and how they were
+    found."""
+    by_region, date = POD_PRICES[arch]["regions"], POD_PRICES[arch]["date"]
+    if region in by_region:
+        return by_region[region], f"{region}, on-demand prices of {date}, before tax"
+    base = by_region["us-central1"]
     prices = {name: price * UNKNOWN_REGION_MARGIN for name, price in base.items()}
     margin = round((UNKNOWN_REGION_MARGIN - 1) * 100)
-    return prices, (f"{region}: us-central1's prices plus {margin}%, on-demand prices of {PRICES_DATE}, before tax; "
+    return prices, (f"{region}: us-central1's prices plus {margin}%, on-demand prices of {date}, before tax; "
                     "this region's own are not here")
 
 
@@ -367,7 +379,7 @@ POD_KINDS = {"amd64": "amd64 (x86) Pods", "arm64": "arm64 Pods"}
 def estimate(plan, profiles, cases, region, arch, time_limit_s):
     """How long a run on `arch` takes and what it costs, for people, and why
     it does not fit in its time limit, or None."""
-    prices, source = region_prices(region)
+    prices, source = region_prices(region, arch)
     generator = GENERATOR_RESOURCES[arch]
     generator_price = pod_price(prices, generator["cpu"], generator["memory"], generator["ephemeral-storage"])
     smock_prices = {profile["name"]: pod_price(prices, profile["cpu_limit"], profile["memory_limit"],
@@ -405,8 +417,8 @@ def estimate(plan, profiles, cases, region, arch, time_limit_s):
         f"Pods still stop within minutes of the time limit, and the cluster costs its fee, "
         f"${CLUSTER_FEE_PER_HOUR:.2f} an hour, "
         "until it is deleted: the next run's checks name it.",
-        *(["Arm Pods are priced here as general-purpose x86 Pods: see the pricing page for autopilot-arm."]
-          if arch == "arm64" else []),
+        *(["Arm Pods are priced at the Arm Pod rates of the Scale-Out compute class, the only Arm Pod rates of the "
+           "pricing page, which names none for autopilot-arm."] if arch == "arm64" else []),
     ])
     needed_s = lifetime_s + TIME_LIMIT_MARGIN_S
     if needed_s <= time_limit_s:
@@ -699,6 +711,25 @@ def gke_markdown(results):
     return "\n".join(lines) + "\n"
 
 
+def stopped_record(results, reason, profile):
+    """Where a run that stopped before its end stopped, and why: the
+    profile it was running and the last step it measured there; or None
+    when it did not stop."""
+    if not reason:
+        return None
+    steps = results[profile]["steps"] if profile in results else []
+    return {"reason": reason, "profile": profile, "after": steps[-1]["id"] if steps else None}
+
+
+def stopped_markdown(stopped):
+    """What summary.md says of a run that stopped before its end."""
+    where = ""
+    if stopped["profile"]:
+        step = f"after its step {stopped['after']}" if stopped["after"] else "before its first step"
+        where = f" under profile {stopped['profile']}, {step}"
+    return f"**Stopped early:** the run stopped{where}: {stopped['reason']}. Nothing after that was measured."
+
+
 def nodes_of(results, app):
     """The nodes the Pods of `app` (smock or generator) ran on, over every
     profile, as pod-info keeps them."""
@@ -723,10 +754,12 @@ def command_summarize(args):
     cases = plan_cases(plan, comma_list(args.cases))
     out = Path(args.out)
     results = {profile["name"]: profile_results(out, plan, profile, cases, args.arch) for profile in profiles}
+    stopped = stopped_record(results, args.stopped, args.stopped_under)
     summary = {"format": harness.FORMAT, "complete": all(result["complete"] for result in results.values()),
                "idle_rss": [idle for result in results.values() for idle in result["idle_rss"]],
                "cases": [step for result in results.values() for step in result["steps"]],
-               "targets": [], "gke": {"profiles": {name: profile_record(result) for name, result in results.items()}}}
+               "targets": [], "gke": {"profiles": {name: profile_record(result) for name, result in results.items()},
+                                      "stopped": stopped}}
     planned = [spec for profile in profiles for spec in steps(plan, profile, cases)]
     summary["targets"] = harness.explain_steps_not_run(
         harness.check_targets(harness.read_targets(targets_path), args.arch, summary), summary, planned)
@@ -752,7 +785,8 @@ def command_summarize(args):
                         "mocks": status.get("mocks")},
         "request_mix": {"file": harness.shown_path(mix), "sha256": harness.sha256_file(mix),
                         "weights": {request["name"]: request["weight"] for request in read_json(mix)["requests"]}},
-        "plan": {"file": harness.shown_path(plan_path), "sha256": harness.sha256_file(plan_path)},
+        "plan": {"file": harness.shown_path(plan_path), "sha256": harness.sha256_file(plan_path),
+                 "sha256_without_about": harness.sha256_without_about(plan_path)},
         "targets": {"file": harness.shown_path(targets_path), "sha256": harness.sha256_file(targets_path)},
         "note": (f"Measured on GKE Autopilot in {zone or args.region}, on {args.arch} nodes "
                  f"({machine_type or 'of an unknown machine type'}): smock in a {compute_class} Pod with each "
@@ -785,7 +819,12 @@ def command_summarize(args):
     }
     harness.write_json(out / "summary.json", summary)
     harness.write_json(out / "conditions.json", conditions)
-    (out / "summary.md").write_text(harness.summary_markdown(summary, conditions) + gke_markdown(results))
+    markdown = harness.summary_markdown(summary, conditions)
+    if stopped:
+        # Right below the line that says what ran.
+        title, started, rest = markdown.split("\n\n", 2)
+        markdown = "\n\n".join([title, started, stopped_markdown(stopped), rest])
+    (out / "summary.md").write_text(markdown + gke_markdown(results))
     return 0
 
 
@@ -926,6 +965,8 @@ def main(argv):
     summarizing.add_argument("--smock-image", help="smock's image digest")
     summarizing.add_argument("--smock-sha256", help="the SHA-256 of the smock binary in the image")
     summarizing.add_argument("--generator-image", help="the load generator's image digest")
+    summarizing.add_argument("--stopped", help="why the run stopped before its end, when it did")
+    summarizing.add_argument("--stopped-under", help="the profile the run was running when it stopped")
     summarizing.add_argument("out", help="the run's results: raw/<profile>/generator.log and pods.json")
     summarizing.set_defaults(handler=command_summarize)
     stopping = commands.add_parser("stopped", help="print why the load generator stopped its profile early and how "

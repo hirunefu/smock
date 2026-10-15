@@ -823,6 +823,18 @@ class AutopilotProfiles(unittest.TestCase):
             if target["rate"] is not None:
                 self.assertIn(target["rate"], cases[target["case"]]["rates"][target["profile"]], target["id"])
 
+    def test_the_plans_description_names_the_target_rates_of_each_architecture(self):
+        # Such as "5,000 under 250m" for autopilot-min's target on arm64,
+        # in that architecture's part of the description.
+        about = read(BENCH, "plan-autopilot.json")["about"]
+        for architecture, targets in harness.read_targets(BENCH / "targets.json").items():
+            self.assertIn(architecture, about)
+            part = about[about.index(architecture):]
+            for target in targets:
+                if target["rate"] is not None:
+                    cpu = "1 CPU" if target["cpu_limit"] == "1" else target["cpu_limit"]
+                    self.assertIn(f"{target['rate']:,} under {cpu}", part, (architecture, target["id"]))
+
 
 def targets_file(test, profiles=(), architectures=None):
     """Writes a targets file into a new directory, and returns its path: the

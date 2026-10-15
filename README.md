@@ -1165,8 +1165,9 @@ architecture the targets file has no set for.
 
 - `conditions.json`: what ran where. The smock version, commit, toolchain
   and binary digest; the definition set digest and the Mocks; the request
-  mix; the plan file; the architecture, CPU model, kernel and CPU
-  governors; the profiles with their CPU and memory limits, the CPU limits
+  mix; the plan file, with its SHA-256 and that of the plan without its
+  `about` (`sha256_without_about`); the architecture, CPU model, kernel
+  and CPU governors; the profiles with their CPU and memory limits, the CPU limits
   and the CPUs of smock and of the load generator; each case's profile,
   rate, durations and connection counts; oha and its version; the targets
   file; any options that changed the plan.
@@ -1263,6 +1264,13 @@ The line above the table says which steps count.
 - From each run's `conditions.json`, it names the runs (smock's version and
   commit, the machine, the plan) and lists the conditions besides smock
   that differ, such as the architecture, the CPU model, the plan or oha.
+  The plan differs when what it runs differs: the comparison takes the
+  hash of the plan without its `about`, so that a change to the
+  description alone is no difference. A run from before runs recorded
+  that hash has only the file's, which the comparison then takes, so the
+  first comparison with such a run shows the plan as changed if anything
+  in its file changed, its `about` included (as that of
+  `bench/plan-autopilot.json` did after the R1 runs).
   Compare runs of the same kind: a GKE run with a GKE run, a run on a
   machine with a run on the same machine. It says so when one run is on
   GKE and the other is not.
@@ -1290,8 +1298,13 @@ compare, such as for a summary of another `format`.
 Autopilot: smock in a Pod with each profile's limits as its requests, the
 load from another node over the Pod network. It is part of the
 [checklist before merging into main](docs/merging-into-main.md), and costs
-money: about $0.20 to $0.25 a run (2026-10-14 prices, us-central1 or
-asia-northeast1), which it estimates before it makes anything.
+money: about $0.20 to $0.25 a run on x86 nodes (2026-10-14 prices,
+us-central1 or asia-northeast1), and about $0.16 on Arm nodes in
+us-central1 (2026-10-15 prices), which it estimates before it makes
+anything. Each architecture's Pods are priced at their own on-demand
+rates: x86 Pods at the general-purpose ones, Arm Pods at the Arm Pod rates
+of the Scale-Out compute class, the only Arm Pod rates of the pricing
+page, which names none for the `autopilot-arm` class the run uses.
 
 ```sh
 export GKE_BENCH_PROJECT=<project ID> GKE_BENCH_REGION=us-central1
@@ -1345,11 +1358,17 @@ that run's linux/amd64 build and tests passed.
   project, checks that the Artifact Registry, Compute Engine and
   Kubernetes Engine APIs are enabled (it prints the command that enables
   them; `--enable-apis` runs it), that `GKE_BENCH_ZONE`, when set, is in
-  the region, that `CPUS_ALL_REGIONS` and the region's `CPUS` quota have
-  32 vCPUs free (`GKE_BENCH_NEEDED_CPUS`), for four nodes of 8 vCPUs:
-  Autopilot's first node, its system node, smock's and the load
-  generator's (in the probe, a quota of 24 held the load generator's node
-  back), and that no cluster or repository of an earlier run is left. Then
+  the region, that the quotas the run's nodes draw on have enough free,
+  and that no cluster or repository of an earlier run is left. The run
+  needs four nodes of 8 vCPUs: Autopilot's first node, its system node,
+  smock's and the load generator's (in the probe, a quota of 24 vCPUs held
+  the load generator's node back). So it needs 32 vCPUs free in
+  `CPUS_ALL_REGIONS` and in the region's `CPUS` (`GKE_BENCH_NEEDED_CPUS`,
+  from which the number of nodes follows); 100 GB of boot disk a node, in
+  the region's `SSD_TOTAL_GB` on amd64 (pd-balanced) and `HDB_TOTAL_GB` on
+  arm64 (hyperdisk-balanced, as the probe's Arm nodes had); and an external
+  IP address a node, in `IN_USE_ADDRESSES`. It names each quota with how
+  much is free and how much the run needs, and says which is short. Then
   it prints how long the run takes and what it costs, expected and at
   most, and stops unless `--yes` says to go on.
 - **Images.** It builds the release binary, unless given one, and two
@@ -1454,9 +1473,15 @@ whether the traffic ports answered, whether the profile ended early and
 why, and the load generator's CPU request; the conditions also record,
 for each node of each profile, its CPU (`cpu`, as `gke.py node-cpu`
 prints it, or null when it is unknown), and name the CPU model of smock's
-nodes in `machine.cpu_model`, which `summary.md` shows. The summary
-checks the targets of the run's architecture (`--arch`). Nothing outside smock's Pod
-can read its cgroup on Autopilot, so what smock used comes from its own
+nodes in `machine.cpu_model`, which `summary.md` shows. A run that stops
+once a profile has started, because something fails or it is stopped
+(Ctrl-C, SIGTERM, a closed terminal), still writes `summary.json`,
+`summary.md` and `conditions.json` from what it measured; `summary.md`
+then says, right below its first line, under which profile and after
+which step the run stopped, and why (`gke.stopped` in `summary.json`).
+The summary checks the targets of the run's architecture (`--arch`).
+Nothing outside smock's Pod can read its cgroup on Autopilot, so what
+smock used comes from its own
 `/metrics`, its [process and cgroup metrics](#admin-api), which the load
 generator scrapes right before and right after each step, and a second
 into it: its CPU time and throttling during the step and in its first

@@ -225,12 +225,25 @@ def run_line(name, conditions):
 CONDITIONS = (
     ("architecture", architecture),
     ("machine", where),
-    ("plan", lambda conditions: (conditions["plan"]["file"], conditions["plan"]["sha256"])),
+    ("plan", lambda conditions: (conditions["plan"]["file"], conditions["plan"]["sha256"],
+                                 conditions["plan"].get("sha256_without_about"))),
     ("request mix", lambda conditions: conditions["request_mix"]["sha256"]),
     ("definition set", lambda conditions: conditions["definitions"]["digest"]),
     ("load generator", lambda conditions: conditions["load_generator"]["version"]),
     ("options that changed the plan", lambda conditions: conditions.get("overrides") or "none"),
 )
+
+
+def same(name, before, after):
+    """Whether the runs had the same condition `name`. The same plan is the
+    same file with the same content but for its about, when both runs
+    recorded the hash of that; else, as a run from before runs recorded it
+    has only the file's hash, the same file with the same hash."""
+    if name != "plan":
+        return before == after
+    if before[2] and after[2]:
+        return (before[0], before[2]) == (after[0], after[2])
+    return before[:2] == after[:2]
 
 
 def difference(name, before, after):
@@ -333,7 +346,7 @@ def runs_section(older, newer):
         lines += ["", f"The runs ran on different architectures ({architectures[0]} → {architectures[1]}): no step is "
                       "compared as a regression."]
     differences = [difference(name, shown(older), shown(newer)) for name, shown in CONDITIONS
-                   if shown(older) != shown(newer)]
+                   if not same(name, shown(older), shown(newer))]
     nodes, nodes_changed = smock_nodes_section(older, newer)
     if nodes_changed:
         differences.append("the CPU of smock's nodes")

@@ -385,12 +385,15 @@ class Summary(Helper):
     checked, and the conditions it ran under."""
 
     def results(self, lines, pod_info, rates=(500, 1000), where=("--region", "us-central1", "--zone", "us-central1-a",
-                                                                 "--arch", "arm64"), targets=None, smock_node_cpu=None):
+                                                                 "--arch", "arm64"), targets=None, smock_node_cpu=None,
+                stopped=(), plan=None):
         """A results directory as scripts/gke-bench.sh leaves it, with the
         load generator's log, the Pods of profile small, and, when given,
         what smock's init container printed (`smock_node_cpu`, a text),
         summarized against `targets` ({architecture: entries}, by default
-        small's targets for both)."""
+        small's targets for both); `stopped` says why and where the run
+        stopped early, if it did. The plan is small_plan's at `rates`,
+        unless `plan` names another."""
         out = self.directory()
         raw = out / "raw" / "small"
         raw.mkdir(parents=True)
@@ -400,11 +403,11 @@ class Summary(Helper):
         if smock_node_cpu is not None:
             (raw / "smock-node-cpu.log").write_text(smock_node_cpu)
         status, _, stderr = helper(
-            "summarize", "--plan", small_plan(self.directory(), rates),
+            "summarize", "--plan", plan or small_plan(self.directory(), rates),
             "--targets", small_targets(self.directory(), targets), *where,
             "--started-at", "2026-10-14T03:28:50+00:00", "--finished-at", "2026-10-14T04:01:56+00:00",
             "--cluster-version", "1.35.8-gke.1225000", "--smock-image", "sha256:" + "1" * 64,
-            "--generator-image", "sha256:" + "2" * 64, out)
+            "--generator-image", "sha256:" + "2" * 64, *stopped, out)
         self.assertEqual(status, 0, stderr)
         return out
 
@@ -487,6 +490,23 @@ class Summary(Helper):
         self.assertIn("GKE Autopilot", markdown)
         self.assertIn("| http-keep-alive | 1000 |", markdown)
 
+    def test_the_conditions_record_a_hash_of_the_plan_that_leaves_out_its_description(self):
+        lines = [START, generator_step(500), generator_step(1000), {"kind": "done"}]
+
+        def recorded(**changes):
+            """What conditions.json records of small_plan's plan, changed."""
+            path = small_plan(self.directory())
+            path.write_text(json.dumps({**json.loads(path.read_text()), **changes}))
+            out = self.results(lines, pods(), plan=path)
+            return json.loads((out / "conditions.json").read_text())["plan"]
+
+        first, second = recorded(about="What the plan runs."), recorded(about="What the plan runs, said otherwise.")
+        self.assertNotEqual(first["sha256"], second["sha256"])
+        self.assertEqual(first["sha256_without_about"], second["sha256_without_about"])
+        # Anything else is a different plan.
+        other = recorded(about="What the plan runs.", cooldown_s=5)
+        self.assertNotEqual(other["sha256_without_about"], first["sha256_without_about"])
+
     def test_the_conditions_record_the_architecture_region_zone_and_machine_types(self):
         # An amd64 run with no zone pinned: Autopilot chose it.
         generator_node = {**X86_NODE, "instance_type": "ek-standard-16"}
@@ -541,6 +561,31 @@ class Summary(Helper):
         summary = json.loads((out / "summary.json").read_text())
         self.assertFalse(summary["complete"])
         self.assertEqual([case["rate"] for case in summary["cases"]], [500])
+
+    def test_a_run_that_stopped_early_says_where_and_why_at_the_top_of_its_summary(self):
+        out = self.results([START, IDLE, generator_step(500)], pods(),
+                           stopped=("--stopped", "stopped by SIGTERM", "--stopped-under", "small"))
+        summary = json.loads((out / "summary.json").read_text())
+        self.assertFalse(summary["complete"])
+        self.assertEqual([case["rate"] for case in summary["cases"]], [500])
+        self.assertEqual(summary["gke"]["stopped"],
+                         {"reason": "stopped by SIGTERM", "profile": "small", "after": "http-keep-alive@small@500"})
+        markdown = (out / "summary.md").read_text()
+        note = ("**Stopped early:** the run stopped under profile small, after its step http-keep-alive@small@500: "
+                "stopped by SIGTERM. Nothing after that was measured.")
+        self.assertIn(note, markdown)
+        # Right below the line that says what ran.
+        self.assertLess(markdown.index("Started 2026-10-14T03:28:50+00:00"), markdown.index(note))
+        self.assertLess(markdown.index(note), markdown.index("## "))
+        # Before the profile's first step.
+        out = self.results([START, IDLE], pods(), stopped=("--stopped", "the load generator's Pod did not start "
+                                                           "under small", "--stopped-under", "small"))
+        self.assertIn("**Stopped early:** the run stopped under profile small, before its first step: the load "
+                      "generator's Pod did not start under small.", (out / "summary.md").read_text())
+        # A run that did not stop says nothing of it.
+        out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}], pods())
+        self.assertIsNone(json.loads((out / "summary.json").read_text())["gke"]["stopped"])
+        self.assertNotIn("Stopped early", (out / "summary.md").read_text())
 
     def test_steps_a_profile_did_not_run_after_it_stopped_early_are_not_measured_with_the_reason(self):
         # The step at 500 got no response at all, so the load generator ran
@@ -627,14 +672,15 @@ class Estimate(Helper):
     def test_it_states_the_expected_cost_and_the_most_a_run_cut_off_at_the_time_limit_costs(self):
         status, stdout, stderr = self.estimate(time_limit_s=3600)
         self.assertEqual(status, 0, stderr)
-        self.assertIn("Cost estimate for arm64 Pods (us-central1, on-demand prices of 2026-10-14, before tax", stdout)
+        self.assertIn("Cost estimate for arm64 Pods (us-central1, on-demand prices of 2026-10-15, before tax", stdout)
         self.assertRegex(stdout, r"Expected: about \$0\.\d\d, the cluster existing for about \d+ minutes\.")
         # Until the watchdog deletes it at the time limit, and for the 5
         # minutes the deletion takes: the cluster's fee ($0.10 an hour), the
-        # load generator (4 vCPU and 4Gi at $0.0445 and $0.0049225 an hour,
-        # 2Gi of ephemeral storage at $0.0001389) and the largest smock (1
-        # vCPU, 1Gi, 64Mi), $0.3474 an hour for 65 minutes.
-        self.assertIn("At most: $0.38, if it ran until the time limit (60 minutes)", stdout)
+        # load generator (4 vCPU and 4Gi at the Arm Pod rates of $0.0356 and
+        # $0.003938 an hour, 2Gi of ephemeral storage at $0.0001389) and the
+        # largest smock (1 vCPU, 1Gi, 64Mi), $0.2980 an hour for 65 minutes.
+        self.assertIn("At most: $0.32, if it ran until the time limit (60 minutes)", stdout)
+        self.assertIn("Arm Pods are priced at the Arm Pod rates of the Scale-Out compute class", stdout)
         # What is billed when nothing is left to delete the cluster.
         self.assertIn("its Pods still stop within minutes of the time limit, and the cluster costs its fee, "
                       "$0.10 an hour", stdout)
@@ -650,8 +696,28 @@ class Estimate(Helper):
         self.assertIn("At most: $0.59, if it ran until the time limit (60 minutes)", stdout)
         self.assertIn("The load generator's Pod (6 vCPU, 6Gi)", stdout)
         self.assertNotIn("Arm", stdout)
-        _, stdout, _ = self.estimate(region="asia-southeast1", arch="arm64")
-        self.assertIn("Arm Pods are priced here as general-purpose x86 Pods", stdout)
+
+    def test_x86_pods_are_estimated_at_the_general_purpose_rates_and_arm_pods_at_the_arm_rates(self):
+        # amd64 in us-central1: the fee, the load generator (6 vCPU and 6Gi
+        # at $0.0445 and $0.0049225 an hour, 2Gi of ephemeral storage at
+        # $0.0001389) and the largest smock (1 vCPU, 1Gi, 64Mi): $0.4462 an
+        # hour for 65 minutes, as before Arm Pods had rates of their own.
+        status, stdout, stderr = self.estimate(arch="amd64", time_limit_s=3600)
+        self.assertEqual(status, 0, stderr)
+        self.assertIn("Cost estimate for amd64 (x86) Pods (us-central1, on-demand prices of 2026-10-14", stdout)
+        self.assertIn("At most: $0.48, if it ran until the time limit (60 minutes)", stdout)
+        self.assertNotIn("Arm", stdout)
+        # The same run on arm64 costs less: $0.2980 an hour.
+        _, stdout, _ = self.estimate(arch="arm64", time_limit_s=3600)
+        self.assertIn("At most: $0.32, if it ran until the time limit (60 minutes)", stdout)
+        # A region with Arm Pods but without their rates here: the fee and
+        # the Pods at us-central1's Arm Pod rates plus the margin, $0.10 and
+        # $0.1980 * 1.3, $0.3574 an hour.
+        _, stdout, _ = self.estimate(region="asia-southeast1", arch="arm64", time_limit_s=3600)
+        self.assertIn("Cost estimate for arm64 Pods (asia-southeast1: us-central1's prices plus 30%, on-demand "
+                      "prices of 2026-10-15", stdout)
+        self.assertIn("At most: $0.39, if it ran until the time limit (60 minutes)", stdout)
+        self.assertNotIn("priced here as general-purpose x86 Pods", stdout)
 
     def test_a_region_without_prices_here_is_estimated_from_us_central1s_with_a_margin(self):
         status, stdout, _ = self.estimate(region="europe-west4")

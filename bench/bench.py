@@ -138,6 +138,17 @@ def sha256_file(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def sha256_without_about(path):
+    """The SHA-256 of a JSON file's value without its `about`, as compact
+    JSON with sorted keys: of what a plan says to run, whatever its
+    description and its layout, so that a run's conditions show the same
+    plan when only those changed."""
+    value = read_json(path)
+    if isinstance(value, dict):
+        value.pop("about", None)
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
 def cpu_quota_percent(limit):
     """The systemd CPUQuota percentage of a Kubernetes-style CPU limit:
     250m is 25 %, 2 is 200 %."""
@@ -852,7 +863,8 @@ class Run:
                 "sha256": sha256_file(BENCH / "requests.json"),
                 "weights": {request["name"]: request["weight"] for request in self.mix},
             },
-            "plan": {"file": shown_path(self.plan_path), "sha256": sha256_file(self.plan_path)},
+            "plan": {"file": shown_path(self.plan_path), "sha256": sha256_file(self.plan_path),
+                     "sha256_without_about": sha256_without_about(self.plan_path)},
             "note": self.plan.get("note"),
             "targets": {"file": shown_path(self.targets_path), "sha256": sha256_file(self.targets_path)},
             "machine": machine(),

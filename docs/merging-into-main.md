@@ -53,7 +53,10 @@ pre-merge run compares with them.
   reference without failing
   ([Comparing runs](../README.md#comparing-runs)). Its first lines say
   whether the machine, the plan or anything else besides smock differed,
-  and which steps count.
+  and which steps count. A change to the plan's `about` alone is no
+  difference, but a run from before runs recorded the plan's hash without
+  it, such as R1's, has only its file's hash: the first comparison with
+  one may show the plan as changed when only its description did.
 - [ ] **Run the benchmark on GKE Autopilot** with `scripts/gke-bench.sh`
   ([On GKE Autopilot](../README.md#on-gke-autopilot)). It needs gcloud
   logged in (`gcloud auth login`), docker, kubectl, and the MoonBit
@@ -86,9 +89,12 @@ pre-merge run compares with them.
   failed when its zone had no Arm nodes left. Unless `GKE_BENCH_ZONE` pins
   one, Autopilot chooses the zone, and the load generator runs in smock's.
 
-  It checks the APIs, the CPU quota (32 vCPUs free in `CPUS_ALL_REGIONS`
-  and in the region's `CPUS`; ask for more on the console's Quotas page if
-  not), and that nothing is left from an earlier run, and prints every
+  It checks the APIs, the quotas the run's four nodes draw on (32 vCPUs
+  free in `CPUS_ALL_REGIONS` and in the region's `CPUS`, 400 GB of boot
+  disk in `SSD_TOTAL_GB` on amd64 or `HDB_TOTAL_GB` on arm64, and 4
+  addresses in `IN_USE_ADDRESSES`; it names the one that is short, and
+  more can be asked for on the console's Quotas page), and that nothing is
+  left from an earlier run, and prints every
   command it would run and the cost estimate. A full amd64 run is
   expected to cost about $0.22, and at most about $0.63 if it ran until
   its time limit of 80 minutes, before tax (about $0.26 and $0.77 in

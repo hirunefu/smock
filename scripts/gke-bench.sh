@@ -3,8 +3,9 @@
 # integration branch is merged into main (docs/merging-into-main.md):
 #
 # 1. checks, reading only: the tools, the project, the APIs it needs, the
-#    CPU quota for the nodes of the run, and nothing left by an earlier run;
-#    then prints how long the run takes and what it costs;
+#    quotas of the region that the run's nodes draw on (vCPUs, boot disks,
+#    external IP addresses), and nothing left by an earlier run; then prints
+#    how long the run takes and what it costs;
 # 2. with --yes, builds two images on this machine (smock with the
 #    benchmark's definitions, and the load generator) for the architecture
 #    of the run (--arch, this machine's by default), with the release binary
@@ -27,7 +28,8 @@
 # 4. writes the load generator's lines, the Pods' state, smock's log and
 #    its Service with the Service's EndpointSlices under the results
 #    directory, and summary.json, summary.md and conditions.json, which
-#    bench/compare.py compares;
+#    bench/compare.py compares: also when the run stops once a profile has
+#    started, from what it measured, with where and why it stopped;
 # 5. always deletes the cluster and the repository: when it ends, fails or
 #    is interrupted, and from a watchdog in its own session when the time
 #    limit (80 minutes by default) has passed, even if this script was
@@ -64,7 +66,8 @@
 #                           arm64 run needs one with Arm Pods (ARM_REGIONS below)
 #   GKE_BENCH_ZONE          the zone smock and the load generator run in (default: the one
 #                           Autopilot chooses for smock, which the load generator follows)
-#   GKE_BENCH_NEEDED_CPUS   the vCPUs of quota the run needs (default: 32, four nodes of 8)
+#   GKE_BENCH_NEEDED_CPUS   the vCPUs of quota the run needs (default: 32, four nodes of 8); the
+#                           nodes' boot disks and external IP addresses it needs follow from it
 #   GKE_BENCH_NODE_SERVICE_ACCOUNT
 #                           the service account the nodes run as, which may read the images
 #                           (default: the project's Compute Engine default service account)
@@ -116,6 +119,20 @@ APIS=(artifactregistry.googleapis.com compute.googleapis.com container.googleapi
 # compute class), as GKE's documentation listed them on 2026-10-14. x86
 # Pods run in every region.
 ARM_REGIONS=" us-central1 us-east1 us-west1 europe-west1 europe-west2 europe-west4 asia-southeast1 "
+# What each node of the run takes of its region's quotas, by the metric of
+# Compute Engine that counts it (as gcloud compute regions describe names
+# them): 8 vCPUs (CPUS; the runs' nodes were ek-standard-8 and
+# e4a-standard-8), a boot disk of 100 GB (the probe's nodes had 94 GiB of
+# ephemeral storage on it), and an ephemeral external IP address
+# (IN_USE_ADDRESSES), since the nodes are not private. The boot disk counts
+# against SSD_TOTAL_GB on amd64, as pd-balanced, the only boot disk type
+# GKE's documentation of compute classes allows on Autopilot, and against
+# HDB_TOTAL_GB on arm64, as hyperdisk-balanced, which the e4a-standard-8
+# nodes of the arm64 probe of 2026-10-14 had. The run needs as many nodes
+# as GKE_BENCH_NEEDED_CPUS makes nodes of 8 vCPUs.
+NODE_CPUS=8
+NODE_BOOT_DISK_GB=100
+declare -A BOOT_DISK_QUOTAS=([amd64]=SSD_TOTAL_GB [arm64]=HDB_TOTAL_GB)
 # The Dockerfiles of the two images, from the repository's root.
 DOCKERFILES=(Dockerfile bench/gke/smock-definitions.dockerfile bench/gke/generator.Dockerfile)
 # How long the load generator's Pod may wait for a node, smock to become
@@ -134,6 +151,8 @@ plan="$ROOT/bench/plan-autopilot.json" targets="$ROOT/bench/targets.json"
 profiles="" cases="" out="" time_limit=80m smock_binary="" oha_binary="" arch="" smock_sha256=""
 project_number="" account_pattern="" problems=() apis_to_enable=()
 work="" resources_may_exist=0 watchdog_pid="" built_images=() log_pid="" token_at=0
+# The profile running, why the run stopped, and whether the summary is written.
+current_profile="" stop_reason="" summarized=0
 
 say() {
   printf 'gke-bench: %s\n' "$*" >&2
@@ -141,6 +160,7 @@ say() {
 
 die() {
   say "$*"
+  stop_reason="$*"
   exit 1
 }
 
@@ -530,6 +550,7 @@ on_exit() {
   trap '' INT TERM HUP
   trap - EXIT
   stop_children
+  summarize_stopped "${stop_reason:-the script ended with status $status}"
   if [ "$resources_may_exist" = 1 ]; then
     say "deleting the cluster and the repository"
     delete_cluster || status=1
@@ -566,6 +587,7 @@ on_signal() {
     fi
   fi
   say "stopped by SIG$1"
+  stop_reason="stopped by SIG$1"
   exit "$2"
 }
 
@@ -576,20 +598,23 @@ trap 'on_signal HUP 129' HUP
 
 # --- Checks ----------------------------------------------------------------
 
+# Checks that quota METRIC of FILE (gcloud's description of the project or
+# of the region) has NEEDED free, and says how much: LABEL names the quota,
+# UNIT is its unit, and WHY what the run needs it for.
 check_quota() {
-  local file=$1 metric=$2 label=$3 text
-  if text=$("$PYTHON" - "$file" "$metric" "$label" "$NEEDED_CPUS" <<'EOF'
+  local file=$1 metric=$2 label=$3 needed=$4 unit=$5 why=$6 text
+  if text=$("$PYTHON" - "$file" "$metric" "$label" "$needed" "$unit" "$why" <<'EOF'
 import json
 import sys
 
-path, metric, label, needed = sys.argv[1:5]
+path, metric, label, needed, unit, why = sys.argv[1:7]
 quotas = {quota["metric"]: quota for quota in json.load(open(path)).get("quotas", [])}
 quota = quotas.get(metric)
 if quota is None:
     print(f"{label}: the project has no such quota")
     sys.exit(1)
 free = quota["limit"] - quota["usage"]
-print(f"{label}: {free:g} of {quota['limit']:g} vCPUs free, the run needs {float(needed):g}")
+print(f"{label}: {free:g} of {quota['limit']:g} {unit} free, the run needs {float(needed):g} {why}")
 sys.exit(0 if free >= float(needed) else 1)
 EOF
   ); then
@@ -600,23 +625,28 @@ EOF
   fi
 }
 
-# The checks that need the Compute Engine API: the zone, the CPU quota,
-# and what the project has before the run.
+# The checks that need the Compute Engine API: the zone, the quotas the
+# run's nodes draw on, and what the project has before the run.
 check_project() {
-  local region line
+  local region line nodes=$(((NEEDED_CPUS + NODE_CPUS - 1) / NODE_CPUS)) disk=${BOOT_DISK_QUOTAS[$arch]}
   if [ -n "$ZONE" ]; then
     region=$(reads "$GCLOUD" compute zones describe "$ZONE" --project="$PROJECT" --format='value(region.basename())')
     [ "$region" = "$REGION" ] || problem "zone $ZONE is not a zone of $REGION: set GKE_BENCH_ZONE to one, or unset it"
   fi
   if reads "$GCLOUD" compute project-info describe --project="$PROJECT" --format=json >"$work/project-info.json"; then
-    check_quota "$work/project-info.json" CPUS_ALL_REGIONS CPUS_ALL_REGIONS
+    check_quota "$work/project-info.json" CPUS_ALL_REGIONS CPUS_ALL_REGIONS "$NEEDED_CPUS" vCPUs \
+      "for its $nodes nodes"
   else
     problem "cannot read the project's CPU quota"
   fi
   if reads "$GCLOUD" compute regions describe "$REGION" --project="$PROJECT" --format=json >"$work/region.json"; then
-    check_quota "$work/region.json" CPUS "CPUS in $REGION"
+    check_quota "$work/region.json" CPUS "CPUS in $REGION" "$NEEDED_CPUS" vCPUs "for its $nodes nodes"
+    check_quota "$work/region.json" "$disk" "$disk in $REGION" $((nodes * NODE_BOOT_DISK_GB)) GB \
+      "for its $nodes nodes' boot disks of $NODE_BOOT_DISK_GB GB"
+    check_quota "$work/region.json" IN_USE_ADDRESSES "IN_USE_ADDRESSES in $REGION" "$nodes" addresses \
+      "for its $nodes nodes' external IP addresses"
   else
-    problem "cannot read the CPU quota of $REGION"
+    problem "cannot read the quotas of $REGION"
   fi
   if ! take_inventory "$work/inventory-before"; then
     problem "cannot list what the project has, which the end of the run compares with"
@@ -740,7 +770,7 @@ preflight() {
   if [ ${#missing[@]} -eq 0 ]; then
     check_project
   else
-    say "the zone, the CPU quota and what the project has are checked once the APIs are enabled"
+    say "the zone, the quotas and what the project has are checked once the APIs are enabled"
   fi
 }
 
@@ -1075,6 +1105,37 @@ run_profile() {
   return "$status"
 }
 
+# Writes summary.json, summary.md and conditions.json from what the profiles
+# left in the results directory, with the options of gke.py summarize given.
+summarize() {
+  local smock_image_ref=${smock_ref:-} generator_image_ref=${generator_ref:-}
+  summarized=1
+  "$PYTHON" "$GKE_PY" summarize --plan "$plan" --targets "$targets" "${selection[@]}" --region "$REGION" \
+    ${ZONE:+--zone "$ZONE"} --arch "$arch" --started-at "$started_at" --finished-at "$finished_at" \
+    --cluster-version "${cluster_version:-}" --smock-image "${smock_image_ref##*@}" \
+    --generator-image "${generator_image_ref##*@}" --smock-sha256 "$smock_sha256" "$@" "$out"
+}
+
+# When the run stops once a profile has started but before it wrote its
+# summary, writes the summary from what was measured, saying where it
+# stopped and why (the argument). Of the profile it was running, the load
+# generator's log may be only what was streamed.
+# shellcheck disable=SC2329 # Called by on_exit.
+summarize_stopped() {
+  local raw=$out/raw/$current_profile
+  if [ "$dry_run" = 1 ] || [ "$summarized" = 1 ] || [ -z "$current_profile" ]; then
+    return 0
+  fi
+  if [ ! -s "$raw/generator.log" ] && [ -f "$raw/generator-stream.log" ]; then
+    mv "$raw/generator-stream.log" "$raw/generator.log"
+  fi
+  finished_at=$(date -u +%FT%TZ)
+  say "the run stopped under profile $current_profile: writing summary.json, summary.md and conditions.json from" \
+    "what it measured"
+  summarize --stopped "$1" --stopped-under "$current_profile" &&
+    say "results: $out (summary.md says where and why the run stopped)"
+}
+
 # --- Main --------------------------------------------------------------------
 
 if ! profile_lines=$("$PYTHON" "$GKE_PY" plan --plan "$plan" "${selection[@]}"); then
@@ -1126,6 +1187,7 @@ while read -r name steps deadline_s <&3; do
     run_status=1
     break
   fi
+  current_profile=$name
   run_profile "$name" "$deadline_s" "$steps"
   case $? in
   0) ;;
@@ -1142,10 +1204,7 @@ finished_at=$(date -u +%FT%TZ)
 if [ "$dry_run" = 1 ]; then
   say "would write summary.json, summary.md and conditions.json into $out"
 else
-  "$PYTHON" "$GKE_PY" summarize --plan "$plan" --targets "$targets" "${selection[@]}" --region "$REGION" \
-    ${ZONE:+--zone "$ZONE"} --arch "$arch" --started-at "$started_at" --finished-at "$finished_at" \
-    --cluster-version "$cluster_version" --smock-image "${smock_ref##*@}" --generator-image "${generator_ref##*@}" \
-    --smock-sha256 "$smock_sha256" "$out" || run_status=1
+  summarize || run_status=1
   # Whatever the Jobs said: a log that lost lines leaves steps unmeasured.
   if ! incomplete=$("$PYTHON" -c "$INCOMPLETE_PROFILES" "$out/summary.json" 2>/dev/null); then
     run_status=1
