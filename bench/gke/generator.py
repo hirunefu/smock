@@ -285,7 +285,7 @@ def run_step(spec, mix, oha, address, ports, scrape_metrics):
             item["process"].wait(total_s + 300)
         wall_s, cpu_s = time.monotonic() - started, cpu_children_s() - cpu_before
         metrics_after, scraped_after = scrape_metrics(), time.monotonic()
-        kinds, latencies, release_latencies, lags, seconds = harness.analyze_load(run, load, spec, work)
+        kinds, latencies, release_latencies, lags, each_second = harness.analyze_load(run, load, spec, work)
     finally:
         for item in load:
             if item["process"].poll() is None:
@@ -298,7 +298,7 @@ def run_step(spec, mix, oha, address, ports, scrape_metrics):
                                                               scraped_first - scraped_before)
     return {
         **spec,
-        **harness.load_result(spec, kinds, latencies, release_latencies, lags, seconds),
+        **harness.load_result(spec, kinds, latencies, release_latencies, lags, each_second),
         "tcp_passive_opens": None,
         "idle_connections_open_at_end": None,
         "pinning": None,

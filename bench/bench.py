@@ -1298,7 +1298,7 @@ def run_case(run, spec):
         metrics_after = smock.metrics()
         opens = tcp_passive_opens() - opens_before
         idle_open = idle.open_count()
-    kinds, latencies, release_latencies, lags, seconds = analyze_load(run, load, spec, raw)
+    kinds, latencies, release_latencies, lags, each_second = analyze_load(run, load, spec, raw)
     smock_cpu = cpu_use(cpu_before, cpu_after, spec["cpu_limit"], wall_s, (metrics_before, metrics_after))
     if smock_cpu:
         smock_cpu["first_second"] = first_second
@@ -1319,7 +1319,7 @@ def run_case(run, spec):
     })
     result = {
         **spec,
-        **load_result(spec, kinds, latencies, release_latencies, lags, seconds),
+        **load_result(spec, kinds, latencies, release_latencies, lags, each_second),
         "tcp_passive_opens": opens,
         "idle_connections_open_at_end": idle_open,
         "pinning": pinning,
@@ -1385,7 +1385,7 @@ def per_second(spec, by_second):
     return {"requests": requests, "p99_ms": p99}
 
 
-def load_result(spec, kinds, latencies, release_latencies, lags, seconds):
+def load_result(spec, kinds, latencies, release_latencies, lags, each_second):
     """What a step's load measured, from analyze_load: the achieved rate,
     the errors, the percentiles, whether the load generator fell behind,
     and each second of the load (per_second)."""
@@ -1406,7 +1406,7 @@ def load_result(spec, kinds, latencies, release_latencies, lags, seconds):
             "unexpected_status": sum(kind["unexpected_status"] for kind in kinds),
             "no_response": sum(kind["no_response"] for kind in kinds),
         },
-        "per_second": seconds,
+        "per_second": each_second,
     }
 
 
