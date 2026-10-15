@@ -6,7 +6,9 @@ They run the helper through its command line, as scripts/gke-bench.sh does,
 and need python3 alone, but for the test of the load generator
 (bench/gke/generator.py), which runs it against smock on this machine and
 needs what the benchmark's own tests need: a release build of smock
-(dist/smock, or SMOCK_BENCH_SMOCK) and oha (on PATH, or OHA).
+(dist/smock, or SMOCK_BENCH_SMOCK), oha (on PATH, or OHA), and a systemd
+user manager that can set CPU quotas and memory limits, since smock runs
+in a scope of its own there, as in a container under a profile's limits.
 
 usage: python3 -m unittest discover -s bench -v
 """
@@ -293,9 +295,17 @@ def small_targets(directory, architectures=None):
     return path
 
 
-def generator_step(rate, p99=2.0, p99_9=2.5, errors=0):
-    """A step line of the load generator for http-keep-alive under small."""
+def generator_step(rate, p99=2.0, p99_9=2.5, errors=0, peak_mib=20.0, scraped=True):
+    """A step line of the load generator for http-keep-alive under small:
+    with what smock used during it, from its /metrics (smock's CPU at 30 µs
+    a request, its peak memory `peak_mib`), or, when not `scraped`, as from
+    a smock without process metrics."""
     scheduled = rate * 20
+    requests = rate * 25 - errors
+    usage_s = requests * 30e-6
+    smock_cpu = {"usage_s": round(usage_s, 3), "periods": 250, "throttled_periods": 3, "throttled_s": 0.012,
+                 "source": "cgroup", "process_s": round(usage_s, 2), "wall_s": 25.004, "requests": requests,
+                 "us_per_request": 30.0, "utilization": round(usage_s / (25.004 * 0.25), 4)}
     return {"kind": "step", "result": {
         "id": f"http-keep-alive@small@{rate}", "case": "http-keep-alive", "profile": "small", "cpu_limit": "250m",
         "memory_limit": "512Mi", "raw": f"raw/small/http-keep-alive@{rate}", "protocol": "http",
@@ -306,9 +316,19 @@ def generator_step(rate, p99=2.0, p99_9=2.5, errors=0):
         "latency_from_release_ms": {"p50": 0.3, "p90": 0.5, "p99": 1.0, "p99_9": 1.5, "max": 3.0},
         "generator_lag_ms": {"p50": 1.0, "p99": 1.9, "p99_9": 2.0, "max": 3.1}, "load_generator_late": False,
         "requests": {"scheduled": scheduled, "ok": scheduled - errors, "unexpected_status": 0, "no_response": errors},
-        "tcp_passive_opens": None, "idle_connections_open_at_end": None, "pinning": None, "smock_cpu": None,
-        "memory": {"peak_bytes": None, "oom_kills": None}, "rss_kib": {"first": None, "last": None, "max": None},
+        "tcp_passive_opens": None, "idle_connections_open_at_end": None, "pinning": None,
+        "smock_cpu": smock_cpu if scraped else None,
+        "memory": {"peak_bytes": round(peak_mib * (1 << 20)) if scraped else None, "oom_kills": None},
+        "rss_kib": {"first": 17000, "last": 18000, "max": 18000} if scraped else {"first": None, "last": None,
+                                                                                   "max": None},
         "smock_ready": True, "smock_exit_status": None, "per_request": []}}
+
+
+# What the load generator says of smock idle under small, from its
+# /metrics, 5 s after it was ready.
+IDLE = {"kind": "idle-rss", "profile": "small", "idle": {
+    "profile": "small", "cpu_limit": "250m", "memory_limit": "512Mi", "settle_s": 5, "smock_ready": True,
+    "digest": "48f7ce9715f0", "rss_kib": 16384, "memory": {"peak_bytes": 15 << 20, "oom_kills": None}}}
 
 
 START = {"kind": "start", "profile": "small", "oha": "oha 1.16.0", "cpus": 8, "affinity": 4,
@@ -372,26 +392,48 @@ class Summary(Helper):
         return out
 
     def test_each_step_the_load_generator_reported_is_a_case_and_the_targets_are_checked(self):
-        out = self.results([START, "generator: step 500 requests/s\n", generator_step(500),
-                            generator_step(1000, p99=2.5, p99_9=6.0), {"kind": "done", "profile": "small"}], pods())
+        out = self.results([START, IDLE, "generator: step 500 requests/s\n", generator_step(500),
+                            generator_step(1000, p99=2.5, p99_9=6.0, peak_mib=21.5),
+                            {"kind": "done", "profile": "small"}], pods())
         summary = json.loads((out / "summary.json").read_text())
         self.assertEqual(summary["format"], 4)
         self.assertTrue(summary["complete"])
         self.assertEqual([case["id"] for case in summary["cases"]],
                          ["http-keep-alive@small@500", "http-keep-alive@small@1000"])
-        self.assertEqual(summary["idle_rss"], [])
+        # smock never restarted, so the kernel never OOM-killed it.
+        self.assertEqual(summary["idle_rss"], [{**IDLE["idle"], "memory": {"peak_bytes": 15 << 20, "oom_kills": 0}}])
         verdicts = {target["id"]: (target["verdict"], target["measured"]) for target in summary["targets"]}
         self.assertEqual(verdicts, {
             "small/p99": ("met", 2.5),
             "small/p99_9": ("missed", 6.0),
-            # smock never restarted, so the kernel never OOM-killed it.
             "small/oom_kills": ("met", 0),
-            "small/peak_memory": ("not measured", None),
-            "small/idle_rss": ("not measured", None),
+            # From smock's /metrics: its cgroup's memory.peak by the end of
+            # the step, and its RSS idle.
+            "small/peak_memory": ("met", 21.5),
+            "small/idle_rss": ("met", 16.0),
         })
+        markdown = (out / "summary.md").read_text()
+        self.assertIn("Idle RSS: 16.0 MiB, 5 s after startup; peak memory 15.0 MiB, 0 OOM kills.", markdown)
+        # The CPU time a request and the share of the CPU limit, then how
+        # long smock was throttled.
+        self.assertIn("| 0 | 30.0 | 12.0 | 0.012 | 17.6 | 21.5 | 0 |", markdown)
         compared = subprocess.run([sys.executable, str(BENCH / "compare.py"), str(out), str(out)],
                                   capture_output=True, text=True)
         self.assertIn("| small | http-keep-alive | 1,000 | 2.5 → 2.5 | 0% |", compared.stdout, compared.stderr)
+
+    def test_a_smock_without_process_metrics_measures_no_idle_rss_peak_memory_or_cpu(self):
+        # As a smock built before /metrics had them: the load generator
+        # reports no idle RSS, and nothing of what smock used at a step.
+        out = self.results([START, generator_step(500, scraped=False), generator_step(1000, scraped=False),
+                            {"kind": "done", "profile": "small"}], pods())
+        summary = json.loads((out / "summary.json").read_text())
+        self.assertEqual(summary["idle_rss"], [])
+        verdicts = {target["id"]: (target["verdict"], target["reason"]) for target in summary["targets"]}
+        self.assertEqual(verdicts["small/peak_memory"],
+                         ("not measured",
+                          "the kernel kept no peak memory in http-keep-alive@small@1000 (no memory.peak)"))
+        self.assertEqual(verdicts["small/idle_rss"], ("not measured", "the run did not measure idle RSS under small"))
+        self.assertIn("| 0 | - | - | - | - | - | 0 |", (out / "summary.md").read_text())
 
     def test_the_targets_of_the_runs_architecture_are_checked(self):
         # amd64's p99 at 1,000 requests/s is at most 2 ms, which the run's
@@ -578,13 +620,20 @@ class Estimate(Helper):
 
 class LocalSmock:
     """smock serving the benchmark's definitions on this machine, on free
-    ports, as the GKE run's image does."""
+    ports, as the GKE run's image does, and as in a container of its own
+    under profile small's limits: in a systemd scope of its own, which
+    only smock is in, with a CPU quota of 250m and a memory limit of
+    512Mi, as bench/bench.py runs it. It becomes smock by exec."""
+
+    SCOPE = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "-p", "CPUQuota=25%",
+             "-p", f"MemoryMax={512 << 20}", "--"]
 
     def __enter__(self):
         self.process = subprocess.Popen(
-            [SMOCK, "serve", "--dir", str(BENCH / "definitions"), "--port", "0", "--tls-port", "0", "--admin-port", "0",
-             "--admin-auth", "off"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-            text=True, env={name: value for name, value in os.environ.items() if not name.startswith("SMOCK_")})
+            [*self.SCOPE, SMOCK, "serve", "--dir", str(BENCH / "definitions"), "--port", "0", "--tls-port", "0",
+             "--admin-port", "0", "--admin-auth", "off"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE, text=True,
+            env={name: value for name, value in os.environ.items() if not name.startswith("SMOCK_")})
         self.ports = {}
         listening = threading.Event()
 
@@ -659,7 +708,7 @@ class Generator(Helper):
         """The small plan with short steps, at `rates`, over plain HTTP and
         then TLS."""
         plan = json.loads(small_plan(self.directory(), rates=rates).read_text())
-        plan.update(ramp_s=0.5, duration_s=2, tail_s=1, cooldown_s=0)
+        plan.update(ramp_s=0.5, duration_s=2, tail_s=1, cooldown_s=0, idle_rss={"settle_s": 0.5})
         plan["cases"].append({**plan["cases"][0], "name": "https-keep-alive", "protocol": "https"})
         path = self.directory() / "plan.json"
         path.write_text(json.dumps(plan))
@@ -701,11 +750,21 @@ class Generator(Helper):
             status, lines, output = self.generate(plan_path, smock)
         self.assertEqual(status, 0, output)
         self.assertEqual([line["kind"] for line in lines],
-                         ["start", "traffic-check", "metrics-before", "step", "step", "metrics-after", "done"])
+                         ["start", "idle-rss", "traffic-check", "metrics-before", "step", "step", "metrics-after",
+                          "done"])
         self.assertRegex(lines[0]["status"]["digest"], "^[0-9a-f]{12}$")
+        # smock's idle RSS and peak memory, from its /metrics, before any
+        # load.
+        idle = lines[1]["idle"]
+        self.assertEqual({key: idle[key] for key in ("profile", "cpu_limit", "memory_limit", "settle_s",
+                                                     "smock_ready", "digest")},
+                         {"profile": "small", "cpu_limit": "250m", "memory_limit": "512Mi", "settle_s": 0.5,
+                          "smock_ready": True, "digest": lines[0]["status"]["digest"]})
+        self.assertGreater(idle["rss_kib"], 1024)
+        self.assertGreater(idle["memory"]["peak_bytes"], 0)
         # Both traffic ports answered the first request of the mix before
         # the first step.
-        check = lines[1]
+        check = lines[2]
         self.assertTrue(check["ok"], check)
         self.assertEqual((check["host"], check["target"]), ("catalog.bench.internal", "/catalog/items/SKU-00317"))
         for port in ("plain", "tls"):
@@ -717,12 +776,48 @@ class Generator(Helper):
             self.assertGreater(step["requests"]["scheduled"], 350)
             self.assertIsNotNone(step["latency_ms"]["p99_9"])
             self.assertEqual(len(step["per_request"]), 9)
+            self.assert_smock_use(step)
 
-        summary, conditions, _ = self.summarize(plan_path, output)
+        summary, conditions, markdown = self.summarize(plan_path, output)
         self.assertTrue(summary["complete"])
         self.assertEqual([case["id"] for case in summary["cases"]], ["http-keep-alive@small", "https-keep-alive@small"])
+        # smock never restarted, so the kernel never OOM-killed it.
+        self.assertEqual(summary["idle_rss"], [{**idle, "memory": {**idle["memory"], "oom_kills": 0}}])
+        verdict = next(target for target in summary["targets"] if target["id"] == "small/idle_rss")
+        self.assertEqual((verdict["verdict"] in ("met", "missed"), verdict["measured"]),
+                         (True, round(idle["rss_kib"] / 1024, 2)))
+        self.assertIn(f"Idle RSS: {idle['rss_kib'] / 1024:.1f} MiB, 0.5 s after startup", markdown)
         self.assertTrue(conditions["gke"]["profiles"]["small"]["traffic_check"]["ok"])
         self.assertIsNone(conditions["gke"]["profiles"]["small"]["ended_early"])
+
+    def assert_smock_use(self, step):
+        """What a step says smock used, from its /metrics around the step,
+        is what the cgroup of smock's scope, which holds only smock, and
+        its process counted: its CPU time, throttling, RSS and peak
+        memory, and the requests it answered."""
+        cpu = step["smock_cpu"]
+        self.assertEqual(cpu["source"], "cgroup", step["id"])
+        # Every request of the step's load, ramp and tail included, and
+        # none other: at most the rate for the whole load from each oha.
+        total_s = step["ramp_s"] + step["duration_s"] + step["tail_s"]
+        self.assertGreaterEqual(cpu["requests"], step["requests"]["ok"])
+        self.assertLessEqual(cpu["requests"], step["rate"] * total_s + len(step["per_request"]))
+        self.assertGreaterEqual(cpu["wall_s"], total_s)
+        self.assertLess(cpu["wall_s"], total_s + 30)
+        self.assertAlmostEqual(cpu["us_per_request"], cpu["usage_s"] * 1e6 / cpu["requests"],
+                               delta=0.0005 * 1e6 / cpu["requests"] + 0.01)
+        self.assertAlmostEqual(cpu["utilization"], cpu["usage_s"] / (cpu["wall_s"] * 0.25), delta=0.01)
+        self.assertGreater(cpu["usage_s"], 0)
+        self.assertLessEqual(cpu["utilization"], 1.05)
+        # The process's CPU time, in ticks of 1/100 s, is the cgroup's.
+        self.assertAlmostEqual(cpu["process_s"], cpu["usage_s"], delta=0.03)
+        self.assertGreater(cpu["periods"], 0)
+        self.assertGreaterEqual(cpu["throttled_periods"], 0)
+        self.assertGreaterEqual(cpu["throttled_s"], 0)
+        rss = step["rss_kib"]
+        self.assertGreater(rss["first"], 1024)
+        self.assertEqual(rss["max"], max(rss["first"], rss["last"]))
+        self.assertGreater(step["memory"]["peak_bytes"], 0)
 
     def test_a_traffic_port_that_never_answers_stops_the_profile_before_its_first_step(self):
         # As smock's Service did under autopilot-min: connections open, and
@@ -734,13 +829,13 @@ class Generator(Helper):
         self.assertEqual(status, 0, output)
         self.assertLess(time.monotonic() - started, 30)
         self.assertEqual([line["kind"] for line in lines],
-                         ["start", "traffic-check", "metrics-before", "stopped", "metrics-after", "done"])
-        check = lines[1]
+                         ["start", "idle-rss", "traffic-check", "metrics-before", "stopped", "metrics-after", "done"])
+        check = lines[2]
         self.assertFalse(check["ok"])
         self.assertEqual((check["ports"]["plain"]["answered"], check["ports"]["plain"]["status"]), (True, 200))
         self.assertEqual((check["ports"]["tls"]["answered"], check["ports"]["tls"]["port"]), (False, silent.port))
         self.assertEqual(check["ports"]["tls"]["error"], "timed out")
-        stopped = lines[3]
+        stopped = lines[4]
         self.assertEqual(stopped["reason"], f"smock did not answer through its Service in 2 s: TLS port {silent.port} "
                                             "(timed out)")
         self.assertEqual((stopped["after"], stopped["steps"]),
@@ -760,18 +855,21 @@ class Generator(Helper):
             status, lines, output = self.generate(plan_path, smock, plain=gate.port)
         self.assertEqual(status, 0, output)
         self.assertEqual([line["kind"] for line in lines],
-                         ["start", "traffic-check", "metrics-before", "step", "traffic-check", "stopped",
+                         ["start", "idle-rss", "traffic-check", "metrics-before", "step", "traffic-check", "stopped",
                           "metrics-after", "done"])
-        self.assertTrue(lines[1]["ok"], lines[1])
-        self.assertEqual(lines[1]["address"], "127.0.0.1")
-        step = lines[3]["result"]
+        self.assertTrue(lines[2]["ok"], lines[2])
+        self.assertEqual(lines[2]["address"], "127.0.0.1")
+        step = lines[4]["result"]
         self.assertEqual((step["id"], step["requests"]["ok"]), ("http-keep-alive@small", 0))
         self.assertEqual(step["requests"]["no_response"], step["requests"]["scheduled"])
-        check = lines[4]
+        # smock itself was there, and answered none of the step's
+        # requests, which went elsewhere: no CPU time a request.
+        self.assertEqual((step["smock_cpu"]["requests"], step["smock_cpu"]["us_per_request"]), (0, None))
+        check = lines[5]
         self.assertEqual((check["after"], check["ok"], check["ports"]["plain"]["answered"]),
                          ("http-keep-alive@small", False, False))
         self.assertEqual(check["resolves_now"], "127.0.0.1")
-        stopped = lines[5]
+        stopped = lines[6]
         self.assertRegex(stopped["reason"], r"^http-keep-alive@small got no response to any of its \d+ requests")
         self.assertIn(f", and smock did not answer through its Service in 2 s after it: plain port {gate.port} (",
                       stopped["reason"])

@@ -22,6 +22,29 @@ test "a counter renders its help, its type and one sample per label set, in the 
 }
 
 ///|
+test "a counter can follow a running total kept elsewhere, and never goes down with it" {
+  let registry = @metrics.Registry()
+  let cpu = registry
+    .counter("process_cpu_seconds_total", help="CPU time.")
+    .labels([])
+  let out = []
+  for total in [12.34, 12.5, 12.4, @double.not_a_number, 13] {
+    cpu.advance_to(total)
+    out.push(registry.render().split("\n").nth(2).unwrap_or("").to_owned())
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|process_cpu_seconds_total 12.34
+      #|process_cpu_seconds_total 12.5
+      #|process_cpu_seconds_total 12.5
+      #|process_cpu_seconds_total 12.5
+      #|process_cpu_seconds_total 13
+    ),
+  )
+}
+
+///|
 test "a gauge can be set, raised and lowered" {
   let registry = @metrics.Registry()
   let entries = registry.gauge(

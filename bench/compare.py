@@ -10,11 +10,13 @@ or below the rate of their profile's entry in that file, for the newer
 run's CPU architecture, count: above it smock may be past its capacity, and
 the latencies of a queue swing from run to run, so those steps are shown
 for reference. p99.9 counts only where both runs measured at least the
-rule's number of requests at the step. It also lists the targets the newer
-run missed. It exits with 1 when it finds a regression or a missed target,
-or when the newer run did not measure a step that counts and that the older
-one measured (it stopped early, left the step out, or its load generator
-fell behind), and 2 when it cannot compare.
+rule's number of requests at the step. Where both runs measured smock's CPU
+time a request at a step, it shows how that changed too, for information
+only. It also lists the targets the newer run missed. It exits with 1 when
+it finds a regression or a missed target, or when the newer run did not
+measure a step that counts and that the older one measured (it stopped
+early, left the step out, or its load generator fell behind), and 2 when it
+cannot compare.
 
 usage: python3 bench/compare.py <older> <newer> [--targets FILE]
 
@@ -332,6 +334,43 @@ def latency_table(older, newer, rule, rates, counted, architectures):
     return lines, regressions, unmeasured
 
 
+CPU_COLUMNS = ("Profile", "Case", "Rate", "CPU µs/request", "Change", "CPU % of limit")
+
+
+def cpu_of(step):
+    """What a step measured of smock's CPU (its smock_cpu), or {} when it
+    measured nothing, as a run before the CPU a request was measured."""
+    return step.get("smock_cpu") or {}
+
+
+def percent(utilization):
+    return "-" if utilization is None else f"{utilization * 100:.1f}"
+
+
+def cpu_table(older, newer):
+    """The lines of the section on smock's CPU time a request at each step
+    both runs measured it at, with how it changed; none when no step has it
+    in both."""
+    older_steps = {step_key(step): step for step in older["cases"]}
+    rows = []
+    for step in newer["cases"]:
+        before, after = cpu_of(older_steps.get(step_key(step)) or {}), cpu_of(step)
+        if before.get("us_per_request") is None or after.get("us_per_request") is None:
+            continue
+        rows.append({"Profile": step["profile"], "Case": step["case"], "Rate": f"{step['rate']:,}",
+                     "CPU µs/request": f"{before['us_per_request']} → {after['us_per_request']}",
+                     "Change": change_text(before["us_per_request"], after["us_per_request"]),
+                     "CPU % of limit": f"{percent(before.get('utilization'))} → {percent(after.get('utilization'))}"})
+    if not rows:
+        return []
+    return ["## CPU per request", "",
+            "smock's CPU time during each step's load, ramp and tail included, divided by the requests it answered "
+            "then, and that time against the CPU limit, at each step both runs measured them at. For information "
+            "only: no change here is a regression, and another machine or CPU model gives other numbers.", "",
+            "| " + " | ".join(CPU_COLUMNS) + " |", "|" + "---|" * len(CPU_COLUMNS),
+            *("| " + " | ".join(row[column] for column in CPU_COLUMNS) + " |" for row in rows)]
+
+
 def report(older_run, newer_run, rule, rates_by_architecture):
     """The comparison for people, in Markdown, and how many regressions,
     missed targets and steps the newer run left unmeasured it found among
@@ -353,6 +392,9 @@ def report(older_run, newer_run, rule, rates_by_architecture):
         # They are listed, and what the newer run did there does not fail it.
         table, _, _ = latency_table(older, newer, rule, rates, False, architectures)
         lines += ["", "## For reference: steps above the target rate", "", *table]
+    cpu = cpu_table(older, newer)
+    if cpu:
+        lines += ["", *cpu]
     missed, target_lines = targets_section(older, newer)
     lines += ["", "## Targets", "", *target_lines, "", result_line(regressions, missed, unmeasured)]
     return "\n".join(lines) + "\n", regressions + missed + unmeasured

@@ -17,6 +17,8 @@ pub async fn serve(
   settings : @settings.ServeSettings,
   logger : @log.Logger,
 ) -> Int {
+  // When the process started, as process_start_time_seconds gives it.
+  let started_at = @async.now()
   // Only SIGTERM cancels the program, which starts the drain below. SIGINT
   // and SIGHUP keep their default action: the process ends at once.
   @signal.set_global_cancellation_signals([SIGTERM])
@@ -76,6 +78,11 @@ pub async fn serve(
     build,
     metrics~,
     journal_metrics=JournalMetrics::register(metrics),
+    process_metrics=ProcessMetrics::register(
+      metrics,
+      started_at~,
+      files=ProcessFiles::of_self(),
+    ),
     logger~,
     token~,
     replica=replica_name(),

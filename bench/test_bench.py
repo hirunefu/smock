@@ -317,6 +317,114 @@ class CpuLimits(unittest.TestCase):
             self.assertEqual(result["errors"], 0)
 
 
+class CpuPerRequest(unittest.TestCase):
+    """Each step says what smock's CPU time during the load comes to: a
+    request, over the requests smock answered meanwhile, as its /metrics
+    counts them (smock_requests_total), and against the CPU limit over the
+    same time. Beside the CPU time of smock's cgroup, it has, as a
+    cross-check, the CPU time smock's process counted, which its /metrics
+    serves too."""
+
+    def test_each_step_has_its_cpu_time_a_request_and_against_the_limit(self):
+        out = bench(self, "--cases", "http-keep-alive", "--cpu-limits", "250m,1", "--rate", "400", *SHORT)
+        text = (out / "summary.md").read_text()
+        sections = markdown_sections(text)
+        for cpu_limit, cpus in (("250m", 0.25), ("1", 1)):
+            result = case(out, f"http-keep-alive@{cpu_limit}")
+            cpu = result["smock_cpu"]
+            self.assertEqual(cpu["source"], "cgroup")
+            # Every request of the load: ramp, window and tail, at most the
+            # rate for the whole load from each oha.
+            total_s = 0.5 + 4 + 2
+            self.assertGreaterEqual(cpu["requests"], result["requests"]["ok"])
+            self.assertLessEqual(cpu["requests"], 400 * total_s + 9)
+            self.assertGreaterEqual(cpu["wall_s"], total_s)
+            self.assertLess(cpu["wall_s"], total_s + 10)
+            self.assertAlmostEqual(cpu["us_per_request"], cpu["usage_s"] * 1e6 / cpu["requests"],
+                                   delta=0.0005 * 1e6 / cpu["requests"] + 0.01)
+            self.assertAlmostEqual(cpu["utilization"], cpu["usage_s"] / (cpu["wall_s"] * cpus), delta=0.01)
+            # smock's process is all its cgroup holds: the two agree, to the
+            # process's ticks of 1/100 s.
+            self.assertAlmostEqual(cpu["process_s"], cpu["usage_s"], delta=0.03)
+            [row] = markdown_table(next(lines for heading, lines in sections.items()
+                                        if heading.startswith(f"{cpu_limit}:")))
+            self.assertEqual((row["CPU µs/request"], row["CPU % of limit"]),
+                             (str(cpu["us_per_request"]), f"{cpu['utilization'] * 100:.1f}"))
+        self.assertIn("*CPU µs/request* is the CPU time smock used during the load", text)
+
+
+def scrape(start=1791993354.147, cpu=0.03, rss=17727488, requests=(1,), cgroup=True, cfs=True,
+           usage=0.043131, periods=3, throttled_periods=1, throttled=0.057118, peak=11468800):
+    """smock's /metrics as it serves it, cut to what bench.py reads, with
+    these values: the process metrics, smock_requests_total with a series
+    for each count of `requests`, and, with `cgroup`, its cgroup's (with
+    `cfs`, the CFS counts)."""
+    lines = ['# HELP smock_build_info The smock build.', '# TYPE smock_build_info gauge',
+             'smock_build_info{version="0.0.0-dev",commit="bce2d12a78d7",toolchain="moonc v0.10.14"} 1',
+             '# HELP smock_requests_total Requests.', '# TYPE smock_requests_total counter',
+             *(f'smock_requests_total{{mock="catalog",stub="item {i}"}} {count}' for i, count in enumerate(requests)),
+             'smock_journal_entries 1', f'process_start_time_seconds {start}', f'process_cpu_seconds_total {cpu}',
+             f'process_resident_memory_bytes {rss}']
+    if cgroup:
+        lines.append(f'smock_cgroup_cpu_usage_seconds_total {usage}')
+        if cfs:
+            lines += [f'smock_cgroup_cpu_periods_total {periods}',
+                      f'smock_cgroup_cpu_throttled_periods_total {throttled_periods}',
+                      f'smock_cgroup_cpu_throttled_seconds_total {throttled}']
+        lines.append(f'smock_cgroup_memory_peak_bytes {peak}')
+    return harness.metric_values("\n".join(lines) + "\n")
+
+
+class ScrapedUse(unittest.TestCase):
+    """What smock used between two scrapes of its /metrics, as a GKE run
+    reads it, in the layout of a step's smock_cpu, peak memory and RSS."""
+
+    def test_the_cpu_time_comes_from_smocks_cgroup_with_its_throttling_and_rss_and_peak_memory(self):
+        before = scrape()
+        after = scrape(cpu=0.81, rss=19922944, requests=(5001, 2500), usage=0.823131, periods=253,
+                       throttled_periods=4, throttled=0.069118, peak=20971520)
+        cpu, peak, rss = harness.scraped_use(before, after, "250m", 25.0)
+        self.assertEqual(cpu, {"usage_s": 0.78, "periods": 250, "throttled_periods": 3, "throttled_s": 0.012,
+                               "source": "cgroup", "process_s": 0.78, "wall_s": 25.0, "requests": 7500,
+                               "us_per_request": 104.0, "utilization": 0.1248})
+        self.assertEqual(peak, 20971520)
+        self.assertEqual(rss, {"first": 17312, "last": 19456, "max": 19456})
+
+    def test_without_its_cgroups_metrics_the_cpu_time_is_the_processs(self):
+        cpu, peak, _ = harness.scraped_use(scrape(cgroup=False), scrape(cpu=0.81, requests=(7501,), cgroup=False),
+                                           "1", 25.0)
+        self.assertEqual(cpu, {"usage_s": 0.78, "periods": None, "throttled_periods": None, "throttled_s": None,
+                               "source": "process", "process_s": 0.78, "wall_s": 25.0, "requests": 7500,
+                               "us_per_request": 104.0, "utilization": 0.0312})
+        self.assertIsNone(peak)
+        # Without a CPU limit's CFS counts, the CPU time is still the
+        # cgroup's.
+        cpu, _, _ = harness.scraped_use(scrape(cfs=False), scrape(usage=0.823131, requests=(7501,), cfs=False),
+                                        "1", 25.0)
+        self.assertEqual((cpu["source"], cpu["usage_s"], cpu["periods"], cpu["throttled_s"]),
+                         ("cgroup", 0.78, None, None))
+
+    def test_requests_count_from_none_before_the_first_and_a_step_without_one_has_no_cpu_time_a_request(self):
+        cpu, _, _ = harness.scraped_use(scrape(requests=()), scrape(requests=(1200,), usage=0.163131), "250m", 25.0)
+        self.assertEqual((cpu["requests"], cpu["us_per_request"]), (1200, 100.0))
+        cpu, _, _ = harness.scraped_use(scrape(), scrape(usage=0.053131), "250m", 25.0)
+        self.assertEqual((cpu["requests"], cpu["us_per_request"]), (0, None))
+
+    def test_a_smock_that_restarted_or_did_not_answer_tells_nothing_of_the_step(self):
+        # A new process: another start time, and counters from zero.
+        for after in (scrape(start=1791993400.5, cpu=0.02, usage=0.03), None):
+            cpu, peak, rss = harness.scraped_use(scrape(), after, "250m", 25.0)
+            self.assertEqual((cpu, peak, rss), (None, None, {"first": 17312, "last": None, "max": None}))
+        cpu, peak, rss = harness.scraped_use(None, scrape(), "250m", 25.0)
+        self.assertEqual((cpu, peak, rss), (None, None, {"first": None, "last": None, "max": None}))
+
+    def test_a_smock_without_process_metrics_tells_nothing_of_the_step(self):
+        old = harness.metric_values('smock_requests_total{mock="catalog",stub=""} 3\nsmock_journal_entries 3\n')
+        newer = harness.metric_values('smock_requests_total{mock="catalog",stub=""} 900\nsmock_journal_entries 900\n')
+        self.assertEqual(harness.scraped_use(old, newer, "250m", 25.0),
+                         (None, None, {"first": None, "last": None, "max": None}))
+
+
 class Cases(unittest.TestCase):
     """The cases cover plain HTTP and TLS, keep-alive connections and a new
     connection per request, many idle connections held open during the load,

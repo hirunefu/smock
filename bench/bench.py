@@ -590,6 +590,12 @@ class Smock:
         finally:
             connection.close()
 
+    def metrics(self):
+        """smock's /metrics, as metric_values reads it, or None when smock
+        does not answer."""
+        status, body = self.admin("GET", "/metrics")
+        return metric_values(body.decode()) if status == 200 else None
+
     def status(self):
         """What the Admin API status operation says: the version, commit and
         toolchain smock was built with, and the definitions it serves."""
@@ -1072,17 +1078,129 @@ def analyze_request(run, item, spec, raw):
     }, latencies, release_latencies, lags
 
 
-def cpu_use(before, after):
-    """The CPU smock's cgroup used and was throttled for between two
-    readings of its cpu.stat, or None when smock was gone at either."""
+def metric_values(text):
+    """The samples of `text`, metrics in the Prometheus text format as
+    smock's /metrics serves them, by metric name, the series of each metric
+    summed: smock_requests_total over every Mock and Stub, for one. None
+    when there is no text."""
+    if text is None:
+        return None
+    values = {}
+    for line in text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        series, _, value = line.rpartition(" ")
+        name = series.split("{", 1)[0]
+        try:
+            values[name] = values.get(name, 0.0) + float(value)
+        except ValueError:
+            continue
+    return values
+
+
+def grew(before, after, name, labelled=False):
+    """How much the counter `name` grew between two scrapes of smock's
+    /metrics (as metric_values reads them), or None when either has none
+    of it, or it went down, as a restarted smock's do. A `labelled` counter
+    has no series, and so no sample, until it first counts: its absence is
+    0."""
     if before is None or after is None:
         return None
+    if labelled:
+        before, after = {name: 0.0, **before}, {name: 0.0, **after}
+    if name not in before or name not in after or after[name] < before[name]:
+        return None
+    return after[name] - before[name]
+
+
+def restarted(before, after):
+    """Whether smock restarted between two scrapes of its /metrics: its
+    process started at another time."""
+    start = "process_start_time_seconds"
+    return before.get(start) != after.get(start)
+
+
+def rounded(value, digits):
+    return None if value is None else round(value, digits)
+
+
+def per_request(usage_s, requests, wall_s, cpu_limit):
+    """What `usage_s` seconds of smock's CPU time over `wall_s` seconds, in
+    which smock answered `requests` requests (on its plain and TLS ports,
+    from smock_requests_total), come to: the CPU time a request in
+    microseconds, and the share of the CPU limit `cpu_limit` used. Each is
+    None when what it needs is unknown."""
+    cpus = cpu_quota_percent(cpu_limit) / 100
     return {
-        "usage_s": round((after["usage_usec"] - before["usage_usec"]) / 1e6, 3),
+        "wall_s": rounded(wall_s, 3),
+        "requests": None if requests is None else round(requests),
+        "us_per_request": round(usage_s * 1e6 / requests, 2) if usage_s is not None and requests else None,
+        "utilization": round(usage_s / (wall_s * cpus), 4) if usage_s is not None and wall_s and cpus else None,
+    }
+
+
+def cpu_use(before, after, cpu_limit, wall_s=None, scrapes=(None, None)):
+    """The CPU smock's cgroup used and was throttled for between two
+    readings of its cpu.stat, `wall_s` seconds apart (None when unknown),
+    or None when smock was gone at either. With smock's /metrics scraped
+    around them (`scrapes`, before and after, as metric_values reads them):
+    the requests smock answered in between, what the CPU time comes to a
+    request and against the CPU limit (per_request), and the CPU time
+    smock's process counted (process_s), a cross-check to the hundredth of
+    a second."""
+    if before is None or after is None:
+        return None
+    usage_s = (after["usage_usec"] - before["usage_usec"]) / 1e6
+    return {
+        "usage_s": round(usage_s, 3),
         "periods": after["nr_periods"] - before["nr_periods"],
         "throttled_periods": after["nr_throttled"] - before["nr_throttled"],
         "throttled_s": round((after["throttled_usec"] - before["throttled_usec"]) / 1e6, 3),
+        "source": "cgroup",
+        "process_s": rounded(grew(*scrapes, "process_cpu_seconds_total"), 2),
+        **per_request(usage_s, grew(*scrapes, "smock_requests_total", labelled=True), wall_s, cpu_limit),
     }
+
+
+def scraped_use(before, after, cpu_limit, wall_s):
+    """What smock used between two scrapes of its /metrics (as
+    metric_values reads them, None for one that got no answer), `wall_s`
+    seconds apart, in the layout of a step's smock_cpu, memory peak and
+    rss_kib, from its process and cgroup metrics, as a run that cannot
+    read smock's cgroup itself measures it: (smock_cpu, peak_bytes,
+    rss_kib).
+
+    - smock_cpu is cpu_use's, with the CPU time from smock's cgroup
+      (`source` cgroup) when smock has its cgroup's metrics, else from its
+      process's (`source` process), and the CFS counts None without them.
+      It is None without both scrapes, or when smock restarted between
+      them, and then so is all the rest but the first RSS.
+    - peak_bytes is the most memory smock's cgroup had used at the second
+      scrape: since smock started, not since the first one.
+    - rss_kib has smock's RSS at the two scrapes, and the larger as its
+      max."""
+    rss = [None if values is None or "process_resident_memory_bytes" not in values
+           else round(values["process_resident_memory_bytes"] / 1024) for values in (before, after)]
+    if before is None or after is None or restarted(before, after):
+        return None, None, {"first": rss[0], "last": None, "max": None}
+    cgroup = grew(before, after, "smock_cgroup_cpu_usage_seconds_total")
+    process = grew(before, after, "process_cpu_seconds_total")
+    usage_s = cgroup if cgroup is not None else process
+    periods = grew(before, after, "smock_cgroup_cpu_periods_total")
+    throttled_periods = grew(before, after, "smock_cgroup_cpu_throttled_periods_total")
+    cpu = None if usage_s is None else {
+        "usage_s": round(usage_s, 3),
+        "periods": None if periods is None else round(periods),
+        "throttled_periods": None if throttled_periods is None else round(throttled_periods),
+        "throttled_s": rounded(grew(before, after, "smock_cgroup_cpu_throttled_seconds_total"), 3),
+        "source": "cgroup" if cgroup is not None else "process",
+        "process_s": rounded(process, 2),
+        **per_request(usage_s, grew(before, after, "smock_requests_total", labelled=True), wall_s, cpu_limit),
+    }
+    peak = after.get("smock_cgroup_memory_peak_bytes")
+    known = [kib for kib in rss if kib is not None]
+    return cpu, None if peak is None else round(peak), {"first": rss[0], "last": rss[1],
+                                                        "max": max(known) if len(known) == 2 else None}
 
 
 def run_case(run, spec):
@@ -1097,7 +1215,8 @@ def run_case(run, spec):
             return not_ready_result(run, spec, killed.oom_kills)
         rss = stack.enter_context(RssSampler(smock, spec["rss_interval_s"]))
         idle = stack.enter_context(IdleConnections(smock.ports["plain"], spec["idle_connections"], run.mix[0]))
-        cpu_before = smock.cpu_stat()
+        metrics_before = smock.metrics()
+        cpu_before, cpu_before_at = smock.cpu_stat(), time.monotonic()
         opens_before = tcp_passive_opens()
         load = start_load(run, smock, spec, raw)
         pids = " ".join(str(item["process"].pid) for item in load)
@@ -1115,8 +1234,12 @@ def run_case(run, spec):
         for item in load:
             item["process"].wait(total_s + 300)
             run.processes.remove(item["process"])
-        # What smock used until the load ended, or until it went.
-        cpu_after = smock.cpu_stat() or smock.last_cpu_stat
+        # What smock used until the load ended, or until it went, when
+        # how long it took is unknown.
+        cpu_after, cpu_after_at = smock.cpu_stat(), time.monotonic()
+        wall_s = cpu_after_at - cpu_before_at if cpu_after is not None else None
+        cpu_after = cpu_after or smock.last_cpu_stat
+        metrics_after = smock.metrics()
         opens = tcp_passive_opens() - opens_before
         idle_open = idle.open_count()
     kinds, latencies, release_latencies, lags = analyze_load(run, load, spec, raw)
@@ -1141,7 +1264,7 @@ def run_case(run, spec):
         "tcp_passive_opens": opens,
         "idle_connections_open_at_end": idle_open,
         "pinning": pinning,
-        "smock_cpu": cpu_use(cpu_before, cpu_after),
+        "smock_cpu": cpu_use(cpu_before, cpu_after, spec["cpu_limit"], wall_s, (metrics_before, metrics_after)),
         "memory": {"peak_bytes": smock.peak_bytes, "oom_kills": smock.oom_kills},
         "rss_kib": {
             "first": rss_values[0] if rss_values else None,
@@ -1456,7 +1579,8 @@ def idle_line(idle):
 
 
 CASE_COLUMNS = ("Case", "Rate", "Achieved", "p50 ms", "p99 ms", "p99.9 ms", "Max ms", "From release p99.9 ms",
-                "Lag p99.9 ms", "Lag max ms", "Errors", "Throttled s", "Max RSS MiB", "Peak memory MiB", "OOM kills")
+                "Lag p99.9 ms", "Lag max ms", "Errors", "CPU µs/request", "CPU % of limit", "Throttled s",
+                "Max RSS MiB", "Peak memory MiB", "OOM kills")
 
 
 def case_row(case):
@@ -1472,8 +1596,10 @@ def case_row(case):
     peak = mib(memory["peak_bytes"])
     if memory["oom_kills"] and memory["peak_bytes"] is not None:
         peak = f">= {peak}"
+    utilization = cpu.get("utilization")
     cells = [name, case["rate"], case["achieved_rate"], latency["p50"], latency["p99"], latency["p99_9"],
-             latency["max"], release["p99_9"], lag["p99_9"], lag["max"], case["errors"], cpu.get("throttled_s"),
+             latency["max"], release["p99_9"], lag["p99_9"], lag["max"], case["errors"], cpu.get("us_per_request"),
+             None if utilization is None else f"{utilization * 100:.1f}", cpu.get("throttled_s"),
              mib(case["rss_kib"]["max"], 1024), peak, memory["oom_kills"]]
     return "| " + " | ".join(shown(cell) for cell in cells) + " |"
 
@@ -1523,7 +1649,10 @@ def summary_markdown(summary, conditions):
               "with no swap. Latency counts from each request's scheduled send time. *From release* counts "
               "from when the load generator released it, and *lag* is how late it released them; oha's 1 ms "
               "timer adds about a millisecond, now and then a few more. A case whose lag is over its limits "
-              f"({lag_limits_text()}) fell behind its schedule and is marked *late*. *Throttled* is how long "
+              f"({lag_limits_text()}) fell behind its schedule and is marked *late*. *CPU µs/request* is the CPU "
+              "time smock used during the load (cpu.stat), ramp and tail included, divided by the requests it "
+              "answered then (smock_requests_total), and *CPU % of limit* that time against the CPU limit "
+              "over the same wall time. *Throttled* is how long "
               "the CPU quota held smock back during the load (cpu.stat). *Peak memory* is the most memory "
               "smock's cgroup used (memory.peak: what memory.max limits, the Journal, socket buffers and page "
               "cache included), and *OOM kills* how many times the kernel killed smock for memory "

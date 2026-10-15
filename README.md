@@ -69,6 +69,12 @@ Packages of `smock/smock`:
 - `metrics`: the metrics registry: counters, gauges and histograms with
   fixed label names, rendered in the Prometheus text format. Features
   register their metrics in the one registry `smock serve` keeps.
+- `usage`: understands what Linux says a process and its cgroup use, in
+  `/proc/self/stat`, `/proc/self/status` and a cgroup v2's `cpu.stat` and
+  `memory.peak`, for the process and cgroup metrics, and where
+  `/proc/self/cgroup` puts the process's cgroup, for those and for the
+  memory limit the Journal's bound follows. It does no I/O: `server` reads
+  the files and hands it their text.
 - `openssl`: smock's own bindings to OpenSSL, the one C library ADR 0001
   allows (native). A TLS connection there does no I/O: it takes the bytes
   that arrive from the peer and hands out the bytes to send, and `server`
@@ -332,6 +338,26 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   certificate expires; `smock_journal_entries`, `smock_journal_bytes` and
   `smock_journal_evictions_total` show the [Journal](#the-journal)'s size
   and evictions, without labels.
+- What smock's process and its cgroup use is read when `/metrics` is
+  scraped, so serving requests costs nothing for it. The standard process
+  metrics of Prometheus's client libraries: `process_cpu_seconds_total`
+  (user and system, from `/proc/self/stat`, to the hundredth of a second),
+  `process_resident_memory_bytes` (`VmRSS` of `/proc/self/status`) and
+  `process_start_time_seconds`. On cgroup v2, the metrics of smock's own
+  cgroup, the one `/proc/self/cgroup` names: from its `cpu.stat`,
+  `smock_cgroup_cpu_usage_seconds_total` (to the microsecond) and, with a
+  CPU limit, `smock_cgroup_cpu_periods_total`,
+  `smock_cgroup_cpu_throttled_periods_total` and
+  `smock_cgroup_cpu_throttled_seconds_total`, how often and how long the
+  CFS quota held it back; from its `memory.peak`,
+  `smock_cgroup_memory_peak_bytes`, the most memory it has used, all that
+  `memory.max` limits. In a Kubernetes container the cgroup is the
+  container's, so they show smock's CPU, throttling and peak memory where
+  nothing outside the Pod can read its cgroup, as on GKE Autopilot; outside
+  one, the cgroup may hold other processes too. A metric whose file smock
+  cannot read when it starts is left out; one whose file it cannot read
+  or understand at a scrape keeps the value it last read, and `/metrics`
+  answers all the same.
 - The request traffic on the plain and TLS ports is in
   `smock_requests_total` and the latency histogram
   `smock_request_duration_seconds` (from the request being read in full to
@@ -1022,9 +1048,10 @@ shows what smock itself adds; a target below the floor would need a load
 generator that paces requests more finely than 1 ms.
 
 A full run of `bench/plan-autopilot.json` measures every target of its
-architecture (on GKE, all but idle RSS and peak memory). A run of
-`bench/plan.json`, as in CI, runs none of these profiles, and reports each
-target as not measured.
+architecture; on GKE, idle RSS and peak memory come from smock's own
+[process and cgroup metrics](#admin-api), so a smock without them leaves
+those two unmeasured. A run of `bench/plan.json`, as in CI, runs none of
+these profiles, and reports each target as not measured.
 
 To check an earlier run against the targets as they are now, such as after
 they changed, without running anything:
@@ -1126,14 +1153,18 @@ architecture the targets file has no set for.
   from the scheduled send times and the latency from release (each p50,
   p90, p99, p99.9, max), the generator lag (p50, p99, p99.9, max) and
   whether the load generator fell behind, the achieved rate, the errors by
-  kind, smock's CPU use and throttling, the quota, memory limit and CPUs
-  read while it ran, smock's peak memory and OOM kills (`memory`), whether
-  smock got ready, smock's RSS (first, last, max), the TCP connections the
-  machine accepted during the load, and the idle connections still open at
-  its end. Then the idle RSS under each profile, with peak memory and OOM
-  kills, and each target with its architecture and profile, its verdict,
-  what was measured and why when that is not plain. `format` numbers the
-  layout.
+  kind, smock's CPU use and throttling (`smock_cpu`: from its cgroup's
+  `cpu.stat`, with the requests smock answered meanwhile, from
+  `smock_requests_total`, what the CPU time comes to a request,
+  `us_per_request`, and against the CPU limit, `utilization`, and the CPU
+  time its process counted, `process_s`, from its `/metrics`, as a
+  cross-check), the quota, memory limit and CPUs read while it ran,
+  smock's peak memory and OOM kills (`memory`), whether smock got ready,
+  smock's RSS (first, last, max), the TCP connections the machine accepted
+  during the load, and the idle connections still open at its end. Then
+  the idle RSS under each profile, with peak memory and OOM kills, and
+  each target with its architecture and profile, its verdict, what was
+  measured and why when that is not plain. `format` numbers the layout.
 - `summary.md`: the same for people, a section for each profile. Its
   *Targets* section says which architecture's targets it checked.
 - `raw/<profile>/<case>/` (`<case>@<rate>` for a ladder's steps):
@@ -1186,6 +1217,10 @@ The line above the table says which steps count.
   regression, and so is a smock that was not ready. Above the target rate
   they are listed for reference.
 - Steps only one run has are listed, not compared.
+- Where both runs measured smock's CPU time a request at a step, a *CPU
+  per request* section shows it and its share of the CPU limit in each,
+  and how it changed. It is there for information: it fails nothing, and
+  another machine or CPU model gives other numbers.
 - A step the older run measured and the newer one did not, because the
   newer run left it out or stopped before it, or its load generator fell
   behind, fails the comparison: nothing says how smock did there. Above
@@ -1314,7 +1349,9 @@ that run's linux/amd64 build and tests passed.
   pins both to one zone instead. The load generator sends each step the
   way `bench/bench.py` does, with its functions, and prints one JSON line
   for each step, a case as `summary.json` has it. It looks up the
-  Service's address once smock answers by name, and before the first step
+  Service's address once smock answers by name. Before any load, once
+  smock has idled for the plan's settle time after it was ready, it reads
+  smock's idle RSS from smock's `/metrics`. Before the first step it
   sends the first request of the mix to the plain and the TLS port there,
   for up to 60 s each until it gets a response; after a step that got no
   response at all, it checks again, since an overloaded smock can answer
@@ -1363,9 +1400,17 @@ EndpointSlices, both kept before smock's Pod is deleted;
 `watchdog.log`. The summary and the conditions record, for each profile,
 whether the traffic ports answered, whether the profile ended early and
 why, and the load generator's CPU request. The summary checks the
-targets of the run's architecture (`--arch`). A GKE run does not measure
-idle RSS, peak memory or CPU throttling, so their targets are not
-measured; OOM kills come from smock's restarts. Nothing it writes names the account or the project, and what it
+targets of the run's architecture (`--arch`). Nothing outside smock's Pod
+can read its cgroup on Autopilot, so what smock used comes from its own
+`/metrics`, its [process and cgroup metrics](#admin-api), which the load
+generator scrapes right before and right after each step: its CPU time and
+throttling during the step, from its container's cgroup, with the CPU time
+a request and against the CPU limit; its RSS at the step's start and end,
+the larger as its max; and the most memory its container had used by the
+step's end (`memory.peak`), since smock started under the profile, so
+earlier steps count too. A smock without those metrics leaves them, idle
+RSS and the targets on them unmeasured. OOM kills come from smock's
+restarts. Nothing it writes names the account or the project, and what it
 prints shows the project as `$GKE_BENCH_PROJECT` and gcloud's account as
 `<account>`.
 
