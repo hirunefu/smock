@@ -1256,8 +1256,13 @@ compare, such as for a summary of another `format`.
 Autopilot: smock in a Pod with each profile's limits as its requests, the
 load from another node over the Pod network. It is part of the
 [checklist before merging into main](docs/merging-into-main.md), and costs
-money: about $0.20 to $0.25 a run (2026-10-14 prices, us-central1 or
-asia-northeast1), which it estimates before it makes anything.
+money: about $0.20 to $0.25 a run on x86 nodes (2026-10-14 prices,
+us-central1 or asia-northeast1), and about $0.16 on Arm nodes in
+us-central1 (2026-10-15 prices), which it estimates before it makes
+anything. Each architecture's Pods are priced at their own on-demand
+rates: x86 Pods at the general-purpose ones, Arm Pods at the Arm Pod rates
+of the Scale-Out compute class, the only Arm Pod rates of the pricing
+page, which names none for the `autopilot-arm` class the run uses.
 
 ```sh
 export GKE_BENCH_PROJECT=<project ID> GKE_BENCH_REGION=us-central1

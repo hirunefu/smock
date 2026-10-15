@@ -581,14 +581,15 @@ class Estimate(Helper):
     def test_it_states_the_expected_cost_and_the_most_a_run_cut_off_at_the_time_limit_costs(self):
         status, stdout, stderr = self.estimate(time_limit_s=3600)
         self.assertEqual(status, 0, stderr)
-        self.assertIn("Cost estimate for arm64 Pods (us-central1, on-demand prices of 2026-10-14, before tax", stdout)
+        self.assertIn("Cost estimate for arm64 Pods (us-central1, on-demand prices of 2026-10-15, before tax", stdout)
         self.assertRegex(stdout, r"Expected: about \$0\.\d\d, the cluster existing for about \d+ minutes\.")
         # Until the watchdog deletes it at the time limit, and for the 5
         # minutes the deletion takes: the cluster's fee ($0.10 an hour), the
-        # load generator (4 vCPU and 4Gi at $0.0445 and $0.0049225 an hour,
-        # 2Gi of ephemeral storage at $0.0001389) and the largest smock (1
-        # vCPU, 1Gi, 64Mi), $0.3474 an hour for 65 minutes.
-        self.assertIn("At most: $0.38, if it ran until the time limit (60 minutes)", stdout)
+        # load generator (4 vCPU and 4Gi at the Arm Pod rates of $0.0356 and
+        # $0.003938 an hour, 2Gi of ephemeral storage at $0.0001389) and the
+        # largest smock (1 vCPU, 1Gi, 64Mi), $0.2980 an hour for 65 minutes.
+        self.assertIn("At most: $0.32, if it ran until the time limit (60 minutes)", stdout)
+        self.assertIn("Arm Pods are priced at the Arm Pod rates of the Scale-Out compute class", stdout)
         # What is billed when nothing is left to delete the cluster.
         self.assertIn("its Pods still stop within minutes of the time limit, and the cluster costs its fee, "
                       "$0.10 an hour", stdout)
@@ -604,8 +605,28 @@ class Estimate(Helper):
         self.assertIn("At most: $0.59, if it ran until the time limit (60 minutes)", stdout)
         self.assertIn("The load generator's Pod (6 vCPU, 6Gi)", stdout)
         self.assertNotIn("Arm", stdout)
-        _, stdout, _ = self.estimate(region="asia-southeast1", arch="arm64")
-        self.assertIn("Arm Pods are priced here as general-purpose x86 Pods", stdout)
+
+    def test_x86_pods_are_estimated_at_the_general_purpose_rates_and_arm_pods_at_the_arm_rates(self):
+        # amd64 in us-central1: the fee, the load generator (6 vCPU and 6Gi
+        # at $0.0445 and $0.0049225 an hour, 2Gi of ephemeral storage at
+        # $0.0001389) and the largest smock (1 vCPU, 1Gi, 64Mi): $0.4462 an
+        # hour for 65 minutes, as before Arm Pods had rates of their own.
+        status, stdout, stderr = self.estimate(arch="amd64", time_limit_s=3600)
+        self.assertEqual(status, 0, stderr)
+        self.assertIn("Cost estimate for amd64 (x86) Pods (us-central1, on-demand prices of 2026-10-14", stdout)
+        self.assertIn("At most: $0.48, if it ran until the time limit (60 minutes)", stdout)
+        self.assertNotIn("Arm", stdout)
+        # The same run on arm64 costs less: $0.2980 an hour.
+        _, stdout, _ = self.estimate(arch="arm64", time_limit_s=3600)
+        self.assertIn("At most: $0.32, if it ran until the time limit (60 minutes)", stdout)
+        # A region with Arm Pods but without their rates here: the fee and
+        # the Pods at us-central1's Arm Pod rates plus the margin, $0.10 and
+        # $0.1980 * 1.3, $0.3574 an hour.
+        _, stdout, _ = self.estimate(region="asia-southeast1", arch="arm64", time_limit_s=3600)
+        self.assertIn("Cost estimate for arm64 Pods (asia-southeast1: us-central1's prices plus 30%, on-demand "
+                      "prices of 2026-10-15", stdout)
+        self.assertIn("At most: $0.39, if it ran until the time limit (60 minutes)", stdout)
+        self.assertNotIn("priced here as general-purpose x86 Pods", stdout)
 
     def test_a_region_without_prices_here_is_estimated_from_us_central1s_with_a_margin(self):
         status, stdout, _ = self.estimate(region="europe-west4")
