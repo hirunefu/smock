@@ -37,15 +37,15 @@
       ]
     },
     "amd64": {
-      "about": "Provisional. From two runs of bench/plan-autopilot.json on GKE Autopilot on 2026-10-14, on x86, the architecture of the maintainer's production environment: smock in general-purpose x86 Pods on ek-standard-8 nodes in us-central1-a, where a vCPU is a hyperthread, under each profile's CPU and memory limits, loaded by oha from a Pod on another node over the Pod network. Under 1 CPU, smock kept up with plain HTTP up to about 19,000 requests a second (TLS about 14,000), with p99 3.0 ms and p99.9 3.5 to 4.5 ms at 5,000 in both runs, and p99 4.2 and 12.9 ms at 10,000. Under 250m and 50m, the CFS quota showed in the slowest requests even at light load, and they varied from run to run: under 250m, in the one run that measured it, p99 was 3.7 ms at 1,250 a second but 69 ms at 625 (it kept up to about 3,500); under 50m at 125 a second, p99 was 18 and 45 ms and p99.9 80 and 138 ms in the two runs (it kept up to about 500). These targets leave room for that. Those runs measured neither idle RSS nor peak memory (smock had no process or cgroup metrics yet): their bounds are those of arm64.",
+      "about": "Provisional. From three runs of bench/plan-autopilot.json on GKE Autopilot, two on 2026-10-14 and one on 2026-10-15 with a smock that spends less CPU on each request, on x86, the architecture of the maintainer's production environment: smock in general-purpose x86 Pods on ek-standard-8 nodes in us-central1-a, where a vCPU is a hyperthread, under each profile's CPU and memory limits, loaded by oha from a Pod on another node over the Pod network. Under 1 CPU, smock kept up with plain HTTP up to about 19,000 to 21,000 requests a second (TLS about 14,000). At 10,000, p99 was 3.8 ms and p99.9 5.8 ms in the third run, with smock at 75% of its CPU limit, 4.2 and 11.7 ms in the second, and 12.9 and 22 ms in the first; at 20,000, close to that limit, requests queued for seconds. Under 250m and 50m, the CFS quota showed in the slowest requests even at light load, and they varied from run to run: under 250m, in the two runs that measured it, p99 was 3.7 and 2.8 ms at 1,250 a second, but 69 ms at 625 in one of them; under 50m at 125 a second, p99 was 3.3 to 45 ms and p99.9 41 to 138 ms. These targets leave room for that. Only the third run measured idle RSS and peak memory, from smock's process and cgroup metrics: idle RSS was 16.2 to 16.3 MiB under each profile, and peak memory at each target's rate at most 27.2 MiB, under 1 CPU. The bounds are those of arm64.",
       "profiles": [
         {
           "profile": "chart-default",
           "cpu_limit": "1",
           "memory_limit": "1Gi",
           "case": "http-keep-alive",
-          "rate": 5000,
-          "at_most": { "p99_ms": 5, "p99_9_ms": 20, "peak_memory_mib": 32, "idle_rss_mib": 20 }
+          "rate": 10000,
+          "at_most": { "p99_ms": 10, "p99_9_ms": 20, "peak_memory_mib": 32, "idle_rss_mib": 20 }
         },
         {
           "profile": "autopilot-min",
