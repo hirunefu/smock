@@ -1480,7 +1480,8 @@ for each node of each profile, its CPU (`cpu`, as `gke.py node-cpu`
 prints it, or null when it is unknown), and name the CPU model of smock's
 nodes in `machine.cpu_model`, which `summary.md` shows. A run that stops
 once a profile has started, because something fails or it is stopped
-(Ctrl-C, SIGTERM, a closed terminal), still writes `summary.json`,
+(Ctrl-C, SIGTERM, a closed terminal, or the watchdog at the time limit,
+which it names as the reason), still writes `summary.json`,
 `summary.md` and `conditions.json` from what it measured; `summary.md`
 then says, right below its first line, under which profile and after
 which step the run stopped, and why (`gke.stopped` in `summary.json`). So

@@ -1240,6 +1240,22 @@ class StoppedEarly(Script):
                       "http-keep-alive@small@1000: stopped by SIGTERM.", markdown)
         self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
 
+    def test_a_run_the_watchdog_stopped_at_the_time_limit_says_so(self):
+        # The time limit passes while smock becomes ready under small, and
+        # the watchdog stops the run with SIGTERM.
+        self.fake_time(1)
+        self.configure(smock_ready={"advance_s": 2500, "sleep": 60})
+        process = self.start_script("--yes", "--time-limit", "40m")
+        output, _ = process.communicate(timeout=60)
+        self.assertNotEqual(process.returncode, 0, output)
+        reason = "the time limit of 40 minutes passed, and the watchdog stopped the run"
+        self.assertIn(f"gke-bench: {reason}", output)
+        summary, _, markdown = self.written()
+        self.assertEqual(summary["gke"]["stopped"], {"reason": reason, "profile": "small", "after": None})
+        self.assertIn(f"**Stopped early:** the run stopped under profile small, before its first step: {reason}.",
+                      markdown)
+        self.wait_for_nothing_left()
+
     def test_a_run_that_ends_normally_says_nothing_of_stopping(self):
         status, output = self.run_script("--yes")
         self.assertEqual(status, 0, output)

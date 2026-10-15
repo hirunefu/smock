@@ -160,6 +160,10 @@ READY_LIMIT_S=900
 TOKEN_REFRESH_S=2700
 # How long deleting the cluster may take before the script gives up on it.
 DELETE_LIMIT_S=1800
+# The file the watchdog leaves in the results directory, beside its stop
+# file, before it stops the run at the time limit, so that the run says
+# why it was stopped.
+TIME_LIMIT_PASSED=.time-limit-passed
 # The longest time limit: a full run takes under an hour, and a limit far
 # beyond it, such as 4800 taken as minutes, would keep a stuck run billed.
 MAX_TIME_LIMIT_S=14400
@@ -338,9 +342,10 @@ delete_repository() {
 
 # The watchdog's own process (scripts/gke-bench.sh --watchdog): in its own
 # session, deaf to the terminal, it waits for the deadline, then stops the
-# run and deletes the cluster and the repository, and, once the run has
-# gone, its temporary directory with the kubeconfig. The run stops it when
-# it has cleaned up, through the stop file.
+# run (with SIGTERM, having left TIME_LIMIT_PASSED beside the stop file)
+# and deletes the cluster and the repository, and, once the run has gone,
+# its temporary directory with the kubeconfig. The run stops it when it has
+# cleaned up, through the stop file.
 watchdog() {
   trap '' INT HUP
   trap 'say "watchdog: stopped by the run"; exit 0' TERM
@@ -361,6 +366,7 @@ watchdog() {
   say "watchdog: the time limit has passed; stopping the run and deleting what it made"
   learn_account
   if is_this_script "$parent"; then
+    : >"$(dirname "$stop")/$TIME_LIMIT_PASSED"
     kill -TERM "$parent" 2>/dev/null
   fi
   delete_cluster
@@ -604,8 +610,11 @@ on_signal() {
       exec >/dev/null 2>&1
     fi
   fi
-  say "stopped by SIG$1"
   stop_reason="stopped by SIG$1"
+  if [ "$1" = TERM ] && [ -e "$out/$TIME_LIMIT_PASSED" ]; then
+    stop_reason="the time limit of $((time_limit_s / 60)) minutes passed, and the watchdog stopped the run"
+  fi
+  say "$stop_reason"
   exit "$2"
 }
 
@@ -871,7 +880,7 @@ start_watchdog() {
     return
   fi
   mkdir -p "$out" || die "cannot make the results directory $out"
-  rm -f "$out/.watchdog-stop"
+  rm -f "$out/.watchdog-stop" "$out/$TIME_LIMIT_PASSED"
   GKE_BENCH_WATCHDOG_DEADLINE=$deadline GKE_BENCH_WATCHDOG_PARENT=$$ GKE_BENCH_WATCHDOG_STOP=$out/.watchdog-stop \
     GKE_BENCH_CLUSTER=$cluster GKE_BENCH_REPOSITORY=$repository GKE_BENCH_WORK=$work \
     setsid "$SCRIPT" --watchdog </dev/null >>"$out/watchdog.log" 2>&1 &
