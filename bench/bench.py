@@ -1033,7 +1033,7 @@ def analyze_request(run, item, spec, raw):
     requests scheduled in the window, counted from their due times and from
     the times oha released them, how late it released them, what went
     wrong, and the latencies of all its requests that got a response by
-    the second of the load they were due in ({second: latencies})."""
+    the second of the load oha released them in ({second: latencies})."""
     request, rate = item["request"], item["rate"]
     database = run.tmp / f"{request['name']}.sqlite"
     first, last = window(spec, rate)
@@ -1052,16 +1052,19 @@ def analyze_request(run, item, spec, raw):
         # it. oha's timer has a resolution of 1 ms, so tickets go out about
         # a millisecond after they are due, now and then a few more: the
         # lag, reported apart with the latency from release, which leaves
-        # it out. Tickets are
-        # released in order, so the k-th release is ticket k. oha stores only
-        # the requests that got a response: when some got none, the k-th
-        # stored release is ticket k or a later one, and the lag and the
-        # latency of such a case are overstated.
+        # it out. Tickets are released in order, so the k-th release is
+        # ticket k. oha stores only the requests that got a response: when
+        # some got none, the k-th stored release is ticket k or a later
+        # one, and the lag and the latency of such a case are overstated,
+        # by 1 / rate for each missing ticket before it. Each response
+        # counts in the second of the load oha released it in, which is the
+        # one it was due in but for the lag, so a missing ticket leaves the
+        # second it was due in short, not the last one.
         rows = connection.execute("SELECT start_latency_correction, end, status FROM oha "
                                   "ORDER BY start_latency_correction")
         for k, (released, ended, status) in enumerate(rows):
             due = k / rate
-            by_second.setdefault(int(due), array.array("d")).append(ended - due)
+            by_second.setdefault(int(released), array.array("d")).append(ended - due)
             if first <= k < last:
                 latencies.append(ended - due)
                 release_latencies.append(ended - released)
@@ -1346,12 +1349,18 @@ def analyze_load(run, load, spec, raw):
 
 def per_second(spec, by_second):
     """For each second of a step's load from its start, ramp and tail
-    included, how many of the requests due in it got a response, of every
-    request kind together, and their p99 latency from the due times (None
-    when none did), from their latencies by second ({second: latencies}):
-    {"requests": [...], "p99_ms": [...]}, a second each. A burst at the
-    start, a stall now and then and a step slow all through look apart in
-    it, where the window's percentiles mix them."""
+    included, how many of the requests oha released in it got a response,
+    of every request kind together, and their p99 latency from the due
+    times (None when none did), from their latencies by second ({second:
+    latencies}): {"requests": [...], "p99_ms": [...]}, a second each. A
+    burst at the start, a stall now and then and a step slow all through
+    look apart in it, where the window's percentiles mix them.
+
+    oha releases a request about a millisecond after it is due, later when
+    it falls behind, and stores none that got no response. Such a request
+    leaves the second it was due in short, and overstates the p99 of each
+    later second by up to the time between two requests of its kind (1 /
+    their rate), as analyze_request explains."""
     total_s = spec["ramp_s"] + spec["duration_s"] + spec["tail_s"]
     seconds = max(math.ceil(total_s), max(by_second, default=-1) + 1)
     requests, p99 = [], []

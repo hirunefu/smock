@@ -464,21 +464,23 @@ class ScrapedUse(unittest.TestCase):
 def oha_database(path, latencies_ms, rate):
     """An oha database as oha writes it with -q and --latency-correction:
     ticket k released 0.2 ms after it was due, at k / rate, and answered
-    `latencies_ms[k]` after it was due, with status 200."""
+    `latencies_ms[k]` after it was due, with status 200, or no row for it
+    when that is None, as oha stores none for a request that got no
+    response."""
     connection = sqlite3.connect(path)
     connection.execute("CREATE TABLE oha (start REAL, start_latency_correction REAL, end REAL, duration REAL, "
                        "status INTEGER, len_bytes INTEGER)")
     connection.executemany("INSERT INTO oha VALUES (?, ?, ?, ?, ?, ?)", [
         (k / rate + 0.0002, k / rate + 0.0002, k / rate + latency / 1000, latency / 1000, 200, 400)
-        for k, latency in enumerate(latencies_ms)])
+        for k, latency in enumerate(latencies_ms) if latency is not None])
     connection.commit()
     connection.close()
 
 
 class PerSecond(unittest.TestCase):
     """Each step keeps, for each second of its load from its start, ramp
-    and tail included, how many requests due in it got a response and
-    their p99 latency, counted from when they were due: a burst at the
+    and tail included, how many requests oha released in it got a response
+    and their p99 latency, counted from when they were due: a burst at the
     start, a stall now and then, and a step slow all through look apart."""
 
     def test_each_second_of_the_load_has_its_requests_and_their_p99(self):
@@ -513,6 +515,23 @@ class PerSecond(unittest.TestCase):
         result = harness.load_result(spec, *harness.analyze_load(SimpleNamespace(tmp=directory), load, spec,
                                                                  directory))
         self.assertEqual(result["per_second"], {"requests": [10, 10, 5, 0], "p99_ms": [1.0, 1.0, 1.0, None]})
+
+    def test_requests_that_got_no_response_leave_the_second_they_were_due_in_short(self):
+        directory = Path(tempfile.mkdtemp(prefix="smock-bench-test-"))
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        spec = {"ramp_s": 1, "duration_s": 2, "tail_s": 1}
+        # Tickets 10 to 14 of 40, the first half of second 1, got no
+        # response, as when smock restarts: oha stored no row for them.
+        oha_database(directory / "a.sqlite", [None if 10 <= k < 15 else 1 for k in range(40)], 10)
+        load = [{"request": {"name": "a", "expect": {"status": 200}}, "rate": 10.0, "connections": 1,
+                 "process": SimpleNamespace(returncode=0)}]
+        result = harness.load_result(spec, *harness.analyze_load(SimpleNamespace(tmp=directory), load, spec,
+                                                                 directory))
+        # Each response counts in the second oha released it in. Their due
+        # times come from their order, so from the loss on they are 5
+        # tickets too early, and the p99 of the later seconds is overstated
+        # by their share of a second, 500 ms, as the window's is.
+        self.assertEqual(result["per_second"], {"requests": [10, 5, 10, 10], "p99_ms": [1.0, 501.0, 501.0, 501.0]})
 
 
 class Cases(unittest.TestCase):
