@@ -53,7 +53,8 @@ Packages of `smock/smock`:
   template helpers draw from. Its sequence for a seed is fixed, the same on
   every target.
 - `defdir`: reads the definitions directory and loads it, for
-  `smock serve`, `smock check` and `smock render` (native).
+  `smock serve`, `smock check` and `smock render`, and takes the stamp of
+  it that a poll compares (native).
 - `server`: the listeners, the connection loop and the Admin API (native).
   On the TLS port the same loop reads and writes through a TLS stream; on
   the admin port it answers the Admin API. It reloads rotated certificates,
@@ -65,7 +66,10 @@ Packages of `smock/smock`:
   (inotify) and polling in case an event is missed, so that `server` can
   reload the definitions directory and the certificate directories
   (native). Its `Schedule`, which coalesces a burst of events into one
-  check and keeps the poll interval, does no I/O and reads no clock.
+  check and keeps the poll interval, does no I/O and reads no clock. A poll
+  reads nothing unless the `Stamp` of what the caller reads (the names it
+  lists and the times of the files it reads) may have changed since the
+  last one.
 - `metrics`: the metrics registry: counters, gauges and histograms with
   fixed label names, rendered in the Prometheus text format. Features
   register their metrics in the one registry `smock serve` keeps.

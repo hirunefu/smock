@@ -1,7 +1,12 @@
 import {
   "smock/smock/definitions",
+  "smock/smock/watch",
   "moonbitlang/async/fs",
   "moonbitlang/core/encoding/utf8",
 }
+
+import {
+  "moonbitlang/async",
+} for "test"
 
 supported_targets = "native"

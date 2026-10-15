@@ -32,21 +32,31 @@ pub async fn serve(
   }
   // Watching starts before the first load, so that no change made while it
   // reads the files goes unnoticed. Without a definitions directory, there
-  // is nothing to watch and nothing to reload.
+  // is nothing to watch and nothing to reload. A poll first compares a stamp
+  // of what a reload reads with the last one, and reads only when it may
+  // have changed.
   let watch = match settings.dir {
     None => None
-    Some(dir) => Some(@watch.Watch(dir))
+    Some(dir) =>
+      Some(
+        @watch.Watch(dir, stamp=stamp => {
+          @defdir.stamp(stamp, dir, body_file_dir=settings.body_file_dir)
+        }),
+      )
   }
   defer (if watch is Some(watch) { watch.close() })
   // The directories of the certificate and key files are watched too, also
-  // from before the first load.
+  // from before the first load, and their polls compare a stamp of the
+  // files the same way.
   let tls_watches = []
   let pairs = match settings.tls {
     Some(files) => [files, ..settings.tls_mock_certs.values()]
     None => [..settings.tls_mock_certs.values()]
   }
   for dir in tls_dirs(pairs) {
-    tls_watches.push(@watch.Watch(dir))
+    tls_watches.push(
+      @watch.Watch(dir, stamp=stamp => stamp_pairs(stamp, pairs)),
+    )
   }
   defer tls_watches.each(watch => watch.close())
   // The process generator. Its seed is logged, so that a run can be

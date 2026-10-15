@@ -188,6 +188,19 @@ fn tls_dirs(pairs : Array[@settings.TlsFiles]) -> Array[String] {
 }
 
 ///|
+/// Notes in `stamp` the certificate and key files of `pairs`, which each
+/// check of their directories reads.
+async fn stamp_pairs(
+  stamp : @watch.Stamp,
+  pairs : Array[@settings.TlsFiles],
+) -> Unit {
+  for files in pairs {
+    stamp.note_file(files.cert_file)
+    stamp.note_file(files.key_file)
+  }
+}
+
+///|
 /// The configuration a new handshake gets when the client asks for
 /// `server_name` by SNI: the pair of the Mock whose Hosts include the name,
 /// compared as Host resolution compares Hosts, if that Mock has one, and

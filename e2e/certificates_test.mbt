@@ -44,9 +44,14 @@ fn is_certificate_entry(line : String) -> Bool {
 
 ///|
 /// Waits until smock has logged `count` entries about TLS certificates in
-/// all, and returns them as `log_entries` shows them.
-async fn Smock::certificate_entries(self : Smock, count : Int) -> String {
-  let logged = @async.with_timeout_opt(reload_patience_ms, () => {
+/// all, at most `within` milliseconds, and returns them as `log_entries`
+/// shows them.
+async fn Smock::certificate_entries(
+  self : Smock,
+  count : Int,
+  within? : Int = reload_patience_ms,
+) -> String {
+  let logged = @async.with_timeout_opt(within, () => {
     for ;; {
       let lines = self.logs.filter(is_certificate_entry)
       if lines.length() >= count {
@@ -197,6 +202,55 @@ async test "a Secret-style update, which swaps the ..data symlink and keeps the 
             )
           },
         )
+      })
+    })
+  })
+}
+
+///|
+async test "a Secret-style update where no event reports it, behind symlinks that lead out of the certificate directory, is found by the next poll" {
+  with_definitions([("users.json", users)], dir => {
+    with_certificates(certs => {
+      with_secret(@testcerts.rsa_chain, @testcerts.rsa_key, secret => {
+        with_definitions([], linked => {
+          for name in ["tls.crt", "tls.key"] {
+            @fs.symlink(target="\{secret}/\{name}", "\{linked}/\{name}")
+          }
+          // Older than the 2 s after which a poll trusts its stamp.
+          @async.sleep(2500)
+          let _ = with_smock(
+            ["--dir", dir, "--port", "0", ..certs.pair_args(linked)],
+            smock => {
+              let before = smock.presented(certs)
+              configmap_update(
+                secret,
+                "2026_10_13_02",
+                [
+                  ("tls.crt", @testcerts.ecdsa_chain + "\n"),
+                  ("tls.key", @testcerts.ecdsa_key + "\n"),
+                ],
+                replaces="2026_10_13_01",
+              )
+              @async.sleep(1000)
+              let within = smock.logs.filter(is_certificate_entry).length()
+              let logged = smock.certificate_entries(1, within=poll_patience_ms)
+              inspect(
+                (
+                  $|before: \{before}
+                  $|entries within 1 s: \{within}
+                  $|\{logged}
+                  $|after: \{smock.presented(certs)}
+                ),
+                content=(
+                  #|before: smock-test-rsa
+                  #|entries within 1 s: 0
+                  #|{"level":"info","msg":"TLS certificate reloaded","mock":"","certFile":"*/tls.crt","keyFile":"*/tls.key","expiry":"2125-01-01T00:00:00.000Z"}
+                  #|after: smock-test-ecdsa
+                ),
+              )
+            },
+          )
+        })
       })
     })
   })
