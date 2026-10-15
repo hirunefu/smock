@@ -8,7 +8,8 @@ for each request of the mix (bench/requests.json) at its weight's share of
 the step's rate and connections, at a fixed arrival rate, latency counted
 from each request's due time. It prints one JSON line for each step to
 stdout, in the layout of a case of bench/bench.py's summary.json, between a
-line about the start and one when it is done; progress goes to stderr.
+line about the start, with the CPU of the node it runs on (gke.py
+node-cpu), and one when it is done; progress goes to stderr.
 
 It looks up smock's address once smock answers by name, and sends the load
 there. Once smock has been ready for the plan's idle settle time, it reads
@@ -344,7 +345,7 @@ def main():
     status_json = json.loads(body) if status == 200 else None
     emit({"kind": "start", "profile": profile_name, "address": address, "oha": oha_version,
           "cpus": os.cpu_count(), "affinity": len(os.sched_getaffinity(0)), "nofile": hard,
-          "status": status_json})
+          "status": status_json, "node_cpu": gke.read_node_cpu()[0]})
     # As bench/bench.py measures idle RSS, under the profiles the plan
     # names for it (each, when it names none): once smock has idled for the
     # plan's settle time after it was ready, before any load. It has been

@@ -1262,6 +1262,14 @@ The line above the table says which steps count.
   Compare runs of the same kind: a GKE run with a GKE run, a run on a
   machine with a run on the same machine. It says so when one run is on
   GKE and the other is not.
+- Of two GKE runs, it says under each profile whether smock's node had
+  another CPU in the newer run: its model (with its family, model and
+  stepping, which tell apart the generations a virtual machine's model
+  name may not), microcode, TLS flags or the kernel's mitigations of its
+  vulnerabilities, each where it changed; where smock's node had the same
+  CPU; and where a run did not record it, as runs before the nodes' CPUs
+  were recorded did not. A latency that changed with the node may be the
+  node's rather than smock's. It fails nothing.
 - Runs on different CPU architectures, such as an arm64 GKE run and an
   amd64 one, are not compared step by step: their latencies differ by more
   than smock, so no step is a regression, nor a step the newer run left
@@ -1374,9 +1382,19 @@ that run's linux/amd64 build and tests passed.
   `autopilot-arm` compute class on arm64, Autopilot's default
   general-purpose x86 Pods on amd64. Autopilot chooses smock's zone, and a
   required Pod affinity keeps the load generator in it; `GKE_BENCH_ZONE`
-  pins both to one zone instead. The load generator sends each step the
-  way `bench/bench.py` does, with its functions, and prints one JSON line
-  for each step, a case as `summary.json` has it. It looks up the
+  pins both to one zone instead. Before smock starts, an init container
+  in its Pod, from the load generator's image and with smock's limits so
+  that the Pod asks for no more, prints the CPU of smock's node
+  (`bench/gke/gke.py node-cpu`): its model name, vendor, family, model and
+  stepping (on arm64, its implementer, part, variant and revision), its
+  microcode, whether it has the flags that make TLS fast (`aes`, `avx2`,
+  `sha_ni` and `vaes` on x86; `aes`, `pmull` and `sha2` on arm64), and
+  what the kernel says of each of its vulnerabilities, from
+  `/proc/cpuinfo` and `/sys/devices/system/cpu/vulnerabilities`. It
+  succeeds whatever it can read, so that smock always starts. The load
+  generator says the same of its own node. The load generator sends each
+  step the way `bench/bench.py` does, with its functions, and prints one
+  JSON line for each step, a case as `summary.json` has it. It looks up the
   Service's address once smock answers by name. Before any load, once
   smock has idled for the plan's settle time after it was ready, it reads
   smock's idle RSS from smock's `/metrics`. Before the first step it
@@ -1420,15 +1438,20 @@ otherwise: `raw/<profile>/generator.log`, the load generator's lines;
 `raw/<profile>/pods.json`, the nodes the Pods ran on, smock's restarts and
 the load generator's CPU request; `raw/<profile>/smock.log`, smock's log
 (and the log of its container before its last restart, when it
-restarted, with kubectl's errors in their place), and
+restarted, with kubectl's errors in their place);
+`raw/<profile>/smock-node-cpu.log`, what smock's init container printed
+of the CPU of its node; and
 `raw/<profile>/service.json`, its Service with the Service's
-EndpointSlices, both kept before smock's Pod is deleted;
+EndpointSlices, all three kept before smock's Pod is deleted;
 `summary.json` in the layout of a run on a machine, which
 `bench/compare.py` reads; `summary.md`; `conditions.json`; and
 `watchdog.log`. The summary and the conditions record, for each profile,
 whether the traffic ports answered, whether the profile ended early and
-why, and the load generator's CPU request. The summary checks the
-targets of the run's architecture (`--arch`). Nothing outside smock's Pod
+why, and the load generator's CPU request; the conditions also record,
+for each node of each profile, its CPU (`cpu`, as `gke.py node-cpu`
+prints it, or null when it is unknown), and name the CPU model of smock's
+nodes in `machine.cpu_model`, which `summary.md` shows. The summary
+checks the targets of the run's architecture (`--arch`). Nothing outside smock's Pod
 can read its cgroup on Autopilot, so what smock used comes from its own
 `/metrics`, its [process and cgroup metrics](#admin-api), which the load
 generator scrapes right before and right after each step, and a second

@@ -529,6 +529,100 @@ class Conditions(Comparison):
         self.assertIn("- Older: no conditions.json beside its summary.", missing)
 
 
+# The CPUs of nodes, as a GKE run's conditions.json records them: an AMD
+# EPYC 7B13 (Zen 3), and an Intel Broadwell, which has no SHA or vector AES
+# instructions and other mitigations.
+AMD = {"model_name": "AMD EPYC 7B13", "vendor_id": "AuthenticAMD", "cpu_family": "25", "model": "1",
+       "stepping": "0", "microcode": "0xffffffff", "flags": {"aes": True, "avx2": True, "sha_ni": True, "vaes": True},
+       "vulnerabilities": {"meltdown": "Not affected", "retbleed": "Not affected",
+                           "spectre_v2": "Mitigation: Retpolines; IBPB: conditional; STIBP: always-on"}}
+INTEL = {"model_name": "Intel(R) Xeon(R) CPU @ 2.20GHz", "vendor_id": "GenuineIntel", "cpu_family": "6",
+         "model": "79", "stepping": "0", "microcode": "0xffffffff",
+         "flags": {"aes": True, "avx2": True, "sha_ni": False, "vaes": False},
+         "vulnerabilities": {"meltdown": "Mitigation: PTI", "retbleed": "Mitigation: IBRS",
+                             "spectre_v2": "Mitigation: IBRS; IBPB: conditional; STIBP: conditional"}}
+
+# A node of a run before the nodes' CPUs were recorded.
+NOT_RECORDED = object()
+
+
+def gke_conditions(cpus):
+    """The conditions of an amd64 GKE run in which smock ran, under each
+    profile of `cpus` ({profile: CPU}), on a node of its own with that CPU
+    (None: the run could not read it; NOT_RECORDED: a run before the nodes'
+    CPUs were recorded), and the load generator on another node."""
+    profiles = {}
+    for number, (profile, cpu) in enumerate(cpus.items()):
+        node = {"instance_type": "ek-standard-8", "arch": "amd64", "zone": "us-central1-a"}
+        generator_node = {**node, "cpu": INTEL}
+        if cpu is not NOT_RECORDED:
+            node["cpu"] = cpu
+        profiles[profile] = {"smock": [{"name": f"smock-{profile}", "node": f"node-{number}"}],
+                             "generator": [{"name": f"generator-{profile}-1", "node": f"node-{number}-b"}],
+                             "nodes": {f"node-{number}": node, f"node-{number}-b": generator_node}}
+    return conditions(architecture="amd64", cpu_model="GKE Autopilot ek-standard-8", gke={
+        "region": "us-central1", "zone": "us-central1-a", "compute_class": "general-purpose", "arch": "amd64",
+        "machine_type": "ek-standard-8", "profiles": profiles})
+
+
+class SmockNodes(Comparison):
+    """Two GKE runs may put smock on nodes of different CPUs, whose
+    latencies differ by more than smock: the report says, under each
+    profile, how the CPU of smock's node changed, from each run's
+    conditions.json, and fails nothing for it."""
+
+    def test_a_cpu_model_microcode_tls_flags_or_mitigations_that_changed_are_named_under_each_profile(self):
+        newer_amd = {**AMD, "microcode": "0xa0011d1"}
+        older = self.summary([step()], conditions=gke_conditions({"chart-default": AMD, "autopilot-min": AMD}))
+        newer = self.summary([step()], conditions=gke_conditions({"chart-default": INTEL,
+                                                                  "autopilot-min": newer_amd}))
+        status, report = self.compare(older, newer)
+        self.assertEqual(status, 0, report)
+        self.assertIn("Besides smock, the runs differ in: the CPU of smock's nodes.", report)
+        self.assertIn("\n".join([
+            "smock's node had another CPU in the newer run, so a change in latency there may be the node's rather "
+            "than smock's:",
+            "",
+            "- chart-default: model AMD EPYC 7B13 (family 25, model 1, stepping 0) → Intel(R) Xeon(R) CPU @ 2.20GHz "
+            "(family 6, model 79, stepping 0); TLS flags aes avx2 sha_ni vaes → aes avx2; mitigations of meltdown, "
+            "retbleed, spectre_v2.",
+            "- autopilot-min: microcode 0xffffffff → 0xa0011d1.",
+        ]), report)
+
+    def test_the_same_cpu_under_each_profile_is_said_too(self):
+        older = self.summary([step()], conditions=gke_conditions({"chart-default": AMD, "autopilot-min": INTEL}))
+        newer = self.summary([step()], conditions=gke_conditions({"chart-default": AMD, "autopilot-min": INTEL}))
+        status, report = self.compare(older, newer)
+        self.assertEqual(status, 0, report)
+        self.assertIn("Besides smock, the runs had the same conditions.", report)
+        self.assertIn("smock's node had the same CPU in both runs (model, microcode, TLS flags and mitigations) "
+                      "under chart-default, autopilot-min.", report)
+        self.assertNotIn("another CPU", report)
+
+    def test_a_cpu_a_run_did_not_record_is_unknown(self):
+        # As a run before the nodes' CPUs were recorded, compared with one
+        # after.
+        recorded = gke_conditions({"chart-default": AMD, "autopilot-min": AMD})
+        for older, newer, expected in (
+                (gke_conditions({"chart-default": NOT_RECORDED, "autopilot-min": NOT_RECORDED}), recorded,
+                 "The older run did not record the CPU of smock's nodes: whether it changed is unknown."),
+                (gke_conditions({"chart-default": NOT_RECORDED, "autopilot-min": NOT_RECORDED}),
+                 gke_conditions({"chart-default": NOT_RECORDED, "autopilot-min": NOT_RECORDED}),
+                 "Neither run recorded the CPU of smock's nodes: whether it changed is unknown."),
+                (recorded, gke_conditions({"chart-default": AMD, "autopilot-min": None}),
+                 "Whether smock's node had another CPU is unknown under autopilot-min: a run did not record it.")):
+            status, report = self.compare(self.summary([step()], conditions=older),
+                                          self.summary([step()], conditions=newer))
+            self.assertEqual(status, 0, report)
+            self.assertIn(expected, report)
+            self.assertIn("Besides smock, the runs had the same conditions.", report)
+
+    def test_runs_on_machines_say_nothing_of_nodes(self):
+        _, report = self.compare(self.summary([step()], conditions=conditions()),
+                                 self.summary([step()], conditions=conditions()))
+        self.assertNotIn("smock's node", report)
+
+
 class Inputs(Comparison):
     def test_summaries_it_cannot_read_or_compare_stop_it_with_status_2(self):
         good = self.summary([step()])

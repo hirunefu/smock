@@ -278,13 +278,38 @@ def services_and_endpoint_slices():
     return {"apiVersion": "v1", "kind": "List", "items": items, "metadata": {"resourceVersion": ""}}
 
 
-def logs(target, previous):
-    """kubectl logs [--previous] job/<name> or pod/<name>."""
+def node_list():
+    """kubectl get nodes -o json: the nodes the Pods run on, of the
+    architecture smock's Pod asked for."""
+    pods = [item for item in objects().values() if item["kind"] == "Pod"]
+    arch = next((pod["spec"]["nodeSelector"]["kubernetes.io/arch"] for pod in pods), "amd64")
+    return {"items": [{
+        "metadata": {"name": name, "labels": {"node.kubernetes.io/instance-type": "ek-standard-8",
+                                              "kubernetes.io/arch": arch,
+                                              "topology.kubernetes.io/zone": "us-central1-a"}},
+        "status": {"capacity": {"cpu": "8"}, "allocatable": {"cpu": "7910m"},
+                   "nodeInfo": {"kernelVersion": "6.12.105+", "kubeletVersion": "v1.35.8-gke.1225000",
+                                "osImage": "Container-Optimized OS from Google"}}} for name in ("node-a", "node-b")]}
+
+
+def logs(target, previous, container):
+    """kubectl logs [--previous] [--container=<name>] job/<name> or
+    pod/<name>: a container other than smock's is named <pod>/<container>
+    in the configured logs."""
     kind, name = target.split("/", 1)
     known = config.get("logs", {})
     if kind == "pod" and f"Pod/{name}" not in objects():
         sys.stderr.write(f'Error from server (NotFound): pods "{name}" not found\n')
         answer("", 1)
+    if kind == "pod" and container is None:
+        spec = objects()[f"Pod/{name}"]["spec"]
+        if spec.get("initContainers"):
+            # As kubectl says, on stderr, for a Pod of more than one.
+            names = [item["name"] for item in spec["containers"]] + \
+                [f"{item['name']} (init)" for item in spec["initContainers"]]
+            sys.stderr.write(f'Defaulted container "{names[0]}" out of: {", ".join(names)}\n')
+    if container not in (None, "smock"):
+        name += f"/{container}"
     if previous:
         if not restarts(name):
             sys.stderr.write(f'Error from server (BadRequest): previous terminated container "smock" in pod '
@@ -329,13 +354,13 @@ if tool == "kubectl":
     if words[:2] == ["get", "job"]:
         answer(config.get("job_state", "Complete=True "))
     if words[:1] == ["logs"]:
-        logs(words[1], "--previous" in argv)
+        logs(words[1], "--previous" in argv, options.get("container"))
     if words[:2] == ["get", "pods"]:
         answer(json.dumps(pod_list()))
     if words[:2] == ["get", "service,endpointslices"]:
         answer(json.dumps(services_and_endpoint_slices()))
     if words[:2] == ["get", "nodes"]:
-        answer(json.dumps({"items": []}))
+        answer(json.dumps(node_list()))
     answer()
 '''
 
@@ -428,6 +453,13 @@ def generator_log(profile="small", cpu_limit="250m", memory_limit="512Mi", rates
     lines.append({"kind": "done", "profile": profile})
     return "".join(json.dumps(line) + "\n" for line in lines)
 
+
+# What smock's init container prints of the CPU of its node, as gke.py
+# node-cpu keeps it.
+NODE_CPU = {"model_name": "AMD EPYC 7B13", "vendor_id": "AuthenticAMD", "cpu_family": "25", "model": "1",
+            "stepping": "0", "microcode": "0xffffffff",
+            "flags": {"aes": True, "avx2": True, "sha_ni": True, "vaes": True},
+            "vulnerabilities": {"spectre_v2": "Mitigation: Retpolines; IBPB: conditional; STIBP: always-on"}}
 
 # What smock logs, as JSON lines.
 SMOCK_LOG = ('{"time":"2026-10-14T09:00:01.000Z","level":"info","msg":"listening","listener":"plain",'
@@ -839,10 +871,35 @@ class Diagnostics(Script):
                          ["smock-small"])
         self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
 
+    def test_the_cpu_of_smocks_node_that_its_init_container_printed_is_kept_and_summarized(self):
+        line = {"kind": "node-cpu", "cpu": NODE_CPU}
+        (self.tmp / "smock-node-cpu.log").write_text(json.dumps(line) + "\n")
+        self.configure(logs={"generator-small": str(self.tmp / "generator-small.log"),
+                             "smock-small": str(self.tmp / "smock-small.log"),
+                             "smock-small/node-cpu": str(self.tmp / "smock-node-cpu.log")})
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 0, output)
+        raw = self.out / "raw" / "small"
+        self.assertEqual([json.loads(text) for text in (raw / "smock-node-cpu.log").read_text().splitlines()], [line])
+        # smock's log is its own container's, with no word of the other.
+        self.assertEqual((raw / "smock.log").read_text(), SMOCK_LOG)
+        conditions = json.loads((self.out / "conditions.json").read_text())
+        nodes = conditions["gke"]["profiles"]["small"]["nodes"]
+        self.assertEqual((nodes["node-a"]["cpu"], nodes["node-b"]["cpu"]), (NODE_CPU, None))
+        self.assertEqual(conditions["machine"]["cpu_model"], "GKE Autopilot ek-standard-8, AMD EPYC 7B13")
+        # Read while smock's Pod was there.
+        kubectl = self.calls("kubectl")
+        deleted = next(index for index, call in enumerate(kubectl)
+                       if call["words"][:1] == ["delete"] and any(item["kind"] == "Pod"
+                                                                   for item in call["document"].get("items", [])))
+        [read] = [index for index, call in enumerate(kubectl) if "--container=node-cpu" in call["argv"]]
+        self.assertLess(read, deleted)
+
     def test_a_dry_run_says_what_it_would_keep(self):
         status, output = self.run_script("--dry-run")
         self.assertEqual(status, 0, output)
         self.assertIn("smock.log", output)
+        self.assertIn("smock-node-cpu.log", output)
         self.assertIn("service.json", output)
 
 

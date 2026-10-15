@@ -129,10 +129,14 @@ pre-merge run compares with them.
   architectures are not compared as regressions: the comparison says that
   they differ, compares no step, and still fails on a missed target. When
   the previous pre-merge GKE run was on the other architecture, this run is
-  the first of its own and the baseline of the next. When the targets have
-  changed since a run, `python3 bench/bench.py check-targets <results>`
-  checks it against them as they are now, without running anything or
-  changing its directory.
+  the first of its own and the baseline of the next. When smock's node had
+  another CPU under a profile, the comparison names how: a latency that
+  changed with it may be the node's rather than smock's. Each step's
+  `per_second` and `smock_cpu` in `summary.json` (its first second, how
+  long smock waited for a CPU, the node's steal time) help tell them
+  apart. When the targets have changed since a run,
+  `python3 bench/bench.py check-targets <results>` checks it against them
+  as they are now, without running anything or changing its directory.
 - [ ] **Post the summary on the pull request or the merge record**: both
   runs' `summary.md` and both comparisons. They name the machine, the
   architecture, region, zone and node types, never the account or the

@@ -101,6 +101,20 @@ class Manifests(Helper):
         # The Service selects smock's Pod.
         self.assertLessEqual(service["spec"]["selector"].items(), pod["metadata"]["labels"].items())
 
+    def test_an_init_container_prints_the_cpu_of_smocks_node_asking_for_no_more_than_smock(self):
+        # From the load generator's image, which has Python and gke.py;
+        # smock's own has no shell. Autopilot bills a Pod for the larger of
+        # its init containers and the sum of its containers: with smock's
+        # limits, the Pod asks for what smock does.
+        for profile in ("autopilot-burst-min", "chart-default"):
+            [pod] = objects(self.manifests(profile=profile), "Pod")
+            [container] = pod_spec(pod)["containers"]
+            [init] = pod_spec(pod)["initContainers"]
+            self.assertEqual((init["name"], init["image"], init["command"]),
+                             ("node-cpu", GENERATOR_IMAGE, ["python3", "/bench/gke/gke.py", "node-cpu"]))
+            self.assertEqual(init["resources"], container["resources"])
+            self.assertEqual(init["securityContext"], container["securityContext"])
+
     def test_each_profile_has_its_own_service_and_pod_which_the_load_generator_targets(self):
         # A new name for each profile: no ClusterIP or datapath entry of the
         # previous profile's Service, just deleted, is reused.
@@ -371,17 +385,20 @@ class Summary(Helper):
     checked, and the conditions it ran under."""
 
     def results(self, lines, pod_info, rates=(500, 1000), where=("--region", "us-central1", "--zone", "us-central1-a",
-                                                                 "--arch", "arm64"), targets=None):
+                                                                 "--arch", "arm64"), targets=None, smock_node_cpu=None):
         """A results directory as scripts/gke-bench.sh leaves it, with the
-        load generator's log and the Pods of profile small, summarized
-        against `targets` ({architecture: entries}, by default small's
-        targets for both)."""
+        load generator's log, the Pods of profile small, and, when given,
+        what smock's init container printed (`smock_node_cpu`, a text),
+        summarized against `targets` ({architecture: entries}, by default
+        small's targets for both)."""
         out = self.directory()
         raw = out / "raw" / "small"
         raw.mkdir(parents=True)
         text = "".join(line if isinstance(line, str) else json.dumps(line) + "\n" for line in lines)
         (raw / "generator.log").write_text(text)
         (raw / "pods.json").write_text(json.dumps(pod_info))
+        if smock_node_cpu is not None:
+            (raw / "smock-node-cpu.log").write_text(smock_node_cpu)
         status, _, stderr = helper(
             "summarize", "--plan", small_plan(self.directory(), rates),
             "--targets", small_targets(self.directory(), targets), *where,
@@ -489,6 +506,35 @@ class Summary(Helper):
         self.assertEqual(conditions["machine"]["architecture"], "amd64")
         self.assertIn("asia-northeast1-b", conditions["note"])
         self.assertIn("amd64", conditions["note"])
+
+    def test_the_conditions_name_the_cpu_of_smocks_node_and_of_the_load_generators(self):
+        # smock's, from what its init container printed; the load
+        # generator's, from its start line.
+        out = self.results([{**START, "node_cpu": INTEL_CPU}, generator_step(500), generator_step(1000),
+                            {"kind": "done"}], pods(node=X86_NODE),
+                           where=("--region", "us-central1", "--arch", "amd64"),
+                           smock_node_cpu=json.dumps({"kind": "node-cpu", "cpu": AMD_CPU}) + "\n")
+        conditions = json.loads((out / "conditions.json").read_text())
+        nodes = conditions["gke"]["profiles"]["small"]["nodes"]
+        self.assertEqual((nodes["node-a"]["cpu"], nodes["node-b"]["cpu"]), (AMD_CPU, INTEL_CPU))
+        # The machine is smock's: the CPU model its nodes had.
+        self.assertEqual(conditions["machine"]["cpu_model"], "GKE Autopilot ek-standard-8, AMD EPYC 7B13")
+        markdown = (out / "summary.md").read_text()
+        self.assertIn("on amd64 (GKE Autopilot ek-standard-8, AMD EPYC 7B13, 8 CPUs)", markdown)
+        self.assertIn("| small | ek-standard-8 (amd64, asia-northeast1-b), AMD EPYC 7B13 | "
+                      "ek-standard-8 (amd64, asia-northeast1-b), Intel(R) Xeon(R) CPU @ 2.20GHz |", markdown)
+
+    def test_a_node_whose_cpu_was_not_recorded_has_none(self):
+        # As a run before its nodes' CPUs were recorded, or one whose init
+        # container's log could not be read: kubectl's error is no line.
+        for smock_node_cpu in (None, "Error from server (NotFound): pods \"smock-small\" not found\n"):
+            out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}],
+                               pods(node=X86_NODE), where=("--region", "us-central1", "--arch", "amd64"),
+                               smock_node_cpu=smock_node_cpu)
+            conditions = json.loads((out / "conditions.json").read_text())
+            nodes = conditions["gke"]["profiles"]["small"]["nodes"]
+            self.assertEqual((nodes["node-a"]["cpu"], nodes["node-b"]["cpu"]), (None, None))
+            self.assertEqual(conditions["machine"]["cpu_model"], "GKE Autopilot ek-standard-8")
 
     def test_a_profile_cut_short_leaves_the_run_incomplete(self):
         out = self.results([START, generator_step(500), "generator: the deadline passed\n"], pods())
@@ -753,6 +799,9 @@ class Generator(Helper):
                          ["start", "idle-rss", "traffic-check", "metrics-before", "step", "step", "metrics-after",
                           "done"])
         self.assertRegex(lines[0]["status"]["digest"], "^[0-9a-f]{12}$")
+        # The CPU of the load generator's node, this machine's here.
+        self.assertIsNotNone(lines[0]["node_cpu"]["model_name"])
+        self.assertIn("aes", lines[0]["node_cpu"]["flags"])
         # smock's idle RSS and peak memory, from its /metrics, before any
         # load.
         idle = lines[1]["idle"]
@@ -1086,6 +1135,105 @@ class Dockerfiles(Helper):
         status, _, stderr = self.check("# RUN apt-get install curl\nFROM scratch\nLABEL note=\"RUN nothing\"\n"
                                        "COPY a \\\n  # a comment in the middle\n  RUN /b\n")
         self.assertEqual(status, 0, stderr)
+
+
+def cpuinfo_block(processor, model_name="AMD EPYC 7B13", family=25, model=1, stepping=0, microcode="0xffffffff",
+                  flags="aes avx2 sha_ni vaes"):
+    """A processor of /proc/cpuinfo as Linux writes it on an x86 virtual
+    machine, with the flags of `flags` among others."""
+    return (f"processor\t: {processor}\nvendor_id\t: {'AuthenticAMD' if 'AMD' in model_name else 'GenuineIntel'}\n"
+            f"cpu family\t: {family}\nmodel\t\t: {model}\nmodel name\t: {model_name}\nstepping\t: {stepping}\n"
+            f"microcode\t: {microcode}\ncpu MHz\t\t: 2449.998\ncache size\t: 512 KB\nphysical id\t: 0\n"
+            f"siblings\t: 8\ncore id\t\t: {processor // 2}\ncpu cores\t: 4\nfpu\t\t: yes\n"
+            f"flags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep sse sse2 ht syscall nx lm constant_tsc "
+            f"pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 movbe popcnt xsave avx f16c rdrand hypervisor {flags} "
+            f"bmi1 bmi2 adx clflushopt\n"
+            f"bugs\t\t: sysret_ss_attrs spectre_v1 spectre_v2 spec_store_bypass srso\n"
+            f"bogomips\t: 4899.99\naddress sizes\t: 48 bits physical, 48 bits virtual\npower management:\n\n")
+
+
+# What Linux says of an AMD and of an Intel x86 CPU's vulnerabilities.
+AMD_VULNERABILITIES = {
+    "meltdown": "Not affected",
+    "retbleed": "Not affected",
+    "spec_rstack_overflow": "Vulnerable: Safe RET, no microcode",
+    "spectre_v2": "Mitigation: Retpolines; IBPB: conditional; IBRS_FW; STIBP: always-on; RSB filling; "
+                  "PBRSB-eIBRS: Not affected; BHI: Not affected",
+}
+
+INTEL_VULNERABILITIES = {
+    "meltdown": "Mitigation: PTI",
+    "retbleed": "Mitigation: IBRS",
+    "spec_rstack_overflow": "Not affected",
+    "spectre_v2": "Mitigation: IBRS; IBPB: conditional; STIBP: conditional; RSB filling; PBRSB-eIBRS: Not affected; "
+                  "BHI: SW loop, KVM: SW loop",
+}
+
+# What gke.py node-cpu keeps of an AMD EPYC 7B13 (Zen 3) node's CPU.
+AMD_CPU = {"model_name": "AMD EPYC 7B13", "vendor_id": "AuthenticAMD", "cpu_family": "25", "model": "1",
+           "stepping": "0", "microcode": "0xffffffff",
+           "flags": {"aes": True, "avx2": True, "sha_ni": True, "vaes": True},
+           "vulnerabilities": AMD_VULNERABILITIES}
+
+# And of an Intel Broadwell node's: no SHA or vector AES instructions.
+INTEL_CPU = {"model_name": "Intel(R) Xeon(R) CPU @ 2.20GHz", "vendor_id": "GenuineIntel", "cpu_family": "6",
+             "model": "79", "stepping": "0", "microcode": "0xffffffff",
+             "flags": {"aes": True, "avx2": True, "sha_ni": False, "vaes": False},
+             "vulnerabilities": INTEL_VULNERABILITIES}
+
+
+class NodeCpu(Helper):
+    """What smock's init container and the load generator say of the CPU
+    of the node they run on: its model, microcode, the flags that make TLS
+    fast and the kernel's mitigations of its vulnerabilities, from
+    /proc/cpuinfo and /sys/devices/system/cpu/vulnerabilities."""
+
+    def node_cpu(self, cpuinfo, vulnerabilities):
+        """What gke.py node-cpu prints for a /proc/cpuinfo of `cpuinfo` (None:
+        no file) and the vulnerabilities `vulnerabilities` ({name: text}, None:
+        no directory): its exit status and its one JSON line."""
+        directory = self.directory()
+        args = ["node-cpu", "--cpuinfo", directory / "cpuinfo", "--vulnerabilities", directory / "vulnerabilities"]
+        if cpuinfo is not None:
+            (directory / "cpuinfo").write_text(cpuinfo)
+        if vulnerabilities is not None:
+            (directory / "vulnerabilities").mkdir()
+            for name, text in vulnerabilities.items():
+                (directory / "vulnerabilities" / name).write_text(text + "\n")
+        status, stdout, stderr = helper(*args)
+        return status, [json.loads(line) for line in stdout.splitlines()], stderr
+
+    def test_an_x86_nodes_model_microcode_tls_flags_and_mitigations_are_printed(self):
+        status, lines, stderr = self.node_cpu(cpuinfo_block(0) + cpuinfo_block(1), AMD_VULNERABILITIES)
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(lines, [{"kind": "node-cpu", "cpu": AMD_CPU}])
+        status, lines, stderr = self.node_cpu(
+            cpuinfo_block(0, model_name="Intel(R) Xeon(R) CPU @ 2.20GHz", family=6, model=79, flags="aes avx2"),
+            INTEL_VULNERABILITIES)
+        self.assertEqual(lines, [{"kind": "node-cpu", "cpu": INTEL_CPU}])
+
+    def test_an_arm64_node_is_named_by_its_implementer_and_part_with_its_own_tls_flags(self):
+        # As Linux writes it on arm64, which has no model name or microcode.
+        cpuinfo = ("processor\t: 0\nBogoMIPS\t: 48.00\nFeatures\t: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics "
+                   "fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc dcpop sha3 sha512\nCPU implementer\t: 0x41\n"
+                   "CPU architecture: 8\nCPU variant\t: 0x0\nCPU part\t: 0xd4f\nCPU revision\t: 1\n\n")
+        status, lines, stderr = self.node_cpu(cpuinfo, {"spectre_v2": "Not affected"})
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(lines, [{"kind": "node-cpu", "cpu": {
+            "model_name": "implementer 0x41, part 0xd4f", "cpu_implementer": "0x41", "cpu_architecture": "8",
+            "cpu_variant": "0x0", "cpu_part": "0xd4f", "cpu_revision": "1", "microcode": None,
+            "flags": {"aes": True, "pmull": True, "sha2": True}, "vulnerabilities": {"spectre_v2": "Not affected"}}}])
+
+    def test_what_it_cannot_read_it_says_and_still_succeeds_so_that_smock_starts(self):
+        # An init container that failed would keep smock's Pod from starting.
+        status, lines, stderr = self.node_cpu(None, None)
+        self.assertEqual(status, 0, stderr)
+        [line] = lines
+        self.assertEqual((line["kind"], line["cpu"]), ("node-cpu", None))
+        self.assertIn("cpuinfo", line["error"])
+        status, lines, stderr = self.node_cpu(cpuinfo_block(0), None)
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(lines, [{"kind": "node-cpu", "cpu": {**AMD_CPU, "vulnerabilities": None}}])
 
 
 class PodInfo(Helper):

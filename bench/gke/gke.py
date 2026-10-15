@@ -8,6 +8,7 @@ usage:
   python3 bench/gke/gke.py estimate [options]    how long a run takes and what it costs
   python3 bench/gke/gke.py manifests [options]   the Kubernetes objects of one profile
   python3 bench/gke/gke.py pod-info PODS NODES    what to keep of the Pods and their nodes
+  python3 bench/gke/gke.py node-cpu [options]     what to keep of the CPU of the node it runs on
   python3 bench/gke/gke.py summarize [options] OUT   summary.json, summary.md and conditions.json
   python3 bench/gke/gke.py stopped LOG            why the load generator stopped its profile early, if it did
   python3 bench/gke/gke.py elf-arch FILE          the architecture of an executable, amd64 or arm64
@@ -218,7 +219,9 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
     the namespace and its quota, smock.json smock's Service and Pod,
     generator.json the load generator's Job. Both Pods run on nodes of
     `arch`, in `zone` when it is given; else Autopilot chooses smock's zone,
-    and the load generator runs in the same one, on another node.
+    and the load generator runs in the same one, on another node. Before
+    smock starts, an init container from the load generator's image prints
+    the CPU of smock's node (gke.py node-cpu), which the run keeps.
 
     smock runs in a Pod of its own, not a Deployment, so that it can have a
     deadline (`smock_deadline_s`, the time left until the run's time limit,
@@ -265,6 +268,14 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
             "automountServiceAccountToken": False,
             "terminationGracePeriodSeconds": 5,
             "securityContext": pod_security,
+            # With smock's limits, so that the Pod asks for no more than
+            # smock does: Autopilot bills a Pod for the larger of its init
+            # containers and the sum of its containers.
+            "initContainers": [{
+                "name": "node-cpu", "image": generator_image, "command": ["python3", "/bench/gke/gke.py", "node-cpu"],
+                "resources": {"requests": limits, "limits": limits},
+                "securityContext": container_security,
+            }],
             "containers": [{
                 "name": "smock", "image": smock_image, "args": ["serve"],
                 "env": [{"name": "SMOCK_DIR", "value": "/definitions"},
@@ -508,6 +519,67 @@ def pod_info(pod_list, node_list):
     return info
 
 
+# Where Linux describes the CPUs, and the mitigations of their
+# vulnerabilities, one file each.
+CPUINFO = "/proc/cpuinfo"
+VULNERABILITIES = "/sys/devices/system/cpu/vulnerabilities"
+
+# The fields of /proc/cpuinfo that say which CPU a processor is: on x86 its
+# vendor, family, model and stepping (a virtual machine's model name, such
+# as "Intel(R) Xeon(R) CPU @ 2.20GHz", may not tell its generation); on
+# arm64, which has no model name, its implementer, architecture, variant,
+# part and revision.
+CPU_IDENTITY = ("vendor_id", "cpu family", "model", "stepping", "CPU implementer", "CPU architecture",
+                "CPU variant", "CPU part", "CPU revision")
+
+# The CPU flags that make TLS fast, by the line of /proc/cpuinfo that lists
+# them: on x86, AES-NI and its vector form for AES-GCM, AVX2 for ChaCha20
+# and the elliptic curves, and the SHA extensions for the handshake's
+# hashes; on arm64, the AES, polynomial multiply and SHA-2 instructions.
+TLS_FLAGS = {"flags": ("aes", "avx2", "sha_ni", "vaes"), "Features": ("aes", "pmull", "sha2")}
+
+
+def read_node_cpu(cpuinfo=CPUINFO, vulnerabilities=VULNERABILITIES):
+    """The CPU of the node this runs on, as node_cpu keeps it, from the
+    files `cpuinfo` and `vulnerabilities`, and None; or None and why it
+    could not be read."""
+    try:
+        return node_cpu(Path(cpuinfo).read_text(), read_vulnerabilities(vulnerabilities)), None
+    except Exception as failure:  # noqa: BLE001 - whatever it is, the run goes on
+        return None, f"cannot read {cpuinfo}: {failure}"
+
+
+def node_cpu(cpuinfo, vulnerabilities):
+    """What a run keeps of the CPU of a node, from the text of its
+    /proc/cpuinfo, of its first processor (a node's vCPUs are all of one
+    model): the model name (on arm64, its implementer and part), the fields
+    that say which CPU it is, the microcode (None on arm64), whether it has
+    each flag of TLS_FLAGS, and `vulnerabilities`, what the kernel says of
+    each of the CPU's vulnerabilities, {name: mitigation}, or None."""
+    fields = {}
+    for line in cpuinfo.strip().split("\n\n", 1)[0].splitlines():
+        name, colon, value = line.partition(":")
+        if colon:
+            fields.setdefault(name.strip(), value.strip())
+    model_name = fields.get("model name")
+    if model_name is None and "CPU implementer" in fields and "CPU part" in fields:
+        model_name = f"implementer {fields['CPU implementer']}, part {fields['CPU part']}"
+    flags = next(({flag: flag in fields[line].split() for flag in wanted}
+                  for line, wanted in TLS_FLAGS.items() if line in fields), None)
+    return {"model_name": model_name,
+            **{name.lower().replace(" ", "_"): fields[name] for name in CPU_IDENTITY if name in fields},
+            "microcode": fields.get("microcode"), "flags": flags, "vulnerabilities": vulnerabilities}
+
+
+def read_vulnerabilities(directory):
+    """What the kernel says of each of the CPU's vulnerabilities, from the
+    files of `directory`, {name: text}, or None when it cannot be read."""
+    try:
+        return {path.name: path.read_text().strip() for path in sorted(Path(directory).iterdir()) if path.is_file()}
+    except OSError:
+        return None
+
+
 def generator_lines(path):
     """The JSON lines of the load generator's log, without its progress
     messages."""
@@ -529,15 +601,27 @@ def generator_lines(path):
 def profile_results(out, plan, profile, cases, arch):
     """What one profile's run left: its steps, smock's idle RSS when the
     load generator read it, whether it ran each step of the plan, what the
-    load generator said at its start, its Pods, whether smock's traffic
-    ports answered before the first step, whether the load generator
-    stopped the profile early and which steps it did not run, and the load
-    generator Pod's CPU request (as the Pod had it, else as the run
-    asked)."""
+    load generator said at its start, its Pods and the CPU of each node
+    they ran on (`cpu` of each node, None when unknown), whether smock's
+    traffic ports answered before the first step, whether the load
+    generator stopped the profile early and which steps it did not run,
+    and the load generator Pod's CPU request (as the Pod had it, else as
+    the run asked)."""
     raw = Path(out) / "raw" / profile["name"]
     lines = generator_lines(raw / "generator.log")
     pods = read_json(raw / "pods.json") if (raw / "pods.json").exists() else {"smock": [], "generator": [],
                                                                                "nodes": {}}
+    start = next((line for line in lines if line["kind"] == "start"), None)
+    # smock's node's, from what its init container printed, which the run
+    # kept; the load generator's, from its start line.
+    printed = next((line for line in generator_lines(raw / "smock-node-cpu.log") if line["kind"] == "node-cpu"), {})
+    cpus = {"smock": printed.get("cpu"), "generator": (start or {}).get("node_cpu")}
+    for node in pods["nodes"].values():
+        node["cpu"] = None
+    for app, cpu in cpus.items():
+        for pod in pods[app]:
+            if cpu and pod["node"] in pods["nodes"]:
+                pods["nodes"][pod["node"]]["cpu"] = cpu
     results = [line["result"] for line in lines if line["kind"] == "step"]
     idle = [line["idle"] for line in lines if line["kind"] == "idle-rss"]
     # smock's container restarts after an OOM kill: with none, the kernel
@@ -548,7 +632,6 @@ def profile_results(out, plan, profile, cases, arch):
         result["memory"]["oom_kills"] = oom_kills
     planned = [spec["id"] for spec in steps(plan, profile, cases)]
     done = any(line["kind"] == "done" for line in lines)
-    start = next((line for line in lines if line["kind"] == "start"), None)
     # The check before the first step, not one after a step.
     check = next((line for line in lines if line["kind"] == "traffic-check" and "after" not in line), None)
     stopped = next((line for line in lines if line["kind"] == "stopped"), None)
@@ -571,7 +654,8 @@ def profile_record(result):
 def node_text(node):
     if node is None:
         return "-"
-    return f"{node['instance_type']} ({node['arch']}, {node['zone']})"
+    model = (node.get("cpu") or {}).get("model_name")
+    return f"{node['instance_type']} ({node['arch']}, {node['zone']})" + (f", {model}" if model else "")
 
 
 def traffic_check_text(check):
@@ -656,6 +740,8 @@ def command_summarize(args):
     # to when the nodes are unknown.
     zone = distinct(node["zone"] for node in [*smock_nodes, *generator_nodes]) or args.zone
     machine_type = distinct(node["instance_type"] for node in smock_nodes)
+    # The CPU models of smock's nodes, when their init containers said.
+    cpu_models = distinct((node.get("cpu") or {}).get("model_name") for node in smock_nodes)
     conditions = {
         "format": harness.FORMAT,
         "started_at": args.started_at,
@@ -679,7 +765,8 @@ def command_summarize(args):
                  "profile, earlier steps included. Idle RSS is read once smock has been ready for the settle "
                  "time, before any load. OOM kills come from smock's restarts."),
         "machine": {"architecture": args.arch,
-                    "cpu_model": f"GKE Autopilot {node['instance_type'] if node else 'node'}",
+                    "cpu_model": f"GKE Autopilot {node['instance_type'] if node else 'node'}"
+                                 + (f", {cpu_models}" if cpu_models else ""),
                     "cpus": int(node["cpus"]) if node and str(node["cpus"]).isdigit() else None,
                     "kernel": node["kernel"] if node else None},
         "gke": {"arch": args.arch, "region": args.region, "zone": zone, "pinned_zone": args.zone,
@@ -750,6 +837,16 @@ def command_pod_info(args):
     return 0
 
 
+def command_node_cpu(args):
+    """Prints a node-cpu line: the CPU of the node it runs on, as node_cpu
+    keeps it, or None and why. It succeeds whatever it reads, since smock's
+    Pod runs it in an init container, which must succeed for smock to
+    start."""
+    cpu, error = read_node_cpu(args.cpuinfo, args.vulnerabilities)
+    print(json.dumps({"kind": "node-cpu", "cpu": cpu, **({"error": error} if error else {})}), flush=True)
+    return 0
+
+
 def command_elf_arch(args):
     print(elf_arch(args.file))
     return 0
@@ -806,6 +903,12 @@ def main(argv):
     info.add_argument("pods", help="kubectl get pods -o json")
     info.add_argument("nodes", help="kubectl get nodes -o json")
     info.set_defaults(handler=command_pod_info)
+    cpu = commands.add_parser("node-cpu", help="print, as a JSON line, what to keep of the CPU of the node it runs on; "
+                                              "it succeeds whatever it can read")
+    cpu.add_argument("--cpuinfo", default=CPUINFO, help=f"the CPUs' description (default: {CPUINFO})")
+    cpu.add_argument("--vulnerabilities", default=VULNERABILITIES,
+                     help=f"the kernel's mitigations of the CPU's vulnerabilities (default: {VULNERABILITIES})")
+    cpu.set_defaults(handler=command_node_cpu)
     summarizing = commands.add_parser("summarize", help="write summary.json, summary.md and conditions.json")
     summarizing.add_argument("--plan", required=True, help="the plan the run ran")
     summarizing.add_argument("--targets", default=str(BENCH / "targets.json"),
