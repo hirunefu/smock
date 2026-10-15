@@ -73,12 +73,14 @@ Packages of `smock/smock`:
 - `metrics`: the metrics registry: counters, gauges and histograms with
   fixed label names, rendered in the Prometheus text format. Features
   register their metrics in the one registry `smock serve` keeps.
-- `usage`: understands what Linux says a process and its cgroup use, in
-  `/proc/self/stat`, `/proc/self/status` and a cgroup v2's `cpu.stat` and
-  `memory.peak`, for the process and cgroup metrics, and where
-  `/proc/self/cgroup` puts the process's cgroup, for those and for the
-  memory limit the Journal's bound follows. It does no I/O: `server` reads
-  the files and hands it their text.
+- `usage`: understands what Linux says a process and its cgroup use, and
+  how long the process waited for a CPU, in `/proc/self/stat`,
+  `/proc/self/status`, `/proc/self/schedstat` and a cgroup v2's `cpu.stat`
+  and `memory.peak`, for the process and cgroup metrics; the machine's
+  steal time in `/proc/stat`; and where `/proc/self/cgroup` puts the
+  process's cgroup, for those and for the memory limit the Journal's bound
+  follows. It does no I/O: `server` reads the files and hands it their
+  text.
 - `openssl`: smock's own bindings to OpenSSL, the one C library ADR 0001
   allows (native). A TLS connection there does no I/O: it takes the bytes
   that arrive from the peer and hands out the bytes to send, and `server`
