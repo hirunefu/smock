@@ -371,12 +371,13 @@ class Summary(Helper):
     checked, and the conditions it ran under."""
 
     def results(self, lines, pod_info, rates=(500, 1000), where=("--region", "us-central1", "--zone", "us-central1-a",
-                                                                 "--arch", "arm64"), targets=None, stopped=()):
+                                                                 "--arch", "arm64"), targets=None, stopped=(), plan=None):
         """A results directory as scripts/gke-bench.sh leaves it, with the
         load generator's log and the Pods of profile small, summarized
         against `targets` ({architecture: entries}, by default small's
         targets for both); `stopped` says why and where the run stopped
-        early, if it did."""
+        early, if it did. The plan is small_plan's at `rates`, unless
+        `plan` names another."""
         out = self.directory()
         raw = out / "raw" / "small"
         raw.mkdir(parents=True)
@@ -384,7 +385,7 @@ class Summary(Helper):
         (raw / "generator.log").write_text(text)
         (raw / "pods.json").write_text(json.dumps(pod_info))
         status, _, stderr = helper(
-            "summarize", "--plan", small_plan(self.directory(), rates),
+            "summarize", "--plan", plan or small_plan(self.directory(), rates),
             "--targets", small_targets(self.directory(), targets), *where,
             "--started-at", "2026-10-14T03:28:50+00:00", "--finished-at", "2026-10-14T04:01:56+00:00",
             "--cluster-version", "1.35.8-gke.1225000", "--smock-image", "sha256:" + "1" * 64,
@@ -470,6 +471,23 @@ class Summary(Helper):
         markdown = (out / "summary.md").read_text()
         self.assertIn("GKE Autopilot", markdown)
         self.assertIn("| http-keep-alive | 1000 |", markdown)
+
+    def test_the_conditions_record_a_hash_of_the_plan_that_leaves_out_its_description(self):
+        lines = [START, generator_step(500), generator_step(1000), {"kind": "done"}]
+
+        def recorded(**changes):
+            """What conditions.json records of small_plan's plan, changed."""
+            path = small_plan(self.directory())
+            path.write_text(json.dumps({**json.loads(path.read_text()), **changes}))
+            out = self.results(lines, pods(), plan=path)
+            return json.loads((out / "conditions.json").read_text())["plan"]
+
+        first, second = recorded(about="What the plan runs."), recorded(about="What the plan runs, said otherwise.")
+        self.assertNotEqual(first["sha256"], second["sha256"])
+        self.assertEqual(first["sha256_without_about"], second["sha256_without_about"])
+        # Anything else is a different plan.
+        other = recorded(about="What the plan runs.", cooldown_s=5)
+        self.assertNotEqual(other["sha256_without_about"], first["sha256_without_about"])
 
     def test_the_conditions_record_the_architecture_region_zone_and_machine_types(self):
         # An amd64 run with no zone pinned: Autopilot chose it.

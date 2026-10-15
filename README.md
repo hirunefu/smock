@@ -1149,8 +1149,9 @@ architecture the targets file has no set for.
 
 - `conditions.json`: what ran where. The smock version, commit, toolchain
   and binary digest; the definition set digest and the Mocks; the request
-  mix; the plan file; the architecture, CPU model, kernel and CPU
-  governors; the profiles with their CPU and memory limits, the CPU limits
+  mix; the plan file, with its SHA-256 and that of the plan without its
+  `about` (`sha256_without_about`); the architecture, CPU model, kernel
+  and CPU governors; the profiles with their CPU and memory limits, the CPU limits
   and the CPUs of smock and of the load generator; each case's profile,
   rate, durations and connection counts; oha and its version; the targets
   file; any options that changed the plan.
@@ -1237,6 +1238,13 @@ The line above the table says which steps count.
 - From each run's `conditions.json`, it names the runs (smock's version and
   commit, the machine, the plan) and lists the conditions besides smock
   that differ, such as the architecture, the CPU model, the plan or oha.
+  The plan differs when what it runs differs: the comparison takes the
+  hash of the plan without its `about`, so that a change to the
+  description alone is no difference. A run from before runs recorded
+  that hash has only the file's, which the comparison then takes, so the
+  first comparison with such a run shows the plan as changed if anything
+  in its file changed, its `about` included (as that of
+  `bench/plan-autopilot.json` did after the R1 runs).
   Compare runs of the same kind: a GKE run with a GKE run, a run on a
   machine with a run on the same machine. It says so when one run is on
   GKE and the other is not.

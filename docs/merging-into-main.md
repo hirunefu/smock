@@ -53,7 +53,10 @@ pre-merge run compares with them.
   reference without failing
   ([Comparing runs](../README.md#comparing-runs)). Its first lines say
   whether the machine, the plan or anything else besides smock differed,
-  and which steps count.
+  and which steps count. A change to the plan's `about` alone is no
+  difference, but a run from before runs recorded the plan's hash without
+  it, such as R1's, has only its file's hash: the first comparison with
+  one may show the plan as changed when only its description did.
 - [ ] **Run the benchmark on GKE Autopilot** with `scripts/gke-bench.sh`
   ([On GKE Autopilot](../README.md#on-gke-autopilot)). It needs gcloud
   logged in (`gcloud auth login`), docker, kubectl, and the MoonBit

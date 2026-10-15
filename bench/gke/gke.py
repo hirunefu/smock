@@ -699,7 +699,8 @@ def command_summarize(args):
                         "mocks": status.get("mocks")},
         "request_mix": {"file": harness.shown_path(mix), "sha256": harness.sha256_file(mix),
                         "weights": {request["name"]: request["weight"] for request in read_json(mix)["requests"]}},
-        "plan": {"file": harness.shown_path(plan_path), "sha256": harness.sha256_file(plan_path)},
+        "plan": {"file": harness.shown_path(plan_path), "sha256": harness.sha256_file(plan_path),
+                 "sha256_without_about": harness.sha256_without_about(plan_path)},
         "targets": {"file": harness.shown_path(targets_path), "sha256": harness.sha256_file(targets_path)},
         "note": (f"Measured on GKE Autopilot in {zone or args.region}, on {args.arch} nodes "
                  f"({machine_type or 'of an unknown machine type'}): smock in a {compute_class} Pod with each "

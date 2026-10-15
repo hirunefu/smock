@@ -449,13 +449,18 @@ class CpuPerRequest(Comparison):
 
 
 def conditions(version="0.1.0", commit="a21fe97d59c6", architecture="arm64", cpu_model="Apple M1", cpus=8,
-               plan_sha="aa", oha="oha 1.16.0", gke=None):
-    """The parts of conditions.json the comparison reads."""
+               plan_sha="aa", oha="oha 1.16.0", gke=None, plan_sha_without_about=None):
+    """The parts of conditions.json the comparison reads: of the plan, the
+    file's SHA-256, and that of the plan without its about when
+    `plan_sha_without_about` is given, as runs record it now."""
+    plan = {"file": "bench/plan-autopilot.json", "sha256": plan_sha}
+    if plan_sha_without_about:
+        plan["sha256_without_about"] = plan_sha_without_about
     value = {"started_at": "2026-10-14T03:13:18+00:00",
              "smock": {"version": version, "commit": commit, "toolchain": "moonc v0.10.14"},
              "definitions": {"digest": "48f7ce9715f0"},
              "request_mix": {"file": "bench/requests.json", "sha256": "bb"},
-             "plan": {"file": "bench/plan-autopilot.json", "sha256": plan_sha},
+             "plan": plan,
              "machine": {"architecture": architecture, "cpu_model": cpu_model, "cpus": cpus},
              "load_generator": {"name": "oha", "version": oha}, "overrides": {}}
     if gke:
@@ -478,6 +483,26 @@ class Conditions(Comparison):
         self.assertIn("- Newer: smock 0.2.0 (commit 2222) on arm64 (Apple M2, 8 CPUs)", report)
         self.assertIn("Besides smock, the runs differ in: machine (arm64 (Apple M1, 8 CPUs) → arm64 (Apple M2, "
                       "8 CPUs)), plan (bench/plan-autopilot.json changed).", report)
+
+    def test_a_plan_whose_description_alone_changed_is_the_same_plan(self):
+        def compared(older, newer):
+            return self.compare(self.summary([step()], conditions=conditions(**older)),
+                                self.summary([step()], conditions=conditions(**newer)))[1]
+        # Both runs recorded the hash of the plan without its about: the
+        # file changed, its about alone.
+        report = compared({"plan_sha": "aa", "plan_sha_without_about": "a1"},
+                          {"plan_sha": "cc", "plan_sha_without_about": "a1"})
+        self.assertIn("Besides smock, the runs had the same conditions.", report)
+        report = compared({"plan_sha": "aa", "plan_sha_without_about": "a1"},
+                          {"plan_sha": "cc", "plan_sha_without_about": "c1"})
+        self.assertIn("plan (bench/plan-autopilot.json changed)", report)
+        # A run from before runs recorded it has the file's hash only, which
+        # the comparison falls back to: the same file is the same plan, and
+        # any change to it, its about too, a different one.
+        report = compared({"plan_sha": "aa"}, {"plan_sha": "aa", "plan_sha_without_about": "a1"})
+        self.assertIn("Besides smock, the runs had the same conditions.", report)
+        report = compared({"plan_sha": "aa"}, {"plan_sha": "cc", "plan_sha_without_about": "a1"})
+        self.assertIn("plan (bench/plan-autopilot.json changed)", report)
 
     def test_a_gke_run_compared_with_a_run_on_a_machine_is_called_out(self):
         gke = {"region": "us-central1", "zone": "us-central1-a", "compute_class": "autopilot-arm"}
