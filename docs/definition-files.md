@@ -752,8 +752,10 @@ restart:
   names in the directories and the modification and change times of the
   files, after following symlinks, with those of the last check, and reads
   the files only when something differs, so an idle smock's polls cost
-  little CPU. A definitions directory that
-  does not exist yet is polled until it appears. One that cannot be watched
+  little CPU. After a reload that had a problem reading the directory,
+  such as a file that cannot be read, the next poll reads again. A
+  definitions directory that does not exist yet is polled until it
+  appears. One that cannot be watched
   for another reason, such as the inotify limits, is only polled, and smock
   logs a warning.
 - A reload reads and validates every file, builds a whole new definition

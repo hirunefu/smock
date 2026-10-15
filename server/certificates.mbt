@@ -260,7 +260,8 @@ fn Certificates::warn_undeclared(self : Certificates) -> Unit {
 /// that holds certificate or key files, until the task is cancelled. Logs
 /// a warning when the directory cannot be watched, and is only polled.
 async fn Certificates::run(self : Certificates, watch : @watch.Watch) -> Unit {
-  watch.run(async fn(_) { self.check() }, on_error=err => {
+  let check = async fn(_) { if !self.check() { watch.forget() } }
+  watch.run(check, on_error=err => {
     self.logger.warn(
       "cannot watch the TLS certificate directory, only polling it",
       fields={
@@ -273,33 +274,40 @@ async fn Certificates::run(self : Certificates, watch : @watch.Watch) -> Unit {
 
 ///|
 /// Reads every pair again, and loads each one whose files changed. A check
-/// that fails in an unforeseen way is logged, and the next one tries again.
-async fn Certificates::check(self : Certificates) -> Unit {
+/// that fails in an unforeseen way is logged. Tells whether it read the
+/// files of every pair: when it did not, the next poll reads again, though
+/// the files may not have changed, since the problem may have passed.
+async fn Certificates::check(self : Certificates) -> Bool {
   self.checking.acquire()
   defer self.checking.release()
   let pairs = match self.default {
     Files(pair) => [pair, ..self.by_mock.values()]
     SelfSigned(_) => [..self.by_mock.values()]
   }
+  let mut read_all = true
   for pair in pairs {
-    self.check_pair(pair) catch {
+    let read = self.check_pair(pair) catch {
       err => {
         let fields = pair_fields(pair.mock, pair.files)
         fields["error"] = Json::string(err.to_string())
         self.logger.error("TLS certificate reload failed", fields~)
+        false
       }
     }
+    read_all = read_all && read
   }
+  read_all
 }
 
 ///|
 /// Reads `pair` again, and when its files changed, loads them and swaps
 /// them in, or keeps presenting the pair loaded before when they cannot be
 /// used. Either way, one log entry names the pair and the new expiry.
-async fn Certificates::check_pair(self : Certificates, pair : Pair) -> Unit {
+/// Tells whether its files could be read.
+async fn Certificates::check_pair(self : Certificates, pair : Pair) -> Bool {
   let read = read_pair(pair.files)
   if read == pair.last_read {
-    return
+    return read is Ok(_)
   }
   pair.last_read = read
   let (loaded, expiry) = match read {
@@ -322,4 +330,5 @@ async fn Certificates::check_pair(self : Certificates, pair : Pair) -> Unit {
       self.logger.error("TLS certificate reload failed", fields~)
     }
   }
+  read is Ok(_)
 }

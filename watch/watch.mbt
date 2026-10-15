@@ -151,6 +151,15 @@ pub async fn Watch::run(
 }
 
 ///|
+/// Forgets the last stamp, so that the next poll checks whatever its stamp
+/// notes. A caller whose check could not read all that the stamp notes,
+/// such as a file that gave an I/O error, calls it so that the next poll
+/// tries again: the files need not change again, and nor would the stamp.
+pub fn Watch::forget(self : Watch) -> Unit {
+  self.last = None
+}
+
+///|
 /// Stops watching.
 pub fn Watch::close(self : Watch) -> Unit {
   if self.watcher is Some(watcher) {

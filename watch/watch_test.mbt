@@ -70,3 +70,32 @@ async test "a poll compares its stamp with the one taken before the last check, 
     ),
   )
 }
+
+///|
+async test "a poll checks after a check whose read failed, though nothing changed since" {
+  let dir = @fs.tmpdir(prefix="smock-watch-")
+  defer @fs.rmdir(dir, recursive=true)
+  let checks = []
+  @async.with_task_group(group => {
+    let watch = @watch.Watch(dir, stamp=stamp => stamp.note("the same"))
+    group.spawn_bg(no_wait=true, () => {
+      defer watch.close()
+      watch.run(check => {
+        checks.push(@debug.to_string(check))
+        // The first read fails, the next one works.
+        if checks.length() == 1 {
+          watch.forget()
+        }
+      })
+    })
+    @fs.write_file("\{dir}/other.json", "{}")
+    @async.sleep(11_000)
+  })
+  inspect(
+    checks.join("\n"),
+    content=(
+      #|Changed
+      #|Poll
+    ),
+  )
+}
