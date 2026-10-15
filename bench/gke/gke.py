@@ -773,8 +773,6 @@ def command_summarize(args):
     # to when the nodes are unknown.
     zone = distinct(node["zone"] for node in [*smock_nodes, *generator_nodes]) or args.zone
     machine_type = distinct(node["instance_type"] for node in smock_nodes)
-    # The CPU models of smock's nodes, when their init containers said.
-    cpu_models = distinct((node.get("cpu") or {}).get("model_name") for node in smock_nodes)
     conditions = {
         "format": harness.FORMAT,
         "started_at": args.started_at,
@@ -798,9 +796,11 @@ def command_summarize(args):
                  "memory its container had used by the step's end (memory.peak), since smock started under the "
                  "profile, earlier steps included. Idle RSS is read once smock has been ready for the settle "
                  "time, before any load. OOM kills come from smock's restarts."),
+        # The node type, as before the nodes' CPUs were recorded, so that
+        # comparing with such a run shows no other machine: each node's CPU
+        # is in its own record, which compare.py reads for smock's nodes.
         "machine": {"architecture": args.arch,
-                    "cpu_model": f"GKE Autopilot {node['instance_type'] if node else 'node'}"
-                                 + (f", {cpu_models}" if cpu_models else ""),
+                    "cpu_model": f"GKE Autopilot {node['instance_type'] if node else 'node'}",
                     "cpus": int(node["cpus"]) if node and str(node["cpus"]).isdigit() else None,
                     "kernel": node["kernel"] if node else None},
         "gke": {"arch": args.arch, "region": args.region, "zone": zone, "pinned_zone": args.zone,

@@ -1476,8 +1476,10 @@ EndpointSlices, all three kept before smock's Pod is deleted;
 whether the traffic ports answered, whether the profile ended early and
 why, and the load generator's CPU request; the conditions also record,
 for each node of each profile, its CPU (`cpu`, as `gke.py node-cpu`
-prints it, or null when it is unknown), and name the CPU model of smock's
-nodes in `machine.cpu_model`, which `summary.md` shows. A run that stops
+prints it, or null when it is unknown), whose model `summary.md` shows
+beside each node; `machine.cpu_model` names only the node type, as in a
+run from before the nodes' CPUs were recorded, so that comparing with one
+does not show another machine. A run that stops
 once a profile has started, because something fails or it is stopped
 (Ctrl-C, SIGTERM, a closed terminal), still writes `summary.json`,
 `summary.md` and `conditions.json` from what it measured; `summary.md`

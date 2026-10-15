@@ -537,10 +537,13 @@ class Summary(Helper):
         conditions = json.loads((out / "conditions.json").read_text())
         nodes = conditions["gke"]["profiles"]["small"]["nodes"]
         self.assertEqual((nodes["node-a"]["cpu"], nodes["node-b"]["cpu"]), (AMD_CPU, INTEL_CPU))
-        # The machine is smock's: the CPU model its nodes had.
-        self.assertEqual(conditions["machine"]["cpu_model"], "GKE Autopilot ek-standard-8, AMD EPYC 7B13")
+        # The machine is the node type, as in a run before the nodes' CPUs
+        # were recorded, so that comparing with one does not show it as
+        # changed: each node's CPU is in its own record and in the Pods
+        # table.
+        self.assertEqual(conditions["machine"]["cpu_model"], "GKE Autopilot ek-standard-8")
         markdown = (out / "summary.md").read_text()
-        self.assertIn("on amd64 (GKE Autopilot ek-standard-8, AMD EPYC 7B13, 8 CPUs)", markdown)
+        self.assertIn("on amd64 (GKE Autopilot ek-standard-8, 8 CPUs)", markdown)
         self.assertIn("| small | ek-standard-8 (amd64, asia-northeast1-b), AMD EPYC 7B13 | "
                       "ek-standard-8 (amd64, asia-northeast1-b), Intel(R) Xeon(R) CPU @ 2.20GHz |", markdown)
 

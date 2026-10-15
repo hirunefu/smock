@@ -575,7 +575,8 @@ def gke_conditions(cpus):
     """The conditions of an amd64 GKE run in which smock ran, under each
     profile of `cpus` ({profile: CPU}), on a node of its own with that CPU
     (None: the run could not read it; NOT_RECORDED: a run before the nodes'
-    CPUs were recorded), and the load generator on another node."""
+    CPUs were recorded), and the load generator on another node. Its
+    machine is the node type whatever the CPUs, as gke.py writes it."""
     profiles = {}
     for number, (profile, cpu) in enumerate(cpus.items()):
         node = {"instance_type": "ek-standard-8", "arch": "amd64", "zone": "us-central1-a"}

@@ -929,7 +929,7 @@ class Diagnostics(Script):
         conditions = json.loads((self.out / "conditions.json").read_text())
         nodes = conditions["gke"]["profiles"]["small"]["nodes"]
         self.assertEqual((nodes["node-a"]["cpu"], nodes["node-b"]["cpu"]), (NODE_CPU, None))
-        self.assertEqual(conditions["machine"]["cpu_model"], "GKE Autopilot ek-standard-8, AMD EPYC 7B13")
+        self.assertEqual(conditions["machine"]["cpu_model"], "GKE Autopilot ek-standard-8")
         # Read while smock's Pod was there.
         kubectl = self.calls("kubectl")
         deleted = next(index for index, call in enumerate(kubectl)
