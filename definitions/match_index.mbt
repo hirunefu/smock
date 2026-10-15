@@ -118,3 +118,71 @@ pub fn Mock::candidates(
     Some(self.stubs[position])
   })
 }
+
+///|
+/// No positions, for a list the match index does not have.
+let no_positions : Array[Int] = []
+
+///|
+/// The first of `candidates(meth, path)` for which `accepts` holds, in the
+/// same order, or `None`: found with a merge over the index's lists, with
+/// no iterator or closure per Stub, since every request looks for one.
+pub fn Mock::first_candidate(
+  self : Mock,
+  meth : String,
+  path : String,
+  accepts : (Stub) -> Bool,
+) -> Stub? {
+  let index = self.index
+  // The same lists as `candidates` merges. A Stub is in one list at most,
+  // so the lists never share a position.
+  let mut by_path_method = no_positions
+  let mut by_path_any = no_positions
+  if index.by_path.get(path) is Some(stubs) {
+    if stubs.by_method.get(meth) is Some(list) {
+      by_path_method = list
+    }
+    by_path_any = stubs.any_method
+  }
+  let by_method = match index.by_method.get(meth) {
+    Some(list) => list
+    None => no_positions
+  }
+  let scanned = index.scanned
+  let mut a = 0
+  let mut b = 0
+  let mut c = 0
+  let mut d = 0
+  for ;; {
+    // The lowest next position of the four lists.
+    let mut position = @int.MAX_VALUE
+    let mut list = -1
+    if a < by_path_method.length() && by_path_method[a] < position {
+      position = by_path_method[a]
+      list = 0
+    }
+    if b < by_path_any.length() && by_path_any[b] < position {
+      position = by_path_any[b]
+      list = 1
+    }
+    if c < by_method.length() && by_method[c] < position {
+      position = by_method[c]
+      list = 2
+    }
+    if d < scanned.length() && scanned[d] < position {
+      position = scanned[d]
+      list = 3
+    }
+    match list {
+      0 => a += 1
+      1 => b += 1
+      2 => c += 1
+      3 => d += 1
+      _ => return None
+    }
+    let stub = self.stubs[position]
+    if accepts(stub) {
+      return Some(stub)
+    }
+  }
+}

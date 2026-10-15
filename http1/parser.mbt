@@ -443,6 +443,11 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
         break
       }
       if section is FieldValue {
+        // Eight bytes at a time while none of them ends the value.
+        let bytes = buf.unsafe_reinterpret_as_bytes()
+        while at + 8 <= stop && !has_control(bytes.unsafe_read_uint64_le(at)) {
+          at += 8
+        }
         while at < stop && is_field_value_byte(buf[at]) {
           at += 1
         }
@@ -453,6 +458,11 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
       }
     } else if scan is Target {
       let from = at
+      // Eight bytes at a time while all of them are visible characters.
+      let bytes = buf.unsafe_reinterpret_as_bytes()
+      while at + 8 <= stop && is_visible(bytes.unsafe_read_uint64_le(at)) {
+        at += 8
+      }
       while at < stop && buf[at] > b' ' && buf[at] < b'\x7f' {
         at += 1
       }
@@ -552,6 +562,37 @@ fn Section::after(self : Section, c : Byte) -> Section {
 /// and bytes above 0x7f (obs-text).
 fn is_field_value_byte(c : Byte) -> Bool {
   c == b'\t' || (c >= b' ' && c != b'\x7f')
+}
+
+///|
+/// `0x01` in each of the eight bytes of a word.
+const ONES : UInt64 = 0x0101010101010101
+
+///|
+/// `0x80` in each of the eight bytes of a word.
+const HIGHS : UInt64 = 0x8080808080808080
+
+///|
+/// Whether one of the eight bytes of `word` is below 0x20 or is 0x7f: a
+/// byte `is_field_value_byte` refuses, or a tab. With no such byte, all
+/// eight may appear in a field value.
+fn has_control(word : UInt64) -> Bool {
+  // A byte below n sets its high bit in (word - n) & !word, for n <= 0x80;
+  // a borrow can only set the bits of bytes above such a byte.
+  let below_space = (word - ONES * 0x20) & word.lnot()
+  let del = word ^ (ONES * 0x7f)
+  let is_del = (del - ONES) & del.lnot()
+  ((below_space | is_del) & HIGHS) != 0
+}
+
+///|
+/// Whether each of the eight bytes of `word` is a visible ASCII character,
+/// 0x21 to 0x7e, as a request target is made of.
+fn is_visible(word : UInt64) -> Bool {
+  let below = (word - ONES * 0x21) & word.lnot()
+  // A byte of 0x7f or more sets its high bit in word + 1 or in word.
+  let above = (word + ONES) | word
+  ((below | above) & HIGHS) == 0
 }
 
 ///|

@@ -135,34 +135,37 @@ fn Journal::entry(
   session~ : String?,
   host~ : String?,
   resolution~ : Resolution,
-  stub~ : (String, StubSource)?,
+  matched~ : MatchedStub?,
   near_miss~ : NearMiss?,
   plan~ : ResponsePlan,
   template_error~ : TemplateError?,
   digest~ : String,
   now~ : Int64,
 ) -> JournalEntry {
+  // An entry is made for every request, so it is built with plain matches,
+  // which allocate no closures or tuples.
   let body = truncate(request.body, self.settings.body_limit)
   // The body's value in the Near miss is truncated like the body, so that
   // no entry holds a whole body.
   let truncated = body.length() < request.body.length()
-  let near_miss = near_miss.map(near_miss => {
-    guard truncated else { return near_miss }
-    {
-      ..near_miss,
-      failed: near_miss.failed.map(failed => {
-        match failed.condition {
-          Body => { ..failed, actual: [@utf8.decode_lossy(body)], }
-          _ => failed
-        }
-      }),
-    }
-  })
-  let (mock, via_default) = match resolution {
-    ByHost(name) => (Some(name), false)
-    ViaDefault(name) => (Some(name), true)
-    NoMock => (None, false)
+  let near_miss = match near_miss {
+    Some(near_miss) if truncated =>
+      Some({
+        ..near_miss,
+        failed: near_miss.failed.map(failed => {
+          match failed.condition {
+            Body => { ..failed, actual: [@utf8.decode_lossy(body)], }
+            _ => failed
+          }
+        }),
+      })
+    _ => near_miss
   }
+  let mock = match resolution {
+    ByHost(name) | ViaDefault(name) => Some(name)
+    NoMock => None
+  }
+  let via_default = resolution is ViaDefault(_)
   let status = match plan.fault {
     Some(Close | Reset) => None
     _ => Some(plan.status)
@@ -173,13 +176,18 @@ fn Journal::entry(
   for header in request.headers {
     text += header.0.length() + header.1.length()
   }
-  let (stub, stub_source) = match stub {
-    Some((id, source)) => (Some(id), Some(source))
-    None => (None, None)
+  let stub = match matched {
+    Some(FromFile(id)) | Some(Ephemeral(id)) => Some(id)
+    None => None
   }
-  for name in [session, host, mock, stub] {
-    text += name.map_or(0, name => name.length())
+  let stub_source = match matched {
+    Some(matched) => Some(matched.source())
+    None => None
   }
+  text += text_length(session) +
+    text_length(host) +
+    text_length(mock) +
+    text_length(stub)
   if template_error is Some(error) {
     text += error.at.length() + error.message.length()
   }
@@ -200,7 +208,12 @@ fn Journal::entry(
     mock,
     via_default,
     digest,
-    request: { ..request, body, },
+    // The request itself when its body is whole: nothing changes it.
+    request: if truncated {
+      { ..request, body, }
+    } else {
+      request
+    },
     body_size: request.body.length(),
     stub,
     stub_source,
@@ -209,6 +222,15 @@ fn Journal::entry(
     fault: plan.fault,
     template_error,
     size: 256 + 2 * text + body.length(),
+  }
+}
+
+///|
+/// The UTF-16 code units of `name`, 0 for none.
+fn text_length(name : String?) -> Int {
+  match name {
+    Some(name) => name.length()
+    None => 0
   }
 }
 
@@ -279,7 +301,7 @@ fn Journal::append(self : Journal, entry : JournalEntry) -> Unit {
 ///|
 /// Counts `entry` as evicted by the bound, for its Session.
 fn Journal::count_eviction(self : Journal, entry : JournalEntry) -> Unit {
-  self.evicted[entry.session] = self.evicted.get(entry.session).unwrap_or(0) + 1
+  self.evicted.update_or_default(entry.session, 1, count => count + 1)
   self.evictions += 1L
 }
 

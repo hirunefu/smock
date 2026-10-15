@@ -173,6 +173,68 @@ async fn until_end(conn : Conn, since : Int64) -> (Int64, Int64, String) {
 }
 
 ///|
+async test "a request still arriving when SIGTERM comes is answered once the rest of it arrives, with Connection: close, and its connection closes after the response" {
+  with_definitions([("m.json", drain_defs)], dir => {
+    with_certificates(certs => {
+      let _ = with_smock(
+        [
+          "--dir",
+          dir,
+          "--port",
+          "0",
+          "--drain-timeout-ms",
+          "10000",
+          ..certs.args(),
+        ],
+        smock => {
+          let conns = []
+          for over in [Plain, Tls(certs)] {
+            let conn = smock.connect(over~)
+            // The head, without the empty line that ends it.
+            conn.write("GET /fast HTTP/1.1\r\nHost: localhost\r\n")
+            conns.push(conn)
+          }
+          defer conns.each(conn => conn.close())
+          @async.sleep(settle_ms)
+          smock.terminate()
+          @async.sleep(settle_ms)
+          let out = []
+          for i, conn in conns {
+            conn.write("\r\n")
+            out.push("\{["plain", "TLS"][i]}:")
+            out.push(read_response(conn))
+            out.push("then closed: \{closed(conn)}")
+          }
+          out.push("exit status \{smock.exited()}")
+          inspect(
+            out.join("\n"),
+            content=(
+              #|plain:
+              #|HTTP/1.1 200 OK
+              #|Smock-Mock: m; via=default
+              #|Connection: close
+              #|Content-Length: 4
+              #|
+              #|fast
+              #|then closed: true
+              #|TLS:
+              #|HTTP/1.1 200 OK
+              #|Smock-Mock: m; via=default
+              #|Connection: close
+              #|Content-Length: 4
+              #|
+              #|fast
+              #|then closed: true
+              #|exit status 0
+            ),
+          )
+        },
+      )
+    })
+  })
+}
+
+///|
 async test "Server-Sent Event streams and delays still running when the drain timeout expires are cut, and smock exits with status 0" {
   with_definitions([("m.json", drain_defs)], dir => {
     let stopped = with_smock(
