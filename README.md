@@ -1161,10 +1161,10 @@ architecture the targets file has no set for.
   cross-check), the quota, memory limit and CPUs read while it ran,
   smock's peak memory and OOM kills (`memory`), whether smock got ready,
   smock's RSS (first, last, max), the TCP connections the machine accepted
-  during the load, and the idle connections still open at its end. Then the idle RSS under each profile, with peak memory and OOM
-  kills, and each target with its architecture and profile, its verdict,
-  what was measured and why when that is not plain. `format` numbers the
-  layout.
+  during the load, and the idle connections still open at its end. Then
+  the idle RSS under each profile, with peak memory and OOM kills, and
+  each target with its architecture and profile, its verdict, what was
+  measured and why when that is not plain. `format` numbers the layout.
 - `summary.md`: the same for people, a section for each profile. Its
   *Targets* section says which architecture's targets it checked.
 - `raw/<profile>/<case>/` (`<case>@<rate>` for a ladder's steps):
