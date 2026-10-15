@@ -1457,8 +1457,9 @@ that run's linux/amd64 build and tests passed.
 
 It writes to `bench/results/gke-<date>-<time>/` unless `--out` says
 otherwise: `raw/<profile>/generator.log`, the load generator's lines;
-`raw/<profile>/pods.json`, the nodes the Pods ran on, smock's restarts and
-the load generator's CPU request; `raw/<profile>/smock.log`, smock's log
+`raw/<profile>/pods.json`, the nodes the Pods ran on (with each one's
+boot disk type, `boot_disk`), smock's restarts and the load generator's
+CPU request; `raw/<profile>/smock.log`, smock's log
 (and the log of its container before its last restart, when it
 restarted, with kubectl's errors in their place);
 `raw/<profile>/smock-node-cpu.log`, what smock's init container printed

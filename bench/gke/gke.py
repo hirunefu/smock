@@ -493,10 +493,11 @@ def run_instructions(path):
     return found
 
 
-# The labels of a node that say what it is and where.
+# The labels of a node that say what it is and where, and the type of its
+# boot disk, whose regional quota scripts/gke-bench.sh checks.
 NODE_LABELS = {"instance_type": "node.kubernetes.io/instance-type", "arch": "kubernetes.io/arch",
                "zone": "topology.kubernetes.io/zone", "machine_family": "cloud.google.com/machine-family",
-               "compute_class": "cloud.google.com/compute-class"}
+               "compute_class": "cloud.google.com/compute-class", "boot_disk": "cloud.google.com/gke-boot-disk"}
 
 
 def pod_info(pod_list, node_list):

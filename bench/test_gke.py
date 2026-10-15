@@ -350,14 +350,15 @@ START = {"kind": "start", "profile": "small", "oha": "oha 1.16.0", "cpus": 8, "a
                     "digest": "48f7ce9715f0", "mocks": [{"name": "catalog"}]}}
 
 NODE = {"instance_type": "e4a-standard-8", "arch": "arm64", "zone": "us-central1-a", "machine_family": "e4a",
-        "compute_class": "autopilot-arm", "kernel": "6.12.94+", "kubelet": "v1.35.8-gke.1225000",
-        "os_image": "Container-Optimized OS from Google", "cpus": "8", "allocatable_cpu": "7910m"}
+        "compute_class": "autopilot-arm", "boot_disk": "hyperdisk-balanced", "kernel": "6.12.94+",
+        "kubelet": "v1.35.8-gke.1225000", "os_image": "Container-Optimized OS from Google", "cpus": "8",
+        "allocatable_cpu": "7910m"}
 
 
 # An amd64 node of Autopilot's general-purpose Pods, which have no compute
 # class label.
 X86_NODE = {**NODE, "instance_type": "ek-standard-8", "arch": "amd64", "zone": "asia-northeast1-b",
-            "machine_family": "ek", "compute_class": None}
+            "machine_family": "ek", "compute_class": None, "boot_disk": "pd-balanced"}
 
 
 def pods(restarts=0, reason=None, node=NODE, generator_node=None, generator_cpu="4"):
@@ -1326,7 +1327,10 @@ class PodInfo(Helper):
              "status": {"phase": "Failed", "reason": "DeadlineExceeded", "containerStatuses": []}}]}
         labels = {"node.kubernetes.io/instance-type": "e4a-standard-8", "kubernetes.io/arch": "arm64",
                   "topology.kubernetes.io/zone": "us-central1-a", "cloud.google.com/machine-family": "e4a",
-                  "cloud.google.com/compute-class": "autopilot-arm"}
+                  "cloud.google.com/compute-class": "autopilot-arm",
+                  # The type of its boot disk, whose quota the run's checks
+                  # take it to draw on.
+                  "cloud.google.com/gke-boot-disk": "hyperdisk-balanced"}
         node_list = {"items": [{
             "metadata": {"name": "node-a", "labels": labels,
                          "annotations": {"container.googleapis.com/instance_id": "1234"}},
