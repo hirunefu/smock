@@ -58,11 +58,13 @@ pre-merge run compares with them.
   ([On GKE Autopilot](../README.md#on-gke-autopilot)). It needs gcloud
   logged in (`gcloud auth login`), docker, kubectl, and the MoonBit
   toolchain or a release binary, and the project and region in the
-  environment. The pre-merge run is on x86 (amd64) nodes in Tokyo
-  (asia-northeast1), whatever machine starts it: Autopilot has x86 Pods in
-  every region, and plenty of them. Keep to one architecture from run to
-  run, so that each compares with the previous one; its summary checks
-  the targets of that architecture, the amd64 ones on x86 nodes. From an
+  environment. The pre-merge run is on x86 (amd64) nodes, the
+  architecture of the maintainer's production environment, in zone
+  us-central1-a, whatever machine starts it: Autopilot has x86 Pods in
+  every region, and plenty of them, and us-central1 costs less than
+  Tokyo. Keep to one architecture and one zone from run to run, so that
+  each compares with the previous one; its summary checks the targets of
+  that architecture, the amd64 ones on x86 nodes. From an
   arm64 machine, which cannot build smock for amd64, take the release
   binary CI built for linux/amd64 on the push of the commit checked out
   (check that the run's `headSha` is `git rev-parse HEAD`; CI keeps it for
@@ -74,7 +76,7 @@ pre-merge run compares with them.
   gh run list -R hirunefu/smock --workflow CI --branch integration/r1 --event push --limit 1 --json databaseId,headSha
   dir=$(mktemp -d)
   gh run download <run-id> -R hirunefu/smock -n smock-linux-amd64 --dir "$dir"
-  export GKE_BENCH_PROJECT=<project ID> GKE_BENCH_REGION=asia-northeast1
+  export GKE_BENCH_PROJECT=<project ID> GKE_BENCH_REGION=us-central1 GKE_BENCH_ZONE=us-central1-a
   scripts/gke-bench.sh --dry-run --arch amd64 --smock "$dir/smock"
   ```
 

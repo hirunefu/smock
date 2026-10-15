@@ -1280,16 +1280,16 @@ us-west1, europe-west1, europe-west2, europe-west4 and asia-southeast1
 (GKE's documentation, 2026-10-14): an arm64 run needs one of those, and
 the script warns when its region is not one. x86 capacity is plentiful,
 and an Arm run once failed for want of Arm nodes in its zone. To run on
-x86 nodes in Tokyo from an arm64 machine, which cannot build smock for
-amd64, take the release binary that CI built for linux/amd64 from the
-commit checked out, from CI's run on the push of that commit (CI keeps it
-for 7 days):
+x86 nodes from an arm64 machine, which cannot build smock for amd64, as
+the pre-merge run does in us-central1-a, take the release binary that CI
+built for linux/amd64 from the commit checked out, from CI's run on the
+push of that commit (CI keeps it for 7 days):
 
 ```sh
 gh run list -R hirunefu/smock --workflow CI --branch integration/r1 --event push --limit 1 --json databaseId,headSha
 dir=$(mktemp -d)
 gh run download <run-id> -R hirunefu/smock -n smock-linux-amd64 --dir "$dir"   # writes $dir/smock
-export GKE_BENCH_PROJECT=<project ID> GKE_BENCH_REGION=asia-northeast1
+export GKE_BENCH_PROJECT=<project ID> GKE_BENCH_REGION=us-central1 GKE_BENCH_ZONE=us-central1-a
 scripts/gke-bench.sh --dry-run --arch amd64 --smock "$dir/smock"
 scripts/gke-bench.sh --yes --arch amd64 --smock "$dir/smock"
 ```
