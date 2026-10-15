@@ -1085,7 +1085,8 @@ keep_smock_state() {
 # (which the next profile would hit too). Returns 3 when the profile ran
 # but not all of its steps (its Job did not complete, or the load generator
 # stopped it early), and 4 when the load generator's Job or smock's Pod and
-# Service were not deleted, so that no later profile may run beside them.
+# Service were not deleted, so that no later profile may run beside them
+# (stop_reason then says which).
 run_profile() {
   local name=$1 deadline_s=$2 job=generator-$1 manifests=$work/manifests/$1 raw=$out/raw/$1 status=0 waited ended
   local left=""
@@ -1151,6 +1152,8 @@ run_profile() {
     left="${left:+$left, and }smock's Pod and Service"
   if [ -n "$left" ]; then
     say "not deleted in 5 minutes under $name: $left; no later profile runs beside them"
+    stop_reason="$left $([[ $left == *" and "* ]] && echo were || echo was) not deleted in 5 minutes, so no"
+    stop_reason+=" later profile ran"
     return 4
   fi
   return "$status"
@@ -1230,11 +1233,15 @@ start_watchdog
 push_images
 make_cluster
 
-run_status=0
+# Where and why the profiles stopped before the last, which summary.md
+# says, when they did.
+run_status=0 stopped=()
 while read -r name steps deadline_s <&3; do
   # Each profile needs its Job's time, smock's start, and the deletion.
   if [ $(($(now) + deadline_s + 600)) -gt "$deadline" ]; then
     say "profile $name and those after it do not fit in the time limit; skipping them"
+    stop_reason="profile $name and those after it did not fit in the time limit of $((time_limit_s / 60)) minutes"
+    stopped=(--stopped "$stop_reason" --stopped-under "$name")
     run_status=1
     break
   fi
@@ -1244,6 +1251,7 @@ while read -r name steps deadline_s <&3; do
   0) ;;
   3) run_status=1 ;;
   4)
+    stopped=(--stopped "$stop_reason" --stopped-under "$name")
     run_status=1
     break
     ;;
@@ -1255,7 +1263,7 @@ finished_at=$(date -u +%FT%TZ)
 if [ "$dry_run" = 1 ]; then
   say "would write summary.json, summary.md and conditions.json into $out"
 else
-  summarize || run_status=1
+  summarize "${stopped[@]}" || run_status=1
   # Whatever the Jobs said: a log that lost lines leaves steps unmeasured.
   if ! incomplete=$("$PYTHON" -c "$INCOMPLETE_PROFILES" "$out/summary.json" 2>/dev/null); then
     run_status=1

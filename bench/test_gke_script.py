@@ -119,9 +119,14 @@ def answer(text="", status=0):
 
 
 def rule(name):
-    """What the test configured for a call, by its name."""
+    """What the test configured for a call, by its name: time moves on by
+    `advance_s` for the script (with the fake date), the call sleeps for
+    `sleep` and fails with `status`."""
     value = config.get(name)
     if isinstance(value, dict):
+        if "advance_s" in value:
+            offset = state_dir / "time-offset"
+            offset.write_text(str(float(offset.read_text() if offset.exists() else 0) + value["advance_s"]))
         time.sleep(value.get("sleep", 0))
         if "status" in value:
             sys.stderr.write(value.get("stderr", f"fake {tool}: {name} failed\n"))
@@ -377,7 +382,8 @@ if tool == "kubectl":
 '''
 
 # A fake date: time passes FAKE_TIME_SCALE times as fast for the script as
-# it does, from the first time it is asked.
+# it does, from the first time it is asked, and jumps forward by what the
+# fakes wrote to time-offset.
 FAKE_DATE = r'''#!/usr/bin/env python3
 import os
 import shutil
@@ -395,7 +401,9 @@ base_file = Path(os.environ["FAKE_STATE"]) / "time-base"
 if not base_file.exists():
     base_file.write_text(str(time.time()))
 base = float(base_file.read_text())
-now = base + (time.time() - base) * float(os.environ.get("FAKE_TIME_SCALE", "1"))
+offset_file = Path(os.environ["FAKE_STATE"]) / "time-offset"
+offset = float(offset_file.read_text()) if offset_file.exists() else 0
+now = base + (time.time() - base) * float(os.environ.get("FAKE_TIME_SCALE", "1")) + offset
 os.execv(real, [real, "-d", f"@{now:.0f}", *args])
 '''
 
@@ -1079,6 +1087,13 @@ class Profiles(Script):
                          {"small": {"amd64": "6", "arm64": "4"}[HOST_ARCH],
                           "large": {"amd64": "6", "arm64": "4"}[HOST_ARCH]})
 
+    def stopped(self):
+        """Why the run stopped early, as summary.json and summary.md say."""
+        summary = json.loads((self.out / "summary.json").read_text())
+        markdown = (self.out / "summary.md").read_text()
+        return summary["gke"]["stopped"], next((line for line in markdown.splitlines()
+                                                if line.startswith("**Stopped early:**")), None)
+
     def test_a_smock_not_deleted_in_time_stops_the_later_profiles_and_the_run_still_cleans_up(self):
         self.configure(delete_fails_on="manifests/small/smock.json")
         status, output = self.run_script("--yes")
@@ -1089,6 +1104,12 @@ class Profiles(Script):
         summary = json.loads((self.out / "summary.json").read_text())
         self.assertFalse(summary["complete"])
         self.assertEqual({case["profile"] for case in summary["cases"]}, {"small"})
+        # summary.md says why large was not run.
+        reason = "smock's Pod and Service were not deleted in 5 minutes, so no later profile ran"
+        self.assertEqual(self.stopped(), (
+            {"reason": reason, "profile": "small", "after": "http-keep-alive@small@1000"},
+            f"**Stopped early:** the run stopped under profile small, after its step http-keep-alive@small@1000: "
+            f"{reason}. Nothing after that was measured."))
         self.assertEqual(self.state_now()["clusters"], {})
         self.assertIn("nothing is left", output)
 
@@ -1101,6 +1122,27 @@ class Profiles(Script):
         self.assertEqual([(verb, name) for verb, name, _ in self.smock_calls()],
                          [("apply", "smock-small"), ("delete", "smock-small")])
         self.assertFalse(json.loads((self.out / "summary.json").read_text())["complete"])
+        self.assertEqual(self.stopped()[0]["reason"],
+                         "the load generator's Job was not deleted in 5 minutes, so no later profile ran")
+        self.assertIn("nothing is left", output)
+
+    def test_a_profile_that_does_not_fit_in_the_time_limit_is_skipped_and_summary_md_says_so(self):
+        # The plan fits in 35 minutes as estimated, but 1,000 s pass while
+        # smock becomes ready under small: large, with its Job's 507 s and
+        # 600 s for smock's start and the deletion, no longer fits.
+        self.fake_time(1)
+        self.configure(smock_ready={"advance_s": 1000})
+        status, output = self.run_script("--yes", "--time-limit", "35m")
+        self.assertEqual(status, 1, output)
+        self.assertIn("profile large and those after it do not fit in the time limit; skipping them", output)
+        self.assertEqual([(verb, name) for verb, name, _ in self.smock_calls()],
+                         [("apply", "smock-small"), ("delete", "smock-small")])
+        reason = "profile large and those after it did not fit in the time limit of 35 minutes"
+        self.assertEqual(self.stopped(), (
+            {"reason": reason, "profile": "large", "after": None},
+            f"**Stopped early:** the run stopped under profile large, before its first step: {reason}. Nothing "
+            "after that was measured."))
+        self.assertIn("not every step was measured under: large (summary.md says why)", output)
         self.assertIn("nothing is left", output)
 
     def test_a_log_that_lost_steps_fails_the_run_although_every_job_completed(self):

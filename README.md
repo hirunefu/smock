@@ -1483,7 +1483,9 @@ once a profile has started, because something fails or it is stopped
 (Ctrl-C, SIGTERM, a closed terminal), still writes `summary.json`,
 `summary.md` and `conditions.json` from what it measured; `summary.md`
 then says, right below its first line, under which profile and after
-which step the run stopped, and why (`gke.stopped` in `summary.json`).
+which step the run stopped, and why (`gke.stopped` in `summary.json`). So
+it does when the run leaves out the profiles after one whose Pods were
+not deleted in time, or from one that no longer fits in the time limit.
 The summary checks the targets of the run's architecture (`--arch`).
 Nothing outside smock's Pod can read its cgroup on Autopilot, so what
 smock used comes from its own
