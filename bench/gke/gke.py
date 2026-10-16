@@ -25,10 +25,13 @@ for each, the first the baseline, and --rounds N; plan and estimate take
 """
 
 import argparse
+import functools
 import importlib.util
 import json
+import math
 import re
 import shutil
+import statistics
 import struct
 import sys
 from fractions import Fraction
@@ -1191,6 +1194,287 @@ def command_samples(args):
     return 0
 
 
+@functools.cache
+def compare_module():
+    """bench/compare.py, for what it says of a step that measured nothing
+    and of the conditions of two runs, loaded as it loads bench/bench.py,
+    but only when needed: the load generator's image, whose Pods run this
+    file too, holds no compare.py."""
+    spec = importlib.util.spec_from_file_location("bench_compare", BENCH / "compare.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# A sample's directory: its round, then its variant's label.
+SAMPLE_NAME = re.compile(r"([1-9][0-9]*)-(" + VARIANT_LABEL.pattern + ")")
+
+# The share of its CPU limit from which smock is saturated: it queues, and
+# what its CPU comes to a request says less of its code.
+SATURATED = 0.9
+
+
+def read_samples(out):
+    """The samples of a run of variants under `out`, as summarize left them:
+    {(round, label): (summary, conditions)}, by round; None for one it did
+    not summarize."""
+    compare = compare_module()
+    root = Path(out) / SAMPLES
+    samples = {}
+    for directory in root.iterdir() if root.is_dir() else []:
+        match = SAMPLE_NAME.fullmatch(directory.name)
+        if match and directory.is_dir():
+            try:
+                samples[int(match[1]), match[2]] = \
+                    compare.read_run(directory) if (directory / "summary.json").exists() else None
+            except compare.CompareError as error:
+                raise GkeError(str(error)) from error
+    return dict(sorted(samples.items(), key=lambda item: item[0][0]))
+
+
+def median(values):
+    return statistics.median(values) if values else None
+
+
+def percent_change(before, after):
+    return None if before is None or after is None or not before else (after - before) / before * 100
+
+
+def percent_text(change):
+    """A change in percent, for people, as compare.py shows one."""
+    if change is None:
+        return "-"
+    change = round(change, 1)
+    return "0%" if change == 0 else f"{change:+.1f}".removesuffix(".0") + "%"
+
+
+def sign_test_p(higher, lower):
+    """The exact two-sided p of a sign test: how likely a split of the
+    pairs that differ at least as uneven as `higher` against `lower` is,
+    were either as likely as the other."""
+    pairs = higher + lower
+    if not pairs:
+        return 1.0
+    return min(1.0, 2 * sum(math.comb(pairs, k) for k in range(min(higher, lower) + 1)) / 2 ** pairs)
+
+
+def run_record(sample, round_, label, profile_name, step_id, line):
+    """What one run, `label`'s at `step_id` in `round_`, measured, from its
+    sample (summary and conditions, or None) and its step line of the load
+    generator (`line`, or None): smock's CPU, throttling, waits, the node's
+    steal time (another variant's count, when this one's smock has none)
+    and p99; and why it measured nothing, or None."""
+    compare = compare_module()
+    run = f"{label} round {round_}"
+    record = {"round": round_, "us_per_request": None, "utilization": None, "throttled_periods": None,
+              "periods": None, "scheduling_delay_s": None, "node_steal_s": None, "p99_ms": None, "not_measured": None}
+    case = sample and next((case for case in sample[0]["cases"] if case["id"] == step_id), None)
+    if case is None:
+        ended = sample and (sample[0]["gke"]["profiles"].get(profile_name) or {}).get("ended_early")
+        why = f": {ended['reason']}" if ended and step_id in ended["not_measured"] else ""
+        record["not_measured"] = f"{run} did not run it{why}" if sample else f"the sample {round_}-{label} has no " \
+                                                                                 "summary"
+        return record
+    cpu = case.get("smock_cpu") or {}
+    steal = (line or {}).get("node_steal_s") or {label: cpu.get("node_steal_s")}
+    record.update(us_per_request=cpu.get("us_per_request"), utilization=cpu.get("utilization"),
+                  throttled_periods=cpu.get("throttled_periods"), periods=cpu.get("periods"),
+                  scheduling_delay_s=cpu.get("scheduling_delay_s"),
+                  node_steal_s=next((value for value in [steal.get(label), *steal.values()] if value is not None),
+                                    None),
+                  p99_ms=case["latency_ms"]["p99"],
+                  not_measured=compare.not_measured(case, run) or (
+                      None if cpu.get("us_per_request") is not None else
+                      f"smock's /metrics gave no CPU time a request in the {run} run"))
+    return record
+
+
+def saturated(run):
+    return (run["utilization"] or 0) >= SATURATED
+
+
+def variant_at_step(runs, baseline_runs=None):
+    """What a variant's `runs` of one step, one a round, measured: the
+    median, lowest and highest CPU a request of those measured, how many
+    there are, the CFS periods they were throttled in and their periods,
+    the median waits and p99; and, against the baseline's runs
+    (`baseline_runs`, None for the baseline's own), the change of the
+    median and of each run against the baseline's in the same round, each
+    pair saturated when either run used SATURATED of its CPU limit."""
+    measured = [run for run in runs if run["not_measured"] is None]
+    values = [run["us_per_request"] for run in measured]
+    counted = [run for run in measured if run["throttled_periods"] is not None and run["periods"] is not None]
+
+    def median_of(key, digits):
+        known = [run[key] for run in measured if run[key] is not None]
+        return None if not known else round(median(known), digits)
+
+    record = {"runs": runs, "n": len(measured), "median_us_per_request": median_of("us_per_request", 2),
+              "min_us_per_request": min(values, default=None), "max_us_per_request": max(values, default=None),
+              "throttled_periods": sum(run["throttled_periods"] for run in counted) if counted else None,
+              "periods": sum(run["periods"] for run in counted) if counted else None,
+              "scheduling_delay_s": median_of("scheduling_delay_s", 4), "node_steal_s": median_of("node_steal_s", 2),
+              "p99_ms": median_of("p99_ms", 3)}
+    if baseline_runs is None:
+        return {**record, "saturated": sum(saturated(run) for run in measured)}
+    baseline_values = [run["us_per_request"] for run in baseline_runs if run["not_measured"] is None]
+    change = percent_change(median(baseline_values), median(values))
+    pairs = [{"round": run["round"], "change_percent": round(percent_change(base["us_per_request"],
+                                                                             run["us_per_request"]), 2),
+              "saturated": saturated(base) or saturated(run)}
+             for base, run in zip(baseline_runs, runs, strict=True)
+             if base["not_measured"] is None and run["not_measured"] is None]
+    return {**record, "change_percent": None if change is None else round(change, 2), "pairs": pairs,
+            "higher": sum(pair["change_percent"] > 0 for pair in pairs),
+            "saturated": sum(pair["saturated"] for pair in pairs)}
+
+
+def verdict(pairs):
+    """Whether a variant used more CPU a request than the baseline, over
+    its unsaturated `pairs` of runs of a profile: the median change and its
+    range, how many were higher and how many lower, and the sign test's p
+    of that; higher or lower when p is at most 0.05, else no clear
+    difference."""
+    changes = [pair["change_percent"] for pair in pairs if not pair["saturated"]]
+    higher, lower = sum(change > 0 for change in changes), sum(change < 0 for change in changes)
+    p = sign_test_p(higher, lower)
+    return {"pairs": len(changes), "higher": higher, "lower": lower,
+            "median_change_percent": None if not changes else round(median(changes), 2),
+            "min_change_percent": min(changes, default=None), "max_change_percent": max(changes, default=None),
+            "sign_test_p": p,
+            "verdict": None if not changes else "no clear difference" if p > 0.05 else
+            "higher" if higher > lower else "lower"}
+
+
+def profile_comparison(profile, samples, labels, baseline, rounds, lines):
+    """How the variants compare under `profile`, from their `samples`
+    ({(round, label): sample}) and the load generator's `lines`: each
+    step's runs of each variant (variant_at_step) and each variant's
+    verdict against the `baseline`."""
+    name = profile["name"]
+    step_lines = {(line["round"], line["variant"], line["result"]["id"]): line
+                  for line in lines if line["kind"] == "step" and line.get("variant")}
+    planned = next(([spec for spec in sample[1]["cases"] if spec["profile"] == name]
+                    for sample in samples.values() if sample and sample[1]), [])
+    steps = []
+    for spec in planned:
+        runs = {label: [run_record(samples.get((round_, label)), round_, label, name, spec["id"],
+                                   step_lines.get((round_, label, spec["id"]))) for round_ in range(1, rounds + 1)]
+                for label in labels}
+        steps.append({"id": spec["id"], "case": spec["id"].split("@", 1)[0], "rate": spec["rate"],
+                      "variants": {label: variant_at_step(runs[label], None if label == baseline else runs[baseline])
+                                   for label in labels}})
+    complete = all(sample and (sample[0]["gke"]["profiles"].get(name) or {}).get("complete")
+                   for (round_, label), sample in samples.items())
+    return {"complete": bool(samples) and complete, "rounds": rounds, "steps": steps,
+            "verdicts": {label: verdict([pair for step in steps for pair in step["variants"][label]["pairs"]])
+                         for label in labels if label != baseline}}
+
+
+def periods_text(record):
+    if record["throttled_periods"] is None:
+        return "-"
+    return f"{record['throttled_periods']:,} of {record['periods']:,}"
+
+
+def us_text(record):
+    if not record["n"]:
+        return "-"
+    return (f"{record['median_us_per_request']:.1f} ({record['min_us_per_request']:.1f}–"
+            f"{record['max_us_per_request']:.1f}, {record['n']})")
+
+
+def range_text(low, high):
+    if low is None:
+        return "-"
+    return percent_text(low) if percent_text(low) == percent_text(high) else \
+        f"{percent_text(low)} to {percent_text(high)}"
+
+
+def p_text(p):
+    return "< 0.001" if p < 0.001 else f"{p:.3f}".rstrip("0").rstrip(".")
+
+
+SAME_NODE_COLUMNS = ("Case", "Rate", "Variant", "CPU µs/request", "Change", "Paired", "Higher", "Throttled periods",
+                     "CPU wait s", "Node steal s", "p99 ms", "Saturated")
+
+
+def same_node_row(step, label, record, baseline):
+    """A variant's row of a step in same-node.md."""
+    if label == baseline:
+        paired = ["-", "-", "-"]
+        saturated_text = f"{record['saturated']} of {record['n']} runs"
+    else:
+        changes = [pair["change_percent"] for pair in record["pairs"]]
+        paired = [percent_text(record["change_percent"]), range_text(min(changes, default=None),
+                                                                     max(changes, default=None)),
+                  f"{record['higher']} of {len(changes)}" if changes else "-"]
+        saturated_text = f"{record['saturated']} of {len(changes)} pairs"
+    cells = [step["case"], f"{step['rate']:,}", f"{label} (baseline)" if label == baseline else label,
+             us_text(record), *paired, periods_text(record), harness.shown(record["scheduling_delay_s"]),
+             harness.shown(record["node_steal_s"]), harness.shown(record["p99_ms"]), saturated_text]
+    return "| " + " | ".join(cells) + " |"
+
+
+def verdict_line(label, baseline, result):
+    if not result["pairs"]:
+        return f"- {label} against {baseline}: no pair of runs that both measured and neither saturated."
+    return (f"- {label} against {baseline}: {percent_text(result['median_change_percent'])} "
+            f"({range_text(result['min_change_percent'], result['max_change_percent'])}), higher in "
+            f"{result['higher']} of {result['pairs']} pairs, sign test p = {p_text(result['sign_test_p'])}: "
+            f"{result['verdict']}.")
+
+
+def same_node_markdown(report, profiles):
+    """same-node.md: for each profile, a row for each variant at each step,
+    then each variant's verdict against the baseline."""
+    baseline = report["baseline"]
+    lines = ["# smock variants on one node"]
+    for profile in profiles:
+        result = report["gke"]["profiles"][profile["name"]]
+        lines += ["", harness.profile_heading(profile), "",
+                  "| " + " | ".join(SAME_NODE_COLUMNS) + " |", "|" + "---|" * len(SAME_NODE_COLUMNS)]
+        for step in result["steps"]:
+            lines += [same_node_row(step, label, record, baseline) for label, record in step["variants"].items()]
+        lines += ["", "Verdicts, over the pairs of runs of every step in which neither run saturated:", "",
+                  *(verdict_line(label, baseline, verdict_result)
+                    for label, verdict_result in result["verdicts"].items())]
+    return "\n".join(lines) + "\n"
+
+
+def same_node(out, baseline=None):
+    """The comparison of the variants of a run under `out`, from its
+    samples, each summarized, and its raw/<profile>/: same-node.json's
+    content, same-node.md's, and the exit status."""
+    samples = read_samples(out)
+    known = [sample for sample in samples.values() if sample and sample[1]]
+    if not known:
+        raise GkeError(f"{Path(out) / SAMPLES} holds no summarized sample: split the run with gke.py samples, and "
+                       "summarize each sample")
+    profiles = known[0][1]["profiles"]
+    raws = {profile["name"]: generator_lines(Path(out) / "raw" / profile["name"] / "generator.log")
+            for profile in profiles}
+    labels = list(dict.fromkeys([*(line["variant"] for lines in raws.values() for line in lines
+                                   if line.get("variant")), *(label for _, label in samples)]))
+    baseline = baseline or labels[0]
+    if baseline not in labels:
+        raise GkeError(f"the run has no variant {baseline}: its variants are {and_list(labels)}")
+    labels = [baseline, *(label for label in labels if label != baseline)]
+    rounds = max(round_ for round_, _ in samples)
+    results = {profile["name"]: profile_comparison(profile, samples, labels, baseline, rounds, raws[profile["name"]])
+               for profile in profiles}
+    report = {"format": 1, "baseline": baseline, "variants": labels,
+              "complete": all(result["complete"] for result in results.values()), "gke": {"profiles": results}}
+    return report, same_node_markdown(report, profiles), 0
+
+
+def command_same_node(args):
+    report, markdown, status = same_node(args.out, args.baseline)
+    harness.write_json(Path(args.out) / "same-node.json", report)
+    (Path(args.out) / "same-node.md").write_text(markdown)
+    return status
+
+
 def command_stopped(args):
     stopped = next((line for line in generator_lines(args.log) if line["kind"] == "stopped"), None)
     if stopped:
@@ -1396,6 +1680,13 @@ def main(argv):
     splitting.add_argument("--cases", help="the cases the run ran, comma-separated (default: every case)")
     splitting.add_argument("out", help="the run's results: raw/<profile>/ of a run of variants")
     splitting.set_defaults(handler=command_samples)
+    comparing = commands.add_parser("same-node", help="compare the variants of a run, each with the baseline, from "
+                                                      "its samples, each summarized: write same-node.json and "
+                                                      "same-node.md")
+    comparing.add_argument("--baseline", help="the variant to compare the others with (default: the first)")
+    comparing.add_argument("out", help="the run's results: samples/ as gke.py samples wrote it, each sample "
+                                       "summarized, and raw/")
+    comparing.set_defaults(handler=command_same_node)
     stopping = commands.add_parser("stopped", help="print why the load generator stopped its profile early and how "
                                                     "many steps it did not run; nothing when it did not")
     stopping.add_argument("log", help="the load generator's log: raw/<profile>/generator.log")

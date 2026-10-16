@@ -2126,6 +2126,32 @@ class VariantRun(Helper):
         return json.loads((directory / "summary.json").read_text()), \
             json.loads((directory / "conditions.json").read_text())
 
+    def same_node(self, out, *options, sha256=None):
+        """gke.py same-node over `out` with `options`, once its samples are
+        split and each summarized as the runner does it, with its variant's
+        binary's sha256 of `sha256` ({label: hex}, each label's own by
+        default): its exit status, same-node.json, same-node.md and what it
+        wrote to stderr."""
+        plan = small_plan(self.directory())
+        for _, label, directory in self.samples(out, plan):
+            self.summarize_sample(directory, (sha256 or {}).get(label, label[0] * 64), plan)
+        status, _, stderr = helper("same-node", out, *options)
+        report = json.loads((out / "same-node.json").read_text()) if (out / "same-node.json").exists() else None
+        markdown = (out / "same-node.md").read_text() if (out / "same-node.md").exists() else None
+        return status, report, markdown, stderr
+
+    def row(self, markdown, case, rate, label, heading="## small: CPU limit 250m, memory limit 512Mi"):
+        """The cells of a variant's row for a step in the table under
+        `heading` of same-node.md, by column."""
+        section = markdown.split(f"\n{heading}\n", 1)[1].split("\n## ", 1)[0]
+        lines = [line for line in section.splitlines() if line.startswith("|")]
+        header = [cell.strip() for cell in lines[0].strip("|").split("|")]
+        for line in lines[2:]:
+            row = dict(zip(header, (cell.strip() for cell in line.strip("|").split("|"))))
+            if (row["Case"], row["Rate"], row["Variant"].split(" ")[0]) == (case, f"{rate:,}", label):
+                return row
+        self.fail(f"no row for {label} at {case}@{rate} in:\n{markdown}")
+
 
 class Samples(VariantRun):
     """gke.py samples splits a run of variants into its samples, each one
@@ -2195,6 +2221,54 @@ class Samples(VariantRun):
         self.assertEqual([json.loads(line)["kind"] for line in sample_log.splitlines()],
                          ["start", "traffic-check", "metrics-before", "step", "traffic-check", "stopped",
                           "metrics-after", "done"])
+
+
+# Two variants' CPU a request over four rounds at two rates: b's is higher
+# than a's in every round, by 10%, 4%, 10% and 20% at 500 requests/s and by
+# 10%, 5%, 15% and 2.5% at 1,000.
+HIGHER = {"a": {500: [30.0, 31.0, 29.0, 30.0], 1000: [40.0, 40.0, 40.0, 40.0]},
+          "b": {500: [33.0, 32.24, 31.9, 36.0], 1000: [44.0, 42.0, 46.0, 41.0]}}
+
+
+class SameNode(VariantRun):
+    """gke.py same-node compares the variants of a run on one node, from
+    their samples' summaries and the load generator's lines: step by step,
+    each variant's CPU a request against the baseline's, run by run in the
+    same round, and over every step of a profile, whether a variant used
+    more than the baseline beyond chance."""
+
+    def test_each_variants_median_and_range_and_its_paired_change_against_the_baseline_are_reported(self):
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(HIGHER),
+                                                                           variant_pods(["a", "b"])))
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(report["baseline"], "a")
+        profile = report["gke"]["profiles"]["small"]
+        self.assertTrue(profile["complete"])
+        b = next(step for step in profile["steps"] if step["rate"] == 500)["variants"]["b"]
+        self.assertEqual({key: b[key] for key in ("n", "median_us_per_request", "min_us_per_request",
+                                                  "max_us_per_request", "change_percent", "higher")},
+                         {"n": 4, "median_us_per_request": 32.62, "min_us_per_request": 31.9,
+                          "max_us_per_request": 36.0, "change_percent": 8.73, "higher": 4})
+        self.assertEqual([(pair["round"], pair["change_percent"], pair["saturated"]) for pair in b["pairs"]],
+                         [(1, 10.0, False), (2, 4.0, False), (3, 10.0, False), (4, 20.0, False)])
+        # Over both rates' eight pairs, all higher: a sign test's p of
+        # 2 / 2^8.
+        self.assertEqual(profile["verdicts"]["b"],
+                         {"pairs": 8, "higher": 8, "lower": 0, "median_change_percent": 10.0,
+                          "min_change_percent": 2.5, "max_change_percent": 20.0, "sign_test_p": 0.0078125,
+                          "verdict": "higher"})
+        self.assertEqual(self.row(markdown, "http-keep-alive", 500, "a"),
+                         {"Case": "http-keep-alive", "Rate": "500", "Variant": "a (baseline)",
+                          "CPU µs/request": "30.0 (29.0–31.0, 4)", "Change": "-", "Paired": "-", "Higher": "-",
+                          "Throttled periods": "12 of 1,000", "CPU wait s": "0.02", "Node steal s": "0.0",
+                          "p99 ms": "2.0", "Saturated": "0 of 4 runs"})
+        self.assertEqual(self.row(markdown, "http-keep-alive", 500, "b"),
+                         {"Case": "http-keep-alive", "Rate": "500", "Variant": "b",
+                          "CPU µs/request": "32.6 (31.9–36.0, 4)", "Change": "+8.7%", "Paired": "+4% to +20%",
+                          "Higher": "4 of 4", "Throttled periods": "12 of 1,000", "CPU wait s": "0.02",
+                          "Node steal s": "0.0", "p99 ms": "2.0", "Saturated": "0 of 4 pairs"})
+        self.assertIn("- b against a: +10% (+2.5% to +20%), higher in 8 of 8 pairs, sign test p = 0.008: higher.",
+                      markdown)
 
 
 if __name__ == "__main__":
