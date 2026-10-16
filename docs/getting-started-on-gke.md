@@ -19,14 +19,11 @@ then.
   Google's GKE pricing page gives the rates.
 - smock itself runs on GKE Autopilot in the benchmark, and the Helm
   chart is tested on kind. The GKE commands below follow GKE's
-  documentation of 2026-10-13. On 2026-10-17 the guide ran on GKE
-  Autopilot in us-central1 up to [Install smock](#install-smock), and
-  [Reach it from the VPC](#reach-it-from-the-vpc) too, in a project
-  whose node service account had no roles and without the two grants
-  of [Create an Autopilot cluster](#create-an-autopilot-cluster): the
-  Pod then could not pull the image, as
-  [Troubleshooting](#troubleshooting) describes. The other commands
-  were checked the same day, the cluster ones on kind.
+  documentation of 2026-10-13. On 2026-10-17 the guide ran as written
+  on GKE Autopilot in us-central1, in a project whose node service
+  account had no roles, with every one of its
+  [Next steps](#next-steps) but a Standard cluster and Arm nodes; the
+  outputs it shows are that run's.
 
 ## What you need
 
@@ -212,10 +209,10 @@ The nodes pull the image and send their logs and metrics as the Compute
 Engine default service account, `<project number>-compute@developer.gserviceaccount.com`.
 In a project whose organisation turns off the automatic Editor grant to
 that account, as organisations created on or after 2024-05-03 do by
-default, it has no roles, and the nodes cannot pull the image. Grant it the two
-that GKE's documentation asks for (2026-10-13): reading the repository,
-and GKE's default node role on the project. A role the account already
-has changes nothing:
+default, it has no roles, and the nodes cannot pull the image. Grant
+it the two that GKE's documentation asks for (2026-10-13): reading the
+repository, and GKE's default node role on the project. A role the
+account already has changes nothing:
 
 ```sh
 N=$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')
@@ -237,7 +234,7 @@ gcloud container clusters get-credentials smock --location="$LOCATION" --project
 kubectl get namespaces            # default, kube-system and others
 ```
 
-- Creating the cluster takes several minutes, about seven in
+- Creating the cluster takes several minutes, seven to nine in
   us-central1 on 2026-10-17.
 - kubectl reaches GKE through `gke-gcloud-auth-plugin`. When gcloud came
   from a package manager such as apt or dnf, `gcloud components install`
@@ -272,8 +269,8 @@ kubectl --namespace mocks get pods          # smock-<hash>   1/1   Running
   `users.yaml`; the `\.` keeps the dot inside the key.
 - `helm upgrade --install` installs the release the first time and
   upgrades it afterwards, so the same command also repairs a failed
-  install. `--wait` returns once the Pod is ready, which takes a few
-  minutes while Autopilot adds a node.
+  install. `--wait` returns once the Pod is ready, after Autopilot adds
+  a node for it, which took about a minute on 2026-10-17.
 - helm then prints the chart's notes, which name the chart's app
   version, `smock 0.0.0-dev` in a checkout. The Pod runs the image
   pushed above all the same.
@@ -427,6 +424,10 @@ kubectl logs pod/curl             # {"id":1,"name":"Alice"}
 kubectl delete pod curl
 ```
 
+On Autopilot, `kubectl run` first prints a warning that
+`autopilot-default-resources-mutator` gave the Pod default resources,
+since it asks for none; that is expected.
+
 Every client of that URL sends the same Host, so one Mock answers them
 all. With several Mocks, each needs a Host of its own: give each Mock a
 Service named after it that selects the same Pods, and list the names
@@ -503,9 +504,9 @@ same upgrade turns on:
   --set-string 'service.annotations.networking\.gke\.io/internal-load-balancer-allow-global-access=true'
 ```
 
-On Autopilot on 2026-10-17, the address came within about a minute and
-a half, and GKE made a forwarding rule with the scheme `INTERNAL`, for
-ports 80 and 443, with global access on when the flag was given.
+On Autopilot on 2026-10-17, the address came within about a minute,
+and GKE made a forwarding rule with the scheme `INTERNAL`, for ports 80
+and 443, with global access on when the flag was given.
 `helm uninstall` deletes it with the Service.
 
 Never expose `smock-admin` this way: `/metrics` needs no token, and the
@@ -555,11 +556,31 @@ curl -s localhost:9090/metrics | grep '^smock_requests_total'
 those that no Mock answered.
 
 On GKE, Cloud Logging also collects these logs, through the node role
-granted in [Create an Autopilot cluster](#create-an-autopilot-cluster).
-The chart makes no PodMonitoring for Google Cloud Managed Service for
-Prometheus, so scraping `/metrics` there takes one of your own,
-selecting the label `app.kubernetes.io/name: smock` and the port
-`admin`. This has not yet been run on GKE.
+granted in [Create an Autopilot cluster](#create-an-autopilot-cluster),
+with each line's fields under `jsonPayload`. The chart makes no
+PodMonitoring for Google Cloud Managed Service for Prometheus, which
+Autopilot runs, so scraping `/metrics` there takes one of your own:
+
+```yaml
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: smock
+  namespace: mocks
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: smock
+  endpoints:
+    - port: admin
+      interval: 30s
+```
+
+Save it as `podmonitoring.yaml` and run
+`kubectl apply -f podmonitoring.yaml`. On 2026-10-17 the metrics could
+be queried about two minutes later. Managed Service for Prometheus
+counts from its first scrape, so `smock_requests_total` starts there at
+0 and counts the requests after it.
 
 ### On a Standard cluster
 
@@ -623,7 +644,7 @@ This has not yet been run on GKE.
 | The Pod is in `CrashLoopBackOff`, and its log says `invalid definitions`. | smock does not start with Definition files that are not valid, and `helm --wait` fails after its timeout. The log entry names the file, the JSON Pointer and the error: fix the file, check it, and run `helm upgrade --install` again. |
 | The Pod is in `CrashLoopBackOff`, and its log says `exec format error`. | The image holds a binary of another architecture than the node: `file dist/smock` must say x86-64 for x86 nodes. |
 | The Pod is `Pending`. | On Autopilot, for a few minutes while GKE adds a node. On a Standard cluster, `Insufficient cpu` in `kubectl --namespace mocks describe pod` means that the node is too small: see [On a Standard cluster](#on-a-standard-cluster). |
-| curl gets `Empty reply from server` or `Connection refused`, and kubectl printed `error: lost connection to pod`. | A port-forward follows one Pod, and ends when that Pod is replaced, such as by `kubectl rollout restart` or an upgrade that restarts the Pods. Start the port-forward again. |
+| curl gets `Empty reply from server` or `Connection refused`, and kubectl printed `error: lost connection to pod`; or, just after an upgrade, curl still gets the previous files' answers. | A port-forward follows one Pod. When that Pod is replaced, such as by `kubectl rollout restart` or an upgrade that restarts the Pods, the port-forward reaches the old Pod while it shuts down, then ends. Stop the port-forward (`kill %1 %2`) and start it again. |
 | curl gets an answer that the guide does not show, such as 404 `{"error":"no Stub matched"}` with `Smock-Mock: default; via=default` and no `Smock-Near-Miss`, or the Admin API answers 401; or a port-forward prints `unable to listen on any of the requested ports`. | Something else on the machine, such as a local smock, already listens on 8080 or 9090. When it listens on IPv4 only, as smock does, kubectl forwards on `[::1]` alone and says so only on its standard output, which the commands above discard, so curl can reach the other program. `ss -ltnp \| grep -E ':(8080\|9090)'` (`lsof -i :8080` on macOS) shows it. Forward other local ports, such as `18080:80` and `19090:9090`, and send the requests there. |
 | A request gets 404 `{"error":"no Stub matched"}`. | If the response also says `Smock-Mock: default` and has no `Smock-Near-Miss`, another program answered: see the row above. Otherwise `Smock-Near-Miss` names the closest Stub and the conditions it failed; `/v1/journal/unmatched` shows what each condition expected. |
 | A request gets 404 `no Mock for this Host`. | There are several Mocks, and none lists the request's Host or is `default: true`: see [Call it from other Pods](#call-it-from-other-pods). |

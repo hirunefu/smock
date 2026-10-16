@@ -657,9 +657,11 @@ release and no image to pull. Until there is:
     --wait --timeout 10m
   ```
 
-  Adding body files replaces the Pod, which ends that guide's
-  port-forwards, so start them again. `localhost:8080/api/v1/users` then
-  reaches `users-api`, whose `hosts` lists `localhost`.
+  Adding body files replaces the Pod. That guide's port-forwards reach
+  the old Pod, with the old files, until it stops, and then end, so stop
+  them (`kill %1 %2`) and start them again. `localhost:8080/api/v1/users`
+  then reaches `users-api`, whose `hosts` lists `localhost`. This ran on
+  GKE Autopilot on 2026-10-17.
   Values hold text only, so binary body files need git-sync or a
   ConfigMap of one's own
   ([charts/smock/README.md](../charts/smock/README.md)).
