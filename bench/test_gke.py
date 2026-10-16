@@ -2152,6 +2152,41 @@ class Samples(VariantRun):
             self.assertEqual(conditions["gke"]["profiles"]["small"]["nodes"]["node-a"]["cpu"],
                              AMD_CPU if label == "a" else None)
 
+    def test_a_profile_stopped_early_leaves_each_sample_the_steps_it_did_not_run(self):
+        # b's run at 500 requests/s in round 2, the first of that step, got
+        # no response, nor did the traffic check after it: every variant
+        # stopped, and round 1 was whole.
+        reason = ("variant b, round 2: http-keep-alive@small@500 got no response to any of its 10,000 requests, and "
+                  "smock did not answer through its Service in 60 s after it: plain port 80 (timed out)")
+        left = [{"round": 2, "variant": "a", "id": "http-keep-alive@small@500"},
+                {"round": 2, "variant": "a", "id": "http-keep-alive@small@1000"},
+                {"round": 2, "variant": "b", "id": "http-keep-alive@small@1000"}]
+        us = {"a": {500: [30.0, 31.0], 1000: [32.0, 33.0]}, "b": {500: [40.0, 41.0], 1000: [42.0, 43.0]}}
+        lines = variant_lines(us, runs={("b", 2, 500): {"errors": 10000}},
+                              stopped={"variant": "b", "round": 2, "reason": reason,
+                                       "after": "http-keep-alive@small@500", "runs": left})
+        check = {**TRAFFIC_CHECK, "variant": "b", "round": 2, "after": "http-keep-alive@small@500", "ok": False}
+        lines.insert(next(index for index, line in enumerate(lines) if line.get("round") == 2) + 1, check)
+        out = self.variant_run(lines, variant_pods(["a", "b"]))
+        summaries = {(round_, label): self.summarize_sample(directory)[0]
+                     for round_, label, directory in self.samples(out)}
+        for sample in ((1, "a"), (1, "b")):
+            self.assertTrue(summaries[sample]["complete"], sample)
+            self.assertIsNone(summaries[sample]["gke"]["profiles"]["small"]["ended_early"])
+        # b ran its step at 500 in round 2, and the check after it is its
+        # own; a ran none.
+        self.assertEqual(
+            {sample: (summaries[sample]["complete"], [case["rate"] for case in summaries[sample]["cases"]],
+                      summaries[sample]["gke"]["profiles"]["small"]["ended_early"]) for sample in ((2, "a"), (2, "b"))},
+            {(2, "a"): (False, [], {"reason": reason, "after": None,
+                                    "not_measured": ["http-keep-alive@small@500", "http-keep-alive@small@1000"]}),
+             (2, "b"): (False, [500], {"reason": reason, "after": "http-keep-alive@small@500",
+                                       "not_measured": ["http-keep-alive@small@1000"]})})
+        sample_log = (out / "samples" / "2-b" / "raw" / "small" / "generator.log").read_text()
+        self.assertEqual([json.loads(line)["kind"] for line in sample_log.splitlines()],
+                         ["start", "traffic-check", "metrics-before", "step", "traffic-check", "stopped",
+                          "metrics-after", "done"])
+
 
 if __name__ == "__main__":
     unittest.main()
