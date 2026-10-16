@@ -2354,9 +2354,9 @@ class SameNode(VariantRun):
         self.assertEqual((profile["verdicts"]["b"]["pairs"], profile["verdicts"]["b"]["sign_test_p"]), (6, 0.03125))
         self.assertEqual(profile["not_measured"], [
             {"id": "http-keep-alive@small@500", "round": 3, "variant": "b",
-             "reason": "500 of 10000 requests failed in the b round 3 run", "left_out": False},
+             "reason": "500 of 10000 requests failed in the b round 3 run", "not_run": None},
             {"id": "http-keep-alive@small@1000", "round": 4, "variant": "a",
-             "reason": "the load generator fell behind in the a round 4 run", "left_out": False}])
+             "reason": "the load generator fell behind in the a round 4 run", "not_run": None}])
         self.assertIn("Not measured, and left out of the counts:\n\n"
                       "- http-keep-alive@small@500: 500 of 10000 requests failed in the b round 3 run.\n"
                       "- http-keep-alive@small@1000: the load generator fell behind in the a round 4 run.\n", markdown)
@@ -2513,6 +2513,29 @@ class SameNode(VariantRun):
                                    str(out / "samples" / "1-b")], capture_output=True, text=True).stdout
         self.assertIn("| small | http-keep-alive | 500 | 30.0 → 33.0 | +10% | 50.0 → 50.0 |", compared)
         self.assertIn("The newer run did not record the CPU of smock's nodes: whether it changed is unknown.", compared)
+
+    def test_runs_the_load_generator_never_reported_or_that_were_not_summarized_are_counted_once(self):
+        # The load generator's Job ran out of time after b's first run of
+        # round 2: it reported none of the three runs after it, nor its
+        # done lines.
+        us = {"a": {500: [30.0, 31.0], 1000: [32.0, 33.0]}, "b": {500: [40.0, 41.0], 1000: [42.0, 43.0]}}
+        lines = variant_lines(us, done=False)
+        lines = lines[:next(index for index, line in enumerate(lines) if line.get("round") == 2) + 1]
+        out = self.variant_run(lines, variant_pods(["a", "b"]))
+        status, report, markdown, stderr = self.same_node(out)
+        self.assertEqual(status, 1)
+        self.assertEqual(report["problems"], ["small: every sample is incomplete"])
+        self.assertEqual([(entry["round"], entry["variant"], entry["not_run"])
+                          for entry in report["gke"]["profiles"]["small"]["not_measured"]],
+                         [(2, "a", "not reported"), (2, "a", "not reported"), (2, "b", "not reported")])
+        self.assertIn("The load generator did not report 3 runs, as when its Job ran out of time before them.", markdown)
+        self.assertNotIn("- http-keep-alive", markdown)
+        # A sample summarize did not summarize: its runs count as none.
+        (out / "samples" / "1-b" / "summary.json").unlink()
+        status, _, stderr = helper("same-node", out)
+        self.assertEqual(status, 1)
+        self.assertIn("The sample 1-b has no summary, so its 2 runs are not counted.",
+                      (out / "same-node.md").read_text())
 
     def test_a_variant_with_two_sha256_values_exits_2_since_what_it_measured_is_unknown(self):
         out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))

@@ -1275,20 +1275,22 @@ def run_record(sample, round_, label, profile_name, step_id, line):
     sample (summary and conditions, or None) and its step line of the load
     generator (`line`, or None): smock's CPU, throttling, waits, the node's
     steal time (another variant's count, when this one's smock has none)
-    and p99; and why it measured nothing, or None, and whether the load
-    generator left it out when it stopped the profile early."""
+    and p99; why it measured nothing, or None; and why it did not run, or
+    None: left out when the load generator stopped the profile early, not
+    reported by the load generator, or in a sample with no summary."""
     compare = compare_module()
     run = f"{label} round {round_}"
     record = {"round": round_, "us_per_request": None, "utilization": None, "throttled_periods": None,
               "periods": None, "scheduling_delay_s": None, "node_steal_s": None, "p99_ms": None, "not_measured": None,
-              "left_out": False}
+              "not_run": None}
     case = sample and next((case for case in sample[0]["cases"] if case["id"] == step_id), None)
     if case is None:
         ended = sample and (sample[0]["gke"]["profiles"].get(profile_name) or {}).get("ended_early")
-        record["left_out"] = bool(ended and step_id in ended["not_measured"])
-        record["not_measured"] = (f"the {run} run was left out: {ended['reason']}" if record["left_out"] else
-                                  f"the load generator did not report the {run} run" if sample else
-                                  f"the sample {round_}-{label} has no summary")
+        record["not_run"] = "left out" if ended and step_id in ended["not_measured"] else \
+            "not reported" if sample else "no summary"
+        record["not_measured"] = {"left out": f"the {run} run was left out: {(ended or {}).get('reason')}",
+                                  "not reported": f"the load generator did not report the {run} run",
+                                  "no summary": f"the sample {round_}-{label} has no summary"}[record["not_run"]]
         return record
     cpu = case.get("smock_cpu") or {}
     steal = (line or {}).get("node_steal_s") or {label: cpu.get("node_steal_s")}
@@ -1506,9 +1508,9 @@ def profile_comparison(profile, samples, labels, baseline, rounds, lines):
                          for label in labels if label != baseline},
             "drift": {label: drift(steps, label) for label in labels},
             "ended_early": ended and {"reason": ended["reason"],
-                                      "left_out": sum(run["left_out"] for _, _, run in unmeasured)},
+                                      "left_out": sum(run["not_run"] == "left out" for _, _, run in unmeasured)},
             "not_measured": [{"id": step_id, "round": run["round"], "variant": label, "reason": run["not_measured"],
-                              "left_out": run["left_out"]} for step_id, label, run in unmeasured]}
+                              "not_run": run["not_run"]} for step_id, label, run in unmeasured]}
 
 
 def periods_text(record):
@@ -1565,16 +1567,32 @@ def verdict_line(label, baseline, result):
             f"{result['verdict']}.")
 
 
+def runs_text(count):
+    return f"{count} run" + ("" if count == 1 else "s")
+
+
 def not_measured_lines(result):
     """What same-node.md says of a profile's runs that measured nothing:
-    the early stop that left runs out, and why each other one did not
+    those that did not run, by why, and why each other one did not
     count."""
     lines = []
     ended = result["ended_early"]
     if ended:
-        runs = "run was" if ended["left_out"] == 1 else "runs were"
-        lines += ["", f"**Stopped early:** {ended['reason']}. {ended['left_out']} {runs} left out."]
-    others = [entry for entry in result["not_measured"] if not entry["left_out"]]
+        lines += ["", f"**Stopped early:** {ended['reason']}. {runs_text(ended['left_out'])} "
+                      f"{'was' if ended['left_out'] == 1 else 'were'} left out."]
+    unreported = sum(entry["not_run"] == "not reported" for entry in result["not_measured"])
+    if unreported:
+        lines += ["", f"The load generator did not report {runs_text(unreported)}, as when its Job ran out of time "
+                      "before them."]
+    unsummarized = list(dict.fromkeys(f"{entry['round']}-{entry['variant']}" for entry in result["not_measured"]
+                                      if entry["not_run"] == "no summary"))
+    if unsummarized:
+        count = sum(entry["not_run"] == "no summary" for entry in result["not_measured"])
+        many = len(unsummarized) > 1
+        lines += ["", f"The sample{'s' if many else ''} {and_list(unsummarized)} "
+                      f"{'have' if many else 'has'} no summary, so {'their' if many else 'its'} {runs_text(count)} "
+                      f"{'are' if count > 1 else 'is'} not counted."]
+    others = [entry for entry in result["not_measured"] if not entry["not_run"]]
     if others:
         lines += ["", "Not measured, and left out of the counts:", "",
                   *(f"- {entry['id']}: {entry['reason']}." for entry in others)]
@@ -1714,9 +1732,12 @@ def same_node(out, baseline=None, sha256=None, no_init=()):
         info = read_json(pods) if pods.exists() else {"smock": [], "generator": [], "nodes": {}}
         result = profile_comparison(profile, samples, labels, baseline, rounds, raws[profile["name"]])
         placement = placement_record(profile, info, labels, samples)
-        if result["incomplete"]:
-            many = len(result["incomplete"]) > 1
-            placement["problems"].append(f"sample{'s' if many else ''} {and_list(result['incomplete'])} "
+        incomplete = result["incomplete"]
+        if len(incomplete) == rounds * len(labels):
+            placement["problems"].append("every sample is incomplete")
+        elif incomplete:
+            many = len(incomplete) > 1
+            placement["problems"].append(f"sample{'s' if many else ''} {and_list(incomplete)} "
                                          f"{'are' if many else 'is'} incomplete")
         results[profile["name"]] = {**result, **placement}
     placed = [f"{name}: {problem}" for name, result in results.items() for problem in result["problems"]]
