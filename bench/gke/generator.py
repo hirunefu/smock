@@ -43,14 +43,15 @@ ROUNDS rounds: rounds outer, the steps in the middle and the variants
 inner, one variant under load at a time, their order turned by one for
 each round and each step (run_order), so that with two variants each step
 runs AB, BA, AB, BA over four rounds. Right before and right after each
-run, it scrapes the variants left idle, for the CPU time each used
-meanwhile and the node's steal time as each counts it (None from a smock
-too old to count it). Every line about smock carries its variant, and a
-step or traffic-check line after a run its round, while a step's result
-keeps the layout of a case: one variant's lines of one round are an
-ordinary run's. When a run of any variant would stop the profile, every
-variant stops, and the stopped line names the variant and lists the runs
-left out, by round, variant and step id.
+run, it scrapes the variants left idle, each within a second
+(gke.NEIGHBOUR_SCRAPE_S), for the CPU time each used meanwhile and the
+node's steal time as each counts it (None from a smock too old to count
+it, or that did not answer in time). Every line about smock carries its
+variant, and a step or traffic-check line after a run its round, while a
+step's result keeps the layout of a case: one variant's lines of one
+round are an ordinary run's. When a run of any variant would stop the
+profile, every variant stops, and the stopped line names the variant and
+lists the runs left out, by round, variant and step id.
 
 Environment:
   TARGET      smock's host name (its Service), without VARIANTS
@@ -251,11 +252,21 @@ def no_response_reason(result):
             + (f" (oha: {', '.join(errors)})" if errors else ""))
 
 
-def scrape(target, port):
+def scrape(target, port, timeout=5):
     """smock's /metrics, as harness.metric_values reads it, or None when it
-    does not answer."""
-    status, body = admin(target, port, "/metrics")
+    does not answer within `timeout` seconds."""
+    status, body = admin(target, port, "/metrics", timeout)
     return harness.metric_values(body) if status == 200 else None
+
+
+def scrape_idle(variants):
+    """The /metrics of each of the idle `variants`, scraped right before or
+    right after another's run, as scrape reads them: each within
+    gke.NEIGHBOUR_SCRAPE_S, the time the Job's deadline allows such a
+    scrape, so that one that hangs costs a run no more; None from one that
+    did not answer by then. The loaded variant's own scrapes may take
+    longer."""
+    return [scrape(variant.target, variant.admin_port, gke.NEIGHBOUR_SCRAPE_S) for variant in variants]
 
 
 def idle_result(profile, settle_s, metrics, digest):
@@ -516,13 +527,13 @@ def main():
         # The neighbour guard: the variants left idle on the node, scraped
         # right around the run, for what they used meanwhile.
         idle = [other for other in variants if other is not variant]
-        idle_before = [scrape(other.target, other.admin_port) for other in idle]
+        idle_before = scrape_idle(idle)
         if ready:
             result = run_step(spec, mix, oha, variant.address, variant.ports,
                               functools.partial(scrape, variant.target, variant.admin_port), variant.first_second)
         else:
             result = harness.not_ready_result(SimpleNamespace(mix=mix), spec, None)
-        idle_after = [scrape(other.target, other.admin_port) for other in idle]
+        idle_after = scrape_idle(idle)
         guard = {}
         if tagged:
             used = {other.label: idle_use(before, after)

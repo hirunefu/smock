@@ -1788,6 +1788,16 @@ class NeighbourGuard(unittest.TestCase):
         before["smock_node_cpu_steal_seconds_total"], after["smock_node_cpu_steal_seconds_total"] = 30.0, 30.5
         self.assertEqual(self.generator.idle_use(before, after), (0.013, 0.5))
 
+    def test_an_idle_variant_that_does_not_answer_in_the_time_the_jobs_deadline_allows_is_unknown(self):
+        # The Job's deadline allows each scrape of a neighbour
+        # NEIGHBOUR_SCRAPE_S; one that hangs costs no more.
+        with SilentPort() as silent:
+            started = time.monotonic()
+            scraped = self.generator.scrape_idle([SimpleNamespace(target="127.0.0.1", admin_port=silent.port)])
+            took = time.monotonic() - started
+        self.assertEqual(scraped, [None])
+        self.assertLess(took, self.generator.gke.NEIGHBOUR_SCRAPE_S + 0.5)
+
     def test_a_scrape_without_an_answer_or_a_restart_between_them_leaves_both_unknown(self):
         for before, after in ((None, old_smock_metrics(1.0)), (old_smock_metrics(1.0), None),
                               (old_smock_metrics(1.0), old_smock_metrics(0.1, start=1760000500.0))):

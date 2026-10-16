@@ -151,7 +151,9 @@ TRAFFIC_CHECK_S = 60
 TRAFFIC_CHECKS = 2
 # With variants, how long the load generator may take to scrape the
 # /metrics of an idle variant, a neighbour of the one under load, before
-# and after each run: an idle smock on the node answers in milliseconds.
+# and after each run: an idle smock on the node answers in milliseconds,
+# and the load generator gives up on one after this long
+# (generator.scrape_idle).
 NEIGHBOUR_SCRAPE_S = 1
 
 
