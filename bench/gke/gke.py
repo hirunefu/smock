@@ -294,10 +294,12 @@ def check_counts(variants, rounds):
         raise GkeError(f"the load generator measures each variant in at least 1 round, not {rounds}")
 
 
-def runs(specs, variants=1, rounds=1):
-    """Each run of the steps `specs`, in the order the load generator makes
-    them, as far as their time goes: with `variants`, each variant's run of
-    each step in each of `rounds` rounds."""
+def run_steps(specs, variants=1, rounds=1):
+    """The step of each run the load generator makes of `specs`: each step
+    once for each of `variants` in each of `rounds` rounds. They are not in
+    the order the runs are made (generator.run_order's), which
+    job_deadline_s and estimate do not need: a run's time does not depend
+    on its place."""
     return specs * (variants * rounds)
 
 
@@ -308,7 +310,7 @@ def job_deadline_s(plan, profile, specs, variants=1, rounds=1):
     one, idle, before and after it; its start and the settle time once; and
     the traffic check of each variant before the first step, with one after
     a step."""
-    made = runs(specs, variants, rounds)
+    made = run_steps(specs, variants, rounds)
     return round(load_s(plan, made) + len(made) * (STEP_ANALYSIS_S + 2 * (variants - 1) * NEIGHBOUR_SCRAPE_S) +
                  GENERATOR_START_S + (idle_settle_s(plan, profile) or 0) +
                  (variants + TRAFFIC_CHECKS - 1) * TRAFFIC_CHECK_S)
@@ -563,7 +565,7 @@ def estimate(plan, profiles, cases, region, arch, time_limit_s, variants=1, roun
         specs = steps(plan, profile, cases)
         if not specs:
             continue
-        made = runs(specs, variants, rounds)
+        made = run_steps(specs, variants, rounds)
         load = load_s(plan, made) + \
             len(made) * (EXPECTED_ANALYSIS_S + 2 * (variants - 1) * EXPECTED_NEIGHBOUR_SCRAPE_S) + \
             (idle_settle_s(plan, profile) or 0) + 60

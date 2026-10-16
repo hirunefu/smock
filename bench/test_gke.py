@@ -375,7 +375,7 @@ class Variants(Helper):
         [profile] = gke.plan_profiles(plan, [env["PROFILE"]])
         specs = gke.steps(plan, profile, gke.plan_cases(plan, gke.comma_list(env["CASES"])))
         made = [spec for _, spec, _ in generator.run_order(specs, variants, int(env["ROUNDS"]))]
-        self.assertEqual(len(made), len(gke.runs(specs, len(variants), 3)))
+        self.assertEqual(len(made), len(gke.run_steps(specs, len(variants), 3)))
         self.assertGreater(job["spec"]["activeDeadlineSeconds"], gke.load_s(plan, made))
 
     def test_variants_and_rounds_it_cannot_run_are_refused_with_what_to_change(self):
