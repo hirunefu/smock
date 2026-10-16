@@ -1,6 +1,8 @@
 """Tests of the GKE Autopilot run's helper, bench/gke/gke.py: the manifests
-it renders for each profile, its plan of the run and cost estimate, and the
-summary it makes of what the load generator and the cluster reported.
+it renders for each profile, its plan of the run and cost estimate, the
+summary it makes of what the load generator and the cluster reported, and,
+for a run of variants of smock on one node, its samples and the comparison
+of the variants.
 
 They run the helper through its command line, as scripts/gke-bench.sh does,
 and need python3 alone, but for the test of the load generator
@@ -1431,6 +1433,7 @@ class GeneratorWithVariants(Helper):
         return out, [line.split(" ")[:2] for line in stdout.splitlines()]
 
     def summarize_sample(self, directory):
+        """summarize over a sample's directory, as the runner calls it."""
         status, _, stderr = helper(
             "summarize", "--plan", self.plan_path, "--targets", small_targets(self.directory()), "--region",
             "us-central1", "--arch", "arm64", "--started-at", "2026-10-16T03:28:50+00:00", "--finished-at",
