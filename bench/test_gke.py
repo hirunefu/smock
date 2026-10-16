@@ -588,6 +588,30 @@ class Summary(Helper):
         self.assertIsNone(json.loads((out / "summary.json").read_text())["gke"]["stopped"])
         self.assertNotIn("Stopped early", (out / "summary.md").read_text())
 
+    def test_a_run_stopped_before_anything_was_reported_says_what_is_unknown(self):
+        # smock never became ready under the first profile, on no node: the
+        # load generator printed nothing, so smock's version, the
+        # definition set and oha's version are unknown, as is the machine.
+        out = self.results([], {"smock": [{"name": "smock-small", "node": None, "ready": False, "restarts": 0,
+                                           "last_termination": None}], "generator": [], "nodes": {}},
+                           stopped=("--stopped", "smock did not become ready under small", "--stopped-under", "small"))
+        markdown = (out / "summary.md").read_text()
+        self.assertIn("Started 2026-10-14T03:28:50+00:00: smock of an unknown version (commit unknown, toolchain "
+                      "unknown), definition set unknown, on arm64 (GKE Autopilot node, CPUs unknown), oha of an "
+                      "unknown version, plan ", markdown)
+        self.assertNotIn("None", markdown)
+        # conditions.json records them as null.
+        conditions = json.loads((out / "conditions.json").read_text())
+        self.assertEqual((conditions["smock"]["version"], conditions["machine"]["cpus"]), (None, None))
+        # So does the comparison with a run that knew them.
+        older = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}], pods())
+        compared = subprocess.run([sys.executable, str(BENCH / "compare.py"), str(older), str(out)],
+                                  capture_output=True, text=True)
+        self.assertIn("- Newer: smock of an unknown version (commit unknown) on GKE Autopilot (us-central1-a, "
+                      "autopilot-arm), arm64 (GKE Autopilot node, CPUs unknown)", compared.stdout, compared.stderr)
+        self.assertIn("definition set (48f7ce9715f0 → unknown)", compared.stdout)
+        self.assertNotIn("None", compared.stdout)
+
     def test_steps_a_profile_did_not_run_after_it_stopped_early_are_not_measured_with_the_reason(self):
         # The step at 500 got no response at all, so the load generator ran
         # none after it.

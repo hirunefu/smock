@@ -204,8 +204,7 @@ def different_architectures(older, newer):
 
 def where(conditions):
     """Where a run ran, for people."""
-    machine = conditions["machine"]
-    place = f"{machine['architecture']} ({machine['cpu_model']}, {machine['cpus']} CPUs)"
+    place = harness.machine_text(conditions["machine"])
     gke = conditions.get("gke")
     if gke:
         place = f"GKE Autopilot ({gke.get('zone') or gke['region']}, {gke['compute_class']}), {place}"
@@ -216,8 +215,9 @@ def run_line(name, conditions):
     if conditions is None:
         return f"- {name}: no conditions.json beside its summary."
     smock = conditions["smock"]
-    return (f"- {name}: smock {smock['version']} (commit {smock['commit']}) on {where(conditions)}, "
-            f"plan {conditions['plan']['file']}, started {conditions['started_at']}.")
+    return (f"- {name}: smock {harness.known(smock['version'], 'of an unknown version')} (commit "
+            f"{harness.known(smock['commit'])}) on {where(conditions)}, plan {conditions['plan']['file']}, started "
+            f"{conditions['started_at']}.")
 
 
 # The conditions besides smock that change what a run measures: for each, a
@@ -251,7 +251,7 @@ def difference(name, before, after):
         return f"plan ({after[0]} changed)"
     if isinstance(before, tuple):
         before, after = before[0], after[0]
-    return f"{name} ({before} → {after})"
+    return f"{name} ({harness.known(before)} → {harness.known(after)})"
 
 
 def smock_node_cpus(conditions):

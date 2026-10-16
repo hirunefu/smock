@@ -1689,17 +1689,31 @@ def targets_section(targets, run_architecture, targets_file):
     return lines
 
 
+def known(value, unknown="unknown"):
+    """A value of the conditions for people: `unknown` when the run did not
+    learn it (null), as a GKE run that stopped before its load generator
+    said what ran."""
+    return unknown if value is None else value
+
+
+def machine_text(machine):
+    """The machine a run ran on, for people."""
+    cpus = "CPUs unknown" if machine["cpus"] is None else f"{machine['cpus']} CPUs"
+    return f"{machine['architecture']} ({machine['cpu_model']}, {cpus})"
+
+
 def summary_markdown(summary, conditions):
     """The summary for people: the targets, then for each profile idle RSS
     and the cases."""
-    smock, machine = conditions["smock"], conditions["machine"]
+    smock, machine, generator = conditions["smock"], conditions["machine"], conditions["load_generator"]
     lines = [
         "# smock benchmark",
         "",
-        f"Started {conditions['started_at']}: smock {smock['version']} (commit {smock['commit']}, "
-        f"{smock['toolchain']}), definition set {conditions['definitions']['digest']}, "
-        f"on {machine['architecture']} ({machine['cpu_model']}, {machine['cpus']} CPUs), "
-        f"{conditions['load_generator']['version']}, plan {conditions['plan']['file']}.",
+        f"Started {conditions['started_at']}: smock {known(smock['version'], 'of an unknown version')} "
+        f"(commit {known(smock['commit'])}, {known(smock['toolchain'], 'toolchain unknown')}), definition set "
+        f"{known(conditions['definitions']['digest'])}, on {machine_text(machine)}, "
+        f"{known(generator['version'], generator['name'] + ' of an unknown version')}, plan "
+        f"{conditions['plan']['file']}.",
     ]
     if conditions.get("note"):
         lines += ["", f"**Note:** {conditions['note']}"]
