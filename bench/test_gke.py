@@ -319,8 +319,8 @@ class Variants(Helper):
         self.assertEqual(container["resources"]["requests"], container["resources"]["limits"])
 
     def test_the_namespace_holds_each_variants_pod_the_load_generators_and_no_more(self):
-        # As without variants, room for two more Pods than the run makes:
-        # one smock Pod and the load generator's fit in 4.
+        # Each smock Pod and the load generator's, with two to spare, as
+        # without variants, whose one smock Pod gives 4.
         four = (*TWO_VARIANTS, f"r2b={OTHER_IMAGE}", f"r2h={OTHER_IMAGE},no-init")
         for variants, pods in (((), "4"), (TWO_VARIANTS, "5"), (four, "7")):
             [quota] = objects(self.manifests(variants=variants), "ResourceQuota")
