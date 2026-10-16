@@ -666,21 +666,30 @@ def pod_info(pod_list, node_list, restarts=True):
     the project, such as image references or provider IDs. smock's
     restarts are None (unknown) unless `restarts`: the OOM kills of a
     profile come from them, so only those read at the profile's end count,
-    and a run that stops before then keeps what it read earlier."""
+    and a run that stops before then keeps what it read earlier. Each smock
+    Pod keeps its variant (None without one) and the requests and limits
+    its container named smock was admitted with (None without such a
+    container), which Autopilot may have changed."""
     info = {"smock": [], "generator": [], "nodes": {}}
     for pod in pod_list["items"]:
-        app = pod["metadata"].get("labels", {}).get("app")
+        labels = pod["metadata"].get("labels", {})
         status = pod.get("status", {})
-        if app == SMOCK:
-            container = (status.get("containerStatuses") or [{}])[0]
+        if labels.get("app") == SMOCK:
+            statuses = status.get("containerStatuses") or [{}]
+            container = next((container for container in statuses if container.get("name") == "smock"), statuses[0])
             terminated = container.get("lastState", {}).get("terminated") or {}
+            smock = next((container for container in pod["spec"].get("containers", [])
+                          if container.get("name") == "smock"), None)
+            admitted = None if smock is None else smock.get("resources", {})
             info["smock"].append({
                 "name": pod["metadata"]["name"], "node": pod["spec"].get("nodeName"),
                 "ready": any(condition["type"] == "Ready" and condition["status"] == "True"
                              for condition in status.get("conditions", [])),
                 "restarts": container.get("restartCount", 0) if restarts else None,
-                "last_termination": terminated.get("reason")})
-        elif app == "smock-bench-generator":
+                "last_termination": terminated.get("reason"), "variant": labels.get("variant"),
+                "resources": None if admitted is None else {"requests": admitted.get("requests"),
+                                                            "limits": admitted.get("limits")}})
+        elif labels.get("app") == "smock-bench-generator":
             container = (pod["spec"].get("containers") or [{}])[0]
             info["generator"].append({"name": pod["metadata"]["name"], "node": pod["spec"].get("nodeName"),
                                       "phase": status.get("phase"), "reason": status.get("reason"),

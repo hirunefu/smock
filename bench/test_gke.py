@@ -1610,7 +1610,7 @@ class PodInfo(Helper):
         self.assertNotIn("a-private-project-123", stdout)
         info = json.loads(stdout)
         self.assertEqual(info["smock"], [{"name": "smock-bench-1", "node": "node-a", "ready": True, "restarts": 2,
-                                          "last_termination": "OOMKilled"}])
+                                          "last_termination": "OOMKilled", "variant": None, "resources": None}])
         self.assertEqual(info["generator"], [{"name": "generator-small-1", "node": "node-b", "phase": "Failed",
                                               "reason": "DeadlineExceeded", "cpu_request": "6"}])
         self.assertEqual(info["nodes"], {"node-a": NODE})
@@ -1619,6 +1619,38 @@ class PodInfo(Helper):
                                         directory / "nodes.json")
         self.assertEqual(status, 0, stderr)
         self.assertEqual(json.loads(stdout), {**info, "smock": [{**info["smock"][0], "restarts": None}]})
+
+    def test_each_smock_pods_variant_and_the_resources_its_smock_container_was_admitted_with_are_kept(self):
+        # As Autopilot admitted them, which may differ from what the
+        # manifests asked for; from the container named smock, wherever it
+        # is in the Pod.
+        directory = self.directory()
+
+        def smock_pod(label, cpu, restarts):
+            admitted = {"cpu": cpu, "memory": "512Mi", "ephemeral-storage": "64Mi"}
+            return {"metadata": {"name": f"smock-autopilot-min-{label}",
+                                 "labels": {"app": "smock-bench", "profile": "autopilot-min", "variant": label}},
+                    "spec": {"nodeName": "node-a", "containers": [
+                        {"name": "other", "resources": {"requests": {"cpu": "1"}, "limits": {"cpu": "1"}}},
+                        {"name": "smock", "resources": {"requests": admitted, "limits": admitted}}]},
+                    "status": {"phase": "Running", "conditions": [{"type": "Ready", "status": "True"}],
+                               "containerStatuses": [{"name": "other", "restartCount": 7},
+                                                     {"name": "smock", "restartCount": restarts, "lastState": {}}]}}
+
+        (directory / "pods.json").write_text(json.dumps({"items": [smock_pod("r1", "250m", 0),
+                                                                   smock_pod("r2", "500m", 1)]}))
+        (directory / "nodes.json").write_text(json.dumps({"items": []}))
+        status, stdout, stderr = helper("pod-info", directory / "pods.json", directory / "nodes.json")
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(json.loads(stdout)["smock"], [
+            {"name": "smock-autopilot-min-r1", "node": "node-a", "ready": True, "restarts": 0,
+             "last_termination": None, "variant": "r1",
+             "resources": {"requests": {"cpu": "250m", "memory": "512Mi", "ephemeral-storage": "64Mi"},
+                           "limits": {"cpu": "250m", "memory": "512Mi", "ephemeral-storage": "64Mi"}}},
+            {"name": "smock-autopilot-min-r2", "node": "node-a", "ready": True, "restarts": 1,
+             "last_termination": None, "variant": "r2",
+             "resources": {"requests": {"cpu": "500m", "memory": "512Mi", "ephemeral-storage": "64Mi"},
+                           "limits": {"cpu": "500m", "memory": "512Mi", "ephemeral-storage": "64Mi"}}}])
 
 
 if __name__ == "__main__":
