@@ -975,6 +975,33 @@ class Estimate(Helper):
         self.assertEqual(status, 1)
         self.assertIn("more than the time limit of 20 minutes", stderr)
 
+    def test_with_variants_each_ones_pod_and_runs_are_counted_and_the_images_they_need(self):
+        # small_plan's one profile (250m, 512Mi: $0.01359493 an hour) and
+        # two steps, 4 variants over 4 rounds on amd64 in us-central1: 32
+        # runs of 25 s with 2 s between them (862 s), each analysed in about
+        # 5 s and with 3 idle neighbours scraped before and after it in
+        # about 0.1 s each (32 × 5.6 s), the 5 s settle and a minute to
+        # start: the load generator's 1,106.2 s ($0.2968128 an hour). The
+        # profile also waits 3 minutes for its first Pod and 30 s for each
+        # other, 1,376.2 s for which its 4 smock Pods are billed; the
+        # cluster exists 9 minutes more before it, and 5 after.
+        plan = small_plan(self.directory())
+        status, stdout, stderr = self.estimate("--variants", 4, "--rounds", 4, plan=plan, arch="amd64",
+                                               time_limit_s=3600)
+        self.assertEqual(status, 0, stderr)
+        self.assertIn("- smock's Pods, one for each of 4 variants on one node, 1 profile one after the other: $0.02.",
+                      stdout)
+        self.assertIn("- The load generator's Pod (6 vCPU, 6Gi): about 18 minutes, $0.09.", stdout)
+        self.assertIn("- Artifact Registry: up to 5 images of about 100 MB", stdout)
+        self.assertIn("Expected: about $0.17, the cluster existing for about 37 minutes.", stdout)
+        # The fee, the load generator and 4 smock Pods at the largest
+        # profile's limits: $0.4511925 an hour for 65 minutes.
+        self.assertIn("At most: $0.49, if it ran until the time limit (60 minutes)", stdout)
+        status, _, stderr = self.estimate("--variants", 4, "--rounds", 4, plan=plan, arch="amd64", time_limit_s=1200)
+        self.assertEqual(status, 1)
+        self.assertIn("the run needs about 47 minutes with a margin, more than the time limit of 20 minutes: run "
+                      "fewer profiles, cases, variants or rounds, or raise the limit", stderr)
+
 
 class LocalSmock:
     """smock serving the benchmark's definitions on this machine, on free

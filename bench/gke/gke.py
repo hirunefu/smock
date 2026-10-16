@@ -175,6 +175,11 @@ CLUSTER_CREATE_S = 540
 CLUSTER_DELETE_S = 300
 PROFILE_START_S = 180
 EXPECTED_ANALYSIS_S = 5
+# With variants, about how long each after the first takes to start on the
+# node of the first, whose images that node has but its own, and to be
+# checked there; and to scrape an idle neighbour's /metrics.
+VARIANT_START_S = 30
+EXPECTED_NEIGHBOUR_SCRAPE_S = 0.1
 # A run must be done this long before its time limit.
 TIME_LIMIT_MARGIN_S = 600
 
@@ -521,9 +526,11 @@ def region_prices(region):
 POD_KINDS = {"amd64": "amd64 (x86) Pods", "arm64": "arm64 Pods"}
 
 
-def estimate(plan, profiles, cases, region, arch, time_limit_s):
+def estimate(plan, profiles, cases, region, arch, time_limit_s, variants=1, rounds=1):
     """How long a run on `arch` takes and what it costs, for people, and why
-    it does not fit in its time limit, or None."""
+    it does not fit in its time limit, or None; with as many `variants` of
+    smock, each in a Pod of its own under each profile's limits all through
+    the profile, and `rounds`, as it measures."""
     prices, source = region_prices(region)
     generator = GENERATOR_RESOURCES[arch]
     generator_price = pod_price(prices, generator["cpu"], generator["memory"], generator["ephemeral-storage"])
@@ -534,26 +541,35 @@ def estimate(plan, profiles, cases, region, arch, time_limit_s):
         specs = steps(plan, profile, cases)
         if not specs:
             continue
-        load = load_s(plan, specs) + len(specs) * EXPECTED_ANALYSIS_S + (idle_settle_s(plan, profile) or 0) + 60
+        made = runs(specs, variants, rounds)
+        load = load_s(plan, made) + \
+            len(made) * (EXPECTED_ANALYSIS_S + 2 * (variants - 1) * EXPECTED_NEIGHBOUR_SCRAPE_S) + \
+            (idle_settle_s(plan, profile) or 0) + 60
+        start = PROFILE_START_S + (variants - 1) * VARIANT_START_S
         generator_s += load
-        profiles_s += PROFILE_START_S + load
-        smock_cost += smock_prices[profile["name"]] * (PROFILE_START_S + load) / 3600
+        profiles_s += start + load
+        smock_cost += variants * smock_prices[profile["name"]] * (start + load) / 3600
         generator_cost += generator_price * load / 3600
     lifetime_s = CLUSTER_CREATE_S + profiles_s + CLUSTER_DELETE_S
     fee = CLUSTER_FEE_PER_HOUR * lifetime_s / 3600
     expected = fee + smock_cost + generator_cost
-    at_most = (CLUSTER_FEE_PER_HOUR + generator_price + max(smock_prices.values())) * \
+    at_most = (CLUSTER_FEE_PER_HOUR + generator_price + variants * max(smock_prices.values())) * \
         (time_limit_s + CLUSTER_DELETE_S) / 3600
+    profiles_text = f"{len(profiles)} profile{'' if len(profiles) == 1 else 's'} one after the other"
     text = "\n".join([
         f"Cost estimate for {POD_KINDS[arch]} ({source}; {PRICES_URL}):",
         f"- The cluster: about {round(lifetime_s / 60)} minutes, from its creation to its deletion. Its management "
         f"fee of ${CLUSTER_FEE_PER_HOUR:.2f} an hour comes to ${fee:.2f}, or $0 while the billing account's free "
         "tier covers it (one Autopilot or zonal cluster).",
-        f"- smock's Pods, {len(profiles)} profile{'' if len(profiles) == 1 else 's'} one after the other: "
-        f"${smock_cost:.2f}.",
+        (f"- smock's Pods, {profiles_text}: ${smock_cost:.2f}." if variants == 1 else
+         f"- smock's Pods, one for each of {variants} variants on one node, {profiles_text}: ${smock_cost:.2f}."),
         f"- The load generator's Pod ({generator['cpu']} vCPU, {generator['memory']}): about "
         f"{round(generator_s / 60)} minutes, ${generator_cost:.2f}.",
-        "- Artifact Registry: two images of about 100 MB for under an hour, within the free 0.5 GB a month.",
+        ("- Artifact Registry: two images of about 100 MB for under an hour, within the free 0.5 GB a month."
+         if variants == 1 else
+         f"- Artifact Registry: up to {variants + 1} images of about 100 MB while the run lasts (the load "
+         "generator's, and smock's for each distinct binary, which share all but its layer), within the free 0.5 GB "
+         "a month."),
         "- No load balancer, static IP or volume: the run never makes one.",
         f"Expected: about ${expected:.2f}, the cluster existing for about {round(lifetime_s / 60)} minutes.",
         f"At most: ${at_most:.2f}, if it ran until the time limit ({round(time_limit_s / 60)} minutes), when the "
@@ -568,8 +584,9 @@ def estimate(plan, profiles, cases, region, arch, time_limit_s):
     needed_s = lifetime_s + TIME_LIMIT_MARGIN_S
     if needed_s <= time_limit_s:
         return text, None
+    fewer = "profiles or cases" if variants == 1 else "profiles, cases, variants or rounds"
     return text, (f"the run needs about {round(needed_s / 60)} minutes with a margin, more than the time limit of "
-                  f"{round(time_limit_s / 60)} minutes: run fewer profiles or cases, or raise the limit")
+                  f"{round(time_limit_s / 60)} minutes: run fewer {fewer}, or raise the limit")
 
 
 # The e_machine of an ELF executable of each architecture.
@@ -1003,7 +1020,8 @@ def command_estimate(args):
     plan = read_json(args.plan)
     profiles = plan_profiles(plan, comma_list(args.profiles))
     cases = plan_cases(plan, comma_list(args.cases))
-    text, problem = estimate(plan, profiles, cases, args.region, args.arch, args.time_limit_s)
+    variants, rounds = counts(args)
+    text, problem = estimate(plan, profiles, cases, args.region, args.arch, args.time_limit_s, variants, rounds)
     print(text)
     if problem:
         raise GkeError(problem)
@@ -1104,6 +1122,7 @@ def main(argv):
     estimating.add_argument("--arch", required=True, choices=("arm64", "amd64"), help="the nodes' architecture")
     estimating.add_argument("--time-limit-s", type=int, required=True,
                             help="seconds after which the watchdog deletes the cluster")
+    add_counts(estimating)
     estimating.set_defaults(handler=command_estimate)
     rendering = commands.add_parser("manifests", help="write the Kubernetes objects of one profile")
     rendering.add_argument("--plan", required=True, help="the plan, such as bench/plan-autopilot.json")
