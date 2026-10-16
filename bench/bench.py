@@ -1385,8 +1385,9 @@ def per_second(spec, by_second):
     oha releases a request about a millisecond after it is due, so in the
     second it was due in unless it fell behind, and stores none that got
     no response. Such a request leaves the second it was due in short, and
-    overstates the p99 of each later second by up to the time between two
-    requests of its kind (1 / their rate), as analyze_request explains."""
+    overstates the p99 of that second and of each later one by up to the
+    time between two requests of its kind (1 / their rate), as
+    analyze_request explains."""
     total_s = spec["ramp_s"] + spec["duration_s"] + spec["tail_s"]
     seconds = max(math.ceil(total_s), max(by_second, default=-1) + 1)
     requests, p99 = [], []

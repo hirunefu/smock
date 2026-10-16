@@ -1182,13 +1182,18 @@ architecture the targets file has no set for.
   p90, p99, p99.9, max), the generator lag (p50, p99, p99.9, max) and
   whether the load generator fell behind, the achieved rate, the errors by
   kind, each second of the load from its start, ramp and tail included
-  (`per_second`: how many of the requests oha released in that second,
-  about a millisecond after they were due, got a response, `requests`, and
-  their p99 from the scheduled send times, `p99_ms`, so that a burst at
-  the start, a stall now and then and a step slow all through look apart;
-  oha keeps nothing of a request that got no response, so one leaves the
-  second it was due in short, and overstates the p99 of each later second
-  by up to the time between two requests of its kind, 1 / their rate),
+  (`per_second`: how many of the requests oha released in that second got
+  a response, `requests`, and their p99 from the scheduled send times,
+  `p99_ms`, so that a burst at the start, a stall now and then and a step
+  slow all through look apart; oha releases a request about a millisecond
+  after it was due, so in the second it was due in, unless oha fell
+  behind, as in a stall that holds it up too: then the request and its
+  latency count in the second oha released it in, which may be a second
+  or more later (in the window, `load_generator_late` then flags the
+  step); oha keeps nothing of a request that got no response, so one
+  leaves the second it was due in short, and overstates the p99 of that
+  second and of each later one by up to the time between two requests of
+  its kind, 1 / their rate),
   smock's CPU use and throttling
   (`smock_cpu`: from its cgroup's `cpu.stat`, with the requests smock
   answered meanwhile, from `smock_requests_total`, what the CPU time comes
