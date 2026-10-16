@@ -2361,6 +2361,43 @@ class SameNode(VariantRun):
                       f"| a (baseline) | a21fe97d59c6 | 0.2.0 | {'a' * 12} | - |\n"
                       f"| b | 4f178ef33830 | 0.3.0 | {'b' * 12} | no-init, no-first-second |\n", markdown)
 
+    def test_variants_on_one_node_are_checked_by_its_name_even_when_one_did_not_print_its_cpu(self):
+        # b ran without the init container: only a's sample knows the
+        # node's CPU, and both name the node.
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(HIGHER),
+                                                                           variant_pods(["a", "b"])), "--no-init", "b")
+        self.assertEqual(status, 0, stderr)
+        profile = report["gke"]["profiles"]["small"]
+        self.assertEqual({key: profile[key] for key in ("nodes", "one_node", "limits_as_planned", "problems")},
+                         {"nodes": {"a": "node-a", "b": "node-a"}, "one_node": True, "limits_as_planned": True,
+                          "problems": []})
+        self.assertEqual(profile["node"], {"name": "node-a", "instance_type": "ek-standard-8",
+                                           "zone": "asia-northeast1-b", "cpu": AMD_CPU})
+        self.assertIn("Every variant ran on node node-a: ek-standard-8 in asia-northeast1-b, AMD EPYC 7B13 (family 25, "
+                      "model 1, stepping 0). Each was admitted with the profile's limits as its requests and limits.",
+                      markdown)
+
+    def test_variants_on_two_nodes_or_under_other_limits_than_the_plans_cannot_be_compared(self):
+        out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"], nodes={"b": "node-c"}))
+        status, report, markdown, stderr = self.same_node(out)
+        self.assertEqual(status, 1)
+        problem = "small: the smock Pods of small are on 2 nodes, not one: a on node-a, b on node-c"
+        self.assertEqual((report["problems"], report["gke"]["profiles"]["small"]["one_node"]), ([problem], False))
+        self.assertIn(f"gke: {problem}", stderr)
+        self.assertIn(f"**Not comparable:**\n\n- {problem}.\n", markdown)
+        self.assertIn("The variants ran on 2 nodes: a on node-a, b on node-c.", markdown)
+        # As Autopilot raises a Pod's resources it finds too small.
+        out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"], limits={"b": ("500m", "512Mi")}))
+        status, report, markdown, stderr = self.same_node(out)
+        self.assertEqual(status, 1)
+        self.assertEqual(report["problems"],
+                         ["small: variant b's CPU request was admitted as 500m, not the profile's 250m",
+                          "small: variant b's CPU limit was admitted as 500m, not the profile's 250m"])
+        self.assertFalse(report["gke"]["profiles"]["small"]["limits_as_planned"])
+        self.assertIn("Every variant ran on node node-a: ek-standard-8 in asia-northeast1-b, AMD EPYC 7B13 (family 25, "
+                      "model 1, stepping 0). Not every one was admitted with the profile's limits as its requests and "
+                      "limits.", markdown)
+
     def test_a_variant_with_two_sha256_values_exits_2_since_what_it_measured_is_unknown(self):
         out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
         # summarize was told another binary for b in round 3.

@@ -751,18 +751,23 @@ def and_list(items):
     return " and ".join([", ".join(items[:-1]), items[-1]] if len(items) > 1 else items)
 
 
+def profile_pods(info, profile):
+    """The smock Pods of `profile` of those pod-info kept (`info`)."""
+    return [pod for pod in info["smock"] if pod["name"] == smock_name(profile["name"], pod.get("variant"))]
+
+
+def who(pod):
+    return f"variant {pod['variant']}" if pod.get("variant") else f"Pod {pod['name']}"
+
+
 def placement_problems(info, profile):
     """Why the smock Pods of `profile`, as pod-info keeps them (`info`),
     cannot be compared with each other, one sentence each; none when every
     one has a node, the same, and was admitted with the profile's limits
     as its CPU and memory requests and limits."""
-    pods = [pod for pod in info["smock"] if pod["name"] == smock_name(profile["name"], pod.get("variant"))]
+    pods = profile_pods(info, profile)
     if not pods:
         return [f"no smock Pod of profile {profile['name']} is in what the run read of its Pods"]
-
-    def who(pod):
-        return f"variant {pod['variant']}" if pod.get("variant") else f"Pod {pod['name']}"
-
     problems = [f"{who(pod)} has no node yet" for pod in pods if not pod["node"]]
     nodes = {}
     for pod in pods:
@@ -771,6 +776,13 @@ def placement_problems(info, profile):
     if len(nodes) > 1:
         problems.append(f"the smock Pods of {profile['name']} are on {len(nodes)} nodes, not one: "
                         + ", ".join(f"{and_list(names)} on {node}" for node, names in nodes.items()))
+    return problems + limit_problems(pods, profile)
+
+
+def limit_problems(pods, profile):
+    """Which of smock's `pods` were not admitted with `profile`'s limits as
+    their CPU and memory requests and limits, and how, one sentence each."""
+    problems = []
     wanted = {"cpu": ("CPU", profile["cpu_limit"]), "memory": ("memory", profile["memory_limit"])}
     for pod in pods:
         if pod.get("resources") is None:
@@ -1349,6 +1361,51 @@ def verdict(pairs):
             "higher" if higher > lower else "lower"}
 
 
+def placement_record(profile, info, labels, samples):
+    """Where the variants ran under `profile`, and how Autopilot admitted
+    them, from what pod-info kept of the Pods (`info`): each variant's
+    node, whether they shared one, that node, with its CPU as the init
+    container of a variant printed it (from its samples' conditions),
+    whether each was admitted with the profile's limits, and why they
+    cannot be compared when they cannot. A variant without the init
+    container is on the node by its name."""
+    name = profile["name"]
+    pods = {pod.get("variant"): pod for pod in profile_pods(info, profile)}
+    nodes = {label: (pods.get(label) or {}).get("node") for label in labels}
+    problems = placement_problems(info, profile)
+    if pods:
+        problems += [f"variant {label} has no Pod in what the run read of the Pods of {name}"
+                     for label in labels if label not in pods]
+    shared = next(iter(set(nodes.values()))) if len(set(nodes.values())) == 1 else None
+    node = info["nodes"].get(shared) if shared else None
+    cpu = next((cpu for sample in samples.values() if sample and sample[1]
+                for cpu in [(((sample[1]["gke"]["profiles"].get(name) or {}).get("nodes") or {}).get(shared) or {})
+                            .get("cpu")] if cpu), None)
+    return {"nodes": nodes, "one_node": shared is not None,
+            "node": shared and {"name": shared, "instance_type": (node or {}).get("instance_type"),
+                                "zone": (node or {}).get("zone"), "cpu": cpu},
+            "limits_as_planned": bool(pods) and not limit_problems(list(pods.values()), profile),
+            "problems": problems}
+
+
+def placement_text(result):
+    """Where a profile's variants ran, and whether under its limits, for
+    people."""
+    node = result["node"]
+    if node:
+        cpu = compare_module().cpu_name(node["cpu"]) if node["cpu"] else "CPU unknown"
+        where = (f"Every variant ran on node {node['name']}: {harness.shown(node['instance_type'])} in "
+                 f"{harness.shown(node['zone'])}, {cpu}.")
+    else:
+        on = {}
+        for label, name in result["nodes"].items():
+            on.setdefault(name or "no node known", []).append(label)
+        where = f"The variants ran on {len(on)} nodes: " + ", ".join(f"{and_list(labels)} on {name}"
+                                                                     for name, labels in on.items()) + "."
+    admitted = "Each was" if result["limits_as_planned"] else "Not every one was"
+    return f"{where} {admitted} admitted with the profile's limits as its requests and limits."
+
+
 def profile_comparison(profile, samples, labels, baseline, rounds, lines):
     """How the variants compare under `profile`, from their `samples`
     ({(round, label): sample}) and the load generator's `lines`: each
@@ -1475,7 +1532,7 @@ def same_node_markdown(report):
         lines += ["", "**Not comparable:**", "", *(f"- {problem}." for problem in report["problems"])]
     for profile in report["profiles"]:
         result = report["gke"]["profiles"][profile["name"]]
-        lines += ["", harness.profile_heading(profile), "",
+        lines += ["", harness.profile_heading(profile), "", placement_text(result), "",
                   "| " + " | ".join(SAME_NODE_COLUMNS) + " |", "|" + "---|" * len(SAME_NODE_COLUMNS)]
         for step in result["steps"]:
             lines += [same_node_row(step, label, record, baseline) for label, record in step["variants"].items()]
@@ -1530,7 +1587,8 @@ def same_node(out, baseline=None, sha256=None, no_init=()):
     each variant's binary the run gives ({label: [hex]}) and the variants
     it ran without the init container: same-node.json's content,
     same-node.md's, and the exit status: 2 when a variant has two sha256,
-    else 0."""
+    1 when the variants did not share a node or were admitted with other
+    limits than the plan's, else 0."""
     samples = read_samples(out)
     known = [sample for sample in samples.values() if sample and sample[1]]
     if not known:
@@ -1548,12 +1606,20 @@ def same_node(out, baseline=None, sha256=None, no_init=()):
     labels = [baseline, *(label for label in labels if label != baseline)]
     variants, problems = variant_records(labels, baseline, samples, raws, sha256 or {}, no_init)
     rounds = max(round_ for round_, _ in samples)
-    results = {profile["name"]: profile_comparison(profile, samples, labels, baseline, rounds, raws[profile["name"]])
-               for profile in profiles}
+    results = {}
+    for profile in profiles:
+        pods = Path(out) / "raw" / profile["name"] / "pods.json"
+        info = read_json(pods) if pods.exists() else {"smock": [], "generator": [], "nodes": {}}
+        results[profile["name"]] = {
+            **profile_comparison(profile, samples, labels, baseline, rounds, raws[profile["name"]]),
+            **placement_record(profile, info, labels, samples)}
+    placed = [f"{name}: {problem}" for name, result in results.items() for problem in result["problems"]]
+    status = 2 if problems else 1 if placed else 0
+    problems += placed
     report = {"format": 1, "baseline": baseline, "variants": variants, "problems": problems,
               "complete": all(result["complete"] for result in results.values()), "profiles": profiles,
               "gke": {"profiles": results}}
-    return report, same_node_markdown(report), 2 if problems else 0
+    return report, same_node_markdown(report), status
 
 
 def command_same_node(args):
