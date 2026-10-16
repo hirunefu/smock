@@ -1702,9 +1702,11 @@ def machine_text(machine):
     return f"{machine['architecture']} ({machine['cpu_model']}, {cpus})"
 
 
-def summary_markdown(summary, conditions):
+def summary_markdown(summary, conditions, stopped=None):
     """The summary for people: the targets, then for each profile idle RSS
-    and the cases."""
+    and the cases. `stopped` says where and why a run that stopped before
+    its end stopped, right below the line that says what ran, in place of
+    the note that the run is incomplete."""
     smock, machine, generator = conditions["smock"], conditions["machine"], conditions["load_generator"]
     lines = [
         "# smock benchmark",
@@ -1715,12 +1717,14 @@ def summary_markdown(summary, conditions):
         f"{known(generator['version'], generator['name'] + ' of an unknown version')}, plan "
         f"{conditions['plan']['file']}.",
     ]
+    if stopped:
+        lines += ["", stopped]
     if conditions.get("note"):
         lines += ["", f"**Note:** {conditions['note']}"]
     if conditions["overrides"]:
         shown_overrides = ", ".join(f"{name} {value}" for name, value in conditions["overrides"].items())
         lines += ["", f"**Not a full run:** the command line changed the plan ({shown_overrides})."]
-    if not summary["complete"]:
+    if not summary["complete"] and not stopped:
         lines += ["", "**Incomplete:** the run stopped before its last case."]
     lines += ["", *targets_section(summary["targets"], kubernetes_architecture(machine["architecture"]),
                                    conditions["targets"]["file"])]

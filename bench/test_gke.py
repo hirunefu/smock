@@ -575,9 +575,11 @@ class Summary(Helper):
         note = ("**Stopped early:** the run stopped under profile small, after its step http-keep-alive@small@500: "
                 "stopped by SIGTERM. Nothing after that was measured.")
         self.assertIn(note, markdown)
-        # Right below the line that says what ran.
+        # Right below the line that says what ran, in place of the note
+        # that the run is incomplete.
         self.assertLess(markdown.index("Started 2026-10-14T03:28:50+00:00"), markdown.index(note))
-        self.assertLess(markdown.index(note), markdown.index("## "))
+        self.assertLess(markdown.index(note), markdown.index("**Note:**"))
+        self.assertNotIn("**Incomplete:**", markdown)
         # Before the profile's first step.
         out = self.results([START, IDLE], pods(), stopped=("--stopped", "the load generator's Pod did not start "
                                                            "under small", "--stopped-under", "small"))

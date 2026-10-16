@@ -822,11 +822,7 @@ def command_summarize(args):
     }
     harness.write_json(out / "summary.json", summary)
     harness.write_json(out / "conditions.json", conditions)
-    markdown = harness.summary_markdown(summary, conditions)
-    if stopped:
-        # Right below the line that says what ran.
-        title, started, rest = markdown.split("\n\n", 2)
-        markdown = "\n\n".join([title, started, stopped_markdown(stopped), rest])
+    markdown = harness.summary_markdown(summary, conditions, stopped and stopped_markdown(stopped))
     (out / "summary.md").write_text(markdown + gke_markdown(results))
     return 0
 
