@@ -345,6 +345,37 @@ class Variants(Helper):
         [container] = pod_spec(job)["containers"]
         self.assertIn({"name": "ROUNDS", "value": "6"}, container["env"])
 
+    def test_the_load_generator_reads_each_variants_service_from_its_job_and_makes_the_runs_its_deadline_counts(self):
+        # gke.py writes the Job and generator.py reads it: the two meet only
+        # in this environment, so it is read here as the generator reads it.
+        generator = load_generator_module()
+        gke = generator.gke
+        rendered = self.manifests(profile="autopilot-min", cases="http-keep-alive", rounds=3,
+                                  variants=(*TWO_VARIANTS, f"r2h={OTHER_IMAGE},no-init,no-first-second"))
+        [job] = objects(rendered, "Job")
+        [container] = pod_spec(job)["containers"]
+        env = {variable["name"]: variable["value"] for variable in container["env"]}
+        variants = generator.read_variants(env)
+        self.assertEqual([(variant.label, variant.first_second) for variant in variants],
+                         [("r1", True), ("r2", True), ("r2h", False)])
+        services = {service["metadata"]["name"]: service["spec"] for service in objects(rendered, "Service")}
+        for variant in variants:
+            # Each target is the host name of the Service that selects that
+            # variant's Pod, and that Service serves every port the
+            # generator sends to.
+            name, domain = variant.target.split(".", 1)
+            self.assertEqual(domain, "smock-bench.svc.cluster.local")
+            self.assertEqual(services[name]["selector"]["variant"], variant.label)
+            self.assertLessEqual({*variant.ports.values(), variant.admin_port},
+                                 {port["port"] for port in services[name]["ports"]})
+        # The Job's deadline is for as many runs as the generator makes.
+        plan = gke.read_json(BENCH / "plan-autopilot.json")
+        [profile] = gke.plan_profiles(plan, [env["PROFILE"]])
+        specs = gke.steps(plan, profile, gke.plan_cases(plan, gke.comma_list(env["CASES"])))
+        made = [spec for _, spec, _ in generator.run_order(specs, variants, int(env["ROUNDS"]))]
+        self.assertEqual(len(made), len(gke.runs(specs, len(variants), 3)))
+        self.assertGreater(job["spec"]["activeDeadlineSeconds"], gke.load_s(plan, made))
+
     def test_variants_and_rounds_it_cannot_run_are_refused_with_what_to_change(self):
         def render(*images, profile="autopilot-min", plan=BENCH / "plan-autopilot.json"):
             return helper("manifests", "--plan", plan, "--profile", profile, "--arch", "amd64",
