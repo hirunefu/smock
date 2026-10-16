@@ -1417,26 +1417,35 @@ class GeneratorWithVariants(Helper):
             self.assertEqual(line["node_steal_s"], {"a": 0.0, "b": 0.0})
             self.assertEqual(line["node_steal_s"][line["variant"]], line["result"]["smock_cpu"]["node_steal_s"])
 
-    def sample(self, round_, label):
-        """The log of one variant's sample, its pass over the steps in one
-        round: its lines but the steps and checks after a run of other
-        rounds, and its idle RSS in round 1 alone."""
-        def kept(line):
-            if line.get("variant") != label or (line["kind"] == "idle-rss" and round_ != 1):
-                return False
-            return line["kind"] not in ("step", "traffic-check") or line.get("round", round_) == round_
-
-        return "".join(json.dumps(line) + "\n" for line in self.lines if kept(line))
-
     def test_each_round_of_each_variant_splits_out_as_an_ordinary_run_that_summarizes_as_complete(self):
+        # What the load generator printed, kept as the runner keeps it with
+        # the variants' Pods, split by gke.py samples.
+        out = self.directory()
+        raw = out / "raw" / "small"
+        raw.mkdir(parents=True)
+        (raw / "generator.log").write_text(self.output)
+        (raw / "pods.json").write_text(json.dumps(variant_pods(["a", "b"])))
+        status, stdout, stderr = helper("samples", out, "--plan", self.plan_path)
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual([line.split(" ")[:2] for line in stdout.splitlines()],
+                         [["1", "a"], ["1", "b"], ["2", "a"], ["2", "b"]])
         for round_, label in ((1, "a"), (2, "b")):
-            summary, conditions, _ = self.summarize(self.plan_path, self.sample(round_, label))
+            directory = out / "samples" / f"{round_}-{label}"
+            status, _, stderr = helper(
+                "summarize", "--plan", self.plan_path, "--targets", small_targets(self.directory()), "--region",
+                "us-central1", "--arch", "arm64", "--started-at", "2026-10-16T03:28:50+00:00", "--finished-at",
+                "2026-10-16T03:31:02+00:00", directory)
+            self.assertEqual(status, 0, stderr)
+            summary = json.loads((directory / "summary.json").read_text())
+            conditions = json.loads((directory / "conditions.json").read_text())
             self.assertTrue(summary["complete"], (round_, label))
             self.assertEqual([case["id"] for case in summary["cases"]], STEP_IDS)
             self.assertEqual([case["smock_cpu"]["first_second"] is None for case in summary["cases"]],
                              [label == "b"] * 2)
-            self.assertEqual(len(summary["idle_rss"]), 1 if round_ == 1 else 0)
+            self.assertEqual([idle["memory"]["oom_kills"] for idle in summary["idle_rss"]], [0] if round_ == 1 else [])
             self.assertTrue(conditions["gke"]["profiles"]["small"]["traffic_check"]["ok"])
+            start = next(line for line in self.lines if line["kind"] == "start" and line["variant"] == label)
+            self.assertEqual(conditions["smock"]["commit"], start["status"]["commit"])
 
 
 class VariantsStopTogether(Helper):
