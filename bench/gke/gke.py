@@ -1637,19 +1637,22 @@ READING = [
 
 
 def same_node_markdown(report):
-    """same-node.md: each variant's binary and options, why the variants
-    cannot be compared when they cannot, and for each profile, a row for
-    each variant at each step, the runs that measured nothing, then each
-    variant's verdict against the baseline."""
+    """same-node.md: what ran, why the variants cannot be compared when
+    they cannot, each variant's binary and options, whether the samples'
+    other conditions were the same, how to read the rest; and for each
+    profile, where the variants ran, in what order, what the idle ones
+    used, a row for each variant at each step, the runs that measured
+    nothing, each variant's verdict against the baseline, and its
+    drift."""
     baseline = report["baseline"]
     run = report["run"]
     lines = ["# smock variants on one node", "",
              f"Started {run['started_at']}: {len(report['variants'])} variants of smock over {run['rounds']} "
              f"round{'' if run['rounds'] == 1 else 's'}, on {run['machine']}, "
-             f"{harness.known(run['load_generator'], 'a load generator of an unknown version')}, plan {run['plan']}.",
-             "", *variants_lines(report), "", conditions_text(report["conditions"]), "", *READING]
+             f"{harness.known(run['load_generator'], 'a load generator of an unknown version')}, plan {run['plan']}."]
     if report["problems"]:
         lines += ["", "**Not comparable:**", "", *(f"- {problem}." for problem in report["problems"])]
+    lines += ["", *variants_lines(report), "", conditions_text(report["conditions"]), "", *READING]
     for profile in report["profiles"]:
         result = report["gke"]["profiles"][profile["name"]]
         lines += ["", harness.profile_heading(profile), "", placement_text(result), "", order_text(result), "",
