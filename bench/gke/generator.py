@@ -249,6 +249,20 @@ def idle_result(profile, settle_s, metrics, digest):
             "memory": {"peak_bytes": None if peak is None else round(peak), "oom_kills": None}}, None
 
 
+def run_order(specs, variants, rounds):
+    """The runs of a profile, in the order they run: (round, spec,
+    variant), rounds outer (from 1), `specs` in the middle and `variants`
+    inner, their order turned by one for each round and each step, so that
+    with two variants each step runs AB, BA, AB, BA over four rounds. The
+    runs compared with each other come right after one another, a step's
+    cooldown apart, and each variant runs first, second and so on as often
+    as the others when the rounds are a multiple of the variants."""
+    return [(round_, spec, variants[(round_ - 1 + index + offset) % len(variants)])
+            for round_ in range(1, rounds + 1)
+            for index, spec in enumerate(specs)
+            for offset in range(len(variants))]
+
+
 def cpu_children_s():
     usage = resource.getrusage(resource.RUSAGE_CHILDREN)
     return usage.ru_utime + usage.ru_stime

@@ -1152,6 +1152,39 @@ class StopAfterAStep(unittest.TestCase):
                               (no_response_step(self.spec["id"]), [])):
             self.assertEqual(self.stop_after(result, later, check_result(False)), (None, None, 0))
 
+
+class RunOrder(unittest.TestCase):
+    """With variants, the load generator runs rounds outer, the steps of the
+    profile in the middle and the variants inner, one at a time, the
+    variants' order turned by one for each round and each step: the runs
+    compared with each other come right after one another, and each
+    variant runs first as often as the others."""
+
+    generator = load_generator_module()
+
+    def order(self, steps, variants, rounds):
+        return [(round_, spec["id"], variant)
+                for round_, spec, variant in self.generator.run_order([{"id": step} for step in steps], variants,
+                                                                      rounds)]
+
+    def test_with_two_variants_each_step_runs_them_ab_ba_ab_ba_over_four_rounds(self):
+        runs = self.order(["s1"], ["a", "b"], 4)
+        self.assertEqual(runs, [(1, "s1", "a"), (1, "s1", "b"), (2, "s1", "b"), (2, "s1", "a"),
+                                (3, "s1", "a"), (3, "s1", "b"), (4, "s1", "b"), (4, "s1", "a")])
+
+    def test_the_order_turns_by_one_with_each_round_and_each_step_the_baseline_first(self):
+        runs = self.order(["s1", "s2"], ["a", "b", "c"], 3)
+        self.assertEqual([variant for _, _, variant in runs],
+                         ["a", "b", "c", "b", "c", "a",
+                          "b", "c", "a", "c", "a", "b",
+                          "c", "a", "b", "a", "b", "c"])
+        self.assertEqual([(round_, step) for round_, step, _ in runs][::3],
+                         [(1, "s1"), (1, "s2"), (2, "s1"), (2, "s2"), (3, "s1"), (3, "s2")])
+
+    def test_without_variants_the_steps_run_once_in_the_plans_order(self):
+        self.assertEqual(self.order(["s1", "s2"], [None], 1), [(1, "s1", None), (1, "s2", None)])
+
+
 def elf_header(machine, elf_class=2, data=1, elf_type=2):
     """The first 20 bytes of an ELF file: its identification, type and
     machine."""
