@@ -1274,8 +1274,10 @@ push_images
 make_cluster
 
 # Where and why the profiles stopped before the last, which summary.md
-# says, when they did.
-run_status=0 stopped=()
+# says, when they did; and the last profile, after which none is left to
+# stop.
+run_status=0 stopped=() last_profile=${profile_lines##*$'\n'}
+last_profile=${last_profile%% *}
 while read -r name steps deadline_s <&3; do
   # Each profile needs its Job's time, smock's start, and the deletion.
   if [ $(($(now) + deadline_s + 600)) -gt "$deadline" ]; then
@@ -1291,7 +1293,8 @@ while read -r name steps deadline_s <&3; do
   0) ;;
   3) run_status=1 ;;
   4)
-    stopped=(--stopped "$stop_reason" --stopped-under "$name")
+    # What was not deleted keeps only the later profiles from running.
+    [ "$name" = "$last_profile" ] || stopped=(--stopped "$stop_reason" --stopped-under "$name")
     run_status=1
     break
     ;;

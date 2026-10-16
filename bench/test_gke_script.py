@@ -1135,6 +1135,18 @@ class Profiles(Script):
                          "the load generator's Job was not deleted in 5 minutes, so no later profile ran")
         self.assertIn("nothing is left", output)
 
+    def test_a_smock_not_deleted_in_time_under_the_last_profile_fails_the_run_but_stops_nothing(self):
+        # Every step was measured, and no later profile was to run.
+        self.configure(delete_fails_on="manifests/large/smock.json")
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        self.assertIn("not deleted in 5 minutes under large: smock's Pod and Service", output)
+        summary = json.loads((self.out / "summary.json").read_text())
+        self.assertTrue(summary["complete"])
+        self.assertEqual(self.stopped(), (None, None))
+        self.assertEqual(self.state_now()["clusters"], {})
+        self.assertIn("nothing is left", output)
+
     def test_a_profile_that_does_not_fit_in_the_time_limit_is_skipped_and_summary_md_says_so(self):
         # The plan fits in 35 minutes as estimated, but 1,000 s pass while
         # smock becomes ready under small: large, with its Job's 507 s and
