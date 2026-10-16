@@ -325,10 +325,10 @@ def smock_nodes_section(older, newer):
         lines += ["smock's node had another CPU in the newer run, so a change in latency there may be the node's "
                   "rather than smock's:", "",
                   *(f"- {name}: {'; '.join(changes)}." for name, changes in changed.items() if changes)]
-    same = [name for name, changes in changed.items() if not changes]
-    if same:
+    unchanged = [name for name, changes in changed.items() if not changes]
+    if unchanged:
         lines += [*([""] if lines else []), "smock's node had the same CPU in both runs (model, microcode, TLS flags "
-                  f"and mitigations) under {', '.join(same)}."]
+                  f"and mitigations) under {', '.join(unchanged)}."]
     if unknown:
         lines += [*([""] if lines else []), "Whether smock's node had another CPU is unknown under "
                   f"{', '.join(unknown)}: a run did not record it."]
