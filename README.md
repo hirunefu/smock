@@ -68,8 +68,8 @@ Packages of `smock/smock`:
   (native). Its `Schedule`, which coalesces a burst of events into one
   check and keeps the poll interval, does no I/O and reads no clock. A poll
   reads nothing unless the `Stamp` of what the caller reads (the names it
-  lists and the times of the files it reads) may have changed since the
-  last one.
+  lists, and where the files it reads really are and their times) may have
+  changed since the last one.
 - `metrics`: the metrics registry: counters, gauges and histograms with
   fixed label names, rendered in the Prometheus text format. Features
   register their metrics in the one registry `smock serve` keeps.

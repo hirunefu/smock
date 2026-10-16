@@ -748,14 +748,23 @@ restart:
 - Changes are coalesced: smock reloads once they have been quiet for
   250 ms, so a burst of changes gives one reload. It also polls the
   directory every 10 s, in case a change went unnoticed, and reloads when
-  the files differ from those it read last. A poll first compares the
-  names in the directories and the modification and change times of the
-  files, after following symlinks, with those of the last poll, and reads
-  the files only when something differs, so an idle smock's polls cost
-  little CPU. A definitions directory that
+  the files differ from those it read last. A definitions directory that
   does not exist yet is polled until it appears. One that cannot be watched
   for another reason, such as the inotify limits, is only polled, and smock
   logs a warning.
+- A poll first compares the names in the directories, where each file
+  really is once symlinks are resolved, and the modification and change
+  times of the files with those of the last check, and reads the files only
+  when something differs. That takes a few calls for each file instead of
+  reading it, which saves most of a poll's CPU when the files are a few
+  large ones, as in the benchmark's set, and little when they are many
+  small body files; startup and each check that reads pay for both. After a
+  read that met a problem reading the directory, such as a file that cannot
+  be read, each poll reads again while the problem lasts. A file time ahead
+  of the clock is logged as a warning, once. A modification time ahead, as
+  from an archive made on a host whose clock ran ahead, changes nothing
+  else; a change time ahead, which only a clock set back gives, makes each
+  poll read the files until the clock passes it.
 - A reload reads and validates every file, builds a whole new definition
   set and swaps it in at once, so no request sees half of a change.
   Requests already being handled finish with the set they started with,
