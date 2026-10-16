@@ -1233,6 +1233,10 @@ SAMPLE_NAME = re.compile(r"([1-9][0-9]*)-(" + VARIANT_LABEL.pattern + ")")
 # what its CPU comes to a request says less of its code.
 SATURATED = 0.9
 
+# The sign test's p at or below which a variant's CPU a request differs
+# from the baseline's: the usual 5%, which 6 pairs that all agree reach.
+SIGNIFICANT_P = 0.05
+
 
 def read_samples(out):
     """The samples of a run of variants under `out`, as summarize left them:
@@ -1358,8 +1362,8 @@ def verdict(pairs):
     """Whether a variant used more CPU a request than the baseline, over
     its unsaturated `pairs` of runs of a profile: the median change and its
     range, how many were higher and how many lower, and the sign test's p
-    of that; higher or lower when p is at most 0.05, else no clear
-    difference."""
+    of that; higher or lower when p is at most SIGNIFICANT_P, else no
+    clear difference."""
     changes = [pair["change_percent"] for pair in pairs if not pair["saturated"]]
     higher, lower = sum(change > 0 for change in changes), sum(change < 0 for change in changes)
     p = sign_test_p(higher, lower)
@@ -1367,7 +1371,7 @@ def verdict(pairs):
             "median_change_percent": None if not changes else round(median(changes), 2),
             "min_change_percent": min(changes, default=None), "max_change_percent": max(changes, default=None),
             "sign_test_p": p,
-            "verdict": None if not changes else "no clear difference" if p > 0.05 else
+            "verdict": None if not changes else "no clear difference" if p > SIGNIFICANT_P else
             "higher" if higher > lower else "lower"}
 
 
@@ -1623,24 +1627,27 @@ def variants_lines(report):
     return lines
 
 
-# What same-node.md says of how to read it.
-READING = [
-    "## Reading the comparison", "",
-    "Each variant ran in a Pod of its own on one node, and one load generator measured them in turn: each round ran "
-    "the profile's steps, and each step ran every variant once, one after another, their order turned by one for "
-    "each round and step. A sample is one variant's steps in one round: samples/<round>-<label>/ holds its summary, "
-    "which compare.py reads as a run's.", "",
-    "*CPU µs/request* is the median of a variant's runs of the step, with the lowest and highest and how many runs "
-    "measured it. *Change* is that median's change from the baseline's. *Paired* is the range of the changes of each "
-    "run from the baseline's run of the step in the same round, and *Higher* how many of those pairs used more. "
-    "*Throttled periods* adds up the CFS periods in which the quota held smock back, out of all, over the runs. *CPU "
-    "wait s*, *Node steal s* and *p99 ms* are medians; - is unknown, as from a smock too old to count it. *Saturated* "
-    "counts the baseline's runs, or a variant's pairs, in which a run used 90% of its CPU limit or more: smock then "
-    "queues, and its CPU a request says less of its code.", "",
-    "Each verdict takes the pairs of every step of the profile in which neither run saturated: their median change, "
-    "lowest to highest, how many were higher, and the p of an exact two-sided sign test, ties left out. With 8 pairs "
-    "the smallest p is 0.008; above 0.05 is no clear difference.",
-]
+def reading_lines():
+    """What same-node.md says of how to read it, with the cuts its verdicts
+    are made with."""
+    return [
+        "## Reading the comparison", "",
+        "Each variant ran in a Pod of its own on one node, and one load generator measured them in turn: each round "
+        "ran the profile's steps, and each step ran every variant once, one after another, their order turned by one "
+        "for each round and step. A sample is one variant's steps in one round: samples/<round>-<label>/ holds its "
+        "summary, which compare.py reads as a run's.", "",
+        "*CPU µs/request* is the median of a variant's runs of the step, with the lowest and highest and how many runs "
+        "measured it. *Change* is that median's change from the baseline's. *Paired* is the range of the changes of "
+        "each run from the baseline's run of the step in the same round, and *Higher* how many of those pairs used "
+        "more. *Throttled periods* adds up the CFS periods in which the quota held smock back, out of all, over the "
+        "runs. *CPU wait s*, *Node steal s* and *p99 ms* are medians; - is unknown, as from a smock too old to count "
+        "it. *Saturated* counts the baseline's runs, or a variant's pairs, in which a run used "
+        f"{SATURATED:.0%} of its CPU limit or more: smock then queues, and its CPU a request says less of its code.",
+        "",
+        "Each verdict takes the pairs of every step of the profile in which neither run saturated: their median "
+        "change, lowest to highest, how many were higher, and the p of an exact two-sided sign test, ties left out. "
+        f"With 8 pairs the smallest p is 0.008; above {SIGNIFICANT_P:g} is no clear difference.",
+    ]
 
 
 def same_node_markdown(report):
@@ -1662,7 +1669,7 @@ def same_node_markdown(report):
         lines += ["", run_stopped_text(report["stopped"])]
     if report["problems"]:
         lines += ["", "**Not comparable:**", "", *(f"- {problem}." for problem in report["problems"])]
-    lines += ["", *variants_lines(report), "", conditions_text(report["conditions"]), "", *READING]
+    lines += ["", *variants_lines(report), "", conditions_text(report["conditions"]), "", *reading_lines()]
     for profile in report["profiles"]:
         result = report["gke"]["profiles"][profile["name"]]
         lines += ["", harness.profile_heading(profile), "", placement_text(result), "", order_text(result), "",

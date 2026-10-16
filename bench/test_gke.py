@@ -30,6 +30,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 BENCH = Path(__file__).resolve().parent
 ROOT = BENCH.parent
@@ -2427,6 +2428,19 @@ class SameNode(VariantRun):
                           "verdict": "no clear difference"})
         self.assertIn("- b against a: +10% (+10% to +20%), higher in 3 of 3 pairs, sign test p = 0.25: no clear "
                       "difference.", markdown)
+
+    def test_how_to_read_the_comparison_says_the_cuts_the_verdicts_are_made_with(self):
+        out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
+        status, _, markdown, stderr = self.same_node(out)
+        self.assertEqual(status, 0, stderr)
+        self.assertIn("in which a run used 90% of its CPU limit or more", markdown)
+        self.assertIn("above 0.05 is no clear difference", markdown)
+        # Whatever they are.
+        gke = load_generator_module().gke
+        with mock.patch.object(gke, "SATURATED", 0.8), mock.patch.object(gke, "SIGNIFICANT_P", 0.01):
+            _, markdown, _ = gke.same_node(out)
+        self.assertIn("in which a run used 80% of its CPU limit or more", markdown)
+        self.assertIn("above 0.01 is no clear difference", markdown)
 
     def test_a_run_that_measured_nothing_drops_out_of_the_counts_with_why(self):
         # b's run at 500 requests/s in round 3 lost requests, and the load
