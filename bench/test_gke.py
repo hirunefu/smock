@@ -2006,5 +2006,152 @@ class PodInfo(Helper):
                            "limits": {"cpu": "500m", "memory": "512Mi", "ephemeral-storage": "64Mi"}}}])
 
 
+def variant_step(label, round_, rate, us_per_request=30.0, utilization=0.5, neighbours=None, node_steal_s=None,
+                 **changes):
+    """A step line of the load generator with variants: `label`'s run of
+    http-keep-alive under small at `rate` in `round_`, smock's CPU at
+    `us_per_request` and `utilization`, with what the idle variants used
+    (`neighbours`) and each variant's count of the node's steal time; and
+    `changes` to its result's smock_cpu, or to the result itself (errors,
+    load_generator_late)."""
+    result = generator_step(rate, errors=changes.pop("errors", 0))["result"]
+    result["load_generator_late"] = changes.pop("load_generator_late", False)
+    result["smock_cpu"].update(us_per_request=us_per_request, utilization=utilization, scheduling_delay_s=0.02,
+                               involuntary_context_switches=40, node_steal_s=0.0, first_second=None, **changes)
+    return {"kind": "step", "variant": label, "round": round_, "neighbours": neighbours or {},
+            "node_steal_s": node_steal_s or {label: result["smock_cpu"]["node_steal_s"]}, "result": result}
+
+
+def variant_lines(us_per_request, rates=(500, 1000), runs=None, stopped=None, done=True):
+    """The load generator's lines of a run of variants of smock under
+    small, at `rates` of http-keep-alive, as it prints them: each variant's
+    start, idle RSS and traffic check, then the runs, rounds outer, the
+    rates in the middle and the variants inner, their order turned by one
+    for each round and rate. `us_per_request` gives each variant's CPU a
+    request at each rate in each round, {label: {rate: [round 1's, round
+    2's, ...]}}, the first the baseline; `runs` what else differs in a run,
+    {(label, round, rate): variant_step's keywords}. Runs after a `stopped`
+    line's (its fields) are left out, and the done lines are when `done`."""
+    labels = list(us_per_request)
+    rounds = len(us_per_request[labels[0]][rates[0]])
+    lines = []
+    for label in labels:
+        lines += [{**START, "variant": label, "first_second": label == labels[0]},
+                  {**IDLE, "variant": label}, {**TRAFFIC_CHECK, "variant": label},
+                  {"kind": "metrics-before", "profile": "small", "variant": label, "text": "# metrics\n"}]
+    for round_ in range(1, rounds + 1):
+        for index, rate in enumerate(rates):
+            for offset in range(len(labels)):
+                label = labels[(round_ - 1 + index + offset) % len(labels)]
+                if stopped and {"round": round_, "variant": label, "id": f"http-keep-alive@small@{rate}"} in \
+                        stopped["runs"]:
+                    continue
+                lines.append(variant_step(label, round_, rate, us_per_request[label][rate][round_ - 1],
+                                          **(runs or {}).get((label, round_, rate), {})))
+    if stopped:
+        lines.append({"kind": "stopped", "profile": "small", **stopped})
+    for label in labels:
+        lines.append({"kind": "metrics-after", "profile": "small", "variant": label, "text": "# metrics\n"})
+    if done:
+        lines += [{"kind": "done", "profile": "small", "variant": label} for label in labels]
+    return lines
+
+
+def variant_pods(labels, nodes=None, limits=None):
+    """What gke.py pod-info keeps of the Pods of a run of variants under
+    small: each variant's smock Pod on its node of `nodes` ({label: node},
+    node-a by default), admitted with its `limits` ({label: (cpu, memory)},
+    small's by default), and the load generator's on node-b."""
+    smock = []
+    for label in labels:
+        cpu, memory = (limits or {}).get(label, ("250m", "512Mi"))
+        smock.append({**kept_pod(label, node=(nodes or {}).get(label, "node-a"), cpu=cpu, memory=memory,
+                                 profile="small"), "restarts": 0})
+    return {"smock": smock,
+            "generator": [{"name": "generator-small-x7k2p", "node": "node-b", "phase": "Succeeded", "reason": None,
+                           "cpu_request": "6"}],
+            "nodes": {"node-a": X86_NODE, "node-b": X86_NODE, "node-c": X86_NODE}}
+
+
+class VariantRun(Helper):
+    """A run of variants as the runner leaves it, raw/small/ with the load
+    generator's log, the Pods, and each variant's own files in
+    raw/small/<label>/; and its samples, each summarized."""
+
+    def variant_run(self, lines, pod_info, no_init=("b",)):
+        """A results directory of a run of variants under small whose load
+        generator wrote `lines`, with the Pods `pod_info`: each variant has
+        its smock log, and what its init container printed of its node's
+        CPU unless it is `no_init`."""
+        out = self.directory()
+        raw = out / "raw" / "small"
+        raw.mkdir(parents=True)
+        (raw / "generator.log").write_text("".join(json.dumps(line) + "\n" for line in lines))
+        (raw / "pods.json").write_text(json.dumps(pod_info))
+        for label in dict.fromkeys(line["variant"] for line in lines if line.get("variant")):
+            (raw / label).mkdir()
+            (raw / label / "smock.log").write_text(f"smock {label} listening\n")
+            if label not in no_init:
+                (raw / label / "smock-node-cpu.log").write_text(json.dumps({"kind": "node-cpu", "cpu": AMD_CPU}) +
+                                                                "\n")
+        return out
+
+    def samples(self, out, plan=None):
+        """gke.py samples over `out`, and the samples it printed: [(round,
+        label, directory)]."""
+        status, stdout, stderr = helper("samples", out, "--plan", plan or small_plan(self.directory()))
+        self.assertEqual(status, 0, stderr)
+        return [(int(round_), label, Path(directory))
+                for round_, label, directory in (line.split(" ", 2) for line in stdout.splitlines())]
+
+    def summarize_sample(self, directory, sha256=None, plan=None):
+        """summarize over a sample's directory, as the runner calls it for
+        each, with the sample's variant's binary; its summary.json and
+        conditions.json."""
+        status, _, stderr = helper(
+            "summarize", "--plan", plan or small_plan(self.directory()), "--targets", small_targets(self.directory()),
+            "--region", "us-central1", "--arch", "amd64", "--started-at", "2026-10-16T03:28:50+00:00",
+            "--finished-at", "2026-10-16T04:01:56+00:00", "--smock-image", "sha256:" + "1" * 64,
+            *(["--smock-sha256", sha256] if sha256 else []), "--generator-image", "sha256:" + "2" * 64, directory)
+        self.assertEqual(status, 0, stderr)
+        return json.loads((directory / "summary.json").read_text()), \
+            json.loads((directory / "conditions.json").read_text())
+
+
+class Samples(VariantRun):
+    """gke.py samples splits a run of variants into its samples, each one
+    variant's pass over the steps in one round, as an ordinary run of
+    smock alone that gke.py summarize, unchanged, summarizes."""
+
+    def test_each_round_of_each_variant_is_a_sample_that_summarizes_as_a_run_of_smock_alone(self):
+        us = {"a": {500: [30.0, 31.0], 1000: [32.0, 33.0]}, "b": {500: [40.0, 41.0], 1000: [42.0, 43.0]}}
+        out = self.variant_run(variant_lines(us), variant_pods(["a", "b"]))
+        samples = self.samples(out)
+        self.assertEqual([(round_, label) for round_, label, _ in samples], [(1, "a"), (1, "b"), (2, "a"), (2, "b")])
+        for round_, label, directory in samples:
+            self.assertEqual(directory, out / "samples" / f"{round_}-{label}")
+            raw = directory / "raw" / "small"
+            # Its own smock Pod alone, so that its OOM kills are known, and
+            # the load generator's, on the nodes they ran on.
+            pod_info = json.loads((raw / "pods.json").read_text())
+            self.assertEqual([pod["name"] for pod in pod_info["smock"]], [f"smock-small-{label}"])
+            self.assertEqual([pod["name"] for pod in pod_info["generator"]], ["generator-small-x7k2p"])
+            self.assertEqual(set(pod_info["nodes"]), {"node-a", "node-b"})
+            # Its own smock log, and what its init container printed, which
+            # b, without one, has not.
+            self.assertEqual((raw / "smock.log").read_text(), f"smock {label} listening\n")
+            self.assertEqual((raw / "smock-node-cpu.log").exists(), label == "a")
+            summary, conditions = self.summarize_sample(directory)
+            self.assertTrue(summary["complete"], (round_, label))
+            self.assertEqual([(case["rate"], case["smock_cpu"]["us_per_request"]) for case in summary["cases"]],
+                             [(rate, us[label][rate][round_ - 1]) for rate in (500, 1000)])
+            # Idle RSS was read once, before any load: round 1's.
+            self.assertEqual([idle["memory"]["oom_kills"] for idle in summary["idle_rss"]], [0] if round_ == 1 else [])
+            self.assertEqual({case["memory"]["oom_kills"] for case in summary["cases"]}, {0})
+            self.assertTrue(conditions["gke"]["profiles"]["small"]["traffic_check"]["ok"])
+            self.assertEqual(conditions["gke"]["profiles"]["small"]["nodes"]["node-a"]["cpu"],
+                             AMD_CPU if label == "a" else None)
+
+
 if __name__ == "__main__":
     unittest.main()

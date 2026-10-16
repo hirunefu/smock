@@ -11,6 +11,7 @@ usage:
   python3 bench/gke/gke.py placement PODS [options]   fail unless a profile's smock Pods share a node, at its limits
   python3 bench/gke/gke.py node-cpu [options]     what to keep of the CPU of the node it runs on
   python3 bench/gke/gke.py summarize [options] OUT   summary.json, summary.md and conditions.json
+  python3 bench/gke/gke.py samples [options] OUT     split a run of variants into one run of each sample
   python3 bench/gke/gke.py stopped LOG            why the load generator stopped its profile early, if it did
   python3 bench/gke/gke.py elf-arch FILE          the architecture of an executable, amd64 or arm64
   python3 bench/gke/gke.py names-commit FILE COMMIT   fail if smock's build information does not name COMMIT
@@ -27,6 +28,7 @@ import argparse
 import importlib.util
 import json
 import re
+import shutil
 import struct
 import sys
 from fractions import Fraction
@@ -1079,6 +1081,116 @@ def command_summarize(args):
     return 0
 
 
+# Where a run of variants keeps what it read of each, and where samples
+# writes their samples. A run of variants keeps in raw/<profile>/, as one of
+# smock alone does, the load generator's log (generator.log, with each line
+# about smock tagged with its variant) and the profile's Pods as pod-info
+# keeps them (pods.json); and each variant's own files in
+# raw/<profile>/<label>/: smock's log (smock.log) and, but for a no-init
+# variant, what its init container printed of its node's CPU
+# (smock-node-cpu.log). A sample, one variant's pass over the steps in one
+# round, is samples/<round>-<label>/, an ordinary run's results directory.
+SAMPLES = "samples"
+
+
+def sample_lines(lines, round_, label):
+    """The load generator's lines of a sample, `label`'s pass over the steps
+    in `round_`, as the load generator prints them for smock alone: the
+    variant's own lines, but its idle RSS only in round 1, when it was read,
+    before any load, and of its runs and the checks after them only those
+    of `round_`. A stopped line lists the steps the sample did not run,
+    after the last it did, and the sample has none when it ran them all."""
+    kept, last = [], None
+    for line in lines:
+        if line["kind"] == "stopped":
+            left = [run["id"] for run in line.get("runs") or [] if (run["round"], run["variant"]) == (round_, label)]
+            if left:
+                kept.append({"kind": "stopped", "profile": line.get("profile"), "reason": line["reason"],
+                             "after": last, "steps": left})
+        elif line.get("variant") == label and not (line["kind"] == "idle-rss" and round_ != 1) and \
+                line.get("round", round_) == round_:
+            kept.append(line)
+            if line["kind"] == "step":
+                last = line["result"]["id"]
+    return kept
+
+
+def sample_pods(info, profile_name, label):
+    """What pod-info kept of the profile's Pods (`info`), as a sample of
+    `label` has it: the variant's own smock Pod alone, as in a run of smock
+    alone, the load generator's, and the nodes they ran on."""
+    smock = [pod for pod in info["smock"]
+             if pod.get("variant") == label and pod["name"] == smock_name(profile_name, label)]
+    used = {pod["node"] for pod in [*smock, *info["generator"]]}
+    return {"smock": smock, "generator": info["generator"],
+            "nodes": {name: node for name, node in info["nodes"].items() if name in used}}
+
+
+def variants_of(lines, info):
+    """The labels of the variants of a run under one profile, in the load
+    generator's order, the baseline first, from its lines; then those of
+    any other smock Pod of a variant, as when the load generator printed
+    nothing."""
+    labels = [line["variant"] for line in lines if line.get("variant")]
+    return list(dict.fromkeys([*labels, *(pod["variant"] for pod in info["smock"] if pod.get("variant"))]))
+
+
+def rounds_of(lines):
+    """The rounds of a run of variants under one profile, as far as its
+    load generator's lines tell: those of its runs, and of the runs a stop
+    left out."""
+    stopped = [run["round"] for line in lines if line["kind"] == "stopped" for run in line.get("runs") or []]
+    return max([1, *(line["round"] for line in lines if line.get("round")), *stopped])
+
+
+def write_samples(out, profiles):
+    """Splits each profile's raw/<profile>/ of a run of variants under `out`
+    into its samples, samples/<round>-<label>/raw/<profile>/: the sample's
+    lines of the load generator's log (sample_lines), its Pods
+    (sample_pods), and the files the run kept of its variant. Every sample
+    of the run has each profile that the run has anything of, so that one
+    a profile did not reach is incomplete there. Returns the samples, as
+    (round, label, directory), by round, then in the variants' order."""
+    raws = {}
+    for profile in profiles:
+        raw = Path(out) / "raw" / profile["name"]
+        if raw.is_dir():
+            info = read_json(raw / "pods.json") if (raw / "pods.json").exists() else {"smock": [], "generator": [],
+                                                                                       "nodes": {}}
+            raws[profile["name"]] = (raw, generator_lines(raw / "generator.log"), info)
+    labels = list(dict.fromkeys(label for _, lines, info in raws.values() for label in variants_of(lines, info)))
+    if not labels:
+        raise GkeError(f"{Path(out) / 'raw'} holds no run of variants of smock: samples splits the results of a run "
+                       "that compared variants (manifests' --variant)")
+    rounds = max(rounds_of(lines) for _, lines, _ in raws.values())
+    shutil.rmtree(Path(out) / SAMPLES, ignore_errors=True)
+    samples = []
+    for round_ in range(1, rounds + 1):
+        for label in labels:
+            directory = Path(out) / SAMPLES / f"{round_}-{label}"
+            for name, (raw, lines, info) in raws.items():
+                kept = directory / "raw" / name
+                kept.mkdir(parents=True)
+                if (raw / label).is_dir():
+                    for path in (raw / label).iterdir():
+                        if path.is_file():
+                            shutil.copyfile(path, kept / path.name)
+                (kept / "generator.log").write_text("".join(json.dumps(line) + "\n"
+                                                            for line in sample_lines(lines, round_, label)))
+                harness.write_json(kept / "pods.json", sample_pods(info, name, label))
+            samples.append((round_, label, directory))
+    return samples
+
+
+def command_samples(args):
+    plan = read_json(args.plan)
+    profiles = plan_profiles(plan, comma_list(args.profiles))
+    plan_cases(plan, comma_list(args.cases))
+    for round_, label, directory in write_samples(args.out, profiles):
+        print(round_, label, directory)
+    return 0
+
+
 def command_stopped(args):
     stopped = next((line for line in generator_lines(args.log) if line["kind"] == "stopped"), None)
     if stopped:
@@ -1276,6 +1388,14 @@ def main(argv):
     summarizing.add_argument("--stopped-under", help="the profile the run was running when it stopped")
     summarizing.add_argument("out", help="the run's results: raw/<profile>/generator.log and pods.json")
     summarizing.set_defaults(handler=command_summarize)
+    splitting = commands.add_parser("samples", help="split a run of variants into its samples, "
+                                                    "samples/<round>-<label>/, each a run of one variant in one round "
+                                                    "for summarize; print each one's round, label and directory")
+    splitting.add_argument("--plan", required=True, help="the plan the run ran")
+    splitting.add_argument("--profiles", help="the profiles the run ran, comma-separated (default: every profile)")
+    splitting.add_argument("--cases", help="the cases the run ran, comma-separated (default: every case)")
+    splitting.add_argument("out", help="the run's results: raw/<profile>/ of a run of variants")
+    splitting.set_defaults(handler=command_samples)
     stopping = commands.add_parser("stopped", help="print why the load generator stopped its profile early and how "
                                                     "many steps it did not run; nothing when it did not")
     stopping.add_argument("log", help="the load generator's log: raw/<profile>/generator.log")
