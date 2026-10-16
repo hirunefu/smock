@@ -1555,8 +1555,8 @@ the baseline's in the same round and step are close in time: next to
 each other, about 30 seconds apart, with two variants; with four, one to
 three runs apart (each run is the step's 25 s and its 2 s cool-down, so
 about 30 to 80 seconds), and a variant two places after the baseline,
-like r2b below, is always two runs from it. `bench/plan-same-node.json` is the plan for
-it: HTTP keep-alive at the two lowest rates of
+like r2b below, is always two runs from it. `bench/plan-same-node.json`
+is the plan for it: HTTP keep-alive at the two lowest rates of
 `bench/plan-autopilot.json`'s ladders under 50m and 250m, where R2's
 binary used more CPU a request than R1's, and at half the lowest, since
 R2's binary came near its CPU limit from the second step and a pair in
@@ -1603,28 +1603,28 @@ summarized as a run of that binary alone, which `bench/compare.py`
 compares with any other run. smock's idle RSS is read once, before any
 load, so only round 1's samples have it, and a later one shows its
 target as not measured; a sample of a `no-first-second` variant says
-that its runs had no scrape a second in. Its `summary.md` is `same-node.md`, the
-comparison (`same-node.json` holds it too). That names each variant's
-commit, version, SHA-256 and options, and says whether the samples'
-conditions besides smock were the same; then, for each profile, the node
-and its CPU, whether every variant was on it with the plan's limits, the
-order the variants ran in, the most CPU an idle variant used beside
-another's run, and a row for each variant at each step: its CPU a
-request, as the median of its runs with the lowest, the highest and how
-many; the change from the baseline's; the range of the changes of its
-runs from the baseline's in the same round, and how many were higher;
-the throttled periods; the CPU wait; the node's steal time; p99; and the
-runs that saturated, at 90% of the CPU limit or more. Each variant's
-verdict takes the pairs of runs, over every step, in which neither
-saturated: their median change and range, how many were higher, and the
-p of an exact sign test, whose smallest with 8 pairs is 0.008. Fewer
-than 6 pairs that differ cannot give a p of 0.05 or less, so with 5 or
-fewer it says there are too few pairs to decide; above 0.05, it says no
-clear difference, and so it does, whatever the p, when the median change
-lies inside the profile's A/A spread. Below the verdicts, each variant
-of one binary has its own against the first with it, the A/A pair's and
-the other options'. A drift line compares each variant's first round
-with the later ones. The run exits 1 when the variants
+that its runs had no scrape a second in. Its `summary.md` is
+`same-node.md`, the comparison (`same-node.json` holds it too). That
+names each variant's commit, version, SHA-256 and options, and says
+whether the samples' conditions besides smock were the same; then, for
+each profile, the node and its CPU, whether every variant was on it with
+the plan's limits, the order the variants ran in, the most CPU an idle
+variant used beside another's run, and a row for each variant at each
+step: its CPU a request, as the median of its runs with the lowest, the
+highest and how many; the change from the baseline's; the range of the
+changes of its runs from the baseline's in the same round, and how many
+were higher; the throttled periods; the CPU wait; the node's steal time;
+p99; and the runs that saturated, at 90% of the CPU limit or more. Each
+variant's verdict takes the pairs of runs, over every step, in which
+neither saturated: their median change and range, how many were higher,
+and the p of an exact sign test, whose smallest with 8 pairs is 0.008.
+Fewer than 6 pairs that differ cannot give a p of 0.05 or less, so with
+5 or fewer it says there are too few pairs to decide; above 0.05, it
+says no clear difference, and so it does, whatever the p, when the
+median change lies inside the profile's A/A spread. Below the verdicts,
+each variant of one binary has its own against the first with it, the
+A/A pair's and the other options'. A drift line compares each variant's
+first round with the later ones. The run exits 1 when the variants
 cannot be compared: on more than one node, under other limits than the
 plan's, or with a sample incomplete.
 
