@@ -1386,7 +1386,7 @@ def placement_record(profile, info, labels, samples):
     cpu = next((cpu for sample in samples.values() if sample and sample[1]
                 for cpu in [(((sample[1]["gke"]["profiles"].get(name) or {}).get("nodes") or {}).get(shared) or {})
                             .get("cpu")] if cpu), None)
-    return {"nodes": nodes, "one_node": shared is not None,
+    return {"pods_read": bool(pods), "nodes": nodes, "one_node": shared is not None,
             "node": shared and {"name": shared, "instance_type": (node or {}).get("instance_type"),
                                 "zone": (node or {}).get("zone"), "cpu": cpu},
             "limits_as_planned": bool(pods) and not limit_problems(list(pods.values()), profile),
@@ -1397,6 +1397,8 @@ def placement_text(result):
     """Where a profile's variants ran, and whether under its limits, for
     people."""
     node = result["node"]
+    if not result["pods_read"]:
+        return "The run read no smock Pod under this profile."
     if node:
         cpu = compare_module().cpu_name(node["cpu"]) if node["cpu"] else "CPU unknown"
         where = (f"Every variant ran on node {node['name']}: {harness.shown(node['instance_type'])} in "
@@ -1548,13 +1550,13 @@ def same_node_row(step, label, record, baseline):
     """A variant's row of a step in same-node.md."""
     if label == baseline:
         paired = ["-", "-", "-"]
-        saturated_text = f"{record['saturated']} of {record['n']} runs"
+        saturated_text = f"{record['saturated']} of {record['n']} runs" if record["n"] else "-"
     else:
         changes = [pair["change_percent"] for pair in record["pairs"]]
         paired = [percent_text(record["change_percent"]), range_text(min(changes, default=None),
                                                                      max(changes, default=None)),
                   f"{record['higher']} of {len(changes)}" if changes else "-"]
-        saturated_text = f"{record['saturated']} of {len(changes)} pairs"
+        saturated_text = f"{record['saturated']} of {len(changes)} pairs" if changes else "-"
     cells = [step["case"], f"{step['rate']:,}", f"{label} (baseline)" if label == baseline else label,
              us_text(record), *paired, periods_text(record), harness.shown(record["scheduling_delay_s"]),
              harness.shown(record["node_steal_s"]), harness.shown(record["p99_ms"]), saturated_text]
@@ -1585,8 +1587,8 @@ def not_measured_lines(result):
                       f"{'was' if ended['left_out'] == 1 else 'were'} left out."]
     unreported = sum(entry["not_run"] == "not reported" for entry in result["not_measured"])
     if unreported:
-        lines += ["", f"The load generator did not report {runs_text(unreported)}, as when its Job ran out of time "
-                      "before them."]
+        lines += ["", f"The load generator did not report {runs_text(unreported)}: its Job ended before them, or "
+                      "never ran."]
     unsummarized = list(dict.fromkeys(f"{entry['round']}-{entry['variant']}" for entry in result["not_measured"]
                                       if entry["not_run"] == "no summary"))
     if unsummarized:

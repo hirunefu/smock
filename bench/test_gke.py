@@ -2145,13 +2145,14 @@ class VariantRun(Helper):
         return json.loads((directory / "summary.json").read_text()), \
             json.loads((directory / "conditions.json").read_text())
 
-    def same_node(self, out, *options, sha256=None):
+    def same_node(self, out, *options, sha256=None, plan=None):
         """gke.py same-node over `out` with `options`, once its samples are
         split and each summarized as the runner does it, with its variant's
         binary's sha256 of `sha256` ({label or (round, label): hex}, by
         default 64 of the label's first letter): its exit status,
-        same-node.json, same-node.md and what it wrote to stderr."""
-        plan = small_plan(self.directory())
+        same-node.json, same-node.md and what it wrote to stderr. The plan
+        is small_plan's, unless `plan` names another."""
+        plan = plan or small_plan(self.directory())
         sha256 = sha256 or {}
         for round_, label, directory in self.samples(out, plan):
             self.summarize_sample(directory, sha256.get((round_, label), sha256.get(label, label[0] * 64)), plan)
@@ -2423,9 +2424,10 @@ class SameNode(VariantRun):
                                                                            variant_pods(["a", "b"])), "--no-init", "b")
         self.assertEqual(status, 0, stderr)
         profile = report["gke"]["profiles"]["small"]
-        self.assertEqual({key: profile[key] for key in ("nodes", "one_node", "limits_as_planned", "problems")},
-                         {"nodes": {"a": "node-a", "b": "node-a"}, "one_node": True, "limits_as_planned": True,
-                          "problems": []})
+        self.assertEqual({key: profile[key] for key in ("pods_read", "nodes", "one_node", "limits_as_planned",
+                                                        "problems")},
+                         {"pods_read": True, "nodes": {"a": "node-a", "b": "node-a"}, "one_node": True,
+                          "limits_as_planned": True, "problems": []})
         self.assertEqual(profile["node"], {"name": "node-a", "instance_type": "ek-standard-8",
                                            "zone": "asia-northeast1-b", "cpu": AMD_CPU})
         self.assertIn("Every variant ran on node node-a: ek-standard-8 in asia-northeast1-b, AMD EPYC 7B13 (family 25, "
@@ -2544,7 +2546,7 @@ class SameNode(VariantRun):
         self.assertEqual([(entry["round"], entry["variant"], entry["not_run"])
                           for entry in report["gke"]["profiles"]["small"]["not_measured"]],
                          [(2, "a", "not reported"), (2, "a", "not reported"), (2, "b", "not reported")])
-        self.assertIn("The load generator did not report 3 runs, as when its Job ran out of time before them.", markdown)
+        self.assertIn("The load generator did not report 3 runs: its Job ended before them, or never ran.", markdown)
         self.assertNotIn("- http-keep-alive", markdown)
         # A sample summarize did not summarize: its runs count as none.
         (out / "samples" / "1-b" / "summary.json").unlink()
@@ -2552,6 +2554,27 @@ class SameNode(VariantRun):
         self.assertEqual(status, 1)
         self.assertIn("The sample 1-b has no summary, so its 2 runs are not counted.",
                       (out / "same-node.md").read_text())
+
+    def test_a_profile_the_run_did_not_reach_cannot_be_compared_and_says_so(self):
+        # A second profile, big, which the run did not reach, as one that
+        # did not fit in its time limit.
+        plan = small_plan(self.directory())
+        content = json.loads(plan.read_text())
+        content["profiles"].append({"name": "big", "cpu_limit": "1", "memory_limit": "1Gi"})
+        content["cases"][0]["rates"]["big"] = [5000]
+        plan.write_text(json.dumps(content))
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(HIGHER),
+                                                                           variant_pods(["a", "b"])), plan=plan)
+        self.assertEqual(status, 1)
+        self.assertEqual(report["problems"], ["big: no smock Pod of profile big is in what the run read of its Pods",
+                                              "big: every sample is incomplete"])
+        self.assertTrue(report["gke"]["profiles"]["small"]["complete"])
+        big = markdown.split("\n## big: CPU limit 1, memory limit 1Gi\n", 1)[1]
+        self.assertIn("The run read no smock Pod under this profile.", big)
+        self.assertIn("The load generator ran no step.", big)
+        self.assertIn("The load generator did not report 8 runs: its Job ended before them, or never ran.", big)
+        self.assertEqual([self.row(markdown, "http-keep-alive", 5000, label, "## big: CPU limit 1, memory limit 1Gi")
+                          ["Saturated"] for label in ("a", "b")], ["-", "-"])
 
     def test_a_variant_with_two_sha256_values_exits_2_since_what_it_measured_is_unknown(self):
         out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
