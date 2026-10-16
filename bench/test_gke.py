@@ -1753,6 +1753,24 @@ class Dockerfiles(Helper):
                                        "COPY a \\\n  # a comment in the middle\n  RUN /b\n")
         self.assertEqual(status, 0, stderr)
 
+    def test_the_load_generators_image_runs_gke_py_and_the_generator_with_the_files_it_holds(self):
+        # The build context of the load generator's image (build_images in
+        # scripts/gke-bench.sh), whose Pods run gke.py node-cpu and the
+        # load generator: nothing of bench/ else, such as compare.py, which
+        # gke.py loads only for same-node.
+        image = self.directory() / "bench"
+        (image / "gke").mkdir(parents=True)
+        for path in ("bench.py", "requests.json", "gke/gke.py", "gke/generator.py"):
+            shutil.copyfile(BENCH / path, image / path)
+        shutil.copyfile(BENCH / "plan-autopilot.json", image / "plan.json")
+        load = ("import importlib.util, sys; spec = importlib.util.spec_from_file_location('generator', sys.argv[1]); "
+                "spec.loader.exec_module(importlib.util.module_from_spec(spec))")
+        for command in ([image / "gke" / "gke.py", "node-cpu"], [image / "gke" / "gke.py", "plan", "--plan",
+                                                                  image / "plan.json"],
+                        ["-c", load, image / "gke" / "generator.py"]):
+            result = subprocess.run([sys.executable, *map(str, command)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
 
 def cpuinfo_block(processor, model_name="AMD EPYC 7B13", family=25, model=1, stepping=0, microcode="0xffffffff",
                   flags="aes avx2 sha_ni vaes"):
