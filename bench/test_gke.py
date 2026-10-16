@@ -1167,6 +1167,64 @@ class GeneratorWithVariants(Helper):
             self.assertEqual(line["node_steal_s"][line["variant"]], line["result"]["smock_cpu"]["node_steal_s"])
 
 
+class VariantsStopTogether(Helper):
+    """When a variant stops the profile, as one smock alone does, every
+    variant stops, so that each run left has the others' to compare with,
+    and the stopped line says which variant stopped it and which runs were
+    left out."""
+
+    generator_plan = Generator.generator_plan
+
+    def test_a_variant_that_never_answers_stops_every_variant_before_the_first_run(self):
+        plan_path = self.generator_plan()
+        with LocalSmock() as a, LocalSmock() as b, SilentPort() as silent:
+            status, lines, output = generate_variants(plan_path, [("a", a, True, {}),
+                                                                  ("b", b, True, {"tls": silent.port})], 2)
+        self.assertEqual(status, 0, output)
+        self.assertEqual([(line["kind"], line.get("variant")) for line in lines],
+                         [("start", "a"), ("start", "b"), ("idle-rss", "a"), ("idle-rss", "b"),
+                          ("traffic-check", "a"), ("traffic-check", "b"), ("metrics-before", "a"),
+                          ("metrics-before", "b"), ("stopped", "b"), ("metrics-after", "a"), ("metrics-after", "b"),
+                          ("done", "a"), ("done", "b")])
+        self.assertEqual([line["ok"] for line in lines if line["kind"] == "traffic-check"], [True, False])
+        stopped = lines[8]
+        self.assertEqual(stopped["reason"], f"variant b: smock did not answer through its Service in 2 s: TLS port "
+                                            f"{silent.port} (timed out)")
+        self.assertEqual((stopped["round"], stopped["after"]), (None, None))
+        self.assertEqual(stopped["runs"],
+                         [{"round": 1, "variant": "a", "id": STEP_IDS[0]}, {"round": 1, "variant": "b", "id": STEP_IDS[0]},
+                          {"round": 1, "variant": "b", "id": STEP_IDS[1]}, {"round": 1, "variant": "a", "id": STEP_IDS[1]},
+                          {"round": 2, "variant": "b", "id": STEP_IDS[0]}, {"round": 2, "variant": "a", "id": STEP_IDS[0]},
+                          {"round": 2, "variant": "a", "id": STEP_IDS[1]}, {"round": 2, "variant": "b", "id": STEP_IDS[1]}])
+
+    def test_a_run_with_no_response_from_a_variant_that_is_gone_stops_every_variant(self):
+        # b's plain port answers its traffic check, then hangs up on every
+        # connection: b's first run and the check after it get no response.
+        plan_path = self.generator_plan()
+        with LocalSmock() as a, LocalSmock() as b, SilentPort(answer_first=True) as gate:
+            status, lines, output = generate_variants(plan_path, [("a", a, True, {}),
+                                                                  ("b", b, True, {"plain": gate.port})], 2)
+        self.assertEqual(status, 0, output)
+        self.assertEqual([(line["kind"], line.get("variant")) for line in lines],
+                         [("start", "a"), ("start", "b"), ("idle-rss", "a"), ("idle-rss", "b"),
+                          ("traffic-check", "a"), ("traffic-check", "b"), ("metrics-before", "a"),
+                          ("metrics-before", "b"), ("step", "a"), ("step", "b"), ("traffic-check", "b"),
+                          ("stopped", "b"), ("metrics-after", "a"), ("metrics-after", "b"), ("done", "a"),
+                          ("done", "b")])
+        self.assertEqual(lines[8]["result"]["requests"]["ok"], lines[8]["result"]["requests"]["scheduled"])
+        self.assertEqual(lines[9]["result"]["requests"]["ok"], 0)
+        check = lines[10]
+        self.assertEqual((check["round"], check["after"], check["ok"]), (1, STEP_IDS[0], False))
+        stopped = lines[11]
+        self.assertRegex(stopped["reason"], r"^variant b, round 1: http-keep-alive@small got no response to any of "
+                                            r"its \d+ requests")
+        self.assertEqual((stopped["round"], stopped["after"]), (1, STEP_IDS[0]))
+        self.assertEqual(stopped["runs"],
+                         [{"round": 1, "variant": "b", "id": STEP_IDS[1]}, {"round": 1, "variant": "a", "id": STEP_IDS[1]},
+                          {"round": 2, "variant": "b", "id": STEP_IDS[0]}, {"round": 2, "variant": "a", "id": STEP_IDS[0]},
+                          {"round": 2, "variant": "a", "id": STEP_IDS[1]}, {"round": 2, "variant": "b", "id": STEP_IDS[1]}])
+
+
 
 def load_generator_module():
     """bench/gke/generator.py as a module, for its functions."""
