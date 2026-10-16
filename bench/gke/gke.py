@@ -1452,13 +1452,28 @@ def not_measured_lines(result):
     return lines
 
 
-def same_node_markdown(report, profiles):
-    """same-node.md: for each profile, a row for each variant at each step,
-    the runs that measured nothing, then each variant's verdict against the
-    baseline."""
+def variants_lines(report):
+    """The table of same-node.md that names each variant's binary and
+    options."""
+    lines = ["| Variant | Commit | Version | sha256 | Options |", "|---|---|---|---|---|"]
+    for variant in report["variants"]:
+        name = f"{variant['label']} (baseline)" if variant["baseline"] else variant["label"]
+        lines.append(f"| {name} | {harness.shown(variant['commit'])} | {harness.shown(variant['version'])} | "
+                     f"{harness.shown(variant['sha256'] and variant['sha256'][:12])} | "
+                     f"{', '.join(variant['options']) or '-'} |")
+    return lines
+
+
+def same_node_markdown(report):
+    """same-node.md: each variant's binary and options, why the variants
+    cannot be compared when they cannot, and for each profile, a row for
+    each variant at each step, the runs that measured nothing, then each
+    variant's verdict against the baseline."""
     baseline = report["baseline"]
-    lines = ["# smock variants on one node"]
-    for profile in profiles:
+    lines = ["# smock variants on one node", "", *variants_lines(report)]
+    if report["problems"]:
+        lines += ["", "**Not comparable:**", "", *(f"- {problem}." for problem in report["problems"])]
+    for profile in report["profiles"]:
         result = report["gke"]["profiles"][profile["name"]]
         lines += ["", harness.profile_heading(profile), "",
                   "| " + " | ".join(SAME_NODE_COLUMNS) + " |", "|" + "---|" * len(SAME_NODE_COLUMNS)]
@@ -1471,10 +1486,51 @@ def same_node_markdown(report, profiles):
     return "\n".join(lines) + "\n"
 
 
-def same_node(out, baseline=None):
+def given_sha256(texts):
+    """The binaries --sha256 gives, LABEL=HEX each: {label: [hex, ...]}."""
+    given = {}
+    for text in texts or []:
+        label, equals, value = text.partition("=")
+        if not equals or not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise GkeError(f"--sha256 {text}: give it as LABEL=HEX, the SHA-256 of the variant's binary")
+        given.setdefault(label, []).append(value)
+    return given
+
+
+def variant_records(labels, baseline, samples, raws, sha256, no_init):
+    """Each variant's binary and options, from its samples' conditions (its
+    commit and version, as its smock said at the start, and the sha256 of
+    the binary summarize was given), the sha256 the run gives (`sha256`,
+    {label: [hex]}), whether it ran without the init container (`no_init`,
+    as the run says) and whether the load generator skipped its scrape a
+    second into each run; and the problems: a variant with more than one
+    sha256."""
+    records, problems = [], []
+    for label in labels:
+        smocks = [sample[1]["smock"] for (_, other), sample in samples.items()
+                  if other == label and sample and sample[1]]
+        values = list(dict.fromkeys([*(smock["sha256"] for smock in smocks if smock.get("sha256")),
+                                     *sha256.get(label, [])]))
+        if len(values) > 1:
+            problems.append(f"variant {label} has {'two' if len(values) == 2 else len(values)} sha256 values, "
+                            f"{and_list(values)}: which binary it ran is unknown")
+        skipped = any(line["kind"] == "start" and line.get("variant") == label and line.get("first_second") is False
+                      for lines in raws.values() for line in lines)
+        smock = next((smock for smock in smocks if smock.get("commit")), {})
+        records.append({"label": label, "baseline": label == baseline, "commit": smock.get("commit"),
+                        "version": smock.get("version"), "sha256": values[0] if len(values) == 1 else None,
+                        "options": [*(["no-init"] if label in no_init else []),
+                                    *(["no-first-second"] if skipped else [])]})
+    return records, problems
+
+
+def same_node(out, baseline=None, sha256=None, no_init=()):
     """The comparison of the variants of a run under `out`, from its
-    samples, each summarized, and its raw/<profile>/: same-node.json's
-    content, same-node.md's, and the exit status."""
+    samples, each summarized, and its raw/<profile>/, with the sha256 of
+    each variant's binary the run gives ({label: [hex]}) and the variants
+    it ran without the init container: same-node.json's content,
+    same-node.md's, and the exit status: 2 when a variant has two sha256,
+    else 0."""
     samples = read_samples(out)
     known = [sample for sample in samples.values() if sample and sample[1]]
     if not known:
@@ -1486,21 +1542,26 @@ def same_node(out, baseline=None):
     labels = list(dict.fromkeys([*(line["variant"] for lines in raws.values() for line in lines
                                    if line.get("variant")), *(label for _, label in samples)]))
     baseline = baseline or labels[0]
-    if baseline not in labels:
-        raise GkeError(f"the run has no variant {baseline}: its variants are {and_list(labels)}")
+    for label in [baseline, *(sha256 or {}), *no_init]:
+        if label not in labels:
+            raise GkeError(f"the run has no variant {label}: its variants are {and_list(labels)}")
     labels = [baseline, *(label for label in labels if label != baseline)]
+    variants, problems = variant_records(labels, baseline, samples, raws, sha256 or {}, no_init)
     rounds = max(round_ for round_, _ in samples)
     results = {profile["name"]: profile_comparison(profile, samples, labels, baseline, rounds, raws[profile["name"]])
                for profile in profiles}
-    report = {"format": 1, "baseline": baseline, "variants": labels,
-              "complete": all(result["complete"] for result in results.values()), "gke": {"profiles": results}}
-    return report, same_node_markdown(report, profiles), 0
+    report = {"format": 1, "baseline": baseline, "variants": variants, "problems": problems,
+              "complete": all(result["complete"] for result in results.values()), "profiles": profiles,
+              "gke": {"profiles": results}}
+    return report, same_node_markdown(report), 2 if problems else 0
 
 
 def command_same_node(args):
-    report, markdown, status = same_node(args.out, args.baseline)
+    report, markdown, status = same_node(args.out, args.baseline, given_sha256(args.sha256), args.no_init or ())
     harness.write_json(Path(args.out) / "same-node.json", report)
     (Path(args.out) / "same-node.md").write_text(markdown)
+    for problem in report["problems"]:
+        print(f"gke: {problem}", file=sys.stderr)
     return status
 
 
@@ -1713,6 +1774,11 @@ def main(argv):
                                                       "its samples, each summarized: write same-node.json and "
                                                       "same-node.md")
     comparing.add_argument("--baseline", help="the variant to compare the others with (default: the first)")
+    comparing.add_argument("--sha256", action="append",
+                           help="LABEL=HEX: the SHA-256 of a variant's binary, beside what each sample's summary "
+                                "records; a variant with two fails the comparison")
+    comparing.add_argument("--no-init", action="append",
+                           help="LABEL: a variant whose Pods ran without the init container (manifests' no-init)")
     comparing.add_argument("out", help="the run's results: samples/ as gke.py samples wrote it, each sample "
                                        "summarized, and raw/")
     comparing.set_defaults(handler=command_same_node)

@@ -2130,12 +2130,13 @@ class VariantRun(Helper):
     def same_node(self, out, *options, sha256=None):
         """gke.py same-node over `out` with `options`, once its samples are
         split and each summarized as the runner does it, with its variant's
-        binary's sha256 of `sha256` ({label: hex}, each label's own by
-        default): its exit status, same-node.json, same-node.md and what it
-        wrote to stderr."""
+        binary's sha256 of `sha256` ({label or (round, label): hex}, by
+        default 64 of the label's first letter): its exit status,
+        same-node.json, same-node.md and what it wrote to stderr."""
         plan = small_plan(self.directory())
-        for _, label, directory in self.samples(out, plan):
-            self.summarize_sample(directory, (sha256 or {}).get(label, label[0] * 64), plan)
+        sha256 = sha256 or {}
+        for round_, label, directory in self.samples(out, plan):
+            self.summarize_sample(directory, sha256.get((round_, label), sha256.get(label, label[0] * 64)), plan)
         status, _, stderr = helper("same-node", out, *options)
         report = json.loads((out / "same-node.json").read_text()) if (out / "same-node.json").exists() else None
         markdown = (out / "same-node.md").read_text() if (out / "same-node.md").exists() else None
@@ -2339,6 +2340,40 @@ class SameNode(VariantRun):
         # The rest is measured as from any smock.
         self.assertEqual(self.row(markdown, "http-keep-alive", 500, "b")["CPU µs/request"], "32.6 (31.9–36.0, 4)")
         self.assertEqual(report["gke"]["profiles"]["small"]["verdicts"]["b"]["pairs"], 8)
+
+    def test_each_variants_binary_and_options_are_named(self):
+        # b is another commit, run without the init container (as the
+        # runner says) and without the scrape a second into each step (as
+        # the load generator did).
+        lines = variant_lines(HIGHER)
+        for line in lines:
+            if line["kind"] == "start" and line["variant"] == "b":
+                line["status"] = {**line["status"], "commit": "4f178ef33830", "version": "0.3.0"}
+        status, report, markdown, stderr = self.same_node(self.variant_run(lines, variant_pods(["a", "b"])),
+                                                          "--no-init", "b", "--sha256", f"b={'b' * 64}")
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(report["variants"], [
+            {"label": "a", "baseline": True, "commit": "a21fe97d59c6", "version": "0.2.0", "sha256": "a" * 64,
+             "options": []},
+            {"label": "b", "baseline": False, "commit": "4f178ef33830", "version": "0.3.0", "sha256": "b" * 64,
+             "options": ["no-init", "no-first-second"]}])
+        self.assertIn("| Variant | Commit | Version | sha256 | Options |\n|---|---|---|---|---|\n"
+                      f"| a (baseline) | a21fe97d59c6 | 0.2.0 | {'a' * 12} | - |\n"
+                      f"| b | 4f178ef33830 | 0.3.0 | {'b' * 12} | no-init, no-first-second |\n", markdown)
+
+    def test_a_variant_with_two_sha256_values_exits_2_since_what_it_measured_is_unknown(self):
+        out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
+        # summarize was told another binary for b in round 3.
+        status, report, markdown, stderr = self.same_node(out, sha256={(3, "b"): "c" * 64})
+        self.assertEqual(status, 2)
+        problem = f"variant b has two sha256 values, {'b' * 64} and {'c' * 64}: which binary it ran is unknown"
+        self.assertIn(f"gke: {problem}", stderr)
+        self.assertIn(problem, markdown)
+        self.assertEqual(report["problems"], [problem])
+        # And when the run's own differs from the samples'.
+        status, _, _, stderr = self.same_node(out, "--sha256", f"a={'d' * 64}")
+        self.assertEqual(status, 2)
+        self.assertIn(f"gke: variant a has two sha256 values, {'a' * 64} and {'d' * 64}", stderr)
 
 
 if __name__ == "__main__":
