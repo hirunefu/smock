@@ -6,12 +6,13 @@
 #    quotas of the region that the run's nodes draw on (vCPUs, boot disks,
 #    external IP addresses), and nothing left by an earlier run; then prints
 #    how long the run takes and what it costs;
-# 2. with --yes, builds two images on this machine (smock with the
-#    benchmark's definitions, and the load generator) for the architecture
-#    of the run (--arch, this machine's by default), with the release binary
-#    it builds or is given: the images only copy files, so this machine
-#    builds them for the other architecture too, with no emulation, from
-#    binaries of that architecture (the one CI built for smock);
+# 2. with --yes, builds the images on this machine (smock with the
+#    benchmark's definitions, one for each binary a run of variants
+#    compares, and the load generator) for the architecture of the run
+#    (--arch, this machine's by default), with the release binary it builds
+#    or is given: the images only copy files, so this machine builds them
+#    for the other architecture too, with no emulation, from binaries of
+#    that architecture (the one CI built for smock);
 # 3. pushes them to a new Artifact Registry repository, makes a new
 #    Autopilot cluster, both labelled purpose=smock-bench, and runs each
 #    profile of the plan (bench/plan-autopilot.json by default): smock in a
@@ -24,12 +25,21 @@
 #    nothing is left to delete the cluster; the next profile starts once
 #    they are gone, also after a profile that the load generator stopped
 #    early because smock's traffic ports did not answer, before the first
-#    step or after a step that got no response;
+#    step or after a step that got no response; with --variant, each
+#    variant's smock in a Pod and Service of its own under each profile
+#    (smock-<profile>-<label>), each started once the one before is ready,
+#    all on the first one's node, which the run checks before the load
+#    generator starts, with the profile's limits, and one load generator
+#    that measures each variant in turn, round after round (--rounds);
 # 4. writes the load generator's lines, the Pods' state, smock's log and
 #    its Service with the Service's EndpointSlices under the results
 #    directory, and summary.json, summary.md and conditions.json, which
 #    bench/compare.py compares: also when the run stops once a profile has
-#    started, from what it measured, with where and why it stopped;
+#    started, from what it measured, with where and why it stopped; with
+#    --variant, each variant's log and Service under raw/<profile>/<label>/,
+#    a summary of each sample (one variant's pass over the steps in one
+#    round) under samples/<round>-<label>/, and the comparison of the
+#    variants in same-node.json and same-node.md, also as summary.md;
 # 5. always deletes the cluster and the repository: when it ends, fails or
 #    is interrupted, and from a watchdog in its own session when the time
 #    limit (80 minutes by default) has passed, even if this script was
@@ -59,6 +69,16 @@
 #                    gh run download <run-id> -R hirunefu/smock -n smock-linux-<arch> gets the
 #                    one CI built (CI's run on the push of that commit)
 #   --oha FILE       use this oha (of the run's architecture) instead of the pinned one
+#   --variant LABEL=FILE[,no-init][,no-first-second]
+#                    compare release binaries, or one binary with other options, on one node:
+#                    2 to 4 variants, the first the baseline, each in a Pod of its own under
+#                    each profile, which one load generator measures in turn; LABEL (1 to 16
+#                    of a-z, 0-9 and -, from a letter) names its Pod and Service, FILE is its
+#                    binary, built from any commit; no-init leaves out the init container
+#                    that prints its node's CPU, no-first-second the load generator's scrape
+#                    of its /metrics a second into each step; not with --smock
+#   --rounds N       how many times the load generator measures each variant's steps, the
+#                    variants' order turned each round and step (default: 4); only with --variant
 #
 # Environment:
 #   GKE_BENCH_PROJECT       the Google Cloud project (required)
@@ -75,7 +95,8 @@
 #                           the commands to use (default: gcloud, kubectl, docker, python3 on PATH)
 #
 # Exit status: 0 when every profile ran all of its steps and nothing is
-# left, 1 otherwise, 2 for a wrong command line or environment.
+# left (and with --variant, when the variants can be compared), 1
+# otherwise, 2 for a wrong command line or environment.
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -104,6 +125,21 @@ if restarts is None:
     sys.exit(1)
 print(restarts)
 '
+# Prints the node of the Pod the second argument names, from what gke.py
+# pod-info kept of the Pods (the first): nothing when it has none.
+POD_NODE='
+import json, sys
+print(next((pod["node"] or "" for pod in json.load(open(sys.argv[1]))["smock"] if pod["name"] == sys.argv[2]), ""))
+'
+# Keeps of kubectl's listing of Services and EndpointSlices, on its standard
+# input, those of the Service the argument names.
+OWN_SERVICE='
+import json, sys
+listing = json.load(sys.stdin)
+listing["items"] = [item for item in listing["items"] if sys.argv[1] in (
+    item["metadata"]["name"], item["metadata"].get("labels", {}).get("kubernetes.io/service-name"))]
+print(json.dumps(listing, indent=4))
+'
 # Prints why gcloud could not fetch the quotas of the region whose
 # description it printed (the argument, as JSON); fails when it could.
 QUOTA_WARNING='
@@ -113,8 +149,8 @@ if not warning:
     sys.exit(1)
 print(warning.get("message") or warning.get("code") or "gcloud says no more")
 '
-# Prints the profiles of summary.json (the argument) that are not complete,
-# space-separated.
+# Prints the profiles of summary.json, or of a run of variants'
+# same-node.json (the argument), that are not complete, space-separated.
 INCOMPLETE_PROFILES='
 import json, sys
 print(*(name for name, profile in json.load(open(sys.argv[1]))["gke"]["profiles"].items() if not profile["complete"]))
@@ -154,7 +190,8 @@ NODE_CPUS=8
 NODE_BOOT_DISK_GB=100
 SYSTEM_NODES=2
 declare -A BOOT_DISK_QUOTAS=([amd64]=SSD_TOTAL_GB [arm64]=HDB_TOTAL_GB)
-# The Dockerfiles of the two images, from the repository's root.
+# The Dockerfiles of the images, smock's and the load generator's, from the
+# repository's root.
 DOCKERFILES=(Dockerfile bench/gke/smock-definitions.dockerfile bench/gke/generator.Dockerfile)
 # How long the load generator's Pod may wait for a node, smock to become
 # ready, and an access token may be used before a new one is fetched.
@@ -174,6 +211,17 @@ MAX_TIME_LIMIT_S=14400
 dry_run=0 yes=0 enable_apis=0
 plan="$ROOT/bench/plan-autopilot.json" targets="$ROOT/bench/targets.json"
 profiles="" cases="" out="" time_limit=80m smock_binary="" oha_binary="" arch="" smock_sha256=""
+# The variants of a run that compares them (--variant), in the order given,
+# the first the baseline, and how many rounds the load generator measures
+# them in (--rounds); none in a run of one smock. Each variant's binary,
+# its options as gke.py takes them (",no-init,no-first-second", or fewer),
+# whether its Pod has the init container, its SHA-256, the image of its
+# binary and that image's reference once pushed, by label; and the images
+# of smock, one for each distinct binary, named for the first variant with
+# it, with their references once pushed.
+variant_args=() variants=() rounds="" smock_images=()
+declare -A variant_file=() variant_options=() variant_init=() variant_sha256=() variant_image=() variant_ref=()
+declare -A image_ref=()
 project_number="" account_pattern="" problems=() apis_to_enable=()
 work="" resources_may_exist=0 watchdog_pid="" built_images=() log_pid="" token_at=0
 # The profile running, why the run stopped, and whether the summary is written.
@@ -279,6 +327,19 @@ now() {
 
 problem() {
   problems+=("$*")
+}
+
+# Its arguments for people: a, b and c.
+and_list() {
+  local text=$1 index
+  for ((index = 2; index <= $#; index++)); do
+    if [ "$index" = $# ]; then
+      text+=" and ${!index}"
+    else
+      text+=", ${!index}"
+    fi
+  done
+  printf '%s' "$text"
 }
 
 # --- The watchdog --------------------------------------------------------
@@ -399,7 +460,7 @@ while [ $# -gt 0 ]; do
   --dry-run) dry_run=1 ;;
   --yes) yes=1 ;;
   --enable-apis) enable_apis=1 ;;
-  --plan | --profiles | --cases | --targets | --out | --time-limit | --arch | --smock | --oha)
+  --plan | --profiles | --cases | --targets | --out | --time-limit | --arch | --smock | --oha | --variant | --rounds)
     option_value "$@"
     case $1 in
     --arch) arch=$2 ;;
@@ -411,6 +472,8 @@ while [ $# -gt 0 ]; do
     --time-limit) time_limit=$2 ;;
     --smock) smock_binary=$2 ;;
     --oha) oha_binary=$2 ;;
+    --variant) variant_args+=("$2") ;;
+    --rounds) rounds=$2 ;;
     esac
     shift
     ;;
@@ -422,6 +485,57 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+# Says why the command line cannot make a run, and exits.
+wrong() {
+  say "$*"
+  exit 2
+}
+
+# Reads the variants --variant gives, LABEL=FILE[,no-init][,no-first-second]
+# each, into variants and the maps by label, with the SHA-256 of each one's
+# binary, which a dry run needs even when the checks stop early, and the
+# rounds (4 unless --rounds says otherwise); exits when they cannot make a
+# run, as gke.py would refuse them once the cluster is made. gke.py plan
+# checks the names each label makes under the profiles.
+read_variants() {
+  local text label file option options seen=" "
+  if [ ${#variant_args[@]} -eq 0 ]; then
+    [ -z "$rounds" ] || wrong "--rounds needs --variant: smock alone is measured once"
+    return 0
+  fi
+  [ -z "$smock_binary" ] || wrong "give the binaries with --smock or with --variant, not both"
+  if [ ${#variant_args[@]} -lt 2 ] || [ ${#variant_args[@]} -gt 4 ]; then
+    wrong "a run compares 2 to 4 variants, not ${#variant_args[@]}"
+  fi
+  for text in "${variant_args[@]}"; do
+    [[ $text == *=?* ]] || wrong "--variant $text: give it as LABEL=FILE[,no-init][,no-first-second]"
+    label=${text%%=*}
+    IFS=, read -r -a options <<<"${text#*=}"
+    file=${options[0]}
+    if ! [[ $label =~ ^[a-z]([-a-z0-9]{0,14}[a-z0-9])?$ ]]; then
+      wrong "variant label $label: use 1 to 16 lowercase letters, digits and hyphens, starting with a letter and" \
+        "ending with a letter or digit"
+    fi
+    [[ $seen != *" $label "* ]] || wrong "variant $label is given twice: give each its own label"
+    seen+="$label "
+    variant_init[$label]=1 variant_options[$label]=""
+    for option in "${options[@]:1}"; do
+      case $option in
+      no-init) variant_init[$label]=0 ;;
+      no-first-second) ;;
+      *) wrong "variant $label: no option $option; there are no-init and no-first-second" ;;
+      esac
+      [[ ${variant_options[$label]}, == *",$option,"* ]] || variant_options[$label]+=",$option"
+    done
+    [ -f "$file" ] || wrong "no file $file"
+    variants+=("$label")
+    variant_file[$label]=$file
+    variant_sha256[$label]=$(sha256sum "$file" | cut -d ' ' -f 1)
+  done
+  rounds=${rounds:-4}
+  [[ $rounds =~ ^[1-9][0-9]{0,2}$ ]] || wrong "--rounds is a number of rounds, at least 1, not $rounds"
+}
 
 if [ -z "$PROJECT" ] || [ -z "$REGION" ]; then
   say "set GKE_BENCH_PROJECT (the Google Cloud project) and GKE_BENCH_REGION (such as us-central1)"
@@ -446,6 +560,7 @@ if ! [[ $NEEDED_CPUS =~ ^[1-9][0-9]{0,3}$ ]]; then
   say "GKE_BENCH_NEEDED_CPUS is a number of vCPUs, such as 32"
   exit 2
 fi
+read_variants
 case $(uname -m) in
 aarch64 | arm64) host_arch=arm64 ;;
 x86_64 | amd64) host_arch=amd64 ;;
@@ -463,7 +578,7 @@ amd64 | arm64) ;;
   exit 2
   ;;
 esac
-if [ "$arch" != "$host_arch" ] && [ -z "$smock_binary" ]; then
+if [ "$arch" != "$host_arch" ] && [ -z "$smock_binary" ] && [ ${#variants[@]} -eq 0 ]; then
   say "this machine ($(uname -m)) cannot build smock for $arch: give --smock with the release binary that CI" \
     "built for linux/$arch from the commit to measure (CI's run on its push), such as:" \
     "gh run download <run-id> -R hirunefu/smock -n smock-linux-$arch"
@@ -744,6 +859,7 @@ binary_problem() {
 # cannot run, it prints the SHA-256 too, which the conditions record.
 check_binaries() {
   local text version commit head
+  check_variants
   if [ -n "$smock_binary" ]; then
     text=$(binary_problem smock "$smock_binary")
     if [ -n "$text" ]; then
@@ -774,6 +890,33 @@ check_binaries() {
   fi
 }
 
+# Checks that each variant's binary is for the run's architecture, and
+# says which binary it is: its SHA-256, which the summary records, and the
+# commit it says it is built from when this machine can run it (smock
+# --version). Unlike --smock, a variant's binary may be built from any
+# commit: the harness is the commit checked out, and the binaries are what
+# the run compares. Of one this machine cannot run, the summary has the
+# commit smock says once it runs on its node.
+check_variants() {
+  local label file text version commit
+  for label in "${variants[@]}"; do
+    file=${variant_file[$label]}
+    text=$(binary_problem "variant $label" "$file")
+    if [ -n "$text" ]; then
+      problem "$text"
+    elif [ "$arch" != "$host_arch" ]; then
+      say "variant $label: $file is for $arch, which this machine cannot run; its SHA-256 is" \
+        "${variant_sha256[$label]}; the summary has the commit it says it is built from"
+    elif [ -x "$file" ] && version=$("$file" --version 2>&1) &&
+      commit=$(sed -n 's/.*(commit \([0-9a-f]*\),.*/\1/p' <<<"$version") && [ -n "$commit" ]; then
+      say "variant $label: $file says it is built from commit $commit; its SHA-256 is ${variant_sha256[$label]}"
+    else
+      say "variant $label: $file does not say its commit here (\`$file --version\`); its SHA-256 is" \
+        "${variant_sha256[$label]}; the summary has the commit it says it is built from"
+    fi
+  done
+}
+
 # Checks that the images only copy: an image for another architecture than
 # this machine's cannot RUN anything here, with no emulation.
 check_dockerfiles() {
@@ -801,7 +944,7 @@ preflight() {
     problem "$KUBECTL does not run (\`$KUBECTL version --client\` failed); with mise, give" \
       "KUBECTL=\"\$(mise where kubectl@<version>)/bin/kubectl\""
   "$DOCKER" version >/dev/null 2>&1 || problem "$DOCKER does not reach its daemon (\`$DOCKER version\` failed)"
-  if [ -z "$smock_binary" ] && ! command -v moon >/dev/null 2>&1; then
+  if [ -z "$smock_binary" ] && [ ${#variants[@]} -eq 0 ] && ! command -v moon >/dev/null 2>&1; then
     problem "moon is not on PATH to build the release binary: install the pinned MoonBit, or give --smock"
   fi
   if [ -z "$oha_binary" ] && ! command -v curl >/dev/null 2>&1; then
@@ -839,11 +982,46 @@ preflight() {
 
 # --- The run -----------------------------------------------------------------
 
+# Gives each variant the image of its binary: one image of smock for each
+# distinct binary, by its SHA-256, named for the first variant with it,
+# which those after it with the same binary share; and says which binary
+# each image holds.
+share_images() {
+  local label image sharing
+  smock_images=()
+  for label in "${variants[@]}"; do
+    variant_image[$label]=smock-$label
+    for image in "${smock_images[@]}"; do
+      if [ "${variant_sha256[${image#smock-}]}" = "${variant_sha256[$label]}" ]; then
+        variant_image[$label]=$image
+        break
+      fi
+    done
+    [ "${variant_image[$label]}" != "smock-$label" ] || smock_images+=("smock-$label")
+  done
+  for image in "${smock_images[@]}"; do
+    sharing=()
+    for label in "${variants[@]}"; do
+      [ "${variant_image[$label]}" != "$image" ] || sharing+=("$label")
+    done
+    say "smock's image $image holds the binary of $(and_list "${sharing[@]}")" \
+      "(SHA-256 ${variant_sha256[${image#smock-}]})"
+  done
+}
+
+# Writes the build context of an image of smock into DIRECTORY (the first
+# argument): the binary (the second) and the benchmark's definitions.
+smock_context() {
+  mkdir -p "$1/dist"
+  cp "$2" "$1/dist/smock"
+  cp -r "$ROOT/bench/definitions" "$1/definitions"
+}
+
 build_images() {
   smock_image=smock-gke-bench/smock:$run_id
   generator_image=smock-gke-bench/generator:$run_id
-  local text
-  if [ -z "$smock_binary" ]; then
+  local text image
+  if [ -z "$smock_binary" ] && [ ${#variants[@]} -eq 0 ]; then
     changes "$ROOT/scripts/build-release.sh" || die "the release build failed"
     smock_binary=$ROOT/dist/smock
   fi
@@ -855,22 +1033,36 @@ build_images() {
       [ -z "$text" ] || die "$text"
     fi
   fi
+  [ ${#variants[@]} -eq 0 ] || share_images
   if [ "$dry_run" = 0 ]; then
-    smock_sha256=$(sha256sum "$smock_binary" | cut -d ' ' -f 1)
-    mkdir -p "$work/smock-image/dist" "$work/generator-image/bench/gke"
+    mkdir -p "$work/generator-image/bench/gke"
     cat "$ROOT/Dockerfile" "$ROOT/bench/gke/smock-definitions.dockerfile" >"$work/smock.Dockerfile"
-    cp "$smock_binary" "$work/smock-image/dist/smock"
-    cp -r "$ROOT/bench/definitions" "$work/smock-image/definitions"
+    if [ ${#variants[@]} -eq 0 ]; then
+      smock_sha256=$(sha256sum "$smock_binary" | cut -d ' ' -f 1)
+      smock_context "$work/smock-image" "$smock_binary"
+      built_images=("$smock_image")
+    else
+      for image in "${smock_images[@]}"; do
+        smock_context "$work/$image-image" "${variant_file[${image#smock-}]}"
+        built_images+=("smock-gke-bench/$image:$run_id")
+      done
+    fi
+    built_images+=("$generator_image")
     cp "$oha_binary" "$work/generator-image/oha"
     cp "$ROOT/bench/bench.py" "$ROOT/bench/requests.json" "$work/generator-image/bench/"
     cp "$plan" "$work/generator-image/bench/plan.json"
     cp "$ROOT/bench/gke/gke.py" "$ROOT/bench/gke/generator.py" "$work/generator-image/bench/gke/"
   fi
-  [ "$dry_run" = 1 ] || built_images=("$smock_image" "$generator_image")
   [ "$dry_run" = 0 ] || say "would write $work/smock.Dockerfile: the repository's Dockerfile and" \
     "bench/gke/smock-definitions.dockerfile"
-  changes "$DOCKER" build --platform="linux/$arch" --file="$work/smock.Dockerfile" --tag="$smock_image" \
-    "$work/smock-image" || die "building smock's image failed"
+  if [ ${#variants[@]} -eq 0 ]; then
+    changes "$DOCKER" build --platform="linux/$arch" --file="$work/smock.Dockerfile" --tag="$smock_image" \
+      "$work/smock-image" || die "building smock's image failed"
+  fi
+  for image in "${smock_images[@]}"; do
+    changes "$DOCKER" build --platform="linux/$arch" --file="$work/smock.Dockerfile" \
+      --tag="smock-gke-bench/$image:$run_id" "$work/$image-image" || die "building smock's image $image failed"
+  done
   changes "$DOCKER" build --platform="linux/$arch" --file="$ROOT/bench/gke/generator.Dockerfile" \
     --tag="$generator_image" "$work/generator-image" || die "building the load generator's image failed"
 }
@@ -939,9 +1131,22 @@ push_images() {
       --username=oauth2accesstoken --password-stdin "https://$registry" >/dev/null; } &
     wait $! || die "logging in to $registry failed"
   fi
-  [ "$dry_run" = 1 ] || built_images+=("$registry/$PROJECT/$repository/smock:$run_id"
-    "$registry/$PROJECT/$repository/generator:$run_id")
-  smock_ref=$(push_image "$smock_image" smock) || exit 1
+  local image label
+  if [ ${#variants[@]} -eq 0 ]; then
+    [ "$dry_run" = 1 ] || built_images+=("$registry/$PROJECT/$repository/smock:$run_id"
+      "$registry/$PROJECT/$repository/generator:$run_id")
+    smock_ref=$(push_image "$smock_image" smock) || exit 1
+  else
+    for image in "${smock_images[@]}" generator; do
+      [ "$dry_run" = 1 ] || built_images+=("$registry/$PROJECT/$repository/$image:$run_id")
+    done
+    for image in "${smock_images[@]}"; do
+      image_ref[$image]=$(push_image "smock-gke-bench/$image:$run_id" "$image") || exit 1
+    done
+    for label in "${variants[@]}"; do
+      variant_ref[$label]=${image_ref[${variant_image[$label]}]}
+    done
+  fi
   generator_ref=$(push_image "$generator_image" generator) || exit 1
 }
 
@@ -1094,9 +1299,11 @@ keep_smock_node_cpu() {
 # there, masked: its log as smock.log (when it restarted, or that is not
 # known, its container before the last restart first), with kubectl's
 # errors in their place, and its Service with the Service's EndpointSlices
-# as service.json.
+# as service.json. Its restarts come from the pods.json the third argument
+# names (by default the one under RAW, the second); a variant's Service is
+# named for it (the fourth), and only it and its EndpointSlices are kept.
 keep_smock_state() {
-  local smock_pod=$1 raw=$2 restarts
+  local smock_pod=$1 raw=$2 pods=${3:-$2/pods.json} service=${4:-} restarts
   # kubectl itself, not the function kube, so that its errors stay in order
   # with what it prints. smock's container by name: kubectl says on stderr
   # which one it chose for a Pod with an init container.
@@ -1107,7 +1314,7 @@ keep_smock_state() {
   fi
   mkdir -p "$raw"
   refresh_token
-  restarts=$("$PYTHON" -c "$SMOCK_RESTARTS" "$raw/pods.json" "$smock_pod" 2>/dev/null) || restarts=unknown
+  restarts=$("$PYTHON" -c "$SMOCK_RESTARTS" "$pods" "$smock_pod" 2>/dev/null) || restarts=unknown
   if [ "$restarts" = 0 ]; then
     "${logs[@]}" "pod/$smock_pod" 2>&1 | masked >"$raw/smock.log"
   else
@@ -1118,21 +1325,88 @@ keep_smock_state() {
       "${logs[@]}" "pod/$smock_pod"
     } 2>&1 | masked >"$raw/smock.log"
   fi
-  kube get service,endpointslices --output=json | masked >"$raw/service.json" ||
-    say "cannot read smock's Service and its EndpointSlices; $raw/service.json may be empty"
+  if [ -z "$service" ]; then
+    kube get service,endpointslices --output=json | masked >"$raw/service.json" ||
+      say "cannot read smock's Service and its EndpointSlices; $raw/service.json may be empty"
+  else
+    kube get service,endpointslices --output=json | "$PYTHON" -c "$OWN_SERVICE" "$service" | masked \
+      >"$raw/service.json" || say "cannot read the Service $service and its EndpointSlices; $raw/service.json may" \
+      "be empty"
+  fi
 }
 
-# Runs one profile: smock, then the load generator, then what they left,
-# then deletes both. Fails when smock or the load generator could not start
-# (which the next profile would hit too). Returns 3 when the profile ran
-# but not all of its steps (its Job did not complete, or the load generator
-# stopped it early), and 4 when the load generator's Job or smock's Pod and
-# Service were not deleted, so that no later profile may run beside them
-# (stop_reason then says which).
+# Keeps what each variant whose Pod was applied under profile NAME (the
+# first argument; the others are those variants) left in RAW/<label>/
+# (keep_smock_state), and of one with the init container what it printed
+# of its node's CPU, as when it never became ready.
+keep_variants_state() {
+  local name=$1 label
+  for label in "${@:2}"; do
+    [ "${variant_init[$label]}" = 0 ] || keep_smock_node_cpu "smock-$name-$label" "$out/raw/$name/$label"
+    keep_smock_state "smock-$name-$label" "$out/raw/$name/$label" "$out/raw/$name/pods.json" "smock-$name-$label"
+  done
+}
+
+# Starts the variants under profile NAME (the first argument), from the
+# manifests in the second: each Pod once the one before is ready, so that
+# each joins the node of the first, which matches its own affinity and may
+# go anywhere. Then keeps the Pods, and checks that they share one node
+# with the plan's limits as their requests and limits (gke.py placement),
+# since a comparison across nodes or under other limits would compare
+# them; and keeps what the init container of each that has one printed of
+# its node's CPU. Dies, having kept the evidence, when a variant does not
+# become ready (Pending, as when its node has no room for it) or the check
+# fails, before the load generator starts.
+start_variants() {
+  local name=$1 manifests=$2 raw=$out/raw/$1 first=${variants[0]} label pod node text line why="" started=()
+  for label in "${variants[@]}"; do
+    pod=smock-$name-$label
+    started+=("$label")
+    kube_run apply --filename="$manifests/smock-$label.json" || die "applying the Pod of variant $label failed"
+    if ! kube_run wait --for=condition=Ready "pod/$pod" --timeout="${READY_LIMIT_S}s"; then
+      kube get events --field-selector=involvedObject.kind=Pod | masked >&2
+      mkdir -p "$raw/$label"
+      kube describe "pod/$pod" 2>&1 | masked >"$raw/$label/describe.txt"
+      keep_pods "$raw"
+      keep_variants_state "$name" "${started[@]}"
+      node=$("$PYTHON" -c "$POD_NODE" "$raw/pods.json" "$pod" 2>/dev/null)
+      if [ "$label" = "$first" ]; then
+        die "variant $label did not become ready under $name"
+      elif [ -z "$node" ]; then
+        die "variant $label could not join the node of variant $first under $name: its Pod had no node after" \
+          "$((READY_LIMIT_S / 60)) minutes (its events are above, and in $raw/$label/describe.txt)"
+      fi
+      die "variant $label did not become ready under $name, on the node of variant $first"
+    fi
+  done
+  keep_pods "$raw" --without-restarts
+  if [ "$dry_run" = 1 ]; then
+    say "would check that the variants share a node, with the limits of $name as their requests and limits:" \
+      "$(shown "$PYTHON" "$GKE_PY" placement "$raw/pods.json" --plan "$plan" --profile "$name")"
+  elif ! text=$("$PYTHON" "$GKE_PY" placement "$raw/pods.json" --plan "$plan" --profile "$name" 2>&1); then
+    keep_variants_state "$name" "${variants[@]}"
+    while IFS= read -r line; do
+      why+="${why:+; }${line#gke: }"
+    done <<<"$text"
+    die "the variants cannot be compared under $name, so the load generator was not started: $why"
+  fi
+  for label in "${variants[@]}"; do
+    [ "${variant_init[$label]}" = 0 ] || keep_smock_node_cpu "smock-$name-$label" "$raw/$label"
+  done
+}
+
+# Runs one profile: smock, or each variant (start_variants), then the load
+# generator, then what they left, then deletes them. Fails when smock, a
+# variant or the load generator could not start, or the variants cannot be
+# compared (which the next profile would hit too). Returns 3 when the
+# profile ran but not all of its steps (its Job did not complete, or the
+# load generator stopped it early), and 4 when the load generator's Job or
+# smock's Pods and Services were not deleted, so that no later profile may
+# run beside them (stop_reason then says which).
 run_profile() {
   local name=$1 deadline_s=$2 job=generator-$1 manifests=$work/manifests/$1 raw=$out/raw/$1 status=0 waited ended
-  local left=""
-  local smock_ref_shown=${smock_ref:-} generator_ref_shown=${generator_ref:-}
+  local left="" label undeleted=() smock_options=(--smock-image "${smock_ref:-}")
+  local generator_ref_shown=${generator_ref:-}
   # smock's Pod and Service, as gke.py names them: their own under each
   # profile, so that a lookup of the name cannot get the address of the
   # previous profile's Service.
@@ -1140,21 +1414,34 @@ run_profile() {
   # smock's Pod ends by itself at the time limit, counted from when its
   # node accepts it.
   local smock_deadline_s=$((deadline - $(now)))
-  say "profile $name: $3 steps; the load generator's Job may take $((deadline_s / 60)) minutes"
+  if [ ${#variants[@]} -eq 0 ]; then
+    say "profile $name: $3 steps; the load generator's Job may take $((deadline_s / 60)) minutes"
+  else
+    say "profile $name: $3 steps for each of ${#variants[@]} variants in each of $rounds rounds," \
+      "$(($3 * ${#variants[@]} * rounds)) runs; the load generator's Job may take $((deadline_s / 60)) minutes"
+    smock_options=(--rounds "$rounds")
+    for label in "${variants[@]}"; do
+      smock_options+=(--variant "$label=${variant_ref[$label]:-}${variant_options[$label]}")
+    done
+  fi
   "$PYTHON" "$GKE_PY" manifests --plan "$plan" --profile "$name" ${cases:+--cases "$cases"} --arch "$arch" \
-    ${ZONE:+--zone "$ZONE"} --smock-image "$smock_ref_shown" --generator-image "$generator_ref_shown" \
+    ${ZONE:+--zone "$ZONE"} "${smock_options[@]}" --generator-image "$generator_ref_shown" \
     --smock-deadline-s "$smock_deadline_s" --out "$manifests" || die "rendering the manifests of $name failed"
   kube_run apply --filename="$manifests/namespace.json" || die "applying the namespace failed"
-  kube_run apply --filename="$manifests/smock.json" || die "applying smock's Pod failed"
-  kube_run wait --for=condition=Ready "pod/$smock_pod" --timeout="${READY_LIMIT_S}s" || {
-    kube get events --field-selector=involvedObject.kind=Pod | masked >&2
-    keep_pods "$raw"
+  if [ ${#variants[@]} -eq 0 ]; then
+    kube_run apply --filename="$manifests/smock.json" || die "applying smock's Pod failed"
+    kube_run wait --for=condition=Ready "pod/$smock_pod" --timeout="${READY_LIMIT_S}s" || {
+      kube get events --field-selector=involvedObject.kind=Pod | masked >&2
+      keep_pods "$raw"
+      keep_smock_node_cpu "$smock_pod" "$raw"
+      keep_smock_state "$smock_pod" "$raw"
+      die "smock did not become ready under $name"
+    }
+    keep_pods "$raw" --without-restarts
     keep_smock_node_cpu "$smock_pod" "$raw"
-    keep_smock_state "$smock_pod" "$raw"
-    die "smock did not become ready under $name"
-  }
-  keep_pods "$raw" --without-restarts
-  keep_smock_node_cpu "$smock_pod" "$raw"
+  else
+    start_variants "$name" "$manifests"
+  fi
   kube_run apply --filename="$manifests/generator.json" || die "applying the load generator's Job failed"
   if [ "$dry_run" = 1 ]; then
     say "would wait for the Job $job, keep its log as $raw/generator.log and its Pods as $raw/pods.json, then" \
@@ -1188,13 +1475,31 @@ run_profile() {
       status=3
     fi
   fi
-  keep_smock_state "$smock_pod" "$raw"
+  if [ ${#variants[@]} -eq 0 ]; then
+    keep_smock_state "$smock_pod" "$raw"
+  else
+    for label in "${variants[@]}"; do
+      keep_smock_state "smock-$name-$label" "$raw/$label" "$raw/pods.json" "smock-$name-$label"
+    done
+  fi
   # The next profile starts once the load generator's Job and Pod, and
-  # smock's Pod and Service, are gone.
+  # smock's Pods and Services, are gone.
   kube_run delete --filename="$manifests/generator.json" --ignore-not-found --cascade=foreground --wait=true \
     --timeout=300s || left="the load generator's Job"
-  kube_run delete --filename="$manifests/smock.json" --ignore-not-found --wait=true --timeout=300s ||
-    left="${left:+$left, and }smock's Pod and Service"
+  if [ ${#variants[@]} -eq 0 ]; then
+    kube_run delete --filename="$manifests/smock.json" --ignore-not-found --wait=true --timeout=300s ||
+      left="${left:+$left, and }smock's Pod and Service"
+  else
+    for label in "${variants[@]}"; do
+      kube_run delete --filename="$manifests/smock-$label.json" --ignore-not-found --wait=true --timeout=300s ||
+        undeleted+=("$label")
+    done
+    if [ ${#undeleted[@]} = 1 ]; then
+      left="${left:+$left, and }the Pod and Service of variant ${undeleted[0]}"
+    elif [ ${#undeleted[@]} -gt 1 ]; then
+      left="${left:+$left, and }the Pods and Services of variants $(and_list "${undeleted[@]}")"
+    fi
+  fi
   if [ -n "$left" ]; then
     say "not deleted in 5 minutes under $name: $left; no later profile runs beside them"
     stop_reason="$left $([[ $left == *" and "* ]] && echo were || echo was) not deleted in 5 minutes, so no"
@@ -1207,12 +1512,53 @@ run_profile() {
 # Writes summary.json, summary.md and conditions.json from what the profiles
 # left in the results directory, with the options of gke.py summarize given.
 summarize() {
-  local smock_image_ref=${smock_ref:-} generator_image_ref=${generator_ref:-}
   summarized=1
+  summarize_into "$out" "${smock_ref:-}" "$smock_sha256" "$@"
+}
+
+# Writes summary.json, summary.md and conditions.json into DIRECTORY (the
+# first argument) from what its raw/ holds, a run of smock whose image and
+# binary the second and third arguments name (its reference and its
+# SHA-256), with the options of gke.py summarize given after them.
+summarize_into() {
+  local directory=$1 smock_image_ref=$2 sha256=$3 generator_image_ref=${generator_ref:-}
   "$PYTHON" "$GKE_PY" summarize --plan "$plan" --targets "$targets" "${selection[@]}" --region "$REGION" \
     ${ZONE:+--zone "$ZONE"} --arch "$arch" --started-at "$started_at" --finished-at "$finished_at" \
     --cluster-version "${cluster_version:-}" --smock-image "${smock_image_ref##*@}" \
-    --generator-image "${generator_image_ref##*@}" --smock-sha256 "$smock_sha256" "$@" "$out"
+    --generator-image "${generator_image_ref##*@}" --smock-sha256 "$sha256" "${@:4}" "$directory"
+}
+
+# Of a run of variants, splits what the profiles left in the results
+# directory into its samples (gke.py samples: samples/<round>-<label>/, one
+# variant's pass over the steps in one round, each a run of smock alone, of
+# every round the run planned, which the load generator may not have said),
+# writes each sample's summary with its variant's image and binary and the
+# options of gke.py summarize given, and compares the variants (gke.py
+# same-node: same-node.json and same-node.md, which is also summary.md), in
+# the order given, the first the baseline, which neither the Pods nor the
+# samples say when the load generator never started. Fails when a sample
+# could not be summarized, or the variants cannot be compared: on more
+# than one node, under other limits than the plan's, or with a sample
+# incomplete.
+summarize_variants() {
+  local label directory status=0 compared=() sampled=" "
+  summarized=1
+  "$PYTHON" "$GKE_PY" samples --plan "$plan" "${selection[@]}" --rounds "$rounds" "$out" >"$work/samples.txt" ||
+    return 1
+  while read -r _ label directory; do
+    summarize_into "$directory" "${variant_ref[$label]:-}" "${variant_sha256[$label]:-}" "$@" || status=1
+    sampled+="$label "
+  done <"$work/samples.txt"
+  # Only the variants with samples: one whose Pod was never applied has
+  # none. The first was applied first, so it has them.
+  for label in "${variants[@]}"; do
+    [[ $sampled == *" $label "* ]] || continue
+    compared+=(--sha256 "$label=${variant_sha256[$label]}")
+    [ "${variant_init[$label]}" = 1 ] || compared+=(--no-init "$label")
+  done
+  "$PYTHON" "$GKE_PY" same-node --baseline "${variants[0]}" "${compared[@]}" "$out" || status=1
+  [ ! -f "$out/same-node.md" ] || cp "$out/same-node.md" "$out/summary.md"
+  return "$status"
 }
 
 # When the run stops once a profile has started but before it wrote its
@@ -1229,6 +1575,13 @@ summarize_stopped() {
     mv "$raw/generator-stream.log" "$raw/generator.log"
   fi
   finished_at=$(date -u +%FT%TZ)
+  if [ ${#variants[@]} -gt 0 ]; then
+    say "the run stopped under profile $current_profile: summarizing each sample, and comparing the variants, from" \
+      "what it measured"
+    summarize_variants --stopped "$1" --stopped-under "$current_profile"
+    [ ! -f "$out/summary.md" ] || say "results: $out (summary.md says where and why the run stopped)"
+    return 0
+  fi
   say "the run stopped under profile $current_profile: writing summary.json, summary.md and conditions.json from" \
     "what it measured"
   summarize --stopped "$1" --stopped-under "$current_profile" &&
@@ -1237,13 +1590,22 @@ summarize_stopped() {
 
 # --- Main --------------------------------------------------------------------
 
-if ! profile_lines=$("$PYTHON" "$GKE_PY" plan --plan "$plan" "${selection[@]}"); then
+# How many variants and rounds gke.py times and prices the run for: none
+# for smock alone. The plan also checks that each variant's label can name
+# its Pod and Service under each profile, as gke.py manifests would refuse
+# it once the cluster is made.
+counts=() named=()
+if [ ${#variants[@]} -gt 0 ]; then
+  counts=(--variants "${#variants[@]}" --rounds "$rounds")
+  named=(--labels "$(IFS=,; echo "${variants[*]}")")
+fi
+if ! profile_lines=$("$PYTHON" "$GKE_PY" plan --plan "$plan" "${selection[@]}" "${counts[@]}" "${named[@]}"); then
   exit 1
 fi
 say "run $run_id: project \$GKE_BENCH_PROJECT, $REGION, zone ${ZONE:-chosen by Autopilot}, $arch, plan" \
   "${plan#"$ROOT"/}"
 preflight
-"$PYTHON" "$GKE_PY" estimate --plan "$plan" "${selection[@]}" --region "$REGION" --arch "$arch" \
+"$PYTHON" "$GKE_PY" estimate --plan "$plan" "${selection[@]}" "${counts[@]}" --region "$REGION" --arch "$arch" \
   --time-limit-s "$time_limit_s" \
   >&2 2>"$work/estimate.txt" || problem "$(sed 's/^gke: //' "$work/estimate.txt")"
 if [ ${#problems[@]} -gt 0 ]; then
@@ -1284,7 +1646,9 @@ make_cluster
 run_status=0 stopped=() last_profile=${profile_lines##*$'\n'}
 last_profile=${last_profile%% *}
 while read -r name steps deadline_s <&3; do
-  # Each profile needs its Job's time, smock's start, and the deletion.
+  # Each profile needs its Job's time, smock's start, and the deletion:
+  # 600 s is gke.py's TIME_LIMIT_MARGIN_S, with which its estimate refuses
+  # a run of variants whose profile would be skipped here.
   if [ $(($(now) + deadline_s + 600)) -gt "$deadline" ]; then
     say "profile $name and those after it do not fit in the time limit; skipping them"
     stop_reason="profile $name and those after it did not fit in the time limit of $((time_limit_s / 60)) minutes"
@@ -1308,19 +1672,33 @@ while read -r name steps deadline_s <&3; do
 done 3<<<"$profile_lines"
 finished_at=$(date -u +%FT%TZ)
 
-if [ "$dry_run" = 1 ]; then
+if [ "$dry_run" = 1 ] && [ ${#variants[@]} -gt 0 ]; then
+  say "would split the results in $out into samples/<round>-<label>/, write each sample's summary.json, summary.md" \
+    "and conditions.json, and compare the variants in same-node.json and same-node.md, also as summary.md"
+elif [ "$dry_run" = 1 ]; then
   say "would write summary.json, summary.md and conditions.json into $out"
 else
-  summarize "${stopped[@]}" || run_status=1
+  report=$out/summary.json
+  if [ ${#variants[@]} -gt 0 ]; then
+    report=$out/same-node.json
+    summarize_variants "${stopped[@]}" || run_status=1
+  else
+    summarize "${stopped[@]}" || run_status=1
+  fi
   # Whatever the Jobs said: a log that lost lines leaves steps unmeasured.
-  if ! incomplete=$("$PYTHON" -c "$INCOMPLETE_PROFILES" "$out/summary.json" 2>/dev/null); then
+  if ! incomplete=$("$PYTHON" -c "$INCOMPLETE_PROFILES" "$report" 2>/dev/null); then
     run_status=1
   elif [ -n "$incomplete" ]; then
     say "not every step was measured under: $incomplete (summary.md says why)"
     run_status=1
   fi
-  say "results: $out (summary.md, summary.json, conditions.json, raw/)"
-  say "compare them with the previous pre-merge run's: python3 bench/compare.py <previous> $out"
+  if [ ${#variants[@]} -gt 0 ]; then
+    say "results: $out (summary.md, the comparison, also as same-node.md; same-node.json; samples/; raw/)"
+    say "compare two samples with: python3 bench/compare.py $out/samples/1-${variants[0]} $out/samples/1-${variants[1]}"
+  else
+    say "results: $out (summary.md, summary.json, conditions.json, raw/)"
+    say "compare them with the previous pre-merge run's: python3 bench/compare.py <previous> $out"
+  fi
 fi
 if [ ${#problems[@]} -gt 0 ]; then
   run_status=1

@@ -917,9 +917,10 @@ latency for each case, and checks the provisional performance targets.
 | `bench/requests.json` | The request mix: nine kinds of request, with weights, realistic headers, a Session in `baggage`, and bodies. |
 | `bench/plan.json` | The cases, the CPU limits, and the rates and durations. |
 | `bench/plan-autopilot.json` | Another plan: smock under the CPU and memory limits of the smallest GKE Autopilot Pods and of the Helm chart's default, at ladders of rates. The targets hold under its profiles. |
+| `bench/plan-same-node.json` | The plan of a GKE run that compares smock binaries on one node: HTTP keep-alive at the lowest rates of `bench/plan-autopilot.json`'s ladders, and at half the lowest under 50m and 250m. |
 | `bench/targets.json` | The provisional targets, a set for each CPU architecture, the one place to change them, and the rule that calls a change between two runs a regression. |
 | `bench/compare.py` | Compares two runs: p99 and p99.9 at each step both ran, and the targets the newer one missed. |
-| `bench/gke/` | The GKE Autopilot run's helper (`gke.py`: its plan, cost estimate, manifests and summary), its load generator (`generator.py`), and what its two images add. |
+| `bench/gke/` | The GKE Autopilot run's helper (`gke.py`: its plan, cost estimate, manifests and summary, and the comparison of binaries on one node), its load generator (`generator.py`), and what its images add. |
 | `scripts/gke-bench.sh` | Runs the benchmark on GKE Autopilot, end to end. |
 
 `e2e/bench_test.mbt` checks on every test run that each request of the mix
@@ -1398,9 +1399,12 @@ that run's linux/amd64 build and tests passed.
   release image with `bench/definitions/`
   (`bench/gke/smock-definitions.dockerfile`), and the load generator's
   (`bench/gke/generator.Dockerfile`: Python, the pinned oha of that
-  architecture, `bench.py`, the plan and `bench/gke/`). Both only copy
-  files onto multi-architecture bases, so a machine of the other
-  architecture builds them with no emulation; `python3 -m unittest
+  architecture, `bench.py`, the plan and `bench/gke/`). With `--variant`
+  it builds no binary, and in place of the release image one image of
+  smock for each distinct binary the variants give (see
+  [Comparing smock binaries on one node](#comparing-smock-binaries-on-one-node)).
+  The images only copy files onto multi-architecture bases, so a machine
+  of the other architecture builds them with no emulation; `python3 -m unittest
   discover -s bench` fails if a `RUN` appears. It pushes them to a new
   Artifact Registry repository, and lets the nodes' service account (the
   project's Compute Engine default one, or
@@ -1534,6 +1538,119 @@ and gcloud's account as `<account>`.
 generator against smock on this machine, and the script against fake
 gcloud, kubectl and docker commands, including that every way a run ends
 deletes what it made.
+
+#### Comparing smock binaries on one node
+
+One binary used 15 to 25% more or less CPU a request from one node to
+another in the runs of R2, more than the difference between binaries
+those runs were to measure. `--variant` compares 2 to 4 smock binaries,
+or one binary with other options, on one node instead. Under each
+profile, each variant runs in a Pod of its own with the profile's
+limits, all on the first one's node (a required Pod affinity on the
+node's hostname; Autopilot refuses anti-affinity below 0.5 vCPU), and one
+load generator measures them one at a time over `--rounds` rounds (4 by
+default): each round runs every step, and each step every variant, their
+order turned by one for each round and step, so that a variant's run and
+the baseline's in the same round and step are close in time: next to
+each other, about 30 seconds apart, with two variants; with four, one to
+three runs apart (each run is the step's 25 s, its analysis and its 2 s
+cool-down, about 32 s, so about 30 to 100 seconds), and a variant two
+places after the baseline, like r2b below, is always two runs from it.
+`bench/plan-same-node.json`
+is the plan for it: HTTP keep-alive at the two lowest rates of
+`bench/plan-autopilot.json`'s ladders under 50m and 250m, where R2's
+binary used more CPU a request than R1's, and at half the lowest, since
+R2's binary came near its CPU limit from the second step and a pair in
+which a run saturated does not count; and two rates under 1 CPU as a
+control.
+
+```sh
+r1=$(mktemp -d) r2=$(mktemp -d)
+gh run download <run-id> -R hirunefu/smock -n smock-linux-amd64 --dir "$r1"   # CI's run on the push of R1's commit
+gh run download <run-id> -R hirunefu/smock -n smock-linux-amd64 --dir "$r2"   # and of R2's
+export GKE_BENCH_PROJECT=<project ID> GKE_BENCH_REGION=us-central1 GKE_BENCH_ZONE=us-central1-a
+scripts/gke-bench.sh --yes --arch amd64 --plan bench/plan-same-node.json \
+  --profiles autopilot-burst-min,autopilot-min --time-limit 120m \
+  --variant r1="$r1/smock" --variant r2="$r2/smock" --variant r2b="$r2/smock" \
+  --variant r2h="$r2/smock",no-init,no-first-second
+```
+
+Each `--variant` is `LABEL=FILE`, the first the baseline; the label (1 to
+16 lowercase letters, digits and hyphens) names the variant's Pod and
+Service, `smock-<profile>-<label>`. `no-init` leaves out the init
+container that prints the node's CPU, and `no-first-second` the load
+generator's scrape of smock's `/metrics` a second into each step: R2's
+two changes to the harness. Variants of one binary (one SHA-256) are
+also compared with the first variant that has it: with the same options,
+such as r2b against r2, an A/A pair, whose paired changes show how far
+runs of one binary differ on the node, the A/A spread; with other
+options, such as r2h against r2, what those options cost. A binary
+must be for the run's architecture, but may be built from any commit:
+the harness is the commit checked out, and the binaries are what the run
+compares. The script prints each one's SHA-256, and the commit it says
+when the machine can run it; each distinct binary gets one image, which
+the variants with it share. CI keeps a binary for 7 days; for an older
+commit, push a branch at it, and CI builds it again. The run starts each
+variant once the one before is ready, and before the load generator
+starts, checks (`gke.py placement`) that every variant is on one node,
+admitted with the profile's limits as its requests and limits. When not,
+or when a variant cannot join the first one's node in 15 minutes, it
+stops there, with the Pods, their events and their logs kept.
+
+Besides `raw/<profile>/`, with each variant's log and Service in
+`raw/<profile>/<label>/`, it writes a sample of each variant in each
+round, `samples/<round>-<label>/`: the variant's steps in that round,
+summarized as a run of that binary alone, which `bench/compare.py`
+compares with any other run. smock's idle RSS is read once, before any
+load, so only round 1's samples have it, and a later one shows its
+target as not measured; a sample of a `no-first-second` variant says
+that its runs had no scrape a second in. Its `summary.md` is
+`same-node.md`, the comparison (`same-node.json` holds it too). That
+names each variant's commit, version, SHA-256 and options, and says
+whether the samples' conditions besides smock were the same; then, for
+each profile, the node and its CPU, whether every variant was on it with
+the plan's limits, the order the variants ran in, the most CPU an idle
+variant used beside another's run, and a row for each variant at each
+step: its CPU a request, as the median of its runs with the lowest, the
+highest and how many; the change from the baseline's; the range of the
+changes of its runs from the baseline's in the same round, and how many
+were higher; the throttled periods; the CPU wait; the node's steal time;
+p99; and the runs that saturated, at 90% of the CPU limit or more. Each
+variant's verdict takes the pairs of runs, over every step, in which
+neither saturated: their median change and range, how many were higher,
+and the p of an exact sign test, whose smallest with 8 pairs is 0.008.
+Fewer than 6 pairs that differ cannot give a p of 0.05 or less, so with
+5 or fewer it says there are too few pairs to decide; above 0.05, it
+says no clear difference, and so it does, whatever the p, when the
+median change lies inside the profile's A/A spread. Below the verdicts,
+each variant of one binary has its own against the first with it, the
+A/A pair's and the other options'. A drift line compares each variant's
+first round with the later ones. The run exits 1 when the variants
+cannot be compared: on more than one node, under other limits than the
+plan's, or with a sample incomplete.
+
+To read the variants against another baseline, such as each against
+r2, run `gke.py same-node` again on the run's results with
+`--baseline r2 --report same-node-r2` and the `--sha256 LABEL=HEX` and
+`--no-init LABEL` the run gave it (same-node.json names each variant's
+SHA-256 and options): it writes `same-node-r2.json` and
+`same-node-r2.md`, and leaves the run's own comparison as it is.
+
+```sh
+python3 bench/gke/gke.py same-node --baseline r2 --report same-node-r2 \
+  --sha256 r1=<SHA-256 of r1> --sha256 r2=<SHA-256 of r2> --sha256 r2b=<SHA-256 of r2> \
+  --sha256 r2h=<SHA-256 of r2> --no-init r2h <results directory>
+```
+
+The run above, two profiles of 48 runs each, costs about $0.43 in
+us-central1 at the prices of 2026-10-16, or $0.30 while the free tier
+covers the cluster's fee: the cluster lives about 77 minutes, and the
+load generator about 54. A profile starts only when its Job's deadline,
+48 minutes there, and 10 minutes more fit before the time limit, so the
+second needs a limit of about 100 minutes, which the estimate checks
+before anything is made, and more when the images take long to push or
+the cluster to make; 110 leaves about 10 minutes, at most $0.86, and
+120 leaves room, at most $0.94.
 
 ### In CI
 

@@ -9,6 +9,7 @@ usage: python3 -m unittest discover -s bench -v
 """
 
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -29,6 +30,15 @@ SCRIPT = ROOT / "scripts" / "gke-bench.sh"
 # This machine's architecture, as the script names it, and the other one.
 HOST_ARCH = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}[platform.machine()]
 OTHER_ARCH = {"amd64": "arm64", "arm64": "amd64"}[HOST_ARCH]
+
+def gke_module():
+    """bench/gke/gke.py as a module, for the rules the script keeps in step
+    with it."""
+    spec = importlib.util.spec_from_file_location("gke", BENCH / "gke" / "gke.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
 
 # The commit checked out, which a release binary built here names.
 HEAD = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short=12", "HEAD"], capture_output=True, text=True,
@@ -234,14 +244,17 @@ def restarts(pod):
 
 def pod_list():
     """The namespace's Pods, as kubectl get pods -o json lists them: smock's
-    Pod as applied, and one Pod for each Job, from its template."""
+    Pods as applied, each on its node of `pod_nodes` (node-a unless
+    configured; none, Pending, for null), and one Pod for each Job, from its
+    template."""
     items = []
     for item in objects().values():
         if item["kind"] == "Pod":
             name = item["metadata"]["name"]
-            items.append({**item, "spec": {**item["spec"], "nodeName": "node-a"}, "status": {
-                "phase": "Running", "podIP": "10.20.0.7",
-                "conditions": [{"type": "Ready", "status": "True"}],
+            node = config.get("pod_nodes", {}).get(name, "node-a")
+            items.append({**item, "spec": {**item["spec"], **({"nodeName": node} if node else {})}, "status": {
+                "phase": "Running" if node else "Pending", "podIP": "10.20.0.7",
+                "conditions": [{"type": "Ready", "status": "True" if node else "False"}],
                 "containerStatuses": [{"name": "smock", "ready": True, "restartCount": restarts(name),
                                        "lastState": {"terminated": {"reason": "OOMKilled", "exitCode": 137}}
                                        if restarts(name) else {}}]}})
@@ -253,6 +266,8 @@ def pod_list():
                                                   "job-name": item["metadata"]["name"]}},
                           "spec": {**template["spec"], "nodeName": "node-b"},
                           "status": {"phase": config.get("job_pod_phase", "Succeeded")}})
+    # By name, as kubectl lists them.
+    items.sort(key=lambda item: item["metadata"]["name"])
     return {"apiVersion": "v1", "kind": "List", "items": items, "metadata": {"resourceVersion": ""}}
 
 
@@ -297,13 +312,14 @@ def node_list():
     architecture smock's Pod asked for."""
     pods = [item for item in objects().values() if item["kind"] == "Pod"]
     arch = next((pod["spec"]["nodeSelector"]["kubernetes.io/arch"] for pod in pods), "amd64")
+    names = dict.fromkeys(["node-a", "node-b", *(node for node in config.get("pod_nodes", {}).values() if node)])
     return {"items": [{
         "metadata": {"name": name, "labels": {"node.kubernetes.io/instance-type": "ek-standard-8",
                                               "kubernetes.io/arch": arch,
                                               "topology.kubernetes.io/zone": "us-central1-a"}},
         "status": {"capacity": {"cpu": "8"}, "allocatable": {"cpu": "7910m"},
                    "nodeInfo": {"kernelVersion": "6.12.105+", "kubeletVersion": "v1.35.8-gke.1225000",
-                                "osImage": "Container-Optimized OS from Google"}}} for name in ("node-a", "node-b")]}
+                                "osImage": "Container-Optimized OS from Google"}}} for name in names]}
 
 
 def logs(target, previous, container):
@@ -366,6 +382,8 @@ if tool == "kubectl":
         answer(f"{words[1]} condition met\n")
     if words[:2] == ["get", "events"]:
         answer(config.get("events", ""))
+    if words[:1] == ["describe"]:
+        answer(config.get("describe", ""))
     if words[:2] == ["get", "pods"] and "selector" in options:
         answer(config.get("job_pod_phase", "Succeeded"))
     if words[:2] == ["get", "job"]:
@@ -443,43 +461,93 @@ def limit_cpus(cpu_limit):
     return int(cpu_limit[:-1]) / 1000 if cpu_limit.endswith("m") else float(cpu_limit)
 
 
+def start_line(profile, commit="a21fe97d59c6"):
+    """The load generator's start line: smock answered, and said `commit`."""
+    return {"kind": "start", "profile": profile, "oha": "oha 1.16.0",
+            "status": {"version": "0.2.0", "commit": commit, "toolchain": "moonc", "digest": "48f7ce9715f0",
+                       "mocks": []}}
+
+
+def idle_line(profile, cpu_limit, memory_limit):
+    """The load generator's idle-rss line: smock's RSS before any load."""
+    return {"kind": "idle-rss", "profile": profile, "idle": {
+        "profile": profile, "cpu_limit": cpu_limit, "memory_limit": memory_limit, "settle_s": 5,
+        "smock_ready": True, "digest": "48f7ce9715f0", "rss_kib": 16384,
+        "memory": {"peak_bytes": 15 << 20, "oom_kills": None}}}
+
+
+def traffic_check_line(profile, tls_answers=True):
+    """The load generator's traffic check before the first step: the plain
+    port answered, and the TLS port when `tls_answers`."""
+    return {"kind": "traffic-check", "profile": profile, "ok": tls_answers, "host": "catalog.bench.internal",
+            "method": "GET", "target": "/catalog/items/SKU-00317", "window_s": 60,
+            "ports": {"plain": {"port": 80, "answered": True, "status": 200, "attempts": 1, "seconds": 0.004,
+                                "error": None},
+                      "tls": {"port": 443, "answered": tls_answers, "status": 200 if tls_answers else None,
+                              "attempts": 1 if tls_answers else 12, "seconds": 0.011 if tls_answers else 60.2,
+                              "error": None if tls_answers else "timed out"}}}
+
+
+def step_result(profile, cpu_limit, memory_limit, rate):
+    """A step of http-keep-alive at `rate` under a profile, as the load
+    generator reports it: every request answered, smock at 30 µs each."""
+    return {
+        "id": f"http-keep-alive@{profile}@{rate}", "case": "http-keep-alive", "profile": profile,
+        "cpu_limit": cpu_limit, "memory_limit": memory_limit, "rate": rate, "ramp_s": 2, "duration_s": 20,
+        "tail_s": 3, "connections": 64, "protocol": "http", "connection": "keep-alive", "idle_connections": 0,
+        "achieved_rate": rate, "errors": 0,
+        "latency_ms": {"p50": 1.2, "p90": 1.6, "p99": 2.0, "p99_9": 2.5, "max": 4.0},
+        "latency_from_release_ms": {"p50": 0.3, "p90": 0.5, "p99": 1.0, "p99_9": 1.5, "max": 3.0},
+        "generator_lag_ms": {"p50": 1.0, "p99": 1.9, "p99_9": 2.0, "max": 3.1}, "load_generator_late": False,
+        "requests": {"scheduled": rate * 20, "ok": rate * 20, "unexpected_status": 0, "no_response": 0},
+        "smock_cpu": {"usage_s": round(rate * 25 * 30e-6, 3), "periods": 250, "throttled_periods": 0,
+                      "throttled_s": 0.0, "source": "cgroup", "process_s": round(rate * 25 * 30e-6, 2),
+                      "wall_s": 25.004, "requests": rate * 25, "us_per_request": 30.0,
+                      "utilization": round(rate * 25 * 30e-6 / (25.004 * limit_cpus(cpu_limit)), 4)},
+        "memory": {"peak_bytes": 20 << 20, "oom_kills": None},
+        "rss_kib": {"first": 17000, "last": 18000, "max": 18000}, "smock_ready": True}
+
+
 def generator_log(profile="small", cpu_limit="250m", memory_limit="512Mi", rates=(500, 1000), tls_answers=True):
     """What the load generator writes for a profile of the small plans: when
     smock's TLS port does not answer, it runs no step."""
-    lines = [{"kind": "start", "profile": profile, "oha": "oha 1.16.0",
-              "status": {"version": "0.2.0", "commit": "a21fe97d59c6", "toolchain": "moonc", "digest": "48f7ce9715f0",
-                         "mocks": []}},
-             {"kind": "idle-rss", "profile": profile, "idle": {
-                 "profile": profile, "cpu_limit": cpu_limit, "memory_limit": memory_limit, "settle_s": 5,
-                 "smock_ready": True, "digest": "48f7ce9715f0", "rss_kib": 16384,
-                 "memory": {"peak_bytes": 15 << 20, "oom_kills": None}}},
-             {"kind": "traffic-check", "profile": profile, "ok": tls_answers, "host": "catalog.bench.internal",
-              "method": "GET", "target": "/catalog/items/SKU-00317", "window_s": 60,
-              "ports": {"plain": {"port": 80, "answered": True, "status": 200, "attempts": 1, "seconds": 0.004,
-                                  "error": None},
-                        "tls": {"port": 443, "answered": tls_answers, "status": 200 if tls_answers else None,
-                                "attempts": 1 if tls_answers else 12, "seconds": 0.011 if tls_answers else 60.2,
-                                "error": None if tls_answers else "timed out"}}}]
+    lines = [start_line(profile), idle_line(profile, cpu_limit, memory_limit),
+             traffic_check_line(profile, tls_answers)]
     for rate in rates if tls_answers else ():
-        lines.append({"kind": "step", "result": {
-            "id": f"http-keep-alive@{profile}@{rate}", "case": "http-keep-alive", "profile": profile,
-            "cpu_limit": cpu_limit, "memory_limit": memory_limit, "rate": rate, "ramp_s": 2, "duration_s": 20,
-            "tail_s": 3, "connections": 64, "protocol": "http", "connection": "keep-alive", "idle_connections": 0,
-            "achieved_rate": rate, "errors": 0,
-            "latency_ms": {"p50": 1.2, "p90": 1.6, "p99": 2.0, "p99_9": 2.5, "max": 4.0},
-            "latency_from_release_ms": {"p50": 0.3, "p90": 0.5, "p99": 1.0, "p99_9": 1.5, "max": 3.0},
-            "generator_lag_ms": {"p50": 1.0, "p99": 1.9, "p99_9": 2.0, "max": 3.1}, "load_generator_late": False,
-            "requests": {"scheduled": rate * 20, "ok": rate * 20, "unexpected_status": 0, "no_response": 0},
-            "smock_cpu": {"usage_s": round(rate * 25 * 30e-6, 3), "periods": 250, "throttled_periods": 0,
-                          "throttled_s": 0.0, "source": "cgroup", "process_s": round(rate * 25 * 30e-6, 2),
-                          "wall_s": 25.004, "requests": rate * 25, "us_per_request": 30.0,
-                          "utilization": round(rate * 25 * 30e-6 / (25.004 * limit_cpus(cpu_limit)), 4)},
-            "memory": {"peak_bytes": 20 << 20, "oom_kills": None},
-            "rss_kib": {"first": 17000, "last": 18000, "max": 18000}, "smock_ready": True}})
+        lines.append({"kind": "step", "result": step_result(profile, cpu_limit, memory_limit, rate)})
     if not tls_answers:
         lines.append({"kind": "stopped", "profile": profile, "reason": SILENT_TLS, "after": None,
                       "steps": [f"http-keep-alive@{profile}@{rate}" for rate in rates]})
     lines.append({"kind": "done", "profile": profile})
+    return "".join(json.dumps(line) + "\n" for line in lines)
+
+
+def variant_generator_log(commits, rounds=4, profile="small", cpu_limit="250m", memory_limit="512Mi",
+                          rates=(500, 1000), skipped=()):
+    """What the load generator writes for a run of variants under a profile
+    of the small plans, each variant's smock saying the commit of
+    `commits` ({label: commit}, the baseline first): each one's start, idle
+    RSS and traffic check, then the runs, rounds outer, the rates in the
+    middle and the variants inner, their order turned by one each round and
+    rate, every line tagged with its variant (and a run's with its round);
+    then each one's done. The variants `skipped` are not scraped a second
+    into each step (no-first-second)."""
+    labels = list(commits)
+    lines = []
+    for label in labels:
+        lines += [{**start_line(profile, commits[label]), "variant": label, "first_second": label not in skipped,
+                   "rounds": rounds},
+                  {**idle_line(profile, cpu_limit, memory_limit), "variant": label},
+                  {**traffic_check_line(profile), "variant": label}]
+    for round_ in range(1, rounds + 1):
+        for index, rate in enumerate(rates):
+            for offset in range(len(labels)):
+                label = labels[(round_ - 1 + index + offset) % len(labels)]
+                lines.append({"kind": "step", "variant": label, "round": round_,
+                              "neighbours": {other: 0.004 for other in labels if other != label},
+                              "node_steal_s": {other: 0.0 for other in labels},
+                              "result": step_result(profile, cpu_limit, memory_limit, rate)})
+    lines += [{"kind": "done", "profile": profile, "variant": label} for label in labels]
     return "".join(json.dumps(line) + "\n" for line in lines)
 
 
@@ -1648,6 +1716,390 @@ class Leftovers(Script):
         self.assertNotIn(f"repository {repository['words'][3]}: deleted", output)
         self.assertIn("LEFT AFTER THE RUN", output)
         self.assertIn(f"repository {repository['words'][3]} us-central1", output)
+
+
+class Variants(Script):
+    """--variant compares 2 to 4 smock binaries, or one binary with other
+    options, on one node under each profile: each variant in a Pod of its
+    own, which the run applies and waits for one after the other, checks
+    that they share one node at the plan's limits, and has one load
+    generator measure in turn, over --rounds rounds; the summary compares
+    them."""
+
+    def test_wrong_combinations_of_variants_and_rounds_exit_2_and_call_nothing(self):
+        other = self.smock_for(HOST_ARCH, "0d984c8a1b2c")
+        for args, expected in (
+                (["--variant", f"a={self.smock}", "--variant", f"b={other}", "--smock", self.smock],
+                 "give the binaries with --smock or with --variant, not both"),
+                (["--variant", f"a={self.smock}"], "2 to 4 variants, not 1"),
+                ([arg for label in "abcde" for arg in ("--variant", f"{label}={self.smock}")],
+                 "2 to 4 variants, not 5"),
+                (["--rounds", "4"], "--rounds needs --variant"),
+                (["--variant", f"a={self.smock}", "--variant", f"b={other}", "--rounds", "0"],
+                 "--rounds is a number of rounds, at least 1, not 0"),
+                (["--variant", f"a={self.smock}", "--variant", f"a={other}"],
+                 "variant a is given twice: give each its own label"),
+                (["--variant", f"A={self.smock}", "--variant", f"b={other}"], "variant label A: use 1 to 16"),
+                (["--variant", f"a={self.smock},no-tls", "--variant", f"b={other}"],
+                 "variant a: no option no-tls; there are no-init and no-first-second"),
+                (["--variant", f"a={self.smock}", "--variant", "b"],
+                 "--variant b: give it as LABEL=FILE[,no-init][,no-first-second]"),
+                (["--variant", f"a={self.smock}", "--variant", f"b={self.tmp}/missing"],
+                 f"no file {self.tmp}/missing")):
+            # Without --smock: a run of variants is given its binaries.
+            status, output = self.run_script_without_smock("--dry-run", *args)
+            self.assertEqual(status, 2, (args, output))
+            self.assertIn(expected, output, args)
+        self.assertEqual(self.calls(), [])
+
+    def test_a_profile_starts_with_the_margin_gke_py_estimates_with(self):
+        self.assertIn(f"deadline_s + {gke_module().TIME_LIMIT_MARGIN_S}))", SCRIPT.read_text())
+
+    def test_the_script_refuses_variants_as_gke_py_does_before_anything_is_made(self):
+        # The script checks the variants before the cluster is made, and
+        # gke.py once it is: both by gke.py's rules.
+        gke = gke_module()
+        labels = [f"v{number}" for number in range(gke.MAX_VARIANTS + 1)]
+        status, output = self.run_script_without_smock(
+            "--dry-run", *(arg for label in labels for arg in ("--variant", f"{label}={self.smock}")))
+        self.assertEqual(status, 2, output)
+        self.assertIn(f"{gke.MIN_VARIANTS} to {gke.MAX_VARIANTS} variants, not {gke.MAX_VARIANTS + 1}", output)
+        script = SCRIPT.read_text()
+        self.assertIn(f"^{gke.VARIANT_LABEL.pattern}$", script)
+        self.assertIn(f"rounds=${{rounds:-{gke.DEFAULT_ROUNDS}}}", script)
+        self.assertEqual(self.calls(), [])
+
+    def test_a_label_too_long_for_a_profiles_service_is_refused_before_anything_is_made(self):
+        name = "a-profile-whose-name-is-forty-four-chars-long"[:44]
+        self.plan.write_text(json.dumps({**SMALL_PLAN, "profiles": [{**SMALL_PLAN["profiles"][0], "name": name}],
+                                         "cases": [{**SMALL_PLAN["cases"][0], "rates": {name: [500, 1000]}}]}))
+        status, output = self.run_script_without_smock("--yes", "--variant", f"r1={self.smock}",
+                                                       "--variant", f"abcdefghijklmnop={self.smock}")
+        self.assertEqual(status, 1, output)
+        self.assertIn(f"variant abcdefghijklmnop under profile {name} cannot name a Kubernetes Service "
+                      f"(smock-{name}-abcdefghijklmnop): give it a shorter label", output)
+        self.assertEqual(self.changing_calls(), [])
+        self.assertEqual(self.made(["push"]), [])
+
+    def test_binaries_built_from_any_commit_are_named_by_their_sha256_and_one_for_another_architecture_is_refused(self):
+        # The harness is the commit checked out; the binaries are what the
+        # run compares, so they need not be built from it.
+        old = self.smock_for(HOST_ARCH, "0d984c8a1b2c")
+        status, output = self.run_script_without_smock("--variant", f"r1={old}", "--variant", f"r2={self.smock}")
+        self.assertEqual(status, 0, output)
+        for label, binary, commit in (("r1", old, "0d984c8a1b2c"), ("r2", self.smock, HEAD)):
+            self.assertIn(f"variant {label}: {binary} says it is built from commit {commit}; its SHA-256 is "
+                          f"{hashlib.sha256(binary.read_bytes()).hexdigest()}", output)
+        # One this machine cannot run: what smock says of its commit once
+        # it runs is in the summary.
+        foreign = [self.smock_for(OTHER_ARCH, commit) for commit in ("0d984c8a1b2c", HEAD)]
+        status, output = self.run_script_without_smock("--arch", OTHER_ARCH, "--oha",
+                                                       self.binary("oha", OTHER_ARCH, "oha 1.16.0\n"),
+                                                       "--variant", f"r1={foreign[0]}", "--variant", f"r2={foreign[1]}")
+        self.assertEqual(status, 0, output)
+        self.assertIn(f"variant r1: {foreign[0]} is for {OTHER_ARCH}, which this machine cannot run; its SHA-256 is "
+                      f"{hashlib.sha256(foreign[0].read_bytes()).hexdigest()}; the summary has the commit it says it "
+                      "is built from", output)
+        # A binary for another architecture than the run's is refused
+        # before anything is made.
+        status, output = self.run_script_without_smock("--yes", "--variant", f"r1={foreign[0]}",
+                                                       "--variant", f"r2={self.smock}")
+        self.assertEqual(status, 1, output)
+        self.assertIn(f"variant r1: {foreign[0]} is for {OTHER_ARCH}, not for linux/{HOST_ARCH}, which the run is for",
+                      output)
+        self.assertEqual(self.changing_calls(), [])
+
+    def test_the_estimate_and_each_profiles_time_count_every_variant_in_every_round(self):
+        # Two variants in 4 rounds make 16 runs of small's two steps: its
+        # Job may take 1,187 s, where smock alone's takes 507 s.
+        b = self.smock_for(HOST_ARCH, "0d984c8a1b2c")
+        status, output = self.run_script_without_smock("--dry-run", "--variant", f"a={self.smock}",
+                                                       "--variant", f"b={b}")
+        self.assertEqual(status, 0, output)
+        self.assertIn("- smock's Pods, one for each of 2 variants on one node, 1 profile one after the other:", output)
+        self.assertIn("profile small: 2 steps for each of 2 variants in each of 4 rounds, 16 runs; the load "
+                      "generator's Job may take 19 minutes", output)
+        # A run that fits in 30 minutes alone does not with its variants.
+        status, output = self.run_script_without_smock("--yes", "--time-limit", "30m", "--variant", f"a={self.smock}",
+                                                       "--variant", f"b={b}")
+        self.assertEqual(status, 1, output)
+        self.assertIn("to fit in the time limit of 30 minutes, so the run would skip it and any after it: the run "
+                      "needs a limit of about 39 minutes; run fewer profiles, cases, variants or rounds, or raise the "
+                      "limit", output)
+        self.assertEqual(self.changing_calls(), [])
+        status, output = self.run_script("--yes", "--time-limit", "30m")
+        self.assertEqual(status, 0, output)
+
+    def test_each_distinct_binary_has_one_smock_image_which_its_variants_share(self):
+        old = self.smock_for(HOST_ARCH, "0d984c8a1b2c")
+        status, output = self.run_variants(variants={"r1": [old], "r2": [self.smock], "r2b": [self.smock],
+                                                     "r2h": [self.smock, "no-init", "no-first-second"]})
+        self.assertEqual(status, 0, output)
+        # One image of smock for each of the two binaries, and the load
+        # generator's, each built once and pushed once.
+        tags = [next(arg for arg in call["argv"] if arg.startswith("--tag=")).split("=", 1)[1].rsplit(":", 1)[0]
+                for call in self.made(["build"])]
+        self.assertEqual(tags, ["smock-gke-bench/smock-r1", "smock-gke-bench/smock-r2", "smock-gke-bench/generator"])
+        pushed = [call["words"][1].rsplit("/", 1)[1].split(":")[0] for call in self.made(["push"])]
+        self.assertEqual(pushed, ["smock-r1", "smock-r2", "generator"])
+        images = self.pod_images()
+        self.assertEqual(set(images), {"smock-small-r1", "smock-small-r2", "smock-small-r2b", "smock-small-r2h"})
+        self.assertRegex(images["smock-small-r1"], r"/smock-r1@sha256:[0-9a-f]{64}$")
+        self.assertRegex(images["smock-small-r2"], r"/smock-r2@sha256:[0-9a-f]{64}$")
+        self.assertEqual({images[f"smock-small-{label}"] for label in ("r2", "r2b", "r2h")}, {images["smock-small-r2"]})
+        digest = hashlib.sha256(self.smock.read_bytes()).hexdigest()
+        self.assertIn(f"smock's image smock-r2 holds the binary of r2, r2b and r2h (SHA-256 {digest})", output)
+        # r2h's options: its Pod has no init container, and the load
+        # generator does not scrape it a second into each step.
+        pods = {item["metadata"]["name"]: item for call in self.made(["apply"])
+                for item in call["document"].get("items", []) if item["kind"] == "Pod"}
+        self.assertEqual({name: "initContainers" in pod["spec"] for name, pod in pods.items()},
+                         {"smock-small-r1": True, "smock-small-r2": True, "smock-small-r2b": True,
+                          "smock-small-r2h": False})
+        [job] = [call["document"] for call in self.made(["apply"]) if call["document"]["kind"] == "Job"]
+        env = {item["name"]: item["value"] for item in job["spec"]["template"]["spec"]["containers"][0]["env"]}
+        self.assertEqual({variant["label"]: variant["first_second"] for variant in json.loads(env["VARIANTS"])},
+                         {"r1": True, "r2": True, "r2b": True, "r2h": False})
+
+    def test_a_dry_run_of_variants_prints_each_image_and_each_variant_it_would_make(self):
+        old = self.smock_for(HOST_ARCH, "0d984c8a1b2c")
+        status, output = self.run_script_without_smock("--dry-run", "--variant", f"r1={old}", "--variant",
+                                                       f"r2={self.smock}", "--variant", f"r2b={self.smock}")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(self.changing_calls(), [])
+        for expected in ("would run: docker build", "--tag=smock-gke-bench/smock-r1:", "--tag=smock-gke-bench/smock-r2:",
+                         "/smock-r1:", "would run: env DOCKER_CONFIG=", "/smock-r2:", "manifests/small/smock-r1.json",
+                         "manifests/small/smock-r2b.json", "wait --for=condition=Ready pod/smock-small-r2b",
+                         "would check that the variants share a node, with the limits of small as their requests and "
+                         "limits", "smock-node-cpu.log",
+                         "would split the results in", "same-node.json and same-node.md, also as summary.md"):
+            self.assertIn(expected, output)
+        # r2b shares r2's image.
+        self.assertNotIn("smock-gke-bench/smock-r2b", output)
+
+    def test_a_dry_run_of_variants_on_a_machine_without_docker_still_prints_what_the_run_would_do(self):
+        old = self.smock_for(HOST_ARCH, "0d984c8a1b2c")
+        status, output = self.run_script_without_smock("--dry-run", "--variant", f"r1={old}", "--variant",
+                                                       f"r2={self.smock}", DOCKER=str(self.tmp / "missing" / "docker"))
+        # It cannot run, and says why; then what it would do.
+        self.assertEqual(status, 1, output)
+        self.assertNotIn("unbound variable", output)
+        self.assertIn("docker is not on PATH", output)
+        for expected in ("docker build --platform", "--tag=smock-gke-bench/smock-r1:", "--tag=smock-gke-bench/smock-r2:",
+                         "manifests/small/smock-r1.json", "manifests/small/smock-r2.json"):
+            self.assertIn(expected, output)
+        self.assertEqual(self.changing_calls(), [])
+
+    def test_each_variant_joins_the_node_before_the_next_and_the_load_generator_starts_once_all_are_there(self):
+        status, output = self.run_variants()
+        self.assertEqual(status, 0, output)
+        steps = [(call["words"][0], self.filename(call) if call["words"][0] == "apply" else call["words"][1])
+                 for call in self.calls("kubectl") if call["words"][:1] in (["apply"], ["wait"])]
+        self.assertEqual(steps, [("apply", "namespace.json"), ("apply", "smock-r1.json"), ("wait", "pod/smock-small-r1"),
+                                 ("apply", "smock-r2.json"), ("wait", "pod/smock-small-r2"),
+                                 ("apply", "generator.json")])
+        # The load generator measures each variant in turn, in 4 rounds.
+        [job] = [call["document"] for call in self.made(["apply"]) if call["document"]["kind"] == "Job"]
+        env = {item["name"]: item["value"] for item in job["spec"]["template"]["spec"]["containers"][0]["env"]}
+        self.assertEqual(([variant["label"] for variant in json.loads(env["VARIANTS"])], env["ROUNDS"]),
+                         (["r1", "r2"], "4"))
+        # Its Job goes first, then each variant.
+        self.assertEqual([self.filename(call) for call in self.made(["delete"])],
+                         ["generator.json", "smock-r1.json", "smock-r2.json"])
+        self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
+        self.assertIn("nothing is left", output)
+
+    def test_the_summary_compares_the_variants_from_their_samples_each_summarized_as_a_run_of_its_binary(self):
+        old = self.smock_for(HOST_ARCH, "0d984c8a1b2c")
+        binaries = {"r1": old, "r2": self.smock, "r2h": self.smock}
+        status, output = self.run_variants(variants={"r1": [old], "r2": [self.smock],
+                                                     "r2h": [self.smock, "no-init", "no-first-second"]})
+        self.assertEqual(status, 0, output)
+        raw = self.out / "raw" / "small"
+        # What the run kept of each variant: its log, what its init
+        # container printed of its node's CPU (r2h has none), and its own
+        # Service with its EndpointSlices.
+        for label in binaries:
+            self.assertEqual((raw / label / "smock.log").read_text(),
+                             SMOCK_LOG.replace("listening", f"{label} listening"))
+            self.assertEqual((raw / label / "smock-node-cpu.log").exists(), label != "r2h", label)
+            kept = json.loads((raw / label / "service.json").read_text())
+            self.assertEqual([(item["kind"], item["metadata"].get("labels", {}).get("kubernetes.io/service-name",
+                                                                                   item["metadata"]["name"]))
+                              for item in kept["items"]],
+                             [("Service", f"smock-small-{label}"), ("EndpointSlice", f"smock-small-{label}")])
+        self.assertEqual([call["words"][1] for call in self.calls("kubectl") if "--container=node-cpu" in call["argv"]],
+                         ["pod/smock-small-r1", "pod/smock-small-r2"])
+        # A sample for each variant in each round, summarized as a run of
+        # its binary alone, which compare.py compares with another.
+        samples = self.out / "samples"
+        self.assertEqual(sorted(path.name for path in samples.iterdir()),
+                         sorted(f"{round_}-{label}" for round_ in range(1, 5) for label in binaries))
+        for round_ in range(1, 5):
+            for label, binary in binaries.items():
+                summary = json.loads((samples / f"{round_}-{label}" / "summary.json").read_text())
+                conditions = json.loads((samples / f"{round_}-{label}" / "conditions.json").read_text())
+                self.assertTrue(summary["complete"], (round_, label))
+                self.assertEqual(conditions["smock"]["sha256"], hashlib.sha256(binary.read_bytes()).hexdigest())
+                self.assertEqual(conditions["smock"]["image"], "sha256:" + "ab" * 32)
+        # The comparison, which is the run's summary.md.
+        report = json.loads((self.out / "same-node.json").read_text())
+        self.assertEqual([(variant["label"], variant["commit"], variant["sha256"], variant["options"])
+                          for variant in report["variants"]],
+                         [("r1", "0d984c8a1b2c", hashlib.sha256(old.read_bytes()).hexdigest(), []),
+                          ("r2", HEAD, hashlib.sha256(self.smock.read_bytes()).hexdigest(), []),
+                          ("r2h", HEAD, hashlib.sha256(self.smock.read_bytes()).hexdigest(),
+                           ["no-init", "no-first-second"])])
+        self.assertTrue(report["complete"])
+        self.assertEqual(report["problems"], [])
+        self.assertEqual((self.out / "summary.md").read_text(), (self.out / "same-node.md").read_text())
+        self.assertFalse((self.out / "summary.json").exists())
+        self.assertIn(f"results: {self.out} (summary.md, the comparison, also as same-node.md; same-node.json; "
+                      "samples/; raw/)", output)
+        self.assertIn(f"compare two samples with: python3 bench/compare.py {self.out}/samples/1-r1 "
+                      f"{self.out}/samples/1-r2", output)
+
+    def test_variants_on_two_nodes_stop_the_run_before_the_load_generator_starts(self):
+        self.configure(pod_nodes={"smock-small-r2": "node-c"})
+        status, output = self.run_variants()
+        self.assertEqual(status, 1, output)
+        self.assertIn("the variants cannot be compared under small, so the load generator was not started: the smock "
+                      "Pods of small are on 2 nodes, not one: r1 on node-a, r2 on node-c", output)
+        self.assertEqual([call for call in self.made(["apply"]) if call["document"]["kind"] == "Job"], [])
+        # What the run read of the Pods and kept of each variant says so.
+        raw = self.out / "raw" / "small"
+        self.assertEqual({pod["name"]: pod["node"] for pod in json.loads((raw / "pods.json").read_text())["smock"]},
+                         {"smock-small-r1": "node-a", "smock-small-r2": "node-c"})
+        for label in ("r1", "r2"):
+            self.assertTrue((raw / label / "smock.log").exists(), label)
+        self.assertIn("small: the smock Pods of small are on 2 nodes, not one: r1 on node-a, r2 on node-c",
+                      (self.out / "summary.md").read_text())
+        # The load generator never said how many rounds it would run: the
+        # runner does, and none of their runs was measured.
+        self.assertEqual(sorted(path.name for path in (self.out / "samples").iterdir()),
+                         sorted(f"{round_}-{label}" for round_ in range(1, 5) for label in ("r1", "r2")))
+        self.assertIn("The load generator did not report 16 runs", (self.out / "summary.md").read_text())
+        self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
+        self.assertIn("nothing is left", output)
+
+    def test_a_run_stopped_before_the_load_generator_compares_the_variants_in_the_order_given(self):
+        # r2 is the baseline, then r1 and r2b, though kubectl lists the Pods
+        # by name; r1 is on another node, so the load generator never says
+        # their order.
+        self.configure(pod_nodes={"smock-small-r1": "node-c"})
+        status, output = self.run_variants(variants={"r2": [self.smock],
+                                                     "r1": [self.smock_for(HOST_ARCH, "0d984c8a1b2c")],
+                                                     "r2b": [self.smock]})
+        self.assertEqual(status, 1, output)
+        report = json.loads((self.out / "same-node.json").read_text())
+        self.assertEqual((report["baseline"], [variant["label"] for variant in report["variants"]]),
+                         ("r2", ["r2", "r1", "r2b"]))
+        self.assertIn("| r2 (baseline) |", (self.out / "summary.md").read_text())
+
+    def test_a_variant_that_cannot_join_the_node_of_the_first_stops_the_run_with_its_events_kept(self):
+        # Pending: the first variant's node has no room for it.
+        events = ("Warning  FailedScheduling  pod/smock-small-r2  0/3 nodes are available: 3 node(s) didn't match pod "
+                  "affinity rules\n")
+        self.configure(never_ready=["pod/smock-small-r2"], pod_nodes={"smock-small-r2": None}, events=events,
+                       describe="Name:  smock-small-r2\nStatus:  Pending\n")
+        status, output = self.run_variants()
+        self.assertEqual(status, 1, output)
+        self.assertIn("variant r2 could not join the node of variant r1 under small: its Pod had no node after 15 "
+                      "minutes", output)
+        self.assertIn("didn't match pod affinity rules", output)
+        raw = self.out / "raw" / "small"
+        self.assertEqual((raw / "r2" / "describe.txt").read_text(), "Name:  smock-small-r2\nStatus:  Pending\n")
+        self.assertTrue((raw / "r1" / "smock.log").exists())
+        self.assertEqual([call for call in self.made(["apply"]) if call["document"]["kind"] == "Job"], [])
+        self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
+        # On the node, but never ready.
+        self.configure(never_ready=["pod/smock-small-r2"])
+        status, output = self.run_variants()
+        self.assertEqual(status, 1, output)
+        self.assertIn("variant r2 did not become ready under small, on the node of variant r1", output)
+
+    def test_a_run_of_variants_that_stops_under_a_later_profile_compares_what_it_measured_and_says_why(self):
+        # small measures every run; then r1 never becomes ready under large.
+        self.plan.write_text(json.dumps(TWO_PROFILES_PLAN))
+        self.configure(never_ready=["pod/smock-large-r1"])
+        status, output = self.run_variants()
+        self.assertEqual(status, 1, output)
+        reason = "variant r1 did not become ready under large"
+        self.assertIn(f"gke-bench: {reason}", output)
+        report = json.loads((self.out / "same-node.json").read_text())
+        self.assertEqual(report["stopped"], {"reason": reason, "profile": "large", "after": None})
+        self.assertEqual({name: profile["complete"] for name, profile in report["gke"]["profiles"].items()},
+                         {"small": True, "large": False})
+        markdown = (self.out / "summary.md").read_text()
+        self.assertIn(f"**Stopped early:** the run stopped under profile large, before its first run: {reason}.",
+                      markdown)
+        self.assertEqual(markdown, (self.out / "same-node.md").read_text())
+        # Each sample says so too, as a run of smock alone.
+        summary = json.loads((self.out / "samples" / "1-r2" / "summary.json").read_text())
+        self.assertEqual(summary["gke"]["stopped"], {"reason": reason, "profile": "large", "after": None})
+        self.assertIn("summary.md says where and why the run stopped", output)
+        self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
+        self.assertIn("nothing is left", output)
+
+    def test_a_variant_not_deleted_in_time_stops_the_later_profiles_and_is_named(self):
+        self.plan.write_text(json.dumps(TWO_PROFILES_PLAN))
+        self.configure(delete_fails_on="manifests/small/smock-r2.json")
+        status, output = self.run_variants()
+        self.assertEqual(status, 1, output)
+        self.assertIn("not deleted in 5 minutes under small: the Pod and Service of variant r2; no later profile runs "
+                      "beside them", output)
+        # Every variant's deletion was tried; nothing of large was made.
+        self.assertEqual([self.filename(call) for call in self.made(["delete"])],
+                         ["generator.json", "smock-r1.json", "smock-r2.json"])
+        self.assertFalse([call for call in self.made(["apply"]) if "/large/" in self.filename(call, whole=True)])
+        report = json.loads((self.out / "same-node.json").read_text())
+        self.assertEqual(report["stopped"]["reason"],
+                         "the Pod and Service of variant r2 were not deleted in 5 minutes, so no later profile ran")
+        self.assertIn("nothing is left", output)
+
+    def configure(self, **config):
+        logs = {"generator-small": str(self.tmp / "generator-small.log")}
+        (self.tmp / "smock-node-cpu.log").write_text(json.dumps({"kind": "node-cpu", "cpu": NODE_CPU}) + "\n")
+        for label in ("r1", "r2", "r2b", "r2h"):
+            (self.tmp / f"smock-small-{label}.log").write_text(SMOCK_LOG.replace("listening", f"{label} listening"))
+            logs[f"smock-small-{label}"] = str(self.tmp / f"smock-small-{label}.log")
+            logs[f"smock-small-{label}/node-cpu"] = str(self.tmp / "smock-node-cpu.log")
+        config.setdefault("logs", logs)
+        super().configure(**config)
+
+    def run_variants(self, *args, variants=None, **environment):
+        """A run (--yes) of `variants` ({label: [binary, options...]}; by
+        default r1, from another commit, and r2, from the one checked out),
+        whose load generator measured each in 4 rounds."""
+        variants = variants or {"r1": [self.smock_for(HOST_ARCH, "0d984c8a1b2c")], "r2": [self.smock]}
+        (self.tmp / "generator-small.log").write_text(variant_generator_log(
+            {label: "0d984c8a1b2c" if label == "r1" else HEAD for label in variants},
+            skipped=[label for label, (_, *flags) in variants.items() if "no-first-second" in flags]))
+        options = [arg for label, (binary, *flags) in variants.items()
+                   for arg in ("--variant", ",".join([f"{label}={binary}", *flags]))]
+        return self.run_script_without_smock("--yes", *options, *args, **environment)
+
+    def pod_images(self):
+        """The image of each smock Pod applied, by name."""
+        return {item["metadata"]["name"]: item["spec"]["containers"][0]["image"]
+                for call in self.made(["apply"]) for item in call["document"].get("items", [])
+                if item["kind"] == "Pod"}
+
+    @staticmethod
+    def filename(call, whole=False):
+        """The file a kubectl apply or delete was given, by its name, or its
+        whole path when `whole`."""
+        path = next(arg.split("=", 1)[1] for arg in call["argv"] if arg.startswith("--filename="))
+        return path if whole else Path(path).name
+
+    def run_script_without_smock(self, *args, timeout=120, **environment):
+        """The script with this test's plan, oha and results directory, and
+        no --smock unless `args` gives it."""
+        command = [str(SCRIPT), "--plan", str(self.plan), "--oha", str(self.oha), "--out", str(self.out),
+                   *map(str, args)]
+        result = subprocess.run(command, env=self.environment(**environment), capture_output=True, text=True,
+                                timeout=timeout)
+        return result.returncode, result.stdout + result.stderr
 
 
 if __name__ == "__main__":

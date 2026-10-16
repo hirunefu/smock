@@ -1,6 +1,8 @@
 """Tests of the GKE Autopilot run's helper, bench/gke/gke.py: the manifests
-it renders for each profile, its plan of the run and cost estimate, and the
-summary it makes of what the load generator and the cluster reported.
+it renders for each profile, its plan of the run and cost estimate, the
+summary it makes of what the load generator and the cluster reported, and,
+for a run of variants of smock on one node, its samples and the comparison
+of the variants.
 
 They run the helper through its command line, as scripts/gke-bench.sh does,
 and need python3 alone, but for the test of the load generator
@@ -27,6 +29,8 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 BENCH = Path(__file__).resolve().parent
 ROOT = BENCH.parent
@@ -52,14 +56,19 @@ class Helper(unittest.TestCase):
         return path
 
     def manifests(self, profile="autopilot-min", arch="arm64", plan=BENCH / "plan-autopilot.json", cases=None,
-                  smock_deadline_s=3000, zone="us-central1-a"):
-        """The manifests rendered for one profile: {file name: objects}."""
+                  smock_deadline_s=3000, zone="us-central1-a", variants=(), rounds=None):
+        """The manifests rendered for one profile: {file name: objects}.
+        With `variants` (each as --variant takes it), smock's images are
+        theirs."""
         out = self.directory()
+        images = [arg for variant in variants for arg in ("--variant", variant)] or ["--smock-image", SMOCK_IMAGE]
         args = ["manifests", "--plan", plan, "--profile", profile, "--arch", arch, *(["--zone", zone] if zone else []),
-                "--smock-image", SMOCK_IMAGE, "--generator-image", GENERATOR_IMAGE,
+                *images, "--generator-image", GENERATOR_IMAGE,
                 "--smock-deadline-s", smock_deadline_s, "--out", out]
         if cases:
             args += ["--cases", cases]
+        if rounds is not None:
+            args += ["--rounds", rounds]
         status, stdout, stderr = helper(*args)
         self.assertEqual(status, 0, stderr)
         rendered = {}
@@ -237,6 +246,242 @@ class Manifests(Helper):
         self.assertEqual(namespaces, {namespace["metadata"]["name"]})
 
 
+# A second smock image, of another binary than SMOCK_IMAGE's.
+OTHER_IMAGE = "registry.example/smock-bench/smock@sha256:" + "3" * 64
+
+# Two variants of smock, as --variant takes them: R1's binary, the
+# baseline, and R2's.
+TWO_VARIANTS = (f"r1={SMOCK_IMAGE}", f"r2={OTHER_IMAGE}")
+
+
+class Variants(Helper):
+    """With variants, each variant's smock runs in a Pod and behind a
+    Service of its own, under the profile's limits, every one on the node
+    of the first, while one load generator on another node measures them
+    in turn."""
+
+    def test_each_variants_pod_and_service_are_named_for_it_and_its_service_selects_its_pod_alone(self):
+        rendered = self.manifests(variants=TWO_VARIANTS)
+        self.assertEqual(sorted(rendered), ["generator.json", "namespace.json", "smock-r1.json", "smock-r2.json"])
+        pods = objects(rendered, "Pod")
+        for label, image in (("r1", SMOCK_IMAGE), ("r2", OTHER_IMAGE)):
+            [service, pod] = rendered[f"smock-{label}.json"]
+            self.assertEqual((service["kind"], pod["kind"]), ("Service", "Pod"))
+            self.assertEqual((pod["metadata"]["name"], service["metadata"]["name"]),
+                             (f"smock-autopilot-min-{label}", f"smock-autopilot-min-{label}"))
+            self.assertEqual(pod["metadata"]["labels"],
+                             {"app": "smock-bench", "profile": "autopilot-min", "variant": label})
+            self.assertEqual(service["spec"]["selector"], pod["metadata"]["labels"])
+            [container] = pod_spec(pod)["containers"]
+            self.assertEqual(container["image"], image)
+            # The load of one variant goes to its Pod, never to another's.
+            selector = service["spec"]["selector"].items()
+            self.assertEqual([other["metadata"]["name"] for other in pods
+                              if selector <= other["metadata"]["labels"].items()], [pod["metadata"]["name"]])
+
+    def test_every_variants_pod_must_share_a_node_with_the_profiles_others_and_none_keeps_another_away(self):
+        # Through the hostname, which Autopilot allows as a topology key; a
+        # nodeSelector on it is restricted there. The first Pod matches its
+        # own labels, so it may go anywhere, and the others follow it. No
+        # anti-affinity: Autopilot rejects it below 0.5 vCPU.
+        rendered = self.manifests(profile="autopilot-burst-min", variants=TWO_VARIANTS, zone=None)
+        pods = objects(rendered, "Pod")
+        self.assertEqual(len(pods), 2)
+        for pod in pods:
+            affinity = pod_spec(pod)["affinity"]
+            self.assertEqual(set(affinity), {"podAffinity"})
+            [term] = affinity["podAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]
+            self.assertEqual(term, {"labelSelector": {"matchLabels": {"app": "smock-bench",
+                                                                      "profile": "autopilot-burst-min"}},
+                                    "topologyKey": "kubernetes.io/hostname"})
+            self.assertEqual(pod_spec(pod)["nodeSelector"], {"kubernetes.io/arch": "arm64",
+                                                             "cloud.google.com/compute-class": "autopilot-arm"})
+        # The load generator stays off that node, and in its zone.
+        [job] = objects(rendered, "Job")
+        affinity = pod_spec(job)["affinity"]
+        for kind, key in (("podAntiAffinity", "kubernetes.io/hostname"),
+                          ("podAffinity", "topology.kubernetes.io/zone")):
+            [term] = affinity[kind]["requiredDuringSchedulingIgnoredDuringExecution"]
+            self.assertEqual(term["topologyKey"], key)
+            for pod in pods:
+                self.assertLessEqual(term["labelSelector"]["matchLabels"].items(), pod["metadata"]["labels"].items())
+
+    def test_a_no_init_variant_has_no_init_container_and_the_same_limits_as_the_others(self):
+        # Its container's cpu.max and the Pod's CPU limit stay the same, so
+        # that the init container alone differs.
+        rendered = self.manifests(profile="autopilot-min", variants=(f"r2={OTHER_IMAGE}",
+                                                                     f"r2h={OTHER_IMAGE},no-init,no-first-second"))
+        [_, with_init] = rendered["smock-r2.json"]
+        [_, without] = rendered["smock-r2h.json"]
+        [init] = pod_spec(with_init)["initContainers"]
+        self.assertEqual(init["name"], "node-cpu")
+        self.assertNotIn("initContainers", pod_spec(without))
+        [container] = pod_spec(without)["containers"]
+        self.assertEqual(container["resources"], pod_spec(with_init)["containers"][0]["resources"])
+        self.assertEqual((container["resources"]["limits"]["cpu"], container["resources"]["limits"]["memory"]),
+                         ("250m", "512Mi"))
+        self.assertEqual(container["resources"]["requests"], container["resources"]["limits"])
+
+    def test_the_namespace_holds_each_variants_pod_the_load_generators_and_no_more(self):
+        # Each smock Pod and the load generator's, with two to spare, as
+        # without variants, whose one smock Pod gives 4.
+        four = (*TWO_VARIANTS, f"r2b={OTHER_IMAGE}", f"r2h={OTHER_IMAGE},no-init")
+        for variants, pods in (((), "4"), (TWO_VARIANTS, "5"), (four, "7")):
+            [quota] = objects(self.manifests(variants=variants), "ResourceQuota")
+            self.assertEqual(quota["spec"]["hard"]["pods"], pods)
+
+    def test_one_load_generator_is_told_each_variants_service_in_order_and_the_rounds_in_place_of_a_target(self):
+        rendered = self.manifests(profile="autopilot-min", cases="http-keep-alive",
+                                  variants=(*TWO_VARIANTS, f"r2h={OTHER_IMAGE},no-init,no-first-second"))
+        [job] = objects(rendered, "Job")
+        [container] = pod_spec(job)["containers"]
+        env = {variable["name"]: variable["value"] for variable in container["env"]}
+        self.assertEqual(set(env), {"PROFILE", "CASES", "VARIANTS", "ROUNDS"})
+        self.assertEqual((env["PROFILE"], env["CASES"], env["ROUNDS"]), ("autopilot-min", "http-keep-alive", "4"))
+        self.assertEqual(json.loads(env["VARIANTS"]), [
+            {"label": "r1", "target": "smock-autopilot-min-r1.smock-bench.svc.cluster.local", "first_second": True},
+            {"label": "r2", "target": "smock-autopilot-min-r2.smock-bench.svc.cluster.local", "first_second": True},
+            {"label": "r2h", "target": "smock-autopilot-min-r2h.smock-bench.svc.cluster.local",
+             "first_second": False}])
+        # As many rounds as asked for.
+        [job] = objects(self.manifests(variants=TWO_VARIANTS, rounds=6), "Job")
+        [container] = pod_spec(job)["containers"]
+        self.assertIn({"name": "ROUNDS", "value": "6"}, container["env"])
+
+    def test_the_load_generator_reads_each_variants_service_from_its_job_and_makes_the_runs_its_deadline_counts(self):
+        # gke.py writes the Job and generator.py reads it: the two meet only
+        # in this environment, so it is read here as the generator reads it.
+        generator = load_generator_module()
+        gke = generator.gke
+        rendered = self.manifests(profile="autopilot-min", cases="http-keep-alive", rounds=3,
+                                  variants=(*TWO_VARIANTS, f"r2h={OTHER_IMAGE},no-init,no-first-second"))
+        [job] = objects(rendered, "Job")
+        [container] = pod_spec(job)["containers"]
+        env = {variable["name"]: variable["value"] for variable in container["env"]}
+        variants = generator.read_variants(env)
+        self.assertEqual([(variant.label, variant.first_second) for variant in variants],
+                         [("r1", True), ("r2", True), ("r2h", False)])
+        services = {service["metadata"]["name"]: service["spec"] for service in objects(rendered, "Service")}
+        for variant in variants:
+            # Each target is the host name of the Service that selects that
+            # variant's Pod, and that Service serves every port the
+            # generator sends to.
+            name, domain = variant.target.split(".", 1)
+            self.assertEqual(domain, "smock-bench.svc.cluster.local")
+            self.assertEqual(services[name]["selector"]["variant"], variant.label)
+            self.assertLessEqual({*variant.ports.values(), variant.admin_port},
+                                 {port["port"] for port in services[name]["ports"]})
+        # The Job's deadline is for as many runs as the generator makes.
+        plan = gke.read_json(BENCH / "plan-autopilot.json")
+        [profile] = gke.plan_profiles(plan, [env["PROFILE"]])
+        specs = gke.steps(plan, profile, gke.plan_cases(plan, gke.comma_list(env["CASES"])))
+        made = [spec for _, spec, _ in generator.run_order(specs, variants, int(env["ROUNDS"]))]
+        self.assertEqual(len(made), len(gke.run_steps(specs, len(variants), 3)))
+        self.assertGreater(job["spec"]["activeDeadlineSeconds"], gke.load_s(plan, made))
+
+    def test_variants_and_rounds_it_cannot_run_are_refused_with_what_to_change(self):
+        def render(*images, profile="autopilot-min", plan=BENCH / "plan-autopilot.json"):
+            return helper("manifests", "--plan", plan, "--profile", profile, "--arch", "amd64",
+                          "--generator-image", GENERATOR_IMAGE, "--smock-deadline-s", 3000, "--out", self.directory(),
+                          *images)
+
+        def variants(*texts):
+            return [arg for text in texts for arg in ("--variant", text)]
+
+        long_plan = json.loads((BENCH / "plan-autopilot.json").read_text())
+        long_name = "a-profile-whose-name-is-fifty-two-characters-long-ab"
+        long_plan["profiles"][0]["name"] = long_name
+        long_plan["cases"] = [{**case, "rates": {long_name: [125]}} for case in long_plan["cases"]]
+        long_path = self.directory() / "plan.json"
+        long_path.write_text(json.dumps(long_plan))
+        for images, expected in (
+                (variants(TWO_VARIANTS[0]), "2 to 4 variants, not 1"),
+                (variants(*TWO_VARIANTS, f"a={OTHER_IMAGE}", f"b={OTHER_IMAGE}", f"c={OTHER_IMAGE}"),
+                 "2 to 4 variants, not 5"),
+                (variants(*TWO_VARIANTS, f"r1={OTHER_IMAGE}"), "variant r1 is given twice"),
+                (variants(TWO_VARIANTS[0], f"R2={OTHER_IMAGE}"), "variant label R2"),
+                (variants(TWO_VARIANTS[0], f"r2-={OTHER_IMAGE}"), "variant label r2-"),
+                (variants(TWO_VARIANTS[0], f"a-label-of-17-chr={OTHER_IMAGE}"), "variant label a-label-of-17-chr"),
+                (variants(TWO_VARIANTS[0], OTHER_IMAGE), f"--variant {OTHER_IMAGE}: give it as LABEL=IMAGE"),
+                (variants(TWO_VARIANTS[0], "r2="), "--variant r2=: give it as LABEL=IMAGE"),
+                (variants(TWO_VARIANTS[0], f"r2={OTHER_IMAGE},no-sleep"), "variant r2: no option no-sleep"),
+                ([*variants(*TWO_VARIANTS), "--rounds", 0], "at least 1 round, not 0"),
+                (["--smock-image", SMOCK_IMAGE, "--rounds", 4], "--rounds needs --variant"),
+                (["--smock-image", SMOCK_IMAGE, *variants(*TWO_VARIANTS)], "--smock-image or --variant, not both"),
+                ([], "smock's image: --smock-image, or --variant for each variant")):
+            status, _, stderr = render(*images)
+            self.assertEqual(status, 1, images)
+            self.assertIn(expected, stderr)
+        # smock-<profile>-<label> must still name a Service.
+        status, _, stderr = render(*variants(f"r1={SMOCK_IMAGE}", f"r2-bare={OTHER_IMAGE}"), profile=long_name,
+                                   plan=long_path)
+        self.assertEqual(status, 1)
+        self.assertIn(f"variant r2-bare under profile {long_name} cannot name a Kubernetes Service "
+                      f"(smock-{long_name}-r2-bare): give it a shorter label", stderr)
+        status, _, stderr = render(*variants(f"r1={SMOCK_IMAGE}", f"r2={OTHER_IMAGE}"), profile=long_name,
+                                   plan=long_path)
+        self.assertEqual(status, 0, stderr)
+
+    def test_the_load_generators_deadline_grows_with_each_variants_runs_and_its_neighbours_scrapes(self):
+        # small_plan's two steps of 2 + 20 + 3 s with 2 s between them; the
+        # plan settles 5 s before reading idle RSS. One smock: 52 s of load,
+        # 15 s to analyse each step, 300 s to start, the 5 s settle, and 60
+        # s for each of two traffic checks.
+        plan = small_plan(self.directory())
+        status, stdout, stderr = helper("plan", "--plan", plan)
+        self.assertEqual((status, stdout), (0, "small 2 507\n"), stderr)
+        # 2 variants over 4 rounds run each step 8 times: 16 runs of 25 s
+        # with 2 s between them (430 s), each with its analysis and the
+        # scrape of the idle neighbour before and after it, 1 s each (16 ×
+        # 17 s), the start and settle, and a traffic check of each variant
+        # before the first step and one after a step (3 × 60 s).
+        status, stdout, stderr = helper("plan", "--plan", plan, "--variants", 2, "--rounds", 4)
+        self.assertEqual((status, stdout), (0, "small 2 1187\n"), stderr)
+        # 4 rounds unless told otherwise, as for the manifests.
+        self.assertEqual(helper("plan", "--plan", plan, "--variants", 2)[1], "small 2 1187\n")
+        # 4 variants in 1 round: 8 runs (214 s), each scraping 3 neighbours
+        # twice (8 × 21 s), and 5 traffic checks.
+        status, stdout, stderr = helper("plan", "--plan", plan, "--variants", 4, "--rounds", 1)
+        self.assertEqual((status, stdout), (0, "small 2 987\n"), stderr)
+        # The Job's own deadline is the plan's.
+        [job] = objects(self.manifests(profile="small", plan=plan, variants=TWO_VARIANTS), "Job")
+        self.assertEqual(job["spec"]["activeDeadlineSeconds"], 1187)
+        for args, expected in ((["--variants", 0], "1 to 4 variants, not 0"),
+                               (["--variants", 5], "1 to 4 variants, not 5"),
+                               (["--variants", 2, "--rounds", 0], "at least 1 round, not 0"),
+                               (["--rounds", 4], "--rounds needs --variants")):
+            status, _, stderr = helper("plan", "--plan", plan, *args)
+            self.assertEqual(status, 1, args)
+            self.assertIn(expected, stderr)
+
+    def test_the_plan_refuses_a_label_too_long_for_a_profiles_service_before_anything_is_made(self):
+        # As manifests would once the cluster is made: given the labels,
+        # plan checks each profile's names.
+        plan = json.loads((BENCH / "plan-autopilot.json").read_text())
+        long_name = "a-profile-whose-name-is-forty-four-chars-long"[:44]
+        plan["profiles"][0]["name"] = long_name
+        plan["cases"] = [{**case, "rates": {long_name: [125]}} for case in plan["cases"]]
+        path = self.directory() / "plan.json"
+        path.write_text(json.dumps(plan))
+        status, _, stderr = helper("plan", "--plan", path, "--variants", 2, "--labels", "r1,abcdefghijklmnop")
+        self.assertEqual(status, 1)
+        self.assertIn(f"variant abcdefghijklmnop under profile {long_name} cannot name a Kubernetes Service "
+                      f"(smock-{long_name}-abcdefghijklmnop): give it a shorter label", stderr)
+        status, stdout, stderr = helper("plan", "--plan", path, "--variants", 2, "--labels", "r1,r2")
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(stdout.split()[0], long_name)
+
+    def test_without_variants_smocks_one_pod_runs_as_before_with_no_variant_label_or_affinity(self):
+        rendered = self.manifests()
+        self.assertEqual(sorted(rendered), ["generator.json", "namespace.json", "smock.json"])
+        [pod] = objects(rendered, "Pod")
+        self.assertEqual(pod["metadata"]["labels"], {"app": "smock-bench", "profile": "autopilot-min"})
+        self.assertNotIn("affinity", pod_spec(pod))
+        [job] = objects(rendered, "Job")
+        self.assertEqual([variable["name"] for variable in pod_spec(job)["containers"][0]["env"]],
+                         ["TARGET", "PROFILE", "CASES"])
+
+
 class Plan(Helper):
     """The plan of a GKE run: the profiles it runs, each with its steps, and
     only what a Pod on GKE can run."""
@@ -277,6 +522,46 @@ class Plan(Helper):
         status, _, stderr = self.plan(plan=path)
         self.assertEqual(status, 1)
         self.assertIn("case http-keep-alive holds idle connections", stderr)
+
+
+class SameNodePlan(Helper):
+    """bench/plan-same-node.json is the plan of a run that compares smock
+    binaries on one node (scripts/gke-bench.sh --variant): HTTP keep-alive
+    alone, at the lowest rates of bench/plan-autopilot.json's ladders and,
+    under 50m and 250m, at half the lowest, under its profiles and with its
+    window, so that each sample compares with a pre-merge run's steps."""
+
+    def test_it_measures_http_keep_alive_at_and_below_the_lowest_steps_of_the_autopilot_plans_ladders(self):
+        plan = json.loads((BENCH / "plan-same-node.json").read_text())
+        autopilot = json.loads((BENCH / "plan-autopilot.json").read_text())
+        [case] = plan["cases"]
+        # Under 50m and 250m, R2's binary saturated from the second step of
+        # the autopilot plan's ladder (0.94 to 0.97 of its limit at 250
+        # requests/s under 50m in the runs of 2026-10-16, 0.80 to 0.85 at
+        # 1,250 under 250m), so each has a step below the ladder's lowest in
+        # place of its third, and two steps' 8 pairs over 4 rounds where
+        # the higher saturates.
+        self.assertEqual(case["rates"], {"autopilot-burst-min": [62, 125, 250],
+                                         "autopilot-min": [312, 625, 1250], "chart-default": [2500, 5000]})
+        http = next(case for case in autopilot["cases"] if case["name"] == "http-keep-alive")
+        self.assertEqual({key: value for key, value in case.items() if key != "rates"},
+                         {key: value for key, value in http.items() if key != "rates"})
+        for profile, rates in case["rates"].items():
+            ladder = http["rates"][profile]
+            on_it = [rate for rate in rates if rate >= ladder[0]]
+            self.assertEqual(on_it, ladder[:len(on_it)], profile)
+        for key in ("profiles", "ramp_s", "duration_s", "tail_s", "cooldown_s", "rss_interval_s", "idle_rss",
+                    "load_generator"):
+            self.assertEqual(plan[key], autopilot[key], key)
+        self.assertIn("scripts/gke-bench.sh --variant", plan["about"])
+
+    def test_four_variants_in_four_rounds_give_each_profile_of_run_1_its_jobs_time(self):
+        # 48 runs of three steps, each beside three idle variants: the
+        # Job's deadline under autopilot-burst-min and autopilot-min.
+        status, stdout, stderr = helper("plan", "--plan", BENCH / "plan-same-node.json", "--profiles",
+                                        "autopilot-burst-min,autopilot-min", "--variants", 4, "--rounds", 4)
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(stdout, "autopilot-burst-min 3 2907\nautopilot-min 3 2907\n")
 
 
 def small_plan(directory, rates=(500, 1000)):
@@ -490,6 +775,19 @@ class Summary(Helper):
         markdown = (out / "summary.md").read_text()
         self.assertIn("GKE Autopilot", markdown)
         self.assertIn("| http-keep-alive | 1000 |", markdown)
+
+    def test_the_note_says_how_smock_was_measured(self):
+        out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}], pods())
+        self.assertEqual(json.loads((out / "conditions.json").read_text())["note"], (
+            "Measured on GKE Autopilot in us-central1-a, on arm64 nodes (e4a-standard-8): smock in a autopilot-arm Pod "
+            "with each profile's limits as its requests, and oha in a Pod on another node in its zone, over the Pod "
+            "network. What smock used comes from its own /metrics, its process and cgroup metrics, scraped right "
+            "before and right after each step, and a second into it: its CPU time and throttling during the step and "
+            "its first second, from its container's cgroup; how long it waited for a CPU, the time the CFS quota held "
+            "it back included, and its node's steal time; its RSS at the step's start and end, the larger as its max; "
+            "and the most memory its container had used by the step's end (memory.peak), since smock started under "
+            "the profile, earlier steps included. Idle RSS is read once smock has been ready for the settle time, "
+            "before any load. OOM kills come from smock's restarts at the profile's end."))
 
     def test_the_conditions_record_a_hash_of_the_plan_that_leaves_out_its_description(self):
         lines = [START, generator_step(500), generator_step(1000), {"kind": "done"}]
@@ -782,6 +1080,57 @@ class Estimate(Helper):
         status, stdout, stderr = self.estimate(time_limit_s=1200)
         self.assertEqual(status, 1)
         self.assertIn("more than the time limit of 20 minutes", stderr)
+
+    def test_with_variants_each_ones_pod_and_runs_are_counted_and_the_images_they_need(self):
+        # small_plan's one profile (250m, 512Mi: $0.01359493 an hour) and
+        # two steps, 4 variants over 4 rounds on amd64 in us-central1: 32
+        # runs of 25 s with 2 s between them (862 s), each analysed in about
+        # 5 s and with 3 idle neighbours scraped before and after it in
+        # about 0.1 s each (32 × 5.6 s), the 5 s settle and a minute to
+        # start: the load generator's 1,106.2 s ($0.2968128 an hour). The
+        # profile also waits 3 minutes for its first Pod and 30 s for each
+        # other, 1,376.2 s for which its 4 smock Pods are billed; the
+        # cluster exists 9 minutes more before it, and 5 after.
+        plan = small_plan(self.directory())
+        status, stdout, stderr = self.estimate("--variants", 4, "--rounds", 4, plan=plan, arch="amd64",
+                                               time_limit_s=3600)
+        self.assertEqual(status, 0, stderr)
+        self.assertIn("- smock's Pods, one for each of 4 variants on one node, 1 profile one after the other: $0.02.",
+                      stdout)
+        self.assertIn("- The load generator's Pod (6 vCPU, 6Gi): about 18 minutes, $0.09.", stdout)
+        self.assertIn("- Artifact Registry: up to 5 images of about 100 MB", stdout)
+        self.assertIn("Expected: about $0.17, the cluster existing for about 37 minutes.", stdout)
+        # The fee, the load generator and 4 smock Pods at the largest
+        # profile's limits: $0.4511925 an hour for 65 minutes.
+        self.assertIn("At most: $0.49, if it ran until the time limit (60 minutes)", stdout)
+        # Its Job may take 2,139 s, which with the margin and the cluster's
+        # creation needs 55 minutes, more than the cluster's 47.
+        status, _, stderr = self.estimate("--variants", 4, "--rounds", 4, plan=plan, arch="amd64", time_limit_s=1200)
+        self.assertEqual(status, 1)
+        self.assertIn("profile small would start about 9 minutes in, too late for its load generator's Job, which may "
+                      "take 36 minutes, and the 10 minutes after it to fit in the time limit of 20 minutes, so the run "
+                      "would skip it and any after it: the run needs a limit of about 55 minutes; run fewer profiles, "
+                      "cases, variants or rounds, or raise the limit", stderr)
+
+    def test_with_variants_a_profile_the_runner_would_skip_for_time_is_refused(self):
+        # Run 1: the runner starts a profile only when its Job's deadline,
+        # 2,907 s here, and 10 minutes more fit before the time limit.
+        # autopilot-min would start 2,437.8 s in (the cluster's 540 s, then
+        # autopilot-burst-min's 270 s of Pod starts and 1,627.8 s of load),
+        # so it needs 5,944.8 s: 100 minutes, where the cluster alone needs
+        # 87.
+        def estimate(minutes):
+            return self.estimate("--variants", 4, "--rounds", 4, "--profiles", "autopilot-burst-min,autopilot-min",
+                                 plan=BENCH / "plan-same-node.json", arch="amd64", time_limit_s=minutes * 60)
+
+        status, _, stderr = estimate(95)
+        self.assertEqual(status, 1)
+        self.assertIn("profile autopilot-min would start about 41 minutes in, too late for its load generator's Job, "
+                      "which may take 48 minutes, and the 10 minutes after it to fit in the time limit of 95 minutes, "
+                      "so the run would skip it and any after it: the run needs a limit of about 100 minutes", stderr)
+        for minutes in (100, 120):
+            status, _, stderr = estimate(minutes)
+            self.assertEqual(status, 0, (minutes, stderr))
 
 
 class LocalSmock:
@@ -1076,6 +1425,221 @@ class Generator(Helper):
         self.assertIn("Not measured: https-keep-alive@small.", markdown)
 
 
+STEP_IDS = ["http-keep-alive@small", "https-keep-alive@small"]
+
+
+def generate_variants(plan_path, variants, rounds):
+    """Runs the load generator for profile small against several smocks on
+    this machine as variants, `variants` [(label, smock, first_second,
+    ports instead of smock's own)], for `rounds` rounds; returns its exit
+    status, its JSON lines and its output."""
+    entries = [{"label": label, "target": "localhost", "first_second": first_second,
+                "plain_port": int(ports.get("plain", smock.ports["plain"])),
+                "tls_port": int(ports.get("tls", smock.ports["tls"])), "admin_port": int(smock.ports["admin"])}
+               for label, smock, first_second, ports in variants]
+    environment = {**{name: value for name, value in os.environ.items() if name != "TARGET"},
+                   "VARIANTS": json.dumps(entries), "ROUNDS": str(rounds), "PROFILE": "small",
+                   "CASES": "http-keep-alive,https-keep-alive", "PLAN": str(plan_path),
+                   "OHA": shutil.which(OHA) or OHA, "TRAFFIC_CHECK_S": "2"}
+    generator = subprocess.run([sys.executable, str(BENCH / "gke" / "generator.py")], env=environment,
+                               capture_output=True, text=True, timeout=240)
+    lines = [json.loads(line) for line in generator.stdout.splitlines()]
+    return generator.returncode, lines, generator.stdout + generator.stderr
+
+
+class GeneratorWithVariants(Helper):
+    """With variants, smocks kept on one node, the load generator runs each
+    step of the profile against each variant in turn, one at a time, the
+    variants' order turned for each round and each step, and tags every
+    line about smock with its variant. It runs here against two smocks on
+    this machine, a and b, for two rounds; b skips the scrape a second
+    into each step."""
+
+    generator_plan = Generator.generator_plan
+    summarize = Generator.summarize
+
+    @classmethod
+    def setUpClass(cls):
+        directory = Path(tempfile.mkdtemp(prefix="smock-gke-test-"))
+        cls.addClassCleanup(shutil.rmtree, directory, ignore_errors=True)
+        cls.plan_path = Generator.generator_plan(SimpleNamespace(directory=lambda: directory))
+        with LocalSmock() as a, LocalSmock() as b:
+            cls.status, cls.lines, cls.output = generate_variants(cls.plan_path, [("a", a, True, {}),
+                                                                                  ("b", b, False, {})], 2)
+
+    def test_each_step_runs_each_variant_in_turn_in_the_turned_order_and_every_line_is_tagged(self):
+        self.assertEqual(self.status, 0, self.output)
+        order = [(1, STEP_IDS[0], "a"), (1, STEP_IDS[0], "b"), (1, STEP_IDS[1], "b"), (1, STEP_IDS[1], "a"),
+                 (2, STEP_IDS[0], "b"), (2, STEP_IDS[0], "a"), (2, STEP_IDS[1], "a"), (2, STEP_IDS[1], "b")]
+        self.assertEqual([(line["kind"], line.get("variant")) for line in self.lines],
+                         [("start", "a"), ("start", "b"), ("idle-rss", "a"), ("idle-rss", "b"),
+                          ("traffic-check", "a"), ("traffic-check", "b"), ("metrics-before", "a"),
+                          ("metrics-before", "b"), *[("step", variant) for _, _, variant in order],
+                          ("metrics-after", "a"), ("metrics-after", "b"), ("done", "a"), ("done", "b")])
+        self.assertEqual([(line["round"], line["result"]["id"], line["variant"])
+                          for line in self.lines if line["kind"] == "step"], order)
+        # Each start line says how many rounds were planned, which a log
+        # cut short does not show otherwise.
+        starts = [line for line in self.lines if line["kind"] == "start"]
+        self.assertEqual([(start["address"], start["first_second"], start["rounds"]) for start in starts],
+                         [("127.0.0.1", True, 2), ("127.0.0.1", False, 2)])
+        for start in starts:
+            self.assertRegex(start["status"]["digest"], "^[0-9a-f]{12}$")
+        for check in (line for line in self.lines if line["kind"] == "traffic-check"):
+            self.assertTrue(check["ok"], check)
+        # Each variant's own smock answered the load of its runs.
+        for step in (line["result"] for line in self.lines if line["kind"] == "step"):
+            self.assertEqual((step["errors"], step["smock_ready"]), (0, True))
+            self.assertGreaterEqual(step["smock_cpu"]["requests"], step["requests"]["ok"])
+
+    def test_a_variant_that_skips_the_scrape_a_second_into_each_step_records_no_first_second(self):
+        for line in (line for line in self.lines if line["kind"] == "step"):
+            cpu = line["result"]["smock_cpu"]
+            self.assertGreater(cpu["usage_s"], 0)
+            if line["variant"] == "a":
+                self.assertGreaterEqual(cpu["first_second"]["wall_s"], 1)
+                self.assertGreater(cpu["first_second"]["requests"], 0)
+            else:
+                self.assertIn("first_second", cpu)
+                self.assertIsNone(cpu["first_second"])
+
+    def test_each_run_records_what_the_idle_variant_used_meanwhile_and_the_nodes_steal_time(self):
+        for line in (line for line in self.lines if line["kind"] == "step"):
+            idle = "b" if line["variant"] == "a" else "a"
+            self.assertEqual(list(line["neighbours"]), [idle])
+            # An idle smock, scraped around the run: far less CPU than the
+            # one under load.
+            self.assertGreaterEqual(line["neighbours"][idle], 0)
+            self.assertLess(line["neighbours"][idle], line["result"]["smock_cpu"]["usage_s"])
+            # Each variant's count of the node's steal time, the loaded
+            # one's from its own scrapes: none here, on no virtual machine.
+            self.assertEqual(line["node_steal_s"], {"a": 0.0, "b": 0.0})
+            self.assertEqual(line["node_steal_s"][line["variant"]], line["result"]["smock_cpu"]["node_steal_s"])
+
+    def split(self):
+        """What the load generator printed, kept as the runner keeps it
+        with the variants' Pods, split by gke.py samples: the results
+        directory, and the samples' rounds and labels as it printed them."""
+        out = self.directory()
+        raw = out / "raw" / "small"
+        raw.mkdir(parents=True)
+        (raw / "generator.log").write_text(self.output)
+        (raw / "pods.json").write_text(json.dumps(variant_pods(["a", "b"])))
+        status, stdout, stderr = helper("samples", out, "--plan", self.plan_path)
+        self.assertEqual(status, 0, stderr)
+        return out, [line.split(" ")[:2] for line in stdout.splitlines()]
+
+    def summarize_sample(self, directory):
+        """summarize over a sample's directory, as the runner calls it."""
+        status, _, stderr = helper(
+            "summarize", "--plan", self.plan_path, "--targets", small_targets(self.directory()), "--region",
+            "us-central1", "--arch", "arm64", "--started-at", "2026-10-16T03:28:50+00:00", "--finished-at",
+            "2026-10-16T03:31:02+00:00", directory)
+        self.assertEqual(status, 0, stderr)
+
+    def test_each_round_of_each_variant_splits_out_as_an_ordinary_run_that_summarizes_as_complete(self):
+        out, samples = self.split()
+        self.assertEqual(samples, [["1", "a"], ["1", "b"], ["2", "a"], ["2", "b"]])
+        for round_, label in ((1, "a"), (2, "b")):
+            directory = out / "samples" / f"{round_}-{label}"
+            self.summarize_sample(directory)
+            summary = json.loads((directory / "summary.json").read_text())
+            conditions = json.loads((directory / "conditions.json").read_text())
+            self.assertTrue(summary["complete"], (round_, label))
+            self.assertEqual([case["id"] for case in summary["cases"]], STEP_IDS)
+            self.assertEqual([case["smock_cpu"]["first_second"] is None for case in summary["cases"]],
+                             [label == "b"] * 2)
+            self.assertEqual([idle["memory"]["oom_kills"] for idle in summary["idle_rss"]], [0] if round_ == 1 else [])
+            self.assertTrue(conditions["gke"]["profiles"]["small"]["traffic_check"]["ok"])
+            start = next(line for line in self.lines if line["kind"] == "start" and line["variant"] == label)
+            self.assertEqual(conditions["smock"]["commit"], start["status"]["commit"])
+
+    def test_same_node_compares_the_variants_from_what_the_load_generator_printed(self):
+        out, samples = self.split()
+        for round_, label in samples:
+            self.summarize_sample(out / "samples" / f"{round_}-{label}")
+        status, _, stderr = helper("same-node", out)
+        self.assertEqual(status, 0, stderr)
+        report = json.loads((out / "same-node.json").read_text())
+        profile = report["gke"]["profiles"]["small"]
+        self.assertTrue(profile["complete"])
+        self.assertEqual([(entry["round"], entry["id"], entry["variants"]) for entry in profile["order"]],
+                         [(1, STEP_IDS[0], ["a", "b"]), (1, STEP_IDS[1], ["b", "a"]), (2, STEP_IDS[0], ["b", "a"]),
+                          (2, STEP_IDS[1], ["a", "b"])])
+        self.assertEqual(profile["positions"], {"a": [2, 2], "b": [2, 2]})
+        # Each variant's run of each step in each round counts, or is listed
+        # with why not, as when the load generator fell behind on this
+        # machine; b has a pair with a in each round in which both count.
+        unmeasured = {(entry["id"], entry["variant"], entry["round"]) for entry in profile["not_measured"]}
+        for step in profile["steps"]:
+            for label in ("a", "b"):
+                self.assertEqual(step["variants"][label]["n"],
+                                 2 - sum((step["id"], label, round_) in unmeasured for round_ in (1, 2)))
+            self.assertEqual([pair["round"] for pair in step["variants"]["b"]["pairs"]],
+                             [round_ for round_ in (1, 2) if not {(step["id"], "a", round_),
+                                                                  (step["id"], "b", round_)} & unmeasured])
+        self.assertIsNotNone(profile["neighbours"])
+        self.assertEqual([variant["options"] for variant in report["variants"]], [[], ["no-first-second"]])
+
+
+class VariantsStopTogether(Helper):
+    """When a variant stops the profile, as one smock alone does, every
+    variant stops, so that each run left has the others' to compare with,
+    and the stopped line says which variant stopped it and which runs were
+    left out."""
+
+    generator_plan = Generator.generator_plan
+
+    def test_a_variant_that_never_answers_stops_every_variant_before_the_first_run(self):
+        plan_path = self.generator_plan()
+        with LocalSmock() as a, LocalSmock() as b, SilentPort() as silent:
+            status, lines, output = generate_variants(plan_path, [("a", a, True, {}),
+                                                                  ("b", b, True, {"tls": silent.port})], 2)
+        self.assertEqual(status, 0, output)
+        self.assertEqual([(line["kind"], line.get("variant")) for line in lines],
+                         [("start", "a"), ("start", "b"), ("idle-rss", "a"), ("idle-rss", "b"),
+                          ("traffic-check", "a"), ("traffic-check", "b"), ("metrics-before", "a"),
+                          ("metrics-before", "b"), ("stopped", "b"), ("metrics-after", "a"), ("metrics-after", "b"),
+                          ("done", "a"), ("done", "b")])
+        self.assertEqual([line["ok"] for line in lines if line["kind"] == "traffic-check"], [True, False])
+        stopped = lines[8]
+        self.assertEqual(stopped["reason"], f"variant b: smock did not answer through its Service in 2 s: TLS port "
+                                            f"{silent.port} (timed out)")
+        self.assertEqual((stopped["round"], stopped["after"]), (None, None))
+        self.assertEqual(stopped["runs"],
+                         [{"round": 1, "variant": "a", "id": STEP_IDS[0]}, {"round": 1, "variant": "b", "id": STEP_IDS[0]},
+                          {"round": 1, "variant": "b", "id": STEP_IDS[1]}, {"round": 1, "variant": "a", "id": STEP_IDS[1]},
+                          {"round": 2, "variant": "b", "id": STEP_IDS[0]}, {"round": 2, "variant": "a", "id": STEP_IDS[0]},
+                          {"round": 2, "variant": "a", "id": STEP_IDS[1]}, {"round": 2, "variant": "b", "id": STEP_IDS[1]}])
+
+    def test_a_run_with_no_response_from_a_variant_that_is_gone_stops_every_variant(self):
+        # b's plain port answers its traffic check, then hangs up on every
+        # connection: b's first run and the check after it get no response.
+        plan_path = self.generator_plan()
+        with LocalSmock() as a, LocalSmock() as b, SilentPort(answer_first=True) as gate:
+            status, lines, output = generate_variants(plan_path, [("a", a, True, {}),
+                                                                  ("b", b, True, {"plain": gate.port})], 2)
+        self.assertEqual(status, 0, output)
+        self.assertEqual([(line["kind"], line.get("variant")) for line in lines],
+                         [("start", "a"), ("start", "b"), ("idle-rss", "a"), ("idle-rss", "b"),
+                          ("traffic-check", "a"), ("traffic-check", "b"), ("metrics-before", "a"),
+                          ("metrics-before", "b"), ("step", "a"), ("step", "b"), ("traffic-check", "b"),
+                          ("stopped", "b"), ("metrics-after", "a"), ("metrics-after", "b"), ("done", "a"),
+                          ("done", "b")])
+        self.assertEqual(lines[8]["result"]["requests"]["ok"], lines[8]["result"]["requests"]["scheduled"])
+        self.assertEqual(lines[9]["result"]["requests"]["ok"], 0)
+        check = lines[10]
+        self.assertEqual((check["round"], check["after"], check["ok"]), (1, STEP_IDS[0], False))
+        stopped = lines[11]
+        self.assertRegex(stopped["reason"], r"^variant b, round 1: http-keep-alive@small got no response to any of "
+                                            r"its \d+ requests")
+        self.assertEqual((stopped["round"], stopped["after"]), (1, STEP_IDS[0]))
+        self.assertEqual(stopped["runs"],
+                         [{"round": 1, "variant": "b", "id": STEP_IDS[1]}, {"round": 1, "variant": "a", "id": STEP_IDS[1]},
+                          {"round": 2, "variant": "b", "id": STEP_IDS[0]}, {"round": 2, "variant": "a", "id": STEP_IDS[0]},
+                          {"round": 2, "variant": "a", "id": STEP_IDS[1]}, {"round": 2, "variant": "b", "id": STEP_IDS[1]}])
+
+
 
 def load_generator_module():
     """bench/gke/generator.py as a module, for its functions."""
@@ -1151,6 +1715,94 @@ class StopAfterAStep(unittest.TestCase):
         for result, later in ((no_response_step(self.spec["id"], ok=1), self.later),
                               (no_response_step(self.spec["id"]), [])):
             self.assertEqual(self.stop_after(result, later, check_result(False)), (None, None, 0))
+
+
+class RunOrder(unittest.TestCase):
+    """With variants, the load generator runs rounds outer, the steps of the
+    profile in the middle and the variants inner, one at a time, the
+    variants' order turned by one for each round and each step: a
+    variant's run and the baseline's in the same round and step come
+    right after one another with two variants, and up to n - 1 runs apart
+    with n, and each variant runs first as often as the others."""
+
+    generator = load_generator_module()
+
+    def order(self, steps, variants, rounds):
+        return [(round_, spec["id"], variant)
+                for round_, spec, variant in self.generator.run_order([{"id": step} for step in steps], variants,
+                                                                      rounds)]
+
+    def test_with_two_variants_each_step_runs_them_ab_ba_ab_ba_over_four_rounds(self):
+        runs = self.order(["s1"], ["a", "b"], 4)
+        self.assertEqual(runs, [(1, "s1", "a"), (1, "s1", "b"), (2, "s1", "b"), (2, "s1", "a"),
+                                (3, "s1", "a"), (3, "s1", "b"), (4, "s1", "b"), (4, "s1", "a")])
+
+    def test_the_order_turns_by_one_with_each_round_and_each_step_the_baseline_first(self):
+        runs = self.order(["s1", "s2"], ["a", "b", "c"], 3)
+        self.assertEqual([variant for _, _, variant in runs],
+                         ["a", "b", "c", "b", "c", "a",
+                          "b", "c", "a", "c", "a", "b",
+                          "c", "a", "b", "a", "b", "c"])
+        self.assertEqual([(round_, step) for round_, step, _ in runs][::3],
+                         [(1, "s1"), (1, "s2"), (2, "s1"), (2, "s2"), (3, "s1"), (3, "s2")])
+
+    def test_with_four_variants_each_runs_one_to_three_runs_from_the_baseline_and_the_third_always_two(self):
+        variants = ["r1", "r2", "r2b", "r2h"]
+        runs = self.order(["s1", "s2", "s3"], variants, 4)
+        apart = {variant: set() for variant in variants[1:]}
+        for start in range(0, len(runs), len(variants)):
+            step = [variant for _, _, variant in runs[start:start + len(variants)]]
+            for variant in apart:
+                apart[variant].add(abs(step.index(variant) - step.index("r1")))
+        self.assertEqual(apart, {"r2": {1, 3}, "r2b": {2}, "r2h": {1, 3}})
+
+    def test_without_variants_the_steps_run_once_in_the_plans_order(self):
+        self.assertEqual(self.order(["s1", "s2"], [None], 1), [(1, "s1", None), (1, "s2", None)])
+
+
+def old_smock_metrics(cpu_s, start=1760000000.0):
+    """A scrape of the /metrics of smock at 0d984c8 (as metric_values reads
+    it), which has its process and cgroup metrics but none of the waits
+    for a CPU or its node's steal time, added in 5fb5a85."""
+    return {"process_start_time_seconds": start, "process_cpu_seconds_total": round(cpu_s, 2),
+            "process_resident_memory_bytes": 9 << 20, "smock_cgroup_cpu_usage_seconds_total": cpu_s,
+            "smock_cgroup_cpu_periods_total": 40.0, "smock_cgroup_cpu_throttled_periods_total": 0.0,
+            "smock_cgroup_cpu_throttled_seconds_total": 0.0, "smock_cgroup_memory_peak_bytes": 12 << 20,
+            "smock_requests_total": 3.0}
+
+
+class NeighbourGuard(unittest.TestCase):
+    """Around each run, the load generator scrapes the variants left idle,
+    for what they used meanwhile on the node they share with the loaded
+    one: their CPU time, and the node's steal time as each counts it. A
+    smock too old to count something leaves it unknown, never stops the
+    run."""
+
+    generator = load_generator_module()
+
+    def test_an_idle_variants_cpu_comes_from_its_cgroup_and_an_old_smock_has_no_steal(self):
+        self.assertEqual(self.generator.idle_use(old_smock_metrics(1.25), old_smock_metrics(1.263)), (0.013, None))
+
+    def test_a_smock_that_counts_steal_time_says_the_nodes(self):
+        before, after = old_smock_metrics(1.25), old_smock_metrics(1.263)
+        before["smock_node_cpu_steal_seconds_total"], after["smock_node_cpu_steal_seconds_total"] = 30.0, 30.5
+        self.assertEqual(self.generator.idle_use(before, after), (0.013, 0.5))
+
+    def test_an_idle_variant_that_does_not_answer_in_the_time_the_jobs_deadline_allows_is_unknown(self):
+        # The Job's deadline allows each scrape of a neighbour
+        # NEIGHBOUR_SCRAPE_S; one that hangs costs no more.
+        with SilentPort() as silent:
+            started = time.monotonic()
+            scraped = self.generator.scrape_idle([SimpleNamespace(target="127.0.0.1", admin_port=silent.port)])
+            took = time.monotonic() - started
+        self.assertEqual(scraped, [None])
+        self.assertLess(took, self.generator.gke.NEIGHBOUR_SCRAPE_S + 0.5)
+
+    def test_a_scrape_without_an_answer_or_a_restart_between_them_leaves_both_unknown(self):
+        for before, after in ((None, old_smock_metrics(1.0)), (old_smock_metrics(1.0), None),
+                              (old_smock_metrics(1.0), old_smock_metrics(0.1, start=1760000500.0))):
+            self.assertEqual(self.generator.idle_use(before, after), (None, None))
+
 
 def elf_header(machine, elf_class=2, data=1, elf_type=2):
     """The first 20 bytes of an ELF file: its identification, type and
@@ -1256,6 +1908,24 @@ class Dockerfiles(Helper):
                                        "COPY a \\\n  # a comment in the middle\n  RUN /b\n")
         self.assertEqual(status, 0, stderr)
 
+    def test_the_load_generators_image_runs_gke_py_and_the_generator_with_the_files_it_holds(self):
+        # The build context of the load generator's image (build_images in
+        # scripts/gke-bench.sh), whose Pods run gke.py node-cpu and the
+        # load generator: nothing of bench/ else, such as compare.py, which
+        # gke.py loads only for same-node.
+        image = self.directory() / "bench"
+        (image / "gke").mkdir(parents=True)
+        for path in ("bench.py", "requests.json", "gke/gke.py", "gke/generator.py"):
+            shutil.copyfile(BENCH / path, image / path)
+        shutil.copyfile(BENCH / "plan-autopilot.json", image / "plan.json")
+        load = ("import importlib.util, sys; spec = importlib.util.spec_from_file_location('generator', sys.argv[1]); "
+                "spec.loader.exec_module(importlib.util.module_from_spec(spec))")
+        for command in ([image / "gke" / "gke.py", "node-cpu"], [image / "gke" / "gke.py", "plan", "--plan",
+                                                                  image / "plan.json"],
+                        ["-c", load, image / "gke" / "generator.py"]):
+            result = subprocess.run([sys.executable, *map(str, command)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
 
 def cpuinfo_block(processor, model_name="AMD EPYC 7B13", family=25, model=1, stepping=0, microcode="0xffffffff",
                   flags="aes avx2 sha_ni vaes"):
@@ -1356,6 +2026,90 @@ class NodeCpu(Helper):
         self.assertEqual(lines, [{"kind": "node-cpu", "cpu": {**AMD_CPU, "vulnerabilities": None}}])
 
 
+def kept_pod(label, node="node-a", cpu="250m", memory="512Mi", profile="autopilot-min", requests=None):
+    """What gke.py pod-info keeps of a variant's smock Pod: on `node`,
+    admitted with `cpu` and `memory` as its limits, and as its requests
+    unless `requests` says otherwise."""
+    limits = {"cpu": cpu, "memory": memory, "ephemeral-storage": "64Mi"}
+    return {"name": f"smock-{profile}-{label}", "node": node, "ready": True, "restarts": None,
+            "last_termination": None, "variant": label, "resources": {"requests": requests or limits, "limits": limits}}
+
+
+class Placement(Helper):
+    """Before the load generator starts, the run checks that every variant
+    of the profile runs on one node, under the profile's limits as
+    Autopilot admitted them: else the comparison would not hold."""
+
+    def placement(self, smock, profile="autopilot-min"):
+        """gke.py placement over the profile's Pods as pod-info keeps them,
+        with `smock` as its smock Pods."""
+        path = self.directory() / "pods.json"
+        path.write_text(json.dumps({"smock": smock, "generator": [], "nodes": {}}))
+        return helper("placement", path, "--plan", BENCH / "plan-autopilot.json", "--profile", profile)
+
+    def test_variants_on_one_node_under_the_profiles_limits_pass(self):
+        # The API may write a quantity otherwise than the plan does; a Pod
+        # of another profile is not this one's.
+        status, stdout, stderr = self.placement([
+            kept_pod("r1"), kept_pod("r2", cpu="0.25", memory="536870912"), kept_pod("r2b"),
+            kept_pod("r1", node="node-b", profile="chart-default", cpu="1", memory="1Gi")])
+        self.assertEqual((status, stdout, stderr), (0, "", ""))
+        status, _, stderr = self.placement([kept_pod("r1", cpu="1", memory="1Gi", profile="chart-default"),
+                                            kept_pod("r2", cpu="1000m", memory="1Gi", profile="chart-default")],
+                                           profile="chart-default")
+        self.assertEqual(status, 0, stderr)
+
+    def test_the_variants_pods_as_rendered_and_read_back_by_pod_info_pass(self):
+        # As the run applies them, and kubectl lists them once each has a
+        # node.
+        rendered = self.manifests(profile="autopilot-burst-min",
+                                  variants=(*TWO_VARIANTS, f"r2h={OTHER_IMAGE},no-init"))
+        directory = self.directory()
+        pod_list = {"items": [{**pod, "spec": {**pod["spec"], "nodeName": "node-a"},
+                               "status": {"phase": "Running", "conditions": [{"type": "Ready", "status": "True"}],
+                                          "containerStatuses": [{"name": "smock", "restartCount": 0}]}}
+                              for pod in objects(rendered, "Pod")]}
+        (directory / "pods.json").write_text(json.dumps(pod_list))
+        (directory / "nodes.json").write_text(json.dumps({"items": []}))
+        status, stdout, stderr = helper("pod-info", "--without-restarts", directory / "pods.json",
+                                        directory / "nodes.json")
+        self.assertEqual(status, 0, stderr)
+        (directory / "pod-info.json").write_text(stdout)
+        self.assertEqual([pod["variant"] for pod in json.loads(stdout)["smock"]], ["r1", "r2", "r2h"])
+        status, _, stderr = helper("placement", directory / "pod-info.json", "--plan", BENCH / "plan-autopilot.json",
+                                   "--profile", "autopilot-burst-min")
+        self.assertEqual(status, 0, stderr)
+
+    def test_variants_on_two_nodes_fail_saying_which_is_on_which(self):
+        status, _, stderr = self.placement([kept_pod("r1"), kept_pod("r2", node="node-b"), kept_pod("r2b"),
+                                            kept_pod("r2h", node="node-b")])
+        self.assertEqual(status, 1)
+        self.assertIn("the smock Pods of autopilot-min are on 2 nodes, not one: r1 and r2b on node-a, r2 and r2h on "
+                      "node-b", stderr)
+
+    def test_a_variant_admitted_with_other_requests_or_limits_than_the_profiles_fails_saying_which(self):
+        # As Autopilot raises what is under its minimums for the Pods that
+        # need more, such as those with anti-affinity.
+        status, _, stderr = self.placement([
+            kept_pod("r1", memory="1Gi", requests={"cpu": "250m", "memory": "512Mi", "ephemeral-storage": "64Mi"}),
+            kept_pod("r2", cpu="500m")])
+        self.assertEqual(status, 1)
+        self.assertEqual(stderr.splitlines(), [
+            "gke: variant r1's memory limit was admitted as 1Gi, not the profile's 512Mi",
+            "gke: variant r2's CPU request was admitted as 500m, not the profile's 250m",
+            "gke: variant r2's CPU limit was admitted as 500m, not the profile's 250m"])
+
+    def test_a_variant_with_no_node_yet_or_unknown_resources_fails(self):
+        status, _, stderr = self.placement([kept_pod("r1"), kept_pod("r2", node=None),
+                                            {**kept_pod("r2b"), "resources": None}])
+        self.assertEqual(status, 1)
+        self.assertIn("gke: variant r2 has no node yet", stderr)
+        self.assertIn("gke: variant r2b's admitted requests and limits are unknown", stderr)
+        status, _, stderr = self.placement([kept_pod("r1", profile="chart-default")])
+        self.assertEqual(status, 1)
+        self.assertIn("gke: no smock Pod of profile autopilot-min is in", stderr)
+
+
 class PodInfo(Helper):
     def test_only_what_says_where_and_how_the_pods_ran_is_kept(self):
         directory = self.directory()
@@ -1400,6 +2154,866 @@ class PodInfo(Helper):
                                         directory / "nodes.json")
         self.assertEqual(status, 0, stderr)
         self.assertEqual(json.loads(stdout), {**info, "smock": [{**info["smock"][0], "restarts": None}]})
+
+    def test_each_smock_pods_variant_and_the_resources_its_smock_container_was_admitted_with_are_kept(self):
+        # As Autopilot admitted them, which may differ from what the
+        # manifests asked for; from the container named smock, wherever it
+        # is in the Pod.
+        directory = self.directory()
+
+        def smock_pod(label, cpu, restarts):
+            admitted = {"cpu": cpu, "memory": "512Mi", "ephemeral-storage": "64Mi"}
+            return {"metadata": {"name": f"smock-autopilot-min-{label}",
+                                 "labels": {"app": "smock-bench", "profile": "autopilot-min", "variant": label}},
+                    "spec": {"nodeName": "node-a", "containers": [
+                        {"name": "other", "resources": {"requests": {"cpu": "1"}, "limits": {"cpu": "1"}}},
+                        {"name": "smock", "resources": {"requests": admitted, "limits": admitted}}]},
+                    "status": {"phase": "Running", "conditions": [{"type": "Ready", "status": "True"}],
+                               "containerStatuses": [{"name": "other", "restartCount": 7},
+                                                     {"name": "smock", "restartCount": restarts, "lastState": {}}]}}
+
+        (directory / "pods.json").write_text(json.dumps({"items": [smock_pod("r1", "250m", 0),
+                                                                   smock_pod("r2", "500m", 1)]}))
+        (directory / "nodes.json").write_text(json.dumps({"items": []}))
+        status, stdout, stderr = helper("pod-info", directory / "pods.json", directory / "nodes.json")
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(json.loads(stdout)["smock"], [
+            {"name": "smock-autopilot-min-r1", "node": "node-a", "ready": True, "restarts": 0,
+             "last_termination": None, "variant": "r1",
+             "resources": {"requests": {"cpu": "250m", "memory": "512Mi", "ephemeral-storage": "64Mi"},
+                           "limits": {"cpu": "250m", "memory": "512Mi", "ephemeral-storage": "64Mi"}}},
+            {"name": "smock-autopilot-min-r2", "node": "node-a", "ready": True, "restarts": 1,
+             "last_termination": None, "variant": "r2",
+             "resources": {"requests": {"cpu": "500m", "memory": "512Mi", "ephemeral-storage": "64Mi"},
+                           "limits": {"cpu": "500m", "memory": "512Mi", "ephemeral-storage": "64Mi"}}}])
+
+
+def variant_step(label, round_, rate, us_per_request=30.0, utilization=0.5, neighbours=None, steal=None, **changes):
+    """A step line of the load generator with variants: `label`'s run of
+    http-keep-alive under small at `rate` in `round_`, smock's CPU at
+    `us_per_request` and `utilization`, with what the idle variants used
+    (`neighbours`) and each variant's count of the node's steal time
+    (`steal`, by default the loaded one's alone); and `changes` to its
+    result's smock_cpu, or to the result itself (errors,
+    load_generator_late)."""
+    result = generator_step(rate, errors=changes.pop("errors", 0))["result"]
+    result["load_generator_late"] = changes.pop("load_generator_late", False)
+    result["smock_cpu"].update({"us_per_request": us_per_request, "utilization": utilization,
+                                "scheduling_delay_s": 0.02, "involuntary_context_switches": 40, "node_steal_s": 0.0,
+                                "first_second": None, **changes})
+    return {"kind": "step", "variant": label, "round": round_, "neighbours": neighbours or {},
+            "node_steal_s": steal or {label: result["smock_cpu"]["node_steal_s"]}, "result": result}
+
+
+def variant_lines(us_per_request, rates=(500, 1000), runs=None, stopped=None, done=True):
+    """The load generator's lines of a run of variants of smock under
+    small, at `rates` of http-keep-alive, as it prints them: each variant's
+    start, idle RSS and traffic check, then the runs, rounds outer, the
+    rates in the middle and the variants inner, their order turned by one
+    for each round and rate. `us_per_request` gives each variant's CPU a
+    request at each rate in each round, {label: {rate: [round 1's, round
+    2's, ...]}}, the first the baseline, which also give the rounds each
+    start line says were planned; `runs` what else differs in a run,
+    {(label, round, rate): variant_step's keywords}. Runs after a `stopped`
+    line's (its fields) are left out, and the done lines are when `done`."""
+    labels = list(us_per_request)
+    rounds = len(us_per_request[labels[0]][rates[0]])
+    lines = []
+    for label in labels:
+        lines += [{**START, "variant": label, "first_second": label == labels[0], "rounds": rounds},
+                  {**IDLE, "variant": label}, {**TRAFFIC_CHECK, "variant": label},
+                  {"kind": "metrics-before", "profile": "small", "variant": label, "text": "# metrics\n"}]
+    for round_ in range(1, rounds + 1):
+        for index, rate in enumerate(rates):
+            for offset in range(len(labels)):
+                label = labels[(round_ - 1 + index + offset) % len(labels)]
+                if stopped and {"round": round_, "variant": label, "id": f"http-keep-alive@small@{rate}"} in \
+                        stopped["runs"]:
+                    continue
+                lines.append(variant_step(label, round_, rate, us_per_request[label][rate][round_ - 1],
+                                          **(runs or {}).get((label, round_, rate), {})))
+    if stopped:
+        lines.append({"kind": "stopped", "profile": "small", **stopped})
+    for label in labels:
+        lines.append({"kind": "metrics-after", "profile": "small", "variant": label, "text": "# metrics\n"})
+    if done:
+        lines += [{"kind": "done", "profile": "small", "variant": label} for label in labels]
+    return lines
+
+
+def variant_pods(labels, nodes=None, limits=None):
+    """What gke.py pod-info keeps of the Pods of a run of variants under
+    small: each variant's smock Pod on its node of `nodes` ({label: node},
+    node-a by default), admitted with its `limits` ({label: (cpu, memory)},
+    small's by default), and the load generator's on node-b."""
+    smock = []
+    for label in labels:
+        cpu, memory = (limits or {}).get(label, ("250m", "512Mi"))
+        smock.append({**kept_pod(label, node=(nodes or {}).get(label, "node-a"), cpu=cpu, memory=memory,
+                                 profile="small"), "restarts": 0})
+    return {"smock": smock,
+            "generator": [{"name": "generator-small-x7k2p", "node": "node-b", "phase": "Succeeded", "reason": None,
+                           "cpu_request": "6"}],
+            "nodes": {"node-a": X86_NODE, "node-b": X86_NODE, "node-c": X86_NODE}}
+
+
+class VariantRun(Helper):
+    """A run of variants as the runner leaves it, raw/small/ with the load
+    generator's log, the Pods, and each variant's own files in
+    raw/small/<label>/; and its samples, each summarized."""
+
+    def variant_run(self, lines, pod_info, no_init=("b",)):
+        """A results directory of a run of variants under small whose load
+        generator wrote `lines`, with the Pods `pod_info`: each variant has
+        its smock log, and what its init container printed of its node's
+        CPU unless it is `no_init`."""
+        out = self.directory()
+        raw = out / "raw" / "small"
+        raw.mkdir(parents=True)
+        (raw / "generator.log").write_text("".join(json.dumps(line) + "\n" for line in lines))
+        (raw / "pods.json").write_text(json.dumps(pod_info))
+        for label in dict.fromkeys(line["variant"] for line in lines if line.get("variant")):
+            (raw / label).mkdir()
+            (raw / label / "smock.log").write_text(f"smock {label} listening\n")
+            if label not in no_init:
+                (raw / label / "smock-node-cpu.log").write_text(json.dumps({"kind": "node-cpu", "cpu": AMD_CPU}) +
+                                                                "\n")
+        return out
+
+    def samples(self, out, plan=None, rounds=None):
+        """gke.py samples over `out`, told the planned `rounds` when given,
+        and the samples it printed: [(round, label, directory)]."""
+        status, stdout, stderr = helper("samples", out, "--plan", plan or small_plan(self.directory()),
+                                        *(["--rounds", rounds] if rounds else []))
+        self.assertEqual(status, 0, stderr)
+        return [(int(round_), label, Path(directory))
+                for round_, label, directory in (line.split(" ", 2) for line in stdout.splitlines())]
+
+    def summarize_sample(self, directory, sha256=None, plan=None, stopped=None):
+        """summarize over a sample's directory, as the runner calls it for
+        each, with the sample's variant's binary, and where and why the run
+        stopped before its end when it did (`stopped`, (reason, profile));
+        its summary.json and conditions.json."""
+        status, _, stderr = helper(
+            "summarize", "--plan", plan or small_plan(self.directory()), "--targets", small_targets(self.directory()),
+            "--region", "us-central1", "--arch", "amd64", "--started-at", "2026-10-16T03:28:50+00:00",
+            "--finished-at", "2026-10-16T04:01:56+00:00", "--smock-image", "sha256:" + "1" * 64,
+            *(["--smock-sha256", sha256] if sha256 else []), "--generator-image", "sha256:" + "2" * 64,
+            *(["--stopped", stopped[0], "--stopped-under", stopped[1]] if stopped else []), directory)
+        self.assertEqual(status, 0, stderr)
+        return json.loads((directory / "summary.json").read_text()), \
+            json.loads((directory / "conditions.json").read_text())
+
+    def same_node(self, out, *options, sha256=None, plan=None, stopped=None, rounds=None):
+        """gke.py same-node over `out` with `options`, once its samples are
+        split (told the planned `rounds` when given) and each summarized as
+        the runner does it, with its variant's binary's sha256 of `sha256`
+        ({label or (round, label): hex}, by default 64 of the label's first
+        letter), and where and why the run stopped when it did (`stopped`,
+        (reason, profile)): its exit status, same-node.json, same-node.md
+        and what it wrote to stderr. The plan is small_plan's, unless `plan`
+        names another."""
+        plan = plan or small_plan(self.directory())
+        sha256 = sha256 or {}
+        for round_, label, directory in self.samples(out, plan, rounds):
+            self.summarize_sample(directory, sha256.get((round_, label), sha256.get(label, label[0] * 64)), plan,
+                                  stopped)
+        status, _, stderr = helper("same-node", out, *options)
+        report = json.loads((out / "same-node.json").read_text()) if (out / "same-node.json").exists() else None
+        markdown = (out / "same-node.md").read_text() if (out / "same-node.md").exists() else None
+        return status, report, markdown, stderr
+
+    def row(self, markdown, case, rate, label, heading="## small: CPU limit 250m, memory limit 512Mi"):
+        """The cells of a variant's row for a step in the table under
+        `heading` of same-node.md, by column."""
+        section = markdown.split(f"\n{heading}\n", 1)[1].split("\n## ", 1)[0]
+        lines = [line for line in section.splitlines() if line.startswith("|")]
+        header = [cell.strip() for cell in lines[0].strip("|").split("|")]
+        for line in lines[2:]:
+            row = dict(zip(header, (cell.strip() for cell in line.strip("|").split("|"))))
+            if (row["Case"], row["Rate"], row["Variant"].split(" ")[0]) == (case, f"{rate:,}", label):
+                return row
+        self.fail(f"no row for {label} at {case}@{rate} in:\n{markdown}")
+
+
+# Why the load generator stopped the run of stopped_in_round_2.
+STOPPED_IN_ROUND_2 = ("variant b, round 2: http-keep-alive@small@500 got no response to any of its 10,000 requests, "
+                      "and smock did not answer through its Service in 60 s after it: plain port 80 (timed out)")
+
+
+def stopped_in_round_2():
+    """The lines of a run of a and b over two rounds that the load
+    generator stopped early: b's run at 500 requests/s in round 2, the
+    first of that step, got no response, nor did the traffic check after
+    it, so every variant stopped, round 1 whole; and why it stopped."""
+    left = [{"round": 2, "variant": "a", "id": "http-keep-alive@small@500"},
+            {"round": 2, "variant": "a", "id": "http-keep-alive@small@1000"},
+            {"round": 2, "variant": "b", "id": "http-keep-alive@small@1000"}]
+    us = {"a": {500: [30.0, 31.0], 1000: [32.0, 33.0]}, "b": {500: [40.0, 41.0], 1000: [42.0, 43.0]}}
+    lines = variant_lines(us, runs={("b", 2, 500): {"errors": 10000}},
+                          stopped={"variant": "b", "round": 2, "reason": STOPPED_IN_ROUND_2,
+                                   "after": "http-keep-alive@small@500", "runs": left})
+    check = {**TRAFFIC_CHECK, "variant": "b", "round": 2, "after": "http-keep-alive@small@500", "ok": False}
+    lines.insert(next(index for index, line in enumerate(lines) if line.get("round") == 2) + 1, check)
+    return lines, STOPPED_IN_ROUND_2
+
+
+class Samples(VariantRun):
+    """gke.py samples splits a run of variants into its samples, each one
+    variant's pass over the steps in one round, as an ordinary run of
+    smock alone that gke.py summarize, unchanged, summarizes."""
+
+    def test_each_round_of_each_variant_is_a_sample_that_summarizes_as_a_run_of_smock_alone(self):
+        us = {"a": {500: [30.0, 31.0], 1000: [32.0, 33.0]}, "b": {500: [40.0, 41.0], 1000: [42.0, 43.0]}}
+        out = self.variant_run(variant_lines(us), variant_pods(["a", "b"]))
+        samples = self.samples(out)
+        self.assertEqual([(round_, label) for round_, label, _ in samples], [(1, "a"), (1, "b"), (2, "a"), (2, "b")])
+        for round_, label, directory in samples:
+            self.assertEqual(directory, out / "samples" / f"{round_}-{label}")
+            raw = directory / "raw" / "small"
+            # Its own smock Pod alone, so that its OOM kills are known, and
+            # the load generator's, on the nodes they ran on.
+            pod_info = json.loads((raw / "pods.json").read_text())
+            self.assertEqual([pod["name"] for pod in pod_info["smock"]], [f"smock-small-{label}"])
+            self.assertEqual([pod["name"] for pod in pod_info["generator"]], ["generator-small-x7k2p"])
+            self.assertEqual(set(pod_info["nodes"]), {"node-a", "node-b"})
+            # Its own smock log, and what its init container printed, which
+            # b, without one, has not.
+            self.assertEqual((raw / "smock.log").read_text(), f"smock {label} listening\n")
+            self.assertEqual((raw / "smock-node-cpu.log").exists(), label == "a")
+            summary, conditions = self.summarize_sample(directory)
+            self.assertTrue(summary["complete"], (round_, label))
+            self.assertEqual([(case["rate"], case["smock_cpu"]["us_per_request"]) for case in summary["cases"]],
+                             [(rate, us[label][rate][round_ - 1]) for rate in (500, 1000)])
+            # Idle RSS was read once, before any load: round 1's.
+            self.assertEqual([idle["memory"]["oom_kills"] for idle in summary["idle_rss"]], [0] if round_ == 1 else [])
+            self.assertEqual({case["memory"]["oom_kills"] for case in summary["cases"]}, {0})
+            self.assertTrue(conditions["gke"]["profiles"]["small"]["traffic_check"]["ok"])
+            self.assertEqual(conditions["gke"]["profiles"]["small"]["nodes"]["node-a"]["cpu"],
+                             AMD_CPU if label == "a" else None)
+
+    def test_a_sample_of_a_variant_not_scraped_a_second_into_each_step_does_not_say_it_was(self):
+        # b ran without the load generator's scrape a second into each
+        # step (no-first-second); a with it.
+        out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
+        notes = {label: self.summarize_sample(directory)[1]["note"]
+                 for round_, label, directory in self.samples(out) if round_ == 1}
+        self.assertIn("scraped right before and right after each step, and a second into it: its CPU time and "
+                      "throttling during the step and its first second, from", notes["a"])
+        self.assertIn("scraped right before and right after each step: its CPU time and throttling during the step, "
+                      "from its container's cgroup;", notes["b"])
+        self.assertIn("The load generator did not scrape smock a second into each step.", notes["b"])
+        self.assertNotIn("first second", notes["b"])
+
+    def test_a_profile_stopped_early_leaves_each_sample_the_steps_it_did_not_run(self):
+        lines, reason = stopped_in_round_2()
+        out = self.variant_run(lines, variant_pods(["a", "b"]))
+        summaries = {(round_, label): self.summarize_sample(directory)[0]
+                     for round_, label, directory in self.samples(out)}
+        for sample in ((1, "a"), (1, "b")):
+            self.assertTrue(summaries[sample]["complete"], sample)
+            self.assertIsNone(summaries[sample]["gke"]["profiles"]["small"]["ended_early"])
+        # b ran its step at 500 in round 2, and the check after it is its
+        # own; a ran none.
+        self.assertEqual(
+            {sample: (summaries[sample]["complete"], [case["rate"] for case in summaries[sample]["cases"]],
+                      summaries[sample]["gke"]["profiles"]["small"]["ended_early"]) for sample in ((2, "a"), (2, "b"))},
+            {(2, "a"): (False, [], {"reason": reason, "after": None,
+                                    "not_measured": ["http-keep-alive@small@500", "http-keep-alive@small@1000"]}),
+             (2, "b"): (False, [500], {"reason": reason, "after": "http-keep-alive@small@500",
+                                       "not_measured": ["http-keep-alive@small@1000"]})})
+        # What the runner says when the profile ends, from the whole log.
+        status, stdout, stderr = helper("stopped", out / "raw" / "small" / "generator.log")
+        self.assertEqual((status, stdout), (0, f"{reason}; 3 runs not measured\n"), stderr)
+        sample_log = (out / "samples" / "2-b" / "raw" / "small" / "generator.log").read_text()
+        self.assertEqual([json.loads(line)["kind"] for line in sample_log.splitlines()],
+                         ["start", "traffic-check", "metrics-before", "step", "traffic-check", "stopped",
+                          "metrics-after", "done"])
+
+
+# Two variants' CPU a request over four rounds at two rates: b's is higher
+# than a's in every round, by 10%, 4%, 10% and 20% at 500 requests/s and by
+# 10%, 5%, 15% and 2.5% at 1,000.
+HIGHER = {"a": {500: [30.0, 31.0, 29.0, 30.0], 1000: [40.0, 40.0, 40.0, 40.0]},
+          "b": {500: [33.0, 32.24, 31.9, 36.0], 1000: [44.0, 42.0, 46.0, 41.0]}}
+
+
+# Three variants' CPU a request over four rounds at two rates: b is 5%
+# above a in every round, and c, b's binary, 7%, 6%, 2% and 2% above or
+# below b in turn.
+SAME_BINARY = {"a": {500: [30.0] * 4, 1000: [40.0] * 4},
+               "b": {500: [31.5] * 4, 1000: [42.0] * 4},
+               "c": {500: [33.705, 29.61, 32.13, 30.87], 1000: [44.94, 39.48, 42.84, 41.16]}}
+
+
+class SameNode(VariantRun):
+    """gke.py same-node compares the variants of a run on one node, from
+    their samples' summaries and the load generator's lines: step by step,
+    each variant's CPU a request against the baseline's, run by run in the
+    same round, and over every step of a profile, whether a variant used
+    more than the baseline beyond chance."""
+
+    def test_each_variants_median_and_range_and_its_paired_change_against_the_baseline_are_reported(self):
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(HIGHER),
+                                                                           variant_pods(["a", "b"])))
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(report["baseline"], "a")
+        profile = report["gke"]["profiles"]["small"]
+        self.assertTrue(profile["complete"])
+        b = next(step for step in profile["steps"] if step["rate"] == 500)["variants"]["b"]
+        self.assertEqual({key: b[key] for key in ("n", "median_us_per_request", "min_us_per_request",
+                                                  "max_us_per_request", "change_percent", "higher")},
+                         {"n": 4, "median_us_per_request": 32.62, "min_us_per_request": 31.9,
+                          "max_us_per_request": 36.0, "change_percent": 8.73, "higher": 4})
+        self.assertEqual([(pair["round"], pair["change_percent"], pair["saturated"]) for pair in b["pairs"]],
+                         [(1, 10.0, False), (2, 4.0, False), (3, 10.0, False), (4, 20.0, False)])
+        # Over both rates' eight pairs, all higher: a sign test's p of
+        # 2 / 2^8.
+        self.assertEqual(profile["verdicts"]["b"],
+                         {"pairs": 8, "higher": 8, "lower": 0, "median_change_percent": 10.0,
+                          "min_change_percent": 2.5, "max_change_percent": 20.0, "sign_test_p": 0.0078125,
+                          "smallest_p": 0.0078125, "a_a_spread": None, "inside_a_a_spread": None,
+                          "verdict": "higher"})
+        self.assertEqual(self.row(markdown, "http-keep-alive", 500, "a"),
+                         {"Case": "http-keep-alive", "Rate": "500", "Variant": "a (baseline)",
+                          "CPU µs/request": "30.0 (29.0–31.0, 4)", "Change": "-", "Paired": "-", "Higher": "-",
+                          "Throttled periods": "12 of 1,000", "CPU wait s": "0.02", "Node steal s": "0.0",
+                          "p99 ms": "2.0", "Saturated": "0 of 4 runs"})
+        self.assertEqual(self.row(markdown, "http-keep-alive", 500, "b"),
+                         {"Case": "http-keep-alive", "Rate": "500", "Variant": "b",
+                          "CPU µs/request": "32.6 (31.9–36.0, 4)", "Change": "+8.7%", "Paired": "+4% to +20%",
+                          "Higher": "4 of 4", "Throttled periods": "12 of 1,000", "CPU wait s": "0.02",
+                          "Node steal s": "0.0", "p99 ms": "2.0", "Saturated": "0 of 4 pairs"})
+        self.assertIn("- b against a: +10% (+2.5% to +20%), higher in 8 of 8 pairs, sign test p = 0.008: higher.",
+                      markdown)
+        self.assertIn("Started 2026-10-16T03:28:50+00:00: 2 variants of smock over 4 rounds, on GKE Autopilot "
+                      "(asia-northeast1-b, general-purpose), amd64 (GKE Autopilot ek-standard-8, 8 CPUs), oha 1.16.0, "
+                      "plan ", markdown)
+        self.assertIn("\n## Reading the comparison\n", markdown)
+
+    def test_another_variant_can_be_the_baseline(self):
+        out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
+        status, report, markdown, stderr = self.same_node(out, "--baseline", "b")
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual((report["baseline"], [variant["label"] for variant in report["variants"]]), ("b", ["b", "a"]))
+        self.assertEqual(self.row(markdown, "http-keep-alive", 500, "b")["Variant"], "b (baseline)")
+        self.assertIn("- a against b: -9.1% (-16.7% to -2.4%), higher in 0 of 8 pairs, sign test p = 0.008: lower.",
+                      markdown)
+        status, _, stderr = helper("same-node", out, "--baseline", "c")
+        self.assertEqual(status, 1)
+        self.assertIn("gke: the run has no variant c: its variants are a and b", stderr)
+
+    def test_a_reading_against_another_baseline_can_be_kept_beside_the_runs_own(self):
+        out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
+        status, _, markdown, stderr = self.same_node(out)
+        self.assertEqual(status, 0, stderr)
+        status, _, stderr = helper("same-node", out, "--baseline", "b", "--report", "same-node-b")
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(json.loads((out / "same-node-b.json").read_text())["baseline"], "b")
+        self.assertIn("- a against b: ", (out / "same-node-b.md").read_text())
+        # The run's own is as it was.
+        self.assertEqual(json.loads((out / "same-node.json").read_text())["baseline"], "a")
+        self.assertEqual((out / "same-node.md").read_text(), markdown)
+        for name in ("../same-node", "samples/x", ""):
+            status, _, stderr = helper("same-node", out, "--report", name)
+            self.assertEqual(status, 1, name)
+            self.assertIn(f"--report {name}: give a name for the report's files", stderr)
+
+    def test_each_variants_drift_compares_its_first_round_with_the_later_ones(self):
+        # b's round 1 at 500 requests/s, 33.0, against the median of its
+        # later rounds, 32.24, and at 1,000, 44.0 against 42.0.
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(HIGHER),
+                                                                           variant_pods(["a", "b"])))
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(report["gke"]["profiles"]["small"]["drift"], {
+            "a": {"steps": 2, "median_change_percent": 0.0, "min_change_percent": 0.0, "max_change_percent": 0.0},
+            "b": {"steps": 2, "median_change_percent": 3.56, "min_change_percent": 2.36, "max_change_percent": 4.76}})
+        self.assertIn("Drift, each variant's CPU µs/request in round 1 against the median of its later rounds, step by "
+                      "step: a 0% (0%, 2 steps); b +3.6% (+2.4% to +4.8%, 2 steps).", markdown)
+
+    def test_pairs_in_which_either_run_saturated_its_cpu_limit_are_left_out_of_the_verdict(self):
+        # b used 95% of its CPU limit at 1,000 requests/s in every round,
+        # and a 92% at 500 in round 2.
+        runs = {("b", round_, 1000): {"utilization": 0.95} for round_ in range(1, 5)}
+        runs["a", 2, 500] = {"utilization": 0.92}
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(HIGHER, runs=runs),
+                                                                           variant_pods(["a", "b"])))
+        self.assertEqual(status, 0, stderr)
+        profile = report["gke"]["profiles"]["small"]
+        self.assertEqual([[pair["saturated"] for pair in step["variants"]["b"]["pairs"]] for step in profile["steps"]],
+                         [[False, True, False, False], [True, True, True, True]])
+        # Each step's rows still show every pair.
+        self.assertEqual([self.row(markdown, "http-keep-alive", rate, label)["Saturated"]
+                          for rate in (500, 1000) for label in ("a", "b")],
+                         ["1 of 4 runs", "1 of 4 pairs", "0 of 4 runs", "4 of 4 pairs"])
+        self.assertEqual(self.row(markdown, "http-keep-alive", 1000, "b")["Paired"], "+2.5% to +15%")
+        # Three pairs left, all higher: p = 2 / 2^3, the least three pairs
+        # can give.
+        self.assertEqual(profile["verdicts"]["b"],
+                         {"pairs": 3, "higher": 3, "lower": 0, "median_change_percent": 10.0,
+                          "min_change_percent": 10.0, "max_change_percent": 20.0, "sign_test_p": 0.25,
+                          "smallest_p": 0.25, "a_a_spread": None, "inside_a_a_spread": None,
+                          "verdict": "too few pairs to decide"})
+        self.assertIn("- b against a: +10% (+10% to +20%), higher in 3 of 3 pairs, sign test p = 0.25: too few pairs "
+                      "to decide (with 3 that differ, p cannot be below 0.25).", markdown)
+
+    def test_too_few_pairs_to_reach_the_threshold_are_too_few_to_decide_not_no_difference(self):
+        # b is higher than a in every pair, as R2's binary under 50m, where
+        # only the lowest step's runs do not saturate.
+        def verdict(rounds, failed=()):
+            us = {"a": {500: [30.0] * rounds, 1000: [40.0] * rounds},
+                  "b": {500: [36.0] * rounds, 1000: [48.0] * rounds}}
+            runs = {("b", round_, 1000): {"errors": 500} for round_ in failed}
+            status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(us, runs=runs),
+                                                                               variant_pods(["a", "b"])))
+            self.assertEqual(status, 0, stderr)
+            line = next(line for line in markdown.splitlines() if line.startswith("- b against a: "))
+            return report["gke"]["profiles"]["small"]["verdicts"]["b"], line
+
+        # 4 pairs, all higher: p = 0.125, the least 4 pairs can give.
+        result, line = verdict(2)
+        self.assertEqual((result["pairs"], result["sign_test_p"], result["smallest_p"], result["verdict"]),
+                         (4, 0.125, 0.125, "too few pairs to decide"))
+        self.assertEqual(line, "- b against a: +20% (+20%), higher in 4 of 4 pairs, sign test p = 0.125: too few pairs "
+                               "to decide (with 4 that differ, p cannot be below 0.125).")
+        # 5: still at least 0.0625.
+        result, _ = verdict(3, failed=[2])
+        self.assertEqual((result["pairs"], result["smallest_p"], result["verdict"]),
+                         (5, 0.0625, "too few pairs to decide"))
+        # 6 can: 0.03125.
+        result, line = verdict(3)
+        self.assertEqual((result["pairs"], result["sign_test_p"], result["verdict"]), (6, 0.03125, "higher"))
+        self.assertTrue(line.endswith("higher in 6 of 6 pairs, sign test p = 0.031: higher."), line)
+
+    def test_how_to_read_the_comparison_says_the_cuts_the_verdicts_are_made_with(self):
+        out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
+        status, _, markdown, stderr = self.same_node(out)
+        self.assertEqual(status, 0, stderr)
+        self.assertIn("in which a run used 90% of its CPU limit or more", markdown)
+        self.assertIn("smock's idle RSS is read once, before any load, so only round 1's samples have it; a later "
+                      "sample shows its target as not measured.", markdown)
+        self.assertIn("fewer than 6 pairs that differ cannot give a p of 0.05 or less", markdown)
+        self.assertIn("above 0.05 is no clear difference", markdown)
+        # Whatever they are.
+        gke = load_generator_module().gke
+        with mock.patch.object(gke, "SATURATED", 0.8), mock.patch.object(gke, "SIGNIFICANT_P", 0.01):
+            _, markdown, _ = gke.same_node(out)
+        self.assertIn("in which a run used 80% of its CPU limit or more", markdown)
+        self.assertIn("fewer than 8 pairs that differ cannot give a p of 0.01 or less", markdown)
+        self.assertIn("above 0.01 is no clear difference", markdown)
+
+    def test_a_p_below_a_thousandth_is_said_as_such(self):
+        # 12 pairs over six rounds, all higher: p = 2 / 2^12.
+        us = {"a": {500: [30.0] * 6, 1000: [40.0] * 6}, "b": {500: [33.0] * 6, 1000: [44.0] * 6}}
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(us),
+                                                                           variant_pods(["a", "b"])))
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(report["gke"]["profiles"]["small"]["verdicts"]["b"]["sign_test_p"], 2 / 2 ** 12)
+        self.assertIn("- b against a: +10% (+10%), higher in 12 of 12 pairs, sign test p < 0.001: higher.", markdown)
+
+    def test_a_change_reads_as_compare_py_says_it_of_the_same_two_runs(self):
+        # 30.03 to 33.59 is +11.854...%: +11.9%, not the +11.8% of a change
+        # rounded to 11.85 first. The JSON keeps two digits.
+        us = {"a": {500: [30.03] * 2, 1000: [40.0] * 2}, "b": {500: [33.59] * 2, 1000: [44.0] * 2}}
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(us),
+                                                                           variant_pods(["a", "b"])))
+        self.assertEqual(status, 0, stderr)
+        expected = load_generator_module().gke.compare_module().change_text(30.03, 33.59)
+        self.assertEqual(expected, "+11.9%")
+        row = self.row(markdown, "http-keep-alive", 500, "b")
+        self.assertEqual((row["Change"], row["Paired"]), (expected, expected))
+        b = report["gke"]["profiles"]["small"]["steps"][0]["variants"]["b"]
+        self.assertEqual((b["change_percent"], [pair["change_percent"] for pair in b["pairs"]]),
+                         (11.85, [11.85, 11.85]))
+
+    def test_a_run_that_measured_nothing_drops_out_of_the_counts_with_why(self):
+        # b's run at 500 requests/s in round 3 lost requests, and the load
+        # generator fell behind in a's at 1,000 in round 4: neither counts,
+        # nor does its pair.
+        runs = {("b", 3, 500): {"errors": 500}, ("a", 4, 1000): {"load_generator_late": True}}
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(HIGHER, runs=runs),
+                                                                           variant_pods(["a", "b"])))
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual({(rate, label): self.row(markdown, "http-keep-alive", rate, label)["CPU µs/request"]
+                          for rate in (500, 1000) for label in ("a", "b")},
+                         {(500, "a"): "30.0 (29.0–31.0, 4)", (500, "b"): "33.0 (32.2–36.0, 3)",
+                          (1000, "a"): "40.0 (40.0–40.0, 3)", (1000, "b"): "43.0 (41.0–46.0, 4)"})
+        self.assertEqual([(self.row(markdown, "http-keep-alive", rate, "b")["Paired"],
+                           self.row(markdown, "http-keep-alive", rate, "b")["Higher"]) for rate in (500, 1000)],
+                         [("+4% to +20%", "3 of 3"), ("+5% to +15%", "3 of 3")])
+        profile = report["gke"]["profiles"]["small"]
+        self.assertEqual((profile["verdicts"]["b"]["pairs"], profile["verdicts"]["b"]["sign_test_p"]), (6, 0.03125))
+        self.assertEqual(profile["not_measured"], [
+            {"id": "http-keep-alive@small@500", "round": 3, "variant": "b",
+             "reason": "500 of 10000 requests failed in the b round 3 run", "not_run": None},
+            {"id": "http-keep-alive@small@1000", "round": 4, "variant": "a",
+             "reason": "the load generator fell behind in the a round 4 run", "not_run": None}])
+        self.assertIn("Not measured, and left out of the counts:\n\n"
+                      "- http-keep-alive@small@500: 500 of 10000 requests failed in the b round 3 run.\n"
+                      "- http-keep-alive@small@1000: the load generator fell behind in the a round 4 run.\n", markdown)
+
+    def test_the_waits_an_old_smock_does_not_count_show_as_a_dash_and_its_node_steal_comes_from_another(self):
+        # b is smock at 0d984c8, which counts neither its waits for a CPU
+        # nor the node's steal time: a's count stands in for the steal.
+        old = {"scheduling_delay_s": None, "involuntary_context_switches": None, "node_steal_s": None}
+        runs = {}
+        for round_ in range(1, 5):
+            for rate in (500, 1000):
+                runs["a", round_, rate] = {"node_steal_s": 0.3, "steal": {"a": 0.3, "b": None}}
+                runs["b", round_, rate] = {**old, "steal": {"a": 0.5, "b": None}}
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(HIGHER, runs=runs),
+                                                                           variant_pods(["a", "b"])))
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual({label: (self.row(markdown, "http-keep-alive", 500, label)["CPU wait s"],
+                                  self.row(markdown, "http-keep-alive", 500, label)["Node steal s"])
+                          for label in ("a", "b")}, {"a": ("0.02", "0.3"), "b": ("-", "0.5")})
+        # The rest is measured as from any smock.
+        self.assertEqual(self.row(markdown, "http-keep-alive", 500, "b")["CPU µs/request"], "32.6 (31.9–36.0, 4)")
+        self.assertEqual(report["gke"]["profiles"]["small"]["verdicts"]["b"]["pairs"], 8)
+
+    def test_each_variants_binary_and_options_are_named(self):
+        # b is another commit, run without the init container (as the
+        # runner says) and without the scrape a second into each step (as
+        # the load generator did).
+        lines = variant_lines(HIGHER)
+        for line in lines:
+            if line["kind"] == "start" and line["variant"] == "b":
+                line["status"] = {**line["status"], "commit": "4f178ef33830", "version": "0.3.0"}
+        status, report, markdown, stderr = self.same_node(self.variant_run(lines, variant_pods(["a", "b"])),
+                                                          "--no-init", "b", "--sha256", f"b={'b' * 64}")
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(report["variants"], [
+            {"label": "a", "baseline": True, "commit": "a21fe97d59c6", "version": "0.2.0", "sha256": "a" * 64,
+             "options": []},
+            {"label": "b", "baseline": False, "commit": "4f178ef33830", "version": "0.3.0", "sha256": "b" * 64,
+             "options": ["no-init", "no-first-second"]}])
+        self.assertIn("| Variant | Commit | Version | sha256 | Options |\n|---|---|---|---|---|\n"
+                      f"| a (baseline) | a21fe97d59c6 | 0.2.0 | {'a' * 12} | - |\n"
+                      f"| b | 4f178ef33830 | 0.3.0 | {'b' * 12} | no-init, no-first-second |\n", markdown)
+
+    def test_variants_on_one_node_are_checked_by_its_name_even_when_one_did_not_print_its_cpu(self):
+        # b ran without the init container: only a's sample knows the
+        # node's CPU, and both name the node.
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(HIGHER),
+                                                                           variant_pods(["a", "b"])), "--no-init", "b")
+        self.assertEqual(status, 0, stderr)
+        profile = report["gke"]["profiles"]["small"]
+        self.assertEqual({key: profile[key] for key in ("pods_read", "nodes", "one_node", "limits_as_planned",
+                                                        "problems")},
+                         {"pods_read": True, "nodes": {"a": "node-a", "b": "node-a"}, "one_node": True,
+                          "limits_as_planned": True, "problems": []})
+        self.assertEqual(profile["node"], {"name": "node-a", "instance_type": "ek-standard-8",
+                                           "zone": "asia-northeast1-b", "cpu": AMD_CPU})
+        self.assertIn("Every variant ran on node node-a: ek-standard-8 in asia-northeast1-b, AMD EPYC 7B13 (family 25, "
+                      "model 1, stepping 0). Each was admitted with the profile's limits as its requests and limits.",
+                      markdown)
+
+    def test_variants_on_two_nodes_or_under_other_limits_than_the_plans_cannot_be_compared(self):
+        out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"], nodes={"b": "node-c"}))
+        status, report, markdown, stderr = self.same_node(out)
+        self.assertEqual(status, 1)
+        problem = "small: the smock Pods of small are on 2 nodes, not one: a on node-a, b on node-c"
+        self.assertEqual((report["problems"], report["gke"]["profiles"]["small"]["one_node"]), ([problem], False))
+        self.assertIn(f"gke: {problem}", stderr)
+        self.assertIn(f"**Not comparable:**\n\n- {problem}.\n", markdown)
+        self.assertIn("The variants ran on 2 nodes: a on node-a, b on node-c.", markdown)
+        # As Autopilot raises a Pod's resources it finds too small.
+        out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"], limits={"b": ("500m", "512Mi")}))
+        status, report, markdown, stderr = self.same_node(out)
+        self.assertEqual(status, 1)
+        self.assertEqual(report["problems"],
+                         ["small: variant b's CPU request was admitted as 500m, not the profile's 250m",
+                          "small: variant b's CPU limit was admitted as 500m, not the profile's 250m"])
+        self.assertFalse(report["gke"]["profiles"]["small"]["limits_as_planned"])
+        self.assertIn("Every variant ran on node node-a: ek-standard-8 in asia-northeast1-b, AMD EPYC 7B13 (family 25, "
+                      "model 1, stepping 0). Not every one was admitted with the profile's limits as its requests and "
+                      "limits.", markdown)
+
+    def test_a_profile_with_an_incomplete_sample_cannot_be_compared_and_says_what_was_measured(self):
+        lines, reason = stopped_in_round_2()
+        status, report, markdown, stderr = self.same_node(self.variant_run(lines, variant_pods(["a", "b"])))
+        self.assertEqual(status, 1)
+        problem = "small: samples 2-a and 2-b are incomplete"
+        self.assertEqual(report["problems"], [problem])
+        self.assertIn(f"gke: {problem}", stderr)
+        self.assertEqual((report["complete"], report["gke"]["profiles"]["small"]["complete"]), (False, False))
+        # What ran still counts: b's run in round 2 failed, and those after
+        # it were left out.
+        self.assertEqual(self.row(markdown, "http-keep-alive", 500, "b")["CPU µs/request"], "40.0 (40.0–40.0, 1)")
+        self.assertEqual(self.row(markdown, "http-keep-alive", 1000, "a")["CPU µs/request"], "32.0 (32.0–32.0, 1)")
+        self.assertIn(f"**Stopped early:** {reason}. 3 runs were left out.", markdown)
+        self.assertIn("- http-keep-alive@small@500: 10000 of 10000 requests failed in the b round 2 run.", markdown)
+
+    def test_the_order_the_variants_ran_in_and_what_their_idle_neighbours_used_are_reported(self):
+        # Three variants over two rounds, not a multiple of three: their
+        # positions are not balanced. c used the most CPU idle, beside b's
+        # run at 1,000 requests/s in round 2.
+        us = {label: {500: [30.0, 30.0], 1000: [30.0, 30.0]} for label in ("a", "b", "c")}
+        runs = {(label, round_, rate): {"neighbours": {other: 0.004 for other in us if other != label}}
+                for label in us for round_ in (1, 2) for rate in (500, 1000)}
+        runs["b", 2, 1000]["neighbours"]["c"] = 0.031
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(us, runs=runs),
+                                                                           variant_pods(["a", "b", "c"])))
+        self.assertEqual(status, 0, stderr)
+        profile = report["gke"]["profiles"]["small"]
+        self.assertEqual(profile["order"], [
+            {"round": 1, "id": "http-keep-alive@small@500", "variants": ["a", "b", "c"]},
+            {"round": 1, "id": "http-keep-alive@small@1000", "variants": ["b", "c", "a"]},
+            {"round": 2, "id": "http-keep-alive@small@500", "variants": ["b", "c", "a"]},
+            {"round": 2, "id": "http-keep-alive@small@1000", "variants": ["c", "a", "b"]}])
+        self.assertEqual(profile["positions"], {"a": [1, 1, 2], "b": [2, 1, 1], "c": [1, 2, 1]})
+        self.assertIn("Each step ran the variants one after another, their order turned by one for each round and "
+                      "step. Times each ran first, second and third: a 1, 1, 2; b 2, 1, 1; c 1, 2, 1.", markdown)
+        self.assertEqual(profile["neighbours"], {"max_cpu_s": 0.031, "variant": "c", "beside": "b", "round": 2,
+                                                 "id": "http-keep-alive@small@1000"})
+        self.assertIn("The idle variants used at most 0.031 s of CPU during another's run: c, during b's run of "
+                      "http-keep-alive@small@1000 in round 2.", markdown)
+
+    def test_every_position_a_variant_can_hold_in_a_step_has_a_name(self):
+        gke = load_generator_module().gke
+        self.assertGreaterEqual(len(gke.ORDINALS), gke.MAX_VARIANTS)
+
+    def test_conditions_besides_smock_are_compared_with_the_baselines_first_samples(self):
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(HIGHER),
+                                                                           variant_pods(["a", "b"])))
+        self.assertEqual((status, report["conditions"]), (0, {"same": True, "reference": "1-a", "differences": []}),
+                         stderr)
+        self.assertIn("Besides smock, the samples had the same conditions.", markdown)
+        # b's load generator said another oha, as no run of one load
+        # generator does.
+        lines = variant_lines(HIGHER)
+        for line in lines:
+            if line["kind"] == "start" and line["variant"] == "b":
+                line["oha"] = "oha 1.17.0"
+        status, report, markdown, stderr = self.same_node(self.variant_run(lines, variant_pods(["a", "b"])))
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(report["conditions"], {"same": False, "reference": "1-a", "differences": [
+            {"condition": "load generator", "text": "load generator (oha 1.16.0 → oha 1.17.0)",
+             "samples": ["1-b", "2-b", "3-b", "4-b"]}]})
+        self.assertIn("Besides smock, the samples differ from 1-a in: load generator (oha 1.16.0 → oha 1.17.0) in "
+                      "1-b, 2-b, 3-b and 4-b.", markdown)
+
+    def test_compare_py_compares_any_two_samples_as_two_runs(self):
+        out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
+        status, _, _, stderr = self.same_node(out)
+        self.assertEqual(status, 0, stderr)
+        for older, newer in (("1-a", "1-b"), ("2-b", "4-a")):
+            compared = subprocess.run([sys.executable, str(BENCH / "compare.py"), str(out / "samples" / older),
+                                       str(out / "samples" / newer)], capture_output=True, text=True)
+            self.assertEqual(compared.returncode, 0, compared.stdout + compared.stderr)
+            self.assertIn("Besides smock, the runs had the same conditions.", compared.stdout)
+            self.assertIn("| small | http-keep-alive | 1,000 | 2.0 → 2.0 | 0% |", compared.stdout)
+        # Its CPU a request, run against run; b's samples, without the init
+        # container, did not record the node's CPU.
+        compared = subprocess.run([sys.executable, str(BENCH / "compare.py"), str(out / "samples" / "1-a"),
+                                   str(out / "samples" / "1-b")], capture_output=True, text=True).stdout
+        self.assertIn("| small | http-keep-alive | 500 | 30.0 → 33.0 | +10% | 50.0 → 50.0 |", compared)
+        self.assertIn("The newer run did not record the CPU of smock's nodes: whether it changed is unknown.", compared)
+
+    def test_runs_the_load_generator_never_reported_or_that_were_not_summarized_are_counted_once(self):
+        # The load generator's Job ran out of time after b's first run of
+        # round 2: it reported none of the three runs after it, nor its
+        # done lines.
+        us = {"a": {500: [30.0, 31.0], 1000: [32.0, 33.0]}, "b": {500: [40.0, 41.0], 1000: [42.0, 43.0]}}
+        lines = variant_lines(us, done=False)
+        lines = lines[:next(index for index, line in enumerate(lines) if line.get("round") == 2) + 1]
+        out = self.variant_run(lines, variant_pods(["a", "b"]))
+        status, report, markdown, stderr = self.same_node(out)
+        self.assertEqual(status, 1)
+        # Round 1's samples measured their steps, and lack only the done
+        # lines.
+        self.assertEqual(report["problems"], ["small: every sample is incomplete",
+                                              "small: samples 1-a and 1-b measured every step, but the load "
+                                              "generator's log ends before its done lines, as when its Job ended or "
+                                              "was stopped first"])
+        self.assertEqual([(entry["round"], entry["variant"], entry["not_run"])
+                          for entry in report["gke"]["profiles"]["small"]["not_measured"]],
+                         [(2, "a", "not reported"), (2, "a", "not reported"), (2, "b", "not reported")])
+        self.assertIn("The load generator did not report 3 runs: its Job ended before them, or never ran.", markdown)
+        self.assertNotIn("- http-keep-alive", markdown)
+        # A sample summarize did not summarize: its runs count as none.
+        (out / "samples" / "1-b" / "summary.json").unlink()
+        status, _, stderr = helper("same-node", out)
+        self.assertEqual(status, 1)
+        self.assertIn("The sample 1-b has no summary, so its 2 runs are not counted.",
+                      (out / "same-node.md").read_text())
+
+    def test_a_log_cut_short_with_no_stop_still_counts_every_run_of_the_planned_rounds(self):
+        # The load generator's Job was killed, by its deadline or the
+        # run's, with no stopped line: what it printed says 4 rounds.
+        def cut(after):
+            lines = variant_lines(HIGHER, done=False)
+            first = next(index for index, line in enumerate(lines) if line.get("round") == 2)
+            out = self.variant_run(lines[:first + after], variant_pods(["a", "b"]))
+            self.assertEqual([(round_, label) for round_, label, _ in self.samples(out)],
+                             [(round_, label) for round_ in range(1, 5) for label in ("a", "b")])
+            status, report, markdown, stderr = self.same_node(out)
+            self.assertEqual(status, 1, stderr)
+            self.assertEqual(report["run"]["rounds"], 4)
+            self.assertIn("2 variants of smock over 4 rounds", markdown)
+            return report["gke"]["profiles"]["small"]["not_measured"], markdown
+
+        # At the end of round 1: 12 of 16 runs were not reported.
+        not_measured, markdown = cut(0)
+        self.assertEqual({entry["not_run"] for entry in not_measured}, {"not reported"})
+        self.assertIn("The load generator did not report 12 runs", markdown)
+        # One run into round 2: 11.
+        _, markdown = cut(1)
+        self.assertIn("The load generator did not report 11 runs", markdown)
+
+    def test_a_run_that_stopped_before_the_load_generator_counts_the_runs_of_the_rounds_it_was_given(self):
+        # Four variants on the node, and no load generator's log: the run
+        # stopped before it started, and the runner says 2 rounds.
+        labels = ["a", "b", "c", "d"]
+        out = self.variant_run([], variant_pods(labels))
+        status, report, markdown, stderr = self.same_node(out, "--baseline", "a", rounds=2)
+        self.assertEqual(status, 1, stderr)
+        self.assertEqual((report["baseline"], report["run"]["rounds"]), ("a", 2))
+        self.assertEqual(len(report["gke"]["profiles"]["small"]["not_measured"]), 16)
+        self.assertIn("The load generator did not report 16 runs", markdown)
+
+    def test_without_the_load_generators_lines_the_variants_are_in_the_order_the_runner_gives(self):
+        # The run stopped before the load generator started: kubectl lists
+        # the Pods by name, and the samples' directories are in no order,
+        # so neither says the variants' order, b, d, a and c; the runner's
+        # --baseline and --sha256 do.
+        out = self.variant_run([], variant_pods(["a", "b", "c", "d"]))
+        given = [arg for label in "bdac" for arg in ("--sha256", f"{label}={label * 64}")]
+        status, report, _, stderr = self.same_node(out, "--baseline", "b", *given, rounds=1)
+        self.assertEqual(status, 1, stderr)
+        self.assertEqual((report["baseline"], [variant["label"] for variant in report["variants"]]),
+                         ("b", ["b", "d", "a", "c"]))
+        # The order of --sha256 alone, too.
+        status, _, stderr = helper("same-node", out, *given)
+        self.assertEqual(status, 1, stderr)
+        report = json.loads((out / "same-node.json").read_text())
+        self.assertEqual((report["baseline"], [variant["label"] for variant in report["variants"]]),
+                         ("b", ["b", "d", "a", "c"]))
+
+    def test_a_profile_the_run_did_not_reach_cannot_be_compared_and_says_so(self):
+        # A second profile, big, which the run did not reach, as one that
+        # did not fit in its time limit.
+        plan = small_plan(self.directory())
+        content = json.loads(plan.read_text())
+        content["profiles"].append({"name": "big", "cpu_limit": "1", "memory_limit": "1Gi"})
+        content["cases"][0]["rates"]["big"] = [5000]
+        plan.write_text(json.dumps(content))
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(HIGHER),
+                                                                           variant_pods(["a", "b"])), plan=plan)
+        self.assertEqual(status, 1)
+        self.assertEqual(report["problems"], ["big: no smock Pod of profile big is in what the run read of its Pods",
+                                              "big: every sample is incomplete"])
+        self.assertTrue(report["gke"]["profiles"]["small"]["complete"])
+        big = markdown.split("\n## big: CPU limit 1, memory limit 1Gi\n", 1)[1]
+        self.assertIn("The run read no smock Pod under this profile.", big)
+        self.assertIn("The load generator ran no step.", big)
+        self.assertIn("The load generator did not report 8 runs: its Job ended before them, or never ran.", big)
+        self.assertEqual([self.row(markdown, "http-keep-alive", 5000, label, "## big: CPU limit 1, memory limit 1Gi")
+                          ["Saturated"] for label in ("a", "b")], ["-", "-"])
+
+    def test_a_run_that_stopped_before_its_end_says_where_and_why_below_what_ran(self):
+        # As the runner tells summarize of each sample: here, the next
+        # profile, big, no longer fitted in the time limit.
+        plan = small_plan(self.directory())
+        content = json.loads(plan.read_text())
+        content["profiles"].append({"name": "big", "cpu_limit": "1", "memory_limit": "1Gi"})
+        content["cases"][0]["rates"]["big"] = [5000]
+        plan.write_text(json.dumps(content))
+        reason = "profile big and those after it did not fit in the time limit of 80 minutes"
+        out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
+        status, report, markdown, _ = self.same_node(out, plan=plan, stopped=(reason, "big"))
+        self.assertEqual(status, 1)
+        self.assertEqual(report["stopped"], {"reason": reason, "profile": "big", "after": None})
+        started, stopped = markdown.split("\n\n")[1:3]
+        self.assertTrue(started.startswith("Started 2026-10-16T03:28:50+00:00: 2 variants"), started)
+        self.assertEqual(stopped, f"**Stopped early:** the run stopped under profile big, before its first run: "
+                                  f"{reason}. Nothing after that was measured.")
+        # Stopped under small after its last run, b's at 1,000 requests/s
+        # in round 4.
+        status, report, markdown, _ = self.same_node(out, stopped=("stopped by SIGTERM", "small"))
+        self.assertEqual(status, 0)
+        self.assertEqual(report["stopped"], {"reason": "stopped by SIGTERM", "profile": "small",
+                                             "after": {"round": 4, "variant": "b", "id": "http-keep-alive@small@1000"}})
+        self.assertIn("\n\n**Stopped early:** the run stopped under profile small, after its run of "
+                      "http-keep-alive@small@1000 by b in round 4: stopped by SIGTERM. Nothing after that was measured."
+                      "\n\n", markdown)
+        status, report, markdown, _ = self.same_node(out)
+        self.assertIsNone(report["stopped"])
+        self.assertNotIn("Stopped early", markdown)
+
+    def test_two_variants_of_one_binary_and_options_are_an_a_a_pair_whose_spread_the_verdicts_are_read_against(self):
+        # b and c are one binary with the same options: c against b is an
+        # A/A pair, whose paired changes, -6% to +7%, are how far runs of
+        # one binary differ on the node. b is 5% above a in every pair,
+        # which the sign test alone calls higher, but inside that spread.
+        status, report, markdown, stderr = self.same_node(
+            self.variant_run(variant_lines(SAME_BINARY), variant_pods(["a", "b", "c"])), sha256={"c": "b" * 64})
+        self.assertEqual(status, 0, stderr)
+        profile = report["gke"]["profiles"]["small"]
+        [within] = profile["within"]
+        self.assertEqual((within["label"], within["against"], within["kind"]), ("c", "b", "same binary"))
+        self.assertEqual([(step["id"], [pair["change_percent"] for pair in step["pairs"]]) for step in within["steps"]],
+                         [("http-keep-alive@small@500", [7.0, -6.0, 2.0, -2.0]),
+                          ("http-keep-alive@small@1000", [7.0, -6.0, 2.0, -2.0])])
+        self.assertEqual({key: within["verdict"][key] for key in ("pairs", "min_change_percent", "max_change_percent",
+                                                                  "a_a_spread", "verdict")},
+                         {"pairs": 8, "min_change_percent": -6.0, "max_change_percent": 7.0, "a_a_spread": None,
+                          "verdict": "no clear difference"})
+        self.assertEqual(profile["a_a_spread"], {"min_change_percent": -6.0, "max_change_percent": 7.0})
+        b = profile["verdicts"]["b"]
+        self.assertEqual({key: b[key] for key in ("median_change_percent", "sign_test_p", "a_a_spread",
+                                                  "inside_a_a_spread", "verdict")},
+                         {"median_change_percent": 5.0, "sign_test_p": 0.0078125,
+                          "a_a_spread": {"min_change_percent": -6.0, "max_change_percent": 7.0},
+                          "inside_a_a_spread": True, "verdict": "no clear difference"})
+        self.assertIn("- b against a: +5% (+5%), higher in 8 of 8 pairs, sign test p = 0.008: no clear difference "
+                      "(inside the A/A spread of -6% to +7%).", markdown)
+        self.assertIn("Variants of one binary, each against the first variant with it, over the same pairs:\n\n"
+                      "- c against b (the same options, an A/A pair): 0% (-6% to +7%), higher in 4 of 8 pairs, "
+                      "sign test p = 1: no clear difference.\n", markdown)
+
+    def test_a_variant_of_one_binary_with_other_options_is_compared_with_the_first_for_what_they_cost(self):
+        # c is b's binary run without the init container (and, as b, the
+        # scrape a second into each step): what the harness costs.
+        status, report, markdown, stderr = self.same_node(
+            self.variant_run(variant_lines(SAME_BINARY), variant_pods(["a", "b", "c"])), "--no-init", "c",
+            sha256={"c": "b" * 64})
+        self.assertEqual(status, 0, stderr)
+        profile = report["gke"]["profiles"]["small"]
+        [within] = profile["within"]
+        self.assertEqual((within["label"], within["against"], within["kind"]), ("c", "b", "other options"))
+        # With no A/A pair, nothing to read the verdicts against.
+        self.assertIsNone(profile["a_a_spread"])
+        self.assertEqual(profile["verdicts"]["b"]["verdict"], "higher")
+        self.assertIn("- c against b (no-init, no-first-second against no-first-second): 0% (-6% to +7%), higher in 4 "
+                      "of 8 pairs, sign test p = 1: no clear difference.", markdown)
+
+    def test_an_a_a_pair_is_found_when_the_baseline_is_its_binary_with_other_options(self):
+        # a, b and c are one binary, a without the init container: b
+        # against a is what the harness costs, and c against b, not
+        # against a, is the A/A pair.
+        status, report, markdown, stderr = self.same_node(
+            self.variant_run(variant_lines(SAME_BINARY), variant_pods(["a", "b", "c"])), "--no-init", "a",
+            sha256={"a": "b" * 64, "c": "b" * 64})
+        self.assertEqual(status, 0, stderr)
+        profile = report["gke"]["profiles"]["small"]
+        self.assertEqual([(within["label"], within["against"], within["kind"]) for within in profile["within"]],
+                         [("b", "a", "other options"), ("c", "b", "same binary")])
+        self.assertEqual(profile["a_a_spread"], {"min_change_percent": -6.0, "max_change_percent": 7.0})
+
+    def test_a_variant_with_two_sha256_values_exits_2_since_what_it_measured_is_unknown(self):
+        out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
+        # summarize was told another binary for b in round 3.
+        status, report, markdown, stderr = self.same_node(out, sha256={(3, "b"): "c" * 64})
+        self.assertEqual(status, 2)
+        problem = f"variant b has two sha256 values, {'b' * 64} and {'c' * 64}: which binary it ran is unknown"
+        self.assertIn(f"gke: {problem}", stderr)
+        self.assertIn(problem, markdown)
+        self.assertEqual(report["problems"], [problem])
+        # And when the run's own differs from the samples'.
+        status, _, _, stderr = self.same_node(out, "--sha256", f"a={'d' * 64}")
+        self.assertEqual(status, 2)
+        self.assertIn(f"gke: variant a has two sha256 values, {'a' * 64} and {'d' * 64}", stderr)
 
 
 if __name__ == "__main__":
