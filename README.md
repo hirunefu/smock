@@ -1542,8 +1542,10 @@ deletes what it made.
 #### Comparing smock binaries on one node
 
 One binary used 15 to 25% more or less CPU a request from one node to
-another in the runs of R2, more than the difference between binaries
-those runs were to measure. `--variant` compares 2 to 4 smock binaries,
+another in the runs of R2, and close to twice as much on one
+ek-standard-8 node as on another with the same CPU in #39's run: more
+than the difference between binaries those runs were to measure.
+`--variant` compares 2 to 4 smock binaries,
 or one binary with other options, on one node instead. Under each
 profile, each variant runs in a Pod of its own with the profile's
 limits, all on the first one's node (a required Pod affinity on the
