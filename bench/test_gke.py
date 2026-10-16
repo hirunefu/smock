@@ -27,6 +27,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 BENCH = Path(__file__).resolve().parent
 ROOT = BENCH.parent
@@ -1296,6 +1297,175 @@ class Generator(Helper):
         self.assertIn("Not measured: https-keep-alive@small.", markdown)
 
 
+STEP_IDS = ["http-keep-alive@small", "https-keep-alive@small"]
+
+
+def generate_variants(plan_path, variants, rounds):
+    """Runs the load generator for profile small against several smocks on
+    this machine as variants, `variants` [(label, smock, first_second,
+    ports instead of smock's own)], for `rounds` rounds; returns its exit
+    status, its JSON lines and its output."""
+    entries = [{"label": label, "target": "localhost", "first_second": first_second,
+                "plain_port": int(ports.get("plain", smock.ports["plain"])),
+                "tls_port": int(ports.get("tls", smock.ports["tls"])), "admin_port": int(smock.ports["admin"])}
+               for label, smock, first_second, ports in variants]
+    environment = {**{name: value for name, value in os.environ.items() if name != "TARGET"},
+                   "VARIANTS": json.dumps(entries), "ROUNDS": str(rounds), "PROFILE": "small",
+                   "CASES": "http-keep-alive,https-keep-alive", "PLAN": str(plan_path),
+                   "OHA": shutil.which(OHA) or OHA, "TRAFFIC_CHECK_S": "2"}
+    generator = subprocess.run([sys.executable, str(BENCH / "gke" / "generator.py")], env=environment,
+                               capture_output=True, text=True, timeout=240)
+    lines = [json.loads(line) for line in generator.stdout.splitlines()]
+    return generator.returncode, lines, generator.stdout + generator.stderr
+
+
+class GeneratorWithVariants(Helper):
+    """With variants, smocks kept on one node, the load generator runs each
+    step of the profile against each variant in turn, one at a time, the
+    variants' order turned for each round and each step, and tags every
+    line about smock with its variant. It runs here against two smocks on
+    this machine, a and b, for two rounds; b skips the scrape a second
+    into each step."""
+
+    generator_plan = Generator.generator_plan
+    summarize = Generator.summarize
+
+    @classmethod
+    def setUpClass(cls):
+        directory = Path(tempfile.mkdtemp(prefix="smock-gke-test-"))
+        cls.addClassCleanup(shutil.rmtree, directory, ignore_errors=True)
+        cls.plan_path = Generator.generator_plan(SimpleNamespace(directory=lambda: directory))
+        with LocalSmock() as a, LocalSmock() as b:
+            cls.status, cls.lines, cls.output = generate_variants(cls.plan_path, [("a", a, True, {}),
+                                                                                  ("b", b, False, {})], 2)
+
+    def test_each_step_runs_each_variant_in_turn_in_the_turned_order_and_every_line_is_tagged(self):
+        self.assertEqual(self.status, 0, self.output)
+        order = [(1, STEP_IDS[0], "a"), (1, STEP_IDS[0], "b"), (1, STEP_IDS[1], "b"), (1, STEP_IDS[1], "a"),
+                 (2, STEP_IDS[0], "b"), (2, STEP_IDS[0], "a"), (2, STEP_IDS[1], "a"), (2, STEP_IDS[1], "b")]
+        self.assertEqual([(line["kind"], line.get("variant")) for line in self.lines],
+                         [("start", "a"), ("start", "b"), ("idle-rss", "a"), ("idle-rss", "b"),
+                          ("traffic-check", "a"), ("traffic-check", "b"), ("metrics-before", "a"),
+                          ("metrics-before", "b"), *[("step", variant) for _, _, variant in order],
+                          ("metrics-after", "a"), ("metrics-after", "b"), ("done", "a"), ("done", "b")])
+        self.assertEqual([(line["round"], line["result"]["id"], line["variant"])
+                          for line in self.lines if line["kind"] == "step"], order)
+        starts = [line for line in self.lines if line["kind"] == "start"]
+        self.assertEqual([(start["address"], start["first_second"]) for start in starts],
+                         [("127.0.0.1", True), ("127.0.0.1", False)])
+        for start in starts:
+            self.assertRegex(start["status"]["digest"], "^[0-9a-f]{12}$")
+        for check in (line for line in self.lines if line["kind"] == "traffic-check"):
+            self.assertTrue(check["ok"], check)
+        # Each variant's own smock answered the load of its runs.
+        for step in (line["result"] for line in self.lines if line["kind"] == "step"):
+            self.assertEqual((step["errors"], step["smock_ready"]), (0, True))
+            self.assertGreaterEqual(step["smock_cpu"]["requests"], step["requests"]["ok"])
+
+    def test_a_variant_that_skips_the_scrape_a_second_into_each_step_records_no_first_second(self):
+        for line in (line for line in self.lines if line["kind"] == "step"):
+            cpu = line["result"]["smock_cpu"]
+            self.assertGreater(cpu["usage_s"], 0)
+            if line["variant"] == "a":
+                self.assertGreaterEqual(cpu["first_second"]["wall_s"], 1)
+                self.assertGreater(cpu["first_second"]["requests"], 0)
+            else:
+                self.assertIn("first_second", cpu)
+                self.assertIsNone(cpu["first_second"])
+
+    def test_each_run_records_what_the_idle_variant_used_meanwhile_and_the_nodes_steal_time(self):
+        for line in (line for line in self.lines if line["kind"] == "step"):
+            idle = "b" if line["variant"] == "a" else "a"
+            self.assertEqual(list(line["neighbours"]), [idle])
+            # An idle smock, scraped around the run: far less CPU than the
+            # one under load.
+            self.assertGreaterEqual(line["neighbours"][idle], 0)
+            self.assertLess(line["neighbours"][idle], line["result"]["smock_cpu"]["usage_s"])
+            # Each variant's count of the node's steal time, the loaded
+            # one's from its own scrapes: none here, on no virtual machine.
+            self.assertEqual(line["node_steal_s"], {"a": 0.0, "b": 0.0})
+            self.assertEqual(line["node_steal_s"][line["variant"]], line["result"]["smock_cpu"]["node_steal_s"])
+
+    def sample(self, round_, label):
+        """The log of one variant's sample, its pass over the steps in one
+        round: its lines but the steps and checks after a run of other
+        rounds, and its idle RSS in round 1 alone."""
+        def kept(line):
+            if line.get("variant") != label or (line["kind"] == "idle-rss" and round_ != 1):
+                return False
+            return line["kind"] not in ("step", "traffic-check") or line.get("round", round_) == round_
+
+        return "".join(json.dumps(line) + "\n" for line in self.lines if kept(line))
+
+    def test_each_round_of_each_variant_splits_out_as_an_ordinary_run_that_summarizes_as_complete(self):
+        for round_, label in ((1, "a"), (2, "b")):
+            summary, conditions, _ = self.summarize(self.plan_path, self.sample(round_, label))
+            self.assertTrue(summary["complete"], (round_, label))
+            self.assertEqual([case["id"] for case in summary["cases"]], STEP_IDS)
+            self.assertEqual([case["smock_cpu"]["first_second"] is None for case in summary["cases"]],
+                             [label == "b"] * 2)
+            self.assertEqual(len(summary["idle_rss"]), 1 if round_ == 1 else 0)
+            self.assertTrue(conditions["gke"]["profiles"]["small"]["traffic_check"]["ok"])
+
+
+class VariantsStopTogether(Helper):
+    """When a variant stops the profile, as one smock alone does, every
+    variant stops, so that each run left has the others' to compare with,
+    and the stopped line says which variant stopped it and which runs were
+    left out."""
+
+    generator_plan = Generator.generator_plan
+
+    def test_a_variant_that_never_answers_stops_every_variant_before_the_first_run(self):
+        plan_path = self.generator_plan()
+        with LocalSmock() as a, LocalSmock() as b, SilentPort() as silent:
+            status, lines, output = generate_variants(plan_path, [("a", a, True, {}),
+                                                                  ("b", b, True, {"tls": silent.port})], 2)
+        self.assertEqual(status, 0, output)
+        self.assertEqual([(line["kind"], line.get("variant")) for line in lines],
+                         [("start", "a"), ("start", "b"), ("idle-rss", "a"), ("idle-rss", "b"),
+                          ("traffic-check", "a"), ("traffic-check", "b"), ("metrics-before", "a"),
+                          ("metrics-before", "b"), ("stopped", "b"), ("metrics-after", "a"), ("metrics-after", "b"),
+                          ("done", "a"), ("done", "b")])
+        self.assertEqual([line["ok"] for line in lines if line["kind"] == "traffic-check"], [True, False])
+        stopped = lines[8]
+        self.assertEqual(stopped["reason"], f"variant b: smock did not answer through its Service in 2 s: TLS port "
+                                            f"{silent.port} (timed out)")
+        self.assertEqual((stopped["round"], stopped["after"]), (None, None))
+        self.assertEqual(stopped["runs"],
+                         [{"round": 1, "variant": "a", "id": STEP_IDS[0]}, {"round": 1, "variant": "b", "id": STEP_IDS[0]},
+                          {"round": 1, "variant": "b", "id": STEP_IDS[1]}, {"round": 1, "variant": "a", "id": STEP_IDS[1]},
+                          {"round": 2, "variant": "b", "id": STEP_IDS[0]}, {"round": 2, "variant": "a", "id": STEP_IDS[0]},
+                          {"round": 2, "variant": "a", "id": STEP_IDS[1]}, {"round": 2, "variant": "b", "id": STEP_IDS[1]}])
+
+    def test_a_run_with_no_response_from_a_variant_that_is_gone_stops_every_variant(self):
+        # b's plain port answers its traffic check, then hangs up on every
+        # connection: b's first run and the check after it get no response.
+        plan_path = self.generator_plan()
+        with LocalSmock() as a, LocalSmock() as b, SilentPort(answer_first=True) as gate:
+            status, lines, output = generate_variants(plan_path, [("a", a, True, {}),
+                                                                  ("b", b, True, {"plain": gate.port})], 2)
+        self.assertEqual(status, 0, output)
+        self.assertEqual([(line["kind"], line.get("variant")) for line in lines],
+                         [("start", "a"), ("start", "b"), ("idle-rss", "a"), ("idle-rss", "b"),
+                          ("traffic-check", "a"), ("traffic-check", "b"), ("metrics-before", "a"),
+                          ("metrics-before", "b"), ("step", "a"), ("step", "b"), ("traffic-check", "b"),
+                          ("stopped", "b"), ("metrics-after", "a"), ("metrics-after", "b"), ("done", "a"),
+                          ("done", "b")])
+        self.assertEqual(lines[8]["result"]["requests"]["ok"], lines[8]["result"]["requests"]["scheduled"])
+        self.assertEqual(lines[9]["result"]["requests"]["ok"], 0)
+        check = lines[10]
+        self.assertEqual((check["round"], check["after"], check["ok"]), (1, STEP_IDS[0], False))
+        stopped = lines[11]
+        self.assertRegex(stopped["reason"], r"^variant b, round 1: http-keep-alive@small got no response to any of "
+                                            r"its \d+ requests")
+        self.assertEqual((stopped["round"], stopped["after"]), (1, STEP_IDS[0]))
+        self.assertEqual(stopped["runs"],
+                         [{"round": 1, "variant": "b", "id": STEP_IDS[1]}, {"round": 1, "variant": "a", "id": STEP_IDS[1]},
+                          {"round": 2, "variant": "b", "id": STEP_IDS[0]}, {"round": 2, "variant": "a", "id": STEP_IDS[0]},
+                          {"round": 2, "variant": "a", "id": STEP_IDS[1]}, {"round": 2, "variant": "b", "id": STEP_IDS[1]}])
+
+
 
 def load_generator_module():
     """bench/gke/generator.py as a module, for its functions."""
@@ -1371,6 +1541,73 @@ class StopAfterAStep(unittest.TestCase):
         for result, later in ((no_response_step(self.spec["id"], ok=1), self.later),
                               (no_response_step(self.spec["id"]), [])):
             self.assertEqual(self.stop_after(result, later, check_result(False)), (None, None, 0))
+
+
+class RunOrder(unittest.TestCase):
+    """With variants, the load generator runs rounds outer, the steps of the
+    profile in the middle and the variants inner, one at a time, the
+    variants' order turned by one for each round and each step: the runs
+    compared with each other come right after one another, and each
+    variant runs first as often as the others."""
+
+    generator = load_generator_module()
+
+    def order(self, steps, variants, rounds):
+        return [(round_, spec["id"], variant)
+                for round_, spec, variant in self.generator.run_order([{"id": step} for step in steps], variants,
+                                                                      rounds)]
+
+    def test_with_two_variants_each_step_runs_them_ab_ba_ab_ba_over_four_rounds(self):
+        runs = self.order(["s1"], ["a", "b"], 4)
+        self.assertEqual(runs, [(1, "s1", "a"), (1, "s1", "b"), (2, "s1", "b"), (2, "s1", "a"),
+                                (3, "s1", "a"), (3, "s1", "b"), (4, "s1", "b"), (4, "s1", "a")])
+
+    def test_the_order_turns_by_one_with_each_round_and_each_step_the_baseline_first(self):
+        runs = self.order(["s1", "s2"], ["a", "b", "c"], 3)
+        self.assertEqual([variant for _, _, variant in runs],
+                         ["a", "b", "c", "b", "c", "a",
+                          "b", "c", "a", "c", "a", "b",
+                          "c", "a", "b", "a", "b", "c"])
+        self.assertEqual([(round_, step) for round_, step, _ in runs][::3],
+                         [(1, "s1"), (1, "s2"), (2, "s1"), (2, "s2"), (3, "s1"), (3, "s2")])
+
+    def test_without_variants_the_steps_run_once_in_the_plans_order(self):
+        self.assertEqual(self.order(["s1", "s2"], [None], 1), [(1, "s1", None), (1, "s2", None)])
+
+
+def old_smock_metrics(cpu_s, start=1760000000.0):
+    """A scrape of the /metrics of smock at 0d984c8 (as metric_values reads
+    it), which has its process and cgroup metrics but none of the waits
+    for a CPU or its node's steal time, added in 5fb5a85."""
+    return {"process_start_time_seconds": start, "process_cpu_seconds_total": round(cpu_s, 2),
+            "process_resident_memory_bytes": 9 << 20, "smock_cgroup_cpu_usage_seconds_total": cpu_s,
+            "smock_cgroup_cpu_periods_total": 40.0, "smock_cgroup_cpu_throttled_periods_total": 0.0,
+            "smock_cgroup_cpu_throttled_seconds_total": 0.0, "smock_cgroup_memory_peak_bytes": 12 << 20,
+            "smock_requests_total": 3.0}
+
+
+class NeighbourGuard(unittest.TestCase):
+    """Around each run, the load generator scrapes the variants left idle,
+    for what they used meanwhile on the node they share with the loaded
+    one: their CPU time, and the node's steal time as each counts it. A
+    smock too old to count something leaves it unknown, never stops the
+    run."""
+
+    generator = load_generator_module()
+
+    def test_an_idle_variants_cpu_comes_from_its_cgroup_and_an_old_smock_has_no_steal(self):
+        self.assertEqual(self.generator.idle_use(old_smock_metrics(1.25), old_smock_metrics(1.263)), (0.013, None))
+
+    def test_a_smock_that_counts_steal_time_says_the_nodes(self):
+        before, after = old_smock_metrics(1.25), old_smock_metrics(1.263)
+        before["smock_node_cpu_steal_seconds_total"], after["smock_node_cpu_steal_seconds_total"] = 30.0, 30.5
+        self.assertEqual(self.generator.idle_use(before, after), (0.013, 0.5))
+
+    def test_a_scrape_without_an_answer_or_a_restart_between_them_leaves_both_unknown(self):
+        for before, after in ((None, old_smock_metrics(1.0)), (old_smock_metrics(1.0), None),
+                              (old_smock_metrics(1.0), old_smock_metrics(0.1, start=1760000500.0))):
+            self.assertEqual(self.generator.idle_use(before, after), (None, None))
+
 
 def elf_header(machine, elf_class=2, data=1, elf_type=2):
     """The first 20 bytes of an ELF file: its identification, type and
