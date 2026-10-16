@@ -146,6 +146,29 @@ pre-merge run compares with them.
   tell them apart. When the targets have changed since a run,
   `python3 bench/bench.py check-targets <results>` checks it against them
   as they are now, without running anything or changing its directory.
+
+  Under the small CPU limits (autopilot-burst-min and autopilot-min), a
+  regression of smock's CPU a request, or a step that now saturates, may
+  be the node's. In #39, smock's CPU a request differed by close to 2×
+  between ek-standard-8 nodes with the same CPU, far more than between
+  R1's binary and R2's on one node. Before you treat such a regression as
+  smock's, settle it on one node
+  ([Comparing smock binaries on one node](../README.md#comparing-smock-binaries-on-one-node)).
+  Run `main`'s binary and the integration branch's as variants, the
+  latter twice as an A/A pair. It is expected to cost about $0.33 in
+  us-central1, and at most $0.77:
+
+  ```sh
+  scripts/gke-bench.sh --yes --arch amd64 --plan bench/plan-same-node.json \
+    --profiles autopilot-burst-min,autopilot-min --time-limit 100m \
+    --variant main="$main/smock" --variant new="$dir/smock" --variant newb="$dir/smock"
+  ```
+
+  `$main/smock` is the release binary CI built for linux/amd64 on the
+  push of `main`'s commit. Its `summary.md` says, step by step and over
+  each profile, whether `new` costs more than `main` on the same node,
+  read against how far `new` and `newb` differ. A difference inside that
+  spread is not a regression.
 - [ ] **Post the summary on the pull request or the merge record**: both
   runs' `summary.md` and both comparisons. They name the machine, the
   architecture, region, zone and node types, never the account or the
