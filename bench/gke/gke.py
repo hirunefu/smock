@@ -7,7 +7,7 @@ usage:
   python3 bench/gke/gke.py plan [options]        the profiles a run runs, with their steps
   python3 bench/gke/gke.py estimate [options]    how long a run takes and what it costs
   python3 bench/gke/gke.py manifests [options]   the Kubernetes objects of one profile
-  python3 bench/gke/gke.py pod-info PODS NODES    what to keep of the Pods and their nodes
+  python3 bench/gke/gke.py pod-info [options] PODS NODES   what to keep of the Pods and their nodes
   python3 bench/gke/gke.py node-cpu [options]     what to keep of the CPU of the node it runs on
   python3 bench/gke/gke.py summarize [options] OUT   summary.json, summary.md and conditions.json
   python3 bench/gke/gke.py stopped LOG            why the load generator stopped its profile early, if it did
@@ -501,10 +501,13 @@ NODE_LABELS = {"instance_type": "node.kubernetes.io/instance-type", "arch": "kub
                "compute_class": "cloud.google.com/compute-class", "boot_disk": "cloud.google.com/gke-boot-disk"}
 
 
-def pod_info(pod_list, node_list):
+def pod_info(pod_list, node_list, restarts=True):
     """What a run keeps of its Pods and of the nodes they ran on: where and
     how they ran, the load generator's CPU request, and nothing that names
-    the project, such as image references or provider IDs."""
+    the project, such as image references or provider IDs. smock's
+    restarts are None (unknown) unless `restarts`: the OOM kills of a
+    profile come from them, so only those read at the profile's end count,
+    and a run that stops before then keeps what it read earlier."""
     info = {"smock": [], "generator": [], "nodes": {}}
     for pod in pod_list["items"]:
         app = pod["metadata"].get("labels", {}).get("app")
@@ -516,7 +519,8 @@ def pod_info(pod_list, node_list):
                 "name": pod["metadata"]["name"], "node": pod["spec"].get("nodeName"),
                 "ready": any(condition["type"] == "Ready" and condition["status"] == "True"
                              for condition in status.get("conditions", [])),
-                "restarts": container.get("restartCount", 0), "last_termination": terminated.get("reason")})
+                "restarts": container.get("restartCount", 0) if restarts else None,
+                "last_termination": terminated.get("reason")})
         elif app == "smock-bench-generator":
             container = (pod["spec"].get("containers") or [{}])[0]
             info["generator"].append({"name": pod["metadata"]["name"], "node": pod["spec"].get("nodeName"),
@@ -640,8 +644,10 @@ def profile_results(out, plan, profile, cases, arch):
                 pods["nodes"][pod["node"]]["cpu"] = cpu
     results = [line["result"] for line in lines if line["kind"] == "step"]
     idle = [line["idle"] for line in lines if line["kind"] == "idle-rss"]
-    # smock's container restarts after an OOM kill: with none, the kernel
-    # never killed it; with some, which step they came in is unknown.
+    # smock's container restarts after an OOM kill: with none at the
+    # profile's end, the kernel never killed it; with some, which step they
+    # came in is unknown, and so is whether there were any when the run
+    # did not read them at the end (None).
     smock = pods["smock"]
     oom_kills = 0 if len(smock) == 1 and smock[0]["restarts"] == 0 else None
     for result in [*results, *idle]:
@@ -697,7 +703,7 @@ def gke_markdown(results):
         pods = result["pods"]
         smock = pods["smock"][0] if pods["smock"] else None
         generator = pods["generator"][0] if pods["generator"] else None
-        restarts = "-" if smock is None else smock["restarts"]
+        restarts = harness.shown(smock and smock["restarts"])
         ended = result["ended_early"]
         lines.append(f"| {name} | {node_text(smock and pods['nodes'].get(smock['node']))} | "
                      f"{node_text(generator and pods['nodes'].get(generator['node']))} | "
@@ -705,7 +711,10 @@ def gke_markdown(results):
                      f"{restarts} | {'yes' if ended else 'no'} |")
         if ended:
             notes.append(f"{name} ended early: {ended['reason']}. Not measured: {', '.join(ended['not_measured'])}.")
-        if smock and smock["restarts"]:
+        if smock and smock["restarts"] is None:
+            notes.append(f"smock's restarts under {name} are unknown, since the run did not read them at the "
+                         "profile's end: its OOM kills are not measured.")
+        elif smock and smock["restarts"]:
             times = "time" if smock["restarts"] == 1 else "times"
             notes.append(f"smock restarted {smock['restarts']} {times} under {name} "
                          f"(last: {smock['last_termination']}): which steps its OOM kills came in is unknown, "
@@ -799,7 +808,7 @@ def command_summarize(args):
                  "and end, the larger as its max; and the most "
                  "memory its container had used by the step's end (memory.peak), since smock started under the "
                  "profile, earlier steps included. Idle RSS is read once smock has been ready for the settle "
-                 "time, before any load. OOM kills come from smock's restarts."),
+                 "time, before any load. OOM kills come from smock's restarts at the profile's end."),
         # The node type, as before the nodes' CPUs were recorded, so that
         # comparing with such a run shows no other machine: each node's CPU
         # is in its own record, which compare.py reads for smock's nodes.
@@ -872,7 +881,7 @@ def command_manifests(args):
 
 
 def command_pod_info(args):
-    print(json.dumps(pod_info(read_json(args.pods), read_json(args.nodes)), indent=2))
+    print(json.dumps(pod_info(read_json(args.pods), read_json(args.nodes), not args.without_restarts), indent=2))
     return 0
 
 
@@ -941,6 +950,8 @@ def main(argv):
     info = commands.add_parser("pod-info", help="print what to keep of the Pods and their nodes")
     info.add_argument("pods", help="kubectl get pods -o json")
     info.add_argument("nodes", help="kubectl get nodes -o json")
+    info.add_argument("--without-restarts", action="store_true",
+                      help="keep smock's restarts as unknown (null), as read before the profile's end")
     info.set_defaults(handler=command_pod_info)
     cpu = commands.add_parser("node-cpu", help="print, as a JSON line, what to keep of the CPU of the node it runs on; "
                                               "it succeeds whatever it can read")

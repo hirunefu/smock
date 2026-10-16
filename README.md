@@ -1482,14 +1482,17 @@ It writes to `bench/results/gke-<date>-<time>/` unless `--out` says
 otherwise: `raw/<profile>/generator.log`, the load generator's lines;
 `raw/<profile>/pods.json`, the nodes the Pods ran on (with each one's
 boot disk type, `boot_disk`), smock's restarts and the load generator's
-CPU request, kept as soon as each Pod has a node and again at the
-profile's end; `raw/<profile>/smock-node-cpu.log`, what smock's init
-container printed of the CPU of its node, kept once smock has started;
-`raw/<profile>/smock.log`, smock's log
-(and the log of its container before its last restart, when it
-restarted, with kubectl's errors in their place); and
-`raw/<profile>/service.json`, its Service with the Service's
-EndpointSlices, both kept before smock's Pod is deleted;
+CPU request, kept as soon as each Pod has a node, with smock's restarts
+unknown (null), and again at the profile's end, with them (a run that
+stops before then, or cannot read them then, leaves them unknown, and
+smock's OOM kills under the profile unmeasured);
+`raw/<profile>/smock-node-cpu.log`, what smock's init container printed
+of the CPU of its node, kept once smock has started;
+`raw/<profile>/smock.log`, smock's log (and the log of its container
+before its last restart, when it restarted or that is not known, with
+kubectl's errors in their place); and `raw/<profile>/service.json`, its
+Service with the Service's EndpointSlices, both kept before smock's Pod
+is deleted;
 `summary.json` in the layout of a run on a machine, which
 `bench/compare.py` reads; `summary.md`; `conditions.json`; and
 `watchdog.log`. The summary and the conditions record, for each profile,
@@ -1523,9 +1526,9 @@ the larger as its max; and the most memory its container had used by the
 step's end (`memory.peak`), since smock started under the profile, so
 earlier steps count too. A smock without those metrics leaves them, idle
 RSS and the targets on them unmeasured. OOM kills come from smock's
-restarts. Nothing it writes names the account or the project, and what it
-prints shows the project as `$GKE_BENCH_PROJECT` and gcloud's account as
-`<account>`.
+restarts at the profile's end. Nothing it writes names the account or
+the project, and what it prints shows the project as `$GKE_BENCH_PROJECT`
+and gcloud's account as `<account>`.
 
 `python3 -m unittest discover -s bench` tests the helper, the load
 generator against smock on this machine, and the script against fake

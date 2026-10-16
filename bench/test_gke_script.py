@@ -373,6 +373,15 @@ if tool == "kubectl":
     if words[:1] == ["logs"]:
         logs(words[1], "--previous" in argv, options.get("container"))
     if words[:2] == ["get", "pods"]:
+        # Only the first `pods_readable` lists succeed, when configured, as
+        # when the API server stops answering for a time.
+        if "pods_readable" in config:
+            with (state_dir / "calls.jsonl").open() as calls:
+                lists = sum(call["words"][:2] == ["get", "pods"] and "--output=json" in call["argv"]
+                            for call in map(json.loads, calls))
+            if lists > config["pods_readable"]:
+                sys.stderr.write("Unable to connect to the server: net/http: TLS handshake timeout\n")
+                answer("", 1)
         answer(json.dumps(pod_list()))
     if words[:2] == ["get", "service,endpointslices"]:
         answer(json.dumps(services_and_endpoint_slices()))
@@ -982,6 +991,24 @@ class Diagnostics(Script):
         self.assertTrue(self.made(["logs", "pod/smock-small"]))
         self.assertTrue([call for call in self.calls("kubectl") if "--previous" in call["argv"]])
 
+    def test_a_smock_whose_restarts_could_not_be_read_at_the_end_keeps_its_previous_containers_log_too(self):
+        # smock restarted during the load, and the Pods could be read as
+        # each got a node, not at the profile's end: whether it restarted
+        # is unknown, so the log of its previous container is kept too.
+        (self.tmp / "smock-previous.log").write_text('{"level":"error","msg":"out of memory"}\n')
+        self.configure(restarts={"smock-small": 1}, pods_readable=2,
+                       logs={"generator-small": str(self.tmp / "generator-small.log"),
+                             "smock-small": str(self.tmp / "smock-small.log"),
+                             "smock-small/previous": str(self.tmp / "smock-previous.log")})
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 0, output)
+        log = (self.out / "raw" / "small" / "smock.log").read_text()
+        self.assertIn("(restarts: unknown)", log)
+        self.assertLess(log.index("out of memory"), log.index('"msg":"listening"'))
+        # Nor are its OOM kills known.
+        summary = json.loads((self.out / "summary.json").read_text())
+        self.assertEqual({case["memory"]["oom_kills"] for case in summary["cases"]}, {None})
+
     def test_a_smock_that_never_became_ready_keeps_its_logs_its_pod_and_its_service(self):
         # It restarted, as when the kernel kills it for memory as it
         # starts: its Pod, kept first, says so, and the log of its
@@ -1275,6 +1302,13 @@ class StoppedEarly(Script):
         self.assertEqual((nodes["node-a"]["cpu"], nodes["node-b"]["cpu"]), (NODE_CPU, None))
         self.assertEqual((conditions["machine"]["cpu_model"], conditions["machine"]["cpus"]),
                          ("GKE Autopilot ek-standard-8", 8))
+        # smock's restarts were not read at the profile's end, and those
+        # read before the load would not show an OOM kill during it: they
+        # are unknown, and so are its OOM kills.
+        self.assertEqual([pod["restarts"] for pod in conditions["gke"]["profiles"]["small"]["smock"]], [None])
+        self.assertEqual({entry["memory"]["oom_kills"] for entry in [*summary["cases"], *summary["idle_rss"]]},
+                         {None})
+        self.assertIn("smock's restarts under small are unknown", markdown)
         self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
 
     def test_a_run_the_watchdog_stopped_at_the_time_limit_says_so(self):

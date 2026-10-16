@@ -689,6 +689,23 @@ class Summary(Helper):
         self.assertEqual(verdict["verdict"], "not measured")
         self.assertIn("smock restarted 1 time under small (last: OOMKilled)", (out / "summary.md").read_text())
 
+    def test_smocks_restarts_read_before_the_profiles_end_measure_no_oom_kills(self):
+        # The run stopped during the load generator's Job, and kept smock's
+        # Pod as it was before the load, with its restarts unknown.
+        out = self.results([START, IDLE, generator_step(500), generator_step(1000)], pods(restarts=None),
+                           stopped=("--stopped", "stopped by SIGTERM", "--stopped-under", "small"))
+        summary = json.loads((out / "summary.json").read_text())
+        self.assertEqual({entry["memory"]["oom_kills"] for entry in [*summary["cases"], *summary["idle_rss"]]},
+                         {None})
+        verdict = next(target for target in summary["targets"] if target["id"] == "small/oom_kills")
+        self.assertEqual(verdict["verdict"], "not measured")
+        markdown = (out / "summary.md").read_text()
+        # No traffic check, and smock's restarts unknown.
+        self.assertIn("| 4 | - | - | no |", markdown)
+        self.assertIn("smock's restarts under small are unknown, since the run did not read them at the profile's "
+                      "end: its OOM kills are not measured.", markdown)
+        self.assertNotIn("None", markdown)
+
 
 class Estimate(Helper):
     """Before anything is made, a run says how long it takes and what it
@@ -1378,6 +1395,11 @@ class PodInfo(Helper):
         self.assertEqual(info["generator"], [{"name": "generator-small-1", "node": "node-b", "phase": "Failed",
                                               "reason": "DeadlineExceeded", "cpu_request": "6"}])
         self.assertEqual(info["nodes"], {"node-a": NODE})
+        # Read before the profile's end, smock's restarts are unknown.
+        status, stdout, stderr = helper("pod-info", "--without-restarts", directory / "pods.json",
+                                        directory / "nodes.json")
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(json.loads(stdout), {**info, "smock": [{**info["smock"][0], "restarts": None}]})
 
 
 if __name__ == "__main__":

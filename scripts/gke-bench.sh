@@ -96,10 +96,13 @@ for repository in json.loads(sys.stdin.read() or "[]"):
 '
 # Prints how many times smock's Pod (the second argument) restarted, from
 # what gke.py pod-info kept of the Pods (the first); fails when that is not
-# known.
+# known, as when it was kept before the profile's end.
 SMOCK_RESTARTS='
 import json, sys
-print(next(pod["restarts"] for pod in json.load(open(sys.argv[1]))["smock"] if pod["name"] == sys.argv[2]))
+restarts = next(pod["restarts"] for pod in json.load(open(sys.argv[1]))["smock"] if pod["name"] == sys.argv[2])
+if restarts is None:
+    sys.exit(1)
+print(restarts)
 '
 # Prints why gcloud could not fetch the quotas of the region whose
 # description it printed (the argument, as JSON); fails when it could.
@@ -1054,18 +1057,20 @@ wait_for_job() {
 }
 
 # Keeps what the run knows of the profile's Pods and of the nodes they run
-# on, as gke.py pod-info keeps them, in pods.json under RAW (the argument):
-# as soon as each Pod has a node, so that a run that stops under the
-# profile has them, and again after the load generator's Job, with smock's
-# restarts at the end. A pods.json kept before stays when they cannot be
-# read.
+# on, as gke.py pod-info keeps them, in pods.json under RAW (the first
+# argument): as soon as each Pod has a node, so that a run that stops under
+# the profile has them, with --without-restarts (the other arguments go to
+# pod-info), since smock's OOM kills come from its restarts at the
+# profile's end; and again at the profile's end, with them. A pods.json
+# kept before stays when they cannot be read, and its restarts stay
+# unknown.
 keep_pods() {
   local raw=$1
   [ "$dry_run" = 0 ] || return 0
   mkdir -p "$raw"
   refresh_token
   if kube get pods --output=json >"$work/pods.json" && kube get nodes --output=json >"$work/nodes.json" &&
-    "$PYTHON" "$GKE_PY" pod-info "$work/pods.json" "$work/nodes.json" >"$work/pod-info.json"; then
+    "$PYTHON" "$GKE_PY" pod-info "${@:2}" "$work/pods.json" "$work/nodes.json" >"$work/pod-info.json"; then
     mv "$work/pod-info.json" "$raw/pods.json"
   fi
 }
@@ -1148,7 +1153,7 @@ run_profile() {
     keep_smock_state "$smock_pod" "$raw"
     die "smock did not become ready under $name"
   }
-  keep_pods "$raw"
+  keep_pods "$raw" --without-restarts
   keep_smock_node_cpu "$smock_pod" "$raw"
   kube_run apply --filename="$manifests/generator.json" || die "applying the load generator's Job failed"
   if [ "$dry_run" = 1 ]; then
@@ -1157,7 +1162,7 @@ run_profile() {
   else
     mkdir -p "$raw"
     wait_for_generator "$job" || die "the load generator's Pod did not start under $name"
-    keep_pods "$raw"
+    keep_pods "$raw" --without-restarts
     # kubectl itself, not the function kube, so that log_pid is its own.
     "$KUBECTL" --kubeconfig="$kubeconfig" --namespace="$NAMESPACE" logs --follow "job/$job" \
       >"$raw/generator-stream.log" 2>>"$work/kubectl.log" &
