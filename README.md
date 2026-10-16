@@ -1089,7 +1089,7 @@ generator that paces requests more finely than 1 ms.
 
 A full run of `bench/plan-autopilot.json` measures every target of its
 architecture; on GKE, idle RSS and peak memory come from smock's own
-[process and cgroup metrics](#admin-api), so a smock without them leaves
+[process and cgroup metrics](#run), so a smock without them leaves
 those two unmeasured. A run of `bench/plan.json`, as in CI, runs none of
 these profiles, and reports each target as not measured.
 
@@ -1531,7 +1531,7 @@ that no longer fits in the time limit.
 The summary checks the targets of the run's architecture (`--arch`).
 Nothing outside smock's Pod can read its cgroup on Autopilot, so what
 smock used comes from its own
-`/metrics`, its [process and cgroup metrics](#admin-api), which the load
+`/metrics`, its [process and cgroup metrics](#run), which the load
 generator scrapes right before and right after each step, and a second
 into it: its CPU time and throttling during the step and in its first
 second, from its container's cgroup, with the CPU time a request and
