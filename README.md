@@ -1547,8 +1547,12 @@ limits, all on the first one's node (a required Pod affinity on the
 node's hostname; Autopilot refuses anti-affinity below 0.5 vCPU), and one
 load generator measures them one at a time over `--rounds` rounds (4 by
 default): each round runs every step, and each step every variant, their
-order turned by one for each round and step, so that the runs compared
-are about 30 seconds apart. `bench/plan-same-node.json` is the plan for
+order turned by one for each round and step, so that a variant's run and
+the baseline's in the same round and step are close in time: next to
+each other, about 30 seconds apart, with two variants; with four, one to
+three runs apart (each run is the step's 25 s and its 2 s cool-down, so
+about 30 to 80 seconds), and a variant two places after the baseline,
+like r2b below, is always two runs from it. `bench/plan-same-node.json` is the plan for
 it: HTTP keep-alive at the two lowest rates of
 `bench/plan-autopilot.json`'s ladders under 50m and 250m, where R2's
 binary used more CPU a request than R1's, and at half the lowest, since

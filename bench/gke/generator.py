@@ -294,10 +294,13 @@ def run_order(specs, variants, rounds):
     """The runs of a profile, in the order they run: (round, spec,
     variant), rounds outer (from 1), `specs` in the middle and `variants`
     inner, their order turned by one for each round and each step, so that
-    with two variants each step runs AB, BA, AB, BA over four rounds. The
-    runs compared with each other come right after one another, a step's
-    cooldown apart, and each variant runs first, second and so on as often
-    as the others when the rounds are a multiple of the variants."""
+    with two variants each step runs AB, BA, AB, BA over four rounds. A
+    variant's run and the baseline's in the same round and step, which are
+    compared, come right after one another, a step's cooldown apart, with
+    two variants; with n, a variant k places after the baseline runs k or
+    n - k runs from it, so 1 to n - 1. Each variant runs first, second and
+    so on as often as the others when the rounds are a multiple of the
+    variants."""
     return [(round_, spec, variants[(round_ - 1 + index + offset) % len(variants)])
             for round_ in range(1, rounds + 1)
             for index, spec in enumerate(specs)

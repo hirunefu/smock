@@ -1720,9 +1720,10 @@ class StopAfterAStep(unittest.TestCase):
 class RunOrder(unittest.TestCase):
     """With variants, the load generator runs rounds outer, the steps of the
     profile in the middle and the variants inner, one at a time, the
-    variants' order turned by one for each round and each step: the runs
-    compared with each other come right after one another, and each
-    variant runs first as often as the others."""
+    variants' order turned by one for each round and each step: a
+    variant's run and the baseline's in the same round and step come
+    right after one another with two variants, and up to n - 1 runs apart
+    with n, and each variant runs first as often as the others."""
 
     generator = load_generator_module()
 
@@ -1744,6 +1745,16 @@ class RunOrder(unittest.TestCase):
                           "c", "a", "b", "a", "b", "c"])
         self.assertEqual([(round_, step) for round_, step, _ in runs][::3],
                          [(1, "s1"), (1, "s2"), (2, "s1"), (2, "s2"), (3, "s1"), (3, "s2")])
+
+    def test_with_four_variants_each_runs_one_to_three_runs_from_the_baseline_and_the_third_always_two(self):
+        variants = ["r1", "r2", "r2b", "r2h"]
+        runs = self.order(["s1", "s2", "s3"], variants, 4)
+        apart = {variant: set() for variant in variants[1:]}
+        for start in range(0, len(runs), len(variants)):
+            step = [variant for _, _, variant in runs[start:start + len(variants)]]
+            for variant in apart:
+                apart[variant].add(abs(step.index(variant) - step.index("r1")))
+        self.assertEqual(apart, {"r2": {1, 3}, "r2b": {2}, "r2h": {1, 3}})
 
     def test_without_variants_the_steps_run_once_in_the_plans_order(self):
         self.assertEqual(self.order(["s1", "s2"], [None], 1), [(1, "s1", None), (1, "s2", None)])
