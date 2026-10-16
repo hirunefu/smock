@@ -2447,6 +2447,26 @@ class SameNode(VariantRun):
         self.assertIn("The idle variants used at most 0.031 s of CPU during another's run: c, during b's run of "
                       "http-keep-alive@small@1000 in round 2.", markdown)
 
+    def test_conditions_besides_smock_are_compared_with_the_baselines_first_samples(self):
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(HIGHER),
+                                                                           variant_pods(["a", "b"])))
+        self.assertEqual((status, report["conditions"]), (0, {"same": True, "reference": "1-a", "differences": []}),
+                         stderr)
+        self.assertIn("Besides smock, the samples had the same conditions.", markdown)
+        # b's load generator said another oha, as no run of one load
+        # generator does.
+        lines = variant_lines(HIGHER)
+        for line in lines:
+            if line["kind"] == "start" and line["variant"] == "b":
+                line["oha"] = "oha 1.17.0"
+        status, report, markdown, stderr = self.same_node(self.variant_run(lines, variant_pods(["a", "b"])))
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(report["conditions"], {"same": False, "reference": "1-a", "differences": [
+            {"condition": "load generator", "text": "load generator (oha 1.16.0 → oha 1.17.0)",
+             "samples": ["1-b", "2-b", "3-b", "4-b"]}]})
+        self.assertIn("Besides smock, the samples differ from 1-a, the baseline's first, in: load generator (oha "
+                      "1.16.0 → oha 1.17.0) in 1-b, 2-b, 3-b and 4-b.", markdown)
+
     def test_a_variant_with_two_sha256_values_exits_2_since_what_it_measured_is_unknown(self):
         out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
         # summarize was told another binary for b in round 3.

@@ -1571,7 +1571,7 @@ def same_node_markdown(report):
     each variant at each step, the runs that measured nothing, then each
     variant's verdict against the baseline."""
     baseline = report["baseline"]
-    lines = ["# smock variants on one node", "", *variants_lines(report)]
+    lines = ["# smock variants on one node", "", *variants_lines(report), "", conditions_text(report["conditions"])]
     if report["problems"]:
         lines += ["", "**Not comparable:**", "", *(f"- {problem}." for problem in report["problems"])]
     for profile in report["profiles"]:
@@ -1586,6 +1586,35 @@ def same_node_markdown(report):
                   *(verdict_line(label, baseline, verdict_result)
                     for label, verdict_result in result["verdicts"].items())]
     return "\n".join(lines) + "\n"
+
+
+def conditions_record(samples, labels):
+    """Whether the samples had the same conditions besides smock (those
+    compare.py compares two runs by) as the baseline's first sample, and
+    where they did not, which samples differ and how."""
+    compare = compare_module()
+    named = sorted(((round_, labels.index(label)), f"{round_}-{label}", sample[1])
+                   for (round_, label), sample in samples.items() if sample and sample[1] and label in labels)
+    if not named:
+        return {"same": True, "reference": None, "differences": []}
+    (_, reference, first), differences = named[0], {}
+    for _, name, conditions in named[1:]:
+        for condition, shown in compare.CONDITIONS:
+            before, after = shown(first), shown(conditions)
+            if not compare.same(condition, before, after):
+                text = compare.difference(condition, before, after)
+                differences.setdefault((condition, text), []).append(name)
+    return {"same": not differences, "reference": reference,
+            "differences": [{"condition": condition, "text": text, "samples": names}
+                            for (condition, text), names in differences.items()]}
+
+
+def conditions_text(conditions):
+    if conditions["same"]:
+        return "Besides smock, the samples had the same conditions."
+    return (f"Besides smock, the samples differ from {conditions['reference']}, the baseline's first, in: "
+            + "; ".join(f"{difference['text']} in {and_list(difference['samples'])}"
+                        for difference in conditions["differences"]) + ".")
 
 
 def given_sha256(texts):
@@ -1666,6 +1695,7 @@ def same_node(out, baseline=None, sha256=None, no_init=()):
     status = 2 if problems else 1 if placed else 0
     problems += placed
     report = {"format": 1, "baseline": baseline, "variants": variants, "problems": problems,
+              "conditions": conditions_record(samples, labels),
               "complete": all(result["complete"] for result in results.values()), "profiles": profiles,
               "gke": {"profiles": results}}
     return report, same_node_markdown(report), status
