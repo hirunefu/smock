@@ -119,9 +119,14 @@ def answer(text="", status=0):
 
 
 def rule(name):
-    """What the test configured for a call, by its name."""
+    """What the test configured for a call, by its name: time moves on by
+    `advance_s` for the script (with the fake date), the call sleeps for
+    `sleep` and fails with `status`."""
     value = config.get(name)
     if isinstance(value, dict):
+        if "advance_s" in value:
+            offset = state_dir / "time-offset"
+            offset.write_text(str(float(offset.read_text() if offset.exists() else 0) + value["advance_s"]))
         time.sleep(value.get("sleep", 0))
         if "status" in value:
             sys.stderr.write(value.get("stderr", f"fake {tool}: {name} failed\n"))
@@ -144,7 +149,16 @@ if tool == "gcloud":
         answer(json.dumps({"quotas": [{"metric": "CPUS_ALL_REGIONS", "limit": config.get("cpus_all_regions", 32.0),
                                        "usage": 0.0}]}))
     if command == ("compute", "regions", "describe"):
-        answer(json.dumps({"quotas": [{"metric": "CPUS", "limit": config.get("regional_cpus", 200.0), "usage": 0.0}]}))
+        # As the real gcloud, when it could not fetch the region's quotas:
+        # a warning, and none.
+        if "region_quota_warning" in config:
+            answer(json.dumps({"name": "us-central1", "quotaStatusWarning": config["region_quota_warning"]}))
+        # The region's quotas, each [limit, usage], as configured; one
+        # configured as null is not listed.
+        quotas = {"CPUS": [config.get("regional_cpus", 200.0), 0.0], "SSD_TOTAL_GB": [4096.0, 0.0],
+                  "HDB_TOTAL_GB": [4096.0, 0.0], "IN_USE_ADDRESSES": [8.0, 0.0], **config.get("regional_quotas", {})}
+        answer(json.dumps({"quotas": [{"metric": metric, "limit": quota[0], "usage": quota[1]}
+                                      for metric, quota in quotas.items() if quota is not None]}))
     if command == ("compute", "zones", "describe"):
         answer(words[3].rsplit("-", 1)[0] + "\n")
     if command == ("container", "clusters", "list"):
@@ -278,13 +292,38 @@ def services_and_endpoint_slices():
     return {"apiVersion": "v1", "kind": "List", "items": items, "metadata": {"resourceVersion": ""}}
 
 
-def logs(target, previous):
-    """kubectl logs [--previous] job/<name> or pod/<name>."""
+def node_list():
+    """kubectl get nodes -o json: the nodes the Pods run on, of the
+    architecture smock's Pod asked for."""
+    pods = [item for item in objects().values() if item["kind"] == "Pod"]
+    arch = next((pod["spec"]["nodeSelector"]["kubernetes.io/arch"] for pod in pods), "amd64")
+    return {"items": [{
+        "metadata": {"name": name, "labels": {"node.kubernetes.io/instance-type": "ek-standard-8",
+                                              "kubernetes.io/arch": arch,
+                                              "topology.kubernetes.io/zone": "us-central1-a"}},
+        "status": {"capacity": {"cpu": "8"}, "allocatable": {"cpu": "7910m"},
+                   "nodeInfo": {"kernelVersion": "6.12.105+", "kubeletVersion": "v1.35.8-gke.1225000",
+                                "osImage": "Container-Optimized OS from Google"}}} for name in ("node-a", "node-b")]}
+
+
+def logs(target, previous, container):
+    """kubectl logs [--previous] [--container=<name>] job/<name> or
+    pod/<name>: a container other than smock's is named <pod>/<container>
+    in the configured logs."""
     kind, name = target.split("/", 1)
     known = config.get("logs", {})
     if kind == "pod" and f"Pod/{name}" not in objects():
         sys.stderr.write(f'Error from server (NotFound): pods "{name}" not found\n')
         answer("", 1)
+    if kind == "pod" and container is None:
+        spec = objects()[f"Pod/{name}"]["spec"]
+        if spec.get("initContainers"):
+            # As kubectl says, on stderr, for a Pod of more than one.
+            names = [item["name"] for item in spec["containers"]] + \
+                [f"{item['name']} (init)" for item in spec["initContainers"]]
+            sys.stderr.write(f'Defaulted container "{names[0]}" out of: {", ".join(names)}\n')
+    if container not in (None, "smock"):
+        name += f"/{container}"
     if previous:
         if not restarts(name):
             sys.stderr.write(f'Error from server (BadRequest): previous terminated container "smock" in pod '
@@ -320,6 +359,9 @@ if tool == "kubectl":
                              for item in items])
         answer("".join(f'{item["kind"].lower()} "{item["metadata"]["name"]}" deleted\n' for item in items))
     if words[:1] == ["wait"]:
+        if words[1] in config.get("never_ready", []):
+            sys.stderr.write(f"error: timed out waiting for the condition on pods/{words[1].split('/', 1)[1]}\n")
+            answer("", 1)
         rule("smock_ready")
         answer(f"{words[1]} condition met\n")
     if words[:2] == ["get", "events"]:
@@ -329,18 +371,28 @@ if tool == "kubectl":
     if words[:2] == ["get", "job"]:
         answer(config.get("job_state", "Complete=True "))
     if words[:1] == ["logs"]:
-        logs(words[1], "--previous" in argv)
+        logs(words[1], "--previous" in argv, options.get("container"))
     if words[:2] == ["get", "pods"]:
+        # Only the first `pods_readable` lists succeed, when configured, as
+        # when the API server stops answering for a time.
+        if "pods_readable" in config:
+            with (state_dir / "calls.jsonl").open() as calls:
+                lists = sum(call["words"][:2] == ["get", "pods"] and "--output=json" in call["argv"]
+                            for call in map(json.loads, calls))
+            if lists > config["pods_readable"]:
+                sys.stderr.write("Unable to connect to the server: net/http: TLS handshake timeout\n")
+                answer("", 1)
         answer(json.dumps(pod_list()))
     if words[:2] == ["get", "service,endpointslices"]:
         answer(json.dumps(services_and_endpoint_slices()))
     if words[:2] == ["get", "nodes"]:
-        answer(json.dumps({"items": []}))
+        answer(json.dumps(node_list()))
     answer()
 '''
 
 # A fake date: time passes FAKE_TIME_SCALE times as fast for the script as
-# it does, from the first time it is asked.
+# it does, from the first time it is asked, and jumps forward by what the
+# fakes wrote to time-offset.
 FAKE_DATE = r'''#!/usr/bin/env python3
 import os
 import shutil
@@ -358,7 +410,9 @@ base_file = Path(os.environ["FAKE_STATE"]) / "time-base"
 if not base_file.exists():
     base_file.write_text(str(time.time()))
 base = float(base_file.read_text())
-now = base + (time.time() - base) * float(os.environ.get("FAKE_TIME_SCALE", "1"))
+offset_file = Path(os.environ["FAKE_STATE"]) / "time-offset"
+offset = float(offset_file.read_text()) if offset_file.exists() else 0
+now = base + (time.time() - base) * float(os.environ.get("FAKE_TIME_SCALE", "1")) + offset
 os.execv(real, [real, "-d", f"@{now:.0f}", *args])
 '''
 
@@ -429,6 +483,13 @@ def generator_log(profile="small", cpu_limit="250m", memory_limit="512Mi", rates
     return "".join(json.dumps(line) + "\n" for line in lines)
 
 
+# What smock's init container prints of the CPU of its node, as gke.py
+# node-cpu keeps it.
+NODE_CPU = {"model_name": "AMD EPYC 7B13", "vendor_id": "AuthenticAMD", "cpu_family": "25", "model": "1",
+            "stepping": "0", "microcode": "0xffffffff",
+            "flags": {"aes": True, "avx2": True, "sha_ni": True, "vaes": True},
+            "vulnerabilities": {"spectre_v2": "Mitigation: Retpolines; IBPB: conditional; STIBP: always-on"}}
+
 # What smock logs, as JSON lines.
 SMOCK_LOG = ('{"time":"2026-10-14T09:00:01.000Z","level":"info","msg":"listening","listener":"plain",'
              '"address":"0.0.0.0:8080"}\n')
@@ -438,7 +499,6 @@ READ_ONLY = {"list", "describe", "version", "print-access-token", "get-value"}
 
 # The account gcloud is logged in as, in the fakes.
 ACCOUNT = "someone.else+bench@example.com"
-
 
 class Script(unittest.TestCase):
     def setUp(self):
@@ -517,6 +577,10 @@ class Script(unittest.TestCase):
     def arguments(self, *args):
         return [str(SCRIPT), "--plan", str(self.plan), "--smock", str(self.smock), "--oha", str(self.oha),
                 "--out", str(self.out), *map(str, args)]
+
+    def for_arch(self, arch):
+        """The options of a run for `arch`, with binaries for it."""
+        return ["--arch", arch, "--smock", self.smock_for(arch), "--oha", self.binary("oha", arch, "oha 1.16.0\n")]
 
     def run_script(self, *args, timeout=120, **environment):
         result = subprocess.run(self.arguments(*args), env=self.environment(**environment), capture_output=True,
@@ -624,11 +688,77 @@ class BeforeAnything(Script):
         status, output = self.run_script("--yes")
         self.assertEqual(status, 1, output)
         self.assertIn("CPUS_ALL_REGIONS: 24 of 24 vCPUs free, the run needs 32", output)
+        self.assertIn("set GKE_BENCH_NEEDED_CPUS lower", output)
         self.assertEqual(self.changing_calls(), [])
+        # The region's CPUS counts every node of an amd64 run, but only
+        # Autopilot's two x86 nodes of an arm64 one.
         self.configure(regional_cpus=16.0)
+        status, output = self.run_script("--yes", *self.for_arch("amd64"))
+        self.assertEqual(status, 1, output)
+        self.assertIn("CPUS in us-central1: 16 of 16 vCPUs free, the run needs 32 for its 4 nodes", output)
+        self.assertEqual(self.changing_calls(), [])
+        status, output = self.run_script(*self.for_arch("arm64"))
+        self.assertEqual(status, 0, output)
+        self.assertIn("CPUS in us-central1: 16 of 16 vCPUs free, the run needs 16 for Autopilot's 2 x86 nodes",
+                      output)
+        self.configure(regional_cpus=8.0)
+        status, output = self.run_script("--yes", *self.for_arch("arm64"))
+        self.assertEqual(status, 1, output)
+        self.assertIn("CPUS in us-central1: 8 of 8 vCPUs free, the run needs 16 for Autopilot's 2 x86 nodes", output)
+        self.assertEqual(self.changing_calls(), [])
+
+    def test_a_short_regional_quota_the_nodes_draw_on_stops_it_and_is_named(self):
+        # Two of the 8 in-use addresses are free, and each of the 4 nodes
+        # takes one.
+        self.configure(regional_quotas={"IN_USE_ADDRESSES": [8.0, 6.0]})
         status, output = self.run_script("--yes")
         self.assertEqual(status, 1, output)
-        self.assertIn("CPUS in us-central1: 16 of 16 vCPUs free, the run needs 32", output)
+        self.assertIn("the run cannot start", output)
+        self.assertIn("IN_USE_ADDRESSES in us-central1: 2 of 8 addresses free, the run needs 4", output)
+        self.assertEqual(self.changing_calls(), [])
+        # The nodes' boot disks, of 100 GB each: on amd64, all four in
+        # SSD_TOTAL_GB.
+        self.configure(regional_quotas={"SSD_TOTAL_GB": [500.0, 250.0]})
+        status, output = self.run_script("--yes", *self.for_arch("amd64"))
+        self.assertEqual(status, 1, output)
+        self.assertIn("SSD_TOTAL_GB in us-central1: 250 of 500 GB free, the run needs 400", output)
+        self.assertEqual(self.changing_calls(), [])
+
+    def test_an_arm64_runs_boot_disks_are_checked_in_the_quota_of_each_nodes_architecture(self):
+        # Autopilot's own two nodes are x86, with pd-balanced boot disks in
+        # SSD_TOTAL_GB; smock's and the load generator's are Arm nodes, with
+        # hyperdisk-balanced ones in HDB_TOTAL_GB.
+        for metric, owner in (("SSD_TOTAL_GB", "Autopilot's 2 x86 nodes"), ("HDB_TOTAL_GB", "its 2 Arm nodes")):
+            self.configure(regional_quotas={metric: [500.0, 350.0]})
+            status, output = self.run_script("--yes", *self.for_arch("arm64"))
+            self.assertEqual(status, 1, output)
+            self.assertIn(f"{metric} in us-central1: 150 of 500 GB free, the run needs 200 for the boot disks of "
+                          f"{owner}, 100 GB each", output)
+            self.assertEqual(self.changing_calls(), [])
+        self.configure(regional_quotas={"SSD_TOTAL_GB": [200.0, 0.0], "HDB_TOTAL_GB": [200.0, 0.0]})
+        status, output = self.run_script(*self.for_arch("arm64"))
+        self.assertEqual(status, 0, output)
+
+    def test_quotas_that_cannot_be_read_stop_it_with_their_own_reason(self):
+        # gcloud could not fetch the region's quotas: one problem, which
+        # more quota would not solve.
+        self.configure(region_quota_warning={"code": "QUOTA_STATUS_UNAVAILABLE",
+                                             "message": "Quota information is temporarily unavailable."})
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        self.assertIn("cannot read the quotas of us-central1 (Quota information is temporarily unavailable.): try "
+                      "again", output)
+        self.assertNotIn("in us-central1:", output)
+        self.assertNotIn("GKE_BENCH_NEEDED_CPUS lower", output)
+        self.assertEqual(self.changing_calls(), [])
+        # A quota the region does not list cannot be checked.
+        self.configure(regional_quotas={"IN_USE_ADDRESSES": None})
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        self.assertIn("IN_USE_ADDRESSES in us-central1: not among the quotas gcloud lists, so the run cannot check "
+                      "it", output)
+        self.assertNotIn("no such quota", output)
+        self.assertNotIn("GKE_BENCH_NEEDED_CPUS lower", output)
         self.assertEqual(self.changing_calls(), [])
 
     def test_apis_not_enabled_stop_it_with_the_command_that_enables_them(self):
@@ -699,6 +829,46 @@ class DryRun(Script):
         # The project shows as the variable that holds it.
         self.assertNotIn(PROJECT, output)
         self.assertIn('--project="$GKE_BENCH_PROJECT"', output)
+
+    def test_it_names_each_regional_quota_the_nodes_draw_on_with_what_is_free_and_what_the_run_needs(self):
+        # Four nodes by default, each with 8 vCPUs, a boot disk of 100 GB
+        # and an external IP address; three for 24 vCPUs. Autopilot's first
+        # node and its system node are x86 on either architecture; smock's
+        # and the load generator's are of the run's.
+        for arch, cpus, nodes in (("amd64", None, 4), ("amd64", "24", 3)):
+            status, output = self.run_script("--dry-run", *self.for_arch(arch), GKE_BENCH_NEEDED_CPUS=cpus)
+            self.assertEqual(status, 0, output)
+            self.assertIn(f"CPUS_ALL_REGIONS: 32 of 32 vCPUs free, the run needs {nodes * 8} for its {nodes} nodes",
+                          output)
+            self.assertIn(f"CPUS in us-central1: 200 of 200 vCPUs free, the run needs {nodes * 8} for its {nodes} "
+                          "nodes", output)
+            self.assertIn(f"SSD_TOTAL_GB in us-central1: 4096 of 4096 GB free, the run needs {nodes * 100} for the "
+                          f"boot disks of its {nodes} nodes, 100 GB each", output)
+            self.assertIn(f"IN_USE_ADDRESSES in us-central1: 8 of 8 addresses free, the run needs {nodes} for the "
+                          f"external IP addresses of its {nodes} nodes", output)
+            self.assertNotIn("HDB_TOTAL_GB", output)
+            self.assertNotIn("Arm nodes", output)
+        for cpus, nodes, arm in ((None, 4, "2 Arm nodes"), ("24", 3, "1 Arm node")):
+            status, output = self.run_script("--dry-run", *self.for_arch("arm64"), GKE_BENCH_NEEDED_CPUS=cpus)
+            self.assertEqual(status, 0, output)
+            self.assertIn(f"CPUS_ALL_REGIONS: 32 of 32 vCPUs free, the run needs {nodes * 8} for its {nodes} nodes",
+                          output)
+            self.assertIn("CPUS in us-central1: 200 of 200 vCPUs free, the run needs 16 for Autopilot's 2 x86 nodes",
+                          output)
+            self.assertIn("SSD_TOTAL_GB in us-central1: 4096 of 4096 GB free, the run needs 200 for the boot disks of "
+                          "Autopilot's 2 x86 nodes, 100 GB each", output)
+            self.assertIn(f"HDB_TOTAL_GB in us-central1: 4096 of 4096 GB free, the run needs {(nodes - 2) * 100} for "
+                          f"the boot disks of its {arm}, 100 GB each", output)
+            self.assertIn(f"IN_USE_ADDRESSES in us-central1: 8 of 8 addresses free, the run needs {nodes} for the "
+                          f"external IP addresses of its {nodes} nodes", output)
+            # Not the CPU quota of the Arm nodes' machine family, which
+            # gcloud does not list.
+            self.assertIn(f"not checked: the CPU quota of the Arm nodes' machine family, of which the run needs "
+                          f"{(nodes - 2) * 8} vCPUs for its {arm}", output)
+            self.assertIn("console's Quotas page", output)
+            # Each quota once.
+            for metric in ("CPUS_ALL_REGIONS:", "CPUS in", "SSD_TOTAL_GB in", "HDB_TOTAL_GB in", "IN_USE_ADDRESSES in"):
+                self.assertEqual(output.count(metric), 1, metric)
 
 
 class Run(Script):
@@ -821,28 +991,80 @@ class Diagnostics(Script):
         self.assertTrue(self.made(["logs", "pod/smock-small"]))
         self.assertTrue([call for call in self.calls("kubectl") if "--previous" in call["argv"]])
 
-    def test_a_smock_that_never_became_ready_keeps_its_log_with_kubectls_errors_and_its_service(self):
-        # Its restarts are not known then: the log of a container before the
-        # last restart is asked for too, and kubectl's answer that there is
-        # none is kept in its place.
+    def test_a_smock_whose_restarts_could_not_be_read_at_the_end_keeps_its_previous_containers_log_too(self):
+        # smock restarted during the load, and the Pods could be read as
+        # each got a node, not at the profile's end: whether it restarted
+        # is unknown, so the log of its previous container is kept too.
+        (self.tmp / "smock-previous.log").write_text('{"level":"error","msg":"out of memory"}\n')
+        self.configure(restarts={"smock-small": 1}, pods_readable=2,
+                       logs={"generator-small": str(self.tmp / "generator-small.log"),
+                             "smock-small": str(self.tmp / "smock-small.log"),
+                             "smock-small/previous": str(self.tmp / "smock-previous.log")})
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 0, output)
+        log = (self.out / "raw" / "small" / "smock.log").read_text()
+        self.assertIn("(restarts: unknown)", log)
+        self.assertLess(log.index("out of memory"), log.index('"msg":"listening"'))
+        # Nor are its OOM kills known.
+        summary = json.loads((self.out / "summary.json").read_text())
+        self.assertEqual({case["memory"]["oom_kills"] for case in summary["cases"]}, {None})
+
+    def test_a_smock_that_never_became_ready_keeps_its_logs_its_pod_and_its_service(self):
+        # It restarted, as when the kernel kills it for memory as it
+        # starts: its Pod, kept first, says so, and the log of its
+        # container before the last restart is kept before the last one's.
+        (self.tmp / "smock-previous.log").write_text('{"level":"error","msg":"out of memory"}\n')
         self.configure(smock_ready={"status": 1, "stderr": "error: timed out waiting for the condition on "
-                                                           "pods/smock-small\n"})
+                                                           "pods/smock-small\n"},
+                       restarts={"smock-small": 3},
+                       logs={"generator-small": str(self.tmp / "generator-small.log"),
+                             "smock-small": str(self.tmp / "smock-small.log"),
+                             "smock-small/previous": str(self.tmp / "smock-previous.log")})
         status, output = self.run_script("--yes")
         self.assertEqual(status, 1, output)
         self.assertIn("smock did not become ready under small", output)
-        log = (self.out / "raw" / "small" / "smock.log").read_text()
-        self.assertIn('Error from server (BadRequest): previous terminated container "smock" in pod "smock-small" '
-                      'not found', log)
+        raw = self.out / "raw" / "small"
+        self.assertEqual([(pod["name"], pod["node"], pod["restarts"])
+                          for pod in json.loads((raw / "pods.json").read_text())["smock"]],
+                         [("smock-small", "node-a", 3)])
+        log = (raw / "smock.log").read_text()
+        self.assertIn("(restarts: 3)", log)
+        self.assertLess(log.index("out of memory"), log.index('"msg":"listening"'))
         self.assertTrue(log.endswith(SMOCK_LOG), log)
-        kept = json.loads((self.out / "raw" / "small" / "service.json").read_text())
+        kept = json.loads((raw / "service.json").read_text())
         self.assertEqual([item["metadata"]["name"] for item in kept["items"] if item["kind"] == "Service"],
                          ["smock-small"])
         self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
+
+    def test_the_cpu_of_smocks_node_that_its_init_container_printed_is_kept_and_summarized(self):
+        line = {"kind": "node-cpu", "cpu": NODE_CPU}
+        (self.tmp / "smock-node-cpu.log").write_text(json.dumps(line) + "\n")
+        self.configure(logs={"generator-small": str(self.tmp / "generator-small.log"),
+                             "smock-small": str(self.tmp / "smock-small.log"),
+                             "smock-small/node-cpu": str(self.tmp / "smock-node-cpu.log")})
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 0, output)
+        raw = self.out / "raw" / "small"
+        self.assertEqual([json.loads(text) for text in (raw / "smock-node-cpu.log").read_text().splitlines()], [line])
+        # smock's log is its own container's, with no word of the other.
+        self.assertEqual((raw / "smock.log").read_text(), SMOCK_LOG)
+        conditions = json.loads((self.out / "conditions.json").read_text())
+        nodes = conditions["gke"]["profiles"]["small"]["nodes"]
+        self.assertEqual((nodes["node-a"]["cpu"], nodes["node-b"]["cpu"]), (NODE_CPU, None))
+        self.assertEqual(conditions["machine"]["cpu_model"], "GKE Autopilot ek-standard-8")
+        # Read while smock's Pod was there.
+        kubectl = self.calls("kubectl")
+        deleted = next(index for index, call in enumerate(kubectl)
+                       if call["words"][:1] == ["delete"] and any(item["kind"] == "Pod"
+                                                                   for item in call["document"].get("items", [])))
+        [read] = [index for index, call in enumerate(kubectl) if "--container=node-cpu" in call["argv"]]
+        self.assertLess(read, deleted)
 
     def test_a_dry_run_says_what_it_would_keep(self):
         status, output = self.run_script("--dry-run")
         self.assertEqual(status, 0, output)
         self.assertIn("smock.log", output)
+        self.assertIn("smock-node-cpu.log", output)
         self.assertIn("service.json", output)
 
 
@@ -901,6 +1123,13 @@ class Profiles(Script):
                          {"small": {"amd64": "6", "arm64": "4"}[HOST_ARCH],
                           "large": {"amd64": "6", "arm64": "4"}[HOST_ARCH]})
 
+    def stopped(self):
+        """Why the run stopped early, as summary.json and summary.md say."""
+        summary = json.loads((self.out / "summary.json").read_text())
+        markdown = (self.out / "summary.md").read_text()
+        return summary["gke"]["stopped"], next((line for line in markdown.splitlines()
+                                                if line.startswith("**Stopped early:**")), None)
+
     def test_a_smock_not_deleted_in_time_stops_the_later_profiles_and_the_run_still_cleans_up(self):
         self.configure(delete_fails_on="manifests/small/smock.json")
         status, output = self.run_script("--yes")
@@ -911,6 +1140,12 @@ class Profiles(Script):
         summary = json.loads((self.out / "summary.json").read_text())
         self.assertFalse(summary["complete"])
         self.assertEqual({case["profile"] for case in summary["cases"]}, {"small"})
+        # summary.md says why large was not run.
+        reason = "smock's Pod and Service were not deleted in 5 minutes, so no later profile ran"
+        self.assertEqual(self.stopped(), (
+            {"reason": reason, "profile": "small", "after": "http-keep-alive@small@1000"},
+            f"**Stopped early:** the run stopped under profile small, after its step http-keep-alive@small@1000: "
+            f"{reason}. Nothing after that was measured."))
         self.assertEqual(self.state_now()["clusters"], {})
         self.assertIn("nothing is left", output)
 
@@ -923,6 +1158,39 @@ class Profiles(Script):
         self.assertEqual([(verb, name) for verb, name, _ in self.smock_calls()],
                          [("apply", "smock-small"), ("delete", "smock-small")])
         self.assertFalse(json.loads((self.out / "summary.json").read_text())["complete"])
+        self.assertEqual(self.stopped()[0]["reason"],
+                         "the load generator's Job was not deleted in 5 minutes, so no later profile ran")
+        self.assertIn("nothing is left", output)
+
+    def test_a_smock_not_deleted_in_time_under_the_last_profile_fails_the_run_but_stops_nothing(self):
+        # Every step was measured, and no later profile was to run.
+        self.configure(delete_fails_on="manifests/large/smock.json")
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        self.assertIn("not deleted in 5 minutes under large: smock's Pod and Service", output)
+        summary = json.loads((self.out / "summary.json").read_text())
+        self.assertTrue(summary["complete"])
+        self.assertEqual(self.stopped(), (None, None))
+        self.assertEqual(self.state_now()["clusters"], {})
+        self.assertIn("nothing is left", output)
+
+    def test_a_profile_that_does_not_fit_in_the_time_limit_is_skipped_and_summary_md_says_so(self):
+        # The plan fits in 35 minutes as estimated, but 1,000 s pass while
+        # smock becomes ready under small: large, with its Job's 507 s and
+        # 600 s for smock's start and the deletion, no longer fits.
+        self.fake_time(1)
+        self.configure(smock_ready={"advance_s": 1000})
+        status, output = self.run_script("--yes", "--time-limit", "35m")
+        self.assertEqual(status, 1, output)
+        self.assertIn("profile large and those after it do not fit in the time limit; skipping them", output)
+        self.assertEqual([(verb, name) for verb, name, _ in self.smock_calls()],
+                         [("apply", "smock-small"), ("delete", "smock-small")])
+        reason = "profile large and those after it did not fit in the time limit of 35 minutes"
+        self.assertEqual(self.stopped(), (
+            {"reason": reason, "profile": "large", "after": None},
+            f"**Stopped early:** the run stopped under profile large, before its first step: {reason}. Nothing "
+            "after that was measured."))
+        self.assertIn("not every step was measured under: large (summary.md says why)", output)
         self.assertIn("nothing is left", output)
 
     def test_a_log_that_lost_steps_fails_the_run_although_every_job_completed(self):
@@ -956,6 +1224,115 @@ class Profiles(Script):
         self.assertTrue((self.out / "raw" / "small" / "smock.log").exists())
         self.assertTrue((self.out / "raw" / "small" / "service.json").exists())
         self.assertIn("nothing is left", output)
+
+
+class StoppedEarly(Script):
+    """A run that stops after it has measured steps still writes its summary
+    from them, and says where it stopped and why; and it keeps the nodes of
+    the profile it stopped under, with the CPU of smock's."""
+
+    def setUp(self):
+        super().setUp()
+        self.plan.write_text(json.dumps(TWO_PROFILES_PLAN))
+        (self.tmp / "generator-large.log").write_text(generator_log("large", "1", "1Gi", (1000, 2000)))
+        (self.tmp / "smock-node-cpu.log").write_text(json.dumps({"kind": "node-cpu", "cpu": NODE_CPU}) + "\n")
+
+    def configure(self, **config):
+        config.setdefault("logs", {"generator-small": str(self.tmp / "generator-small.log"),
+                                   "generator-large": str(self.tmp / "generator-large.log"),
+                                   "smock-small": str(self.tmp / "smock-small.log"),
+                                   "smock-small/node-cpu": str(self.tmp / "smock-node-cpu.log"),
+                                   "smock-large/node-cpu": str(self.tmp / "smock-node-cpu.log")})
+        super().configure(**config)
+
+    def written(self):
+        """summary.json, conditions.json and summary.md, as the run left
+        them."""
+        return (json.loads((self.out / "summary.json").read_text()),
+                json.loads((self.out / "conditions.json").read_text()), (self.out / "summary.md").read_text())
+
+    def test_a_run_that_dies_under_a_later_profile_summarizes_the_steps_it_measured_and_says_where_it_stopped(self):
+        # small measures both of its steps; then smock never becomes ready
+        # under large.
+        self.configure(never_ready=["pod/smock-large"])
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        self.assertIn("smock did not become ready under large", output)
+        summary, conditions, markdown = self.written()
+        self.assertFalse(summary["complete"])
+        self.assertEqual([case["id"] for case in summary["cases"]],
+                         ["http-keep-alive@small@500", "http-keep-alive@small@1000"])
+        self.assertEqual(conditions["gke"]["arch"], HOST_ARCH)
+        self.assertIn("**Stopped early:** the run stopped under profile large, before its first step: smock did not "
+                      "become ready under large.", markdown)
+        # smock's node under large, with its CPU, which its init container
+        # printed before smock started.
+        self.assertEqual(conditions["gke"]["profiles"]["large"]["nodes"]["node-a"]["cpu"], NODE_CPU)
+        self.assertEqual(conditions["gke"]["profiles"]["large"]["smock"][0]["node"], "node-a")
+        self.assertIn("| large | ek-standard-8 (", markdown)
+        self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
+        self.assertIn("nothing is left", output)
+        for path in self.out.rglob("*"):
+            if path.is_file():
+                self.assertNotIn(PROJECT, path.read_text(), path)
+
+    def test_a_run_stopped_during_a_profile_summarizes_the_steps_its_load_generator_reported(self):
+        # The Job never completes; the run is stopped once the load
+        # generator's log has reported both steps of small.
+        self.configure(job_state="")
+        process = self.start_script("--yes")
+        stream = self.out / "raw" / "small" / "generator-stream.log"
+        deadline = time.monotonic() + 60
+        while not (stream.exists() and '"kind": "done"' in stream.read_text()):
+            if time.monotonic() > deadline:
+                self.fail(f"the load generator's log was not streamed to {stream}")
+            time.sleep(0.05)
+        process.send_signal(signal.SIGTERM)
+        output, _ = process.communicate(timeout=60)
+        self.assertNotEqual(process.returncode, 0, output)
+        summary, conditions, markdown = self.written()
+        self.assertEqual([case["id"] for case in summary["cases"]],
+                         ["http-keep-alive@small@500", "http-keep-alive@small@1000"])
+        self.assertIn("**Stopped early:** the run stopped under profile small, after its step "
+                      "http-keep-alive@small@1000: stopped by SIGTERM.", markdown)
+        # The nodes smock and the load generator ran on, kept as soon as
+        # each Pod had one, and the CPU of smock's; the machine is the type
+        # of smock's node, with its CPUs.
+        nodes = conditions["gke"]["profiles"]["small"]["nodes"]
+        self.assertEqual((nodes["node-a"]["cpu"], nodes["node-b"]["cpu"]), (NODE_CPU, None))
+        self.assertEqual((conditions["machine"]["cpu_model"], conditions["machine"]["cpus"]),
+                         ("GKE Autopilot ek-standard-8", 8))
+        # smock's restarts were not read at the profile's end, and those
+        # read before the load would not show an OOM kill during it: they
+        # are unknown, and so are its OOM kills.
+        self.assertEqual([pod["restarts"] for pod in conditions["gke"]["profiles"]["small"]["smock"]], [None])
+        self.assertEqual({entry["memory"]["oom_kills"] for entry in [*summary["cases"], *summary["idle_rss"]]},
+                         {None})
+        self.assertIn("smock's restarts under small are unknown", markdown)
+        self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
+
+    def test_a_run_the_watchdog_stopped_at_the_time_limit_says_so(self):
+        # The time limit passes while smock becomes ready under small, and
+        # the watchdog stops the run with SIGTERM.
+        self.fake_time(1)
+        self.configure(smock_ready={"advance_s": 2500, "sleep": 60})
+        process = self.start_script("--yes", "--time-limit", "40m")
+        output, _ = process.communicate(timeout=60)
+        self.assertNotEqual(process.returncode, 0, output)
+        reason = "the time limit of 40 minutes passed, and the watchdog stopped the run"
+        self.assertIn(f"gke-bench: {reason}", output)
+        summary, _, markdown = self.written()
+        self.assertEqual(summary["gke"]["stopped"], {"reason": reason, "profile": "small", "after": None})
+        self.assertIn(f"**Stopped early:** the run stopped under profile small, before its first step: {reason}.",
+                      markdown)
+        self.wait_for_nothing_left()
+
+    def test_a_run_that_ends_normally_says_nothing_of_stopping(self):
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 0, output)
+        summary, _, markdown = self.written()
+        self.assertTrue(summary["complete"])
+        self.assertNotIn("Stopped early", markdown)
 
 
 def copy_repository(destination):

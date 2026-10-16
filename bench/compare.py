@@ -12,7 +12,8 @@ the latencies of a queue swing from run to run, so those steps are shown
 for reference. p99.9 counts only where both runs measured at least the
 rule's number of requests at the step. Where both runs measured smock's CPU
 time a request at a step, it shows how that changed too, for information
-only. It also lists the targets the newer run missed. It exits with 1 when
+only, and for two GKE runs, whether smock's node had another CPU under each
+profile. It also lists the targets the newer run missed. It exits with 1 when
 it finds a regression or a missed target, or when the newer run did not
 measure a step that counts and that the older one measured (it stopped
 early, left the step out, or its load generator fell behind), and 2 when it
@@ -203,8 +204,7 @@ def different_architectures(older, newer):
 
 def where(conditions):
     """Where a run ran, for people."""
-    machine = conditions["machine"]
-    place = f"{machine['architecture']} ({machine['cpu_model']}, {machine['cpus']} CPUs)"
+    place = harness.machine_text(conditions["machine"])
     gke = conditions.get("gke")
     if gke:
         place = f"GKE Autopilot ({gke.get('zone') or gke['region']}, {gke['compute_class']}), {place}"
@@ -215,8 +215,9 @@ def run_line(name, conditions):
     if conditions is None:
         return f"- {name}: no conditions.json beside its summary."
     smock = conditions["smock"]
-    return (f"- {name}: smock {smock['version']} (commit {smock['commit']}) on {where(conditions)}, "
-            f"plan {conditions['plan']['file']}, started {conditions['started_at']}.")
+    return (f"- {name}: smock {harness.known(smock['version'], 'of an unknown version')} (commit "
+            f"{harness.known(smock['commit'])}) on {where(conditions)}, plan {conditions['plan']['file']}, started "
+            f"{conditions['started_at']}.")
 
 
 # The conditions besides smock that change what a run measures: for each, a
@@ -224,7 +225,8 @@ def run_line(name, conditions):
 CONDITIONS = (
     ("architecture", architecture),
     ("machine", where),
-    ("plan", lambda conditions: (conditions["plan"]["file"], conditions["plan"]["sha256"])),
+    ("plan", lambda conditions: (conditions["plan"]["file"], conditions["plan"]["sha256"],
+                                 conditions["plan"].get("sha256_without_about"))),
     ("request mix", lambda conditions: conditions["request_mix"]["sha256"]),
     ("definition set", lambda conditions: conditions["definitions"]["digest"]),
     ("load generator", lambda conditions: conditions["load_generator"]["version"]),
@@ -232,12 +234,105 @@ CONDITIONS = (
 )
 
 
+def same(name, before, after):
+    """Whether the runs had the same condition `name`. The same plan is the
+    same file with the same content but for its about, when both runs
+    recorded the hash of that; else, as a run from before runs recorded it
+    has only the file's hash, the same file with the same hash."""
+    if name != "plan":
+        return before == after
+    if before[2] and after[2]:
+        return (before[0], before[2]) == (after[0], after[2])
+    return before[:2] == after[:2]
+
+
 def difference(name, before, after):
     if name == "plan" and before[0] == after[0]:
         return f"plan ({after[0]} changed)"
     if isinstance(before, tuple):
         before, after = before[0], after[0]
-    return f"{name} ({before} → {after})"
+    return f"{name} ({harness.known(before)} → {harness.known(after)})"
+
+
+def smock_node_cpus(conditions):
+    """The CPU of smock's node under each profile of a GKE run, as its
+    conditions.json records it ({profile: CPU}), None where it does not:
+    a run before the nodes' CPUs were recorded, or one that could not read
+    it."""
+    cpus = {}
+    for name, profile in conditions["gke"].get("profiles", {}).items():
+        nodes = profile.get("nodes", {})
+        cpus[name] = next((nodes[pod["node"]]["cpu"] for pod in profile.get("smock", [])
+                           if (nodes.get(pod.get("node")) or {}).get("cpu")), None)
+    return cpus
+
+
+# What tells a CPU of x86 or of arm64 from another of the same model name.
+CPU_IDENTITY = (("cpu_family", "family"), ("model", "model"), ("stepping", "stepping"), ("cpu_variant", "variant"),
+                ("cpu_revision", "revision"))
+
+
+def cpu_name(cpu):
+    """A node's CPU model, for people: its model name, then its family,
+    model and stepping (or on arm64, its variant and revision)."""
+    identity = [f"{label} {cpu[key]}" for key, label in CPU_IDENTITY if cpu.get(key) is not None]
+    return f"{cpu['model_name']} ({', '.join(identity)})" if identity else str(cpu["model_name"])
+
+
+def flags_text(cpu):
+    flags = cpu.get("flags")
+    if flags is None:
+        return "unknown"
+    return " ".join(flag for flag, has in flags.items() if has) or "none"
+
+
+def cpu_changes(before, after):
+    """How the CPU of smock's node changed between two runs, for people:
+    its model, microcode, TLS flags and the mitigations of its
+    vulnerabilities, each where it changed."""
+    changes = []
+    if cpu_name(before) != cpu_name(after):
+        changes.append(f"model {cpu_name(before)} → {cpu_name(after)}")
+    if before.get("microcode") != after.get("microcode"):
+        changes.append(f"microcode {before.get('microcode') or 'none'} → {after.get('microcode') or 'none'}")
+    if before.get("flags") != after.get("flags"):
+        changes.append(f"TLS flags {flags_text(before)} → {flags_text(after)}")
+    mitigations = before.get("vulnerabilities") or {}, after.get("vulnerabilities") or {}
+    changed = [name for name in sorted({*mitigations[0], *mitigations[1]})
+               if mitigations[0].get(name) != mitigations[1].get(name)]
+    if changed:
+        changes.append(f"mitigations of {', '.join(changed)}")
+    return changes
+
+
+def smock_nodes_section(older, newer):
+    """Whether smock's node had another CPU in the newer run than in the
+    older, under each profile both GKE runs ran, for people, and whether it
+    did under any; nothing unless both runs are on GKE."""
+    if not (older.get("gke") and newer.get("gke")):
+        return [], False
+    before, after = smock_node_cpus(older), smock_node_cpus(newer)
+    profiles = [name for name in after if name in before]
+    if profiles and not any(before[name] for name in profiles) and not any(after[name] for name in profiles):
+        return ["Neither run recorded the CPU of smock's nodes: whether it changed is unknown."], False
+    for run, cpus in (("older", before), ("newer", after)):
+        if profiles and not any(cpus[name] for name in profiles):
+            return [f"The {run} run did not record the CPU of smock's nodes: whether it changed is unknown."], False
+    changed = {name: cpu_changes(before[name], after[name]) for name in profiles if before[name] and after[name]}
+    unknown = [name for name in profiles if name not in changed]
+    lines = []
+    if any(changed.values()):
+        lines += ["smock's node had another CPU in the newer run, so a change in latency there may be the node's "
+                  "rather than smock's:", "",
+                  *(f"- {name}: {'; '.join(changes)}." for name, changes in changed.items() if changes)]
+    unchanged = [name for name, changes in changed.items() if not changes]
+    if unchanged:
+        lines += [*([""] if lines else []), "smock's node had the same CPU in both runs (model, microcode, TLS flags "
+                  f"and mitigations) under {', '.join(unchanged)}."]
+    if unknown:
+        lines += [*([""] if lines else []), "Whether smock's node had another CPU is unknown under "
+                  f"{', '.join(unknown)}: a run did not record it."]
+    return lines, any(changed.values())
 
 
 def runs_section(older, newer):
@@ -251,11 +346,16 @@ def runs_section(older, newer):
         lines += ["", f"The runs ran on different architectures ({architectures[0]} → {architectures[1]}): no step is "
                       "compared as a regression."]
     differences = [difference(name, shown(older), shown(newer)) for name, shown in CONDITIONS
-                   if shown(older) != shown(newer)]
+                   if not same(name, shown(older), shown(newer))]
+    nodes, nodes_changed = smock_nodes_section(older, newer)
+    if nodes_changed:
+        differences.append("the CPU of smock's nodes")
     if differences:
         lines += ["", f"Besides smock, the runs differ in: {', '.join(differences)}."]
     else:
         lines += ["", "Besides smock, the runs had the same conditions."]
+    if nodes:
+        lines += ["", *nodes]
     return lines
 
 

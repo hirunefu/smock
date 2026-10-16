@@ -21,6 +21,7 @@ import platform
 import re
 import shutil
 import signal
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -28,6 +29,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 BENCH = Path(__file__).resolve().parent
 ROOT = BENCH.parent
@@ -346,6 +348,23 @@ class CpuPerRequest(unittest.TestCase):
             # smock's process is all its cgroup holds: the two agree, to the
             # process's ticks of 1/100 s.
             self.assertAlmostEqual(cpu["process_s"], cpu["usage_s"], delta=0.03)
+            # The step's first second, from smock's /metrics scraped a
+            # second into the load, in the same layout: some of the requests
+            # and of the CPU time, both until smock answered the scrape.
+            first = cpu["first_second"]
+            self.assertEqual(first["source"], "cgroup")
+            self.assertGreaterEqual(first["wall_s"], 1)
+            self.assertLess(first["wall_s"], 3)
+            self.assertGreater(first["requests"], 0)
+            self.assertLess(first["requests"], cpu["requests"])
+            self.assertGreater(first["usage_s"], 0)
+            self.assertLessEqual(first["usage_s"], cpu["usage_s"])
+            self.assertAlmostEqual(first["process_s"], first["usage_s"], delta=0.03)
+            # How long smock waited for a CPU, from its /metrics.
+            self.assertGreaterEqual(cpu["scheduling_delay_s"], 0)
+            self.assertGreaterEqual(first["involuntary_context_switches"], 0)
+            # Each second of the load, ramp and tail included (6.5 s).
+            self.assertEqual(len(result["per_second"]["requests"]), 7)
             [row] = markdown_table(next(lines for heading, lines in sections.items()
                                         if heading.startswith(f"{cpu_limit}:")))
             self.assertEqual((row["CPU µs/request"], row["CPU % of limit"]),
@@ -354,17 +373,23 @@ class CpuPerRequest(unittest.TestCase):
 
 
 def scrape(start=1791993354.147, cpu=0.03, rss=17727488, requests=(1,), cgroup=True, cfs=True,
-           usage=0.043131, periods=3, throttled_periods=1, throttled=0.057118, peak=11468800):
+           usage=0.043131, periods=3, throttled_periods=1, throttled=0.057118, peak=11468800, scheduling=True,
+           delay=0.012345678, switches=40, steal=12.34):
     """smock's /metrics as it serves it, cut to what bench.py reads, with
     these values: the process metrics, smock_requests_total with a series
-    for each count of `requests`, and, with `cgroup`, its cgroup's (with
-    `cfs`, the CFS counts)."""
+    for each count of `requests`, with `scheduling` smock's scheduling
+    delay and involuntary context switches and the node's steal time, and,
+    with `cgroup`, its cgroup's (with `cfs`, the CFS counts)."""
     lines = ['# HELP smock_build_info The smock build.', '# TYPE smock_build_info gauge',
              'smock_build_info{version="0.0.0-dev",commit="bce2d12a78d7",toolchain="moonc v0.10.14"} 1',
              '# HELP smock_requests_total Requests.', '# TYPE smock_requests_total counter',
              *(f'smock_requests_total{{mock="catalog",stub="item {i}"}} {count}' for i, count in enumerate(requests)),
              'smock_journal_entries 1', f'process_start_time_seconds {start}', f'process_cpu_seconds_total {cpu}',
              f'process_resident_memory_bytes {rss}']
+    if scheduling:
+        lines += [f'smock_process_scheduling_delay_seconds_total {delay}',
+                  f'smock_process_involuntary_context_switches_total {switches}',
+                  f'smock_node_cpu_steal_seconds_total {steal}']
     if cgroup:
         lines.append(f'smock_cgroup_cpu_usage_seconds_total {usage}')
         if cfs:
@@ -382,11 +407,16 @@ class ScrapedUse(unittest.TestCase):
     def test_the_cpu_time_comes_from_smocks_cgroup_with_its_throttling_and_rss_and_peak_memory(self):
         before = scrape()
         after = scrape(cpu=0.81, rss=19922944, requests=(5001, 2500), usage=0.823131, periods=253,
-                       throttled_periods=4, throttled=0.069118, peak=20971520)
+                       throttled_periods=4, throttled=0.069118, peak=20971520, delay=0.057645678, switches=52,
+                       steal=12.5)
         cpu, peak, rss = harness.scraped_use(before, after, "250m", 25.0)
+        # smock's main thread waited 45.3 ms for a CPU, and lost it 12
+        # times while it could still run; the node's hypervisor ran
+        # something else for 0.16 s of its CPUs' time.
         self.assertEqual(cpu, {"usage_s": 0.78, "periods": 250, "throttled_periods": 3, "throttled_s": 0.012,
-                               "source": "cgroup", "process_s": 0.78, "wall_s": 25.0, "requests": 7500,
-                               "us_per_request": 104.0, "utilization": 0.1248})
+                               "scheduling_delay_s": 0.0453, "involuntary_context_switches": 12,
+                               "node_steal_s": 0.16, "source": "cgroup", "process_s": 0.78, "wall_s": 25.0,
+                               "requests": 7500, "us_per_request": 104.0, "utilization": 0.1248})
         self.assertEqual(peak, 20971520)
         self.assertEqual(rss, {"first": 17312, "last": 19456, "max": 19456})
 
@@ -394,6 +424,7 @@ class ScrapedUse(unittest.TestCase):
         cpu, peak, _ = harness.scraped_use(scrape(cgroup=False), scrape(cpu=0.81, requests=(7501,), cgroup=False),
                                            "1", 25.0)
         self.assertEqual(cpu, {"usage_s": 0.78, "periods": None, "throttled_periods": None, "throttled_s": None,
+                               "scheduling_delay_s": 0.0, "involuntary_context_switches": 0, "node_steal_s": 0.0,
                                "source": "process", "process_s": 0.78, "wall_s": 25.0, "requests": 7500,
                                "us_per_request": 104.0, "utilization": 0.0312})
         self.assertIsNone(peak)
@@ -403,6 +434,13 @@ class ScrapedUse(unittest.TestCase):
                                         "1", 25.0)
         self.assertEqual((cpu["source"], cpu["usage_s"], cpu["periods"], cpu["throttled_s"]),
                          ("cgroup", 0.78, None, None))
+
+    def test_a_smock_without_the_scheduling_metrics_leaves_them_unknown(self):
+        # As a smock built before /metrics had them.
+        cpu, _, _ = harness.scraped_use(scrape(scheduling=False),
+                                        scrape(requests=(7501,), usage=0.823131, scheduling=False), "250m", 25.0)
+        self.assertEqual((cpu["usage_s"], cpu["scheduling_delay_s"], cpu["involuntary_context_switches"],
+                          cpu["node_steal_s"]), (0.78, None, None, None))
 
     def test_requests_count_from_none_before_the_first_and_a_step_without_one_has_no_cpu_time_a_request(self):
         cpu, _, _ = harness.scraped_use(scrape(requests=()), scrape(requests=(1200,), usage=0.163131), "250m", 25.0)
@@ -423,6 +461,102 @@ class ScrapedUse(unittest.TestCase):
         newer = harness.metric_values('smock_requests_total{mock="catalog",stub=""} 900\nsmock_journal_entries 900\n')
         self.assertEqual(harness.scraped_use(old, newer, "250m", 25.0),
                          (None, None, {"first": None, "last": None, "max": None}))
+
+
+class FirstSecond(unittest.TestCase):
+    """What smock used in a step's first second, when connections open and
+    TLS handshakes come at once, comes from its /metrics scraped a second
+    into the load: its CPU time, the requests it answered and how long it
+    waited, all from what smock read when it answered that scrape."""
+
+    def test_all_of_it_counts_until_smock_answered_the_scrape_however_late(self):
+        # Under a small CPU limit the scrape waits behind the load: smock
+        # answers it 0.7 s late, by when it has used 80 ms of CPU, 800 ms
+        # of it throttled, and answered 150 requests.
+        first = scrape(cpu=0.11, requests=(151,), usage=0.123131, periods=17, throttled_periods=15,
+                       throttled=0.857118, delay=1.012345678, switches=140, steal=12.34)
+        cpu = harness.first_second_use(lambda: first, "50m", scrape(), time.monotonic() - 1.7)
+        self.assertAlmostEqual(cpu.pop("wall_s"), 1.7, delta=0.05)
+        self.assertAlmostEqual(cpu.pop("utilization"), 0.08 / (1.7 * 0.05), delta=0.03)
+        self.assertEqual(cpu, {"usage_s": 0.08, "periods": 14, "throttled_periods": 14, "throttled_s": 0.8,
+                               "scheduling_delay_s": 1.0, "involuntary_context_switches": 100, "node_steal_s": 0.0,
+                               "source": "cgroup", "process_s": 0.08, "requests": 150, "us_per_request": 533.33})
+
+    def test_a_smock_that_did_not_answer_tells_nothing_of_it(self):
+        self.assertIsNone(harness.first_second_use(lambda: None, "50m", scrape(), time.monotonic() - 1))
+
+
+def oha_database(path, latencies_ms, rate):
+    """An oha database as oha writes it with -q and --latency-correction:
+    ticket k released 0.2 ms after it was due, at k / rate, and answered
+    `latencies_ms[k]` after it was due, with status 200, or no row for it
+    when that is None, as oha stores none for a request that got no
+    response."""
+    connection = sqlite3.connect(path)
+    connection.execute("CREATE TABLE oha (start REAL, start_latency_correction REAL, end REAL, duration REAL, "
+                       "status INTEGER, len_bytes INTEGER)")
+    connection.executemany("INSERT INTO oha VALUES (?, ?, ?, ?, ?, ?)", [
+        (k / rate + 0.0002, k / rate + 0.0002, k / rate + latency / 1000, latency / 1000, 200, 400)
+        for k, latency in enumerate(latencies_ms) if latency is not None])
+    connection.commit()
+    connection.close()
+
+
+class PerSecond(unittest.TestCase):
+    """Each step keeps, for each second of its load from its start, ramp
+    and tail included, how many requests oha released in it got a response
+    and their p99 latency, counted from when they were due: a burst at the
+    start, a stall now and then, and a step slow all through look apart."""
+
+    def test_each_second_of_the_load_has_its_requests_and_their_p99(self):
+        directory = Path(tempfile.mkdtemp(prefix="smock-bench-test-"))
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        spec = {"ramp_s": 1, "duration_s": 2, "tail_s": 1}
+        # Two kinds of request at 10 a second each, for the 4 s of the load:
+        # 1 ms, but 50 ms for the first kind's requests due in second 1 (a
+        # stall), and 2 ms for the second kind's due in second 2.
+        latencies = {"a": [50 if 10 <= k < 20 else 1 for k in range(40)],
+                     "b": [2 if 20 <= k < 30 else 1 for k in range(40)]}
+        load = []
+        for name, kind_latencies in latencies.items():
+            oha_database(directory / f"{name}.sqlite", kind_latencies, 10)
+            load.append({"request": {"name": name, "expect": {"status": 200}}, "rate": 10.0, "connections": 1,
+                         "process": SimpleNamespace(returncode=0)})
+        run = SimpleNamespace(tmp=directory)
+        result = harness.load_result(spec, *harness.analyze_load(run, load, spec, directory))
+        self.assertEqual(result["per_second"], {"requests": [20, 20, 20, 20], "p99_ms": [1.0, 50.0, 2.0, 1.0]})
+        # The window, seconds 1 and 2, is what the step's percentiles count.
+        self.assertEqual((result["requests"]["scheduled"], result["latency_ms"]["p99"]), (40, 50.0))
+
+    def test_a_second_in_which_no_request_got_a_response_has_none(self):
+        directory = Path(tempfile.mkdtemp(prefix="smock-bench-test-"))
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        spec = {"ramp_s": 1, "duration_s": 2, "tail_s": 1}
+        # oha stores only the requests that got a response: the first 25,
+        # through half of second 2, of 40.
+        oha_database(directory / "a.sqlite", [1] * 25, 10)
+        load = [{"request": {"name": "a", "expect": {"status": 200}}, "rate": 10.0, "connections": 1,
+                 "process": SimpleNamespace(returncode=0)}]
+        result = harness.load_result(spec, *harness.analyze_load(SimpleNamespace(tmp=directory), load, spec,
+                                                                 directory))
+        self.assertEqual(result["per_second"], {"requests": [10, 10, 5, 0], "p99_ms": [1.0, 1.0, 1.0, None]})
+
+    def test_requests_that_got_no_response_leave_the_second_they_were_due_in_short(self):
+        directory = Path(tempfile.mkdtemp(prefix="smock-bench-test-"))
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        spec = {"ramp_s": 1, "duration_s": 2, "tail_s": 1}
+        # Tickets 10 to 14 of 40, the first half of second 1, got no
+        # response, as when smock restarts: oha stored no row for them.
+        oha_database(directory / "a.sqlite", [None if 10 <= k < 15 else 1 for k in range(40)], 10)
+        load = [{"request": {"name": "a", "expect": {"status": 200}}, "rate": 10.0, "connections": 1,
+                 "process": SimpleNamespace(returncode=0)}]
+        result = harness.load_result(spec, *harness.analyze_load(SimpleNamespace(tmp=directory), load, spec,
+                                                                 directory))
+        # Each response counts in the second oha released it in. Their due
+        # times come from their order, so from the loss on they are 5
+        # tickets too early, and the p99 of the later seconds is overstated
+        # by their share of a second, 500 ms, as the window's is.
+        self.assertEqual(result["per_second"], {"requests": [10, 5, 10, 10], "p99_ms": [1.0, 501.0, 501.0, 501.0]})
 
 
 class Cases(unittest.TestCase):
@@ -732,6 +866,18 @@ class AutopilotProfiles(unittest.TestCase):
                              (target["cpu_limit"], target["memory_limit"]), target["id"])
             if target["rate"] is not None:
                 self.assertIn(target["rate"], cases[target["case"]]["rates"][target["profile"]], target["id"])
+
+    def test_the_plans_description_names_the_target_rates_of_each_architecture(self):
+        # Such as "5,000 under 250m" for autopilot-min's target on arm64,
+        # in that architecture's part of the description.
+        about = read(BENCH, "plan-autopilot.json")["about"]
+        for architecture, targets in harness.read_targets(BENCH / "targets.json").items():
+            self.assertIn(architecture, about)
+            part = about[about.index(architecture):]
+            for target in targets:
+                if target["rate"] is not None:
+                    cpu = "1 CPU" if target["cpu_limit"] == "1" else target["cpu_limit"]
+                    self.assertIn(f"{target['rate']:,} under {cpu}", part, (architecture, target["id"]))
 
 
 def targets_file(test, profiles=(), architectures=None):

@@ -1,10 +1,11 @@
 // The process metrics, which Prometheus's client libraries give every
 // process, and the metrics of smock's cgroup: what smock's process and its
-// cgroup use of CPU and memory, as Linux counts it. They are read from /proc
-// and from the cgroup's files when /metrics is scraped, so serving requests
-// costs nothing for them; a run on GKE Autopilot, where nothing outside
-// the Pod reads its cgroup, measures smock with them. The file formats are
-// in the usage package, which does no I/O; only the reading is here.
+// cgroup use of CPU and memory, as Linux counts it, and how long smock and
+// its machine waited for a CPU. They are read from /proc and from the
+// cgroup's files when /metrics is scraped, so serving requests costs
+// nothing for them; a run on GKE Autopilot, where nothing outside the Pod
+// reads its cgroup, measures smock with them. The file formats are in the
+// usage package, which does no I/O; only the reading is here.
 
 ///|
 /// The files the process and cgroup metrics are read from.
@@ -13,8 +14,15 @@ priv struct ProcessFiles {
   /// `/proc/self/stat` has it.
   stat : String
   /// The process's status, one field a line, with its resident set size
-  /// among others, as `/proc/self/status` has it.
+  /// and its main thread's context switches among others, as
+  /// `/proc/self/status` has it.
   status : String
+  /// The scheduler's counts of the process's main thread, how long it
+  /// waited for a CPU among them, as `/proc/self/schedstat` has them.
+  schedstat : String
+  /// The machine's CPU times, its steal time among them, as `/proc/stat`
+  /// has them.
+  system_stat : String
   /// The directory of the process's cgroup v2, or `None` outside one.
   cgroup_dir : String?
 }
@@ -26,6 +34,8 @@ async fn ProcessFiles::of_self() -> ProcessFiles {
   {
     stat: "/proc/self/stat",
     status: "/proc/self/status",
+    schedstat: "/proc/self/schedstat",
+    system_stat: "/proc/stat",
     cgroup_dir: read_text(proc_self_cgroup).bind(@usage.cgroup_dir),
   }
 }
@@ -33,12 +43,13 @@ async fn ProcessFiles::of_self() -> ProcessFiles {
 ///|
 /// The process and cgroup metrics of one process. A metric whose file
 /// smock cannot read, or does not understand, when it starts is not
-/// registered, and so not in /metrics: all of them without /proc; those of
-/// the cgroup outside a cgroup v2; the CFS counts without the cgroup's cpu
-/// controller, which a CPU limit enables; and the memory peak without
-/// `memory.peak` (Linux before 5.19, or no memory controller). A file that
-/// cannot be read or understood at a scrape leaves its metrics as they
-/// were.
+/// registered, and so not in /metrics: all of them without /proc; the
+/// scheduling delay without `/proc/self/schedstat` (a kernel without
+/// CONFIG_SCHED_INFO); those of the cgroup outside a cgroup v2; the CFS
+/// counts without the cgroup's cpu controller, which a CPU limit enables;
+/// and the memory peak without `memory.peak` (Linux before 5.19, or no
+/// memory controller). A file that cannot be read or understood at a scrape
+/// leaves its metrics as they were.
 priv struct ProcessMetrics {
   /// Where the metrics are read from.
   files : ProcessFiles
@@ -46,6 +57,12 @@ priv struct ProcessMetrics {
   cpu : @metrics.CounterSeries?
   /// `process_resident_memory_bytes`.
   resident : @metrics.GaugeSeries?
+  /// `smock_process_scheduling_delay_seconds_total`.
+  scheduling_delay : @metrics.CounterSeries?
+  /// `smock_process_involuntary_context_switches_total`.
+  involuntary_switches : @metrics.CounterSeries?
+  /// `smock_node_cpu_steal_seconds_total`.
+  steal : @metrics.CounterSeries?
   /// The metrics of smock's cgroup.
   cgroup : CgroupMetrics?
 }
@@ -108,11 +125,62 @@ async fn ProcessMetrics::register(
   } else {
     None
   }
+  let scheduling_delay = if read_text(files.schedstat).bind(
+      @usage.scheduling_delay_seconds,
+    )
+    is Some(_) {
+    Some(
+      metrics
+      .counter(
+        "smock_process_scheduling_delay_seconds_total",
+        help="How long smock's main thread, which serves every request, was ready to run but waited for a CPU, in seconds, to the nanosecond (run_delay of /proc/self/schedstat); with a CPU limit, the time the CFS quota held it back included.",
+      )
+      .labels([]),
+    )
+  } else {
+    None
+  }
+  let involuntary_switches = if read_text(files.status).bind(
+      @usage.involuntary_context_switches,
+    )
+    is Some(_) {
+    Some(
+      metrics
+      .counter(
+        "smock_process_involuntary_context_switches_total",
+        help="Times the kernel took the CPU from smock's main thread, which serves every request, while it could still run (nonvoluntary_ctxt_switches of /proc/self/status); with a CPU limit, the times the CFS quota held it back included.",
+      )
+      .labels([]),
+    )
+  } else {
+    None
+  }
+  let steal = if read_text(files.system_stat).bind(@usage.cpu_steal_seconds)
+    is Some(_) {
+    Some(
+      metrics
+      .counter(
+        "smock_node_cpu_steal_seconds_total",
+        help="CPU time the hypervisor gave to something else while the CPUs of the machine smock runs on, all of them together, had something to run, in seconds, to the hundredth of a second (steal of the cpu line of /proc/stat): the machine's, not smock's, and 0 on bare metal.",
+      )
+      .labels([]),
+    )
+  } else {
+    None
+  }
   let cgroup = match files.cgroup_dir {
     Some(dir) => Some(register_cgroup(metrics, dir))
     None => None
   }
-  let process = { files, cpu, resident, cgroup, }
+  let process = {
+    files,
+    cpu,
+    resident,
+    scheduling_delay,
+    involuntary_switches,
+    steal,
+    cgroup,
+  }
   process.update()
   process
 }
@@ -206,9 +274,27 @@ async fn ProcessMetrics::update(self : ProcessMetrics) -> Unit {
     read_text(self.files.stat).bind(@usage.cpu_seconds) is Some(seconds) {
     cpu.advance_to(seconds)
   }
-  if self.resident is Some(resident) &&
-    read_text(self.files.status).bind(@usage.resident_bytes) is Some(bytes) {
-    resident.set(bytes.to_double())
+  if self.resident is Some(_) || self.involuntary_switches is Some(_) {
+    if read_text(self.files.status) is Some(status) {
+      if self.resident is Some(resident) &&
+        @usage.resident_bytes(status) is Some(bytes) {
+        resident.set(bytes.to_double())
+      }
+      advance(
+        self.involuntary_switches,
+        @usage.involuntary_context_switches(status),
+      )
+    }
+  }
+  if self.scheduling_delay is Some(delay) &&
+    read_text(self.files.schedstat).bind(@usage.scheduling_delay_seconds)
+    is Some(seconds) {
+    delay.advance_to(seconds)
+  }
+  if self.steal is Some(steal) &&
+    read_text(self.files.system_stat).bind(@usage.cpu_steal_seconds)
+    is Some(seconds) {
+    steal.advance_to(seconds)
   }
   guard self.cgroup is Some(cgroup) else { return }
   if cgroup.usage is Some(_) || cgroup.periods is Some(_) {

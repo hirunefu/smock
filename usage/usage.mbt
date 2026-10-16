@@ -1,8 +1,9 @@
-// What smock's process and its cgroup use of CPU and memory, as Linux
-// reports it: the formats of /proc/self/stat, /proc/self/status and
-// /proc/self/cgroup, and of cpu.stat and memory.peak of a cgroup v2. This
-// package does no I/O: the native server reads the files and hands their
-// text here, so the formats are tested on every target.
+// What smock's process and its cgroup use of CPU and memory, and how long
+// they waited for a CPU, as Linux reports it: the formats of
+// /proc/self/stat, /proc/self/status, /proc/self/schedstat,
+// /proc/self/cgroup and /proc/stat, and of cpu.stat and memory.peak of a
+// cgroup v2. This package does no I/O: the native server reads the files
+// and hands their text here, so the formats are tested on every target.
 
 ///|
 /// The clock ticks a second of the CPU times in `/proc/<pid>/stat`:
@@ -42,6 +43,53 @@ pub fn resident_bytes(proc_status : String) -> Int64? {
       return None
     }
     return Some(kib * 1024L)
+  }
+  None
+}
+
+///|
+/// How many times the kernel took the CPU from the task while it could
+/// still run: the `nonvoluntary_ctxt_switches` line of `proc_status`, the
+/// text of `/proc/<pid>/status`, which counts those of the process's main
+/// thread. `None` without one.
+pub fn involuntary_context_switches(proc_status : String) -> Int64? {
+  for line in proc_status.split("\n") {
+    guard line.strip_prefix("nonvoluntary_ctxt_switches:") is Some(rest) else {
+      continue
+    }
+    return decimal(rest.trim())
+  }
+  None
+}
+
+///|
+/// How long the task was ready to run but waited for a CPU, in seconds:
+/// the second field (`run_delay`) of `schedstat`, the text of
+/// `/proc/<pid>/schedstat`, in nanoseconds, which counts the process's
+/// main thread. `None` when it is not such a line.
+pub fn scheduling_delay_seconds(schedstat : String) -> Double? {
+  let fields = schedstat.trim_end(chars="\n").split(" ").collect()
+  guard fields.length() >= 2 && decimal(fields[1]) is Some(ns) else {
+    return None
+  }
+  Some(ns.to_double() / 1.0e9)
+}
+
+///|
+/// How long the hypervisor ran something else while the machine's CPUs,
+/// all of them together, had something to run, in seconds: the eighth
+/// count (`steal`) of the `cpu` line of `proc_stat`, the text of
+/// `/proc/stat`, in clock ticks of 1/100 s. It is the machine's, a
+/// container's as much as its node's, and 0 on bare metal. `None` without
+/// such a line.
+pub fn cpu_steal_seconds(proc_stat : String) -> Double? {
+  for line in proc_stat.split("\n") {
+    guard line.strip_prefix("cpu ") is Some(rest) else { continue }
+    let counts = rest.trim().split(" ").collect()
+    guard counts.length() >= 8 && decimal(counts[7]) is Some(ticks) else {
+      return None
+    }
+    return Some(ticks.to_double() / user_hz)
   }
   None
 }

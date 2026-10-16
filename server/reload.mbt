@@ -39,40 +39,60 @@ fn register_reload_metric(metrics : @metrics.Registry) -> @metrics.Counter {
 /// Reloads on each check of `watch`, the watch of the definitions
 /// directory, until the task is cancelled. Logs a warning when the
 /// directory exists but cannot be watched, and is only polled. A check that
-/// fails in an unforeseen way is logged, and the next one tries again: it
-/// never stops smock.
+/// fails in an unforeseen way is logged, and it never stops smock. After
+/// such a check, or one that found problems reading the directory, the
+/// next poll reads again, though the files may not have changed: the
+/// problem may have passed.
 async fn Reloader::run(self : Reloader, watch : @watch.Watch) -> Unit {
   let check = async fn(check : @watch.Check) {
-    self.check(check) catch {
-      err =>
+    let read_whole = self.check(check) catch {
+      err => {
         self.logger.error("definitions reload failed", fields={
           "error": Json::string(err.to_string()),
         })
+        false
+      }
+    }
+    if !read_whole {
+      watch.forget()
     }
   }
-  watch.run(check, on_error=err => {
-    self.logger.warn(
-      "cannot watch the definitions directory, only polling it",
-      fields={
-        "dir": Json::string(self.dir),
-        "error": Json::string(err.to_string()),
-      },
-    )
-  })
+  watch.run(
+    check,
+    on_error=err => {
+      self.logger.warn(
+        "cannot watch the definitions directory, only polling it",
+        fields={
+          "dir": Json::string(self.dir),
+          "error": Json::string(err.to_string()),
+        },
+      )
+    },
+    on_ahead=(file, time) => {
+      self.logger.warn(
+        "a file in the definitions directory has a time ahead of the clock",
+        fields={
+          "file": Json::string(file),
+          "fileTime": Json::string(@log.format_time(time)),
+        },
+      )
+    },
+  )
 }
 
 ///|
-/// Reads the definitions directory and reloads the engine from it.
+/// Reads the definitions directory and reloads the engine from it. Tells
+/// whether it read the directory without problems.
 ///
 /// A poll reloads only when the set read differs from the one read last:
 /// it looks for a change that no event reported, so that a set that stays
 /// the same, valid or not, does not log a reload every poll interval. A
 /// check after events always reloads.
-async fn Reloader::check(self : Reloader, check : @watch.Check) -> Unit {
+async fn Reloader::check(self : Reloader, check : @watch.Check) -> Bool {
   let (set, problems) = @defdir.read(self.dir, body_file_dir=self.body_file_dir)
   let read = (set.digest(), problems)
   if check is Poll && read == self.last_read {
-    return
+    return problems.is_empty()
   }
   self.last_read = read
   let result = self.engine.reload(set, read_problems=problems, at=@async.now())
@@ -97,6 +117,7 @@ async fn Reloader::check(self : Reloader, check : @watch.Check) -> Unit {
         "errors": diagnostics_json(result.errors),
       })
   }
+  problems.is_empty()
 }
 
 ///|

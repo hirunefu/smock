@@ -36,34 +36,77 @@ pub async fn read(
   dir : String,
   body_file_dir~ : String,
 ) -> (@definitions.DefinitionSet, Array[@definitions.Diagnostic]) {
-  let reader : DirReader = { root: dir, diagnostics: [], }
+  let reader : DirReader = { root: dir, diagnostics: [], stamp: None, }
+  let set = reader.read(body_file_dir~)
+  (set, reader.diagnostics)
+}
+
+///|
+/// Notes in `stamp` what `read` would read from the definitions directory
+/// `dir`, without reading any file: whether the directory exists, the names
+/// it would list, the kind of each entry it would look at, where each body
+/// file really is, the times of each file it would read and the problems it
+/// would report. So a poll can tell, from the stamp alone, that a read
+/// would give the same definition set and the same problems.
+pub async fn stamp(
+  stamp : @watch.Stamp,
+  dir : String,
+  body_file_dir~ : String,
+) -> Unit {
+  let reader : DirReader = { root: dir, diagnostics: [], stamp: Some(stamp), }
+  let _ = reader.read(body_file_dir~)
+  for diagnostic in reader.diagnostics {
+    stamp.note("problem \{diagnostic.file}: \{diagnostic.message}")
+  }
+}
+
+///|
+/// Reading one definitions directory: the directory, as given, and the
+/// problems found so far. Every path it takes is relative to the
+/// directory, and `""` is the directory itself.
+///
+/// While it takes a stamp instead, it notes in it what it finds, and the
+/// times of each file in place of reading it.
+priv struct DirReader {
+  root : String
+  diagnostics : Array[@definitions.Diagnostic]
+  stamp : @watch.Stamp?
+}
+
+///|
+/// Reads the directory into a definition set, as `read` describes, or,
+/// while taking a stamp, an empty one.
+async fn DirReader::read(
+  self : DirReader,
+  body_file_dir~ : String,
+) -> @definitions.DefinitionSet {
   let set : @definitions.DefinitionSet = { files: [], body_files: [], }
-  let exists = @fs.exists(dir) catch {
+  let exists = @fs.exists(self.root) catch {
     err => {
-      reader.problem("", "cannot be read: \{err}")
-      return (set, reader.diagnostics)
+      self.problem("", "cannot be read: \{err}")
+      return set
     }
   }
   if !exists {
-    return (set, reader.diagnostics)
+    self.note("missing")
+    return set
   }
-  if reader.kind("") is Some(kind) && !(kind is Directory) {
-    reader.problem("", "the definitions directory is not a directory")
-    return (set, reader.diagnostics)
+  if self.kind("") is Some(kind) && !(kind is Directory) {
+    self.problem("", "the definitions directory is not a directory")
+    return set
   }
-  for name in reader.visible_entries("") {
+  for name in self.visible_entries("") {
     if !(name.has_suffix(".json") ||
       name.has_suffix(".yaml") ||
       name.has_suffix(".yml")) {
       continue
     }
-    if reader.kind(name) is Some(Regular) &&
-      reader.read_file(name) is Some(bytes) {
+    if self.kind(name) is Some(Regular) && self.read_file(name) is Some(bytes) {
       set.files.push((name, bytes))
     }
   }
-  if reader.kind(body_file_dir) is Some(Directory) {
-    reader.read_body_files(
+  if self.kind(body_file_dir) is Some(Directory) {
+    self.read_body_files(
       body_file_dir,
       set.body_files,
       base=body_file_dir,
@@ -71,16 +114,15 @@ pub async fn read(
       visited=[],
     )
   }
-  (set, reader.diagnostics)
+  set
 }
 
 ///|
-/// Reading one definitions directory: the directory, as given, and the
-/// problems found so far. Every path it takes is relative to the
-/// directory, and `""` is the directory itself.
-priv struct DirReader {
-  root : String
-  diagnostics : Array[@definitions.Diagnostic]
+/// Notes `note` in the stamp, while taking one.
+fn DirReader::note(self : DirReader, note : String) -> Unit {
+  if self.stamp is Some(stamp) {
+    stamp.note(note)
+  }
 }
 
 ///|
@@ -126,7 +168,8 @@ async fn DirReader::read_body_files(
   inside~ : String?,
   visited~ : Array[String],
 ) -> Unit {
-  let real = @fs.realpath(self.path(relative)) catch { _ => return }
+  let real = self.realpath(relative)
+  guard real is Some(real) else { return }
   let inside = inside.unwrap_or(real)
   if !self.stays_inside(relative, real~, inside~, base~) {
     return
@@ -140,9 +183,9 @@ async fn DirReader::read_body_files(
     let path = if relative == "" { name } else { "\{relative}/\{name}" }
     match self.kind(path) {
       Some(Regular) => {
-        let real = @fs.realpath(self.path(path)) catch { _ => continue }
+        guard self.realpath(path) is Some(real) else { continue }
         if self.stays_inside(path, real~, inside~, base~) &&
-          self.read_file(path) is Some(bytes) {
+          self.read_file(path, real~) is Some(bytes) {
           out.push((path[base.length() + 1:].to_owned(), bytes))
         }
       }
@@ -189,22 +232,61 @@ async fn DirReader::visible_entries(
   }
   let visible = names.filter(name => !name.has_prefix("."))
   visible.sort_by((a, b) => @utf8.encode(a).lexical_compare(@utf8.encode(b)))
+  self.note("\{self.path(relative)}: entries \{visible.join("/")}")
   visible
+}
+
+///|
+/// The real path of `relative`, once symlinks are resolved, or `None` when
+/// it cannot be resolved.
+async fn DirReader::realpath(self : DirReader, relative : String) -> String? {
+  try @fs.realpath(self.path(relative)) catch {
+    _ => {
+      self.note("\{self.path(relative)}: no real path")
+      None
+    }
+  } noraise {
+    real => {
+      self.note("\{self.path(relative)}: real path \{real}")
+      Some(real)
+    }
+  }
 }
 
 ///|
 /// The kind of the file at `relative`, following symlinks, or `None` when
 /// it cannot be found, such as a symlink to a missing file.
 async fn DirReader::kind(self : DirReader, relative : String) -> @fs.FileKind? {
-  try @fs.kind(self.path(relative)) catch {
+  let kind = try @fs.kind(self.path(relative)) catch {
     _ => None
   } noraise {
     kind => Some(kind)
   }
+  if self.stamp is Some(_) {
+    let shown = match kind {
+      Some(Regular) => "a file"
+      Some(Directory) => "a directory"
+      Some(_) => "something else"
+      None => "missing"
+    }
+    self.note("\{self.path(relative)}: \{shown}")
+  }
+  kind
 }
 
 ///|
-async fn DirReader::read_file(self : DirReader, relative : String) -> Bytes? {
+/// The bytes of the file at `relative`, or `None` when it cannot be read.
+/// While taking a stamp, notes its real path and times instead, and gives
+/// `None`. `real` is its real path, when that was resolved already.
+async fn DirReader::read_file(
+  self : DirReader,
+  relative : String,
+  real? : String,
+) -> Bytes? {
+  if self.stamp is Some(stamp) {
+    stamp.note_file(self.path(relative), real?)
+    return None
+  }
   try @fs.read_file(self.path(relative)).binary() catch {
     err => {
       self.problem(relative, "cannot be read: \{err}")

@@ -101,6 +101,20 @@ class Manifests(Helper):
         # The Service selects smock's Pod.
         self.assertLessEqual(service["spec"]["selector"].items(), pod["metadata"]["labels"].items())
 
+    def test_an_init_container_prints_the_cpu_of_smocks_node_asking_for_no_more_than_smock(self):
+        # From the load generator's image, which has Python and gke.py;
+        # smock's own has no shell. Autopilot bills a Pod for the larger of
+        # its init containers and the sum of its containers: with smock's
+        # limits, the Pod asks for what smock does.
+        for profile in ("autopilot-burst-min", "chart-default"):
+            [pod] = objects(self.manifests(profile=profile), "Pod")
+            [container] = pod_spec(pod)["containers"]
+            [init] = pod_spec(pod)["initContainers"]
+            self.assertEqual((init["name"], init["image"], init["command"]),
+                             ("node-cpu", GENERATOR_IMAGE, ["python3", "/bench/gke/gke.py", "node-cpu"]))
+            self.assertEqual(init["resources"], container["resources"])
+            self.assertEqual(init["securityContext"], container["securityContext"])
+
     def test_each_profile_has_its_own_service_and_pod_which_the_load_generator_targets(self):
         # A new name for each profile: no ClusterIP or datapath entry of the
         # previous profile's Service, just deleted, is reused.
@@ -336,14 +350,15 @@ START = {"kind": "start", "profile": "small", "oha": "oha 1.16.0", "cpus": 8, "a
                     "digest": "48f7ce9715f0", "mocks": [{"name": "catalog"}]}}
 
 NODE = {"instance_type": "e4a-standard-8", "arch": "arm64", "zone": "us-central1-a", "machine_family": "e4a",
-        "compute_class": "autopilot-arm", "kernel": "6.12.94+", "kubelet": "v1.35.8-gke.1225000",
-        "os_image": "Container-Optimized OS from Google", "cpus": "8", "allocatable_cpu": "7910m"}
+        "compute_class": "autopilot-arm", "boot_disk": "hyperdisk-balanced", "kernel": "6.12.94+",
+        "kubelet": "v1.35.8-gke.1225000", "os_image": "Container-Optimized OS from Google", "cpus": "8",
+        "allocatable_cpu": "7910m"}
 
 
 # An amd64 node of Autopilot's general-purpose Pods, which have no compute
 # class label.
 X86_NODE = {**NODE, "instance_type": "ek-standard-8", "arch": "amd64", "zone": "asia-northeast1-b",
-            "machine_family": "ek", "compute_class": None}
+            "machine_family": "ek", "compute_class": None, "boot_disk": "pd-balanced"}
 
 
 def pods(restarts=0, reason=None, node=NODE, generator_node=None, generator_cpu="4"):
@@ -371,23 +386,29 @@ class Summary(Helper):
     checked, and the conditions it ran under."""
 
     def results(self, lines, pod_info, rates=(500, 1000), where=("--region", "us-central1", "--zone", "us-central1-a",
-                                                                 "--arch", "arm64"), targets=None):
+                                                                 "--arch", "arm64"), targets=None, smock_node_cpu=None,
+                stopped=(), plan=None):
         """A results directory as scripts/gke-bench.sh leaves it, with the
-        load generator's log and the Pods of profile small, summarized
-        against `targets` ({architecture: entries}, by default small's
-        targets for both)."""
+        load generator's log, the Pods of profile small, and, when given,
+        what smock's init container printed (`smock_node_cpu`, a text),
+        summarized against `targets` ({architecture: entries}, by default
+        small's targets for both); `stopped` says why and where the run
+        stopped early, if it did. The plan is small_plan's at `rates`,
+        unless `plan` names another."""
         out = self.directory()
         raw = out / "raw" / "small"
         raw.mkdir(parents=True)
         text = "".join(line if isinstance(line, str) else json.dumps(line) + "\n" for line in lines)
         (raw / "generator.log").write_text(text)
         (raw / "pods.json").write_text(json.dumps(pod_info))
+        if smock_node_cpu is not None:
+            (raw / "smock-node-cpu.log").write_text(smock_node_cpu)
         status, _, stderr = helper(
-            "summarize", "--plan", small_plan(self.directory(), rates),
+            "summarize", "--plan", plan or small_plan(self.directory(), rates),
             "--targets", small_targets(self.directory(), targets), *where,
             "--started-at", "2026-10-14T03:28:50+00:00", "--finished-at", "2026-10-14T04:01:56+00:00",
             "--cluster-version", "1.35.8-gke.1225000", "--smock-image", "sha256:" + "1" * 64,
-            "--generator-image", "sha256:" + "2" * 64, out)
+            "--generator-image", "sha256:" + "2" * 64, *stopped, out)
         self.assertEqual(status, 0, stderr)
         return out
 
@@ -470,6 +491,23 @@ class Summary(Helper):
         self.assertIn("GKE Autopilot", markdown)
         self.assertIn("| http-keep-alive | 1000 |", markdown)
 
+    def test_the_conditions_record_a_hash_of_the_plan_that_leaves_out_its_description(self):
+        lines = [START, generator_step(500), generator_step(1000), {"kind": "done"}]
+
+        def recorded(**changes):
+            """What conditions.json records of small_plan's plan, changed."""
+            path = small_plan(self.directory())
+            path.write_text(json.dumps({**json.loads(path.read_text()), **changes}))
+            out = self.results(lines, pods(), plan=path)
+            return json.loads((out / "conditions.json").read_text())["plan"]
+
+        first, second = recorded(about="What the plan runs."), recorded(about="What the plan runs, said otherwise.")
+        self.assertNotEqual(first["sha256"], second["sha256"])
+        self.assertEqual(first["sha256_without_about"], second["sha256_without_about"])
+        # Anything else is a different plan.
+        other = recorded(about="What the plan runs.", cooldown_s=5)
+        self.assertNotEqual(other["sha256_without_about"], first["sha256_without_about"])
+
     def test_the_conditions_record_the_architecture_region_zone_and_machine_types(self):
         # An amd64 run with no zone pinned: Autopilot chose it.
         generator_node = {**X86_NODE, "instance_type": "ek-standard-16"}
@@ -490,11 +528,94 @@ class Summary(Helper):
         self.assertIn("asia-northeast1-b", conditions["note"])
         self.assertIn("amd64", conditions["note"])
 
+    def test_the_conditions_name_the_cpu_of_smocks_node_and_of_the_load_generators(self):
+        # smock's, from what its init container printed; the load
+        # generator's, from its start line.
+        out = self.results([{**START, "node_cpu": INTEL_CPU}, generator_step(500), generator_step(1000),
+                            {"kind": "done"}], pods(node=X86_NODE),
+                           where=("--region", "us-central1", "--arch", "amd64"),
+                           smock_node_cpu=json.dumps({"kind": "node-cpu", "cpu": AMD_CPU}) + "\n")
+        conditions = json.loads((out / "conditions.json").read_text())
+        nodes = conditions["gke"]["profiles"]["small"]["nodes"]
+        self.assertEqual((nodes["node-a"]["cpu"], nodes["node-b"]["cpu"]), (AMD_CPU, INTEL_CPU))
+        # The machine is the node type, as in a run before the nodes' CPUs
+        # were recorded, so that comparing with one does not show it as
+        # changed: each node's CPU is in its own record and in the Pods
+        # table.
+        self.assertEqual(conditions["machine"]["cpu_model"], "GKE Autopilot ek-standard-8")
+        markdown = (out / "summary.md").read_text()
+        self.assertIn("on amd64 (GKE Autopilot ek-standard-8, 8 CPUs)", markdown)
+        self.assertIn("| small | ek-standard-8 (amd64, asia-northeast1-b), AMD EPYC 7B13 | "
+                      "ek-standard-8 (amd64, asia-northeast1-b), Intel(R) Xeon(R) CPU @ 2.20GHz |", markdown)
+
+    def test_a_node_whose_cpu_was_not_recorded_has_none(self):
+        # As a run before its nodes' CPUs were recorded, or one whose init
+        # container's log could not be read: kubectl's error is no line.
+        for smock_node_cpu in (None, "Error from server (NotFound): pods \"smock-small\" not found\n"):
+            out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}],
+                               pods(node=X86_NODE), where=("--region", "us-central1", "--arch", "amd64"),
+                               smock_node_cpu=smock_node_cpu)
+            conditions = json.loads((out / "conditions.json").read_text())
+            nodes = conditions["gke"]["profiles"]["small"]["nodes"]
+            self.assertEqual((nodes["node-a"]["cpu"], nodes["node-b"]["cpu"]), (None, None))
+            self.assertEqual(conditions["machine"]["cpu_model"], "GKE Autopilot ek-standard-8")
+
     def test_a_profile_cut_short_leaves_the_run_incomplete(self):
         out = self.results([START, generator_step(500), "generator: the deadline passed\n"], pods())
         summary = json.loads((out / "summary.json").read_text())
         self.assertFalse(summary["complete"])
         self.assertEqual([case["rate"] for case in summary["cases"]], [500])
+
+    def test_a_run_that_stopped_early_says_where_and_why_at_the_top_of_its_summary(self):
+        out = self.results([START, IDLE, generator_step(500)], pods(),
+                           stopped=("--stopped", "stopped by SIGTERM", "--stopped-under", "small"))
+        summary = json.loads((out / "summary.json").read_text())
+        self.assertFalse(summary["complete"])
+        self.assertEqual([case["rate"] for case in summary["cases"]], [500])
+        self.assertEqual(summary["gke"]["stopped"],
+                         {"reason": "stopped by SIGTERM", "profile": "small", "after": "http-keep-alive@small@500"})
+        markdown = (out / "summary.md").read_text()
+        note = ("**Stopped early:** the run stopped under profile small, after its step http-keep-alive@small@500: "
+                "stopped by SIGTERM. Nothing after that was measured.")
+        self.assertIn(note, markdown)
+        # Right below the line that says what ran, in place of the note
+        # that the run is incomplete.
+        self.assertLess(markdown.index("Started 2026-10-14T03:28:50+00:00"), markdown.index(note))
+        self.assertLess(markdown.index(note), markdown.index("**Note:**"))
+        self.assertNotIn("**Incomplete:**", markdown)
+        # Before the profile's first step.
+        out = self.results([START, IDLE], pods(), stopped=("--stopped", "the load generator's Pod did not start "
+                                                           "under small", "--stopped-under", "small"))
+        self.assertIn("**Stopped early:** the run stopped under profile small, before its first step: the load "
+                      "generator's Pod did not start under small.", (out / "summary.md").read_text())
+        # A run that did not stop says nothing of it.
+        out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}], pods())
+        self.assertIsNone(json.loads((out / "summary.json").read_text())["gke"]["stopped"])
+        self.assertNotIn("Stopped early", (out / "summary.md").read_text())
+
+    def test_a_run_stopped_before_anything_was_reported_says_what_is_unknown(self):
+        # smock never became ready under the first profile, on no node: the
+        # load generator printed nothing, so smock's version, the
+        # definition set and oha's version are unknown, as is the machine.
+        out = self.results([], {"smock": [{"name": "smock-small", "node": None, "ready": False, "restarts": 0,
+                                           "last_termination": None}], "generator": [], "nodes": {}},
+                           stopped=("--stopped", "smock did not become ready under small", "--stopped-under", "small"))
+        markdown = (out / "summary.md").read_text()
+        self.assertIn("Started 2026-10-14T03:28:50+00:00: smock of an unknown version (commit unknown, toolchain "
+                      "unknown), definition set unknown, on arm64 (GKE Autopilot node, CPUs unknown), oha of an "
+                      "unknown version, plan ", markdown)
+        self.assertNotIn("None", markdown)
+        # conditions.json records them as null.
+        conditions = json.loads((out / "conditions.json").read_text())
+        self.assertEqual((conditions["smock"]["version"], conditions["machine"]["cpus"]), (None, None))
+        # So does the comparison with a run that knew them.
+        older = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}], pods())
+        compared = subprocess.run([sys.executable, str(BENCH / "compare.py"), str(older), str(out)],
+                                  capture_output=True, text=True)
+        self.assertIn("- Newer: smock of an unknown version (commit unknown) on GKE Autopilot (us-central1-a, "
+                      "autopilot-arm), arm64 (GKE Autopilot node, CPUs unknown)", compared.stdout, compared.stderr)
+        self.assertIn("definition set (48f7ce9715f0 → unknown)", compared.stdout)
+        self.assertNotIn("None", compared.stdout)
 
     def test_steps_a_profile_did_not_run_after_it_stopped_early_are_not_measured_with_the_reason(self):
         # The step at 500 got no response at all, so the load generator ran
@@ -568,6 +689,23 @@ class Summary(Helper):
         self.assertEqual(verdict["verdict"], "not measured")
         self.assertIn("smock restarted 1 time under small (last: OOMKilled)", (out / "summary.md").read_text())
 
+    def test_smocks_restarts_read_before_the_profiles_end_measure_no_oom_kills(self):
+        # The run stopped during the load generator's Job, and kept smock's
+        # Pod as it was before the load, with its restarts unknown.
+        out = self.results([START, IDLE, generator_step(500), generator_step(1000)], pods(restarts=None),
+                           stopped=("--stopped", "stopped by SIGTERM", "--stopped-under", "small"))
+        summary = json.loads((out / "summary.json").read_text())
+        self.assertEqual({entry["memory"]["oom_kills"] for entry in [*summary["cases"], *summary["idle_rss"]]},
+                         {None})
+        verdict = next(target for target in summary["targets"] if target["id"] == "small/oom_kills")
+        self.assertEqual(verdict["verdict"], "not measured")
+        markdown = (out / "summary.md").read_text()
+        # No traffic check, and smock's restarts unknown.
+        self.assertIn("| 4 | - | - | no |", markdown)
+        self.assertIn("smock's restarts under small are unknown, since the run did not read them at the profile's "
+                      "end: its OOM kills are not measured.", markdown)
+        self.assertNotIn("None", markdown)
+
 
 class Estimate(Helper):
     """Before anything is made, a run says how long it takes and what it
@@ -581,7 +719,7 @@ class Estimate(Helper):
     def test_it_states_the_expected_cost_and_the_most_a_run_cut_off_at_the_time_limit_costs(self):
         status, stdout, stderr = self.estimate(time_limit_s=3600)
         self.assertEqual(status, 0, stderr)
-        self.assertIn("Cost estimate for arm64 Pods (us-central1, on-demand prices of 2026-10-14, before tax", stdout)
+        self.assertIn("Cost estimate for arm64 Pods (us-central1, on-demand prices of 2026-10-16, before tax", stdout)
         self.assertRegex(stdout, r"Expected: about \$0\.\d\d, the cluster existing for about \d+ minutes\.")
         # Until the watchdog deletes it at the time limit, and for the 5
         # minutes the deletion takes: the cluster's fee ($0.10 an hour), the
@@ -589,6 +727,9 @@ class Estimate(Helper):
         # 2Gi of ephemeral storage at $0.0001389) and the largest smock (1
         # vCPU, 1Gi, 64Mi), $0.3474 an hour for 65 minutes.
         self.assertIn("At most: $0.38, if it ran until the time limit (60 minutes)", stdout)
+        self.assertIn("Arm Pods are priced as x86 ones: autopilot-arm runs them on Autopilot's container-optimized "
+                      "compute platform, which the pricing page bills at one rate for both architectures.", stdout)
+        self.assertNotIn("Scale-Out", stdout)
         # What is billed when nothing is left to delete the cluster.
         self.assertIn("its Pods still stop within minutes of the time limit, and the cluster costs its fee, "
                       "$0.10 an hour", stdout)
@@ -596,7 +737,7 @@ class Estimate(Helper):
     def test_x86_pods_in_tokyo_are_estimated_at_tokyos_prices(self):
         status, stdout, stderr = self.estimate(region="asia-northeast1", arch="amd64", time_limit_s=3600)
         self.assertEqual(status, 0, stderr)
-        self.assertIn("Cost estimate for amd64 (x86) Pods (asia-northeast1, on-demand prices of 2026-10-14", stdout)
+        self.assertIn("Cost estimate for amd64 (x86) Pods (asia-northeast1, on-demand prices of 2026-10-16", stdout)
         # The fee ($0.10 an hour), the load generator on amd64 (6 vCPU and
         # 6Gi at $0.0571 and $0.0063215 an hour, 2Gi of ephemeral storage at
         # $0.0001784) and the largest smock (1 vCPU, 1Gi, 64Mi): $0.5443 an
@@ -604,13 +745,38 @@ class Estimate(Helper):
         self.assertIn("At most: $0.59, if it ran until the time limit (60 minutes)", stdout)
         self.assertIn("The load generator's Pod (6 vCPU, 6Gi)", stdout)
         self.assertNotIn("Arm", stdout)
-        _, stdout, _ = self.estimate(region="asia-southeast1", arch="arm64")
-        self.assertIn("Arm Pods are priced here as general-purpose x86 Pods", stdout)
+
+    def test_both_architectures_pods_are_estimated_at_the_same_rates_of_their_region(self):
+        # amd64 in us-central1: the fee, the load generator (6 vCPU and 6Gi
+        # at $0.0445 and $0.0049225 an hour, 2Gi of ephemeral storage at
+        # $0.0001389) and the largest smock (1 vCPU, 1Gi, 64Mi): $0.4462 an
+        # hour for 65 minutes, as before Arm Pods were priced apart.
+        status, stdout, stderr = self.estimate(arch="amd64", time_limit_s=3600)
+        self.assertEqual(status, 0, stderr)
+        self.assertIn("Cost estimate for amd64 (x86) Pods (us-central1, on-demand prices of 2026-10-16", stdout)
+        self.assertIn("At most: $0.48, if it ran until the time limit (60 minutes)", stdout)
+        self.assertNotIn("Arm", stdout)
+        # The same run on arm64 costs less only for its smaller load
+        # generator (4 vCPU, 4Gi): $0.3474 an hour.
+        _, stdout, _ = self.estimate(arch="arm64", time_limit_s=3600)
+        self.assertIn("At most: $0.38, if it ran until the time limit (60 minutes)", stdout)
+        # Every region with Arm Pods at its own rates, such as Singapore's:
+        # the load generator at $0.0549 and $0.0060729 an hour, ephemeral
+        # storage at $0.0001713, and the fee, $0.4052 an hour.
+        for region in ("us-central1", "us-east1", "us-west1", "europe-west1", "europe-west2", "europe-west4",
+                       "asia-southeast1"):
+            _, stdout, _ = self.estimate(region=region, arch="arm64", time_limit_s=3600)
+            self.assertIn(f"Cost estimate for arm64 Pods ({region}, on-demand prices of 2026-10-16", stdout)
+            if region == "asia-southeast1":
+                self.assertIn("At most: $0.44, if it ran until the time limit (60 minutes)", stdout)
 
     def test_a_region_without_prices_here_is_estimated_from_us_central1s_with_a_margin(self):
-        status, stdout, _ = self.estimate(region="europe-west4")
+        # An amd64 run in Frankfurt: us-central1's Pod prices plus 30% and
+        # the fee, $0.5501 an hour for 65 minutes.
+        status, stdout, _ = self.estimate(region="europe-west3", arch="amd64", time_limit_s=3600)
         self.assertEqual(status, 0)
-        self.assertIn("europe-west4: us-central1's prices plus 30%", stdout)
+        self.assertIn("europe-west3: us-central1's prices plus 30%", stdout)
+        self.assertIn("At most: $0.60, if it ran until the time limit (60 minutes)", stdout)
 
     def test_a_run_longer_than_the_time_limit_is_refused(self):
         status, stdout, stderr = self.estimate(time_limit_s=1200)
@@ -753,6 +919,9 @@ class Generator(Helper):
                          ["start", "idle-rss", "traffic-check", "metrics-before", "step", "step", "metrics-after",
                           "done"])
         self.assertRegex(lines[0]["status"]["digest"], "^[0-9a-f]{12}$")
+        # The CPU of the load generator's node, this machine's here.
+        self.assertIsNotNone(lines[0]["node_cpu"]["model_name"])
+        self.assertIn("aes", lines[0]["node_cpu"]["flags"])
         # smock's idle RSS and peak memory, from its /metrics, before any
         # load.
         idle = lines[1]["idle"]
@@ -814,6 +983,29 @@ class Generator(Helper):
         self.assertGreater(cpu["periods"], 0)
         self.assertGreaterEqual(cpu["throttled_periods"], 0)
         self.assertGreaterEqual(cpu["throttled_s"], 0)
+        # How long smock waited for a CPU, from its /metrics: on this
+        # machine, which is no virtual machine, no steal.
+        self.assertGreaterEqual(cpu["scheduling_delay_s"], 0)
+        self.assertGreaterEqual(cpu["involuntary_context_switches"], 0)
+        self.assertGreaterEqual(cpu["node_steal_s"], 0)
+        # What smock used in the step's first second, from a scrape a
+        # second into the load, in the same layout: some of the requests,
+        # and some of the CPU time.
+        first = cpu["first_second"]
+        self.assertEqual(first["source"], "cgroup")
+        self.assertGreaterEqual(first["wall_s"], 1)
+        self.assertLess(first["wall_s"], 3)
+        self.assertGreater(first["requests"], 0)
+        self.assertLess(first["requests"], cpu["requests"])
+        self.assertGreater(first["usage_s"], 0)
+        self.assertLessEqual(first["usage_s"], cpu["usage_s"])
+        self.assertIsNotNone(first["scheduling_delay_s"])
+        # Each second of the load, ramp and tail included (3.5 s), with the
+        # requests due in it that got a response.
+        seconds = step["per_second"]
+        self.assertEqual(len(seconds["requests"]), 4)
+        self.assertGreaterEqual(sum(seconds["requests"]), step["requests"]["ok"])
+        self.assertEqual([p99 is None for p99 in seconds["p99_ms"]], [count == 0 for count in seconds["requests"]])
         rss = step["rss_kib"]
         self.assertGreater(rss["first"], 1024)
         self.assertEqual(rss["max"], max(rss["first"], rss["last"]))
@@ -1065,6 +1257,105 @@ class Dockerfiles(Helper):
         self.assertEqual(status, 0, stderr)
 
 
+def cpuinfo_block(processor, model_name="AMD EPYC 7B13", family=25, model=1, stepping=0, microcode="0xffffffff",
+                  flags="aes avx2 sha_ni vaes"):
+    """A processor of /proc/cpuinfo as Linux writes it on an x86 virtual
+    machine, with the flags of `flags` among others."""
+    return (f"processor\t: {processor}\nvendor_id\t: {'AuthenticAMD' if 'AMD' in model_name else 'GenuineIntel'}\n"
+            f"cpu family\t: {family}\nmodel\t\t: {model}\nmodel name\t: {model_name}\nstepping\t: {stepping}\n"
+            f"microcode\t: {microcode}\ncpu MHz\t\t: 2449.998\ncache size\t: 512 KB\nphysical id\t: 0\n"
+            f"siblings\t: 8\ncore id\t\t: {processor // 2}\ncpu cores\t: 4\nfpu\t\t: yes\n"
+            f"flags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep sse sse2 ht syscall nx lm constant_tsc "
+            f"pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 movbe popcnt xsave avx f16c rdrand hypervisor {flags} "
+            f"bmi1 bmi2 adx clflushopt\n"
+            f"bugs\t\t: sysret_ss_attrs spectre_v1 spectre_v2 spec_store_bypass srso\n"
+            f"bogomips\t: 4899.99\naddress sizes\t: 48 bits physical, 48 bits virtual\npower management:\n\n")
+
+
+# What Linux says of an AMD and of an Intel x86 CPU's vulnerabilities.
+AMD_VULNERABILITIES = {
+    "meltdown": "Not affected",
+    "retbleed": "Not affected",
+    "spec_rstack_overflow": "Vulnerable: Safe RET, no microcode",
+    "spectre_v2": "Mitigation: Retpolines; IBPB: conditional; IBRS_FW; STIBP: always-on; RSB filling; "
+                  "PBRSB-eIBRS: Not affected; BHI: Not affected",
+}
+
+INTEL_VULNERABILITIES = {
+    "meltdown": "Mitigation: PTI",
+    "retbleed": "Mitigation: IBRS",
+    "spec_rstack_overflow": "Not affected",
+    "spectre_v2": "Mitigation: IBRS; IBPB: conditional; STIBP: conditional; RSB filling; PBRSB-eIBRS: Not affected; "
+                  "BHI: SW loop, KVM: SW loop",
+}
+
+# What gke.py node-cpu keeps of an AMD EPYC 7B13 (Zen 3) node's CPU.
+AMD_CPU = {"model_name": "AMD EPYC 7B13", "vendor_id": "AuthenticAMD", "cpu_family": "25", "model": "1",
+           "stepping": "0", "microcode": "0xffffffff",
+           "flags": {"aes": True, "avx2": True, "sha_ni": True, "vaes": True},
+           "vulnerabilities": AMD_VULNERABILITIES}
+
+# And of an Intel Broadwell node's: no SHA or vector AES instructions.
+INTEL_CPU = {"model_name": "Intel(R) Xeon(R) CPU @ 2.20GHz", "vendor_id": "GenuineIntel", "cpu_family": "6",
+             "model": "79", "stepping": "0", "microcode": "0xffffffff",
+             "flags": {"aes": True, "avx2": True, "sha_ni": False, "vaes": False},
+             "vulnerabilities": INTEL_VULNERABILITIES}
+
+
+class NodeCpu(Helper):
+    """What smock's init container and the load generator say of the CPU
+    of the node they run on: its model, microcode, the flags that make TLS
+    fast and the kernel's mitigations of its vulnerabilities, from
+    /proc/cpuinfo and /sys/devices/system/cpu/vulnerabilities."""
+
+    def node_cpu(self, cpuinfo, vulnerabilities):
+        """What gke.py node-cpu prints for a /proc/cpuinfo of `cpuinfo` (None:
+        no file) and the vulnerabilities `vulnerabilities` ({name: text}, None:
+        no directory): its exit status and its one JSON line."""
+        directory = self.directory()
+        args = ["node-cpu", "--cpuinfo", directory / "cpuinfo", "--vulnerabilities", directory / "vulnerabilities"]
+        if cpuinfo is not None:
+            (directory / "cpuinfo").write_text(cpuinfo)
+        if vulnerabilities is not None:
+            (directory / "vulnerabilities").mkdir()
+            for name, text in vulnerabilities.items():
+                (directory / "vulnerabilities" / name).write_text(text + "\n")
+        status, stdout, stderr = helper(*args)
+        return status, [json.loads(line) for line in stdout.splitlines()], stderr
+
+    def test_an_x86_nodes_model_microcode_tls_flags_and_mitigations_are_printed(self):
+        status, lines, stderr = self.node_cpu(cpuinfo_block(0) + cpuinfo_block(1), AMD_VULNERABILITIES)
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(lines, [{"kind": "node-cpu", "cpu": AMD_CPU}])
+        status, lines, stderr = self.node_cpu(
+            cpuinfo_block(0, model_name="Intel(R) Xeon(R) CPU @ 2.20GHz", family=6, model=79, flags="aes avx2"),
+            INTEL_VULNERABILITIES)
+        self.assertEqual(lines, [{"kind": "node-cpu", "cpu": INTEL_CPU}])
+
+    def test_an_arm64_node_is_named_by_its_implementer_and_part_with_its_own_tls_flags(self):
+        # As Linux writes it on arm64, which has no model name or microcode.
+        cpuinfo = ("processor\t: 0\nBogoMIPS\t: 48.00\nFeatures\t: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics "
+                   "fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc dcpop sha3 sha512\nCPU implementer\t: 0x41\n"
+                   "CPU architecture: 8\nCPU variant\t: 0x0\nCPU part\t: 0xd4f\nCPU revision\t: 1\n\n")
+        status, lines, stderr = self.node_cpu(cpuinfo, {"spectre_v2": "Not affected"})
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(lines, [{"kind": "node-cpu", "cpu": {
+            "model_name": "implementer 0x41, part 0xd4f", "cpu_implementer": "0x41", "cpu_architecture": "8",
+            "cpu_variant": "0x0", "cpu_part": "0xd4f", "cpu_revision": "1", "microcode": None,
+            "flags": {"aes": True, "pmull": True, "sha2": True}, "vulnerabilities": {"spectre_v2": "Not affected"}}}])
+
+    def test_what_it_cannot_read_it_says_and_still_succeeds_so_that_smock_starts(self):
+        # An init container that failed would keep smock's Pod from starting.
+        status, lines, stderr = self.node_cpu(None, None)
+        self.assertEqual(status, 0, stderr)
+        [line] = lines
+        self.assertEqual((line["kind"], line["cpu"]), ("node-cpu", None))
+        self.assertIn("cpuinfo", line["error"])
+        status, lines, stderr = self.node_cpu(cpuinfo_block(0), None)
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(lines, [{"kind": "node-cpu", "cpu": {**AMD_CPU, "vulnerabilities": None}}])
+
+
 class PodInfo(Helper):
     def test_only_what_says_where_and_how_the_pods_ran_is_kept(self):
         directory = self.directory()
@@ -1082,7 +1373,10 @@ class PodInfo(Helper):
              "status": {"phase": "Failed", "reason": "DeadlineExceeded", "containerStatuses": []}}]}
         labels = {"node.kubernetes.io/instance-type": "e4a-standard-8", "kubernetes.io/arch": "arm64",
                   "topology.kubernetes.io/zone": "us-central1-a", "cloud.google.com/machine-family": "e4a",
-                  "cloud.google.com/compute-class": "autopilot-arm"}
+                  "cloud.google.com/compute-class": "autopilot-arm",
+                  # The type of its boot disk, whose quota the run's checks
+                  # take it to draw on.
+                  "cloud.google.com/gke-boot-disk": "hyperdisk-balanced"}
         node_list = {"items": [{
             "metadata": {"name": "node-a", "labels": labels,
                          "annotations": {"container.googleapis.com/instance_id": "1234"}},
@@ -1101,6 +1395,11 @@ class PodInfo(Helper):
         self.assertEqual(info["generator"], [{"name": "generator-small-1", "node": "node-b", "phase": "Failed",
                                               "reason": "DeadlineExceeded", "cpu_request": "6"}])
         self.assertEqual(info["nodes"], {"node-a": NODE})
+        # Read before the profile's end, smock's restarts are unknown.
+        status, stdout, stderr = helper("pod-info", "--without-restarts", directory / "pods.json",
+                                        directory / "nodes.json")
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(json.loads(stdout), {**info, "smock": [{**info["smock"][0], "restarts": None}]})
 
 
 if __name__ == "__main__":

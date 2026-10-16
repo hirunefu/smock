@@ -53,7 +53,8 @@ Packages of `smock/smock`:
   template helpers draw from. Its sequence for a seed is fixed, the same on
   every target.
 - `defdir`: reads the definitions directory and loads it, for
-  `smock serve`, `smock check` and `smock render` (native).
+  `smock serve`, `smock check` and `smock render`, and takes the stamp of
+  it that a poll compares (native).
 - `server`: the listeners, the connection loop and the Admin API (native).
   On the TLS port the same loop reads and writes through a TLS stream; on
   the admin port it answers the Admin API. It reloads rotated certificates,
@@ -65,16 +66,21 @@ Packages of `smock/smock`:
   (inotify) and polling in case an event is missed, so that `server` can
   reload the definitions directory and the certificate directories
   (native). Its `Schedule`, which coalesces a burst of events into one
-  check and keeps the poll interval, does no I/O and reads no clock.
+  check and keeps the poll interval, does no I/O and reads no clock. A poll
+  reads nothing unless the `Stamp` of what the caller reads (the names it
+  lists, and where the files it reads really are and their times) may have
+  changed since the last one.
 - `metrics`: the metrics registry: counters, gauges and histograms with
   fixed label names, rendered in the Prometheus text format. Features
   register their metrics in the one registry `smock serve` keeps.
-- `usage`: understands what Linux says a process and its cgroup use, in
-  `/proc/self/stat`, `/proc/self/status` and a cgroup v2's `cpu.stat` and
-  `memory.peak`, for the process and cgroup metrics, and where
-  `/proc/self/cgroup` puts the process's cgroup, for those and for the
-  memory limit the Journal's bound follows. It does no I/O: `server` reads
-  the files and hands it their text.
+- `usage`: understands what Linux says a process and its cgroup use, and
+  how long the process waited for a CPU, in `/proc/self/stat`,
+  `/proc/self/status`, `/proc/self/schedstat` and a cgroup v2's `cpu.stat`
+  and `memory.peak`, for the process and cgroup metrics; the machine's
+  steal time in `/proc/stat`; and where `/proc/self/cgroup` puts the
+  process's cgroup, for those and for the memory limit the Journal's bound
+  follows. It does no I/O: `server` reads the files and hands it their
+  text.
 - `openssl`: smock's own bindings to OpenSSL, the one C library ADR 0001
   allows (native). A TLS connection there does no I/O: it takes the bytes
   that arrive from the peer and hands out the bytes to send, and `server`
@@ -343,8 +349,23 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   metrics of Prometheus's client libraries: `process_cpu_seconds_total`
   (user and system, from `/proc/self/stat`, to the hundredth of a second),
   `process_resident_memory_bytes` (`VmRSS` of `/proc/self/status`) and
-  `process_start_time_seconds`. On cgroup v2, the metrics of smock's own
-  cgroup, the one `/proc/self/cgroup` names: from its `cpu.stat`,
+  `process_start_time_seconds`. How long smock's main thread, which serves
+  every request, was ready to run but waited for a CPU,
+  `smock_process_scheduling_delay_seconds_total` (`run_delay` of
+  `/proc/self/schedstat`, to the nanosecond), and how many times the kernel
+  took the CPU from it while it could still run,
+  `smock_process_involuntary_context_switches_total`
+  (`nonvoluntary_ctxt_switches` of `/proc/self/status`). With a CPU limit,
+  both include the time the CFS quota held smock back. The CPU time the
+  hypervisor gave to something else while the machine's CPUs had something
+  to run, `smock_node_cpu_steal_seconds_total` (`steal` of `/proc/stat`, to
+  the hundredth of a second): the machine's, all its CPUs together, not
+  smock's, and 0 on bare metal; in a container, its node's. With how long
+  the quota held smock back, `smock_cgroup_cpu_throttled_seconds_total`
+  below, they tell a smock that waited for a CPU on a busy node (a delay
+  well beyond the throttled time, or steal time) from one that needed more
+  CPU (a delay about the throttled time). On cgroup v2, the metrics of
+  smock's own cgroup, the one `/proc/self/cgroup` names: from its `cpu.stat`,
   `smock_cgroup_cpu_usage_seconds_total` (to the microsecond) and, with a
   CPU limit, `smock_cgroup_cpu_periods_total`,
   `smock_cgroup_cpu_throttled_periods_total` and
@@ -962,13 +983,13 @@ rather than hiding them; the Journal's byte bound follows the memory limit
 Each profile measures idle RSS, then plain HTTP and TLS with keep-alive
 connections, each at a ladder of fixed rates from 2,500 to 80,000 requests
 a second per CPU (125 to 4,000 under 50m), 20 seconds a step. The top of
-each ladder is about where smock uses up its CPU over TLS. Plain HTTP's
-ladder also has 30,000 a second per CPU, so that it has the rate of each
-profile's arm64 [targets](#targets) (250, 5,000 and 30,000; the amd64
-ones, 125, 1,250 and 10,000, are on every ladder), and 50,000 a second per
-CPU, by which smock had used up its CPU under each profile in the arm64
-GKE probe those targets come from. A full run takes about 20 minutes; it
-prints its estimate before it starts.
+each ladder is about where smock uses up its CPU over TLS. Every ladder
+has the rates of the amd64 [targets](#targets) (125, 1,250 and 10,000)
+and of the arm64 ones under 50m and 250m (250 and 5,000). Plain HTTP's
+ladder also has 30,000 a second per CPU, the rate of arm64's target under
+1 CPU, and 50,000 a second per CPU, by which smock had used up its CPU
+under each profile in the arm64 GKE probe those targets come from. A full
+run takes about 20 minutes; it prints its estimate before it starts.
 
 Before a full run:
 
@@ -1149,8 +1170,9 @@ architecture the targets file has no set for.
 
 - `conditions.json`: what ran where. The smock version, commit, toolchain
   and binary digest; the definition set digest and the Mocks; the request
-  mix; the plan file; the architecture, CPU model, kernel and CPU
-  governors; the profiles with their CPU and memory limits, the CPU limits
+  mix; the plan file, with its SHA-256 and that of the plan without its
+  `about` (`sha256_without_about`); the architecture, CPU model, kernel
+  and CPU governors; the profiles with their CPU and memory limits, the CPU limits
   and the CPUs of smock and of the load generator; each case's profile,
   rate, durations and connection counts; oha and its version; the targets
   file; any options that changed the plan.
@@ -1159,12 +1181,35 @@ architecture the targets file has no set for.
   from the scheduled send times and the latency from release (each p50,
   p90, p99, p99.9, max), the generator lag (p50, p99, p99.9, max) and
   whether the load generator fell behind, the achieved rate, the errors by
-  kind, smock's CPU use and throttling (`smock_cpu`: from its cgroup's
-  `cpu.stat`, with the requests smock answered meanwhile, from
-  `smock_requests_total`, what the CPU time comes to a request,
-  `us_per_request`, and against the CPU limit, `utilization`, and the CPU
-  time its process counted, `process_s`, from its `/metrics`, as a
-  cross-check), the quota, memory limit and CPUs read while it ran,
+  kind, each second of the load from its start, ramp and tail included
+  (`per_second`: how many of the requests oha released in that second got
+  a response, `requests`, and their p99 from the scheduled send times,
+  `p99_ms`, so that a burst at the start, a stall now and then and a step
+  slow all through look apart; oha releases a request about a millisecond
+  after it was due, so in the second it was due in, unless oha fell
+  behind, as in a stall that holds it up too: then the request and its
+  latency count in the second oha released it in, which may be a second
+  or more later (in the window, `load_generator_late` then flags the
+  step); oha keeps nothing of a request that got no response, so one
+  leaves the second it was due in short, and overstates the p99 of that
+  second and of each later one by up to the time between two requests of
+  its kind, 1 / their rate),
+  smock's CPU use and throttling
+  (`smock_cpu`: from its cgroup's `cpu.stat`, with the requests smock
+  answered meanwhile, from `smock_requests_total`, what the CPU time comes
+  to a request, `us_per_request`, and against the CPU limit,
+  `utilization`, the CPU time its process counted, `process_s`, from its
+  `/metrics`, as a cross-check, how long smock's main thread waited for a
+  CPU, `scheduling_delay_s`, how many times the kernel took the CPU from
+  it, `involuntary_context_switches`, both including, under a CPU limit,
+  the time the CFS quota held it back, `throttled_s`, and the machine's
+  steal time, `node_steal_s`, from its `/metrics`, and the same for the
+  step's first second, `first_second`, when connections open and TLS
+  handshakes come at once, all from its `/metrics` and its cgroup's
+  metrics there, scraped a second into the load: under a small CPU limit
+  the scrape waits behind the load, so that second ends when smock
+  answers it, which can be a second or more later), the quota, memory
+  limit and CPUs read while it ran,
   smock's peak memory and OOM kills (`memory`), whether smock got ready,
   smock's RSS (first, last, max), the TCP connections the machine accepted
   during the load, and the idle connections still open at its end. Then
@@ -1237,9 +1282,24 @@ The line above the table says which steps count.
 - From each run's `conditions.json`, it names the runs (smock's version and
   commit, the machine, the plan) and lists the conditions besides smock
   that differ, such as the architecture, the CPU model, the plan or oha.
+  The plan differs when what it runs differs: the comparison takes the
+  hash of the plan without its `about`, so that a change to the
+  description alone is no difference. A run from before runs recorded
+  that hash has only the file's, which the comparison then takes, so the
+  first comparison with such a run shows the plan as changed if anything
+  in its file changed, its `about` included (as that of
+  `bench/plan-autopilot.json` did after the R1 runs).
   Compare runs of the same kind: a GKE run with a GKE run, a run on a
   machine with a run on the same machine. It says so when one run is on
   GKE and the other is not.
+- Of two GKE runs, it says under each profile whether smock's node had
+  another CPU in the newer run: its model (with its family, model and
+  stepping, which tell apart the generations a virtual machine's model
+  name may not), microcode, TLS flags or the kernel's mitigations of its
+  vulnerabilities, each where it changed; where smock's node had the same
+  CPU; and where a run did not record it, as runs before the nodes' CPUs
+  were recorded did not. A latency that changed with the node may be the
+  node's rather than smock's. It fails nothing.
 - Runs on different CPU architectures, such as an arm64 GKE run and an
   amd64 one, are not compared step by step: their latencies differ by more
   than smock, so no step is a regression, nor a step the newer run left
@@ -1256,8 +1316,12 @@ compare, such as for a summary of another `format`.
 Autopilot: smock in a Pod with each profile's limits as its requests, the
 load from another node over the Pod network. It is part of the
 [checklist before merging into main](docs/merging-into-main.md), and costs
-money: about $0.20 to $0.25 a run (2026-10-14 prices, us-central1 or
-asia-northeast1), which it estimates before it makes anything.
+money: about $0.22 to $0.26 a run on x86 nodes (us-central1 or
+asia-northeast1), and about $0.18 on Arm nodes in us-central1, at the
+on-demand prices of 2026-10-16, which it estimates before it makes
+anything. Both architectures' Pods run on Autopilot's container-optimized
+compute platform, Arm ones through the `autopilot-arm` compute class, and
+the pricing page bills that platform's Pods at one rate for both.
 
 ```sh
 export GKE_BENCH_PROJECT=<project ID> GKE_BENCH_REGION=us-central1
@@ -1311,13 +1375,24 @@ that run's linux/amd64 build and tests passed.
   project, checks that the Artifact Registry, Compute Engine and
   Kubernetes Engine APIs are enabled (it prints the command that enables
   them; `--enable-apis` runs it), that `GKE_BENCH_ZONE`, when set, is in
-  the region, that `CPUS_ALL_REGIONS` and the region's `CPUS` quota have
-  32 vCPUs free (`GKE_BENCH_NEEDED_CPUS`), for four nodes of 8 vCPUs:
-  Autopilot's first node, its system node, smock's and the load
-  generator's (in the probe, a quota of 24 held the load generator's node
-  back), and that no cluster or repository of an earlier run is left. Then
-  it prints how long the run takes and what it costs, expected and at
-  most, and stops unless `--yes` says to go on.
+  the region, that the quotas the run's nodes draw on have enough free,
+  and that no cluster or repository of an earlier run is left. The run
+  needs four nodes of 8 vCPUs: Autopilot's first node, its system node,
+  smock's and the load generator's (in the probe, a quota of 24 vCPUs held
+  the load generator's node back). Autopilot's two are x86 nodes on either
+  architecture; smock's and the load generator's are of the run's. So it
+  needs 32 vCPUs free in `CPUS_ALL_REGIONS` (`GKE_BENCH_NEEDED_CPUS`, from
+  which the number of nodes follows); in the region's `CPUS`, 8 for each
+  x86 node; 100 GB of boot disk a node, in the region's `SSD_TOTAL_GB` for
+  an x86 node (pd-balanced, GKE's default) and in `HDB_TOTAL_GB` for an
+  Arm node (hyperdisk-balanced, as the probe's Arm nodes had); and an
+  external IP address a node, in `IN_USE_ADDRESSES`. An Arm node's vCPUs
+  count in a CPU quota of its machine family, which gcloud does not list:
+  an arm64 run says that it is not checked, and the console's Quotas page
+  shows it. It names each quota with how much is free and how much the
+  run needs, and says which is short or cannot be read. Then it prints how
+  long the run takes and what it costs, expected and at most, and stops
+  unless `--yes` says to go on.
 - **Images.** It builds the release binary, unless given one, and two
   images for the run's architecture (`docker build --platform`): the
   release image with `bench/definitions/`
@@ -1352,9 +1427,19 @@ that run's linux/amd64 build and tests passed.
   `autopilot-arm` compute class on arm64, Autopilot's default
   general-purpose x86 Pods on amd64. Autopilot chooses smock's zone, and a
   required Pod affinity keeps the load generator in it; `GKE_BENCH_ZONE`
-  pins both to one zone instead. The load generator sends each step the
-  way `bench/bench.py` does, with its functions, and prints one JSON line
-  for each step, a case as `summary.json` has it. It looks up the
+  pins both to one zone instead. Before smock starts, an init container
+  in its Pod, from the load generator's image and with smock's limits so
+  that the Pod asks for no more, prints the CPU of smock's node
+  (`bench/gke/gke.py node-cpu`): its model name, vendor, family, model and
+  stepping (on arm64, its implementer, part, variant and revision), its
+  microcode, whether it has the flags that make TLS fast (`aes`, `avx2`,
+  `sha_ni` and `vaes` on x86; `aes`, `pmull` and `sha2` on arm64), and
+  what the kernel says of each of its vulnerabilities, from
+  `/proc/cpuinfo` and `/sys/devices/system/cpu/vulnerabilities`. It
+  succeeds whatever it can read, so that smock always starts. The load
+  generator says the same of its own node. The load generator sends each
+  step the way `bench/bench.py` does, with its functions, and prints one
+  JSON line for each step, a case as `summary.json` has it. It looks up the
   Service's address once smock answers by name. Before any load, once
   smock has idled for the plan's settle time after it was ready, it reads
   smock's idle RSS from smock's `/metrics`. Before the first step it
@@ -1395,30 +1480,55 @@ that run's linux/amd64 build and tests passed.
 
 It writes to `bench/results/gke-<date>-<time>/` unless `--out` says
 otherwise: `raw/<profile>/generator.log`, the load generator's lines;
-`raw/<profile>/pods.json`, the nodes the Pods ran on, smock's restarts and
-the load generator's CPU request; `raw/<profile>/smock.log`, smock's log
-(and the log of its container before its last restart, when it
-restarted, with kubectl's errors in their place), and
-`raw/<profile>/service.json`, its Service with the Service's
-EndpointSlices, both kept before smock's Pod is deleted;
+`raw/<profile>/pods.json`, the nodes the Pods ran on (with each one's
+boot disk type, `boot_disk`), smock's restarts and the load generator's
+CPU request, kept as soon as each Pod has a node, with smock's restarts
+unknown (null), and again at the profile's end, with them (a run that
+stops before then, or cannot read them then, leaves them unknown, and
+smock's OOM kills under the profile unmeasured);
+`raw/<profile>/smock-node-cpu.log`, what smock's init container printed
+of the CPU of its node, kept once smock has started;
+`raw/<profile>/smock.log`, smock's log (and the log of its container
+before its last restart, when it restarted or that is not known, with
+kubectl's errors in their place); and `raw/<profile>/service.json`, its
+Service with the Service's EndpointSlices, both kept before smock's Pod
+is deleted;
 `summary.json` in the layout of a run on a machine, which
 `bench/compare.py` reads; `summary.md`; `conditions.json`; and
 `watchdog.log`. The summary and the conditions record, for each profile,
 whether the traffic ports answered, whether the profile ended early and
-why, and the load generator's CPU request. The summary checks the
-targets of the run's architecture (`--arch`). Nothing outside smock's Pod
-can read its cgroup on Autopilot, so what smock used comes from its own
+why, and the load generator's CPU request; the conditions also record,
+for each node of each profile, its CPU (`cpu`, as `gke.py node-cpu`
+prints it, or null when it is unknown), whose model `summary.md` shows
+beside each node; `machine.cpu_model` names only the node type, as in a
+run from before the nodes' CPUs were recorded, so that comparing with one
+does not show another machine. A run that stops
+once a profile has started, because something fails or it is stopped
+(Ctrl-C, SIGTERM, a closed terminal, or the watchdog at the time limit,
+which it names as the reason), still writes `summary.json`,
+`summary.md` and `conditions.json` from what it measured; `summary.md`
+then says, right below the line that says when the run started and what
+ran, under which profile and after which step it stopped, and why
+(`gke.stopped` in `summary.json`). So it does when the run leaves out
+the profiles after one whose Pods were not deleted in time, or from one
+that no longer fits in the time limit.
+The summary checks the targets of the run's architecture (`--arch`).
+Nothing outside smock's Pod can read its cgroup on Autopilot, so what
+smock used comes from its own
 `/metrics`, its [process and cgroup metrics](#admin-api), which the load
-generator scrapes right before and right after each step: its CPU time and
-throttling during the step, from its container's cgroup, with the CPU time
-a request and against the CPU limit; its RSS at the step's start and end,
+generator scrapes right before and right after each step, and a second
+into it: its CPU time and throttling during the step and in its first
+second, from its container's cgroup, with the CPU time a request and
+against the CPU limit; how long it waited for a CPU, the time the CFS
+quota held it back included, and its node's steal time; its RSS at the
+step's start and end,
 the larger as its max; and the most memory its container had used by the
 step's end (`memory.peak`), since smock started under the profile, so
 earlier steps count too. A smock without those metrics leaves them, idle
 RSS and the targets on them unmeasured. OOM kills come from smock's
-restarts. Nothing it writes names the account or the project, and what it
-prints shows the project as `$GKE_BENCH_PROJECT` and gcloud's account as
-`<account>`.
+restarts at the profile's end. Nothing it writes names the account or
+the project, and what it prints shows the project as `$GKE_BENCH_PROJECT`
+and gcloud's account as `<account>`.
 
 `python3 -m unittest discover -s bench` tests the helper, the load
 generator against smock on this machine, and the script against fake

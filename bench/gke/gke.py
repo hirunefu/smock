@@ -7,7 +7,8 @@ usage:
   python3 bench/gke/gke.py plan [options]        the profiles a run runs, with their steps
   python3 bench/gke/gke.py estimate [options]    how long a run takes and what it costs
   python3 bench/gke/gke.py manifests [options]   the Kubernetes objects of one profile
-  python3 bench/gke/gke.py pod-info PODS NODES    what to keep of the Pods and their nodes
+  python3 bench/gke/gke.py pod-info [options] PODS NODES   what to keep of the Pods and their nodes
+  python3 bench/gke/gke.py node-cpu [options]     what to keep of the CPU of the node it runs on
   python3 bench/gke/gke.py summarize [options] OUT   summary.json, summary.md and conditions.json
   python3 bench/gke/gke.py stopped LOG            why the load generator stopped its profile early, if it did
   python3 bench/gke/gke.py elf-arch FILE          the architecture of an executable, amd64 or arm64
@@ -57,7 +58,8 @@ def smock_name(profile_name):
 # second and above (the amd64 run of 2026-10-14), so it has 6 there. Either
 # fits an 8-vCPU node (7910m allocatable on ek-standard-8 and
 # e4a-standard-8 in those runs) with at least 1 vCPU left for Autopilot's
-# own Pods on it, so that the run's CPU quota of three such nodes holds.
+# own Pods on it, so that the quotas the run checks, of nodes of 8 vCPUs
+# (four by default: GKE_BENCH_NEEDED_CPUS in scripts/gke-bench.sh), hold.
 # oha's worker threads and the split of the connections between the
 # requests of the mix do not depend on the number of CPUs. Its ephemeral
 # storage holds oha's databases of one step.
@@ -80,17 +82,31 @@ TRAFFIC_CHECK_S = 60
 TRAFFIC_CHECKS = 2
 
 
-# What a run costs: on-demand prices of general-purpose (x86) Autopilot
-# Pods, which are billed for their requests, in USD an hour before tax, from
-# https://cloud.google.com/kubernetes-engine/pricing on 2026-10-14, and the
-# cluster management fee, the same in every region. A billing account's
-# free tier ($74.40 a month) covers the fee of one Autopilot or zonal
-# cluster. Arm Pods are priced here as x86 ones.
-PRICES_DATE = "2026-10-14"
+# What a run costs: on-demand prices of Autopilot Pods, which are billed for
+# their requests, in USD an hour before tax, from PRICES_URL on PRICES_DATE;
+# and the cluster management fee, the same in every region. A billing
+# account's free tier ($74.40 a month) covers the fee of one Autopilot or
+# zonal cluster. Both architectures' Pods run on Autopilot's
+# container-optimized compute platform: x86 ones by default, Arm ones
+# through the built-in autopilot-arm compute class (GKE's documentation of
+# the built-in compute classes, 2026-10-13). The pricing page bills that
+# platform's Pods at one rate table for both architectures ("Pods that use
+# the Autopilot container-optimized compute platform"); its Scale-Out Arm
+# Pod rates are those of another compute class, on other machines. The
+# prices are those of the regions with Arm Pods (ARM_REGIONS in
+# scripts/gke-bench.sh) and of Tokyo; another region's are us-central1's
+# plus UNKNOWN_REGION_MARGIN.
 PRICES_URL = "https://cloud.google.com/kubernetes-engine/pricing"
+PRICES_DATE = "2026-10-16"
 CLUSTER_FEE_PER_HOUR = 0.10
 POD_PRICES_PER_HOUR = {
     "us-central1": {"vcpu": 0.0445, "memory_gib": 0.0049225, "ephemeral_gib": 0.0001389},
+    "us-east1": {"vcpu": 0.0445, "memory_gib": 0.0049225, "ephemeral_gib": 0.0001389},
+    "us-west1": {"vcpu": 0.0445, "memory_gib": 0.0049225, "ephemeral_gib": 0.0001389},
+    "europe-west1": {"vcpu": 0.049, "memory_gib": 0.0054202, "ephemeral_gib": 0.0001529},
+    "europe-west2": {"vcpu": 0.0573, "memory_gib": 0.0063421, "ephemeral_gib": 0.0001789},
+    "europe-west4": {"vcpu": 0.049, "memory_gib": 0.0054202, "ephemeral_gib": 0.0001529},
+    "asia-southeast1": {"vcpu": 0.0549, "memory_gib": 0.0060729, "ephemeral_gib": 0.0001713},
     "asia-northeast1": {"vcpu": 0.0571, "memory_gib": 0.0063215, "ephemeral_gib": 0.0001784},
 }
 UNKNOWN_REGION_MARGIN = 1.3
@@ -218,7 +234,9 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
     the namespace and its quota, smock.json smock's Service and Pod,
     generator.json the load generator's Job. Both Pods run on nodes of
     `arch`, in `zone` when it is given; else Autopilot chooses smock's zone,
-    and the load generator runs in the same one, on another node.
+    and the load generator runs in the same one, on another node. Before
+    smock starts, an init container from the load generator's image prints
+    the CPU of smock's node (gke.py node-cpu), which the run keeps.
 
     smock runs in a Pod of its own, not a Deployment, so that it can have a
     deadline (`smock_deadline_s`, the time left until the run's time limit,
@@ -265,6 +283,14 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
             "automountServiceAccountToken": False,
             "terminationGracePeriodSeconds": 5,
             "securityContext": pod_security,
+            # With smock's limits, so that the Pod asks for no more than
+            # smock does: Autopilot bills a Pod for the larger of its init
+            # containers and the sum of its containers.
+            "initContainers": [{
+                "name": "node-cpu", "image": generator_image, "command": ["python3", "/bench/gke/gke.py", "node-cpu"],
+                "resources": {"requests": limits, "limits": limits},
+                "securityContext": container_security,
+            }],
             "containers": [{
                 "name": "smock", "image": smock_image, "args": ["serve"],
                 "env": [{"name": "SMOCK_DIR", "value": "/definitions"},
@@ -339,14 +365,14 @@ def pod_price(prices, cpu, memory, ephemeral):
 
 
 def region_prices(region):
-    """The Pod prices of a region, and how they were found."""
+    """The prices of the Pods in a region, and how they were found."""
     if region in POD_PRICES_PER_HOUR:
         return POD_PRICES_PER_HOUR[region], f"{region}, on-demand prices of {PRICES_DATE}, before tax"
     base = POD_PRICES_PER_HOUR["us-central1"]
     prices = {name: price * UNKNOWN_REGION_MARGIN for name, price in base.items()}
     margin = round((UNKNOWN_REGION_MARGIN - 1) * 100)
-    return prices, (f"{region}: us-central1's prices plus {margin}%, on-demand prices of {PRICES_DATE}, before tax; "
-                    "this region's own are not here")
+    return prices, (f"{region}: us-central1's prices plus {margin}%, on-demand prices of {PRICES_DATE}, before "
+                    "tax; this region's own are not here")
 
 
 # The Pods of each architecture, for people.
@@ -394,8 +420,8 @@ def estimate(plan, profiles, cases, region, arch, time_limit_s):
         f"Pods still stop within minutes of the time limit, and the cluster costs its fee, "
         f"${CLUSTER_FEE_PER_HOUR:.2f} an hour, "
         "until it is deleted: the next run's checks name it.",
-        *(["Arm Pods are priced here as general-purpose x86 Pods: see the pricing page for autopilot-arm."]
-          if arch == "arm64" else []),
+        *(["Arm Pods are priced as x86 ones: autopilot-arm runs them on Autopilot's container-optimized compute "
+           "platform, which the pricing page bills at one rate for both architectures."] if arch == "arm64" else []),
     ])
     needed_s = lifetime_s + TIME_LIMIT_MARGIN_S
     if needed_s <= time_limit_s:
@@ -468,16 +494,20 @@ def run_instructions(path):
     return found
 
 
-# The labels of a node that say what it is and where.
+# The labels of a node that say what it is and where, and the type of its
+# boot disk, whose regional quota scripts/gke-bench.sh checks.
 NODE_LABELS = {"instance_type": "node.kubernetes.io/instance-type", "arch": "kubernetes.io/arch",
                "zone": "topology.kubernetes.io/zone", "machine_family": "cloud.google.com/machine-family",
-               "compute_class": "cloud.google.com/compute-class"}
+               "compute_class": "cloud.google.com/compute-class", "boot_disk": "cloud.google.com/gke-boot-disk"}
 
 
-def pod_info(pod_list, node_list):
+def pod_info(pod_list, node_list, restarts=True):
     """What a run keeps of its Pods and of the nodes they ran on: where and
     how they ran, the load generator's CPU request, and nothing that names
-    the project, such as image references or provider IDs."""
+    the project, such as image references or provider IDs. smock's
+    restarts are None (unknown) unless `restarts`: the OOM kills of a
+    profile come from them, so only those read at the profile's end count,
+    and a run that stops before then keeps what it read earlier."""
     info = {"smock": [], "generator": [], "nodes": {}}
     for pod in pod_list["items"]:
         app = pod["metadata"].get("labels", {}).get("app")
@@ -489,7 +519,8 @@ def pod_info(pod_list, node_list):
                 "name": pod["metadata"]["name"], "node": pod["spec"].get("nodeName"),
                 "ready": any(condition["type"] == "Ready" and condition["status"] == "True"
                              for condition in status.get("conditions", [])),
-                "restarts": container.get("restartCount", 0), "last_termination": terminated.get("reason")})
+                "restarts": container.get("restartCount", 0) if restarts else None,
+                "last_termination": terminated.get("reason")})
         elif app == "smock-bench-generator":
             container = (pod["spec"].get("containers") or [{}])[0]
             info["generator"].append({"name": pod["metadata"]["name"], "node": pod["spec"].get("nodeName"),
@@ -506,6 +537,67 @@ def pod_info(pod_list, node_list):
             "os_image": status["nodeInfo"]["osImage"], "cpus": status["capacity"]["cpu"],
             "allocatable_cpu": status["allocatable"]["cpu"]}
     return info
+
+
+# Where Linux describes the CPUs, and the mitigations of their
+# vulnerabilities, one file each.
+CPUINFO = "/proc/cpuinfo"
+VULNERABILITIES = "/sys/devices/system/cpu/vulnerabilities"
+
+# The fields of /proc/cpuinfo that say which CPU a processor is: on x86 its
+# vendor, family, model and stepping (a virtual machine's model name, such
+# as "Intel(R) Xeon(R) CPU @ 2.20GHz", may not tell its generation); on
+# arm64, which has no model name, its implementer, architecture, variant,
+# part and revision.
+CPU_IDENTITY = ("vendor_id", "cpu family", "model", "stepping", "CPU implementer", "CPU architecture",
+                "CPU variant", "CPU part", "CPU revision")
+
+# The CPU flags that make TLS fast, by the line of /proc/cpuinfo that lists
+# them: on x86, AES-NI and its vector form for AES-GCM, AVX2 for ChaCha20
+# and the elliptic curves, and the SHA extensions for the handshake's
+# hashes; on arm64, the AES, polynomial multiply and SHA-2 instructions.
+TLS_FLAGS = {"flags": ("aes", "avx2", "sha_ni", "vaes"), "Features": ("aes", "pmull", "sha2")}
+
+
+def read_node_cpu(cpuinfo=CPUINFO, vulnerabilities=VULNERABILITIES):
+    """The CPU of the node this runs on, as node_cpu keeps it, from the
+    files `cpuinfo` and `vulnerabilities`, and None; or None and why it
+    could not be read."""
+    try:
+        return node_cpu(Path(cpuinfo).read_text(), read_vulnerabilities(vulnerabilities)), None
+    except Exception as failure:  # noqa: BLE001 - whatever it is, the run goes on
+        return None, f"cannot read {cpuinfo}: {failure}"
+
+
+def node_cpu(cpuinfo, vulnerabilities):
+    """What a run keeps of the CPU of a node, from the text of its
+    /proc/cpuinfo, of its first processor (a node's vCPUs are all of one
+    model): the model name (on arm64, its implementer and part), the fields
+    that say which CPU it is, the microcode (None on arm64), whether it has
+    each flag of TLS_FLAGS, and `vulnerabilities`, what the kernel says of
+    each of the CPU's vulnerabilities, {name: mitigation}, or None."""
+    fields = {}
+    for line in cpuinfo.strip().split("\n\n", 1)[0].splitlines():
+        name, colon, value = line.partition(":")
+        if colon:
+            fields.setdefault(name.strip(), value.strip())
+    model_name = fields.get("model name")
+    if model_name is None and "CPU implementer" in fields and "CPU part" in fields:
+        model_name = f"implementer {fields['CPU implementer']}, part {fields['CPU part']}"
+    flags = next(({flag: flag in fields[line].split() for flag in wanted}
+                  for line, wanted in TLS_FLAGS.items() if line in fields), None)
+    return {"model_name": model_name,
+            **{name.lower().replace(" ", "_"): fields[name] for name in CPU_IDENTITY if name in fields},
+            "microcode": fields.get("microcode"), "flags": flags, "vulnerabilities": vulnerabilities}
+
+
+def read_vulnerabilities(directory):
+    """What the kernel says of each of the CPU's vulnerabilities, from the
+    files of `directory`, {name: text}, or None when it cannot be read."""
+    try:
+        return {path.name: path.read_text().strip() for path in sorted(Path(directory).iterdir()) if path.is_file()}
+    except OSError:
+        return None
 
 
 def generator_lines(path):
@@ -529,26 +621,39 @@ def generator_lines(path):
 def profile_results(out, plan, profile, cases, arch):
     """What one profile's run left: its steps, smock's idle RSS when the
     load generator read it, whether it ran each step of the plan, what the
-    load generator said at its start, its Pods, whether smock's traffic
-    ports answered before the first step, whether the load generator
-    stopped the profile early and which steps it did not run, and the load
-    generator Pod's CPU request (as the Pod had it, else as the run
-    asked)."""
+    load generator said at its start, its Pods and the CPU of each node
+    they ran on (`cpu` of each node, None when unknown), whether smock's
+    traffic ports answered before the first step, whether the load
+    generator stopped the profile early and which steps it did not run,
+    and the load generator Pod's CPU request (as the Pod had it, else as
+    the run asked)."""
     raw = Path(out) / "raw" / profile["name"]
     lines = generator_lines(raw / "generator.log")
     pods = read_json(raw / "pods.json") if (raw / "pods.json").exists() else {"smock": [], "generator": [],
                                                                                "nodes": {}}
+    start = next((line for line in lines if line["kind"] == "start"), None)
+    # smock's node's, from what its init container printed, which the run
+    # kept; the load generator's, from its start line.
+    printed = next((line for line in generator_lines(raw / "smock-node-cpu.log") if line["kind"] == "node-cpu"), {})
+    cpus = {"smock": printed.get("cpu"), "generator": (start or {}).get("node_cpu")}
+    for node in pods["nodes"].values():
+        node["cpu"] = None
+    for app, cpu in cpus.items():
+        for pod in pods[app]:
+            if cpu and pod["node"] in pods["nodes"]:
+                pods["nodes"][pod["node"]]["cpu"] = cpu
     results = [line["result"] for line in lines if line["kind"] == "step"]
     idle = [line["idle"] for line in lines if line["kind"] == "idle-rss"]
-    # smock's container restarts after an OOM kill: with none, the kernel
-    # never killed it; with some, which step they came in is unknown.
+    # smock's container restarts after an OOM kill: with none at the
+    # profile's end, the kernel never killed it; with some, which step they
+    # came in is unknown, and so is whether there were any when the run
+    # did not read them at the end (None).
     smock = pods["smock"]
     oom_kills = 0 if len(smock) == 1 and smock[0]["restarts"] == 0 else None
     for result in [*results, *idle]:
         result["memory"]["oom_kills"] = oom_kills
     planned = [spec["id"] for spec in steps(plan, profile, cases)]
     done = any(line["kind"] == "done" for line in lines)
-    start = next((line for line in lines if line["kind"] == "start"), None)
     # The check before the first step, not one after a step.
     check = next((line for line in lines if line["kind"] == "traffic-check" and "after" not in line), None)
     stopped = next((line for line in lines if line["kind"] == "stopped"), None)
@@ -571,7 +676,8 @@ def profile_record(result):
 def node_text(node):
     if node is None:
         return "-"
-    return f"{node['instance_type']} ({node['arch']}, {node['zone']})"
+    model = (node.get("cpu") or {}).get("model_name")
+    return f"{node['instance_type']} ({node['arch']}, {node['zone']})" + (f", {model}" if model else "")
 
 
 def traffic_check_text(check):
@@ -597,7 +703,7 @@ def gke_markdown(results):
         pods = result["pods"]
         smock = pods["smock"][0] if pods["smock"] else None
         generator = pods["generator"][0] if pods["generator"] else None
-        restarts = "-" if smock is None else smock["restarts"]
+        restarts = harness.shown(smock and smock["restarts"])
         ended = result["ended_early"]
         lines.append(f"| {name} | {node_text(smock and pods['nodes'].get(smock['node']))} | "
                      f"{node_text(generator and pods['nodes'].get(generator['node']))} | "
@@ -605,7 +711,10 @@ def gke_markdown(results):
                      f"{restarts} | {'yes' if ended else 'no'} |")
         if ended:
             notes.append(f"{name} ended early: {ended['reason']}. Not measured: {', '.join(ended['not_measured'])}.")
-        if smock and smock["restarts"]:
+        if smock and smock["restarts"] is None:
+            notes.append(f"smock's restarts under {name} are unknown, since the run did not read them at the "
+                         "profile's end: its OOM kills are not measured.")
+        elif smock and smock["restarts"]:
             times = "time" if smock["restarts"] == 1 else "times"
             notes.append(f"smock restarted {smock['restarts']} {times} under {name} "
                          f"(last: {smock['last_termination']}): which steps its OOM kills came in is unknown, "
@@ -613,6 +722,25 @@ def gke_markdown(results):
     if notes:
         lines += ["", *notes]
     return "\n".join(lines) + "\n"
+
+
+def stopped_record(results, reason, profile):
+    """Where a run that stopped before its end stopped, and why: the
+    profile it was running and the last step it measured there; or None
+    when it did not stop."""
+    if not reason:
+        return None
+    steps = results[profile]["steps"] if profile in results else []
+    return {"reason": reason, "profile": profile, "after": steps[-1]["id"] if steps else None}
+
+
+def stopped_markdown(stopped):
+    """What summary.md says of a run that stopped before its end."""
+    where = ""
+    if stopped["profile"]:
+        step = f"after its step {stopped['after']}" if stopped["after"] else "before its first step"
+        where = f" under profile {stopped['profile']}, {step}"
+    return f"**Stopped early:** the run stopped{where}: {stopped['reason']}. Nothing after that was measured."
 
 
 def nodes_of(results, app):
@@ -639,10 +767,12 @@ def command_summarize(args):
     cases = plan_cases(plan, comma_list(args.cases))
     out = Path(args.out)
     results = {profile["name"]: profile_results(out, plan, profile, cases, args.arch) for profile in profiles}
+    stopped = stopped_record(results, args.stopped, args.stopped_under)
     summary = {"format": harness.FORMAT, "complete": all(result["complete"] for result in results.values()),
                "idle_rss": [idle for result in results.values() for idle in result["idle_rss"]],
                "cases": [step for result in results.values() for step in result["steps"]],
-               "targets": [], "gke": {"profiles": {name: profile_record(result) for name, result in results.items()}}}
+               "targets": [], "gke": {"profiles": {name: profile_record(result) for name, result in results.items()},
+                                      "stopped": stopped}}
     planned = [spec for profile in profiles for spec in steps(plan, profile, cases)]
     summary["targets"] = harness.explain_steps_not_run(
         harness.check_targets(harness.read_targets(targets_path), args.arch, summary), summary, planned)
@@ -666,17 +796,22 @@ def command_summarize(args):
                         "mocks": status.get("mocks")},
         "request_mix": {"file": harness.shown_path(mix), "sha256": harness.sha256_file(mix),
                         "weights": {request["name"]: request["weight"] for request in read_json(mix)["requests"]}},
-        "plan": {"file": harness.shown_path(plan_path), "sha256": harness.sha256_file(plan_path)},
-        "targets": {"file": harness.shown_path(targets_path), "sha256": harness.sha256_file(targets_path)},
+        "plan": harness.plan_record(plan_path),
+        "targets": harness.file_record(targets_path),
         "note": (f"Measured on GKE Autopilot in {zone or args.region}, on {args.arch} nodes "
                  f"({machine_type or 'of an unknown machine type'}): smock in a {compute_class} Pod with each "
                  "profile's limits as its requests, and oha in a Pod on another node in its zone, over the Pod "
                  "network. What smock used comes from its own /metrics, its process and cgroup metrics, scraped "
-                 "right before and right after each step: its CPU time and throttling during the step, from its "
-                 "container's cgroup; its RSS at the step's start and end, the larger as its max; and the most "
+                 "right before and right after each step, and a second into it: its CPU time and throttling during "
+                 "the step and its first second, from its container's cgroup; how long it waited for a CPU, the "
+                 "time the CFS quota held it back included, and its node's steal time; its RSS at the step's start "
+                 "and end, the larger as its max; and the most "
                  "memory its container had used by the step's end (memory.peak), since smock started under the "
                  "profile, earlier steps included. Idle RSS is read once smock has been ready for the settle "
-                 "time, before any load. OOM kills come from smock's restarts."),
+                 "time, before any load. OOM kills come from smock's restarts at the profile's end."),
+        # The node type, as before the nodes' CPUs were recorded, so that
+        # comparing with such a run shows no other machine: each node's CPU
+        # is in its own record, which compare.py reads for smock's nodes.
         "machine": {"architecture": args.arch,
                     "cpu_model": f"GKE Autopilot {node['instance_type'] if node else 'node'}",
                     "cpus": int(node["cpus"]) if node and str(node["cpus"]).isdigit() else None,
@@ -697,7 +832,8 @@ def command_summarize(args):
     }
     harness.write_json(out / "summary.json", summary)
     harness.write_json(out / "conditions.json", conditions)
-    (out / "summary.md").write_text(harness.summary_markdown(summary, conditions) + gke_markdown(results))
+    markdown = harness.summary_markdown(summary, conditions, stopped and stopped_markdown(stopped))
+    (out / "summary.md").write_text(markdown + gke_markdown(results))
     return 0
 
 
@@ -745,7 +881,17 @@ def command_manifests(args):
 
 
 def command_pod_info(args):
-    print(json.dumps(pod_info(read_json(args.pods), read_json(args.nodes)), indent=2))
+    print(json.dumps(pod_info(read_json(args.pods), read_json(args.nodes), not args.without_restarts), indent=2))
+    return 0
+
+
+def command_node_cpu(args):
+    """Prints a node-cpu line: the CPU of the node it runs on, as node_cpu
+    keeps it, or None and why. It succeeds whatever it reads, since smock's
+    Pod runs it in an init container, which must succeed for smock to
+    start."""
+    cpu, error = read_node_cpu(args.cpuinfo, args.vulnerabilities)
+    print(json.dumps({"kind": "node-cpu", "cpu": cpu, **({"error": error} if error else {})}), flush=True)
     return 0
 
 
@@ -804,7 +950,15 @@ def main(argv):
     info = commands.add_parser("pod-info", help="print what to keep of the Pods and their nodes")
     info.add_argument("pods", help="kubectl get pods -o json")
     info.add_argument("nodes", help="kubectl get nodes -o json")
+    info.add_argument("--without-restarts", action="store_true",
+                      help="keep smock's restarts as unknown (null), as read before the profile's end")
     info.set_defaults(handler=command_pod_info)
+    cpu = commands.add_parser("node-cpu", help="print, as a JSON line, what to keep of the CPU of the node it runs on; "
+                                              "it succeeds whatever it can read")
+    cpu.add_argument("--cpuinfo", default=CPUINFO, help=f"the CPUs' description (default: {CPUINFO})")
+    cpu.add_argument("--vulnerabilities", default=VULNERABILITIES,
+                     help=f"the kernel's mitigations of the CPU's vulnerabilities (default: {VULNERABILITIES})")
+    cpu.set_defaults(handler=command_node_cpu)
     summarizing = commands.add_parser("summarize", help="write summary.json, summary.md and conditions.json")
     summarizing.add_argument("--plan", required=True, help="the plan the run ran")
     summarizing.add_argument("--targets", default=str(BENCH / "targets.json"),
@@ -822,6 +976,8 @@ def main(argv):
     summarizing.add_argument("--smock-image", help="smock's image digest")
     summarizing.add_argument("--smock-sha256", help="the SHA-256 of the smock binary in the image")
     summarizing.add_argument("--generator-image", help="the load generator's image digest")
+    summarizing.add_argument("--stopped", help="why the run stopped before its end, when it did")
+    summarizing.add_argument("--stopped-under", help="the profile the run was running when it stopped")
     summarizing.add_argument("out", help="the run's results: raw/<profile>/generator.log and pods.json")
     summarizing.set_defaults(handler=command_summarize)
     stopping = commands.add_parser("stopped", help="print why the load generator stopped its profile early and how "
