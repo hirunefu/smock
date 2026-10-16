@@ -2270,6 +2270,30 @@ class SameNode(VariantRun):
         self.assertIn("- b against a: +10% (+2.5% to +20%), higher in 8 of 8 pairs, sign test p = 0.008: higher.",
                       markdown)
 
+    def test_pairs_in_which_either_run_saturated_its_cpu_limit_are_left_out_of_the_verdict(self):
+        # b used 95% of its CPU limit at 1,000 requests/s in every round,
+        # and a 92% at 500 in round 2.
+        runs = {("b", round_, 1000): {"utilization": 0.95} for round_ in range(1, 5)}
+        runs["a", 2, 500] = {"utilization": 0.92}
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(HIGHER, runs=runs),
+                                                                           variant_pods(["a", "b"])))
+        self.assertEqual(status, 0, stderr)
+        profile = report["gke"]["profiles"]["small"]
+        self.assertEqual([[pair["saturated"] for pair in step["variants"]["b"]["pairs"]] for step in profile["steps"]],
+                         [[False, True, False, False], [True, True, True, True]])
+        # Each step's rows still show every pair.
+        self.assertEqual([self.row(markdown, "http-keep-alive", rate, label)["Saturated"]
+                          for rate in (500, 1000) for label in ("a", "b")],
+                         ["1 of 4 runs", "1 of 4 pairs", "0 of 4 runs", "4 of 4 pairs"])
+        self.assertEqual(self.row(markdown, "http-keep-alive", 1000, "b")["Paired"], "+2.5% to +15%")
+        # Three pairs left, all higher: p = 2 / 2^3.
+        self.assertEqual(profile["verdicts"]["b"],
+                         {"pairs": 3, "higher": 3, "lower": 0, "median_change_percent": 10.0,
+                          "min_change_percent": 10.0, "max_change_percent": 20.0, "sign_test_p": 0.25,
+                          "verdict": "no clear difference"})
+        self.assertIn("- b against a: +10% (+10% to +20%), higher in 3 of 3 pairs, sign test p = 0.25: no clear "
+                      "difference.", markdown)
+
 
 if __name__ == "__main__":
     unittest.main()
