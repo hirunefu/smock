@@ -17,11 +17,16 @@ then.
   From there on, the project is billed for the stored image, the
   cluster and smock's Pod until [Clean up](#clean-up) deletes them;
   Google's GKE pricing page gives the rates.
-- smock itself runs on GKE Autopilot in the benchmark, but the Helm
-  chart is tested on kind only. The GKE commands below follow GKE's
-  documentation of 2026-10-13, and the other commands were checked on
-  2026-10-17, the cluster ones on kind; the guide has not yet been run
-  on GKE as written.
+- smock itself runs on GKE Autopilot in the benchmark, and the Helm
+  chart is tested on kind. The GKE commands below follow GKE's
+  documentation of 2026-10-13. On 2026-10-17 the guide ran on GKE
+  Autopilot in us-central1 up to [Install smock](#install-smock), and
+  [Reach it from the VPC](#reach-it-from-the-vpc) too, in a project
+  whose node service account had no roles and without the two grants
+  of [Create an Autopilot cluster](#create-an-autopilot-cluster): the
+  Pod then could not pull the image, as
+  [Troubleshooting](#troubleshooting) describes. The other commands
+  were checked the same day, the cluster ones on kind.
 
 ## What you need
 
@@ -201,15 +206,16 @@ docker push "$IMAGE:$TAG"
 An Autopilot cluster has no nodes to size: GKE adds nodes for the Pods
 it is asked to run, and bills the Pods' resource requests. The chart's
 defaults, one CPU and 1 GiB with requests equal to limits, are valid
-there as they are.
+there as they are, and Autopilot keeps them unchanged.
 
 The nodes pull the image and send their logs and metrics as the Compute
 Engine default service account, `<project number>-compute@developer.gserviceaccount.com`.
 In a project whose organisation turns off the automatic Editor grant to
 that account, as organisations created on or after 2024-05-03 do by
-default, it has no roles. Grant it the two that GKE's documentation
-asks for (2026-10-13): reading the repository, and GKE's default node
-role on the project. A role the account already has changes nothing:
+default, it has no roles, and the nodes cannot pull the image. Grant it the two
+that GKE's documentation asks for (2026-10-13): reading the repository,
+and GKE's default node role on the project. A role the account already
+has changes nothing:
 
 ```sh
 N=$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')
@@ -231,7 +237,8 @@ gcloud container clusters get-credentials smock --location="$LOCATION" --project
 kubectl get namespaces            # default, kube-system and others
 ```
 
-- Creating the cluster takes several minutes.
+- Creating the cluster takes several minutes, about seven in
+  us-central1 on 2026-10-17.
 - kubectl reaches GKE through `gke-gcloud-auth-plugin`. When gcloud came
   from a package manager such as apt or dnf, `gcloud components install`
   refuses; the package `google-cloud-cli-gke-gcloud-auth-plugin` installs
@@ -496,9 +503,14 @@ same upgrade turns on:
   --set-string 'service.annotations.networking\.gke\.io/internal-load-balancer-allow-global-access=true'
 ```
 
+On Autopilot on 2026-10-17, the address came within about a minute and
+a half, and GKE made a forwarding rule with the scheme `INTERNAL`, for
+ports 80 and 443, with global access on when the flag was given.
+`helm uninstall` deletes it with the Service.
+
 Never expose `smock-admin` this way: `/metrics` needs no token, and the
 token travels over plain HTTP. The chart has no Ingress or Gateway
-template. This has not yet been run on GKE.
+template.
 
 ### Check what was called
 
@@ -607,7 +619,7 @@ This has not yet been run on GKE.
 | `helm upgrade --install` waits the whole `--timeout`, then fails with `resource Deployment/mocks/smock not ready. status: InProgress, message: Available: 0/1` and `context deadline exceeded`. | The Pod did not become ready. `kubectl --namespace mocks get pods` shows its status; find it in the rows below. |
 | The Pod stays in `ContainerCreating`, and `kubectl --namespace mocks describe pod` says `MountVolume.SetUp failed for volume "admin-token" : secret "smock-admin-token" not found`. | The token Secret is not in the namespace `mocks`, for example because it was created without `--namespace mocks`. Create it as in [Install smock](#install-smock): the Pod then starts by itself, and running `helm upgrade --install` again marks the release `deployed`. |
 | helm says `cannot reuse a name that is still in use`. | A failed `helm install` left the release behind. Use `helm upgrade --install`, as in [Install smock](#install-smock). |
-| The Pod is in `ImagePullBackOff`. | `image.repository` or `image.tag` is missing, so the chart asks for `ghcr.io/hirunefu/smock:0.0.0-dev`, which does not exist; or the node service account may not read the repository (the grants in [Create an Autopilot cluster](#create-an-autopilot-cluster)). `kubectl --namespace mocks describe pod` names the image and the error. |
+| The Pod is in `ErrImagePull` or `ImagePullBackOff`. | `kubectl --namespace mocks describe pod` names the image and the error. When it says `failed to fetch oauth token` and `403 Forbidden` for an image in Artifact Registry, the node service account may not read the repository: make the grants in [Create an Autopilot cluster](#create-an-autopilot-cluster); the kubelet keeps retrying the pull. When it names `ghcr.io/hirunefu/smock:0.0.0-dev`, `image.repository` or `image.tag` is missing, and that image does not exist. |
 | The Pod is in `CrashLoopBackOff`, and its log says `invalid definitions`. | smock does not start with Definition files that are not valid, and `helm --wait` fails after its timeout. The log entry names the file, the JSON Pointer and the error: fix the file, check it, and run `helm upgrade --install` again. |
 | The Pod is in `CrashLoopBackOff`, and its log says `exec format error`. | The image holds a binary of another architecture than the node: `file dist/smock` must say x86-64 for x86 nodes. |
 | The Pod is `Pending`. | On Autopilot, for a few minutes while GKE adds a node. On a Standard cluster, `Insufficient cpu` in `kubectl --namespace mocks describe pod` means that the node is too small: see [On a Standard cluster](#on-a-standard-cluster). |
