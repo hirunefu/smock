@@ -1601,9 +1601,11 @@ the throttled periods; the CPU wait; the node's steal time; p99; and the
 runs that saturated, at 90% of the CPU limit or more. Each variant's
 verdict takes the pairs of runs, over every step, in which neither
 saturated: their median change and range, how many were higher, and the
-p of an exact sign test, whose smallest with 8 pairs is 0.008; above
-0.05, it says no clear difference. A drift line compares each variant's
-first round with the later ones. The run exits 1 when the variants
+p of an exact sign test, whose smallest with 8 pairs is 0.008. Fewer
+than 6 pairs that differ cannot give a p of 0.05 or less, so with 5 or
+fewer it says there are too few pairs to decide; above 0.05, it says no
+clear difference. A drift line compares each variant's first round with
+the later ones. The run exits 1 when the variants
 cannot be compared: on more than one node, under other limits than the
 plan's, or with a sample incomplete.
 

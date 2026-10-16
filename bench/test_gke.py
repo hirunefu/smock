@@ -2363,7 +2363,7 @@ class SameNode(VariantRun):
         self.assertEqual(profile["verdicts"]["b"],
                          {"pairs": 8, "higher": 8, "lower": 0, "median_change_percent": 10.0,
                           "min_change_percent": 2.5, "max_change_percent": 20.0, "sign_test_p": 0.0078125,
-                          "verdict": "higher"})
+                          "smallest_p": 0.0078125, "verdict": "higher"})
         self.assertEqual(self.row(markdown, "http-keep-alive", 500, "a"),
                          {"Case": "http-keep-alive", "Rate": "500", "Variant": "a (baseline)",
                           "CPU µs/request": "30.0 (29.0–31.0, 4)", "Change": "-", "Paired": "-", "Higher": "-",
@@ -2421,25 +2421,56 @@ class SameNode(VariantRun):
                           for rate in (500, 1000) for label in ("a", "b")],
                          ["1 of 4 runs", "1 of 4 pairs", "0 of 4 runs", "4 of 4 pairs"])
         self.assertEqual(self.row(markdown, "http-keep-alive", 1000, "b")["Paired"], "+2.5% to +15%")
-        # Three pairs left, all higher: p = 2 / 2^3.
+        # Three pairs left, all higher: p = 2 / 2^3, the least three pairs
+        # can give.
         self.assertEqual(profile["verdicts"]["b"],
                          {"pairs": 3, "higher": 3, "lower": 0, "median_change_percent": 10.0,
                           "min_change_percent": 10.0, "max_change_percent": 20.0, "sign_test_p": 0.25,
-                          "verdict": "no clear difference"})
-        self.assertIn("- b against a: +10% (+10% to +20%), higher in 3 of 3 pairs, sign test p = 0.25: no clear "
-                      "difference.", markdown)
+                          "smallest_p": 0.25, "verdict": "too few pairs to decide"})
+        self.assertIn("- b against a: +10% (+10% to +20%), higher in 3 of 3 pairs, sign test p = 0.25: too few pairs "
+                      "to decide (with 3 that differ, p cannot be below 0.25).", markdown)
+
+    def test_too_few_pairs_to_reach_the_threshold_are_too_few_to_decide_not_no_difference(self):
+        # b is higher than a in every pair, as R2's binary under 50m, where
+        # only the lowest step's runs do not saturate.
+        def verdict(rounds, failed=()):
+            us = {"a": {500: [30.0] * rounds, 1000: [40.0] * rounds},
+                  "b": {500: [36.0] * rounds, 1000: [48.0] * rounds}}
+            runs = {("b", round_, 1000): {"errors": 500} for round_ in failed}
+            status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(us, runs=runs),
+                                                                               variant_pods(["a", "b"])))
+            self.assertEqual(status, 0, stderr)
+            line = next(line for line in markdown.splitlines() if line.startswith("- b against a: "))
+            return report["gke"]["profiles"]["small"]["verdicts"]["b"], line
+
+        # 4 pairs, all higher: p = 0.125, the least 4 pairs can give.
+        result, line = verdict(2)
+        self.assertEqual((result["pairs"], result["sign_test_p"], result["smallest_p"], result["verdict"]),
+                         (4, 0.125, 0.125, "too few pairs to decide"))
+        self.assertEqual(line, "- b against a: +20% (+20%), higher in 4 of 4 pairs, sign test p = 0.125: too few pairs "
+                               "to decide (with 4 that differ, p cannot be below 0.125).")
+        # 5: still at least 0.0625.
+        result, _ = verdict(3, failed=[2])
+        self.assertEqual((result["pairs"], result["smallest_p"], result["verdict"]),
+                         (5, 0.0625, "too few pairs to decide"))
+        # 6 can: 0.03125.
+        result, line = verdict(3)
+        self.assertEqual((result["pairs"], result["sign_test_p"], result["verdict"]), (6, 0.03125, "higher"))
+        self.assertTrue(line.endswith("higher in 6 of 6 pairs, sign test p = 0.031: higher."), line)
 
     def test_how_to_read_the_comparison_says_the_cuts_the_verdicts_are_made_with(self):
         out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
         status, _, markdown, stderr = self.same_node(out)
         self.assertEqual(status, 0, stderr)
         self.assertIn("in which a run used 90% of its CPU limit or more", markdown)
+        self.assertIn("fewer than 6 pairs that differ cannot give a p of 0.05 or less", markdown)
         self.assertIn("above 0.05 is no clear difference", markdown)
         # Whatever they are.
         gke = load_generator_module().gke
         with mock.patch.object(gke, "SATURATED", 0.8), mock.patch.object(gke, "SIGNIFICANT_P", 0.01):
             _, markdown, _ = gke.same_node(out)
         self.assertIn("in which a run used 80% of its CPU limit or more", markdown)
+        self.assertIn("fewer than 8 pairs that differ cannot give a p of 0.01 or less", markdown)
         self.assertIn("above 0.01 is no clear difference", markdown)
 
     def test_a_p_below_a_thousandth_is_said_as_such(self):

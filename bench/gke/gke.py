@@ -1358,21 +1358,30 @@ def variant_at_step(runs, baseline_runs=None):
             "saturated": sum(pair["saturated"] for pair in pairs)}
 
 
+def fewest_pairs():
+    """How many pairs that differ, all one way, the sign test needs for a p
+    of SIGNIFICANT_P or less."""
+    return next(pairs for pairs in range(1, 64) if sign_test_p(pairs, 0) <= SIGNIFICANT_P)
+
+
 def verdict(pairs):
     """Whether a variant used more CPU a request than the baseline, over
     its unsaturated `pairs` of runs of a profile: the median change and its
-    range, how many were higher and how many lower, and the sign test's p
-    of that; higher or lower when p is at most SIGNIFICANT_P, else no
-    clear difference."""
+    range, how many were higher and how many lower, the sign test's p of
+    that, and the smallest p as many pairs that differ could give; higher
+    or lower when p is at most SIGNIFICANT_P, no clear difference when it
+    is above it but could have been at most it, and too few pairs to
+    decide when it could not, as with fewer than fewest_pairs() pairs that
+    differ, so that a lack of pairs does not read as a lack of difference."""
     changes = [pair["change_percent"] for pair in pairs if not pair["saturated"]]
     higher, lower = sum(change > 0 for change in changes), sum(change < 0 for change in changes)
-    p = sign_test_p(higher, lower)
+    p, smallest = sign_test_p(higher, lower), sign_test_p(higher + lower, 0)
     return {"pairs": len(changes), "higher": higher, "lower": lower,
             "median_change_percent": None if not changes else round(median(changes), 2),
             "min_change_percent": min(changes, default=None), "max_change_percent": max(changes, default=None),
-            "sign_test_p": p,
-            "verdict": None if not changes else "no clear difference" if p > SIGNIFICANT_P else
-            "higher" if higher > lower else "lower"}
+            "sign_test_p": p, "smallest_p": smallest,
+            "verdict": None if not changes else "too few pairs to decide" if smallest > SIGNIFICANT_P else
+            "no clear difference" if p > SIGNIFICANT_P else "higher" if higher > lower else "lower"}
 
 
 def placement_record(profile, info, labels, samples):
@@ -1549,9 +1558,13 @@ def range_text(low, high):
         f"{percent_text(low)} to {percent_text(high)}"
 
 
+def p_number(p):
+    return f"{p:.3f}".rstrip("0").rstrip(".")
+
+
 def p_text(p):
     """A sign test's p, for people: p = 0.008, or p < 0.001."""
-    return "p < 0.001" if p < 0.001 else "p = " + f"{p:.3f}".rstrip("0").rstrip(".")
+    return "p < 0.001" if p < 0.001 else f"p = {p_number(p)}"
 
 
 SAME_NODE_COLUMNS = ("Case", "Rate", "Variant", "CPU µs/request", "Change", "Paired", "Higher", "Throttled periods",
@@ -1581,7 +1594,15 @@ def verdict_line(label, baseline, result):
     return (f"- {label} against {baseline}: {percent_text(result['median_change_percent'])} "
             f"({range_text(result['min_change_percent'], result['max_change_percent'])}), higher in "
             f"{result['higher']} of {result['pairs']} pairs, sign test {p_text(result['sign_test_p'])}: "
-            f"{result['verdict']}.")
+            f"{result['verdict']}{too_few_text(result)}.")
+
+
+def too_few_text(result):
+    """Why a verdict says there are too few pairs to decide, for people."""
+    if result["verdict"] != "too few pairs to decide":
+        return ""
+    return (f" (with {result['higher'] + result['lower']} that differ, p cannot be below "
+            f"{p_number(result['smallest_p'])})")
 
 
 def runs_text(count):
@@ -1647,7 +1668,9 @@ def reading_lines():
         "",
         "Each verdict takes the pairs of every step of the profile in which neither run saturated: their median "
         "change, lowest to highest, how many were higher, and the p of an exact two-sided sign test, ties left out. "
-        f"With 8 pairs the smallest p is 0.008; above {SIGNIFICANT_P:g} is no clear difference.",
+        f"With 8 pairs that all agree, p is {p_number(sign_test_p(8, 0))}; fewer than {fewest_pairs()} pairs that "
+        f"differ cannot give a p of {SIGNIFICANT_P:g} or less, and the verdict then says there are too few pairs to "
+        f"decide; above {SIGNIFICANT_P:g} is no clear difference.",
     ]
 
 
