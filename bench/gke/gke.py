@@ -1930,15 +1930,17 @@ def variant_records(labels, baseline, samples, raws, sha256, no_init):
 
 
 def same_node(out, baseline=None, sha256=None, no_init=()):
-    """The comparison of the variants of a run under `out`, from its
-    samples, each summarized, and its raw/<profile>/, with the sha256 of
-    each variant's binary the run gives ({label: [hex]}) and the variants
-    it ran without the init container (where and why the run stopped, when
-    it stopped before its end, as it told summarize of each sample):
-    same-node.json's content,
-    same-node.md's, and the exit status: 2 when a variant has two sha256,
-    1 when the variants did not share a node, were admitted with other
-    limits than the plan's, or a sample is incomplete, else 0."""
+    """The comparison of the variants of a run under `out` with the
+    `baseline` (the first variant unless given), from the run's samples,
+    each summarized, and its raw/<profile>/, with the sha256 of each
+    variant's binary the run gives ({label: [hex]}, in the variants'
+    order) and the variants it ran without the init container (`no_init`).
+    Returns same-node.json's content, which says where and why the run
+    stopped when it stopped before its end (as the runner told summarize
+    of each sample), same-node.md's, and the exit status: 2 when a variant
+    has two sha256, 1 when the variants did not share a node, were
+    admitted with other limits than the plan's, or a sample is incomplete,
+    else 0."""
     samples = read_samples(out)
     known = [sample for sample in samples.values() if sample and sample[1]]
     if not known:
@@ -2260,7 +2262,8 @@ def main(argv):
                                        "summarized, and raw/")
     comparing.set_defaults(handler=command_same_node)
     stopping = commands.add_parser("stopped", help="print why the load generator stopped its profile early and how "
-                                                    "many steps it did not run; nothing when it did not")
+                                                    "many steps (or, for a run of variants, runs) it did not run; "
+                                                    "nothing when it did not")
     stopping.add_argument("log", help="the load generator's log: raw/<profile>/generator.log")
     stopping.set_defaults(handler=command_stopped)
     reading = commands.add_parser("elf-arch", help="print the architecture of an ELF executable: amd64 or arm64")
