@@ -1153,6 +1153,19 @@ class GeneratorWithVariants(Helper):
                 self.assertIn("first_second", cpu)
                 self.assertIsNone(cpu["first_second"])
 
+    def test_each_run_records_what_the_idle_variant_used_meanwhile_and_the_nodes_steal_time(self):
+        for line in (line for line in self.lines if line["kind"] == "step"):
+            idle = "b" if line["variant"] == "a" else "a"
+            self.assertEqual(list(line["neighbours"]), [idle])
+            # An idle smock, scraped around the run: far less CPU than the
+            # one under load.
+            self.assertGreaterEqual(line["neighbours"][idle], 0)
+            self.assertLess(line["neighbours"][idle], line["result"]["smock_cpu"]["usage_s"])
+            # Each variant's count of the node's steal time, the loaded
+            # one's from its own scrapes: none here, on no virtual machine.
+            self.assertEqual(line["node_steal_s"], {"a": 0.0, "b": 0.0})
+            self.assertEqual(line["node_steal_s"][line["variant"]], line["result"]["smock_cpu"]["node_steal_s"])
+
 
 
 def load_generator_module():
@@ -1261,6 +1274,40 @@ class RunOrder(unittest.TestCase):
 
     def test_without_variants_the_steps_run_once_in_the_plans_order(self):
         self.assertEqual(self.order(["s1", "s2"], [None], 1), [(1, "s1", None), (1, "s2", None)])
+
+
+def old_smock_metrics(cpu_s, start=1760000000.0):
+    """A scrape of the /metrics of smock at 0d984c8 (as metric_values reads
+    it), which has its process and cgroup metrics but none of the waits
+    for a CPU or its node's steal time, added in 5fb5a85."""
+    return {"process_start_time_seconds": start, "process_cpu_seconds_total": round(cpu_s, 2),
+            "process_resident_memory_bytes": 9 << 20, "smock_cgroup_cpu_usage_seconds_total": cpu_s,
+            "smock_cgroup_cpu_periods_total": 40.0, "smock_cgroup_cpu_throttled_periods_total": 0.0,
+            "smock_cgroup_cpu_throttled_seconds_total": 0.0, "smock_cgroup_memory_peak_bytes": 12 << 20,
+            "smock_requests_total": 3.0}
+
+
+class NeighbourGuard(unittest.TestCase):
+    """Around each run, the load generator scrapes the variants left idle,
+    for what they used meanwhile on the node they share with the loaded
+    one: their CPU time, and the node's steal time as each counts it. A
+    smock too old to count something leaves it unknown, never stops the
+    run."""
+
+    generator = load_generator_module()
+
+    def test_an_idle_variants_cpu_comes_from_its_cgroup_and_an_old_smock_has_no_steal(self):
+        self.assertEqual(self.generator.idle_use(old_smock_metrics(1.25), old_smock_metrics(1.263)), (0.013, None))
+
+    def test_a_smock_that_counts_steal_time_says_the_nodes(self):
+        before, after = old_smock_metrics(1.25), old_smock_metrics(1.263)
+        before["smock_node_cpu_steal_seconds_total"], after["smock_node_cpu_steal_seconds_total"] = 30.0, 30.5
+        self.assertEqual(self.generator.idle_use(before, after), (0.013, 0.5))
+
+    def test_a_scrape_without_an_answer_or_a_restart_between_them_leaves_both_unknown(self):
+        for before, after in ((None, old_smock_metrics(1.0)), (old_smock_metrics(1.0), None),
+                              (old_smock_metrics(1.0), old_smock_metrics(0.1, start=1760000500.0))):
+            self.assertEqual(self.generator.idle_use(before, after), (None, None))
 
 
 def elf_header(machine, elf_class=2, data=1, elf_type=2):

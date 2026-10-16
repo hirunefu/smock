@@ -249,6 +249,21 @@ def idle_result(profile, settle_s, metrics, digest):
             "memory": {"peak_bytes": None if peak is None else round(peak), "oom_kills": None}}, None
 
 
+def idle_use(before, after):
+    """What an idle variant's smock used between two scrapes of its
+    /metrics (as harness.metric_values reads them) around another
+    variant's run on their node: its CPU seconds, from its cgroup, else its
+    process, as a run's usage_s; and the node's steal seconds as it counts
+    them. Each is None when unknown: a scrape got no answer, smock
+    restarted in between, or it has no such metric, as smock before
+    5fb5a85 (0d984c8, for one) counts no steal time."""
+    if before is None or after is None or harness.restarted(before, after):
+        return None, None
+    cgroup = harness.grew(before, after, "smock_cgroup_cpu_usage_seconds_total")
+    usage_s = cgroup if cgroup is not None else harness.grew(before, after, "process_cpu_seconds_total")
+    return harness.rounded(usage_s, 3), harness.waited(before, after)["node_steal_s"]
+
+
 def run_order(specs, variants, rounds):
     """The runs of a profile, in the order they run: (round, spec,
     variant), rounds outer (from 1), `specs` in the middle and `variants`
@@ -466,19 +481,37 @@ def main():
             time.sleep(plan["cooldown_s"])
         name = run_name(round_, spec, variant)
         log(f"{name}: {spec['rate']} requests/s for {spec['duration_s']} s")
-        if wait_ready(variant.target, variant.admin_port, READY_BEFORE_STEP_S):
+        ready = wait_ready(variant.target, variant.admin_port, READY_BEFORE_STEP_S)
+        # The neighbour guard: the variants left idle on the node, scraped
+        # right around the run, for what they used meanwhile.
+        idle = [other for other in variants if other is not variant]
+        idle_before = [scrape(other.target, other.admin_port) for other in idle]
+        if ready:
             result = run_step(spec, mix, oha, variant.address, variant.ports,
                               functools.partial(scrape, variant.target, variant.admin_port), variant.first_second)
         else:
             result = harness.not_ready_result(SimpleNamespace(mix=mix), spec, None)
-        emit({"kind": "step", **tag(variant), **({"round": round_} if tagged else {}), "result": result})
+        idle_after = [scrape(other.target, other.admin_port) for other in idle]
+        guard = {}
+        if tagged:
+            used = {other.label: idle_use(before, after)
+                    for other, before, after in zip(idle, idle_before, idle_after, strict=True)}
+            # The node's steal time as each variant counts it, the loaded
+            # one over its run: a smock too old to count it has None, and
+            # another's count stands in for it.
+            guard = {"round": round_, "neighbours": {label: cpu_s for label, (cpu_s, _) in used.items()},
+                     "node_steal_s": {other.label: (result["smock_cpu"] or {}).get("node_steal_s") if other is variant
+                                      else used[other.label][1] for other in variants}}
+        emit({"kind": "step", **tag(variant), **guard, "result": result})
         cpu = result["smock_cpu"] or {}
         per_request = "-" if cpu.get("us_per_request") is None else cpu["us_per_request"]
         utilization = "-" if cpu.get("utilization") is None else f"{cpu['utilization'] * 100:.1f}%"
         log(f"{name}: p99 {result['latency_ms']['p99']} ms, p99.9 {result['latency_ms']['p99_9']} ms, "
             f"{result['achieved_rate']} requests/s, {result['errors']} errors, "
             f"generator lag p99.9 {result['generator_lag_ms']['p99_9']} ms, "
-            f"smock CPU {per_request} µs a request, {utilization} of its limit")
+            f"smock CPU {per_request} µs a request, {utilization} of its limit" +
+            "".join(f"; idle {label} {'-' if cpu_s is None else cpu_s} s CPU"
+                    for label, cpu_s in guard.get("neighbours", {}).items()))
         later = runs[position + 1:]
         stopped, check = stop_after(spec, result, [later_spec for _, later_spec, _ in later], variant.check_again)
         if stopped and tagged:
