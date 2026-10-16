@@ -776,6 +776,19 @@ class Summary(Helper):
         self.assertIn("GKE Autopilot", markdown)
         self.assertIn("| http-keep-alive | 1000 |", markdown)
 
+    def test_the_note_says_how_smock_was_measured(self):
+        out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}], pods())
+        self.assertEqual(json.loads((out / "conditions.json").read_text())["note"], (
+            "Measured on GKE Autopilot in us-central1-a, on arm64 nodes (e4a-standard-8): smock in a autopilot-arm Pod "
+            "with each profile's limits as its requests, and oha in a Pod on another node in its zone, over the Pod "
+            "network. What smock used comes from its own /metrics, its process and cgroup metrics, scraped right "
+            "before and right after each step, and a second into it: its CPU time and throttling during the step and "
+            "its first second, from its container's cgroup; how long it waited for a CPU, the time the CFS quota held "
+            "it back included, and its node's steal time; its RSS at the step's start and end, the larger as its max; "
+            "and the most memory its container had used by the step's end (memory.peak), since smock started under "
+            "the profile, earlier steps included. Idle RSS is read once smock has been ready for the settle time, "
+            "before any load. OOM kills come from smock's restarts at the profile's end."))
+
     def test_the_conditions_record_a_hash_of_the_plan_that_leaves_out_its_description(self):
         lines = [START, generator_step(500), generator_step(1000), {"kind": "done"}]
 
@@ -2358,6 +2371,19 @@ class Samples(VariantRun):
             self.assertEqual(conditions["gke"]["profiles"]["small"]["nodes"]["node-a"]["cpu"],
                              AMD_CPU if label == "a" else None)
 
+    def test_a_sample_of_a_variant_not_scraped_a_second_into_each_step_does_not_say_it_was(self):
+        # b ran without the load generator's scrape a second into each
+        # step (no-first-second); a with it.
+        out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
+        notes = {label: self.summarize_sample(directory)[1]["note"]
+                 for round_, label, directory in self.samples(out) if round_ == 1}
+        self.assertIn("scraped right before and right after each step, and a second into it: its CPU time and "
+                      "throttling during the step and its first second, from", notes["a"])
+        self.assertIn("scraped right before and right after each step: its CPU time and throttling during the step, "
+                      "from its container's cgroup;", notes["b"])
+        self.assertIn("The load generator did not scrape smock a second into each step.", notes["b"])
+        self.assertNotIn("first second", notes["b"])
+
     def test_a_profile_stopped_early_leaves_each_sample_the_steps_it_did_not_run(self):
         lines, reason = stopped_in_round_2()
         out = self.variant_run(lines, variant_pods(["a", "b"]))
@@ -2527,6 +2553,8 @@ class SameNode(VariantRun):
         status, _, markdown, stderr = self.same_node(out)
         self.assertEqual(status, 0, stderr)
         self.assertIn("in which a run used 90% of its CPU limit or more", markdown)
+        self.assertIn("smock's idle RSS is read once, before any load, so only round 1's samples have it; a later "
+                      "sample shows its target as not measured.", markdown)
         self.assertIn("fewer than 6 pairs that differ cannot give a p of 0.05 or less", markdown)
         self.assertIn("above 0.05 is no clear difference", markdown)
         # Whatever they are.

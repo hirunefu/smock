@@ -1593,7 +1593,10 @@ Besides `raw/<profile>/`, with each variant's log and Service in
 `raw/<profile>/<label>/`, it writes a sample of each variant in each
 round, `samples/<round>-<label>/`: the variant's steps in that round,
 summarized as a run of that binary alone, which `bench/compare.py`
-compares with any other run. Its `summary.md` is `same-node.md`, the
+compares with any other run. smock's idle RSS is read once, before any
+load, so only round 1's samples have it, and a later one shows its
+target as not measured; a sample of a `no-first-second` variant says
+that its runs had no scrape a second in. Its `summary.md` is `same-node.md`, the
 comparison (`same-node.json` holds it too). That names each variant's
 commit, version, SHA-256 and options, and says whether the samples'
 conditions besides smock were the same; then, for each profile, the node

@@ -1093,6 +1093,12 @@ def command_summarize(args):
     # to when the nodes are unknown.
     zone = distinct(node["zone"] for node in [*smock_nodes, *generator_nodes]) or args.zone
     machine_type = distinct(node["instance_type"] for node in smock_nodes)
+    # A variant's sample may come from runs without the scrape a second
+    # into each step (no-first-second), as its start line says.
+    first_second = start.get("first_second", True)
+    scraped = ("right before and right after each step, and a second into it: its CPU time and throttling during the "
+               "step and its first second" if first_second else
+               "right before and right after each step: its CPU time and throttling during the step")
     conditions = {
         "format": harness.FORMAT,
         "started_at": args.started_at,
@@ -1109,13 +1115,13 @@ def command_summarize(args):
                  f"({machine_type or 'of an unknown machine type'}): smock in a {compute_class} Pod with each "
                  "profile's limits as its requests, and oha in a Pod on another node in its zone, over the Pod "
                  "network. What smock used comes from its own /metrics, its process and cgroup metrics, scraped "
-                 "right before and right after each step, and a second into it: its CPU time and throttling during "
-                 "the step and its first second, from its container's cgroup; how long it waited for a CPU, the "
+                 f"{scraped}, from its container's cgroup; how long it waited for a CPU, the "
                  "time the CFS quota held it back included, and its node's steal time; its RSS at the step's start "
                  "and end, the larger as its max; and the most "
                  "memory its container had used by the step's end (memory.peak), since smock started under the "
                  "profile, earlier steps included. Idle RSS is read once smock has been ready for the settle "
-                 "time, before any load. OOM kills come from smock's restarts at the profile's end."),
+                 "time, before any load. OOM kills come from smock's restarts at the profile's end." +
+                 ("" if first_second else " The load generator did not scrape smock a second into each step.")),
         # The node type, as before the nodes' CPUs were recorded, so that
         # comparing with such a run shows no other machine: each node's CPU
         # is in its own record, which compare.py reads for smock's nodes.
@@ -1792,7 +1798,8 @@ def reading_lines():
         "Each variant ran in a Pod of its own on one node, and one load generator measured them in turn: each round "
         "ran the profile's steps, and each step ran every variant once, one after another, their order turned by one "
         "for each round and step. A sample is one variant's steps in one round: samples/<round>-<label>/ holds its "
-        "summary, which compare.py reads as a run's.", "",
+        "summary, which compare.py reads as a run's. smock's idle RSS is read once, before any load, so only round "
+        "1's samples have it; a later sample shows its target as not measured.", "",
         "*CPU µs/request* is the median of a variant's runs of the step, with the lowest and highest and how many runs "
         "measured it. *Change* is that median's change from the baseline's. *Paired* is the range of the changes of "
         "each run from the baseline's run of the step in the same round, and *Higher* how many of those pairs used "
