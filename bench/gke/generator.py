@@ -33,8 +33,33 @@ for a CPU and its node's steal time, its RSS at the start and the end, and
 its cgroup's peak memory by the end, in the layout bench/bench.py reports
 them in from smock's cgroup.
 
+With VARIANTS, it compares smock binaries kept on one node, each a variant
+with its own Pod and Service, the first the baseline. It waits for each
+variant in turn and says so in a start line of its own; once all are
+ready and have idled the settle time, it reads each one's idle RSS, then
+checks each one's traffic ports. It then runs the profile's steps for
+ROUNDS rounds: rounds outer, the steps in the middle and the variants
+inner, one variant under load at a time, their order turned by one for
+each round and each step (run_order), so that with two variants each step
+runs AB, BA, AB, BA over four rounds. Right before and right after each
+run, it scrapes the variants left idle, for the CPU time each used
+meanwhile and the node's steal time as each counts it (None from a smock
+too old to count it). Every line about smock carries its variant, and a
+step or traffic-check line after a run its round, while a step's result
+keeps the layout of a case: one variant's lines of one round are an
+ordinary run's. When a run of any variant would stop the profile, every
+variant stops, and the stopped line names the variant and lists the runs
+left out, by round, variant and step id.
+
 Environment:
-  TARGET      smock's host name (its Service)
+  TARGET      smock's host name (its Service), without VARIANTS
+  VARIANTS    the variants, a JSON array in order, the baseline first, of
+              {"label": ..., "target": its host name (its Service),
+               "first_second": false to skip the scrape a second into
+              each run, true by default}; a variant may also name its own
+              "plain_port", "tls_port" and "admin_port", as a test that
+              runs several smocks on one machine does
+  ROUNDS      with VARIANTS, how many rounds to run (default: 1)
   PROFILE     the profile of the plan to run
   CASES       the cases to run, comma-separated (default: every case of the plan)
   PLAN        the plan (default: plan.json in the directory of bench.py)
@@ -383,13 +408,19 @@ def run_name(round_, spec, variant):
     return spec["id"] if variant.label is None else f"{spec['id']} ({variant.label}, round {round_})"
 
 
-def left_out(later, tagged):
-    """What a stopped line lists of the runs `later`, which did not run:
-    without variants, their steps' ids; with them, each run's round,
-    variant and step id."""
-    if not tagged:
-        return {"steps": [spec["id"] for _, spec, _ in later]}
-    return {"runs": [{"round": round_, "variant": variant.label, "id": spec["id"]} for round_, spec, variant in later]}
+def stopped_fields(variant, round_, reason, after, later):
+    """A stopped line's fields, when `variant`'s run in `round_` (None
+    before the first) stops the profile: why, after which step (None
+    before the first), and what of the runs `later` did not run. Without
+    variants, the steps' ids; with them, every variant stops, so that the
+    runs left stay paired, and the line names the variant and its round,
+    in the reason too, and lists each run left out by round, variant and
+    step id."""
+    if variant.label is None:
+        return {"reason": reason, "after": after, "steps": [spec["id"] for _, spec, _ in later]}
+    where = f"variant {variant.label}" + ("" if round_ is None else f", round {round_}")
+    return {"variant": variant.label, "round": round_, "reason": f"{where}: {reason}", "after": after,
+            "runs": [{"round": number, "variant": other.label, "id": spec["id"]} for number, spec, other in later]}
 
 
 def main():
@@ -464,12 +495,8 @@ def main():
         emit({"kind": "traffic-check", "profile": profile_name, **tag(variant), **check})
         reason = None if check["ok"] else \
             f"smock did not answer through its Service in {check_s:g} s: {silent_ports_text(check)}"
-        # A variant that cannot run stops them all, so that every run left
-        # has the others' to compare with.
         if reason and not stopped:
-            stopped = {"reason": reason, "after": None, **left_out(runs, tagged)} if not tagged else \
-                {**tag(variant), "round": None, "reason": f"variant {variant.label}: {reason}", "after": None,
-                 **left_out(runs, tagged)}
+            stopped = stopped_fields(variant, None, reason, None, runs)
         log(f"traffic check{of(variant)}: {reason or 'both ports answered'}")
     for variant in variants:
         emit({"kind": "metrics-before", "profile": profile_name, **tag(variant),
@@ -514,11 +541,8 @@ def main():
                     for label, cpu_s in guard.get("neighbours", {}).items()))
         later = runs[position + 1:]
         stopped, check = stop_after(spec, result, [later_spec for _, later_spec, _ in later], variant.check_again)
-        if stopped and tagged:
-            # Every variant stops, so that the runs left stay paired.
-            stopped = {**tag(variant), "round": round_,
-                       "reason": f"variant {variant.label}, round {round_}: {stopped['reason']}",
-                       "after": stopped["after"], **left_out(later, tagged)}
+        if stopped:
+            stopped = stopped_fields(variant, round_, stopped["reason"], stopped["after"], later)
         if check:
             emit({"kind": "traffic-check", "profile": profile_name, **tag(variant),
                   **({"round": round_} if tagged else {}), "after": spec["id"], **check})
