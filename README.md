@@ -978,13 +978,13 @@ rather than hiding them; the Journal's byte bound follows the memory limit
 Each profile measures idle RSS, then plain HTTP and TLS with keep-alive
 connections, each at a ladder of fixed rates from 2,500 to 80,000 requests
 a second per CPU (125 to 4,000 under 50m), 20 seconds a step. The top of
-each ladder is about where smock uses up its CPU over TLS. Plain HTTP's
-ladder also has 30,000 a second per CPU, so that it has the rate of each
-profile's arm64 [targets](#targets) (250, 5,000 and 30,000; the amd64
-ones, 125, 1,250 and 10,000, are on every ladder), and 50,000 a second per
-CPU, by which smock had used up its CPU under each profile in the arm64
-GKE probe those targets come from. A full run takes about 20 minutes; it
-prints its estimate before it starts.
+each ladder is about where smock uses up its CPU over TLS. Every ladder
+has the rates of the amd64 [targets](#targets) (125, 1,250 and 10,000)
+and of the arm64 ones under 50m and 250m (250 and 5,000). Plain HTTP's
+ladder also has 30,000 a second per CPU, the rate of arm64's target under
+1 CPU, and 50,000 a second per CPU, by which smock had used up its CPU
+under each profile in the arm64 GKE probe those targets come from. A full
+run takes about 20 minutes; it prints its estimate before it starts.
 
 Before a full run:
 
