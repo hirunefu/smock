@@ -1464,13 +1464,14 @@ It writes to `bench/results/gke-<date>-<time>/` unless `--out` says
 otherwise: `raw/<profile>/generator.log`, the load generator's lines;
 `raw/<profile>/pods.json`, the nodes the Pods ran on (with each one's
 boot disk type, `boot_disk`), smock's restarts and the load generator's
-CPU request; `raw/<profile>/smock.log`, smock's log
+CPU request, kept as soon as each Pod has a node and again at the
+profile's end; `raw/<profile>/smock-node-cpu.log`, what smock's init
+container printed of the CPU of its node, kept once smock has started;
+`raw/<profile>/smock.log`, smock's log
 (and the log of its container before its last restart, when it
-restarted, with kubectl's errors in their place);
-`raw/<profile>/smock-node-cpu.log`, what smock's init container printed
-of the CPU of its node; and
+restarted, with kubectl's errors in their place); and
 `raw/<profile>/service.json`, its Service with the Service's
-EndpointSlices, all three kept before smock's Pod is deleted;
+EndpointSlices, both kept before smock's Pod is deleted;
 `summary.json` in the layout of a run on a machine, which
 `bench/compare.py` reads; `summary.md`; `conditions.json`; and
 `watchdog.log`. The summary and the conditions record, for each profile,

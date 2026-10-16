@@ -982,20 +982,29 @@ class Diagnostics(Script):
         self.assertTrue(self.made(["logs", "pod/smock-small"]))
         self.assertTrue([call for call in self.calls("kubectl") if "--previous" in call["argv"]])
 
-    def test_a_smock_that_never_became_ready_keeps_its_log_with_kubectls_errors_and_its_service(self):
-        # Its restarts are not known then: the log of a container before the
-        # last restart is asked for too, and kubectl's answer that there is
-        # none is kept in its place.
+    def test_a_smock_that_never_became_ready_keeps_its_logs_its_pod_and_its_service(self):
+        # It restarted, as when the kernel kills it for memory as it
+        # starts: its Pod, kept first, says so, and the log of its
+        # container before the last restart is kept before the last one's.
+        (self.tmp / "smock-previous.log").write_text('{"level":"error","msg":"out of memory"}\n')
         self.configure(smock_ready={"status": 1, "stderr": "error: timed out waiting for the condition on "
-                                                           "pods/smock-small\n"})
+                                                           "pods/smock-small\n"},
+                       restarts={"smock-small": 3},
+                       logs={"generator-small": str(self.tmp / "generator-small.log"),
+                             "smock-small": str(self.tmp / "smock-small.log"),
+                             "smock-small/previous": str(self.tmp / "smock-previous.log")})
         status, output = self.run_script("--yes")
         self.assertEqual(status, 1, output)
         self.assertIn("smock did not become ready under small", output)
-        log = (self.out / "raw" / "small" / "smock.log").read_text()
-        self.assertIn('Error from server (BadRequest): previous terminated container "smock" in pod "smock-small" '
-                      'not found', log)
+        raw = self.out / "raw" / "small"
+        self.assertEqual([(pod["name"], pod["node"], pod["restarts"])
+                          for pod in json.loads((raw / "pods.json").read_text())["smock"]],
+                         [("smock-small", "node-a", 3)])
+        log = (raw / "smock.log").read_text()
+        self.assertIn("(restarts: 3)", log)
+        self.assertLess(log.index("out of memory"), log.index('"msg":"listening"'))
         self.assertTrue(log.endswith(SMOCK_LOG), log)
-        kept = json.loads((self.out / "raw" / "small" / "service.json").read_text())
+        kept = json.loads((raw / "service.json").read_text())
         self.assertEqual([item["metadata"]["name"] for item in kept["items"] if item["kind"] == "Service"],
                          ["smock-small"])
         self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
@@ -1180,17 +1189,21 @@ class Profiles(Script):
 
 class StoppedEarly(Script):
     """A run that stops after it has measured steps still writes its summary
-    from them, and says where it stopped and why."""
+    from them, and says where it stopped and why; and it keeps the nodes of
+    the profile it stopped under, with the CPU of smock's."""
 
     def setUp(self):
         super().setUp()
         self.plan.write_text(json.dumps(TWO_PROFILES_PLAN))
         (self.tmp / "generator-large.log").write_text(generator_log("large", "1", "1Gi", (1000, 2000)))
+        (self.tmp / "smock-node-cpu.log").write_text(json.dumps({"kind": "node-cpu", "cpu": NODE_CPU}) + "\n")
 
     def configure(self, **config):
         config.setdefault("logs", {"generator-small": str(self.tmp / "generator-small.log"),
                                    "generator-large": str(self.tmp / "generator-large.log"),
-                                   "smock-small": str(self.tmp / "smock-small.log")})
+                                   "smock-small": str(self.tmp / "smock-small.log"),
+                                   "smock-small/node-cpu": str(self.tmp / "smock-node-cpu.log"),
+                                   "smock-large/node-cpu": str(self.tmp / "smock-node-cpu.log")})
         super().configure(**config)
 
     def written(self):
@@ -1213,6 +1226,11 @@ class StoppedEarly(Script):
         self.assertEqual(conditions["gke"]["arch"], HOST_ARCH)
         self.assertIn("**Stopped early:** the run stopped under profile large, before its first step: smock did not "
                       "become ready under large.", markdown)
+        # smock's node under large, with its CPU, which its init container
+        # printed before smock started.
+        self.assertEqual(conditions["gke"]["profiles"]["large"]["nodes"]["node-a"]["cpu"], NODE_CPU)
+        self.assertEqual(conditions["gke"]["profiles"]["large"]["smock"][0]["node"], "node-a")
+        self.assertIn("| large | ek-standard-8 (", markdown)
         self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
         self.assertIn("nothing is left", output)
         for path in self.out.rglob("*"):
@@ -1233,11 +1251,17 @@ class StoppedEarly(Script):
         process.send_signal(signal.SIGTERM)
         output, _ = process.communicate(timeout=60)
         self.assertNotEqual(process.returncode, 0, output)
-        summary, _, markdown = self.written()
+        summary, conditions, markdown = self.written()
         self.assertEqual([case["id"] for case in summary["cases"]],
                          ["http-keep-alive@small@500", "http-keep-alive@small@1000"])
         self.assertIn("**Stopped early:** the run stopped under profile small, after its step "
                       "http-keep-alive@small@1000: stopped by SIGTERM.", markdown)
+        # The nodes smock and the load generator ran on, kept as soon as
+        # each Pod had one, and the CPU of smock's.
+        nodes = conditions["gke"]["profiles"]["small"]["nodes"]
+        self.assertEqual((nodes["node-a"]["cpu"], nodes["node-b"]["cpu"]), (NODE_CPU, None))
+        self.assertEqual((conditions["machine"]["cpu_model"], conditions["machine"]["cpus"]),
+                         ("GKE Autopilot ek-standard-8, AMD EPYC 7B13", 8))
         self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
 
     def test_a_run_the_watchdog_stopped_at_the_time_limit_says_so(self):

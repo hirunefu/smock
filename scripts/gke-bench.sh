@@ -1053,12 +1053,43 @@ wait_for_job() {
   done
 }
 
+# Keeps what the run knows of the profile's Pods and of the nodes they run
+# on, as gke.py pod-info keeps them, in pods.json under RAW (the argument):
+# as soon as each Pod has a node, so that a run that stops under the
+# profile has them, and again after the load generator's Job, with smock's
+# restarts at the end. A pods.json kept before stays when they cannot be
+# read.
+keep_pods() {
+  local raw=$1
+  [ "$dry_run" = 0 ] || return 0
+  mkdir -p "$raw"
+  refresh_token
+  if kube get pods --output=json >"$work/pods.json" && kube get nodes --output=json >"$work/nodes.json" &&
+    "$PYTHON" "$GKE_PY" pod-info "$work/pods.json" "$work/nodes.json" >"$work/pod-info.json"; then
+    mv "$work/pod-info.json" "$raw/pods.json"
+  fi
+}
+
+# Keeps what the init container of smock's Pod printed of the CPU of its
+# node, masked, with kubectl's errors in its place, as smock-node-cpu.log:
+# it has printed it once smock has started.
+keep_smock_node_cpu() {
+  local smock_pod=$1 raw=$2
+  if [ "$dry_run" = 1 ]; then
+    say "would keep what smock's init container printed of the CPU of its node as $raw/smock-node-cpu.log"
+    return 0
+  fi
+  mkdir -p "$raw"
+  refresh_token
+  "$KUBECTL" --kubeconfig="$kubeconfig" --namespace="$NAMESPACE" logs --container=node-cpu "pod/$smock_pod" 2>&1 |
+    masked >"$raw/smock-node-cpu.log"
+}
+
 # Keeps what smock left under a profile while its Pod and Service are still
 # there, masked: its log as smock.log (when it restarted, or that is not
-# known, its container before the last restart first), and what its init
-# container printed of the CPU of its node as smock-node-cpu.log, each with
-# kubectl's errors in their place, and its Service with the Service's
-# EndpointSlices as service.json.
+# known, its container before the last restart first), with kubectl's
+# errors in their place, and its Service with the Service's EndpointSlices
+# as service.json.
 keep_smock_state() {
   local smock_pod=$1 raw=$2 restarts
   # kubectl itself, not the function kube, so that its errors stay in order
@@ -1066,8 +1097,7 @@ keep_smock_state() {
   # which one it chose for a Pod with an init container.
   local logs=("$KUBECTL" --kubeconfig="$kubeconfig" --namespace="$NAMESPACE" logs --container=smock)
   if [ "$dry_run" = 1 ]; then
-    say "would keep smock's log as $raw/smock.log, what its init container printed of the CPU of its node as" \
-      "$raw/smock-node-cpu.log, and its Service and EndpointSlices as $raw/service.json"
+    say "would keep smock's log as $raw/smock.log, and its Service and EndpointSlices as $raw/service.json"
     return 0
   fi
   mkdir -p "$raw"
@@ -1083,8 +1113,6 @@ keep_smock_state() {
       "${logs[@]}" "pod/$smock_pod"
     } 2>&1 | masked >"$raw/smock.log"
   fi
-  "$KUBECTL" --kubeconfig="$kubeconfig" --namespace="$NAMESPACE" logs --container=node-cpu "pod/$smock_pod" 2>&1 |
-    masked >"$raw/smock-node-cpu.log"
   kube get service,endpointslices --output=json | masked >"$raw/service.json" ||
     say "cannot read smock's Service and its EndpointSlices; $raw/service.json may be empty"
 }
@@ -1115,9 +1143,13 @@ run_profile() {
   kube_run apply --filename="$manifests/smock.json" || die "applying smock's Pod failed"
   kube_run wait --for=condition=Ready "pod/$smock_pod" --timeout="${READY_LIMIT_S}s" || {
     kube get events --field-selector=involvedObject.kind=Pod | masked >&2
+    keep_pods "$raw"
+    keep_smock_node_cpu "$smock_pod" "$raw"
     keep_smock_state "$smock_pod" "$raw"
     die "smock did not become ready under $name"
   }
+  keep_pods "$raw"
+  keep_smock_node_cpu "$smock_pod" "$raw"
   kube_run apply --filename="$manifests/generator.json" || die "applying the load generator's Job failed"
   if [ "$dry_run" = 1 ]; then
     say "would wait for the Job $job, keep its log as $raw/generator.log and its Pods as $raw/pods.json, then" \
@@ -1125,6 +1157,7 @@ run_profile() {
   else
     mkdir -p "$raw"
     wait_for_generator "$job" || die "the load generator's Pod did not start under $name"
+    keep_pods "$raw"
     # kubectl itself, not the function kube, so that log_pid is its own.
     "$KUBECTL" --kubeconfig="$kubeconfig" --namespace="$NAMESPACE" logs --follow "job/$job" \
       >"$raw/generator-stream.log" 2>>"$work/kubectl.log" &
@@ -1143,9 +1176,7 @@ run_profile() {
     else
       mv "$raw/generator-stream.log" "$raw/generator.log"
     fi
-    if kube get pods --output=json >"$work/pods.json" && kube get nodes --output=json >"$work/nodes.json"; then
-      "$PYTHON" "$GKE_PY" pod-info "$work/pods.json" "$work/nodes.json" >"$raw/pods.json"
-    fi
+    keep_pods "$raw"
     ended=$("$PYTHON" "$GKE_PY" stopped "$raw/generator.log")
     if [ -n "$ended" ]; then
       say "profile $name ended early: $ended"
