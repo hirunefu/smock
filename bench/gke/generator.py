@@ -35,9 +35,10 @@ them in from smock's cgroup.
 
 With VARIANTS, it compares smock binaries kept on one node, each a variant
 with its own Pod and Service, the first the baseline. It waits for each
-variant in turn and says so in a start line of its own; once all are
-ready and have idled the settle time, it reads each one's idle RSS, then
-checks each one's traffic ports. It then runs the profile's steps for
+variant in turn and says so in a start line of its own, which also says
+how many rounds it is to run; once all are ready and have idled the
+settle time, it reads each one's idle RSS, then checks each one's traffic
+ports. It then runs the profile's steps for
 ROUNDS rounds: rounds outer, the steps in the middle and the variants
 inner, one variant under load at a time, their order turned by one for
 each round and each step (run_order), so that with two variants each step
@@ -466,7 +467,7 @@ def main():
         emit({"kind": "start", "profile": profile_name, **tag(variant), "address": variant.address, "oha": oha_version,
               "cpus": os.cpu_count(), "affinity": len(os.sched_getaffinity(0)), "nofile": hard,
               "status": variant.status, "node_cpu": gke.read_node_cpu()[0],
-              **({"first_second": variant.first_second} if tagged else {})})
+              **({"first_second": variant.first_second, "rounds": rounds} if tagged else {})})
     # As bench/bench.py measures idle RSS, under the profiles the plan
     # names for it (each, when it names none): once smock has idled for the
     # plan's settle time after it was ready, before any load. Each variant

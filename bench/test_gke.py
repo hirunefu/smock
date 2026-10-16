@@ -1424,9 +1424,11 @@ class GeneratorWithVariants(Helper):
                           ("metrics-after", "a"), ("metrics-after", "b"), ("done", "a"), ("done", "b")])
         self.assertEqual([(line["round"], line["result"]["id"], line["variant"])
                           for line in self.lines if line["kind"] == "step"], order)
+        # Each start line says how many rounds were planned, which a log
+        # cut short does not show otherwise.
         starts = [line for line in self.lines if line["kind"] == "start"]
-        self.assertEqual([(start["address"], start["first_second"]) for start in starts],
-                         [("127.0.0.1", True), ("127.0.0.1", False)])
+        self.assertEqual([(start["address"], start["first_second"], start["rounds"]) for start in starts],
+                         [("127.0.0.1", True, 2), ("127.0.0.1", False, 2)])
         for start in starts:
             self.assertRegex(start["status"]["digest"], "^[0-9a-f]{12}$")
         for check in (line for line in self.lines if line["kind"] == "traffic-check"):
@@ -2135,14 +2137,15 @@ def variant_lines(us_per_request, rates=(500, 1000), runs=None, stopped=None, do
     rates in the middle and the variants inner, their order turned by one
     for each round and rate. `us_per_request` gives each variant's CPU a
     request at each rate in each round, {label: {rate: [round 1's, round
-    2's, ...]}}, the first the baseline; `runs` what else differs in a run,
+    2's, ...]}}, the first the baseline, which also give the rounds each
+    start line says were planned; `runs` what else differs in a run,
     {(label, round, rate): variant_step's keywords}. Runs after a `stopped`
     line's (its fields) are left out, and the done lines are when `done`."""
     labels = list(us_per_request)
     rounds = len(us_per_request[labels[0]][rates[0]])
     lines = []
     for label in labels:
-        lines += [{**START, "variant": label, "first_second": label == labels[0]},
+        lines += [{**START, "variant": label, "first_second": label == labels[0], "rounds": rounds},
                   {**IDLE, "variant": label}, {**TRAFFIC_CHECK, "variant": label},
                   {"kind": "metrics-before", "profile": "small", "variant": label, "text": "# metrics\n"}]
     for round_ in range(1, rounds + 1):
@@ -2202,10 +2205,11 @@ class VariantRun(Helper):
                                                                 "\n")
         return out
 
-    def samples(self, out, plan=None):
-        """gke.py samples over `out`, and the samples it printed: [(round,
-        label, directory)]."""
-        status, stdout, stderr = helper("samples", out, "--plan", plan or small_plan(self.directory()))
+    def samples(self, out, plan=None, rounds=None):
+        """gke.py samples over `out`, told the planned `rounds` when given,
+        and the samples it printed: [(round, label, directory)]."""
+        status, stdout, stderr = helper("samples", out, "--plan", plan or small_plan(self.directory()),
+                                        *(["--rounds", rounds] if rounds else []))
         self.assertEqual(status, 0, stderr)
         return [(int(round_), label, Path(directory))
                 for round_, label, directory in (line.split(" ", 2) for line in stdout.splitlines())]
@@ -2225,17 +2229,18 @@ class VariantRun(Helper):
         return json.loads((directory / "summary.json").read_text()), \
             json.loads((directory / "conditions.json").read_text())
 
-    def same_node(self, out, *options, sha256=None, plan=None, stopped=None):
+    def same_node(self, out, *options, sha256=None, plan=None, stopped=None, rounds=None):
         """gke.py same-node over `out` with `options`, once its samples are
-        split and each summarized as the runner does it, with its variant's
-        binary's sha256 of `sha256` ({label or (round, label): hex}, by
-        default 64 of the label's first letter), and where and why the run
-        stopped when it did (`stopped`, (reason, profile)): its exit status,
-        same-node.json, same-node.md and what it wrote to stderr. The plan
-        is small_plan's, unless `plan` names another."""
+        split (told the planned `rounds` when given) and each summarized as
+        the runner does it, with its variant's binary's sha256 of `sha256`
+        ({label or (round, label): hex}, by default 64 of the label's first
+        letter), and where and why the run stopped when it did (`stopped`,
+        (reason, profile)): its exit status, same-node.json, same-node.md
+        and what it wrote to stderr. The plan is small_plan's, unless `plan`
+        names another."""
         plan = plan or small_plan(self.directory())
         sha256 = sha256 or {}
-        for round_, label, directory in self.samples(out, plan):
+        for round_, label, directory in self.samples(out, plan, rounds):
             self.summarize_sample(directory, sha256.get((round_, label), sha256.get(label, label[0] * 64)), plan,
                                   stopped)
         status, _, stderr = helper("same-node", out, *options)
@@ -2709,7 +2714,12 @@ class SameNode(VariantRun):
         out = self.variant_run(lines, variant_pods(["a", "b"]))
         status, report, markdown, stderr = self.same_node(out)
         self.assertEqual(status, 1)
-        self.assertEqual(report["problems"], ["small: every sample is incomplete"])
+        # Round 1's samples measured their steps, and lack only the done
+        # lines.
+        self.assertEqual(report["problems"], ["small: every sample is incomplete",
+                                              "small: samples 1-a and 1-b measured every step, but the load "
+                                              "generator's log ends before its done lines, as when its Job ended or "
+                                              "was stopped first"])
         self.assertEqual([(entry["round"], entry["variant"], entry["not_run"])
                           for entry in report["gke"]["profiles"]["small"]["not_measured"]],
                          [(2, "a", "not reported"), (2, "a", "not reported"), (2, "b", "not reported")])
@@ -2721,6 +2731,40 @@ class SameNode(VariantRun):
         self.assertEqual(status, 1)
         self.assertIn("The sample 1-b has no summary, so its 2 runs are not counted.",
                       (out / "same-node.md").read_text())
+
+    def test_a_log_cut_short_with_no_stop_still_counts_every_run_of_the_planned_rounds(self):
+        # The load generator's Job was killed, by its deadline or the
+        # run's, with no stopped line: what it printed says 4 rounds.
+        def cut(after):
+            lines = variant_lines(HIGHER, done=False)
+            first = next(index for index, line in enumerate(lines) if line.get("round") == 2)
+            out = self.variant_run(lines[:first + after], variant_pods(["a", "b"]))
+            self.assertEqual([(round_, label) for round_, label, _ in self.samples(out)],
+                             [(round_, label) for round_ in range(1, 5) for label in ("a", "b")])
+            status, report, markdown, stderr = self.same_node(out)
+            self.assertEqual(status, 1, stderr)
+            self.assertEqual(report["run"]["rounds"], 4)
+            self.assertIn("2 variants of smock over 4 rounds", markdown)
+            return report["gke"]["profiles"]["small"]["not_measured"], markdown
+
+        # At the end of round 1: 12 of 16 runs were not reported.
+        not_measured, markdown = cut(0)
+        self.assertEqual({entry["not_run"] for entry in not_measured}, {"not reported"})
+        self.assertIn("The load generator did not report 12 runs", markdown)
+        # One run into round 2: 11.
+        _, markdown = cut(1)
+        self.assertIn("The load generator did not report 11 runs", markdown)
+
+    def test_a_run_that_stopped_before_the_load_generator_counts_the_runs_of_the_rounds_it_was_given(self):
+        # Four variants on the node, and no load generator's log: the run
+        # stopped before it started, and the runner says 2 rounds.
+        labels = ["a", "b", "c", "d"]
+        out = self.variant_run([], variant_pods(labels))
+        status, report, markdown, stderr = self.same_node(out, rounds=2)
+        self.assertEqual(status, 1, stderr)
+        self.assertEqual(report["run"]["rounds"], 2)
+        self.assertEqual(len(report["gke"]["profiles"]["small"]["not_measured"]), 16)
+        self.assertIn("The load generator did not report 16 runs", markdown)
 
     def test_a_profile_the_run_did_not_reach_cannot_be_compared_and_says_so(self):
         # A second profile, big, which the run did not reach, as one that

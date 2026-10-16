@@ -533,7 +533,8 @@ def variant_generator_log(commits, rounds=4, profile="small", cpu_limit="250m", 
     labels = list(commits)
     lines = []
     for label in labels:
-        lines += [{**start_line(profile, commits[label]), "variant": label, "first_second": label not in skipped},
+        lines += [{**start_line(profile, commits[label]), "variant": label, "first_second": label not in skipped,
+                   "rounds": rounds},
                   {**idle_line(profile, cpu_limit, memory_limit), "variant": label},
                   {**traffic_check_line(profile), "variant": label}]
     for round_ in range(1, rounds + 1):
@@ -1942,6 +1943,11 @@ class Variants(Script):
             self.assertTrue((raw / label / "smock.log").exists(), label)
         self.assertIn("small: the smock Pods of small are on 2 nodes, not one: r1 on node-a, r2 on node-c",
                       (self.out / "summary.md").read_text())
+        # The load generator never said how many rounds it would run: the
+        # runner does, and none of their runs was measured.
+        self.assertEqual(sorted(path.name for path in (self.out / "samples").iterdir()),
+                         sorted(f"{round_}-{label}" for round_ in range(1, 5) for label in ("r1", "r2")))
+        self.assertIn("The load generator did not report 16 runs", (self.out / "summary.md").read_text())
         self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
         self.assertIn("nothing is left", output)
 

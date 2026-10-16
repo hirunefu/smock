@@ -1172,20 +1172,23 @@ def variants_of(lines, info):
 
 def rounds_of(lines):
     """The rounds of a run of variants under one profile, as far as its
-    load generator's lines tell: those of its runs, and of the runs a stop
-    left out."""
+    load generator's lines tell: those its start lines say were planned,
+    those of its runs, and of the runs a stop left out."""
+    planned = [line["rounds"] for line in lines if line["kind"] == "start" and line.get("rounds")]
     stopped = [run["round"] for line in lines if line["kind"] == "stopped" for run in line.get("runs") or []]
-    return max([1, *(line["round"] for line in lines if line.get("round")), *stopped])
+    return max([1, *planned, *(line["round"] for line in lines if line.get("round")), *stopped])
 
 
-def write_samples(out, profiles):
+def write_samples(out, profiles, rounds=1):
     """Splits each profile's raw/<profile>/ of a run of variants under `out`
     into its samples, samples/<round>-<label>/raw/<profile>/: the sample's
     lines of the load generator's log (sample_lines), its Pods
     (sample_pods), and the files the run kept of its variant. Every sample
     of the run has each profile that the run has anything of, so that one
-    a profile did not reach is incomplete there. Returns the samples, as
-    (round, label, directory), by round, then in the variants' order."""
+    a profile did not reach is incomplete there; and there is one for each
+    round the run planned, as the load generator's lines say or, at least,
+    `rounds`, so that a round it never started is too. Returns the samples,
+    as (round, label, directory), by round, then in the variants' order."""
     raws = {}
     for profile in profiles:
         raw = Path(out) / "raw" / profile["name"]
@@ -1195,7 +1198,7 @@ def write_samples(out, profiles):
     if not labels:
         raise GkeError(f"{Path(out) / 'raw'} holds no run of variants of smock: samples splits the results of a run "
                        "that compared variants (manifests' --variant)")
-    rounds = max(rounds_of(lines) for _, lines, _ in raws.values())
+    rounds = max(rounds, *(rounds_of(lines) for _, lines, _ in raws.values()))
     shutil.rmtree(Path(out) / SAMPLES, ignore_errors=True)
     samples = []
     for round_ in range(1, rounds + 1):
@@ -1219,7 +1222,9 @@ def command_samples(args):
     plan = read_json(args.plan)
     profiles = plan_profiles(plan, comma_list(args.profiles))
     plan_cases(plan, comma_list(args.cases))
-    for round_, label, directory in write_samples(args.out, profiles):
+    if args.rounds is not None and args.rounds < 1:
+        raise GkeError(f"a run of variants has at least 1 round, not {args.rounds}")
+    for round_, label, directory in write_samples(args.out, profiles, args.rounds or 1):
         print(round_, label, directory)
     return 0
 
@@ -1572,6 +1577,12 @@ def profile_comparison(profile, samples, labels, baseline, rounds, lines, pairs_
     incomplete = [f"{round_}-{label}" for round_ in range(1, rounds + 1) for label in labels
                   if not (samples.get((round_, label)) and
                           (samples[round_, label][0]["gke"]["profiles"].get(name) or {}).get("complete"))]
+    # Of those, the samples the load generator reported every step of: it
+    # never printed their done lines.
+    cut_short = [sample for sample in incomplete
+                 for round_, label in [sample.split("-", 1)]
+                 if steps and all(step["variants"][label]["runs"][int(round_) - 1]["not_run"] is None
+                                  for step in steps)]
     ended = next((ended for sample in samples.values() if sample
                   for ended in [(sample[0]["gke"]["profiles"].get(name) or {}).get("ended_early")] if ended), None)
     # The runs in the order the load generator made them, by step, and how
@@ -1598,7 +1609,8 @@ def profile_comparison(profile, samples, labels, baseline, rounds, lines, pairs_
     within = [next(entry for entry in a_a if entry["label"] == label) if kind == "same binary" else
               within_comparison(steps, label, against, kind, spread) for label, against, kind in pairs_of_one_binary]
     same = {(entry["label"], entry["against"]) for entry in a_a}
-    return {"complete": not incomplete, "incomplete": incomplete, "rounds": rounds, "order": order,
+    return {"complete": not incomplete, "incomplete": incomplete, "cut_short": cut_short, "rounds": rounds,
+            "order": order,
             "positions": positions,
             "neighbours": top and {"max_cpu_s": top[0], "variant": top[1], "beside": top[2]["variant"],
                                    "round": top[2]["round"], "id": top[2]["result"]["id"]},
@@ -1922,6 +1934,12 @@ def same_node(out, baseline=None, sha256=None, no_init=()):
             many = len(incomplete) > 1
             placement["problems"].append(f"sample{'s' if many else ''} {and_list(incomplete)} "
                                          f"{'are' if many else 'is'} incomplete")
+        cut_short = result["cut_short"]
+        if cut_short:
+            which = "every sample" if len(cut_short) == rounds * len(labels) else \
+                f"sample{'s' if len(cut_short) > 1 else ''} {and_list(cut_short)}"
+            placement["problems"].append(f"{which} measured every step, but the load generator's log ends before "
+                                         "its done lines, as when its Job ended or was stopped first")
         results[profile["name"]] = {**result, **placement}
     placed = [f"{name}: {problem}" for name, result in results.items() for problem in result["problems"]]
     status = 2 if problems else 1 if placed else 0
@@ -2180,6 +2198,9 @@ def main(argv):
     splitting.add_argument("--plan", required=True, help="the plan the run ran")
     splitting.add_argument("--profiles", help="the profiles the run ran, comma-separated (default: every profile)")
     splitting.add_argument("--cases", help="the cases the run ran, comma-separated (default: every case)")
+    splitting.add_argument("--rounds", type=int,
+                           help="the rounds the run planned, when the load generator may not have said so "
+                                "(default: as many as it says)")
     splitting.add_argument("out", help="the run's results: raw/<profile>/ of a run of variants")
     splitting.set_defaults(handler=command_samples)
     comparing = commands.add_parser("same-node", help="compare the variants of a run, each with the baseline, from "

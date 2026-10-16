@@ -1528,7 +1528,8 @@ summarize_into() {
 
 # Of a run of variants, splits what the profiles left in the results
 # directory into its samples (gke.py samples: samples/<round>-<label>/, one
-# variant's pass over the steps in one round, each a run of smock alone),
+# variant's pass over the steps in one round, each a run of smock alone, of
+# every round the run planned, which the load generator may not have said),
 # writes each sample's summary with its variant's image and binary and the
 # options of gke.py summarize given, and compares the variants (gke.py
 # same-node: same-node.json and same-node.md, which is also summary.md).
@@ -1538,7 +1539,8 @@ summarize_into() {
 summarize_variants() {
   local label directory status=0 compared=() seen=" "
   summarized=1
-  "$PYTHON" "$GKE_PY" samples --plan "$plan" "${selection[@]}" "$out" >"$work/samples.txt" || return 1
+  "$PYTHON" "$GKE_PY" samples --plan "$plan" "${selection[@]}" --rounds "$rounds" "$out" >"$work/samples.txt" ||
+    return 1
   while read -r _ label directory; do
     summarize_into "$directory" "${variant_ref[$label]:-}" "${variant_sha256[$label]:-}" "$@" || status=1
     if [[ $seen != *" $label "* ]]; then
