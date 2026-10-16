@@ -2422,6 +2422,31 @@ class SameNode(VariantRun):
         self.assertIn(f"**Stopped early:** {reason}. 3 runs were left out.", markdown)
         self.assertIn("- http-keep-alive@small@500: 10000 of 10000 requests failed in the b round 2 run.", markdown)
 
+    def test_the_order_the_variants_ran_in_and_what_their_idle_neighbours_used_are_reported(self):
+        # Three variants over two rounds, not a multiple of three: their
+        # positions are not balanced. c used the most CPU idle, beside b's
+        # run at 1,000 requests/s in round 2.
+        us = {label: {500: [30.0, 30.0], 1000: [30.0, 30.0]} for label in ("a", "b", "c")}
+        runs = {(label, round_, rate): {"neighbours": {other: 0.004 for other in us if other != label}}
+                for label in us for round_ in (1, 2) for rate in (500, 1000)}
+        runs["b", 2, 1000]["neighbours"]["c"] = 0.031
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(us, runs=runs),
+                                                                           variant_pods(["a", "b", "c"])))
+        self.assertEqual(status, 0, stderr)
+        profile = report["gke"]["profiles"]["small"]
+        self.assertEqual(profile["order"], [
+            {"round": 1, "id": "http-keep-alive@small@500", "variants": ["a", "b", "c"]},
+            {"round": 1, "id": "http-keep-alive@small@1000", "variants": ["b", "c", "a"]},
+            {"round": 2, "id": "http-keep-alive@small@500", "variants": ["b", "c", "a"]},
+            {"round": 2, "id": "http-keep-alive@small@1000", "variants": ["c", "a", "b"]}])
+        self.assertEqual(profile["positions"], {"a": [1, 1, 2], "b": [2, 1, 1], "c": [1, 2, 1]})
+        self.assertIn("Each step ran the variants one after another, their order turned by one for each round and "
+                      "step. Times each ran first, second and third: a 1, 1, 2; b 2, 1, 1; c 1, 2, 1.", markdown)
+        self.assertEqual(profile["neighbours"], {"max_cpu_s": 0.031, "variant": "c", "beside": "b", "round": 2,
+                                                 "id": "http-keep-alive@small@1000"})
+        self.assertIn("The idle variants used at most 0.031 s of CPU during another's run: c, during b's run of "
+                      "http-keep-alive@small@1000 in round 2.", markdown)
+
     def test_a_variant_with_two_sha256_values_exits_2_since_what_it_measured_is_unknown(self):
         out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
         # summarize was told another binary for b in round 3.

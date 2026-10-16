@@ -1406,11 +1406,36 @@ def placement_text(result):
     return f"{where} {admitted} admitted with the profile's limits as its requests and limits."
 
 
+ORDINALS = ("first", "second", "third", "fourth")
+
+
+def order_text(result):
+    """In what order the variants ran, for people."""
+    if not result["order"]:
+        return "The load generator ran no step."
+    counts = "; ".join(f"{label} {', '.join(map(str, held))}" for label, held in result["positions"].items())
+    return (f"Each step ran the variants one after another, their order turned by one for each round and step. Times "
+            f"each ran {and_list(list(ORDINALS[:len(result['positions'])]))}: {counts}.")
+
+
+def neighbours_text(result):
+    """What the idle variants used during another's run, at most, for
+    people."""
+    top = result["neighbours"]
+    if not top:
+        return "What the idle variants used during another's run is unknown."
+    return (f"The idle variants used at most {top['max_cpu_s']} s of CPU during another's run: {top['variant']}, "
+            f"during {top['beside']}'s run of {top['id']} in round {top['round']}.")
+
+
 def profile_comparison(profile, samples, labels, baseline, rounds, lines):
     """How the variants compare under `profile`, from their `samples`
-    ({(round, label): sample}) and the load generator's `lines`: each
-    step's runs of each variant (variant_at_step) and each variant's
-    verdict against the `baseline`."""
+    ({(round, label): sample}) and the load generator's `lines`: whether
+    every sample is complete, the order of the runs and how often each
+    variant held each position in a step, the most CPU an idle variant
+    used during another's run, each step's runs of each variant
+    (variant_at_step), each variant's verdict against the `baseline`, and
+    the runs that measured nothing."""
     name = profile["name"]
     step_lines = {(line["round"], line["variant"], line["result"]["id"]): line
                   for line in lines if line["kind"] == "step" and line.get("variant")}
@@ -1429,9 +1454,27 @@ def profile_comparison(profile, samples, labels, baseline, rounds, lines):
                           (samples[round_, label][0]["gke"]["profiles"].get(name) or {}).get("complete"))]
     ended = next((ended for sample in samples.values() if sample
                   for ended in [(sample[0]["gke"]["profiles"].get(name) or {}).get("ended_early")] if ended), None)
+    # The runs in the order the load generator made them, by step, and how
+    # often each variant ran first, second and so on in a step.
+    order = []
+    for line in step_lines.values():
+        if order and (order[-1]["round"], order[-1]["id"]) == (line["round"], line["result"]["id"]):
+            order[-1]["variants"].append(line["variant"])
+        else:
+            order.append({"round": line["round"], "id": line["result"]["id"], "variants": [line["variant"]]})
+    positions = {label: [sum(entry["variants"][index:index + 1] == [label] for entry in order)
+                         for index in range(len(labels))] for label in labels}
+    # The most CPU an idle variant used during another's run.
+    used = [(cpu_s, label, line) for line in step_lines.values()
+            for label, cpu_s in (line.get("neighbours") or {}).items() if cpu_s is not None]
+    top = max(used, key=lambda item: item[0], default=None)
     unmeasured = [(step["id"], label, run) for step in steps for index in range(rounds) for label in labels
                   for run in [step["variants"][label]["runs"][index]] if run["not_measured"]]
-    return {"complete": not incomplete, "incomplete": incomplete, "rounds": rounds, "steps": steps,
+    return {"complete": not incomplete, "incomplete": incomplete, "rounds": rounds, "order": order,
+            "positions": positions,
+            "neighbours": top and {"max_cpu_s": top[0], "variant": top[1], "beside": top[2]["variant"],
+                                   "round": top[2]["round"], "id": top[2]["result"]["id"]},
+            "steps": steps,
             "verdicts": {label: verdict([pair for step in steps for pair in step["variants"][label]["pairs"]])
                          for label in labels if label != baseline},
             "ended_early": ended and {"reason": ended["reason"],
@@ -1533,7 +1576,8 @@ def same_node_markdown(report):
         lines += ["", "**Not comparable:**", "", *(f"- {problem}." for problem in report["problems"])]
     for profile in report["profiles"]:
         result = report["gke"]["profiles"][profile["name"]]
-        lines += ["", harness.profile_heading(profile), "", placement_text(result), "",
+        lines += ["", harness.profile_heading(profile), "", placement_text(result), "", order_text(result), "",
+                  neighbours_text(result), "",
                   "| " + " | ".join(SAME_NODE_COLUMNS) + " |", "|" + "---|" * len(SAME_NODE_COLUMNS)]
         for step in result["steps"]:
             lines += [same_node_row(step, label, record, baseline) for label, record in step["variants"].items()]
