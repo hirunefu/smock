@@ -1257,11 +1257,12 @@ class StoppedEarly(Script):
         self.assertIn("**Stopped early:** the run stopped under profile small, after its step "
                       "http-keep-alive@small@1000: stopped by SIGTERM.", markdown)
         # The nodes smock and the load generator ran on, kept as soon as
-        # each Pod had one, and the CPU of smock's.
+        # each Pod had one, and the CPU of smock's; the machine is the type
+        # of smock's node, with its CPUs.
         nodes = conditions["gke"]["profiles"]["small"]["nodes"]
         self.assertEqual((nodes["node-a"]["cpu"], nodes["node-b"]["cpu"]), (NODE_CPU, None))
         self.assertEqual((conditions["machine"]["cpu_model"], conditions["machine"]["cpus"]),
-                         ("GKE Autopilot ek-standard-8, AMD EPYC 7B13", 8))
+                         ("GKE Autopilot ek-standard-8", 8))
         self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
 
     def test_a_run_the_watchdog_stopped_at_the_time_limit_says_so(self):
