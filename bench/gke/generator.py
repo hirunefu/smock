@@ -327,93 +327,176 @@ def run_step(spec, mix, oha, address, ports, scrape_metrics):
     }
 
 
+def read_variants(environ):
+    """The smocks to send each step to, in order. With VARIANTS, its
+    variants: each with its label, its host name, whether to scrape smock
+    a second into each run, and its own ports when it names them, else
+    PLAIN_PORT, TLS_PORT and ADMIN_PORT. Without it, smock at TARGET alone,
+    with no label."""
+    ports = {"plain": int(environ.get("PLAIN_PORT", "80")), "tls": int(environ.get("TLS_PORT", "443"))}
+    admin_port = int(environ.get("ADMIN_PORT", "9090"))
+    if not environ.get("VARIANTS"):
+        return [SimpleNamespace(label=None, target=environ["TARGET"], first_second=True, ports=ports,
+                                admin_port=admin_port)]
+    return [SimpleNamespace(label=entry["label"], target=entry["target"], first_second=entry.get("first_second", True),
+                            ports={"plain": int(entry.get("plain_port", ports["plain"])),
+                                   "tls": int(entry.get("tls_port", ports["tls"]))},
+                            admin_port=int(entry.get("admin_port", admin_port)))
+            for entry in json.loads(environ["VARIANTS"])]
+
+
+def tag(variant):
+    """The fields that tag a line about smock with its variant, so that the
+    output splits by variant: none without variants."""
+    return {} if variant.label is None else {"variant": variant.label}
+
+
+def who(variant):
+    return "smock" if variant.label is None else f"smock {variant.label}"
+
+
+def of(variant):
+    return "" if variant.label is None else f" of smock {variant.label}"
+
+
+def run_name(round_, spec, variant):
+    """A run, for people: its step's id, and with variants its variant and
+    round."""
+    return spec["id"] if variant.label is None else f"{spec['id']} ({variant.label}, round {round_})"
+
+
+def left_out(later, tagged):
+    """What a stopped line lists of the runs `later`, which did not run:
+    without variants, their steps' ids; with them, each run's round,
+    variant and step id."""
+    if not tagged:
+        return {"steps": [spec["id"] for _, spec, _ in later]}
+    return {"runs": [{"round": round_, "variant": variant.label, "id": spec["id"]} for round_, spec, variant in later]}
+
+
 def main():
-    target, profile_name = os.environ["TARGET"], os.environ["PROFILE"]
+    profile_name = os.environ["PROFILE"]
+    variants = read_variants(os.environ)
+    # With variants, each line about smock says which variant it is about.
+    tagged = variants[0].label is not None
+    rounds = int(os.environ.get("ROUNDS") or 1) if tagged else 1
     plan = gke.read_json(os.environ.get("PLAN") or harness.BENCH / "plan.json")
     [profile] = gke.plan_profiles(plan, [profile_name])
     specs = gke.steps(plan, profile, gke.plan_cases(plan, gke.comma_list(os.environ.get("CASES"))))
-    ports = {"plain": int(os.environ.get("PLAIN_PORT", "80")), "tls": int(os.environ.get("TLS_PORT", "443"))}
-    admin_port = int(os.environ.get("ADMIN_PORT", "9090"))
+    runs = run_order(specs, variants, rounds)
     oha = shutil.which(os.environ.get("OHA", "oha")) or os.environ.get("OHA", "oha")
     mix = harness.read_json(harness.BENCH / "requests.json")["requests"]
     # Every connection is a file descriptor.
     _, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
-    log(f"{len(specs)} steps under {profile_name}; waiting for smock at {target}")
-    if not wait_ready(target, admin_port, READY_AT_START_S):
-        emit({"kind": "error", "message": f"smock at {target} did not become ready in {READY_AT_START_S} s"})
-        return 1
-    # Looked up once smock answers by name, not before: a Service just made
-    # may not resolve at first, and under autopilot-min on 2026-10-14 the
-    # name of a Service just made again resolved at first to the address of
-    # the one before it, which the load went to and nothing answered.
-    try:
-        address = socket.gethostbyname(target)
-    except OSError as error:
-        emit({"kind": "error", "message": f"smock answered at {target}, whose address could not be looked up then: "
-                                          f"{error}"})
-        return 1
-    log(f"{target} is {address}")
-    status, body = admin(target, admin_port, "/v1/status")
-    oha_version = subprocess.run([oha, "--version"], capture_output=True, text=True, check=True).stdout.strip()
-    status_json = json.loads(body) if status == 200 else None
-    emit({"kind": "start", "profile": profile_name, "address": address, "oha": oha_version,
-          "cpus": os.cpu_count(), "affinity": len(os.sched_getaffinity(0)), "nofile": hard,
-          "status": status_json, "node_cpu": gke.read_node_cpu()[0]})
+    if tagged:
+        log(f"{len(runs)} runs under {profile_name}: {len(specs)} steps, each against {len(variants)} variants, "
+            f"{rounds} rounds")
+    for variant in variants:
+        target = variant.target
+        log(f"{len(specs)} steps under {profile_name}; waiting for {who(variant)} at {target}")
+        if not wait_ready(target, variant.admin_port, READY_AT_START_S):
+            emit({"kind": "error", **tag(variant),
+                  "message": f"smock at {target} did not become ready in {READY_AT_START_S} s"})
+            return 1
+        # Looked up once smock answers by name, not before: a Service just
+        # made may not resolve at first, and under autopilot-min on
+        # 2026-10-14 the name of a Service just made again resolved at first
+        # to the address of the one before it, which the load went to and
+        # nothing answered.
+        try:
+            variant.address = socket.gethostbyname(target)
+        except OSError as error:
+            emit({"kind": "error", **tag(variant),
+                  "message": f"smock answered at {target}, whose address could not be looked up then: {error}"})
+            return 1
+        log(f"{target} is {variant.address}")
+        status, body = admin(target, variant.admin_port, "/v1/status")
+        oha_version = subprocess.run([oha, "--version"], capture_output=True, text=True, check=True).stdout.strip()
+        variant.status = json.loads(body) if status == 200 else None
+        emit({"kind": "start", "profile": profile_name, **tag(variant), "address": variant.address, "oha": oha_version,
+              "cpus": os.cpu_count(), "affinity": len(os.sched_getaffinity(0)), "nofile": hard,
+              "status": variant.status, "node_cpu": gke.read_node_cpu()[0],
+              **({"first_second": variant.first_second} if tagged else {})})
     # As bench/bench.py measures idle RSS, under the profiles the plan
     # names for it (each, when it names none): once smock has idled for the
-    # plan's settle time after it was ready, before any load. It has been
-    # ready at least since the wait above.
+    # plan's settle time after it was ready, before any load. Each variant
+    # has been ready at least since its wait above, the last the latest.
     settle_s = gke.idle_settle_s(plan, profile)
     if settle_s is not None:
         log(f"idle RSS: {settle_s} s after smock was ready")
         time.sleep(settle_s)
-        idle, why = idle_result(profile, settle_s, scrape(target, admin_port), (status_json or {}).get("digest"))
-        if idle:
-            emit({"kind": "idle-rss", "profile": profile_name, "idle": idle})
-            log(f"idle RSS: {idle['rss_kib']} KiB, peak memory {idle['memory']['peak_bytes']} bytes")
-        else:
-            log(f"idle RSS: not measured, {why}")
+        for variant in variants:
+            idle, why = idle_result(profile, settle_s, scrape(variant.target, variant.admin_port),
+                                    (variant.status or {}).get("digest"))
+            if idle:
+                emit({"kind": "idle-rss", "profile": profile_name, **tag(variant), "idle": idle})
+                log(f"idle RSS{of(variant)}: {idle['rss_kib']} KiB, peak memory {idle['memory']['peak_bytes']} "
+                    "bytes")
+            else:
+                log(f"idle RSS{of(variant)}: not measured, {why}")
     check_s = float(os.environ.get("TRAFFIC_CHECK_S", gke.TRAFFIC_CHECK_S))
-    # The traffic check, before the first step and after a step with no
-    # response.
-    check_again = functools.partial(traffic_check, target, address, ports, mix[0], check_s)
-    check = check_again()
-    emit({"kind": "traffic-check", "profile": profile_name, **check})
     stopped = None
-    if not check["ok"]:
-        stopped = {"reason": f"smock did not answer through its Service in {check_s:g} s: {silent_ports_text(check)}",
-                   "after": None, "steps": [spec["id"] for spec in specs]}
-    log(f"traffic check: {'both ports answered' if check['ok'] else stopped['reason']}")
-    emit({"kind": "metrics-before", "profile": profile_name, "text": admin(target, admin_port, "/metrics")[1]})
-    for index, spec in enumerate(specs):
+    for variant in variants:
+        # The traffic check, before the first run and after a run with no
+        # response.
+        variant.check_again = functools.partial(traffic_check, variant.target, variant.address, variant.ports, mix[0],
+                                                check_s)
+        check = variant.check_again()
+        emit({"kind": "traffic-check", "profile": profile_name, **tag(variant), **check})
+        reason = None if check["ok"] else \
+            f"smock did not answer through its Service in {check_s:g} s: {silent_ports_text(check)}"
+        # A variant that cannot run stops them all, so that every run left
+        # has the others' to compare with.
+        if reason and not stopped:
+            stopped = {"reason": reason, "after": None, **left_out(runs, tagged)} if not tagged else \
+                {**tag(variant), "round": None, "reason": f"variant {variant.label}: {reason}", "after": None,
+                 **left_out(runs, tagged)}
+        log(f"traffic check{of(variant)}: {reason or 'both ports answered'}")
+    for variant in variants:
+        emit({"kind": "metrics-before", "profile": profile_name, **tag(variant),
+              "text": admin(variant.target, variant.admin_port, "/metrics")[1]})
+    for position, (round_, spec, variant) in enumerate(runs):
         if stopped:
             break
-        if index:
+        if position:
             time.sleep(plan["cooldown_s"])
-        log(f"{spec['id']}: {spec['rate']} requests/s for {spec['duration_s']} s")
-        if wait_ready(target, admin_port, READY_BEFORE_STEP_S):
-            result = run_step(spec, mix, oha, address, ports, functools.partial(scrape, target, admin_port))
+        name = run_name(round_, spec, variant)
+        log(f"{name}: {spec['rate']} requests/s for {spec['duration_s']} s")
+        if wait_ready(variant.target, variant.admin_port, READY_BEFORE_STEP_S):
+            result = run_step(spec, mix, oha, variant.address, variant.ports,
+                              functools.partial(scrape, variant.target, variant.admin_port))
         else:
             result = harness.not_ready_result(SimpleNamespace(mix=mix), spec, None)
-        emit({"kind": "step", "result": result})
+        emit({"kind": "step", **tag(variant), **({"round": round_} if tagged else {}), "result": result})
         cpu = result["smock_cpu"] or {}
         per_request = "-" if cpu.get("us_per_request") is None else cpu["us_per_request"]
         utilization = "-" if cpu.get("utilization") is None else f"{cpu['utilization'] * 100:.1f}%"
-        log(f"{spec['id']}: p99 {result['latency_ms']['p99']} ms, p99.9 {result['latency_ms']['p99_9']} ms, "
+        log(f"{name}: p99 {result['latency_ms']['p99']} ms, p99.9 {result['latency_ms']['p99_9']} ms, "
             f"{result['achieved_rate']} requests/s, {result['errors']} errors, "
             f"generator lag p99.9 {result['generator_lag_ms']['p99_9']} ms, "
             f"smock CPU {per_request} µs a request, {utilization} of its limit")
-        stopped, check = stop_after(spec, result, specs[index + 1:], check_again)
+        later = runs[position + 1:]
+        stopped, check = stop_after(spec, result, [later_spec for _, later_spec, _ in later], variant.check_again)
+        if stopped and tagged:
+            # Every variant stops, so that the runs left stay paired.
+            stopped = {**tag(variant), "round": round_,
+                       "reason": f"variant {variant.label}, round {round_}: {stopped['reason']}",
+                       "after": stopped["after"], **left_out(later, tagged)}
         if check:
-            emit({"kind": "traffic-check", "profile": profile_name, "after": spec["id"], **check})
-            log(f"{spec['id']} got no response; traffic check after it: "
+            emit({"kind": "traffic-check", "profile": profile_name, **tag(variant),
+                  **({"round": round_} if tagged else {}), "after": spec["id"], **check})
+            log(f"{name} got no response; traffic check after it: "
                 f"{'both ports answered, going on' if check['ok'] else silent_ports_text(check)}")
     if stopped:
         emit({"kind": "stopped", "profile": profile_name, **stopped})
-        log(f"stopped: {stopped['reason']}; {len(stopped['steps'])} steps not run")
-    emit({"kind": "metrics-after", "profile": profile_name, "text": admin(target, admin_port, "/metrics")[1]})
-    emit({"kind": "done", "profile": profile_name})
+        log(f"stopped: {stopped['reason']}; " +
+            (f"{len(stopped['runs'])} runs not run" if tagged else f"{len(stopped['steps'])} steps not run"))
+    for variant in variants:
+        emit({"kind": "metrics-after", "profile": profile_name, **tag(variant),
+              "text": admin(variant.target, variant.admin_port, "/metrics")[1]})
+    for variant in variants:
+        emit({"kind": "done", "profile": profile_name, **tag(variant)})
     return 0
 
 

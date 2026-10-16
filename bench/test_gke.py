@@ -27,6 +27,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 BENCH = Path(__file__).resolve().parent
 ROOT = BENCH.parent
@@ -1074,6 +1075,72 @@ class Generator(Helper):
                          {"reason": stopped["reason"], "after": "http-keep-alive@small",
                           "not_measured": ["https-keep-alive@small"]})
         self.assertIn("Not measured: https-keep-alive@small.", markdown)
+
+
+STEP_IDS = ["http-keep-alive@small", "https-keep-alive@small"]
+
+
+def generate_variants(plan_path, variants, rounds):
+    """Runs the load generator for profile small against several smocks on
+    this machine as variants, `variants` [(label, smock, first_second,
+    ports instead of smock's own)], for `rounds` rounds; returns its exit
+    status, its JSON lines and its output."""
+    entries = [{"label": label, "target": "localhost", "first_second": first_second,
+                "plain_port": int(ports.get("plain", smock.ports["plain"])),
+                "tls_port": int(ports.get("tls", smock.ports["tls"])), "admin_port": int(smock.ports["admin"])}
+               for label, smock, first_second, ports in variants]
+    environment = {**{name: value for name, value in os.environ.items() if name != "TARGET"},
+                   "VARIANTS": json.dumps(entries), "ROUNDS": str(rounds), "PROFILE": "small",
+                   "CASES": "http-keep-alive,https-keep-alive", "PLAN": str(plan_path),
+                   "OHA": shutil.which(OHA) or OHA, "TRAFFIC_CHECK_S": "2"}
+    generator = subprocess.run([sys.executable, str(BENCH / "gke" / "generator.py")], env=environment,
+                               capture_output=True, text=True, timeout=240)
+    lines = [json.loads(line) for line in generator.stdout.splitlines()]
+    return generator.returncode, lines, generator.stdout + generator.stderr
+
+
+class GeneratorWithVariants(Helper):
+    """With variants, smocks kept on one node, the load generator runs each
+    step of the profile against each variant in turn, one at a time, the
+    variants' order turned for each round and each step, and tags every
+    line about smock with its variant. It runs here against two smocks on
+    this machine, a and b, for two rounds; b skips the scrape a second
+    into each step."""
+
+    generator_plan = Generator.generator_plan
+    summarize = Generator.summarize
+
+    @classmethod
+    def setUpClass(cls):
+        directory = Path(tempfile.mkdtemp(prefix="smock-gke-test-"))
+        cls.addClassCleanup(shutil.rmtree, directory, ignore_errors=True)
+        cls.plan_path = Generator.generator_plan(SimpleNamespace(directory=lambda: directory))
+        with LocalSmock() as a, LocalSmock() as b:
+            cls.status, cls.lines, cls.output = generate_variants(cls.plan_path, [("a", a, True, {}),
+                                                                                  ("b", b, False, {})], 2)
+
+    def test_each_step_runs_each_variant_in_turn_in_the_turned_order_and_every_line_is_tagged(self):
+        self.assertEqual(self.status, 0, self.output)
+        order = [(1, STEP_IDS[0], "a"), (1, STEP_IDS[0], "b"), (1, STEP_IDS[1], "b"), (1, STEP_IDS[1], "a"),
+                 (2, STEP_IDS[0], "b"), (2, STEP_IDS[0], "a"), (2, STEP_IDS[1], "a"), (2, STEP_IDS[1], "b")]
+        self.assertEqual([(line["kind"], line.get("variant")) for line in self.lines],
+                         [("start", "a"), ("start", "b"), ("idle-rss", "a"), ("idle-rss", "b"),
+                          ("traffic-check", "a"), ("traffic-check", "b"), ("metrics-before", "a"),
+                          ("metrics-before", "b"), *[("step", variant) for _, _, variant in order],
+                          ("metrics-after", "a"), ("metrics-after", "b"), ("done", "a"), ("done", "b")])
+        self.assertEqual([(line["round"], line["result"]["id"], line["variant"])
+                          for line in self.lines if line["kind"] == "step"], order)
+        starts = [line for line in self.lines if line["kind"] == "start"]
+        self.assertEqual([(start["address"], start["first_second"]) for start in starts],
+                         [("127.0.0.1", True), ("127.0.0.1", False)])
+        for start in starts:
+            self.assertRegex(start["status"]["digest"], "^[0-9a-f]{12}$")
+        for check in (line for line in self.lines if line["kind"] == "traffic-check"):
+            self.assertTrue(check["ok"], check)
+        # Each variant's own smock answered the load of its runs.
+        for step in (line["result"] for line in self.lines if line["kind"] == "step"):
+            self.assertEqual((step["errors"], step["smock_ready"]), (0, True))
+            self.assertGreaterEqual(step["smock_cpu"]["requests"], step["requests"]["ok"])
 
 
 
