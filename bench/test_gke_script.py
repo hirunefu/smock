@@ -1817,6 +1817,22 @@ class Variants(Script):
         self.assertEqual({variant["label"]: variant["first_second"] for variant in json.loads(env["VARIANTS"])},
                          {"r1": True, "r2": True, "r2b": True, "r2h": False})
 
+    def test_a_dry_run_of_variants_prints_each_image_and_each_variant_it_would_make(self):
+        old = self.smock_for(HOST_ARCH, "0d984c8a1b2c")
+        status, output = self.run_script_without_smock("--dry-run", "--variant", f"r1={old}", "--variant",
+                                                       f"r2={self.smock}", "--variant", f"r2b={self.smock}")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(self.changing_calls(), [])
+        for expected in ("would run: docker build", "--tag=smock-gke-bench/smock-r1:", "--tag=smock-gke-bench/smock-r2:",
+                         "/smock-r1:", "would run: env DOCKER_CONFIG=", "/smock-r2:", "manifests/small/smock-r1.json",
+                         "manifests/small/smock-r2b.json", "wait --for=condition=Ready pod/smock-small-r2b",
+                         "would check that the variants share a node, with the limits of small as their requests and "
+                         "limits", "smock-node-cpu.log",
+                         "would split the results in", "same-node.json and same-node.md, also as summary.md"):
+            self.assertIn(expected, output)
+        # r2b shares r2's image.
+        self.assertNotIn("smock-gke-bench/smock-r2b", output)
+
     def test_each_variant_joins_the_node_before_the_next_and_the_load_generator_starts_once_all_are_there(self):
         status, output = self.run_variants()
         self.assertEqual(status, 0, output)
