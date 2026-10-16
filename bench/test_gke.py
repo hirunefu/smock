@@ -2442,6 +2442,15 @@ class SameNode(VariantRun):
         self.assertIn("in which a run used 80% of its CPU limit or more", markdown)
         self.assertIn("above 0.01 is no clear difference", markdown)
 
+    def test_a_p_below_a_thousandth_is_said_as_such(self):
+        # 12 pairs over six rounds, all higher: p = 2 / 2^12.
+        us = {"a": {500: [30.0] * 6, 1000: [40.0] * 6}, "b": {500: [33.0] * 6, 1000: [44.0] * 6}}
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(us),
+                                                                           variant_pods(["a", "b"])))
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(report["gke"]["profiles"]["small"]["verdicts"]["b"]["sign_test_p"], 2 / 2 ** 12)
+        self.assertIn("- b against a: +10% (+10%), higher in 12 of 12 pairs, sign test p < 0.001: higher.", markdown)
+
     def test_a_run_that_measured_nothing_drops_out_of_the_counts_with_why(self):
         # b's run at 500 requests/s in round 3 lost requests, and the load
         # generator fell behind in a's at 1,000 in round 4: neither counts,

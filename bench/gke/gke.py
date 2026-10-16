@@ -1550,7 +1550,8 @@ def range_text(low, high):
 
 
 def p_text(p):
-    return "< 0.001" if p < 0.001 else f"{p:.3f}".rstrip("0").rstrip(".")
+    """A sign test's p, for people: p = 0.008, or p < 0.001."""
+    return "p < 0.001" if p < 0.001 else "p = " + f"{p:.3f}".rstrip("0").rstrip(".")
 
 
 SAME_NODE_COLUMNS = ("Case", "Rate", "Variant", "CPU µs/request", "Change", "Paired", "Higher", "Throttled periods",
@@ -1579,7 +1580,7 @@ def verdict_line(label, baseline, result):
         return f"- {label} against {baseline}: no pair of runs that both measured and neither saturated."
     return (f"- {label} against {baseline}: {percent_text(result['median_change_percent'])} "
             f"({range_text(result['min_change_percent'], result['max_change_percent'])}), higher in "
-            f"{result['higher']} of {result['pairs']} pairs, sign test p = {p_text(result['sign_test_p'])}: "
+            f"{result['higher']} of {result['pairs']} pairs, sign test {p_text(result['sign_test_p'])}: "
             f"{result['verdict']}.")
 
 
