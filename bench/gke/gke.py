@@ -1803,8 +1803,11 @@ def command_same_node(args):
 def command_stopped(args):
     stopped = next((line for line in generator_lines(args.log) if line["kind"] == "stopped"), None)
     if stopped:
-        count = len(stopped["steps"])
-        print(f"{stopped['reason']}; {count} step{'' if count == 1 else 's'} not measured")
+        # A run of variants lists the runs it left out, of every variant
+        # in every round left, where one of smock alone lists its steps.
+        what = "step" if "steps" in stopped else "run"
+        count = len(stopped["steps"] if "steps" in stopped else stopped["runs"])
+        print(f"{stopped['reason']}; {count} {what}{'' if count == 1 else 's'} not measured")
     return 0
 
 

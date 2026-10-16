@@ -2247,6 +2247,9 @@ class Samples(VariantRun):
                                     "not_measured": ["http-keep-alive@small@500", "http-keep-alive@small@1000"]}),
              (2, "b"): (False, [500], {"reason": reason, "after": "http-keep-alive@small@500",
                                        "not_measured": ["http-keep-alive@small@1000"]})})
+        # What the runner says when the profile ends, from the whole log.
+        status, stdout, stderr = helper("stopped", out / "raw" / "small" / "generator.log")
+        self.assertEqual((status, stdout), (0, f"{reason}; 3 runs not measured\n"), stderr)
         sample_log = (out / "samples" / "2-b" / "raw" / "small" / "generator.log").read_text()
         self.assertEqual([json.loads(line)["kind"] for line in sample_log.splitlines()],
                          ["start", "traffic-check", "metrics-before", "step", "traffic-check", "stopped",
