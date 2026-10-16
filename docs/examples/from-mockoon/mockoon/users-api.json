@@ -1,0 +1,283 @@
+{
+  "uuid": "694befb3-4da5-43a5-8b7d-383ead6f3e5b",
+  "lastMigration": 33,
+  "name": "users-api",
+  "endpointPrefix": "api/v1",
+  "latency": 0,
+  "port": 3000,
+  "hostname": "",
+  "folders": [],
+  "routes": [
+    {
+      "uuid": "f1a7121e-b66e-486b-840e-571980190b9d",
+      "type": "http",
+      "documentation": "Lists the users; ?status=inactive lists the inactive ones.",
+      "method": "get",
+      "endpoint": "users",
+      "responses": [
+        {
+          "uuid": "48d46358-43c6-4cc7-8cca-79a31bb98a9c",
+          "rules": [],
+          "rulesOperator": "OR",
+          "statusCode": 200,
+          "label": "all",
+          "headers": [],
+          "body": "",
+          "latency": 300,
+          "bodyType": "FILE",
+          "filePath": "../defs/files/users.json",
+          "databucketID": "",
+          "sendFileAsBody": true,
+          "disableTemplating": false,
+          "fallbackTo404": false,
+          "default": true,
+          "crudKey": "id",
+          "callbacks": []
+        },
+        {
+          "uuid": "cdc0de6d-cd50-479f-926e-4feaaa1fa98d",
+          "rules": [
+            {
+              "target": "query",
+              "modifier": "status",
+              "value": "inactive",
+              "invert": false,
+              "operator": "equals"
+            }
+          ],
+          "rulesOperator": "OR",
+          "statusCode": 200,
+          "label": "inactive",
+          "headers": [],
+          "body": "",
+          "latency": 0,
+          "bodyType": "FILE",
+          "filePath": "../defs/files/inactive-users.json",
+          "databucketID": "",
+          "sendFileAsBody": true,
+          "disableTemplating": false,
+          "fallbackTo404": false,
+          "default": false,
+          "crudKey": "id",
+          "callbacks": []
+        }
+      ],
+      "responseMode": null,
+      "streamingMode": null,
+      "streamingInterval": 0
+    },
+    {
+      "uuid": "00fd588b-c8e7-448f-b04b-3a0ba025f988",
+      "type": "http",
+      "documentation": "",
+      "method": "get",
+      "endpoint": "users/:id",
+      "responses": [
+        {
+          "uuid": "39ba0860-196f-400a-8756-3ed26d9a88ed",
+          "rules": [],
+          "rulesOperator": "OR",
+          "statusCode": 200,
+          "label": "found",
+          "headers": [],
+          "body": "{ \"id\": \"{{urlParam 'id'}}\", \"name\": \"{{faker 'person.fullName'}}\", \"lang\": \"{{queryParam 'lang' 'en'}}\" }",
+          "latency": 0,
+          "bodyType": "INLINE",
+          "filePath": "",
+          "databucketID": "",
+          "sendFileAsBody": false,
+          "disableTemplating": false,
+          "fallbackTo404": false,
+          "default": true,
+          "crudKey": "id",
+          "callbacks": []
+        },
+        {
+          "uuid": "928649e6-1205-47d7-906b-31d2445fd1e2",
+          "rules": [
+            {
+              "target": "params",
+              "modifier": "id",
+              "value": "^0+$",
+              "invert": false,
+              "operator": "regex"
+            }
+          ],
+          "rulesOperator": "OR",
+          "statusCode": 404,
+          "label": "missing",
+          "headers": [],
+          "body": "{ \"error\": \"not found\" }",
+          "latency": 0,
+          "bodyType": "INLINE",
+          "filePath": "",
+          "databucketID": "",
+          "sendFileAsBody": false,
+          "disableTemplating": false,
+          "fallbackTo404": false,
+          "default": false,
+          "crudKey": "id",
+          "callbacks": []
+        }
+      ],
+      "responseMode": null,
+      "streamingMode": null,
+      "streamingInterval": 0
+    },
+    {
+      "uuid": "30aff846-d294-422e-b835-f1a54e734586",
+      "type": "http",
+      "documentation": "",
+      "method": "post",
+      "endpoint": "users",
+      "responses": [
+        {
+          "uuid": "64ea5ee1-bcb4-4977-8c25-356f1fea6cb0",
+          "rules": [
+            {
+              "target": "header",
+              "modifier": "X-Api-Key",
+              "value": "secret",
+              "invert": false,
+              "operator": "equals"
+            },
+            {
+              "target": "body",
+              "modifier": "role",
+              "value": "admin",
+              "invert": false,
+              "operator": "equals"
+            }
+          ],
+          "rulesOperator": "AND",
+          "statusCode": 201,
+          "label": "created",
+          "headers": [],
+          "body": "{ \"id\": \"{{faker 'string.uuid'}}\", \"name\": \"{{body 'name'}}\" }",
+          "latency": 0,
+          "bodyType": "INLINE",
+          "filePath": "",
+          "databucketID": "",
+          "sendFileAsBody": false,
+          "disableTemplating": false,
+          "fallbackTo404": false,
+          "default": false,
+          "crudKey": "id",
+          "callbacks": []
+        },
+        {
+          "uuid": "0e42339c-ffed-4548-bec6-6d8d0cc10bac",
+          "rules": [],
+          "rulesOperator": "OR",
+          "statusCode": 403,
+          "label": "forbidden",
+          "headers": [],
+          "body": "{ \"error\": \"forbidden\" }",
+          "latency": 0,
+          "bodyType": "INLINE",
+          "filePath": "",
+          "databucketID": "",
+          "sendFileAsBody": false,
+          "disableTemplating": false,
+          "fallbackTo404": false,
+          "default": true,
+          "crudKey": "id",
+          "callbacks": []
+        }
+      ],
+      "responseMode": null,
+      "streamingMode": null,
+      "streamingInterval": 0
+    },
+    {
+      "uuid": "744351bc-7aaf-49ad-baeb-deb4f8940826",
+      "type": "crud",
+      "documentation": "",
+      "method": "",
+      "endpoint": "orders",
+      "responses": [
+        {
+          "uuid": "b9e09077-c8e0-4954-aa92-ebe2c9d482c0",
+          "rules": [],
+          "rulesOperator": "OR",
+          "statusCode": 200,
+          "label": "orders",
+          "headers": [],
+          "body": "",
+          "latency": 0,
+          "bodyType": "DATABUCKET",
+          "filePath": "",
+          "databucketID": "ordr",
+          "sendFileAsBody": false,
+          "disableTemplating": false,
+          "fallbackTo404": false,
+          "default": true,
+          "crudKey": "id",
+          "callbacks": []
+        }
+      ],
+      "responseMode": null,
+      "streamingMode": null,
+      "streamingInterval": 0
+    }
+  ],
+  "rootChildren": [
+    {
+      "type": "route",
+      "uuid": "f1a7121e-b66e-486b-840e-571980190b9d"
+    },
+    {
+      "type": "route",
+      "uuid": "00fd588b-c8e7-448f-b04b-3a0ba025f988"
+    },
+    {
+      "type": "route",
+      "uuid": "30aff846-d294-422e-b835-f1a54e734586"
+    },
+    {
+      "type": "route",
+      "uuid": "744351bc-7aaf-49ad-baeb-deb4f8940826"
+    }
+  ],
+  "proxyMode": false,
+  "proxyHost": "",
+  "proxyRemovePrefix": false,
+  "proxyReqHeaders": [
+    {
+      "key": "",
+      "value": ""
+    }
+  ],
+  "proxyResHeaders": [
+    {
+      "key": "",
+      "value": ""
+    }
+  ],
+  "tlsOptions": {
+    "enabled": false,
+    "type": "CERT",
+    "pfxPath": "",
+    "certPath": "",
+    "keyPath": "",
+    "caPath": "",
+    "passphrase": ""
+  },
+  "cors": true,
+  "headers": [
+    {
+      "key": "Content-Type",
+      "value": "application/json"
+    }
+  ],
+  "data": [
+    {
+      "uuid": "7fc1f994-0bec-4edd-9247-1c276c347b42",
+      "id": "ordr",
+      "name": "orders",
+      "documentation": "",
+      "value": "[{\"id\":1,\"item\":\"book\"},{\"id\":2,\"item\":\"pen\"}]"
+    }
+  ],
+  "callbacks": []
+}

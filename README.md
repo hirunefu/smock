@@ -4,6 +4,11 @@ smock is a mock server for HTTP/1.1, HTTPS and Server-Sent Events. It stands in
 for the services a system depends on, on Kubernetes and on developers'
 machines. It is written in MoonBit ([ADR 0001](docs/adr/0001-moonbit-with-c-only-for-tls.md)).
 The domain terms are defined in [GLOSSARY.md](GLOSSARY.md).
+[docs/getting-started-on-gke.md](docs/getting-started-on-gke.md) takes a
+first-time reader to smock answering requests on GKE Autopilot, before a
+release exists.
+[docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) maps
+Mockoon environments, routes and rules onto Mocks and Stubs.
 
 ## Layout
 
@@ -484,6 +489,8 @@ file-name order), what a Mock answers when nothing matches, responses with
 inline bodies, body files, JSON or Server-Sent Events, response templates,
 Faults, the JSON Schema, editor support and writing Definition files in
 another configuration language.
+[docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) turns a
+Mockoon environment into Definition files.
 
 Definition files can also be YAML (`.yaml` or `.yml`), mixed with JSON files
 in one directory. A YAML file means exactly what the equivalent JSON file
@@ -712,6 +719,11 @@ The image's command is `serve`; arguments replace it (`... smock:<version>
 (such as a Kubernetes Secret). The image exposes the plain port 8080, the TLS
 port 8443 and the admin port 9090. Files mounted into the container must be
 readable by UID 65532.
+
+Until the first release,
+[docs/getting-started-on-gke.md](docs/getting-started-on-gke.md) builds the
+image from the binary that CI keeps, and installs the chart below from a
+checkout.
 
 ### Helm chart
 
