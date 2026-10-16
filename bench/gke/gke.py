@@ -58,7 +58,8 @@ def smock_name(profile_name):
 # second and above (the amd64 run of 2026-10-14), so it has 6 there. Either
 # fits an 8-vCPU node (7910m allocatable on ek-standard-8 and
 # e4a-standard-8 in those runs) with at least 1 vCPU left for Autopilot's
-# own Pods on it, so that the run's CPU quota of three such nodes holds.
+# own Pods on it, so that the quotas the run checks, of nodes of 8 vCPUs
+# (four by default: GKE_BENCH_NEEDED_CPUS in scripts/gke-bench.sh), hold.
 # oha's worker threads and the split of the connections between the
 # requests of the mix do not depend on the number of CPUs. Its ephemeral
 # storage holds oha's databases of one step.
