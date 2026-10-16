@@ -2281,6 +2281,18 @@ class SameNode(VariantRun):
         self.assertIn("- b against a: +10% (+2.5% to +20%), higher in 8 of 8 pairs, sign test p = 0.008: higher.",
                       markdown)
 
+    def test_each_variants_drift_compares_its_first_round_with_the_later_ones(self):
+        # b's round 1 at 500 requests/s, 33.0, against the median of its
+        # later rounds, 32.24, and at 1,000, 44.0 against 42.0.
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(HIGHER),
+                                                                           variant_pods(["a", "b"])))
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(report["gke"]["profiles"]["small"]["drift"], {
+            "a": {"steps": 2, "median_change_percent": 0.0, "min_change_percent": 0.0, "max_change_percent": 0.0},
+            "b": {"steps": 2, "median_change_percent": 3.56, "min_change_percent": 2.36, "max_change_percent": 4.76}})
+        self.assertIn("Drift, each variant's CPU µs/request in round 1 against the median of its later rounds, step by "
+                      "step: a 0% (0%, 2 steps); b +3.6% (+2.4% to +4.8%, 2 steps).", markdown)
+
     def test_pairs_in_which_either_run_saturated_its_cpu_limit_are_left_out_of_the_verdict(self):
         # b used 95% of its CPU limit at 1,000 requests/s in every round,
         # and a 92% at 500 in round 2.

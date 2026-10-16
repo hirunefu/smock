@@ -1406,6 +1406,33 @@ def placement_text(result):
     return f"{where} {admitted} admitted with the profile's limits as its requests and limits."
 
 
+def drift(steps, label):
+    """How a variant's CPU a request in round 1 differs from the median of
+    its later rounds at each step that has both: the median change, its
+    range, and over how many steps. A first round apart from the others is
+    a node or a smock that changed with time, not a variant."""
+    changes = []
+    for step in steps:
+        first, *later = step["variants"][label]["runs"]
+        values = [run["us_per_request"] for run in later if run["not_measured"] is None]
+        if first["not_measured"] is None and values:
+            changes.append(percent_change(median(values), first["us_per_request"]))
+    rounded = [round(change, 2) for change in changes]
+    return {"steps": len(changes), "median_change_percent": None if not changes else round(median(changes), 2),
+            "min_change_percent": min(rounded, default=None), "max_change_percent": max(rounded, default=None)}
+
+
+def drift_text(result):
+    if result["rounds"] < 2:
+        return "Drift: one round alone, with none to compare round 1 with."
+    return ("Drift, each variant's CPU µs/request in round 1 against the median of its later rounds, step by step: "
+            + "; ".join(f"{label} -" if not record["steps"] else
+                        f"{label} {percent_text(record['median_change_percent'])} "
+                        f"({range_text(record['min_change_percent'], record['max_change_percent'])}, "
+                        f"{record['steps']} step{'' if record['steps'] == 1 else 's'})"
+                        for label, record in result["drift"].items()) + ".")
+
+
 ORDINALS = ("first", "second", "third", "fourth")
 
 
@@ -1434,8 +1461,8 @@ def profile_comparison(profile, samples, labels, baseline, rounds, lines):
     every sample is complete, the order of the runs and how often each
     variant held each position in a step, the most CPU an idle variant
     used during another's run, each step's runs of each variant
-    (variant_at_step), each variant's verdict against the `baseline`, and
-    the runs that measured nothing."""
+    (variant_at_step), each variant's verdict against the `baseline` and
+    its drift, and the runs that measured nothing."""
     name = profile["name"]
     step_lines = {(line["round"], line["variant"], line["result"]["id"]): line
                   for line in lines if line["kind"] == "step" and line.get("variant")}
@@ -1477,6 +1504,7 @@ def profile_comparison(profile, samples, labels, baseline, rounds, lines):
             "steps": steps,
             "verdicts": {label: verdict([pair for step in steps for pair in step["variants"][label]["pairs"]])
                          for label in labels if label != baseline},
+            "drift": {label: drift(steps, label) for label in labels},
             "ended_early": ended and {"reason": ended["reason"],
                                       "left_out": sum(run["left_out"] for _, _, run in unmeasured)},
             "not_measured": [{"id": step_id, "round": run["round"], "variant": label, "reason": run["not_measured"],
@@ -1584,7 +1612,7 @@ def same_node_markdown(report):
         lines += not_measured_lines(result)
         lines += ["", "Verdicts, over the pairs of runs of every step in which neither run saturated:", "",
                   *(verdict_line(label, baseline, verdict_result)
-                    for label, verdict_result in result["verdicts"].items())]
+                    for label, verdict_result in result["verdicts"].items()), "", drift_text(result)]
     return "\n".join(lines) + "\n"
 
 
