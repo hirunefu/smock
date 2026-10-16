@@ -1709,8 +1709,9 @@ class Variants(Script):
     """--variant compares 2 to 4 smock binaries, or one binary with other
     options, on one node under each profile: each variant in a Pod of its
     own, which the run applies and waits for one after the other, checks
-    are on one node at the plan's limits, and one load generator measures
-    in turn, over --rounds rounds; the summary compares them."""
+    that they share one node at the plan's limits, and has one load
+    generator measure in turn, over --rounds rounds; the summary compares
+    them."""
 
     def test_wrong_combinations_of_variants_and_rounds_exit_2_and_call_nothing(self):
         other = self.smock_for(HOST_ARCH, "0d984c8a1b2c")
