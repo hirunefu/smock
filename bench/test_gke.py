@@ -1142,6 +1142,17 @@ class GeneratorWithVariants(Helper):
             self.assertEqual((step["errors"], step["smock_ready"]), (0, True))
             self.assertGreaterEqual(step["smock_cpu"]["requests"], step["requests"]["ok"])
 
+    def test_a_variant_that_skips_the_scrape_a_second_into_each_step_records_no_first_second(self):
+        for line in (line for line in self.lines if line["kind"] == "step"):
+            cpu = line["result"]["smock_cpu"]
+            self.assertGreater(cpu["usage_s"], 0)
+            if line["variant"] == "a":
+                self.assertGreaterEqual(cpu["first_second"]["wall_s"], 1)
+                self.assertGreater(cpu["first_second"]["requests"], 0)
+            else:
+                self.assertIn("first_second", cpu)
+                self.assertIsNone(cpu["first_second"])
+
 
 
 def load_generator_module():

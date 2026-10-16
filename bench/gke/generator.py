@@ -268,14 +268,16 @@ def cpu_children_s():
     return usage.ru_utime + usage.ru_stime
 
 
-def run_step(spec, mix, oha, address, ports, scrape_metrics):
+def run_step(spec, mix, oha, address, ports, scrape_metrics, first_second=True):
     """Sends one step's load and returns what it measured, as a case of
     summary.json has it; what only a run on one machine measures is None.
     `scrape_metrics` scrapes smock's /metrics, right before and right
-    after the load, for what smock used between the two scrapes, and a
-    second into the load, for what it used in the step's first second
-    (smock_cpu's first_second), when TLS handshakes and connections
-    opening come at once."""
+    after the load, for what smock used between the two scrapes, and, with
+    `first_second`, a second into the load, for what it used in the step's
+    first second (smock_cpu's first_second), when TLS handshakes and
+    connections opening come at once. Without it, that scrape, which is
+    work for smock too, is left out, and first_second is None: a variant
+    can run without it, to see whether it costs smock CPU."""
     work = Path(tempfile.mkdtemp(prefix="step-"))
     run = SimpleNamespace(mix=mix, tmp=work)
     port = ports["tls" if spec["protocol"] == "https" else "plain"]
@@ -293,8 +295,9 @@ def run_step(spec, mix, oha, address, ports, scrape_metrics):
                 process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                            stderr=stderr)
             load.append({"request": request, "rate": float(rate), "connections": connections, "process": process})
-        time.sleep(max(0.0, started + 1 - time.monotonic()))
-        metrics_first, scraped_first = scrape_metrics(), time.monotonic()
+        if first_second:
+            time.sleep(max(0.0, started + 1 - time.monotonic()))
+            metrics_first, scraped_first = scrape_metrics(), time.monotonic()
         for item in load:
             item["process"].wait(total_s + 300)
         wall_s, cpu_s = time.monotonic() - started, cpu_children_s() - cpu_before
@@ -308,8 +311,8 @@ def run_step(spec, mix, oha, address, ports, scrape_metrics):
     smock_cpu, peak_bytes, rss_kib = harness.scraped_use(metrics_before, metrics_after, spec["cpu_limit"],
                                                          scraped_after - scraped_before)
     if smock_cpu:
-        smock_cpu["first_second"], _, _ = harness.scraped_use(metrics_before, metrics_first, spec["cpu_limit"],
-                                                              scraped_first - scraped_before)
+        smock_cpu["first_second"] = harness.scraped_use(metrics_before, metrics_first, spec["cpu_limit"],
+                                                        scraped_first - scraped_before)[0] if first_second else None
     return {
         **spec,
         **harness.load_result(spec, kinds, latencies, release_latencies, lags, each_second),
@@ -465,7 +468,7 @@ def main():
         log(f"{name}: {spec['rate']} requests/s for {spec['duration_s']} s")
         if wait_ready(variant.target, variant.admin_port, READY_BEFORE_STEP_S):
             result = run_step(spec, mix, oha, variant.address, variant.ports,
-                              functools.partial(scrape, variant.target, variant.admin_port))
+                              functools.partial(scrape, variant.target, variant.admin_port), variant.first_second)
         else:
             result = harness.not_ready_result(SimpleNamespace(mix=mix), spec, None)
         emit({"kind": "step", **tag(variant), **({"round": round_} if tagged else {}), "result": result})
