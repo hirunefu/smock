@@ -1572,8 +1572,11 @@ Each `--variant` is `LABEL=FILE`, the first the baseline; the label (1 to
 Service, `smock-<profile>-<label>`. `no-init` leaves out the init
 container that prints the node's CPU, and `no-first-second` the load
 generator's scrape of smock's `/metrics` a second into each step: R2's
-two changes to the harness. Two variants of one binary, such as r2 and
-r2b, show how far runs of the same binary differ on the node. A binary
+two changes to the harness. Variants of one binary (one SHA-256) are
+also compared with the first variant that has it: with the same options,
+such as r2b against r2, an A/A pair, whose paired changes show how far
+runs of one binary differ on the node, the A/A spread; with other
+options, such as r2h against r2, what those options cost. A binary
 must be for the run's architecture, but may be built from any commit:
 the harness is the commit checked out, and the binaries are what the run
 compares. The script prints each one's SHA-256, and the commit it says
@@ -1607,8 +1610,11 @@ saturated: their median change and range, how many were higher, and the
 p of an exact sign test, whose smallest with 8 pairs is 0.008. Fewer
 than 6 pairs that differ cannot give a p of 0.05 or less, so with 5 or
 fewer it says there are too few pairs to decide; above 0.05, it says no
-clear difference. A drift line compares each variant's first round with
-the later ones. The run exits 1 when the variants
+clear difference, and so it does, whatever the p, when the median change
+lies inside the profile's A/A spread. Below the verdicts, each variant
+of one binary has its own against the first with it, the A/A pair's and
+the other options'. A drift line compares each variant's first round
+with the later ones. The run exits 1 when the variants
 cannot be compared: on more than one node, under other limits than the
 plan's, or with a sample incomplete.
 

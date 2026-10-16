@@ -2345,6 +2345,14 @@ HIGHER = {"a": {500: [30.0, 31.0, 29.0, 30.0], 1000: [40.0, 40.0, 40.0, 40.0]},
           "b": {500: [33.0, 32.24, 31.9, 36.0], 1000: [44.0, 42.0, 46.0, 41.0]}}
 
 
+# Three variants' CPU a request over four rounds at two rates: b is 5%
+# above a in every round, and c, b's binary, 7%, 6%, 2% and 2% above or
+# below b in turn.
+SAME_BINARY = {"a": {500: [30.0] * 4, 1000: [40.0] * 4},
+               "b": {500: [31.5] * 4, 1000: [42.0] * 4},
+               "c": {500: [33.705, 29.61, 32.13, 30.87], 1000: [44.94, 39.48, 42.84, 41.16]}}
+
+
 class SameNode(VariantRun):
     """gke.py same-node compares the variants of a run on one node, from
     their samples' summaries and the load generator's lines: step by step,
@@ -2371,7 +2379,8 @@ class SameNode(VariantRun):
         self.assertEqual(profile["verdicts"]["b"],
                          {"pairs": 8, "higher": 8, "lower": 0, "median_change_percent": 10.0,
                           "min_change_percent": 2.5, "max_change_percent": 20.0, "sign_test_p": 0.0078125,
-                          "smallest_p": 0.0078125, "verdict": "higher"})
+                          "smallest_p": 0.0078125, "a_a_spread": None, "inside_a_a_spread": None,
+                          "verdict": "higher"})
         self.assertEqual(self.row(markdown, "http-keep-alive", 500, "a"),
                          {"Case": "http-keep-alive", "Rate": "500", "Variant": "a (baseline)",
                           "CPU µs/request": "30.0 (29.0–31.0, 4)", "Change": "-", "Paired": "-", "Higher": "-",
@@ -2434,7 +2443,8 @@ class SameNode(VariantRun):
         self.assertEqual(profile["verdicts"]["b"],
                          {"pairs": 3, "higher": 3, "lower": 0, "median_change_percent": 10.0,
                           "min_change_percent": 10.0, "max_change_percent": 20.0, "sign_test_p": 0.25,
-                          "smallest_p": 0.25, "verdict": "too few pairs to decide"})
+                          "smallest_p": 0.25, "a_a_spread": None, "inside_a_a_spread": None,
+                          "verdict": "too few pairs to decide"})
         self.assertIn("- b against a: +10% (+10% to +20%), higher in 3 of 3 pairs, sign test p = 0.25: too few pairs "
                       "to decide (with 3 that differ, p cannot be below 0.25).", markdown)
 
@@ -2747,6 +2757,53 @@ class SameNode(VariantRun):
         status, report, markdown, _ = self.same_node(out)
         self.assertIsNone(report["stopped"])
         self.assertNotIn("Stopped early", markdown)
+
+    def test_two_variants_of_one_binary_and_options_are_an_a_a_pair_whose_spread_the_verdicts_are_read_against(self):
+        # b and c are one binary with the same options: c against b is an
+        # A/A pair, whose paired changes, -6% to +7%, are how far runs of
+        # one binary differ on the node. b is 5% above a in every pair,
+        # which the sign test alone calls higher, but inside that spread.
+        status, report, markdown, stderr = self.same_node(
+            self.variant_run(variant_lines(SAME_BINARY), variant_pods(["a", "b", "c"])), sha256={"c": "b" * 64})
+        self.assertEqual(status, 0, stderr)
+        profile = report["gke"]["profiles"]["small"]
+        [within] = profile["within"]
+        self.assertEqual((within["label"], within["against"], within["kind"]), ("c", "b", "same binary"))
+        self.assertEqual([(step["id"], [pair["change_percent"] for pair in step["pairs"]]) for step in within["steps"]],
+                         [("http-keep-alive@small@500", [7.0, -6.0, 2.0, -2.0]),
+                          ("http-keep-alive@small@1000", [7.0, -6.0, 2.0, -2.0])])
+        self.assertEqual({key: within["verdict"][key] for key in ("pairs", "min_change_percent", "max_change_percent",
+                                                                  "a_a_spread", "verdict")},
+                         {"pairs": 8, "min_change_percent": -6.0, "max_change_percent": 7.0, "a_a_spread": None,
+                          "verdict": "no clear difference"})
+        self.assertEqual(profile["a_a_spread"], {"min_change_percent": -6.0, "max_change_percent": 7.0})
+        b = profile["verdicts"]["b"]
+        self.assertEqual({key: b[key] for key in ("median_change_percent", "sign_test_p", "a_a_spread",
+                                                  "inside_a_a_spread", "verdict")},
+                         {"median_change_percent": 5.0, "sign_test_p": 0.0078125,
+                          "a_a_spread": {"min_change_percent": -6.0, "max_change_percent": 7.0},
+                          "inside_a_a_spread": True, "verdict": "no clear difference"})
+        self.assertIn("- b against a: +5% (+5%), higher in 8 of 8 pairs, sign test p = 0.008: no clear difference "
+                      "(inside the A/A spread of -6% to +7%).", markdown)
+        self.assertIn("Variants of one binary, each against the first variant with it, over the same pairs:\n\n"
+                      "- c against b (the same options, an A/A pair): 0% (-6% to +7%), higher in 4 of 8 pairs, "
+                      "sign test p = 1: no clear difference.\n", markdown)
+
+    def test_a_variant_of_one_binary_with_other_options_is_compared_with_the_first_for_what_they_cost(self):
+        # c is b's binary run without the init container (and, as b, the
+        # scrape a second into each step): what the harness costs.
+        status, report, markdown, stderr = self.same_node(
+            self.variant_run(variant_lines(SAME_BINARY), variant_pods(["a", "b", "c"])), "--no-init", "c",
+            sha256={"c": "b" * 64})
+        self.assertEqual(status, 0, stderr)
+        profile = report["gke"]["profiles"]["small"]
+        [within] = profile["within"]
+        self.assertEqual((within["label"], within["against"], within["kind"]), ("c", "b", "other options"))
+        # With no A/A pair, nothing to read the verdicts against.
+        self.assertIsNone(profile["a_a_spread"])
+        self.assertEqual(profile["verdicts"]["b"]["verdict"], "higher")
+        self.assertIn("- c against b (no-init, no-first-second against no-first-second): 0% (-6% to +7%), higher in 4 "
+                      "of 8 pairs, sign test p = 1: no clear difference.", markdown)
 
     def test_a_variant_with_two_sha256_values_exits_2_since_what_it_measured_is_unknown(self):
         out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))

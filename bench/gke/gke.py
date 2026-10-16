@@ -1364,24 +1364,70 @@ def fewest_pairs():
     return next(pairs for pairs in range(1, 64) if sign_test_p(pairs, 0) <= SIGNIFICANT_P)
 
 
-def verdict(pairs):
-    """Whether a variant used more CPU a request than the baseline, over
-    its unsaturated `pairs` of runs of a profile: the median change and its
-    range, how many were higher and how many lower, the sign test's p of
-    that, and the smallest p as many pairs that differ could give; higher
-    or lower when p is at most SIGNIFICANT_P, no clear difference when it
-    is above it but could have been at most it, and too few pairs to
-    decide when it could not, as with fewer than fewest_pairs() pairs that
-    differ, so that a lack of pairs does not read as a lack of difference."""
+def verdict(pairs, spread=None):
+    """Whether a variant used more CPU a request than another (the
+    baseline), over its unsaturated `pairs` of runs of a profile: the
+    median change and its range, how many were higher and how many lower,
+    the sign test's p of that, and the smallest p as many pairs that differ
+    could give; higher or lower when p is at most SIGNIFICANT_P, no clear
+    difference when it is above it but could have been at most it, and too
+    few pairs to decide when it could not, as with fewer than
+    fewest_pairs() pairs that differ, so that a lack of pairs does not read
+    as a lack of difference. With the A/A `spread` of the profile
+    (a_a_spread's), a median change inside it is no clear difference too,
+    whatever p is: runs of one binary differ that much on the node."""
     changes = [pair["change_percent"] for pair in pairs if not pair["saturated"]]
     higher, lower = sum(change > 0 for change in changes), sum(change < 0 for change in changes)
     p, smallest = sign_test_p(higher, lower), sign_test_p(higher + lower, 0)
-    return {"pairs": len(changes), "higher": higher, "lower": lower,
-            "median_change_percent": None if not changes else round(median(changes), 2),
+    middle = None if not changes else round(median(changes), 2)
+    inside = None if spread is None or middle is None else \
+        spread["min_change_percent"] <= middle <= spread["max_change_percent"]
+    return {"pairs": len(changes), "higher": higher, "lower": lower, "median_change_percent": middle,
             "min_change_percent": min(changes, default=None), "max_change_percent": max(changes, default=None),
-            "sign_test_p": p, "smallest_p": smallest,
+            "sign_test_p": p, "smallest_p": smallest, "a_a_spread": spread, "inside_a_a_spread": inside,
             "verdict": None if not changes else "too few pairs to decide" if smallest > SIGNIFICANT_P else
-            "no clear difference" if p > SIGNIFICANT_P else "higher" if higher > lower else "lower"}
+            "no clear difference" if p > SIGNIFICANT_P or inside else "higher" if higher > lower else "lower"}
+
+
+def pairings(variants):
+    """The variants of one binary, by its sha256, each against the first
+    variant with it (the baseline when it is one of them), from
+    variant_records' `variants`: [(label, against, kind)], kind "same
+    binary" when they also have the same options, an A/A pair, else "other
+    options"."""
+    found, first = [], {}
+    for variant in variants:
+        if not variant["sha256"]:
+            continue
+        other = first.setdefault(variant["sha256"], variant)
+        if other is not variant:
+            found.append((variant["label"], other["label"],
+                          "same binary" if variant["options"] == other["options"] else "other options"))
+    return found
+
+
+def within_comparison(steps, label, against, kind, spread=None):
+    """How the variant `label` compares with `against`, another of its
+    binary, at each of a profile's `steps` (their change, pairs, how many
+    higher and how many saturated, as variant_at_step has them) and over
+    them all (verdict's, with the A/A `spread`)."""
+    records = [{"id": step["id"], **{key: record[key] for key in ("change_percent", "pairs", "higher", "saturated")}}
+               for step in steps
+               for record in [variant_at_step(step["variants"][label]["runs"], step["variants"][against]["runs"])]]
+    return {"label": label, "against": against, "kind": kind, "steps": records,
+            "verdict": verdict([pair for record in records for pair in record["pairs"]], spread)}
+
+
+def a_a_spread(within):
+    """The A/A spread of a profile: the lowest and highest change of the
+    unsaturated pairs of its A/A pairs (`within`, within_comparison's), how
+    far runs of one binary with the same options differ on the node; or
+    None without such pairs."""
+    verdicts = [entry["verdict"] for entry in within if entry["kind"] == "same binary" and entry["verdict"]["pairs"]]
+    if not verdicts:
+        return None
+    return {"min_change_percent": min(result["min_change_percent"] for result in verdicts),
+            "max_change_percent": max(result["max_change_percent"] for result in verdicts)}
 
 
 def placement_record(profile, info, labels, samples):
@@ -1482,14 +1528,17 @@ def neighbours_text(result):
             f"during {top['beside']}'s run of {top['id']} in round {top['round']}.")
 
 
-def profile_comparison(profile, samples, labels, baseline, rounds, lines):
+def profile_comparison(profile, samples, labels, baseline, rounds, lines, pairs_of_one_binary=()):
     """How the variants compare under `profile`, from their `samples`
-    ({(round, label): sample}) and the load generator's `lines`: whether
+    ({(round, label): sample}) and the load generator's lines: whether
     every sample is complete, the order of the runs and how often each
     variant held each position in a step, the most CPU an idle variant
     used during another's run, each step's runs of each variant
-    (variant_at_step), each variant's verdict against the `baseline` and
-    its drift, and the runs that measured nothing."""
+    (variant_at_step), each variant of one binary against the first with
+    it (`pairs_of_one_binary`, pairings'), the A/A spread of those with the
+    same options, each variant's verdict against the `baseline`, read
+    against that spread unless the two are an A/A pair, and its drift, and
+    the runs that measured nothing."""
     name = profile["name"]
     step_lines = {(line["round"], line["variant"], line["result"]["id"]): line
                   for line in lines if line["kind"] == "step" and line.get("variant")}
@@ -1524,13 +1573,23 @@ def profile_comparison(profile, samples, labels, baseline, rounds, lines):
     top = max(used, key=lambda item: item[0], default=None)
     unmeasured = [(step["id"], label, run) for step in steps for index in range(rounds) for label in labels
                   for run in [step["variants"][label]["runs"][index]] if run["not_measured"]]
+    # The A/A pairs first, for the spread the other verdicts are read
+    # against.
+    a_a = [within_comparison(steps, label, against, kind) for label, against, kind in pairs_of_one_binary
+           if kind == "same binary"]
+    spread = a_a_spread(a_a)
+    within = [next(entry for entry in a_a if entry["label"] == label) if kind == "same binary" else
+              within_comparison(steps, label, against, kind, spread) for label, against, kind in pairs_of_one_binary]
+    same = {(entry["label"], entry["against"]) for entry in a_a}
     return {"complete": not incomplete, "incomplete": incomplete, "rounds": rounds, "order": order,
             "positions": positions,
             "neighbours": top and {"max_cpu_s": top[0], "variant": top[1], "beside": top[2]["variant"],
                                    "round": top[2]["round"], "id": top[2]["result"]["id"]},
             "steps": steps,
-            "verdicts": {label: verdict([pair for step in steps for pair in step["variants"][label]["pairs"]])
+            "verdicts": {label: verdict([pair for step in steps for pair in step["variants"][label]["pairs"]],
+                                        None if (label, baseline) in same else spread)
                          for label in labels if label != baseline},
+            "within": within, "a_a_spread": spread,
             "drift": {label: drift(steps, label) for label in labels},
             "ended_early": ended and {"reason": ended["reason"],
                                       "left_out": sum(run["not_run"] == "left out" for _, _, run in unmeasured)},
@@ -1588,13 +1647,33 @@ def same_node_row(step, label, record, baseline):
     return "| " + " | ".join(cells) + " |"
 
 
-def verdict_line(label, baseline, result):
+def verdict_line(label, against, result, note=None):
+    """A variant's verdict against another, for people, with a `note` on
+    what the two are."""
+    named = f"- {label} against {against}" + (f" ({note})" if note else "")
     if not result["pairs"]:
-        return f"- {label} against {baseline}: no pair of runs that both measured and neither saturated."
-    return (f"- {label} against {baseline}: {percent_text(result['median_change_percent'])} "
+        return f"{named}: no pair of runs that both measured and neither saturated."
+    inside = ""
+    if result["inside_a_a_spread"] and result["verdict"] == "no clear difference":
+        spread = result["a_a_spread"]
+        inside = f" (inside the A/A spread of {range_text(spread['min_change_percent'], spread['max_change_percent'])})"
+    return (f"{named}: {percent_text(result['median_change_percent'])} "
             f"({range_text(result['min_change_percent'], result['max_change_percent'])}), higher in "
             f"{result['higher']} of {result['pairs']} pairs, sign test {p_text(result['sign_test_p'])}: "
-            f"{result['verdict']}{too_few_text(result)}.")
+            f"{result['verdict']}{too_few_text(result)}{inside}.")
+
+
+def within_lines(result, variants):
+    """What same-node.md says of a profile's variants of one binary, each
+    against the first with it: the question each answers."""
+    if not result["within"]:
+        return []
+    options = {variant["label"]: ", ".join(variant["options"]) or "no option" for variant in variants}
+    return ["", "Variants of one binary, each against the first variant with it, over the same pairs:", "",
+            *(verdict_line(entry["label"], entry["against"], entry["verdict"],
+                           "the same options, an A/A pair" if entry["kind"] == "same binary" else
+                           f"{options[entry['label']]} against {options[entry['against']]}")
+              for entry in result["within"])]
 
 
 def too_few_text(result):
@@ -1670,7 +1749,11 @@ def reading_lines():
         "change, lowest to highest, how many were higher, and the p of an exact two-sided sign test, ties left out. "
         f"With 8 pairs that all agree, p is {p_number(sign_test_p(8, 0))}; fewer than {fewest_pairs()} pairs that "
         f"differ cannot give a p of {SIGNIFICANT_P:g} or less, and the verdict then says there are too few pairs to "
-        f"decide; above {SIGNIFICANT_P:g} is no clear difference.",
+        f"decide; above {SIGNIFICANT_P:g} is no clear difference.", "",
+        "Variants of one binary (one SHA-256) are also compared with the first variant that has it, over the same "
+        "pairs: with the same options, an A/A pair, whose lowest to highest paired change is the A/A spread, how far "
+        "runs of one binary differ on the node; with other options, what those cost. A verdict whose median change "
+        "lies inside the profile's A/A spread says no clear difference, whatever its p, which same-node.json keeps.",
     ]
 
 
@@ -1681,8 +1764,8 @@ def same_node_markdown(report):
     other conditions were the same, how to read the rest; and for each
     profile, where the variants ran, in what order, what the idle ones
     used, a row for each variant at each step, the runs that measured
-    nothing, each variant's verdict against the baseline, and its
-    drift."""
+    nothing, each variant's verdict against the baseline, each variant of
+    one binary against the first with it, and each variant's drift."""
     baseline = report["baseline"]
     run = report["run"]
     lines = ["# smock variants on one node", "",
@@ -1704,7 +1787,8 @@ def same_node_markdown(report):
         lines += not_measured_lines(result)
         lines += ["", "Verdicts, over the pairs of runs of every step in which neither run saturated:", "",
                   *(verdict_line(label, baseline, verdict_result)
-                    for label, verdict_result in result["verdicts"].items()), "", drift_text(result)]
+                    for label, verdict_result in result["verdicts"].items()),
+                  *within_lines(result, report["variants"]), "", drift_text(result)]
     return "\n".join(lines) + "\n"
 
 
@@ -1813,7 +1897,8 @@ def same_node(out, baseline=None, sha256=None, no_init=()):
     for profile in profiles:
         pods = Path(out) / "raw" / profile["name"] / "pods.json"
         info = read_json(pods) if pods.exists() else {"smock": [], "generator": [], "nodes": {}}
-        result = profile_comparison(profile, samples, labels, baseline, rounds, raws[profile["name"]])
+        result = profile_comparison(profile, samples, labels, baseline, rounds, raws[profile["name"]],
+                                    pairings(variants))
         placement = placement_record(profile, info, labels, samples)
         incomplete = result["incomplete"]
         if len(incomplete) == rounds * len(labels):
