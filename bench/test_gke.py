@@ -2155,6 +2155,28 @@ class VariantRun(Helper):
         self.fail(f"no row for {label} at {case}@{rate} in:\n{markdown}")
 
 
+# Why the load generator stopped the run of stopped_in_round_2.
+STOPPED_IN_ROUND_2 = ("variant b, round 2: http-keep-alive@small@500 got no response to any of its 10,000 requests, "
+                      "and smock did not answer through its Service in 60 s after it: plain port 80 (timed out)")
+
+
+def stopped_in_round_2():
+    """The lines of a run of a and b over two rounds that the load
+    generator stopped early: b's run at 500 requests/s in round 2, the
+    first of that step, got no response, nor did the traffic check after
+    it, so every variant stopped, round 1 whole; and why it stopped."""
+    left = [{"round": 2, "variant": "a", "id": "http-keep-alive@small@500"},
+            {"round": 2, "variant": "a", "id": "http-keep-alive@small@1000"},
+            {"round": 2, "variant": "b", "id": "http-keep-alive@small@1000"}]
+    us = {"a": {500: [30.0, 31.0], 1000: [32.0, 33.0]}, "b": {500: [40.0, 41.0], 1000: [42.0, 43.0]}}
+    lines = variant_lines(us, runs={("b", 2, 500): {"errors": 10000}},
+                          stopped={"variant": "b", "round": 2, "reason": STOPPED_IN_ROUND_2,
+                                   "after": "http-keep-alive@small@500", "runs": left})
+    check = {**TRAFFIC_CHECK, "variant": "b", "round": 2, "after": "http-keep-alive@small@500", "ok": False}
+    lines.insert(next(index for index, line in enumerate(lines) if line.get("round") == 2) + 1, check)
+    return lines, STOPPED_IN_ROUND_2
+
+
 class Samples(VariantRun):
     """gke.py samples splits a run of variants into its samples, each one
     variant's pass over the steps in one round, as an ordinary run of
@@ -2190,20 +2212,7 @@ class Samples(VariantRun):
                              AMD_CPU if label == "a" else None)
 
     def test_a_profile_stopped_early_leaves_each_sample_the_steps_it_did_not_run(self):
-        # b's run at 500 requests/s in round 2, the first of that step, got
-        # no response, nor did the traffic check after it: every variant
-        # stopped, and round 1 was whole.
-        reason = ("variant b, round 2: http-keep-alive@small@500 got no response to any of its 10,000 requests, and "
-                  "smock did not answer through its Service in 60 s after it: plain port 80 (timed out)")
-        left = [{"round": 2, "variant": "a", "id": "http-keep-alive@small@500"},
-                {"round": 2, "variant": "a", "id": "http-keep-alive@small@1000"},
-                {"round": 2, "variant": "b", "id": "http-keep-alive@small@1000"}]
-        us = {"a": {500: [30.0, 31.0], 1000: [32.0, 33.0]}, "b": {500: [40.0, 41.0], 1000: [42.0, 43.0]}}
-        lines = variant_lines(us, runs={("b", 2, 500): {"errors": 10000}},
-                              stopped={"variant": "b", "round": 2, "reason": reason,
-                                       "after": "http-keep-alive@small@500", "runs": left})
-        check = {**TRAFFIC_CHECK, "variant": "b", "round": 2, "after": "http-keep-alive@small@500", "ok": False}
-        lines.insert(next(index for index, line in enumerate(lines) if line.get("round") == 2) + 1, check)
+        lines, reason = stopped_in_round_2()
         out = self.variant_run(lines, variant_pods(["a", "b"]))
         summaries = {(round_, label): self.summarize_sample(directory)[0]
                      for round_, label, directory in self.samples(out)}
@@ -2397,6 +2406,21 @@ class SameNode(VariantRun):
         self.assertIn("Every variant ran on node node-a: ek-standard-8 in asia-northeast1-b, AMD EPYC 7B13 (family 25, "
                       "model 1, stepping 0). Not every one was admitted with the profile's limits as its requests and "
                       "limits.", markdown)
+
+    def test_a_profile_with_an_incomplete_sample_cannot_be_compared_and_says_what_was_measured(self):
+        lines, reason = stopped_in_round_2()
+        status, report, markdown, stderr = self.same_node(self.variant_run(lines, variant_pods(["a", "b"])))
+        self.assertEqual(status, 1)
+        problem = "small: samples 2-a and 2-b are incomplete"
+        self.assertEqual(report["problems"], [problem])
+        self.assertIn(f"gke: {problem}", stderr)
+        self.assertEqual((report["complete"], report["gke"]["profiles"]["small"]["complete"]), (False, False))
+        # What ran still counts: b's run in round 2 failed, and those after
+        # it were left out.
+        self.assertEqual(self.row(markdown, "http-keep-alive", 500, "b")["CPU µs/request"], "40.0 (40.0–40.0, 1)")
+        self.assertEqual(self.row(markdown, "http-keep-alive", 1000, "a")["CPU µs/request"], "32.0 (32.0–32.0, 1)")
+        self.assertIn(f"**Stopped early:** {reason}. 3 runs were left out.", markdown)
+        self.assertIn("- http-keep-alive@small@500: 10000 of 10000 requests failed in the b round 2 run.", markdown)
 
     def test_a_variant_with_two_sha256_values_exits_2_since_what_it_measured_is_unknown(self):
         out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))

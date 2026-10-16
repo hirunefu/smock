@@ -1424,13 +1424,14 @@ def profile_comparison(profile, samples, labels, baseline, rounds, lines):
         steps.append({"id": spec["id"], "case": spec["id"].split("@", 1)[0], "rate": spec["rate"],
                       "variants": {label: variant_at_step(runs[label], None if label == baseline else runs[baseline])
                                    for label in labels}})
-    complete = all(sample and (sample[0]["gke"]["profiles"].get(name) or {}).get("complete")
-                   for (round_, label), sample in samples.items())
+    incomplete = [f"{round_}-{label}" for round_ in range(1, rounds + 1) for label in labels
+                  if not (samples.get((round_, label)) and
+                          (samples[round_, label][0]["gke"]["profiles"].get(name) or {}).get("complete"))]
     ended = next((ended for sample in samples.values() if sample
                   for ended in [(sample[0]["gke"]["profiles"].get(name) or {}).get("ended_early")] if ended), None)
     unmeasured = [(step["id"], label, run) for step in steps for index in range(rounds) for label in labels
                   for run in [step["variants"][label]["runs"][index]] if run["not_measured"]]
-    return {"complete": bool(samples) and complete, "rounds": rounds, "steps": steps,
+    return {"complete": not incomplete, "incomplete": incomplete, "rounds": rounds, "steps": steps,
             "verdicts": {label: verdict([pair for step in steps for pair in step["variants"][label]["pairs"]])
                          for label in labels if label != baseline},
             "ended_early": ended and {"reason": ended["reason"],
@@ -1587,8 +1588,8 @@ def same_node(out, baseline=None, sha256=None, no_init=()):
     each variant's binary the run gives ({label: [hex]}) and the variants
     it ran without the init container: same-node.json's content,
     same-node.md's, and the exit status: 2 when a variant has two sha256,
-    1 when the variants did not share a node or were admitted with other
-    limits than the plan's, else 0."""
+    1 when the variants did not share a node, were admitted with other
+    limits than the plan's, or a sample is incomplete, else 0."""
     samples = read_samples(out)
     known = [sample for sample in samples.values() if sample and sample[1]]
     if not known:
@@ -1610,9 +1611,13 @@ def same_node(out, baseline=None, sha256=None, no_init=()):
     for profile in profiles:
         pods = Path(out) / "raw" / profile["name"] / "pods.json"
         info = read_json(pods) if pods.exists() else {"smock": [], "generator": [], "nodes": {}}
-        results[profile["name"]] = {
-            **profile_comparison(profile, samples, labels, baseline, rounds, raws[profile["name"]]),
-            **placement_record(profile, info, labels, samples)}
+        result = profile_comparison(profile, samples, labels, baseline, rounds, raws[profile["name"]])
+        placement = placement_record(profile, info, labels, samples)
+        if result["incomplete"]:
+            many = len(result["incomplete"]) > 1
+            placement["problems"].append(f"sample{'s' if many else ''} {and_list(result['incomplete'])} "
+                                         f"{'are' if many else 'is'} incomplete")
+        results[profile["name"]] = {**result, **placement}
     placed = [f"{name}: {problem}" for name, result in results.items() for problem in result["problems"]]
     status = 2 if problems else 1 if placed else 0
     problems += placed
