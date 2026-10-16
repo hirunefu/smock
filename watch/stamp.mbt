@@ -18,6 +18,11 @@
 /// times, and a rename sets the change time of the file it moves on Linux.
 /// moonbitlang/async gives no inode without C, which ADR 0001 keeps to TLS.
 ///
+/// The times come from the file opened, not from its path, so that the
+/// client of a network file system such as NFS asks the server for them,
+/// as it does when a file is opened to be read (close-to-open), instead of
+/// answering from its attribute cache, which can be up to a minute old.
+///
 /// File times are coarse, though: a change made soon after another can get
 /// the same time. So a stamp is trusted only once it was taken a while
 /// after the newest time it notes (`settle_ms`): any change after that gets
@@ -63,8 +68,9 @@ pub fn Stamp::note(self : Stamp, note : String) -> Unit {
 
 ///|
 /// Notes the file at `path`: its real path, once symlinks are resolved, and
-/// its modification and change times, or why they cannot be had. `real` is
-/// its real path, when the caller has resolved it already.
+/// its modification and change times, taken from the file opened, or why
+/// they cannot be had. `real` is its real path, when the caller has
+/// resolved it already.
 pub async fn Stamp::note_file(
   self : Stamp,
   path : String,
@@ -80,7 +86,14 @@ pub async fn Stamp::note_file(
         }
       }
   }
-  try (@fs.mtime(real), @fs.ctime(real)) catch {
+  let file = @fs.open(real, mode=ReadOnly) catch {
+    err => {
+      self.notes.push("\{path}: \{real}: \{err}")
+      return
+    }
+  }
+  defer file.close()
+  try (file.mtime(), file.ctime()) catch {
     err => self.notes.push("\{path}: \{real}: \{err}")
   } noraise {
     (modified, changed) => {
