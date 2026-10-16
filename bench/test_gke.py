@@ -454,6 +454,23 @@ class Variants(Helper):
             self.assertEqual(status, 1, args)
             self.assertIn(expected, stderr)
 
+    def test_the_plan_refuses_a_label_too_long_for_a_profiles_service_before_anything_is_made(self):
+        # As manifests would once the cluster is made: given the labels,
+        # plan checks each profile's names.
+        plan = json.loads((BENCH / "plan-autopilot.json").read_text())
+        long_name = "a-profile-whose-name-is-forty-four-chars-long"[:44]
+        plan["profiles"][0]["name"] = long_name
+        plan["cases"] = [{**case, "rates": {long_name: [125]}} for case in plan["cases"]]
+        path = self.directory() / "plan.json"
+        path.write_text(json.dumps(plan))
+        status, _, stderr = helper("plan", "--plan", path, "--variants", 2, "--labels", "r1,abcdefghijklmnop")
+        self.assertEqual(status, 1)
+        self.assertIn(f"variant abcdefghijklmnop under profile {long_name} cannot name a Kubernetes Service "
+                      f"(smock-{long_name}-abcdefghijklmnop): give it a shorter label", stderr)
+        status, stdout, stderr = helper("plan", "--plan", path, "--variants", 2, "--labels", "r1,r2")
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(stdout.split()[0], long_name)
+
     def test_without_variants_smocks_one_pod_runs_as_before_with_no_variant_label_or_affinity(self):
         rendered = self.manifests()
         self.assertEqual(sorted(rendered), ["generator.json", "namespace.json", "smock.json"])

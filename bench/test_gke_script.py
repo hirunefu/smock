@@ -1766,6 +1766,18 @@ class Variants(Script):
         self.assertIn(f"rounds=${{rounds:-{gke.DEFAULT_ROUNDS}}}", script)
         self.assertEqual(self.calls(), [])
 
+    def test_a_label_too_long_for_a_profiles_service_is_refused_before_anything_is_made(self):
+        name = "a-profile-whose-name-is-forty-four-chars-long"[:44]
+        self.plan.write_text(json.dumps({**SMALL_PLAN, "profiles": [{**SMALL_PLAN["profiles"][0], "name": name}],
+                                         "cases": [{**SMALL_PLAN["cases"][0], "rates": {name: [500, 1000]}}]}))
+        status, output = self.run_script_without_smock("--yes", "--variant", f"r1={self.smock}",
+                                                       "--variant", f"abcdefghijklmnop={self.smock}")
+        self.assertEqual(status, 1, output)
+        self.assertIn(f"variant abcdefghijklmnop under profile {name} cannot name a Kubernetes Service "
+                      f"(smock-{name}-abcdefghijklmnop): give it a shorter label", output)
+        self.assertEqual(self.changing_calls(), [])
+        self.assertEqual(self.made(["push"]), [])
+
     def test_binaries_built_from_any_commit_are_named_by_their_sha256_and_one_for_another_architecture_is_refused(self):
         # The harness is the commit checked out; the binaries are what the
         # run compares, so they need not be built from it.

@@ -285,6 +285,17 @@ def idle_settle_s(plan, profile):
     return idle["settle_s"]
 
 
+def check_variant_names(profile, labels):
+    """Fails unless smock-<profile>-<label> names a Kubernetes Service for
+    each of the variants' `labels`: a run checks it with gke.py plan
+    before it makes anything, and manifests once more."""
+    for label in labels:
+        name = smock_name(profile["name"], label)
+        if not DNS_LABEL.fullmatch(name):
+            raise GkeError(f"variant {label} under profile {profile['name']} cannot name a Kubernetes Service "
+                           f"({name}): give it a shorter label")
+
+
 def check_counts(variants, rounds):
     """Fails unless a run can have `variants` (1, or as many as it compares)
     and `rounds`."""
@@ -454,11 +465,7 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
         raise GkeError(f"smock's Pod needs a deadline of at least 1 s, not {smock_deadline_s}")
     if variants:
         check_counts(len(variants), rounds)
-    for variant in variants or []:
-        name = smock_name(profile["name"], variant["label"])
-        if not DNS_LABEL.fullmatch(name):
-            raise GkeError(f"variant {variant['label']} under profile {profile['name']} cannot name a Kubernetes "
-                           f"Service ({name}): give it a shorter label")
+    check_variant_names(profile, [variant["label"] for variant in variants or []])
     labels = {"app": SMOCK}
     namespace = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": NAMESPACE}}
     # Nothing billed apart from the Pods: no load balancer, node port or
@@ -2014,6 +2021,8 @@ def command_plan(args):
     cases = plan_cases(plan, comma_list(args.cases))
     variants, rounds = counts(args)
     for profile in profiles:
+        check_variant_names(profile, comma_list(args.labels) or [])
+    for profile in profiles:
         specs = steps(plan, profile, cases)
         if specs:
             print(profile["name"], len(specs), job_deadline_s(plan, profile, specs, variants, rounds))
@@ -2126,6 +2135,8 @@ def main(argv):
     planning.add_argument("--profiles", help="only these profiles, comma-separated (default: every profile)")
     planning.add_argument("--cases", help="only these cases, comma-separated (default: every case)")
     add_counts(planning)
+    planning.add_argument("--labels", help="the variants' labels, comma-separated, whose Pods and Services each "
+                                           "profile must be able to name")
     planning.set_defaults(handler=command_plan)
     estimating = commands.add_parser("estimate", help="say how long a run takes and what it costs")
     estimating.add_argument("--plan", required=True, help="the plan, such as bench/plan-autopilot.json")

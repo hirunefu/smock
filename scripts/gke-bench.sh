@@ -496,7 +496,8 @@ wrong() {
 # each, into variants and the maps by label, with the SHA-256 of each one's
 # binary, which a dry run needs even when the checks stop early, and the
 # rounds (4 unless --rounds says otherwise); exits when they cannot make a
-# run, as gke.py would refuse them once the cluster is made.
+# run, as gke.py would refuse them once the cluster is made. gke.py plan
+# checks the names each label makes under the profiles.
 read_variants() {
   local text label file option options seen=" "
   if [ ${#variant_args[@]} -eq 0 ]; then
@@ -1590,10 +1591,15 @@ summarize_stopped() {
 # --- Main --------------------------------------------------------------------
 
 # How many variants and rounds gke.py times and prices the run for: none
-# for smock alone.
-counts=()
-[ ${#variants[@]} -eq 0 ] || counts=(--variants "${#variants[@]}" --rounds "$rounds")
-if ! profile_lines=$("$PYTHON" "$GKE_PY" plan --plan "$plan" "${selection[@]}" "${counts[@]}"); then
+# for smock alone. The plan also checks that each variant's label can name
+# its Pod and Service under each profile, as gke.py manifests would refuse
+# it once the cluster is made.
+counts=() named=()
+if [ ${#variants[@]} -gt 0 ]; then
+  counts=(--variants "${#variants[@]}" --rounds "$rounds")
+  named=(--labels "$(IFS=,; echo "${variants[*]}")")
+fi
+if ! profile_lines=$("$PYTHON" "$GKE_PY" plan --plan "$plan" "${selection[@]}" "${counts[@]}" "${named[@]}"); then
   exit 1
 fi
 say "run $run_id: project \$GKE_BENCH_PROJECT, $REGION, zone ${ZONE:-chosen by Autopilot}, $arch, plan" \
