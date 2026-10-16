@@ -42,13 +42,65 @@ SMOCK = "smock-bench"
 DNS_LABEL = re.compile(r"[a-z]([-a-z0-9]{0,61}[a-z0-9])?")
 
 
-def smock_name(profile_name):
-    """The name of smock's Pod and Service under a profile: each profile has
-    its own, so that a lookup of its name cannot get the address of the
-    previous profile's Service, deleted just before, as under autopilot-min
-    on 2026-10-14 (its load went to the address of autopilot-burst-min's
-    Service, and nothing answered)."""
-    return f"smock-{profile_name}"
+def smock_name(profile_name, variant=None):
+    """The name of smock's Pod and Service under a profile, and of a
+    variant's when it is given: each profile has its own, so that a lookup
+    of its name cannot get the address of the previous profile's Service,
+    deleted just before, as under autopilot-min on 2026-10-14 (its load
+    went to the address of autopilot-burst-min's Service, and nothing
+    answered)."""
+    return f"smock-{profile_name}" + (f"-{variant}" if variant else "")
+
+
+# A variant of smock, which a run can measure against others on one node:
+# a label, which names its Pod and Service, and the image of its binary.
+# The label is short enough that smock-<profile>-<label> still names a
+# Service under most profiles.
+VARIANT_LABEL = re.compile(r"[a-z]([-a-z0-9]{0,14}[a-z0-9])?")
+
+# How many times the load generator measures each variant's ladder, unless
+# told otherwise.
+DEFAULT_ROUNDS = 4
+
+
+# What a variant may do otherwise than the others: run without the init
+# container that prints its node's CPU, and without the load generator's
+# scrape of its /metrics a second into each step.
+VARIANT_OPTIONS = ("no-init", "no-first-second")
+
+# How many variants a run can compare on one node: the namespace's quota
+# and the load generator's time grow with each.
+MIN_VARIANTS, MAX_VARIANTS = 2, 4
+
+
+def parse_variant(text):
+    """A variant as --variant gives it, LABEL=IMAGE[,no-init][,no-first-second]:
+    {label, image, init, first_second}."""
+    label, equals, rest = text.partition("=")
+    image, *options = rest.split(",")
+    if not equals or not image:
+        raise GkeError(f"--variant {text}: give it as LABEL=IMAGE[,no-init][,no-first-second]")
+    if not VARIANT_LABEL.fullmatch(label):
+        raise GkeError(f"variant label {label}: use 1 to 16 lowercase letters, digits and hyphens, starting with a "
+                       "letter and ending with a letter or digit")
+    for option in options:
+        if option not in VARIANT_OPTIONS:
+            raise GkeError(f"variant {label}: no option {option}; there are {' and '.join(VARIANT_OPTIONS)}")
+    return {"label": label, "image": image, "init": "no-init" not in options,
+            "first_second": "no-first-second" not in options}
+
+
+def parse_variants(texts):
+    """The variants --variant gives, in its order, the first the baseline:
+    parse_variant's, each with its own label; [] without any."""
+    variants = [parse_variant(text) for text in texts or []]
+    if variants and not MIN_VARIANTS <= len(variants) <= MAX_VARIANTS:
+        raise GkeError(f"a run compares {MIN_VARIANTS} to {MAX_VARIANTS} variants, not {len(variants)}")
+    labels = [variant["label"] for variant in variants]
+    for label in dict.fromkeys(labels):
+        if labels.count(label) > 1:
+            raise GkeError(f"variant {label} is given twice: give each its own label")
+    return variants
 
 
 # The load generator's Pod, by the nodes' architecture: oha used at most
@@ -229,7 +281,102 @@ def node_selector(arch, zone=None):
     return selector
 
 
-def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, smock_deadline_s):
+# How smock's Pods and the load generator's run: as a user of no
+# privilege, with nothing to write but what they print.
+POD_SECURITY = {"runAsNonRoot": True, "runAsUser": 65532, "runAsGroup": 65532,
+                "seccompProfile": {"type": "RuntimeDefault"}}
+SMOCK_SECURITY = {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
+                  "capabilities": {"drop": ["ALL"]}}
+
+
+def smock_objects(profile, arch, zone, generator_image, smock_deadline_s, image, variant=None):
+    """smock's Service and Pod under `profile`, from `image`; a variant's,
+    {label, init, ...}, when it is given."""
+    name = smock_name(profile["name"], variant and variant["label"])
+    labels = {"app": SMOCK}
+    pod_labels = {**labels, "profile": profile["name"], **({"variant": variant["label"]} if variant else {})}
+    limits = {"cpu": profile["cpu_limit"], "memory": profile["memory_limit"],
+              "ephemeral-storage": SMOCK_EPHEMERAL_STORAGE}
+    service = {
+        "apiVersion": "v1", "kind": "Service",
+        "metadata": {"name": name, "namespace": NAMESPACE, "labels": labels},
+        "spec": {"type": "ClusterIP", "selector": pod_labels,
+                 "ports": [{"name": "plain", "port": 80, "targetPort": 8080},
+                           {"name": "tls", "port": 443, "targetPort": 8443},
+                           {"name": "admin", "port": 9090, "targetPort": 9090}]},
+    }
+    pod = {
+        "apiVersion": "v1", "kind": "Pod",
+        "metadata": {"name": name, "namespace": NAMESPACE, "labels": pod_labels},
+        "spec": {
+            # Restarted in place after an OOM kill, as a Deployment's Pod
+            # would be, until the deadline.
+            "restartPolicy": "Always",
+            "activeDeadlineSeconds": smock_deadline_s,
+            "nodeSelector": node_selector(arch, zone),
+            # A variant's Pod on the node of the profile's others, so that
+            # they differ in nothing but themselves: through the hostname,
+            # which Autopilot allows as a topology key, where a nodeSelector
+            # on it is restricted. The first matches its own labels, so it
+            # may go anywhere. No anti-affinity: Autopilot rejects it below
+            # 0.5 vCPU.
+            **({"affinity": {"podAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": [{
+                "labelSelector": {"matchLabels": {**labels, "profile": profile["name"]}},
+                "topologyKey": "kubernetes.io/hostname"}]}}} if variant else {}),
+            "enableServiceLinks": False,
+            "automountServiceAccountToken": False,
+            "terminationGracePeriodSeconds": 5,
+            "securityContext": POD_SECURITY,
+            # With smock's limits, so that the Pod asks for no more than
+            # smock does: Autopilot bills a Pod for the larger of its init
+            # containers and the sum of its containers. A no-init variant
+            # has none, and the same limits.
+            **({} if variant and not variant["init"] else {"initContainers": [{
+                "name": "node-cpu", "image": generator_image, "command": ["python3", "/bench/gke/gke.py", "node-cpu"],
+                "resources": {"requests": limits, "limits": limits},
+                "securityContext": SMOCK_SECURITY,
+            }]}),
+            "containers": [{
+                "name": "smock", "image": image, "args": ["serve"],
+                "env": [{"name": "SMOCK_DIR", "value": "/definitions"},
+                        {"name": "SMOCK_ADMIN_AUTH", "value": "off"}],
+                "ports": [{"name": "plain", "containerPort": 8080}, {"name": "tls", "containerPort": 8443},
+                          {"name": "admin", "containerPort": 9090}],
+                "resources": {"requests": limits, "limits": limits},
+                "readinessProbe": {"httpGet": {"path": "/readyz", "port": 9090}, "periodSeconds": 5,
+                                   "failureThreshold": 2},
+                "securityContext": SMOCK_SECURITY,
+            }],
+        },
+    }
+    return [service, pod]
+
+
+def service_host(profile, variant=None):
+    """The host name of smock's Service under `profile`, or of a variant's
+    (its label)."""
+    return f"{smock_name(profile['name'], variant)}.{NAMESPACE}.svc.cluster.local"
+
+
+def generator_env(profile, cases, variants, rounds):
+    """The load generator's environment (generator.py's): smock's Service
+    as TARGET; or, with `variants`, VARIANTS, each one's label, Service and
+    whether to scrape smock a second into each step, in order, and the
+    number of ROUNDS."""
+    common = [{"name": "PROFILE", "value": profile["name"]},
+              {"name": "CASES", "value": ",".join(case["name"] for case in cases)}]
+    if not variants:
+        return [{"name": "TARGET", "value": service_host(profile)}, *common]
+    return [*common,
+            {"name": "VARIANTS", "value": json.dumps([{"label": variant["label"],
+                                                       "target": service_host(profile, variant["label"]),
+                                                       "first_second": variant["first_second"]}
+                                                      for variant in variants])},
+            {"name": "ROUNDS", "value": str(rounds)}]
+
+
+def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, smock_deadline_s, variants=None,
+              rounds=DEFAULT_ROUNDS):
     """The objects of one profile: {file name: object}. namespace.json holds
     the namespace and its quota, smock.json smock's Service and Pod,
     generator.json the load generator's Job. Both Pods run on nodes of
@@ -242,68 +389,37 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
     deadline (`smock_deadline_s`, the time left until the run's time limit,
     which counts from when its node accepts it): like the load generator's
     Job, it stops being billed by itself even when neither the run nor its
-    watchdog is left to delete the cluster."""
+    watchdog is left to delete the cluster.
+
+    With `variants` (parse_variant's, the first the baseline), smock-<label>.json
+    holds each variant's Service and Pod, from its image, in place of
+    smock.json."""
     if smock_deadline_s < 1:
         raise GkeError(f"smock's Pod needs a deadline of at least 1 s, not {smock_deadline_s}")
-    name = smock_name(profile["name"])
+    if variants and rounds < 1:
+        raise GkeError(f"the load generator measures each variant in at least 1 round, not {rounds}")
+    for variant in variants or []:
+        name = smock_name(profile["name"], variant["label"])
+        if not DNS_LABEL.fullmatch(name):
+            raise GkeError(f"variant {variant['label']} under profile {profile['name']} cannot name a Kubernetes "
+                           f"Service ({name}): give it a shorter label")
     labels = {"app": SMOCK}
-    limits = {"cpu": profile["cpu_limit"], "memory": profile["memory_limit"],
-              "ephemeral-storage": SMOCK_EPHEMERAL_STORAGE}
-    pod_security = {"runAsNonRoot": True, "runAsUser": 65532, "runAsGroup": 65532,
-                    "seccompProfile": {"type": "RuntimeDefault"}}
-    container_security = {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
-                          "capabilities": {"drop": ["ALL"]}}
     namespace = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": NAMESPACE}}
     # Nothing billed apart from the Pods: no load balancer, node port or
-    # volume claim, and no more Pods than the run needs.
+    # volume claim, and no more Pods than the run needs: each smock Pod and
+    # the load generator's, with two to spare.
     quota = {
         "apiVersion": "v1", "kind": "ResourceQuota",
         "metadata": {"name": "smock-bench", "namespace": NAMESPACE},
         "spec": {"hard": {"services.loadbalancers": "0", "services.nodeports": "0", "persistentvolumeclaims": "0",
-                          "pods": "4"}},
+                          "pods": str(len(variants or [None]) + 3)}},
     }
-    service = {
-        "apiVersion": "v1", "kind": "Service",
-        "metadata": {"name": name, "namespace": NAMESPACE, "labels": labels},
-        "spec": {"type": "ClusterIP", "selector": {**labels, "profile": profile["name"]},
-                 "ports": [{"name": "plain", "port": 80, "targetPort": 8080},
-                           {"name": "tls", "port": 443, "targetPort": 8443},
-                           {"name": "admin", "port": 9090, "targetPort": 9090}]},
-    }
-    pod = {
-        "apiVersion": "v1", "kind": "Pod",
-        "metadata": {"name": name, "namespace": NAMESPACE, "labels": {**labels, "profile": profile["name"]}},
-        "spec": {
-            # Restarted in place after an OOM kill, as a Deployment's Pod
-            # would be, until the deadline.
-            "restartPolicy": "Always",
-            "activeDeadlineSeconds": smock_deadline_s,
-            "nodeSelector": node_selector(arch, zone),
-            "enableServiceLinks": False,
-            "automountServiceAccountToken": False,
-            "terminationGracePeriodSeconds": 5,
-            "securityContext": pod_security,
-            # With smock's limits, so that the Pod asks for no more than
-            # smock does: Autopilot bills a Pod for the larger of its init
-            # containers and the sum of its containers.
-            "initContainers": [{
-                "name": "node-cpu", "image": generator_image, "command": ["python3", "/bench/gke/gke.py", "node-cpu"],
-                "resources": {"requests": limits, "limits": limits},
-                "securityContext": container_security,
-            }],
-            "containers": [{
-                "name": "smock", "image": smock_image, "args": ["serve"],
-                "env": [{"name": "SMOCK_DIR", "value": "/definitions"},
-                        {"name": "SMOCK_ADMIN_AUTH", "value": "off"}],
-                "ports": [{"name": "plain", "containerPort": 8080}, {"name": "tls", "containerPort": 8443},
-                          {"name": "admin", "containerPort": 9090}],
-                "resources": {"requests": limits, "limits": limits},
-                "readinessProbe": {"httpGet": {"path": "/readyz", "port": 9090}, "periodSeconds": 5,
-                                   "failureThreshold": 2},
-                "securityContext": container_security,
-            }],
-        },
-    }
+    if variants:
+        smock = {f"smock-{variant['label']}.json": smock_objects(profile, arch, zone, generator_image,
+                                                                 smock_deadline_s, variant["image"], variant)
+                 for variant in variants}
+    else:
+        smock = {"smock.json": smock_objects(profile, arch, zone, generator_image, smock_deadline_s, smock_image)}
     specs = steps(plan, profile, cases)
     job = {
         "apiVersion": "batch/v1", "kind": "Job",
@@ -319,7 +435,7 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
                     "nodeSelector": node_selector(arch, zone),
                     "enableServiceLinks": False,
                     "automountServiceAccountToken": False,
-                    "securityContext": pod_security,
+                    "securityContext": POD_SECURITY,
                     # Never on smock's node, so that smock's CPU is its own
                     # and the load crosses the Pod network; in smock's zone,
                     # which the zone given or this affinity sees to, so
@@ -334,9 +450,7 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
                     },
                     "containers": [{
                         "name": "generator", "image": generator_image,
-                        "env": [{"name": "TARGET", "value": f"{name}.{NAMESPACE}.svc.cluster.local"},
-                                {"name": "PROFILE", "value": profile["name"]},
-                                {"name": "CASES", "value": ",".join(case["name"] for case in cases)}],
+                        "env": generator_env(profile, cases, variants, rounds),
                         "resources": {"requests": GENERATOR_RESOURCES[arch], "limits": GENERATOR_RESOURCES[arch]},
                         "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}},
                     }],
@@ -346,7 +460,7 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
     }
     return {
         "namespace.json": {"apiVersion": "v1", "kind": "List", "items": [namespace, quota]},
-        "smock.json": {"apiVersion": "v1", "kind": "List", "items": [service, pod]},
+        **{file: {"apiVersion": "v1", "kind": "List", "items": items} for file, items in smock.items()},
         "generator.json": job,
     }
 
@@ -871,8 +985,15 @@ def command_manifests(args):
     plan = read_json(args.plan)
     [profile] = plan_profiles(plan, [args.profile])
     cases = plan_cases(plan, comma_list(args.cases))
+    variants = parse_variants(args.variant)
+    if variants and args.smock_image:
+        raise GkeError("give smock's image with --smock-image or --variant, not both")
+    if not variants and not args.smock_image:
+        raise GkeError("manifests needs smock's image: --smock-image, or --variant for each variant")
+    if args.rounds is not None and not variants:
+        raise GkeError("--rounds needs --variant: without variants, the load generator measures each step once")
     rendered = manifests(plan, profile, cases, args.arch, args.zone, args.smock_image, args.generator_image,
-                         args.smock_deadline_s)
+                         args.smock_deadline_s, variants, DEFAULT_ROUNDS if args.rounds is None else args.rounds)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     for name, document in rendered.items():
@@ -941,8 +1062,15 @@ def main(argv):
     rendering.add_argument("--arch", required=True, choices=("arm64", "amd64"), help="the nodes' architecture")
     rendering.add_argument("--zone", help="the zone smock and the load generator run in (default: Autopilot "
                                           "chooses smock's, and the load generator follows it)")
-    rendering.add_argument("--smock-image", required=True, help="smock's image, by digest")
+    rendering.add_argument("--smock-image", help="smock's image, by digest")
+    rendering.add_argument("--variant", action="append",
+                           help="LABEL=IMAGE[,no-init][,no-first-second]: a variant of smock to measure on the node "
+                                "of the others, from its image, by digest; 2 to 4 of them, in place of --smock-image, "
+                                "the first the baseline")
     rendering.add_argument("--generator-image", required=True, help="the load generator's image, by digest")
+    rendering.add_argument("--rounds", type=int,
+                           help=f"how many times to measure each variant's steps (default: {DEFAULT_ROUNDS}); only "
+                                "with --variant")
     rendering.add_argument("--smock-deadline-s", type=int, required=True,
                            help="how long smock's Pod may run, in seconds: the time left until the run's time limit")
     rendering.add_argument("--out", required=True, help="the directory to write them to")

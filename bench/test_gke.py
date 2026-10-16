@@ -52,14 +52,19 @@ class Helper(unittest.TestCase):
         return path
 
     def manifests(self, profile="autopilot-min", arch="arm64", plan=BENCH / "plan-autopilot.json", cases=None,
-                  smock_deadline_s=3000, zone="us-central1-a"):
-        """The manifests rendered for one profile: {file name: objects}."""
+                  smock_deadline_s=3000, zone="us-central1-a", variants=(), rounds=None):
+        """The manifests rendered for one profile: {file name: objects}.
+        With `variants` (each as --variant takes it), smock's images are
+        theirs."""
         out = self.directory()
+        images = [arg for variant in variants for arg in ("--variant", variant)] or ["--smock-image", SMOCK_IMAGE]
         args = ["manifests", "--plan", plan, "--profile", profile, "--arch", arch, *(["--zone", zone] if zone else []),
-                "--smock-image", SMOCK_IMAGE, "--generator-image", GENERATOR_IMAGE,
+                *images, "--generator-image", GENERATOR_IMAGE,
                 "--smock-deadline-s", smock_deadline_s, "--out", out]
         if cases:
             args += ["--cases", cases]
+        if rounds is not None:
+            args += ["--rounds", rounds]
         status, stdout, stderr = helper(*args)
         self.assertEqual(status, 0, stderr)
         rendered = {}
@@ -235,6 +240,161 @@ class Manifests(Helper):
                       if item["kind"] != "Namespace"}
         [namespace] = objects(rendered, "Namespace")
         self.assertEqual(namespaces, {namespace["metadata"]["name"]})
+
+
+# A second smock image, of another binary than SMOCK_IMAGE's.
+OTHER_IMAGE = "registry.example/smock-bench/smock@sha256:" + "3" * 64
+
+# Two variants of smock, as --variant takes them: R1's binary, the
+# baseline, and R2's.
+TWO_VARIANTS = (f"r1={SMOCK_IMAGE}", f"r2={OTHER_IMAGE}")
+
+
+class Variants(Helper):
+    """With variants, each variant's smock runs in a Pod and behind a
+    Service of its own, under the profile's limits, every one on the node
+    of the first, while one load generator on another node measures them
+    in turn."""
+
+    def test_each_variants_pod_and_service_are_named_for_it_and_its_service_selects_its_pod_alone(self):
+        rendered = self.manifests(variants=TWO_VARIANTS)
+        self.assertEqual(sorted(rendered), ["generator.json", "namespace.json", "smock-r1.json", "smock-r2.json"])
+        pods = objects(rendered, "Pod")
+        for label, image in (("r1", SMOCK_IMAGE), ("r2", OTHER_IMAGE)):
+            [service, pod] = rendered[f"smock-{label}.json"]
+            self.assertEqual((service["kind"], pod["kind"]), ("Service", "Pod"))
+            self.assertEqual((pod["metadata"]["name"], service["metadata"]["name"]),
+                             (f"smock-autopilot-min-{label}", f"smock-autopilot-min-{label}"))
+            self.assertEqual(pod["metadata"]["labels"],
+                             {"app": "smock-bench", "profile": "autopilot-min", "variant": label})
+            self.assertEqual(service["spec"]["selector"], pod["metadata"]["labels"])
+            [container] = pod_spec(pod)["containers"]
+            self.assertEqual(container["image"], image)
+            # The load of one variant goes to its Pod, never to another's.
+            selector = service["spec"]["selector"].items()
+            self.assertEqual([other["metadata"]["name"] for other in pods
+                              if selector <= other["metadata"]["labels"].items()], [pod["metadata"]["name"]])
+
+    def test_every_variants_pod_must_share_a_node_with_the_profiles_others_and_none_keeps_another_away(self):
+        # Through the hostname, which Autopilot allows as a topology key; a
+        # nodeSelector on it is restricted there. The first Pod matches its
+        # own labels, so it may go anywhere, and the others follow it. No
+        # anti-affinity: Autopilot rejects it below 0.5 vCPU.
+        rendered = self.manifests(profile="autopilot-burst-min", variants=TWO_VARIANTS, zone=None)
+        pods = objects(rendered, "Pod")
+        self.assertEqual(len(pods), 2)
+        for pod in pods:
+            affinity = pod_spec(pod)["affinity"]
+            self.assertEqual(set(affinity), {"podAffinity"})
+            [term] = affinity["podAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]
+            self.assertEqual(term, {"labelSelector": {"matchLabels": {"app": "smock-bench",
+                                                                      "profile": "autopilot-burst-min"}},
+                                    "topologyKey": "kubernetes.io/hostname"})
+            self.assertEqual(pod_spec(pod)["nodeSelector"], {"kubernetes.io/arch": "arm64",
+                                                             "cloud.google.com/compute-class": "autopilot-arm"})
+        # The load generator stays off that node, and in its zone.
+        [job] = objects(rendered, "Job")
+        affinity = pod_spec(job)["affinity"]
+        for kind, key in (("podAntiAffinity", "kubernetes.io/hostname"), ("podAffinity", "topology.kubernetes.io/zone")):
+            [term] = affinity[kind]["requiredDuringSchedulingIgnoredDuringExecution"]
+            self.assertEqual(term["topologyKey"], key)
+            for pod in pods:
+                self.assertLessEqual(term["labelSelector"]["matchLabels"].items(), pod["metadata"]["labels"].items())
+
+    def test_a_no_init_variant_has_no_init_container_and_the_same_limits_as_the_others(self):
+        # Its container's cpu.max and the Pod's CPU limit stay the same, so
+        # that the init container alone differs.
+        rendered = self.manifests(profile="autopilot-min", variants=(f"r2={OTHER_IMAGE}",
+                                                                     f"r2h={OTHER_IMAGE},no-init,no-first-second"))
+        [_, with_init] = rendered["smock-r2.json"]
+        [_, without] = rendered["smock-r2h.json"]
+        [init] = pod_spec(with_init)["initContainers"]
+        self.assertEqual(init["name"], "node-cpu")
+        self.assertNotIn("initContainers", pod_spec(without))
+        [container] = pod_spec(without)["containers"]
+        self.assertEqual(container["resources"], pod_spec(with_init)["containers"][0]["resources"])
+        self.assertEqual((container["resources"]["limits"]["cpu"], container["resources"]["limits"]["memory"]),
+                         ("250m", "512Mi"))
+        self.assertEqual(container["resources"]["requests"], container["resources"]["limits"])
+
+    def test_the_namespace_holds_each_variants_pod_the_load_generators_and_no_more(self):
+        # As without variants, room for two more Pods than the run makes:
+        # one smock Pod and the load generator's fit in 4.
+        four = (*TWO_VARIANTS, f"r2b={OTHER_IMAGE}", f"r2h={OTHER_IMAGE},no-init")
+        for variants, pods in (((), "4"), (TWO_VARIANTS, "5"), (four, "7")):
+            [quota] = objects(self.manifests(variants=variants), "ResourceQuota")
+            self.assertEqual(quota["spec"]["hard"]["pods"], pods)
+
+    def test_one_load_generator_is_told_each_variants_service_in_order_and_the_rounds_in_place_of_a_target(self):
+        rendered = self.manifests(profile="autopilot-min", cases="http-keep-alive",
+                                  variants=(*TWO_VARIANTS, f"r2h={OTHER_IMAGE},no-init,no-first-second"))
+        [job] = objects(rendered, "Job")
+        [container] = pod_spec(job)["containers"]
+        env = {variable["name"]: variable["value"] for variable in container["env"]}
+        self.assertEqual(set(env), {"PROFILE", "CASES", "VARIANTS", "ROUNDS"})
+        self.assertEqual((env["PROFILE"], env["CASES"], env["ROUNDS"]), ("autopilot-min", "http-keep-alive", "4"))
+        self.assertEqual(json.loads(env["VARIANTS"]), [
+            {"label": "r1", "target": "smock-autopilot-min-r1.smock-bench.svc.cluster.local", "first_second": True},
+            {"label": "r2", "target": "smock-autopilot-min-r2.smock-bench.svc.cluster.local", "first_second": True},
+            {"label": "r2h", "target": "smock-autopilot-min-r2h.smock-bench.svc.cluster.local",
+             "first_second": False}])
+        # As many rounds as asked for.
+        [job] = objects(self.manifests(variants=TWO_VARIANTS, rounds=6), "Job")
+        [container] = pod_spec(job)["containers"]
+        self.assertIn({"name": "ROUNDS", "value": "6"}, container["env"])
+
+    def test_variants_and_rounds_it_cannot_run_are_refused_with_what_to_change(self):
+        def render(*images, profile="autopilot-min", plan=BENCH / "plan-autopilot.json"):
+            return helper("manifests", "--plan", plan, "--profile", profile, "--arch", "amd64",
+                          "--generator-image", GENERATOR_IMAGE, "--smock-deadline-s", 3000, "--out", self.directory(),
+                          *images)
+
+        def variants(*texts):
+            return [arg for text in texts for arg in ("--variant", text)]
+
+        long_plan = json.loads((BENCH / "plan-autopilot.json").read_text())
+        long_name = "a-profile-whose-name-is-fifty-two-characters-long-ab"
+        long_plan["profiles"][0]["name"] = long_name
+        long_plan["cases"] = [{**case, "rates": {long_name: [125]}} for case in long_plan["cases"]]
+        long_path = self.directory() / "plan.json"
+        long_path.write_text(json.dumps(long_plan))
+        for images, expected in (
+                (variants(TWO_VARIANTS[0]), "2 to 4 variants, not 1"),
+                (variants(*TWO_VARIANTS, f"a={OTHER_IMAGE}", f"b={OTHER_IMAGE}", f"c={OTHER_IMAGE}"),
+                 "2 to 4 variants, not 5"),
+                (variants(*TWO_VARIANTS, f"r1={OTHER_IMAGE}"), "variant r1 is given twice"),
+                (variants(TWO_VARIANTS[0], f"R2={OTHER_IMAGE}"), "variant label R2"),
+                (variants(TWO_VARIANTS[0], f"r2-={OTHER_IMAGE}"), "variant label r2-"),
+                (variants(TWO_VARIANTS[0], f"a-label-of-17-chr={OTHER_IMAGE}"), "variant label a-label-of-17-chr"),
+                (variants(TWO_VARIANTS[0], OTHER_IMAGE), f"--variant {OTHER_IMAGE}: give it as LABEL=IMAGE"),
+                (variants(TWO_VARIANTS[0], "r2="), "--variant r2=: give it as LABEL=IMAGE"),
+                (variants(TWO_VARIANTS[0], f"r2={OTHER_IMAGE},no-sleep"), "variant r2: no option no-sleep"),
+                ([*variants(*TWO_VARIANTS), "--rounds", 0], "at least 1 round, not 0"),
+                (["--smock-image", SMOCK_IMAGE, "--rounds", 4], "--rounds needs --variant"),
+                (["--smock-image", SMOCK_IMAGE, *variants(*TWO_VARIANTS)], "--smock-image or --variant, not both"),
+                ([], "smock's image: --smock-image, or --variant for each variant")):
+            status, _, stderr = render(*images)
+            self.assertEqual(status, 1, images)
+            self.assertIn(expected, stderr)
+        # smock-<profile>-<label> must still name a Service.
+        status, _, stderr = render(*variants(f"r1={SMOCK_IMAGE}", f"r2-bare={OTHER_IMAGE}"), profile=long_name,
+                                   plan=long_path)
+        self.assertEqual(status, 1)
+        self.assertIn(f"variant r2-bare under profile {long_name} cannot name a Kubernetes Service "
+                      f"(smock-{long_name}-r2-bare): give it a shorter label", stderr)
+        status, _, stderr = render(*variants(f"r1={SMOCK_IMAGE}", f"r2={OTHER_IMAGE}"), profile=long_name,
+                                   plan=long_path)
+        self.assertEqual(status, 0, stderr)
+
+    def test_without_variants_smocks_one_pod_runs_as_before_with_no_variant_label_or_affinity(self):
+        rendered = self.manifests()
+        self.assertEqual(sorted(rendered), ["generator.json", "namespace.json", "smock.json"])
+        [pod] = objects(rendered, "Pod")
+        self.assertEqual(pod["metadata"]["labels"], {"app": "smock-bench", "profile": "autopilot-min"})
+        self.assertNotIn("affinity", pod_spec(pod))
+        [job] = objects(rendered, "Job")
+        self.assertEqual([variable["name"] for variable in pod_spec(job)["containers"][0]["env"]],
+                         ["TARGET", "PROFILE", "CASES"])
 
 
 class Plan(Helper):
