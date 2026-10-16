@@ -688,10 +688,11 @@ def pod_info(pod_list, node_list, restarts=True):
     the project, such as image references or provider IDs. smock's
     restarts are None (unknown) unless `restarts`: the OOM kills of a
     profile come from them, so only those read at the profile's end count,
-    and a run that stops before then keeps what it read earlier. Each smock
-    Pod keeps its variant (None without one) and the requests and limits
+    and a run that stops before then keeps what it read earlier. A smock
+    Pod of a variant also keeps its variant and the requests and limits
     its container named smock was admitted with (None without such a
-    container), which Autopilot may have changed."""
+    container), which Autopilot may have changed; any other smock Pod keeps
+    neither, as before there were variants."""
     info = {"smock": [], "generator": [], "nodes": {}}
     for pod in pod_list["items"]:
         labels = pod["metadata"].get("labels", {})
@@ -700,17 +701,19 @@ def pod_info(pod_list, node_list, restarts=True):
             statuses = status.get("containerStatuses") or [{}]
             container = next((container for container in statuses if container.get("name") == "smock"), statuses[0])
             terminated = container.get("lastState", {}).get("terminated") or {}
-            spec = next((container for container in pod["spec"].get("containers", [])
-                         if container.get("name") == "smock"), None)
-            admitted = None if spec is None else spec.get("resources", {})
-            info["smock"].append({
-                "name": pod["metadata"]["name"], "node": pod["spec"].get("nodeName"),
-                "ready": any(condition["type"] == "Ready" and condition["status"] == "True"
-                             for condition in status.get("conditions", [])),
-                "restarts": container.get("restartCount", 0) if restarts else None,
-                "last_termination": terminated.get("reason"), "variant": labels.get("variant"),
-                "resources": None if admitted is None else {"requests": admitted.get("requests"),
-                                                            "limits": admitted.get("limits")}})
+            entry = {"name": pod["metadata"]["name"], "node": pod["spec"].get("nodeName"),
+                     "ready": any(condition["type"] == "Ready" and condition["status"] == "True"
+                                  for condition in status.get("conditions", [])),
+                     "restarts": container.get("restartCount", 0) if restarts else None,
+                     "last_termination": terminated.get("reason")}
+            if labels.get("variant"):
+                spec = next((container for container in pod["spec"].get("containers", [])
+                             if container.get("name") == "smock"), None)
+                admitted = None if spec is None else spec.get("resources", {})
+                entry["variant"] = labels["variant"]
+                entry["resources"] = None if admitted is None else {"requests": admitted.get("requests"),
+                                                                    "limits": admitted.get("limits")}
+            info["smock"].append(entry)
         elif labels.get("app") == "smock-bench-generator":
             container = (pod["spec"].get("containers") or [{}])[0]
             info["generator"].append({"name": pod["metadata"]["name"], "node": pod["spec"].get("nodeName"),

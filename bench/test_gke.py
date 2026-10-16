@@ -2059,7 +2059,7 @@ class PodInfo(Helper):
         self.assertNotIn("a-private-project-123", stdout)
         info = json.loads(stdout)
         self.assertEqual(info["smock"], [{"name": "smock-bench-1", "node": "node-a", "ready": True, "restarts": 2,
-                                          "last_termination": "OOMKilled", "variant": None, "resources": None}])
+                                          "last_termination": "OOMKilled"}])
         self.assertEqual(info["generator"], [{"name": "generator-small-1", "node": "node-b", "phase": "Failed",
                                               "reason": "DeadlineExceeded", "cpu_request": "6"}])
         self.assertEqual(info["nodes"], {"node-a": NODE})
