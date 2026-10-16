@@ -2479,6 +2479,23 @@ class SameNode(VariantRun):
         self.assertIn("Besides smock, the samples differ from 1-a, the baseline's first, in: load generator (oha "
                       "1.16.0 → oha 1.17.0) in 1-b, 2-b, 3-b and 4-b.", markdown)
 
+    def test_compare_py_compares_any_two_samples_as_two_runs(self):
+        out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
+        status, _, _, stderr = self.same_node(out)
+        self.assertEqual(status, 0, stderr)
+        for older, newer in (("1-a", "1-b"), ("2-b", "4-a")):
+            compared = subprocess.run([sys.executable, str(BENCH / "compare.py"), str(out / "samples" / older),
+                                       str(out / "samples" / newer)], capture_output=True, text=True)
+            self.assertEqual(compared.returncode, 0, compared.stdout + compared.stderr)
+            self.assertIn("Besides smock, the runs had the same conditions.", compared.stdout)
+            self.assertIn("| small | http-keep-alive | 1,000 | 2.0 → 2.0 | 0% |", compared.stdout)
+        # Its CPU a request, run against run; b's samples, without the init
+        # container, did not record the node's CPU.
+        compared = subprocess.run([sys.executable, str(BENCH / "compare.py"), str(out / "samples" / "1-a"),
+                                   str(out / "samples" / "1-b")], capture_output=True, text=True).stdout
+        self.assertIn("| small | http-keep-alive | 500 | 30.0 → 33.0 | +10% | 50.0 → 50.0 |", compared)
+        self.assertIn("The newer run did not record the CPU of smock's nodes: whether it changed is unknown.", compared)
+
     def test_a_variant_with_two_sha256_values_exits_2_since_what_it_measured_is_unknown(self):
         out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
         # summarize was told another binary for b in round 3.
