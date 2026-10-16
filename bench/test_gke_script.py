@@ -1861,6 +1861,19 @@ class Variants(Script):
         # r2b shares r2's image.
         self.assertNotIn("smock-gke-bench/smock-r2b", output)
 
+    def test_a_dry_run_of_variants_on_a_machine_without_docker_still_prints_what_the_run_would_do(self):
+        old = self.smock_for(HOST_ARCH, "0d984c8a1b2c")
+        status, output = self.run_script_without_smock("--dry-run", "--variant", f"r1={old}", "--variant",
+                                                       f"r2={self.smock}", DOCKER=str(self.tmp / "missing" / "docker"))
+        # It cannot run, and says why; then what it would do.
+        self.assertEqual(status, 1, output)
+        self.assertNotIn("unbound variable", output)
+        self.assertIn("docker is not on PATH", output)
+        for expected in ("docker build --platform", "--tag=smock-gke-bench/smock-r1:", "--tag=smock-gke-bench/smock-r2:",
+                         "manifests/small/smock-r1.json", "manifests/small/smock-r2.json"):
+            self.assertIn(expected, output)
+        self.assertEqual(self.changing_calls(), [])
+
     def test_each_variant_joins_the_node_before_the_next_and_the_load_generator_starts_once_all_are_there(self):
         status, output = self.run_variants()
         self.assertEqual(status, 0, output)

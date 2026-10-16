@@ -493,9 +493,10 @@ wrong() {
 }
 
 # Reads the variants --variant gives, LABEL=FILE[,no-init][,no-first-second]
-# each, into variants and the maps by label, and the rounds (4 unless
-# --rounds says otherwise); exits when they cannot make a run, as gke.py
-# would refuse them once the cluster is made.
+# each, into variants and the maps by label, with the SHA-256 of each one's
+# binary, which a dry run needs even when the checks stop early, and the
+# rounds (4 unless --rounds says otherwise); exits when they cannot make a
+# run, as gke.py would refuse them once the cluster is made.
 read_variants() {
   local text label file option options seen=" "
   if [ ${#variant_args[@]} -eq 0 ]; then
@@ -529,6 +530,7 @@ read_variants() {
     [ -f "$file" ] || wrong "no file $file"
     variants+=("$label")
     variant_file[$label]=$file
+    variant_sha256[$label]=$(sha256sum "$file" | cut -d ' ' -f 1)
   done
   rounds=${rounds:-4}
   [[ $rounds =~ ^[1-9][0-9]{0,2}$ ]] || wrong "--rounds is a number of rounds, at least 1, not $rounds"
@@ -898,7 +900,6 @@ check_variants() {
   local label file text version commit
   for label in "${variants[@]}"; do
     file=${variant_file[$label]}
-    variant_sha256[$label]=$(sha256sum "$file" | cut -d ' ' -f 1)
     text=$(binary_problem "variant $label" "$file")
     if [ -n "$text" ]; then
       problem "$text"
