@@ -724,3 +724,59 @@ async test "a Definition file whose modification time is ahead of the clock is w
     },
   )
 }
+
+///|
+async test "a symlink outside the definitions directory pointed at a file with the very same times is found by the next poll" {
+  with_definitions([("defs/mocks.json", reload_mock)], root => {
+    // Two releases of users.json, written back to back, as a script that
+    // writes both would: within one clock tick they get the very same
+    // times. A new pair is written until they do.
+    let times = async fn(path : String) { (@fs.mtime(path), @fs.ctime(path)) }
+    let mut same = false
+    let mut release = 0
+    while !same && release < 20 {
+      release += 1
+      for name in ["a", "b"] {
+        @fs.mkdir("\{root}/rel/\{release}\{name}", recursive=true)
+      }
+      for name in ["a", "b"] {
+        @fs.write_file(
+          "\{root}/rel/\{release}\{name}/users.json",
+          stub_file("get-user", "/users/1", name),
+        )
+      }
+      same = times("\{root}/rel/\{release}a/users.json") ==
+        times("\{root}/rel/\{release}b/users.json")
+    }
+    @fs.symlink(target="\{release}a", "\{root}/rel/current")
+    @fs.symlink(
+      target="\{root}/rel/current/users.json",
+      "\{root}/defs/users.json",
+    )
+    // Older than the 2 s after which a poll trusts its stamp.
+    @async.sleep(2500)
+    let _ = with_smock(["--dir", "\{root}/defs", "--port", "0"], smock => {
+      let before = smock.status()
+      let served_before = smock.brief("/users/1")
+      @fs.symlink(target="\{release}b", "\{root}/rel/next")
+      @fs.rename("\{root}/rel/next", "\{root}/rel/current")
+      @async.sleep(1000)
+      let within = last_reload(smock.status())
+      let after = smock.reloaded(before, within=poll_patience_ms)
+      inspect(
+        (
+          $|the very same times: \{same}
+          $|before: \{served_before}
+          $|within 1 s: \{within}
+          $|by the next poll: \{last_reload(after)}; /users/1: \{smock.brief("/users/1")}
+        ),
+        content=(
+          #|the very same times: true
+          #|before: 200 a
+          #|within 1 s: null
+          #|by the next poll: "swapped"; /users/1: 200 b
+        ),
+      )
+    })
+  })
+}

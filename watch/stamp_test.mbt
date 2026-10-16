@@ -134,3 +134,26 @@ async test "a modification time ahead of the clock does not keep a stamp from be
     ),
   )
 }
+
+///|
+async test "a stamp notes where a file really is, so that a symlink pointed at another file with the very same times shows" {
+  let dir = @fs.tmpdir(prefix="smock-stamp-")
+  defer @fs.rmdir(dir, recursive=true)
+  let path = "\{dir}/users.json"
+  @fs.mkdir("\{dir}/a")
+  @fs.mkdir("\{dir}/b")
+  @fs.write_file("\{dir}/a/users.json", "{}")
+  // A hard link: another name for the same file, so the very same times,
+  // as two files written within one clock tick can have.
+  let status = @process.run("ln", ["\{dir}/a/users.json", "\{dir}/b/users.json"])
+  guard status == 0 else { fail("ln exited with \{status}") }
+  @fs.symlink(target="a/users.json", path)
+  let at = changed_at("\{dir}/a/users.json") + 60_000
+  let last = stamp_of(path, at~)
+  @fs.symlink(target="b/users.json", "\{dir}/next")
+  @fs.rename("\{dir}/next", path)
+  inspect(
+    "pointed at b: unchanged \{stamp_of(path, at~).unchanged_since(last)}",
+    content="pointed at b: unchanged false",
+  )
+}

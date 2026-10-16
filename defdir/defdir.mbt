@@ -185,7 +185,7 @@ async fn DirReader::read_body_files(
       Some(Regular) => {
         guard self.realpath(path) is Some(real) else { continue }
         if self.stays_inside(path, real~, inside~, base~) &&
-          self.read_file(path) is Some(bytes) {
+          self.read_file(path, real~) is Some(bytes) {
           out.push((path[base.length() + 1:].to_owned(), bytes))
         }
       }
@@ -276,10 +276,15 @@ async fn DirReader::kind(self : DirReader, relative : String) -> @fs.FileKind? {
 
 ///|
 /// The bytes of the file at `relative`, or `None` when it cannot be read.
-/// While taking a stamp, notes its times instead, and gives `None`.
-async fn DirReader::read_file(self : DirReader, relative : String) -> Bytes? {
+/// While taking a stamp, notes its real path and times instead, and gives
+/// `None`. `real` is its real path, when that was resolved already.
+async fn DirReader::read_file(
+  self : DirReader,
+  relative : String,
+  real? : String,
+) -> Bytes? {
   if self.stamp is Some(stamp) {
-    stamp.note_file(self.path(relative))
+    stamp.note_file(self.path(relative), real?)
     return None
   }
   try @fs.read_file(self.path(relative)).binary() catch {

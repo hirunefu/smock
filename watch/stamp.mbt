@@ -3,19 +3,20 @@
 /// that a poll that finds nothing changed costs a few calls for file
 /// metadata instead of reading and digesting every file. The caller notes
 /// in it, in the order it would read them, the names in each directory it
-/// would list and each file it would read, whose modification and change
-/// times are noted, after following symlinks.
+/// would list and each file it would read, whose real path, once symlinks
+/// are resolved, and modification and change times are noted.
 ///
 /// A file's contents cannot change without its change time (ctime)
 /// changing: a write sets it, a new file gets the current time, and no call
 /// sets it back. So a file replaced by another, such as by a ConfigMap
-/// update, which swaps the `..data` symlink, shows as new times too. The
-/// size would add nothing, since a new size comes with a new change time.
-/// The inode would add only a file swapped for another with the very same
-/// times, such as two versions written within one clock tick and swapped
-/// back and forth. moonbitlang/async gives neither for a path after
-/// following symlinks, so comparing them would need C, which ADR 0001
-/// keeps to TLS.
+/// update, which swaps the `..data` symlink, shows as new times too. A
+/// symlink pointed at another file that already existed can lead to one
+/// with the very same times, though, such as two versions a script wrote
+/// within one clock tick: the real path shows that. The size would add
+/// nothing, since a new size comes with a new change time. The inode would
+/// add only a file renamed over the one at a real path, with the very same
+/// times, and a rename sets the change time of the file it moves on Linux.
+/// moonbitlang/async gives no inode without C, which ADR 0001 keeps to TLS.
 ///
 /// File times are coarse, though: a change made soon after another can get
 /// the same time. So a stamp is trusted only once it was taken a while
@@ -61,15 +62,30 @@ pub fn Stamp::note(self : Stamp, note : String) -> Unit {
 }
 
 ///|
-/// Notes the file at `path`: its modification and change times, after
-/// following symlinks, or why they cannot be had.
-pub async fn Stamp::note_file(self : Stamp, path : String) -> Unit {
-  try (@fs.mtime(path), @fs.ctime(path)) catch {
-    err => self.notes.push("\{path}: \{err}")
+/// Notes the file at `path`: its real path, once symlinks are resolved, and
+/// its modification and change times, or why they cannot be had. `real` is
+/// its real path, when the caller has resolved it already.
+pub async fn Stamp::note_file(
+  self : Stamp,
+  path : String,
+  real? : String,
+) -> Unit {
+  let real = match real {
+    Some(real) => real
+    None =>
+      @fs.realpath(path) catch {
+        err => {
+          self.notes.push("\{path}: \{err}")
+          return
+        }
+      }
+  }
+  try (@fs.mtime(real), @fs.ctime(real)) catch {
+    err => self.notes.push("\{path}: \{real}: \{err}")
   } noraise {
     (modified, changed) => {
       self.notes.push(
-        "\{path}: \{modified.0}.\{modified.1} \{changed.0}.\{changed.1}",
+        "\{path}: \{real} \{modified.0}.\{modified.1} \{changed.0}.\{changed.1}",
       )
       let modified = ms_up(modified)
       let changed = ms_up(changed)

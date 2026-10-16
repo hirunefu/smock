@@ -48,6 +48,17 @@ async test "the stamp of a definitions directory changes with each change a read
   write(dir, "README.md", "")
   configmap_update(dir, "v1", [("orders.json", "{}")])
   @fs.symlink(target="..data/orders.json", "\{dir}/orders.json")
+  // Two releases of a file with the very same times, as two versions a
+  // script wrote within one clock tick can have: here, two names for one
+  // file.
+  write(dir, ".releases/a/payments.json", "{}")
+  @fs.mkdir("\{dir}/.releases/b")
+  let status = @process.run("ln", [
+    "\{dir}/.releases/a/payments.json",
+    "\{dir}/.releases/b/payments.json",
+  ])
+  guard status == 0 else { fail("ln exited with \{status}") }
+  @fs.symlink(target=".releases/a/payments.json", "\{dir}/payments.json")
   // Far enough after the files were written for each stamp to be trusted.
   let at = @async.now() + 60_000
   let changes : Array[(String, async () -> Unit)] = [
@@ -73,6 +84,13 @@ async test "the stamp of a definitions directory changes with each change a read
     (
       "the ..data symlink swapped",
       () => configmap_update(dir, "v2", [("orders.json", "{}")]),
+    ),
+    (
+      "a Definition file's symlink pointed at a file with the very same times",
+      () => {
+        @fs.symlink(target=".releases/b/payments.json", "\{dir}/next")
+        @fs.rename("\{dir}/next", "\{dir}/payments.json")
+      },
     ),
     (
       "a Definition file replaced by a directory",
@@ -108,6 +126,7 @@ async test "the stamp of a definitions directory changes with each change a read
       #|a body file added: unchanged false
       #|a body file removed: unchanged false
       #|the ..data symlink swapped: unchanged false
+      #|a Definition file's symlink pointed at a file with the very same times: unchanged false
       #|a Definition file replaced by a directory: unchanged false
     ),
   )
