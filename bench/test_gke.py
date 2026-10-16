@@ -1417,9 +1417,10 @@ class GeneratorWithVariants(Helper):
             self.assertEqual(line["node_steal_s"], {"a": 0.0, "b": 0.0})
             self.assertEqual(line["node_steal_s"][line["variant"]], line["result"]["smock_cpu"]["node_steal_s"])
 
-    def test_each_round_of_each_variant_splits_out_as_an_ordinary_run_that_summarizes_as_complete(self):
-        # What the load generator printed, kept as the runner keeps it with
-        # the variants' Pods, split by gke.py samples.
+    def split(self):
+        """What the load generator printed, kept as the runner keeps it
+        with the variants' Pods, split by gke.py samples: the results
+        directory, and the samples' rounds and labels as it printed them."""
         out = self.directory()
         raw = out / "raw" / "small"
         raw.mkdir(parents=True)
@@ -1427,15 +1428,21 @@ class GeneratorWithVariants(Helper):
         (raw / "pods.json").write_text(json.dumps(variant_pods(["a", "b"])))
         status, stdout, stderr = helper("samples", out, "--plan", self.plan_path)
         self.assertEqual(status, 0, stderr)
-        self.assertEqual([line.split(" ")[:2] for line in stdout.splitlines()],
-                         [["1", "a"], ["1", "b"], ["2", "a"], ["2", "b"]])
+        return out, [line.split(" ")[:2] for line in stdout.splitlines()]
+
+    def summarize_sample(self, directory):
+        status, _, stderr = helper(
+            "summarize", "--plan", self.plan_path, "--targets", small_targets(self.directory()), "--region",
+            "us-central1", "--arch", "arm64", "--started-at", "2026-10-16T03:28:50+00:00", "--finished-at",
+            "2026-10-16T03:31:02+00:00", directory)
+        self.assertEqual(status, 0, stderr)
+
+    def test_each_round_of_each_variant_splits_out_as_an_ordinary_run_that_summarizes_as_complete(self):
+        out, samples = self.split()
+        self.assertEqual(samples, [["1", "a"], ["1", "b"], ["2", "a"], ["2", "b"]])
         for round_, label in ((1, "a"), (2, "b")):
             directory = out / "samples" / f"{round_}-{label}"
-            status, _, stderr = helper(
-                "summarize", "--plan", self.plan_path, "--targets", small_targets(self.directory()), "--region",
-                "us-central1", "--arch", "arm64", "--started-at", "2026-10-16T03:28:50+00:00", "--finished-at",
-                "2026-10-16T03:31:02+00:00", directory)
-            self.assertEqual(status, 0, stderr)
+            self.summarize_sample(directory)
             summary = json.loads((directory / "summary.json").read_text())
             conditions = json.loads((directory / "conditions.json").read_text())
             self.assertTrue(summary["complete"], (round_, label))
@@ -1446,6 +1453,33 @@ class GeneratorWithVariants(Helper):
             self.assertTrue(conditions["gke"]["profiles"]["small"]["traffic_check"]["ok"])
             start = next(line for line in self.lines if line["kind"] == "start" and line["variant"] == label)
             self.assertEqual(conditions["smock"]["commit"], start["status"]["commit"])
+
+    def test_same_node_compares_the_variants_from_what_the_load_generator_printed(self):
+        out, samples = self.split()
+        for round_, label in samples:
+            self.summarize_sample(out / "samples" / f"{round_}-{label}")
+        status, _, stderr = helper("same-node", out)
+        self.assertEqual(status, 0, stderr)
+        report = json.loads((out / "same-node.json").read_text())
+        profile = report["gke"]["profiles"]["small"]
+        self.assertTrue(profile["complete"])
+        self.assertEqual([(entry["round"], entry["id"], entry["variants"]) for entry in profile["order"]],
+                         [(1, STEP_IDS[0], ["a", "b"]), (1, STEP_IDS[1], ["b", "a"]), (2, STEP_IDS[0], ["b", "a"]),
+                          (2, STEP_IDS[1], ["a", "b"])])
+        self.assertEqual(profile["positions"], {"a": [2, 2], "b": [2, 2]})
+        # Each variant's run of each step in each round counts, or is listed
+        # with why not, as when the load generator fell behind on this
+        # machine; b has a pair with a in each round in which both count.
+        unmeasured = {(entry["id"], entry["variant"], entry["round"]) for entry in profile["not_measured"]}
+        for step in profile["steps"]:
+            for label in ("a", "b"):
+                self.assertEqual(step["variants"][label]["n"],
+                                 2 - sum((step["id"], label, round_) in unmeasured for round_ in (1, 2)))
+            self.assertEqual([pair["round"] for pair in step["variants"]["b"]["pairs"]],
+                             [round_ for round_ in (1, 2) if not {(step["id"], "a", round_),
+                                                                  (step["id"], "b", round_)} & unmeasured])
+        self.assertIsNotNone(profile["neighbours"])
+        self.assertEqual([variant["options"] for variant in report["variants"]], [[], ["no-first-second"]])
 
 
 class VariantsStopTogether(Helper):
