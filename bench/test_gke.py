@@ -1166,6 +1166,27 @@ class GeneratorWithVariants(Helper):
             self.assertEqual(line["node_steal_s"], {"a": 0.0, "b": 0.0})
             self.assertEqual(line["node_steal_s"][line["variant"]], line["result"]["smock_cpu"]["node_steal_s"])
 
+    def sample(self, round_, label):
+        """The log of one variant's sample, its pass over the steps in one
+        round: its lines but the steps and checks after a run of other
+        rounds, and its idle RSS in round 1 alone."""
+        def kept(line):
+            if line.get("variant") != label or (line["kind"] == "idle-rss" and round_ != 1):
+                return False
+            return line["kind"] not in ("step", "traffic-check") or line.get("round", round_) == round_
+
+        return "".join(json.dumps(line) + "\n" for line in self.lines if kept(line))
+
+    def test_each_round_of_each_variant_splits_out_as_an_ordinary_run_that_summarizes_as_complete(self):
+        for round_, label in ((1, "a"), (2, "b")):
+            summary, conditions, _ = self.summarize(self.plan_path, self.sample(round_, label))
+            self.assertTrue(summary["complete"], (round_, label))
+            self.assertEqual([case["id"] for case in summary["cases"]], STEP_IDS)
+            self.assertEqual([case["smock_cpu"]["first_second"] is None for case in summary["cases"]],
+                             [label == "b"] * 2)
+            self.assertEqual(len(summary["idle_rss"]), 1 if round_ == 1 else 0)
+            self.assertTrue(conditions["gke"]["profiles"]["small"]["traffic_check"]["ok"])
+
 
 class VariantsStopTogether(Helper):
     """When a variant stops the profile, as one smock alone does, every
