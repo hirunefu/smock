@@ -58,7 +58,8 @@ def smock_name(profile_name):
 # second and above (the amd64 run of 2026-10-14), so it has 6 there. Either
 # fits an 8-vCPU node (7910m allocatable on ek-standard-8 and
 # e4a-standard-8 in those runs) with at least 1 vCPU left for Autopilot's
-# own Pods on it, so that the run's CPU quota of three such nodes holds.
+# own Pods on it, so that the quotas the run checks, of nodes of 8 vCPUs
+# (four by default: GKE_BENCH_NEEDED_CPUS in scripts/gke-bench.sh), hold.
 # oha's worker threads and the split of the connections between the
 # requests of the mix do not depend on the number of CPUs. Its ephemeral
 # storage holds oha's databases of one step.
@@ -82,27 +83,31 @@ TRAFFIC_CHECKS = 2
 
 
 # What a run costs: on-demand prices of Autopilot Pods, which are billed for
-# their requests, in USD an hour before tax, from PRICES_URL, for each
-# architecture of the nodes with the date they were read there; and the
-# cluster management fee, the same in every region. A billing account's
-# free tier ($74.40 a month) covers the fee of one Autopilot or zonal
-# cluster. x86 Pods are general-purpose ones, read on 2026-10-14. The page
-# has no rates for the autopilot-arm compute class that the run's Arm Pods
-# use: its only Arm Pod rates are those of the Scale-Out compute class
-# ("Scale-Out Arm Pod" vCPU and memory, read on 2026-10-15), which price
-# them here, with ephemeral storage at the general-purpose rate, since the
-# Scale-Out class has none of its own. Arm Pods run in fewer regions than
-# x86 ones (ARM_REGIONS in scripts/gke-bench.sh), Tokyo not among them.
+# their requests, in USD an hour before tax, from PRICES_URL on PRICES_DATE;
+# and the cluster management fee, the same in every region. A billing
+# account's free tier ($74.40 a month) covers the fee of one Autopilot or
+# zonal cluster. Both architectures' Pods run on Autopilot's
+# container-optimized compute platform: x86 ones by default, Arm ones
+# through the built-in autopilot-arm compute class (GKE's documentation of
+# the built-in compute classes, 2026-10-13). The pricing page bills that
+# platform's Pods at one rate table for both architectures ("Pods that use
+# the Autopilot container-optimized compute platform"); its Scale-Out Arm
+# Pod rates are those of another compute class, on other machines. The
+# prices are those of the regions with Arm Pods (ARM_REGIONS in
+# scripts/gke-bench.sh) and of Tokyo; another region's are us-central1's
+# plus UNKNOWN_REGION_MARGIN.
 PRICES_URL = "https://cloud.google.com/kubernetes-engine/pricing"
+PRICES_DATE = "2026-10-16"
 CLUSTER_FEE_PER_HOUR = 0.10
-POD_PRICES = {
-    "amd64": {"date": "2026-10-14", "regions": {
-        "us-central1": {"vcpu": 0.0445, "memory_gib": 0.0049225, "ephemeral_gib": 0.0001389},
-        "asia-northeast1": {"vcpu": 0.0571, "memory_gib": 0.0063215, "ephemeral_gib": 0.0001784},
-    }},
-    "arm64": {"date": "2026-10-15", "regions": {
-        "us-central1": {"vcpu": 0.0356, "memory_gib": 0.003938, "ephemeral_gib": 0.0001389},
-    }},
+POD_PRICES_PER_HOUR = {
+    "us-central1": {"vcpu": 0.0445, "memory_gib": 0.0049225, "ephemeral_gib": 0.0001389},
+    "us-east1": {"vcpu": 0.0445, "memory_gib": 0.0049225, "ephemeral_gib": 0.0001389},
+    "us-west1": {"vcpu": 0.0445, "memory_gib": 0.0049225, "ephemeral_gib": 0.0001389},
+    "europe-west1": {"vcpu": 0.049, "memory_gib": 0.0054202, "ephemeral_gib": 0.0001529},
+    "europe-west2": {"vcpu": 0.0573, "memory_gib": 0.0063421, "ephemeral_gib": 0.0001789},
+    "europe-west4": {"vcpu": 0.049, "memory_gib": 0.0054202, "ephemeral_gib": 0.0001529},
+    "asia-southeast1": {"vcpu": 0.0549, "memory_gib": 0.0060729, "ephemeral_gib": 0.0001713},
+    "asia-northeast1": {"vcpu": 0.0571, "memory_gib": 0.0063215, "ephemeral_gib": 0.0001784},
 }
 UNKNOWN_REGION_MARGIN = 1.3
 
@@ -359,17 +364,15 @@ def pod_price(prices, cpu, memory, ephemeral):
     return cpus(cpu) * prices["vcpu"] + gib(memory) * prices["memory_gib"] + gib(ephemeral) * prices["ephemeral_gib"]
 
 
-def region_prices(region, arch):
-    """The prices of the Pods of `arch` in a region, and how they were
-    found."""
-    by_region, date = POD_PRICES[arch]["regions"], POD_PRICES[arch]["date"]
-    if region in by_region:
-        return by_region[region], f"{region}, on-demand prices of {date}, before tax"
-    base = by_region["us-central1"]
+def region_prices(region):
+    """The prices of the Pods in a region, and how they were found."""
+    if region in POD_PRICES_PER_HOUR:
+        return POD_PRICES_PER_HOUR[region], f"{region}, on-demand prices of {PRICES_DATE}, before tax"
+    base = POD_PRICES_PER_HOUR["us-central1"]
     prices = {name: price * UNKNOWN_REGION_MARGIN for name, price in base.items()}
     margin = round((UNKNOWN_REGION_MARGIN - 1) * 100)
-    return prices, (f"{region}: us-central1's prices plus {margin}%, on-demand prices of {date}, before tax; "
-                    "this region's own are not here")
+    return prices, (f"{region}: us-central1's prices plus {margin}%, on-demand prices of {PRICES_DATE}, before "
+                    "tax; this region's own are not here")
 
 
 # The Pods of each architecture, for people.
@@ -379,7 +382,7 @@ POD_KINDS = {"amd64": "amd64 (x86) Pods", "arm64": "arm64 Pods"}
 def estimate(plan, profiles, cases, region, arch, time_limit_s):
     """How long a run on `arch` takes and what it costs, for people, and why
     it does not fit in its time limit, or None."""
-    prices, source = region_prices(region, arch)
+    prices, source = region_prices(region)
     generator = GENERATOR_RESOURCES[arch]
     generator_price = pod_price(prices, generator["cpu"], generator["memory"], generator["ephemeral-storage"])
     smock_prices = {profile["name"]: pod_price(prices, profile["cpu_limit"], profile["memory_limit"],
@@ -417,8 +420,8 @@ def estimate(plan, profiles, cases, region, arch, time_limit_s):
         f"Pods still stop within minutes of the time limit, and the cluster costs its fee, "
         f"${CLUSTER_FEE_PER_HOUR:.2f} an hour, "
         "until it is deleted: the next run's checks name it.",
-        *(["Arm Pods are priced at the Arm Pod rates of the Scale-Out compute class, the only Arm Pod rates of the "
-           "pricing page, which names none for autopilot-arm."] if arch == "arm64" else []),
+        *(["Arm Pods are priced as x86 ones: autopilot-arm runs them on Autopilot's container-optimized compute "
+           "platform, which the pricing page bills at one rate for both architectures."] if arch == "arm64" else []),
     ])
     needed_s = lifetime_s + TIME_LIMIT_MARGIN_S
     if needed_s <= time_limit_s:
@@ -491,10 +494,11 @@ def run_instructions(path):
     return found
 
 
-# The labels of a node that say what it is and where.
+# The labels of a node that say what it is and where, and the type of its
+# boot disk, whose regional quota scripts/gke-bench.sh checks.
 NODE_LABELS = {"instance_type": "node.kubernetes.io/instance-type", "arch": "kubernetes.io/arch",
                "zone": "topology.kubernetes.io/zone", "machine_family": "cloud.google.com/machine-family",
-               "compute_class": "cloud.google.com/compute-class"}
+               "compute_class": "cloud.google.com/compute-class", "boot_disk": "cloud.google.com/gke-boot-disk"}
 
 
 def pod_info(pod_list, node_list):
@@ -783,9 +787,8 @@ def command_summarize(args):
                         "mocks": status.get("mocks")},
         "request_mix": {"file": harness.shown_path(mix), "sha256": harness.sha256_file(mix),
                         "weights": {request["name"]: request["weight"] for request in read_json(mix)["requests"]}},
-        "plan": {"file": harness.shown_path(plan_path), "sha256": harness.sha256_file(plan_path),
-                 "sha256_without_about": harness.sha256_without_about(plan_path)},
-        "targets": {"file": harness.shown_path(targets_path), "sha256": harness.sha256_file(targets_path)},
+        "plan": harness.plan_record(plan_path),
+        "targets": harness.file_record(targets_path),
         "note": (f"Measured on GKE Autopilot in {zone or args.region}, on {args.arch} nodes "
                  f"({machine_type or 'of an unknown machine type'}): smock in a {compute_class} Pod with each "
                  "profile's limits as its requests, and oha in a Pod on another node in its zone, over the Pod "
@@ -820,11 +823,7 @@ def command_summarize(args):
     }
     harness.write_json(out / "summary.json", summary)
     harness.write_json(out / "conditions.json", conditions)
-    markdown = harness.summary_markdown(summary, conditions)
-    if stopped:
-        # Right below the line that says what ran.
-        title, started, rest = markdown.split("\n\n", 2)
-        markdown = "\n\n".join([title, started, stopped_markdown(stopped), rest])
+    markdown = harness.summary_markdown(summary, conditions, stopped and stopped_markdown(stopped))
     (out / "summary.md").write_text(markdown + gke_markdown(results))
     return 0
 

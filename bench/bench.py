@@ -149,6 +149,19 @@ def sha256_without_about(path):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def file_record(path):
+    """What a run's conditions record of a file it read, such as the
+    targets: where it is and its SHA-256."""
+    return {"file": shown_path(path), "sha256": sha256_file(path)}
+
+
+def plan_record(path):
+    """What a run's conditions record of its plan: as of any file, and the
+    SHA-256 of what it says to run, without its description, which
+    bench/compare.py compares."""
+    return {**file_record(path), "sha256_without_about": sha256_without_about(path)}
+
+
 def cpu_quota_percent(limit):
     """The systemd CPUQuota percentage of a Kubernetes-style CPU limit:
     250m is 25 %, 2 is 200 %."""
@@ -863,10 +876,9 @@ class Run:
                 "sha256": sha256_file(BENCH / "requests.json"),
                 "weights": {request["name"]: request["weight"] for request in self.mix},
             },
-            "plan": {"file": shown_path(self.plan_path), "sha256": sha256_file(self.plan_path),
-                     "sha256_without_about": sha256_without_about(self.plan_path)},
+            "plan": plan_record(self.plan_path),
             "note": self.plan.get("note"),
-            "targets": {"file": shown_path(self.targets_path), "sha256": sha256_file(self.targets_path)},
+            "targets": file_record(self.targets_path),
             "machine": machine(),
             "load_generator": {"name": "oha", "version": self.oha_version},
             "harness": {"python": platform.python_version()},
@@ -1712,24 +1724,42 @@ def targets_section(targets, run_architecture, targets_file):
     return lines
 
 
-def summary_markdown(summary, conditions):
+def known(value, unknown="unknown"):
+    """A value of the conditions for people: `unknown` when the run did not
+    learn it (null), as a GKE run that stopped before its load generator
+    said what ran."""
+    return unknown if value is None else value
+
+
+def machine_text(machine):
+    """The machine a run ran on, for people."""
+    cpus = "CPUs unknown" if machine["cpus"] is None else f"{machine['cpus']} CPUs"
+    return f"{machine['architecture']} ({machine['cpu_model']}, {cpus})"
+
+
+def summary_markdown(summary, conditions, stopped=None):
     """The summary for people: the targets, then for each profile idle RSS
-    and the cases."""
-    smock, machine = conditions["smock"], conditions["machine"]
+    and the cases. `stopped` says where and why a run that stopped before
+    its end stopped, right below the line that says what ran, in place of
+    the note that the run is incomplete."""
+    smock, machine, generator = conditions["smock"], conditions["machine"], conditions["load_generator"]
     lines = [
         "# smock benchmark",
         "",
-        f"Started {conditions['started_at']}: smock {smock['version']} (commit {smock['commit']}, "
-        f"{smock['toolchain']}), definition set {conditions['definitions']['digest']}, "
-        f"on {machine['architecture']} ({machine['cpu_model']}, {machine['cpus']} CPUs), "
-        f"{conditions['load_generator']['version']}, plan {conditions['plan']['file']}.",
+        f"Started {conditions['started_at']}: smock {known(smock['version'], 'of an unknown version')} "
+        f"(commit {known(smock['commit'])}, {known(smock['toolchain'], 'toolchain unknown')}), definition set "
+        f"{known(conditions['definitions']['digest'])}, on {machine_text(machine)}, "
+        f"{known(generator['version'], generator['name'] + ' of an unknown version')}, plan "
+        f"{conditions['plan']['file']}.",
     ]
+    if stopped:
+        lines += ["", stopped]
     if conditions.get("note"):
         lines += ["", f"**Note:** {conditions['note']}"]
     if conditions["overrides"]:
         shown_overrides = ", ".join(f"{name} {value}" for name, value in conditions["overrides"].items())
         lines += ["", f"**Not a full run:** the command line changed the plan ({shown_overrides})."]
-    if not summary["complete"]:
+    if not summary["complete"] and not stopped:
         lines += ["", "**Incomplete:** the run stopped before its last case."]
     lines += ["", *targets_section(summary["targets"], kubernetes_architecture(machine["architecture"]),
                                    conditions["targets"]["file"])]

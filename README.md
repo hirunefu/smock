@@ -983,13 +983,13 @@ rather than hiding them; the Journal's byte bound follows the memory limit
 Each profile measures idle RSS, then plain HTTP and TLS with keep-alive
 connections, each at a ladder of fixed rates from 2,500 to 80,000 requests
 a second per CPU (125 to 4,000 under 50m), 20 seconds a step. The top of
-each ladder is about where smock uses up its CPU over TLS. Plain HTTP's
-ladder also has 30,000 a second per CPU, so that it has the rate of each
-profile's arm64 [targets](#targets) (250, 5,000 and 30,000; the amd64
-ones, 125, 1,250 and 10,000, are on every ladder), and 50,000 a second per
-CPU, by which smock had used up its CPU under each profile in the arm64
-GKE probe those targets come from. A full run takes about 20 minutes; it
-prints its estimate before it starts.
+each ladder is about where smock uses up its CPU over TLS. Every ladder
+has the rates of the amd64 [targets](#targets) (125, 1,250 and 10,000)
+and of the arm64 ones under 50m and 250m (250 and 5,000). Plain HTTP's
+ladder also has 30,000 a second per CPU, the rate of arm64's target under
+1 CPU, and 50,000 a second per CPU, by which smock had used up its CPU
+under each profile in the arm64 GKE probe those targets come from. A full
+run takes about 20 minutes; it prints its estimate before it starts.
 
 Before a full run:
 
@@ -1311,13 +1311,12 @@ compare, such as for a summary of another `format`.
 Autopilot: smock in a Pod with each profile's limits as its requests, the
 load from another node over the Pod network. It is part of the
 [checklist before merging into main](docs/merging-into-main.md), and costs
-money: about $0.20 to $0.25 a run on x86 nodes (2026-10-14 prices,
-us-central1 or asia-northeast1), and about $0.16 on Arm nodes in
-us-central1 (2026-10-15 prices), which it estimates before it makes
-anything. Each architecture's Pods are priced at their own on-demand
-rates: x86 Pods at the general-purpose ones, Arm Pods at the Arm Pod rates
-of the Scale-Out compute class, the only Arm Pod rates of the pricing
-page, which names none for the `autopilot-arm` class the run uses.
+money: about $0.22 to $0.26 a run on x86 nodes (us-central1 or
+asia-northeast1), and about $0.18 on Arm nodes in us-central1, at the
+on-demand prices of 2026-10-16, which it estimates before it makes
+anything. Both architectures' Pods run on Autopilot's container-optimized
+compute platform, Arm ones through the `autopilot-arm` compute class, and
+the pricing page bills that platform's Pods at one rate for both.
 
 ```sh
 export GKE_BENCH_PROJECT=<project ID> GKE_BENCH_REGION=us-central1
@@ -1375,15 +1374,20 @@ that run's linux/amd64 build and tests passed.
   and that no cluster or repository of an earlier run is left. The run
   needs four nodes of 8 vCPUs: Autopilot's first node, its system node,
   smock's and the load generator's (in the probe, a quota of 24 vCPUs held
-  the load generator's node back). So it needs 32 vCPUs free in
-  `CPUS_ALL_REGIONS` and in the region's `CPUS` (`GKE_BENCH_NEEDED_CPUS`,
-  from which the number of nodes follows); 100 GB of boot disk a node, in
-  the region's `SSD_TOTAL_GB` on amd64 (pd-balanced) and `HDB_TOTAL_GB` on
-  arm64 (hyperdisk-balanced, as the probe's Arm nodes had); and an external
-  IP address a node, in `IN_USE_ADDRESSES`. It names each quota with how
-  much is free and how much the run needs, and says which is short. Then
-  it prints how long the run takes and what it costs, expected and at
-  most, and stops unless `--yes` says to go on.
+  the load generator's node back). Autopilot's two are x86 nodes on either
+  architecture; smock's and the load generator's are of the run's. So it
+  needs 32 vCPUs free in `CPUS_ALL_REGIONS` (`GKE_BENCH_NEEDED_CPUS`, from
+  which the number of nodes follows); in the region's `CPUS`, 8 for each
+  x86 node; 100 GB of boot disk a node, in the region's `SSD_TOTAL_GB` for
+  an x86 node (pd-balanced, GKE's default) and in `HDB_TOTAL_GB` for an
+  Arm node (hyperdisk-balanced, as the probe's Arm nodes had); and an
+  external IP address a node, in `IN_USE_ADDRESSES`. An Arm node's vCPUs
+  count in a CPU quota of its machine family, which gcloud does not list:
+  an arm64 run says that it is not checked, and the console's Quotas page
+  shows it. It names each quota with how much is free and how much the
+  run needs, and says which is short or cannot be read. Then it prints how
+  long the run takes and what it costs, expected and at most, and stops
+  unless `--yes` says to go on.
 - **Images.** It builds the release binary, unless given one, and two
   images for the run's architecture (`docker build --platform`): the
   release image with `bench/definitions/`
@@ -1471,14 +1475,16 @@ that run's linux/amd64 build and tests passed.
 
 It writes to `bench/results/gke-<date>-<time>/` unless `--out` says
 otherwise: `raw/<profile>/generator.log`, the load generator's lines;
-`raw/<profile>/pods.json`, the nodes the Pods ran on, smock's restarts and
-the load generator's CPU request; `raw/<profile>/smock.log`, smock's log
+`raw/<profile>/pods.json`, the nodes the Pods ran on (with each one's
+boot disk type, `boot_disk`), smock's restarts and the load generator's
+CPU request, kept as soon as each Pod has a node and again at the
+profile's end; `raw/<profile>/smock-node-cpu.log`, what smock's init
+container printed of the CPU of its node, kept once smock has started;
+`raw/<profile>/smock.log`, smock's log
 (and the log of its container before its last restart, when it
-restarted, with kubectl's errors in their place);
-`raw/<profile>/smock-node-cpu.log`, what smock's init container printed
-of the CPU of its node; and
+restarted, with kubectl's errors in their place); and
 `raw/<profile>/service.json`, its Service with the Service's
-EndpointSlices, all three kept before smock's Pod is deleted;
+EndpointSlices, both kept before smock's Pod is deleted;
 `summary.json` in the layout of a run on a machine, which
 `bench/compare.py` reads; `summary.md`; `conditions.json`; and
 `watchdog.log`. The summary and the conditions record, for each profile,
@@ -1490,10 +1496,14 @@ beside each node; `machine.cpu_model` names only the node type, as in a
 run from before the nodes' CPUs were recorded, so that comparing with one
 does not show another machine. A run that stops
 once a profile has started, because something fails or it is stopped
-(Ctrl-C, SIGTERM, a closed terminal), still writes `summary.json`,
+(Ctrl-C, SIGTERM, a closed terminal, or the watchdog at the time limit,
+which it names as the reason), still writes `summary.json`,
 `summary.md` and `conditions.json` from what it measured; `summary.md`
-then says, right below its first line, under which profile and after
-which step the run stopped, and why (`gke.stopped` in `summary.json`).
+then says, right below the line that says when the run started and what
+ran, under which profile and after which step it stopped, and why
+(`gke.stopped` in `summary.json`). So it does when the run leaves out
+the profiles after one whose Pods were not deleted in time, or from one
+that no longer fits in the time limit.
 The summary checks the targets of the run's architecture (`--arch`).
 Nothing outside smock's Pod can read its cgroup on Autopilot, so what
 smock used comes from its own
