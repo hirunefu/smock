@@ -1965,6 +1965,22 @@ class Variants(Script):
         self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
         self.assertIn("nothing is left", output)
 
+    def test_a_variant_not_deleted_in_time_stops_the_later_profiles_and_is_named(self):
+        self.plan.write_text(json.dumps(TWO_PROFILES_PLAN))
+        self.configure(delete_fails_on="manifests/small/smock-r2.json")
+        status, output = self.run_variants()
+        self.assertEqual(status, 1, output)
+        self.assertIn("not deleted in 5 minutes under small: the Pod and Service of variant r2; no later profile runs "
+                      "beside them", output)
+        # Every variant's deletion was tried; nothing of large was made.
+        self.assertEqual([self.filename(call) for call in self.made(["delete"])],
+                         ["generator.json", "smock-r1.json", "smock-r2.json"])
+        self.assertFalse([call for call in self.made(["apply"]) if "/large/" in self.filename(call, whole=True)])
+        report = json.loads((self.out / "same-node.json").read_text())
+        self.assertEqual(report["stopped"]["reason"],
+                         "the Pod and Service of variant r2 were not deleted in 5 minutes, so no later profile ran")
+        self.assertIn("nothing is left", output)
+
     def configure(self, **config):
         logs = {"generator-small": str(self.tmp / "generator-small.log")}
         (self.tmp / "smock-node-cpu.log").write_text(json.dumps({"kind": "node-cpu", "cpu": NODE_CPU}) + "\n")
@@ -1994,9 +2010,11 @@ class Variants(Script):
                 if item["kind"] == "Pod"}
 
     @staticmethod
-    def filename(call):
-        """The file a kubectl apply or delete was given, by its name."""
-        return next(Path(arg.split("=", 1)[1]).name for arg in call["argv"] if arg.startswith("--filename="))
+    def filename(call, whole=False):
+        """The file a kubectl apply or delete was given, by its name, or its
+        whole path when `whole`."""
+        path = next(arg.split("=", 1)[1] for arg in call["argv"] if arg.startswith("--filename="))
+        return path if whole else Path(path).name
 
     def run_script_without_smock(self, *args, timeout=120, **environment):
         """The script with this test's plan, oha and results directory, and
