@@ -295,7 +295,8 @@ class Variants(Helper):
         # The load generator stays off that node, and in its zone.
         [job] = objects(rendered, "Job")
         affinity = pod_spec(job)["affinity"]
-        for kind, key in (("podAntiAffinity", "kubernetes.io/hostname"), ("podAffinity", "topology.kubernetes.io/zone")):
+        for kind, key in (("podAntiAffinity", "kubernetes.io/hostname"),
+                          ("podAffinity", "topology.kubernetes.io/zone")):
             [term] = affinity[kind]["requiredDuringSchedulingIgnoredDuringExecution"]
             self.assertEqual(term["topologyKey"], key)
             for pod in pods:

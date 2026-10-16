@@ -8,12 +8,19 @@ usage:
   python3 bench/gke/gke.py estimate [options]    how long a run takes and what it costs
   python3 bench/gke/gke.py manifests [options]   the Kubernetes objects of one profile
   python3 bench/gke/gke.py pod-info [options] PODS NODES   what to keep of the Pods and their nodes
+  python3 bench/gke/gke.py placement PODS [options]   fail unless a profile's smock Pods share a node, at its limits
   python3 bench/gke/gke.py node-cpu [options]     what to keep of the CPU of the node it runs on
   python3 bench/gke/gke.py summarize [options] OUT   summary.json, summary.md and conditions.json
   python3 bench/gke/gke.py stopped LOG            why the load generator stopped its profile early, if it did
   python3 bench/gke/gke.py elf-arch FILE          the architecture of an executable, amd64 or arm64
   python3 bench/gke/gke.py names-commit FILE COMMIT   fail if smock's build information does not name COMMIT
   python3 bench/gke/gke.py check-dockerfiles FILE...   fail if a Dockerfile has a RUN instruction
+
+A run measures one smock, or compares 2 to 4 variants of it, each in a Pod
+of its own on one node, which one load generator measures in turn, round
+after round: manifests then takes --variant LABEL=IMAGE[,no-init][,no-first-second]
+for each, the first the baseline, and --rounds N; plan and estimate take
+--variants N and --rounds N.
 """
 
 import argparse
@@ -53,10 +60,11 @@ def smock_name(profile_name, variant=None):
     return f"smock-{profile_name}" + (f"-{variant}" if variant else "")
 
 
-# A variant of smock, which a run can measure against others on one node:
-# a label, which names its Pod and Service, and the image of its binary.
-# The label is short enough that smock-<profile>-<label> still names a
-# Service under most profiles.
+# A variant of smock, which a run can measure against others on one node,
+# each in turn: a label, which names its Pod and Service, the image of its
+# binary, and its options. The label is short enough (16 characters at
+# most) that smock-<profile>-<label> still names a Service under most
+# profiles; manifests checks it does under the profile it renders.
 VARIANT_LABEL = re.compile(r"[a-z]([-a-z0-9]{0,14}[a-z0-9])?")
 
 # How many times the load generator measures each variant's ladder, unless
@@ -176,9 +184,10 @@ CLUSTER_CREATE_S = 540
 CLUSTER_DELETE_S = 300
 PROFILE_START_S = 180
 EXPECTED_ANALYSIS_S = 5
-# With variants, about how long each after the first takes to start on the
-# node of the first, whose images that node has but its own, and to be
-# checked there; and to scrape an idle neighbour's /metrics.
+# With variants: about how long each variant after the first takes to
+# start on the first one's node, which has every image but its own, and to
+# be checked there; and how long a scrape of an idle neighbour's /metrics
+# takes.
 VARIANT_START_S = 30
 EXPECTED_NEIGHBOUR_SCRAPE_S = 0.1
 # A run must be done this long before its time limit.
@@ -424,9 +433,13 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
     Job, it stops being billed by itself even when neither the run nor its
     watchdog is left to delete the cluster.
 
-    With `variants` (parse_variant's, the first the baseline), smock-<label>.json
-    holds each variant's Service and Pod, from its image, in place of
-    smock.json."""
+    With `variants` (parse_variants', the first the baseline), each has
+    smock-<label>.json in place of smock.json: its own Service and Pod,
+    from its image, on the node of the profile's other variants (a no-init
+    variant without the init container); the quota counts each one's Pod,
+    and the load generator measures each in turn over `rounds` rounds (its
+    VARIANTS and ROUNDS), with time for them all. `smock_image` is not used
+    then."""
     if smock_deadline_s < 1:
         raise GkeError(f"smock's Pod needs a deadline of at least 1 s, not {smock_deadline_s}")
     if variants:
@@ -679,9 +692,9 @@ def pod_info(pod_list, node_list, restarts=True):
             statuses = status.get("containerStatuses") or [{}]
             container = next((container for container in statuses if container.get("name") == "smock"), statuses[0])
             terminated = container.get("lastState", {}).get("terminated") or {}
-            smock = next((container for container in pod["spec"].get("containers", [])
-                          if container.get("name") == "smock"), None)
-            admitted = None if smock is None else smock.get("resources", {})
+            spec = next((container for container in pod["spec"].get("containers", [])
+                         if container.get("name") == "smock"), None)
+            admitted = None if spec is None else spec.get("resources", {})
             info["smock"].append({
                 "name": pod["metadata"]["name"], "node": pod["spec"].get("nodeName"),
                 "ready": any(condition["type"] == "Ready" and condition["status"] == "True"
