@@ -1926,6 +1926,29 @@ class Variants(Script):
         self.assertEqual(status, 1, output)
         self.assertIn("variant r2 did not become ready under small, on the node of variant r1", output)
 
+    def test_a_run_of_variants_that_stops_under_a_later_profile_compares_what_it_measured_and_says_why(self):
+        # small measures every run; then r1 never becomes ready under large.
+        self.plan.write_text(json.dumps(TWO_PROFILES_PLAN))
+        self.configure(never_ready=["pod/smock-large-r1"])
+        status, output = self.run_variants()
+        self.assertEqual(status, 1, output)
+        reason = "variant r1 did not become ready under large"
+        self.assertIn(f"gke-bench: {reason}", output)
+        report = json.loads((self.out / "same-node.json").read_text())
+        self.assertEqual(report["stopped"], {"reason": reason, "profile": "large", "after": None})
+        self.assertEqual({name: profile["complete"] for name, profile in report["gke"]["profiles"].items()},
+                         {"small": True, "large": False})
+        markdown = (self.out / "summary.md").read_text()
+        self.assertIn(f"**Stopped early:** the run stopped under profile large, before its first run: {reason}.",
+                      markdown)
+        self.assertEqual(markdown, (self.out / "same-node.md").read_text())
+        # Each sample says so too, as a run of smock alone.
+        summary = json.loads((self.out / "samples" / "1-r2" / "summary.json").read_text())
+        self.assertEqual(summary["gke"]["stopped"], {"reason": reason, "profile": "large", "after": None})
+        self.assertIn("summary.md says where and why the run stopped", output)
+        self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
+        self.assertIn("nothing is left", output)
+
     def configure(self, **config):
         logs = {"generator-small": str(self.tmp / "generator-small.log")}
         (self.tmp / "smock-node-cpu.log").write_text(json.dumps({"kind": "node-cpu", "cpu": NODE_CPU}) + "\n")

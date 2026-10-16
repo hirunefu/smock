@@ -2169,30 +2169,34 @@ class VariantRun(Helper):
         return [(int(round_), label, Path(directory))
                 for round_, label, directory in (line.split(" ", 2) for line in stdout.splitlines())]
 
-    def summarize_sample(self, directory, sha256=None, plan=None):
+    def summarize_sample(self, directory, sha256=None, plan=None, stopped=None):
         """summarize over a sample's directory, as the runner calls it for
-        each, with the sample's variant's binary; its summary.json and
-        conditions.json."""
+        each, with the sample's variant's binary, and where and why the run
+        stopped before its end when it did (`stopped`, (reason, profile));
+        its summary.json and conditions.json."""
         status, _, stderr = helper(
             "summarize", "--plan", plan or small_plan(self.directory()), "--targets", small_targets(self.directory()),
             "--region", "us-central1", "--arch", "amd64", "--started-at", "2026-10-16T03:28:50+00:00",
             "--finished-at", "2026-10-16T04:01:56+00:00", "--smock-image", "sha256:" + "1" * 64,
-            *(["--smock-sha256", sha256] if sha256 else []), "--generator-image", "sha256:" + "2" * 64, directory)
+            *(["--smock-sha256", sha256] if sha256 else []), "--generator-image", "sha256:" + "2" * 64,
+            *(["--stopped", stopped[0], "--stopped-under", stopped[1]] if stopped else []), directory)
         self.assertEqual(status, 0, stderr)
         return json.loads((directory / "summary.json").read_text()), \
             json.loads((directory / "conditions.json").read_text())
 
-    def same_node(self, out, *options, sha256=None, plan=None):
+    def same_node(self, out, *options, sha256=None, plan=None, stopped=None):
         """gke.py same-node over `out` with `options`, once its samples are
         split and each summarized as the runner does it, with its variant's
         binary's sha256 of `sha256` ({label or (round, label): hex}, by
-        default 64 of the label's first letter): its exit status,
+        default 64 of the label's first letter), and where and why the run
+        stopped when it did (`stopped`, (reason, profile)): its exit status,
         same-node.json, same-node.md and what it wrote to stderr. The plan
         is small_plan's, unless `plan` names another."""
         plan = plan or small_plan(self.directory())
         sha256 = sha256 or {}
         for round_, label, directory in self.samples(out, plan):
-            self.summarize_sample(directory, sha256.get((round_, label), sha256.get(label, label[0] * 64)), plan)
+            self.summarize_sample(directory, sha256.get((round_, label), sha256.get(label, label[0] * 64)), plan,
+                                  stopped)
         status, _, stderr = helper("same-node", out, *options)
         report = json.loads((out / "same-node.json").read_text()) if (out / "same-node.json").exists() else None
         markdown = (out / "same-node.md").read_text() if (out / "same-node.md").exists() else None
@@ -2615,6 +2619,36 @@ class SameNode(VariantRun):
         self.assertIn("The load generator did not report 8 runs: its Job ended before them, or never ran.", big)
         self.assertEqual([self.row(markdown, "http-keep-alive", 5000, label, "## big: CPU limit 1, memory limit 1Gi")
                           ["Saturated"] for label in ("a", "b")], ["-", "-"])
+
+    def test_a_run_that_stopped_before_its_end_says_where_and_why_below_what_ran(self):
+        # As the runner tells summarize of each sample: here, the next
+        # profile, big, no longer fitted in the time limit.
+        plan = small_plan(self.directory())
+        content = json.loads(plan.read_text())
+        content["profiles"].append({"name": "big", "cpu_limit": "1", "memory_limit": "1Gi"})
+        content["cases"][0]["rates"]["big"] = [5000]
+        plan.write_text(json.dumps(content))
+        reason = "profile big and those after it did not fit in the time limit of 80 minutes"
+        out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
+        status, report, markdown, _ = self.same_node(out, plan=plan, stopped=(reason, "big"))
+        self.assertEqual(status, 1)
+        self.assertEqual(report["stopped"], {"reason": reason, "profile": "big", "after": None})
+        started, stopped = markdown.split("\n\n")[1:3]
+        self.assertTrue(started.startswith("Started 2026-10-16T03:28:50+00:00: 2 variants"), started)
+        self.assertEqual(stopped, f"**Stopped early:** the run stopped under profile big, before its first run: "
+                                  f"{reason}. Nothing after that was measured.")
+        # Stopped under small after its last run, b's at 1,000 requests/s
+        # in round 4.
+        status, report, markdown, _ = self.same_node(out, stopped=("stopped by SIGTERM", "small"))
+        self.assertEqual(status, 0)
+        self.assertEqual(report["stopped"], {"reason": "stopped by SIGTERM", "profile": "small",
+                                             "after": {"round": 4, "variant": "b", "id": "http-keep-alive@small@1000"}})
+        self.assertIn("\n\n**Stopped early:** the run stopped under profile small, after its run of "
+                      "http-keep-alive@small@1000 by b in round 4: stopped by SIGTERM. Nothing after that was measured."
+                      "\n\n", markdown)
+        status, report, markdown, _ = self.same_node(out)
+        self.assertIsNone(report["stopped"])
+        self.assertNotIn("Stopped early", markdown)
 
     def test_a_variant_with_two_sha256_values_exits_2_since_what_it_measured_is_unknown(self):
         out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))

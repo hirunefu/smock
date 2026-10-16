@@ -1637,8 +1637,9 @@ READING = [
 
 
 def same_node_markdown(report):
-    """same-node.md: what ran, why the variants cannot be compared when
-    they cannot, each variant's binary and options, whether the samples'
+    """same-node.md: what ran, where and why the run stopped when it
+    stopped before its end, why the variants cannot be compared when they
+    cannot, each variant's binary and options, whether the samples'
     other conditions were the same, how to read the rest; and for each
     profile, where the variants ran, in what order, what the idle ones
     used, a row for each variant at each step, the runs that measured
@@ -1650,6 +1651,8 @@ def same_node_markdown(report):
              f"Started {run['started_at']}: {len(report['variants'])} variants of smock over {run['rounds']} "
              f"round{'' if run['rounds'] == 1 else 's'}, on {run['machine']}, "
              f"{harness.known(run['load_generator'], 'a load generator of an unknown version')}, plan {run['plan']}."]
+    if report["stopped"]:
+        lines += ["", run_stopped_text(report["stopped"])]
     if report["problems"]:
         lines += ["", "**Not comparable:**", "", *(f"- {problem}." for problem in report["problems"])]
     lines += ["", *variants_lines(report), "", conditions_text(report["conditions"]), "", *READING]
@@ -1745,7 +1748,9 @@ def same_node(out, baseline=None, sha256=None, no_init=()):
     """The comparison of the variants of a run under `out`, from its
     samples, each summarized, and its raw/<profile>/, with the sha256 of
     each variant's binary the run gives ({label: [hex]}) and the variants
-    it ran without the init container: same-node.json's content,
+    it ran without the init container (where and why the run stopped, when
+    it stopped before its end, as it told summarize of each sample):
+    same-node.json's content,
     same-node.md's, and the exit status: 2 when a variant has two sha256,
     1 when the variants did not share a node, were admitted with other
     limits than the plan's, or a sample is incomplete, else 0."""
@@ -1785,6 +1790,7 @@ def same_node(out, baseline=None, sha256=None, no_init=()):
     problems += placed
     reference = summarized(samples, labels)[0][1]
     report = {"format": 1, "baseline": baseline, "variants": variants, "problems": problems,
+              "stopped": run_stopped(samples, raws),
               "run": {"started_at": reference["started_at"], "rounds": rounds,
                       "machine": compare_module().where(reference),
                       "load_generator": reference["load_generator"]["version"], "plan": reference["plan"]["file"]},
@@ -1792,6 +1798,33 @@ def same_node(out, baseline=None, sha256=None, no_init=()):
               "complete": all(result["complete"] for result in results.values()), "profiles": profiles,
               "gke": {"profiles": results}}
     return report, same_node_markdown(report), status
+
+
+def run_stopped(samples, raws):
+    """Where a run of variants that stopped before its end stopped, and why,
+    as the runner told summarize of each sample: the profile it was
+    running and its last run there ({round, variant, id}, from the load
+    generator's lines, `raws`), or None before the first; None when the
+    run did not stop."""
+    stopped = next((sample[0]["gke"]["stopped"] for sample in samples.values()
+                    if sample and sample[0]["gke"].get("stopped")), None)
+    if not stopped:
+        return None
+    made = [line for line in raws.get(stopped["profile"], []) if line["kind"] == "step" and line.get("variant")]
+    return {"reason": stopped["reason"], "profile": stopped["profile"],
+            "after": {"round": made[-1]["round"], "variant": made[-1]["variant"], "id": made[-1]["result"]["id"]}
+            if made else None}
+
+
+def run_stopped_text(stopped):
+    """What same-node.md says of a run that stopped before its end."""
+    where = ""
+    if stopped["profile"]:
+        after = stopped["after"]
+        run = (f"after its run of {after['id']} by {after['variant']} in round {after['round']}" if after else
+               "before its first run")
+        where = f" under profile {stopped['profile']}, {run}"
+    return f"**Stopped early:** the run stopped{where}: {stopped['reason']}. Nothing after that was measured."
 
 
 def command_same_node(args):
