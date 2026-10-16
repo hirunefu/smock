@@ -1575,6 +1575,90 @@ class NodeCpu(Helper):
         self.assertEqual(lines, [{"kind": "node-cpu", "cpu": {**AMD_CPU, "vulnerabilities": None}}])
 
 
+def kept_pod(label, node="node-a", cpu="250m", memory="512Mi", profile="autopilot-min", requests=None):
+    """What gke.py pod-info keeps of a variant's smock Pod: on `node`,
+    admitted with `cpu` and `memory` as its limits, and as its requests
+    unless `requests` says otherwise."""
+    limits = {"cpu": cpu, "memory": memory, "ephemeral-storage": "64Mi"}
+    return {"name": f"smock-{profile}-{label}", "node": node, "ready": True, "restarts": None,
+            "last_termination": None, "variant": label, "resources": {"requests": requests or limits, "limits": limits}}
+
+
+class Placement(Helper):
+    """Before the load generator starts, the run checks that every variant
+    of the profile runs on one node, under the profile's limits as
+    Autopilot admitted them: else the comparison would not hold."""
+
+    def placement(self, smock, profile="autopilot-min"):
+        """gke.py placement over the profile's Pods as pod-info keeps them,
+        with `smock` as its smock Pods."""
+        path = self.directory() / "pods.json"
+        path.write_text(json.dumps({"smock": smock, "generator": [], "nodes": {}}))
+        return helper("placement", path, "--plan", BENCH / "plan-autopilot.json", "--profile", profile)
+
+    def test_variants_on_one_node_under_the_profiles_limits_pass(self):
+        # The API may write a quantity otherwise than the plan does; a Pod
+        # of another profile is not this one's.
+        status, stdout, stderr = self.placement([
+            kept_pod("r1"), kept_pod("r2", cpu="0.25", memory="536870912"), kept_pod("r2b"),
+            kept_pod("r1", node="node-b", profile="chart-default", cpu="1", memory="1Gi")])
+        self.assertEqual((status, stdout, stderr), (0, "", ""))
+        status, _, stderr = self.placement([kept_pod("r1", cpu="1", memory="1Gi", profile="chart-default"),
+                                            kept_pod("r2", cpu="1000m", memory="1Gi", profile="chart-default")],
+                                           profile="chart-default")
+        self.assertEqual(status, 0, stderr)
+
+    def test_the_variants_pods_as_rendered_and_read_back_by_pod_info_pass(self):
+        # As the run applies them, and kubectl lists them once each has a
+        # node.
+        rendered = self.manifests(profile="autopilot-burst-min",
+                                  variants=(*TWO_VARIANTS, f"r2h={OTHER_IMAGE},no-init"))
+        directory = self.directory()
+        pod_list = {"items": [{**pod, "spec": {**pod["spec"], "nodeName": "node-a"},
+                               "status": {"phase": "Running", "conditions": [{"type": "Ready", "status": "True"}],
+                                          "containerStatuses": [{"name": "smock", "restartCount": 0}]}}
+                              for pod in objects(rendered, "Pod")]}
+        (directory / "pods.json").write_text(json.dumps(pod_list))
+        (directory / "nodes.json").write_text(json.dumps({"items": []}))
+        status, stdout, stderr = helper("pod-info", "--without-restarts", directory / "pods.json",
+                                        directory / "nodes.json")
+        self.assertEqual(status, 0, stderr)
+        (directory / "pod-info.json").write_text(stdout)
+        self.assertEqual([pod["variant"] for pod in json.loads(stdout)["smock"]], ["r1", "r2", "r2h"])
+        status, _, stderr = helper("placement", directory / "pod-info.json", "--plan", BENCH / "plan-autopilot.json",
+                                   "--profile", "autopilot-burst-min")
+        self.assertEqual(status, 0, stderr)
+
+    def test_variants_on_two_nodes_fail_saying_which_is_on_which(self):
+        status, _, stderr = self.placement([kept_pod("r1"), kept_pod("r2", node="node-b"), kept_pod("r2b"),
+                                            kept_pod("r2h", node="node-b")])
+        self.assertEqual(status, 1)
+        self.assertIn("the smock Pods of autopilot-min are on 2 nodes, not one: r1 and r2b on node-a, r2 and r2h on "
+                      "node-b", stderr)
+
+    def test_a_variant_admitted_with_other_requests_or_limits_than_the_profiles_fails_saying_which(self):
+        # As Autopilot raises what is under its minimums for the Pods that
+        # need more, such as those with anti-affinity.
+        status, _, stderr = self.placement([
+            kept_pod("r1", memory="1Gi", requests={"cpu": "250m", "memory": "512Mi", "ephemeral-storage": "64Mi"}),
+            kept_pod("r2", cpu="500m")])
+        self.assertEqual(status, 1)
+        self.assertEqual(stderr.splitlines(), [
+            "gke: variant r1's memory limit was admitted as 1Gi, not the profile's 512Mi",
+            "gke: variant r2's CPU request was admitted as 500m, not the profile's 250m",
+            "gke: variant r2's CPU limit was admitted as 500m, not the profile's 250m"])
+
+    def test_a_variant_with_no_node_yet_or_unknown_resources_fails(self):
+        status, _, stderr = self.placement([kept_pod("r1"), kept_pod("r2", node=None),
+                                            {**kept_pod("r2b"), "resources": None}])
+        self.assertEqual(status, 1)
+        self.assertIn("gke: variant r2 has no node yet", stderr)
+        self.assertIn("gke: variant r2b's admitted requests and limits are unknown", stderr)
+        status, _, stderr = self.placement([kept_pod("r1", profile="chart-default")])
+        self.assertEqual(status, 1)
+        self.assertIn("gke: no smock Pod of profile autopilot-min is in", stderr)
+
+
 class PodInfo(Helper):
     def test_only_what_says_where_and_how_the_pods_ran_is_kept(self):
         directory = self.directory()

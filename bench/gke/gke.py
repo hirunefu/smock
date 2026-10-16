@@ -22,6 +22,7 @@ import json
 import re
 import struct
 import sys
+from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -707,6 +708,66 @@ def pod_info(pod_list, node_list, restarts=True):
     return info
 
 
+# What each suffix of a Kubernetes quantity multiplies its number by.
+QUANTITY_SUFFIXES = {"Ki": 1 << 10, "Mi": 1 << 20, "Gi": 1 << 30, "Ti": 1 << 40, "Pi": 1 << 50, "Ei": 1 << 60,
+                     "n": Fraction(1, 10 ** 9), "u": Fraction(1, 10 ** 6), "m": Fraction(1, 1000), "k": 10 ** 3,
+                     "M": 10 ** 6, "G": 10 ** 9, "T": 10 ** 12, "P": 10 ** 15, "E": 10 ** 18}
+QUANTITY = re.compile(r"(\d+\.?\d*|\.\d+)(?:[eE]([-+]?\d+)|(" + "|".join(QUANTITY_SUFFIXES) + r"))?")
+
+
+def quantity(text):
+    """The exact value of a Kubernetes quantity, such as 250m, 0.25, 512Mi
+    or 536870912, which the API may write otherwise than the plan does; or
+    None when `text` is not one."""
+    match = QUANTITY.fullmatch(str(text))
+    if not match:
+        return None
+    value = Fraction(match[1])
+    if match[2]:
+        return value * Fraction(10) ** int(match[2])
+    return value * QUANTITY_SUFFIXES[match[3]] if match[3] else value
+
+
+def and_list(items):
+    """`items` for people: a, b and c."""
+    return " and ".join([", ".join(items[:-1]), items[-1]] if len(items) > 1 else items)
+
+
+def placement_problems(info, profile):
+    """Why the smock Pods of `profile`, as pod-info keeps them (`info`),
+    cannot be compared with each other, one sentence each; none when every
+    one has a node, the same, and was admitted with the profile's limits
+    as its CPU and memory requests and limits."""
+    pods = [pod for pod in info["smock"] if pod["name"] == smock_name(profile["name"], pod.get("variant"))]
+    if not pods:
+        return [f"no smock Pod of profile {profile['name']} is in what the run read of its Pods"]
+
+    def who(pod):
+        return f"variant {pod['variant']}" if pod.get("variant") else f"Pod {pod['name']}"
+
+    problems = [f"{who(pod)} has no node yet" for pod in pods if not pod["node"]]
+    nodes = {}
+    for pod in pods:
+        if pod["node"]:
+            nodes.setdefault(pod["node"], []).append(pod.get("variant") or pod["name"])
+    if len(nodes) > 1:
+        problems.append(f"the smock Pods of {profile['name']} are on {len(nodes)} nodes, not one: "
+                        + ", ".join(f"{and_list(names)} on {node}" for node, names in nodes.items()))
+    wanted = {"cpu": ("CPU", profile["cpu_limit"]), "memory": ("memory", profile["memory_limit"])}
+    for pod in pods:
+        if pod.get("resources") is None:
+            problems.append(f"{who(pod)}'s admitted requests and limits are unknown")
+            continue
+        for kind, admitted in (("request", pod["resources"].get("requests")),
+                               ("limit", pod["resources"].get("limits"))):
+            for resource, (name, limit) in wanted.items():
+                value = (admitted or {}).get(resource)
+                if value is None or quantity(value) is None or quantity(value) != quantity(limit):
+                    problems.append(f"{who(pod)}'s {name} {kind} was admitted as {value or 'none'}, not the "
+                                    f"profile's {limit}")
+    return problems
+
+
 # Where Linux describes the CPUs, and the mitigations of their
 # vulnerabilities, one file each.
 CPUINFO = "/proc/cpuinfo"
@@ -1062,6 +1123,15 @@ def command_pod_info(args):
     return 0
 
 
+def command_placement(args):
+    plan = read_json(args.plan)
+    [profile] = plan_profiles(plan, [args.profile])
+    problems = placement_problems(read_json(args.pods), profile)
+    for problem in problems:
+        print(f"gke: {problem}", file=sys.stderr)
+    return 1 if problems else 0
+
+
 def command_node_cpu(args):
     """Prints a node-cpu line: the CPU of the node it runs on, as node_cpu
     keeps it, or None and why. It succeeds whatever it reads, since smock's
@@ -1159,6 +1229,13 @@ def main(argv):
     info.add_argument("--without-restarts", action="store_true",
                       help="keep smock's restarts as unknown (null), as read before the profile's end")
     info.set_defaults(handler=command_pod_info)
+    placing = commands.add_parser("placement", help="fail, saying why, unless every smock Pod of the profile is on "
+                                                    "one node, admitted with the profile's limits as its requests "
+                                                    "and limits")
+    placing.add_argument("pods", help="what gke.py pod-info kept of the profile's Pods")
+    placing.add_argument("--plan", required=True, help="the plan the run runs")
+    placing.add_argument("--profile", required=True, help="the profile")
+    placing.set_defaults(handler=command_placement)
     cpu = commands.add_parser("node-cpu", help="print, as a JSON line, what to keep of the CPU of the node it runs on; "
                                               "it succeeds whatever it can read")
     cpu.add_argument("--cpuinfo", default=CPUINFO, help=f"the CPUs' description (default: {CPUINFO})")
