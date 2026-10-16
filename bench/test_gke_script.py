@@ -1752,6 +1752,9 @@ class Variants(Script):
             self.assertIn(expected, output, args)
         self.assertEqual(self.calls(), [])
 
+    def test_a_profile_starts_with_the_margin_gke_py_estimates_with(self):
+        self.assertIn(f"deadline_s + {gke_module().TIME_LIMIT_MARGIN_S}))", SCRIPT.read_text())
+
     def test_the_script_refuses_variants_as_gke_py_does_before_anything_is_made(self):
         # The script checks the variants before the cluster is made, and
         # gke.py once it is: both by gke.py's rules.
@@ -1820,8 +1823,9 @@ class Variants(Script):
         status, output = self.run_script_without_smock("--yes", "--time-limit", "30m", "--variant", f"a={self.smock}",
                                                        "--variant", f"b={b}")
         self.assertEqual(status, 1, output)
-        self.assertIn("more than the time limit of 30 minutes: run fewer profiles, cases, variants or rounds, or raise "
-                      "the limit", output)
+        self.assertIn("to fit in the time limit of 30 minutes, so the run would skip it and any after it: the run "
+                      "needs a limit of about 39 minutes; run fewer profiles, cases, variants or rounds, or raise the "
+                      "limit", output)
         self.assertEqual(self.changing_calls(), [])
         status, output = self.run_script("--yes", "--time-limit", "30m")
         self.assertEqual(status, 0, output)

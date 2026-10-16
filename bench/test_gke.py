@@ -1090,10 +1090,34 @@ class Estimate(Helper):
         # The fee, the load generator and 4 smock Pods at the largest
         # profile's limits: $0.4511925 an hour for 65 minutes.
         self.assertIn("At most: $0.49, if it ran until the time limit (60 minutes)", stdout)
+        # Its Job may take 2,139 s, which with the margin and the cluster's
+        # creation needs 55 minutes, more than the cluster's 47.
         status, _, stderr = self.estimate("--variants", 4, "--rounds", 4, plan=plan, arch="amd64", time_limit_s=1200)
         self.assertEqual(status, 1)
-        self.assertIn("the run needs about 47 minutes with a margin, more than the time limit of 20 minutes: run "
-                      "fewer profiles, cases, variants or rounds, or raise the limit", stderr)
+        self.assertIn("profile small would start about 9 minutes in, too late for its load generator's Job, which may "
+                      "take 36 minutes, and the 10 minutes after it to fit in the time limit of 20 minutes, so the run "
+                      "would skip it and any after it: the run needs a limit of about 55 minutes; run fewer profiles, "
+                      "cases, variants or rounds, or raise the limit", stderr)
+
+    def test_with_variants_a_profile_the_runner_would_skip_for_time_is_refused(self):
+        # Run 1: the runner starts a profile only when its Job's deadline,
+        # 2,907 s here, and 10 minutes more fit before the time limit.
+        # autopilot-min would start 2,437.8 s in (the cluster's 540 s, then
+        # autopilot-burst-min's 270 s of Pod starts and 1,627.8 s of load),
+        # so it needs 5,944.8 s: 100 minutes, where the cluster alone needs
+        # 87.
+        def estimate(minutes):
+            return self.estimate("--variants", 4, "--rounds", 4, "--profiles", "autopilot-burst-min,autopilot-min",
+                                 plan=BENCH / "plan-same-node.json", arch="amd64", time_limit_s=minutes * 60)
+
+        status, _, stderr = estimate(95)
+        self.assertEqual(status, 1)
+        self.assertIn("profile autopilot-min would start about 41 minutes in, too late for its load generator's Job, "
+                      "which may take 48 minutes, and the 10 minutes after it to fit in the time limit of 95 minutes, "
+                      "so the run would skip it and any after it: the run needs a limit of about 100 minutes", stderr)
+        for minutes in (100, 120):
+            status, _, stderr = estimate(minutes)
+            self.assertEqual(status, 0, (minutes, stderr))
 
 
 class LocalSmock:

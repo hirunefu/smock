@@ -1623,8 +1623,10 @@ us-central1 at the prices of 2026-10-16, or $0.30 while the free tier
 covers the cluster's fee: the cluster lives about 77 minutes, and the
 load generator about 54. A profile starts only when its Job's deadline,
 48 minutes there, and 10 minutes more fit before the time limit, so the
-second needs a limit of about 110 minutes, and 120 leaves room; at most,
-the run costs $0.94 then.
+second needs a limit of about 100 minutes, which the estimate checks
+before anything is made, and more when the images take long to push or
+the cluster to make; 110 leaves about 10 minutes, at most $0.86, and
+120 leaves room, at most $0.94.
 
 ### In CI
 

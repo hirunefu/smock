@@ -1646,7 +1646,9 @@ make_cluster
 run_status=0 stopped=() last_profile=${profile_lines##*$'\n'}
 last_profile=${last_profile%% *}
 while read -r name steps deadline_s <&3; do
-  # Each profile needs its Job's time, smock's start, and the deletion.
+  # Each profile needs its Job's time, smock's start, and the deletion:
+  # 600 s is gke.py's TIME_LIMIT_MARGIN_S, with which its estimate refuses
+  # a run of variants whose profile would be skipped here.
   if [ $(($(now) + deadline_s + 600)) -gt "$deadline" ]; then
     say "profile $name and those after it do not fit in the time limit; skipping them"
     stop_reason="profile $name and those after it did not fit in the time limit of $((time_limit_s / 60)) minutes"

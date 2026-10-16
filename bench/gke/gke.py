@@ -568,10 +568,19 @@ def estimate(plan, profiles, cases, region, arch, time_limit_s, variants=1, roun
     smock_prices = {profile["name"]: pod_price(prices, profile["cpu_limit"], profile["memory_limit"],
                                                SMOCK_EPHEMERAL_STORAGE) for profile in profiles}
     smock_cost = generator_cost = generator_s = profiles_s = 0
+    # When each profile would start, and the first the runner would skip
+    # for time: it starts a profile only when the profile's Job's deadline
+    # and TIME_LIMIT_MARGIN_S fit before the time limit.
+    late, latest_s = None, 0
     for profile in profiles:
         specs = steps(plan, profile, cases)
         if not specs:
             continue
+        starts_s = CLUSTER_CREATE_S + profiles_s
+        deadline_s = job_deadline_s(plan, profile, specs, variants, rounds)
+        latest_s = max(latest_s, starts_s + deadline_s + TIME_LIMIT_MARGIN_S)
+        if late is None and starts_s + deadline_s + TIME_LIMIT_MARGIN_S > time_limit_s:
+            late = {"name": profile["name"], "starts_s": starts_s, "deadline_s": deadline_s}
         made = run_steps(specs, variants, rounds)
         load = load_s(plan, made) + \
             len(made) * (EXPECTED_ANALYSIS_S + 2 * (variants - 1) * EXPECTED_NEIGHBOUR_SCRAPE_S) + \
@@ -613,9 +622,21 @@ def estimate(plan, profiles, cases, region, arch, time_limit_s, variants=1, roun
            "platform, which the pricing page bills at one rate for both architectures."] if arch == "arm64" else []),
     ])
     needed_s = lifetime_s + TIME_LIMIT_MARGIN_S
+    fewer = "profiles or cases" if variants == 1 else "profiles, cases, variants or rounds"
+    # With variants, a profile's Job deadline is far beyond its expected
+    # time (15 s to analyse each run, where about 5 are expected, and a
+    # second for each neighbour's scrape), so a run whose cluster would fit
+    # may still have a profile the runner skips. Without, the two differ by
+    # seconds, and only the cluster's time is checked, as before.
+    if variants > 1 and late:
+        return text, (f"profile {late['name']} would start about {round(late['starts_s'] / 60)} minutes in, too late "
+                      f"for its load generator's Job, which may take {round(late['deadline_s'] / 60)} minutes, and the "
+                      f"{TIME_LIMIT_MARGIN_S // 60} minutes after it to fit in the time limit of "
+                      f"{round(time_limit_s / 60)} minutes, so the run would skip it and any after it: the run needs a "
+                      f"limit of about {math.ceil(max(needed_s, latest_s) / 60)} minutes; run fewer {fewer}, or "
+                      "raise the limit")
     if needed_s <= time_limit_s:
         return text, None
-    fewer = "profiles or cases" if variants == 1 else "profiles, cases, variants or rounds"
     return text, (f"the run needs about {round(needed_s / 60)} minutes with a margin, more than the time limit of "
                   f"{round(time_limit_s / 60)} minutes: run fewer {fewer}, or raise the limit")
 
