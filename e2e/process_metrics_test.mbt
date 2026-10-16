@@ -215,9 +215,9 @@ async test "scheduling metrics: smock's scheduling delay and involuntary context
         "steal time as /proc had it at the scrape: \{between(stolen, steal / 100.0, steal_after / 100.0)}",
       ].join("\n"),
       content=(
-        #|# HELP smock_process_scheduling_delay_seconds_total How long smock's main thread, which serves every request, was ready to run but waited for a CPU, in seconds, to the nanosecond (run_delay of /proc/self/schedstat).
+        #|# HELP smock_process_scheduling_delay_seconds_total How long smock's main thread, which serves every request, was ready to run but waited for a CPU, in seconds, to the nanosecond (run_delay of /proc/self/schedstat); with a CPU limit, the time the CFS quota held it back included.
         #|# TYPE smock_process_scheduling_delay_seconds_total counter
-        #|# HELP smock_process_involuntary_context_switches_total Times the kernel took the CPU from smock's main thread, which serves every request, while it could still run (nonvoluntary_ctxt_switches of /proc/self/status).
+        #|# HELP smock_process_involuntary_context_switches_total Times the kernel took the CPU from smock's main thread, which serves every request, while it could still run (nonvoluntary_ctxt_switches of /proc/self/status); with a CPU limit, the times the CFS quota held it back included.
         #|# TYPE smock_process_involuntary_context_switches_total counter
         #|# HELP smock_node_cpu_steal_seconds_total CPU time the hypervisor gave to something else while the CPUs of the machine smock runs on, all of them together, had something to run, in seconds, to the hundredth of a second (steal of the cpu line of /proc/stat): the machine's, not smock's, and 0 on bare metal.
         #|# TYPE smock_node_cpu_steal_seconds_total counter

@@ -73,12 +73,14 @@ Packages of `smock/smock`:
 - `metrics`: the metrics registry: counters, gauges and histograms with
   fixed label names, rendered in the Prometheus text format. Features
   register their metrics in the one registry `smock serve` keeps.
-- `usage`: understands what Linux says a process and its cgroup use, in
-  `/proc/self/stat`, `/proc/self/status` and a cgroup v2's `cpu.stat` and
-  `memory.peak`, for the process and cgroup metrics, and where
-  `/proc/self/cgroup` puts the process's cgroup, for those and for the
-  memory limit the Journal's bound follows. It does no I/O: `server` reads
-  the files and hands it their text.
+- `usage`: understands what Linux says a process and its cgroup use, and
+  how long the process waited for a CPU, in `/proc/self/stat`,
+  `/proc/self/status`, `/proc/self/schedstat` and a cgroup v2's `cpu.stat`
+  and `memory.peak`, for the process and cgroup metrics; the machine's
+  steal time in `/proc/stat`; and where `/proc/self/cgroup` puts the
+  process's cgroup, for those and for the memory limit the Journal's bound
+  follows. It does no I/O: `server` reads the files and hands it their
+  text.
 - `openssl`: smock's own bindings to OpenSSL, the one C library ADR 0001
   allows (native). A TLS connection there does no I/O: it takes the bytes
   that arrive from the peer and hands out the bytes to send, and `server`
@@ -353,14 +355,17 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   `/proc/self/schedstat`, to the nanosecond), and how many times the kernel
   took the CPU from it while it could still run,
   `smock_process_involuntary_context_switches_total`
-  (`nonvoluntary_ctxt_switches` of `/proc/self/status`). The CPU time the
+  (`nonvoluntary_ctxt_switches` of `/proc/self/status`). With a CPU limit,
+  both include the time the CFS quota held smock back. The CPU time the
   hypervisor gave to something else while the machine's CPUs had something
   to run, `smock_node_cpu_steal_seconds_total` (`steal` of `/proc/stat`, to
   the hundredth of a second): the machine's, all its CPUs together, not
-  smock's, and 0 on bare metal; in a container, its node's. Together they
-  tell a smock that waited for a CPU on a busy node from one that needed
-  more CPU. On cgroup v2, the metrics of smock's own
-  cgroup, the one `/proc/self/cgroup` names: from its `cpu.stat`,
+  smock's, and 0 on bare metal; in a container, its node's. With how long
+  the quota held smock back, `smock_cgroup_cpu_throttled_seconds_total`
+  below, they tell a smock that waited for a CPU on a busy node (a delay
+  well beyond the throttled time, or steal time) from one that needed more
+  CPU (a delay about the throttled time). On cgroup v2, the metrics of
+  smock's own cgroup, the one `/proc/self/cgroup` names: from its `cpu.stat`,
   `smock_cgroup_cpu_usage_seconds_total` (to the microsecond) and, with a
   CPU limit, `smock_cgroup_cpu_periods_total`,
   `smock_cgroup_cpu_throttled_periods_total` and
@@ -1177,21 +1182,29 @@ architecture the targets file has no set for.
   p90, p99, p99.9, max), the generator lag (p50, p99, p99.9, max) and
   whether the load generator fell behind, the achieved rate, the errors by
   kind, each second of the load from its start, ramp and tail included
-  (`per_second`: how many of the requests due in that second got a
-  response, `requests`, and their p99 from the scheduled send times,
-  `p99_ms`, so that a burst at the start, a stall now and then and a step
-  slow all through look apart), smock's CPU use and throttling
+  (`per_second`: how many of the requests oha released in that second,
+  about a millisecond after they were due, got a response, `requests`, and
+  their p99 from the scheduled send times, `p99_ms`, so that a burst at
+  the start, a stall now and then and a step slow all through look apart;
+  oha keeps nothing of a request that got no response, so one leaves the
+  second it was due in short, and overstates the p99 of each later second
+  by up to the time between two requests of its kind, 1 / their rate),
+  smock's CPU use and throttling
   (`smock_cpu`: from its cgroup's `cpu.stat`, with the requests smock
   answered meanwhile, from `smock_requests_total`, what the CPU time comes
   to a request, `us_per_request`, and against the CPU limit,
   `utilization`, the CPU time its process counted, `process_s`, from its
   `/metrics`, as a cross-check, how long smock's main thread waited for a
   CPU, `scheduling_delay_s`, how many times the kernel took the CPU from
-  it, `involuntary_context_switches`, and the machine's steal time,
-  `node_steal_s`, from its `/metrics`, and the same for the step's first
-  second, `first_second`, read a second into the load, when connections
-  open and TLS handshakes come at once), the quota, memory limit and CPUs
-  read while it ran,
+  it, `involuntary_context_switches`, both including, under a CPU limit,
+  the time the CFS quota held it back, `throttled_s`, and the machine's
+  steal time, `node_steal_s`, from its `/metrics`, and the same for the
+  step's first second, `first_second`, when connections open and TLS
+  handshakes come at once, all from its `/metrics` and its cgroup's
+  metrics there, scraped a second into the load: under a small CPU limit
+  the scrape waits behind the load, so that second ends when smock
+  answers it, which can be a second or more later), the quota, memory
+  limit and CPUs read while it ran,
   smock's peak memory and OOM kills (`memory`), whether smock got ready,
   smock's RSS (first, last, max), the TCP connections the machine accepted
   during the load, and the idle connections still open at its end. Then
@@ -1472,8 +1485,10 @@ EndpointSlices, all three kept before smock's Pod is deleted;
 whether the traffic ports answered, whether the profile ended early and
 why, and the load generator's CPU request; the conditions also record,
 for each node of each profile, its CPU (`cpu`, as `gke.py node-cpu`
-prints it, or null when it is unknown), and name the CPU model of smock's
-nodes in `machine.cpu_model`, which `summary.md` shows. A run that stops
+prints it, or null when it is unknown), whose model `summary.md` shows
+beside each node; `machine.cpu_model` names only the node type, as in a
+run from before the nodes' CPUs were recorded, so that comparing with one
+does not show another machine. A run that stops
 once a profile has started, because something fails or it is stopped
 (Ctrl-C, SIGTERM, a closed terminal), still writes `summary.json`,
 `summary.md` and `conditions.json` from what it measured; `summary.md`
@@ -1486,8 +1501,9 @@ smock used comes from its own
 generator scrapes right before and right after each step, and a second
 into it: its CPU time and throttling during the step and in its first
 second, from its container's cgroup, with the CPU time a request and
-against the CPU limit; how long it waited for a CPU, and its node's steal
-time; its RSS at the step's start and end,
+against the CPU limit; how long it waited for a CPU, the time the CFS
+quota held it back included, and its node's steal time; its RSS at the
+step's start and end,
 the larger as its max; and the most memory its container had used by the
 step's end (`memory.peak`), since smock started under the profile, so
 earlier steps count too. A smock without those metrics leaves them, idle

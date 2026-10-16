@@ -773,8 +773,6 @@ def command_summarize(args):
     # to when the nodes are unknown.
     zone = distinct(node["zone"] for node in [*smock_nodes, *generator_nodes]) or args.zone
     machine_type = distinct(node["instance_type"] for node in smock_nodes)
-    # The CPU models of smock's nodes, when their init containers said.
-    cpu_models = distinct((node.get("cpu") or {}).get("model_name") for node in smock_nodes)
     conditions = {
         "format": harness.FORMAT,
         "started_at": args.started_at,
@@ -793,14 +791,17 @@ def command_summarize(args):
                  "profile's limits as its requests, and oha in a Pod on another node in its zone, over the Pod "
                  "network. What smock used comes from its own /metrics, its process and cgroup metrics, scraped "
                  "right before and right after each step, and a second into it: its CPU time and throttling during "
-                 "the step and its first second, from its container's cgroup; how long it waited for a CPU, and its "
-                 "node's steal time; its RSS at the step's start and end, the larger as its max; and the most "
+                 "the step and its first second, from its container's cgroup; how long it waited for a CPU, the "
+                 "time the CFS quota held it back included, and its node's steal time; its RSS at the step's start "
+                 "and end, the larger as its max; and the most "
                  "memory its container had used by the step's end (memory.peak), since smock started under the "
                  "profile, earlier steps included. Idle RSS is read once smock has been ready for the settle "
                  "time, before any load. OOM kills come from smock's restarts."),
+        # The node type, as before the nodes' CPUs were recorded, so that
+        # comparing with such a run shows no other machine: each node's CPU
+        # is in its own record, which compare.py reads for smock's nodes.
         "machine": {"architecture": args.arch,
-                    "cpu_model": f"GKE Autopilot {node['instance_type'] if node else 'node'}"
-                                 + (f", {cpu_models}" if cpu_models else ""),
+                    "cpu_model": f"GKE Autopilot {node['instance_type'] if node else 'node'}",
                     "cpus": int(node["cpus"]) if node and str(node["cpus"]).isdigit() else None,
                     "kernel": node["kernel"] if node else None},
         "gke": {"arch": args.arch, "region": args.region, "zone": zone, "pinned_zone": args.zone,
