@@ -2503,6 +2503,22 @@ class SameNode(VariantRun):
         self.assertEqual(status, 1)
         self.assertIn("gke: the run has no variant c: its variants are a and b", stderr)
 
+    def test_a_reading_against_another_baseline_can_be_kept_beside_the_runs_own(self):
+        out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
+        status, _, markdown, stderr = self.same_node(out)
+        self.assertEqual(status, 0, stderr)
+        status, _, stderr = helper("same-node", out, "--baseline", "b", "--report", "same-node-b")
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(json.loads((out / "same-node-b.json").read_text())["baseline"], "b")
+        self.assertIn("- a against b: ", (out / "same-node-b.md").read_text())
+        # The run's own is as it was.
+        self.assertEqual(json.loads((out / "same-node.json").read_text())["baseline"], "a")
+        self.assertEqual((out / "same-node.md").read_text(), markdown)
+        for name in ("../same-node", "samples/x", ""):
+            status, _, stderr = helper("same-node", out, "--report", name)
+            self.assertEqual(status, 1, name)
+            self.assertIn(f"--report {name}: give a name for the report's files", stderr)
+
     def test_each_variants_drift_compares_its_first_round_with_the_later_ones(self):
         # b's round 1 at 500 requests/s, 33.0, against the median of its
         # later rounds, 32.24, and at 1,000, 44.0 against 42.0.

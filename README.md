@@ -1625,6 +1625,19 @@ with the later ones. The run exits 1 when the variants
 cannot be compared: on more than one node, under other limits than the
 plan's, or with a sample incomplete.
 
+To read the variants against another baseline, such as each against
+r2, run `gke.py same-node` again on the run's results with
+`--baseline r2 --report same-node-r2` and the `--sha256 LABEL=HEX` and
+`--no-init LABEL` the run gave it (same-node.json names each variant's
+SHA-256 and options): it writes `same-node-r2.json` and
+`same-node-r2.md`, and leaves the run's own comparison as it is.
+
+```sh
+python3 bench/gke/gke.py same-node --baseline r2 --report same-node-r2 \
+  --sha256 r1=<SHA-256 of r1> --sha256 r2=<SHA-256 of r2> --sha256 r2b=<SHA-256 of r2> \
+  --sha256 r2h=<SHA-256 of r2> --no-init r2h <results directory>
+```
+
 The run above, two profiles of 48 runs each, costs about $0.43 in
 us-central1 at the prices of 2026-10-16, or $0.30 while the free tier
 covers the cluster's fee: the cluster lives about 77 minutes, and the

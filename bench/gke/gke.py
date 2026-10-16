@@ -2027,10 +2027,17 @@ def run_stopped_text(stopped):
     return stopped_sentence(where, stopped["reason"])
 
 
+# What a report's files may be named: a name, not a path.
+REPORT_NAME = re.compile(r"[A-Za-z0-9][-A-Za-z0-9_.]*")
+
+
 def command_same_node(args):
+    if not REPORT_NAME.fullmatch(args.report):
+        raise GkeError(f"--report {args.report}: give a name for the report's files, such as same-node-r2, with "
+                       "letters, digits, hyphens, underscores and dots")
     report, markdown, status = same_node(args.out, args.baseline, given_sha256(args.sha256), args.no_init or ())
-    harness.write_json(Path(args.out) / "same-node.json", report)
-    (Path(args.out) / "same-node.md").write_text(markdown)
+    harness.write_json(Path(args.out) / f"{args.report}.json", report)
+    (Path(args.out) / f"{args.report}.md").write_text(markdown)
     for problem in report["problems"]:
         print(f"gke: {problem}", file=sys.stderr)
     return status
@@ -2253,13 +2260,16 @@ def main(argv):
     splitting.set_defaults(handler=command_samples)
     comparing = commands.add_parser("same-node", help="compare the variants of a run, each with the baseline, from "
                                                       "its samples, each summarized: write same-node.json and "
-                                                      "same-node.md")
+                                                      "same-node.md, or those --report names")
     comparing.add_argument("--baseline", help="the variant to compare the others with (default: the first)")
     comparing.add_argument("--sha256", action="append",
                            help="LABEL=HEX: the SHA-256 of a variant's binary, beside what each sample's summary "
                                 "records; a variant with two fails the comparison")
     comparing.add_argument("--no-init", action="append",
                            help="LABEL: a variant whose Pods ran without the init container (manifests' no-init)")
+    comparing.add_argument("--report", default="same-node",
+                           help="the name of the files to write, NAME.json and NAME.md, so that a reading against "
+                                "another baseline can be kept beside the run's own (default: same-node)")
     comparing.add_argument("out", help="the run's results: samples/ as gke.py samples wrote it, each sample "
                                        "summarized, and raw/")
     comparing.set_defaults(handler=command_same_node)
