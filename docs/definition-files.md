@@ -755,7 +755,10 @@ restart:
 - A poll first compares the names in the directories, where each file
   really is once symlinks are resolved, and the modification and change
   times of the files with those of the last check, and reads the files only
-  when something differs, so an idle smock's polls cost little CPU. After a
+  when something differs. That takes a few calls for each file instead of
+  reading it, which saves most of a poll's CPU when the files are a few
+  large ones, as in the benchmark's set, and little when they are many
+  small body files; startup and each check that reads pay for both. After a
   reload that had a problem reading the directory, such as a file that
   cannot be read, the next poll reads again. A file time ahead of the clock
   is logged as a warning, once. A modification time ahead, as from an

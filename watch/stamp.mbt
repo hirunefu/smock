@@ -1,10 +1,12 @@
 ///|
 /// What a poll compares with the last poll's before it reads anything, so
-/// that a poll that finds nothing changed costs a few calls for file
-/// metadata instead of reading and digesting every file. The caller notes
-/// in it, in the order it would read them, the names in each directory it
-/// would list and each file it would read, whose real path, once symlinks
-/// are resolved, and modification and change times are noted.
+/// that a poll that finds nothing changed costs a few calls for each file's
+/// metadata instead of reading and digesting it. That saves most of a
+/// poll's CPU when the files are a few large ones, and little when they are
+/// many small ones; each check that reads pays for both. The caller
+/// notes in it, in the order it would read them, the names in each
+/// directory it would list and each file it would read, whose real path,
+/// once symlinks are resolved, and modification and change times are noted.
 ///
 /// A file's contents cannot change without its change time (ctime)
 /// changing: a write sets it, a new file gets the current time, and no call

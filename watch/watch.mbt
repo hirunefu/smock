@@ -10,7 +10,7 @@
 /// it first takes a `Stamp` of what the caller reads, and checks only when
 /// the stamp may differ from the one taken before the last check, whatever
 /// caused that check, or when the watch started. So a poll that finds
-/// nothing changed reads no file.
+/// nothing changed reads no file's contents.
 ///
 /// The events come from the async runtime's file watcher (inotify on
 /// Linux), so no C is needed (ADR 0001). A directory that does not exist
