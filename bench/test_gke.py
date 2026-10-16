@@ -510,21 +510,29 @@ class Plan(Helper):
 class SameNodePlan(Helper):
     """bench/plan-same-node.json is the plan of a run that compares smock
     binaries on one node (scripts/gke-bench.sh --variant): HTTP keep-alive
-    alone, at the lowest rates of bench/plan-autopilot.json's ladders,
-    under its profiles and with its window, so that each sample compares
-    with a pre-merge run's steps."""
+    alone, at the lowest rates of bench/plan-autopilot.json's ladders and,
+    under 50m and 250m, at half the lowest, under its profiles and with its
+    window, so that each sample compares with a pre-merge run's steps."""
 
-    def test_it_measures_http_keep_alive_at_the_lowest_steps_of_the_autopilot_plans_ladders(self):
+    def test_it_measures_http_keep_alive_at_and_below_the_lowest_steps_of_the_autopilot_plans_ladders(self):
         plan = json.loads((BENCH / "plan-same-node.json").read_text())
         autopilot = json.loads((BENCH / "plan-autopilot.json").read_text())
         [case] = plan["cases"]
-        self.assertEqual(case["rates"], {"autopilot-burst-min": [125, 250, 500],
-                                         "autopilot-min": [625, 1250, 2500], "chart-default": [2500, 5000]})
+        # Under 50m and 250m, R2's binary saturated from the second step of
+        # the autopilot plan's ladder (0.94 to 0.97 of its limit at 250
+        # requests/s under 50m in the runs of 2026-10-16, 0.80 to 0.85 at
+        # 1,250 under 250m), so each has a step below the ladder's lowest in
+        # place of its third, and two steps' 8 pairs over 4 rounds where
+        # the higher saturates.
+        self.assertEqual(case["rates"], {"autopilot-burst-min": [62, 125, 250],
+                                         "autopilot-min": [312, 625, 1250], "chart-default": [2500, 5000]})
         http = next(case for case in autopilot["cases"] if case["name"] == "http-keep-alive")
         self.assertEqual({key: value for key, value in case.items() if key != "rates"},
                          {key: value for key, value in http.items() if key != "rates"})
         for profile, rates in case["rates"].items():
-            self.assertEqual(rates, http["rates"][profile][:len(rates)], profile)
+            ladder = http["rates"][profile]
+            on_it = [rate for rate in rates if rate >= ladder[0]]
+            self.assertEqual(on_it, ladder[:len(on_it)], profile)
         for key in ("profiles", "ramp_s", "duration_s", "tail_s", "cooldown_s", "rss_interval_s", "idle_rss",
                     "load_generator"):
             self.assertEqual(plan[key], autopilot[key], key)

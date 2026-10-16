@@ -917,7 +917,7 @@ latency for each case, and checks the provisional performance targets.
 | `bench/requests.json` | The request mix: nine kinds of request, with weights, realistic headers, a Session in `baggage`, and bodies. |
 | `bench/plan.json` | The cases, the CPU limits, and the rates and durations. |
 | `bench/plan-autopilot.json` | Another plan: smock under the CPU and memory limits of the smallest GKE Autopilot Pods and of the Helm chart's default, at ladders of rates. The targets hold under its profiles. |
-| `bench/plan-same-node.json` | The plan of a GKE run that compares smock binaries on one node: HTTP keep-alive at the lowest rates of `bench/plan-autopilot.json`'s ladders. |
+| `bench/plan-same-node.json` | The plan of a GKE run that compares smock binaries on one node: HTTP keep-alive at the lowest rates of `bench/plan-autopilot.json`'s ladders, and at half the lowest under 50m and 250m. |
 | `bench/targets.json` | The provisional targets, a set for each CPU architecture, the one place to change them, and the rule that calls a change between two runs a regression. |
 | `bench/compare.py` | Compares two runs: p99 and p99.9 at each step both ran, and the targets the newer one missed. |
 | `bench/gke/` | The GKE Autopilot run's helper (`gke.py`: its plan, cost estimate, manifests and summary, and the comparison of binaries on one node), its load generator (`generator.py`), and what its images add. |
@@ -1549,9 +1549,12 @@ load generator measures them one at a time over `--rounds` rounds (4 by
 default): each round runs every step, and each step every variant, their
 order turned by one for each round and step, so that the runs compared
 are about 30 seconds apart. `bench/plan-same-node.json` is the plan for
-it: HTTP keep-alive at the lowest rates of `bench/plan-autopilot.json`'s
-ladders, where R2's binary used more CPU a request than R1's under 50m
-and 250m, and two rates under 1 CPU as a control.
+it: HTTP keep-alive at the two lowest rates of
+`bench/plan-autopilot.json`'s ladders under 50m and 250m, where R2's
+binary used more CPU a request than R1's, and at half the lowest, since
+R2's binary came near its CPU limit from the second step and a pair in
+which a run saturated does not count; and two rates under 1 CPU as a
+control.
 
 ```sh
 r1=$(mktemp -d) r2=$(mktemp -d)
