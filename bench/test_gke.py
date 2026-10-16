@@ -2298,6 +2298,22 @@ class SameNode(VariantRun):
                           "Node steal s": "0.0", "p99 ms": "2.0", "Saturated": "0 of 4 pairs"})
         self.assertIn("- b against a: +10% (+2.5% to +20%), higher in 8 of 8 pairs, sign test p = 0.008: higher.",
                       markdown)
+        self.assertIn("Started 2026-10-16T03:28:50+00:00: 2 variants of smock over 4 rounds, on GKE Autopilot "
+                      "(asia-northeast1-b, general-purpose), amd64 (GKE Autopilot ek-standard-8, 8 CPUs), oha 1.16.0, "
+                      "plan ", markdown)
+        self.assertIn("\n## Reading the comparison\n", markdown)
+
+    def test_another_variant_can_be_the_baseline(self):
+        out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
+        status, report, markdown, stderr = self.same_node(out, "--baseline", "b")
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual((report["baseline"], [variant["label"] for variant in report["variants"]]), ("b", ["b", "a"]))
+        self.assertEqual(self.row(markdown, "http-keep-alive", 500, "b")["Variant"], "b (baseline)")
+        self.assertIn("- a against b: -9.1% (-16.7% to -2.4%), higher in 0 of 8 pairs, sign test p = 0.008: lower.",
+                      markdown)
+        status, _, stderr = helper("same-node", out, "--baseline", "c")
+        self.assertEqual(status, 1)
+        self.assertIn("gke: the run has no variant c: its variants are a and b", stderr)
 
     def test_each_variants_drift_compares_its_first_round_with_the_later_ones(self):
         # b's round 1 at 500 requests/s, 33.0, against the median of its
@@ -2494,8 +2510,8 @@ class SameNode(VariantRun):
         self.assertEqual(report["conditions"], {"same": False, "reference": "1-a", "differences": [
             {"condition": "load generator", "text": "load generator (oha 1.16.0 → oha 1.17.0)",
              "samples": ["1-b", "2-b", "3-b", "4-b"]}]})
-        self.assertIn("Besides smock, the samples differ from 1-a, the baseline's first, in: load generator (oha "
-                      "1.16.0 → oha 1.17.0) in 1-b, 2-b, 3-b and 4-b.", markdown)
+        self.assertIn("Besides smock, the samples differ from 1-a in: load generator (oha 1.16.0 → oha 1.17.0) in "
+                      "1-b, 2-b, 3-b and 4-b.", markdown)
 
     def test_compare_py_compares_any_two_samples_as_two_runs(self):
         out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))

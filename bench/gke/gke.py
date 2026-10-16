@@ -12,6 +12,7 @@ usage:
   python3 bench/gke/gke.py node-cpu [options]     what to keep of the CPU of the node it runs on
   python3 bench/gke/gke.py summarize [options] OUT   summary.json, summary.md and conditions.json
   python3 bench/gke/gke.py samples [options] OUT     split a run of variants into one run of each sample
+  python3 bench/gke/gke.py same-node [options] OUT   compare the variants: same-node.json and same-node.md
   python3 bench/gke/gke.py stopped LOG            why the load generator stopped its profile early, if it did
   python3 bench/gke/gke.py elf-arch FILE          the architecture of an executable, amd64 or arm64
   python3 bench/gke/gke.py names-commit FILE COMMIT   fail if smock's build information does not name COMMIT
@@ -21,7 +22,9 @@ A run measures one smock, or compares 2 to 4 variants of it, each in a Pod
 of its own on one node, which one load generator measures in turn, round
 after round: manifests then takes --variant LABEL=IMAGE[,no-init][,no-first-second]
 for each, the first the baseline, and --rounds N; plan and estimate take
---variants N and --rounds N.
+--variants N and --rounds N. Its results split into samples, one
+variant's pass over the steps in one round each, which summarize
+summarizes as runs of smock alone, and same-node compares them.
 """
 
 import argparse
@@ -1611,13 +1614,38 @@ def variants_lines(report):
     return lines
 
 
+# What same-node.md says of how to read it.
+READING = [
+    "## Reading the comparison", "",
+    "Each variant ran in a Pod of its own on one node, and one load generator measured them in turn: each round ran "
+    "the profile's steps, and each step ran every variant once, one after another, their order turned by one for "
+    "each round and step. A sample is one variant's steps in one round: samples/<round>-<label>/ holds its summary, "
+    "which compare.py reads as a run's.", "",
+    "*CPU µs/request* is the median of a variant's runs of the step, with the lowest and highest and how many runs "
+    "measured it. *Change* is that median's change from the baseline's. *Paired* is the range of the changes of each "
+    "run from the baseline's run of the step in the same round, and *Higher* how many of those pairs used more. "
+    "*Throttled periods* adds up the CFS periods in which the quota held smock back, out of all, over the runs. *CPU "
+    "wait s*, *Node steal s* and *p99 ms* are medians; - is unknown, as from a smock too old to count it. *Saturated* "
+    "counts the baseline's runs, or a variant's pairs, in which a run used 90% of its CPU limit or more: smock then "
+    "queues, and its CPU a request says less of its code.", "",
+    "Each verdict takes the pairs of every step of the profile in which neither run saturated: their median change, "
+    "lowest to highest, how many were higher, and the p of an exact two-sided sign test, ties left out. With 8 pairs "
+    "the smallest p is 0.008; above 0.05 is no clear difference.",
+]
+
+
 def same_node_markdown(report):
     """same-node.md: each variant's binary and options, why the variants
     cannot be compared when they cannot, and for each profile, a row for
     each variant at each step, the runs that measured nothing, then each
     variant's verdict against the baseline."""
     baseline = report["baseline"]
-    lines = ["# smock variants on one node", "", *variants_lines(report), "", conditions_text(report["conditions"])]
+    run = report["run"]
+    lines = ["# smock variants on one node", "",
+             f"Started {run['started_at']}: {len(report['variants'])} variants of smock over {run['rounds']} "
+             f"round{'' if run['rounds'] == 1 else 's'}, on {run['machine']}, "
+             f"{harness.known(run['load_generator'], 'a load generator of an unknown version')}, plan {run['plan']}.",
+             "", *variants_lines(report), "", conditions_text(report["conditions"]), "", *READING]
     if report["problems"]:
         lines += ["", "**Not comparable:**", "", *(f"- {problem}." for problem in report["problems"])]
     for profile in report["profiles"]:
@@ -1634,17 +1662,24 @@ def same_node_markdown(report):
     return "\n".join(lines) + "\n"
 
 
+def summarized(samples, labels):
+    """The samples with conditions, as [(name, conditions)], by round, then
+    in the variants' order (`labels`, the baseline first)."""
+    return [(f"{round_}-{label}", sample[1])
+            for (round_, label), sample in sorted(samples.items(), key=lambda item: (item[0][0],
+                                                                                    labels.index(item[0][1])))
+            if sample and sample[1]]
+
+
 def conditions_record(samples, labels):
     """Whether the samples had the same conditions besides smock (those
-    compare.py compares two runs by) as the baseline's first sample, and
-    where they did not, which samples differ and how."""
+    compare.py compares two runs by) as the first that has them, the
+    baseline's first when it does, and where they did not, which samples
+    differ and how."""
     compare = compare_module()
-    named = sorted(((round_, labels.index(label)), f"{round_}-{label}", sample[1])
-                   for (round_, label), sample in samples.items() if sample and sample[1] and label in labels)
-    if not named:
-        return {"same": True, "reference": None, "differences": []}
-    (_, reference, first), differences = named[0], {}
-    for _, name, conditions in named[1:]:
+    named = summarized(samples, labels)
+    (reference, first), differences = named[0], {}
+    for name, conditions in named[1:]:
         for condition, shown in compare.CONDITIONS:
             before, after = shown(first), shown(conditions)
             if not compare.same(condition, before, after):
@@ -1658,7 +1693,7 @@ def conditions_record(samples, labels):
 def conditions_text(conditions):
     if conditions["same"]:
         return "Besides smock, the samples had the same conditions."
-    return (f"Besides smock, the samples differ from {conditions['reference']}, the baseline's first, in: "
+    return (f"Besides smock, the samples differ from {conditions['reference']} in: "
             + "; ".join(f"{difference['text']} in {and_list(difference['samples'])}"
                         for difference in conditions["differences"]) + ".")
 
@@ -1743,7 +1778,11 @@ def same_node(out, baseline=None, sha256=None, no_init=()):
     placed = [f"{name}: {problem}" for name, result in results.items() for problem in result["problems"]]
     status = 2 if problems else 1 if placed else 0
     problems += placed
+    reference = summarized(samples, labels)[0][1]
     report = {"format": 1, "baseline": baseline, "variants": variants, "problems": problems,
+              "run": {"started_at": reference["started_at"], "rounds": rounds,
+                      "machine": compare_module().where(reference),
+                      "load_generator": reference["load_generator"]["version"], "plan": reference["plan"]["file"]},
               "conditions": conditions_record(samples, labels),
               "complete": all(result["complete"] for result in results.values()), "profiles": profiles,
               "gke": {"profiles": results}}
