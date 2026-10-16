@@ -1399,9 +1399,12 @@ that run's linux/amd64 build and tests passed.
   release image with `bench/definitions/`
   (`bench/gke/smock-definitions.dockerfile`), and the load generator's
   (`bench/gke/generator.Dockerfile`: Python, the pinned oha of that
-  architecture, `bench.py`, the plan and `bench/gke/`). Both only copy
-  files onto multi-architecture bases, so a machine of the other
-  architecture builds them with no emulation; `python3 -m unittest
+  architecture, `bench.py`, the plan and `bench/gke/`). With `--variant`
+  it builds no binary, and in place of the release image one image of
+  smock for each distinct binary the variants give (see
+  [Comparing smock binaries on one node](#comparing-smock-binaries-on-one-node)).
+  The images only copy files onto multi-architecture bases, so a machine
+  of the other architecture builds them with no emulation; `python3 -m unittest
   discover -s bench` fails if a `RUN` appears. It pushes them to a new
   Artifact Registry repository, and lets the nodes' service account (the
   project's Compute Engine default one, or
