@@ -2015,20 +2015,21 @@ class PodInfo(Helper):
                            "limits": {"cpu": "500m", "memory": "512Mi", "ephemeral-storage": "64Mi"}}}])
 
 
-def variant_step(label, round_, rate, us_per_request=30.0, utilization=0.5, neighbours=None, node_steal_s=None,
-                 **changes):
+def variant_step(label, round_, rate, us_per_request=30.0, utilization=0.5, neighbours=None, steal=None, **changes):
     """A step line of the load generator with variants: `label`'s run of
     http-keep-alive under small at `rate` in `round_`, smock's CPU at
     `us_per_request` and `utilization`, with what the idle variants used
-    (`neighbours`) and each variant's count of the node's steal time; and
-    `changes` to its result's smock_cpu, or to the result itself (errors,
+    (`neighbours`) and each variant's count of the node's steal time
+    (`steal`, by default the loaded one's alone); and `changes` to its
+    result's smock_cpu, or to the result itself (errors,
     load_generator_late)."""
     result = generator_step(rate, errors=changes.pop("errors", 0))["result"]
     result["load_generator_late"] = changes.pop("load_generator_late", False)
-    result["smock_cpu"].update(us_per_request=us_per_request, utilization=utilization, scheduling_delay_s=0.02,
-                               involuntary_context_switches=40, node_steal_s=0.0, first_second=None, **changes)
+    result["smock_cpu"].update({"us_per_request": us_per_request, "utilization": utilization,
+                                "scheduling_delay_s": 0.02, "involuntary_context_switches": 40, "node_steal_s": 0.0,
+                                "first_second": None, **changes})
     return {"kind": "step", "variant": label, "round": round_, "neighbours": neighbours or {},
-            "node_steal_s": node_steal_s or {label: result["smock_cpu"]["node_steal_s"]}, "result": result}
+            "node_steal_s": steal or {label: result["smock_cpu"]["node_steal_s"]}, "result": result}
 
 
 def variant_lines(us_per_request, rates=(500, 1000), runs=None, stopped=None, done=True):
@@ -2319,6 +2320,25 @@ class SameNode(VariantRun):
         self.assertIn("Not measured, and left out of the counts:\n\n"
                       "- http-keep-alive@small@500: 500 of 10000 requests failed in the b round 3 run.\n"
                       "- http-keep-alive@small@1000: the load generator fell behind in the a round 4 run.\n", markdown)
+
+    def test_the_waits_an_old_smock_does_not_count_show_as_a_dash_and_its_node_steal_comes_from_another(self):
+        # b is smock at 0d984c8, which counts neither its waits for a CPU
+        # nor the node's steal time: a's count stands in for the steal.
+        old = {"scheduling_delay_s": None, "involuntary_context_switches": None, "node_steal_s": None}
+        runs = {}
+        for round_ in range(1, 5):
+            for rate in (500, 1000):
+                runs["a", round_, rate] = {"node_steal_s": 0.3, "steal": {"a": 0.3, "b": None}}
+                runs["b", round_, rate] = {**old, "steal": {"a": 0.5, "b": None}}
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(HIGHER, runs=runs),
+                                                                           variant_pods(["a", "b"])))
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual({label: (self.row(markdown, "http-keep-alive", 500, label)["CPU wait s"],
+                                  self.row(markdown, "http-keep-alive", 500, label)["Node steal s"])
+                          for label in ("a", "b")}, {"a": ("0.02", "0.3"), "b": ("-", "0.5")})
+        # The rest is measured as from any smock.
+        self.assertEqual(self.row(markdown, "http-keep-alive", 500, "b")["CPU µs/request"], "32.6 (31.9–36.0, 4)")
+        self.assertEqual(report["gke"]["profiles"]["small"]["verdicts"]["b"]["pairs"], 8)
 
 
 if __name__ == "__main__":
