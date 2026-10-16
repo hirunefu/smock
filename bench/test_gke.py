@@ -2294,6 +2294,32 @@ class SameNode(VariantRun):
         self.assertIn("- b against a: +10% (+10% to +20%), higher in 3 of 3 pairs, sign test p = 0.25: no clear "
                       "difference.", markdown)
 
+    def test_a_run_that_measured_nothing_drops_out_of_the_counts_with_why(self):
+        # b's run at 500 requests/s in round 3 lost requests, and the load
+        # generator fell behind in a's at 1,000 in round 4: neither counts,
+        # nor does its pair.
+        runs = {("b", 3, 500): {"errors": 500}, ("a", 4, 1000): {"load_generator_late": True}}
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(HIGHER, runs=runs),
+                                                                           variant_pods(["a", "b"])))
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual({(rate, label): self.row(markdown, "http-keep-alive", rate, label)["CPU µs/request"]
+                          for rate in (500, 1000) for label in ("a", "b")},
+                         {(500, "a"): "30.0 (29.0–31.0, 4)", (500, "b"): "33.0 (32.2–36.0, 3)",
+                          (1000, "a"): "40.0 (40.0–40.0, 3)", (1000, "b"): "43.0 (41.0–46.0, 4)"})
+        self.assertEqual([(self.row(markdown, "http-keep-alive", rate, "b")["Paired"],
+                           self.row(markdown, "http-keep-alive", rate, "b")["Higher"]) for rate in (500, 1000)],
+                         [("+4% to +20%", "3 of 3"), ("+5% to +15%", "3 of 3")])
+        profile = report["gke"]["profiles"]["small"]
+        self.assertEqual((profile["verdicts"]["b"]["pairs"], profile["verdicts"]["b"]["sign_test_p"]), (6, 0.03125))
+        self.assertEqual(profile["not_measured"], [
+            {"id": "http-keep-alive@small@500", "round": 3, "variant": "b",
+             "reason": "500 of 10000 requests failed in the b round 3 run", "left_out": False},
+            {"id": "http-keep-alive@small@1000", "round": 4, "variant": "a",
+             "reason": "the load generator fell behind in the a round 4 run", "left_out": False}])
+        self.assertIn("Not measured, and left out of the counts:\n\n"
+                      "- http-keep-alive@small@500: 500 of 10000 requests failed in the b round 3 run.\n"
+                      "- http-keep-alive@small@1000: the load generator fell behind in the a round 4 run.\n", markdown)
+
 
 if __name__ == "__main__":
     unittest.main()

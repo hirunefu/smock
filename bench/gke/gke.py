@@ -1263,17 +1263,20 @@ def run_record(sample, round_, label, profile_name, step_id, line):
     sample (summary and conditions, or None) and its step line of the load
     generator (`line`, or None): smock's CPU, throttling, waits, the node's
     steal time (another variant's count, when this one's smock has none)
-    and p99; and why it measured nothing, or None."""
+    and p99; and why it measured nothing, or None, and whether the load
+    generator left it out when it stopped the profile early."""
     compare = compare_module()
     run = f"{label} round {round_}"
     record = {"round": round_, "us_per_request": None, "utilization": None, "throttled_periods": None,
-              "periods": None, "scheduling_delay_s": None, "node_steal_s": None, "p99_ms": None, "not_measured": None}
+              "periods": None, "scheduling_delay_s": None, "node_steal_s": None, "p99_ms": None, "not_measured": None,
+              "left_out": False}
     case = sample and next((case for case in sample[0]["cases"] if case["id"] == step_id), None)
     if case is None:
         ended = sample and (sample[0]["gke"]["profiles"].get(profile_name) or {}).get("ended_early")
-        why = f": {ended['reason']}" if ended and step_id in ended["not_measured"] else ""
-        record["not_measured"] = f"{run} did not run it{why}" if sample else f"the sample {round_}-{label} has no " \
-                                                                                 "summary"
+        record["left_out"] = bool(ended and step_id in ended["not_measured"])
+        record["not_measured"] = (f"the {run} run was left out: {ended['reason']}" if record["left_out"] else
+                                  f"the load generator did not report the {run} run" if sample else
+                                  f"the sample {round_}-{label} has no summary")
         return record
     cpu = case.get("smock_cpu") or {}
     steal = (line or {}).get("node_steal_s") or {label: cpu.get("node_steal_s")}
@@ -1366,9 +1369,17 @@ def profile_comparison(profile, samples, labels, baseline, rounds, lines):
                                    for label in labels}})
     complete = all(sample and (sample[0]["gke"]["profiles"].get(name) or {}).get("complete")
                    for (round_, label), sample in samples.items())
+    ended = next((ended for sample in samples.values() if sample
+                  for ended in [(sample[0]["gke"]["profiles"].get(name) or {}).get("ended_early")] if ended), None)
+    unmeasured = [(step["id"], label, run) for step in steps for index in range(rounds) for label in labels
+                  for run in [step["variants"][label]["runs"][index]] if run["not_measured"]]
     return {"complete": bool(samples) and complete, "rounds": rounds, "steps": steps,
             "verdicts": {label: verdict([pair for step in steps for pair in step["variants"][label]["pairs"]])
-                         for label in labels if label != baseline}}
+                         for label in labels if label != baseline},
+            "ended_early": ended and {"reason": ended["reason"],
+                                      "left_out": sum(run["left_out"] for _, _, run in unmeasured)},
+            "not_measured": [{"id": step_id, "round": run["round"], "variant": label, "reason": run["not_measured"],
+                              "left_out": run["left_out"]} for step_id, label, run in unmeasured]}
 
 
 def periods_text(record):
@@ -1425,9 +1436,26 @@ def verdict_line(label, baseline, result):
             f"{result['verdict']}.")
 
 
+def not_measured_lines(result):
+    """What same-node.md says of a profile's runs that measured nothing:
+    the early stop that left runs out, and why each other one did not
+    count."""
+    lines = []
+    ended = result["ended_early"]
+    if ended:
+        runs = "run was" if ended["left_out"] == 1 else "runs were"
+        lines += ["", f"**Stopped early:** {ended['reason']}. {ended['left_out']} {runs} left out."]
+    others = [entry for entry in result["not_measured"] if not entry["left_out"]]
+    if others:
+        lines += ["", "Not measured, and left out of the counts:", "",
+                  *(f"- {entry['id']}: {entry['reason']}." for entry in others)]
+    return lines
+
+
 def same_node_markdown(report, profiles):
     """same-node.md: for each profile, a row for each variant at each step,
-    then each variant's verdict against the baseline."""
+    the runs that measured nothing, then each variant's verdict against the
+    baseline."""
     baseline = report["baseline"]
     lines = ["# smock variants on one node"]
     for profile in profiles:
@@ -1436,6 +1464,7 @@ def same_node_markdown(report, profiles):
                   "| " + " | ".join(SAME_NODE_COLUMNS) + " |", "|" + "---|" * len(SAME_NODE_COLUMNS)]
         for step in result["steps"]:
             lines += [same_node_row(step, label, record, baseline) for label, record in step["variants"].items()]
+        lines += not_measured_lines(result)
         lines += ["", "Verdicts, over the pairs of runs of every step in which neither run saturated:", "",
                   *(verdict_line(label, baseline, verdict_result)
                     for label, verdict_result in result["verdicts"].items())]
