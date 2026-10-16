@@ -1448,19 +1448,23 @@ def verdict(pairs, spread=None):
 
 
 def pairings(variants):
-    """The variants of one binary, by its sha256, each against the first
-    variant with it (the baseline when it is one of them), from
-    variant_records' `variants`: [(label, against, kind)], kind "same
-    binary" when they also have the same options, an A/A pair, else "other
-    options"."""
-    found, first = [], {}
+    """The variants of one binary, by its sha256, from variant_records'
+    `variants`: [(label, against, kind)]. Each is against the first
+    earlier variant with its binary and options, kind "same binary", an A/A
+    pair; else against the first with its binary (the baseline when it is
+    one of them), kind "other options". So an A/A pair is found also when
+    the baseline is the binary with other options."""
+    found, earlier = [], []
     for variant in variants:
         if not variant["sha256"]:
             continue
-        other = first.setdefault(variant["sha256"], variant)
-        if other is not variant:
-            found.append((variant["label"], other["label"],
-                          "same binary" if variant["options"] == other["options"] else "other options"))
+        same = [other for other in earlier if other["sha256"] == variant["sha256"]]
+        twins = [other for other in same if other["options"] == variant["options"]]
+        if twins:
+            found.append((variant["label"], twins[0]["label"], "same binary"))
+        elif same:
+            found.append((variant["label"], same[0]["label"], "other options"))
+        earlier.append(variant)
     return found
 
 

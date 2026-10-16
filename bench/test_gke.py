@@ -2988,6 +2988,19 @@ class SameNode(VariantRun):
         self.assertIn("- c against b (no-init, no-first-second against no-first-second): 0% (-6% to +7%), higher in 4 "
                       "of 8 pairs, sign test p = 1: no clear difference.", markdown)
 
+    def test_an_a_a_pair_is_found_when_the_baseline_is_its_binary_with_other_options(self):
+        # a, b and c are one binary, a without the init container: b
+        # against a is what the harness costs, and c against b, not
+        # against a, is the A/A pair.
+        status, report, markdown, stderr = self.same_node(
+            self.variant_run(variant_lines(SAME_BINARY), variant_pods(["a", "b", "c"])), "--no-init", "a",
+            sha256={"a": "b" * 64, "c": "b" * 64})
+        self.assertEqual(status, 0, stderr)
+        profile = report["gke"]["profiles"]["small"]
+        self.assertEqual([(within["label"], within["against"], within["kind"]) for within in profile["within"]],
+                         [("b", "a", "other options"), ("c", "b", "same binary")])
+        self.assertEqual(profile["a_a_spread"], {"min_change_percent": -6.0, "max_change_percent": 7.0})
+
     def test_a_variant_with_two_sha256_values_exits_2_since_what_it_measured_is_unknown(self):
         out = self.variant_run(variant_lines(HIGHER), variant_pods(["a", "b"]))
         # summarize was told another binary for b in round 3.
