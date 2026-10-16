@@ -9,6 +9,7 @@ usage: python3 -m unittest discover -s bench -v
 """
 
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -29,6 +30,15 @@ SCRIPT = ROOT / "scripts" / "gke-bench.sh"
 # This machine's architecture, as the script names it, and the other one.
 HOST_ARCH = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}[platform.machine()]
 OTHER_ARCH = {"amd64": "arm64", "arm64": "amd64"}[HOST_ARCH]
+
+def gke_module():
+    """bench/gke/gke.py as a module, for the rules the script keeps in step
+    with it."""
+    spec = importlib.util.spec_from_file_location("gke", BENCH / "gke" / "gke.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
 
 # The commit checked out, which a release binary built here names.
 HEAD = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short=12", "HEAD"], capture_output=True, text=True,
@@ -1737,6 +1747,20 @@ class Variants(Script):
             status, output = self.run_script_without_smock("--dry-run", *args)
             self.assertEqual(status, 2, (args, output))
             self.assertIn(expected, output, args)
+        self.assertEqual(self.calls(), [])
+
+    def test_the_script_refuses_variants_as_gke_py_does_before_anything_is_made(self):
+        # The script checks the variants before the cluster is made, and
+        # gke.py once it is: both by gke.py's rules.
+        gke = gke_module()
+        labels = [f"v{number}" for number in range(gke.MAX_VARIANTS + 1)]
+        status, output = self.run_script_without_smock(
+            "--dry-run", *(arg for label in labels for arg in ("--variant", f"{label}={self.smock}")))
+        self.assertEqual(status, 2, output)
+        self.assertIn(f"{gke.MIN_VARIANTS} to {gke.MAX_VARIANTS} variants, not {gke.MAX_VARIANTS + 1}", output)
+        script = SCRIPT.read_text()
+        self.assertIn(f"^{gke.VARIANT_LABEL.pattern}$", script)
+        self.assertIn(f"rounds=${{rounds:-{gke.DEFAULT_ROUNDS}}}", script)
         self.assertEqual(self.calls(), [])
 
     def test_binaries_built_from_any_commit_are_named_by_their_sha256_and_one_for_another_architecture_is_refused(self):

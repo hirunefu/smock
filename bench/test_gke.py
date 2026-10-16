@@ -2571,6 +2571,10 @@ class SameNode(VariantRun):
         self.assertIn("The idle variants used at most 0.031 s of CPU during another's run: c, during b's run of "
                       "http-keep-alive@small@1000 in round 2.", markdown)
 
+    def test_every_position_a_variant_can_hold_in_a_step_has_a_name(self):
+        gke = load_generator_module().gke
+        self.assertGreaterEqual(len(gke.ORDINALS), gke.MAX_VARIANTS)
+
     def test_conditions_besides_smock_are_compared_with_the_baselines_first_samples(self):
         status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(HIGHER),
                                                                            variant_pods(["a", "b"])))

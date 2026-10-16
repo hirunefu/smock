@@ -1445,6 +1445,8 @@ def drift_text(result):
                         for label, record in result["drift"].items()) + ".")
 
 
+# The positions a variant can hold in a step, for people: one for each of
+# MAX_VARIANTS.
 ORDINALS = ("first", "second", "third", "fourth")
 
 
@@ -1991,8 +1993,8 @@ def main(argv):
     rendering.add_argument("--smock-image", help="smock's image, by digest")
     rendering.add_argument("--variant", action="append",
                            help="LABEL=IMAGE[,no-init][,no-first-second]: a variant of smock to measure on the node "
-                                "of the others, from its image, by digest; 2 to 4 of them, in place of --smock-image, "
-                                "the first the baseline")
+                                f"of the others, from its image, by digest; {MIN_VARIANTS} to {MAX_VARIANTS} of them, "
+                                "in place of --smock-image, the first the baseline")
     rendering.add_argument("--generator-image", required=True, help="the load generator's image, by digest")
     rendering.add_argument("--rounds", type=int,
                            help=f"how many times to measure each variant's steps (default: {DEFAULT_ROUNDS}); only "
