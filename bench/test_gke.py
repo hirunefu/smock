@@ -386,6 +386,38 @@ class Variants(Helper):
                                    plan=long_path)
         self.assertEqual(status, 0, stderr)
 
+    def test_the_load_generators_deadline_grows_with_each_variants_runs_and_its_neighbours_scrapes(self):
+        # small_plan's two steps of 2 + 20 + 3 s with 2 s between them; the
+        # plan settles 5 s before reading idle RSS. One smock: 52 s of load,
+        # 15 s to analyse each step, 300 s to start, the 5 s settle, and 60
+        # s for each of two traffic checks.
+        plan = small_plan(self.directory())
+        status, stdout, stderr = helper("plan", "--plan", plan)
+        self.assertEqual((status, stdout), (0, "small 2 507\n"), stderr)
+        # 2 variants over 4 rounds run each step 8 times: 16 runs of 25 s
+        # with 2 s between them (430 s), each with its analysis and the
+        # scrape of the idle neighbour before and after it, 1 s each (16 ×
+        # 17 s), the start and settle, and a traffic check of each variant
+        # before the first step and one after a step (3 × 60 s).
+        status, stdout, stderr = helper("plan", "--plan", plan, "--variants", 2, "--rounds", 4)
+        self.assertEqual((status, stdout), (0, "small 2 1187\n"), stderr)
+        # 4 rounds unless told otherwise, as for the manifests.
+        self.assertEqual(helper("plan", "--plan", plan, "--variants", 2)[1], "small 2 1187\n")
+        # 4 variants in 1 round: 8 runs (214 s), each scraping 3 neighbours
+        # twice (8 × 21 s), and 5 traffic checks.
+        status, stdout, stderr = helper("plan", "--plan", plan, "--variants", 4, "--rounds", 1)
+        self.assertEqual((status, stdout), (0, "small 2 987\n"), stderr)
+        # The Job's own deadline is the plan's.
+        [job] = objects(self.manifests(profile="small", plan=plan, variants=TWO_VARIANTS), "Job")
+        self.assertEqual(job["spec"]["activeDeadlineSeconds"], 1187)
+        for args, expected in ((["--variants", 0], "1 to 4 variants, not 0"),
+                               (["--variants", 5], "1 to 4 variants, not 5"),
+                               (["--variants", 2, "--rounds", 0], "at least 1 round, not 0"),
+                               (["--rounds", 4], "--rounds needs --variants")):
+            status, _, stderr = helper("plan", "--plan", plan, *args)
+            self.assertEqual(status, 1, args)
+            self.assertIn(expected, stderr)
+
     def test_without_variants_smocks_one_pod_runs_as_before_with_no_variant_label_or_affinity(self):
         rendered = self.manifests()
         self.assertEqual(sorted(rendered), ["generator.json", "namespace.json", "smock.json"])

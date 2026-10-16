@@ -132,6 +132,10 @@ STEP_ANALYSIS_S = 15
 GENERATOR_START_S = 300
 TRAFFIC_CHECK_S = 60
 TRAFFIC_CHECKS = 2
+# With variants, how long the load generator may take to scrape the
+# /metrics of an idle variant, a neighbour of the one under load, before
+# and after each run: an idle smock on the node answers in milliseconds.
+NEIGHBOUR_SCRAPE_S = 1
 
 
 # What a run costs: on-demand prices of Autopilot Pods, which are billed for
@@ -258,10 +262,33 @@ def idle_settle_s(plan, profile):
     return idle["settle_s"]
 
 
-def job_deadline_s(plan, profile, specs):
-    """The load generator Job's activeDeadlineSeconds under `profile`."""
-    return round(load_s(plan, specs) + len(specs) * STEP_ANALYSIS_S + GENERATOR_START_S +
-                 (idle_settle_s(plan, profile) or 0) + TRAFFIC_CHECKS * TRAFFIC_CHECK_S)
+def check_counts(variants, rounds):
+    """Fails unless a run can have `variants` (1, or as many as it compares)
+    and `rounds`."""
+    if not 1 <= variants <= MAX_VARIANTS:
+        raise GkeError(f"a run measures 1 to {MAX_VARIANTS} variants, not {variants}")
+    if rounds < 1:
+        raise GkeError(f"the load generator measures each variant in at least 1 round, not {rounds}")
+
+
+def runs(specs, variants=1, rounds=1):
+    """Each run of the steps `specs`, in the order the load generator makes
+    them, as far as their time goes: with `variants`, each variant's run of
+    each step in each of `rounds` rounds."""
+    return specs * (variants * rounds)
+
+
+def job_deadline_s(plan, profile, specs, variants=1, rounds=1):
+    """The load generator Job's activeDeadlineSeconds under `profile`, with
+    as many `variants` and `rounds` as it runs: each run's load and
+    analysis, and, beside the run of one variant, the scrapes of each other
+    one, idle, before and after it; its start and the settle time once; and
+    the traffic check of each variant before the first step, with one after
+    a step."""
+    made = runs(specs, variants, rounds)
+    return round(load_s(plan, made) + len(made) * (STEP_ANALYSIS_S + 2 * (variants - 1) * NEIGHBOUR_SCRAPE_S) +
+                 GENERATOR_START_S + (idle_settle_s(plan, profile) or 0) +
+                 (variants + TRAFFIC_CHECKS - 1) * TRAFFIC_CHECK_S)
 
 
 # The compute class of each architecture's Pods: the built-in autopilot-arm
@@ -396,8 +423,8 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
     smock.json."""
     if smock_deadline_s < 1:
         raise GkeError(f"smock's Pod needs a deadline of at least 1 s, not {smock_deadline_s}")
-    if variants and rounds < 1:
-        raise GkeError(f"the load generator measures each variant in at least 1 round, not {rounds}")
+    if variants:
+        check_counts(len(variants), rounds)
     for variant in variants or []:
         name = smock_name(profile["name"], variant["label"])
         if not DNS_LABEL.fullmatch(name):
@@ -427,7 +454,8 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
                      "labels": {"app": "smock-bench-generator", "profile": profile["name"]}},
         "spec": {
             "backoffLimit": 0,
-            "activeDeadlineSeconds": job_deadline_s(plan, profile, specs),
+            "activeDeadlineSeconds": job_deadline_s(plan, profile, specs, len(variants or [None]),
+                                                    rounds if variants else 1),
             "template": {
                 "metadata": {"labels": {"app": "smock-bench-generator", "profile": profile["name"]}},
                 "spec": {
@@ -963,10 +991,11 @@ def command_plan(args):
     plan = read_json(args.plan)
     profiles = plan_profiles(plan, comma_list(args.profiles))
     cases = plan_cases(plan, comma_list(args.cases))
+    variants, rounds = counts(args)
     for profile in profiles:
         specs = steps(plan, profile, cases)
         if specs:
-            print(profile["name"], len(specs), job_deadline_s(plan, profile, specs))
+            print(profile["name"], len(specs), job_deadline_s(plan, profile, specs, variants, rounds))
     return 0
 
 
@@ -1038,6 +1067,26 @@ def command_check_dockerfiles(args):
     return 0
 
 
+def counts(args):
+    """How many variants and rounds the options of add_counts give, checked."""
+    if args.rounds is not None and args.variants == 1:
+        raise GkeError("--rounds needs --variants: smock alone is measured once")
+    rounds = 1 if args.variants == 1 else DEFAULT_ROUNDS if args.rounds is None else args.rounds
+    check_counts(args.variants, rounds)
+    return args.variants, rounds
+
+
+def add_counts(parser):
+    """The options of how many variants a run measures, and in how many
+    rounds."""
+    parser.add_argument("--variants", type=int, default=1,
+                        help=f"how many variants of smock the run measures on one node, 2 to {MAX_VARIANTS} "
+                             "(default: 1, smock alone)")
+    parser.add_argument("--rounds", type=int,
+                        help="how many times the load generator measures each variant's steps (default: "
+                             f"{DEFAULT_ROUNDS}); only with --variants")
+
+
 def main(argv):
     parser = argparse.ArgumentParser(prog="gke.py", description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -1045,6 +1094,7 @@ def main(argv):
     planning.add_argument("--plan", required=True, help="the plan, such as bench/plan-autopilot.json")
     planning.add_argument("--profiles", help="only these profiles, comma-separated (default: every profile)")
     planning.add_argument("--cases", help="only these cases, comma-separated (default: every case)")
+    add_counts(planning)
     planning.set_defaults(handler=command_plan)
     estimating = commands.add_parser("estimate", help="say how long a run takes and what it costs")
     estimating.add_argument("--plan", required=True, help="the plan, such as bench/plan-autopilot.json")
