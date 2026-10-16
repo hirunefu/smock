@@ -867,6 +867,13 @@ def read_vulnerabilities(directory):
         return None
 
 
+def read_pod_info(raw):
+    """What pod-info kept of a profile's Pods, from its raw/<profile>/
+    (`raw`); none when the run kept nothing there."""
+    path = Path(raw) / "pods.json"
+    return read_json(path) if path.exists() else {"smock": [], "generator": [], "nodes": {}}
+
+
 def generator_lines(path):
     """The JSON lines of the load generator's log, without its progress
     messages."""
@@ -896,8 +903,7 @@ def profile_results(out, plan, profile, cases, arch):
     the run asked)."""
     raw = Path(out) / "raw" / profile["name"]
     lines = generator_lines(raw / "generator.log")
-    pods = read_json(raw / "pods.json") if (raw / "pods.json").exists() else {"smock": [], "generator": [],
-                                                                               "nodes": {}}
+    pods = read_pod_info(raw)
     start = next((line for line in lines if line["kind"] == "start"), None)
     # smock's node's, from what its init container printed, which the run
     # kept; the load generator's, from its start line.
@@ -1001,13 +1007,19 @@ def stopped_record(results, reason, profile):
     return {"reason": reason, "profile": profile, "after": steps[-1]["id"] if steps else None}
 
 
+def stopped_sentence(where, reason):
+    """What summary.md, or same-node.md, says of a run that stopped before
+    its end: `where` (empty, or " under profile ...") and why."""
+    return f"**Stopped early:** the run stopped{where}: {reason}. Nothing after that was measured."
+
+
 def stopped_markdown(stopped):
     """What summary.md says of a run that stopped before its end."""
     where = ""
     if stopped["profile"]:
         step = f"after its step {stopped['after']}" if stopped["after"] else "before its first step"
         where = f" under profile {stopped['profile']}, {step}"
-    return f"**Stopped early:** the run stopped{where}: {stopped['reason']}. Nothing after that was measured."
+    return stopped_sentence(where, stopped["reason"])
 
 
 def nodes_of(results, app):
@@ -1178,9 +1190,7 @@ def write_samples(out, profiles):
     for profile in profiles:
         raw = Path(out) / "raw" / profile["name"]
         if raw.is_dir():
-            info = read_json(raw / "pods.json") if (raw / "pods.json").exists() else {"smock": [], "generator": [],
-                                                                                       "nodes": {}}
-            raws[profile["name"]] = (raw, generator_lines(raw / "generator.log"), info)
+            raws[profile["name"]] = (raw, generator_lines(raw / "generator.log"), read_pod_info(raw))
     labels = list(dict.fromkeys(label for _, lines, info in raws.values() for label in variants_of(lines, info)))
     if not labels:
         raise GkeError(f"{Path(out) / 'raw'} holds no run of variants of smock: samples splits the results of a run "
@@ -1229,6 +1239,22 @@ def compare_module():
 # A sample's directory: its round, then its variant's label.
 SAMPLE_NAME = re.compile(r"([1-9][0-9]*)-(" + VARIANT_LABEL.pattern + ")")
 
+# The changes in percent same-node.json keeps, to two digits; same-node.md
+# shows them from the exact values, as compare.py does, to one.
+PERCENT_KEYS = ("change_percent", "median_change_percent", "min_change_percent", "max_change_percent")
+
+
+def rounded_percents(value):
+    """`value` with every change in percent of PERCENT_KEYS in it, at any
+    depth, to two digits."""
+    if isinstance(value, dict):
+        return {key: round(item, 2) if key in PERCENT_KEYS and isinstance(item, float) else rounded_percents(item)
+                for key, item in value.items()}
+    if isinstance(value, list):
+        return [rounded_percents(item) for item in value]
+    return value
+
+
 # The share of its CPU limit from which smock is saturated: it queues, and
 # what its CPU comes to a request says less of its code.
 SATURATED = 0.9
@@ -1262,14 +1288,6 @@ def median(values):
 
 def percent_change(before, after):
     return None if before is None or after is None or not before else (after - before) / before * 100
-
-
-def percent_text(change):
-    """A change in percent, for people, as compare.py shows one."""
-    if change is None:
-        return "-"
-    change = round(change, 1)
-    return "0%" if change == 0 else f"{change:+.1f}".removesuffix(".0") + "%"
 
 
 def sign_test_p(higher, lower):
@@ -1348,12 +1366,11 @@ def variant_at_step(runs, baseline_runs=None):
         return {**record, "saturated": sum(saturated(run) for run in measured)}
     baseline_values = [run["us_per_request"] for run in baseline_runs if run["not_measured"] is None]
     change = percent_change(median(baseline_values), median(values))
-    pairs = [{"round": run["round"], "change_percent": round(percent_change(base["us_per_request"],
-                                                                             run["us_per_request"]), 2),
+    pairs = [{"round": run["round"], "change_percent": percent_change(base["us_per_request"], run["us_per_request"]),
               "saturated": saturated(base) or saturated(run)}
              for base, run in zip(baseline_runs, runs, strict=True)
              if base["not_measured"] is None and run["not_measured"] is None]
-    return {**record, "change_percent": None if change is None else round(change, 2), "pairs": pairs,
+    return {**record, "change_percent": change, "pairs": pairs,
             "higher": sum(pair["change_percent"] > 0 for pair in pairs),
             "saturated": sum(pair["saturated"] for pair in pairs)}
 
@@ -1379,7 +1396,7 @@ def verdict(pairs, spread=None):
     changes = [pair["change_percent"] for pair in pairs if not pair["saturated"]]
     higher, lower = sum(change > 0 for change in changes), sum(change < 0 for change in changes)
     p, smallest = sign_test_p(higher, lower), sign_test_p(higher + lower, 0)
-    middle = None if not changes else round(median(changes), 2)
+    middle = median(changes)
     inside = None if spread is None or middle is None else \
         spread["min_change_percent"] <= middle <= spread["max_change_percent"]
     return {"pairs": len(changes), "higher": higher, "lower": lower, "median_change_percent": middle,
@@ -1488,14 +1505,14 @@ def drift(steps, label):
         values = [run["us_per_request"] for run in later if run["not_measured"] is None]
         if first["not_measured"] is None and values:
             changes.append(percent_change(median(values), first["us_per_request"]))
-    rounded = [round(change, 2) for change in changes]
-    return {"steps": len(changes), "median_change_percent": None if not changes else round(median(changes), 2),
-            "min_change_percent": min(rounded, default=None), "max_change_percent": max(rounded, default=None)}
+    return {"steps": len(changes), "median_change_percent": median(changes),
+            "min_change_percent": min(changes, default=None), "max_change_percent": max(changes, default=None)}
 
 
 def drift_text(result):
     if result["rounds"] < 2:
         return "Drift: one round alone, with none to compare round 1 with."
+    percent_text = compare_module().percent_text
     return ("Drift, each variant's CPU µs/request in round 1 against the median of its later rounds, step by step: "
             + "; ".join(f"{label} -" if not record["steps"] else
                         f"{label} {percent_text(record['median_change_percent'])} "
@@ -1611,10 +1628,12 @@ def us_text(record):
 
 
 def range_text(low, high):
+    """The lowest to the highest of some changes in percent, for people, as
+    compare.py shows a change: one alone when both read the same."""
     if low is None:
         return "-"
-    return percent_text(low) if percent_text(low) == percent_text(high) else \
-        f"{percent_text(low)} to {percent_text(high)}"
+    low, high = compare_module().percent_text(low), compare_module().percent_text(high)
+    return low if low == high else f"{low} to {high}"
 
 
 def p_number(p):
@@ -1637,8 +1656,8 @@ def same_node_row(step, label, record, baseline):
         saturated_text = f"{record['saturated']} of {record['n']} runs" if record["n"] else "-"
     else:
         changes = [pair["change_percent"] for pair in record["pairs"]]
-        paired = [percent_text(record["change_percent"]), range_text(min(changes, default=None),
-                                                                     max(changes, default=None)),
+        paired = [compare_module().percent_text(record["change_percent"]),
+                  range_text(min(changes, default=None), max(changes, default=None)),
                   f"{record['higher']} of {len(changes)}" if changes else "-"]
         saturated_text = f"{record['saturated']} of {len(changes)} pairs" if changes else "-"
     cells = [step["case"], f"{step['rate']:,}", f"{label} (baseline)" if label == baseline else label,
@@ -1657,7 +1676,7 @@ def verdict_line(label, against, result, note=None):
     if result["inside_a_a_spread"] and result["verdict"] == "no clear difference":
         spread = result["a_a_spread"]
         inside = f" (inside the A/A spread of {range_text(spread['min_change_percent'], spread['max_change_percent'])})"
-    return (f"{named}: {percent_text(result['median_change_percent'])} "
+    return (f"{named}: {compare_module().percent_text(result['median_change_percent'])} "
             f"({range_text(result['min_change_percent'], result['max_change_percent'])}), higher in "
             f"{result['higher']} of {result['pairs']} pairs, sign test {p_text(result['sign_test_p'])}: "
             f"{result['verdict']}{too_few_text(result)}{inside}.")
@@ -1684,31 +1703,28 @@ def too_few_text(result):
             f"{p_number(result['smallest_p'])})")
 
 
-def runs_text(count):
-    return f"{count} run" + ("" if count == 1 else "s")
-
-
 def not_measured_lines(result):
     """What same-node.md says of a profile's runs that measured nothing:
     those that did not run, by why, and why each other one did not
     count."""
+    plural = compare_module().plural
     lines = []
     ended = result["ended_early"]
     if ended:
-        lines += ["", f"**Stopped early:** {ended['reason']}. {runs_text(ended['left_out'])} "
+        lines += ["", f"**Stopped early:** {ended['reason']}. {plural(ended['left_out'], 'run')} "
                       f"{'was' if ended['left_out'] == 1 else 'were'} left out."]
     unreported = sum(entry["not_run"] == "not reported" for entry in result["not_measured"])
     if unreported:
-        lines += ["", f"The load generator did not report {runs_text(unreported)}: its Job ended before them, or "
-                      "never ran."]
+        lines += ["", f"The load generator did not report {plural(unreported, 'run')}: its Job ended before them, "
+                      "or never ran."]
     unsummarized = list(dict.fromkeys(f"{entry['round']}-{entry['variant']}" for entry in result["not_measured"]
                                       if entry["not_run"] == "no summary"))
     if unsummarized:
         count = sum(entry["not_run"] == "no summary" for entry in result["not_measured"])
         many = len(unsummarized) > 1
         lines += ["", f"The sample{'s' if many else ''} {and_list(unsummarized)} "
-                      f"{'have' if many else 'has'} no summary, so {'their' if many else 'its'} {runs_text(count)} "
-                      f"{'are' if count > 1 else 'is'} not counted."]
+                      f"{'have' if many else 'has'} no summary, so {'their' if many else 'its'} "
+                      f"{plural(count, 'run')} {'are' if count > 1 else 'is'} not counted."]
     others = [entry for entry in result["not_measured"] if not entry["not_run"]]
     if others:
         lines += ["", "Not measured, and left out of the counts:", "",
@@ -1895,8 +1911,7 @@ def same_node(out, baseline=None, sha256=None, no_init=()):
     rounds = max(round_ for round_, _ in samples)
     results = {}
     for profile in profiles:
-        pods = Path(out) / "raw" / profile["name"] / "pods.json"
-        info = read_json(pods) if pods.exists() else {"smock": [], "generator": [], "nodes": {}}
+        info = read_pod_info(Path(out) / "raw" / profile["name"])
         result = profile_comparison(profile, samples, labels, baseline, rounds, raws[profile["name"]],
                                     pairings(variants))
         placement = placement_record(profile, info, labels, samples)
@@ -1920,7 +1935,7 @@ def same_node(out, baseline=None, sha256=None, no_init=()):
               "conditions": conditions_record(samples, labels),
               "complete": all(result["complete"] for result in results.values()), "profiles": profiles,
               "gke": {"profiles": results}}
-    return report, same_node_markdown(report), status
+    return rounded_percents(report), same_node_markdown(report), status
 
 
 def run_stopped(samples, raws):
@@ -1947,7 +1962,7 @@ def run_stopped_text(stopped):
         run = (f"after its run of {after['id']} by {after['variant']} in round {after['round']}" if after else
                "before its first run")
         where = f" under profile {stopped['profile']}, {run}"
-    return f"**Stopped early:** the run stopped{where}: {stopped['reason']}. Nothing after that was measured."
+    return stopped_sentence(where, stopped["reason"])
 
 
 def command_same_node(args):

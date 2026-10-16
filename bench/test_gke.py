@@ -2500,6 +2500,21 @@ class SameNode(VariantRun):
         self.assertEqual(report["gke"]["profiles"]["small"]["verdicts"]["b"]["sign_test_p"], 2 / 2 ** 12)
         self.assertIn("- b against a: +10% (+10%), higher in 12 of 12 pairs, sign test p < 0.001: higher.", markdown)
 
+    def test_a_change_reads_as_compare_py_says_it_of_the_same_two_runs(self):
+        # 30.03 to 33.59 is +11.854...%: +11.9%, not the +11.8% of a change
+        # rounded to 11.85 first. The JSON keeps two digits.
+        us = {"a": {500: [30.03] * 2, 1000: [40.0] * 2}, "b": {500: [33.59] * 2, 1000: [44.0] * 2}}
+        status, report, markdown, stderr = self.same_node(self.variant_run(variant_lines(us),
+                                                                           variant_pods(["a", "b"])))
+        self.assertEqual(status, 0, stderr)
+        expected = load_generator_module().gke.compare_module().change_text(30.03, 33.59)
+        self.assertEqual(expected, "+11.9%")
+        row = self.row(markdown, "http-keep-alive", 500, "b")
+        self.assertEqual((row["Change"], row["Paired"]), (expected, expected))
+        b = report["gke"]["profiles"]["small"]["steps"][0]["variants"]["b"]
+        self.assertEqual((b["change_percent"], [pair["change_percent"] for pair in b["pairs"]]),
+                         (11.85, [11.85, 11.85]))
+
     def test_a_run_that_measured_nothing_drops_out_of_the_counts_with_why(self):
         # b's run at 500 requests/s in round 3 lost requests, and the load
         # generator fell behind in a's at 1,000 in round 4: neither counts,

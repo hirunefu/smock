@@ -98,13 +98,21 @@ def number(value):
     return "-" if value is None else str(value)
 
 
-def change_text(older, newer):
-    if older is None or newer is None or older == 0:
+def percent_text(change):
+    """A change in percent, for people: to one digit, signed, 0% when it
+    rounds to none, and - when it is unknown."""
+    if change is None:
         return "-"
-    change = round((newer - older) / older * 100, 1)
+    change = round(change, 1)
     if change == 0:
         return "0%"
     return f"{change:+.1f}".removesuffix(".0") + "%"
+
+
+def change_text(older, newer):
+    if older is None or newer is None or older == 0:
+        return "-"
+    return percent_text((newer - older) / older * 100)
 
 
 def worse(older, newer, rule):
