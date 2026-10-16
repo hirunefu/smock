@@ -1,0 +1,28 @@
+{
+  "about": "What scripts/gke-bench.sh --variant runs to compare smock binaries, or one binary with other options, on one GKE Autopilot node: each variant in a Pod of its own on that node under each profile's limits, which one load generator measures in turn, round after round, so that the node's CPU is the same for each and only the variants differ (#39). HTTP keep-alive alone, at the lowest rates of bench/plan-autopilot.json's ladders: 125, 250 and 500 requests a second under 50m and 625, 1,250 and 2,500 under 250m, where R2's binary used more CPU a request than R1's in the pre-merge runs on x86 nodes and, at the top, saturated and was throttled; and 2,500 and 5,000 under 1 CPU, where it did not, as a control. The profiles, the window, the cool-down and idle_rss are bench/plan-autopilot.json's, so that each sample (samples/<round>-<label>/) compares with a pre-merge run's steps through bench/compare.py. --profiles runs some profiles only.",
+  "load_generator": { "name": "oha", "version": "1.16.0" },
+  "profiles": [
+    { "name": "autopilot-burst-min", "cpu_limit": "50m", "memory_limit": "52Mi" },
+    { "name": "autopilot-min", "cpu_limit": "250m", "memory_limit": "512Mi" },
+    { "name": "chart-default", "cpu_limit": "1", "memory_limit": "1Gi" }
+  ],
+  "ramp_s": 2,
+  "duration_s": 20,
+  "tail_s": 3,
+  "cooldown_s": 2,
+  "rss_interval_s": 0.5,
+  "idle_rss": { "settle_s": 5 },
+  "cases": [
+    {
+      "name": "http-keep-alive",
+      "protocol": "http",
+      "connection": "keep-alive",
+      "connections": 64,
+      "rates": {
+        "autopilot-burst-min": [125, 250, 500],
+        "autopilot-min": [625, 1250, 2500],
+        "chart-default": [2500, 5000]
+      }
+    }
+  ]
+}

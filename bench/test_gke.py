@@ -506,6 +506,38 @@ class Plan(Helper):
         self.assertIn("case http-keep-alive holds idle connections", stderr)
 
 
+class SameNodePlan(Helper):
+    """bench/plan-same-node.json is the plan of a run that compares smock
+    binaries on one node (scripts/gke-bench.sh --variant): HTTP keep-alive
+    alone, at the lowest rates of bench/plan-autopilot.json's ladders,
+    under its profiles and with its window, so that each sample compares
+    with a pre-merge run's steps."""
+
+    def test_it_measures_http_keep_alive_at_the_lowest_steps_of_the_autopilot_plans_ladders(self):
+        plan = json.loads((BENCH / "plan-same-node.json").read_text())
+        autopilot = json.loads((BENCH / "plan-autopilot.json").read_text())
+        [case] = plan["cases"]
+        self.assertEqual(case["rates"], {"autopilot-burst-min": [125, 250, 500],
+                                         "autopilot-min": [625, 1250, 2500], "chart-default": [2500, 5000]})
+        http = next(case for case in autopilot["cases"] if case["name"] == "http-keep-alive")
+        self.assertEqual({key: value for key, value in case.items() if key != "rates"},
+                         {key: value for key, value in http.items() if key != "rates"})
+        for profile, rates in case["rates"].items():
+            self.assertEqual(rates, http["rates"][profile][:len(rates)], profile)
+        for key in ("profiles", "ramp_s", "duration_s", "tail_s", "cooldown_s", "rss_interval_s", "idle_rss",
+                    "load_generator"):
+            self.assertEqual(plan[key], autopilot[key], key)
+        self.assertIn("scripts/gke-bench.sh --variant", plan["about"])
+
+    def test_four_variants_in_four_rounds_give_each_profile_of_run_1_its_jobs_time(self):
+        # 48 runs of three steps, each beside three idle variants: the
+        # Job's deadline under autopilot-burst-min and autopilot-min.
+        status, stdout, stderr = helper("plan", "--plan", BENCH / "plan-same-node.json", "--profiles",
+                                        "autopilot-burst-min,autopilot-min", "--variants", 4, "--rounds", 4)
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(stdout, "autopilot-burst-min 3 2907\nautopilot-min 3 2907\n")
+
+
 def small_plan(directory, rates=(500, 1000)):
     """A plan with one profile, small (250m, 512Mi), and one case at a
     ladder of rates."""
