@@ -1,0 +1,85 @@
+# The Mockoon environment ../mockoon/users-api.json as a Definition file.
+# Each group of Stubs is one Mockoon route, in the environment's order.
+mocks:
+  - name: users-api
+    hosts: [localhost, users-api]
+
+stubs:
+  # GET users: lists the users; ?status=inactive lists the inactive ones.
+  # The response with a rule comes first, the default response last.
+  - id: list-inactive-users
+    mock: users-api
+    request: { method: GET, path: /api/v1/users, query: { status: inactive } }
+    response:
+      status: 200
+      headers: { Content-Type: application/json }
+      bodyFile: inactive-users.json
+
+  - id: list-users
+    mock: users-api
+    request: { method: GET, path: /api/v1/users }
+    response:
+      status: 200
+      headers: { Content-Type: application/json }
+      bodyFile: users.json
+    fault:
+      delay: { fixed: 300 }
+
+  # GET users/:id: the 404 for IDs made of zeros, then the default response.
+  - id: get-user-missing
+    mock: users-api
+    request: { method: GET, path: { pattern: "/api/v1/users/0+" } }
+    response: { status: 404, json: { error: not found } }
+
+  - id: get-user
+    mock: users-api
+    request: { method: GET, path: { pattern: "/api/v1/users/[^/]+" } }
+    response:
+      status: 200
+      template: true
+      json:
+        id: ${path[3]}
+        name: ${fake.name()}
+        lang: ${query.lang ?? 'en'}
+
+  # POST users: both rules (AND) on one Stub, the default response last.
+  - id: create-user
+    mock: users-api
+    request:
+      method: POST
+      path: /api/v1/users
+      headers: { X-Api-Key: secret }
+      body: { json: { role: admin } }
+    response:
+      status: 201
+      template: true
+      json:
+        id: ${fake.uuid()}
+        name: ${body.name ?? ''}
+
+  - id: create-user-forbidden
+    mock: users-api
+    request: { method: POST, path: /api/v1/users }
+    response: { status: 403, json: { error: forbidden } }
+
+  # orders: a CRUD route on the data bucket "orders". Only the list is
+  # kept, with the bucket's initial value.
+  - id: list-orders
+    mock: users-api
+    request: { method: GET, path: /api/v1/orders }
+    response:
+      status: 200
+      headers: { X-Total-Count: "2", X-Filtered-Count: "2" }
+      json: [{ id: 1, item: book }, { id: 2, item: pen }]
+
+  # cors: true answers every OPTIONS request. Last, so that it is not
+  # named as the Near miss of requests that other Stubs nearly match.
+  - id: preflight
+    mock: users-api
+    request: { method: OPTIONS }
+    response:
+      status: 200
+      headers:
+        Access-Control-Allow-Origin: "*"
+        Access-Control-Allow-Methods: GET,POST,PUT,PATCH,DELETE,HEAD,OPTIONS
+        Access-Control-Allow-Headers: Content-Type, Origin, Accept, Authorization, Content-Length, X-Requested-With

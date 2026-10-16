@@ -358,6 +358,10 @@ up. [On a Standard cluster](#on-a-standard-cluster) is the exception: it
 repeats the path from
 [Create an Autopilot cluster](#create-an-autopilot-cluster) on a cluster
 of another type.
+[migrating-from-mockoon.md](migrating-from-mockoon.md) turns Mockoon
+environments into Definition files, and
+[serves its example](migrating-from-mockoon.md#running-it-where-mockoon-ran)
+on this install too.
 
 ### Change the definitions and watch the reload
 
