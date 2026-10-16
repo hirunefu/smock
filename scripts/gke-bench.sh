@@ -1532,24 +1532,29 @@ summarize_into() {
 # every round the run planned, which the load generator may not have said),
 # writes each sample's summary with its variant's image and binary and the
 # options of gke.py summarize given, and compares the variants (gke.py
-# same-node: same-node.json and same-node.md, which is also summary.md).
-# Fails when a sample could not be summarized, or the variants cannot be
-# compared: on more than one node, under other limits than the plan's, or
-# with a sample incomplete.
+# same-node: same-node.json and same-node.md, which is also summary.md), in
+# the order given, the first the baseline, which neither the Pods nor the
+# samples say when the load generator never started. Fails when a sample
+# could not be summarized, or the variants cannot be compared: on more
+# than one node, under other limits than the plan's, or with a sample
+# incomplete.
 summarize_variants() {
-  local label directory status=0 compared=() seen=" "
+  local label directory status=0 compared=() sampled=" "
   summarized=1
   "$PYTHON" "$GKE_PY" samples --plan "$plan" "${selection[@]}" --rounds "$rounds" "$out" >"$work/samples.txt" ||
     return 1
   while read -r _ label directory; do
     summarize_into "$directory" "${variant_ref[$label]:-}" "${variant_sha256[$label]:-}" "$@" || status=1
-    if [[ $seen != *" $label "* ]]; then
-      seen+="$label "
-      compared+=(--sha256 "$label=${variant_sha256[$label]}")
-      [ "${variant_init[$label]}" = 1 ] || compared+=(--no-init "$label")
-    fi
+    sampled+="$label "
   done <"$work/samples.txt"
-  "$PYTHON" "$GKE_PY" same-node "${compared[@]}" "$out" || status=1
+  # Only the variants with samples: one whose Pod was never applied has
+  # none. The first was applied first, so it has them.
+  for label in "${variants[@]}"; do
+    [[ $sampled == *" $label "* ]] || continue
+    compared+=(--sha256 "$label=${variant_sha256[$label]}")
+    [ "${variant_init[$label]}" = 1 ] || compared+=(--no-init "$label")
+  done
+  "$PYTHON" "$GKE_PY" same-node --baseline "${variants[0]}" "${compared[@]}" "$out" || status=1
   [ ! -f "$out/same-node.md" ] || cp "$out/same-node.md" "$out/summary.md"
   return "$status"
 }

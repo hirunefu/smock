@@ -1271,8 +1271,8 @@ SIGNIFICANT_P = 0.05
 
 def read_samples(out):
     """The samples of a run of variants under `out`, as summarize left them:
-    {(round, label): (summary, conditions)}, by round; None for one it did
-    not summarize."""
+    {(round, label): (summary, conditions)}, by round, then label, in no
+    order of the directory's; None for one it did not summarize."""
     compare = compare_module()
     root = Path(out) / SAMPLES
     samples = {}
@@ -1284,7 +1284,7 @@ def read_samples(out):
                     compare.read_run(directory) if (directory / "summary.json").exists() else None
             except compare.CompareError as error:
                 raise GkeError(str(error)) from error
-    return dict(sorted(samples.items(), key=lambda item: item[0][0]))
+    return dict(sorted(samples.items()))
 
 
 def median(values):
@@ -1912,8 +1912,13 @@ def same_node(out, baseline=None, sha256=None, no_init=()):
     profiles = known[0][1]["profiles"]
     raws = {profile["name"]: generator_lines(Path(out) / "raw" / profile["name"] / "generator.log")
             for profile in profiles}
-    labels = list(dict.fromkeys([*(line["variant"] for lines in raws.values() for line in lines
-                                   if line.get("variant")), *(label for _, label in samples)]))
+    # In the load generator's order, the baseline first; else, as when it
+    # never started, in the order of the run's --sha256, which is the
+    # variants' (the Pods' and the samples' are not).
+    told = [line["variant"] for lines in raws.values() for line in lines if line.get("variant")]
+    run = {*told, *(label for _, label in samples)}
+    labels = [label for label in dict.fromkeys([*told, *(sha256 or {}), *(label for _, label in samples)])
+              if label in run]
     baseline = baseline or labels[0]
     for label in [baseline, *(sha256 or {}), *no_init]:
         if label not in labels:

@@ -266,6 +266,8 @@ def pod_list():
                                                   "job-name": item["metadata"]["name"]}},
                           "spec": {**template["spec"], "nodeName": "node-b"},
                           "status": {"phase": config.get("job_pod_phase", "Succeeded")}})
+    # By name, as kubectl lists them.
+    items.sort(key=lambda item: item["metadata"]["name"])
     return {"apiVersion": "v1", "kind": "List", "items": items, "metadata": {"resourceVersion": ""}}
 
 
@@ -1950,6 +1952,20 @@ class Variants(Script):
         self.assertIn("The load generator did not report 16 runs", (self.out / "summary.md").read_text())
         self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
         self.assertIn("nothing is left", output)
+
+    def test_a_run_stopped_before_the_load_generator_compares_the_variants_in_the_order_given(self):
+        # r2 is the baseline, then r1 and r2b, though kubectl lists the Pods
+        # by name; r1 is on another node, so the load generator never says
+        # their order.
+        self.configure(pod_nodes={"smock-small-r1": "node-c"})
+        status, output = self.run_variants(variants={"r2": [self.smock],
+                                                     "r1": [self.smock_for(HOST_ARCH, "0d984c8a1b2c")],
+                                                     "r2b": [self.smock]})
+        self.assertEqual(status, 1, output)
+        report = json.loads((self.out / "same-node.json").read_text())
+        self.assertEqual((report["baseline"], [variant["label"] for variant in report["variants"]]),
+                         ("r2", ["r2", "r1", "r2b"]))
+        self.assertIn("| r2 (baseline) |", (self.out / "summary.md").read_text())
 
     def test_a_variant_that_cannot_join_the_node_of_the_first_stops_the_run_with_its_events_kept(self):
         # Pending: the first variant's node has no room for it.

@@ -2760,11 +2760,29 @@ class SameNode(VariantRun):
         # stopped before it started, and the runner says 2 rounds.
         labels = ["a", "b", "c", "d"]
         out = self.variant_run([], variant_pods(labels))
-        status, report, markdown, stderr = self.same_node(out, rounds=2)
+        status, report, markdown, stderr = self.same_node(out, "--baseline", "a", rounds=2)
         self.assertEqual(status, 1, stderr)
-        self.assertEqual(report["run"]["rounds"], 2)
+        self.assertEqual((report["baseline"], report["run"]["rounds"]), ("a", 2))
         self.assertEqual(len(report["gke"]["profiles"]["small"]["not_measured"]), 16)
         self.assertIn("The load generator did not report 16 runs", markdown)
+
+    def test_without_the_load_generators_lines_the_variants_are_in_the_order_the_runner_gives(self):
+        # The run stopped before the load generator started: kubectl lists
+        # the Pods by name, and the samples' directories are in no order,
+        # so neither says the variants' order, b, d, a and c; the runner's
+        # --baseline and --sha256 do.
+        out = self.variant_run([], variant_pods(["a", "b", "c", "d"]))
+        given = [arg for label in "bdac" for arg in ("--sha256", f"{label}={label * 64}")]
+        status, report, _, stderr = self.same_node(out, "--baseline", "b", *given, rounds=1)
+        self.assertEqual(status, 1, stderr)
+        self.assertEqual((report["baseline"], [variant["label"] for variant in report["variants"]]),
+                         ("b", ["b", "d", "a", "c"]))
+        # The order of --sha256 alone, too.
+        status, _, stderr = helper("same-node", out, *given)
+        self.assertEqual(status, 1, stderr)
+        report = json.loads((out / "same-node.json").read_text())
+        self.assertEqual((report["baseline"], [variant["label"] for variant in report["variants"]]),
+                         ("b", ["b", "d", "a", "c"]))
 
     def test_a_profile_the_run_did_not_reach_cannot_be_compared_and_says_so(self):
         # A second profile, big, which the run did not reach, as one that
