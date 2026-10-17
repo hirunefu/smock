@@ -364,8 +364,8 @@ fn Contract::validate(
         }
       ("patternProperties", Object(patterns)) =>
         if value is Object(object) {
-          for pattern, property in patterns {
-            for name, v in object {
+          for name, v in object {
+            for pattern, property in patterns {
               if matches(pattern, name, file) {
                 self.validate(sub(property), v, "\{at}/\{name}", problems)
               }

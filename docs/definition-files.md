@@ -286,21 +286,24 @@ unmatched requests is refused.
 
 ## Responses
 
-A Stub's `response` has a `status`, `headers`, and a body. `headers` maps
-each header name to a string, or to an array of strings that sends the
-field once per value, in order, where the name stands:
+A Stub's `response` has a `status`, `headers`, and a body.
+
+`headers` maps each header name to a string or to an array of strings.
+An array sends one field per value, in order, where the name stands.
+This sends two `Set-Cookie` fields:
 
 ```json
 "headers": { "Set-Cookie": ["session=abc; Path=/; HttpOnly", "theme=dark; Path=/"] }
 ```
 
-sends two `Set-Cookie` fields. An array is never empty, and `Content-Type`
-takes one string. Names are compared case-insensitively, so `Set-Cookie`
-and `set-cookie` cannot both be given; give the name an array instead. In
-a YAML flow sequence a comma ends a value, so write values that have one,
-such as a cookie's `Expires`, in block style or quote them. smock sets
-`Content-Length` from the body; `Content-Length`, `Transfer-Encoding` and
-`Connection` cannot be given. The body is either inline, as text in UTF-8:
+An array is never empty. `Content-Type` takes one string. Names are
+compared case-insensitively, so `Set-Cookie` and `set-cookie` cannot both
+be given; give the name an array instead. In a YAML flow sequence a comma
+ends a value. Write a value that has one, such as a cookie's `Expires`,
+in block style or in quotes. smock sets `Content-Length` from the body;
+`Content-Length`, `Transfer-Encoding` and `Connection` cannot be given.
+
+The body is either inline, as text in UTF-8:
 
 ```json
 "response": { "status": 200, "body": "{\"id\":1}" }

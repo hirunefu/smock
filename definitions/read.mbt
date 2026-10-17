@@ -920,28 +920,27 @@ fn File::read_headers(
     } else {
       names[lower] = name
     }
-    let field_value = (value : String, at : String) => {
-      if @http1.is_field_value(value) {
-        out.push((name, value, at))
+    let push_field = (text : String, at : String) => {
+      if @http1.is_field_value(text) {
+        out.push((name, text, at))
       } else {
         self.error(at, "must not contain control characters other than tab")
       }
     }
     match value {
-      String(value) => field_value(value, field)
-      // smock reads Content-Type, to escape a templated body.
-      Array(_) if lower == "content-type" =>
-        self.error(field, "must be a string: a response has one Content-Type")
+      String(text) => push_field(text, field)
+      // smock reads Content-Type, to escape a templated body, so it takes
+      // one string.
+      _ if lower == "content-type" => self.error(field, "must be a string")
       Array([]) => self.error(field, "must not be an empty array")
-      Array(values) =>
-        for i, value in values {
+      Array(items) =>
+        for i, item in items {
           let at = child_pointer(field, i.to_string())
-          match value {
-            String(value) => field_value(value, at)
+          match item {
+            String(text) => push_field(text, at)
             _ => self.error(at, "must be a string")
           }
         }
-      _ if lower == "content-type" => self.error(field, "must be a string")
       _ => self.error(field, "must be a string or an array of strings")
     }
   }

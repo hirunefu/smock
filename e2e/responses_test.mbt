@@ -255,11 +255,11 @@ async test "an empty header array and an array for Content-Type stop smock serve
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"invalid definitions","file":"users.json","pointer":"/stubs/0/response/headers/Set-Cookie","error":"must not be an empty array"}
-        #|{"level":"error","msg":"invalid definitions","file":"users.json","pointer":"/stubs/0/response/headers/content-type","error":"must be a string: a response has one Content-Type"}
+        #|{"level":"error","msg":"invalid definitions","file":"users.json","pointer":"/stubs/0/response/headers/content-type","error":"must be a string"}
         #|---
         #|status 1
         #|users.json: /stubs/0/response/headers/Set-Cookie: must not be an empty array
-        #|users.json: /stubs/0/response/headers/content-type: must be a string: a response has one Content-Type
+        #|users.json: /stubs/0/response/headers/content-type: must be a string
         #|
       ),
     )

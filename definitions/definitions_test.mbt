@@ -652,9 +652,9 @@ test "a header given an array must be a non-empty array of strings that follow t
       #|users.json: /stubs/0/response/headers/X-A/2: must not contain control characters other than tab
       #|users.json: /stubs/0/response/headers/X-B: must be a string or an array of strings
       #|users.json: /stubs/0/response/headers/X-C: must be a string or an array of strings
-      #|users.json: /stubs/0/response/headers/content-type: must be a string: a response has one Content-Type
+      #|users.json: /stubs/0/response/headers/content-type: must be a string
       #|users.json: /stubs/1/response/headers/Content-Type: must be a string
-      #|users.json: /stubs/2/response/headers/CONTENT-TYPE: must be a string: a response has one Content-Type
+      #|users.json: /stubs/2/response/headers/CONTENT-TYPE: must be a string
     ),
   )
 }

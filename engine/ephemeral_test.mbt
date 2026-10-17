@@ -633,7 +633,7 @@ test "an Ephemeral Stub may give a header an array: it answers with one field pe
       #|{"id":"eph-1","mock":"users","session":null,"request":{"path":"/login"},"response":{"status":200,"headers":{"X-A":"1","Set-Cookie":["a=1","b=2"]}}}
       #|---
       #|/response/headers/Set-Cookie: must not be an empty array
-      #|/response/headers/Content-Type: must be a string: a response has one Content-Type
+      #|/response/headers/Content-Type: must be a string
     ),
   )
 }

@@ -4,7 +4,8 @@
 
 ///|
 /// The Mock `users` in a JSON file, with a Stub that has every kind of
-/// condition, and in a YAML file a Stub that answers from a body file.
+/// condition and a header given an array, and in a YAML file a Stub that
+/// answers from a body file.
 let render_definitions : Array[(String, String)] = [
   (
     "10-users.json",
@@ -16,7 +17,8 @@ let render_definitions : Array[(String, String)] = [
       #|      "headers": { "X-Api-Key": "secret" },
       #|      "body": { "json": { "name": "Zoë" } } },
       #|    "response": { "status": 201,
-      #|      "headers": { "Location": "/users/7", "Content-Type": "application/json" },
+      #|      "headers": { "Location": "/users/7", "Set-Cookie": ["a=1", "b=2"],
+      #|        "Content-Type": "application/json" },
       #|      "body": "{\"id\":7}" } }] }
     ),
   ),
@@ -144,6 +146,14 @@ async test "smock render prints the named Stub's status, headers and body for a 
         #|        "value": "/users/7"
         #|      },
         #|      {
+        #|        "name": "Set-Cookie",
+        #|        "value": "a=1"
+        #|      },
+        #|      {
+        #|        "name": "Set-Cookie",
+        #|        "value": "b=2"
+        #|      },
+        #|      {
         #|        "name": "Content-Type",
         #|        "value": "application/json"
         #|      }
@@ -191,6 +201,14 @@ async test "smock render still renders the Stub when the sample fails its condit
         #|      {
         #|        "name": "Location",
         #|        "value": "/users/7"
+        #|      },
+        #|      {
+        #|        "name": "Set-Cookie",
+        #|        "value": "a=1"
+        #|      },
+        #|      {
+        #|        "name": "Set-Cookie",
+        #|        "value": "b=2"
         #|      },
         #|      {
         #|        "name": "Content-Type",
@@ -404,7 +422,7 @@ async test "the Admin render operation answers with the rendering, the failed co
           #|200
           #|{"stub":"get-user","mock":"users","time":"<time>","seed":<seed>,"response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"templateError":null,"failed":[],"warnings":[]}
           #|200
-          #|{"stub":"create-user","mock":"users","time":"<time>","seed":<seed>,"response":{"status":201,"headers":[{"name":"Location","value":"/users/7"},{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":7}","size":8,"truncated":false},"events":null},"templateError":null,"failed":[{"condition":"query:dry","expected":"yes","actual":["no"]},{"condition":"header:x-api-key","expected":"secret","actual":[]},{"condition":"body","expected":{"json":{"name":"Zoë"}},"actual":[""]}],"warnings":[]}
+          #|{"stub":"create-user","mock":"users","time":"<time>","seed":<seed>,"response":{"status":201,"headers":[{"name":"Location","value":"/users/7"},{"name":"Set-Cookie","value":"a=1"},{"name":"Set-Cookie","value":"b=2"},{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":7}","size":8,"truncated":false},"events":null},"templateError":null,"failed":[{"condition":"query:dry","expected":"yes","actual":["no"]},{"condition":"header:x-api-key","expected":"secret","actual":[]},{"condition":"body","expected":{"json":{"name":"Zoë"}},"actual":[""]}],"warnings":[]}
         ),
       )
     })
