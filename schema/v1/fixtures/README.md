@@ -21,7 +21,8 @@ disagree.
   Files that are invalid only because of an RE2 pattern, a missing body
   file, a uniform delay whose `min` exceeds its `max`, or a Host that no
   request can carry (such as `:8080`, which normalises to no name, or
-  `users:http`) belong here too, as do JSON files that repeat a key in one
+  `users:http`) belong here too, as do responses whose `headers` give two
+  names that differ only in case, and JSON files that repeat a key in one
   object, which a JSON Schema validator reads as the last of them.
 - `not-supported-yet/` holds files that use a field the Schema defines but
   smock does not implement yet. When a ticket implements the field, it moves

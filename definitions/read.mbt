@@ -888,7 +888,8 @@ fn File::read_body_file(self : File, pointer : String, json : Json) -> Bytes {
 
 ///|
 /// Reads response headers: an object whose members are field names and
-/// string values.
+/// string values. Header names are case-insensitive, so no two may differ
+/// only in case, a rule the JSON Schema cannot express.
 fn File::read_headers(
   self : File,
   pointer : String,
@@ -899,13 +900,22 @@ fn File::read_headers(
     self.error(pointer, "must be an object")
     return out
   }
+  // Each header name so far, as given, by its lower case.
+  let names : Map[String, String] = Map([])
   for name, value in headers {
     let field = child_pointer(pointer, name)
+    let lower = name.to_lower()
     if !@http1.is_token(name) {
       self.error(field, "is not a valid header name")
-    } else if name.to_lower()
-      is ("content-length" | "transfer-encoding" | "connection") {
+    } else if lower is ("content-length" | "transfer-encoding" | "connection") {
       self.error(field, "is set by smock and cannot be given")
+    } else if names.get(lower) is Some(earlier) {
+      self.error(
+        field,
+        "the header name \{earlier.escape()} is already given: header names are case-insensitive",
+      )
+    } else {
+      names[lower] = name
     }
     match value {
       String(value) =>

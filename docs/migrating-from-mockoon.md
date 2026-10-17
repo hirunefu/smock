@@ -60,9 +60,10 @@ covers part of the need, the item says what.
 - **A body for unmatched requests.** A Mock sets only the status of its
   no-match response.
 - **Response limits.** A response's `headers` is a map with one string
-  per name and no list form, so several `Set-Cookie` values cannot be
-  given under one name; its status is from 200 to 599; and body files
-  are always sent whole, without Range requests.
+  per name and no list form. Names that differ only in case are
+  rejected, so several `Set-Cookie` values cannot be given. Its status is
+  from 200 to 599, and body files are always sent whole, without Range
+  requests.
 - **OpenAPI import and export, and a GUI.** The translation is done by
   hand, and Definition files are edited as text. Editors can check them
   against the JSON Schema
@@ -742,7 +743,7 @@ counterpart, and name those that have none.
 |---|---|
 | `statusCode` | `status`, from 200 to 599. |
 | `label` | Part of the Stub's `id`, which is unique in the definition set. |
-| `headers` | `headers`, a map with one string per name. |
+| `headers` | `headers`, a map with one string per name, the names compared case-insensitively. |
 | `bodyType: INLINE` | `json` or `body`. |
 | `body` | `json` for JSON, or `body` for text sent as written; with `template: true` when it uses helpers. |
 | The default body, `{}` | `json: {}`. A Stub without a body sends an empty one. |
