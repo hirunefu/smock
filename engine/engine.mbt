@@ -483,10 +483,17 @@ fn stub_response(response : @definitions.Response) -> ResponsePlan {
 }
 
 ///|
-/// The response of `mock` when no Stub matches, with the Near miss, if
-/// any, in the `Smock-Near-Miss` header.
+/// The response of `mock` when no Stub matches: its `noMatch.headers` after
+/// smock's Content-Type, and the Near miss, if any, in the
+/// `Smock-Near-Miss` header.
 fn no_match(mock : @definitions.Mock, near_miss : NearMiss?) -> ResponsePlan {
-  let headers = [("Content-Type", "application/json")]
+  let given = mock.no_match_headers
+  // Room for the Near miss and the Smock-Mock field the Default Mock adds.
+  let headers = Array(capacity=given.length() + 3)
+  headers.push(("Content-Type", "application/json"))
+  for i in 0..<given.length() {
+    headers.push(given[i])
+  }
   if near_miss is Some(near_miss) {
     headers.push(("Smock-Near-Miss", near_miss.header_value()))
   }

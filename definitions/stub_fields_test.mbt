@@ -300,6 +300,47 @@ test "a Mock's noMatch is an object with a status from 200 to 599" {
 }
 
 ///|
+test "a Mock's noMatch.headers follow the rules of a Stub's response headers, and Content-Type and Smock-Near-Miss are set by smock too" {
+  inspect(
+    problems([
+      (
+        "a.json",
+        (
+          #|{ "mocks": [
+          #|  { "name": "a", "noMatch": { "status": 404, "headers": {
+          #|    "Access-Control-Allow-Origin": "*", "Vary": ["Origin", "Accept"],
+          #|    "X-Path": "${request.path}", "Smock-Other": "1" } } },
+          #|  { "name": "b", "noMatch": { "headers": ["X-A: 1"] } },
+          #|  { "name": "c", "noMatch": { "headers": {
+          #|    "Content-Type": "text/plain", "smock-near-miss": "x", "Smock-Mock": "y",
+          #|    "Content-Length": "1", "Transfer-Encoding": "chunked", "Connection": "close" } } },
+          #|  { "name": "d", "noMatch": { "headers": { "X-A": "1", "x-a": ["2"] } } },
+          #|  { "name": "e", "noMatch": { "headers": {
+          #|    "Vary": [], "X-B": 1, "X-C": ["a\r\nb", 2], "X D": "1" } } },
+          #|  { "name": "f", "noMatch": { "headers": { "CONTENT-TYPE": ["application/json"] } } } ] }
+        ),
+      ),
+    ]),
+    content=(
+      #|a.json: /mocks/1/noMatch/headers: must be an object
+      #|a.json: /mocks/2/noMatch/headers/Content-Type: is set by smock and cannot be given
+      #|a.json: /mocks/2/noMatch/headers/smock-near-miss: is set by smock and cannot be given
+      #|a.json: /mocks/2/noMatch/headers/Smock-Mock: is set by smock and cannot be given
+      #|a.json: /mocks/2/noMatch/headers/Content-Length: is set by smock and cannot be given
+      #|a.json: /mocks/2/noMatch/headers/Transfer-Encoding: is set by smock and cannot be given
+      #|a.json: /mocks/2/noMatch/headers/Connection: is set by smock and cannot be given
+      #|a.json: /mocks/3/noMatch/headers/x-a: the header name "X-A" is already given: header names are case-insensitive
+      #|a.json: /mocks/4/noMatch/headers/Vary: must not be an empty array
+      #|a.json: /mocks/4/noMatch/headers/X-B: must be a string or an array of strings
+      #|a.json: /mocks/4/noMatch/headers/X-C/0: must not contain control characters other than tab
+      #|a.json: /mocks/4/noMatch/headers/X-C/1: must be a string
+      #|a.json: /mocks/4/noMatch/headers/X D: is not a valid header name
+      #|a.json: /mocks/5/noMatch/headers/CONTENT-TYPE: is set by smock and cannot be given
+    ),
+  )
+}
+
+///|
 test "a body file is named by a path relative to the body-file subdirectory, and must exist there" {
   let response = (i : Int, body_file : String) => {
     "{ \"id\": \"s\{i}\", \"mock\": \"m\", \"response\": { \"status\": 200, \"bodyFile\": \{body_file.escape()} } }"

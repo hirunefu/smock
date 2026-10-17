@@ -199,3 +199,128 @@ test "a Mock's noMatch.status is the status when no Stub matches" {
     ),
   )
 }
+
+///|
+test "a Mock's noMatch.headers are sent, untemplated, on its every no-match response, after Content-Type and before smock's own headers" {
+  let h = harness([
+    (
+      "m.json",
+      (
+        #|{ "mocks": [
+        #|    { "name": "web", "hosts": ["web.test"], "default": true,
+        #|      "noMatch": { "status": 418,
+        #|        "headers": { "Access-Control-Allow-Origin": "*",
+        #|          "Vary": ["Origin", "Accept"], "X-Path": "${request.path}" } } },
+        #|    { "name": "plain", "hosts": ["plain.test"] } ],
+        #|  "stubs": [
+        #|    { "id": "get-user", "mock": "web",
+        #|      "request": { "method": "GET", "path": "/users/1" },
+        #|      "response": { "status": 200, "body": "user" } } ] }
+      ),
+    ),
+  ])
+  let send = (host : String, meth : String, target : String) => {
+    response(h.send(meth, target, headers=[("Host", host)]))
+  }
+  inspect(
+    [
+      send("web.test", "OPTIONS", "/users/1"),
+      send("other.test", "GET", "/nothing"),
+      send("web.test", "GET", "/users/1"),
+      send("plain.test", "GET", "/nothing"),
+    ].join("\n---\n"),
+    content=(
+      #|418
+      #|Content-Type: application/json
+      #|Access-Control-Allow-Origin: *
+      #|Vary: Origin
+      #|Vary: Accept
+      #|X-Path: ${request.path}
+      #|Smock-Near-Miss: get-user; failed=method
+      #|{"error":"no Stub matched"}
+      #|---
+      #|418
+      #|Content-Type: application/json
+      #|Access-Control-Allow-Origin: *
+      #|Vary: Origin
+      #|Vary: Accept
+      #|X-Path: ${request.path}
+      #|Smock-Near-Miss: get-user; failed=path
+      #|Smock-Mock: web; via=default
+      #|{"error":"no Stub matched"}
+      #|---
+      #|200
+      #|user
+      #|---
+      #|404
+      #|Content-Type: application/json
+      #|{"error":"no Stub matched"}
+    ),
+  )
+}
+
+///|
+test "a request for a Host that no Mock answers gets none of a Mock's noMatch.headers" {
+  let h = harness([
+    (
+      "m.json",
+      (
+        #|{ "mocks": [
+        #|    { "name": "web", "hosts": ["web.test"],
+        #|      "noMatch": { "headers": { "Access-Control-Allow-Origin": "*" } } },
+        #|    { "name": "plain", "hosts": ["plain.test"] } ] }
+      ),
+    ),
+  ])
+  inspect(
+    response(h.send("GET", "/", headers=[("Host", "other.test")])),
+    content=(
+      #|404
+      #|Content-Type: application/json
+      #|{"error":"no Mock for this Host","host":"other.test","acceptedHosts":["web.test","plain.test"]}
+    ),
+  )
+}
+
+///|
+test "a reload reports an invalid noMatch header at its JSON Pointer and keeps serving, and a valid one adds the headers" {
+  let mock = (no_match : String) => {
+    "{ \"mocks\": [{ \"name\": \"m\", \"noMatch\": \{no_match} }] }"
+  }
+  let h = harness([("m.json", mock("{}"))])
+  let failed = h.reload([
+    ("m.json", mock("{ \"headers\": { \"Smock-Near-Miss\": \"x\" } }")),
+  ])
+  let after_failed = response(h.send("GET", "/"))
+  let swapped = h.reload([
+    (
+      "m.json",
+      mock("{ \"headers\": { \"Access-Control-Allow-Origin\": \"*\" } }"),
+    ),
+  ])
+  inspect(
+    [
+      reload_summary(failed).replace_all(old=failed.old_digest, new="<old>"),
+      after_failed,
+      @debug.to_string(swapped.result),
+      response(h.send("GET", "/")),
+    ].join("\n---\n"),
+    content=(
+      #|Failed at 1791815460000: <old> -> <old>
+      #|m.json: /mocks/0/noMatch/headers/Smock-Near-Miss: is set by smock and cannot be given
+      #|---
+      #|404
+      #|Content-Type: application/json
+      #|Smock-Mock: m; via=default
+      #|{"error":"no Stub matched"}
+      #|---
+      #|Swapped
+      #|---
+      #|404
+      #|Content-Type: application/json
+      #|Access-Control-Allow-Origin: *
+      #|Smock-Mock: m; via=default
+      #|{"error":"no Stub matched"}
+    ),
+  )
+}

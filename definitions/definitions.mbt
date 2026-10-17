@@ -87,6 +87,9 @@ pub struct Mock {
   hosts : ReadOnlyArray[String]
   /// The status of the response when no Stub matches.
   no_match_status : Int
+  /// The header fields of the response when no Stub matches, in order: the
+  /// Mock's `noMatch.headers`, sent with smock's own.
+  no_match_headers : ReadOnlyArray[(String, String)]
   /// Whether the Journal records the requests the Mock answers: the Mock's
   /// `journal`, true by default.
   journal : Bool
@@ -687,6 +690,7 @@ pub fn load(
           name: "default",
           hosts: ReadOnlyArray::from_array([]),
           no_match_status: 404,
+          no_match_headers: ReadOnlyArray::from_array([]),
           journal: true,
           stubs: ReadOnlyArray::from_array([]),
           index: MatchIndex::new(ReadOnlyArray::from_array([])),
@@ -708,6 +712,7 @@ pub fn load(
       name: mock.name,
       hosts: ReadOnlyArray::from_iter(mock.hosts.iter().map(host => host.0)),
       no_match_status: mock.no_match_status,
+      no_match_headers: ReadOnlyArray::from_array(mock.no_match_headers),
       journal: mock.journal,
       stubs,
       index: MatchIndex::new(stubs),

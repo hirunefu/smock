@@ -1,0 +1,12 @@
+{
+  "mocks": [
+    {
+      "name": "users",
+      "noMatch": {
+        "headers": {
+          "smock-mock": "users"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "mocks": [
+    {
+      "name": "users",
+      "noMatch": {
+        "headers": {
+          "Vary": "Origin",
+          "vary": "Accept"
+        }
+      }
+    }
+  ]
+}
