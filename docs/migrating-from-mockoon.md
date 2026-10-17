@@ -59,11 +59,8 @@ covers part of the need, the item says what.
   request's Host.
 - **A body for unmatched requests.** A Mock sets only the status of its
   no-match response.
-- **Response limits.** A response's `headers` is a map with one string
-  per name and no list form. Names that differ only in case are
-  rejected, so several `Set-Cookie` values cannot be given. Its status is
-  from 200 to 599, and body files are always sent whole, without Range
-  requests.
+- **Response limits.** A response's status is from 200 to 599, and body
+  files are always sent whole, without Range requests.
 - **OpenAPI import and export, and a GUI.** The translation is done by
   hand, and Definition files are edited as text. Editors can check them
   against the JSON Schema
@@ -289,10 +286,22 @@ every kind:
   such as `{ $each: "range(1, 3)", as: i, do: "${i}" }`.
 - **Headers.** Mockoon sends the environment's headers with every
   response, and a response's own headers replace those of the same name.
-  smock has no environment headers: copy the ones that clients rely on
-  into each Stub's `headers`. Here that is only
+  `Set-Cookie` is the exception: Mockoon sends every value, the
+  environment's first. smock has no environment headers: copy the ones
+  that clients rely on into each Stub's `headers`. Here that is only
   `Content-Type: application/json`, which a `json` body gets by itself
-  and the two body-file Stubs set.
+  and the two body-file Stubs set. Several `Set-Cookie` values become one
+  name with an array of them, in the order Mockoon sends them:
+
+  ```yaml
+  headers:
+    Set-Cookie:
+      - session=abc; Path=/; HttpOnly
+      - theme=dark; Path=/
+  ```
+
+  For any other key that a response lists more than once, Mockoon sends
+  only the last value, so give the name that value as a string.
 - **Empty bodies.** A new Mockoon response has the body `{}`. A Stub
   writes that as `json: {}`, since a Stub without a body sends an empty
   one.
@@ -743,7 +752,7 @@ counterpart, and name those that have none.
 |---|---|
 | `statusCode` | `status`, from 200 to 599. |
 | `label` | Part of the Stub's `id`, which is unique in the definition set. |
-| `headers` | `headers`, a map with one string per name, the names compared case-insensitively. |
+| `headers` | `headers`, a map from each name to a string, or to an array of strings for several `Set-Cookie` values. Names are compared case-insensitively. |
 | `bodyType: INLINE` | `json` or `body`. |
 | `body` | `json` for JSON, or `body` for text sent as written; with `template: true` when it uses helpers. |
 | The default body, `{}` | `json: {}`. A Stub without a body sends an empty one. |

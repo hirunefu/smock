@@ -1,0 +1,13 @@
+{
+  "mocks": [{ "name": "users" }],
+  "stubs": [
+    {
+      "id": "login",
+      "mock": "users",
+      "response": {
+        "status": 200,
+        "headers": { "Set-Cookie": ["a=1"], "set-cookie": "b=2" }
+      }
+    }
+  ]
+}

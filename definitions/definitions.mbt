@@ -514,7 +514,8 @@ fn deep_copy(json : Json) -> Json {
 /// A Stub's response.
 pub struct Response {
   status : Int
-  /// The header fields, in the order written. A `json` body adds
+  /// The header fields, in the order written. A header given an array has
+  /// one field per value, in array order. A `json` body adds
   /// `Content-Type: application/json` at the end unless one is given.
   headers : ReadOnlyArray[(String, String)]
   /// The body, when the response is not a template.
@@ -530,6 +531,7 @@ pub struct Response {
 /// The templates of a response with `template` on.
 pub struct ResponseTemplate {
   /// The header fields, their values text templates, in the order written.
+  /// A header given an array has one field per value, in array order.
   /// `Content-Type` is never templated.
   headers : ReadOnlyArray[(String, @template.Text)]
   body : BodyTemplate

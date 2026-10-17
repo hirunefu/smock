@@ -1612,7 +1612,7 @@
             "maximum": 599
           },
           "headers": {
-            "description": "The header fields smock sends, in order, without Content-Length, Transfer-Encoding and Connection, which depend on the connection.",
+            "description": "The header fields smock sends, in order, without Content-Length, Transfer-Encoding and Connection, which depend on the connection. A header the Stub gives an array appears once per value.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Header"

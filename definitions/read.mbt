@@ -888,13 +888,16 @@ fn File::read_body_file(self : File, pointer : String, json : Json) -> Bytes {
 
 ///|
 /// Reads response headers: an object whose members are field names and
-/// string values. Header names are case-insensitive, so no two may differ
-/// only in case, a rule the JSON Schema cannot express.
+/// values. A value is a string, or a non-empty array of strings to send
+/// the field once per value, in order; Content-Type takes one string.
+/// Returns the fields as (name, value, JSON Pointer of the value). Header
+/// names are case-insensitive, so no two may differ only in case, a rule
+/// the JSON Schema cannot express.
 fn File::read_headers(
   self : File,
   pointer : String,
   json : Json,
-) -> Array[(String, String)] {
+) -> Array[(String, String, String)] {
   let out = []
   guard json is Object(headers) else {
     self.error(pointer, "must be an object")
@@ -918,16 +921,28 @@ fn File::read_headers(
     } else {
       names[lower] = name
     }
+    let push_field = (text : String, at : String) => {
+      if @http1.is_field_value(text) {
+        out.push((name, text, at))
+      } else {
+        self.error(at, "must not contain control characters other than tab")
+      }
+    }
     match value {
-      String(value) =>
-        if @http1.is_field_value(value) {
-          out.push((name, value))
-        } else {
-          self.error(
-            field, "must not contain control characters other than tab",
-          )
+      String(text) => push_field(text, field)
+      // smock reads Content-Type, to escape a templated body, so it takes
+      // one string.
+      _ if lower == "content-type" => self.error(field, "must be a string")
+      Array([]) => self.error(field, "must not be an empty array")
+      Array(items) =>
+        for i, item in items {
+          let at = child_pointer(field, i.to_string())
+          match item {
+            String(text) => push_field(text, at)
+            _ => self.error(at, "must be a string")
+          }
         }
-      _ => self.error(field, "must be a string")
+      _ => self.error(field, "must be a string or an array of strings")
     }
   }
   out

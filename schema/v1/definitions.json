@@ -181,7 +181,7 @@
           "$ref": "#/$defs/status"
         },
         "headers": {
-          "description": "Header fields to send, by name. Names are compared case-insensitively, so two names that differ only in case, such as Set-Cookie and set-cookie, are rejected. smock sets Content-Length, Transfer-Encoding and Connection itself, and Smock-Mock when the Default Mock answers, so they cannot be given.",
+          "description": "Header fields to send, by name: a value, or a non-empty array of values, each sent as its own field line, in order, such as several Set-Cookie fields. Content-Type takes one value. Names are compared case-insensitively, so two names that differ only in case, such as Set-Cookie and set-cookie, are rejected. smock sets Content-Length, Transfer-Encoding and Connection itself, and Smock-Mock when the Default Mock answers, so they cannot be given.",
           "type": "object",
           "propertyNames": {
             "$ref": "#/$defs/headerName",
@@ -190,10 +190,22 @@
               "pattern": "^([Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Ll][Ee][Nn][Gg][Tt][Hh]|[Tt][Rr][Aa][Nn][Ss][Ff][Ee][Rr]-[Ee][Nn][Cc][Oo][Dd][Ii][Nn][Gg]|[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]|[Ss][Mm][Oo][Cc][Kk]-[Mm][Oo][Cc][Kk])$"
             }
           },
+          "patternProperties": {
+            "^[Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Tt][Yy][Pp][Ee]$": {
+              "description": "Content-Type takes one value, never an array: smock reads it to escape a templated body.",
+              "$ref": "#/$defs/headerValue"
+            }
+          },
           "additionalProperties": {
-            "description": "The field value. It contains no control characters other than tab.",
-            "type": "string",
-            "pattern": "^[^\\u0000-\\u0008\\u000a-\\u001f\\u007f]*$"
+            "description": "A value, or a non-empty array of values, each sent as its own field line, in order.",
+            "oneOf": [
+              { "$ref": "#/$defs/headerValue" },
+              {
+                "type": "array",
+                "minItems": 1,
+                "items": { "$ref": "#/$defs/headerValue" }
+              }
+            ]
           }
         },
         "body": {
@@ -377,6 +389,11 @@
       "description": "A header field name: an HTTP token.",
       "type": "string",
       "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+    },
+    "headerValue": {
+      "description": "A header field value. It contains no control characters other than tab.",
+      "type": "string",
+      "pattern": "^[^\\u0000-\\u0008\\u000a-\\u001f\\u007f]*$"
     }
   }
 }

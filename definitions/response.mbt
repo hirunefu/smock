@@ -60,10 +60,7 @@ fn File::read_response(
     let field = child_pointer(pointer, key)
     match key {
       "status" => status = self.read_status(field, value)
-      "headers" =>
-        for header in self.read_headers(field, value) {
-          headers.push((header.0, header.1, child_pointer(field, header.0)))
-        }
+      "headers" => headers.append(self.read_headers(field, value))
       "body" => body = Inline(field, self.string(field, value).unwrap_or(""))
       "bodyFile" => body = File(field, self.read_body_file(field, value))
       "json" => body = JsonBody(field, value)

@@ -503,6 +503,31 @@ test "a Stub that streams Server-Sent Events renders its events, with the Conten
 }
 
 ///|
+test "a header given an array renders as one name and value per value, in order, each value rendered on its own" {
+  let h = harness([
+    (
+      "m.json",
+      (
+        #|{ "mocks": [{ "name": "m" }],
+        #|  "stubs": [{ "id": "login", "mock": "m",
+        #|    "response": { "status": 200, "template": true,
+        #|      "headers": { "Set-Cookie": ["session=${query.s}", "theme=dark"], "X-A": "1" } } }] }
+      ),
+    ),
+  ])
+  let rendering = @json.parse(h.render("login", { "query": { "s": "abc" } }))
+  guard rendering is { "response": { "headers": headers, .. }, .. } else {
+    fail("no headers")
+  }
+  inspect(
+    headers.stringify(),
+    content=(
+      #|[{"name":"Set-Cookie","value":"session=abc"},{"name":"Set-Cookie","value":"theme=dark"},{"name":"X-A","value":"1"}]
+    ),
+  )
+}
+
+///|
 test "a sample request's Session is a string or null, and is no Session when null or absent" {
   let session = (sample : Json) => {
     @engine.SampleRequest::from_json(sample).session

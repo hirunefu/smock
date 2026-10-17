@@ -75,3 +75,32 @@ test "an events Stub's own Content-Type is replaced by text/event-stream" {
     ),
   )
 }
+
+///|
+test "an events Stub sends each value of a header given an array, after Content-Type: text/event-stream" {
+  let h = harness([
+    (
+      "m.json",
+      (
+        #|{ "mocks": [{ "name": "m" }],
+        #|  "stubs": [{ "id": "stream", "mock": "m",
+        #|    "response": { "status": 200,
+        #|      "headers": { "Set-Cookie": ["a=1", "b=2"], "X-Trace": "a" },
+        #|      "events": [{ "data": "x" }] } }] }
+      ),
+    ),
+  ])
+  inspect(
+    response(h.send("GET", "/events")),
+    content=(
+      #|200
+      #|Content-Type: text/event-stream
+      #|Set-Cookie: a=1
+      #|Set-Cookie: b=2
+      #|X-Trace: a
+      #|Smock-Mock: m; via=default
+      #|after 0 ms: event -, id -, data "x"
+      #|
+    ),
+  )
+}

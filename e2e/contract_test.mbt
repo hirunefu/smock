@@ -362,14 +362,28 @@ fn Contract::validate(
             }
           }
         }
+      ("patternProperties", Object(patterns)) =>
+        if value is Object(object) {
+          for name, v in object {
+            for pattern, property in patterns {
+              if matches(pattern, name, file) {
+                self.validate(sub(property), v, "\{at}/\{name}", problems)
+              }
+            }
+          }
+        }
       ("additionalProperties", _) =>
         if value is Object(object) {
           let known = match members.get("properties") {
             Some(Object(properties)) => properties
             _ => Map([])
           }
+          let patterns = match members.get("patternProperties") {
+            Some(Object(patterns)) => patterns
+            _ => Map([])
+          }
           for name, v in object {
-            if !known.contains(name) {
+            if !known.contains(name) && !matches_any(patterns, name, file) {
               self.validate(sub(argument), v, "\{at}/\{name}", problems)
             }
           }
@@ -458,13 +472,8 @@ fn Contract::validate(
           problems.push("\{at}: \{s.escape()} is longer than \{n}")
         }
       ("pattern", String(pattern)) =>
-        if value is String(s) {
-          let regex = @re2.compile(re2_syntax(pattern)) catch {
-            err => fail("pattern \{pattern.escape()} in \{file}: \{err}")
-          }
-          if regex.search(@utf8.encode(s)) is None {
-            problems.push("\{at}: \{s.escape()} does not match \{pattern}")
-          }
+        if value is String(s) && !matches(pattern, s, file) {
+          problems.push("\{at}: \{s.escape()} does not match \{pattern}")
         }
       _ =>
         problems.push(
@@ -477,7 +486,8 @@ fn Contract::validate(
 ///|
 /// Adds to `seen` the names of the properties of `value`, an object, that
 /// the keyword `keyword` with `argument`, in a schema in `file`, evaluates:
-/// those `properties` names, every one for `additionalProperties` and
+/// those `properties` names, those a `patternProperties` pattern matches,
+/// every one for `additionalProperties` and
 /// `unevaluatedProperties`, and those that the subschemas applied in place
 /// evaluate (`$ref`, `allOf`, the passing ones of `anyOf` and `oneOf`, and
 /// `dependentSchemas`). The properties no keyword evaluates are the ones
@@ -506,6 +516,12 @@ fn Contract::evaluated_by(
           seen.add(name)
         }
       }
+    ("patternProperties", Object(patterns)) =>
+      for name, _ in object {
+        if matches_any(patterns, name, file) {
+          seen.add(name)
+        }
+      }
     ("additionalProperties" | "unevaluatedProperties", _) =>
       for name, _ in object {
         seen.add(name)
@@ -529,6 +545,32 @@ fn Contract::evaluated_by(
       }
     _ => ()
   }
+}
+
+///|
+/// Whether `pattern`, a regular expression in a schema in `file`, matches
+/// somewhere in `s`.
+fn matches(pattern : String, s : String, file : String) -> Bool raise {
+  let regex = @re2.compile(re2_syntax(pattern)) catch {
+    err => fail("pattern \{pattern.escape()} in \{file}: \{err}")
+  }
+  regex.search(@utf8.encode(s)) is Some(_)
+}
+
+///|
+/// Whether a pattern of `patterns`, the argument of `patternProperties` in
+/// a schema in `file`, matches the name `name`.
+fn matches_any(
+  patterns : Map[String, Json],
+  name : String,
+  file : String,
+) -> Bool raise {
+  for pattern, _ in patterns {
+    if matches(pattern, name, file) {
+      return true
+    }
+  }
+  false
 }
 
 ///|
@@ -924,6 +966,42 @@ async test "the contract checker rejects responses that break the document" {
       },
     ),
     (
+      "a listed Ephemeral Stub with a header array",
+      "GET",
+      "/v1/mocks/users/stubs",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"stubs":[{"id":"eph-1","mock":"users","session":"s","response":{"status":200,"headers":{"Content-Type":"text/plain","X-A":"1","Set-Cookie":["a=1","b=2"]}}}],"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a listed Ephemeral Stub with an empty header array",
+      "GET",
+      "/v1/mocks/users/stubs",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"stubs":[{"id":"eph-1","mock":"users","session":"s","response":{"status":200,"headers":{"Set-Cookie":[]}}}],"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a listed Ephemeral Stub with an array for Content-Type",
+      "GET",
+      "/v1/mocks/users/stubs",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"stubs":[{"id":"eph-1","mock":"users","session":"s","response":{"status":200,"headers":{"content-type":["text/plain"]}}}],"warnings":[]}
+        ),
+      },
+    ),
+    (
       "a deleted Ephemeral Stub with its Mock",
       "DELETE",
       "/v1/mocks/users/stubs/eph-1",
@@ -1258,6 +1336,9 @@ async test "the contract checker rejects responses that break the document" {
       #|an added Ephemeral Stub without its Session: /stub: session is missing
       #|a listed Ephemeral Stub with a status out of range: /stubs/0/response/status: 99 is below 200
       #|a listed Ephemeral Stub with an undocumented field: /stubs/0/addedAt: no value is allowed here
+      #|a listed Ephemeral Stub with a header array: conforms
+      #|a listed Ephemeral Stub with an empty header array: /stubs/0/response/headers/Set-Cookie: [] matches 0 of oneOf, not 1
+      #|a listed Ephemeral Stub with an array for Content-Type: /stubs/0/response/headers/content-type: ["text/plain"] is not of type string
       #|a deleted Ephemeral Stub with its Mock: /mock: no value is allowed here
       #|an unknown Ephemeral Stub: conforms
       #|a reset without the count of Journal entries: /removed: journalEntries is missing

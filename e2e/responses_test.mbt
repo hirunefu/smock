@@ -109,6 +109,44 @@ async test "smock serve answers from a body file, matches exact and json conditi
 }
 
 ///|
+async test "smock serve sends a header given an array as one field line per value, in order, where its name stands" {
+  let defs =
+    #|mocks:
+    #|  - name: users
+    #|stubs:
+    #|  - id: login
+    #|    mock: users
+    #|    request: { method: POST, path: /login }
+    #|    response:
+    #|      status: 200
+    #|      headers:
+    #|        X-A: "1"
+    #|        Set-Cookie:
+    #|          - session=abc; Path=/; HttpOnly
+    #|          - theme=dark; Path=/; Expires=Wed, 21 Oct 2026 07:28:00 GMT
+    #|        X-B: [only]
+    #|      body: ok
+  with_definitions([("users.yaml", defs)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      inspect(
+        smock.send("POST", "/login"),
+        content=(
+          #|HTTP/1.1 200 OK
+          #|X-A: 1
+          #|Set-Cookie: session=abc; Path=/; HttpOnly
+          #|Set-Cookie: theme=dark; Path=/; Expires=Wed, 21 Oct 2026 07:28:00 GMT
+          #|X-B: only
+          #|Smock-Mock: users; via=default
+          #|Content-Length: 2
+          #|
+          #|ok
+        ),
+      )
+    })
+  })
+}
+
+///|
 async test "smock serve reads body files from the body-file subdirectory its setting names" {
   let defs =
     #|{ "mocks": [{ "name": "users" }],
@@ -193,6 +231,35 @@ async test "two header names in a response that differ only in case stop smock s
         #|---
         #|status 1
         #|users.json: /stubs/0/response/headers/set-cookie: the header name "Set-Cookie" is already given: header names are case-insensitive
+        #|
+      ),
+    )
+  })
+}
+
+///|
+async test "an empty header array and an array for Content-Type stop smock serve and fail smock check, at the header's name" {
+  let defs =
+    #|{ "mocks": [{ "name": "users" }],
+    #|  "stubs": [{ "id": "login", "mock": "users",
+    #|    "response": { "status": 200,
+    #|      "headers": { "Set-Cookie": [], "content-type": ["text/plain"] } } }] }
+  with_definitions([("users.json", defs)], dir => {
+    let stopped = run_smock(["serve", "--dir", dir, "--port", "0"])
+    inspect(
+      "status \{stopped.status}\n\{log_entries(stopped.logs)}\n---\n\{check([dir])}",
+      content=(
+        #|status 1
+        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
+        #|{"level":"info","msg":"random seed","seed":"*"}
+        #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"error","msg":"invalid definitions","file":"users.json","pointer":"/stubs/0/response/headers/Set-Cookie","error":"must not be an empty array"}
+        #|{"level":"error","msg":"invalid definitions","file":"users.json","pointer":"/stubs/0/response/headers/content-type","error":"must be a string"}
+        #|---
+        #|status 1
+        #|users.json: /stubs/0/response/headers/Set-Cookie: must not be an empty array
+        #|users.json: /stubs/0/response/headers/content-type: must be a string
         #|
       ),
     )

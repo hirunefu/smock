@@ -1,0 +1,20 @@
+{
+  "mocks": [{ "name": "users" }],
+  "stubs": [
+    {
+      "id": "login",
+      "mock": "users",
+      "request": { "method": "POST", "path": "/login" },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "text/plain",
+          "Set-Cookie": ["session=abc; Path=/; HttpOnly", "theme=dark; Path=/"],
+          "X-One": ["only"],
+          "X-Tab": ["a\tb", ""]
+        },
+        "body": "ok"
+      }
+    }
+  ]
+}

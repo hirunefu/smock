@@ -286,12 +286,25 @@ unmatched requests is refused.
 
 ## Responses
 
-A Stub's `response` has a `status`, `headers`, and a body. `headers` gives
-one string per header name. Names are compared case-insensitively, so
-`Set-Cookie` and `set-cookie` cannot both be given. smock sets
-`Content-Length` from the body; `Content-Length`, `Transfer-Encoding` and
-`Connection` cannot be given, nor can `Smock-Mock`, which smock adds when
-the Default Mock answers. The body is either inline, as text in UTF-8:
+A Stub's `response` has a `status`, `headers`, and a body.
+
+`headers` maps each header name to a string or to an array of strings.
+An array sends one field per value, in order, where the name stands.
+This sends two `Set-Cookie` fields:
+
+```json
+"headers": { "Set-Cookie": ["session=abc; Path=/; HttpOnly", "theme=dark; Path=/"] }
+```
+
+An array is never empty. `Content-Type` takes one string. Names are
+compared case-insensitively, so `Set-Cookie` and `set-cookie` cannot both
+be given; give the name an array instead. In a YAML flow sequence a comma
+ends a value. Write a value that has one, such as a cookie's `Expires`,
+in block style or in quotes. smock sets `Content-Length` from the body;
+`Content-Length`, `Transfer-Encoding` and `Connection` cannot be given,
+nor can `Smock-Mock`, which smock adds when the Default Mock answers.
+
+The body is either inline, as text in UTF-8:
 
 ```json
 "response": { "status": 200, "body": "{\"id\":1}" }
@@ -415,8 +428,9 @@ What is a template with `template: true`:
 - `json` is a structured template, and so is the `json` of each event.
 - `body`, a body file (`bodyFile`, which must then be UTF-8) and the
   `data`, `id` and `event` of each event are text templates.
-- Header values are text templates, except `Content-Type`, which must not
-  contain `${`.
+- Header values are text templates, each value of an array on its own,
+  except `Content-Type`, which must not contain `${`. An array's length is
+  fixed: a template cannot add or drop a field.
 - `status` and an event's `delay` are never templated.
 
 With `template` off, nothing is parsed or rendered: `${` is plain text and
@@ -521,10 +535,11 @@ generator with `fault.seed`, otherwise the process generator, see
 [Seeds](#seeds)), whatever its template draws: the Fault decisions draw
 from a generator seeded with it, and the helpers from another one seeded
 with it XOR a fixed constant, in render order (header values in the order
-written, then the body, members and loop iterations in order, or the
-events in order, each event's `event`, `id`, then `data` or `json`). So a
-seeded Stub repeats its helper output on every run, on native and on
-wasm-gc alike, and adding fake data never changes its Faults.
+written, an array's values in order, then the body, members and loop
+iterations in order, or the events in order, each event's `event`, `id`,
+then `data` or `json`). So a seeded Stub repeats its helper output on
+every run, on native and on wasm-gc alike, and adding fake data never
+changes its Faults.
 
 `now()` and `nowMillis()` read the time smock received the request at,
 never the clock while rendering; in an event, they add the delays of the
