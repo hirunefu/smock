@@ -20,10 +20,10 @@ then.
 - smock itself runs on GKE Autopilot in the benchmark, and the Helm
   chart is tested on kind. The GKE commands below follow GKE's
   documentation of 2026-10-13. On 2026-10-17 the guide ran as written
-  on GKE Autopilot in us-central1, in a project whose node service
-  account had no roles, with every one of its
-  [Next steps](#next-steps) but a Standard cluster and Arm nodes; the
-  outputs it shows are that run's.
+  in us-central1, on GKE Autopilot and on a Standard cluster, in a
+  project whose node service account had no roles, with every one of
+  its [Next steps](#next-steps); the outputs it shows are from those
+  runs.
 
 ## What you need
 
@@ -607,7 +607,15 @@ with the chart's defaults, so set both the requests and the limits:
 ```
 
 The chart README's [Resources](../charts/smock/README.md#resources)
-section has more. This has not yet been run on GKE.
+section has more.
+
+On 2026-10-17, with GKE 1.36.4, the cluster took about eight minutes to
+create, and deleting it about five. Its `e2-standard-2` node had 1930m
+of CPU to allocate, of which GKE's own Pods requested 648m, so smock's
+one-CPU Pod was running 13 seconds after the install started, and it
+answered as above. An `e2-medium` node had 940m, and the same Pod on it
+stayed Pending with `Insufficient cpu`. With the flags above, the Pod
+got 250m and 512Mi as both its requests and its limits.
 
 ### Arm nodes
 
@@ -615,17 +623,33 @@ Autopilot also runs Arm (arm64) Pods, in us-central1, us-east1,
 us-west1, europe-west1, europe-west2, europe-west4 and asia-southeast1
 (GKE's documentation, 2026-10-13). Download `smock-linux-arm64` in place
 of `smock-linux-amd64`, build with `--platform linux/arm64`, and add
-these flags to the install:
+this flag to the install:
 
 ```sh
-  --set-string 'nodeSelector.cloud\.google\.com/compute-class=autopilot-arm' \
-  --set-string 'nodeSelector.kubernetes\.io/arch=arm64'
+  --set-string 'nodeSelector.cloud\.google\.com/compute-class=autopilot-arm'
 ```
 
-The compute class needs GKE 1.35.3-gke.1389000 or later, and GKE's
-documentation asks for both labels before 1.36.0-gke.3302001. Without
-them, the Pod runs on an x86 node and fails with `exec format error`.
-This has not yet been run on GKE.
+- The compute class needs GKE 1.35.3-gke.1389000 or later. This prints
+  the cluster's version:
+
+  ```sh
+  gcloud container clusters describe smock --location="$LOCATION" --project="$PROJECT" \
+    --format='value(currentMasterVersion)'
+  ```
+
+- Before 1.36.0-gke.3302001, GKE's documentation asks for the
+  architecture label too:
+  `--set-string 'nodeSelector.kubernetes\.io/arch=arm64'`. From that
+  version on, Autopilot adds the label itself. Giving it as well makes
+  helm print a warning,
+  `Key 'kubernetes.io/arch' is not recommended with node selector`, and
+  the Pod runs on an Arm node all the same.
+- Without the compute class, the Pod runs on an x86 node, restarts, and
+  its log says `exec /usr/local/bin/smock: exec format error`.
+
+On 2026-10-17, with GKE 1.36.4, the Pod ran on a `c4a-standard-4` node
+about a minute and a half after the install started, and answered as
+above.
 
 ## Troubleshooting
 
@@ -642,7 +666,7 @@ This has not yet been run on GKE.
 | helm says `cannot reuse a name that is still in use`. | A failed `helm install` left the release behind. Use `helm upgrade --install`, as in [Install smock](#install-smock). |
 | The Pod is in `ErrImagePull` or `ImagePullBackOff`. | `kubectl --namespace mocks describe pod` names the image and the error. When it says `failed to fetch oauth token` and `403 Forbidden` for an image in Artifact Registry, the node service account may not read the repository: make the grants in [Create an Autopilot cluster](#create-an-autopilot-cluster); the kubelet keeps retrying the pull. When it names `ghcr.io/hirunefu/smock:0.0.0-dev`, `image.repository` or `image.tag` is missing, and that image does not exist. |
 | The Pod is in `CrashLoopBackOff`, and its log says `invalid definitions`. | smock does not start with Definition files that are not valid, and `helm --wait` fails after its timeout. The log entry names the file, the JSON Pointer and the error: fix the file, check it, and run `helm upgrade --install` again. |
-| The Pod is in `CrashLoopBackOff`, and its log says `exec format error`. | The image holds a binary of another architecture than the node: `file dist/smock` must say x86-64 for x86 nodes. |
+| The Pod is in `CrashLoopBackOff`, and its log says `exec format error`. | The image holds a binary of another architecture than the node: `file dist/smock` must say x86-64 for x86 nodes, and ARM aarch64 for Arm nodes, which also need the compute class in [Arm nodes](#arm-nodes). |
 | The Pod is `Pending`. | On Autopilot, for a few minutes while GKE adds a node. On a Standard cluster, `Insufficient cpu` in `kubectl --namespace mocks describe pod` means that the node is too small: see [On a Standard cluster](#on-a-standard-cluster). |
 | curl gets `Empty reply from server` or `Connection refused`, and kubectl printed `error: lost connection to pod`; or, just after an upgrade, curl still gets the previous files' answers. | A port-forward follows one Pod. When that Pod is replaced, such as by `kubectl rollout restart` or an upgrade that restarts the Pods, the port-forward reaches the old Pod while it shuts down, then ends. Stop the port-forward (`kill %1 %2`) and start it again. |
 | curl gets an answer that the guide does not show, such as 404 `{"error":"no Stub matched"}` with `Smock-Mock: default; via=default` and no `Smock-Near-Miss`, or the Admin API answers 401; or a port-forward prints `unable to listen on any of the requested ports`. | Something else on the machine, such as a local smock, already listens on 8080 or 9090. When it listens on IPv4 only, as smock does, kubectl forwards on `[::1]` alone and says so only on its standard output, which the commands above discard, so curl can reach the other program. `ss -ltnp \| grep -E ':(8080\|9090)'` (`lsof -i :8080` on macOS) shows it. Forward other local ports, such as `18080:80` and `19090:9090`, and send the requests there. |
