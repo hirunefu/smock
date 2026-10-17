@@ -166,7 +166,7 @@
       "type": "object",
       "properties": {
         "json": {
-          "description": "The JSON value the body must contain. An object needs each listed key, matched recursively, and may have others. An array needs the same length and is matched element by element. Any other value must be equal."
+          "description": "The JSON value the body must contain. An object whose only member is pattern, with a string, is a pattern condition on the value in its place: a string the pattern matches as a whole, or a number, true or false whose JSON text it matches as a whole, a number in its shortest form (1.50 as 1.5); null, objects and arrays never match it. Such patterns are compiled when the definitions are loaded, like other patterns. Any other object needs each listed key, matched recursively, and may have others. An array needs the same length and is matched element by element. Any other value must be equal. So a json condition cannot match the object {\"pattern\": \"...\"} itself: match it with a pattern on the whole body."
         }
       },
       "required": ["json"],
