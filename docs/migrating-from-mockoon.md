@@ -37,17 +37,18 @@ covers part of the need, the item says what.
   initial value, and a test can change answers for itself with Ephemeral
   Stubs, as [the CRUD route](#latency-cors-and-the-crud-route) of the
   example shows.
-- **Answers that depend on earlier requests.** The `RANDOM` and
+- **Answers that change between requests.** The `RANDOM` and
   `SEQUENTIAL` response modes, `request_number` rules, and global
   variables have no counterpart. `fake.pick(…)` varies a value, a
   connection Fault's `probability` makes some requests fail, though
-  never with a status, and a test changes the answer between its calls
-  by adding or deleting Ephemeral Stubs in its Session.
+  never with a status other than the Stub's, and a test changes the
+  answer between its calls by adding or deleting Ephemeral Stubs in its
+  Session.
   [Answers that change between requests](#answers-that-change-between-requests)
   says which answer to keep.
 - **Callbacks.** smock never sends a request of its own. A test that
-  relied on a callback sends that request to its target itself, and can
-  check in the Journal that the request that fired it arrived.
+  relied on a callback sends that request to the callback's URL itself,
+  and can check in the Journal that the request that fired it arrived.
 - **WebSockets.** smock serves HTTP/1.1 and HTTPS. It can stream
   Server-Sent Events, which only a client written for them reads.
 - **Request conditions beyond equality and patterns.** Negation
@@ -68,8 +69,8 @@ covers part of the need, the item says what.
   gives the two ways round it.
 - **A body or headers for unmatched requests.** A Mock sets only the
   status of its no-match response, which therefore carries no CORS
-  headers. [Unmatched requests](#behaviour-that-differs) gives the
-  workaround.
+  headers. The Unmatched requests item of
+  [Behaviour that differs](#behaviour-that-differs) gives the workaround.
 - **Response limits.** A response's status is from 200 to 599, and body
   files are always sent whole, without Range requests.
 - **OpenAPI import and export, and a GUI.** The translation is done by
@@ -189,6 +190,7 @@ and has no counterpart.
 
 ### Environments told apart by port
 
+The example has one environment, so its file does not change here.
 Mockoon serves each environment on a port of its own, and clients often
 tell two environments apart only by port, such as `localhost:3000` and
 `localhost:3001`. smock compares Hosts without the port, so there are two
@@ -215,11 +217,12 @@ ways to keep them apart:
   header, as in `curl -H 'Host: auth-service' localhost:8080/auth/me`. A
   client of `auth-service` that still sends the Host `localhost`, such as
   one whose port 3001 was mapped to smock's, reaches `shop-api` without a
-  sign: its requests get `shop-api`'s answers, or a 404 whose
+  sign. Its requests get `shop-api`'s answers, or a 404 whose
   `Smock-Near-Miss` names a `shop-api` Stub, and no `Smock-Mock` header,
   since `localhost` is `shop-api`'s own Host. In
-  `GET /v1/journal/unmatched`, the entry's `host` and `mock` show the
-  mix-up.
+  `GET /v1/journal/unmatched`
+  ([Checking the migration](#checking-the-migration)), the entry's
+  `host` and `mock` show the mix-up.
 - **One smock for each environment.** Give each smock its own
   definitions directory with one Mock. Each Mock can then list
   `localhost`, and as the only Mock it is also the Default Mock of its
@@ -305,7 +308,7 @@ The query rule of `GET users` becomes `query: { status: inactive }`, and
 the two AND rules of `POST users` become `headers: { X-Api-Key: secret }`
 and `body: { json: { role: admin } }` on one Stub.
 
-These things need care when translating rules; [Rules](#rules) maps
+Five things need care when translating rules; [Rules](#rules) maps
 every kind:
 
 - **A Mockoon regex matches anywhere in the value; a smock pattern
@@ -328,10 +331,11 @@ every kind:
   `json` condition holds values, not patterns:
   `body: { json: { email: { pattern: … } } }` asks for an `email` that
   is an object with a `pattern` key. `smock check` accepts it, and it
-  never matches an address; `smock render` shows it failing on `body`.
-  Write one pattern on the whole body instead, with the key and the
-  value as JSON text. The rule body `email` regex `@example\.com$`
-  becomes:
+  never matches an address; `smock render`
+  ([Checking the migration](#checking-the-migration)) shows it failing
+  on `body`. Write one pattern on the whole body instead, with the key
+  and the value as JSON text. The rule body `email` regex
+  `@example\.com$` becomes:
 
   ```yaml
   body: { pattern: '(?s).*"email"\s*:\s*"([^"\\]|\\.)*@example\.com".*' }
@@ -342,17 +346,14 @@ every kind:
   `body` condition, so two such rules joined with AND go into one
   pattern, with both orders of the keys: `(?s).*(A.*B|B.*A).*` for the
   field patterns `A` and `B`. The pattern reads text, not JSON, so it
-  still differs from Mockoon:
-  - a number has no quotes, so the pattern above misses
-    `"email": 12345`, which Mockoon's regex reads as `12345`; add an
-    alternative without quotes where a field can be a number;
-  - it also matches the key at any depth, such as in
-    `{"user":{"email":"ann@example.com"}}`, which Mockoon's `email` does
-    not;
-  - Mockoon tests each element of an array, and the pattern sees the
-    brackets;
-  - Mockoon decodes escapes, so it reads `ann\u0040example.com` as
-    `ann@example.com`, and the pattern does not.
+  still differs from Mockoon in four ways. A number has no quotes, so
+  the pattern above misses `"email": 12345`, which Mockoon's regex reads
+  as `12345`; add an alternative without quotes where a field can be a
+  number. The pattern matches the key at any depth, such as in
+  `{"user":{"email":"ann@example.com"}}`, which Mockoon's `email` does
+  not. Mockoon tests each element of an array, while the pattern sees
+  the brackets. Mockoon decodes escapes, so it reads
+  `ann\u0040example.com` as `ann@example.com`, and the pattern does not.
 
   Where clients send only a few values, one `json` Stub for each value
   matches exactly instead.
@@ -361,30 +362,31 @@ every kind:
   rule's condition holds, so their Stubs get that condition, and they
   move in front of the inverted response's Stub, which drops the
   condition and becomes the general Stub. Responses before it keep their
-  place. A route `GET users/:id` whose responses are a 401 with the
-  inverted rule header `Authorization` regex `^Bearer\s+\S+`, a 404 for
-  params `id` equals `0`, and the default 200, becomes:
+  place. Take a route `GET accounts/:id` in another environment,
+  `accounts-api`, also with the prefix `api/v1`. Its responses are a 401
+  with the inverted rule header `Authorization` regex `^Bearer\s+\S+`, a
+  404 for params `id` equals `0`, and the default 200. They become:
 
   ```yaml
-  - id: user-unknown
-    mock: users-api
+  - id: account-unknown
+    mock: accounts-api
     request:
       method: GET
-      path: /api/v1/users/0
+      path: /api/v1/accounts/0
       headers: { Authorization: { pattern: 'Bearer\s+\S+.*' } }
     response: { status: 404, json: { error: unknown } }
 
-  - id: user-found
-    mock: users-api
+  - id: account-found
+    mock: accounts-api
     request:
       method: GET
-      path: { pattern: "/api/v1/users/[^/]+" }
+      path: { pattern: "/api/v1/accounts/[^/]+" }
       headers: { Authorization: { pattern: 'Bearer\s+\S+.*' } }
     response: { status: 200, json: { id: 1 } }
 
-  - id: user-unauthorized
-    mock: users-api
-    request: { method: GET, path: { pattern: "/api/v1/users/[^/]+" } }
+  - id: account-unauthorized
+    mock: accounts-api
+    request: { method: GET, path: { pattern: "/api/v1/accounts/[^/]+" } }
     response: { status: 401, json: { error: unauthorized } }
   ```
 
@@ -449,7 +451,10 @@ every kind:
   expression: `{ message: If it exists, we sent a mail. }` fails with
   `empty value: write null, or "" for an empty string`, and
   `{ message: "If it exists, we sent a mail." }` and
-  `{ $each: "range(1, 3)", as: i, do: "${i}" }` work.
+  `{ $each: "range(1, 3)", as: i, do: "${i}" }` work. Quote a header
+  value that YAML would read as a number or a boolean, such as
+  `Retry-After: "120"` and `Access-Control-Allow-Credentials: "true"`;
+  unquoted, it fails with `must be a string or an array of strings`.
 - **Headers.** Mockoon sends the environment's headers with every
   response, and a response's own headers replace those of the same name.
   `Set-Cookie` is the exception: Mockoon sends every value, the
@@ -461,9 +466,6 @@ every kind:
   headers within a file; when many Stubs need the same headers, or the
   same delay, generate the file from a language that exports JSON
   ([another configuration language](definition-files.md#writing-definition-files-in-another-configuration-language)).
-  Quote a value that YAML would read as a number or a boolean, such as
-  `Retry-After: "120"` and `Access-Control-Allow-Credentials: "true"`;
-  unquoted, it fails with `must be a string or an array of strings`.
   Several `Set-Cookie` values become one name with an array of them, in
   the order Mockoon sends them:
 
@@ -483,23 +485,24 @@ every kind:
   in `bodyFile`, relative to `files/`. Mockoon reads a relative
   `filePath` from the environment file's directory, so keep only the
   path below `defs/files/`: the example's `../defs/files/users.json`
-  becomes `bodyFile: users.json`, and so would `files/users.json`.
-  Mockoon derives the Content-Type from the file's extension and smock
-  does not, so set it. With Mockoon's default `sendFileAsBody: false`,
-  Mockoon also sends `Content-Disposition: attachment` with the file's
-  name: add that header if clients need it (the example's files have
-  `sendFileAsBody` set to true). A body file is a template only with `template: true`, and must
-  then be UTF-8. Range requests have no counterpart
+  becomes `bodyFile: users.json`, and so would a `filePath` of
+  `files/users.json`. Mockoon derives the Content-Type from the file's
+  extension and smock does not, so set it. With Mockoon's default
+  `sendFileAsBody: false`, Mockoon also sends
+  `Content-Disposition: attachment` with the file's name: add that
+  header if clients need it (the example's files have `sendFileAsBody`
+  set to true). A body file is a template only with `template: true`,
+  and must then be UTF-8. Range requests have no counterpart
   ([file serving](https://mockoon.com/docs/latest/response-configuration/file-serving/)).
 - **A templated file path and `fallbackTo404`.** A Stub names one fixed
   body file, and a missing body file makes the definition set invalid,
-  which `smock check` reports. For a path such as
-  `files/invoices/{{urlParam 'id'}}.pdf`, write one Stub for each file
-  that exists, with its exact path, then a Stub with the path pattern
-  for the others. With `fallbackTo404`, Mockoon answers those with 404,
-  the response's own headers and its inline body, and, with
-  `sendFileAsBody: false`, a `Content-Disposition` with the requested
-  name:
+  which `smock check` reports. For a `filePath` such as
+  `files/invoices/{{urlParam 'id'}}.pdf` on the route `invoices/:id/pdf`,
+  write one Stub for each file that exists, with its exact path, then a
+  Stub with the path pattern for the others. With `fallbackTo404`,
+  Mockoon answers those with 404, the response's own headers and its
+  inline body, and, with `sendFileAsBody: false`, a
+  `Content-Disposition` with the requested name:
 
   ```yaml
   - id: invoice-a1
@@ -544,20 +547,22 @@ every kind:
   then adds the environment headers, which replace those of the same
   name. The Stub `preflight` does the same; it has the three defaults
   because this environment's only header is `Content-Type`, which an
-  answer without a body can do without. When the environment headers
-  hold CORS headers, start from the defaults and let those replace and
-  extend them. With `Access-Control-Allow-Origin: http://localhost:5173`
-  and `Access-Control-Allow-Credentials: true` among them, Mockoon's
-  answer has those two and the default `Allow-Methods` and
-  `Allow-Headers`. The defaults alone would send `*` and no
-  `Allow-Credentials`, and a browser refuses a request with credentials
-  then.
+  answer without a body does not need. When the environment headers
+  hold CORS headers, start from the defaults and let the environment's
+  CORS headers replace and extend them. With
+  `Access-Control-Allow-Origin: http://localhost:5173` and
+  `Access-Control-Allow-Credentials: true` among them, Mockoon's answer
+  has those two and the default `Allow-Methods` and `Allow-Headers`.
+  With the defaults alone, smock would send `*` and no
+  `Allow-Credentials`, and a browser then refuses a request with
+  credentials.
 
   `preflight` comes last, so that it is not named as the Near miss of
   requests that other Stubs nearly match: on a tie in failed conditions,
   the Near miss is the Stub tried first. Since it has only one condition,
-  its method, it is still the Near miss of a request that every other
-  Stub fails on two or more, such as `DELETE /api/v1/orders/1`, which gets
+  its method, it is still the Near miss of a request that fails two or
+  more conditions of every other Stub, such as
+  `DELETE /api/v1/orders/1`, which gets
   `Smock-Near-Miss: preflight; failed=method`.
 
   Mockoon adds CORS headers to other responses only when they are among
@@ -606,6 +611,7 @@ every kind:
 
 ### Answers that change between requests
 
+The example has no such route, so its file does not change here.
 A `RANDOM` route picks any of its responses, and a `SEQUENTIAL` one
 serves them in turn, from the first again after the last. A
 `request_number` rule counts a route's requests from 1, and a global
@@ -623,8 +629,8 @@ response it sends:
   with the two bodies as `then` and `else`, sends one or the other at
   random. `status` is never templated, so a 503 cannot come at random. A
   connection Fault with a `probability` fails some requests, but the
-  client sees a closed connection, not a 503 and its `Retry-After`, so
-  it tests other code.
+  client sees a reset, a closed connection or the Stub's own response
+  cut short, not a 503 and its `Retry-After`, so it tests other code.
 - `request_number`: the response of the first requests, usually the
   default.
 - A global variable: the value after the request that sets it, such as
@@ -822,8 +828,9 @@ or with small environments made to test them:
       json: { error: not found }
   ```
 
-  It costs the checks of [Checking the migration](#checking-the-migration):
-  those requests get no `Smock-Near-Miss` header, and
+  The Stub hides what
+  [Checking the migration](#checking-the-migration) relies on: those
+  requests get no `Smock-Near-Miss` header, and
   `GET /v1/journal/unmatched` no longer lists them, since a Stub answered
   them. Add it once the migration is checked; a Journal query
   (`POST /v1/journal/query`) then still finds them by the Stub that
@@ -871,15 +878,15 @@ first, which often means that responses were written in the wrong order:
 smock check defs   # prints nothing and exits with 0 for the example
 ```
 
+In CI, run it as a step that fails the build: `- run: smock check defs`.
+
 The warning compares a pattern only with an exact path, never with
 another pattern ([warnings](definition-files.md#warnings)), so it misses
 two Stubs in the wrong order whose paths are both patterns: with
 `get-user` declared before `get-user-missing`, `smock check` prints
-nothing, and `GET /api/v1/users/000` gets 200. Those are the Stubs of routes with
-parameters, and of inverted rules turned around, so check them with
-`smock render` or with requests, as below.
-
-In CI, run it as a step that fails the build: `- run: smock check defs`.
+nothing, and `GET /api/v1/users/000` gets 200. Those are the Stubs of
+routes with parameters, and of inverted rules turned around, so check
+them with `smock render` or with requests, as below.
 
 `smock render` shows, without a server, what one Stub answers to a
 sample request, and which of the Stub's conditions the sample fails. The
