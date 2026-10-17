@@ -83,7 +83,7 @@ test "every problem is reported, each with its file and JSON Pointer" {
       #|d.json: /stubs/3/response/headers: must be an object
       #|d.json: /stubs/4/response/headers/a~1b: is not a valid header name
       #|d.json: /stubs/4/response/headers/~0x y: is not a valid header name
-      #|d.json: /stubs/4/response/headers/X-Ok: must be a string
+      #|d.json: /stubs/4/response/headers/X-Ok: must be a string or an array of strings
       #|d.json: /stubs/4/response/headers/X-Bad: must not contain control characters other than tab
       #|d.json: /stubs/4/response/headers/Content-Length: is set by smock and cannot be given
       #|d.json: /stubs/4/response/headers/transfer-encoding: is set by smock and cannot be given
@@ -622,6 +622,66 @@ test "two names in a response's headers that differ only in case are rejected at
       #|users.json: /stubs/0/response/headers/set-cookie: the header name "Set-Cookie" is already given: header names are case-insensitive
       #|users.json: /stubs/1/response/headers/x-a: the header name "X-A" is already given: header names are case-insensitive
       #|users.json: /stubs/1/response/headers/X-a: the header name "X-A" is already given: header names are case-insensitive
+    ),
+  )
+}
+
+///|
+test "a header given an array must be a non-empty array of strings that follow the value rule, and Content-Type takes one string" {
+  inspect(
+    problems([
+      (
+        "users.json",
+        (
+          #|{ "mocks": [{ "name": "users" }],
+          #|  "stubs": [
+          #|    { "id": "a", "mock": "users",
+          #|      "response": { "status": 200, "headers": {
+          #|        "Set-Cookie": [], "X-A": ["a=1", 2, "b\r\nX: y", "c\td"], "X-B": 1, "X-C": {},
+          #|        "content-type": ["text/plain"] } } },
+          #|    { "id": "b", "mock": "users",
+          #|      "response": { "status": 200, "headers": { "Content-Type": 1 } } },
+          #|    { "id": "c", "mock": "users",
+          #|      "response": { "status": 200, "headers": { "CONTENT-TYPE": [] } } } ] }
+        ),
+      ),
+    ]),
+    content=(
+      #|users.json: /stubs/0/response/headers/Set-Cookie: must not be an empty array
+      #|users.json: /stubs/0/response/headers/X-A/1: must be a string
+      #|users.json: /stubs/0/response/headers/X-A/2: must not contain control characters other than tab
+      #|users.json: /stubs/0/response/headers/X-B: must be a string or an array of strings
+      #|users.json: /stubs/0/response/headers/X-C: must be a string or an array of strings
+      #|users.json: /stubs/0/response/headers/content-type: must be a string: a response has one Content-Type
+      #|users.json: /stubs/1/response/headers/Content-Type: must be a string
+      #|users.json: /stubs/2/response/headers/CONTENT-TYPE: must be a string: a response has one Content-Type
+    ),
+  )
+}
+
+///|
+test "names that differ only in case, and names smock sets, are rejected whether given a string or an array" {
+  inspect(
+    problems([
+      (
+        "users.json",
+        (
+          #|{ "mocks": [{ "name": "users" }],
+          #|  "stubs": [
+          #|    { "id": "a", "mock": "users",
+          #|      "response": { "status": 200, "headers": { "Set-Cookie": ["a=1"], "set-cookie": "b=2" } } },
+          #|    { "id": "b", "mock": "users",
+          #|      "response": { "status": 200, "headers": { "X-A": "1", "x-a": ["2", "3"] } } },
+          #|    { "id": "c", "mock": "users",
+          #|      "response": { "status": 200, "headers": { "Content-Length": ["1"], "Connection": ["close"] } } } ] }
+        ),
+      ),
+    ]),
+    content=(
+      #|users.json: /stubs/0/response/headers/set-cookie: the header name "Set-Cookie" is already given: header names are case-insensitive
+      #|users.json: /stubs/1/response/headers/x-a: the header name "X-A" is already given: header names are case-insensitive
+      #|users.json: /stubs/2/response/headers/Content-Length: is set by smock and cannot be given
+      #|users.json: /stubs/2/response/headers/Connection: is set by smock and cannot be given
     ),
   )
 }

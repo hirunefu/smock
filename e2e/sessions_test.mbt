@@ -196,6 +196,38 @@ let invalid_stub : String =
   #|  "colour": "red" }
 
 ///|
+async test "an Ephemeral Stub may give a header an array: it is added and listed with the array, and sends one field line per value" {
+  with_definitions([("users.json", users)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let stubs = "/v1/mocks/users/stubs"
+      let added = smock.call(
+        "POST",
+        stubs,
+        body=(
+          #|{"request":{"path":"/login"},"response":{"status":200,"headers":{"Content-Type":"text/plain","X-A":"1","Set-Cookie":["a=1","b=2"]},"body":"ok"}}
+        ),
+      )
+      inspect(
+        "\{added}\n\{smock.call("GET", stubs)}\n\{smock.send("GET", "/login")}",
+        content=(
+          #|201 {"stub":{"id":"eph-1","mock":"users","session":null,"request":{"path":"/login"},"response":{"status":200,"headers":{"Content-Type":"text/plain","X-A":"1","Set-Cookie":["a=1","b=2"]},"body":"ok"}},"warnings":[]}
+          #|200 {"stubs":[{"id":"eph-1","mock":"users","session":null,"request":{"path":"/login"},"response":{"status":200,"headers":{"Content-Type":"text/plain","X-A":"1","Set-Cookie":["a=1","b=2"]},"body":"ok"}}],"warnings":[]}
+          #|HTTP/1.1 200 OK
+          #|Content-Type: text/plain
+          #|X-A: 1
+          #|Set-Cookie: a=1
+          #|Set-Cookie: b=2
+          #|Smock-Mock: users; via=default
+          #|Content-Length: 2
+          #|
+          #|ok
+        ),
+      )
+    })
+  })
+}
+
+///|
 async test "an invalid Ephemeral Stub gets 400 invalid_stub with the problems smock check reports for the same Stub in a Definition file" {
   let file = "{ \"mocks\": [{ \"name\": \"users\" }], \"stubs\": [" +
     invalid_stub.replace(old="{", new="{ \"id\": \"s\", \"mock\": \"users\",") +

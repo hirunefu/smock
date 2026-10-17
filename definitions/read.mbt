@@ -888,13 +888,16 @@ fn File::read_body_file(self : File, pointer : String, json : Json) -> Bytes {
 
 ///|
 /// Reads response headers: an object whose members are field names and
-/// string values. Header names are case-insensitive, so no two may differ
-/// only in case, a rule the JSON Schema cannot express.
+/// values. A value is a string, or a non-empty array of strings to send
+/// the field once per value, in order; Content-Type takes one string.
+/// Returns the fields as (name, value, JSON Pointer of the value). Header
+/// names are case-insensitive, so no two may differ only in case, a rule
+/// the JSON Schema cannot express.
 fn File::read_headers(
   self : File,
   pointer : String,
   json : Json,
-) -> Array[(String, String)] {
+) -> Array[(String, String, String)] {
   let out = []
   guard json is Object(headers) else {
     self.error(pointer, "must be an object")
@@ -917,16 +920,29 @@ fn File::read_headers(
     } else {
       names[lower] = name
     }
+    let field_value = (value : String, at : String) => {
+      if @http1.is_field_value(value) {
+        out.push((name, value, at))
+      } else {
+        self.error(at, "must not contain control characters other than tab")
+      }
+    }
     match value {
-      String(value) =>
-        if @http1.is_field_value(value) {
-          out.push((name, value))
-        } else {
-          self.error(
-            field, "must not contain control characters other than tab",
-          )
+      String(value) => field_value(value, field)
+      // smock reads Content-Type, to escape a templated body.
+      Array(_) if lower == "content-type" =>
+        self.error(field, "must be a string: a response has one Content-Type")
+      Array([]) => self.error(field, "must not be an empty array")
+      Array(values) =>
+        for i, value in values {
+          let at = child_pointer(field, i.to_string())
+          match value {
+            String(value) => field_value(value, at)
+            _ => self.error(at, "must be a string")
+          }
         }
-      _ => self.error(field, "must be a string")
+      _ if lower == "content-type" => self.error(field, "must be a string")
+      _ => self.error(field, "must be a string or an array of strings")
     }
   }
   out

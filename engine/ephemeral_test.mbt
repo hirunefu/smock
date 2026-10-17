@@ -604,6 +604,41 @@ test "Ephemeral Stubs are validated and compiled like Stubs from Definition file
 }
 
 ///|
+test "an Ephemeral Stub may give a header an array: it answers with one field per value, and is listed with the array as added" {
+  let h = harness(shop)
+  let _ = h.add(
+    "users",
+    None,
+    (
+      #|{ "request": { "path": "/login" },
+      #|  "response": { "status": 200, "headers": { "X-A": "1", "Set-Cookie": ["a=1", "b=2"] } } }
+    ),
+  )
+  inspect(
+    response(h.send("GET", "http://users.svc/login")) +
+    "---\n" +
+    h.list("users", None) +
+    "\n---\n" +
+    h.problems(
+      (
+        #|{ "response": { "status": 200, "headers": { "Set-Cookie": [], "Content-Type": ["text/plain"] } } }
+      ),
+    ),
+    content=(
+      #|200
+      #|X-A: 1
+      #|Set-Cookie: a=1
+      #|Set-Cookie: b=2
+      #|---
+      #|{"id":"eph-1","mock":"users","session":null,"request":{"path":"/login"},"response":{"status":200,"headers":{"X-A":"1","Set-Cookie":["a=1","b=2"]}}}
+      #|---
+      #|/response/headers/Set-Cookie: must not be an empty array
+      #|/response/headers/Content-Type: must be a string: a response has one Content-Type
+    ),
+  )
+}
+
+///|
 test "an Ephemeral Stub with an id or a mock, or a body from a body file, is rejected, and one that is not an object or has no response too" {
   let h = harness(shop)
   let cases = [

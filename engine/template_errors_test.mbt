@@ -156,6 +156,21 @@ test "a header value is a text template, but Content-Type is never templated" {
 }
 
 ///|
+test "each value of a header given an array is its own text template, reported at its own JSON Pointer" {
+  inspect(
+    template_problems(
+      templated(
+        0, "headers: { Set-Cookie: [\"a=${query.a}\", \"b=${query.}\", \"c=${\"] }",
+      ),
+    ),
+    content=(
+      #|m.yaml: /stubs/0/response/headers/Set-Cookie/1: template: column 11: expected a name after .
+      #|m.yaml: /stubs/0/response/headers/Set-Cookie/2: template: column 3: the ${ is not closed
+    ),
+  )
+}
+
+///|
 test "a structured template that does not parse is reported at the JSON Pointer of the value, every problem in it" {
   inspect(
     template_problems(

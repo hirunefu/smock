@@ -587,6 +587,28 @@ test "a templated header value never puts a line break into the head: every cont
 }
 
 ///|
+test "each value of a header given an array renders on its own, as one field, in order; a render error names the value" {
+  let h = one_response(
+    (
+      #|{ "status": 200, "template": true,
+      #|  "headers": { "Set-Cookie": ["session=${query.s}; Path=/", "theme=${query.t ?? 'light'}"] } }
+    ),
+  )
+  inspect(
+    response(h.send("GET", "/?s=a%0D%0Ab", headers=[("Host", "m.example")])) +
+    "---\n" +
+    h.body("/"),
+    content=(
+      #|200
+      #|Set-Cookie: session=a  b; Path=/
+      #|Set-Cookie: theme=light
+      #|---
+      #|500 {"error":"template failed","stub":"s","at":"/response/headers/Set-Cookie/0","message":"query.s is missing"}
+    ),
+  )
+}
+
+///|
 test "a templated event's data may give several lines, and every control character of its id and event becomes a space" {
   let h = one_response(
     (

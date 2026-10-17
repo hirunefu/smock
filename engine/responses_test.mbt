@@ -37,6 +37,38 @@ test "a Stub answers with its status, its headers in order, and its inline body"
 }
 
 ///|
+test "a header given an array is sent once per value, in order, where its name stands" {
+  let h = harness([
+    (
+      "m.json",
+      (
+        #|{ "mocks": [{ "name": "m" }],
+        #|  "stubs": [
+        #|    { "id": "login", "mock": "m", "request": { "path": "/login" },
+        #|      "response": { "status": 200,
+        #|        "headers": { "X-A": "1",
+        #|          "Set-Cookie": ["session=abc; Path=/; HttpOnly", "theme=dark; Path=/"],
+        #|          "X-B": ["only"] },
+        #|        "json": { "ok": true } } } ] }
+      ),
+    ),
+  ])
+  inspect(
+    response(h.send("GET", "/login")),
+    content=(
+      #|200
+      #|X-A: 1
+      #|Set-Cookie: session=abc; Path=/; HttpOnly
+      #|Set-Cookie: theme=dark; Path=/
+      #|X-B: only
+      #|Content-Type: application/json
+      #|Smock-Mock: m; via=default
+      #|{"ok":true}
+    ),
+  )
+}
+
+///|
 test "a Stub answers with the bytes of its body file, named relative to the body-file subdirectory" {
   let h = harness(
     [

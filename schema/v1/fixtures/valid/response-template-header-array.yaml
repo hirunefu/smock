@@ -1,0 +1,14 @@
+mocks:
+  - name: users
+stubs:
+  - id: login
+    mock: users
+    request: { method: POST, path: /login }
+    response:
+      status: 200
+      template: true
+      headers:
+        Set-Cookie:
+          - session=${query.s ?? 'none'}; Path=/; HttpOnly
+          - theme=dark; Path=/; Expires=Wed, 21 Oct 2026 07:28:00 GMT
+      body: ok
