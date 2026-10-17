@@ -211,6 +211,39 @@ test "a pattern with syntax outside the R1 subset, or that is not RE2 syntax, is
 }
 
 ///|
+test "a pattern object in a json condition that does not compile is a diagnostic at the JSON Pointer of its pattern field, each one reported" {
+  inspect(
+    stub_problems([
+      stub_with(
+        "a",
+        (
+          #|"request": { "body": { "json": {
+          #|  "email": { "pattern": "([a-z]+@example\\.com" },
+          #|  "tags": ["ok", { "pattern": "x{1001}" }, { "pattern": "[a-z]+" }],
+          #|  "a/b": { "c~d": { "pattern": "\\p{Greek}" } } } } }
+        ),
+      ),
+      stub_with(
+        "b", "\"request\": { \"body\": { \"json\": { \"pattern\": \"(?=a)\" } } }",
+      ),
+      stub_with(
+        "c",
+        (
+          #|"request": { "body": { "json": {
+          #|  "a": { "pattern": ")", "flags": "i" }, "b": { "pattern": 1 } } } }
+        ),
+      ),
+    ]),
+    content=(
+      #|a.json: /stubs/0/request/body/json/email/pattern: is not a valid pattern: position 0: missing closing )
+      #|a.json: /stubs/0/request/body/json/tags/1/pattern: is not a valid pattern: position 1: invalid repetition size {1001}
+      #|a.json: /stubs/0/request/body/json/a~1b/c~0d/pattern: is not a valid pattern: position 0: Unicode class \p{Greek} is not supported in R1
+      #|a.json: /stubs/1/request/body/json/pattern: is not a valid pattern: position 0: lookahead (?= is not RE2 syntax
+    ),
+  )
+}
+
+///|
 test "the snapshot holds each pattern compiled when the set is loaded, ready to match" {
   let file =
     #|{ "mocks": [{ "name": "m" }],

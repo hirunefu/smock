@@ -63,7 +63,8 @@ pub fn Snapshot::warnings(self : Snapshot) -> Array[Warning] {
 ///   matches `s`'s exact path.
 /// - Each of `t`'s query, header and body conditions also appears,
 ///   identically, in `s`. Header names are in lower case, so they compare
-///   case-insensitively, as in matching.
+///   case-insensitively, as in matching. A `json` condition with patterns
+///   is identical only to one with the same patterns in the same places.
 ///
 /// Containment between two patterns is not attempted: what cannot be
 /// proven this way is not reported.

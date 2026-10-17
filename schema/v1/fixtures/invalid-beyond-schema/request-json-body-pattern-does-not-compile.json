@@ -1,0 +1,25 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "create-user",
+      "mock": "users",
+      "request": {
+        "body": {
+          "json": {
+            "email": {
+              "pattern": "(.*@example\\.com"
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 201
+      }
+    }
+  ]
+}

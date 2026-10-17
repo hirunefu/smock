@@ -745,7 +745,10 @@ fn File::read_body_condition(
   for key, value in condition {
     let field = child_pointer(pointer, key)
     match key {
-      "json" => out = Some(BodyCondition::Json(JsonCondition::new(value)))
+      "json" =>
+        if self.read_expected(field, value) is Some(expected) {
+          out = Some(BodyCondition::Json(JsonCondition::new(value, expected)))
+        }
       "pattern" =>
         if self.string(field, value) is Some(source) &&
           self.compile(field, source) is Some(pattern) {
@@ -761,6 +764,46 @@ fn File::read_body_condition(
     _ => ()
   }
   out
+}
+
+///|
+/// Reads the value of a `json` condition, the value at `pointer`, as
+/// matching expects it, and compiles each pattern object in it: an object
+/// whose only member is `pattern`, with a string. It has none when a
+/// pattern does not compile, and each one that does not is reported.
+fn File::read_expected(self : File, pointer : String, json : Json) -> Expected? {
+  match json {
+    Object(members) => {
+      if members.length() == 1 && members.get("pattern") is Some(String(source)) {
+        return self
+          .compile(child_pointer(pointer, "pattern"), source)
+          .map(pattern => Expected::Pattern(pattern))
+      }
+      let keys = []
+      let values = []
+      for key, value in members {
+        if self.read_expected(child_pointer(pointer, key), value)
+          is Some(expected) {
+          keys.push(key)
+          values.push(expected)
+        }
+      }
+      guard values.length() == members.length() else { return None }
+      Some(Object(FixedArray::from_array(keys), FixedArray::from_array(values)))
+    }
+    Array(items) => {
+      let values = []
+      for i, item in items {
+        if self.read_expected(child_pointer(pointer, i.to_string()), item)
+          is Some(expected) {
+          values.push(expected)
+        }
+      }
+      guard values.length() == items.length() else { return None }
+      Some(Array(FixedArray::from_array(values)))
+    }
+    _ => Some(Scalar(json))
+  }
 }
 
 ///|

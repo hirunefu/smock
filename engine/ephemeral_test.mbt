@@ -606,6 +606,41 @@ test "Ephemeral Stubs are validated and compiled like Stubs from Definition file
 }
 
 ///|
+test "an Ephemeral Stub's json condition may hold patterns, compiled when it is added, and one that does not compile is rejected at its JSON Pointer" {
+  let h = harness(shop)
+  let added = h.add(
+    "users",
+    None,
+    (
+      #|{ "request": { "method": "POST", "path": "/users",
+      #|    "body": { "json": { "email": { "pattern": ".*@example\\.com" } } } },
+      #|  "response": { "status": 201 } }
+    ),
+  )
+  let send = (body : String) => {
+    matched_id(h.send("POST", "http://users.svc/users", body~))
+  }
+  debug_inspect(
+    [
+      send("{\"email\":\"a@example.com\"}"),
+      send("{\"email\":\"a@example.org\"}"),
+    ],
+    content=(
+      $|[Some("\{added}"), None]
+    ),
+  )
+  inspect(
+    h.problems(
+      (
+        #|{ "request": { "body": { "json": { "ids": [{ "pattern": "[0-9" }] } } },
+        #|  "response": { "status": 201 } }
+      ),
+    ),
+    content="/request/body/json/ids/0/pattern: is not a valid pattern: position 0: missing closing ]",
+  )
+}
+
+///|
 test "an Ephemeral Stub may give a header an array: it answers with one field per value, and is listed with the array as added" {
   let h = harness(shop)
   let _ = h.add(

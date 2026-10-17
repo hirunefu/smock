@@ -402,6 +402,42 @@ test "the Near miss explains a failed body condition: exact, pattern or json, wi
 }
 
 ///|
+test "a json condition with a pattern fails as body: the Near miss shows the condition with its pattern object, and the body as sent" {
+  let h = stubs([
+    (
+      #|{ "id": "create-user", "mock": "m",
+      #|  "request": { "method": "POST", "path": "/users",
+      #|    "body": { "json": { "email": { "pattern": ".*@example\\.com" } } } },
+      #|  "response": { "status": 201 } }
+    ),
+  ])
+  let missed = h.send(
+    "POST",
+    "/users",
+    body="{\"email\":{\"pattern\":\".*@example\\\\.com\"}}",
+  )
+  inspect(
+    missed.plan.headers
+    .filter(header => header.0 == "Smock-Near-Miss")
+    .map(header => header.1)
+    .join(""),
+    content="create-user; failed=body",
+  )
+  guard missed.near_miss is Some(near_miss) else { fail("no Near miss") }
+  json_inspect(near_miss.to_json(), content={
+    "stub": "create-user",
+    "stubSource": "file",
+    "failed": [
+      {
+        "condition": "body",
+        "expected": { "json": { "email": { "pattern": ".*@example\\.com" } } },
+        "actual": ["{\"email\":{\"pattern\":\".*@example\\\\.com\"}}"],
+      },
+    ],
+  })
+}
+
+///|
 test "the Near miss shows a body that is not UTF-8 with U+FFFD in place of what is not UTF-8" {
   let h = harness([
     (

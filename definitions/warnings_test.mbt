@@ -322,6 +322,46 @@ test "what the subset test cannot prove is not reported: containment between two
 }
 
 ///|
+test "a json condition with patterns shadows only one written the same way, patterns included" {
+  inspect(
+    verdicts([
+      (
+        (
+          #|{ "body": { "json": { "email": { "pattern": ".*@example\\.com" }, "tags": [{ "pattern": "[a-z]+" }] } } }
+        ),
+        (
+          #|{ "body": { "json": { "tags": [{ "pattern": "[a-z]+" }], "email": { "pattern": ".*@example\\.com" } } } }
+        ),
+      ),
+      // t's pattern matches s's string, but a pattern is not compared with
+      // another condition.
+      (
+        "{ \"body\": { \"json\": { \"email\": { \"pattern\": \".*\" } } } }", "{ \"body\": { \"json\": { \"email\": \"a@example.com\" } } }",
+      ),
+      // Two patterns that match the same values are not compared either.
+      (
+        "{ \"body\": { \"json\": { \"n\": { \"pattern\": \"[0-9]\" } } } }", "{ \"body\": { \"json\": { \"n\": { \"pattern\": \"\\\\d\" } } } }",
+      ),
+      // Read as literal JSON, t would be contained in s; but t's member is a
+      // pattern, which never matches s's object.
+      (
+        "{ \"body\": { \"json\": { \"a\": { \"pattern\": \"x\" } } } }", "{ \"body\": { \"json\": { \"a\": { \"pattern\": \"x\", \"b\": 1 } } } }",
+      ),
+      (
+        "{ \"body\": { \"json\": { \"a\": { \"pattern\": \"x\" } } } }", "{ \"body\": { \"json\": { \"a\": { \"pattern\": \"y\" } } } }",
+      ),
+    ]),
+    content=(
+      #|t { "body": { "json": { "email": { "pattern": ".*@example\\.com" }, "tags": [{ "pattern": "[a-z]+" }] } } } / s { "body": { "json": { "tags": [{ "pattern": "[a-z]+" }], "email": { "pattern": ".*@example\\.com" } } } } -> shadowed
+      #|t { "body": { "json": { "email": { "pattern": ".*" } } } } / s { "body": { "json": { "email": "a@example.com" } } } -> not reported
+      #|t { "body": { "json": { "n": { "pattern": "[0-9]" } } } } / s { "body": { "json": { "n": { "pattern": "\\d" } } } } -> not reported
+      #|t { "body": { "json": { "a": { "pattern": "x" } } } } / s { "body": { "json": { "a": { "pattern": "x", "b": 1 } } } } -> not reported
+      #|t { "body": { "json": { "a": { "pattern": "x" } } } } / s { "body": { "json": { "a": { "pattern": "y" } } } } -> not reported
+    ),
+  )
+}
+
+///|
 /// A Stub of the Mock `mock` with `fields` added, such as `"priority": 1`,
 /// that matches `GET /a`.
 fn get_a(id : String, mock? : String = "m", fields? : String = "") -> String {

@@ -86,3 +86,69 @@ async test "smock serve exits with status 1 at startup when a pattern does not c
     },
   )
 }
+
+///|
+/// The Stub of issue #45, in YAML: a pattern on a member of a JSON body.
+let json_pattern_users : String =
+  #|mocks:
+  #|  - name: users
+  #|stubs:
+  #|  - id: create-user
+  #|    mock: users
+  #|    request:
+  #|      method: POST
+  #|      path: /users
+  #|      body: { json: { email: { pattern: ".*@example\\.com" } } }
+  #|    response: { status: 201 }
+
+///|
+async test "smock serve matches a pattern on a member of a JSON body, and a body that holds the pattern object itself gets a Near miss on body" {
+  with_definitions([("users.yaml", json_pattern_users)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      inspect(
+        [
+          smock.send("POST", "/users", body="{\"email\": \"a@example.com\"}"),
+          smock.send(
+            "POST",
+            "/users",
+            body="{\"email\": {\"pattern\": \".*@example\\\\.com\"}}",
+          ),
+        ].join("\n---\n"),
+        content=(
+          #|HTTP/1.1 201 Created
+          #|Smock-Mock: users; via=default
+          #|Content-Length: 0
+          #|
+          #|
+          #|---
+          #|HTTP/1.1 404 Not Found
+          #|Content-Type: application/json
+          #|Smock-Near-Miss: create-user; failed=body
+          #|Smock-Mock: users; via=default
+          #|Content-Length: 27
+          #|
+          #|{"error":"no Stub matched"}
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "smock check reports a pattern inside a json condition that does not compile at the JSON Pointer of its pattern field, and exits 1" {
+  let bad =
+    #|{ "mocks": [{ "name": "users" }],
+    #|  "stubs": [{ "id": "create-user", "mock": "users",
+    #|    "request": { "body": { "json": { "emails": [{ "pattern": "[a-z+@example\\.com" }] } } },
+    #|    "response": { "status": 201 } }] }
+  with_definitions([("users.json", bad)], dir => {
+    inspect(
+      check([dir]),
+      content=(
+        #|status 1
+        #|users.json: /stubs/0/request/body/json/emails/0/pattern: is not a valid pattern: position 0: missing closing ]
+        #|
+      ),
+    )
+  })
+}
