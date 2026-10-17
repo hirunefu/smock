@@ -1,6 +1,8 @@
 // `JsonCondition::matches` as it was before conditions were read into
 // arrays when loaded, with pattern objects added, kept as the oracle for
 // the one of today: for any condition value and any body, both must agree.
+// The file also checks, with the same random values, what the
+// shadowed-Stub warning needs of `JsonCondition`'s equality.
 
 ///|
 fn reference_contains(actual : Json, expected : Json) -> Bool {
@@ -178,8 +180,11 @@ fn rewritten(json : Json, rand : @random.Rand) -> Json {
 /// The shadowed-Stub warning takes a Stub's body condition to cover only an
 /// equal one. The numbers drawn here never pair one kept as text with an
 /// equal one that is not, such as 12345678901234567890 and
-/// 1.2345678901234567890e19: `same_number` compares those apart from how
-/// `contains` does, and that gap has nothing to do with patterns.
+/// 1.2345678901234567890e19. `same_number` is not transitive on such
+/// numbers: it compares two kept as text exactly and any other pair as
+/// Doubles. So those two conditions are equal, yet a body's
+/// 12345678901234567891 meets only the second. That gap has nothing to do
+/// with patterns.
 test "json conditions that are equal match the same bodies, patterns included, as the shadowed-Stub warning needs" {
   let rand = @random.Rand::chacha8(seed=b"smock json condition equality!!!")
   let differ = []

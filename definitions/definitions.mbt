@@ -273,8 +273,9 @@ pub enum BodyCondition {
 ///|
 /// A `json` condition on the request body: a JSON value the body must
 /// contain, in which an object whose only member is `pattern`, with a
-/// string, is a pattern. The value is the condition's own copy, which
-/// nothing outside can change, so the snapshot stays as it was loaded.
+/// string, is a pattern. `File::read_json_condition` reads one. The value
+/// is the condition's own copy, which nothing outside can change, so the
+/// snapshot stays as it was loaded.
 pub struct JsonCondition {
   priv value : Json
   /// The value, read into arrays, so that matching it walks no map.
@@ -292,12 +293,6 @@ priv enum Expected {
   /// string.
   Pattern(Pattern)
   Scalar(Json)
-}
-
-///|
-/// A condition on `value`, which it copies, read as `expected`.
-fn JsonCondition::new(value : Json, expected : Expected) -> JsonCondition {
-  { value: deep_copy(value), expected, }
 }
 
 ///|

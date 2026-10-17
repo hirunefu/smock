@@ -746,9 +746,9 @@ fn File::read_body_condition(
     let field = child_pointer(pointer, key)
     match key {
       "json" =>
-        if self.read_expected(field, value) is Some(expected) {
-          out = Some(BodyCondition::Json(JsonCondition::new(value, expected)))
-        }
+        out = self
+          .read_json_condition(field, value)
+          .map(condition => BodyCondition::Json(condition))
       "pattern" =>
         if self.string(field, value) is Some(source) &&
           self.compile(field, source) is Some(pattern) {
@@ -767,11 +767,29 @@ fn File::read_body_condition(
 }
 
 ///|
-/// Reads the value of a `json` condition, the value at `pointer`, as
-/// matching expects it, and compiles each pattern object in it: an object
-/// whose only member is `pattern`, with a string. It has none when a
-/// pattern does not compile, and each one that does not is reported.
-fn File::read_expected(self : File, pointer : String, json : Json) -> Expected? {
+/// Reads a `json` condition, the value at `pointer`, and compiles each
+/// pattern in it. It has none when a pattern does not compile, and each one
+/// that does not is reported.
+fn File::read_json_condition(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> JsonCondition? {
+  self
+  .read_json_condition_value(pointer, json)
+  .map(expected => JsonCondition::{ value: deep_copy(json), expected, })
+}
+
+///|
+/// Reads `json`, the value at `pointer` in a `json` condition, as matching
+/// expects it. An object whose only member is `pattern`, with a string, is
+/// a pattern object, and its pattern is compiled. It has none when a
+/// pattern in it does not compile, and each one that does not is reported.
+fn File::read_json_condition_value(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> Expected? {
   match json {
     Object(members) => {
       if members.length() == 1 && members.get("pattern") is Some(String(source)) {
@@ -782,7 +800,7 @@ fn File::read_expected(self : File, pointer : String, json : Json) -> Expected? 
       let keys = []
       let values = []
       for key, value in members {
-        if self.read_expected(child_pointer(pointer, key), value)
+        if self.read_json_condition_value(child_pointer(pointer, key), value)
           is Some(expected) {
           keys.push(key)
           values.push(expected)
@@ -794,7 +812,10 @@ fn File::read_expected(self : File, pointer : String, json : Json) -> Expected? 
     Array(items) => {
       let values = []
       for i, item in items {
-        if self.read_expected(child_pointer(pointer, i.to_string()), item)
+        if self.read_json_condition_value(
+            child_pointer(pointer, i.to_string()),
+            item,
+          )
           is Some(expected) {
           values.push(expected)
         }
