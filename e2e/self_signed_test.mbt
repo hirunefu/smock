@@ -33,12 +33,8 @@ async fn run_openssl(args : Array[String], stdin? : String) -> (Int, String) {
   let result = @async.with_timeout_opt(patience_ms, () => {
     match stdin {
       Some(path) =>
-        @process.collect_output(
-          "openssl",
-          args,
-          stdin=@process.redirect_from_file(path),
-        )
-      None => @process.collect_output("openssl", args)
+        collect_output("openssl", args, stdin=@process.redirect_from_file(path))
+      None => collect_output("openssl", args)
     }
   })
   guard result is Some((status, stdout, _)) else {
@@ -492,7 +488,7 @@ async test "the generated certificate and its key stay in memory: smock serves H
 async fn not_after(file : String) -> String {
   let (_, text) = run_openssl(["x509", "-in", file, "-noout", "-enddate"])
   let date = line_after(text, "notAfter=")
-  let (status, out) = @process.collect_stdout("date", ["-u", "-d", date, "+%s"])
+  let (status, out, _) = collect_output("date", ["-u", "-d", date, "+%s"])
   guard status == 0 else { fail("date cannot read \{date}") }
   out.text().trim().to_owned()
 }

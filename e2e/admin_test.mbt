@@ -255,7 +255,7 @@ async fn each_kind(smock : Smock) -> Array[(String, String, AdminResponse)] {
 
 ///|
 async test "every Admin API response, errors included, names the replica that handled it: the host name" {
-  let (_, uname) = @process.collect_stdout("uname", ["-n"])
+  let (_, uname, _) = collect_output("uname", ["-n"])
   let host = uname.text().trim().to_owned()
   let _ = with_smock(["--port", "0"], smock => {
     let out = []
@@ -308,7 +308,7 @@ async test "errors take the form {error, message, warnings}: a missing token, an
 
 ///|
 async test "with more than one replica, every JSON response, errors included, warns that state is per replica" {
-  let (_, uname) = @process.collect_stdout("uname", ["-n"])
+  let (_, uname, _) = collect_output("uname", ["-n"])
   let host = uname.text().trim().to_owned()
   let warnings = []
   let _ = with_smock(["--port", "0"], env={ "SMOCK_REPLICAS": "3" }, smock => {

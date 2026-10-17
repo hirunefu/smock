@@ -472,7 +472,7 @@ async test "an invalid definitions directory gives the messages smock check give
       ),
     ],
     dir => {
-      let (check_status, check_stdout, _) = @process.collect_output(
+      let (check_status, check_stdout, _) = collect_output(
         binary,
         ["check", dir],
         inherit_env=false,

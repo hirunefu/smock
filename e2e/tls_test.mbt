@@ -246,7 +246,7 @@ async fn Smock::s_client(
 ) -> String {
   write(certs.dir, "request.txt", request)
   let result = @async.with_timeout_opt(patience_ms, () => {
-    @process.collect_output(
+    collect_output(
       "openssl",
       [
         "s_client",
@@ -390,7 +390,7 @@ async test "SNI never chooses the Mock: a request whose SNI names one Mock's Hos
 /// sends first, such as a TLS alert. Returns whether it closed in time.
 async fn ends(tcp : @socket.Tcp) -> Bool {
   let closed = @async.with_timeout_opt(patience_ms, () => {
-    while tcp.read_some() is Some(_) {
+    while past_spurious_eagain(() => tcp.read_some()) is Some(_) {
 
     }
   })

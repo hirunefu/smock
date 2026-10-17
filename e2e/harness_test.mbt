@@ -11,7 +11,7 @@ let binary : String = "_build/native/debug/build/smock/smock/cmd/smock/smock.exe
 /// Builds the binary once per test process, so the tests always run the
 /// code they are built from.
 let build : @async.Lazy[Unit] = @async.Lazy(() => {
-  let (status, output) = @process.collect_output_merged("moon", [
+  let (status, output) = collect_output_merged("moon", [
     "build", "--target", "native", "cmd/smock",
   ])
   if status != 0 {
@@ -201,10 +201,37 @@ enum Over {
 }
 
 ///|
-/// A connection to smock, over plain TCP or over TLS.
+/// A connection to smock, over plain TCP or over TLS. Its reads over plain
+/// TCP get past a spurious EAGAIN (see `past_spurious_eagain`). Its reads
+/// over TLS cannot: a TLS connection fails for good once a read in it fails.
 enum Conn {
   PlainConn(@socket.Tcp)
   TlsConn(@tls.Tls, @socket.Tcp)
+}
+
+///|
+/// Runs `read` again each time it fails with EAGAIN. moonbitlang/async
+/// 0.22.4 raises it when a read is woken although its descriptor has nothing
+/// to read (moonbitlang/async#571). A closed descriptor stays on epoll while
+/// a process the tests spawn still holds a copy of it: a child holds a copy
+/// of every descriptor the test process has open until the child execs, and
+/// keeps a socket for good when it was spawned before the socket was marked
+/// close-on-exec. epoll reports events by descriptor number only, so a new
+/// socket or pipe that gets the same number wakes on the old one's events,
+/// such as the FIN of a connection smock has closed. The library fixes this
+/// on its main branch (moonbitlang/async#663), in no release yet.
+///
+/// Each repeated read waits for the descriptor's own data, end of stream or
+/// reset, so nothing smock does is hidden. `read` must keep what it has read
+/// when it fails, as `read_until`, `read_some` and `read` do.
+async fn[T] past_spurious_eagain(read : async () -> T) -> T {
+  for ;; {
+    break read() catch {
+      @os_error.OSError(_, ..) as err if err.is_nonblocking_io_error() =>
+        continue
+      err => raise err
+    }
+  }
 }
 
 ///|
@@ -218,7 +245,7 @@ async fn Conn::write(self : Conn, data : &@io.Data) -> Unit {
 ///|
 async fn Conn::read_until(self : Conn, separator : String) -> String? {
   match self {
-    PlainConn(tcp) => tcp.read_until(separator)
+    PlainConn(tcp) => past_spurious_eagain(() => tcp.read_until(separator))
     TlsConn(tls, _) => tls.read_until(separator)
   }
 }
@@ -226,7 +253,22 @@ async fn Conn::read_until(self : Conn, separator : String) -> String? {
 ///|
 async fn Conn::read_exactly(self : Conn, length : Int) -> Bytes {
   match self {
-    PlainConn(tcp) => tcp.read_exactly(length)
+    PlainConn(tcp) => {
+      // `tcp.read_exactly` drops what it has read when a read in it fails,
+      // so it reads here one `tcp.read` at a time.
+      let buf = FixedArray::make(length, b'\x00')
+      let mut received = 0
+      while received < length {
+        let n = past_spurious_eagain(() => {
+          tcp.read(buf, offset=received, max_len=length - received)
+        })
+        if n == 0 {
+          raise @io.ReaderClosed
+        }
+        received += n
+      }
+      Bytes::from_array(buf)
+    }
     TlsConn(tls, _) => tls.read_exactly(length)
   }
 }
@@ -234,7 +276,7 @@ async fn Conn::read_exactly(self : Conn, length : Int) -> Bytes {
 ///|
 async fn Conn::read_some(self : Conn) -> Bytes? {
   match self {
-    PlainConn(tcp) => tcp.read_some()
+    PlainConn(tcp) => past_spurious_eagain(() => tcp.read_some())
     TlsConn(tls, _) => tls.read_some()
   }
 }
@@ -328,7 +370,7 @@ async fn[X] Serving::start(
   let reader = group.spawn(() => {
     defer stderr.close()
     for ;; {
-      let line = stderr.read_until("\n")
+      let line = past_spurious_eagain(() => stderr.read_until("\n"))
       if line is Some(line) {
         logs.push(line)
       }
@@ -474,12 +516,71 @@ async fn smock_output(
 ) -> (Int, String, String) {
   build.wait()
   let result = @async.with_timeout_opt(patience_ms, () => {
-    @process.collect_output(binary, args, extra_env=env, inherit_env=false)
+    collect_output(binary, args, extra_env=env, inherit_env=false)
   })
   guard result is Some((status, stdout, stderr)) else {
     fail("smock \{args.join(" ")} did not exit in time")
   }
   (status, stdout.text(), stderr.text())
+}
+
+///|
+/// Runs `command <args>` until it exits, and returns its exit status and
+/// what it wrote to stdout and to stderr, as `@process.collect_output` does,
+/// but reads them past a spurious EAGAIN (see `past_spurious_eagain`).
+async fn collect_output(
+  command : String,
+  args : Array[String],
+  extra_env? : Map[String, String] = Map([]),
+  inherit_env? : Bool = true,
+  stdin? : &@process.ProcessInput,
+) -> (Int, &@io.Data, &@io.Data) {
+  let (stdout, stdout_end) = @process.read_from_process()
+  let (stderr, stderr_end) = @process.read_from_process()
+  @async.with_task_group(group => {
+    let status = group.spawn(() => {
+      @process.run(
+        command,
+        args,
+        extra_env~,
+        inherit_env~,
+        stdin?,
+        stdout=stdout_end,
+        stderr=stderr_end,
+      )
+    })
+    let stdout = group.spawn(() => read_output(stdout))
+    let stderr = group.spawn(() => read_output(stderr))
+    (status.wait(), stdout.wait(), stderr.wait())
+  })
+}
+
+///|
+/// Like `collect_output`, with stderr merged into stdout.
+async fn collect_output_merged(
+  command : String,
+  args : Array[String],
+) -> (Int, &@io.Data) {
+  let (output, output_end) = @process.read_from_process()
+  @async.with_task_group(group => {
+    let status = group.spawn(() => {
+      @process.run(command, args, stdout=output_end, stderr=output_end)
+    })
+    let output = read_output(output)
+    (status.wait(), output)
+  })
+}
+
+///|
+/// Reads what a process writes to `output` until it closes it, past a
+/// spurious EAGAIN, then closes `output`.
+async fn read_output(output : @process.ReadFromProcess) -> &@io.Data {
+  defer output.close()
+  let received = @buffer.Buffer()
+  while past_spurious_eagain(() => output.read_some()) is Some(bytes) {
+    received.write_bytes(bytes)
+  }
+  received.to_bytes()
 }
 
 ///|
