@@ -221,7 +221,7 @@ async test "an invalid Ephemeral Stub gets 400 invalid_stub with the problems sm
         #|/response/status: must be an integer from 200 to 599
         #|/response/headers/Content-Length: is set by smock and cannot be given
         #|/response/headers/x-a: the header name "X-A" is already given: header names are case-insensitive
-        #|/response/headers/Smock-Mock: is reserved: header names starting with Smock- are smock's own
+        #|/response/headers/Smock-Mock: is set by smock and cannot be given
         #|/colour: is not a known field
         #|---
         #|smock check:
@@ -231,7 +231,7 @@ async test "an invalid Ephemeral Stub gets 400 invalid_stub with the problems sm
         #|users.json: /stubs/0/response/status: must be an integer from 200 to 599
         #|users.json: /stubs/0/response/headers/Content-Length: is set by smock and cannot be given
         #|users.json: /stubs/0/response/headers/x-a: the header name "X-A" is already given: header names are case-insensitive
-        #|users.json: /stubs/0/response/headers/Smock-Mock: is reserved: header names starting with Smock- are smock's own
+        #|users.json: /stubs/0/response/headers/Smock-Mock: is set by smock and cannot be given
         #|users.json: /stubs/0/colour: is not a known field
         #|
       ),

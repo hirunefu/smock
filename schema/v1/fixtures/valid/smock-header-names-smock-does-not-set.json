@@ -17,7 +17,8 @@
         "status": 200,
         "headers": {
           "Smock": "1",
-          "X-Smock-Mock": "2"
+          "X-Smock-Mock": "2",
+          "Smock-Near-Miss": "3"
         }
       }
     }

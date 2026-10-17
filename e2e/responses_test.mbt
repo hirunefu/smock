@@ -200,7 +200,7 @@ async test "two header names in a response that differ only in case stop smock s
 }
 
 ///|
-async test "a response header name that starts with Smock- stops smock serve and fails smock check" {
+async test "a Smock-Mock response header stops smock serve and fails smock check" {
   let defs =
     #|mocks:
     #|  - name: a
@@ -222,10 +222,10 @@ async test "a response header name that starts with Smock- stops smock serve and
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
-        #|{"level":"error","msg":"invalid definitions","file":"a.yaml","pointer":"/stubs/0/response/headers/smock-mock","error":"is reserved: header names starting with Smock- are smock's own"}
+        #|{"level":"error","msg":"invalid definitions","file":"a.yaml","pointer":"/stubs/0/response/headers/smock-mock","error":"is set by smock and cannot be given"}
         #|---
         #|status 1
-        #|a.yaml: /stubs/0/response/headers/smock-mock: is reserved: header names starting with Smock- are smock's own
+        #|a.yaml: /stubs/0/response/headers/smock-mock: is set by smock and cannot be given
         #|
       ),
     )

@@ -650,7 +650,7 @@ test "a header name that smock sets, or that is not valid, is not also reported 
 }
 
 ///|
-test "a response header name that starts with Smock-, in any case, is reserved, and each one gets that problem alone" {
+test "Smock-Mock, in any case, is set by smock and cannot be given, but other names that start with Smock- can" {
   inspect(
     problems([
       (
@@ -665,10 +665,8 @@ test "a response header name that starts with Smock-, in any case, is reserved, 
       ),
     ]),
     content=(
-      #|users.json: /stubs/0/response/headers/Smock-Mock: is reserved: header names starting with Smock- are smock's own
-      #|users.json: /stubs/0/response/headers/smock-mock: is reserved: header names starting with Smock- are smock's own
-      #|users.json: /stubs/0/response/headers/SMOCK-Near-Miss: is reserved: header names starting with Smock- are smock's own
-      #|users.json: /stubs/0/response/headers/Smock-Later: is reserved: header names starting with Smock- are smock's own
+      #|users.json: /stubs/0/response/headers/Smock-Mock: is set by smock and cannot be given
+      #|users.json: /stubs/0/response/headers/smock-mock: is set by smock and cannot be given
     ),
   )
 }
