@@ -60,9 +60,9 @@ covers part of the need, the item says what.
 - **A body for unmatched requests.** A Mock sets only the status of its
   no-match response.
 - **Response limits.** A response's `headers` is a map with one string
-  per name and no list form, and two names that differ only in case are
-  rejected, so several `Set-Cookie` values cannot be given; its status is
-  from 200 to 599; and body files are always sent whole, without Range
+  per name and no list form. Names that differ only in case are
+  rejected, so several `Set-Cookie` values cannot be given. Its status is
+  from 200 to 599, and body files are always sent whole, without Range
   requests.
 - **OpenAPI import and export, and a GUI.** The translation is done by
   hand, and Definition files are edited as text. Editors can check them

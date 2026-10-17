@@ -171,3 +171,30 @@ async test "a missing body file or a body-file path that leaves its subdirectory
     )
   })
 }
+
+///|
+async test "two header names in a response that differ only in case stop smock serve and fail smock check, at the later name" {
+  let defs =
+    #|{ "mocks": [{ "name": "users" }],
+    #|  "stubs": [{ "id": "login", "mock": "users",
+    #|    "response": { "status": 200,
+    #|      "headers": { "Set-Cookie": "a=1", "set-cookie": "b=2" } } }] }
+  with_definitions([("users.json", defs)], dir => {
+    let stopped = run_smock(["serve", "--dir", dir, "--port", "0"])
+    inspect(
+      "status \{stopped.status}\n\{log_entries(stopped.logs)}\n---\n\{check([dir])}",
+      content=(
+        #|status 1
+        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
+        #|{"level":"info","msg":"random seed","seed":"*"}
+        #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"error","msg":"invalid definitions","file":"users.json","pointer":"/stubs/0/response/headers/set-cookie","error":"the header name \"Set-Cookie\" is already given: header names are case-insensitive"}
+        #|---
+        #|status 1
+        #|users.json: /stubs/0/response/headers/set-cookie: the header name "Set-Cookie" is already given: header names are case-insensitive
+        #|
+      ),
+    )
+  })
+}

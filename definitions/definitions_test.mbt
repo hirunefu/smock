@@ -627,7 +627,7 @@ test "two names in a response's headers that differ only in case are rejected at
 }
 
 ///|
-test "a header name that smock sets, or that is not valid, gets that problem alone each time it is given, in any case" {
+test "a header name that smock sets, or that is not valid, is not also reported as differing only in case" {
   inspect(
     problems([
       (

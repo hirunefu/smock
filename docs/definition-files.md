@@ -287,9 +287,8 @@ unmatched requests is refused.
 ## Responses
 
 A Stub's `response` has a `status`, `headers`, and a body. `headers` gives
-one string per header name. Names are compared case-insensitively, so two
-names that differ only in case, such as `Set-Cookie` and `set-cookie`, are
-rejected, and a response cannot send a header field twice. smock sets
+one string per header name. Names are compared case-insensitively, so
+`Set-Cookie` and `set-cookie` cannot both be given. smock sets
 `Content-Length` from the body; `Content-Length`, `Transfer-Encoding` and
 `Connection` cannot be given. The body is either inline, as text in UTF-8:
 
@@ -855,7 +854,7 @@ duplicate is reported where it occurs the second time, in file-name order,
 and the message names the first. It also compiles every
 [pattern](#pattern-conditions), which the Schema accepts as any string, and
 rejects two names in one response's `headers` that differ only in case,
-which the Schema compares exactly. It rejects a key repeated within one
+since the Schema compares names exactly. It rejects a key repeated within one
 JSON object, as YAML files reject it: JSON parsers disagree on which of the
 two values counts, and the Schema sees only one of them.
 

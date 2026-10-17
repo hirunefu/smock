@@ -888,8 +888,8 @@ fn File::read_body_file(self : File, pointer : String, json : Json) -> Bytes {
 
 ///|
 /// Reads response headers: an object whose members are field names and
-/// string values. Field names are case-insensitive, so no two names may
-/// differ only in case, a rule the JSON Schema cannot express.
+/// string values. Header names are case-insensitive, so no two may differ
+/// only in case, a rule the JSON Schema cannot express.
 fn File::read_headers(
   self : File,
   pointer : String,
