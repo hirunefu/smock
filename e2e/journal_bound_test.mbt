@@ -44,7 +44,7 @@ fn user_manager_env(env : Map[String, String]) -> Map[String, String] {
 async fn scope_unavailable() -> String? {
   let script = "cat \"/sys/fs/cgroup$(sed -n 's/^0:://p' /proc/self/cgroup)/memory.max\""
   let command = [..in_scope, "sh", "-c", script]
-  let (status, output) = @process.collect_output_merged(
+  let (status, output) = collect_output_merged(
     command[0],
     command[1:].to_owned(),
   ) catch {

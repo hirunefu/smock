@@ -254,7 +254,7 @@ let quota_scope : Array[String] = [
 async fn quota_scope_unavailable() -> String? {
   let script = "cat \"/sys/fs/cgroup$(sed -n 's/^0:://p' /proc/self/cgroup)/cpu.max\""
   let command = [..quota_scope, "sh", "-c", script]
-  let (status, output) = @process.collect_output_merged(
+  let (status, output) = collect_output_merged(
     command[0],
     command[1:].to_owned(),
   ) catch {

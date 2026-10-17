@@ -47,7 +47,7 @@ async test "the build-info metric carries the version, commit and toolchain smoc
 
 ///|
 async test "/metrics needs no token, also with authentication on, and names the replica" {
-  let (_, uname) = @process.collect_stdout("uname", ["-n"])
+  let (_, uname) = collect_stdout("uname", ["-n"])
   let host = uname.text().trim().to_owned()
   let _ = with_smock(["--port", "0"], smock => {
     let out = []
