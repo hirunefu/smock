@@ -1,0 +1,15 @@
+{
+  "mocks": [
+    {
+      "name": "users",
+      "noMatch": {
+        "status": 404,
+        "headers": {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Expose-Headers": ["Smock-Near-Miss", "Smock-Mock"],
+          "Smock-Note": "${request.path} is sent as written"
+        }
+      }
+    }
+  ]
+}

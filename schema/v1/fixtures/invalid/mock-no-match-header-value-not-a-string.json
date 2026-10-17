@@ -1,0 +1,12 @@
+{
+  "mocks": [
+    {
+      "name": "users",
+      "noMatch": {
+        "headers": {
+          "Access-Control-Max-Age": 600
+        }
+      }
+    }
+  ]
+}

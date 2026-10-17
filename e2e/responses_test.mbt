@@ -298,3 +298,97 @@ async test "a Smock-Mock response header stops smock serve and fails smock check
     )
   })
 }
+
+///|
+async test "a cross-origin request that no Stub matches gets the Mock's noMatch headers with smock's body and Near miss, after a preflight Stub" {
+  let defs =
+    #|mocks:
+    #|  - name: users
+    #|    noMatch:
+    #|      status: 404
+    #|      headers:
+    #|        Access-Control-Allow-Origin: "*"
+    #|        Access-Control-Expose-Headers: Smock-Near-Miss, Smock-Mock
+    #|stubs:
+    #|  - id: get-user
+    #|    mock: users
+    #|    request: { method: GET, path: /users/1 }
+    #|    response: { status: 200, json: { id: 1 } }
+    #|  - id: preflight
+    #|    mock: users
+    #|    request: { method: OPTIONS }
+    #|    response:
+    #|      status: 204
+    #|      headers:
+    #|        Access-Control-Allow-Origin: "*"
+    #|        Access-Control-Allow-Methods: GET, POST, PUT, DELETE
+    #|        Access-Control-Allow-Headers: Content-Type, Authorization
+  with_definitions([("users.yaml", defs)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let origin = ("Origin", "http://localhost:5173")
+      inspect(
+        [
+          smock.send("OPTIONS", "/users/2", headers=[
+            origin,
+            ("Access-Control-Request-Method", "DELETE"),
+          ]),
+          smock.send("GET", "/users/2", headers=[origin]),
+          smock.send("GET", "/users/1", headers=[origin]),
+        ].join("\n---\n"),
+        content=(
+          #|HTTP/1.1 204 No Content
+          #|Access-Control-Allow-Origin: *
+          #|Access-Control-Allow-Methods: GET, POST, PUT, DELETE
+          #|Access-Control-Allow-Headers: Content-Type, Authorization
+          #|Smock-Mock: users; via=default
+          #|
+          #|
+          #|---
+          #|HTTP/1.1 404 Not Found
+          #|Content-Type: application/json
+          #|Access-Control-Allow-Origin: *
+          #|Access-Control-Expose-Headers: Smock-Near-Miss, Smock-Mock
+          #|Smock-Near-Miss: get-user; failed=path
+          #|Smock-Mock: users; via=default
+          #|Content-Length: 27
+          #|
+          #|{"error":"no Stub matched"}
+          #|---
+          #|HTTP/1.1 200 OK
+          #|Content-Type: application/json
+          #|Smock-Mock: users; via=default
+          #|Content-Length: 8
+          #|
+          #|{"id":1}
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "a noMatch header that smock sets stops smock serve and fails smock check, at the header's name" {
+  let defs =
+    #|{ "mocks": [{ "name": "users",
+    #|  "noMatch": { "headers": { "content-type": "text/plain", "Smock-Near-Miss": "none" } } }] }
+  with_definitions([("users.json", defs)], dir => {
+    let stopped = run_smock(["serve", "--dir", dir, "--port", "0"])
+    inspect(
+      "status \{stopped.status}\n\{log_entries(stopped.logs)}\n---\n\{check([dir])}",
+      content=(
+        #|status 1
+        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
+        #|{"level":"info","msg":"random seed","seed":"*"}
+        #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"error","msg":"invalid definitions","file":"users.json","pointer":"/mocks/0/noMatch/headers/content-type","error":"is set by smock and cannot be given"}
+        #|{"level":"error","msg":"invalid definitions","file":"users.json","pointer":"/mocks/0/noMatch/headers/Smock-Near-Miss","error":"is set by smock and cannot be given"}
+        #|---
+        #|status 1
+        #|users.json: /mocks/0/noMatch/headers/content-type: is set by smock and cannot be given
+        #|users.json: /mocks/0/noMatch/headers/Smock-Near-Miss: is set by smock and cannot be given
+        #|
+      ),
+    )
+  })
+}

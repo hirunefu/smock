@@ -137,6 +137,8 @@ priv struct MockDecl {
   default : String?
   /// The status of the response when no Stub matches.
   no_match_status : Int
+  /// The header fields of the response when no Stub matches.
+  no_match_headers : Array[(String, String)]
   /// Whether the Journal records the requests the Mock answers.
   journal : Bool
 }
@@ -330,6 +332,7 @@ fn File::read_mock(self : File, pointer : String, json : Json) -> MockDecl? {
   let mut hosts = []
   let mut default = None
   let mut no_match_status = 404
+  let mut no_match_headers = []
   let mut journal = true
   for key, value in mock {
     let field = child_pointer(pointer, key)
@@ -342,7 +345,11 @@ fn File::read_mock(self : File, pointer : String, json : Json) -> MockDecl? {
           False => ()
           _ => self.error(field, "must be true or false")
         }
-      "noMatch" => no_match_status = self.read_no_match(field, value)
+      "noMatch" => {
+        let (status, headers) = self.read_no_match(field, value)
+        no_match_status = status
+        no_match_headers = headers
+      }
       "journal" =>
         match value {
           True => journal = true
@@ -353,7 +360,14 @@ fn File::read_mock(self : File, pointer : String, json : Json) -> MockDecl? {
     }
   }
   self.require(mock, pointer, "name")
-  name.map(name => { name, hosts, default, no_match_status, journal, })
+  name.map(name => {
+    name,
+    hosts,
+    default,
+    no_match_status,
+    no_match_headers,
+    journal,
+  })
 }
 
 ///|
@@ -381,21 +395,31 @@ fn File::read_hosts(
 }
 
 ///|
-/// Reads how a Mock answers when no Stub matches, and returns the status.
-fn File::read_no_match(self : File, pointer : String, json : Json) -> Int {
+/// Reads how a Mock answers when no Stub matches, and returns the status
+/// and the header fields.
+fn File::read_no_match(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> (Int, Array[(String, String)]) {
   let mut status = 404
+  let mut headers = []
   guard json is Object(fields) else {
     self.error(pointer, "must be an object")
-    return status
+    return (status, headers)
   }
   for key, value in fields {
     let field = child_pointer(pointer, key)
     match key {
       "status" => status = self.read_status(field, value)
+      "headers" =>
+        headers = self
+          .read_headers(field, value, set_by_smock=no_match_names_set_by_smock)
+          .map(header => (header.0, header.1))
       _ => self.unknown_field(field)
     }
   }
-  status
+  (status, headers)
 }
 
 ///|
@@ -951,16 +975,32 @@ fn File::read_body_file(self : File, pointer : String, json : Json) -> Bytes {
 }
 
 ///|
+/// The header names, in lower case, that smock sets on a Stub's response,
+/// so that the Stub cannot give them.
+let response_names_set_by_smock : Array[String] = [
+  "content-length", "transfer-encoding", "connection", "smock-mock",
+]
+
+///|
+/// The header names, in lower case, that smock sets on a Mock's response
+/// when no Stub matches: those of a Stub's response, and the Content-Type
+/// of its JSON body and the Near miss.
+let no_match_names_set_by_smock : Array[String] = [
+  ..response_names_set_by_smock, "content-type", "smock-near-miss",
+]
+
+///|
 /// Reads response headers: an object whose members are field names and
 /// values. A value is a string, or a non-empty array of strings to send
 /// the field once per value, in order; Content-Type takes one string.
 /// Returns the fields as (name, value, JSON Pointer of the value). Header
 /// names are case-insensitive, so no two may differ only in case, a rule
-/// the JSON Schema cannot express.
+/// the JSON Schema cannot express, and none may be one of `set_by_smock`.
 fn File::read_headers(
   self : File,
   pointer : String,
   json : Json,
+  set_by_smock? : Array[String] = response_names_set_by_smock,
 ) -> Array[(String, String, String)] {
   let out = []
   guard json is Object(headers) else {
@@ -974,8 +1014,7 @@ fn File::read_headers(
     let lower = name.to_lower()
     if !@http1.is_token(name) {
       self.error(field, "is not a valid header name")
-    } else if lower
-      is ("content-length" | "transfer-encoding" | "connection" | "smock-mock") {
+    } else if set_by_smock.contains(lower) {
       self.error(field, "is set by smock and cannot be given")
     } else if names.get(lower) is Some(earlier) {
       self.error(
@@ -995,8 +1034,9 @@ fn File::read_headers(
     match value {
       String(text) => push_field(text, field)
       // smock reads Content-Type, to escape a templated body, so it takes
-      // one string.
-      _ if lower == "content-type" => self.error(field, "must be a string")
+      // one string, where it can be given.
+      _ if lower == "content-type" && !set_by_smock.contains(lower) =>
+        self.error(field, "must be a string")
       Array([]) => self.error(field, "must not be an empty array")
       Array(items) =>
         for i, item in items {

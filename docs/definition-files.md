@@ -306,6 +306,49 @@ shown with U+FFFD in place of each sequence that is not, so a failed exact
 same. The Journal entry itself keeps the body's bytes, in base64, up to
 `--journal-body-limit`.
 
+`noMatch.headers` adds header fields to the response when no Stub
+matches, such as CORS headers. Without them, a browser client that calls
+the Mock from another origin gets a CORS error instead of the 404, and
+cannot read the body or the Near miss. Before many cross-origin requests,
+such as one with a JSON body, a browser also sends a preflight `OPTIONS`
+request, and stops unless it gets a 2xx status. A Stub answers those:
+
+```yaml
+mocks:
+  - name: users
+    noMatch:
+      status: 404
+      headers:
+        Access-Control-Allow-Origin: "*"
+        Access-Control-Expose-Headers: Smock-Near-Miss, Smock-Mock
+stubs:
+  - id: preflight
+    mock: users
+    request:
+      method: OPTIONS
+      headers: { Access-Control-Request-Method: { pattern: ".+" } }
+    response:
+      status: 204
+      headers:
+        Access-Control-Allow-Origin: "*"
+        Access-Control-Allow-Methods: GET, POST, PUT, DELETE
+        Access-Control-Allow-Headers: Content-Type, Authorization
+```
+
+Preflight requests then match, so they are not among the unmatched
+requests. A request with another method fails two of this Stub's
+conditions, `method` and the header, so a Stub that fails only one is the
+Near miss instead. With only a `method`, this Stub would be the Near miss
+of most unmatched requests. Declare it after the Mock's other Stubs
+([Which Stub answers](#which-stub-answers)), so that it also loses a tie.
+
+`noMatch.headers` follows the rules of a Stub's `headers`
+([Responses](#responses)), and cannot give `Content-Type` or
+`Smock-Near-Miss` either, as smock sets them on this response. smock sends
+the headers as written, never as templates, after `Content-Type` and
+before `Smock-Near-Miss` and `Smock-Mock`. A request for a Host that no
+Mock answers gets none of them.
+
 ### Turning the Journal off for a Mock
 
 smock records every request a Mock answers in the Journal, unless the Mock
