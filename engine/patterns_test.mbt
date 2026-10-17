@@ -470,7 +470,7 @@ test "an object whose only member is a pattern, in a json condition, matches a s
 }
 
 ///|
-test "a pattern in a json condition matches a number or a boolean by its JSON text, a number as written in its shortest form, and never null, an object or an array" {
+test "a pattern in a json condition matches a number or a boolean by its JSON text, a number in its shortest form, an integer with all its digits, and never null, an object, an array or a string without a UTF-8 form" {
   let h = stubs([
     (
       #|{ "id": "dated", "mock": "m",
@@ -494,7 +494,12 @@ test "a pattern in a json condition matches a number or a boolean by its JSON te
     ),
     (
       #|{ "id": "big", "mock": "m",
-      #|  "request": { "body": { "json": { "big": { "pattern": "[0-9]{20}" } } } },
+      #|  "request": { "body": { "json": { "big": { "pattern": "[0-9]{16}|[0-9]{20}" } } } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "zero", "mock": "m",
+      #|  "request": { "body": { "json": { "zero": { "pattern": "0" } } } },
       #|  "response": { "status": 200 } }
     ),
   ])
@@ -518,7 +523,12 @@ test "a pattern in a json condition matches a number or a boolean by its JSON te
       ("POST", "/", [], "{\"any\":null}"),
       ("POST", "/", [], "{\"any\":{}}"),
       ("POST", "/", [], "{\"any\":[]}"),
+      ("POST", "/", [], "{\"any\":\"\\ud800\"}"),
       ("POST", "/", [], "{\"big\":12345678901234567890}"),
+      ("POST", "/", [], "{\"big\":9007199254740991}"),
+      ("POST", "/", [], "{\"big\":1000000000000000}"),
+      ("POST", "/", [], "{\"zero\":-0}"),
+      ("POST", "/", [], "{\"zero\":0.0}"),
       ("POST", "/", [], "{\"other\":\"x\"}"),
       ("POST", "/", [], "\"x\""),
     ]),
@@ -541,7 +551,12 @@ test "a pattern in a json condition matches a number or a boolean by its JSON te
       #|POST / "{\"any\":null}" -> none
       #|POST / "{\"any\":{}}" -> none
       #|POST / "{\"any\":[]}" -> none
+      #|POST / "{\"any\":\"\\ud800\"}" -> none
       #|POST / "{\"big\":12345678901234567890}" -> big
+      #|POST / "{\"big\":9007199254740991}" -> big
+      #|POST / "{\"big\":1000000000000000}" -> big
+      #|POST / "{\"zero\":-0}" -> zero
+      #|POST / "{\"zero\":0.0}" -> zero
       #|POST / "{\"other\":\"x\"}" -> none
       #|POST / "\"x\"" -> none
     ),
@@ -629,6 +644,31 @@ test "an object with members besides pattern, or whose pattern is not a string, 
       #|POST / "{\"a\":\"x\"}" -> none
       #|POST / "{\"b\":{\"pattern\":1}}" -> number
       #|POST / "{\"b\":\"1\"}" -> none
+    ),
+  )
+}
+
+///|
+test "a pattern object nested under a pattern member matches a literal pattern object in the body" {
+  let h = stubs([
+    (
+      #|{ "id": "literal", "mock": "m",
+      #|  "request": { "body": { "json": { "rule": { "pattern": { "pattern": "a\\.b" } } } } },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  inspect(
+    winners(h, [
+      ("POST", "/", [], "{\"rule\":{\"pattern\":\"a.b\"}}"),
+      ("POST", "/", [], "{\"rule\":{\"flags\":\"i\", \"pattern\" : \"a.b\"}}"),
+      ("POST", "/", [], "{\"rule\":{\"pattern\":\"aXb\"}}"),
+      ("POST", "/", [], "{\"rule\":\"a.b\"}"),
+    ]),
+    content=(
+      #|POST / "{\"rule\":{\"pattern\":\"a.b\"}}" -> literal
+      #|POST / "{\"rule\":{\"flags\":\"i\", \"pattern\" : \"a.b\"}}" -> literal
+      #|POST / "{\"rule\":{\"pattern\":\"aXb\"}}" -> none
+      #|POST / "{\"rule\":\"a.b\"}" -> none
     ),
   )
 }

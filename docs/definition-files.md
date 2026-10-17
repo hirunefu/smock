@@ -118,18 +118,30 @@ A body that does not parse as JSON never meets a `json` condition.
 A pattern in a `json` condition, such as
 `"email": { "pattern": ".*@example\\.com" }`, holds when the value in its
 place is a string that the pattern matches as a whole, or a number, `true`
-or `false` whose JSON text it matches as a whole. A number's text is its
-shortest form, as smock writes JSON: `1.50` is matched as `1.5` and `1e3` as
-`1000`; an integer too large for a 64-bit float keeps its digits. So
+or `false` whose JSON text it matches as a whole. So
 `{ "pattern": "[0-9]{8}" }` meets both `20261017` and `"20261017"`. `null`,
 objects and arrays never meet a pattern, and a missing key fails as it does
 for any other value. Patterns follow the rules of
 [pattern conditions](#pattern-conditions).
 
-So a `json` condition cannot match the object `{"pattern": "…"}` itself.
-To match a body that holds one, give a pattern on the whole body instead,
-such as `{ "pattern": "(?s).*\"pattern\": *\"x\".*" }`. It is matched as
-text, so it depends on how the client writes the JSON.
+A number's text is its shortest form, as smock writes JSON: `1.50` is
+matched as `1.5`, `1e3` as `1000` and `-0` as `0`. An integer keeps all its
+digits, however many it has, and a number beyond a 64-bit float's range,
+such as `1e400`, is matched as written. A string with a lone surrogate, such
+as `"\ud800"`, has no UTF-8 form, so it never meets a pattern.
+
+A pattern can also be the whole `json` value, as in
+`{ "json": { "pattern": "[0-9]+" } }`. It is matched against the body
+parsed as JSON, so it meets the bodies `42` and `"42"`. A pattern on the
+body itself, `{ "pattern": "[0-9]+" }`, matches the body as text, so it
+meets `42` but not `"42"`.
+
+To match an object such as `{"pattern": "a.b"}` itself, nest a pattern in
+it: `{ "pattern": { "pattern": "a\\.b" } }`. The outer `pattern` holds an
+object, not a string, so it is literal JSON, and only the inner object is a
+pattern. Unlike an exact value, the inner pattern also meets a number,
+`true` or `false` whose text it matches, such as `1` for
+`{ "pattern": "1" }`.
 
 ```json
 {
