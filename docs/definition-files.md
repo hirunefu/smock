@@ -90,7 +90,7 @@ Stub without `request` matches every request of its Mock.
 | `path` | its path, percent-decoded and without the query, is exactly this. `/users/a%20b` meets `"/users/a b"`. `{ "pattern": … }`: the pattern matches the whole path. |
 | `query` | each listed parameter is present, and one of its values, decoded, is exactly the given value, or matches the given `{ "pattern": … }` as a whole. Parameters that are not listed are ignored. |
 | `headers` | each listed header is present, its name compared case-insensitively, and one of its values is exactly the given value, or matches the given `{ "pattern": … }` as a whole. Headers that are not listed are ignored. |
-| `body` | a string: the body is exactly this text in UTF-8. `{ "pattern": … }`: the pattern matches the whole body. `{ "json": … }`: the body parses as JSON and contains the given value. |
+| `body` | a string: the body is exactly this text in UTF-8. `{ "pattern": … }`: the pattern matches the whole body. `{ "json": … }`: the body parses as JSON and contains the given value, which may hold patterns. |
 
 Query parameters are decoded as HTML forms encode them: `%20` and `+` both
 stand for a space, so `?q=a+b` meets `"query": { "q": "a b" }`. A parameter
@@ -102,8 +102,10 @@ does not match; a pattern such as `{ "pattern": "(.*, )?a(, .*)?" }` does.
 
 A `json` condition is a subset match:
 
-- an object needs each listed key, with a value that matches in turn, and
-  may have other keys;
+- an object whose only member is `pattern`, with a string, is a pattern:
+  see below;
+- any other object needs each listed key, with a value that matches in
+  turn, and may have other keys;
 - an array needs the same length, matched element by element;
 - any other value must be equal: strings exactly, numbers by their value
   (`1` and `1.0` are equal), and `true`, `false` and `null` themselves.
@@ -112,6 +114,34 @@ A `json` condition is a subset match:
   fraction or an exponent is compared as closely as a 64-bit float holds it.
 
 A body that does not parse as JSON never meets a `json` condition.
+
+A pattern in a `json` condition, such as
+`"email": { "pattern": ".*@example\\.com" }`, holds when the value in its
+place is a string that the pattern matches as a whole, or a number, `true`
+or `false` whose JSON text it matches as a whole. So
+`{ "pattern": "[0-9]{8}" }` meets both `20261017` and `"20261017"`. `null`,
+objects and arrays never meet a pattern, and a missing key fails as it does
+for any other value. Patterns follow the rules of
+[pattern conditions](#pattern-conditions).
+
+A number's text is its shortest form, as smock writes JSON: `1.50` is
+matched as `1.5`, `1e3` as `1000` and `-0` as `0`. An integer keeps all its
+digits, however many it has, and a number beyond a 64-bit float's range,
+such as `1e400`, is matched as written. A string with a lone surrogate, such
+as `"\ud800"`, has no UTF-8 form, so it never meets a pattern.
+
+A pattern can also be the whole `json` value, as in
+`{ "json": { "pattern": "[0-9]+" } }`. It is matched against the body
+parsed as JSON, so it meets the bodies `42` and `"42"`. A pattern on the
+body itself, `{ "pattern": "[0-9]+" }`, matches the body as text, so it
+meets `42` but not `"42"`.
+
+To match an object such as `{"pattern": "a.b"}` itself, nest a pattern in
+it: `{ "pattern": { "pattern": "a\\.b" } }`. The outer `pattern` holds an
+object, not a string, so it is literal JSON, and only the inner object is a
+pattern. Unlike an exact value, the inner pattern also meets a number,
+`true` or `false` whose text it matches, such as `1` for
+`{ "pattern": "1" }`.
 
 ```json
 {
@@ -122,7 +152,13 @@ A body that does not parse as JSON never meets a `json` condition.
     "path": "/users",
     "query": { "dryRun": "true" },
     "headers": { "Content-Type": "application/json" },
-    "body": { "json": { "name": "Alice", "roles": ["admin"] } }
+    "body": {
+      "json": {
+        "name": "Alice",
+        "email": { "pattern": ".*@example\\.com" },
+        "roles": ["admin"]
+      }
+    }
   },
   "response": { "status": 201 }
 }
@@ -130,8 +166,9 @@ A body that does not parse as JSON never meets a `json` condition.
 
 ### Pattern conditions
 
-The path, a query parameter, a header and the body can each be given as a
-pattern instead of an exact value, in RE2 syntax:
+The path, a query parameter, a header, the body and a value inside a
+`json` condition can each be given as a pattern instead of an exact value,
+in RE2 syntax:
 
 ```json
 {
@@ -153,7 +190,9 @@ pattern instead of an exact value, in RE2 syntax:
 - It is matched against the same value as an exact condition: the
   percent-decoded path without the query, the decoded values of a query
   parameter, the values of a header, and the body. When a parameter or a
-  header is repeated, any one of its values may match.
+  header is repeated, any one of its values may match. In a `json`
+  condition, it is matched against the value in its place, as described
+  above.
 - The body is matched as text in UTF-8. `.` does not match a line break
   unless the pattern turns on the `s` flag, as in `(?s)BEGIN.*END`. A body
   that is not valid UTF-8 never meets a pattern, not even `(?s).*`.
@@ -178,6 +217,7 @@ pattern, counted in characters from 0:
 ```console
 users.json: /stubs/0/request/path/pattern: is not a valid pattern: position 7: missing closing )
 users.json: /stubs/1/request/headers/X-Region/pattern: is not a valid pattern: position 0: Unicode class \p{Greek} is not supported in R1
+users.json: /stubs/2/request/body/json/email/pattern: is not a valid pattern: position 0: missing closing )
 ```
 
 ### Which Stub answers

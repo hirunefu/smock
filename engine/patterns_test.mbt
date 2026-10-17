@@ -1,5 +1,6 @@
 // Seam 1 tests of pattern conditions: RE2 patterns that must match the
-// whole path, query parameter value, header value or body.
+// whole path, query parameter value, header value or body, or a value in
+// its place in a `json` condition.
 
 ///|
 test "a path pattern must match the whole percent-decoded path, without the query" {
@@ -435,6 +436,239 @@ test "a body that is not valid UTF-8 never matches a body pattern as a whole, ev
     ],
     content=(
       #|[Some("anything"), Some("anything"), None, None, None, None, None]
+    ),
+  )
+}
+
+///|
+test "an object whose only member is a pattern, in a json condition, matches a string at its place that the pattern matches as a whole" {
+  let h = stubs([
+    (
+      #|{ "id": "create-user", "mock": "m",
+      #|  "request": { "body": { "json": { "email": { "pattern": ".*@example\\.com" } } } },
+      #|  "response": { "status": 201 } }
+    ),
+  ])
+  inspect(
+    winners(h, [
+      ("POST", "/", [], "{\"email\":\"a@example.com\"}"),
+      ("POST", "/", [], "{\"name\":\"Zoë\",\"email\":\"zoë@example.com\"}"),
+      ("POST", "/", [], "{\"email\":\"a@example.com.evil\"}"),
+      ("POST", "/", [], "{\"email\":\"a@exampleXcom\"}"),
+      ("POST", "/", [], "{\"name\":\"a@example.com\"}"),
+      ("POST", "/", [], "{\"email\":{\"pattern\":\".*@example\\\\.com\"}}"),
+    ]),
+    content=(
+      #|POST / "{\"email\":\"a@example.com\"}" -> create-user
+      #|POST / "{\"name\":\"Zoë\",\"email\":\"zoë@example.com\"}" -> create-user
+      #|POST / "{\"email\":\"a@example.com.evil\"}" -> none
+      #|POST / "{\"email\":\"a@exampleXcom\"}" -> none
+      #|POST / "{\"name\":\"a@example.com\"}" -> none
+      #|POST / "{\"email\":{\"pattern\":\".*@example\\\\.com\"}}" -> none
+    ),
+  )
+}
+
+///|
+test "a pattern in a json condition matches a number or a boolean by its JSON text, a number in its shortest form, an integer with all its digits, and never null, an object, an array or a string without a UTF-8 form" {
+  let h = stubs([
+    (
+      #|{ "id": "dated", "mock": "m",
+      #|  "request": { "body": { "json": { "date": { "pattern": "[0-9]{8}" } } } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "flag", "mock": "m",
+      #|  "request": { "body": { "json": { "flag": { "pattern": "true|null" } } } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "price", "mock": "m",
+      #|  "request": { "body": { "json": { "price": { "pattern": "[0-9]+\\.[0-9]" } } } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "anything", "mock": "m",
+      #|  "request": { "body": { "json": { "any": { "pattern": "(?s).*" } } } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "big", "mock": "m",
+      #|  "request": { "body": { "json": { "big": { "pattern": "[0-9]{16}|[0-9]{20}" } } } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "zero", "mock": "m",
+      #|  "request": { "body": { "json": { "zero": { "pattern": "0" } } } },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  inspect(
+    winners(h, [
+      ("POST", "/", [], "{\"date\":12345678}"),
+      ("POST", "/", [], "{\"date\":\"12345678\"}"),
+      ("POST", "/", [], "{\"date\":1234567}"),
+      ("POST", "/", [], "{\"date\":12345678.0}"),
+      ("POST", "/", [], "{\"date\":1.2345678e7}"),
+      ("POST", "/", [], "{\"date\":-1234567}"),
+      ("POST", "/", [], "{\"flag\":true}"),
+      ("POST", "/", [], "{\"flag\":\"true\"}"),
+      ("POST", "/", [], "{\"flag\":false}"),
+      ("POST", "/", [], "{\"flag\":null}"),
+      ("POST", "/", [], "{\"price\":9.90}"),
+      ("POST", "/", [], "{\"price\":9.0}"),
+      ("POST", "/", [], "{\"any\":\"\"}"),
+      ("POST", "/", [], "{\"any\":0}"),
+      ("POST", "/", [], "{\"any\":false}"),
+      ("POST", "/", [], "{\"any\":null}"),
+      ("POST", "/", [], "{\"any\":{}}"),
+      ("POST", "/", [], "{\"any\":[]}"),
+      ("POST", "/", [], "{\"any\":\"\\ud800\"}"),
+      ("POST", "/", [], "{\"big\":12345678901234567890}"),
+      ("POST", "/", [], "{\"big\":9007199254740991}"),
+      ("POST", "/", [], "{\"big\":1000000000000000}"),
+      ("POST", "/", [], "{\"zero\":-0}"),
+      ("POST", "/", [], "{\"zero\":0.0}"),
+      ("POST", "/", [], "{\"other\":\"x\"}"),
+      ("POST", "/", [], "\"x\""),
+    ]),
+    content=(
+      #|POST / "{\"date\":12345678}" -> dated
+      #|POST / "{\"date\":\"12345678\"}" -> dated
+      #|POST / "{\"date\":1234567}" -> none
+      #|POST / "{\"date\":12345678.0}" -> dated
+      #|POST / "{\"date\":1.2345678e7}" -> dated
+      #|POST / "{\"date\":-1234567}" -> none
+      #|POST / "{\"flag\":true}" -> flag
+      #|POST / "{\"flag\":\"true\"}" -> flag
+      #|POST / "{\"flag\":false}" -> none
+      #|POST / "{\"flag\":null}" -> none
+      #|POST / "{\"price\":9.90}" -> price
+      #|POST / "{\"price\":9.0}" -> none
+      #|POST / "{\"any\":\"\"}" -> anything
+      #|POST / "{\"any\":0}" -> anything
+      #|POST / "{\"any\":false}" -> anything
+      #|POST / "{\"any\":null}" -> none
+      #|POST / "{\"any\":{}}" -> none
+      #|POST / "{\"any\":[]}" -> none
+      #|POST / "{\"any\":\"\\ud800\"}" -> none
+      #|POST / "{\"big\":12345678901234567890}" -> big
+      #|POST / "{\"big\":9007199254740991}" -> big
+      #|POST / "{\"big\":1000000000000000}" -> big
+      #|POST / "{\"zero\":-0}" -> zero
+      #|POST / "{\"zero\":0.0}" -> zero
+      #|POST / "{\"other\":\"x\"}" -> none
+      #|POST / "\"x\"" -> none
+    ),
+  )
+}
+
+///|
+test "a pattern object can stand for an array element, at any depth, and arrays still need the same length" {
+  let h = stubs([
+    (
+      #|{ "id": "tags", "mock": "m",
+      #|  "request": { "body": { "json": {
+      #|    "tags": [{ "pattern": "[a-z]+" }, "b"],
+      #|    "users": [{ "id": { "pattern": "u[0-9]+" } }] } } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "root", "mock": "m",
+      #|  "request": { "method": "PUT", "body": { "json": { "pattern": "[0-9]+" } } },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  inspect(
+    winners(h, [
+      (
+        "POST",
+        "/",
+        [],
+        "{\"tags\":[\"a\",\"b\"],\"users\":[{\"id\":\"u1\",\"x\":1}]}",
+      ),
+      ("POST", "/", [], "{\"tags\":[\"A\",\"b\"],\"users\":[{\"id\":\"u1\"}]}"),
+      (
+        "POST",
+        "/",
+        [],
+        "{\"tags\":[\"a\",\"b\",\"c\"],\"users\":[{\"id\":\"u1\"}]}",
+      ),
+      ("POST", "/", [], "{\"tags\":[\"a\"],\"users\":[{\"id\":\"u1\"}]}"),
+      (
+        "POST",
+        "/",
+        [],
+        "{\"tags\":[\"a\",\"b\"],\"users\":[{\"id\":\"u1\"},{\"id\":\"u2\"}]}",
+      ),
+      ("PUT", "/", [], "42"),
+      ("PUT", "/", [], "\"42\""),
+      ("PUT", "/", [], "{\"pattern\":\"[0-9]+\"}"),
+    ]),
+    content=(
+      #|POST / "{\"tags\":[\"a\",\"b\"],\"users\":[{\"id\":\"u1\",\"x\":1}]}" -> tags
+      #|POST / "{\"tags\":[\"A\",\"b\"],\"users\":[{\"id\":\"u1\"}]}" -> none
+      #|POST / "{\"tags\":[\"a\",\"b\",\"c\"],\"users\":[{\"id\":\"u1\"}]}" -> none
+      #|POST / "{\"tags\":[\"a\"],\"users\":[{\"id\":\"u1\"}]}" -> none
+      #|POST / "{\"tags\":[\"a\",\"b\"],\"users\":[{\"id\":\"u1\"},{\"id\":\"u2\"}]}" -> none
+      #|PUT / "42" -> root
+      #|PUT / "\"42\"" -> root
+      #|PUT / "{\"pattern\":\"[0-9]+\"}" -> none
+    ),
+  )
+}
+
+///|
+test "an object with members besides pattern, or whose pattern is not a string, is literal JSON in a json condition" {
+  let h = stubs([
+    (
+      #|{ "id": "two-members", "mock": "m",
+      #|  "request": { "body": { "json": { "a": { "pattern": "x", "flags": "i" } } } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "number", "mock": "m",
+      #|  "request": { "body": { "json": { "b": { "pattern": 1 } } } },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  inspect(
+    winners(h, [
+      ("POST", "/", [], "{\"a\":{\"pattern\":\"x\",\"flags\":\"i\"}}"),
+      ("POST", "/", [], "{\"a\":\"x\"}"),
+      ("POST", "/", [], "{\"b\":{\"pattern\":1}}"),
+      ("POST", "/", [], "{\"b\":\"1\"}"),
+    ]),
+    content=(
+      #|POST / "{\"a\":{\"pattern\":\"x\",\"flags\":\"i\"}}" -> two-members
+      #|POST / "{\"a\":\"x\"}" -> none
+      #|POST / "{\"b\":{\"pattern\":1}}" -> number
+      #|POST / "{\"b\":\"1\"}" -> none
+    ),
+  )
+}
+
+///|
+test "a pattern object nested under a pattern member matches a literal pattern object in the body" {
+  let h = stubs([
+    (
+      #|{ "id": "literal", "mock": "m",
+      #|  "request": { "body": { "json": { "rule": { "pattern": { "pattern": "a\\.b" } } } } },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  inspect(
+    winners(h, [
+      ("POST", "/", [], "{\"rule\":{\"pattern\":\"a.b\"}}"),
+      ("POST", "/", [], "{\"rule\":{\"flags\":\"i\", \"pattern\" : \"a.b\"}}"),
+      ("POST", "/", [], "{\"rule\":{\"pattern\":\"aXb\"}}"),
+      ("POST", "/", [], "{\"rule\":\"a.b\"}"),
+    ]),
+    content=(
+      #|POST / "{\"rule\":{\"pattern\":\"a.b\"}}" -> literal
+      #|POST / "{\"rule\":{\"flags\":\"i\", \"pattern\" : \"a.b\"}}" -> literal
+      #|POST / "{\"rule\":{\"pattern\":\"aXb\"}}" -> none
+      #|POST / "{\"rule\":\"a.b\"}" -> none
     ),
   )
 }

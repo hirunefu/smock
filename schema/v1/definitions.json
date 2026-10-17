@@ -166,7 +166,7 @@
       "type": "object",
       "properties": {
         "json": {
-          "description": "The JSON value the body must contain. An object needs each listed key, matched recursively, and may have others. An array needs the same length and is matched element by element. Any other value must be equal."
+          "description": "The JSON value the body must contain. An object whose only member is `pattern`, with a string, is a pattern on the value in its place. It matches a string, or the JSON text of a number, `true` or `false`, as a whole; a number's text is its shortest form, so `1.50` is matched as `1.5`. It never matches `null`, an object or an array. Any other object needs each listed key, matched recursively, and may have others. An array needs the same length and is matched element by element. Any other value must be equal. To match an object such as `{\"pattern\": \"a.b\"}` itself, nest a pattern in it: `{\"pattern\": {\"pattern\": \"a\\\\.b\"}}`."
         }
       },
       "required": ["json"],

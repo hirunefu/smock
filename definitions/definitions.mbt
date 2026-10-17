@@ -272,8 +272,10 @@ pub enum BodyCondition {
 
 ///|
 /// A `json` condition on the request body: a JSON value the body must
-/// contain. The value is the condition's own copy, which nothing outside
-/// can change, so the snapshot stays as it was loaded.
+/// contain, in which an object whose only member is `pattern`, with a
+/// string, is a pattern. `File::read_json_condition` reads one. The value
+/// is the condition's own copy, which nothing outside can change, so the
+/// snapshot stays as it was loaded.
 pub struct JsonCondition {
   priv value : Json
   /// The value, read into arrays, so that matching it walks no map.
@@ -283,42 +285,23 @@ pub struct JsonCondition {
 ///|
 /// A JSON value as a condition expects it: an object as its keys and the
 /// values expected under them, in order; an array as the values expected
-/// in it; any other value as itself.
+/// in it; a pattern object as its pattern; any other value as itself.
 priv enum Expected {
   Object(FixedArray[String], FixedArray[Expected])
   Array(FixedArray[Expected])
+  /// A pattern object: an object whose only member is `pattern`, with a
+  /// string.
+  Pattern(Pattern)
   Scalar(Json)
 }
 
 ///|
-/// A condition on `value`, which it copies.
-fn JsonCondition::new(value : Json) -> JsonCondition {
-  { value: deep_copy(value), expected: expected_of(value), }
-}
-
-///|
-/// `value` as a condition expects it.
-fn expected_of(value : Json) -> Expected {
-  match value {
-    Object(members) => {
-      let keys = []
-      let values = []
-      for key, item in members {
-        keys.push(key)
-        values.push(expected_of(item))
-      }
-      Object(FixedArray::from_array(keys), FixedArray::from_array(values))
-    }
-    Array(items) => Array(FixedArray::from_array(items.map(expected_of)))
-    _ => Scalar(value)
-  }
-}
-
-///|
-/// Whether `actual` contains the condition's value: an object has each
-/// listed key, with a value that contains the listed one; an array has the
-/// same length, and each element contains the listed one; any other value
-/// is equal, numbers by their value (see `same_number`).
+/// Whether `actual` contains the condition's value: a pattern object's
+/// pattern matches the whole of a string, or of a number's or a boolean's
+/// JSON text; any other object has each listed key, with a value that
+/// contains the listed one; an array has the same length, and each element
+/// contains the listed one; any other value is equal, numbers by their
+/// value (see `same_number`).
 pub fn JsonCondition::matches(self : JsonCondition, actual : Json) -> Bool {
   contains(actual, self.expected)
 }
@@ -350,6 +333,13 @@ fn contains(actual : Json, expected : Expected) -> Bool {
       Number(actual, repr=actual_text),
     ) => same_number(expected, expected_text, actual, actual_text)
     (Scalar(String(expected)), String(actual)) => expected == actual
+    (Pattern(pattern), String(actual)) => pattern.matches(@utf8.encode(actual))
+    // A number as `stringify` writes it: in its shortest form, or as
+    // written when a Double cannot hold it.
+    (Pattern(pattern), Number(_)) =>
+      pattern.matches(@utf8.encode(actual.stringify()))
+    (Pattern(pattern), True) => pattern.matches(b"true")
+    (Pattern(pattern), False) => pattern.matches(b"false")
     (Scalar(True), True) | (Scalar(False), False) | (Scalar(Null), Null) => true
     _ => false
   }
@@ -483,7 +473,9 @@ pub impl ToJson for JsonCondition with fn to_json(self) {
 
 ///|
 /// Conditions are equal when their values are, with numbers compared as
-/// matching compares them.
+/// matching compares them. Patterns are compared as written: whether an
+/// object is a pattern object depends only on its members, so equal values
+/// hold the same patterns in the same places.
 pub impl Eq for JsonCondition with fn equal(self, other) {
   same_value(self.value, other.value)
 }

@@ -446,6 +446,36 @@ test "a sample request's path and query values are compared as given: percent-de
 }
 
 ///|
+test "a json condition with patterns renders like any body condition: met by a sample whose values match, failed as body otherwise" {
+  let h = harness([
+    (
+      "m.json",
+      (
+        #|{ "mocks": [{ "name": "m" }],
+        #|  "stubs": [{ "id": "create-user", "mock": "m",
+        #|    "request": { "body": { "json": {
+        #|      "email": { "pattern": ".*@example\\.com" }, "age": { "pattern": "[0-9]+" } } } },
+        #|    "response": { "status": 201 } }] }
+      ),
+    ),
+  ])
+  inspect(
+    h.failed("create-user", {
+      "body": "{\"email\": \"zoë@example.com\", \"age\": 30}",
+    }),
+    content="",
+  )
+  inspect(
+    h.failed("create-user", {
+      "body": "{\"email\": \"zoë@example.com\", \"age\": 30.5}",
+    }),
+    content=(
+      #|body: expected {"json":{"email":{"pattern":".*@example\\.com"},"age":{"pattern":"[0-9]+"}}}, actual ["{\"email\": \"zoë@example.com\", \"age\": 30.5}"]
+    ),
+  )
+}
+
+///|
 test "a Stub that streams Server-Sent Events renders its events, with the Content-Type smock sends, and no body" {
   let h = harness([
     (
