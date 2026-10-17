@@ -155,11 +155,12 @@ test "a YAML file is validated like the equivalent JSON file" {
     #|    request: { method: 5 }
     #|    response:
     #|      status: 99
-    #|      headers: { a/b: "1", Connection: close }
+    #|      headers: { a/b: "1", Connection: close, X-A: "1", x-a: "2" }
   let json =
     #|{ "mocks": [{ "name": "" }, 3],
     #|  "stubs": [{ "id": 1, "mock": "users", "request": { "method": 5 },
-    #|    "response": { "status": 99, "headers": { "a/b": "1", "Connection": "close" } } }] }
+    #|    "response": { "status": 99,
+    #|      "headers": { "a/b": "1", "Connection": "close", "X-A": "1", "x-a": "2" } } }] }
   let expected =
     #|users.EXT: /mocks/0/name: must be a non-empty string
     #|users.EXT: /mocks/1: must be an object
@@ -168,6 +169,7 @@ test "a YAML file is validated like the equivalent JSON file" {
     #|users.EXT: /stubs/0/response/status: must be an integer from 200 to 599
     #|users.EXT: /stubs/0/response/headers/a~1b: is not a valid header name
     #|users.EXT: /stubs/0/response/headers/Connection: is set by smock and cannot be given
+    #|users.EXT: /stubs/0/response/headers/x-a: the header name "X-A" is already given: header names are case-insensitive
     #|users.EXT: /stubs/0/mock: no file declares the Mock "users"
   assert_eq(@yaml.parse(yaml), @json.parse(json))
   inspect(
@@ -594,6 +596,84 @@ test "two Stubs with the same ID anywhere in the definition set are rejected at 
       #|c.json: /stubs/0/id: the Stub ID "list" is already used at b.json: /stubs/1/id
       #|c.json: /stubs/1/id: the Stub ID "get-user" is already used at b.json: /stubs/0/id
       #|d.json: /stubs/0/id: the Stub ID "get-user" is already used at b.json: /stubs/0/id
+    ),
+  )
+}
+
+///|
+test "two names in a response's headers that differ only in case are rejected at the later one, naming the earlier one" {
+  inspect(
+    problems([
+      (
+        "users.json",
+        (
+          #|{ "mocks": [{ "name": "users" }],
+          #|  "stubs": [
+          #|    { "id": "a", "mock": "users",
+          #|      "response": { "status": 200, "headers": { "Set-Cookie": "a=1", "set-cookie": "b=2" } } },
+          #|    { "id": "b", "mock": "users",
+          #|      "response": { "status": 200, "headers": { "X-A": "1", "X-B": "2", "x-a": "3", "X-a": "4" } } },
+          #|    { "id": "c", "mock": "users",
+          #|      "response": { "status": 200, "headers": { "set-cookie": "c=3", "X-B": "5" } } } ] }
+        ),
+      ),
+    ]),
+    content=(
+      #|users.json: /stubs/0/response/headers/set-cookie: the header name "Set-Cookie" is already given: header names are case-insensitive
+      #|users.json: /stubs/1/response/headers/x-a: the header name "X-A" is already given: header names are case-insensitive
+      #|users.json: /stubs/1/response/headers/X-a: the header name "X-A" is already given: header names are case-insensitive
+    ),
+  )
+}
+
+///|
+test "a header name that smock sets, or that is not valid, gets that problem alone each time it is given, in any case" {
+  inspect(
+    problems([
+      (
+        "users.json",
+        (
+          #|{ "mocks": [{ "name": "users" }],
+          #|  "stubs": [{ "id": "a", "mock": "users",
+          #|    "response": { "status": 200,
+          #|      "headers": { "Content-Length": "1", "content-length": "2", "X Y": "3", "x y": "4" } } }] }
+        ),
+      ),
+    ]),
+    content=(
+      #|users.json: /stubs/0/response/headers/Content-Length: is set by smock and cannot be given
+      #|users.json: /stubs/0/response/headers/content-length: is set by smock and cannot be given
+      #|users.json: /stubs/0/response/headers/X Y: is not a valid header name
+      #|users.json: /stubs/0/response/headers/x y: is not a valid header name
+    ),
+  )
+}
+
+///|
+test "a header name repeated exactly is a duplicate key, in JSON and in YAML, and the rest of the file is not read" {
+  inspect(
+    problems([
+      (
+        "a.json",
+        (
+          #|{ "mocks": [{ "name": "users" }],
+          #|  "stubs": [{ "id": "a", "mock": "users",
+          #|    "response": { "status": 200, "headers": { "X-A": "1", "X-A": "2", "x-a": "3" } } }] }
+        ),
+      ),
+      (
+        "b.yaml",
+        (
+          #|stubs:
+          #|  - id: b
+          #|    mock: users
+          #|    response: { status: 200, headers: { X-A: "1", X-A: "2", x-a: "3" } }
+        ),
+      ),
+    ]),
+    content=(
+      #|a.json: /stubs/0/response/headers/X-A: duplicate key
+      #|b.yaml: /stubs/0/response/headers/X-A: duplicate key
     ),
   )
 }

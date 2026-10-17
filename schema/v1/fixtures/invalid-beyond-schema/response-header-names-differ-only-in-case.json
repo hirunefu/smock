@@ -1,0 +1,15 @@
+{
+  "mocks": [{ "name": "users" }],
+  "stubs": [
+    {
+      "id": "login",
+      "mock": "users",
+      "request": { "method": "POST", "path": "/login" },
+      "response": {
+        "status": 200,
+        "headers": { "Set-Cookie": "a=1", "set-cookie": "b=2" },
+        "body": "ok"
+      }
+    }
+  ]
+}
