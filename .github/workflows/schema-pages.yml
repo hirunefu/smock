@@ -5,6 +5,9 @@
 #
 # One-time maintainer step: in the repository settings, under Pages, set
 # Source to "GitHub Actions". Until then the deploy step fails.
+#
+# While the repository is private it is skipped: GitHub Pages is not
+# available to a private repository on the Free plan.
 name: Publish the JSON Schema
 
 on:
@@ -26,8 +29,12 @@ concurrency:
 jobs:
   deploy:
     name: Deploy to GitHub Pages
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-24.04
+    # A job's permissions replace the workflow's, so contents: read is
+    # repeated here for the checkout.
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
