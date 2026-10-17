@@ -219,7 +219,8 @@ enum Conn {
 /// close-on-exec. epoll reports events by descriptor number only, so a new
 /// socket or pipe that gets the same number wakes on the old one's events,
 /// such as the FIN of a connection smock has closed. The library fixes this
-/// on its main branch (moonbitlang/async#663), in no release yet.
+/// on its main branch (moonbitlang/async#663), in no release yet; #43
+/// removes this once a release has it.
 ///
 /// Each repeated read waits for the descriptor's own data, end of stream or
 /// reset, so nothing smock does is hidden. `read` must keep what it has read
@@ -565,6 +566,23 @@ async fn collect_output_merged(
   @async.with_task_group(group => {
     let status = group.spawn(() => {
       @process.run(command, args, stdout=output_end, stderr=output_end)
+    })
+    let output = read_output(output)
+    (status.wait(), output)
+  })
+}
+
+///|
+/// Like `collect_output`, with stderr left to the test process's own, as
+/// `@process.collect_stdout` does.
+async fn collect_stdout(
+  command : String,
+  args : Array[String],
+) -> (Int, &@io.Data) {
+  let (output, output_end) = @process.read_from_process()
+  @async.with_task_group(group => {
+    let status = group.spawn(() => {
+      @process.run(command, args, stdout=output_end)
     })
     let output = read_output(output)
     (status.wait(), output)

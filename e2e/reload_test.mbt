@@ -687,7 +687,7 @@ async test "a Definition file whose modification time is ahead of the clock is w
         "\{dir}/users.json",
       ])
       guard status == 0 else { fail("touch exited with \{status}") }
-      let (_, date, _) = collect_output("date", [
+      let (_, date) = collect_stdout("date", [
         "-u",
         "-d",
         "@\{ahead}",

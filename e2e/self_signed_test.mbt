@@ -488,7 +488,7 @@ async test "the generated certificate and its key stay in memory: smock serves H
 async fn not_after(file : String) -> String {
   let (_, text) = run_openssl(["x509", "-in", file, "-noout", "-enddate"])
   let date = line_after(text, "notAfter=")
-  let (status, out, _) = collect_output("date", ["-u", "-d", date, "+%s"])
+  let (status, out) = collect_stdout("date", ["-u", "-d", date, "+%s"])
   guard status == 0 else { fail("date cannot read \{date}") }
   out.text().trim().to_owned()
 }

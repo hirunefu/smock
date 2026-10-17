@@ -173,9 +173,7 @@ async test "logs start with the startup entry, then the random seed, the Journal
 /// The output of `command args`, without the whitespace around it, or
 /// `None` when it fails.
 async fn command_output(command : String, args : Array[String]) -> String? {
-  let (status, out, _) = collect_output(command, args) catch {
-    _ => return None
-  }
+  let (status, out) = collect_stdout(command, args) catch { _ => return None }
   guard status == 0 else { return None }
   Some(out.text().trim().to_owned())
 }
