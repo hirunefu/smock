@@ -181,13 +181,13 @@
           "$ref": "#/$defs/status"
         },
         "headers": {
-          "description": "Header fields to send, by name. Names are compared case-insensitively, so two names that differ only in case, such as Set-Cookie and set-cookie, are rejected. smock sets Content-Length, Transfer-Encoding and Connection itself, so they cannot be given.",
+          "description": "Header fields to send, by name. Names are compared case-insensitively, so two names that differ only in case, such as Set-Cookie and set-cookie, are rejected. smock sets Content-Length, Transfer-Encoding and Connection itself, and Smock-Mock when the Default Mock answers, so they cannot be given.",
           "type": "object",
           "propertyNames": {
             "$ref": "#/$defs/headerName",
             "not": {
               "description": "A header field smock sets itself.",
-              "pattern": "^([Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Ll][Ee][Nn][Gg][Tt][Hh]|[Tt][Rr][Aa][Nn][Ss][Ff][Ee][Rr]-[Ee][Nn][Cc][Oo][Dd][Ii][Nn][Gg]|[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn])$"
+              "pattern": "^([Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Ll][Ee][Nn][Gg][Tt][Hh]|[Tt][Rr][Aa][Nn][Ss][Ff][Ee][Rr]-[Ee][Nn][Cc][Oo][Dd][Ii][Nn][Gg]|[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]|[Ss][Mm][Oo][Cc][Kk]-[Mm][Oo][Cc][Kk])$"
             }
           },
           "additionalProperties": {

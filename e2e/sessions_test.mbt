@@ -192,7 +192,7 @@ async test "over the authenticated Admin API, Ephemeral Stubs are added, listed,
 /// A Stub with problems `smock check` reports, without `id` and `mock`.
 let invalid_stub : String =
   #|{ "request": { "method": "GET /", "path": { "pattern": "(" } },
-  #|  "response": { "status": 99, "headers": { "Content-Length": "1", "X-A": "1", "x-a": "2" } },
+  #|  "response": { "status": 99, "headers": { "Content-Length": "1", "X-A": "1", "x-a": "2", "Smock-Mock": "a" } },
   #|  "colour": "red" }
 
 ///|
@@ -221,6 +221,7 @@ async test "an invalid Ephemeral Stub gets 400 invalid_stub with the problems sm
         #|/response/status: must be an integer from 200 to 599
         #|/response/headers/Content-Length: is set by smock and cannot be given
         #|/response/headers/x-a: the header name "X-A" is already given: header names are case-insensitive
+        #|/response/headers/Smock-Mock: is set by smock and cannot be given
         #|/colour: is not a known field
         #|---
         #|smock check:
@@ -230,6 +231,7 @@ async test "an invalid Ephemeral Stub gets 400 invalid_stub with the problems sm
         #|users.json: /stubs/0/response/status: must be an integer from 200 to 599
         #|users.json: /stubs/0/response/headers/Content-Length: is set by smock and cannot be given
         #|users.json: /stubs/0/response/headers/x-a: the header name "X-A" is already given: header names are case-insensitive
+        #|users.json: /stubs/0/response/headers/Smock-Mock: is set by smock and cannot be given
         #|users.json: /stubs/0/colour: is not a known field
         #|
       ),

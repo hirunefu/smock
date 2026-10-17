@@ -907,7 +907,8 @@ fn File::read_headers(
     let lower = name.to_lower()
     if !@http1.is_token(name) {
       self.error(field, "is not a valid header name")
-    } else if lower is ("content-length" | "transfer-encoding" | "connection") {
+    } else if lower
+      is ("content-length" | "transfer-encoding" | "connection" | "smock-mock") {
       self.error(field, "is set by smock and cannot be given")
     } else if names.get(lower) is Some(earlier) {
       self.error(
