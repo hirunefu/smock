@@ -564,7 +564,7 @@ test "Ephemeral Stubs are validated and compiled like Stubs from Definition file
               #|{ "mocks": [{ "name": "users" }],
               #|  "stubs": [{ "id": "s", "mock": "users",
               #|    "request": { "method": "GET /", "path": { "pattern": "(" } },
-              #|    "response": { "status": 99, "headers": { "Content-Length": "1", "X-A": "1", "x-a": "2" } },
+              #|    "response": { "status": 99, "headers": { "Content-Length": "1", "X-A": "1", "x-a": "2", "Smock-Mock": "a" } },
               #|    "colour": "red" }] }
             ),
           ),
@@ -578,7 +578,7 @@ test "Ephemeral Stubs are validated and compiled like Stubs from Definition file
   let ephemeral_problems = h.problems(
     (
       #|{ "request": { "method": "GET /", "path": { "pattern": "(" } },
-      #|  "response": { "status": 99, "headers": { "Content-Length": "1", "X-A": "1", "x-a": "2" } },
+      #|  "response": { "status": 99, "headers": { "Content-Length": "1", "X-A": "1", "x-a": "2", "Smock-Mock": "a" } },
       #|  "colour": "red" }
     ),
   )
@@ -591,6 +591,7 @@ test "Ephemeral Stubs are validated and compiled like Stubs from Definition file
       #|users.json: /stubs/0/response/status: must be an integer from 200 to 599
       #|users.json: /stubs/0/response/headers/Content-Length: is set by smock and cannot be given
       #|users.json: /stubs/0/response/headers/x-a: the header name "X-A" is already given: header names are case-insensitive
+      #|users.json: /stubs/0/response/headers/Smock-Mock: is reserved: header names starting with Smock- are smock's own
       #|users.json: /stubs/0/colour: is not a known field
       #|Ephemeral Stub:
       #|/request/method: must be an HTTP token, such as GET
@@ -598,6 +599,7 @@ test "Ephemeral Stubs are validated and compiled like Stubs from Definition file
       #|/response/status: must be an integer from 200 to 599
       #|/response/headers/Content-Length: is set by smock and cannot be given
       #|/response/headers/x-a: the header name "X-A" is already given: header names are case-insensitive
+      #|/response/headers/Smock-Mock: is reserved: header names starting with Smock- are smock's own
       #|/colour: is not a known field
     ),
   )

@@ -198,3 +198,36 @@ async test "two header names in a response that differ only in case stop smock s
     )
   })
 }
+
+///|
+async test "a response header name that starts with Smock- stops smock serve and fails smock check" {
+  let defs =
+    #|mocks:
+    #|  - name: a
+    #|stubs:
+    #|  - id: s
+    #|    mock: a
+    #|    request: { method: GET, path: /x }
+    #|    response:
+    #|      status: 200
+    #|      headers: { smock-mock: mine }
+    #|      body: ok
+  with_definitions([("a.yaml", defs)], dir => {
+    let stopped = run_smock(["serve", "--dir", dir, "--port", "0"])
+    inspect(
+      "status \{stopped.status}\n\{log_entries(stopped.logs)}\n---\n\{check([dir])}",
+      content=(
+        #|status 1
+        #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
+        #|{"level":"info","msg":"random seed","seed":"*"}
+        #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
+        #|{"level":"error","msg":"invalid definitions","file":"a.yaml","pointer":"/stubs/0/response/headers/smock-mock","error":"is reserved: header names starting with Smock- are smock's own"}
+        #|---
+        #|status 1
+        #|a.yaml: /stubs/0/response/headers/smock-mock: is reserved: header names starting with Smock- are smock's own
+        #|
+      ),
+    )
+  })
+}

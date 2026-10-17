@@ -290,7 +290,10 @@ A Stub's `response` has a `status`, `headers`, and a body. `headers` gives
 one string per header name. Names are compared case-insensitively, so
 `Set-Cookie` and `set-cookie` cannot both be given. smock sets
 `Content-Length` from the body; `Content-Length`, `Transfer-Encoding` and
-`Connection` cannot be given. The body is either inline, as text in UTF-8:
+`Connection` cannot be given. Names that start with `Smock-`, in any case,
+are smock's own, such as `Smock-Mock` and `Smock-Near-Miss`, so they cannot
+be given either. A request's header conditions may still name them. The
+body is either inline, as text in UTF-8:
 
 ```json
 "response": { "status": 200, "body": "{\"id\":1}" }

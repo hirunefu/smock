@@ -650,6 +650,48 @@ test "a header name that smock sets, or that is not valid, is not also reported 
 }
 
 ///|
+test "a response header name that starts with Smock-, in any case, is reserved, and each one gets that problem alone" {
+  inspect(
+    problems([
+      (
+        "users.json",
+        (
+          #|{ "mocks": [{ "name": "users" }],
+          #|  "stubs": [{ "id": "a", "mock": "users",
+          #|    "response": { "status": 200,
+          #|      "headers": { "Smock-Mock": "mine", "smock-mock": "2", "SMOCK-Near-Miss": "3",
+          #|        "Smock-Later": "4", "Smock": "5", "SmockMock": "6", "X-Smock-Mock": "7" } } }] }
+        ),
+      ),
+    ]),
+    content=(
+      #|users.json: /stubs/0/response/headers/Smock-Mock: is reserved: header names starting with Smock- are smock's own
+      #|users.json: /stubs/0/response/headers/smock-mock: is reserved: header names starting with Smock- are smock's own
+      #|users.json: /stubs/0/response/headers/SMOCK-Near-Miss: is reserved: header names starting with Smock- are smock's own
+      #|users.json: /stubs/0/response/headers/Smock-Later: is reserved: header names starting with Smock- are smock's own
+    ),
+  )
+}
+
+///|
+test "a request header condition may name a header that starts with Smock-" {
+  inspect(
+    problems([
+      (
+        "users.json",
+        (
+          #|{ "mocks": [{ "name": "users" }],
+          #|  "stubs": [{ "id": "a", "mock": "users",
+          #|    "request": { "headers": { "Smock-Mock": "users", "smock-near-miss": { "pattern": ".*" } } },
+          #|    "response": { "status": 200 } }] }
+        ),
+      ),
+    ]),
+    content="valid",
+  )
+}
+
+///|
 test "a header name repeated exactly is a duplicate key, in JSON and in YAML, and the rest of the file is not read" {
   inspect(
     problems([
