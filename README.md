@@ -408,7 +408,7 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   parameters give the time (RFC 3339) and the seed of the random source;
   the rendering shows those it used.
 - `/v1/mocks/{mock}/stubs` adds, lists and deletes Ephemeral Stubs, and
-  `POST /v1/reset` clears them and Journal entries
+  `POST /v1/reset` clears them, Journal entries and Scenario state
   ([below](#sessions-and-ephemeral-stubs)).
 - `GET /v1/mocks/{mock}/scenarios` lists the calling Session's Scenarios of
   a Mock, with their states, and `PUT /v1/mocks/{mock}/scenarios/{scenario}`
@@ -570,7 +570,8 @@ curl localhost:8080/users/1                                           # 200, fro
   [Scenario](docs/definition-files.md#scenarios). An Ephemeral Stub may
   carry a `scenario` clause, as a Stub in a Definition file does, even on a
   Scenario that no file names, and shares the Session's state with the
-  file Stubs that name the same Scenario.
+  file Stubs that name the same Scenario. Deleting the Ephemeral Stub
+  leaves the state as it is; a reset clears it.
 - `GET /v1/mocks/{mock}/scenarios` lists the calling Session's Scenarios of
   the Mock, those its file Stubs and the Session's own Ephemeral Stubs
   name, by name. Each has its current `state` and its known `states`:
@@ -583,12 +584,14 @@ curl localhost:8080/users/1                                           # 200, fro
   state that nothing matches.
 - `GET` lists and `DELETE /v1/mocks/{mock}/stubs/{id}` deletes the calling
   Session's Ephemeral Stubs of the Mock. `POST /v1/reset` with
-  `{"scope":"session"}` clears the calling Session's Ephemeral Stubs and
-  [Journal](#the-journal) entries of every Mock, and its eviction count;
-  `{"scope":"mock","mock":"users"}` every Session's of one Mock, even one
-  that a reload removed while the Journal holds its entries; and
-  `{"scope":"all"}` all of them, and every eviction count. It answers how
-  many Ephemeral Stubs and Journal entries it removed.
+  `{"scope":"session"}` clears the calling Session's Ephemeral Stubs,
+  [Journal](#the-journal) entries and Scenario state of every Mock, and its
+  eviction count; `{"scope":"mock","mock":"users"}` every Session's of one
+  Mock, even one that a reload removed while the Journal holds its entries;
+  and `{"scope":"all"}` all of them, and every eviction count. Without a
+  Session, `{"scope":"session"}` clears the no-Session space. A Scenario
+  whose state is cleared is back in `Started`. It answers how many
+  Ephemeral Stubs, Journal entries and Scenario states it removed.
 - Ephemeral Stubs live in the process that received them, until a reset or
   a restart. They survive a [reload](docs/definition-files.md#reloading) of
   the Definition files, except those of a Mock the new files no longer

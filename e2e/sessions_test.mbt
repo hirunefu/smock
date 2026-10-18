@@ -174,13 +174,13 @@ async test "over the authenticated Admin API, Ephemeral Stubs are added, listed,
           #|test-b deletes eph-1: 404 {"error":"unknown_stub","message":"the calling Session has no Ephemeral Stub \"eph-1\" in the Mock \"users\"","warnings":[]}
           #|test-a deletes eph-1: 200 {"id":"eph-1","warnings":[]}
           #|test-a: HTTP/1.1 200 OK {"id":1,"name":"Alice"}
-          #|reset the no-Session space: 200 {"scope":"session","removed":{"ephemeralStubs":1,"journalEntries":2},"warnings":[]}
+          #|reset the no-Session space: 200 {"scope":"session","removed":{"ephemeralStubs":1,"journalEntries":2,"scenarioStates":0},"warnings":[]}
           #|no Session: HTTP/1.1 200 OK {"id":1,"name":"Alice"}
-          #|reset test-a: 200 {"scope":"session","removed":{"ephemeralStubs":1,"journalEntries":3},"warnings":[]}
+          #|reset test-a: 200 {"scope":"session","removed":{"ephemeralStubs":1,"journalEntries":3,"scenarioStates":0},"warnings":[]}
           #|test-b: HTTP/1.1 503 Service Unavailable b
-          #|reset users: 200 {"scope":"mock","removed":{"ephemeralStubs":1,"journalEntries":3},"warnings":[]}
+          #|reset users: 200 {"scope":"mock","removed":{"ephemeralStubs":1,"journalEntries":3,"scenarioStates":0},"warnings":[]}
           #|test-b: HTTP/1.1 200 OK {"id":1,"name":"Alice"}
-          #|reset all: 200 {"scope":"all","removed":{"ephemeralStubs":1,"journalEntries":1},"warnings":[]}
+          #|reset all: 200 {"scope":"all","removed":{"ephemeralStubs":1,"journalEntries":1,"scenarioStates":0},"warnings":[]}
           #|test-c lists: 200 {"stubs":[],"warnings":[]}
         ),
       )
@@ -421,10 +421,10 @@ async test "adding, deleting and resetting each write a JSON log entry; failed c
         #|{"level":"info","msg":"Ephemeral Stub added","mock":"users","session":"test-a","id":"eph-1"}
         #|{"level":"info","msg":"Ephemeral Stub added","mock":"users","session":null,"id":"eph-2"}
         #|{"level":"info","msg":"Ephemeral Stub deleted","mock":"users","session":"test-a","id":"eph-1"}
-        #|{"level":"info","msg":"reset","scope":"session","session":"test-a","removed":{"ephemeralStubs":0,"journalEntries":1}}
-        #|{"level":"info","msg":"reset","scope":"session","session":null,"removed":{"ephemeralStubs":1,"journalEntries":1}}
-        #|{"level":"info","msg":"reset","scope":"mock","mock":"users","removed":{"ephemeralStubs":0,"journalEntries":0}}
-        #|{"level":"info","msg":"reset","scope":"all","removed":{"ephemeralStubs":0,"journalEntries":0}}
+        #|{"level":"info","msg":"reset","scope":"session","session":"test-a","removed":{"ephemeralStubs":0,"journalEntries":1,"scenarioStates":0}}
+        #|{"level":"info","msg":"reset","scope":"session","session":null,"removed":{"ephemeralStubs":1,"journalEntries":1,"scenarioStates":0}}
+        #|{"level":"info","msg":"reset","scope":"mock","mock":"users","removed":{"ephemeralStubs":0,"journalEntries":0,"scenarioStates":0}}
+        #|{"level":"info","msg":"reset","scope":"all","removed":{"ephemeralStubs":0,"journalEntries":0,"scenarioStates":0}}
         #|{"level":"info","msg":"drain started","timeoutMs":20000}
         #|{"level":"info","msg":"drain ended","connectionsCut":0}
       ),

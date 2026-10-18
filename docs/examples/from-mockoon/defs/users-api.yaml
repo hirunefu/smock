@@ -72,6 +72,44 @@ stubs:
       headers: { X-Total-Count: "2", X-Filtered-Count: "2" }
       json: [{ id: 1, item: book }, { id: 2, item: pen }]
 
+  # GET exports/:id: SEQUENTIAL, so its responses take turns. Each answer
+  # moves the Scenario "export" to the next one, and the last back to
+  # Started.
+  - id: get-export-running
+    mock: users-api
+    request: { method: GET, path: { pattern: "/api/v1/exports/[^/]+" } }
+    scenario: { name: export, requires: Started, moveTo: done }
+    response: { status: 200, json: { status: running } }
+
+  - id: get-export-done
+    mock: users-api
+    request: { method: GET, path: { pattern: "/api/v1/exports/[^/]+" } }
+    scenario: { name: export, requires: done, moveTo: Started }
+    response: { status: 200, json: { status: done } }
+
+  # POST password/reset: a request_number rule gives the first two requests
+  # 202 and every later one 429. The Scenario "password-reset" counts them.
+  - id: reset-password-sent-1
+    mock: users-api
+    request: { method: POST, path: /api/v1/password/reset }
+    scenario: { name: password-reset, requires: Started, moveTo: sent once }
+    response: { status: 202, json: { message: sent } }
+
+  - id: reset-password-sent-2
+    mock: users-api
+    request: { method: POST, path: /api/v1/password/reset }
+    scenario: { name: password-reset, requires: sent once, moveTo: sent twice }
+    response: { status: 202, json: { message: sent } }
+
+  - id: reset-password-limited
+    mock: users-api
+    request: { method: POST, path: /api/v1/password/reset }
+    scenario: { name: password-reset, requires: sent twice }
+    response:
+      status: 429
+      headers: { Retry-After: "60" }
+      json: { error: too many requests }
+
   # cors: true answers every OPTIONS request. Last, so that it is not
   # named as the Near miss of requests that other Stubs nearly match.
   - id: preflight

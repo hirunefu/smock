@@ -1033,7 +1033,19 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"scope":"all","removed":{"ephemeralStubs":1},"warnings":[]}
+          #|{"scope":"all","removed":{"ephemeralStubs":1,"scenarioStates":0},"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a reset without the count of Scenario states",
+      "POST",
+      "/v1/reset",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"scope":"session","removed":{"ephemeralStubs":0,"journalEntries":2},"warnings":[]}
         ),
       },
     ),
@@ -1045,7 +1057,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"scope":"replica","removed":{"ephemeralStubs":0,"journalEntries":0},"warnings":[]}
+          #|{"scope":"replica","removed":{"ephemeralStubs":0,"journalEntries":0,"scenarioStates":0},"warnings":[]}
         ),
       },
     ),
@@ -1402,6 +1414,7 @@ async test "the contract checker rejects responses that break the document" {
       #|a deleted Ephemeral Stub with its Mock: /mock: no value is allowed here
       #|an unknown Ephemeral Stub: conforms
       #|a reset without the count of Journal entries: /removed: journalEntries is missing
+      #|a reset without the count of Scenario states: /removed: scenarioStates is missing
       #|a reset with a scope the document does not list: /scope: "replica" is not one of ["session","mock","all"]
       #|a Journal page with an unmatched request: conforms
       #|a Journal entry for an Ephemeral Stub: conforms

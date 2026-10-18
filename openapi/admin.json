@@ -36,7 +36,7 @@
     },
     {
       "name": "Reset",
-      "description": "Clearing Ephemeral Stubs and Journal entries."
+      "description": "Clearing Ephemeral Stubs, Journal entries and Scenario state."
     },
     {
       "name": "Journal",
@@ -377,8 +377,8 @@
       "post": {
         "operationId": "reset",
         "tags": ["Reset"],
-        "summary": "Clear Ephemeral Stubs and Journal entries for a Session, a Mock or everything",
-        "description": "- `session`: the calling Session's Ephemeral Stubs, Journal entries and eviction count, across all Mocks. Without a Session, the no-Session space.\n- `mock`: every Session's Ephemeral Stubs and Journal entries of one Mock.\n- `all`: every Ephemeral Stub, the whole Journal and every eviction count.\n\nWhat Definition files declare is never changed.",
+        "summary": "Clear Ephemeral Stubs, Journal entries and Scenario state for a Session, a Mock or everything",
+        "description": "- `session`: the calling Session's Ephemeral Stubs, Journal entries, Scenario state and eviction count, across all Mocks. Without a Session, the no-Session space.\n- `mock`: every Session's Ephemeral Stubs, Journal entries and Scenario state of one Mock.\n- `all`: every Ephemeral Stub, the whole Journal, every Scenario state and every eviction count.\n\nA Scenario whose state is cleared is back in `Started`. What Definition files declare is never changed.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1271,7 +1271,7 @@
             "type": "object",
             "properties": {
               "scope": {
-                "description": "The calling Session's Ephemeral Stubs, Journal entries and eviction count, across all Mocks.",
+                "description": "The calling Session's Ephemeral Stubs, Journal entries, Scenario state and eviction count, across all Mocks.",
                 "const": "session"
               }
             },
@@ -1283,7 +1283,7 @@
             "type": "object",
             "properties": {
               "scope": {
-                "description": "Every Session's Ephemeral Stubs and Journal entries of one Mock. The eviction counts, which are per Session, stay.",
+                "description": "Every Session's Ephemeral Stubs, Journal entries and Scenario state of one Mock. The eviction counts, which are per Session, stay.",
                 "const": "mock"
               },
               "mock": {
@@ -1300,7 +1300,7 @@
             "type": "object",
             "properties": {
               "scope": {
-                "description": "Every Ephemeral Stub, the whole Journal and every eviction count.",
+                "description": "Every Ephemeral Stub, the whole Journal, every Scenario state and every eviction count.",
                 "const": "all"
               }
             },
@@ -1330,9 +1330,14 @@
                 "description": "How many Journal entries were removed.",
                 "type": "integer",
                 "minimum": 0
+              },
+              "scenarioStates": {
+                "description": "How many Scenario states were cleared, each the state of one Mock, Session and Scenario that was not `Started`. Those Scenarios are back in `Started`.",
+                "type": "integer",
+                "minimum": 0
               }
             },
-            "required": ["ephemeralStubs", "journalEntries"],
+            "required": ["ephemeralStubs", "journalEntries", "scenarioStates"],
             "additionalProperties": false
           },
           "warnings": {
