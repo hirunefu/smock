@@ -938,6 +938,7 @@ latency for each case, and checks the provisional performance targets.
 |---|---|
 | `bench/bench.py` | Runs the benchmark. |
 | `bench/definitions/` | The definition set smock serves: four Mocks, one of them the Default Mock, and about 1,200 Stubs with exact, pattern and `json` conditions (`e2e/bench_test.mbt` pins the exact count). `bench/gen_definitions.py` writes it. |
+| `bench/definitions-scenarios/` | Its Scenario variant, which `--definitions` selects ([Scenarios in the benchmark](#scenarios-in-the-benchmark)). `bench/gen_definitions.py` writes it too. |
 | `bench/requests.json` | The request mix: nine kinds of request, with weights, realistic headers, a Session in `baggage`, and bodies. |
 | `bench/plan.json` | The cases, the CPU limits, and the rates and durations. |
 | `bench/plan-autopilot.json` | Another plan: smock under the CPU and memory limits of the smallest GKE Autopilot Pods and of the Helm chart's default, at ladders of rates. The targets hold under its profiles. |
@@ -949,8 +950,10 @@ latency for each case, and checks the provisional performance targets.
 
 `e2e/bench_test.mbt` checks on every test run that each request of the mix
 reaches the Mock and the Stub it names, on the plain and on the TLS port,
-and lands in the Journal under its Session. CI checks that
-`bench/definitions/` is what `bench/gen_definitions.py` writes.
+and lands in the Journal under its Session, and that in the Scenario
+variant each request moves its Scenario. CI checks that
+`bench/definitions/` and `bench/definitions-scenarios/` are what
+`bench/gen_definitions.py` writes.
 
 The benchmark runs on a developer's machine. The full run of
 `bench/plan-autopilot.json`, a run on GKE Autopilot, and their comparison
@@ -976,6 +979,7 @@ python3 bench/bench.py run               # the whole plan, about 20 minutes
 python3 bench/bench.py run --cases http-keep-alive --cpu-limits 1   # one case under one limit
 python3 bench/bench.py run --plan bench/plan-autopilot.json            # the profiles the targets hold under, about 20 minutes
 python3 bench/bench.py run --plan bench/plan-autopilot.json --profiles autopilot-burst-min   # one profile
+python3 bench/bench.py run --plan bench/plan-autopilot.json --definitions bench/definitions-scenarios   # with Scenario Stubs
 python3 bench/bench.py run --rate 500 --ramp 1 --duration 3 --tail 1 --settle 1 --cooldown 0   # a check of the setup, about 2 minutes
 python3 bench/bench.py check-targets bench/results/<date>-<time>   # an earlier run against the targets as they are now
 python3 -m unittest discover -s bench -v # the harness's own tests, about 5 minutes
@@ -1036,6 +1040,30 @@ Pod's, but the CPU is not the one GKE schedules the Pod on, and the load
 comes over loopback, not a Pod network. Absolute numbers differ from GKE's;
 compare profiles with each other, and runs on the same machine. The summary
 says so too.
+
+### Scenarios in the benchmark
+
+`--definitions` serves another definitions directory than
+`bench/definitions/`. `bench/definitions-scenarios/` is its Scenario
+variant: the same Mocks and Stubs, but each Stub that a request of the mix
+names has a [Scenario](docs/definition-files.md#scenarios) clause, which
+requires `Started` and moves to `Seen`, and right after it a twin,
+`<id>-seen`, with the same request and response, which requires `Seen` and
+moves back to `Started`. Each request carries its own Session, so its
+Scenario is its own, and the two Stubs take turns. So in every Mock,
+every request of the mix matches a Scenario Stub and moves its Scenario:
+smock looks up the Session's states, checks the state the Stub requires,
+moves it, and records the move in the Journal. Every other request also
+tries the Stub whose state does not hold before the twin that answers,
+as a flow's Stubs with the same request do. The plain set has no Scenario
+Stub, so each of its requests pays only the test of whether its Mock has
+one.
+
+To see what Scenarios cost, run each set on the same machine with the same
+plan and compare the runs with `bench/compare.py`, which names the
+definition set as a condition that differs. Each run checks the targets.
+On GKE, a variant with the `scenarios` option serves it
+([Comparing smock binaries on one node](#comparing-smock-binaries-on-one-node)).
 
 ### Targets
 
@@ -1194,8 +1222,8 @@ architecture the targets file has no set for.
 ### What a run writes
 
 - `conditions.json`: what ran where. The smock version, commit, toolchain
-  and binary digest; the definition set digest and the Mocks; the request
-  mix; the plan file, with its SHA-256 and that of the plan without its
+  and binary digest; the definitions directory, its digest and the Mocks;
+  the request mix; the plan file, with its SHA-256 and that of the plan without its
   `about` (`sha256_without_about`); the architecture, CPU model, kernel
   and CPU governors; the profiles with their CPU and memory limits, the CPU limits
   and the CPUs of smock and of the load generator; each case's profile,
@@ -1420,7 +1448,7 @@ that run's linux/amd64 build and tests passed.
   unless `--yes` says to go on.
 - **Images.** It builds the release binary, unless given one, and two
   images for the run's architecture (`docker build --platform`): the
-  release image with `bench/definitions/`
+  release image with `bench/definitions/` and its Scenario variant
   (`bench/gke/smock-definitions.dockerfile`), and the load generator's
   (`bench/gke/generator.Dockerfile`: Python, the pinned oha of that
   architecture, `bench.py`, the plan and `bench/gke/`). With `--variant`
@@ -1606,8 +1634,11 @@ Each `--variant` is `LABEL=FILE`, the first the baseline; the label (1 to
 Service, `smock-<profile>-<label>`. `no-init` leaves out the init
 container that prints the node's CPU, and `no-first-second` the load
 generator's scrape of smock's `/metrics` a second into each step: R2's
-two changes to the harness. Variants of one binary (one SHA-256) are
-also compared with the first variant that has it: with the same options,
+two changes to the harness. `scenarios` serves the Scenario variant of the
+definitions, `bench/definitions-scenarios/`, in place of
+`bench/definitions/` ([Scenarios in the benchmark](#scenarios-in-the-benchmark)).
+Variants of one binary (one SHA-256) are also compared with the first
+variant that has it: with the same options,
 such as r2b against r2, an A/A pair, whose paired changes show how far
 runs of one binary differ on the node, the A/A spread; with other
 options, such as r2h against r2, what those options cost. A binary
@@ -1655,11 +1686,26 @@ first round with the later ones. The run exits 1 when the variants
 cannot be compared: on more than one node, under other limits than the
 plan's, or with a sample incomplete.
 
+To see what Scenarios cost on one node, run one binary without the
+`scenarios` option and with it twice, an A/A pair to read the cost
+against. A `scenarios` variant's samples record the definitions they
+served, and the comparison does not count their other definition set as
+a condition besides smock. It takes as long and costs as much as the
+pre-merge run of three variants
+([docs/merging-into-main.md](docs/merging-into-main.md)):
+
+```sh
+scripts/gke-bench.sh --yes --arch amd64 --plan bench/plan-same-node.json \
+  --profiles autopilot-burst-min,autopilot-min --time-limit 100m \
+  --variant plain="$dir/smock" --variant sc="$dir/smock",scenarios --variant scb="$dir/smock",scenarios
+```
+
 To read the variants against another baseline, such as each against
 r2, run `gke.py same-node` again on the run's results with
 `--baseline r2 --report same-node-r2` and the `--sha256 LABEL=HEX` and
 `--no-init LABEL` the run gave it (same-node.json names each variant's
-SHA-256 and options): it writes `same-node-r2.json` and
+SHA-256 and options; the samples say which served the Scenario variant):
+it writes `same-node-r2.json` and
 `same-node-r2.md`, and leaves the run's own comparison as it is.
 
 ```sh
