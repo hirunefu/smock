@@ -82,6 +82,13 @@ let routes : Array[Route] = [
   route("/v1/mocks/{mock}/stubs", "GET", list_stubs),
   route("/v1/mocks/{mock}/stubs", "POST", add_stub, takes_body=true),
   route("/v1/mocks/{mock}/stubs/{id}", "DELETE", delete_stub),
+  route("/v1/mocks/{mock}/scenarios", "GET", list_scenarios),
+  route(
+    "/v1/mocks/{mock}/scenarios/{scenario}",
+    "PUT",
+    set_scenario,
+    takes_body=true,
+  ),
   route("/v1/reset", "POST", reset, takes_body=true),
   route("/v1/journal/query", "POST", query_journal, takes_body=true),
   route("/v1/journal/verify", "POST", verify_journal, takes_body=true),

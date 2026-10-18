@@ -200,6 +200,119 @@ fn compare_bytes(a : String, b : String) -> Int {
 }
 
 ///|
+/// A Scenario of a Mock as one Session sees it: the state it is in and its
+/// known states, as the Admin API lists and sets it. Its JSON form is the
+/// `Scenario` schema of the Admin API document.
+pub(all) struct Scenario {
+  /// The Scenario's name, within its Mock.
+  name : String
+  /// The state the Scenario is in for the Session.
+  state : String
+  /// The known states of the Scenario for the Session: `Started` first,
+  /// then the others in byte-wise order.
+  states : Array[String]
+} derive(Debug, Eq)
+
+///|
+/// `{"name", "state", "states"}`.
+pub impl ToJson for Scenario with fn to_json(self) {
+  {
+    "name": Json::string(self.name),
+    "state": Json::string(self.state),
+    "states": Json::array(self.states.map(Json::string)),
+  }
+}
+
+///|
+/// The Mock named `mock` in the snapshot served.
+///
+/// Raises `UnknownMock` when no Mock has the name.
+fn Engine::mock_named(
+  self : Engine,
+  mock : String,
+) -> @definitions.Mock raise AdminError {
+  for m in self.snapshot.mocks {
+    if m.name == mock {
+      return m
+    }
+  }
+  raise UnknownMock(mock)
+}
+
+///|
+/// The Scenarios of the Mock `mock` for `session`, or for the no-Session
+/// space when it is `None`, in byte-wise order of their names, each with
+/// the state it is in for the Session and its known states. They are the
+/// Scenarios that the Mock's file Stubs name, those that the Session's own
+/// Ephemeral Stubs in the Mock name, and those that the Session holds a
+/// state for although no Stub names them any more, such as after it
+/// deleted the Ephemeral Stubs that did: the only known state of those is
+/// `Started`. A Session's state may be outside the known states, when only
+/// an Ephemeral Stub it deleted named that state.
+///
+/// Raises `UnknownMock` when no Mock has the name `mock`.
+pub fn Engine::list_scenarios(
+  self : Engine,
+  mock~ : String,
+  session~ : String?,
+) -> Array[Scenario] raise AdminError {
+  let known = self.known_states(self.mock_named(mock), session)
+  let held = self.scenarios.of(mock, session)
+  let names = known.keys().collect()
+  if held is Some(held) {
+    for name, _ in held {
+      if !known.contains(name) {
+        names.push(name)
+      }
+    }
+    names.sort_by(compare_bytes)
+  }
+  names.map(name => {
+    name,
+    state: current_state(held, name),
+    states: known.get(name).unwrap_or([@definitions.initial_state]),
+  })
+}
+
+///|
+/// Moves the Scenario `scenario` of the Mock `mock` to `state` for
+/// `session`, or for the no-Session space when it is `None`, and returns
+/// the Scenario as it is after. Setting `Started` resets the Scenario.
+///
+/// The Scenario must be one that `Engine::list_scenarios` lists for the
+/// Session, and the state one of its known states. So every state stored
+/// is one that the files or the Session's own Ephemeral Stubs name, and a
+/// typo cannot leave a flow in a state that no Stub matches.
+///
+/// Raises `UnknownMock` when no Mock has the name `mock`,
+/// `UnknownScenario` when the Mock has no such Scenario for the Session,
+/// and `UnknownState` when the state is not one of its known states.
+pub fn Engine::set_scenario_state(
+  self : Engine,
+  mock~ : String,
+  session~ : String?,
+  scenario~ : String,
+  state~ : String,
+) -> Scenario raise AdminError {
+  let known = self.known_states(self.mock_named(mock), session)
+  let states = match known.get(scenario) {
+    Some(states) => states
+    None => {
+      guard self.scenarios.of(mock, session) is Some(held) &&
+        held.contains(scenario) else {
+        raise UnknownScenario(mock~, scenario~)
+      }
+      [@definitions.initial_state]
+    }
+  }
+  if !states.contains(state) {
+    raise UnknownState(mock~, scenario~, state~, known=states)
+  }
+  self.scenarios.set(mock, session, scenario, state)
+  { name: scenario, state, states, }
+}
+
+///|
 /// Checks every stored state against the snapshot just swapped in, whose
 /// Mocks are `mocks`, by name, and against the Ephemeral Stubs that stayed.
 /// It drops the states of each Mock that is gone, keeps each state that is

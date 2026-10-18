@@ -728,13 +728,19 @@ A state differs from Mockoon's count in three ways:
   Scenario states, which sends its Scenarios back to `Started`.
   `{"scope":"all"}` clears every Session's, as
   `PURGE /mockoon-admin/state` starts Mockoon's counts over. A reset
-  answers how many states it cleared, in `removed.scenarioStates`. A test
-  can also start over with a new Session, whose Scenarios are all in
-  `Started`. Like Mockoon's counts, states are lost on restart.
+  answers how many states it cleared, in `removed.scenarioStates`.
+  `PUT /v1/mocks/users-api/scenarios/export` with `{"state":"Started"}`
+  starts one flow over, the calling Session's export cycle, and leaves its
+  other Scenarios where they are. A test can also start over with a new
+  Session, whose Scenarios are all in `Started`. Like Mockoon's counts,
+  states are lost on restart.
 
   ```sh
   curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=test-a" \
     -d '{"scope":"session"}' localhost:9090/v1/reset
+  curl -H "baggage: smock-session=test-a" localhost:8080/api/v1/exports/7   # running
+  curl -X PUT -H "Authorization: Bearer change-me" -H "baggage: smock-session=test-a" \
+    -d '{"state":"Started"}' localhost:9090/v1/mocks/users-api/scenarios/export
   curl -H "baggage: smock-session=test-a" localhost:8080/api/v1/exports/7   # running
   ```
 

@@ -410,6 +410,9 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
 - `/v1/mocks/{mock}/stubs` adds, lists and deletes Ephemeral Stubs, and
   `POST /v1/reset` clears them, Journal entries and Scenario state
   ([below](#sessions-and-ephemeral-stubs)).
+- `GET /v1/mocks/{mock}/scenarios` lists the calling Session's Scenarios of
+  a Mock, with their states, and `PUT /v1/mocks/{mock}/scenarios/{scenario}`
+  sets the state of one ([below](#sessions-and-ephemeral-stubs)).
 - `POST /v1/journal/query` lists the calling Session's requests from the
   [Journal](#the-journal), `POST /v1/journal/verify` checks how many of
   them there were, and `GET /v1/journal/unmatched` lists those that no
@@ -569,6 +572,16 @@ curl localhost:8080/users/1                                           # 200, fro
   Scenario that no file names, and shares the Session's state with the
   file Stubs that name the same Scenario. Deleting the Ephemeral Stub
   leaves the state as it is; a reset clears it.
+- `GET /v1/mocks/{mock}/scenarios` lists the calling Session's Scenarios of
+  the Mock, those its file Stubs and the Session's own Ephemeral Stubs
+  name, by name. Each has its current `state` and its known `states`:
+  `Started` first, then every state those Stubs name for it.
+  `PUT /v1/mocks/{mock}/scenarios/{scenario}` with `{"state":"Paid"}` sets
+  the state for the calling Session, so that a test can start in the middle
+  of a flow; `{"state":"Started"}` resets one Scenario. A Scenario that no
+  such Stub names gets 404 `unknown_scenario`, and a state outside the
+  known states 400 `unknown_state`, so a typo cannot leave a flow in a
+  state that nothing matches.
 - `GET` lists and `DELETE /v1/mocks/{mock}/stubs/{id}` deletes the calling
   Session's Ephemeral Stubs of the Mock. `POST /v1/reset` with
   `{"scope":"session"}` clears the calling Session's Ephemeral Stubs,
@@ -583,8 +596,9 @@ curl localhost:8080/users/1                                           # 200, fro
   a restart. They survive a [reload](docs/definition-files.md#reloading) of
   the Definition files, except those of a Mock the new files no longer
   declare.
-- Adding, deleting and resetting each write a log entry (`Ephemeral Stub
-  added`, `Ephemeral Stub deleted`, `reset`); requests write none.
+- Adding, deleting, setting a Scenario's state and resetting each write a
+  log entry (`Ephemeral Stub added`, `Ephemeral Stub deleted`, `Scenario
+  state set`, `reset`); requests write none.
 
 ## The Journal
 
