@@ -290,6 +290,8 @@ fn Engine::prune_scenario_states(
   // The states of a Mock that is gone go with it, and are not counted.
   self.scenarios.remove_where((mock, _) => !mocks.contains(mock)) |> ignore
   self.scenarios.retain((mock, session) => {
+    // A Scenario that no Stub names any more knows only `Started`, which is
+    // never stored, so its state goes.
     let known = self.known_states(mocks[mock], session)
     (scenario, state) => {
       known.get(scenario) is Some(states) && states.contains(state)
