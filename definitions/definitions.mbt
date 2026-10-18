@@ -100,9 +100,10 @@ pub struct Mock {
   stubs : ReadOnlyArray[Stub]
   /// The match index of `stubs`, which `candidates` looks up.
   priv index : MatchIndex
-  /// The Scenarios that the Mock's Stubs name, in byte-wise order of their
-  /// names. A Scenario has no declaration: it exists because Stubs name it.
-  scenarios : ReadOnlyArray[Scenario]
+  /// The Scenarios that the Mock's Stubs name, each with its file states,
+  /// in byte-wise order of their names. A Scenario has no declaration: it
+  /// exists because Stubs name it.
+  scenarios : ReadOnlyArray[ScenarioFileStates]
 } derive(Debug, Eq)
 
 ///|
@@ -114,13 +115,16 @@ pub fn Mock::has_scenarios(self : Mock) -> Bool {
 }
 
 ///|
-/// A Scenario that a Mock's Stubs name: a named state machine within the
-/// Mock, identified by the Mock and its name.
-pub struct Scenario {
+/// The file states of a Scenario that a Mock's Stubs name: the Scenario's
+/// name, and the states that the Stubs in the Definition files name for it.
+/// A Scenario is a named state machine within the Mock, identified by the
+/// Mock and its name.
+pub struct ScenarioFileStates {
+  /// The Scenario's name, within its Mock.
   name : String
-  /// Its file states: `initial_state` first, then every other state that
-  /// the `requires` and `moveTo` of the Mock's Stubs name for it, in
-  /// byte-wise order.
+  /// `initial_state` first, then every other state that the `requires` and
+  /// `moveTo` of the Mock's Stubs name for the Scenario, in byte-wise
+  /// order.
   states : ReadOnlyArray[String]
 } derive(Debug, Eq)
 
@@ -782,7 +786,9 @@ pub fn load(
 /// order of their names, each with its states: `initial_state`, then every
 /// other state that the Stubs' `requires` and `moveTo` name for it, in
 /// byte-wise order.
-fn scenarios_of(stubs : ReadOnlyArray[Stub]) -> ReadOnlyArray[Scenario] {
+fn scenarios_of(
+  stubs : ReadOnlyArray[Stub],
+) -> ReadOnlyArray[ScenarioFileStates] {
   let states : Map[String, Set[String]] = Map([])
   for stub in stubs {
     guard stub.scenario is Some(clause) else { continue }
@@ -806,7 +812,7 @@ fn scenarios_of(stubs : ReadOnlyArray[Stub]) -> ReadOnlyArray[Scenario] {
     .map(entry => {
       let others = entry.1.iter().collect()
       others.sort_by(compare_bytes)
-      Scenario::{
+      ScenarioFileStates::{
         name: entry.0,
         states: ReadOnlyArray::from_array([initial_state, ..others]),
       }
