@@ -461,8 +461,10 @@ failed, such as `Smock-Near-Miss: get-user; failed=method`.
 `smock check defs` validates a definitions directory the way `smock serve`
 loads it: it prints every problem, one per line with the file and a JSON
 Pointer, and exits with status 1 if there is any. It also warns about Stubs
-that can never match, because an earlier Stub always matches first;
-warnings do not change the exit status.
+that can never match, because an earlier Stub always matches first, and
+about a [state that a Stub requires but no Stub moves its Scenario
+to](docs/definition-files.md#a-state-that-no-stub-moves-to); warnings do
+not change the exit status.
 
 `smock render --dir defs get-user --request sample.json` shows what a Stub
 returns for a sample request before a test relies on it. The sample is JSON,

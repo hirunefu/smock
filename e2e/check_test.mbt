@@ -317,7 +317,7 @@ async test "smock check needs the definitions directory as its argument" {
       #|
       #|Usage: smock check [options] <dir>
       #|
-      #|Check a definitions directory as smock serve would load it. Prints every problem, one per line, and exits with status 1 if there is any. Also warns about Stubs that can never match; warnings do not change the exit status.
+      #|Check a definitions directory as smock serve would load it. Prints every problem, one per line, and exits with status 1 if there is any. Also warns about Stubs that can never match, and about states that a Stub requires but no Stub moves its Scenario to; warnings do not change the exit status.
       #|
       #|Arguments:
       #|  dir  The definitions directory.
@@ -339,7 +339,7 @@ async test "smock check --help names its argument and its settings" {
       #|status 0
       #|Usage: smock check [options] <dir>
       #|
-      #|Check a definitions directory as smock serve would load it. Prints every problem, one per line, and exits with status 1 if there is any. Also warns about Stubs that can never match; warnings do not change the exit status.
+      #|Check a definitions directory as smock serve would load it. Prints every problem, one per line, and exits with status 1 if there is any. Also warns about Stubs that can never match, and about states that a Stub requires but no Stub moves its Scenario to; warnings do not change the exit status.
       #|
       #|Arguments:
       #|  dir  The definitions directory.
