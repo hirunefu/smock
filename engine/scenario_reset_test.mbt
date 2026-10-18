@@ -190,3 +190,44 @@ test "a reset of the no-Session space clears only its states, a Mock reset clear
     ),
   )
 }
+
+///|
+test "a Mock reset keeps its unknown_mock rule: a Mock that a reload removed holds no state, so its reset clears only the entries it recorded, and once they are gone it is unknown" {
+  let h = harness(reset_shop)
+  let out = []
+  let step = (label : String, result : String) => {
+    out.push("\{label}: \{result}")
+  }
+  ignore(
+    h.record("POST", "http://payments.svc/orders/42/pay", session="test-a"),
+  )
+  ignore(h.step("POST", "/login", host="users.svc", session="test-a"))
+  let without_payments = [
+    (
+      "00-mocks.json",
+      (
+        #|{ "mocks": [{ "name": "users", "hosts": ["users.svc"], "default": true }] }
+      ),
+    ),
+    reset_shop[1],
+  ]
+  step(
+    "reload, payments removed",
+    @debug.to_string(h.reload(without_payments).result),
+  )
+  step("reset Mock payments", h.reset_scenarios(Mock("payments")))
+  step("reset Mock payments again", h.reset_scenarios(Mock("payments")))
+  step(
+    "test-a GET /me",
+    h.step("GET", "/me", host="users.svc", session="test-a"),
+  )
+  inspect(
+    out.join("\n"),
+    content=(
+      #|reload, payments removed: Swapped
+      #|reset Mock payments: removed 0 Ephemeral Stubs, 1 entries, 0 Scenario states
+      #|reset Mock payments again: UnknownMock("payments")
+      #|test-a GET /me: 200 Alice (u-me; login: In -> In)
+    ),
+  )
+}
