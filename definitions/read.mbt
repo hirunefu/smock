@@ -469,6 +469,7 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
     template: None,
   }
   let mut fault = None
+  let mut scenario = None
   for key, value in stub {
     let field = child_pointer(pointer, key)
     match key {
@@ -478,13 +479,46 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
       "response" => response = self.read_response(pointer, field, value)
       "priority" => priority = self.read_priority(field, value)
       "fault" => fault = self.read_fault(field, value)
+      "scenario" => scenario = self.read_scenario(field, value)
       _ => self.unknown_field(field)
     }
   }
   self.require(stub, pointer, "id")
   self.require(stub, pointer, "mock")
   self.require(stub, pointer, "response")
-  Some({ id, mock, priority, request, response, fault, })
+  Some({ id, mock, priority, request, scenario, response, fault, })
+}
+
+///|
+/// Reads a Scenario clause: the Scenario's `name`, and `requires`,
+/// `moveTo` or both, each a non-empty name.
+fn File::read_scenario(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> ScenarioClause? {
+  guard json is Object(clause) else {
+    self.error(pointer, "must be an object")
+    return None
+  }
+  let mut name = None
+  let mut requires = None
+  let mut move_to = None
+  for key, value in clause {
+    let field = child_pointer(pointer, key)
+    match key {
+      "name" => name = self.name(field, value)
+      "requires" => requires = self.name(field, value)
+      "moveTo" => move_to = self.name(field, value)
+      _ => self.unknown_field(field)
+    }
+  }
+  self.require(clause, pointer, "name")
+  // A clause without either does nothing, which is surely a mistake.
+  if !clause.contains("requires") && !clause.contains("moveTo") {
+    self.error(pointer, "must give requires, moveTo or both")
+  }
+  name.map(name => { name, requires, move_to, })
 }
 
 ///|

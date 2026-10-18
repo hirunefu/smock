@@ -100,7 +100,33 @@ pub struct Mock {
   stubs : ReadOnlyArray[Stub]
   /// The match index of `stubs`, which `candidates` looks up.
   priv index : MatchIndex
+  /// The Scenarios that the Mock's Stubs name, in byte-wise order of their
+  /// names. A Scenario has no declaration: it exists because Stubs name it.
+  scenarios : ReadOnlyArray[Scenario]
 } derive(Debug, Eq)
+
+///|
+/// Whether any Stub of the Mock has a Scenario clause. A Mock without one
+/// pays only this test for Scenarios when it answers a request, unless the
+/// request's Session added an Ephemeral Stub with a clause to it.
+pub fn Mock::has_scenarios(self : Mock) -> Bool {
+  self.scenarios.length() > 0
+}
+
+///|
+/// A Scenario that a Mock's Stubs name: a named state machine within the
+/// Mock, identified by the Mock and its name.
+pub struct Scenario {
+  name : String
+  /// Its file states: `initial_state` first, then every other state that
+  /// the `requires` and `moveTo` of the Mock's Stubs name for it, in
+  /// byte-wise order.
+  states : ReadOnlyArray[String]
+} derive(Debug, Eq)
+
+///|
+/// The state every Scenario starts in, compared case-sensitively.
+pub let initial_state : String = "Started"
 
 ///|
 /// A Stub from a Definition file.
@@ -112,9 +138,26 @@ pub struct Stub {
   /// after every Stub with one.
   priority : Int?
   request : Conditions
+  /// The Stub's Scenario clause, if it has `scenario`.
+  scenario : ScenarioClause?
   response : Response
   /// The Faults the Stub injects when it matches, if it has `fault`.
   fault : Fault?
+} derive(Debug, Eq)
+
+///|
+/// A Stub's Scenario clause: the state a Scenario of the Stub's Mock must
+/// be in for the Stub to match, the state the Stub moves it to when it is
+/// chosen, or both. It is not a request condition: it depends on the
+/// engine's state, not on the request alone.
+pub struct ScenarioClause {
+  /// The Scenario's name.
+  name : String
+  /// The state the Scenario must be in. Without it, the Stub matches in
+  /// every state.
+  requires : String?
+  /// The state the Scenario moves to when the Stub is chosen.
+  move_to : String?
 } derive(Debug, Eq)
 
 ///|
@@ -686,6 +729,7 @@ pub fn load(
           journal: true,
           stubs: ReadOnlyArray::from_array([]),
           index: MatchIndex::new(ReadOnlyArray::from_array([])),
+          scenarios: ReadOnlyArray::from_array([]),
         },
       ]),
       host_index: Map([]),
@@ -708,6 +752,7 @@ pub fn load(
       journal: mock.journal,
       stubs,
       index: MatchIndex::new(stubs),
+      scenarios: scenarios_of(stubs),
     }
   })
   let index_of = Map([])
@@ -730,6 +775,51 @@ pub fn load(
     stub_locations: reader.stub_locations,
     digest,
   })
+}
+
+///|
+/// The Scenarios that `stubs`, the Stubs of one Mock, name, in byte-wise
+/// order of their names, each with its states: `initial_state`, then every
+/// other state that the Stubs' `requires` and `moveTo` name for it, in
+/// byte-wise order.
+fn scenarios_of(stubs : ReadOnlyArray[Stub]) -> ReadOnlyArray[Scenario] {
+  let states : Map[String, Set[String]] = Map([])
+  for stub in stubs {
+    guard stub.scenario is Some(clause) else { continue }
+    let named = match states.get(clause.name) {
+      Some(named) => named
+      None => {
+        let named = Set([])
+        states[clause.name] = named
+        named
+      }
+    }
+    if clause.requires is Some(state) && state != initial_state {
+      named.add(state)
+    }
+    if clause.move_to is Some(state) && state != initial_state {
+      named.add(state)
+    }
+  }
+  let scenarios = states
+    .iter()
+    .map(entry => {
+      let others = entry.1.iter().collect()
+      others.sort_by(compare_bytes)
+      Scenario::{
+        name: entry.0,
+        states: ReadOnlyArray::from_array([initial_state, ..others]),
+      }
+    })
+    .collect()
+  scenarios.sort_by((a, b) => compare_bytes(a.name, b.name))
+  ReadOnlyArray::from_array(scenarios)
+}
+
+///|
+/// How `a` and `b` compare in byte-wise order of their UTF-8 encodings.
+fn compare_bytes(a : String, b : String) -> Int {
+  @utf8.encode(a).lexical_compare(@utf8.encode(b))
 }
 
 ///|
