@@ -387,7 +387,10 @@ Stub can replace one step of a flow from the files. Like the Stub, the
 state belongs to the Session that added it: other Sessions never see it.
 Deleting an Ephemeral Stub leaves the state as it is. A state that no Stub
 names any more matches no `requires`, and the next reload that swaps in
-new files sends it back to `Started` ([Reloading](#reloading)).
+new files sends it back to `Started` ([Reloading](#reloading)). A
+[reset](../README.md#sessions-and-ephemeral-stubs) of the Session, of the
+Mock or of everything clears the states in its scope, and sends their
+Scenarios back to `Started`.
 
 #### How state grows
 
