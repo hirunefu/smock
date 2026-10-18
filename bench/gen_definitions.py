@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Writes the release benchmark's definition set, bench/definitions/.
+"""Writes the release benchmark's definition set, bench/definitions/, and
+its Scenario variant, bench/definitions-scenarios/.
 
 The set stands in for four services of a shop, each a Mock with its own
 Host, with about 1,200 Stubs in all (e2e/bench_test.mbt pins the exact
@@ -22,19 +23,32 @@ Every Mock keeps its Journal on, as smock does by default. The requests
 that bench/bench.py sends are in bench/requests.json; e2e/bench_test.mbt
 checks that each one reaches the Stub it names.
 
+The Scenario variant is the same set, but each Stub that a request of the
+mix names has a Scenario clause named for the request, which requires
+`Started` and moves to `Seen`, and right after it a twin, `<id>-seen`, with
+the same request and response, which requires `Seen` and moves back to
+`Started`. Each request carries its own Session, so its Scenario is its
+own: the two Stubs take turns, and every request of the mix matches one of
+them and moves its Scenario, in every Mock. bench/bench.py serves it with
+`--definitions bench/definitions-scenarios`; e2e/bench_test.mbt checks that
+each request moves its Scenario.
+
 The files are checked in. Run this script again after changing it, and
 commit what it writes.
 
 usage: python3 bench/gen_definitions.py [--check]
-  --check  writes nothing; exits 1 if the files differ from what it would
-           write
+  --check  writes nothing; exits 1 if the files of either set differ from
+           what it would write
 """
 
 import json
 import sys
 from pathlib import Path
 
-DEFINITIONS = Path(__file__).resolve().parent / "definitions"
+BENCH = Path(__file__).resolve().parent
+
+# Each set's directory, by its name under bench/.
+SETS = ("definitions", "definitions-scenarios")
 
 JSON_HEADERS = {"Content-Type": "application/json", "Cache-Control": "no-store"}
 UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
@@ -291,16 +305,44 @@ def definition_file(content):
     return '{\n  "%s": [\n    %s\n  ]\n}\n' % (key, ",\n    ".join(lines))
 
 
+def with_scenarios(content, mix):
+    """The Scenario variant of a Definition file's content: each Stub that a
+    request of `mix` names gets a clause of the Scenario named for the
+    request, which requires Started and moves to Seen, and is followed by
+    its twin, <id>-seen, which requires Seen and moves back to Started."""
+    (key, items), = content.items()
+    if key != "stubs":
+        return content
+    named = {request["expect"]["stub"]: request["name"] for request in mix}
+    stubs = []
+    for stub in items:
+        name = named.get(stub["id"])
+        if name is None:
+            stubs.append(stub)
+            continue
+        stubs.append({**stub, "scenario": {"name": name, "requires": "Started", "moveTo": "Seen"}})
+        stubs.append({**stub, "id": f"{stub['id']}-seen",
+                      "scenario": {"name": name, "requires": "Seen", "moveTo": "Started"}})
+    return {key: stubs}
+
+
 def files():
-    """Every file of the set, by its path in the definitions directory."""
-    return {
-        "00-mocks.json": definition_file(mocks()),
-        "catalog.json": definition_file(catalog()),
-        "users.json": definition_file(users()),
-        "orders.json": definition_file(orders()),
-        "payments.json": definition_file(payments()),
-        "files/search-results.json": search_results(),
+    """Every file of both sets, by its path under bench/."""
+    contents = {
+        "00-mocks.json": mocks(),
+        "catalog.json": catalog(),
+        "users.json": users(),
+        "orders.json": orders(),
+        "payments.json": payments(),
     }
+    mix = json.loads((BENCH / "requests.json").read_text())["requests"]
+    written = {}
+    for directory, transform in (("definitions", lambda content: content),
+                                 ("definitions-scenarios", lambda content: with_scenarios(content, mix))):
+        for name, content in contents.items():
+            written[f"{directory}/{name}"] = definition_file(transform(content))
+        written[f"{directory}/files/search-results.json"] = search_results()
+    return written
 
 
 def main(argv):
@@ -309,26 +351,28 @@ def main(argv):
         return 2
     wanted = files()
     present = {
-        str(path.relative_to(DEFINITIONS)): path.read_text()
-        for path in sorted(DEFINITIONS.rglob("*"))
+        str(path.relative_to(BENCH)): path.read_text()
+        for name in SETS
+        for path in sorted((BENCH / name).rglob("*"))
         if path.is_file()
-    } if DEFINITIONS.exists() else {}
+    }
+    sets = " and ".join(f"bench/{name}/" for name in SETS)
     if argv == ["--check"]:
         stale = sorted(name for name in set(wanted) | set(present) if wanted.get(name) != present.get(name))
         for name in stale:
-            print(f"gen_definitions: bench/definitions/{name} is not what the script writes", file=sys.stderr)
+            print(f"gen_definitions: bench/{name} is not what the script writes", file=sys.stderr)
         if stale:
             print("gen_definitions: run python3 bench/gen_definitions.py and commit the result", file=sys.stderr)
             return 1
-        print(f"gen_definitions: bench/definitions/ is up to date ({len(wanted)} files)")
+        print(f"gen_definitions: {sets} are up to date ({len(wanted)} files)")
         return 0
     for name in set(present) - set(wanted):
-        (DEFINITIONS / name).unlink()
+        (BENCH / name).unlink()
     for name, text in wanted.items():
-        path = DEFINITIONS / name
+        path = BENCH / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
-    print(f"gen_definitions: wrote {len(wanted)} files to bench/definitions/")
+    print(f"gen_definitions: wrote {len(wanted)} files to {sets}")
     return 0
 
 
