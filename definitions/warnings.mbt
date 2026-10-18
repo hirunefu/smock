@@ -35,7 +35,7 @@ pub fn Snapshot::warnings(self : Snapshot) -> Array[Warning] {
     for i, stub in mock.stubs {
       let mut shadowing = None
       for j in 0..<i {
-        if shadows(mock.stubs[j].request, stub.request) {
+        if shadows(mock.stubs[j], stub) {
           shadowing = Some(mock.stubs[j])
           break
         }
@@ -54,9 +54,26 @@ pub fn Snapshot::warnings(self : Snapshot) -> Array[Warning] {
 }
 
 ///|
-/// Whether a Stub with the conditions `t`, tried before a Stub with the
-/// conditions `s`, provably matches every request that `s` matches: `t`
-/// has a subset of the conditions of `s`.
+/// Whether the Stub `t`, tried before the Stub `s`, provably matches every
+/// request that `s` matches, in every state `s` can match in: `t`'s request
+/// conditions shadow `s`'s, and either `t` has no `requires`, or `s` names
+/// the same Scenario with the same `requires`. `moveTo` plays no part: it
+/// does not change whether a Stub matches.
+fn shadows(t : Stub, s : Stub) -> Bool {
+  let in_states_of_s = match t.scenario {
+    None | Some({ requires: None, .. }) => true
+    Some({ name, requires, .. }) =>
+      s.scenario is Some(clause) &&
+      clause.name == name &&
+      clause.requires == requires
+  }
+  in_states_of_s && request_shadows(t.request, s.request)
+}
+
+///|
+/// Whether a Stub with the request conditions `t`, tried before a Stub with
+/// the request conditions `s`, provably matches every request that `s`
+/// matches: `t` has a subset of the conditions of `s`.
 ///
 /// - `t`'s method is absent or equal to `s`'s.
 /// - `t`'s path is absent, equal to `s`'s exact path, or a pattern that
@@ -68,7 +85,7 @@ pub fn Snapshot::warnings(self : Snapshot) -> Array[Warning] {
 ///
 /// Containment between two patterns is not attempted: what cannot be
 /// proven this way is not reported.
-fn shadows(t : Conditions, s : Conditions) -> Bool {
+fn request_shadows(t : Conditions, s : Conditions) -> Bool {
   let meth = match t.meth {
     None => true
     Some(meth) => s.meth == Some(meth)

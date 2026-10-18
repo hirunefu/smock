@@ -485,3 +485,120 @@ test "a valid set without shadowed Stubs has no warnings" {
   )
   inspect(warnings([]), content="none")
 }
+
+///|
+/// The example of spec #48: `GET /orders/42` answers pending until `POST
+/// /orders/42/pay` moves the Scenario `checkout` to `Paid`, and paid after.
+let checkout : String =
+  #|{ "mocks": [{ "name": "payments" }],
+  #|  "stubs": [
+  #|    { "id": "order-pending", "mock": "payments",
+  #|      "request": { "method": "GET", "path": "/orders/42" },
+  #|      "scenario": { "name": "checkout", "requires": "Started" },
+  #|      "response": { "status": 200, "json": { "status": "pending" } } },
+  #|    { "id": "pay", "mock": "payments",
+  #|      "request": { "method": "POST", "path": "/orders/42/pay" },
+  #|      "scenario": { "name": "checkout", "requires": "Started", "moveTo": "Paid" },
+  #|      "response": { "status": 200 } },
+  #|    { "id": "order-paid", "mock": "payments",
+  #|      "request": { "method": "GET", "path": "/orders/42" },
+  #|      "scenario": { "name": "checkout", "requires": "Paid" },
+  #|      "response": { "status": 200, "json": { "status": "paid" } } } ] }
+
+///|
+test "a Stub gated on one state of a Scenario does not shadow a later Stub with the same request that requires another state: the checkout example has no warnings" {
+  inspect(warnings([("payments.json", checkout)]), content="none")
+}
+
+///|
+/// For each pair of `scenario` clauses, `none` for a Stub without one,
+/// whether a Stub `s` with the second is reported as shadowed by a Stub `t`
+/// with the first, declared before it in the same Mock, with the same
+/// request: one line per pair, `t <clause> / s <clause> -> shadowed` or
+/// `-> not reported`.
+fn scenario_verdicts(pairs : Array[(String, String)]) -> String raise {
+  let stub = (id : String, clause : String) => {
+    let clause = if clause == "none" { "" } else { "\"scenario\": \{clause}, " }
+    (
+      $|{ "id": "\{id}", "mock": "m", "request": { "method": "GET", "path": "/a" },
+      $|  \{clause}"response": { "status": 200 } }
+    )
+  }
+  let lines = []
+  for pair in pairs {
+    let (t, s) = pair
+    let file =
+      $|{ "mocks": [{ "name": "m" }],
+      $|  "stubs": [\{stub("t", t)}, \{stub("s", s)}] }
+    let set : @definitions.DefinitionSet = {
+      files: [("m.json", @utf8.encode(file))],
+      body_files: [],
+    }
+    let snapshot = match @definitions.load(set) {
+      Ok(snapshot) => snapshot
+      Err(diagnostics) => fail(diagnostics.map(d => d.to_string()).join("\n"))
+    }
+    // A shadowed Stub's warning points at the Stub itself.
+    let verdict = if snapshot
+      .warnings()
+      .iter()
+      .any(w => w.pointer == "/stubs/1") {
+      "shadowed"
+    } else {
+      "not reported"
+    }
+    lines.push("t \{t} / s \{s} -> \{verdict}")
+  }
+  lines.join("\n")
+}
+
+///|
+test "with the same request, t shadows s when t has no requires, or when s requires the same state of the same Scenario; moveTo plays no part" {
+  inspect(
+    scenario_verdicts([
+      ("none", "{ \"name\": \"checkout\", \"requires\": \"Paid\" }"),
+      (
+        "{ \"name\": \"checkout\", \"moveTo\": \"Paid\" }", "{ \"name\": \"checkout\", \"requires\": \"Paid\" }",
+      ),
+      (
+        "{ \"name\": \"checkout\", \"requires\": \"Paid\" }", "{ \"name\": \"checkout\", \"requires\": \"Paid\" }",
+      ),
+      (
+        "{ \"name\": \"checkout\", \"requires\": \"Started\" }", "{ \"name\": \"checkout\", \"requires\": \"Started\" }",
+      ),
+      (
+        "{ \"name\": \"checkout\", \"requires\": \"Paid\" }", "{ \"name\": \"checkout\", \"requires\": \"Paid\", \"moveTo\": \"Shipped\" }",
+      ),
+      (
+        "{ \"name\": \"checkout\", \"requires\": \"Paid\", \"moveTo\": \"Shipped\" }",
+        "{ \"name\": \"checkout\", \"requires\": \"Paid\" }",
+      ),
+      (
+        "{ \"name\": \"checkout\", \"requires\": \"Started\" }", "{ \"name\": \"checkout\", \"requires\": \"Paid\" }",
+      ),
+      ("{ \"name\": \"checkout\", \"requires\": \"Paid\" }", "none"),
+      (
+        "{ \"name\": \"checkout\", \"requires\": \"Paid\" }", "{ \"name\": \"checkout\", \"moveTo\": \"Paid\" }",
+      ),
+      (
+        "{ \"name\": \"checkout\", \"requires\": \"Paid\" }", "{ \"name\": \"refund\", \"requires\": \"Paid\" }",
+      ),
+      (
+        "{ \"name\": \"checkout\", \"requires\": \"Paid\" }", "{ \"name\": \"checkout\", \"requires\": \"paid\" }",
+      ),
+    ]),
+    content=(
+      #|t none / s { "name": "checkout", "requires": "Paid" } -> shadowed
+      #|t { "name": "checkout", "moveTo": "Paid" } / s { "name": "checkout", "requires": "Paid" } -> shadowed
+      #|t { "name": "checkout", "requires": "Paid" } / s { "name": "checkout", "requires": "Paid" } -> shadowed
+      #|t { "name": "checkout", "requires": "Started" } / s { "name": "checkout", "requires": "Started" } -> shadowed
+      #|t { "name": "checkout", "requires": "Paid" } / s { "name": "checkout", "requires": "Paid", "moveTo": "Shipped" } -> shadowed
+      #|t { "name": "checkout", "requires": "Paid", "moveTo": "Shipped" } / s { "name": "checkout", "requires": "Paid" } -> shadowed
+      #|t { "name": "checkout", "requires": "Started" } / s { "name": "checkout", "requires": "Paid" } -> not reported
+      #|t { "name": "checkout", "requires": "Paid" } / s none -> not reported
+      #|t { "name": "checkout", "requires": "Paid" } / s { "name": "checkout", "moveTo": "Paid" } -> not reported
+      #|t { "name": "checkout", "requires": "Paid" } / s { "name": "refund", "requires": "Paid" } -> not reported
+      #|t { "name": "checkout", "requires": "Paid" } / s { "name": "checkout", "requires": "paid" } -> not reported
+    ),
+  )
+}
