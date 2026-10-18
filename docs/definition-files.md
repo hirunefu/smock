@@ -389,6 +389,12 @@ Deleting an Ephemeral Stub leaves the state as it is. A state that no Stub
 names any more matches no `requires`, and the next reload that swaps in
 new files sends it back to `Started` ([Reloading](#reloading)).
 
+Through the Admin API, a test lists its Session's Scenarios of a Mock,
+with the state each one is in, and sets the state of one, so that it can
+start in the middle of a flow, or reset one Scenario by setting `Started`
+([Sessions and Ephemeral Stubs](../README.md#sessions-and-ephemeral-stubs)).
+It can set only a state that the files or its own Ephemeral Stubs name.
+
 #### How state grows
 
 smock stores one small entry for each Session, Mock and Scenario whose
