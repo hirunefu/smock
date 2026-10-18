@@ -352,8 +352,8 @@ Journal. `SMOCK_JOURNAL_MAX_BYTES` in `env` sets another bound.
 Each Pod runs one single-threaded smock process, so a CPU limit above one
 core would not make it faster: scale with `replicas` instead
 ([ADR 0003](https://github.com/hirunefu/smock/blob/main/docs/adr/0003-one-process-per-pod.md)).
-Replicas share no state: tests that use Ephemeral Stubs or the Journal need
-one replica, or session affinity from a gateway or mesh.
+Replicas share no state: tests that use Ephemeral Stubs, Scenarios or the
+Journal need one replica, or session affinity from a gateway or mesh.
 
 The chart passes `replicas` to smock's replica-count setting, so that each
 Admin API response warns when state is per replica. The value goes stale

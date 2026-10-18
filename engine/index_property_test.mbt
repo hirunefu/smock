@@ -1,6 +1,8 @@
 // Seam 1 property test of the match index: for generated definition sets
 // and requests, the engine that finds Stubs through the index gives the
-// same outcome as the one that tries every Stub in matching order.
+// same outcome as the one that tries every Stub in matching order. Some
+// Stubs have Scenario clauses, and each case sends a sequence of requests
+// with Sessions, so both engines must also make the same moves.
 //
 // Each case is generated from its own seed, derived from its number. A
 // failure names the case; `check_index_case(<case>, IndexTally())` in a test
@@ -36,7 +38,7 @@ fn twins(files : Array[(String, String)]) -> Twins raise {
 /// Sends `request`, with `session`, by default none, to both engines, each with a random
 /// source seeded the same way, and returns the outcome. Fails, showing both,
 /// when the outcomes differ in any part: the response plan, the Journal
-/// entry or the Near miss.
+/// entry, the Near miss or the Scenario move.
 fn Twins::send(
   self : Twins,
   request : @engine.Request,
@@ -54,7 +56,10 @@ fn Twins::send(
     now=fixed_now,
     rand=@prng.Generator(1),
   )
-  let (with_index, in_order) = (describe(indexed), describe(linear))
+  let (with_index, in_order) = (
+    "\{describe(indexed)}\nscenario: \{moved(indexed)}",
+    "\{describe(linear)}\nscenario: \{moved(linear)}",
+  )
   if with_index != in_order {
     fail("with the index:\n\{with_index}\n\nin matching order:\n\{in_order}")
   }
@@ -71,11 +76,14 @@ let index_requests_per_case : Int = 40
 
 ///|
 /// What the generated requests matched, to show that the property test
-/// reaches every kind of Stub and requests that match nothing.
+/// reaches every kind of Stub and requests that match nothing, and Stubs
+/// that move a Scenario or keep its state.
 struct IndexTally {
   /// The number of requests per kind of Stub that answered them: `exact
   /// path`, `path pattern` or `no path` for a Stub from a Definition file,
-  /// `ephemeral` for an Ephemeral Stub, or `no match`.
+  /// `ephemeral` for an Ephemeral Stub, or `no match`; and the number
+  /// answered by a Stub with a Scenario clause that moved its Scenario to
+  /// another state, or kept it in the same one.
   counts : Map[String, Int]
 }
 
@@ -88,6 +96,8 @@ fn IndexTally::IndexTally() -> IndexTally {
       ("no path", 0),
       ("ephemeral", 0),
       ("no match", 0),
+      ("Scenario moved", 0),
+      ("Scenario kept", 0),
     ]),
   }
 }
@@ -98,7 +108,7 @@ fn IndexTally::to_string(self : IndexTally) -> String {
 }
 
 ///|
-test "the match index picks the same Stub as the matching order, for generated definition sets, Ephemeral Stubs and requests" {
+test "the match index picks the same Stub and makes the same Scenario moves as the matching order, for generated definition sets, Ephemeral Stubs and requests with Sessions" {
   let tally = IndexTally()
   for case in 0..<index_cases {
     check_index_case(case, tally)
@@ -106,11 +116,13 @@ test "the match index picks the same Stub as the matching order, for generated d
   inspect(
     tally.to_string(),
     content=(
-      #|exact path: 999
-      #|path pattern: 1404
-      #|no path: 2152
-      #|ephemeral: 542
-      #|no match: 6903
+      #|exact path: 920
+      #|path pattern: 1319
+      #|no path: 1795
+      #|ephemeral: 374
+      #|no match: 7592
+      #|Scenario moved: 231
+      #|Scenario kept: 764
     ),
   )
 }
@@ -170,6 +182,10 @@ fn check_index_case(case : Int, tally : IndexTally) -> Unit raise {
       None => "no match"
     }
     tally.counts[kind] = tally.counts.get(kind).unwrap_or(0) + 1
+    if outcome.scenario is Some({ from, to, .. }) {
+      let kind = if from == to { "Scenario kept" } else { "Scenario moved" }
+      tally.counts[kind] = tally.counts.get(kind).unwrap_or(0) + 1
+    }
   }
 }
 
@@ -346,7 +362,29 @@ fn gen_stub(rand : @random.Rand, id : String) -> (Json, String) {
   if request.length() > 0 {
     stub["request"] = Json::object(request)
   }
+  if chance(rand, 35) {
+    stub["scenario"] = gen_scenario_clause(rand)
+  }
   (Json::object(stub), kind)
+}
+
+///|
+/// A Scenario clause on one of two Scenarios, with `requires`, `moveTo` or
+/// both, each one of three states, `Started` among them.
+fn gen_scenario_clause(rand : @random.Rand) -> Json {
+  let states = ["Started", "X", "Y"]
+  let clause : Map[String, Json] = {
+    "name": Json::string(pick(rand, ["a", "b"])),
+  }
+  match rand.int(limit=3) {
+    0 => clause["requires"] = Json::string(pick(rand, states))
+    1 => clause["moveTo"] = Json::string(pick(rand, states))
+    _ => {
+      clause["requires"] = Json::string(pick(rand, states))
+      clause["moveTo"] = Json::string(pick(rand, states))
+    }
+  }
+  Json::object(clause)
 }
 
 ///|

@@ -100,7 +100,37 @@ pub struct Mock {
   stubs : ReadOnlyArray[Stub]
   /// The match index of `stubs`, which `candidates` looks up.
   priv index : MatchIndex
+  /// The Scenarios that the Mock's Stubs name, each with its file states,
+  /// in byte-wise order of their names. A Scenario has no declaration: it
+  /// exists because Stubs name it.
+  scenarios : ReadOnlyArray[ScenarioFileStates]
 } derive(Debug, Eq)
+
+///|
+/// Whether any Stub of the Mock has a Scenario clause. A Mock without one
+/// pays only this test for Scenarios when it answers a request, unless the
+/// request's Session added an Ephemeral Stub with a clause to it.
+pub fn Mock::has_scenarios(self : Mock) -> Bool {
+  self.scenarios.length() > 0
+}
+
+///|
+/// The file states of a Scenario that a Mock's Stubs name: the Scenario's
+/// name, and the states that the Stubs in the Definition files name for it.
+/// A Scenario is a named state machine within the Mock, identified by the
+/// Mock and its name.
+pub struct ScenarioFileStates {
+  /// The Scenario's name, within its Mock.
+  name : String
+  /// `initial_state` first, then every other state that the `requires` and
+  /// `moveTo` of the Mock's Stubs name for the Scenario, in byte-wise
+  /// order.
+  states : ReadOnlyArray[String]
+} derive(Debug, Eq)
+
+///|
+/// The state every Scenario starts in, compared case-sensitively.
+pub let initial_state : String = "Started"
 
 ///|
 /// A Stub from a Definition file.
@@ -112,9 +142,26 @@ pub struct Stub {
   /// after every Stub with one.
   priority : Int?
   request : Conditions
+  /// The Stub's Scenario clause, if it has `scenario`.
+  scenario : ScenarioClause?
   response : Response
   /// The Faults the Stub injects when it matches, if it has `fault`.
   fault : Fault?
+} derive(Debug, Eq)
+
+///|
+/// A Stub's Scenario clause: the state a Scenario of the Stub's Mock must
+/// be in for the Stub to match, the state the Stub moves it to when it is
+/// chosen, or both. It is not a request condition: it depends on the
+/// engine's state, not on the request alone.
+pub struct ScenarioClause {
+  /// The Scenario's name.
+  name : String
+  /// The state the Scenario must be in. Without it, the Stub matches in
+  /// every state.
+  requires : String?
+  /// The state the Scenario moves to when the Stub is chosen.
+  move_to : String?
 } derive(Debug, Eq)
 
 ///|
@@ -686,6 +733,7 @@ pub fn load(
           journal: true,
           stubs: ReadOnlyArray::from_array([]),
           index: MatchIndex::new(ReadOnlyArray::from_array([])),
+          scenarios: ReadOnlyArray::from_array([]),
         },
       ]),
       host_index: Map([]),
@@ -708,6 +756,7 @@ pub fn load(
       journal: mock.journal,
       stubs,
       index: MatchIndex::new(stubs),
+      scenarios: scenarios_of(stubs),
     }
   })
   let index_of = Map([])
@@ -730,6 +779,101 @@ pub fn load(
     stub_locations: reader.stub_locations,
     digest,
   })
+}
+
+///|
+/// The Scenarios that `stubs`, the Stubs of one Mock, name, in byte-wise
+/// order of their names, each with its states: `initial_state`, then every
+/// other state that the Stubs' `requires` and `moveTo` name for it, in
+/// byte-wise order.
+fn scenarios_of(
+  stubs : ReadOnlyArray[Stub],
+) -> ReadOnlyArray[ScenarioFileStates] {
+  let by_scenario = StatesByScenario::new()
+  for stub in stubs {
+    if stub.scenario is Some(clause) {
+      by_scenario.add_clause(clause)
+    }
+  }
+  let scenarios = []
+  for name, states in by_scenario.sorted() {
+    scenarios.push(ScenarioFileStates::{
+      name,
+      states: ReadOnlyArray::from_array(states),
+    })
+  }
+  ReadOnlyArray::from_array(scenarios)
+}
+
+///|
+/// Scenario names, each with the states gathered for it, such as the
+/// states that the `requires` and `moveTo` of a Mock's Stubs name. Every
+/// Scenario has `initial_state`, so it is never gathered, and a Scenario
+/// gathered without a state has only that one.
+pub struct StatesByScenario {
+  /// The states gathered, other than `initial_state`, by Scenario name.
+  priv states : Map[String, Set[String]]
+}
+
+///|
+/// No Scenario gathered yet.
+pub fn StatesByScenario::new() -> StatesByScenario {
+  { states: Map([]), }
+}
+
+///|
+/// Gathers the Scenario `name`, and `state` for it unless it is `None` or
+/// `initial_state`.
+pub fn StatesByScenario::add(
+  self : StatesByScenario,
+  name : String,
+  state : String?,
+) -> Unit {
+  let states = match self.states.get(name) {
+    Some(states) => states
+    None => {
+      let states = Set([])
+      self.states[name] = states
+      states
+    }
+  }
+  if state is Some(state) && state != initial_state {
+    states.add(state)
+  }
+}
+
+///|
+/// Gathers the Scenario of `clause`, with the states its `requires` and
+/// `moveTo` name.
+pub fn StatesByScenario::add_clause(
+  self : StatesByScenario,
+  clause : ScenarioClause,
+) -> Unit {
+  self.add(clause.name, clause.requires)
+  self.add(clause.name, clause.move_to)
+}
+
+///|
+/// The Scenarios gathered, in byte-wise order of their names, each with its
+/// states: `initial_state` first, then the others in byte-wise order.
+pub fn StatesByScenario::sorted(
+  self : StatesByScenario,
+) -> Map[String, Array[String]] {
+  let names = self.states.keys().collect()
+  names.sort_by(compare_bytes)
+  let sorted = Map([])
+  for name in names {
+    let others = self.states[name].iter().collect()
+    others.sort_by(compare_bytes)
+    sorted[name] = [initial_state, ..others]
+  }
+  sorted
+}
+
+///|
+/// How `a` and `b` compare in byte-wise order of their UTF-8 encodings.
+fn compare_bytes(a : String, b : String) -> Int {
+  @utf8.encode(a).lexical_compare(@utf8.encode(b))
 }
 
 ///|
@@ -807,6 +951,6 @@ pub fn DefinitionSet::digest(self : DefinitionSet) -> String {
 /// `files` in byte-wise order of their names (UTF-8).
 fn sorted_by_name(files : Array[(String, Bytes)]) -> Array[(String, Bytes)] {
   let sorted = files.copy()
-  sorted.sort_by((a, b) => @utf8.encode(a.0).lexical_compare(@utf8.encode(b.0)))
+  sorted.sort_by((a, b) => compare_bytes(a.0, b.0))
   sorted
 }

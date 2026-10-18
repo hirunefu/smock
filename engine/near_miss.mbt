@@ -14,7 +14,7 @@ pub(all) struct NearMiss {
   /// Where the Stub comes from.
   stub_source : StubSource
   /// The conditions it failed, in the order method, path, query
-  /// parameters, headers, body.
+  /// parameters, headers, body, Scenario state.
   failed : Array[FailedCondition]
 } derive(Debug)
 
@@ -27,7 +27,8 @@ pub(all) struct FailedCondition {
   /// The values the request carries for the condition, in order: one for
   /// the method, the path and the body; every value of a query parameter or
   /// header, which may be repeated; none when it is absent. The path and
-  /// query values are percent-decoded, as conditions compare them.
+  /// query values are percent-decoded, as conditions compare them. For a
+  /// Scenario, the one state it is in for the request's Session.
   actual : Array[String]
 } derive(Debug)
 
@@ -41,11 +42,14 @@ pub(all) enum Condition {
   /// The header with this name, in lower case.
   Header(String)
   Body
+  /// The state that the Stub's Scenario clause requires of the Scenario
+  /// with this name.
+  Scenario(String)
 } derive(Debug, Eq)
 
 ///|
 /// The name of the condition, as the Near miss reports it: `method`,
-/// `path`, `query:<name>`, `header:<name>` or `body`.
+/// `path`, `query:<name>`, `header:<name>`, `body` or `scenario:<name>`.
 pub fn Condition::to_string(self : Condition) -> String {
   match self {
     Method => "method"
@@ -53,6 +57,7 @@ pub fn Condition::to_string(self : Condition) -> String {
     Query(name) => "query:\{name}"
     Header(name) => "header:\{name}"
     Body => "body"
+    Scenario(name) => "scenario:\{name}"
   }
 }
 
@@ -101,7 +106,7 @@ pub impl ToJson for Expected with fn to_json(self) {
 ///|
 /// The `Smock-Near-Miss` header value: `<stub-id>; failed=<condition>,...`.
 /// It is ASCII only and carries no expected or actual value: the Stub ID
-/// and the names of query parameters and headers are written as
+/// and the names of query parameters, headers and Scenarios are written as
 /// `header_safe` writes them, so no name can add a field or change the
 /// header's meaning.
 fn NearMiss::header_value(self : NearMiss) -> String {
@@ -110,6 +115,7 @@ fn NearMiss::header_value(self : NearMiss) -> String {
       match failed.condition {
         Query(name) => "query:\{header_safe(name)}"
         Header(name) => "header:\{header_safe(name)}"
+        Scenario(name) => "scenario:\{header_safe(name)}"
         condition => condition.to_string()
       }
     })
@@ -126,21 +132,32 @@ priv enum Failed {
   Query(String, @definitions.ValueCondition)
   Header(String, @definitions.ValueCondition)
   Body(@definitions.BodyCondition)
+  /// The Scenario `name`, the state the Stub requires of it, and the state
+  /// it is in.
+  Scenario(name~ : String, required~ : String, current~ : String)
 }
 
 ///|
 /// The Near miss among `candidates`, each with where it comes from, in
-/// matching order, none of which the request meets: the one with the
-/// fewest failed conditions, the earlier one on a tie. There is none
-/// without candidates.
+/// matching order, none of which the request meets in the current states,
+/// `states`: the one with the fewest failed conditions, the earlier one on
+/// a tie. There is none without candidates.
 fn Incoming::near_miss(
   self : Incoming,
   candidates : Iter[(@definitions.Stub, StubSource)],
+  states : Map[String, String]?,
 ) -> NearMiss? {
   let mut best : (@definitions.Stub, StubSource, Array[Failed])? = None
   for candidate in candidates {
     let (stub, source) = candidate
     let failed = self.failed(stub.request)
+    // The state a Stub requires counts after its request conditions.
+    if stub.scenario is Some({ name, requires: Some(required), .. }) {
+      let current = current_state(states, name)
+      if current != required {
+        failed.push(Failed::Scenario(name~, required~, current~))
+      }
+    }
     match best {
       Some((_, _, fewest)) if fewest.length() <= failed.length() => ()
       _ => best = Some((stub, source, failed))
@@ -225,6 +242,12 @@ fn Incoming::explain(self : Incoming, failed : Failed) -> FailedCondition {
           Json(condition) => Json(condition.to_json())
         },
         actual: [@utf8.decode_lossy(self.request.body)],
+      }
+    Scenario(name~, required~, current~) =>
+      {
+        condition: Scenario(name),
+        expected: Exact(required),
+        actual: [current],
       }
   }
 }

@@ -1,0 +1,115 @@
+{
+  "page": 2,
+  "pageSize": 12,
+  "total": 87,
+  "items": [
+    {
+      "sku": "SKU-00311",
+      "name": "Item 311",
+      "category": "storage",
+      "price": {
+        "amount": 2506,
+        "currency": "EUR"
+      }
+    },
+    {
+      "sku": "SKU-00312",
+      "name": "Item 312",
+      "category": "lighting",
+      "price": {
+        "amount": 2543,
+        "currency": "EUR"
+      }
+    },
+    {
+      "sku": "SKU-00313",
+      "name": "Item 313",
+      "category": "furniture",
+      "price": {
+        "amount": 2580,
+        "currency": "EUR"
+      }
+    },
+    {
+      "sku": "SKU-00314",
+      "name": "Item 314",
+      "category": "kitchen",
+      "price": {
+        "amount": 2617,
+        "currency": "EUR"
+      }
+    },
+    {
+      "sku": "SKU-00315",
+      "name": "Item 315",
+      "category": "garden",
+      "price": {
+        "amount": 2654,
+        "currency": "EUR"
+      }
+    },
+    {
+      "sku": "SKU-00316",
+      "name": "Item 316",
+      "category": "office",
+      "price": {
+        "amount": 2691,
+        "currency": "EUR"
+      }
+    },
+    {
+      "sku": "SKU-00317",
+      "name": "Item 317",
+      "category": "storage",
+      "price": {
+        "amount": 2728,
+        "currency": "EUR"
+      }
+    },
+    {
+      "sku": "SKU-00318",
+      "name": "Item 318",
+      "category": "lighting",
+      "price": {
+        "amount": 2765,
+        "currency": "EUR"
+      }
+    },
+    {
+      "sku": "SKU-00319",
+      "name": "Item 319",
+      "category": "furniture",
+      "price": {
+        "amount": 2802,
+        "currency": "EUR"
+      }
+    },
+    {
+      "sku": "SKU-00320",
+      "name": "Item 320",
+      "category": "kitchen",
+      "price": {
+        "amount": 2839,
+        "currency": "EUR"
+      }
+    },
+    {
+      "sku": "SKU-00321",
+      "name": "Item 321",
+      "category": "garden",
+      "price": {
+        "amount": 2876,
+        "currency": "EUR"
+      }
+    },
+    {
+      "sku": "SKU-00322",
+      "name": "Item 322",
+      "category": "office",
+      "price": {
+        "amount": 2913,
+        "currency": "EUR"
+      }
+    }
+  ]
+}

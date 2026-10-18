@@ -43,7 +43,8 @@ Packages of `smock/smock`:
 - `engine`: decides the response to each request from the snapshot,
   including its Faults, and renders a named Stub's response for a sample
   request, for `smock render` and the Admin render operation. It also holds
-  the Ephemeral Stubs per Mock and Session and the Journal, with its bound,
+  the Ephemeral Stubs and the Scenario state per Mock and Session, and the
+  Journal, with its bound,
   eviction counts and query filter, applies the Admin API operations on
   them (verification and the unmatched requests included), and reads the Session a request carries in its W3C Baggage header. `Engine(snapshot, match_index=false)` tries every Stub in
   matching order instead of using the index; tests check the index against
@@ -407,8 +408,11 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   parameters give the time (RFC 3339) and the seed of the random source;
   the rendering shows those it used.
 - `/v1/mocks/{mock}/stubs` adds, lists and deletes Ephemeral Stubs, and
-  `POST /v1/reset` clears them and Journal entries
+  `POST /v1/reset` clears them, Journal entries and Scenario state
   ([below](#sessions-and-ephemeral-stubs)).
+- `GET /v1/mocks/{mock}/scenarios` lists the calling Session's Scenarios of
+  a Mock, with their states, and `PUT /v1/mocks/{mock}/scenarios/{scenario}`
+  sets the state of one ([below](#sessions-and-ephemeral-stubs)).
 - `POST /v1/journal/query` lists the calling Session's requests from the
   [Journal](#the-journal), `POST /v1/journal/verify` checks how many of
   them there were, and `GET /v1/journal/unmatched` lists those that no
@@ -457,8 +461,10 @@ failed, such as `Smock-Near-Miss: get-user; failed=method`.
 `smock check defs` validates a definitions directory the way `smock serve`
 loads it: it prints every problem, one per line with the file and a JSON
 Pointer, and exits with status 1 if there is any. It also warns about Stubs
-that can never match, because an earlier Stub always matches first;
-warnings do not change the exit status.
+that can never match, because an earlier Stub always matches first, and
+about a [state that a Stub requires but no Stub moves its Scenario
+to](docs/definition-files.md#a-state-that-no-stub-moves-to); warnings do
+not change the exit status.
 
 `smock render --dir defs get-user --request sample.json` shows what a Stub
 returns for a sample request before a test relies on it. The sample is JSON,
@@ -562,20 +568,39 @@ curl localhost:8080/users/1                                           # 200, fro
   Session form their own space, and Ephemeral Stubs added without a Session
   apply only to them. An Ephemeral Stub can be the Near miss, named by its
   ID in `Smock-Near-Miss`.
+- The Session also keeps its own state of each
+  [Scenario](docs/definition-files.md#scenarios). An Ephemeral Stub may
+  carry a `scenario` clause, as a Stub in a Definition file does, even on a
+  Scenario that no file names, and shares the Session's state with the
+  file Stubs that name the same Scenario. Deleting the Ephemeral Stub
+  leaves the state as it is; a reset clears it.
+- `GET /v1/mocks/{mock}/scenarios` lists the calling Session's Scenarios of
+  the Mock, those its file Stubs and the Session's own Ephemeral Stubs
+  name, by name. Each has its current `state` and its known `states`:
+  `Started` first, then every state those Stubs name for it.
+  `PUT /v1/mocks/{mock}/scenarios/{scenario}` with `{"state":"Paid"}` sets
+  the state for the calling Session, so that a test can start in the middle
+  of a flow; `{"state":"Started"}` resets one Scenario. A Scenario that no
+  such Stub names gets 404 `unknown_scenario`, and a state outside the
+  known states 400 `unknown_state`, so a typo cannot leave a Scenario in a
+  state that nothing matches.
 - `GET` lists and `DELETE /v1/mocks/{mock}/stubs/{id}` deletes the calling
   Session's Ephemeral Stubs of the Mock. `POST /v1/reset` with
-  `{"scope":"session"}` clears the calling Session's Ephemeral Stubs and
-  [Journal](#the-journal) entries of every Mock, and its eviction count;
-  `{"scope":"mock","mock":"users"}` every Session's of one Mock, even one
-  that a reload removed while the Journal holds its entries; and
-  `{"scope":"all"}` all of them, and every eviction count. It answers how
-  many Ephemeral Stubs and Journal entries it removed.
+  `{"scope":"session"}` clears the calling Session's Ephemeral Stubs,
+  [Journal](#the-journal) entries and Scenario state of every Mock, and its
+  eviction count; `{"scope":"mock","mock":"users"}` every Session's of one
+  Mock, even one that a reload removed while the Journal holds its entries;
+  and `{"scope":"all"}` all of them, and every eviction count. Without a
+  Session, `{"scope":"session"}` clears the no-Session space. A Scenario
+  whose state is cleared is back in `Started`. It answers how many
+  Ephemeral Stubs, Journal entries and Scenario states it removed.
 - Ephemeral Stubs live in the process that received them, until a reset or
   a restart. They survive a [reload](docs/definition-files.md#reloading) of
   the Definition files, except those of a Mock the new files no longer
   declare.
-- Adding, deleting and resetting each write a log entry (`Ephemeral Stub
-  added`, `Ephemeral Stub deleted`, `reset`); requests write none.
+- Adding, deleting, setting a Scenario's state and resetting each write a
+  log entry (`Ephemeral Stub added`, `Ephemeral Stub deleted`, `Scenario
+  state set`, `reset`); requests write none.
 
 ## The Journal
 
@@ -593,11 +618,14 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   and body; the Stub that answered, or the Near miss with what each failed
   condition expects and what the request sent, each with `stubSource`:
   `file` for a Stub from a Definition file, `ephemeral` for an Ephemeral
-  Stub, so that equal IDs cannot be confused; the status, or the
-  connection Fault; when the request was received and how long the response
-  took; and the digest of the definition set that answered. A request for
-  a Host that no Mock answers is recorded too, with no Mock; one the
-  HTTP/1.1 codec rejects (400, 413, 431, 501 or 505) is not.
+  Stub, so that equal IDs cannot be confused; the
+  [Scenario](docs/definition-files.md#seeing-what-moved) move the Stub
+  made, as `scenario`, with its name and the states it moved from and to;
+  the status, or the connection Fault; when the request was received and
+  how long the response took; and the digest of the definition set that
+  answered. A request for a Host that no Mock answers is recorded too,
+  with no Mock; one the HTTP/1.1 codec rejects (400, 413, 431, 501 or 505)
+  is not.
 - A request is in the Journal as soon as its client has the whole
   response: smock records it just before it writes the response's last
   bytes, so a query made right after a call always finds it. A stream of
@@ -926,6 +954,7 @@ latency for each case, and checks the provisional performance targets.
 |---|---|
 | `bench/bench.py` | Runs the benchmark. |
 | `bench/definitions/` | The definition set smock serves: four Mocks, one of them the Default Mock, and about 1,200 Stubs with exact, pattern and `json` conditions (`e2e/bench_test.mbt` pins the exact count). `bench/gen_definitions.py` writes it. |
+| `bench/definitions-scenarios/` | Its Scenario variant, which `--definitions` selects ([Scenarios in the benchmark](#scenarios-in-the-benchmark)). `bench/gen_definitions.py` writes it too. |
 | `bench/requests.json` | The request mix: nine kinds of request, with weights, realistic headers, a Session in `baggage`, and bodies. |
 | `bench/plan.json` | The cases, the CPU limits, and the rates and durations. |
 | `bench/plan-autopilot.json` | Another plan: smock under the CPU and memory limits of the smallest GKE Autopilot Pods and of the Helm chart's default, at ladders of rates. The targets hold under its profiles. |
@@ -937,8 +966,10 @@ latency for each case, and checks the provisional performance targets.
 
 `e2e/bench_test.mbt` checks on every test run that each request of the mix
 reaches the Mock and the Stub it names, on the plain and on the TLS port,
-and lands in the Journal under its Session. CI checks that
-`bench/definitions/` is what `bench/gen_definitions.py` writes.
+and lands in the Journal under its Session, and that in the Scenario
+variant each request moves its Scenario. CI checks that
+`bench/definitions/` and `bench/definitions-scenarios/` are what
+`bench/gen_definitions.py` writes.
 
 The benchmark runs on a developer's machine. The full run of
 `bench/plan-autopilot.json`, a run on GKE Autopilot, and their comparison
@@ -964,6 +995,7 @@ python3 bench/bench.py run               # the whole plan, about 20 minutes
 python3 bench/bench.py run --cases http-keep-alive --cpu-limits 1   # one case under one limit
 python3 bench/bench.py run --plan bench/plan-autopilot.json            # the profiles the targets hold under, about 20 minutes
 python3 bench/bench.py run --plan bench/plan-autopilot.json --profiles autopilot-burst-min   # one profile
+python3 bench/bench.py run --plan bench/plan-autopilot.json --definitions bench/definitions-scenarios   # with Scenario Stubs
 python3 bench/bench.py run --rate 500 --ramp 1 --duration 3 --tail 1 --settle 1 --cooldown 0   # a check of the setup, about 2 minutes
 python3 bench/bench.py check-targets bench/results/<date>-<time>   # an earlier run against the targets as they are now
 python3 -m unittest discover -s bench -v # the harness's own tests, about 5 minutes
@@ -1024,6 +1056,30 @@ Pod's, but the CPU is not the one GKE schedules the Pod on, and the load
 comes over loopback, not a Pod network. Absolute numbers differ from GKE's;
 compare profiles with each other, and runs on the same machine. The summary
 says so too.
+
+### Scenarios in the benchmark
+
+`--definitions` serves another definitions directory than
+`bench/definitions/`. `bench/definitions-scenarios/` is its Scenario
+variant: the same Mocks and Stubs, but each Stub that a request of the mix
+names has a [Scenario](docs/definition-files.md#scenarios) clause, which
+requires `Started` and moves to `Seen`, and right after it a twin,
+`<id>-seen`, with the same request and response, which requires `Seen` and
+moves back to `Started`. Each request carries its own Session, so its
+Scenario is its own, and the two Stubs take turns. So in every Mock,
+every request of the mix matches a Scenario Stub and moves its Scenario:
+smock looks up the Session's states, checks the state the Stub requires,
+moves it, and records the move in the Journal. Every other request also
+tries the Stub whose state does not hold before the twin that answers,
+as the Stubs of a Scenario with the same request do. The plain set has no
+Scenario Stub, so each of its requests pays only the test of whether its
+Mock has one.
+
+To see what Scenarios cost, run each set on the same machine with the same
+plan and compare the runs with `bench/compare.py`, which names the
+definition set as a condition that differs. Each run checks the targets.
+On GKE, a variant with the `scenarios` option serves it
+([Comparing smock binaries on one node](#comparing-smock-binaries-on-one-node)).
 
 ### Targets
 
@@ -1182,8 +1238,8 @@ architecture the targets file has no set for.
 ### What a run writes
 
 - `conditions.json`: what ran where. The smock version, commit, toolchain
-  and binary digest; the definition set digest and the Mocks; the request
-  mix; the plan file, with its SHA-256 and that of the plan without its
+  and binary digest; the definitions directory, its digest and the Mocks;
+  the request mix; the plan file, with its SHA-256 and that of the plan without its
   `about` (`sha256_without_about`); the architecture, CPU model, kernel
   and CPU governors; the profiles with their CPU and memory limits, the CPU limits
   and the CPUs of smock and of the load generator; each case's profile,
@@ -1408,7 +1464,7 @@ that run's linux/amd64 build and tests passed.
   unless `--yes` says to go on.
 - **Images.** It builds the release binary, unless given one, and two
   images for the run's architecture (`docker build --platform`): the
-  release image with `bench/definitions/`
+  release image with `bench/definitions/` and its Scenario variant
   (`bench/gke/smock-definitions.dockerfile`), and the load generator's
   (`bench/gke/generator.Dockerfile`: Python, the pinned oha of that
   architecture, `bench.py`, the plan and `bench/gke/`). With `--variant`
@@ -1594,8 +1650,11 @@ Each `--variant` is `LABEL=FILE`, the first the baseline; the label (1 to
 Service, `smock-<profile>-<label>`. `no-init` leaves out the init
 container that prints the node's CPU, and `no-first-second` the load
 generator's scrape of smock's `/metrics` a second into each step: R2's
-two changes to the harness. Variants of one binary (one SHA-256) are
-also compared with the first variant that has it: with the same options,
+two changes to the harness. `scenarios` serves the Scenario variant of the
+definitions, `bench/definitions-scenarios/`, in place of
+`bench/definitions/` ([Scenarios in the benchmark](#scenarios-in-the-benchmark)).
+Variants of one binary (one SHA-256) are also compared with the first
+variant that has it: with the same options,
 such as r2b against r2, an A/A pair, whose paired changes show how far
 runs of one binary differ on the node, the A/A spread; with other
 options, such as r2h against r2, what those options cost. A binary
@@ -1643,11 +1702,26 @@ first round with the later ones. The run exits 1 when the variants
 cannot be compared: on more than one node, under other limits than the
 plan's, or with a sample incomplete.
 
+To see what Scenarios cost on one node, run one binary without the
+`scenarios` option and with it twice, an A/A pair to read the cost
+against. A `scenarios` variant's samples record the definitions they
+served, and the comparison does not count their other definition set as
+a condition besides smock. It takes as long and costs as much as the
+pre-merge run of three variants
+([docs/merging-into-main.md](docs/merging-into-main.md)):
+
+```sh
+scripts/gke-bench.sh --yes --arch amd64 --plan bench/plan-same-node.json \
+  --profiles autopilot-burst-min,autopilot-min --time-limit 100m \
+  --variant plain="$dir/smock" --variant sc="$dir/smock",scenarios --variant scb="$dir/smock",scenarios
+```
+
 To read the variants against another baseline, such as each against
 r2, run `gke.py same-node` again on the run's results with
 `--baseline r2 --report same-node-r2` and the `--sha256 LABEL=HEX` and
 `--no-init LABEL` the run gave it (same-node.json names each variant's
-SHA-256 and options): it writes `same-node-r2.json` and
+SHA-256 and options; the samples say which served the Scenario variant):
+it writes `same-node-r2.json` and
 `same-node-r2.md`, and leaves the run's own comparison as it is.
 
 ```sh

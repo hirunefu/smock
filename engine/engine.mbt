@@ -15,6 +15,8 @@ pub struct Engine {
   priv mut last_reload : ReloadResult?
   /// The Ephemeral Stubs, by Mock and Session.
   priv ephemeral : EphemeralStubs
+  /// The state of each Scenario, by Mock and Session.
+  priv scenarios : ScenarioStates
   /// The Journal: the entries committed, oldest first, within its bound.
   priv journal : Journal
 }
@@ -47,6 +49,10 @@ pub(all) struct Outcome {
   near_miss : NearMiss?
   /// The Stub that matched, if any, and where it comes from.
   matched : MatchedStub?
+  /// How the request moved a Scenario of the Mock that answered: the
+  /// clause of the Stub that matched, with the state before and after.
+  /// There is none when no Stub matched, or when the Stub has no clause.
+  scenario : ScenarioMove?
 } derive(Debug)
 
 ///|
@@ -139,6 +145,7 @@ pub fn Engine::Engine(
     match_index,
     last_reload: None,
     ephemeral: EphemeralStubs::new(),
+    scenarios: ScenarioStates::new(),
     journal: Journal::new(journal),
   }
 }
@@ -209,6 +216,12 @@ pub(all) struct ReloadResult {
   /// Every problem in the new set when it was invalid, as
   /// `@definitions.load` gives them; otherwise none.
   errors : Array[@definitions.Diagnostic]
+  /// How many Scenario states the reload sent back to `Started`: the stored
+  /// states that are no longer known states of their Mock, Session and
+  /// Scenario once the new set is swapped in. The states of a Mock that is
+  /// gone are dropped with it, and are not counted. It is 0 when nothing
+  /// was swapped.
+  scenario_states_reset : Int
 } derive(Debug)
 
 ///|
@@ -249,7 +262,10 @@ pub fn ReloadOutcome::name(self : ReloadOutcome) -> String {
 ///   new generator, created from its seed. Plans the engine returned before
 ///   stay as they were: they hold their own bytes. Ephemeral Stubs stay,
 ///   generators included, except those of a Mock the new set does not
-///   declare, which are dropped.
+///   declare, which are dropped. Then each Scenario state stays while its
+///   name is one of the known states of its Mock, Session and Scenario;
+///   any other goes back to `Started`, and the states of a Mock that is
+///   gone are dropped.
 /// - When it is valid with the digest served, nothing is swapped.
 /// - When it is invalid, the served snapshot stays.
 ///
@@ -261,6 +277,7 @@ pub fn Engine::reload(
   at~ : Int64,
 ) -> ReloadResult {
   let old_digest = self.snapshot.digest
+  let mut scenario_states_reset = 0
   let (result, errors) : (ReloadOutcome, Array[@definitions.Diagnostic]) = match
     @definitions.load(set, read_problems~) {
     Ok(snapshot) if snapshot.digest == old_digest => (Unchanged, [])
@@ -268,8 +285,13 @@ pub fn Engine::reload(
       self.snapshot = snapshot
       self.generators = seeded_generators(snapshot)
       // Ephemeral Stubs stay, except those of the Mocks that are gone.
-      let mocks = Set::from_iter(snapshot.mocks.iter().map(mock => mock.name))
+      let mocks = Map::from_iter(
+        snapshot.mocks.iter().map(mock => (mock.name, mock)),
+      )
       self.ephemeral.remove_where((mock, _) => !mocks.contains(mock)) |> ignore
+      // Only then are Scenario states checked, since the known states
+      // include those of the Ephemeral Stubs that stay.
+      scenario_states_reset = self.prune_scenario_states(mocks)
       (Swapped, [])
     }
     Err(errors) => (Failed, errors)
@@ -280,6 +302,7 @@ pub fn Engine::reload(
     old_digest,
     new_digest: self.snapshot.digest,
     errors,
+    scenario_states_reset,
   }
   self.last_reload = Some(reload)
   reload
@@ -329,30 +352,55 @@ pub fn Engine::handle(
     Some(mock) => self.ephemeral.of(mock.name, session)
     None => None
   }
+  // A Stub with a Scenario clause matches only in the state it requires,
+  // checked once its request conditions hold. The Session's states for the
+  // Mock are looked up at most once, and only when a Stub has a clause.
+  let mut states : Map[String, String]? = None
+  let mut states_known = false
   let mut matched : Match? = None
   if ephemeral is Some(list) {
     for i in 0..<list.length() {
       let e = list[i]
       if incoming.meets(e.stub.request) {
-        matched = Some({
-          stub: e.stub,
-          generator: e.generator,
-          source: Ephemeral(e.id),
-        })
-        break
+        if e.stub.scenario is Some(_) && !states_known {
+          states = self.scenarios.of(e.mock, session)
+          states_known = true
+        }
+        if scenario_allows(e.stub, states) {
+          matched = Some({
+            stub: e.stub,
+            generator: e.generator,
+            source: Ephemeral(e.id),
+          })
+          break
+        }
       }
     }
   }
   if matched is None && mock is Some(mock) {
+    // A Mock without a Stub with a clause pays only this test.
+    let gated = mock.has_scenarios()
+    if gated && !states_known {
+      states = self.scenarios.of(mock.name, session)
+      states_known = true
+    }
+    let current = states
     let found = if self.match_index {
-      mock.first_candidate(request.meth, incoming.path, stub => {
-        incoming.meets(stub.request)
-      })
+      if gated {
+        mock.first_candidate(request.meth, incoming.path, stub => {
+          incoming.meets(stub.request) && scenario_allows(stub, current)
+        })
+      } else {
+        mock.first_candidate(request.meth, incoming.path, stub => {
+          incoming.meets(stub.request)
+        })
+      }
     } else {
       let stubs = mock.stubs
       let mut found = None
       for i in 0..<stubs.length() {
-        if incoming.meets(stubs[i].request) {
+        if incoming.meets(stubs[i].request) &&
+          scenario_allows(stubs[i], current) {
           found = Some(stubs[i])
           break
         }
@@ -371,6 +419,25 @@ pub fn Engine::handle(
         source: FromFile(stub.id),
       })
     }
+  }
+  // The Scenario moves now, at the match decision, before the response is
+  // built: whatever happens to the response, a delay, a connection Fault or
+  // a template error, the state has moved, and the next request sees it.
+  // It is the state of the Mock that answered.
+  let mut scenario : ScenarioMove? = None
+  if matched is Some(m) && m.stub.scenario is Some(clause) {
+    if !states_known {
+      states = self.scenarios.of(m.stub.mock, session)
+    }
+    let from = current_state(states, clause.name)
+    let to = match clause.move_to {
+      Some(to) => to
+      None => from
+    }
+    if to != from {
+      self.scenarios.set(m.stub.mock, session, clause.name, to)
+    }
+    scenario = Some({ name: clause.name, from, to, })
   }
   let mut template_error = None
   let mut near_miss = None
@@ -401,7 +468,18 @@ pub fn Engine::handle(
         }
         None => {
           // Only now, when every candidate has failed, are conditions
-          // counted.
+          // counted. A state that a Stub requires counts too. The states
+          // are already known when the Mock's file Stubs have a clause, or
+          // when an Ephemeral Stub with one met the request; otherwise they
+          // are looked up only if an Ephemeral Stub has a clause.
+          if !states_known && ephemeral is Some(list) {
+            for i in 0..<list.length() {
+              if list[i].stub.scenario is Some(_) {
+                states = self.scenarios.of(mock.name, session)
+                break
+              }
+            }
+          }
           let ephemeral = match ephemeral {
             Some(list) => list.iter().map(e => (e.stub, StubSource::Ephemeral))
             None => Iter::empty()
@@ -410,6 +488,7 @@ pub fn Engine::handle(
             ephemeral.concat(
               mock.stubs.iter().map(stub => (stub, StubSource::File)),
             ),
+            states,
           )
           no_match(mock, near_miss)
         }
@@ -431,6 +510,7 @@ pub fn Engine::handle(
         host~,
         resolution~,
         matched=source,
+        scenario~,
         near_miss~,
         plan~,
         template_error~,
@@ -441,7 +521,7 @@ pub fn Engine::handle(
   } else {
     None
   }
-  { resolution, plan, journal, near_miss, matched: source, }
+  { resolution, plan, journal, near_miss, matched: source, scenario, }
 }
 
 ///|

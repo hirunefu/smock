@@ -72,6 +72,63 @@ async test "smock check warns about a Stub that can never match, one line with i
 }
 
 ///|
+async test "smock check understands Scenarios: Stubs gated on different states shadow nothing, the same request and state still do, a required state that no Stub moves to gets a warning at its requires, and it still exits 0" {
+  with_definitions(
+    [
+      (
+        "10-payments.yaml",
+        (
+          #|mocks:
+          #|  - name: payments
+          #|    hosts: [payments.svc]
+          #|stubs:
+          #|  - id: order-pending
+          #|    mock: payments
+          #|    request: { method: GET, path: /orders/42 }
+          #|    scenario: { name: checkout, requires: Started }
+          #|    response: { status: 200, json: { status: pending } }
+          #|  - id: pay
+          #|    mock: payments
+          #|    request: { method: POST, path: /orders/42/pay }
+          #|    scenario: { name: checkout, requires: Started, moveTo: Paid }
+          #|    response: { status: 200 }
+          #|  - id: order-paid
+          #|    mock: payments
+          #|    request: { method: GET, path: /orders/42 }
+          #|    scenario: { name: checkout, requires: Paid }
+          #|    response: { status: 200, json: { status: paid } }
+          #|  - id: order-refunded
+          #|    mock: payments
+          #|    request: { method: GET, path: /orders/42 }
+          #|    scenario: { name: checkout, requires: Refundd }
+          #|    response: { status: 200, json: { status: refunded } }
+        ),
+      ),
+      (
+        "20-more.json",
+        (
+          #|{ "stubs": [{ "id": "order-paid-again", "mock": "payments",
+          #|    "request": { "method": "GET", "path": "/orders/42" },
+          #|    "scenario": { "name": "checkout", "requires": "Paid" },
+          #|    "response": { "status": 200 } }] }
+        ),
+      ),
+    ],
+    dir => {
+      inspect(
+        check([dir]),
+        content=(
+          #|status 0
+          #|10-payments.yaml: /stubs/3/scenario/requires: warning: the Stub "order-refunded" requires the state "Refundd" of the Scenario "checkout", but no Stub in the Definition files moves "checkout" to "Refundd"; only the Admin API or an Ephemeral Stub can
+          #|20-more.json: /stubs/0: warning: the Stub "order-paid-again" can never match: the Stub "order-paid" at 10-payments.yaml: /stubs/2 is tried first and matches every request this one would
+          #|
+        ),
+      )
+    },
+  )
+}
+
+///|
 async test "smock check prints every problem, one line each with the file and JSON Pointer, and exits 1" {
   with_definitions(
     [
@@ -260,7 +317,7 @@ async test "smock check needs the definitions directory as its argument" {
       #|
       #|Usage: smock check [options] <dir>
       #|
-      #|Check a definitions directory as smock serve would load it. Prints every problem, one per line, and exits with status 1 if there is any. Also warns about Stubs that can never match; warnings do not change the exit status.
+      #|Check a definitions directory as smock serve would load it. Prints every problem, one per line, and exits with status 1 if there is any. Also warns about Stubs that can never match, and about states that a Stub requires but no Stub moves its Scenario to; warnings do not change the exit status.
       #|
       #|Arguments:
       #|  dir  The definitions directory.
@@ -282,7 +339,7 @@ async test "smock check --help names its argument and its settings" {
       #|status 0
       #|Usage: smock check [options] <dir>
       #|
-      #|Check a definitions directory as smock serve would load it. Prints every problem, one per line, and exits with status 1 if there is any. Also warns about Stubs that can never match; warnings do not change the exit status.
+      #|Check a definitions directory as smock serve would load it. Prints every problem, one per line, and exits with status 1 if there is any. Also warns about Stubs that can never match, and about states that a Stub requires but no Stub moves its Scenario to; warnings do not change the exit status.
       #|
       #|Arguments:
       #|  dir  The definitions directory.

@@ -248,6 +248,201 @@ and a Stub with neither, such as one with only a path pattern, for every
 request of its Mock, each in its place in the order. Large definition sets
 stay fast when most Stubs have an exact path.
 
+### Scenarios
+
+A *Scenario* is a named state machine within a Mock. Its current state
+decides which Stubs can match, and a Stub can move it to another state.
+With Scenarios, the same request can get different answers at different
+points of a flow: an order is pending until the client pays, and paid
+after.
+
+A Stub takes one `scenario` clause, next to `request` and `response`:
+
+| Member | Meaning |
+|---|---|
+| `name` | The Scenario. Required. |
+| `requires` | The Stub matches only while the Scenario is in this state. Without it, the Stub matches in every state. |
+| `moveTo` | When the Stub is chosen, the Scenario moves to this state. |
+
+A clause gives `requires`, `moveTo` or both; a clause with neither does
+nothing, so it is an error. Scenario and state names are any non-empty
+text, compared byte for byte, like Mock names and Stub IDs.
+
+- Every Scenario starts in the state `Started`, with a capital S.
+- A Scenario has no declaration. It exists because Stubs name it, and its
+  states are `Started` and the ones its Stubs name. The Stubs of one
+  Scenario may sit in different Definition files of the same Mock.
+  `smock check` warns about a [required state that no Stub moves
+  to](#a-state-that-no-stub-moves-to), so a typo in a state name is
+  noticed.
+- A Scenario belongs to its Mock. Two Mocks that use the same name each
+  have their own Scenario, with its own state.
+- `requires` is checked beside the request conditions. A Stub in another
+  state is skipped, like a Stub that fails a condition, and the next one in
+  the usual order is tried ([Which Stub answers](#which-stub-answers)).
+  Scenario Stubs get no special priority.
+- A Stub without a clause matches in every state, so adding a Scenario to a
+  Mock does not disturb its other Stubs.
+- A Stub with `moveTo` and no `requires`, such as a logout, moves the
+  Scenario from any state. `moveTo: Started` sends it back to the start.
+  Moving to the state it is already in changes nothing.
+
+#### An example
+
+The pending and paid answers are two Stubs with the same request and
+different `requires`; the one whose state holds answers:
+
+```yaml
+mocks:
+  - name: payments
+    hosts: [payments.svc]
+stubs:
+  - id: order-pending
+    mock: payments
+    request: { method: GET, path: /orders/42 }
+    scenario: { name: checkout, requires: Started }
+    response: { status: 200, json: { status: pending } }
+  - id: pay
+    mock: payments
+    request: { method: POST, path: /orders/42/pay }
+    scenario: { name: checkout, requires: Started, moveTo: Paid }
+    response: { status: 200 }
+  - id: order-paid
+    mock: payments
+    request: { method: GET, path: /orders/42 }
+    scenario: { name: checkout, requires: Paid }
+    response: { status: 200, json: { status: paid } }
+```
+
+1. `GET /orders/42` answers `{"status":"pending"}`: `checkout` is in
+   `Started`.
+2. `POST /orders/42/pay` answers 200 and moves `checkout` to `Paid`.
+3. `GET /orders/42` now answers `{"status":"paid"}`.
+4. A second `POST /orders/42/pay` matches no Stub, since `pay` requires
+   `Started`, and gets the Mock's 404.
+
+A chain of states gives "the first answers, then another". This retry
+flow resets the connection twice, then answers:
+
+```yaml
+stubs:
+  - id: reset-1
+    mock: orders
+    request: { method: GET, path: /orders/42 }
+    scenario: { name: retry, requires: Started, moveTo: Reset once }
+    response: { status: 200 }
+    fault: { connection: { kind: reset } }
+  - id: reset-2
+    mock: orders
+    request: { method: GET, path: /orders/42 }
+    scenario: { name: retry, requires: Reset once, moveTo: Reset twice }
+    response: { status: 200 }
+    fault: { connection: { kind: reset } }
+  - id: ok
+    mock: orders
+    request: { method: GET, path: /orders/42 }
+    scenario: { name: retry, requires: Reset twice }
+    response: { status: 200, json: { id: 42 } }
+```
+
+#### When the state moves
+
+The state moves the moment smock chooses the Stub, before it builds the
+response. It moves whatever then happens to the response: a delay, a
+connection Fault, a template error (a 500 that still counts as matched),
+a client that disconnects, or a Journal that is off. So:
+
+- Each request sees the moves of every request that reached smock before
+  it. Two requests that race for the same step never both get it: the
+  first moves the state, and the second sees the new one.
+- A request on another connection sees the new state while a delayed or
+  streamed response is still on its way.
+- A retry flow moves on although its responses fail, as above.
+- A request that matches no Stub, or that no Mock takes, moves nothing.
+- The state that moves is the one of the Mock that answered. A request
+  that falls through to the Default Mock moves the Default Mock's
+  Scenario.
+- A reload swaps the definitions between two requests, so a move never
+  straddles two definition sets.
+- `smock render` and the Admin render operation ignore the clause and move
+  nothing.
+
+#### Sessions and Ephemeral Stubs
+
+State is kept per Mock, per [Session](../README.md#sessions-and-ephemeral-stubs)
+and per Scenario. Concurrent tests that share a Mock each walk their own
+flow, as long as each sends its own Session. Requests without a Session
+share one state of their own, which is the simplest for a developer
+running smock locally.
+
+Each replica keeps its own state, as it keeps its own Ephemeral Stubs and
+Journal. Tests that rely on Scenarios need one replica, or session
+affinity. State is lost on restart.
+
+Ephemeral Stubs take the same clause, including Scenarios and states that
+no file names, so a test on a shared instance can build its own Scenario
+without editing files. An Ephemeral Stub and a file Stub that name the
+same Scenario of the same Mock share the Session's state, so an Ephemeral
+Stub can replace one step of a Scenario from the files. Like the Stub, the
+state belongs to the Session that added it: other Sessions never see it.
+Deleting an Ephemeral Stub leaves the state as it is. A state that no Stub
+names any more matches no `requires`, and the next reload that swaps in
+new files sends it back to `Started` ([Reloading](#reloading)). A
+[reset](../README.md#sessions-and-ephemeral-stubs) of the Session, of the
+Mock or of everything clears the states in its scope, and sends their
+Scenarios back to `Started`.
+
+Through the Admin API, a test lists its Session's Scenarios of a Mock,
+with the state each one is in, and sets the state of one, so that it can
+start in the middle of a flow, or reset one Scenario by setting `Started`
+([Sessions and Ephemeral Stubs](../README.md#sessions-and-ephemeral-stubs)).
+It can set only a state that the files or its own Ephemeral Stubs name.
+
+#### How state grows
+
+smock stores one small entry for each Session, Mock and Scenario whose
+state is not `Started`. A move back to `Started` deletes the entry, so
+Sessions that never leave `Started`, or come back to it, cost nothing.
+Nothing expires an entry.
+
+A load test that gives every request a new Session, against Stubs that
+move a state, therefore adds an entry with every request, and smock's
+memory grows for the whole run. Give each virtual user one Session for
+its whole run instead.
+
+#### Seeing what moved
+
+Each [Journal](../README.md#the-journal) entry records the move its Stub
+made, as `scenario`:
+
+```json
+{ "name": "checkout", "from": "Started", "to": "Paid" }
+```
+
+A Stub with a clause but no `moveTo` records the state it answered in as
+both `from` and `to`. An entry whose Stub has no clause, or that no Stub
+answered, has `null`. When the Journal is off, for the Mock or for all,
+the state still moves; only the record is missing.
+
+A request that misses only because of the state gets a Near miss that
+says so ([When no Stub matches](#when-no-stub-matches)). In the example
+above, the second payment gets
+
+```http
+Smock-Near-Miss: pay; failed=scenario:checkout
+```
+
+and its Journal entry holds the condition with the state `pay` requires
+and the state the Session's Scenario was in:
+
+```json
+{ "condition": "scenario:checkout", "expected": "Started", "actual": ["Paid"] }
+```
+
+Only a Stub with `requires` can fail this condition. Scenarios add no
+other response header, so the system under test receives what it would
+receive from the real service.
+
 ### When no Stub matches
 
 The Mock answers with its `noMatch.status`, 404 by default, and the body
@@ -284,12 +479,15 @@ The Near miss is the Stub of the Mock that failed the fewest conditions; on
 a tie, the one tried first. The request's Ephemeral Stubs are candidates
 too, in the order they are tried, and the header names them by their ID,
 such as `eph-3`. Each of these counts as one condition: the method, the
-path, each listed query parameter, each listed header, and the body. They are named `method`, `path`, `query:<name>`, `header:<name>` (in
-lower case) and `body`, in that order. The header is ASCII only and never
+path, each listed query parameter, each listed header, the body, and the
+state a [`scenario` clause](#scenarios) requires. They are named `method`,
+`path`, `query:<name>`, `header:<name>` (in lower case), `body` and
+`scenario:<name>`, in that order. The header is ASCII only and never
 carries what a condition expects or what the request sent: the Stub ID and
-query and header names are percent-encoded where they hold anything other
-than the characters of an HTTP token. A Mock without Stubs, and a request
-for a Host that no Mock answers, get no `Smock-Near-Miss` header.
+query, header and Scenario names are percent-encoded where they hold
+anything other than the characters of an HTTP token. A Mock without Stubs,
+and a request for a Host that no Mock answers, get no `Smock-Near-Miss`
+header.
 
 A request that matches pays nothing for this: smock counts failed
 conditions only once every Stub has failed to match.
@@ -873,11 +1071,24 @@ restart:
 - Ephemeral Stubs survive the swap. A Mock the new set no longer declares
   is gone: its Ephemeral Stubs are dropped, and its Hosts resolve like any
   unknown Host.
+- [Scenario](#scenarios) state survives the swap while its name still
+  exists. A Scenario's state, for a Session or for requests without one,
+  stays when a Stub of the same Mock still names it for that Scenario, in
+  `requires` or in `moveTo`: a Stub in the files, or one of that Session's
+  own Ephemeral Stubs. Any other state goes back to `Started`. The states
+  of a Mock that is gone are dropped with it. So editing a response body
+  leaves tests in progress where they are in their flows, and a state that
+  only a test's own Ephemeral Stubs name survives a change to the files.
+- Renaming a state loses the state of tests in progress. A test whose
+  Scenario is in the old state goes back to `Started` in the middle of its
+  flow, and its next requests may miss. Rename a state when no test relies
+  on it.
 - When the new set is invalid, smock keeps serving the current one and
   reports every problem, as `smock check` would, in the Admin API status, in
-  a log entry and in the reload metric. Fix the files, and the next reload
-  swaps the fixed set in.
-- When the new set has the digest of the one served, nothing is swapped.
+  a log entry and in the reload metric. Scenario state stays as it is. Fix
+  the files, and the next reload swaps the fixed set in.
+- When the new set has the digest of the one served, nothing is swapped,
+  and Scenario state stays as it is.
 - Without `--dir`, there is nothing to watch and nothing is reloaded.
 
 Each definition set has a *definition set digest*: a short content hash of
@@ -920,8 +1131,11 @@ of the last reload (`null` until the first one), as
 `result` is `swapped` (the new set is served now), `unchanged` (it had the
 digest served) or `failed` (it was invalid; the previous set is still
 served). Each reload also writes one log entry: `definitions reloaded` with
-`oldDigest` and `newDigest`, or `definitions reload failed` with the digest
-still served and every error. The Prometheus counter
+`oldDigest`, `newDigest` and `scenarioStatesReset`, or `definitions reload
+failed` with the digest still served and every error.
+`scenarioStatesReset` is the number of Scenario states the reload sent
+back to `Started`, 0 when there are none. The states dropped with a
+removed Mock are not counted. The Prometheus counter
 `smock_definition_reloads_total` counts reloads by `result`. A failed reload
 does not change readiness: `/readyz` on the admin port still passes, so one
 bad commit does not drain every Pod.
@@ -965,18 +1179,24 @@ In CI, run it as a step that fails the build:
 
 ### Warnings
 
-For a valid directory, `smock check` also warns about Stubs that can never
-match, because an earlier Stub of the same Mock always matches first. Each
-warning is one line, marked `warning:`, with the file and JSON Pointer of
-the shadowed Stub, and names the Stub that shadows it. Warnings do not
+For a valid directory, `smock check` also warns about two things that do
+not stop the directory from loading: a Stub that can never match, and a
+Stub that requires a state that no Stub moves to. Each warning is one
+line, marked `warning:`, with the file and a JSON Pointer. Warnings do not
 change the exit status:
 
 ```console
 $ smock check defs
 users.json: /stubs/1: warning: the Stub "user-1" can never match: the Stub "any-user" at users.json: /stubs/0 is tried first and matches every request this one would
+payments.yaml: /stubs/2/scenario/requires: warning: the Stub "order-paid" requires the state "Payed" of the Scenario "checkout", but no Stub in the Definition files moves "checkout" to "Payed"; only the Admin API or an Ephemeral Stub can
 $ echo $?
 0
 ```
+
+#### A Stub that can never match
+
+A Stub can never match when an earlier Stub of the same Mock always
+matches first. The warning points at that Stub and names the earlier one.
 
 "Earlier" means earlier in the order Stubs are [tried](#which-stub-answers).
 A Stub `s` is shadowed by an earlier Stub `t` when `t` has a subset of
@@ -986,12 +1206,38 @@ A Stub `s` is shadowed by an earlier Stub `t` when `t` has a subset of
 - `t` has no path, the same exact path as `s`, or a pattern that matches
   `s`'s exact path;
 - each of `t`'s query, header and body conditions is also in `s`, written
-  the same way (header names in any case).
+  the same way (header names in any case);
+- `t` has no `requires`, or `s` names the same [Scenario](#scenarios) with
+  the same `requires`. `moveTo` plays no part, since it does not change
+  whether a Stub matches.
+
+So the pending and paid Stubs of the [Scenario example](#an-example) do not
+shadow each other: they have the same request, but require different
+states. Two Stubs with the same request that require the same state are
+still reported.
 
 smock does not compare two patterns, or a pattern or `json` condition with
 another condition: it warns only when the shadowing is certain, so a
 warning is never a false alarm, but some Stubs that can never match are
 not reported.
+
+#### A state that no Stub moves to
+
+A Scenario has no declaration, so a typo in a state name loads without a
+problem: `requires: Payed` names a state that no Stub reaches. smock warns
+when a Stub requires a state other than `Started` that no Stub of the same
+Mock and Scenario moves to with `moveTo`, in any Definition file. The
+warning points at the `requires` value.
+
+The warning states a fact about the files. It does not say the Stub can
+never match, because an Ephemeral Stub or the Admin API can still move the
+Scenario to that state, for example for a test that starts in the middle
+of a flow.
+
+- A state that only `moveTo` names is not reported. A last state, after
+  which Stubs without a clause answer, is a normal design.
+- Ephemeral Stubs are never checked, and their `moveTo` does not count:
+  `smock check` reads only the Definition files.
 
 ## Editor support
 

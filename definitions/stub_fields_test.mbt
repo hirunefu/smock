@@ -1,5 +1,6 @@
 // Validation of the Stub and Mock fields that decide matching and static
-// responses: request conditions, priority, noMatch and body files.
+// responses: request conditions, priority, the Scenario clause, noMatch and
+// body files.
 
 ///|
 /// Loads the Definition file `a.json`, holding Mock `m` and `stubs`, with
@@ -301,6 +302,133 @@ test "a priority is an integer from -2147483648 to 2147483647" {
       #|a.json: /stubs/6/priority: must be an integer from -2147483648 to 2147483647
       #|a.json: /stubs/7/priority: must be an integer from -2147483648 to 2147483647
       #|a.json: /stubs/8/priority: must be an integer from -2147483648 to 2147483647
+    ),
+  )
+}
+
+///|
+test "a Scenario clause names its Scenario and gives requires, moveTo or both, each any non-empty text" {
+  inspect(
+    stub_problems([
+      stub_with(
+        "requires", "\"scenario\": { \"name\": \"checkout\", \"requires\": \"Paid\" }",
+      ),
+      stub_with(
+        "move-to", "\"scenario\": { \"name\": \"checkout\", \"moveTo\": \"Paid\" }",
+      ),
+      stub_with(
+        "both", "\"scenario\": { \"name\": \"checkout\", \"requires\": \"Started\", \"moveTo\": \"Paid\" }",
+      ),
+      stub_with(
+        "back", "\"scenario\": { \"name\": \"checkout\", \"requires\": \"Paid\", \"moveTo\": \"Started\" }",
+      ),
+      stub_with(
+        "any-text", "\"scenario\": { \"name\": \"支払い ✓\", \"requires\": \" \", \"moveTo\": \"済み/π\" }",
+      ),
+    ]),
+    content="valid",
+  )
+}
+
+///|
+test "a malformed Scenario clause is a diagnostic at its JSON Pointer" {
+  inspect(
+    stub_problems([
+      stub_with("a", "\"scenario\": \"checkout\""),
+      stub_with("b", "\"scenario\": { \"requires\": \"Paid\" }"),
+      stub_with("c", "\"scenario\": { \"name\": \"\", \"moveTo\": \"Paid\" }"),
+      stub_with("d", "\"scenario\": { \"name\": \"checkout\" }"),
+      stub_with(
+        "e", "\"scenario\": { \"name\": \"checkout\", \"moveTo\": \"Paid\", \"state\": \"Paid\" }",
+      ),
+      stub_with(
+        "f", "\"scenario\": { \"name\": \"checkout\", \"requires\": 1, \"moveTo\": null }",
+      ),
+      stub_with(
+        "g", "\"scenario\": { \"name\": \"checkout\", \"requires\": \"\" }",
+      ),
+      stub_with(
+        "h", "\"scenario\": [{ \"name\": \"checkout\", \"moveTo\": \"Paid\" }]",
+      ),
+      stub_with("i", "\"scenario\": {}"),
+    ]),
+    content=(
+      #|a.json: /stubs/0/scenario: must be an object
+      #|a.json: /stubs/1/scenario: needs "name"
+      #|a.json: /stubs/2/scenario/name: must be a non-empty string
+      #|a.json: /stubs/3/scenario: must give requires, moveTo or both
+      #|a.json: /stubs/4/scenario/state: is not a known field
+      #|a.json: /stubs/5/scenario/requires: must be a non-empty string
+      #|a.json: /stubs/5/scenario/moveTo: must be a non-empty string
+      #|a.json: /stubs/6/scenario/requires: must be a non-empty string
+      #|a.json: /stubs/7/scenario: must be an object
+      #|a.json: /stubs/8/scenario: needs "name"
+      #|a.json: /stubs/8/scenario: must give requires, moveTo or both
+    ),
+  )
+}
+
+///|
+test "the snapshot holds each Stub's Scenario clause, and each Mock's Scenarios with the states its Stubs name" {
+  let file =
+    #|{ "mocks": [{ "name": "payments" }, { "name": "users" }, { "name": "plain" }],
+    #|  "stubs": [
+    #|    { "id": "pending", "mock": "payments", "request": { "path": "/orders/42" },
+    #|      "scenario": { "name": "checkout", "requires": "Started" },
+    #|      "response": { "status": 200 } },
+    #|    { "id": "pay", "mock": "payments", "request": { "path": "/orders/42/pay" },
+    #|      "scenario": { "name": "checkout", "requires": "Started", "moveTo": "Paid" },
+    #|      "response": { "status": 200 } },
+    #|    { "id": "refund", "mock": "payments",
+    #|      "scenario": { "name": "checkout", "moveTo": "Refunded" },
+    #|      "response": { "status": 200 } },
+    #|    { "id": "audit", "mock": "payments",
+    #|      "scenario": { "name": "audit", "requires": "Open" },
+    #|      "response": { "status": 200 } },
+    #|    { "id": "health", "mock": "payments", "response": { "status": 200 } },
+    #|    { "id": "login", "mock": "users",
+    #|      "scenario": { "name": "checkout", "moveTo": "In" },
+    #|      "response": { "status": 200 } },
+    #|    { "id": "plain", "mock": "plain", "response": { "status": 200 } } ] }
+  let set : @definitions.DefinitionSet = {
+    files: [("a.json", @utf8.encode(file))],
+    body_files: [],
+  }
+  guard @definitions.load(set) is Ok(snapshot) else { fail("not loaded") }
+  let out = []
+  let state = (state : String?) => state.unwrap_or("-")
+  for mock in snapshot.mocks {
+    out.push("\{mock.name}: has Scenario Stubs: \{mock.has_scenarios()}")
+    for scenario in mock.scenarios {
+      out.push(
+        "  Scenario \{scenario.name}: \{scenario.states.iter().collect().join(", ")}",
+      )
+    }
+    for stub in mock.stubs {
+      let clause = match stub.scenario {
+        Some(c) =>
+          "\{c.name}, requires \{state(c.requires)}, moveTo \{state(c.move_to)}"
+        None => "no clause"
+      }
+      out.push("  Stub \{stub.id}: \{clause}")
+    }
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|payments: has Scenario Stubs: true
+      #|  Scenario audit: Started, Open
+      #|  Scenario checkout: Started, Paid, Refunded
+      #|  Stub pending: checkout, requires Started, moveTo -
+      #|  Stub pay: checkout, requires Started, moveTo Paid
+      #|  Stub refund: checkout, requires -, moveTo Refunded
+      #|  Stub audit: audit, requires Open, moveTo -
+      #|  Stub health: no clause
+      #|users: has Scenario Stubs: true
+      #|  Scenario checkout: Started, In
+      #|  Stub login: checkout, requires -, moveTo In
+      #|plain: has Scenario Stubs: false
+      #|  Stub plain: no clause
     ),
   )
 }

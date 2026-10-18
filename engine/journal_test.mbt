@@ -89,6 +89,7 @@ test "a committed entry records the request, its Session, Host and Mock, the Stu
         },
         "stub": "get-user",
         "stubSource": "file",
+        "scenario": Json::null(),
         "nearMiss": Json::null(),
         "status": 200,
         "fault": Json::null(),
@@ -1100,6 +1101,114 @@ test "each entry has a sequence number, and a query or the unmatched list pages 
       #|{ "after": -1 }: /after: must be an integer from 0 to 9007199254740991
       #|{ "after": 1.5 }: /after: must be an integer from 0 to 9007199254740991
       #|{ "after": "3" }: /after: must be an integer from 0 to 9007199254740991
+    ),
+  )
+}
+
+///|
+/// The entries of `session`, one per line, as the method, the target and
+/// the `scenario` member.
+fn Harness::moves(self : Harness, session : String?) -> String raise {
+  guard self.query(session, query="{ \"limit\": 10000 }")
+    is Object({ "entries": Array(entries), .. }) else {
+    fail("no entries")
+  }
+  let lines = []
+  for entry in entries {
+    guard entry
+      is Object(
+        {
+          "request": Object(
+            { "method": String(meth), "target": String(target), .. }
+          ),
+          "scenario": scenario,
+          ..
+        }
+      ) else {
+      fail("an entry has a request and a scenario member")
+    }
+    lines.push("\{meth} \{target}: \{scenario.stringify()}")
+  }
+  lines.join("\n")
+}
+
+///|
+test "an entry records the Scenario move of the Stub that answered: null without a clause or without a match, otherwise its name, from and to, where to is from without moveTo" {
+  let h = harness(login)
+  let _ = h.record("GET", "http://auth.svc/token", session="s")
+  let _ = h.record("POST", "http://auth.svc/login", session="s")
+  let _ = h.record("GET", "http://auth.svc/token", session="s")
+  let _ = h.record("POST", "http://auth.svc/logout", session="s")
+  let _ = h.record("PUT", "http://auth.svc/token", session="s")
+  inspect(
+    h.moves(Some("s")),
+    content=(
+      #|GET http://auth.svc/token: null
+      #|POST http://auth.svc/login: {"name":"login","from":"Started","to":"In"}
+      #|GET http://auth.svc/token: {"name":"login","from":"In","to":"In"}
+      #|POST http://auth.svc/logout: {"name":"login","from":"In","to":"Started"}
+      #|PUT http://auth.svc/token: null
+    ),
+  )
+}
+
+///|
+test "an entry counts two bytes for each UTF-16 code unit of its Scenario move, and of the Scenario name and states of its Near miss" {
+  let h = harness(checkout)
+  let _ = h.record("POST", "http://payments.svc/orders/42/pay", session="s")
+  let first = h.stats()
+  let _ = h.record("POST", "http://payments.svc/orders/42/pay", session="s")
+  // The first entry holds POST, the target, HTTP/1.1, the Session s, the
+  // Host payments.svc, the Mock payments and the Stub pay: 69 code units,
+  // and its move checkout, Started, Paid: 19 more. The second has no Stub,
+  // 66 code units, and its Near miss pay, with checkout, Started and Paid:
+  // 22 more. Each takes 256 + 2 * 88 bytes.
+  inspect(
+    "\{first}\n\{h.stats()}",
+    content=(
+      #|1 entries, 432 bytes, 0 evicted
+      #|2 entries, 864 bytes, 0 evicted
+    ),
+  )
+}
+
+///|
+test "with the Journal off, for the Mock or globally, the state still moves: only the record is missing" {
+  let walk = (h : Harness) => {
+    let out = []
+    for host in ["quiet.svc", "quiet.svc", "m.svc", "m.svc"] {
+      let path = if host == "quiet.svc" { "/q" } else { "/slow" }
+      let outcome = h.send("GET", "http://\{host}\{path}", session="s")
+      let recorded = match outcome.journal {
+        Some(entry) => {
+          h.engine.commit(entry)
+          "recorded"
+        }
+        None => "not recorded"
+      }
+      out.push(
+        "\{host}\{path}: \{matched_id(outcome).unwrap_or("no Stub")}, \{recorded}",
+      )
+    }
+    out.join("\n")
+  }
+  let quiet = harness(mishaps)
+  let off = harness(mishaps, journal=@engine.JournalSettings(enabled=false))
+  inspect(
+    [walk(quiet), quiet.moves(Some("s")), walk(off)].join("\n--\n"),
+    content=(
+      #|quiet.svc/q: quiet-1, not recorded
+      #|quiet.svc/q: quiet-2, not recorded
+      #|m.svc/slow: slow, recorded
+      #|m.svc/slow: slow-done, recorded
+      #|--
+      #|GET http://m.svc/slow: {"name":"slow","from":"Started","to":"Done"}
+      #|GET http://m.svc/slow: {"name":"slow","from":"Done","to":"Done"}
+      #|--
+      #|quiet.svc/q: quiet-1, not recorded
+      #|quiet.svc/q: quiet-2, not recorded
+      #|m.svc/slow: slow, not recorded
+      #|m.svc/slow: slow-done, not recorded
     ),
   )
 }

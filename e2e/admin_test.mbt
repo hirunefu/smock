@@ -325,7 +325,7 @@ async test "with more than one replica, every JSON response, errors included, wa
     "\{warnings.length()} responses, \{distinct.length()} kind of warnings:\n\{distinct.iter().collect().join("\n")}",
     content=(
       #|6 responses, 1 kind of warnings:
-      #|[{"code":"per_replica_state","message":"This deployment runs 3 replicas (--replicas), and each one keeps its own Ephemeral Stubs and Journal. This response comes from <host> alone."}]
+      #|[{"code":"per_replica_state","message":"This deployment runs 3 replicas (--replicas), and each one keeps its own Ephemeral Stubs, Scenario state and Journal. This response comes from <host> alone."}]
     ),
   )
 }

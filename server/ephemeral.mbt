@@ -19,6 +19,16 @@ fn session_json(session : String?) -> Json {
 }
 
 ///|
+/// The calling Session `session`, as error messages name it: the calling
+/// Session, or the no-Session space for `None`.
+fn caller(session : String?) -> String {
+  match session {
+    Some(_) => "the calling Session"
+    None => "the no-Session space"
+  }
+}
+
+///|
 /// The error reply to an operation the engine refused, for the calling
 /// Session `session`.
 fn Admin::refused(
@@ -33,17 +43,24 @@ fn Admin::refused(
         "unknown_mock",
         "no Mock is named \{mock.escape()}: Mocks come only from Definition files",
       )
-    UnknownEphemeralStub(mock~, id~) => {
-      let caller = match session {
-        Some(_) => "the calling Session"
-        None => "the no-Session space"
-      }
+    UnknownEphemeralStub(mock~, id~) =>
       self.error(
         404,
         "unknown_stub",
-        "\{caller} has no Ephemeral Stub \{id.escape()} in the Mock \{mock.escape()}",
+        "\{caller(session)} has no Ephemeral Stub \{id.escape()} in the Mock \{mock.escape()}",
       )
-    }
+    UnknownScenario(mock~, scenario~) =>
+      self.error(
+        404,
+        "unknown_scenario",
+        "no Stub of the Mock \{mock.escape()} names the Scenario \{scenario.escape()}, in the Definition files or among the Ephemeral Stubs of \{caller(session)}",
+      )
+    UnknownState(mock~, scenario~, state~, known~) =>
+      self.error(
+        400,
+        "unknown_state",
+        "\{state.escape()} is not a known state of the Scenario \{scenario.escape()} of the Mock \{mock.escape()} for \{caller(session)}, which are \{known.map(known => known.escape()).join(", ")}",
+      )
     InvalidStub(problems) =>
       self.error(
         400,
@@ -130,6 +147,7 @@ fn reset(admin : Admin, call : Call) -> Reply {
   let removed : Json = {
     "ephemeralStubs": Json::number(removed.ephemeral_stubs.to_double()),
     "journalEntries": Json::number(removed.journal_entries.to_double()),
+    "scenarioStates": Json::number(removed.scenario_states.to_double()),
   }
   let (scope_name, fields) : (String, Map[String, Json]) = match scope {
     Session(session) => ("session", { "session": session_json(session) })
