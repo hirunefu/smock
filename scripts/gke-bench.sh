@@ -7,8 +7,8 @@
 #    external IP addresses), and nothing left by an earlier run; then prints
 #    how long the run takes and what it costs;
 # 2. with --yes, builds the images on this machine (smock with the
-#    benchmark's definitions, one for each binary a run of variants
-#    compares, and the load generator) for the architecture of the run
+#    benchmark's definitions and their Scenario variant, one for each
+#    binary a run of variants compares, and the load generator) for the architecture of the run
 #    (--arch, this machine's by default), with the release binary it builds
 #    or is given: the images only copy files, so this machine builds them
 #    for the other architecture too, with no emulation, from binaries of
@@ -69,14 +69,16 @@
 #                    gh run download <run-id> -R hirunefu/smock -n smock-linux-<arch> gets the
 #                    one CI built (CI's run on the push of that commit)
 #   --oha FILE       use this oha (of the run's architecture) instead of the pinned one
-#   --variant LABEL=FILE[,no-init][,no-first-second]
+#   --variant LABEL=FILE[,no-init][,no-first-second][,scenarios]
 #                    compare release binaries, or one binary with other options, on one node:
 #                    2 to 4 variants, the first the baseline, each in a Pod of its own under
 #                    each profile, which one load generator measures in turn; LABEL (1 to 16
 #                    of a-z, 0-9 and -, from a letter) names its Pod and Service, FILE is its
 #                    binary, built from any commit; no-init leaves out the init container
 #                    that prints its node's CPU, no-first-second the load generator's scrape
-#                    of its /metrics a second into each step; not with --smock
+#                    of its /metrics a second into each step, and scenarios serves the
+#                    Scenario variant of the definitions (bench/definitions-scenarios/) in
+#                    place of bench/definitions/; not with --smock
 #   --rounds N       how many times the load generator measures each variant's steps, the
 #                    variants' order turned each round and step (default: 4); only with --variant
 #
@@ -214,13 +216,15 @@ profiles="" cases="" out="" time_limit=80m smock_binary="" oha_binary="" arch=""
 # The variants of a run that compares them (--variant), in the order given,
 # the first the baseline, and how many rounds the load generator measures
 # them in (--rounds); none in a run of one smock. Each variant's binary,
-# its options as gke.py takes them (",no-init,no-first-second", or fewer),
-# whether its Pod has the init container, its SHA-256, the image of its
+# its options as gke.py takes them (",no-init,no-first-second,scenarios",
+# or fewer), whether its Pod has the init container, the definitions it
+# serves as the repository names them, its SHA-256, the image of its
 # binary and that image's reference once pushed, by label; and the images
 # of smock, one for each distinct binary, named for the first variant with
 # it, with their references once pushed.
 variant_args=() variants=() rounds="" smock_images=()
-declare -A variant_file=() variant_options=() variant_init=() variant_sha256=() variant_image=() variant_ref=()
+declare -A variant_file=() variant_options=() variant_init=() variant_definitions=() variant_sha256=()
+declare -A variant_image=() variant_ref=()
 declare -A image_ref=()
 project_number="" account_pattern="" problems=() apis_to_enable=()
 work="" resources_may_exist=0 watchdog_pid="" built_images=() log_pid="" token_at=0
@@ -492,8 +496,8 @@ wrong() {
   exit 2
 }
 
-# Reads the variants --variant gives, LABEL=FILE[,no-init][,no-first-second]
-# each, into variants and the maps by label, with the SHA-256 of each one's
+# Reads the variants --variant gives,
+# LABEL=FILE[,no-init][,no-first-second][,scenarios] each, into variants and the maps by label, with the SHA-256 of each one's
 # binary, which a dry run needs even when the checks stop early, and the
 # rounds (4 unless --rounds says otherwise); exits when they cannot make a
 # run, as gke.py would refuse them once the cluster is made. gke.py plan
@@ -509,7 +513,7 @@ read_variants() {
     wrong "a run compares 2 to 4 variants, not ${#variant_args[@]}"
   fi
   for text in "${variant_args[@]}"; do
-    [[ $text == *=?* ]] || wrong "--variant $text: give it as LABEL=FILE[,no-init][,no-first-second]"
+    [[ $text == *=?* ]] || wrong "--variant $text: give it as LABEL=FILE[,no-init][,no-first-second][,scenarios]"
     label=${text%%=*}
     IFS=, read -r -a options <<<"${text#*=}"
     file=${options[0]}
@@ -519,12 +523,13 @@ read_variants() {
     fi
     [[ $seen != *" $label "* ]] || wrong "variant $label is given twice: give each its own label"
     seen+="$label "
-    variant_init[$label]=1 variant_options[$label]=""
+    variant_init[$label]=1 variant_options[$label]="" variant_definitions[$label]=bench/definitions
     for option in "${options[@]:1}"; do
       case $option in
       no-init) variant_init[$label]=0 ;;
       no-first-second) ;;
-      *) wrong "variant $label: no option $option; there are no-init and no-first-second" ;;
+      scenarios) variant_definitions[$label]=bench/definitions-scenarios ;;
+      *) wrong "variant $label: no option $option; there are no-init, no-first-second and scenarios" ;;
       esac
       [[ ${variant_options[$label]}, == *",$option,"* ]] || variant_options[$label]+=",$option"
     done
@@ -1010,11 +1015,13 @@ share_images() {
 }
 
 # Writes the build context of an image of smock into DIRECTORY (the first
-# argument): the binary (the second) and the benchmark's definitions.
+# argument): the binary (the second), the benchmark's definitions and
+# their Scenario variant, which a scenarios variant serves.
 smock_context() {
   mkdir -p "$1/dist"
   cp "$2" "$1/dist/smock"
   cp -r "$ROOT/bench/definitions" "$1/definitions"
+  cp -r "$ROOT/bench/definitions-scenarios" "$1/definitions-scenarios"
 }
 
 build_images() {
@@ -1532,8 +1539,9 @@ summarize_into() {
 # directory into its samples (gke.py samples: samples/<round>-<label>/, one
 # variant's pass over the steps in one round, each a run of smock alone, of
 # every round the run planned, which the load generator may not have said),
-# writes each sample's summary with its variant's image and binary and the
-# options of gke.py summarize given, and compares the variants (gke.py
+# writes each sample's summary with its variant's image, binary and
+# definitions and the options of gke.py summarize given, and compares the
+# variants (gke.py
 # same-node: same-node.json and same-node.md, which is also summary.md), in
 # the order given, the first the baseline, which neither the Pods nor the
 # samples say when the load generator never started. Fails when a sample
@@ -1546,7 +1554,8 @@ summarize_variants() {
   "$PYTHON" "$GKE_PY" samples --plan "$plan" "${selection[@]}" --rounds "$rounds" "$out" >"$work/samples.txt" ||
     return 1
   while read -r _ label directory; do
-    summarize_into "$directory" "${variant_ref[$label]:-}" "${variant_sha256[$label]:-}" "$@" || status=1
+    summarize_into "$directory" "${variant_ref[$label]:-}" "${variant_sha256[$label]:-}" \
+      --definitions "${variant_definitions[$label]:-bench/definitions}" "$@" || status=1
     sampled+="$label "
   done <"$work/samples.txt"
   # Only the variants with samples: one whose Pod was never applied has

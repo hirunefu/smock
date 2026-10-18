@@ -106,6 +106,15 @@ if tool == "docker" and "login" in words:
     record["stdin"] = sys.stdin.read()
 if tool == "kubectl" and words[:1] in (["apply"], ["delete"]):
     record["document"] = json.loads(Path(options["filename"]).read_text())
+if tool == "docker" and words[:1] == ["build"]:
+    # What each COPY of the Dockerfile copies from the context (the last
+    # word), as [sources, destination], and the sources the context lacks.
+    record["copies"], record["missing"] = [], []
+    for line in Path(options["file"]).read_text().splitlines():
+        if line.strip().upper().startswith("COPY "):
+            *sources, destination = [word for word in line.split()[1:] if not word.startswith("--")]
+            record["copies"].append([sources, destination])
+            record["missing"] += [source for source in sources if not (Path(words[-1]) / source).exists()]
 with (state_dir / "calls.jsonl").open("a") as calls:
     fcntl.flock(calls, fcntl.LOCK_EX)
     calls.write(json.dumps(record) + "\n")
@@ -228,6 +237,10 @@ if tool == "docker":
         runs = any(line.strip().upper().startswith("RUN") for line in dockerfile.splitlines())
         if runs and options.get("platform", f"linux/{machine}") != f"linux/{machine}":
             sys.stderr.write("exec /bin/sh: exec format error\n")
+            answer("", 1)
+        # As docker: a COPY of what the context does not hold fails.
+        if record["missing"]:
+            sys.stderr.write(f'ERROR: failed to compute cache key: "/{record["missing"][0]}": not found\n')
             answer("", 1)
     if words[:1] == ["push"]:
         answer(f"{words[1].rsplit(':', 1)[1]}: digest: sha256:{'ab' * 32} size: 1234\n")
@@ -1412,7 +1425,8 @@ def copy_repository(destination):
         shutil.copy2(ROOT / name, destination / name)
     shutil.copytree(ROOT / "bench" / "gke", destination / "bench" / "gke",
                     ignore=shutil.ignore_patterns("__pycache__"))
-    shutil.copytree(ROOT / "bench" / "definitions", destination / "bench" / "definitions")
+    for name in ("definitions", "definitions-scenarios"):
+        shutil.copytree(ROOT / "bench" / name, destination / "bench" / name)
     return destination / "scripts" / "gke-bench.sh"
 
 
@@ -1741,9 +1755,9 @@ class Variants(Script):
                  "variant a is given twice: give each its own label"),
                 (["--variant", f"A={self.smock}", "--variant", f"b={other}"], "variant label A: use 1 to 16"),
                 (["--variant", f"a={self.smock},no-tls", "--variant", f"b={other}"],
-                 "variant a: no option no-tls; there are no-init and no-first-second"),
+                 "variant a: no option no-tls; there are no-init, no-first-second and scenarios"),
                 (["--variant", f"a={self.smock}", "--variant", "b"],
-                 "--variant b: give it as LABEL=FILE[,no-init][,no-first-second]"),
+                 "--variant b: give it as LABEL=FILE[,no-init][,no-first-second][,scenarios]"),
                 (["--variant", f"a={self.smock}", "--variant", f"b={self.tmp}/missing"],
                  f"no file {self.tmp}/missing")):
             # Without --smock: a run of variants is given its binaries.
@@ -1766,6 +1780,8 @@ class Variants(Script):
         self.assertIn(f"{gke.MIN_VARIANTS} to {gke.MAX_VARIANTS} variants, not {gke.MAX_VARIANTS + 1}", output)
         script = SCRIPT.read_text()
         self.assertIn(f"^{gke.VARIANT_LABEL.pattern}$", script)
+        for option in gke.VARIANT_OPTIONS:
+            self.assertIn(f"\n      {option})", script)
         self.assertIn(f"rounds=${{rounds:-{gke.DEFAULT_ROUNDS}}}", script)
         self.assertEqual(self.calls(), [])
 
@@ -1860,6 +1876,32 @@ class Variants(Script):
         env = {item["name"]: item["value"] for item in job["spec"]["template"]["spec"]["containers"][0]["env"]}
         self.assertEqual({variant["label"]: variant["first_second"] for variant in json.loads(env["VARIANTS"])},
                          {"r1": True, "r2": True, "r2b": True, "r2h": False})
+
+    def test_a_scenarios_variant_serves_the_scenario_variant_of_the_definitions_which_each_image_holds(self):
+        status, output = self.run_variants(variants={"r2": [self.smock], "r2s": [self.smock, "scenarios"]})
+        self.assertEqual(status, 0, output)
+        # One image of smock, which both variants share, holds both sets
+        # (the fake docker, as docker, fails a COPY of what its context
+        # lacks); the scenarios variant's Pod serves the Scenario variant.
+        [smock_build, _] = self.made(["build"])
+        self.assertEqual(smock_build["missing"], [])
+        self.assertEqual(smock_build["copies"][-2:], [[["definitions"], "/definitions"],
+                                                      [["definitions-scenarios"], "/definitions-scenarios"]])
+        pods = {item["metadata"]["name"]: item for call in self.made(["apply"])
+                for item in call["document"].get("items", []) if item["kind"] == "Pod"}
+        self.assertEqual({name: {variable["name"]: variable["value"]
+                                 for variable in pod["spec"]["containers"][0]["env"]}["SMOCK_DIR"]
+                          for name, pod in pods.items()},
+                         {"smock-small-r2": "/definitions", "smock-small-r2s": "/definitions-scenarios"})
+        # Each of its samples says what it served, and the comparison names
+        # the option.
+        for round_ in range(1, 5):
+            for label, directory in (("r2", "bench/definitions"), ("r2s", "bench/definitions-scenarios")):
+                conditions = json.loads((self.out / "samples" / f"{round_}-{label}" / "conditions.json").read_text())
+                self.assertEqual(conditions["definitions"]["directory"], directory, (round_, label))
+        report = json.loads((self.out / "same-node.json").read_text())
+        self.assertEqual([(variant["label"], variant["options"]) for variant in report["variants"]],
+                         [("r2", []), ("r2s", ["scenarios"])])
 
     def test_a_dry_run_of_variants_prints_each_image_and_each_variant_it_would_make(self):
         old = self.smock_for(HOST_ARCH, "0d984c8a1b2c")

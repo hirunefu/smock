@@ -322,6 +322,22 @@ class Variants(Helper):
                          ("250m", "512Mi"))
         self.assertEqual(container["resources"]["requests"], container["resources"]["limits"])
 
+    def test_a_scenarios_variant_serves_the_scenario_variant_of_the_definitions_and_differs_in_nothing_else(self):
+        # Its image holds both sets; the others serve the plain one.
+        rendered = self.manifests(profile="autopilot-min", variants=(f"r2={OTHER_IMAGE}",
+                                                                     f"r2s={OTHER_IMAGE},scenarios"))
+        [_, plain] = rendered["smock-r2.json"]
+        [_, scenarios] = rendered["smock-r2s.json"]
+        served = {}
+        for label, pod in (("r2", plain), ("r2s", scenarios)):
+            [container] = pod_spec(pod)["containers"]
+            served[label] = {variable["name"]: variable["value"] for variable in container["env"]}["SMOCK_DIR"]
+        self.assertEqual(served, {"r2": "/definitions", "r2s": "/definitions-scenarios"})
+        self.assertEqual([init["name"] for init in pod_spec(scenarios)["initContainers"]], ["node-cpu"])
+        self.assertEqual(pod_spec(scenarios)["containers"][0]["resources"],
+                         pod_spec(plain)["containers"][0]["resources"])
+        self.assertEqual(pod_spec(scenarios)["containers"][0]["image"], OTHER_IMAGE)
+
     def test_the_namespace_holds_each_variants_pod_the_load_generators_and_no_more(self):
         # Each smock Pod and the load generator's, with two to spare, as
         # without variants, whose one smock Pod gives 4.
@@ -775,6 +791,15 @@ class Summary(Helper):
         markdown = (out / "summary.md").read_text()
         self.assertIn("GKE Autopilot", markdown)
         self.assertIn("| http-keep-alive | 1000 |", markdown)
+
+    def test_the_conditions_name_the_definitions_smock_served_the_plain_set_unless_told_otherwise(self):
+        lines = [START, generator_step(500), generator_step(1000), {"kind": "done"}]
+        for extra, directory in (((), "bench/definitions"),
+                                 (("--definitions", "bench/definitions-scenarios"), "bench/definitions-scenarios")):
+            out = self.results(lines, pods(), stopped=extra)
+            conditions = json.loads((out / "conditions.json").read_text())
+            self.assertEqual(conditions["definitions"]["directory"], directory)
+            self.assertIn(f"definition set 48f7ce9715f0 ({directory})", (out / "summary.md").read_text())
 
     def test_the_note_says_how_smock_was_measured(self):
         out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}], pods())
@@ -2289,35 +2314,38 @@ class VariantRun(Helper):
         return [(int(round_), label, Path(directory))
                 for round_, label, directory in (line.split(" ", 2) for line in stdout.splitlines())]
 
-    def summarize_sample(self, directory, sha256=None, plan=None, stopped=None):
+    def summarize_sample(self, directory, sha256=None, plan=None, stopped=None, definitions=None):
         """summarize over a sample's directory, as the runner calls it for
-        each, with the sample's variant's binary, and where and why the run
-        stopped before its end when it did (`stopped`, (reason, profile));
-        its summary.json and conditions.json."""
+        each, with the sample's variant's binary, the definitions it served
+        when they are not the plain set, and where and why the run stopped
+        before its end when it did (`stopped`, (reason, profile)); its
+        summary.json and conditions.json."""
         status, _, stderr = helper(
             "summarize", "--plan", plan or small_plan(self.directory()), "--targets", small_targets(self.directory()),
             "--region", "us-central1", "--arch", "amd64", "--started-at", "2026-10-16T03:28:50+00:00",
             "--finished-at", "2026-10-16T04:01:56+00:00", "--smock-image", "sha256:" + "1" * 64,
             *(["--smock-sha256", sha256] if sha256 else []), "--generator-image", "sha256:" + "2" * 64,
+            *(["--definitions", definitions] if definitions else []),
             *(["--stopped", stopped[0], "--stopped-under", stopped[1]] if stopped else []), directory)
         self.assertEqual(status, 0, stderr)
         return json.loads((directory / "summary.json").read_text()), \
             json.loads((directory / "conditions.json").read_text())
 
-    def same_node(self, out, *options, sha256=None, plan=None, stopped=None, rounds=None):
+    def same_node(self, out, *options, sha256=None, plan=None, stopped=None, rounds=None, definitions=None):
         """gke.py same-node over `out` with `options`, once its samples are
         split (told the planned `rounds` when given) and each summarized as
         the runner does it, with its variant's binary's sha256 of `sha256`
         ({label or (round, label): hex}, by default 64 of the label's first
-        letter), and where and why the run stopped when it did (`stopped`,
-        (reason, profile)): its exit status, same-node.json, same-node.md
-        and what it wrote to stderr. The plan is small_plan's, unless `plan`
-        names another."""
+        letter), the definitions it served of `definitions` ({label:
+        directory}, by default the plain set), and where and why the run
+        stopped when it did (`stopped`, (reason, profile)): its exit status,
+        same-node.json, same-node.md and what it wrote to stderr. The plan
+        is small_plan's, unless `plan` names another."""
         plan = plan or small_plan(self.directory())
         sha256 = sha256 or {}
         for round_, label, directory in self.samples(out, plan, rounds):
             self.summarize_sample(directory, sha256.get((round_, label), sha256.get(label, label[0] * 64)), plan,
-                                  stopped)
+                                  stopped, (definitions or {}).get(label))
         status, _, stderr = helper("same-node", out, *options)
         report = json.loads((out / "same-node.json").read_text()) if (out / "same-node.json").exists() else None
         markdown = (out / "same-node.md").read_text() if (out / "same-node.md").exists() else None
@@ -2987,6 +3015,33 @@ class SameNode(VariantRun):
         self.assertEqual(profile["verdicts"]["b"]["verdict"], "higher")
         self.assertIn("- c against b (no-init, no-first-second against no-first-second): 0% (-6% to +7%), higher in 4 "
                       "of 8 pairs, sign test p = 1: no clear difference.", markdown)
+
+    def test_a_variant_serving_the_scenario_variant_is_compared_with_its_binary_for_what_the_scenarios_cost(self):
+        # a, b and c are one binary, b and c serving the Scenario variant of
+        # the definitions, as the runner told summarize: b against a is
+        # what the Scenario Stubs cost, and c against b the A/A pair to
+        # read it against. Their definition set differs as their option
+        # says, not as a condition besides smock.
+        lines = variant_lines(SAME_BINARY)
+        for line in lines:
+            if line["kind"] == "start" and line["variant"] in ("b", "c"):
+                line["status"] = {**line["status"], "digest": "5c0e2b7d91a4"}
+        status, report, markdown, stderr = self.same_node(
+            self.variant_run(lines, variant_pods(["a", "b", "c"])), sha256={"b": "a" * 64, "c": "a" * 64},
+            definitions={"b": "bench/definitions-scenarios", "c": "bench/definitions-scenarios"})
+        self.assertEqual(status, 0, stderr)
+        # b and c are not scraped a second into each step, as the load
+        # generator said.
+        self.assertEqual([(variant["label"], variant["options"]) for variant in report["variants"]],
+                         [("a", []), ("b", ["no-first-second", "scenarios"]),
+                          ("c", ["no-first-second", "scenarios"])])
+        profile = report["gke"]["profiles"]["small"]
+        self.assertEqual([(within["label"], within["against"], within["kind"]) for within in profile["within"]],
+                         [("b", "a", "other options"), ("c", "b", "same binary")])
+        self.assertEqual(profile["a_a_spread"], {"min_change_percent": -6.0, "max_change_percent": 7.0})
+        self.assertIn("- b against a (no-first-second, scenarios against no option): +5% (+5%), higher in 8 of 8 "
+                      "pairs", markdown)
+        self.assertEqual(report["conditions"], {"same": True, "reference": "1-a", "differences": []})
 
     def test_an_a_a_pair_is_found_when_the_baseline_is_its_binary_with_other_options(self):
         # a, b and c are one binary, a without the init container: b

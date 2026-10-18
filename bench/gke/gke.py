@@ -20,8 +20,9 @@ usage:
 
 A run measures one smock, or compares 2 to 4 variants of it, each in a Pod
 of its own on one node, which one load generator measures in turn, round
-after round: manifests then takes --variant LABEL=IMAGE[,no-init][,no-first-second]
-for each, the first the baseline, and --rounds N; plan and estimate take
+after round: manifests then takes
+--variant LABEL=IMAGE[,no-init][,no-first-second][,scenarios] for each,
+the first the baseline, and --rounds N; plan and estimate take
 --variants N and --rounds N. Its results split into samples, one
 variant's pass over the steps in one round each, which summarize
 summarizes as runs of smock alone, and same-node compares them.
@@ -81,9 +82,17 @@ DEFAULT_ROUNDS = 4
 
 
 # What a variant may do otherwise than the others: run without the init
-# container that prints its node's CPU, and without the load generator's
-# scrape of its /metrics a second into each step.
-VARIANT_OPTIONS = ("no-init", "no-first-second")
+# container that prints its node's CPU, without the load generator's
+# scrape of its /metrics a second into each step, and serve the Scenario
+# variant of the benchmark's definitions (bench/definitions-scenarios/).
+VARIANT_OPTIONS = ("no-init", "no-first-second", "scenarios")
+
+# Where smock's image holds the benchmark's definitions
+# (bench/gke/smock-definitions.dockerfile), and their Scenario variant;
+# and the variant as the repository names it, which summarize records.
+DEFINITIONS_DIR = "/definitions"
+SCENARIO_DEFINITIONS_DIR = "/definitions-scenarios"
+SCENARIO_DEFINITIONS = "bench/definitions-scenarios"
 
 # How many variants a run can compare on one node: the namespace's quota
 # and the load generator's time grow with each.
@@ -91,20 +100,22 @@ MIN_VARIANTS, MAX_VARIANTS = 2, 4
 
 
 def parse_variant(text):
-    """A variant as --variant gives it, LABEL=IMAGE[,no-init][,no-first-second]:
-    {label, image, init, first_second}."""
+    """A variant as --variant gives it,
+    LABEL=IMAGE[,no-init][,no-first-second][,scenarios]: {label, image,
+    init, first_second, scenarios}."""
     label, equals, rest = text.partition("=")
     image, *options = rest.split(",")
     if not equals or not image:
-        raise GkeError(f"--variant {text}: give it as LABEL=IMAGE[,no-init][,no-first-second]")
+        raise GkeError(f"--variant {text}: give it as LABEL=IMAGE[,no-init][,no-first-second][,scenarios]")
     if not VARIANT_LABEL.fullmatch(label):
         raise GkeError(f"variant label {label}: use 1 to 16 lowercase letters, digits and hyphens, starting with a "
                        "letter and ending with a letter or digit")
     for option in options:
         if option not in VARIANT_OPTIONS:
-            raise GkeError(f"variant {label}: no option {option}; there are {' and '.join(VARIANT_OPTIONS)}")
+            raise GkeError(f"variant {label}: no option {option}; there are {', '.join(VARIANT_OPTIONS[:-1])} "
+                           f"and {VARIANT_OPTIONS[-1]}")
     return {"label": label, "image": image, "init": "no-init" not in options,
-            "first_second": "no-first-second" not in options}
+            "first_second": "no-first-second" not in options, "scenarios": "scenarios" in options}
 
 
 def parse_variants(texts):
@@ -356,7 +367,8 @@ SMOCK_SECURITY = {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": T
 
 def smock_objects(profile, arch, zone, generator_image, smock_deadline_s, image, variant=None):
     """smock's Service and Pod under `profile`, from `image`; a variant's,
-    {label, init, ...}, when it is given."""
+    {label, init, scenarios, ...}, when it is given: a scenarios variant
+    serves the Scenario variant of the definitions."""
     name = smock_name(profile["name"], variant and variant["label"])
     labels = {"app": SMOCK}
     pod_labels = {**labels, "profile": profile["name"], **({"variant": variant["label"]} if variant else {})}
@@ -403,7 +415,8 @@ def smock_objects(profile, arch, zone, generator_image, smock_deadline_s, image,
             }]}),
             "containers": [{
                 "name": "smock", "image": image, "args": ["serve"],
-                "env": [{"name": "SMOCK_DIR", "value": "/definitions"},
+                "env": [{"name": "SMOCK_DIR",
+                         "value": SCENARIO_DEFINITIONS_DIR if variant and variant["scenarios"] else DEFINITIONS_DIR},
                         {"name": "SMOCK_ADMIN_AUTH", "value": "off"}],
                 "ports": [{"name": "plain", "containerPort": 8080}, {"name": "tls", "containerPort": 8443},
                           {"name": "admin", "containerPort": 9090}],
@@ -459,7 +472,8 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
     With `variants` (parse_variants', the first the baseline), each has
     smock-<label>.json in place of smock.json: its own Service and Pod,
     from its image, on the node of the profile's other variants (a no-init
-    variant without the init container); the quota counts each one's Pod,
+    variant without the init container, a scenarios variant serving the
+    Scenario variant of the definitions); the quota counts each one's Pod,
     and the load generator measures each in turn over `rounds` rounds (its
     VARIANTS and ROUNDS), with time for them all. `smock_image` is not used
     then."""
@@ -1107,7 +1121,7 @@ def command_summarize(args):
         "finished_at": args.finished_at,
         "smock": {"version": status.get("version"), "commit": status.get("commit"),
                   "toolchain": status.get("toolchain"), "image": args.smock_image, "sha256": args.smock_sha256},
-        "definitions": {"directory": "bench/definitions", "digest": status.get("digest"),
+        "definitions": {"directory": args.definitions, "digest": status.get("digest"),
                         "mocks": status.get("mocks")},
         "request_mix": {"file": harness.shown_path(mix), "sha256": harness.sha256_file(mix),
                         "weights": {request["name"]: request["weight"] for request in read_json(mix)["requests"]}},
@@ -1874,12 +1888,17 @@ def conditions_record(samples, labels):
     """Whether the samples had the same conditions besides smock (those
     compare.py compares two runs by) as the first that has them, the
     baseline's first when it does, and where they did not, which samples
-    differ and how."""
+    differ and how. A sample of a variant that served other definitions
+    than the first (a scenarios variant's) has another definition set, as
+    its option says: that is no condition besides smock."""
     compare = compare_module()
     named = summarized(samples, labels)
     (reference, first), differences = named[0], {}
     for name, conditions in named[1:]:
         for condition, shown in compare.CONDITIONS:
+            if condition == "definition set" and \
+                    conditions["definitions"].get("directory") != first["definitions"].get("directory"):
+                continue
             before, after = shown(first), shown(conditions)
             if not compare.same(condition, before, after):
                 text = compare.difference(condition, before, after)
@@ -1910,16 +1929,17 @@ def given_sha256(texts):
 
 def variant_records(labels, baseline, samples, raws, sha256, no_init):
     """Each variant's binary and options, from its samples' conditions (its
-    commit and version, as its smock said at the start, and the sha256 of
-    the binary summarize was given), the sha256 the run gives (`sha256`,
-    {label: [hex]}), whether it ran without the init container (`no_init`,
-    as the run says) and whether the load generator skipped its scrape a
-    second into each run; and the problems: a variant with more than one
-    sha256."""
+    commit and version, as its smock said at the start, the sha256 of the
+    binary summarize was given, and the definitions it was told smock
+    served), the sha256 the run gives (`sha256`, {label: [hex]}), whether
+    it ran without the init container (`no_init`, as the run says) and
+    whether the load generator skipped its scrape a second into each run;
+    and the problems: a variant with more than one sha256."""
     records, problems = [], []
     for label in labels:
-        smocks = [sample[1]["smock"] for (_, other), sample in samples.items()
-                  if other == label and sample and sample[1]]
+        own = [sample[1] for (_, other), sample in samples.items() if other == label and sample and sample[1]]
+        smocks = [conditions["smock"] for conditions in own]
+        scenarios = any(conditions["definitions"].get("directory") == SCENARIO_DEFINITIONS for conditions in own)
         values = list(dict.fromkeys([*(smock["sha256"] for smock in smocks if smock.get("sha256")),
                                      *sha256.get(label, [])]))
         if len(values) > 1:
@@ -1931,7 +1951,8 @@ def variant_records(labels, baseline, samples, raws, sha256, no_init):
         records.append({"label": label, "baseline": label == baseline, "commit": smock.get("commit"),
                         "version": smock.get("version"), "sha256": values[0] if len(values) == 1 else None,
                         "options": [*(["no-init"] if label in no_init else []),
-                                    *(["no-first-second"] if skipped else [])]})
+                                    *(["no-first-second"] if skipped else []),
+                                    *(["scenarios"] if scenarios else [])]})
     return records, problems
 
 
@@ -2200,7 +2221,8 @@ def main(argv):
                                           "chooses smock's, and the load generator follows it)")
     rendering.add_argument("--smock-image", help="smock's image, by digest")
     rendering.add_argument("--variant", action="append",
-                           help="LABEL=IMAGE[,no-init][,no-first-second]: a variant of smock to measure on the node "
+                           help="LABEL=IMAGE[,no-init][,no-first-second][,scenarios]: a variant of smock to measure "
+                                "on the node "
                                 f"of the others, from its image, by digest; {MIN_VARIANTS} to {MAX_VARIANTS} of them, "
                                 "in place of --smock-image, the first the baseline")
     rendering.add_argument("--generator-image", required=True, help="the load generator's image, by digest")
@@ -2246,6 +2268,9 @@ def main(argv):
     summarizing.add_argument("--cluster-version")
     summarizing.add_argument("--smock-image", help="smock's image digest")
     summarizing.add_argument("--smock-sha256", help="the SHA-256 of the smock binary in the image")
+    summarizing.add_argument("--definitions", default="bench/definitions",
+                             help="the definitions smock served, as the repository names them (default: "
+                                  "bench/definitions; bench/definitions-scenarios for a scenarios variant)")
     summarizing.add_argument("--generator-image", help="the load generator's image digest")
     summarizing.add_argument("--stopped", help="why the run stopped before its end, when it did")
     summarizing.add_argument("--stopped-under", help="the profile the run was running when it stopped")
