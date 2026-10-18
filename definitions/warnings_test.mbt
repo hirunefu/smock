@@ -539,14 +539,8 @@ fn scenario_verdicts(pairs : Array[(String, String)]) -> String raise {
       Err(diagnostics) => fail(diagnostics.map(d => d.to_string()).join("\n"))
     }
     // A shadowed Stub's warning points at the Stub itself.
-    let verdict = if snapshot
-      .warnings()
-      .iter()
-      .any(w => w.pointer == "/stubs/1") {
-      "shadowed"
-    } else {
-      "not reported"
-    }
+    let shadowed = snapshot.warnings().iter().any(w => w.pointer == "/stubs/1")
+    let verdict = if shadowed { "shadowed" } else { "not reported" }
     lines.push("t \{t} / s \{s} -> \{verdict}")
   }
   lines.join("\n")
@@ -599,6 +593,121 @@ test "with the same request, t shadows s when t has no requires, or when s requi
       #|t { "name": "checkout", "requires": "Paid" } / s { "name": "checkout", "moveTo": "Paid" } -> not reported
       #|t { "name": "checkout", "requires": "Paid" } / s { "name": "refund", "requires": "Paid" } -> not reported
       #|t { "name": "checkout", "requires": "Paid" } / s { "name": "checkout", "requires": "paid" } -> not reported
+    ),
+  )
+}
+
+///|
+test "a Stub that requires a state no Stub of its Mock and Scenario moves to gets a warning, as a fact, at its requires" {
+  inspect(
+    warnings([
+      (
+        "payments.json",
+        checkout.replace(
+          old="\"requires\": \"Paid\"",
+          new="\"requires\": \"Payed\"",
+        ),
+      ),
+    ]),
+    content=(
+      #|payments.json: /stubs/2/scenario/requires: warning: the Stub "order-paid" requires the state "Payed" of the Scenario "checkout", but no Stub in the Definition files moves "checkout" to "Payed"; only the Admin API or an Ephemeral Stub can
+    ),
+  )
+}
+
+///|
+test "Started, which every Scenario starts in, and states that only moveTo names are never reported" {
+  inspect(
+    warnings([
+      (
+        "m.json",
+        (
+          #|{ "mocks": [{ "name": "m" }],
+          #|  "stubs": [
+          #|    { "id": "start", "mock": "m", "request": { "path": "/start" },
+          #|      "scenario": { "name": "flow", "requires": "Started", "moveTo": "Done" },
+          #|      "response": { "status": 200 } },
+          #|    { "id": "logout", "mock": "m", "request": { "path": "/logout" },
+          #|      "scenario": { "name": "flow", "moveTo": "Started" },
+          #|      "response": { "status": 200 } } ] }
+        ),
+      ),
+    ]),
+    content="none",
+  )
+}
+
+///|
+test "only a moveTo of a Stub of the same Mock and Scenario counts, in any file and anywhere in matching order, and state names compare byte for byte" {
+  inspect(
+    warnings([
+      (
+        "a.json",
+        (
+          #|{ "mocks": [{ "name": "payments", "hosts": ["payments.svc"] },
+          #|    { "name": "refunds", "hosts": ["refunds.svc"] }],
+          #|  "stubs": [
+          #|    { "id": "shipped", "mock": "payments", "request": { "path": "/shipped" },
+          #|      "scenario": { "name": "checkout", "requires": "Shipped" },
+          #|      "response": { "status": 200 } },
+          #|    { "id": "refunded", "mock": "payments", "request": { "path": "/refunded" },
+          #|      "scenario": { "name": "checkout", "requires": "Refunded" },
+          #|      "response": { "status": 200 } },
+          #|    { "id": "cancelled", "mock": "payments", "request": { "path": "/cancelled" },
+          #|      "scenario": { "name": "checkout", "requires": "cancelled" },
+          #|      "response": { "status": 200 } },
+          #|    { "id": "retried", "mock": "payments", "request": { "path": "/retried" },
+          #|      "scenario": { "name": "checkout", "requires": "Retried", "moveTo": "Retried" },
+          #|      "response": { "status": 200 } } ] }
+        ),
+      ),
+      (
+        "b.json",
+        (
+          #|{ "stubs": [
+          #|    { "id": "ship", "mock": "payments", "request": { "path": "/ship" },
+          #|      "scenario": { "name": "checkout", "moveTo": "Shipped" },
+          #|      "response": { "status": 200 } },
+          #|    { "id": "refund-elsewhere", "mock": "refunds", "request": { "path": "/refund" },
+          #|      "scenario": { "name": "checkout", "moveTo": "Refunded" },
+          #|      "response": { "status": 200 } },
+          #|    { "id": "refund-other-scenario", "mock": "payments", "request": { "path": "/refund" },
+          #|      "scenario": { "name": "refund", "moveTo": "Refunded" },
+          #|      "response": { "status": 200 } },
+          #|    { "id": "cancel", "mock": "payments", "request": { "path": "/cancel" },
+          #|      "scenario": { "name": "checkout", "moveTo": "Cancelled" },
+          #|      "response": { "status": 200 } } ] }
+        ),
+      ),
+    ]),
+    // `retried` moves `checkout` to the state it requires, so a Stub in the
+    // files does move `checkout` there, once it is there.
+    content=(
+      #|a.json: /stubs/1/scenario/requires: warning: the Stub "refunded" requires the state "Refunded" of the Scenario "checkout", but no Stub in the Definition files moves "checkout" to "Refunded"; only the Admin API or an Ephemeral Stub can
+      #|a.json: /stubs/2/scenario/requires: warning: the Stub "cancelled" requires the state "cancelled" of the Scenario "checkout", but no Stub in the Definition files moves "checkout" to "cancelled"; only the Admin API or an Ephemeral Stub can
+    ),
+  )
+}
+
+///|
+test "a shadowed Stub that also requires a state no Stub moves to gets both warnings, the one at the Stub first, and each is one line whatever the names hold" {
+  inspect(
+    warnings([
+      (
+        "m.json",
+        (
+          #|{ "mocks": [{ "name": "m" }],
+          #|  "stubs": [
+          #|    { "id": "any", "mock": "m", "response": { "status": 200 } },
+          #|    { "id": "paid", "mock": "m", "request": { "path": "/a" },
+          #|      "scenario": { "name": "check\nout", "requires": "Pa id" },
+          #|      "response": { "status": 200 } } ] }
+        ),
+      ),
+    ]),
+    content=(
+      #|m.json: /stubs/1: warning: the Stub "paid" can never match: the Stub "any" at m.json: /stubs/0 is tried first and matches every request this one would
+      #|m.json: /stubs/1/scenario/requires: warning: the Stub "paid" requires the state "Pa\u{2028}id" of the Scenario "check\nout", but no Stub in the Definition files moves "check\nout" to "Pa\u{2028}id"; only the Admin API or an Ephemeral Stub can
     ),
   )
 }

@@ -1,7 +1,8 @@
 // The `check` warnings: problems that do not make a definition set invalid.
-// In R1 the only one is a shadowed Stub: a Stub that can never match,
-// because an earlier Stub of the same Mock always matches first. A warning
-// is only reported when it can be proven, so it is never a false positive.
+// There are two: a shadowed Stub, which can never match because an earlier
+// Stub of the same Mock always matches first; and a Stub that requires a
+// state of a Scenario that no Stub in the files moves to. A warning is only
+// reported when it can be proven, so it is never a false positive.
 
 ///|
 /// A warning about a valid definition set: the file it is in, a JSON
@@ -27,12 +28,20 @@ pub fn Warning::to_string(self : Warning) -> String {
 
 ///|
 /// The warnings about the definition set of the snapshot, in matching order
-/// of the Stubs they are about, Mock by Mock: each Stub that an earlier Stub
-/// of its Mock shadows, naming the first one that does.
+/// of the Stubs they are about, Mock by Mock. For each Stub:
+///
+/// - if an earlier Stub of its Mock shadows it, a warning at the Stub that
+///   names the first one that does;
+/// - if it requires a state other than `initial_state` that no Stub of its
+///   Mock moves its Scenario to, a warning at its `requires`. The state is
+///   not proven unreachable, since the Admin API or an Ephemeral Stub can
+///   move the Scenario there, so the warning states the fact.
 pub fn Snapshot::warnings(self : Snapshot) -> Array[Warning] {
   let out : Array[Warning] = []
   for mock in self.mocks {
+    let moves = moves_of(mock.stubs)
     for i, stub in mock.stubs {
+      let { file, pointer, } = self.stub_locations[stub.id]
       let mut shadowing = None
       for j in 0..<i {
         if shadows(mock.stubs[j], stub) {
@@ -40,17 +49,44 @@ pub fn Snapshot::warnings(self : Snapshot) -> Array[Warning] {
           break
         }
       }
-      guard shadowing is Some(earlier) else { continue }
-      let { file, pointer, } = self.stub_locations[stub.id]
-      let earlier_at = self.stub_locations[earlier.id]
+      if shadowing is Some(earlier) {
+        let earlier_at = self.stub_locations[earlier.id]
+        out.push({
+          file,
+          pointer,
+          message: "the Stub \{stub.id.escape()} can never match: the Stub \{earlier.id.escape()} at \{earlier_at} is tried first and matches every request this one would",
+        })
+      }
+      guard stub.scenario is Some({ name, requires: Some(state), .. }) &&
+        state != initial_state &&
+        !(moves.get(name) is Some(states) && states.contains(state)) else {
+        continue
+      }
       out.push({
         file,
-        pointer,
-        message: "the Stub \{stub.id.escape()} can never match: the Stub \{earlier.id.escape()} at \{earlier_at} is tried first and matches every request this one would",
+        pointer: "\{pointer}/scenario/requires",
+        message: "the Stub \{stub.id.escape()} requires the state \{state.escape()} of the Scenario \{name.escape()}, but no Stub in the Definition files moves \{name.escape()} to \{state.escape()}; only the Admin API or an Ephemeral Stub can",
       })
     }
   }
   out
+}
+
+///|
+/// The states that `stubs`, the Stubs of one Mock, move each Scenario to
+/// with `moveTo`, by the Scenario's name.
+fn moves_of(stubs : ReadOnlyArray[Stub]) -> Map[String, Set[String]] {
+  let moves : Map[String, Set[String]] = Map([])
+  for stub in stubs {
+    guard stub.scenario is Some({ name, move_to: Some(state), .. }) else {
+      continue
+    }
+    match moves.get(name) {
+      Some(states) => states.add(state)
+      None => moves[name] = Set([state])
+    }
+  }
+  moves
 }
 
 ///|
