@@ -132,9 +132,9 @@ priv enum Failed {
   Query(String, @definitions.ValueCondition)
   Header(String, @definitions.ValueCondition)
   Body(@definitions.BodyCondition)
-  /// The Scenario with this name, the state the Stub requires of it, and
-  /// the state it is in.
-  Scenario(String, String, String)
+  /// The Scenario `name`, the state the Stub requires of it, and the state
+  /// it is in.
+  Scenario(name~ : String, required~ : String, current~ : String)
 }
 
 ///|
@@ -155,7 +155,7 @@ fn Incoming::near_miss(
     if stub.scenario is Some({ name, requires: Some(required), .. }) {
       let current = current_state(states, name)
       if current != required {
-        failed.push(Failed::Scenario(name, required, current))
+        failed.push(Failed::Scenario(name~, required~, current~))
       }
     }
     match best {
@@ -243,7 +243,7 @@ fn Incoming::explain(self : Incoming, failed : Failed) -> FailedCondition {
         },
         actual: [@utf8.decode_lossy(self.request.body)],
       }
-    Scenario(name, required, current) =>
+    Scenario(name~, required~, current~) =>
       {
         condition: Scenario(name),
         expected: Exact(required),
