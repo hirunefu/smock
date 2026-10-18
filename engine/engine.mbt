@@ -477,6 +477,7 @@ pub fn Engine::handle(
             ephemeral.concat(
               mock.stubs.iter().map(stub => (stub, StubSource::File)),
             ),
+            self.scenarios.of(mock.name, session),
           )
           no_match(mock, near_miss)
         }
@@ -498,6 +499,7 @@ pub fn Engine::handle(
         host~,
         resolution~,
         matched=source,
+        scenario~,
         near_miss~,
         plan~,
         template_error~,

@@ -401,6 +401,39 @@ move a state, therefore adds an entry with every request, and smock's
 memory grows for the whole run. Give each virtual user one Session for
 its whole run instead.
 
+#### Seeing what moved
+
+Each [Journal](../README.md#the-journal) entry records the move its Stub
+made, as `scenario`:
+
+```json
+{ "name": "checkout", "from": "Started", "to": "Paid" }
+```
+
+A Stub with a clause but no `moveTo` records the state it answered in as
+both `from` and `to`. An entry whose Stub has no clause, or that no Stub
+answered, has `null`. When the Journal is off, for the Mock or for all,
+the state still moves; only the record is missing.
+
+A request that misses only because of the state gets a Near miss that
+says so ([When no Stub matches](#when-no-stub-matches)). In the example
+above, the second payment gets
+
+```http
+Smock-Near-Miss: pay; failed=scenario:checkout
+```
+
+and its Journal entry holds the condition with the state `pay` requires
+and the state the Session's Scenario was in:
+
+```json
+{ "condition": "scenario:checkout", "expected": "Started", "actual": ["Paid"] }
+```
+
+Only a Stub with `requires` can fail this condition. Scenarios add no
+other response header, so the system under test receives what it would
+receive from the real service.
+
 ### When no Stub matches
 
 The Mock answers with its `noMatch.status`, 404 by default, and the body
@@ -437,12 +470,15 @@ The Near miss is the Stub of the Mock that failed the fewest conditions; on
 a tie, the one tried first. The request's Ephemeral Stubs are candidates
 too, in the order they are tried, and the header names them by their ID,
 such as `eph-3`. Each of these counts as one condition: the method, the
-path, each listed query parameter, each listed header, and the body. They are named `method`, `path`, `query:<name>`, `header:<name>` (in
-lower case) and `body`, in that order. The header is ASCII only and never
+path, each listed query parameter, each listed header, the body, and the
+state a [`scenario` clause](#scenarios) requires. They are named `method`,
+`path`, `query:<name>`, `header:<name>` (in lower case), `body` and
+`scenario:<name>`, in that order. The header is ASCII only and never
 carries what a condition expects or what the request sent: the Stub ID and
-query and header names are percent-encoded where they hold anything other
-than the characters of an HTTP token. A Mock without Stubs, and a request
-for a Host that no Mock answers, get no `Smock-Near-Miss` header.
+query, header and Scenario names are percent-encoded where they hold
+anything other than the characters of an HTTP token. A Mock without Stubs,
+and a request for a Host that no Mock answers, get no `Smock-Near-Miss`
+header.
 
 A request that matches pays nothing for this: smock counts failed
 conditions only once every Stub has failed to match.

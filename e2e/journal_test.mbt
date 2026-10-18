@@ -187,6 +187,7 @@ async test "a query returns the calling Session's entries, oldest first, as the 
             },
             "stub": "get-user",
             "stubSource": "file",
+            "scenario": Json::null(),
             "nearMiss": Json::null(),
             "status": 200,
             "fault": Json::null(),
@@ -222,6 +223,7 @@ async test "a query returns the calling Session's entries, oldest first, as the 
             },
             "stub": Json::null(),
             "stubSource": Json::null(),
+            "scenario": Json::null(),
             "nearMiss": {
               "stub": "get-user",
               "stubSource": "file",
@@ -263,6 +265,7 @@ async test "a query returns the calling Session's entries, oldest first, as the 
             },
             "stub": Json::null(),
             "stubSource": Json::null(),
+            "scenario": Json::null(),
             "nearMiss": Json::null(),
             "status": 404,
             "fault": Json::null(),
@@ -397,6 +400,7 @@ async test "a request ended by a reset Fault is in the Journal, body included, a
             },
             "stub": "reset",
             "stubSource": "file",
+            "scenario": Json::null(),
             "nearMiss": null,
             "status": null,
             "fault": "reset",
@@ -554,6 +558,97 @@ async test "reset clears the calling Session's Journal entries and says how many
           #|test-b: 0 entries
         ),
       )
+    })
+  })
+}
+
+///|
+/// The entries of a Journal page, each as its request line and the members
+/// that say how Scenarios went: `stub`, `scenario` and `nearMiss`.
+fn scenario_shown(page : Json) -> Json raise {
+  guard page is Object({ "entries": Array(entries), .. }) else {
+    fail("a Journal page has entries")
+  }
+  Json::array(
+    entries.map(entry => {
+      guard entry
+        is Object(
+          {
+            "request": Object(
+              { "method": String(meth), "target": String(target), .. }
+            ),
+            "stub": stub,
+            "scenario": scenario,
+            "nearMiss": near_miss,
+            ..
+          }
+        ) else {
+        return Json::string("an entry without its Scenario members")
+      }
+      {
+        "request": Json::string("\{meth} \{target}"),
+        "stub": stub,
+        "scenario": scenario,
+        "nearMiss": near_miss,
+      }
+    }),
+  )
+}
+
+///|
+async test "a query and the unmatched requests carry each entry's Scenario move and the Near miss's Scenario condition, as the document defines them" {
+  with_definitions([("payments.json", checkout)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let _ = smock.order("GET", "/orders/42", session="test-a")
+      let _ = smock.order("POST", "/orders/42/pay", session="test-a")
+      let _ = smock.order("POST", "/orders/42/pay", session="test-a")
+      let (status, page) = smock.journal(session="test-a")
+      inspect(status, content="200")
+      let unmatched = smock.admin(
+        "GET",
+        "/v1/journal/unmatched",
+        headers=session_headers(Some("test-a")),
+      )
+      inspect(unmatched.status, content="200")
+      let near_miss : Json = {
+        "stub": "pay",
+        "stubSource": "file",
+        "failed": [
+          {
+            "condition": "scenario:checkout",
+            "expected": "Started",
+            "actual": ["Paid"],
+          },
+        ],
+      }
+      json_inspect(scenario_shown(page), content=[
+        {
+          "request": "GET /orders/42",
+          "stub": "order-pending",
+          "scenario": { "name": "checkout", "from": "Started", "to": "Started" },
+          "nearMiss": Json::null(),
+        },
+        {
+          "request": "POST /orders/42/pay",
+          "stub": "pay",
+          "scenario": { "name": "checkout", "from": "Started", "to": "Paid" },
+          "nearMiss": Json::null(),
+        },
+        {
+          "request": "POST /orders/42/pay",
+          "stub": Json::null(),
+          "scenario": Json::null(),
+          "nearMiss": near_miss,
+        },
+      ])
+      json_inspect(scenario_shown(unmatched.json()), content=[
+        {
+          "request": "POST /orders/42/pay",
+          "stub": Json::null(),
+          "scenario": Json::null(),
+          "nearMiss": near_miss,
+        },
+      ])
     })
   })
 }

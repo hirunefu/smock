@@ -21,6 +21,17 @@ pub(all) struct ScenarioMove {
 } derive(Debug, Eq)
 
 ///|
+/// The JSON form of the move, the `ScenarioMove` schema of the Admin API
+/// document: `{"name", "from", "to"}`.
+pub impl ToJson for ScenarioMove with fn to_json(self) {
+  {
+    "name": Json::string(self.name),
+    "from": Json::string(self.from),
+    "to": Json::string(self.to),
+  }
+}
+
+///|
 /// The state of each Scenario that is not in `Started`, by Mock, then by
 /// Session (`None` for the no-Session space), then by Scenario name. A
 /// Scenario without an entry is in `Started`, so a move back to `Started`

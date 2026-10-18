@@ -599,11 +599,14 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   and body; the Stub that answered, or the Near miss with what each failed
   condition expects and what the request sent, each with `stubSource`:
   `file` for a Stub from a Definition file, `ephemeral` for an Ephemeral
-  Stub, so that equal IDs cannot be confused; the status, or the
-  connection Fault; when the request was received and how long the response
-  took; and the digest of the definition set that answered. A request for
-  a Host that no Mock answers is recorded too, with no Mock; one the
-  HTTP/1.1 codec rejects (400, 413, 431, 501 or 505) is not.
+  Stub, so that equal IDs cannot be confused; the
+  [Scenario](docs/definition-files.md#seeing-what-moved) move the Stub
+  made, as `scenario`, with its name and the states it moved from and to;
+  the status, or the connection Fault; when the request was received and
+  how long the response took; and the digest of the definition set that
+  answered. A request for a Host that no Mock answers is recorded too,
+  with no Mock; one the HTTP/1.1 codec rejects (400, 413, 431, 501 or 505)
+  is not.
 - A request is in the Journal as soon as its client has the whole
   response: smock records it just before it writes the response's last
   bytes, so a query made right after a call always finds it. A stream of
