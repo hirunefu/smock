@@ -141,8 +141,10 @@ fn scenario_allows(
 /// - every state that the `requires` and `moveTo` of the Session's own
 ///   Ephemeral Stubs in the Mock name for it.
 ///
-/// Only the Scenarios that those Stubs name are here; the only known state
-/// of any other Scenario is `Started`. They come in byte-wise order of
+/// Here are the Scenarios that those Stubs name, and those that the Session
+/// holds a state for although no Stub names them any more, such as after it
+/// deleted the Ephemeral Stubs that did. The only known state of those, as
+/// of any Scenario not here, is `Started`. They come in byte-wise order of
 /// their names, and each one's states start with `Started`, then the others
 /// in byte-wise order, as the Admin API lists them.
 ///
@@ -169,13 +171,12 @@ fn Engine::known_states(
       }
     }
   }
+  if self.scenarios.of(mock.name, session) is Some(held) {
+    for name, _ in held {
+      by_scenario.add(name, None)
+    }
+  }
   by_scenario.sorted()
-}
-
-///|
-/// How `a` and `b` compare in byte-wise order of their UTF-8 encodings.
-fn compare_bytes(a : String, b : String) -> Int {
-  @utf8.encode(a).lexical_compare(@utf8.encode(b))
 }
 
 ///|
@@ -237,20 +238,11 @@ pub fn Engine::list_scenarios(
 ) -> Array[Scenario] raise AdminError {
   let known = self.known_states(self.mock_named(mock), session)
   let held = self.scenarios.of(mock, session)
-  let names = known.keys().collect()
-  if held is Some(held) {
-    for name, _ in held {
-      if !known.contains(name) {
-        names.push(name)
-      }
-    }
-    names.sort_by(compare_bytes)
+  let listed = []
+  for name, states in known {
+    listed.push({ name, state: current_state(held, name), states, })
   }
-  names.map(name => {
-    name,
-    state: current_state(held, name),
-    states: known.get(name).unwrap_or([@definitions.initial_state]),
-  })
+  listed
 }
 
 ///|
@@ -274,15 +266,8 @@ pub fn Engine::set_scenario_state(
   state~ : String,
 ) -> Scenario raise AdminError {
   let known = self.known_states(self.mock_named(mock), session)
-  let states = match known.get(scenario) {
-    Some(states) => states
-    None => {
-      guard self.scenarios.of(mock, session) is Some(held) &&
-        held.contains(scenario) else {
-        raise UnknownScenario(mock~, scenario~)
-      }
-      [@definitions.initial_state]
-    }
+  guard known.get(scenario) is Some(states) else {
+    raise UnknownScenario(mock~, scenario~)
   }
   if !states.contains(state) {
     raise UnknownState(mock~, scenario~, state~, known=states)
