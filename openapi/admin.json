@@ -1277,6 +1277,10 @@
             "description": "Where the Stub that answered comes from: `file` for a Stub from a Definition file, `ephemeral` for an Ephemeral Stub. null when none matched.",
             "enum": ["file", "ephemeral", null]
           },
+          "scenario": {
+            "description": "How the Stub that answered moved its Scenario, when it has a `scenario` clause: the Scenario's name, the state it was in when the Stub was chosen, and the state it is in after. Without `moveTo`, `to` equals `from`. null when no Stub matched or the Stub has no clause.",
+            "oneOf": [{ "$ref": "#/components/schemas/ScenarioMove" }, { "type": "null" }]
+          },
           "nearMiss": {
             "description": "When no Stub matched and the Mock had candidate Stubs: the Near miss. Otherwise null. The actual value of a failed body condition is truncated as the recorded request body is.",
             "oneOf": [
@@ -1303,7 +1307,30 @@
             "oneOf": [{ "$ref": "#/components/schemas/TemplateError" }, { "type": "null" }]
           }
         },
-        "required": ["seq", "receivedAt", "durationMs", "session", "host", "mock", "viaDefault", "digest", "request", "stub", "stubSource", "nearMiss", "status", "fault", "templateError"],
+        "required": ["seq", "receivedAt", "durationMs", "session", "host", "mock", "viaDefault", "digest", "request", "stub", "stubSource", "scenario", "nearMiss", "status", "fault", "templateError"],
+        "additionalProperties": false
+      },
+      "ScenarioMove": {
+        "description": "How a request moved a Scenario of the Mock that answered it, for the request's Session. The state moves when the Stub is chosen, whatever then happens to the response.",
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "The Scenario's name.",
+            "type": "string",
+            "minLength": 1
+          },
+          "from": {
+            "description": "The state the Scenario was in when the Stub was chosen: `Started` when the Session had not moved it.",
+            "type": "string",
+            "minLength": 1
+          },
+          "to": {
+            "description": "The state the Scenario is in after: the clause's `moveTo`, or `from` without one.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": ["name", "from", "to"],
         "additionalProperties": false
       },
       "RecordedRequest": {
@@ -1378,7 +1405,7 @@
         "additionalProperties": false
       },
       "NearMiss": {
-        "description": "The Stub that came closest to matching a request that matched nothing: the candidate with the fewest failed conditions, the earlier one in matching order on a tie. Each of method, path, each listed query parameter, each listed header, and body counts as one condition.",
+        "description": "The Stub that came closest to matching a request that matched nothing: the candidate with the fewest failed conditions, the earlier one in matching order on a tie. Each of method, path, each listed query parameter, each listed header, body, and the state a `scenario` clause requires counts as one condition.",
         "type": "object",
         "properties": {
           "stub": {
@@ -1390,7 +1417,7 @@
             "enum": ["file", "ephemeral"]
           },
           "failed": {
-            "description": "The conditions it failed, in the order method, path, query parameters, headers, body.",
+            "description": "The conditions it failed, in the order method, path, query parameters, headers, body, Scenario state.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/FailedCondition"
@@ -1405,16 +1432,16 @@
         "type": "object",
         "properties": {
           "condition": {
-            "description": "The condition: `method`, `path`, `query:<name>`, `header:<name>` (in lower case) or `body`. Names are as the Stub gives them; the `Smock-Near-Miss` header carries the same conditions with each name percent-encoded. A query parameter name can be any text, even empty.",
+            "description": "The condition: `method`, `path`, `query:<name>`, `header:<name>` (in lower case), `body` or `scenario:<name>`, the state the Stub's `scenario` clause requires of the Scenario with that name. Names are as the Stub gives them; the `Smock-Near-Miss` header carries the same conditions with each name percent-encoded. A query parameter name can be any text, even empty.",
             "type": "string",
-            "pattern": "^(method|path|body|query:[\\s\\S]*|header:.+)$"
+            "pattern": "^(method|path|body|query:[\\s\\S]*|header:.+|scenario:[\\s\\S]+)$"
           },
           "expected": {
-            "description": "The condition as the Stub gives it: an exact string, a pattern, or a json condition.",
+            "description": "The condition as the Stub gives it: an exact string, a pattern, or a json condition. For `scenario:<name>`, the state the Stub requires, as an exact string.",
             "$ref": "../schema/v1/definitions.json#/$defs/request/properties/body"
           },
           "actual": {
-            "description": "The values the request carries for the condition, in order: one for method, path and body; every value of a query parameter or header, which may be repeated; none when it is absent. A body that is not UTF-8 is shown with U+FFFD in place of each sequence that is not; the Journal entry's request body keeps its bytes.",
+            "description": "The values the request carries for the condition, in order: one for method, path and body; every value of a query parameter or header, which may be repeated; none when it is absent. For `scenario:<name>`, the one state the Scenario is in for the request's Session: `Started` when the Session has not moved it. A body that is not UTF-8 is shown with U+FFFD in place of each sequence that is not; the Journal entry's request body keeps its bytes.",
             "type": "array",
             "items": {
               "type": "string"
@@ -1577,7 +1604,7 @@
             "oneOf": [{ "$ref": "#/components/schemas/TemplateError" }, { "type": "null" }]
           },
           "failed": {
-            "description": "The Stub's conditions the sample request fails, as in a Near miss. Empty when it meets them all.",
+            "description": "The Stub's request conditions the sample request fails, as in a Near miss. Empty when it meets them all. A `scenario` clause is ignored, so no `scenario:<name>` condition appears.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/FailedCondition"

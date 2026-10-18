@@ -216,6 +216,12 @@ pub(all) struct ReloadResult {
   /// Every problem in the new set when it was invalid, as
   /// `@definitions.load` gives them; otherwise none.
   errors : Array[@definitions.Diagnostic]
+  /// How many Scenario states the reload sent back to `Started`: the stored
+  /// states that are no longer known states of their Mock, Session and
+  /// Scenario once the new set is swapped in. The states of a Mock that is
+  /// gone are dropped with it, and are not counted. It is 0 when nothing
+  /// was swapped.
+  scenario_states_reset : Int
 } derive(Debug)
 
 ///|
@@ -256,7 +262,10 @@ pub fn ReloadOutcome::name(self : ReloadOutcome) -> String {
 ///   new generator, created from its seed. Plans the engine returned before
 ///   stay as they were: they hold their own bytes. Ephemeral Stubs stay,
 ///   generators included, except those of a Mock the new set does not
-///   declare, which are dropped.
+///   declare, which are dropped. Then each Scenario state stays while its
+///   name is one of the known states of its Mock, Session and Scenario;
+///   any other goes back to `Started`, and the states of a Mock that is
+///   gone are dropped.
 /// - When it is valid with the digest served, nothing is swapped.
 /// - When it is invalid, the served snapshot stays.
 ///
@@ -268,6 +277,7 @@ pub fn Engine::reload(
   at~ : Int64,
 ) -> ReloadResult {
   let old_digest = self.snapshot.digest
+  let mut scenario_states_reset = 0
   let (result, errors) : (ReloadOutcome, Array[@definitions.Diagnostic]) = match
     @definitions.load(set, read_problems~) {
     Ok(snapshot) if snapshot.digest == old_digest => (Unchanged, [])
@@ -275,8 +285,13 @@ pub fn Engine::reload(
       self.snapshot = snapshot
       self.generators = seeded_generators(snapshot)
       // Ephemeral Stubs stay, except those of the Mocks that are gone.
-      let mocks = Set::from_iter(snapshot.mocks.iter().map(mock => mock.name))
+      let mocks = Map::from_iter(
+        snapshot.mocks.iter().map(mock => (mock.name, mock)),
+      )
       self.ephemeral.remove_where((mock, _) => !mocks.contains(mock)) |> ignore
+      // Only then are Scenario states checked, since the known states
+      // include those of the Ephemeral Stubs that stay.
+      scenario_states_reset = self.prune_scenario_states(mocks)
       (Swapped, [])
     }
     Err(errors) => (Failed, errors)
@@ -287,6 +302,7 @@ pub fn Engine::reload(
     old_digest,
     new_digest: self.snapshot.digest,
     errors,
+    scenario_states_reset,
   }
   self.last_reload = Some(reload)
   reload
@@ -461,6 +477,7 @@ pub fn Engine::handle(
             ephemeral.concat(
               mock.stubs.iter().map(stub => (stub, StubSource::File)),
             ),
+            self.scenarios.of(mock.name, session),
           )
           no_match(mock, near_miss)
         }
@@ -482,6 +499,7 @@ pub fn Engine::handle(
         host~,
         resolution~,
         matched=source,
+        scenario~,
         near_miss~,
         plan~,
         template_error~,

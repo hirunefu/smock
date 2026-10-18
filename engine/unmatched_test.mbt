@@ -260,3 +260,51 @@ test "while the Journal is off globally, the unmatched requests are refused; a M
     ),
   )
 }
+
+///|
+test "a second payment matches nothing, and the unmatched requests list it with the pay Stub as its Near miss, which failed only the state" {
+  let h = harness(checkout)
+  let _ = h.record("GET", "http://payments.svc/orders/42", session="test-a")
+  let _ = h.record(
+    "POST",
+    "http://payments.svc/orders/42/pay",
+    session="test-a",
+  )
+  let _ = h.record(
+    "POST",
+    "http://payments.svc/orders/42/pay",
+    session="test-a",
+  )
+  let _ = h.record("GET", "http://payments.svc/orders/42", session="test-a")
+  // test-b has not paid: its payment is answered.
+  let _ = h.record(
+    "POST",
+    "http://payments.svc/orders/42/pay",
+    session="test-b",
+  )
+  json_inspect(h.unmatched(Some("test-a")), content={
+    "entries": [
+      {
+        "request": "POST http://payments.svc/orders/42/pay",
+        "host": "payments.svc",
+        "mock": "payments",
+        "stub": Json::null(),
+        "nearMiss": {
+          "stub": "pay",
+          "stubSource": "file",
+          "failed": [
+            {
+              "condition": "scenario:checkout",
+              "expected": "Started",
+              "actual": ["Paid"],
+            },
+          ],
+        },
+        "status": 404,
+      },
+    ],
+    "more": false,
+    "evicted": 0,
+  })
+  inspect(h.unmatched_listed(Some("test-b")), content="more: false, evicted: 0")
+}

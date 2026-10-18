@@ -3,7 +3,9 @@
 // match, and move the Scenario to another state when the Stub is chosen.
 // The state moves in `Engine::handle`, at the match decision, which is
 // synchronous and single-threaded, so checking a state and moving it needs
-// no lock (ADR 0003).
+// no lock (ADR 0003). A reload that swaps in new definitions keeps each
+// state that is still a known state of its Mock, Session and Scenario, and
+// sends any other back to Started.
 
 ///|
 /// How a request moved a Scenario: the clause of the Stub that answered it,
@@ -17,6 +19,17 @@ pub(all) struct ScenarioMove {
   /// The state the Scenario is in after.
   to : String
 } derive(Debug, Eq)
+
+///|
+/// The JSON form of the move, the `ScenarioMove` schema of the Admin API
+/// document: `{"name", "from", "to"}`.
+pub impl ToJson for ScenarioMove with fn to_json(self) {
+  {
+    "name": Json::string(self.name),
+    "from": Json::string(self.from),
+    "to": Json::string(self.to),
+  }
+}
 
 ///|
 /// The state of each Scenario that is not in `Started`, by Mock, then by
@@ -113,6 +126,120 @@ fn scenario_allows(
       current_state(states, name) == required
     _ => true
   }
+}
+
+///|
+/// The known states of the Scenarios of the Mock `mock` for `session`
+/// (`None` for the no-Session space), by Scenario name. The known states of
+/// a Scenario are:
+///
+/// - `Started`;
+/// - every state that the `requires` and `moveTo` of the Mock's file Stubs
+///   name for it;
+/// - every state that the `requires` and `moveTo` of the Session's own
+///   Ephemeral Stubs in the Mock name for it.
+///
+/// Only the Scenarios that those Stubs name are here; the only known state
+/// of any other Scenario is `Started`. They come in byte-wise order of
+/// their names, and each one's states start with `Started`, then the others
+/// in byte-wise order, as the Admin API lists them.
+///
+/// It goes through the Session's Ephemeral Stubs, so it is computed off the
+/// request path, never in `Engine::handle`. It is for reloads, which check
+/// the stored states against it, and for the Admin API operations that
+/// list and set states.
+fn Engine::known_states(
+  self : Engine,
+  mock : @definitions.Mock,
+  session : String?,
+) -> Map[String, Array[String]] {
+  // The states other than `Started`, by Scenario name.
+  let named : Map[String, Set[String]] = Map([])
+  let add = (name : String, state : String?) => {
+    let states = match named.get(name) {
+      Some(states) => states
+      None => {
+        let states = Set([])
+        named[name] = states
+        states
+      }
+    }
+    if state is Some(state) && state != @definitions.initial_state {
+      states.add(state)
+    }
+  }
+  // The snapshot holds the file part, computed at load.
+  for scenario in mock.scenarios {
+    for state in scenario.states {
+      add(scenario.name, Some(state))
+    }
+  }
+  if self.ephemeral.of(mock.name, session) is Some(list) {
+    for e in list {
+      if e.stub.scenario is Some(clause) {
+        add(clause.name, clause.requires)
+        add(clause.name, clause.move_to)
+      }
+    }
+  }
+  let names = named.keys().collect()
+  names.sort_by(compare_bytes)
+  let known = Map([])
+  for name in names {
+    let others = named[name].iter().collect()
+    others.sort_by(compare_bytes)
+    known[name] = [@definitions.initial_state, ..others]
+  }
+  known
+}
+
+///|
+/// How `a` and `b` compare in byte-wise order of their UTF-8 encodings.
+fn compare_bytes(a : String, b : String) -> Int {
+  @utf8.encode(a).lexical_compare(@utf8.encode(b))
+}
+
+///|
+/// Checks every stored state against the snapshot just swapped in, whose
+/// Mocks are `mocks`, by name, and against the Ephemeral Stubs that stayed.
+/// It drops the states of each Mock that is gone, keeps each state that is
+/// one of the known states of its Mock, Session and Scenario, and drops any
+/// other, which sends its Scenario back to `Started`. Returns how many it
+/// sent back. Like any move back to `Started`, it leaves no map empty.
+fn Engine::prune_scenario_states(
+  self : Engine,
+  mocks : Map[String, @definitions.Mock],
+) -> Int {
+  let by_mock = self.scenarios.by_mock
+  let mut reset = 0
+  for name in by_mock.keys().collect() {
+    guard mocks.get(name) is Some(mock) else {
+      by_mock.remove(name)
+      continue
+    }
+    let by_session = by_mock[name]
+    for session in by_session.keys().collect() {
+      let known = self.known_states(mock, session)
+      let states = by_session[session]
+      for scenario in states.keys().collect() {
+        let kept = match known.get(scenario) {
+          Some(known_states) => known_states.contains(states[scenario])
+          None => false
+        }
+        if !kept {
+          states.remove(scenario)
+          reset += 1
+        }
+      }
+      if states.is_empty() {
+        by_session.remove(session)
+      }
+    }
+    if by_session.is_empty() {
+      by_mock.remove(name)
+    }
+  }
+  reset
 }
 
 ///|
