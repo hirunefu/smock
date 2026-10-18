@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The release benchmark of smock.
 
-It runs smock with the benchmark's definition set (bench/definitions/) under
+It runs smock with the benchmark's definition set (bench/definitions/, or
+another such as its Scenario variant, bench/definitions-scenarios/) under
 resource profiles, each a CPU limit and an optional memory limit, and sends
 it the request mix (bench/requests.json) at a fixed arrival rate, an open
 model: requests go out on schedule whether or not earlier ones have been
@@ -727,6 +728,9 @@ class Run:
         self.plan_path = Path(args.plan).resolve()
         self.plan = read_json(self.plan_path)
         self.mix = read_json(BENCH / "requests.json")["requests"]
+        self.definitions = Path(args.definitions).resolve()
+        if not self.definitions.is_dir():
+            raise BenchError(f"no definitions directory {args.definitions}")
         self.smock = str(Path(args.smock).resolve())
         self.oha = shutil.which(args.oha) or args.oha
         self.out = Path(args.out).resolve()
@@ -837,7 +841,7 @@ class Run:
              "-keyout", str(key), "-out", str(cert)],
             check=True, capture_output=True)
         self.smock_args = [
-            "--dir", str(BENCH / "definitions"), "--port", "0", "--tls-port", "0", "--admin-port", "0",
+            "--dir", str(self.definitions), "--port", "0", "--tls-port", "0", "--admin-port", "0",
             "--admin-auth", "off", "--tls-cert-file", str(cert), "--tls-key-file", str(key),
         ]
         # smock runs with its defaults, the Journal's bounds included, whatever
@@ -867,7 +871,7 @@ class Run:
                                    "made with openssl for the run",
             },
             "definitions": {
-                "directory": shown_path(BENCH / "definitions"),
+                "directory": shown_path(self.definitions),
                 "digest": status.get("digest"),
                 "mocks": status.get("mocks"),
             },
@@ -1749,7 +1753,8 @@ def summary_markdown(summary, conditions, stopped=None):
         "",
         f"Started {conditions['started_at']}: smock {known(smock['version'], 'of an unknown version')} "
         f"(commit {known(smock['commit'])}, {known(smock['toolchain'], 'toolchain unknown')}), definition set "
-        f"{known(conditions['definitions']['digest'])}, on {machine_text(machine)}, "
+        f"{known(conditions['definitions']['digest'])} ({conditions['definitions']['directory']}), on "
+        f"{machine_text(machine)}, "
         f"{known(generator['version'], generator['name'] + ' of an unknown version')}, plan "
         f"{conditions['plan']['file']}.",
     ]
@@ -1883,6 +1888,10 @@ def main(argv):
     run.add_argument("--plan", default=str(BENCH / "plan.json"),
                      help="the plan to run (default: bench/plan.json; bench/plan-autopilot.json has the "
                           "GKE Autopilot profiles and the Helm chart's default, which the targets hold under)")
+    run.add_argument("--definitions", default=str(BENCH / "definitions"),
+                     help="the definitions directory smock serves (default: bench/definitions; "
+                          "bench/definitions-scenarios is its Scenario variant, in which every request of the mix "
+                          "matches a Stub that moves a Scenario)")
     run.add_argument("--cases", help="only these cases of the plan, comma-separated")
     run.add_argument("--profiles", help="only these resource profiles of the plan, comma-separated")
     run.add_argument("--cpu-limits", help="only the profiles with these CPU limits, comma-separated, such as 250m,1")

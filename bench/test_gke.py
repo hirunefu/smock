@@ -900,8 +900,8 @@ class Summary(Helper):
                            stopped=("--stopped", "smock did not become ready under small", "--stopped-under", "small"))
         markdown = (out / "summary.md").read_text()
         self.assertIn("Started 2026-10-14T03:28:50+00:00: smock of an unknown version (commit unknown, toolchain "
-                      "unknown), definition set unknown, on arm64 (GKE Autopilot node, CPUs unknown), oha of an "
-                      "unknown version, plan ", markdown)
+                      "unknown), definition set unknown (bench/definitions), on arm64 (GKE Autopilot node, CPUs "
+                      "unknown), oha of an unknown version, plan ", markdown)
         self.assertNotIn("None", markdown)
         # conditions.json records them as null.
         conditions = json.loads((out / "conditions.json").read_text())
