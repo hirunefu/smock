@@ -1,7 +1,8 @@
 // How the engine stores Scenario state: only states other than Started,
 // with no map left empty. Nothing outside the engine can see this, since a
 // Scenario without an entry is in Started either way, so these tests look
-// at the store itself after requests through `Engine::handle`.
+// at the store itself after requests through `Engine::handle`, and after
+// reloads through `Engine::reload`.
 
 ///|
 /// Mock `payments`, where, from any state, `POST /orders/42/pay` moves
@@ -92,6 +93,63 @@ test "only states other than Started are stored, and a move back to Started leav
       #|no Session refunds: { "payments": { Some("test-a"): { "shipping": "Shipped" } } }
       #|test-a ships again: { "payments": { Some("test-a"): { "shipping": "Shipped" } } }
       #|test-a returns: {}
+    ),
+  )
+}
+
+///|
+test "a reload that sends states back to Started, or drops a Mock's, leaves no empty map behind" {
+  let set = (files : String) => {
+    let set : @definitions.DefinitionSet = {
+      files: [("payments.json", @utf8.encode(files))],
+      body_files: [],
+    }
+    set
+  }
+  guard @definitions.load(set(store_files)) is Ok(snapshot) else {
+    fail("not loaded")
+  }
+  let engine = Engine(snapshot)
+  let rand = @prng.Generator(1)
+  let send = (path : String, session : String?) => {
+    let request : Request = {
+      meth: "POST",
+      target: path,
+      version: "HTTP/1.1",
+      headers: [],
+      body: b"",
+    }
+    ignore(engine.handle(request, session~, now=0, rand~))
+  }
+  let out = []
+  let reload = (label : String, files : String) => {
+    let result = engine.reload(set(files), at=0)
+    out.push(
+      "\{label}: \{result.scenario_states_reset} back to Started; \{@debug.to_string(engine.scenarios.by_mock)}",
+    )
+  }
+  send("/orders/42/pay", Some("test-a"))
+  send("/orders/42/ship", Some("test-a"))
+  send("/orders/42/pay", Some("test-b"))
+  let sent = store_files.replace(old="\"Shipped\"", new="\"Sent\"")
+  reload("Shipped renamed Sent", sent)
+  reload(
+    "Paid renamed Settled too",
+    sent.replace(old="\"Paid\"", new="\"Settled\""),
+  )
+  send("/orders/42/pay", Some("test-a"))
+  reload("payments removed", "{ \"mocks\": [{ \"name\": \"users\" }] }")
+  inspect(
+    out.join("\n"),
+    content=(
+      #|Shipped renamed Sent: 1 back to Started; {
+      #|  "payments": {
+      #|    Some("test-a"): { "checkout": "Paid" },
+      #|    Some("test-b"): { "checkout": "Paid" },
+      #|  },
+      #|}
+      #|Paid renamed Settled too: 2 back to Started; {}
+      #|payments removed: 0 back to Started; {}
     ),
   )
 }

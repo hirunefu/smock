@@ -239,11 +239,103 @@ async test "an invalid set keeps the current one serving and is reported in stat
         reload_entries(stopped.logs, digests),
         content=(
           #|{"level":"error","msg":"definitions reload failed","result":"failed","digest":"<served at startup>","errors":[{"file":"users.json","pointer":"/stubs/0/response/status","message":"must be an integer from 200 to 599"},{"file":"users.json","pointer":"/stubs/0/mock","message":"no file declares the Mock \"nobody\""}]}
-          #|{"level":"info","msg":"definitions reloaded","result":"swapped","oldDigest":"<served at startup>","newDigest":"<served after the fix>"}
+          #|{"level":"info","msg":"definitions reloaded","result":"swapped","oldDigest":"<served at startup>","newDigest":"<served after the fix>","scenarioStatesReset":0}
         ),
       )
     },
   )
+}
+
+///|
+/// Mock `payments` with two Scenarios: `POST /orders/42/pay` moves
+/// `checkout` to `Paid`, and `GET /orders/42` answers paid from then on;
+/// `POST /orders/42/ship` moves `shipping` to `Shipped`, and `GET
+/// /orders/42/shipment` answers shipped from then on.
+let pay_and_ship : String =
+  #|{ "mocks": [{ "name": "payments" }],
+  #|  "stubs": [
+  #|    { "id": "pay", "mock": "payments",
+  #|      "request": { "method": "POST", "path": "/orders/42/pay" },
+  #|      "scenario": { "name": "checkout", "requires": "Started", "moveTo": "Paid" },
+  #|      "response": { "status": 200 } },
+  #|    { "id": "order-paid", "mock": "payments",
+  #|      "request": { "method": "GET", "path": "/orders/42" },
+  #|      "scenario": { "name": "checkout", "requires": "Paid" },
+  #|      "response": { "status": 200, "json": { "status": "paid" } } },
+  #|    { "id": "order", "mock": "payments",
+  #|      "request": { "method": "GET", "path": "/orders/42" },
+  #|      "response": { "status": 200, "json": { "status": "pending" } } },
+  #|    { "id": "ship", "mock": "payments",
+  #|      "request": { "method": "POST", "path": "/orders/42/ship" },
+  #|      "scenario": { "name": "shipping", "moveTo": "Shipped" },
+  #|      "response": { "status": 200 } },
+  #|    { "id": "shipped", "mock": "payments",
+  #|      "request": { "method": "GET", "path": "/orders/42/shipment" },
+  #|      "scenario": { "name": "shipping", "requires": "Shipped" },
+  #|      "response": { "status": 200, "json": { "shipped": true } } },
+  #|    { "id": "shipment", "mock": "payments",
+  #|      "request": { "method": "GET", "path": "/orders/42/shipment" },
+  #|      "response": { "status": 200, "json": { "shipped": false } } } ] }
+
+///|
+async test "a reload by editing a file keeps a state whose name still exists, sends a renamed one back to Started, and logs how many went back" {
+  with_definitions([("payments.json", pay_and_ship)], dir => {
+    let mut digests = []
+    let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let out = []
+      let step = (label : String, result : String) => {
+        out.push("\{label}: \{result}")
+      }
+      step("pay", smock.order("POST", "/orders/42/pay", session="test-a"))
+      step("ship", smock.order("POST", "/orders/42/ship", session="test-a"))
+      step("order", smock.order("GET", "/orders/42", session="test-a"))
+      step(
+        "shipment",
+        smock.order("GET", "/orders/42/shipment", session="test-a"),
+      )
+      let before = smock.status()
+      // The paid body gains a receipt, and Shipped is renamed Sent.
+      write(
+        dir,
+        "payments.json",
+        pay_and_ship
+        .replace(
+          old="{ \"status\": \"paid\" }",
+          new="{ \"status\": \"paid\", \"receipt\": \"r-1\" }",
+        )
+        .replace_all(old="\"Shipped\"", new="\"Sent\""),
+      )
+      let after = smock.reloaded(before)
+      step("reload", last_reload(after))
+      step("order", smock.order("GET", "/orders/42", session="test-a"))
+      step(
+        "shipment",
+        smock.order("GET", "/orders/42/shipment", session="test-a"),
+      )
+      digests = [
+        ("<before>", before.get("digest")),
+        ("<after>", after.get("digest")),
+      ]
+      inspect(
+        out.join("\n"),
+        content=(
+          #|pay: 200, no body
+          #|ship: 200, no body
+          #|order: 200 {"status":"paid"}
+          #|shipment: 200 {"shipped":true}
+          #|reload: "swapped"
+          #|order: 200 {"status":"paid","receipt":"r-1"}
+          #|shipment: 200 {"shipped":false}
+        ),
+      )
+    })
+    inspect(
+      reload_entries(stopped.logs, digests),
+      content=(
+        #|{"level":"info","msg":"definitions reloaded","result":"swapped","oldDigest":"<before>","newDigest":"<after>","scenarioStatesReset":1}
+      ),
+    )
+  })
 }
 
 ///|

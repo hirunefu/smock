@@ -385,7 +385,9 @@ without editing files. An Ephemeral Stub and a file Stub that name the
 same Scenario of the same Mock share the Session's state, so an Ephemeral
 Stub can replace one step of a flow from the files. Like the Stub, the
 state belongs to the Session that added it: other Sessions never see it.
-Deleting an Ephemeral Stub leaves the state as it is.
+Deleting an Ephemeral Stub leaves the state as it is. A state that no Stub
+names any more matches no `requires`, and the next reload that swaps in
+new files sends it back to `Started` ([Reloading](#reloading)).
 
 #### How state grows
 
@@ -1024,11 +1026,24 @@ restart:
 - Ephemeral Stubs survive the swap. A Mock the new set no longer declares
   is gone: its Ephemeral Stubs are dropped, and its Hosts resolve like any
   unknown Host.
+- [Scenario](#scenarios) state survives the swap while its name still
+  exists. A Scenario's state, for a Session or for requests without one,
+  stays when a Stub of the same Mock still names it for that Scenario, in
+  `requires` or in `moveTo`: a Stub in the files, or one of that Session's
+  own Ephemeral Stubs. Any other state goes back to `Started`. The states
+  of a Mock that is gone are dropped with it. So editing a response body
+  leaves tests in progress where they are in their flows, and a state that
+  only a test's own Ephemeral Stubs name survives a change to the files.
+- Renaming a state loses the state of tests in progress. A test whose
+  Scenario is in the old state goes back to `Started` in the middle of its
+  flow, and its next requests may miss. Rename a state when no test relies
+  on it.
 - When the new set is invalid, smock keeps serving the current one and
   reports every problem, as `smock check` would, in the Admin API status, in
-  a log entry and in the reload metric. Fix the files, and the next reload
-  swaps the fixed set in.
-- When the new set has the digest of the one served, nothing is swapped.
+  a log entry and in the reload metric. Scenario state stays as it is. Fix
+  the files, and the next reload swaps the fixed set in.
+- When the new set has the digest of the one served, nothing is swapped,
+  and Scenario state stays as it is.
 - Without `--dir`, there is nothing to watch and nothing is reloaded.
 
 Each definition set has a *definition set digest*: a short content hash of
@@ -1071,8 +1086,11 @@ of the last reload (`null` until the first one), as
 `result` is `swapped` (the new set is served now), `unchanged` (it had the
 digest served) or `failed` (it was invalid; the previous set is still
 served). Each reload also writes one log entry: `definitions reloaded` with
-`oldDigest` and `newDigest`, or `definitions reload failed` with the digest
-still served and every error. The Prometheus counter
+`oldDigest`, `newDigest` and `scenarioStatesReset`, or `definitions reload
+failed` with the digest still served and every error.
+`scenarioStatesReset` is the number of Scenario states the reload sent
+back to `Started`, 0 when there are none. The states dropped with a
+removed Mock are not counted. The Prometheus counter
 `smock_definition_reloads_total` counts reloads by `result`. A failed reload
 does not change readiness: `/readyz` on the admin port still passes, so one
 bad commit does not drain every Pod.
