@@ -282,30 +282,42 @@ pub fn Engine::set_scenario_state(
 /// It drops the states of each Mock that is gone, keeps each state that is
 /// one of the known states of its Mock, Session and Scenario, and drops any
 /// other, which sends its Scenario back to `Started`. Returns how many it
-/// sent back. Like any move back to `Started`, it leaves no map empty.
+/// sent back.
 fn Engine::prune_scenario_states(
   self : Engine,
   mocks : Map[String, @definitions.Mock],
 ) -> Int {
-  let by_mock = self.scenarios.by_mock
-  let mut reset = 0
-  for name in by_mock.keys().collect() {
-    guard mocks.get(name) is Some(mock) else {
-      by_mock.remove(name)
-      continue
+  // The states of a Mock that is gone go with it, and are not counted.
+  self.scenarios.remove_where((mock, _) => !mocks.contains(mock)) |> ignore
+  self.scenarios.retain((mock, session) => {
+    let known = self.known_states(mocks[mock], session)
+    (scenario, state) => {
+      known.get(scenario) is Some(states) && states.contains(state)
     }
-    let by_session = by_mock[name]
+  })
+}
+
+///|
+/// Keeps each state that its test holds for and clears every other, which
+/// sends its Scenario back to `Started`, and returns how many states it
+/// cleared. For each Mock and Session that has a state, `keep` gives the
+/// test, before any of their states is cleared; the test takes the name of
+/// a Scenario and its state. Like any move back to `Started`, it leaves no
+/// map empty.
+fn ScenarioStates::retain(
+  self : ScenarioStates,
+  keep : (String, String?) -> (String, String) -> Bool,
+) -> Int {
+  let mut cleared = 0
+  for mock in self.by_mock.keys().collect() {
+    let by_session = self.by_mock[mock]
     for session in by_session.keys().collect() {
-      let known = self.known_states(mock, session)
+      let kept = keep(mock, session)
       let states = by_session[session]
-      for scenario in states.keys().collect() {
-        let kept = match known.get(scenario) {
-          Some(known_states) => known_states.contains(states[scenario])
-          None => false
-        }
-        if !kept {
-          states.remove(scenario)
-          reset += 1
+      for name in states.keys().collect() {
+        if !kept(name, states[name]) {
+          states.remove(name)
+          cleared += 1
         }
       }
       if states.is_empty() {
@@ -313,10 +325,10 @@ fn Engine::prune_scenario_states(
       }
     }
     if by_session.is_empty() {
-      by_mock.remove(name)
+      self.by_mock.remove(mock)
     }
   }
-  reset
+  cleared
 }
 
 ///|
@@ -327,18 +339,8 @@ fn ScenarioStates::remove_where(
   self : ScenarioStates,
   remove : (String, String?) -> Bool,
 ) -> Int {
-  let mut count = 0
-  for mock in self.by_mock.keys().collect() {
-    let by_session = self.by_mock[mock]
-    for session in by_session.keys().collect() {
-      if remove(mock, session) {
-        count += by_session[session].length()
-        by_session.remove(session)
-      }
-    }
-    if by_session.is_empty() {
-      self.by_mock.remove(mock)
-    }
-  }
-  count
+  self.retain((mock, session) => {
+    let removed = remove(mock, session)
+    (_, _) => !removed
+  })
 }
