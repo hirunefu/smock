@@ -605,6 +605,57 @@ test "the state a Stub requires counts after method, path, query, headers and bo
 }
 
 ///|
+test "on a Mock whose file Stubs have no clause, an Ephemeral Stub that is the Near miss shows the state its Scenario is in for the Session, though no Stub with a clause met the request" {
+  let h = stubs([
+    (
+      #|{ "id": "health", "mock": "m",
+      #|  "request": { "method": "PUT", "path": "/health", "headers": { "X-Probe": "1" } },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  let _ = h.add(
+    "m",
+    Some("test-a"),
+    (
+      #|{ "request": { "method": "POST", "path": "/outage", "headers": { "X-Admin": "yes" } },
+      #|  "scenario": { "name": "outage", "moveTo": "Down" },
+      #|  "response": { "status": 200 } }
+    ),
+  )
+  let _ = h.add(
+    "m",
+    Some("test-a"),
+    (
+      #|{ "request": { "method": "GET", "path": "/status", "query": { "v": "2" } },
+      #|  "scenario": { "name": "outage", "requires": "Recovering" },
+      #|  "response": { "status": 200 } }
+    ),
+  )
+  let _ = h.send(
+    "POST",
+    "/outage",
+    headers=[("X-Admin", "yes")],
+    session="test-a",
+  )
+  guard h.send("GET", "/status?v=1", session="test-a").near_miss
+    is Some(near_miss) else {
+    fail("no Near miss")
+  }
+  json_inspect(near_miss.to_json(), content={
+    "stub": "eph-2",
+    "stubSource": "ephemeral",
+    "failed": [
+      { "condition": "query:v", "expected": "2", "actual": ["1"] },
+      {
+        "condition": "scenario:outage",
+        "expected": "Recovering",
+        "actual": ["Down"],
+      },
+    ],
+  })
+}
+
+///|
 test "the tie rule is unchanged: a Stub that fails only its state ties with one that fails only its method, and the earlier one is the Near miss" {
   let h = stubs([
     (
