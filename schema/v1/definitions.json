@@ -91,7 +91,7 @@
       "unevaluatedProperties": false
     },
     "stub": {
-      "description": "The shape of a Stub, without its ID and its Mock: the conditions a request must meet, the response to return, and the Faults to inject. A Stub in a Definition file adds id and mock to it (see fileStub). The Admin API adds Ephemeral Stubs in this shape, and gives the Mock and the Session itself. This definition does not close itself to other properties so that those two can extend it; each of them closes it with unevaluatedProperties: false.",
+      "description": "The shape of a Stub, without its ID and its Mock: the conditions a request must meet, the Scenario state it needs or moves to, the response to return, and the Faults to inject. A Stub in a Definition file adds id and mock to it (see fileStub). The Admin API adds Ephemeral Stubs in this shape, and gives the Mock and the Session itself. This definition does not close itself to other properties so that those two can extend it; each of them closes it with unevaluatedProperties: false.",
       "type": "object",
       "properties": {
         "priority": {
@@ -101,10 +101,35 @@
           "maximum": 2147483647
         },
         "request": { "$ref": "#/$defs/request" },
+        "scenario": { "$ref": "#/$defs/scenario" },
         "response": { "$ref": "#/$defs/response" },
         "fault": { "$ref": "#/$defs/fault" }
       },
       "required": ["response"]
+    },
+    "scenario": {
+      "description": "The Stub's Scenario clause. A Scenario is a named state machine within the Stub's Mock: it has no declaration, exists because Stubs name it, and starts in the state `Started`. Its state is kept per Mock and per Session: requests without a Session share their own. With requires, the Stub matches only while the Scenario is in that state; without it, in every state. With moveTo, the Scenario moves to that state the moment the Stub is chosen, whatever then happens to the response, even a delay, a connection Fault or a template error. Give requires, moveTo or both. Names are compared byte for byte.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The Scenario's name. Two Mocks may use the same name: each has its own Scenario.",
+          "$ref": "#/$defs/name"
+        },
+        "requires": {
+          "description": "The state the Scenario must be in for the Stub to match, such as `Started`. A Stub in another state is skipped, and the next one is tried.",
+          "$ref": "#/$defs/name"
+        },
+        "moveTo": {
+          "description": "The state the Scenario moves to when the Stub is chosen. `Started` sends it back to the start.",
+          "$ref": "#/$defs/name"
+        }
+      },
+      "required": ["name"],
+      "anyOf": [
+        { "description": "A state to require.", "required": ["requires"] },
+        { "description": "A state to move to.", "required": ["moveTo"] }
+      ],
+      "additionalProperties": false
     },
     "request": {
       "description": "The conditions a request must meet for the Stub to match it. Every condition given must hold. An omitted condition matches anything, so a Stub without request matches every request its Mock receives.",

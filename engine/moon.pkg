@@ -21,5 +21,6 @@ import {
 } for "test"
 
 import {
+  "moonbitlang/core/debug",
   "moonbitlang/core/random",
 } for "wbtest"

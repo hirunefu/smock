@@ -1,0 +1,40 @@
+{
+  "mocks": [
+    {
+      "name": "payments"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "order-pending",
+      "mock": "payments",
+      "request": {
+        "method": "GET",
+        "path": "/orders/42"
+      },
+      "scenario": {
+        "name": "checkout",
+        "requires": "Started"
+      },
+      "response": {
+        "status": 200
+      }
+    },
+    {
+      "id": "refund",
+      "mock": "payments",
+      "request": {
+        "method": "POST",
+        "path": "/orders/42/refund"
+      },
+      "scenario": {
+        "name": "checkout",
+        "requires": "Paid",
+        "moveTo": "Started"
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

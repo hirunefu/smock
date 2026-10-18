@@ -1,0 +1,25 @@
+{
+  "mocks": [
+    {
+      "name": "payments"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "pay",
+      "mock": "payments",
+      "request": {
+        "method": "POST",
+        "path": "/orders/42/pay"
+      },
+      "scenario": {
+        "name": "checkout",
+        "requires": "Started",
+        "moveTo": "Paid"
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

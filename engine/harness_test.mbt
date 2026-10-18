@@ -16,13 +16,16 @@ let fixed_now : Int64 = 1_791_815_405_123L
 ///|
 /// Builds an engine from Definition files given as (name, JSON text) pairs,
 /// and body files as (name, bytes) pairs, with a process generator seeded
-/// with `process_seed`, and the Journal settings `journal`. Fails the test
-/// if the set is invalid.
+/// with `process_seed`, and the Journal settings `journal`. With
+/// `match_index=false`, the engine tries every Stub in matching order, as
+/// the oracle of the match index does. Fails the test if the set is
+/// invalid.
 fn harness(
   files : Array[(String, String)],
   body_files? : Array[(String, Bytes)] = [],
   process_seed? : UInt64 = 1,
   journal? : @engine.JournalSettings = @engine.JournalSettings(),
+  match_index? : Bool = true,
 ) -> Harness {
   let set : @definitions.DefinitionSet = {
     files: files.map(file => (file.0, @utf8.encode(file.1))),
@@ -31,7 +34,7 @@ fn harness(
   match @definitions.load(set) {
     Ok(snapshot) =>
       {
-        engine: @engine.Engine(snapshot, journal~),
+        engine: @engine.Engine(snapshot, journal~, match_index~),
         rand: @prng.Generator(process_seed),
         now: fixed_now,
       }

@@ -1,0 +1,24 @@
+{
+  "mocks": [
+    {
+      "name": "payments"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "cancel",
+      "mock": "payments",
+      "request": {
+        "method": "POST",
+        "path": "/orders/42/cancel"
+      },
+      "scenario": {
+        "name": "checkout",
+        "moveTo": "Cancelled"
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

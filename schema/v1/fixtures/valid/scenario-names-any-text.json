@@ -1,0 +1,21 @@
+{
+  "mocks": [
+    {
+      "name": "決済"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "支払う",
+      "mock": "決済",
+      "scenario": {
+        "name": "お会計 ✓",
+        "requires": "未払い",
+        "moveTo": "済み / π"
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

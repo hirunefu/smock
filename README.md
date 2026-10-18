@@ -43,7 +43,8 @@ Packages of `smock/smock`:
 - `engine`: decides the response to each request from the snapshot,
   including its Faults, and renders a named Stub's response for a sample
   request, for `smock render` and the Admin render operation. It also holds
-  the Ephemeral Stubs per Mock and Session and the Journal, with its bound,
+  the Ephemeral Stubs and the Scenario state per Mock and Session, and the
+  Journal, with its bound,
   eviction counts and query filter, applies the Admin API operations on
   them (verification and the unmatched requests included), and reads the Session a request carries in its W3C Baggage header. `Engine(snapshot, match_index=false)` tries every Stub in
   matching order instead of using the index; tests check the index against
@@ -562,6 +563,11 @@ curl localhost:8080/users/1                                           # 200, fro
   Session form their own space, and Ephemeral Stubs added without a Session
   apply only to them. An Ephemeral Stub can be the Near miss, named by its
   ID in `Smock-Near-Miss`.
+- The Session also keeps its own state of each
+  [Scenario](docs/definition-files.md#scenarios). An Ephemeral Stub may
+  carry a `scenario` clause, as a Stub in a Definition file does, even on a
+  Scenario that no file names, and shares the Session's state with the
+  file Stubs that name the same Scenario.
 - `GET` lists and `DELETE /v1/mocks/{mock}/stubs/{id}` deletes the calling
   Session's Ephemeral Stubs of the Mock. `POST /v1/reset` with
   `{"scope":"session"}` clears the calling Session's Ephemeral Stubs and

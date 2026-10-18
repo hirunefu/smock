@@ -15,6 +15,8 @@ pub struct Engine {
   priv mut last_reload : ReloadResult?
   /// The Ephemeral Stubs, by Mock and Session.
   priv ephemeral : EphemeralStubs
+  /// The state of each Scenario, by Mock and Session.
+  priv scenarios : ScenarioStates
   /// The Journal: the entries committed, oldest first, within its bound.
   priv journal : Journal
 }
@@ -47,6 +49,10 @@ pub(all) struct Outcome {
   near_miss : NearMiss?
   /// The Stub that matched, if any, and where it comes from.
   matched : MatchedStub?
+  /// How the request moved a Scenario of the Mock that answered: the
+  /// clause of the Stub that matched, with the state before and after.
+  /// There is none when no Stub matched, or when the Stub has no clause.
+  scenario : ScenarioMove?
 } derive(Debug)
 
 ///|
@@ -139,6 +145,7 @@ pub fn Engine::Engine(
     match_index,
     last_reload: None,
     ephemeral: EphemeralStubs::new(),
+    scenarios: ScenarioStates::new(),
     journal: Journal::new(journal),
   }
 }
@@ -329,30 +336,55 @@ pub fn Engine::handle(
     Some(mock) => self.ephemeral.of(mock.name, session)
     None => None
   }
+  // A Stub with a Scenario clause matches only in the state it requires,
+  // checked once its request conditions hold. The Session's states for the
+  // Mock are looked up at most once, and only when a Stub has a clause.
+  let mut states : Map[String, String]? = None
+  let mut states_known = false
   let mut matched : Match? = None
   if ephemeral is Some(list) {
     for i in 0..<list.length() {
       let e = list[i]
       if incoming.meets(e.stub.request) {
-        matched = Some({
-          stub: e.stub,
-          generator: e.generator,
-          source: Ephemeral(e.id),
-        })
-        break
+        if e.stub.scenario is Some(_) && !states_known {
+          states = self.scenarios.of(e.mock, session)
+          states_known = true
+        }
+        if scenario_allows(e.stub, states) {
+          matched = Some({
+            stub: e.stub,
+            generator: e.generator,
+            source: Ephemeral(e.id),
+          })
+          break
+        }
       }
     }
   }
   if matched is None && mock is Some(mock) {
+    // A Mock without a Stub with a clause pays only this test.
+    let gated = mock.has_scenarios()
+    if gated && !states_known {
+      states = self.scenarios.of(mock.name, session)
+      states_known = true
+    }
+    let current = states
     let found = if self.match_index {
-      mock.first_candidate(request.meth, incoming.path, stub => {
-        incoming.meets(stub.request)
-      })
+      if gated {
+        mock.first_candidate(request.meth, incoming.path, stub => {
+          incoming.meets(stub.request) && scenario_allows(stub, current)
+        })
+      } else {
+        mock.first_candidate(request.meth, incoming.path, stub => {
+          incoming.meets(stub.request)
+        })
+      }
     } else {
       let stubs = mock.stubs
       let mut found = None
       for i in 0..<stubs.length() {
-        if incoming.meets(stubs[i].request) {
+        if incoming.meets(stubs[i].request) &&
+          scenario_allows(stubs[i], current) {
           found = Some(stubs[i])
           break
         }
@@ -371,6 +403,25 @@ pub fn Engine::handle(
         source: FromFile(stub.id),
       })
     }
+  }
+  // The Scenario moves now, at the match decision, before the response is
+  // built: whatever happens to the response, a delay, a connection Fault or
+  // a template error, the state has moved, and the next request sees it.
+  // It is the state of the Mock that answered.
+  let mut scenario : ScenarioMove? = None
+  if matched is Some(m) && m.stub.scenario is Some(clause) {
+    if !states_known {
+      states = self.scenarios.of(m.stub.mock, session)
+    }
+    let from = current_state(states, clause.name)
+    let to = match clause.move_to {
+      Some(to) => to
+      None => from
+    }
+    if to != from {
+      self.scenarios.set(m.stub.mock, session, clause.name, to)
+    }
+    scenario = Some({ name: clause.name, from, to, })
   }
   let mut template_error = None
   let mut near_miss = None
@@ -441,7 +492,7 @@ pub fn Engine::handle(
   } else {
     None
   }
-  { resolution, plan, journal, near_miss, matched: source, }
+  { resolution, plan, journal, near_miss, matched: source, scenario, }
 }
 
 ///|

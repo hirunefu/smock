@@ -1,0 +1,20 @@
+{
+  "mocks": [
+    {
+      "name": "payments"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "pay",
+      "mock": "payments",
+      "scenario": {
+        "name": "",
+        "moveTo": "Paid"
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}
