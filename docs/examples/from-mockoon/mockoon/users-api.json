@@ -219,6 +219,119 @@
       "responseMode": null,
       "streamingMode": null,
       "streamingInterval": 0
+    },
+    {
+      "uuid": "7e20c480-d6b3-409a-8b05-3d13b6033b6b",
+      "type": "http",
+      "documentation": "A users export, polled until it is done.",
+      "method": "get",
+      "endpoint": "exports/:id",
+      "responses": [
+        {
+          "uuid": "e4094112-9703-432a-a8d8-269ece589875",
+          "rules": [],
+          "rulesOperator": "OR",
+          "statusCode": 200,
+          "label": "running",
+          "headers": [],
+          "body": "{ \"status\": \"running\" }",
+          "latency": 0,
+          "bodyType": "INLINE",
+          "filePath": "",
+          "databucketID": "",
+          "sendFileAsBody": false,
+          "disableTemplating": false,
+          "fallbackTo404": false,
+          "default": true,
+          "crudKey": "id",
+          "callbacks": []
+        },
+        {
+          "uuid": "c8f70753-dd6b-4e90-9688-6e5f045f47ed",
+          "rules": [],
+          "rulesOperator": "OR",
+          "statusCode": 200,
+          "label": "done",
+          "headers": [],
+          "body": "{ \"status\": \"done\" }",
+          "latency": 0,
+          "bodyType": "INLINE",
+          "filePath": "",
+          "databucketID": "",
+          "sendFileAsBody": false,
+          "disableTemplating": false,
+          "fallbackTo404": false,
+          "default": false,
+          "crudKey": "id",
+          "callbacks": []
+        }
+      ],
+      "responseMode": "SEQUENTIAL",
+      "streamingMode": null,
+      "streamingInterval": 0
+    },
+    {
+      "uuid": "8b2baa9b-d80d-4057-808a-8b8e19c82f33",
+      "type": "http",
+      "documentation": "Sends a password reset mail, at most twice.",
+      "method": "post",
+      "endpoint": "password/reset",
+      "responses": [
+        {
+          "uuid": "10bf0d6d-e05c-485b-81f0-eaab7093255c",
+          "rules": [
+            {
+              "target": "request_number",
+              "modifier": "",
+              "value": "^[12]$",
+              "invert": false,
+              "operator": "regex"
+            }
+          ],
+          "rulesOperator": "OR",
+          "statusCode": 202,
+          "label": "sent",
+          "headers": [],
+          "body": "{ \"message\": \"sent\" }",
+          "latency": 0,
+          "bodyType": "INLINE",
+          "filePath": "",
+          "databucketID": "",
+          "sendFileAsBody": false,
+          "disableTemplating": false,
+          "fallbackTo404": false,
+          "default": false,
+          "crudKey": "id",
+          "callbacks": []
+        },
+        {
+          "uuid": "88d1fef8-6db5-4124-ae39-969da8c280e6",
+          "rules": [],
+          "rulesOperator": "OR",
+          "statusCode": 429,
+          "label": "limited",
+          "headers": [
+            {
+              "key": "Retry-After",
+              "value": "60"
+            }
+          ],
+          "body": "{ \"error\": \"too many requests\" }",
+          "latency": 0,
+          "bodyType": "INLINE",
+          "filePath": "",
+          "databucketID": "",
+          "sendFileAsBody": false,
+          "disableTemplating": false,
+          "fallbackTo404": false,
+          "default": true,
+          "crudKey": "id",
+          "callbacks": []
+        }
+      ],
+      "responseMode": null,
+      "streamingMode": null,
+      "streamingInterval": 0
     }
   ],
   "rootChildren": [
@@ -237,6 +350,14 @@
     {
       "type": "route",
       "uuid": "744351bc-7aaf-49ad-baeb-deb4f8940826"
+    },
+    {
+      "type": "route",
+      "uuid": "7e20c480-d6b3-409a-8b05-3d13b6033b6b"
+    },
+    {
+      "type": "route",
+      "uuid": "8b2baa9b-d80d-4057-808a-8b8e19c82f33"
     }
   ],
   "proxyMode": false,
