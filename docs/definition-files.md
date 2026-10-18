@@ -272,6 +272,9 @@ text, compared byte for byte, like Mock names and Stub IDs.
 - A Scenario has no declaration. It exists because Stubs name it, and its
   states are `Started` and the ones its Stubs name. The Stubs of one
   Scenario may sit in different Definition files of the same Mock.
+  `smock check` warns about a [required state that no Stub moves
+  to](#a-state-that-no-stub-moves-to), so a typo in a state name is
+  noticed.
 - A Scenario belongs to its Mock. Two Mocks that use the same name each
   have their own Scenario, with its own state.
 - `requires` is checked beside the request conditions. A Stub in another
@@ -1149,18 +1152,24 @@ In CI, run it as a step that fails the build:
 
 ### Warnings
 
-For a valid directory, `smock check` also warns about Stubs that can never
-match, because an earlier Stub of the same Mock always matches first. Each
-warning is one line, marked `warning:`, with the file and JSON Pointer of
-the shadowed Stub, and names the Stub that shadows it. Warnings do not
+For a valid directory, `smock check` also warns about two things that do
+not stop the directory from loading: a Stub that can never match, and a
+Stub that requires a state that no Stub moves to. Each warning is one
+line, marked `warning:`, with the file and a JSON Pointer. Warnings do not
 change the exit status:
 
 ```console
 $ smock check defs
 users.json: /stubs/1: warning: the Stub "user-1" can never match: the Stub "any-user" at users.json: /stubs/0 is tried first and matches every request this one would
+payments.yaml: /stubs/2/scenario/requires: warning: the Stub "order-paid" requires the state "Payed" of the Scenario "checkout", but no Stub in the Definition files moves "checkout" to "Payed"; only the Admin API or an Ephemeral Stub can
 $ echo $?
 0
 ```
+
+#### A Stub that can never match
+
+A Stub can never match when an earlier Stub of the same Mock always
+matches first. The warning points at that Stub and names the earlier one.
 
 "Earlier" means earlier in the order Stubs are [tried](#which-stub-answers).
 A Stub `s` is shadowed by an earlier Stub `t` when `t` has a subset of
@@ -1170,12 +1179,38 @@ A Stub `s` is shadowed by an earlier Stub `t` when `t` has a subset of
 - `t` has no path, the same exact path as `s`, or a pattern that matches
   `s`'s exact path;
 - each of `t`'s query, header and body conditions is also in `s`, written
-  the same way (header names in any case).
+  the same way (header names in any case);
+- `t` has no `requires`, or `s` names the same [Scenario](#scenarios) with
+  the same `requires`. `moveTo` plays no part, since it does not change
+  whether a Stub matches.
+
+So the pending and paid Stubs of the [Scenario example](#an-example) do not
+shadow each other: they have the same request, but require different
+states. Two Stubs with the same request that require the same state are
+still reported.
 
 smock does not compare two patterns, or a pattern or `json` condition with
 another condition: it warns only when the shadowing is certain, so a
 warning is never a false alarm, but some Stubs that can never match are
 not reported.
+
+#### A state that no Stub moves to
+
+A Scenario has no declaration, so a typo in a state name loads without a
+problem: `requires: Payed` names a state that no Stub reaches. smock warns
+when a Stub requires a state other than `Started` that no Stub of the same
+Mock and Scenario moves to with `moveTo`, in any Definition file. The
+warning points at the `requires` value.
+
+The warning states a fact about the files. It does not say the Stub can
+never match, because an Ephemeral Stub or the Admin API can still move the
+Scenario to that state, for example for a test that starts in the middle
+of a flow.
+
+- A state that only `moveTo` names is not reported. A last state, after
+  which Stubs without a clause answer, is a normal design.
+- Ephemeral Stubs are never checked, and their `moveTo` does not count:
+  `smock check` reads only the Definition files.
 
 ## Editor support
 
