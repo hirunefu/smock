@@ -1379,7 +1379,7 @@ async test "the contract checker rejects responses that break the document" {
       #|a digest that is not 12 hex digits: /digest: "xyz" does not match ^[0-9a-f]{12}$
       #|status without a digest: /digest: null is not of type string
       #|a 401 without WWW-Authenticate: header WWW-Authenticate is missing
-      #|an error code the document does not list: /error: "nope" is not one of ["unauthorized","not_found","method_not_allowed","malformed_json","invalid_request","invalid_stub","unknown_mock","unknown_stub","journal_off","not_started","not_ready","bad_request","content_too_large","header_fields_too_large","not_implemented","http_version_not_supported"]
+      #|an error code the document does not list: /error: "nope" is not one of ["unauthorized","not_found","method_not_allowed","malformed_json","invalid_request","invalid_stub","unknown_mock","unknown_stub","unknown_scenario","unknown_state","journal_off","not_started","not_ready","bad_request","content_too_large","header_fields_too_large","not_implemented","http_version_not_supported"]
       #|an undocumented field: /extra: no value is allowed here
       #|a failed reload with its errors: conforms
       #|a reload result the document does not list: /lastReload: {"at":"2026-10-13T01:02:03.004Z","result":"reloaded","err... matches 0 of oneOf, not 1

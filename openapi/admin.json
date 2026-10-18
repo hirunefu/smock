@@ -3,8 +3,8 @@
   "info": {
     "title": "smock Admin API",
     "version": "1",
-    "summary": "Inspect and change a running smock: Ephemeral Stubs, the Journal, verification, rendering and status.",
-    "description": "The Admin API is JSON over HTTP/1.1 on smock's admin port (`--admin-port`, 9090 by default), separate from the plain and TLS ports.\n\n- **Authentication.** Every operation needs `Authorization: Bearer <token>`. smock reads the token from the file named by `--admin-token-file` (`SMOCK_ADMIN_TOKEN_FILE`) or from the environment variable `SMOCK_ADMIN_TOKEN`, and refuses to start when authentication is on and neither gives a token, or when both the file and the variable are set. A missing or wrong token gets 401 with `WWW-Authenticate: Bearer`. `--admin-auth off` (`SMOCK_ADMIN_AUTH=off`) turns authentication off for local use; then no operation needs a token. The probes (`/startupz`, `/readyz`, `/livez`) and `/metrics` never need one.\n- **Replicas.** Every response, errors included, names the replica that handled it in the `Smock-Replica` header: the Pod's hostname, or the host name outside Kubernetes. Replicas share no state: each one keeps its own Ephemeral Stubs and Journal. When smock is told that its deployment runs more than one replica (`--replicas`, `SMOCK_REPLICAS`, default 1), every JSON response carries a `per_replica_state` warning.\n- **Warnings.** Every JSON response, errors included, has a `warnings` array, empty when there is nothing to warn about.\n- **Errors.** Every error is a JSON object `{error, message, warnings}`: `error` is a code from the ErrorCode schema and `message` says what went wrong. A request for a path this document does not list gets 404 with `not_found`; a method a path does not support gets 405 with `method_not_allowed` and an `Allow` header. Request bodies are JSON: a body that is not valid JSON gets 400 with `malformed_json`. Requests over the size limits of `smock serve` (`--header-size-limit`, `--header-count-limit`, `--body-limit`) get 431 or 413 in the same form, and the connection closes.\n- **Sessions.** Session-scoped operations name their Session the way mocked requests do: by default the `smock-session` member of the W3C `baggage` header. The header and the member are `smock serve` settings. Without a Session, an operation acts on the no-Session space: the requests and Ephemeral Stubs that carry no Session.\n- **Mocks** come only from Definition files. The Admin API adds Ephemeral Stubs to existing Mocks.",
+    "summary": "Inspect and change a running smock: Ephemeral Stubs, Scenarios, the Journal, verification, rendering and status.",
+    "description": "The Admin API is JSON over HTTP/1.1 on smock's admin port (`--admin-port`, 9090 by default), separate from the plain and TLS ports.\n\n- **Authentication.** Every operation needs `Authorization: Bearer <token>`. smock reads the token from the file named by `--admin-token-file` (`SMOCK_ADMIN_TOKEN_FILE`) or from the environment variable `SMOCK_ADMIN_TOKEN`, and refuses to start when authentication is on and neither gives a token, or when both the file and the variable are set. A missing or wrong token gets 401 with `WWW-Authenticate: Bearer`. `--admin-auth off` (`SMOCK_ADMIN_AUTH=off`) turns authentication off for local use; then no operation needs a token. The probes (`/startupz`, `/readyz`, `/livez`) and `/metrics` never need one.\n- **Replicas.** Every response, errors included, names the replica that handled it in the `Smock-Replica` header: the Pod's hostname, or the host name outside Kubernetes. Replicas share no state: each one keeps its own Ephemeral Stubs, Scenario state and Journal. When smock is told that its deployment runs more than one replica (`--replicas`, `SMOCK_REPLICAS`, default 1), every JSON response carries a `per_replica_state` warning.\n- **Warnings.** Every JSON response, errors included, has a `warnings` array, empty when there is nothing to warn about.\n- **Errors.** Every error is a JSON object `{error, message, warnings}`: `error` is a code from the ErrorCode schema and `message` says what went wrong. A request for a path this document does not list gets 404 with `not_found`; a method a path does not support gets 405 with `method_not_allowed` and an `Allow` header. Request bodies are JSON: a body that is not valid JSON gets 400 with `malformed_json`. Requests over the size limits of `smock serve` (`--header-size-limit`, `--header-count-limit`, `--body-limit`) get 431 or 413 in the same form, and the connection closes.\n- **Sessions.** Session-scoped operations name their Session the way mocked requests do: by default the `smock-session` member of the W3C `baggage` header. The header and the member are `smock serve` settings. Without a Session, an operation acts on the no-Session space: the requests and Ephemeral Stubs that carry no Session.\n- **Mocks** come only from Definition files. The Admin API adds Ephemeral Stubs to existing Mocks.",
     "license": {
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
@@ -29,6 +29,10 @@
     {
       "name": "Ephemeral Stubs",
       "description": "Stubs added to an existing Mock for one Session. They are tried before every Stub from Definition files, and the newest first among equal priority."
+    },
+    {
+      "name": "Scenarios",
+      "description": "The state of each Scenario of a Mock, kept per Session: listing the calling Session's Scenarios and setting the state of one."
     },
     {
       "name": "Reset",
@@ -214,6 +218,137 @@
           },
           "404": {
             "description": "The Mock does not exist (`unknown_mock`), or the calling Session has no Ephemeral Stub with this ID in it (`unknown_stub`).",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/mocks/{mock}/scenarios": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Mock"
+        },
+        {
+          "$ref": "#/components/parameters/Session"
+        }
+      ],
+      "get": {
+        "operationId": "listScenarios",
+        "tags": ["Scenarios"],
+        "summary": "List the calling Session's Scenarios of a Mock",
+        "description": "The Scenarios that the Mock's file Stubs name and those that the calling Session's own Ephemeral Stubs in the Mock name, sorted by name byte-wise. Each comes with the state it is in for the calling Session and its known states. Another Session's Ephemeral Stubs and state are never shown. A Scenario that the calling Session still holds a state for, though no Stub names it any more (its Ephemeral Stubs were deleted), is listed too, with `Started` as its only known state.",
+        "responses": {
+          "200": {
+            "description": "The Scenarios.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/UnknownMock"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/mocks/{mock}/scenarios/{scenario}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Mock"
+        },
+        {
+          "name": "scenario",
+          "in": "path",
+          "required": true,
+          "description": "The name of a Scenario of the Mock, percent-encoded like any path segment.",
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        {
+          "$ref": "#/components/parameters/Session"
+        }
+      ],
+      "put": {
+        "operationId": "setScenarioState",
+        "tags": ["Scenarios"],
+        "summary": "Set the state of one of the calling Session's Scenarios",
+        "description": "Moves the Scenario to the state in the body for the calling Session, so that a test can start in the middle of a flow without replaying the calls that lead there. Setting `Started` resets the Scenario. The Scenario must be one that the list operation shows for the calling Session, and the state one of its known states: `Started`, and every state that the `requires` and `moveTo` of the Mock's file Stubs and of the calling Session's own Ephemeral Stubs in the Mock name for it. Other Sessions keep their own state.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScenarioStateInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The state was set. The response shows the Scenario as it is after.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioStateSet"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not valid JSON (`malformed_json`), it is not `{\"state\": <name>}` (`invalid_request`), or the state is not one of the Scenario's known states for the calling Session (`unknown_state`).",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "The Mock does not exist (`unknown_mock`), or no Stub of the Mock names the Scenario, in the Definition files or among the calling Session's Ephemeral Stubs, and the calling Session holds no state for it (`unknown_scenario`). A Scenario that only another Session's Ephemeral Stubs name is unknown.",
             "headers": {
               "Smock-Replica": {
                 "$ref": "#/components/headers/Smock-Replica"
@@ -809,7 +944,7 @@
         "type": "object",
         "properties": {
           "code": {
-            "description": "What the warning is about. `per_replica_state`: the deployment runs more than one replica (`--replicas`), each keeps its own Ephemeral Stubs and Journal, and this response comes from the replica in `Smock-Replica` alone.",
+            "description": "What the warning is about. `per_replica_state`: the deployment runs more than one replica (`--replicas`), each keeps its own Ephemeral Stubs, Scenario state and Journal, and this response comes from the replica in `Smock-Replica` alone.",
             "enum": ["per_replica_state"]
           },
           "message": {
@@ -839,7 +974,7 @@
         "additionalProperties": false
       },
       "ErrorCode": {
-        "description": "What kind of error it is:\n\n- `unauthorized` (401): no bearer token, or the wrong one.\n- `not_found` (404): no operation at this path.\n- `method_not_allowed` (405): the path does not take this method.\n- `malformed_json` (400): the body is not valid JSON.\n- `invalid_request` (400): the body or a parameter does not have the shape the operation takes.\n- `invalid_stub` (400): an Ephemeral Stub is not valid; the message is the one `smock check` gives.\n- `unknown_mock` (404): no Mock has this name.\n- `unknown_stub` (404): no Stub has this ID, or the calling Session has no Ephemeral Stub with it.\n- `journal_off` (409): the Journal is off globally, or for the Mock that the request's filter names.\n- `not_started` (503): the first definition set has not loaded yet.\n- `not_ready` (503): smock is not ready to serve, such as while it drains after SIGTERM.\n- `bad_request` (400): the HTTP request itself is malformed.\n- `content_too_large` (413): the body is over `--body-limit`.\n- `header_fields_too_large` (431): the request head is over `--header-size-limit` or `--header-count-limit`.\n- `not_implemented` (501): this build does not implement the operation, or the request uses a transfer coding other than chunked.\n- `http_version_not_supported` (505): the request is not HTTP/1.x.",
+        "description": "What kind of error it is:\n\n- `unauthorized` (401): no bearer token, or the wrong one.\n- `not_found` (404): no operation at this path.\n- `method_not_allowed` (405): the path does not take this method.\n- `malformed_json` (400): the body is not valid JSON.\n- `invalid_request` (400): the body or a parameter does not have the shape the operation takes.\n- `invalid_stub` (400): an Ephemeral Stub is not valid; the message is the one `smock check` gives.\n- `unknown_mock` (404): no Mock has this name.\n- `unknown_stub` (404): no Stub has this ID, or the calling Session has no Ephemeral Stub with it.\n- `unknown_scenario` (404): no Stub of the Mock names this Scenario, in the Definition files or among the calling Session's Ephemeral Stubs, and the calling Session holds no state for it.\n- `unknown_state` (400): the state is not one of the known states of the Scenario for the calling Session.\n- `journal_off` (409): the Journal is off globally, or for the Mock that the request's filter names.\n- `not_started` (503): the first definition set has not loaded yet.\n- `not_ready` (503): smock is not ready to serve, such as while it drains after SIGTERM.\n- `bad_request` (400): the HTTP request itself is malformed.\n- `content_too_large` (413): the body is over `--body-limit`.\n- `header_fields_too_large` (431): the request head is over `--header-size-limit` or `--header-count-limit`.\n- `not_implemented` (501): this build does not implement the operation, or the request uses a transfer coding other than chunked.\n- `http_version_not_supported` (505): the request is not HTTP/1.x.",
         "enum": [
           "unauthorized",
           "not_found",
@@ -849,6 +984,8 @@
           "invalid_stub",
           "unknown_mock",
           "unknown_stub",
+          "unknown_scenario",
+          "unknown_state",
           "journal_off",
           "not_started",
           "not_ready",
@@ -1052,6 +1189,78 @@
           }
         },
         "required": ["id", "warnings"],
+        "additionalProperties": false
+      },
+      "Scenario": {
+        "description": "A Scenario of a Mock as the calling Session sees it.",
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "The Scenario's name.",
+            "type": "string",
+            "minLength": 1
+          },
+          "state": {
+            "description": "The state the Scenario is in for the calling Session: `Started` until a Stub or the set operation moves it. It is outside `states` when only an Ephemeral Stub that the Session deleted named it.",
+            "type": "string",
+            "minLength": 1
+          },
+          "states": {
+            "description": "The known states of the Scenario for the calling Session, the states the set operation takes: `Started` first, then every other state that the `requires` and `moveTo` of the Mock's file Stubs and of the calling Session's own Ephemeral Stubs in the Mock name for it, byte-wise.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        },
+        "required": ["name", "state", "states"],
+        "additionalProperties": false
+      },
+      "ScenarioList": {
+        "description": "The calling Session's Scenarios of a Mock, sorted by name byte-wise.",
+        "type": "object",
+        "properties": {
+          "scenarios": {
+            "description": "The Scenarios.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Scenario"
+            }
+          },
+          "warnings": {
+            "$ref": "#/components/schemas/Warnings"
+          }
+        },
+        "required": ["scenarios", "warnings"],
+        "additionalProperties": false
+      },
+      "ScenarioStateInput": {
+        "description": "The state to set a Scenario to, for the calling Session.",
+        "type": "object",
+        "properties": {
+          "state": {
+            "description": "One of the Scenario's known states for the calling Session, compared byte for byte. `Started` resets the Scenario.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": ["state"],
+        "additionalProperties": false
+      },
+      "ScenarioStateSet": {
+        "description": "The Scenario whose state was set, as it is after.",
+        "type": "object",
+        "properties": {
+          "scenario": {
+            "$ref": "#/components/schemas/Scenario"
+          },
+          "warnings": {
+            "$ref": "#/components/schemas/Warnings"
+          }
+        },
+        "required": ["scenario", "warnings"],
         "additionalProperties": false
       },
       "ResetRequest": {
