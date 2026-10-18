@@ -385,7 +385,9 @@ without editing files. An Ephemeral Stub and a file Stub that name the
 same Scenario of the same Mock share the Session's state, so an Ephemeral
 Stub can replace one step of a flow from the files. Like the Stub, the
 state belongs to the Session that added it: other Sessions never see it.
-Deleting an Ephemeral Stub leaves the state as it is.
+Deleting an Ephemeral Stub leaves the state as it is. A
+[reset](../README.md#sessions-and-ephemeral-stubs) of the Session, of the
+Mock or of everything clears it, and sends the Scenarios back to `Started`.
 
 #### How state grows
 
