@@ -253,7 +253,7 @@ pub fn Engine::list_scenarios(
 /// The Scenario must be one that `Engine::list_scenarios` lists for the
 /// Session, and the state one of its known states. So every state stored
 /// is one that the files or the Session's own Ephemeral Stubs name, and a
-/// typo cannot leave a flow in a state that no Stub matches.
+/// typo cannot leave a Scenario in a state that no Stub matches.
 ///
 /// Raises `UnknownMock` when no Mock has the name `mock`,
 /// `UnknownScenario` when the Mock has no such Scenario for the Session,

@@ -625,10 +625,10 @@ test "Started, which every Scenario starts in, and states that only moveTo names
           #|{ "mocks": [{ "name": "m" }],
           #|  "stubs": [
           #|    { "id": "start", "mock": "m", "request": { "path": "/start" },
-          #|      "scenario": { "name": "flow", "requires": "Started", "moveTo": "Done" },
+          #|      "scenario": { "name": "visit", "requires": "Started", "moveTo": "Done" },
           #|      "response": { "status": 200 } },
           #|    { "id": "logout", "mock": "m", "request": { "path": "/logout" },
-          #|      "scenario": { "name": "flow", "moveTo": "Started" },
+          #|      "scenario": { "name": "visit", "moveTo": "Started" },
           #|      "response": { "status": 200 } } ] }
         ),
       ),

@@ -664,7 +664,7 @@ the last moves it back to `Started`, which closes the cycle:
 
 `GET /api/v1/exports/7` then answers `running`, `done`, `running`, and
 so on. As in Mockoon, `GET /api/v1/exports/8` takes the next turn of the
-same cycle. Without the `moveTo` of the last Stub, the flow stays at
+same cycle. Without the `moveTo` of the last Stub, the Scenario stays at
 `done`, which suits a client that polls until a job is done; Mockoon has
 no such mode.
 
@@ -705,8 +705,8 @@ A state differs from Mockoon's count in three ways:
   [Session](../README.md#sessions-and-ephemeral-stubs), so concurrent
   tests each walk their own flow, and requests without a Session share
   a state of their own. Each replica keeps its own state, so tests that
-  rely on a flow need one replica, or session affinity. Started side by
-  side, the two answer these requests differently:
+  rely on Scenarios need one replica, or session affinity. Started side
+  by side, the two answer these requests differently:
 
   ```sh
   curl localhost:8080/api/v1/exports/7                                      # running
@@ -730,10 +730,10 @@ A state differs from Mockoon's count in three ways:
   `PURGE /mockoon-admin/state` starts Mockoon's counts over. A reset
   answers how many states it cleared, in `removed.scenarioStates`.
   `PUT /v1/mocks/users-api/scenarios/export` with `{"state":"Started"}`
-  starts one flow over, the calling Session's export cycle, and leaves its
-  other Scenarios where they are. A test can also start over with a new
-  Session, whose Scenarios are all in `Started`. Like Mockoon's counts,
-  states are lost on restart.
+  starts one Scenario over, the calling Session's export cycle, and leaves
+  its other Scenarios where they are. A test can also start over with a
+  new Session, whose Scenarios are all in `Started`. Like Mockoon's
+  counts, states are lost on restart.
 
   ```sh
   curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=test-a" \
