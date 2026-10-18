@@ -42,6 +42,8 @@ priv struct ScenarioStates {
 }
 
 ///|
+/// No state stored: every Scenario of every Mock and Session is in
+/// `Started`.
 fn ScenarioStates::new() -> ScenarioStates {
   { by_mock: Map([]), }
 }
