@@ -582,3 +582,82 @@ test "an Ephemeral Stub's Scenario clause is validated like a file Stub's, with 
     ),
   )
 }
+
+///|
+test "a Stub that smock check warns about, since no Stub in the files moves its Scenario to the state it requires, answers once an Ephemeral Stub moves it there; Ephemeral Stubs are never checked" {
+  // The payment is left to the tests: no Stub in the files moves `checkout`
+  // to `Paid`.
+  let files = [
+    (
+      "payments.json",
+      (
+        #|{ "mocks": [{ "name": "payments", "hosts": ["payments.svc"] }],
+        #|  "stubs": [
+        #|    { "id": "order-pending", "mock": "payments",
+        #|      "request": { "method": "GET", "path": "/orders/42" },
+        #|      "scenario": { "name": "checkout", "requires": "Started" },
+        #|      "response": { "status": 200, "json": { "status": "pending" } } },
+        #|    { "id": "order-paid", "mock": "payments",
+        #|      "request": { "method": "GET", "path": "/orders/42" },
+        #|      "scenario": { "name": "checkout", "requires": "Paid" },
+        #|      "response": { "status": 200, "json": { "status": "paid" } } } ] }
+      ),
+    ),
+  ]
+  let set : @definitions.DefinitionSet = {
+    files: files.map(file => (file.0, @utf8.encode(file.1))),
+    body_files: [],
+  }
+  let out = []
+  let step = (label : String, result : String) => {
+    out.push("\{label}: \{result}")
+  }
+  match @definitions.load(set) {
+    Ok(snapshot) =>
+      for warning in snapshot.warnings() {
+        step("check", warning.to_string())
+      }
+    Err(diagnostics) => fail(diagnostics.map(d => d.to_string()).join("\n"))
+  }
+  let h = harness(files)
+  step(
+    "test-a adds a payment",
+    h.add(
+      "payments",
+      Some("test-a"),
+      (
+        #|{ "request": { "method": "POST", "path": "/orders/42/pay" },
+        #|  "scenario": { "name": "checkout", "requires": "Started", "moveTo": "Paid" },
+        #|  "response": { "status": 200 } }
+      ),
+    ),
+  )
+  // Nothing moves `checkout` to `Refunded`, and the Stub is added all the
+  // same: only Stubs in the files are checked, by smock check.
+  step(
+    "test-a adds a refund",
+    h.add(
+      "payments",
+      Some("test-a"),
+      (
+        #|{ "request": { "method": "GET", "path": "/orders/42/refund" },
+        #|  "scenario": { "name": "checkout", "requires": "Refunded" },
+        #|  "response": { "status": 200 } }
+      ),
+    ),
+  )
+  step("test-a GET", h.step("GET", "/orders/42", session="test-a"))
+  step("test-a pays", h.step("POST", "/orders/42/pay", session="test-a"))
+  step("test-a GET", h.step("GET", "/orders/42", session="test-a"))
+  inspect(
+    out.join("\n"),
+    content=(
+      #|check: payments.json: /stubs/1/scenario/requires: warning: the Stub "order-paid" requires the state "Paid" of the Scenario "checkout", but no Stub in the Definition files moves "checkout" to "Paid"; only the Admin API or an Ephemeral Stub can
+      #|test-a adds a payment: eph-1
+      #|test-a adds a refund: eph-2
+      #|test-a GET: 200 {"status":"pending"} (order-pending; checkout: Started -> Started)
+      #|test-a pays: 200  (eph-1; checkout: Started -> Paid)
+      #|test-a GET: 200 {"status":"paid"} (order-paid; checkout: Paid -> Paid)
+    ),
+  )
+}
