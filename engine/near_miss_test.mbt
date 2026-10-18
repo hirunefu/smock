@@ -502,3 +502,198 @@ test "changing the expected JSON of a Near miss changes no later match: the snap
     content="[None, Some(\"tea\")]",
   )
 }
+
+///|
+/// The `Smock-Near-Miss` header of `outcome`, or `none`.
+fn near_miss_header(outcome : @engine.Outcome) -> String {
+  for header in outcome.plan.headers {
+    if header.0 == "Smock-Near-Miss" {
+      return header.1
+    }
+  }
+  "none"
+}
+
+///|
+test "a Stub that fails only the state it requires is the Near miss, with the condition scenario:<name>: the required state, and the current one" {
+  let h = harness(checkout)
+  let _ = h.send("POST", "http://payments.svc/orders/42/pay", session="test-a")
+  let again = h.send(
+    "POST",
+    "http://payments.svc/orders/42/pay",
+    session="test-a",
+  )
+  inspect(near_miss_header(again), content="pay; failed=scenario:checkout")
+  guard again.near_miss is Some(near_miss) else { fail("no Near miss") }
+  json_inspect(near_miss.to_json(), content={
+    "stub": "pay",
+    "stubSource": "file",
+    "failed": [
+      {
+        "condition": "scenario:checkout",
+        "expected": "Started",
+        "actual": ["Paid"],
+      },
+    ],
+  })
+}
+
+///|
+test "the state a Stub requires counts after method, path, query, headers and body, and a Scenario with no state stored is in Started" {
+  let h = stubs([
+    (
+      #|{ "id": "paid-only", "mock": "m",
+      #|  "request": { "method": "GET", "path": "/orders/42",
+      #|    "query": { "v": "2" }, "headers": { "X-Tenant": "acme" }, "body": "x" },
+      #|  "scenario": { "name": "checkout", "requires": "Paid" },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  let wrong = h.send("PUT", "/orders/41?v=1", body="y", session="test-a")
+  let only_query = h.send(
+    "GET",
+    "/orders/42?v=1",
+    headers=[("X-Tenant", "acme")],
+    body="x",
+    session="test-a",
+  )
+  inspect(
+    [near_miss_header(wrong), near_miss_header(only_query)].join("\n"),
+    content=(
+      #|paid-only; failed=method,path,query:v,header:x-tenant,body,scenario:checkout
+      #|paid-only; failed=query:v,scenario:checkout
+    ),
+  )
+  guard only_query.near_miss is Some(near_miss) else { fail("no Near miss") }
+  json_inspect(near_miss.to_json(), content={
+    "stub": "paid-only",
+    "stubSource": "file",
+    "failed": [
+      { "condition": "query:v", "expected": "2", "actual": ["1"] },
+      {
+        "condition": "scenario:checkout",
+        "expected": "Paid",
+        "actual": ["Started"],
+      },
+    ],
+  })
+  // An Ephemeral Stub is a candidate as before, and its Scenario is in the
+  // state of the request's Session.
+  let _ = h.add(
+    "m",
+    Some("test-a"),
+    (
+      #|{ "request": { "method": "GET", "path": "/health" },
+      #|  "scenario": { "name": "outage", "requires": "Down" },
+      #|  "response": { "status": 200 } }
+    ),
+  )
+  guard h.send("GET", "/health", session="test-a").near_miss is Some(near_miss) else {
+    fail("no Near miss")
+  }
+  json_inspect(near_miss.to_json(), content={
+    "stub": "eph-1",
+    "stubSource": "ephemeral",
+    "failed": [
+      {
+        "condition": "scenario:outage",
+        "expected": "Down",
+        "actual": ["Started"],
+      },
+    ],
+  })
+}
+
+///|
+test "the tie rule is unchanged: a Stub that fails only its state ties with one that fails only its method, and the earlier one is the Near miss" {
+  let h = stubs([
+    (
+      #|{ "id": "a-put", "mock": "m", "request": { "method": "PUT", "path": "/a" },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "b-paid", "mock": "m", "request": { "method": "GET", "path": "/a" },
+      #|  "scenario": { "name": "checkout", "requires": "Paid" },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "c-paid", "mock": "m", "request": { "method": "GET", "path": "/b" },
+      #|  "scenario": { "name": "checkout", "requires": "Paid" },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "d-put", "mock": "m", "request": { "method": "PUT", "path": "/b" },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  inspect(
+    [
+      near_miss_header(h.send("GET", "/a")),
+      near_miss_header(h.send("GET", "/b")),
+    ].join("\n"),
+    content=(
+      #|a-put; failed=method
+      #|c-paid; failed=scenario:checkout
+    ),
+  )
+}
+
+///|
+test "only a Stub that requires a state can fail it: a Stub with moveTo and no requires fails only its request conditions, in any state" {
+  let h = harness(login)
+  let before = near_miss_header(h.send("PUT", "http://auth.svc/logout"))
+  let _ = h.send("POST", "http://auth.svc/login")
+  let after = near_miss_header(h.send("PUT", "http://auth.svc/logout"))
+  inspect(
+    "before login: \{before}\nafter login: \{after}",
+    content=(
+      #|before login: logout; failed=method
+      #|after login: logout; failed=method
+    ),
+  )
+}
+
+///|
+test "the Smock-Near-Miss header percent-encodes the Scenario name and carries no state" {
+  let h = stubs([
+    (
+      #|{ "id": "pay", "mock": "m", "request": { "path": "/pay" },
+      #|  "scenario": { "name": "check out; failed=x,y\r\nü", "requires": "Paid\r\nX: y" },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  inspect(
+    near_miss_header(h.send("GET", "/pay")),
+    content="pay; failed=scenario:check%20out%3B%20failed%3Dx%2Cy%0D%0A%C3%BC",
+  )
+}
+
+///|
+test "Scenarios add no response header: a Stub that requires or moves a state answers with its own headers, and a miss gets only the Near miss" {
+  let h = harness(checkout)
+  inspect(
+    [
+      response(h.send("GET", "http://payments.svc/orders/42")),
+      response(h.send("POST", "http://payments.svc/orders/42/pay")),
+      response(h.send("GET", "http://payments.svc/orders/42")),
+      response(h.send("POST", "http://payments.svc/orders/42/pay")),
+    ].join("\n--\n"),
+    content=(
+      #|200
+      #|Content-Type: application/json
+      #|{"status":"pending"}
+      #|--
+      #|200
+      #|
+      #|--
+      #|200
+      #|Content-Type: application/json
+      #|{"status":"paid"}
+      #|--
+      #|404
+      #|Content-Type: application/json
+      #|Smock-Near-Miss: pay; failed=scenario:checkout
+      #|{"error":"no Stub matched"}
+    ),
+  )
+}

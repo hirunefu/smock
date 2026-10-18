@@ -16,7 +16,8 @@ pub struct JournalSettings {
   /// The most bytes its entries take, as each entry counts them: 256 for
   /// its fixed fields, two for each UTF-16 code unit of the text it holds
   /// (the request line, the header fields, the Session, Host, Mock and
-  /// Stub names and the Near miss), and the bytes of its truncated body.
+  /// Stub names, the Scenario move and the Near miss), and the bytes of
+  /// its truncated body.
   max_bytes : Int
   /// The most bytes of a request body an entry keeps.
   body_limit : Int
@@ -69,6 +70,8 @@ pub struct JournalEntry {
   stub : String?
   /// Where the Stub that matched comes from, if one did.
   stub_source : StubSource?
+  /// How the Stub that matched moved its Scenario, when it has a clause.
+  scenario : ScenarioMove?
   /// The Near miss, when no Stub matched and the Mock had candidates.
   near_miss : NearMiss?
   /// The response status, or `None` when a connection Fault ended the
@@ -136,6 +139,7 @@ fn Journal::entry(
   host~ : String?,
   resolution~ : Resolution,
   matched~ : MatchedStub?,
+  scenario~ : ScenarioMove?,
   near_miss~ : NearMiss?,
   plan~ : ResponsePlan,
   template_error~ : TemplateError?,
@@ -191,11 +195,19 @@ fn Journal::entry(
   if template_error is Some(error) {
     text += error.at.length() + error.message.length()
   }
+  if scenario is Some(moved) {
+    text += moved.name.length() + moved.from.length() + moved.to.length()
+  }
   if near_miss is Some(near_miss) {
     text += near_miss.stub.length()
     for failed in near_miss.failed {
       for value in failed.actual {
         text += value.length()
+      }
+      // A Scenario condition also shows the Scenario and the state the
+      // Stub requires; the state it is in is its actual value.
+      if failed is { condition: Scenario(name), expected: Exact(state), .. } {
+        text += name.length() + state.length()
       }
     }
   }
@@ -217,6 +229,7 @@ fn Journal::entry(
     body_size: request.body.length(),
     stub,
     stub_source,
+    scenario,
     near_miss,
     status,
     fault: plan.fault,
@@ -267,6 +280,7 @@ let vacated : JournalEntry = {
   body_size: 0,
   stub: None,
   stub_source: None,
+  scenario: None,
   near_miss: None,
   status: None,
   fault: None,
@@ -735,6 +749,9 @@ pub impl ToJson for JournalEntry with fn to_json(self) {
     },
     "stub": optional(self.stub),
     "stubSource": optional(self.stub_source.map(source => source.name())),
+    "scenario": self.scenario.map_or(Json::null(), moved => {
+      ToJson::to_json(moved)
+    }),
     "nearMiss": self.near_miss.map_or(Json::null(), near_miss => {
       ToJson::to_json(near_miss)
     }),
