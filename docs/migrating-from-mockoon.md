@@ -37,15 +37,15 @@ covers part of the need, the item says what.
   initial value, and a test can change answers for itself with Ephemeral
   Stubs, as [the CRUD route](#latency-cors-and-the-crud-route) of the
   example shows.
-- **Answers that change between requests.** The `RANDOM` and
-  `SEQUENTIAL` response modes, `request_number` rules, and global
-  variables have no counterpart. `fake.pick(…)` varies a value, a
-  connection Fault's `probability` makes some requests fail, though
-  never with a status other than the Stub's, and a test changes the
-  answer between its calls by adding or deleting Ephemeral Stubs in its
-  Session.
+- **Random answers and global variables.** The `RANDOM` response mode and
+  global variables have no counterpart. The `fake.*` helpers, such as
+  `fake.pick(…)`, vary a value, a connection Fault's `probability` makes
+  some requests fail, though never with a status other than the Stub's,
+  and a test changes the answer between its calls by adding or deleting
+  Ephemeral Stubs in its Session. `SEQUENTIAL` responses and
+  `request_number` rules do carry over, as Scenarios.
   [Answers that change between requests](#answers-that-change-between-requests)
-  says which answer to keep.
+  shows both, and says which answer to keep for the others.
 - **Callbacks.** smock never sends a request of its own. A test that
   relied on a callback sends that request to the callback's URL itself,
   and can check in the Journal that the request that fired it arrived.
@@ -101,6 +101,10 @@ smock's model is flatter:
   the order they are declared, unless `priority` reorders them, so the
   order of the routes, and of the responses within each route, carries
   over.
+- A *Scenario* is a named state within a Mock, which starts in the state
+  `Started`. A Stub can require one of its states and move it to
+  another, so that the same request gets different answers at different
+  points of a flow.
 - A response is a template only with `template: true`, and templates
   insert values with `${…}` expressions, not Handlebars.
 - A request that no Stub matches gets a 404 whose `Smock-Near-Miss`
@@ -115,7 +119,7 @@ full.
 The environment `users-api`, in
 [`mockoon/users-api.json`](examples/from-mockoon/mockoon/users-api.json),
 has the prefix `api/v1`, `cors: true`, the environment header
-`Content-Type: application/json`, and four routes:
+`Content-Type: application/json`, and six routes:
 
 | Route | Responses, in order | Rules |
 |---|---|---|
@@ -123,6 +127,8 @@ has the prefix `api/v1`, `cors: true`, the environment header
 | `GET users/:id` | 200 with an inline template (the default); 404 | On the 404: params `id` regex `^0+$`. |
 | `POST users` | 201 with an inline template; 403 (the default) | On the 201: header `X-Api-Key` equals `secret`, AND body `role` equals `admin`. |
 | CRUD `orders` | The data bucket `orders`, `[{"id":1,"item":"book"},{"id":2,"item":"pen"}]` | None. |
+| `GET exports/:id`, `SEQUENTIAL` | 200 with `{ "status": "running" }` (the default); 200 with `{ "status": "done" }` | None. |
+| `POST password/reset` | 202 with `{ "message": "sent" }`; 429 with `Retry-After: 60` and `{ "error": "too many requests" }` (the default) | On the 202: `request_number` regex `^[12]$`. |
 
 The two inline templates are:
 
@@ -259,9 +265,11 @@ The route's response mode changes this:
 - `FALLBACK`: everything but the Stub of step 2. A request that passes no
   rule then goes on to the next route in Mockoon, and to the next Stubs
   in smock.
-- `RANDOM` and `SEQUENTIAL` have no counterpart:
-  [Answers that change between requests](#answers-that-change-between-requests)
-  says which response to keep.
+- `SEQUENTIAL`: a Stub for each response, in order and without its
+  rules, each moving a Scenario on to the next
+  ([Answers that change between requests](#answers-that-change-between-requests)).
+- `RANDOM` has no counterpart: the same section says which response to
+  keep.
 
 In the example, `GET users` lists its default response first, but the
 Stub of the response with a rule, `list-inactive-users`, comes before the
@@ -617,28 +625,143 @@ every kind:
 
 ### Answers that change between requests
 
-The example has no such route, so its file does not change here.
-A `RANDOM` route picks any of its responses, and a `SEQUENTIAL` one
-serves them in turn, from the first again after the last. A
-`request_number` rule counts a route's requests from 1, and a global
-variable keeps a value that one request sets for later ones
+A `SEQUENTIAL` route serves its responses in turn, and from the first
+again after the last; it ignores their rules and which one is the
+default. A `request_number` rule tests the number of the route's
+request, counted from 1. Both count every request that the route
+answers, whatever the response, with one count for each route that all
+clients share. The count starts over when Mockoon restarts, and on
+`PURGE /mockoon-admin/state`
 ([multiple responses](https://mockoon.com/docs/latest/route-responses/multiple-responses/),
-[global variables](https://mockoon.com/docs/latest/variables/global-variables/)).
-smock answers each request on its own. Keep a Stub in the file for such
-a route, so that every client still gets an answer, and choose the
-response it sends:
+[server state](https://mockoon.com/docs/latest/admin-api/server-state/)).
 
-- `SEQUENTIAL`: the state a client must reach to go on, such as the
-  `done` of a job that it polls until then.
+In smock, the Stubs of such a route share a
+[Scenario](definition-files.md#scenarios). A Stub's `scenario` clause
+names the Scenario, the state it `requires`, and the state it moves the
+Scenario to (`moveTo`) when it answers. Every Scenario starts in the
+state `Started`. Give each route a Scenario of its own, as Mockoon gives
+each route its own count.
+
+`GET exports/:id` is `SEQUENTIAL`. Each of its responses becomes a Stub
+with the route's method and path, in order and without rules. The first
+Stub requires `Started`, and each later one a state named after its
+response. Each Stub moves the Scenario to the state of the next one, and
+the last moves it back to `Started`, which closes the cycle:
+
+```yaml
+- id: get-export-running
+  mock: users-api
+  request: { method: GET, path: { pattern: "/api/v1/exports/[^/]+" } }
+  scenario: { name: export, requires: Started, moveTo: done }
+  response: { status: 200, json: { status: running } }
+
+- id: get-export-done
+  mock: users-api
+  request: { method: GET, path: { pattern: "/api/v1/exports/[^/]+" } }
+  scenario: { name: export, requires: done, moveTo: Started }
+  response: { status: 200, json: { status: done } }
+```
+
+`GET /api/v1/exports/7` then answers `running`, `done`, `running`, and
+so on. As in Mockoon, `GET /api/v1/exports/8` takes the next turn of the
+same cycle. Without the `moveTo` of the last Stub, the flow stays at
+`done`, which suits a client that polls until a job is done; Mockoon has
+no such mode.
+
+`POST password/reset` gives the first two requests 202 and every later
+one 429. "The first N answers, then another" becomes a chain of states:
+a Stub for each of the first N requests, each moving the Scenario on to a
+state that counts it, then a Stub for the other answer, which requires
+the last state and stays there:
+
+```yaml
+- id: reset-password-sent-1
+  mock: users-api
+  request: { method: POST, path: /api/v1/password/reset }
+  scenario: { name: password-reset, requires: Started, moveTo: sent once }
+  response: { status: 202, json: { message: sent } }
+
+- id: reset-password-sent-2
+  mock: users-api
+  request: { method: POST, path: /api/v1/password/reset }
+  scenario: { name: password-reset, requires: sent once, moveTo: sent twice }
+  response: { status: 202, json: { message: sent } }
+
+- id: reset-password-limited
+  mock: users-api
+  request: { method: POST, path: /api/v1/password/reset }
+  scenario: { name: password-reset, requires: sent twice }
+  response:
+    status: 429
+    headers: { Retry-After: "60" }
+    json: { error: too many requests }
+```
+
+A state differs from Mockoon's count in three ways:
+
+- **It is kept per Session and per replica.** Mockoon keeps one count
+  for each route of the environment, and every client moves it. smock
+  keeps a Scenario's state per
+  [Session](../README.md#sessions-and-ephemeral-stubs), so concurrent
+  tests each walk their own flow, and requests without a Session share
+  a state of their own. Each replica keeps its own state, so tests that
+  rely on a flow need one replica, or session affinity. Started side by
+  side, the two answer these requests differently:
+
+  ```sh
+  curl localhost:8080/api/v1/exports/7                                      # running
+  curl -H "baggage: smock-session=test-a" localhost:8080/api/v1/exports/7   # running
+  curl localhost:8080/api/v1/exports/7                                      # done
+  ```
+
+  Mockoon, on port 3000, answers `running`, `done` and `running`: the
+  second request takes the next turn of the one count. In smock, it
+  starts the Session `test-a`'s own cycle, and the third request finds
+  the cycle without a Session where the first left it.
+- **Only a Stub with `moveTo` moves it.** Mockoon counts every request
+  that the route answers. A Stub without a clause answers in every state
+  and moves nothing. So when a route has a 400 for a malformed request
+  as well, Mockoon counts the 400s towards `request_number`, and smock
+  does not.
+- **A reset starts it over.** `POST /v1/reset` with `{"scope":"session"}`
+  clears the calling Session's Ephemeral Stubs, Journal entries and
+  Scenario states, which sends its Scenarios back to `Started`.
+  `{"scope":"all"}` clears every Session's, as
+  `PURGE /mockoon-admin/state` starts Mockoon's counts over. A reset
+  answers how many states it cleared, in `removed.scenarioStates`.
+  `PUT /v1/mocks/users-api/scenarios/export` with `{"state":"Started"}`
+  starts one flow over, the calling Session's export cycle, and leaves its
+  other Scenarios where they are. A test can also start over with a new
+  Session, whose Scenarios are all in `Started`. Like Mockoon's counts,
+  states are lost on restart.
+
+  ```sh
+  curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=test-a" \
+    -d '{"scope":"session"}' localhost:9090/v1/reset
+  curl -H "baggage: smock-session=test-a" localhost:8080/api/v1/exports/7   # running
+  curl -X PUT -H "Authorization: Bearer change-me" -H "baggage: smock-session=test-a" \
+    -d '{"state":"Started"}' localhost:9090/v1/mocks/users-api/scenarios/export
+  curl -H "baggage: smock-session=test-a" localhost:8080/api/v1/exports/7   # running
+  ```
+
+A state is a name that Stubs give, not data: it cannot keep a value from
+a request, and templates cannot read it. So global variables, data
+buckets and CRUD routes still have no counterpart, and neither has
+`RANDOM`, which is not state. A `RANDOM` route picks any of its
+responses, and a global variable keeps a value that one request sets for
+later ones
+([global variables](https://mockoon.com/docs/latest/variables/global-variables/)).
+Keep a Stub in the file for such a route, so that every client still
+gets an answer, and choose the response it sends:
+
 - `RANDOM`: the response that clients get most. Bodies of the same
-  status can still vary: a `json` root of `$if: fake.pick(1, 2) == 1`,
-  with the two bodies as `then` and `else`, sends one or the other at
-  random. `status` is never templated, so a 503 cannot come at random. A
-  connection Fault with a `probability` fails some requests, but the
-  client sees a reset, a closed connection or the Stub's own response
-  cut short, not a 503 and its `Retry-After`, so it tests other code.
-- `request_number`: the response of the first requests, usually the
-  default.
+  status can still vary with the `fake.*` helpers: a `json` root of
+  `$if: fake.pick(1, 2) == 1`, with the two bodies as `then` and `else`,
+  sends one or the other at random. `status` is never templated, so a
+  503 cannot come at random. A connection Fault with a `probability`
+  fails some requests, but the client sees a reset, a closed connection
+  or the Stub's own response cut short, not a 503 and its `Retry-After`,
+  so it tests other code.
 - A global variable: the value after the request that sets it, such as
   the user who logs in.
 
@@ -735,6 +858,44 @@ stubs:
       headers: { X-Total-Count: "2", X-Filtered-Count: "2" }
       json: [{ id: 1, item: book }, { id: 2, item: pen }]
 
+  # GET exports/:id: SEQUENTIAL, so its responses take turns. Each answer
+  # moves the Scenario "export" to the next one, and the last back to
+  # Started.
+  - id: get-export-running
+    mock: users-api
+    request: { method: GET, path: { pattern: "/api/v1/exports/[^/]+" } }
+    scenario: { name: export, requires: Started, moveTo: done }
+    response: { status: 200, json: { status: running } }
+
+  - id: get-export-done
+    mock: users-api
+    request: { method: GET, path: { pattern: "/api/v1/exports/[^/]+" } }
+    scenario: { name: export, requires: done, moveTo: Started }
+    response: { status: 200, json: { status: done } }
+
+  # POST password/reset: a request_number rule gives the first two requests
+  # 202 and every later one 429. The Scenario "password-reset" counts them.
+  - id: reset-password-sent-1
+    mock: users-api
+    request: { method: POST, path: /api/v1/password/reset }
+    scenario: { name: password-reset, requires: Started, moveTo: sent once }
+    response: { status: 202, json: { message: sent } }
+
+  - id: reset-password-sent-2
+    mock: users-api
+    request: { method: POST, path: /api/v1/password/reset }
+    scenario: { name: password-reset, requires: sent once, moveTo: sent twice }
+    response: { status: 202, json: { message: sent } }
+
+  - id: reset-password-limited
+    mock: users-api
+    request: { method: POST, path: /api/v1/password/reset }
+    scenario: { name: password-reset, requires: sent twice }
+    response:
+      status: 429
+      headers: { Retry-After: "60" }
+      json: { error: too many requests }
+
   # cors: true answers every OPTIONS request. Last, so that it is not
   # named as the Near miss of requests that other Stubs nearly match.
   - id: preflight
@@ -764,6 +925,8 @@ Started side by side, with
 | `GET /api/v1/orders` | 200, the two orders, `X-Total-Count: 2`, `X-Filtered-Count: 2` | The same. |
 | `GET /api/v1/orders/1` | 200, `{"id":1,"item":"book"}` | 404, unless a Stub for it is added. |
 | `POST /api/v1/orders`, then `GET /api/v1/orders/3` | 201, then 200 with the new order | 404 and 404, unless the test adds Ephemeral Stubs. |
+| `GET /api/v1/exports/7`, three times | 200, `{ "status": "running" }`, then `done`, then `running` again | 200, `{"status":"running"}`, then `done`, then `running` again |
+| `POST /api/v1/password/reset`, three times | 202, `{ "message": "sent" }`, twice, then 429, `Retry-After: 60` and `{ "error": "too many requests" }` | 202, `{"message":"sent"}`, twice, then 429, `Retry-After: 60` and `{"error":"too many requests"}` |
 
 Mockoon's JSON responses, and its `OPTIONS` answer, carry
 `Content-Type: application/json; charset=utf-8`; smock's JSON responses
@@ -840,6 +1003,11 @@ with the example or with small environments made to test them:
 
   The last header, which Mockoon does not send, lets that page read the
   Near miss too.
+- **Sequences and request numbers.** Mockoon keeps one count for each
+  route, which every client moves. smock keeps a Scenario's state for
+  each Session, in each replica, and moves it only when a Stub with
+  `moveTo` answers
+  ([Answers that change between requests](#answers-that-change-between-requests)).
 - **Latency of unmatched requests.** Mockoon's environment latency delays
   its 404s too. A smock delay applies only to the requests its Stub
   matches.
@@ -876,8 +1044,11 @@ with the example or with small environments made to test them:
 
 `smock check` reads a definitions directory as `smock serve` would, and
 prints every problem with its file and a JSON Pointer. It also warns
-about a Stub that can never match because an earlier one always matches
-first, which often means that responses were written in the wrong order:
+about two things that often show a slip in the translation
+([warnings](definition-files.md#warnings)): a Stub that can never match
+because an earlier one always matches first, which often means that
+responses were written in the wrong order, and a state that a Stub
+requires but no Stub moves to, which often means a typo in a state name:
 
 ```sh
 smock check defs   # prints nothing and exits with 0 for the example
@@ -885,7 +1056,7 @@ smock check defs   # prints nothing and exits with 0 for the example
 
 In CI, run it as a step that fails the build: `- run: smock check defs`.
 
-The warning compares a pattern only with an exact path, never with
+The first warning compares a pattern only with an exact path, never with
 another pattern ([warnings](definition-files.md#warnings)), so it misses
 two Stubs in the wrong order whose paths are both patterns: with
 `get-user` declared before `get-user-missing`, `smock check` prints
@@ -1067,7 +1238,8 @@ counterpart, and name those that have none.
 | `responseMode: null` | Stubs for the responses with rules, then one for the default response. |
 | `DISABLE_RULES` | Only the default response, with only the route's method and path as conditions. |
 | `FALLBACK` | No Stub for the default response without its rules. |
-| `RANDOM`, `SEQUENTIAL` | No counterpart: a Stub for the response to keep, and Ephemeral Stubs for the others ([Answers that change between requests](#answers-that-change-between-requests)). |
+| `SEQUENTIAL` | A Stub for each response, in order and without its rules, each requiring a state of the route's Scenario and moving it to the next, the last back to `Started` ([Answers that change between requests](#answers-that-change-between-requests)). |
+| `RANDOM` | No counterpart: a Stub for the response to keep, and Ephemeral Stubs for the others ([Answers that change between requests](#answers-that-change-between-requests)). |
 | Route `type: http` | Stubs, as above. |
 | `type: crud` | Stubs for the reads, with one for each filtered, sorted or paged list that clients ask for; Ephemeral Stubs for a test's own changes. |
 | `type: ws` | No counterpart. |
@@ -1093,7 +1265,8 @@ counterpart, and name those that have none.
 | `rulesOperator: OR` | One Stub per rule. |
 | `invert` | No counterpart: the Stubs of the later responses get the rule's condition and go first, and the inverted response's Stub follows them without it ([Paths and request conditions](#paths-and-request-conditions)). |
 | Operators `null`, `empty_array`, `array_includes`, `valid_json_schema` | No counterpart. |
-| Targets `request_number`, `global_var`, `data_bucket`, `templating` | No counterpart ([Answers that change between requests](#answers-that-change-between-requests)). |
+| Target `request_number` | A chain of states of the route's Scenario: a Stub for each of the first requests, each moving the Scenario on, then a Stub for the later ones that requires the last state ([Answers that change between requests](#answers-that-change-between-requests)). Only the Stubs with `moveTo` count. |
+| Targets `global_var`, `data_bucket`, `templating` | No counterpart ([Answers that change between requests](#answers-that-change-between-requests)). |
 
 ### Responses
 
@@ -1166,7 +1339,7 @@ write a fixed value. Leaving the member out changes the body's shape.
 | `--max-request-body-size` | `--body-limit`, 10 MiB by default. |
 | `--log-transaction` and the logs | The Journal: `POST /v1/journal/query` and `GET /v1/journal/unmatched`. |
 | The admin API, under `/mockoon-admin` | The Admin API, on its own port, 9090 by default. |
-| `PURGE /mockoon-admin/state` | `POST /v1/reset` with `{"scope":"all"}`, which clears the Ephemeral Stubs and the Journal. |
+| `PURGE /mockoon-admin/state` | `POST /v1/reset` with `{"scope":"all"}`, which clears the Ephemeral Stubs, the Journal and every Scenario state, so that sequences and request counts start over. |
 | `PUT /mockoon-admin/environment` | Edit the files; smock reloads them. |
 | The `mockoon/cli` image | An image built from CI's binary, until a release publishes one. |
 | `import`, `export` | No counterpart. |

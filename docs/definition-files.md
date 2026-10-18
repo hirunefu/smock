@@ -392,6 +392,12 @@ new files sends it back to `Started` ([Reloading](#reloading)). A
 Mock or of everything clears the states in its scope, and sends their
 Scenarios back to `Started`.
 
+Through the Admin API, a test lists its Session's Scenarios of a Mock,
+with the state each one is in, and sets the state of one, so that it can
+start in the middle of a flow, or reset one Scenario by setting `Started`
+([Sessions and Ephemeral Stubs](../README.md#sessions-and-ephemeral-stubs)).
+It can set only a state that the files or its own Ephemeral Stubs name.
+
 #### How state grows
 
 smock stores one small entry for each Session, Mock and Scenario whose
