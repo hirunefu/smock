@@ -294,6 +294,39 @@ class Conditions(unittest.TestCase):
         }])
 
 
+class Definitions(unittest.TestCase):
+    """smock serves bench/definitions/ unless --definitions names another
+    set, such as its Scenario variant, bench/definitions-scenarios/, and the
+    run says which it served."""
+
+    def test_a_run_serves_the_scenario_variant_when_told_and_every_request_still_gets_its_status(self):
+        out = bench(self, "--definitions", str(BENCH / "definitions-scenarios"),
+                    "--cases", "http-keep-alive", "--cpu-limits", "1", "--rate", "200", *SHORT)
+        conditions = read(out, "conditions.json")
+        self.assertEqual(conditions["definitions"]["directory"], "bench/definitions-scenarios")
+        self.assertEqual(conditions["definitions"]["digest"], definition_set_digest(BENCH / "definitions-scenarios"))
+        args = conditions["smock"]["args"]
+        self.assertEqual(args[args.index("--dir") + 1], "bench/definitions-scenarios")
+        # Each request matches a Stub of the variant, which moves its
+        # Scenario, and gets the status the mix expects.
+        result = case(out, "http-keep-alive@1")
+        self.assertEqual(result["errors"], 0)
+        self.assertGreater(result["requests"]["ok"], 0)
+        self.assertIn(f"definition set {conditions['definitions']['digest']} (bench/definitions-scenarios)",
+                      (out / "summary.md").read_text())
+
+    def test_a_definitions_directory_that_is_not_there_is_refused_before_anything_starts(self):
+        out = Path(tempfile.mkdtemp(prefix="smock-bench-test-"))
+        self.addCleanup(shutil.rmtree, out, ignore_errors=True)
+        missing = out / "missing"
+        result = subprocess.run([sys.executable, str(BENCH / "bench.py"), "run", "--smock", str(out / "no-smock"),
+                                 "--definitions", str(missing), "--out", str(out / "results")],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn(f"no definitions directory {missing}", result.stderr)
+        self.assertFalse((out / "results").exists())
+
+
 class CpuLimits(unittest.TestCase):
     """smock runs under CPU limits of 250m, 500m, 1 and 2 cores, on CPUs of
     its own, apart from the load generator's."""

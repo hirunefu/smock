@@ -1,5 +1,6 @@
 // Seam 2 tests of the release benchmark's request mix (bench/requests.json)
-// and definition set (bench/definitions/). bench/bench.py sends these
+// and definition set (bench/definitions/), and of the set's Scenario
+// variant (bench/definitions-scenarios/). bench/bench.py sends these
 // requests to smock under load; here each one is sent once, over the plain
 // and the TLS port, so that a request that no longer reaches the Stub the
 // mix names for it fails a test instead of quietly measuring something
@@ -8,6 +9,11 @@
 ///|
 /// The benchmark's definitions directory, relative to the module root.
 let bench_definitions : String = "bench/definitions"
+
+///|
+/// The directory of the Scenario variant of the benchmark's definitions,
+/// relative to the module root.
+let bench_scenario_definitions : String = "bench/definitions-scenarios"
 
 ///|
 /// One request of the mix and what smock should do with it, as
@@ -287,4 +293,107 @@ async test "bench/the mix reaches several Mocks by Host and the Default Mock, an
     "withBody": ["create-order", "update-order-status", "create-payment"],
     "missing": [],
   })
+}
+
+///|
+async test "bench/in the Scenario variant, each request of the mix gets its status from the Stub the mix names and its twin in turn, over both ports, and moves its Scenario every time" {
+  let mix = read_mix()
+  with_certificates(certs => {
+    let _ = with_smock(
+      ["--dir", bench_scenario_definitions, "--port", "0", ..certs.args()],
+      smock => {
+        let problems = []
+        for over in [Plain, Tls(certs), Plain] {
+          for request in mix {
+            let conn = smock.connect(over~)
+            defer conn.close()
+            conn.write(request.raw())
+            let response = read_response(conn)
+            let expected = "HTTP/1.1 \{request.status} "
+            if !response.has_prefix(expected) {
+              problems.push(
+                "\{request.name}: expected \{expected}, got \{response}",
+              )
+            }
+          }
+        }
+        debug_inspect(problems, content="[]")
+        // Each request's Session: the Stubs that answered it, oldest
+        // first, and how each moved its Scenario.
+        let moves : Map[String, Json] = Map([])
+        for request in mix {
+          guard smock.journal(session=request.session)
+            is (200, Object({ "entries": Array(entries), .. })) else {
+            fail("\{request.name}: the Journal query failed")
+          }
+          moves[request.name] = Json::array(
+            entries.map(entry => {
+              guard entry
+                is Object(
+                  {
+                    "mock": String(mock),
+                    "stub": String(stub),
+                    "scenario": Object(
+                      {
+                        "name": String(name),
+                        "from": String(from),
+                        "to": String(to),
+                        ..
+                      }
+                    ),
+                    ..
+                  }
+                ) else {
+                return Json::string("no move: \{entry.stringify()}")
+              }
+              Json::string("\{mock}/\{stub}: \{name} \{from} -> \{to}")
+            }),
+          )
+        }
+        json_inspect(moves, content={
+          "catalog-item": [
+            "catalog/catalog-item-00317: catalog-item Started -> Seen", "catalog/catalog-item-00317-seen: catalog-item Seen -> Started",
+            "catalog/catalog-item-00317: catalog-item Started -> Seen",
+          ],
+          "catalog-search": [
+            "catalog/catalog-search: catalog-search Started -> Seen", "catalog/catalog-search-seen: catalog-search Seen -> Started",
+            "catalog/catalog-search: catalog-search Started -> Seen",
+          ],
+          "user-profile": [
+            "users/user-10042: user-profile Started -> Seen", "users/user-10042-seen: user-profile Seen -> Started",
+            "users/user-10042: user-profile Started -> Seen",
+          ],
+          "user-preferences": [
+            "users/user-preferences: user-preferences Started -> Seen", "users/user-preferences-seen: user-preferences Seen -> Started",
+            "users/user-preferences: user-preferences Started -> Seen",
+          ],
+          "create-order": [
+            "orders/create-order-partner-gold: create-order Started -> Seen", "orders/create-order-partner-gold-seen: create-order Seen -> Started",
+            "orders/create-order-partner-gold: create-order Started -> Seen",
+          ],
+          "get-order": [
+            "orders/get-order: get-order Started -> Seen", "orders/get-order-seen: get-order Seen -> Started",
+            "orders/get-order: get-order Started -> Seen",
+          ],
+          "update-order-status": [
+            "orders/update-order-status: update-order-status Started -> Seen", "orders/update-order-status-seen: update-order-status Seen -> Started",
+            "orders/update-order-status: update-order-status Started -> Seen",
+          ],
+          "create-payment": [
+            "payments/create-payment-eur: create-payment Started -> Seen", "payments/create-payment-eur-seen: create-payment Seen -> Started",
+            "payments/create-payment-eur: create-payment Started -> Seen",
+          ],
+          "legacy-payment": [
+            "payments/payment-000042: legacy-payment Started -> Seen", "payments/payment-000042-seen: legacy-payment Seen -> Started",
+            "payments/payment-000042: legacy-payment Started -> Seen",
+          ],
+        })
+      },
+    )
+  })
+}
+
+///|
+async test "bench/smock check finds nothing to warn about in the Scenario variant" {
+  inspect(check([bench_scenario_definitions]), content="status 0\n")
 }
