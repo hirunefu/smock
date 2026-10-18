@@ -547,10 +547,10 @@ async test "reset clears the calling Session's Journal entries and says how many
       inspect(
         out.join("\n"),
         content=(
-          #|200 {"scope":"session","removed":{"ephemeralStubs":0,"journalEntries":2},"warnings":[]}
+          #|200 {"scope":"session","removed":{"ephemeralStubs":0,"journalEntries":2,"scenarioStates":0},"warnings":[]}
           #|test-a: 0 entries
           #|test-b: 1 entries
-          #|200 {"scope":"mock","removed":{"ephemeralStubs":0,"journalEntries":1},"warnings":[]}
+          #|200 {"scope":"mock","removed":{"ephemeralStubs":0,"journalEntries":1,"scenarioStates":0},"warnings":[]}
           #|test-b: 0 entries
         ),
       )

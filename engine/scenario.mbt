@@ -114,3 +114,27 @@ fn scenario_allows(
     _ => true
   }
 }
+
+///|
+/// Clears the states of every Mock and Session for which `remove` holds,
+/// which sends their Scenarios back to `Started`, and returns how many
+/// states it cleared.
+fn ScenarioStates::remove_where(
+  self : ScenarioStates,
+  remove : (String, String?) -> Bool,
+) -> Int {
+  let mut count = 0
+  for mock in self.by_mock.keys().collect() {
+    let by_session = self.by_mock[mock]
+    for session in by_session.keys().collect() {
+      if remove(mock, session) {
+        count += by_session[session].length()
+        by_session.remove(session)
+      }
+    }
+    if by_session.is_empty() {
+      self.by_mock.remove(mock)
+    }
+  }
+  count
+}

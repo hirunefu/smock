@@ -208,13 +208,15 @@ pub fn Engine::delete_ephemeral_stub(
 ///|
 /// What a reset clears.
 pub(all) enum ResetScope {
-  /// The Ephemeral Stubs and Journal entries of this Session, or of the
-  /// no-Session space for `None`, across all Mocks, and its eviction count.
+  /// The Ephemeral Stubs, Journal entries and Scenario state of this
+  /// Session, or of the no-Session space for `None`, across all Mocks, and
+  /// its eviction count.
   Session(String?)
-  /// The Ephemeral Stubs and Journal entries of this Mock, for every
-  /// Session.
+  /// The Ephemeral Stubs, Journal entries and Scenario state of this Mock,
+  /// for every Session.
   Mock(String)
-  /// Every Ephemeral Stub, the whole Journal and every eviction count.
+  /// Every Ephemeral Stub, the whole Journal, every Scenario state and
+  /// every eviction count.
   All
 } derive(Debug)
 
@@ -225,12 +227,16 @@ pub(all) struct Removed {
   ephemeral_stubs : Int
   /// How many Journal entries.
   journal_entries : Int
+  /// How many Scenario states, each of one Mock, Session and Scenario,
+  /// which are back in `Started`.
+  scenario_states : Int
 } derive(Debug)
 
 ///|
-/// Clears the Ephemeral Stubs and the Journal entries in `scope`, and for
-/// the scope of a Session or everything, the eviction counts. What
-/// Definition files declare never changes.
+/// Clears the Ephemeral Stubs, the Journal entries and the Scenario state
+/// in `scope`, which sends its Scenarios back to `Started`, and for the
+/// scope of a Session or everything, the eviction counts. What Definition
+/// files declare never changes.
 ///
 /// Raises `UnknownMock` when the scope is a Mock that no Mock has the name
 /// of and that the Journal holds no entries of. A Mock that a reload
@@ -245,6 +251,7 @@ pub fn Engine::reset(
       {
         ephemeral_stubs: self.ephemeral.remove_where((_, s) => s == session),
         journal_entries: self.journal.reset_session(session),
+        scenario_states: self.scenarios.remove_where((_, s) => s == session),
       }
     Mock(mock) => {
       let journal_entries = self.journal.remove_where(entry => {
@@ -256,12 +263,14 @@ pub fn Engine::reset(
       {
         ephemeral_stubs: self.ephemeral.remove_where((m, _) => m == mock),
         journal_entries,
+        scenario_states: self.scenarios.remove_where((m, _) => m == mock),
       }
     }
     All =>
       {
         ephemeral_stubs: self.ephemeral.remove_where((_, _) => true),
         journal_entries: self.journal.reset_all(),
+        scenario_states: self.scenarios.remove_where((_, _) => true),
       }
   }
 }
