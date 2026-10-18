@@ -3,11 +3,11 @@
 This guide turns a Mockoon environment into Definition files for smock.
 It is written for Mockoon 9.x environment files, whose `lastMigration` is
 33, and its statements about Mockoon were checked against Mockoon 9.9.0,
-its documentation and its source on 2026-10-17. It starts with what smock
-does not do, so that a reader whose environments depend on one of those
-features can stop there. A worked example then translates one
-environment step by step, and a reference at the end maps every part of
-an environment that has a counterpart:
+its documentation and its source on 2026-10-17 and 2026-10-18. It starts
+with what smock does not do, so that a reader whose environments depend
+on one of those features can stop there. A worked example then
+translates one environment step by step, and a reference at the end maps
+every part of an environment that has a counterpart:
 
 - The example is in [`examples/from-mockoon/`](examples/from-mockoon/):
   the Mockoon environment `mockoon/users-api.json`, and the definitions
@@ -52,7 +52,7 @@ covers part of the need, the item says what.
 - **WebSockets.** smock serves HTTP/1.1 and HTTPS. It can stream
   Server-Sent Events, which only a client written for them reads.
 - **Request conditions beyond equality and patterns.** Negation
-  (`invert`), a pattern on one field of a JSON body, the `null`,
+  (`invert`), a pattern on the elements of a JSON array, the `null`,
   `empty_array`, `array_includes` and `valid_json_schema` operators, and
   conditions on form fields, XML or cookies by name have no direct
   counterpart. [Rules](#rules) gives the workarounds that exist.
@@ -67,10 +67,6 @@ covers part of the need, the item says what.
   request's Host.
   [Environments told apart by port](#environments-told-apart-by-port)
   gives the two ways round it.
-- **A body or headers for unmatched requests.** A Mock sets only the
-  status of its no-match response, which therefore carries no CORS
-  headers. The Unmatched requests item of
-  [Behaviour that differs](#behaviour-that-differs) gives the workaround.
 - **Response limits.** A response's status is from 200 to 599, and body
   files are always sent whole, without Range requests.
 - **OpenAPI import and export, and a GUI.** The translation is done by
@@ -319,44 +315,45 @@ every kind:
 - **Mockoon's `equals` compares text; a `json` condition compares
   types.** The rule body `count` equals `1` holds for `{"count":1}` and
   for `{"count":"1"}`, but `{ json: { count: 1 } }` only for the first,
-  so write values with the type that clients send. An array that
-  contains the value meets a Mockoon `equals` rule, while a `json` array
-  needs every element, in order; a `pattern` on the body can test for
-  "contains".
+  so write values with the type that clients send. Where they send both,
+  a pattern meets both, since it reads a number or a boolean by its text:
+  `{ json: { count: { pattern: "1" } } }`. An array that contains the
+  value meets a Mockoon `equals` rule, while a `json` array needs every
+  element, in order, and a pattern never meets an array; a pattern on the
+  whole body can test for "contains".
 - **Mockoon reads JSON, form, multipart and XML bodies; a `json`
   condition reads JSON only.** A form field can be matched only by a
   pattern on the whole body
   ([Behaviour that differs](#behaviour-that-differs)).
-- **A regex on a field of a JSON body has no `json` counterpart.** A
-  `json` condition holds values, not patterns:
-  `body: { json: { email: { pattern: … } } }` asks for an `email` that
-  is an object with a `pattern` key. `smock check` accepts it, and it
-  never matches an address; `smock render`
-  ([Checking the migration](#checking-the-migration)) shows it failing
-  on `body`. Write one pattern on the whole body instead, with the key
-  and the value as JSON text. The rule body `email` regex
-  `@example\.com$` becomes:
+- **A regex on a field of a JSON body becomes a pattern in the field's
+  place.** The rule body `email` regex `@example\.com$` becomes:
 
   ```yaml
-  body: { pattern: '(?s).*"email"\s*:\s*"([^"\\]|\\.)*@example\.com".*' }
+  body: { json: { email: { pattern: '.*@example\.com' } } }
   ```
 
-  `([^"\\]|\\.)` is one character of a JSON string, an escape such as
-  `\"` included, and `(?s)` lets `.*` cross line breaks. A Stub has one
-  `body` condition, so two such rules joined with AND go into one
-  pattern, with both orders of the keys: `(?s).*(A.*B|B.*A).*` for the
-  field patterns `A` and `B`. The pattern reads text, not JSON, so it
-  still differs from Mockoon in four ways. A number has no quotes, so
-  the pattern above misses `"email": 12345`, which Mockoon's regex reads
-  as `12345`; add an alternative without quotes where a field can be a
-  number. The pattern matches the key at any depth, such as in
-  `{"user":{"email":"ann@example.com"}}`, which Mockoon's `email` does
-  not. Mockoon tests each element of an array, while the pattern sees
-  the brackets. Mockoon decodes escapes, so it reads
-  `ann\u0040example.com` as `ann@example.com`, and the pattern does not.
+  A path such as `user.email`, or `$.user.email`, becomes nested keys,
+  `{ user: { email: { pattern: … } } }`, and rules on several fields
+  joined with AND go into one `json` condition. As in Mockoon, the
+  pattern reads a string after its escapes are decoded, so it meets
+  `"ann\u0040example.com"`, and it reads a number or a boolean by its
+  text, so `123.*` meets `12345` and `1\.5` meets `1.50`. Three things
+  still differ. Mockoon reads numbers as JavaScript does, which rounds
+  `9007199254740993` to `9007199254740992` and reads `1e400` as
+  `Infinity`; smock keeps every digit of an integer, and reads a number
+  beyond a 64-bit float's range as written. Mockoon reads `null` as empty
+  text and an object as `[object Object]`, and tests each element of an
+  array; a smock pattern never meets `null`, an object or an array, so
+  only a pattern on the whole body can look for one element. An array
+  index in the path, such as `items.0`, has no counterpart, since a
+  `json` array needs every element.
 
-  Where clients send only a few values, one `json` Stub for each value
-  matches exactly instead.
+  A body key named `pattern`, alone in its object and given a string,
+  makes that object a pattern. For the rule body `filter.pattern` equals
+  `a.b`, `{ filter: { pattern: a.b } }` is a pattern on `filter` itself,
+  which never meets the object that clients send. Nest a pattern in it
+  instead: `{ filter: { pattern: { pattern: 'a\.b' } } }`
+  ([json conditions](definition-files.md#how-a-stub-matches-a-request)).
 - **An inverted rule turns the route around.** smock has no negation.
   Mockoon reaches the responses after an inverted rule only when the
   rule's condition holds, so their Stubs get that condition, and they
@@ -459,12 +456,15 @@ every kind:
   response, and a response's own headers replace those of the same name.
   `Set-Cookie` is the exception: Mockoon sends every value, the
   environment's first. smock has no environment headers: copy the ones
-  that clients rely on into each Stub's `headers`. Here that is only
-  `Content-Type: application/json`, which a `json` body gets by itself
-  and the two body-file Stubs set. smock's YAML rejects anchors, aliases
-  and merge keys (`anchors (&) are not supported`), so Stubs cannot share
-  headers within a file; when many Stubs need the same headers, or the
-  same delay, generate the file from a language that exports JSON
+  that clients rely on into each Stub's `headers`, and, except
+  Content-Type, into the Mock's `noMatch.headers` for the requests that
+  no Stub matches ([Behaviour that differs](#behaviour-that-differs)).
+  Here that is only `Content-Type: application/json`, which a `json` body
+  gets by itself and the two body-file Stubs set. smock's YAML rejects
+  anchors, aliases and merge keys (`anchors (&) are not supported`), so
+  Stubs cannot share headers within a file; when many Stubs need the
+  same headers, or the same delay, generate the file from a language that
+  exports JSON
   ([another configuration language](definition-files.md#writing-definition-files-in-another-configuration-language)).
   Several `Set-Cookie` values become one name with an array of them, in
   the order Mockoon sends them:
@@ -563,12 +563,18 @@ every kind:
   its method, it is still the Near miss of a request that fails two or
   more conditions of every other Stub, such as
   `DELETE /api/v1/orders/1`, which gets
-  `Smock-Near-Miss: preflight; failed=method`.
+  `Smock-Near-Miss: preflight; failed=method`. The CORS example in
+  [docs/definition-files.md](definition-files.md#when-no-stub-matches)
+  gives its preflight Stub a second condition,
+  `headers: { Access-Control-Request-Method: { pattern: ".+" } }`, which
+  every preflight meets. The 404 for that `DELETE` then names
+  `list-users`, which fails its method and path, but an `OPTIONS` request
+  without that header, which Mockoon answers, gets 404.
 
-  Mockoon adds CORS headers to other responses only when they are among
-  the environment headers; copy them into the Stubs in that case. Its 404
-  for a request that no route takes carries them too, and smock's
-  no-match response does not
+  Mockoon adds CORS headers to other responses, its 404 for a request
+  that no route takes included, only when they are among the environment
+  headers. In that case, copy them into the Stubs, and into the Mock's
+  `noMatch.headers` for its no-match response
   ([Behaviour that differs](#behaviour-that-differs)).
 - **The CRUD route.** smock keeps no data, so `list-orders` serves the
   bucket's initial value, with the `X-Total-Count` and
@@ -766,9 +772,9 @@ carry `application/json`, and its `OPTIONS` answer none.
 ## Behaviour that differs
 
 Even a faithful translation answers some requests differently. These
-differences were checked against Mockoon CLI 9.9.0 on 2026-10-17, most
-of them by sending the same requests to both servers, with the example
-or with small environments made to test them:
+differences were checked against Mockoon CLI 9.9.0 on 2026-10-17 and
+2026-10-18, most of them by sending the same requests to both servers,
+with the example or with small environments made to test them:
 
 - **Paths.** Mockoon matches paths case-insensitively, accepts a trailing
   slash and merges repeated slashes. smock compares the decoded path
@@ -809,32 +815,31 @@ or with small environments made to test them:
   and XML responses.
 - **Unmatched requests.** Mockoon answers a request that no route takes
   with 404, the `text/html` page "Cannot GET /path", and the environment
-  headers, CORS headers among them. smock answers with the Mock's
-  `noMatch.status`, 404 by default, the body
-  `{"error":"no Stub matched"}` and a header such as
-  `Smock-Near-Miss: list-users; failed=path`, without the environment
-  headers. So where those hold CORS headers, a page on another origin
-  that reads a 404 from Mockoon gets a CORS error from smock. Where that
-  matters, add one more Stub last in the Mock, after `preflight`, with
-  no `request`, so that it takes every request that the other Stubs do
-  not, and give it status 404 and the CORS headers:
+  headers, CORS headers among them, except a few that it replaces or
+  drops for that page, such as Content-Type and Content-Language. smock
+  answers with the Mock's `noMatch.status`, 404 by default, the body
+  `{"error":"no Stub matched"}`, a header such as
+  `Smock-Near-Miss: list-users; failed=path`, and the Mock's
+  `noMatch.headers`. Copy there the environment headers that clients rely
+  on, except Content-Type, which smock sets to `application/json`.
+  Without the CORS headers, a page on another origin that reads a 404
+  from Mockoon gets a CORS error from smock. For the environment headers
+  `Access-Control-Allow-Origin: http://localhost:5173` and
+  `Access-Control-Allow-Credentials: true`, the Mock becomes:
 
   ```yaml
-  - id: not-found
-    mock: users-api
-    response:
-      status: 404
-      headers: { Access-Control-Allow-Origin: http://localhost:5173 }
-      json: { error: not found }
+  mocks:
+    - name: users-api
+      hosts: [localhost, users-api]
+      noMatch:
+        headers:
+          Access-Control-Allow-Origin: http://localhost:5173
+          Access-Control-Allow-Credentials: "true"
+          Access-Control-Expose-Headers: Smock-Near-Miss
   ```
 
-  The Stub hides what
-  [Checking the migration](#checking-the-migration) relies on: those
-  requests get no `Smock-Near-Miss` header, and
-  `GET /v1/journal/unmatched` no longer lists them, since a Stub answered
-  them. Add it once the migration is checked; a Journal query
-  (`POST /v1/journal/query`) then still finds them by the Stub that
-  answered, with `jq '.entries[] | select(.stub == "not-found")'`.
+  The last header, which Mockoon does not send, lets that page read the
+  Near miss too.
 - **Latency of unmatched requests.** Mockoon's environment latency delays
   its 404s too. A smock delay applies only to the requests its Stub
   matches.
@@ -1046,7 +1051,7 @@ counterpart, and name those that have none.
 | `port` | `smock serve --port`, 8080 by default, shared by every Mock; environments that clients tell apart only by port need Hosts of their own or one smock each ([Environments told apart by port](#environments-told-apart-by-port)). |
 | `hostname` | No counterpart: smock listens on every IPv4 address. |
 | `endpointPrefix` | Written into each Stub's path. |
-| `headers` | Copied into each Stub's `headers` where clients rely on them, quoted where YAML would read a number or a boolean. The no-match response gets none. |
+| `headers` | Copied into each Stub's `headers` where clients rely on them, quoted where YAML would read a number or a boolean, and, except Content-Type, into the Mock's `noMatch.headers`. |
 | `latency` | Added to each Stub's delay Fault; requests that no Stub matches are not delayed. |
 | `cors: true` | An `OPTIONS` Stub, declared last, with the three `Access-Control-Allow-*` headers, replaced and extended by the environment headers. |
 | `cors: false` | No `OPTIONS` Stub. |
@@ -1074,16 +1079,16 @@ counterpart, and name those that have none.
 |---|---|
 | `query` | `query: { status: inactive }`; a rule on a nested name such as `filter.name` becomes the parameter's literal name, `query: { "filter[name]": Alice }`. |
 | `header` | `headers: { X-Api-Key: secret }`, the name in any case. |
-| `body` with a path | `body: { json: { role: admin } }`, a subset match on JSON bodies, with types compared. With `regex`, a pattern on the whole body ([Paths and request conditions](#paths-and-request-conditions)); a `pattern` inside `json` is matched as a literal object. |
+| `body` with a path | `body: { json: { role: admin } }`, a subset match on JSON bodies, with types compared. With `regex`, a pattern in the value's place, `body: { json: { email: { pattern: '.*@example\.com' } } }`, which also meets a number or a boolean by its text, but never `null`, an object or an array ([Paths and request conditions](#paths-and-request-conditions)). A key named `pattern`, alone in its object, takes a pattern as its value: `{ filter: { pattern: { pattern: 'a\.b' } } }`. |
 | `body` without a path | `body: "<the whole body>"`, or a `pattern`. |
 | `params` | Part of the path's `pattern`, widened with `[^/]*` so that it stays within its segment. |
 | `path` | `path`, exact or a `pattern`. Mockoon also tests the URL with its query string. |
 | `method` | `method`, in upper case. |
 | `cookie` | A pattern on the Cookie header: `headers: { Cookie: { pattern: '(.*;\s*)?session=abc(;.*)?' } }`. |
-| Operator `equals` | The value itself; with the type that clients send in a `json` condition. |
+| Operator `equals` | The value itself; with the type that clients send in a `json` condition, or as a pattern there, which meets a string, a number or a boolean by its text. |
 | Operator `regex` | `{ pattern: … }`, widened to match the whole value: `admin` becomes `.*admin.*`, or `[^/]*admin[^/]*` in a path, and `^0+$` becomes `0+`. |
 | Operator `regex_i` | The same, with `(?i)` in front. |
-| A `modifier` that starts with `$` (JSONPath) | The same path as nested keys in a `json` condition; JSONPath filters and wildcards have no counterpart. |
+| A `modifier` that starts with `$` (JSONPath) | The same path as nested keys in a `json` condition; JSONPath filters, wildcards and array indexes have no counterpart. |
 | `rulesOperator: AND` | All the conditions on one Stub. |
 | `rulesOperator: OR` | One Stub per rule. |
 | `invert` | No counterpart: the Stubs of the later responses get the rule's condition and go first, and the inverted response's Stub follows them without it ([Paths and request conditions](#paths-and-request-conditions)). |
