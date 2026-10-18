@@ -789,37 +789,85 @@ pub fn load(
 fn scenarios_of(
   stubs : ReadOnlyArray[Stub],
 ) -> ReadOnlyArray[ScenarioFileStates] {
-  let states : Map[String, Set[String]] = Map([])
+  let by_scenario = StatesByScenario::new()
   for stub in stubs {
-    guard stub.scenario is Some(clause) else { continue }
-    let named = match states.get(clause.name) {
-      Some(named) => named
-      None => {
-        let named = Set([])
-        states[clause.name] = named
-        named
-      }
-    }
-    if clause.requires is Some(state) && state != initial_state {
-      named.add(state)
-    }
-    if clause.move_to is Some(state) && state != initial_state {
-      named.add(state)
+    if stub.scenario is Some(clause) {
+      by_scenario.add_clause(clause)
     }
   }
-  let scenarios = states
-    .iter()
-    .map(entry => {
-      let others = entry.1.iter().collect()
-      others.sort_by(compare_bytes)
-      ScenarioFileStates::{
-        name: entry.0,
-        states: ReadOnlyArray::from_array([initial_state, ..others]),
-      }
+  let scenarios = []
+  for name, states in by_scenario.sorted() {
+    scenarios.push(ScenarioFileStates::{
+      name,
+      states: ReadOnlyArray::from_array(states),
     })
-    .collect()
-  scenarios.sort_by((a, b) => compare_bytes(a.name, b.name))
+  }
   ReadOnlyArray::from_array(scenarios)
+}
+
+///|
+/// Scenario names, each with the states gathered for it, such as the
+/// states that the `requires` and `moveTo` of a Mock's Stubs name. Every
+/// Scenario has `initial_state`, so it is never gathered, and a Scenario
+/// gathered without a state has only that one.
+pub struct StatesByScenario {
+  /// The states gathered, other than `initial_state`, by Scenario name.
+  priv states : Map[String, Set[String]]
+}
+
+///|
+/// No Scenario gathered yet.
+pub fn StatesByScenario::new() -> StatesByScenario {
+  { states: Map([]), }
+}
+
+///|
+/// Gathers the Scenario `name`, and `state` for it unless it is `None` or
+/// `initial_state`.
+pub fn StatesByScenario::add(
+  self : StatesByScenario,
+  name : String,
+  state : String?,
+) -> Unit {
+  let states = match self.states.get(name) {
+    Some(states) => states
+    None => {
+      let states = Set([])
+      self.states[name] = states
+      states
+    }
+  }
+  if state is Some(state) && state != initial_state {
+    states.add(state)
+  }
+}
+
+///|
+/// Gathers the Scenario of `clause`, with the states its `requires` and
+/// `moveTo` name.
+pub fn StatesByScenario::add_clause(
+  self : StatesByScenario,
+  clause : ScenarioClause,
+) -> Unit {
+  self.add(clause.name, clause.requires)
+  self.add(clause.name, clause.move_to)
+}
+
+///|
+/// The Scenarios gathered, in byte-wise order of their names, each with its
+/// states: `initial_state` first, then the others in byte-wise order.
+pub fn StatesByScenario::sorted(
+  self : StatesByScenario,
+) -> Map[String, Array[String]] {
+  let names = self.states.keys().collect()
+  names.sort_by(compare_bytes)
+  let sorted = Map([])
+  for name in names {
+    let others = self.states[name].iter().collect()
+    others.sort_by(compare_bytes)
+    sorted[name] = [initial_state, ..others]
+  }
+  sorted
 }
 
 ///|
@@ -903,6 +951,6 @@ pub fn DefinitionSet::digest(self : DefinitionSet) -> String {
 /// `files` in byte-wise order of their names (UTF-8).
 fn sorted_by_name(files : Array[(String, Bytes)]) -> Array[(String, Bytes)] {
   let sorted = files.copy()
-  sorted.sort_by((a, b) => @utf8.encode(a.0).lexical_compare(@utf8.encode(b.0)))
+  sorted.sort_by((a, b) => compare_bytes(a.0, b.0))
   sorted
 }

@@ -155,44 +155,21 @@ fn Engine::known_states(
   mock : @definitions.Mock,
   session : String?,
 ) -> Map[String, Array[String]] {
-  // The states other than `Started`, by Scenario name.
-  let named : Map[String, Set[String]] = Map([])
-  let add = (name : String, state : String?) => {
-    let states = match named.get(name) {
-      Some(states) => states
-      None => {
-        let states = Set([])
-        named[name] = states
-        states
-      }
-    }
-    if state is Some(state) && state != @definitions.initial_state {
-      states.add(state)
-    }
-  }
+  let by_scenario = @definitions.StatesByScenario::new()
   // The snapshot holds the file part, computed at load.
   for scenario in mock.scenarios {
     for state in scenario.states {
-      add(scenario.name, Some(state))
+      by_scenario.add(scenario.name, Some(state))
     }
   }
   if self.ephemeral.of(mock.name, session) is Some(list) {
     for e in list {
       if e.stub.scenario is Some(clause) {
-        add(clause.name, clause.requires)
-        add(clause.name, clause.move_to)
+        by_scenario.add_clause(clause)
       }
     }
   }
-  let names = named.keys().collect()
-  names.sort_by(compare_bytes)
-  let known = Map([])
-  for name in names {
-    let others = named[name].iter().collect()
-    others.sort_by(compare_bytes)
-    known[name] = [@definitions.initial_state, ..others]
-  }
-  known
+  by_scenario.sorted()
 }
 
 ///|
