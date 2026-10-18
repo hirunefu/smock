@@ -348,10 +348,10 @@ every kind:
   index in the path, such as `items.0`, has no counterpart, since a
   `json` array needs every element.
 
-  A body key named `pattern`, alone in its object, makes that object a
-  pattern. For the rule body `filter.pattern` equals `a.b`,
-  `{ filter: { pattern: a.b } }` is a pattern on `filter` itself, which
-  never meets the object that clients send. Nest a pattern in it
+  A body key named `pattern`, alone in its object and given a string,
+  makes that object a pattern. For the rule body `filter.pattern` equals
+  `a.b`, `{ filter: { pattern: a.b } }` is a pattern on `filter` itself,
+  which never meets the object that clients send. Nest a pattern in it
   instead: `{ filter: { pattern: { pattern: 'a\.b' } } }`
   ([json conditions](definition-files.md#how-a-stub-matches-a-request)).
 - **An inverted rule turns the route around.** smock has no negation.
@@ -815,14 +815,17 @@ with the example or with small environments made to test them:
   and XML responses.
 - **Unmatched requests.** Mockoon answers a request that no route takes
   with 404, the `text/html` page "Cannot GET /path", and the environment
-  headers other than Content-Type, CORS headers among them. smock answers
-  with the Mock's `noMatch.status`, 404 by default, the body
+  headers, CORS headers among them, except a few that it replaces or
+  drops for that page, such as Content-Type and Content-Language. smock
+  answers with the Mock's `noMatch.status`, 404 by default, the body
   `{"error":"no Stub matched"}`, a header such as
   `Smock-Near-Miss: list-users; failed=path`, and the Mock's
   `noMatch.headers`. Copy there the environment headers that clients rely
-  on: without the CORS headers, a page on another origin that reads a 404
-  from Mockoon gets a CORS error from smock. `noMatch.headers` cannot
-  give Content-Type, which smock sets to `application/json`:
+  on, except Content-Type, which smock sets to `application/json`.
+  Without the CORS headers, a page on another origin that reads a 404
+  from Mockoon gets a CORS error from smock. For the environment headers
+  `Access-Control-Allow-Origin: http://localhost:5173` and
+  `Access-Control-Allow-Credentials: true`, the Mock becomes:
 
   ```yaml
   mocks:
