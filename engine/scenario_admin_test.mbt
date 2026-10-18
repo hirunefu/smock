@@ -44,7 +44,7 @@ test "list gives each Scenario of the Mock with the calling Session's state and 
 /// Two Mocks whose file Stubs, in two Definition files, name Scenarios
 /// whose names and states sort differently by bytes than by letters:
 /// capitals before small letters, non-ASCII last.
-let shop_flows : Array[(String, String)] = [
+let shop_scenarios : Array[(String, String)] = [
   (
     "10-payments.json",
     (
@@ -92,7 +92,7 @@ let shop_flows : Array[(String, String)] = [
 
 ///|
 test "list gives the Scenarios that the Mock's file Stubs and the calling Session's own Ephemeral Stubs name, by name byte-wise, each with Started first, then its other states byte-wise" {
-  let h = harness(shop_flows)
+  let h = harness(shop_scenarios)
   let _ = h.add(
     "payments",
     Some("test-a"),
@@ -323,7 +323,7 @@ test "setting Started on a Scenario that only the Session's state kept listed cl
 
 ///|
 test "list and set refuse an unknown Mock; set refuses a Scenario that no Stub of the Mock names for the calling Session, and a state outside its known states" {
-  let h = harness(shop_flows)
+  let h = harness(shop_scenarios)
   let _ = h.add(
     "payments",
     Some("test-b"),

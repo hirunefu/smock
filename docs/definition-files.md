@@ -281,7 +281,7 @@ text, compared byte for byte, like Mock names and Stub IDs.
   state is skipped, like a Stub that fails a condition, and the next one in
   the usual order is tried ([Which Stub answers](#which-stub-answers)).
   Scenario Stubs get no special priority.
-- A Stub without a clause matches in every state, so adding a flow to a
+- A Stub without a clause matches in every state, so adding a Scenario to a
   Mock does not disturb its other Stubs.
 - A Stub with `moveTo` and no `requires`, such as a logout, moves the
   Scenario from any state. `moveTo: Started` sends it back to the start.
@@ -380,10 +380,10 @@ Journal. Tests that rely on Scenarios need one replica, or session
 affinity. State is lost on restart.
 
 Ephemeral Stubs take the same clause, including Scenarios and states that
-no file names, so a test on a shared instance can build its own flow
+no file names, so a test on a shared instance can build its own Scenario
 without editing files. An Ephemeral Stub and a file Stub that name the
 same Scenario of the same Mock share the Session's state, so an Ephemeral
-Stub can replace one step of a flow from the files. Like the Stub, the
+Stub can replace one step of a Scenario from the files. Like the Stub, the
 state belongs to the Session that added it: other Sessions never see it.
 Deleting an Ephemeral Stub leaves the state as it is. A state that no Stub
 names any more matches no `requires`, and the next reload that swaps in

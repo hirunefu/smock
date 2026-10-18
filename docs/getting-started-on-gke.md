@@ -534,8 +534,8 @@ apart with a *Session*, named in the header
 their Session sees. The README's
 [Sessions and Ephemeral Stubs](../README.md#sessions-and-ephemeral-stubs)
 and [The Journal](../README.md#the-journal) describe both. Each Pod
-keeps its own Ephemeral Stubs and Journal, so tests that use them need
-one replica.
+keeps its own Ephemeral Stubs, Scenario state and Journal, so tests that
+use them need one replica.
 
 ### Logs and metrics
 

@@ -461,8 +461,10 @@ failed, such as `Smock-Near-Miss: get-user; failed=method`.
 `smock check defs` validates a definitions directory the way `smock serve`
 loads it: it prints every problem, one per line with the file and a JSON
 Pointer, and exits with status 1 if there is any. It also warns about Stubs
-that can never match, because an earlier Stub always matches first;
-warnings do not change the exit status.
+that can never match, because an earlier Stub always matches first, and
+about a [state that a Stub requires but no Stub moves its Scenario
+to](docs/definition-files.md#a-state-that-no-stub-moves-to); warnings do
+not change the exit status.
 
 `smock render --dir defs get-user --request sample.json` shows what a Stub
 returns for a sample request before a test relies on it. The sample is JSON,
@@ -580,7 +582,7 @@ curl localhost:8080/users/1                                           # 200, fro
   the state for the calling Session, so that a test can start in the middle
   of a flow; `{"state":"Started"}` resets one Scenario. A Scenario that no
   such Stub names gets 404 `unknown_scenario`, and a state outside the
-  known states 400 `unknown_state`, so a typo cannot leave a flow in a
+  known states 400 `unknown_state`, so a typo cannot leave a Scenario in a
   state that nothing matches.
 - `GET` lists and `DELETE /v1/mocks/{mock}/stubs/{id}` deletes the calling
   Session's Ephemeral Stubs of the Mock. `POST /v1/reset` with
@@ -1069,9 +1071,9 @@ every request of the mix matches a Scenario Stub and moves its Scenario:
 smock looks up the Session's states, checks the state the Stub requires,
 moves it, and records the move in the Journal. Every other request also
 tries the Stub whose state does not hold before the twin that answers,
-as a flow's Stubs with the same request do. The plain set has no Scenario
-Stub, so each of its requests pays only the test of whether its Mock has
-one.
+as the Stubs of a Scenario with the same request do. The plain set has no
+Scenario Stub, so each of its requests pays only the test of whether its
+Mock has one.
 
 To see what Scenarios cost, run each set on the same machine with the same
 plan and compare the runs with `bench/compare.py`, which names the

@@ -468,7 +468,18 @@ pub fn Engine::handle(
         }
         None => {
           // Only now, when every candidate has failed, are conditions
-          // counted.
+          // counted. A state that a Stub requires counts too. The states
+          // are already known when the Mock's file Stubs have a clause, or
+          // when an Ephemeral Stub with one met the request; otherwise they
+          // are looked up only if an Ephemeral Stub has a clause.
+          if !states_known && ephemeral is Some(list) {
+            for i in 0..<list.length() {
+              if list[i].stub.scenario is Some(_) {
+                states = self.scenarios.of(mock.name, session)
+                break
+              }
+            }
+          }
           let ephemeral = match ephemeral {
             Some(list) => list.iter().map(e => (e.stub, StubSource::Ephemeral))
             None => Iter::empty()
@@ -477,7 +488,7 @@ pub fn Engine::handle(
             ephemeral.concat(
               mock.stubs.iter().map(stub => (stub, StubSource::File)),
             ),
-            self.scenarios.of(mock.name, session),
+            states,
           )
           no_match(mock, near_miss)
         }

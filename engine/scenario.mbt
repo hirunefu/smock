@@ -42,6 +42,8 @@ priv struct ScenarioStates {
 }
 
 ///|
+/// No state stored: every Scenario of every Mock and Session is in
+/// `Started`.
 fn ScenarioStates::new() -> ScenarioStates {
   { by_mock: Map([]), }
 }
@@ -139,8 +141,10 @@ fn scenario_allows(
 /// - every state that the `requires` and `moveTo` of the Session's own
 ///   Ephemeral Stubs in the Mock name for it.
 ///
-/// Only the Scenarios that those Stubs name are here; the only known state
-/// of any other Scenario is `Started`. They come in byte-wise order of
+/// Here are the Scenarios that those Stubs name, and those that the Session
+/// holds a state for although no Stub names them any more, such as after it
+/// deleted the Ephemeral Stubs that did. The only known state of those, as
+/// of any Scenario not here, is `Started`. They come in byte-wise order of
 /// their names, and each one's states start with `Started`, then the others
 /// in byte-wise order, as the Admin API lists them.
 ///
@@ -153,50 +157,26 @@ fn Engine::known_states(
   mock : @definitions.Mock,
   session : String?,
 ) -> Map[String, Array[String]] {
-  // The states other than `Started`, by Scenario name.
-  let named : Map[String, Set[String]] = Map([])
-  let add = (name : String, state : String?) => {
-    let states = match named.get(name) {
-      Some(states) => states
-      None => {
-        let states = Set([])
-        named[name] = states
-        states
-      }
-    }
-    if state is Some(state) && state != @definitions.initial_state {
-      states.add(state)
-    }
-  }
+  let by_scenario = @definitions.StatesByScenario::new()
   // The snapshot holds the file part, computed at load.
   for scenario in mock.scenarios {
     for state in scenario.states {
-      add(scenario.name, Some(state))
+      by_scenario.add(scenario.name, Some(state))
     }
   }
   if self.ephemeral.of(mock.name, session) is Some(list) {
     for e in list {
       if e.stub.scenario is Some(clause) {
-        add(clause.name, clause.requires)
-        add(clause.name, clause.move_to)
+        by_scenario.add_clause(clause)
       }
     }
   }
-  let names = named.keys().collect()
-  names.sort_by(compare_bytes)
-  let known = Map([])
-  for name in names {
-    let others = named[name].iter().collect()
-    others.sort_by(compare_bytes)
-    known[name] = [@definitions.initial_state, ..others]
+  if self.scenarios.of(mock.name, session) is Some(held) {
+    for name, _ in held {
+      by_scenario.add(name, None)
+    }
   }
-  known
-}
-
-///|
-/// How `a` and `b` compare in byte-wise order of their UTF-8 encodings.
-fn compare_bytes(a : String, b : String) -> Int {
-  @utf8.encode(a).lexical_compare(@utf8.encode(b))
+  by_scenario.sorted()
 }
 
 ///|
@@ -258,20 +238,11 @@ pub fn Engine::list_scenarios(
 ) -> Array[Scenario] raise AdminError {
   let known = self.known_states(self.mock_named(mock), session)
   let held = self.scenarios.of(mock, session)
-  let names = known.keys().collect()
-  if held is Some(held) {
-    for name, _ in held {
-      if !known.contains(name) {
-        names.push(name)
-      }
-    }
-    names.sort_by(compare_bytes)
+  let listed = []
+  for name, states in known {
+    listed.push({ name, state: current_state(held, name), states, })
   }
-  names.map(name => {
-    name,
-    state: current_state(held, name),
-    states: known.get(name).unwrap_or([@definitions.initial_state]),
-  })
+  listed
 }
 
 ///|
@@ -282,7 +253,7 @@ pub fn Engine::list_scenarios(
 /// The Scenario must be one that `Engine::list_scenarios` lists for the
 /// Session, and the state one of its known states. So every state stored
 /// is one that the files or the Session's own Ephemeral Stubs name, and a
-/// typo cannot leave a flow in a state that no Stub matches.
+/// typo cannot leave a Scenario in a state that no Stub matches.
 ///
 /// Raises `UnknownMock` when no Mock has the name `mock`,
 /// `UnknownScenario` when the Mock has no such Scenario for the Session,
@@ -295,15 +266,8 @@ pub fn Engine::set_scenario_state(
   state~ : String,
 ) -> Scenario raise AdminError {
   let known = self.known_states(self.mock_named(mock), session)
-  let states = match known.get(scenario) {
-    Some(states) => states
-    None => {
-      guard self.scenarios.of(mock, session) is Some(held) &&
-        held.contains(scenario) else {
-        raise UnknownScenario(mock~, scenario~)
-      }
-      [@definitions.initial_state]
-    }
+  guard known.get(scenario) is Some(states) else {
+    raise UnknownScenario(mock~, scenario~)
   }
   if !states.contains(state) {
     raise UnknownState(mock~, scenario~, state~, known=states)
@@ -318,30 +282,44 @@ pub fn Engine::set_scenario_state(
 /// It drops the states of each Mock that is gone, keeps each state that is
 /// one of the known states of its Mock, Session and Scenario, and drops any
 /// other, which sends its Scenario back to `Started`. Returns how many it
-/// sent back. Like any move back to `Started`, it leaves no map empty.
+/// sent back.
 fn Engine::prune_scenario_states(
   self : Engine,
   mocks : Map[String, @definitions.Mock],
 ) -> Int {
-  let by_mock = self.scenarios.by_mock
-  let mut reset = 0
-  for name in by_mock.keys().collect() {
-    guard mocks.get(name) is Some(mock) else {
-      by_mock.remove(name)
-      continue
+  // The states of a Mock that is gone go with it, and are not counted.
+  self.scenarios.remove_where((mock, _) => !mocks.contains(mock)) |> ignore
+  self.scenarios.retain((mock, session) => {
+    // A Scenario that no Stub names any more knows only `Started`, which is
+    // never stored, so its state goes.
+    let known = self.known_states(mocks[mock], session)
+    (scenario, state) => {
+      known.get(scenario) is Some(states) && states.contains(state)
     }
-    let by_session = by_mock[name]
+  })
+}
+
+///|
+/// Keeps each state that its test holds for and clears every other, which
+/// sends its Scenario back to `Started`, and returns how many states it
+/// cleared. For each Mock and Session that has a state, `keep` gives the
+/// test, before any of their states is cleared; the test takes the name of
+/// a Scenario and its state. Like any move back to `Started`, it leaves no
+/// map empty.
+fn ScenarioStates::retain(
+  self : ScenarioStates,
+  keep : (String, String?) -> (String, String) -> Bool,
+) -> Int {
+  let mut cleared = 0
+  for mock in self.by_mock.keys().collect() {
+    let by_session = self.by_mock[mock]
     for session in by_session.keys().collect() {
-      let known = self.known_states(mock, session)
+      let kept = keep(mock, session)
       let states = by_session[session]
-      for scenario in states.keys().collect() {
-        let kept = match known.get(scenario) {
-          Some(known_states) => known_states.contains(states[scenario])
-          None => false
-        }
-        if !kept {
-          states.remove(scenario)
-          reset += 1
+      for name in states.keys().collect() {
+        if !kept(name, states[name]) {
+          states.remove(name)
+          cleared += 1
         }
       }
       if states.is_empty() {
@@ -349,10 +327,10 @@ fn Engine::prune_scenario_states(
       }
     }
     if by_session.is_empty() {
-      by_mock.remove(name)
+      self.by_mock.remove(mock)
     }
   }
-  reset
+  cleared
 }
 
 ///|
@@ -363,18 +341,8 @@ fn ScenarioStates::remove_where(
   self : ScenarioStates,
   remove : (String, String?) -> Bool,
 ) -> Int {
-  let mut count = 0
-  for mock in self.by_mock.keys().collect() {
-    let by_session = self.by_mock[mock]
-    for session in by_session.keys().collect() {
-      if remove(mock, session) {
-        count += by_session[session].length()
-        by_session.remove(session)
-      }
-    }
-    if by_session.is_empty() {
-      self.by_mock.remove(mock)
-    }
-  }
-  count
+  self.retain((mock, session) => {
+    let removed = remove(mock, session)
+    (_, _) => !removed
+  })
 }

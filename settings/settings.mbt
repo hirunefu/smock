@@ -322,7 +322,7 @@ pub fn serve_command() -> @argparse.Command {
 pub fn check_command() -> @argparse.Command {
   @argparse.Command(
     "check",
-    about="Check a definitions directory as smock serve would load it. Prints every problem, one per line, and exits with status 1 if there is any. Also warns about Stubs that can never match; warnings do not change the exit status.",
+    about="Check a definitions directory as smock serve would load it. Prints every problem, one per line, and exits with status 1 if there is any. Also warns about Stubs that can never match, and about states that a Stub requires but no Stub moves its Scenario to; warnings do not change the exit status.",
     positionals=[
       @argparse.PositionArg(
         "dir",
