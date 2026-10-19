@@ -90,7 +90,7 @@ Stub without `request` matches every request of its Mock.
 | `path` | its path, percent-decoded and without the query, is exactly this. `/users/a%20b` meets `"/users/a b"`. `{ "pattern": … }`: the pattern matches the whole path. |
 | `query` | each listed parameter is present, and one of its values, decoded, is exactly the given value, or matches the given `{ "pattern": … }` as a whole. [`$not` and `$exists`](#negation-and-presence) are about the parameter as a whole. Parameters that are not listed are ignored. |
 | `headers` | each listed header is present, its name compared case-insensitively, and one of its values is exactly the given value, or matches the given `{ "pattern": … }` as a whole. [`$not` and `$exists`](#negation-and-presence) are about the header as a whole. Headers that are not listed are ignored. |
-| `body` | a string: the body is exactly this text in UTF-8. `{ "pattern": … }`: the pattern matches the whole body. `{ "json": … }`: the body parses as JSON and contains the given value, which may hold patterns. |
+| `body` | a string: the body is exactly this text in UTF-8. `{ "pattern": … }`: the pattern matches the whole body. `{ "json": … }`: the body parses as JSON and contains the given value, which may hold patterns and [operators](#operators-in-json-conditions). |
 
 Query parameters are decoded as HTML forms encode them: `%20` and `+` both
 stand for a space, so `?q=a+b` meets `"query": { "q": "a b" }`. A parameter
@@ -104,8 +104,12 @@ A `json` condition is a subset match:
 
 - an object whose only member is `pattern`, with a string, is a pattern:
   see below;
+- an object whose only key starts with `$` is an operator, such as
+  `{ "$not": "admin" }`: see
+  [Operators in json conditions](#operators-in-json-conditions);
 - any other object needs each listed key, with a value that matches in
-  turn, and may have other keys;
+  turn, and may have other keys. A key written `$$name` is the key
+  `$name`;
 - an array needs the same length, matched element by element;
 - any other value must be equal: strings exactly, numbers by their value
   (`1` and `1.0` are equal), and `true`, `false` and `null` themselves.
@@ -270,6 +274,74 @@ users.json: /stubs/0/request/query/status/$nto: is not an operator: the operator
 users.json: /stubs/1/request/headers/Authorization/pattern: is not allowed beside "$not": an operator is the only key of its object
 users.json: /stubs/2/request/query/debug/$exists: must be true or false
 ```
+
+### Operators in json conditions
+
+In a `json` condition, any value can be an operator: the whole condition,
+the value of a member, or an element of an array. An operator is about the
+value in its place.
+
+- `{ "$not": <condition> }` holds when the value does not meet the
+  condition. A missing key meets no condition, so it meets `$not`.
+- `{ "$exists": true }` holds when the key is present, whatever its value,
+  even `null`. `{ "$exists": false }` holds when the key is missing. At the
+  root, `{ "$exists": true }` holds for any JSON body.
+- `{ "$includes": <condition> }` holds when the value is an array with at
+  least one element that meets the condition, wherever it sits. It never
+  holds for a value that is not an array.
+
+`<condition>` is any `json` condition: a value, an object of keys, a
+pattern or another operator.
+
+```yaml
+request:
+  body:
+    json:
+      tags: { $includes: urgent }
+      items: { $not: [] }
+      coupon: { $exists: true }
+      lines: { $includes: { sku: { pattern: "A-.*" } } }
+```
+
+This Stub answers a body whose `tags` array contains `"urgent"`, whose
+`items` is not an empty array, that has a `coupon` key, even `null`, and
+that has a line whose `sku` starts with `A-`.
+
+- Operators nest. `{ "$not": { "$includes": "x" } }` holds when no element
+  is `"x"`, and `{ "$includes": { "$not": "x" } }` when some element is not
+  `"x"`.
+- `null` still means JSON `null`: `"coupon": null` needs the key with the
+  value `null`, and `"coupon": { "$exists": false }` needs it to be
+  missing.
+- `[]` still matches only an empty array. "Not empty" is
+  `{ "$not": [] }`, which a missing key or a value that is not an array
+  also meets. `{ "$includes": { "$exists": true } }` holds only for an
+  array with at least one element.
+- A body that does not parse as JSON never meets a `json` condition, so
+  `{ "json": { "$not": … } }` fails on it too.
+
+A key that starts with `$` is written `$$` and the rest, as in
+[response templates](#structured-templates): `{ "$$ref": "#/a" }` matches
+a body with the key `$ref`. A key that starts with one `$` and is not an
+operator makes the definition set invalid, and so do an operator beside
+another key and an `$exists` that is not `true` or `false`:
+
+```console
+orders.json: /stubs/0/request/body/json/schema/$ref: is not an operator: the operators here are $not, $exists, $includes; write $$ref for a literal key that starts with $
+orders.json: /stubs/1/request/body/json/tags/length: is not allowed beside "$includes": an operator is the only key of its object
+```
+
+The format version is still 1, but two kinds of `json` condition written
+for smock 0.1 now mean something else:
+
+- an object whose only key is `$not`, `$exists` or `$includes` was literal
+  JSON, and is now an operator;
+- a key that starts with `$$`, such as `$$id`, matched that key as written,
+  and now matches it with one `$` less, `$id`.
+
+Any other key that starts with `$` in a `json` condition is now an error,
+so a file with one fails to load rather than change its meaning: write
+the key with `$$`.
 
 ### Which Stub answers
 
@@ -1233,7 +1305,9 @@ and the message names the first. It also compiles every
 rejects two names in one response's `headers` that differ only in case,
 since the Schema compares names exactly. It rejects a key repeated within one
 JSON object, as YAML files reject it: JSON parsers disagree on which of the
-two values counts, and the Schema sees only one of them.
+two values counts, and the Schema sees only one of them. It checks the
+[operators in a `json` condition](#operators-in-json-conditions), where the
+Schema accepts any JSON.
 
 In CI, run it as a step that fails the build:
 
