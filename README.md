@@ -198,12 +198,12 @@ A request over a limit gets its status with `Connection: close`, then the
 connection closes; a timeout closes the connection without a response.
 Neither is logged.
 
-Known limitation: after a 400, 413 or 431 (and a 501 or 505), smock closes
-the connection without reading the rest of the request. A client that is
-still sending it, such as a body over `--body-limit`, may then get a
-connection reset instead of the error response. smock would need to close
-only its sending side first (a half-close), which the async library it is
-built on does not offer yet.
+Known limitation: after answering a request with 400, 413, 431, 501 or 505,
+smock closes the connection without reading the rest of the request. A
+client that is still sending it, such as a body over `--body-limit`, may
+then get a connection reset instead of the error response. smock would
+need to close only its sending side first (a half-close), which the async
+library it is built on does not offer yet.
 
 On SIGTERM, smock drains instead of dropping requests, so that a rolling
 update does not fail the tests running against the old Pod. SIGINT and
@@ -603,14 +603,13 @@ curl localhost:8080/users/1                                           # 200, fro
   `Started` first, then every state those Stubs name for it. A Scenario
   that the Session still holds a state for after it deleted the Ephemeral
   Stubs that named it is listed too, with `["Started"]` as its known
-  states.
+  states, so that a test can reset it.
   `PUT /v1/mocks/{mock}/scenarios/{scenario}` with `{"state":"Paid"}` sets
   the state for the calling Session, so that a test can start in the middle
-  of a flow; `{"state":"Started"}` resets one Scenario, including one that
-  only a deleted Ephemeral Stub named, which clears its state. A Scenario
-  that the list does not show gets 404 `unknown_scenario`, and a state
-  outside the known states 400 `unknown_state`, so a typo cannot leave a
-  Scenario in a state that nothing matches.
+  of a flow; `{"state":"Started"}` resets one Scenario. A Scenario that the
+  list does not show gets 404 `unknown_scenario`, and a state outside the
+  known states 400 `unknown_state`, so a typo cannot leave a Scenario in a
+  state that nothing matches.
 - `GET` lists and `DELETE /v1/mocks/{mock}/stubs/{id}` deletes the calling
   Session's Ephemeral Stubs of the Mock. `POST /v1/reset` with
   `{"scope":"session"}` clears the calling Session's Ephemeral Stubs,
