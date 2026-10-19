@@ -270,8 +270,9 @@ pub struct Conditions {
   /// `ValueCondition::holds` says. Names are compared exactly, case and
   /// all, and values as sent.
   cookies : ReadOnlyArray[(String, ValueCondition)]
-  /// The body: its text, a pattern, a `json` condition, or conditions on
-  /// the values at paths into it as XML.
+  /// The body: its text, a pattern, a `json` condition, conditions on the
+  /// fields of a form, or conditions on the values at paths into it as
+  /// XML.
   body : BodyCondition?
 } derive(Debug, Eq)
 
@@ -450,7 +451,8 @@ priv enum Expected {
   /// string.
   Pattern(Pattern)
   Scalar(Json)
-  /// `$not`: the value does not meet the condition, or is missing.
+  /// `$not`: the value does not meet the condition. A missing key meets it
+  /// when it does not meet the condition inside, as `missing_meets` says.
   Not(Expected)
   /// `$exists`: the value is present, whatever it is, when true, and
   /// missing when false.

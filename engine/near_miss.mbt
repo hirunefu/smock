@@ -163,7 +163,10 @@ priv enum Failed {
   Query(String, @definitions.ValueCondition)
   Header(String, @definitions.ValueCondition)
   Cookie(String, @definitions.ValueCondition)
-  /// An exact, pattern or `json` condition on the body.
+  /// A condition on the body as a whole: an exact, pattern or `json`
+  /// condition, or a `form` or `xml` condition with no field or path,
+  /// which fails when the request's Content-Type does not say the body is
+  /// a form, or the body is not XML.
   Body(@definitions.BodyCondition)
   Form(String, @definitions.ValueCondition)
   Xml(@xml.Path, @definitions.ValueCondition)

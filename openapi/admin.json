@@ -1491,7 +1491,7 @@
             "oneOf": [{ "$ref": "#/components/schemas/ScenarioMove" }, { "type": "null" }]
           },
           "nearMiss": {
-            "description": "When no Stub matched and the Mock had candidate Stubs: the Near miss. Otherwise null. The actual value of a failed body condition, and each actual value of a failed form field or XML path, is truncated as the recorded request body is.",
+            "description": "When no Stub matched and the Mock had candidate Stubs: the Near miss. Otherwise null. The actual value of a failed body condition is truncated as the recorded request body is. The actual values of failed form fields and XML paths are kept in order until their total reaches the Journal's body limit (`--journal-body-limit`), each counting its bytes in UTF-8 and 32 bytes more: the last value kept is cut to what is left, and the values after it are dropped.",
             "oneOf": [
               {
                 "$ref": "#/components/schemas/NearMiss"
@@ -1657,7 +1657,7 @@
             ]
           },
           "actual": {
-            "description": "The values the request carries for the condition, in order: one for method, path and body; every value of a query parameter, header, cookie or form field, which may be repeated, or of the nodes an XML path selects; none when it is absent, or when the body is not a form or not XML. For `scenario:<name>`, the one state the Scenario is in for the request's Session: `Started` when the Session has not moved it. A body that is not UTF-8 is shown with U+FFFD in place of each sequence that is not; the Journal entry's request body keeps its bytes.",
+            "description": "The values the request carries for the condition, in order: one for method, path and body; every value of a query parameter, header, cookie or form field, which may be repeated, or of the nodes an XML path selects; none when it is absent, or when the body is not a form or not XML. For `scenario:<name>`, the one state the Scenario is in for the request's Session: `Started` when the Session has not moved it. A body that is not UTF-8 is shown with U+FFFD in place of each sequence that is not; the Journal entry's request body keeps its bytes. In a Journal entry, the values of form fields and XML paths may be cut or dropped, as `nearMiss` says, so they may be fewer than the request carried.",
             "type": "array",
             "items": {
               "type": "string"
