@@ -4,7 +4,7 @@
 // of a part separates the name from the value. Values stay as sent: quotes
 // are part of them, as RFC 6265bis says, and nothing is percent-decoded.
 // The fields are scanned in place, with no list of cookies built per
-// request, and a value is copied only for a pattern to match it.
+// request, and a value is copied, once, only for a pattern to match it.
 
 ///|
 /// Whether `condition`, on the cookie with this name, holds for the
@@ -30,13 +30,12 @@ fn Incoming::cookie_meets(
 
 ///|
 /// Whether `field`, the value of a `Cookie` field, has a cookie named
-/// `name` whose value meets `wanted`, a test that
-/// `ValueCondition::value_test` gave. An exact value and `$exists` are
-/// compared in place; only a pattern needs the value as a string.
+/// `name` whose value passes `wanted`. An exact value and `$exists` are
+/// compared in place; only a pattern needs the value, in UTF-8.
 fn has_cookie(
   field : String,
   name : String,
-  wanted : @definitions.ValueCondition,
+  wanted : @definitions.ValueTest,
 ) -> Bool {
   for start = 0; start <= field.length(); {
     let end = part_end(field, start)
@@ -44,9 +43,9 @@ fn has_cookie(
     let value = cookie_value(field, start, last, name)
     if value >= 0 {
       let meets = match wanted {
-        Exists(present) => present
+        Any => true
         Exact(text) => field[value:last] == text
-        _ => wanted.meets(field[value:last].to_owned())
+        Pattern(pattern) => pattern.matches(@utf8.encode(field[value:last]))
       }
       if meets {
         return true

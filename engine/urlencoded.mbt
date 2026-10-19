@@ -126,6 +126,32 @@ fn form_decode(bytes : BytesView) -> String {
 }
 
 ///|
+/// A name or a value of application/x-www-form-urlencoded bytes, decoded
+/// as `form_decode` decodes it, in UTF-8: `bytes` themselves when they are
+/// ASCII with no `+` or `%`, which decoding leaves as they are, and new
+/// bytes otherwise.
+fn form_utf8(bytes : BytesView) -> BytesView {
+  let mut plain = true
+  for i in 0..<bytes.length() {
+    if bytes[i] is (b'+' | b'%' | b'\x80'..=b'\xFF') {
+      plain = false
+      break
+    }
+  }
+  if plain {
+    return bytes
+  }
+  let decoded = @buffer.Buffer(size_hint=bytes.length())
+  let mut i = 0
+  while i < bytes.length() {
+    let c = form_char(bytes, i)
+    decoded.write_char_utf8(char_of(c).unsafe_to_char())
+    i = next_of(c)
+  }
+  decoded.to_bytes()
+}
+
+///|
 /// Whether `bytes`, a name or a value of application/x-www-form-urlencoded
 /// bytes, decodes to `text`, as `form_decode` decodes it. It is compared in
 /// place, with no allocation.

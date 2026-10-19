@@ -337,8 +337,10 @@ fn Incoming::explain(self : Incoming, failed : Failed) -> FailedCondition {
 /// What a value condition expects, as the Stub writes it.
 fn expected(condition : @definitions.ValueCondition) -> Expected {
   match condition {
-    Exact(text) => Exact(text)
-    Pattern(pattern) => Pattern(pattern.source)
+    Has(Exact(text)) => Exact(text)
+    Has(Pattern(pattern)) => Pattern(pattern.source)
+    // The test that every value passes is that of `$exists: true`.
+    Has(Any) => Exists(true)
     Not(inner) => Not(expected(inner))
     Exists(present) => Exists(present)
   }

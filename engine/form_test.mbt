@@ -260,6 +260,54 @@ test "a form field takes patterns, $not and $exists as a query parameter does: a
 }
 
 ///|
+test "a form pattern matches the decoded value, with U+FFFD for each byte that is not UTF-8" {
+  let h = stubs([
+    "{ \"id\": \"s\", \"mock\": \"m\", \"request\": { \"body\": { \"form\": { \"v\": { \"pattern\": \"caf. au lait|x.y\" } } } }, \"response\": { \"status\": 200 } }",
+  ])
+  let form = Some(form_type)
+  inspect(
+    posted(h, [
+      (form, "v=caf%C3%A9+au+lait"),
+      (form, "v=café%20au%20lait"),
+      (form, "v=xzy"),
+      (form, "v=x%FFy"),
+      (form, "v=x%FF%FEy"),
+      (form, "v=x+y"),
+    ]),
+    content=(
+      #|[application/x-www-form-urlencoded] "v=caf%C3%A9+au+lait" -> s
+      #|[application/x-www-form-urlencoded] "v=café%20au%20lait" -> s
+      #|[application/x-www-form-urlencoded] "v=xzy" -> s
+      #|[application/x-www-form-urlencoded] "v=x%FFy" -> s
+      #|[application/x-www-form-urlencoded] "v=x%FF%FEy" -> none
+      #|[application/x-www-form-urlencoded] "v=x+y" -> s
+    ),
+  )
+  // Bytes that are not UTF-8 may also come unescaped.
+  let raw = (body : Bytes) => {
+    let outcome = h.engine.handle(
+      {
+        meth: "POST",
+        target: "/",
+        version: "HTTP/1.1",
+        headers: [("Content-Type", form_type)],
+        body,
+      },
+      session=None,
+      now=h.now,
+      rand=h.rand,
+    )
+    matched_id(outcome)
+  }
+  debug_inspect(
+    [raw(b"v=x\xFFy"), raw(b"v=x\xFF\xFEy"), raw(b"v=caf\xC3\xA9 au lait")],
+    content=(
+      #|[Some("s"), None, Some("s")]
+    ),
+  )
+}
+
+///|
 /// A Mock `m` with one Stub, `login`, with query, header and form
 /// conditions.
 let form_login : String =

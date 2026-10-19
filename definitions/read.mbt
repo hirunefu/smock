@@ -759,12 +759,12 @@ fn File::read_conditions(
       "path" =>
         match value {
           String(value) if value.has_prefix("/") =>
-            path = Some(ValueCondition::Exact(value))
+            path = Some(ValueCondition::Has(Exact(value)))
           String(_) => self.error(field, "must start with /")
           Object(condition) =>
             path = self
               .read_pattern(field, condition)
-              .map(pattern => ValueCondition::Pattern(pattern))
+              .map(pattern => ValueCondition::Has(Pattern(pattern)))
           _ => self.error(field, "must be a string or an object")
         }
       "query" => query = self.read_value_conditions(field, value)
@@ -1017,7 +1017,7 @@ fn File::read_value_condition(
   json : Json,
 ) -> ValueCondition? {
   let members = match json {
-    String(value) => return Some(Exact(value))
+    String(value) => return Some(Has(Exact(value)))
     Object(members) => members
     _ => {
       self.error(pointer, "must be a string or an object")
@@ -1025,7 +1025,9 @@ fn File::read_value_condition(
     }
   }
   guard operator_key(members) is Some(_) else {
-    return self.read_pattern(pointer, members).map(pattern => Pattern(pattern))
+    return self
+      .read_pattern(pointer, members)
+      .map(pattern => Has(Pattern(pattern)))
   }
   guard self.read_operator(
       pointer,

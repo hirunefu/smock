@@ -138,8 +138,8 @@ fn request_shadows(t : Conditions, s : Conditions) -> Bool {
   }
   let path = match (t.path, s.path) {
     (None, _) => true
-    (Some(Exact(t_path)), Some(Exact(s_path))) => t_path == s_path
-    (Some(Pattern(pattern)), Some(Exact(s_path))) =>
+    (Some(Has(Exact(t_path))), Some(Has(Exact(s_path)))) => t_path == s_path
+    (Some(Has(Pattern(pattern))), Some(Has(Exact(s_path)))) =>
       pattern.matches(@utf8.encode(s_path))
     (Some(_), _) => false
   }

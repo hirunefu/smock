@@ -285,10 +285,9 @@ pub struct Conditions {
 /// operator is about the name as a whole. The path is a name with exactly
 /// one value.
 pub enum ValueCondition {
-  /// The value is exactly this text.
-  Exact(String)
-  /// The pattern matches the whole value.
-  Pattern(Pattern)
+  /// An exact value or a pattern: one of the name's values passes the
+  /// test.
+  Has(ValueTest)
   /// `$not`: the condition does not hold. With an exact value or a pattern
   /// inside, no value of the name meets it, or the name is absent.
   Not(ValueCondition)
@@ -298,14 +297,38 @@ pub enum ValueCondition {
 } derive(Debug, Eq)
 
 ///|
+/// The test that each value of a name is given for a value condition, as
+/// `ValueCondition::value_test` gives it.
+pub enum ValueTest {
+  /// The value is exactly this text.
+  Exact(String)
+  /// The pattern matches the whole value.
+  Pattern(Pattern)
+  /// Every value passes, so that a name has a value that passes it exactly
+  /// when the name is present: the test of `$exists`. A Stub writes
+  /// `$exists: true` as `Exists(true)`, not as a condition that has this
+  /// test.
+  Any
+} derive(Debug, Eq)
+
+///|
+/// Whether `value` passes the test.
+pub fn ValueTest::meets(self : ValueTest, value : String) -> Bool {
+  match self {
+    Exact(exact) => value == exact
+    Pattern(pattern) => pattern.matches(@utf8.encode(value))
+    Any => true
+  }
+}
+
+///|
 /// Whether `value`, the one value of a name such as the path, meets the
 /// condition: it is exactly the given text, or the pattern matches the
 /// whole of it; an operator holds as `holds` says for a name with this one
 /// value.
 pub fn ValueCondition::meets(self : ValueCondition, value : String) -> Bool {
   match self {
-    Exact(exact) => value == exact
-    Pattern(pattern) => pattern.matches(@utf8.encode(value))
+    Has(wanted) => wanted.meets(value)
     Not(inner) => !inner.meets(value)
     Exists(present) => present
   }
@@ -313,25 +336,21 @@ pub fn ValueCondition::meets(self : ValueCondition, value : String) -> Bool {
 
 ///|
 /// The test that each value of a name is given for the condition: the
-/// exact value or the pattern inside its operators, or, for `$exists`, a
+/// exact value or the pattern inside its operators, or, for `$exists`, the
 /// test that every value passes.
 ///
 /// Whether a name holds the condition depends only on whether one of its
 /// values passes this test, which `holds` turns into the outcome. So a
-/// matcher, whatever the operators, scans the values of a name once with
-/// `meets`, stops at the first that passes, and gives `holds` the result.
-pub fn ValueCondition::value_test(self : ValueCondition) -> ValueCondition {
+/// matcher, whatever the operators, scans the values of a name once, stops
+/// at the first that passes, and gives `holds` the result. The test is
+/// part of the condition, so getting it allocates nothing.
+pub fn ValueCondition::value_test(self : ValueCondition) -> ValueTest {
   match self {
+    Has(wanted) => wanted
     Not(inner) => inner.value_test()
-    Exists(_) => any_value
-    Exact(_) | Pattern(_) => self
+    Exists(_) => Any
   }
 }
-
-///|
-/// The test that every value passes, so that a name has a value that passes
-/// it exactly when the name is present.
-let any_value : ValueCondition = Exists(true)
 
 ///|
 /// Whether the condition holds for a name, given whether one of the name's
@@ -345,9 +364,9 @@ let any_value : ValueCondition = Exists(true)
 ///   as it says.
 pub fn ValueCondition::holds(self : ValueCondition, found~ : Bool) -> Bool {
   match self {
+    Has(_) => found
     Not(inner) => !inner.holds(found~)
     Exists(present) => found == present
-    Exact(_) | Pattern(_) => found
   }
 }
 
