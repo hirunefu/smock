@@ -77,16 +77,16 @@ let index_requests_per_case : Int = 40
 ///|
 /// What the generated requests matched, to show that the property test
 /// reaches every kind of Stub and requests that match nothing, Stubs with
-/// operators or `xml` conditions, and Stubs that move a Scenario or keep
-/// its state.
+/// operators, cookie or `xml` conditions, and Stubs that move a Scenario or
+/// keep its state.
 struct IndexTally {
   /// The number of requests per kind of Stub that answered them: `exact
   /// path`, `path pattern` or `no path` for a Stub from a Definition file,
-  /// `ephemeral` for an Ephemeral Stub, or `no match`; the number answered
-  /// by a Stub from a Definition file with an operator, and with an `xml`
-  /// condition; and the number
-  /// answered by a Stub with a Scenario clause that moved its Scenario to
-  /// another state, or kept it in the same one.
+  /// `ephemeral` for an Ephemeral Stub, or `no match`; the numbers answered
+  /// by a Stub from a Definition file with an operator, with a cookie
+  /// condition and with an `xml` condition; and the number answered by a
+  /// Stub with a Scenario clause that moved its Scenario to another state,
+  /// or kept it in the same one.
   counts : Map[String, Int]
 }
 
@@ -100,6 +100,7 @@ fn IndexTally::IndexTally() -> IndexTally {
       ("ephemeral", 0),
       ("no match", 0),
       ("with an operator", 0),
+      ("with a cookie condition", 0),
       ("with an xml condition", 0),
       ("Scenario moved", 0),
       ("Scenario kept", 0),
@@ -121,15 +122,16 @@ test "the match index picks the same Stub and makes the same Scenario moves as t
   inspect(
     tally.to_string(),
     content=(
-      #|exact path: 885
-      #|path pattern: 1233
-      #|no path: 1875
-      #|ephemeral: 384
-      #|no match: 7623
-      #|with an operator: 374
-      #|with an xml condition: 16
-      #|Scenario moved: 238
-      #|Scenario kept: 751
+      #|exact path: 890
+      #|path pattern: 1234
+      #|no path: 1758
+      #|ephemeral: 340
+      #|no match: 7778
+      #|with an operator: 781
+      #|with a cookie condition: 313
+      #|with an xml condition: 27
+      #|Scenario moved: 218
+      #|Scenario kept: 631
     ),
   )
 }
@@ -191,6 +193,10 @@ fn check_index_case(case : Int, tally : IndexTally) -> Unit raise {
     tally.counts[kind] = tally.counts.get(kind).unwrap_or(0) + 1
     if matched_id(outcome) is Some(id) && generated.with_operators.contains(id) {
       tally.counts["with an operator"] = tally.counts["with an operator"] + 1
+    }
+    if matched_id(outcome) is Some(id) && generated.with_cookies.contains(id) {
+      tally.counts["with a cookie condition"] = tally.counts["with a cookie condition"] +
+        1
     }
     if matched_id(outcome) is Some(id) && generated.with_xml.contains(id) {
       tally.counts["with an xml condition"] = tally.counts["with an xml condition"] +
@@ -256,12 +262,14 @@ fn gen_ephemeral_stubs(rand : @random.Rand) -> Array[(String, String?, Json)] {
 ///|
 /// A generated definition set: its Definition files as (name, JSON text),
 /// the kind of path condition of each Stub, by Stub ID, the IDs of the
-/// Stubs with an operator in a query, header, `json` or `xml` condition,
-/// and the IDs of the Stubs with an `xml` condition.
+/// Stubs with an operator in a query, header, cookie, `json` or `xml`
+/// condition, and the IDs of the Stubs with a cookie condition and with an
+/// `xml` condition.
 struct GeneratedSet {
   files : Array[(String, String)]
   kinds : Map[String, String]
   with_operators : Set[String]
+  with_cookies : Set[String]
   with_xml : Set[String]
 }
 
@@ -299,6 +307,7 @@ fn gen_definition_set(rand : @random.Rand) -> GeneratedSet {
   ]
   let kinds = Map([])
   let with_operators = Set([])
+  let with_cookies = Set([])
   let with_xml = Set([])
   let mut next_id = 0
   for name in names[:1 + rand.int(limit=4)] {
@@ -312,6 +321,9 @@ fn gen_definition_set(rand : @random.Rand) -> GeneratedSet {
       if stub.stringify().contains("\"$") {
         with_operators.add(id)
       }
+      if stub.stringify().contains("\"cookies\"") {
+        with_cookies.add(id)
+      }
       if stub.stringify().contains("\"xml\"") {
         with_xml.add(id)
       }
@@ -319,7 +331,7 @@ fn gen_definition_set(rand : @random.Rand) -> GeneratedSet {
     let file : Json = { "stubs": Json::array(stubs) }
     files.push((name, file.stringify()))
   }
-  { files, kinds, with_operators, with_xml, }
+  { files, kinds, with_operators, with_cookies, with_xml, }
 }
 
 ///|
@@ -369,6 +381,14 @@ fn gen_stub(rand : @random.Rand, id : String) -> (Json, String) {
       ["X-Id", "x-id", "Accept"],
       ["1", "2", "json"],
       ["[0-9]", "j.*"],
+    )
+  }
+  if chance(rand, 20) {
+    request["cookies"] = gen_value_conditions(
+      rand,
+      ["s", "S"],
+      ["1", "\"1\""],
+      ["[0-9]+", "\".*\""],
     )
   }
   if chance(rand, 25) {
@@ -432,9 +452,9 @@ fn gen_pattern(rand : @random.Rand, patterns : Array[String]) -> Json {
 }
 
 ///|
-/// One or two query or header conditions, named from `names`, each exactly
-/// one of `exact` or one of `patterns`, sometimes negated with `$not`, or
-/// `$exists`, true or false.
+/// One or two query, header or cookie conditions, named from `names`, each
+/// exactly one of `exact` or one of `patterns`, sometimes negated with
+/// `$not`, or `$exists`, true or false.
 fn gen_value_conditions(
   rand : @random.Rand,
   names : Array[String],
@@ -460,7 +480,8 @@ fn gen_value_conditions(
 ///|
 /// Generates a request to one of the Mocks, or to an unknown Host that the
 /// Default Mock answers. Paths are written as clients send them, sometimes
-/// percent-encoded, and some query parameters and headers are repeated.
+/// percent-encoded, some query parameters and headers are repeated, and
+/// cookies come in up to two Cookie fields.
 fn gen_request(rand : @random.Rand) -> @engine.Request {
   let path = pick(rand, [
     "/", "/a", "/a", "/a/b", "/a/b", "/A", "/a%20b", "/%C3%A9", "/a/", "/a/c", "/b",
@@ -478,6 +499,14 @@ fn gen_request(rand : @random.Rand) -> @engine.Request {
       (
         pick(rand, ["X-Id", "x-id", "X-ID", "accept", "Accept"]),
         pick(rand, ["1", "2", "json", "x"]),
+      ),
+    )
+  }
+  for _ in 0..<rand.int(limit=3) {
+    headers.push(
+      (
+        pick(rand, ["Cookie", "cookie"]),
+        pick(rand, ["s=1", "s=\"1\"; S=2", "S=1;s=12", "s", "a=1; s=x"]),
       ),
     )
   }

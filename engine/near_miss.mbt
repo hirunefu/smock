@@ -14,7 +14,7 @@ pub(all) struct NearMiss {
   /// Where the Stub comes from.
   stub_source : StubSource
   /// The conditions it failed, in the order method, path, query
-  /// parameters, headers, body or XML paths, Scenario state.
+  /// parameters, headers, cookies, body or XML paths, Scenario state.
   failed : Array[FailedCondition]
 } derive(Debug)
 
@@ -25,9 +25,9 @@ pub(all) struct FailedCondition {
   condition : Condition
   expected : Expected
   /// The values the request carries for the condition, in order: one for
-  /// the method, the path and the body; every value of a query parameter or
-  /// header, which may be repeated, or of the nodes an XML path selects;
-  /// none when it is absent, or when the body is not XML. The path and
+  /// the method, the path and the body; every value of a query parameter,
+  /// header or cookie, which may be repeated, or of the nodes an XML path
+  /// selects; none when it is absent, or when the body is not XML. The path and
   /// query values are percent-decoded, as conditions compare them. For a
   /// Scenario, the one state it is in for the request's Session.
   actual : Array[String]
@@ -42,6 +42,8 @@ pub(all) enum Condition {
   Query(String)
   /// The header with this name, in lower case.
   Header(String)
+  /// The cookie with this name.
+  Cookie(String)
   Body
   /// The path into an XML body, as the Stub writes it.
   Xml(String)
@@ -52,7 +54,8 @@ pub(all) enum Condition {
 
 ///|
 /// The name of the condition, as the Near miss reports it: `method`,
-/// `path`, `query:<name>`, `header:<name>`, `body`, `xml:<path>` or
+/// `path`, `query:<name>`, `header:<name>`, `cookie:<name>`, `body`,
+/// `xml:<path>` or
 /// `scenario:<name>`.
 pub fn Condition::to_string(self : Condition) -> String {
   match self {
@@ -60,6 +63,7 @@ pub fn Condition::to_string(self : Condition) -> String {
     Path => "path"
     Query(name) => "query:\{name}"
     Header(name) => "header:\{name}"
+    Cookie(name) => "cookie:\{name}"
     Body => "body"
     Xml(path) => "xml:\{path}"
     Scenario(name) => "scenario:\{name}"
@@ -119,7 +123,8 @@ pub impl ToJson for Expected with fn to_json(self) {
 ///|
 /// The `Smock-Near-Miss` header value: `<stub-id>; failed=<condition>,...`.
 /// It is ASCII only and carries no expected or actual value: the Stub ID,
-/// the names of query parameters, headers and Scenarios, and XML paths are
+/// the names of query parameters, headers, cookies and Scenarios, and XML
+/// paths are
 /// written as `header_safe` writes them, so no name can add a field or
 /// change the header's meaning.
 fn NearMiss::header_value(self : NearMiss) -> String {
@@ -129,6 +134,7 @@ fn NearMiss::header_value(self : NearMiss) -> String {
         Query(name) => "query:\{header_safe(name)}"
         Header(name) => "header:\{header_safe(name)}"
         Xml(path) => "xml:\{header_safe(path)}"
+        Cookie(name) => "cookie:\{header_safe(name)}"
         Scenario(name) => "scenario:\{header_safe(name)}"
         condition => condition.to_string()
       }
@@ -145,6 +151,7 @@ priv enum Failed {
   Path(@definitions.ValueCondition)
   Query(String, @definitions.ValueCondition)
   Header(String, @definitions.ValueCondition)
+  Cookie(String, @definitions.ValueCondition)
   Body(@definitions.BodyCondition)
   Xml(@xml.Path, @definitions.ValueCondition)
   /// The Scenario `name`, the state the Stub requires of it, and the state
@@ -190,8 +197,9 @@ fn Incoming::near_miss(
 
 ///|
 /// The conditions among `conditions` that the request fails, each counted
-/// once, in the order method, path, query parameters, headers, body. The
-/// paths of an `xml` condition count one by one, in the Stub's order.
+/// once, in the order method, path, query parameters, headers, cookies,
+/// body. The paths of an `xml` condition count one by one, in the Stub's
+/// order.
 fn Incoming::failed(
   self : Incoming,
   conditions : @definitions.Conditions,
@@ -211,6 +219,11 @@ fn Incoming::failed(
   for condition in conditions.headers {
     if !self.header_meets(condition) {
       out.push(Failed::Header(condition.0, condition.1))
+    }
+  }
+  for condition in conditions.cookies {
+    if !self.cookie_meets(condition) {
+      out.push(Failed::Cookie(condition.0, condition.1))
     }
   }
   match conditions.body {
@@ -255,6 +268,12 @@ fn Incoming::explain(self : Incoming, failed : Failed) -> FailedCondition {
         .filter(header => is_name(header.0, lower_name))
         .map(header => header.1)
         .collect(),
+      }
+    Cookie(name, value) =>
+      {
+        condition: Cookie(name),
+        expected: expected(value),
+        actual: cookie_values(self.request.headers, name),
       }
     Body(body) =>
       {

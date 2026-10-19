@@ -1,0 +1,19 @@
+mocks:
+  - name: shop
+stubs:
+  - id: cart
+    mock: shop
+    request:
+      path: /cart
+      cookies:
+        session: { pattern: "sess_[0-9a-f]+" }
+        theme: dark
+        token: '"abc"'
+        debug: { $not: "1" }
+        tracking: { $exists: false }
+        Lang: { $not: { $exists: false } }
+        $ref: x
+        "": ""
+        a b: "é"
+    response:
+      status: 200

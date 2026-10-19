@@ -1626,7 +1626,7 @@
             "enum": ["file", "ephemeral"]
           },
           "failed": {
-            "description": "The conditions it failed, in the order method, path, query parameters, headers, body or XML paths, Scenario state.",
+            "description": "The conditions it failed, in the order method, path, query parameters, headers, cookies, body or XML paths, Scenario state.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/FailedCondition"
@@ -1641,9 +1641,9 @@
         "type": "object",
         "properties": {
           "condition": {
-            "description": "The condition: `method`, `path`, `query:<name>`, `header:<name>` (in lower case), `body`, `xml:<path>`, a path of an xml body condition, or `scenario:<name>`, the state the Stub's `scenario` clause requires of the Scenario with that name. Names and paths are as the Stub gives them; the `Smock-Near-Miss` header carries the same conditions with each name and path percent-encoded. A query parameter name can be any text, even empty.",
+            "description": "The condition: `method`, `path`, `query:<name>`, `header:<name>` (in lower case), `cookie:<name>`, `body`, `xml:<path>`, a path of an xml body condition, or `scenario:<name>`, the state the Stub's `scenario` clause requires of the Scenario with that name. Names and paths are as the Stub gives them; the `Smock-Near-Miss` header carries the same conditions with each name and path percent-encoded. A query parameter or cookie name can be any text, even empty.",
             "type": "string",
-            "pattern": "^(method|path|body|query:[\\s\\S]*|header:.+|xml:/.+|scenario:[\\s\\S]+)$"
+            "pattern": "^(method|path|body|query:[\\s\\S]*|header:.+|cookie:[\\s\\S]*|xml:/.+|scenario:[\\s\\S]+)$"
           },
           "expected": {
             "description": "The condition as the Stub gives it, operators included: an exact string, a pattern, an operator such as `{\"$not\": ...}` or `{\"$exists\": false}`, or a json condition. For `scenario:<name>`, the state the Stub requires, as an exact string.",
@@ -1657,7 +1657,7 @@
             ]
           },
           "actual": {
-            "description": "The values the request carries for the condition, in order: one for method, path and body; every value of a query parameter or header, which may be repeated, or of the nodes an XML path selects; none when it is absent, or when the body is not XML. For `scenario:<name>`, the one state the Scenario is in for the request's Session: `Started` when the Session has not moved it. A body that is not UTF-8 is shown with U+FFFD in place of each sequence that is not; the Journal entry's request body keeps its bytes.",
+            "description": "The values the request carries for the condition, in order: one for method, path and body; every value of a query parameter, header or cookie, which may be repeated, or of the nodes an XML path selects; none when it is absent, or when the body is not XML. For `scenario:<name>`, the one state the Scenario is in for the request's Session: `Started` when the Session has not moved it. A body that is not UTF-8 is shown with U+FFFD in place of each sequence that is not; the Journal entry's request body keeps its bytes.",
             "type": "array",
             "items": {
               "type": "string"

@@ -265,6 +265,11 @@ pub struct Conditions {
   /// for the values of the header with that name, as
   /// `ValueCondition::holds` says. Names are compared case-insensitively.
   headers : ReadOnlyArray[(String, ValueCondition)]
+  /// Cookies as (name, condition): each condition must hold for the values
+  /// of the cookies with that name, from every `Cookie` field, as
+  /// `ValueCondition::holds` says. Names are compared exactly, case and
+  /// all, and values as sent.
+  cookies : ReadOnlyArray[(String, ValueCondition)]
   /// The body: its text, a pattern, a `json` condition, or conditions on
   /// the values at paths into it as XML.
   body : BodyCondition?
@@ -274,10 +279,11 @@ pub struct Conditions {
 /// A condition on a value of a request, such as its path or a header
 /// value, as the Stub writes it, operators included.
 ///
-/// A query parameter or a header is a name that the request carries any
-/// number of values under. An exact value or a pattern holds when one of
-/// the values meets it, so it fails when the name is absent; an operator
-/// is about the name as a whole. The path is a name with exactly one value.
+/// A query parameter, a header or a cookie is a name that the request
+/// carries any number of values under. An exact value or a pattern holds
+/// when one of the values meets it, so it fails when the name is absent; an
+/// operator is about the name as a whole. The path is a name with exactly
+/// one value.
 pub enum ValueCondition {
   /// The value is exactly this text.
   Exact(String)
