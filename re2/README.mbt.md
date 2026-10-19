@@ -5,8 +5,8 @@ length of the input, so that no pattern can make matching stall. The module
 does no I/O and depends only on `moonbitlang/core`. It builds for every
 MoonBit target and is tested on native and `wasm-gc`.
 
-It supports a subset of RE2 syntax, smock's RE2 subset (the subset below),
-with RE2's meaning for each construct. Everything else is a compile error
+It supports a subset of RE2 syntax, listed below, with RE2's meaning for
+each construct. Everything else is a compile error
 that says where in the pattern the problem is.
 
 ## Use

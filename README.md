@@ -144,7 +144,7 @@ chmod +x smock
 SMOCK_ADMIN_TOKEN=change-me ./smock serve --dir defs
 ```
 
-To run a commit that no release has yet, build it from a checkout
+To run a commit that no release holds yet, build it from a checkout
 ([Build and test](#build-and-test)):
 
 ```sh
@@ -160,8 +160,8 @@ current one keeps serving
 ([docs/definition-files.md](docs/definition-files.md#reloading)). Logs go
 to stderr, one JSON object per line; JSON is the only log format. Log
 entries are a diagnostic aid: their messages and fields may change in any
-release and are not part of the compatibility promise, unlike the
-Definition file format and the Admin API. A usage error, such as an
+release, unlike the Definition file format and the Admin API, which are
+versioned (`v1`). A usage error, such as an
 unknown flag, a missing argument or an invalid setting value, is not a log
 entry: smock writes it to stderr as plain text, before any log entry, and
 exits with status 2. `smock serve --help` lists the settings:
@@ -600,10 +600,10 @@ curl localhost:8080/users/1                                           # 200, fro
 - `GET /v1/mocks/{mock}/scenarios` lists the calling Session's Scenarios of
   the Mock, those its file Stubs and the Session's own Ephemeral Stubs
   name, by name. Each has its current `state` and its known `states`:
-  `Started` first, then every state those Stubs name for it. A Scenario
-  that the Session still holds a state for after it deleted the Ephemeral
-  Stubs that named it is listed too, with `["Started"]` as its known
-  states, so that a test can reset it.
+  `Started` first, then every state those Stubs name for it. When the
+  Session deletes the Ephemeral Stubs that named a Scenario, but still
+  holds a state for it, the Scenario stays listed, with `["Started"]` as
+  its known states, so that a test can reset it.
   `PUT /v1/mocks/{mock}/scenarios/{scenario}` with `{"state":"Paid"}` sets
   the state for the calling Session, so that a test can start in the middle
   of a flow; `{"state":"Started"}` resets one Scenario. A Scenario that the
@@ -775,7 +775,7 @@ The image's command is `serve`; arguments replace it (`... smock:<version>
 port 8443 and the admin port 9090. Files mounted into the container must be
 readable by UID 65532.
 
-To run a commit that no release has yet, build the image from a checkout
+To run a commit that no release holds yet, build the image from a checkout
 with `scripts/build-release.sh` and `docker build --tag smock:dev .`, or
 from the release binary that CI keeps for 7 days after each push (the
 `smock-linux-amd64` and `smock-linux-arm64` artifacts of its run), copied to

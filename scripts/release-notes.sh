@@ -50,7 +50,7 @@ lists its values.
 - \`smock-$version-linux-arm64\`
 
 They are the binaries in the image. They link OpenSSL 3 dynamically, so they
-need OpenSSL 3 (\`libssl.so.3\` and \`libcrypto.so.3\`) and glibc at run time:
+need OpenSSL 3 (\`libssl.so.3\` and \`libcrypto.so.3\`) and glibc 2.34 or later at run time:
 on Debian and Ubuntu, the \`libssl3\` package (\`libssl3t64\` on newer
 releases).
 

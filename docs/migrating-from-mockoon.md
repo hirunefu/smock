@@ -1183,10 +1183,10 @@ version in place of `<version>` below.
   Adding body files replaces the Pod. That guide's port-forwards reach
   the old Pod, with the old files, until it stops, and then end, so stop
   them (`kill %1 %2`) and start them again. `localhost:8080/api/v1/users`
-  then reaches `users-api`, whose `hosts` lists `localhost`. The example
-  as it stood on 2026-10-17, before it had Scenario Stubs, ran this way
-  on GKE Autopilot that day, from an image of CI's binary and the chart
-  in a checkout; its Scenario Stubs were checked with a local smock only.
+  then reaches `users-api`, whose `hosts` lists `localhost`. On
+  2026-10-17 the example ran this way on GKE Autopilot, from an image of
+  CI's binary and the chart in a checkout. It had no Scenario Stubs then;
+  those were checked later, with a local smock only.
   Values hold text only, so binary body files need git-sync or a
   ConfigMap of one's own
   ([charts/smock/README.md](../charts/smock/README.md)).

@@ -706,9 +706,10 @@ Each `--variant` is `LABEL=FILE`, the first the baseline; the label (1 to
 Service, `smock-<profile>-<label>`. `no-init` leaves out the init
 container that prints the node's CPU, and `no-first-second` the load
 generator's scrape of smock's `/metrics` a second into each step: the two
-changes the harness got between 0d984c8 and 52ee405. `scenarios` serves the Scenario variant of the
-definitions, `bench/definitions-scenarios/`, in place of
-`bench/definitions/` ([Scenarios in the benchmark](#scenarios-in-the-benchmark)).
+changes the harness got between 0d984c8 and 52ee405. `scenarios` serves
+the Scenario variant of the definitions, `bench/definitions-scenarios/`,
+in place of `bench/definitions/`
+([Scenarios in the benchmark](#scenarios-in-the-benchmark)).
 Variants of one binary (one SHA-256) are also compared with the first
 variant that has it: with the same options,
 such as newb against new, an A/A pair, whose paired changes show how far

@@ -200,12 +200,12 @@ in RE2 syntax:
   matches only when all of them hold. Stubs with patterns are tried in the
   same order as any other Stub.
 
-smock supports a subset of RE2 syntax, smock's RE2 subset, which the
+smock supports a subset of RE2 syntax, which the
 [RE2 module's README](../re2/README.mbt.md#syntax-in-the-subset) lists:
 literals, `.`, bracket classes, `\d`, `\w` and `\s`, anchors and word
 boundaries, groups, alternation, repetitions (counts up to 1000) and the
-flags `i`, `s` and `m`. Matching takes time linear in the length of the value, whatever
-the pattern, so no pattern can stall smock.
+flags `i`, `s` and `m`. Matching takes time linear in the length of the
+value, whatever the pattern, so no pattern can stall smock.
 
 Patterns are compiled once, when smock loads the Definition files. A
 pattern that does not compile, or that uses RE2 syntax outside the subset,
@@ -1134,7 +1134,7 @@ failed` with the digest still served and every error.
 `scenarioStatesReset` is the number of Scenario states the reload sent
 back to `Started`, 0 when there are none. The states dropped with a
 removed Mock are not counted. Like every log field, these are a diagnostic
-aid, not part of the compatibility promise. The Prometheus counter
+aid, and a release may change them. The Prometheus counter
 `smock_definition_reloads_total` counts reloads by `result`. A failed reload
 does not change readiness: `/readyz` on the admin port still passes, so one
 bad commit does not drain every Pod.

@@ -1,6 +1,6 @@
 # Before merging into main
 
-Work lands on an integration branch (`integration/<name>`), and the
+This page is for the maintainer. Work lands on an integration branch (`integration/<name>`), and the
 integration branch is merged into `main` when it is ready. Benchmarks run on
 a developer's machine by default. The full benchmark and a run on real GKE
 Autopilot happen only here, before that merge (the decision on #4):
