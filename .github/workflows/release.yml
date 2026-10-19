@@ -29,9 +29,10 @@
 # the publishing jobs get write permissions, and they run only for a pushed
 # tag; scripts/check-release-workflow.sh checks that in CI.
 #
-# One-time maintainer step after the first release: in the package settings
-# of ghcr.io/hirunefu/smock and of ghcr.io/hirunefu/charts/smock, make the
-# packages public. GitHub creates them private.
+# One-time maintainer step after the first tag (docs/releasing.md): in the
+# package settings of ghcr.io/hirunefu/smock and of
+# ghcr.io/hirunefu/charts/smock, make the packages public. GitHub creates
+# them private.
 name: Release
 
 on:
@@ -92,6 +93,19 @@ jobs:
         run: |
           grep -qF "$TOOLCHAIN" release-notes.md
           grep -qF "need OpenSSL 3" release-notes.md
+
+      # NOTICE names the toolchain and the MoonBit modules the binary is
+      # built from, with their versions (docs/releasing.md).
+      - name: Check that NOTICE names the toolchain and the modules' versions
+        env:
+          TOOLCHAIN: ${{ steps.plan.outputs.toolchain }}
+        run: |
+          grep -qF "$TOOLCHAIN" NOTICE
+          for module in $(grep -oE '"moonbitlang/[a-z]+@[0-9][0-9.]*"' moon.mod | tr -d '"'); do
+            awk -v name="${module%@*}" -v version="Version ${module#*@}." \
+              '$0 == name { found = 1 } found && index($0, version) == 1 { ok = 1; exit } END { exit !ok }' NOTICE ||
+              { echo "::error::NOTICE does not name $module with its version"; exit 1; }
+          done
 
       - uses: actions/upload-artifact@v7
         with:

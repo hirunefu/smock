@@ -3,7 +3,8 @@
 A release publishes the image `ghcr.io/hirunefu/smock:<version>`, the Helm
 chart `oci://ghcr.io/hirunefu/charts/smock` with version `<version>`, and a
 GitHub release with the binaries `smock-<version>-linux-amd64` and
-`smock-<version>-linux-arm64`. The README's
+`smock-<version>-linux-arm64`, their SBOMs, `LICENSE` and `NOTICE`. The
+README's
 [Container image and release binaries](../README.md#container-image-and-release-binaries)
 says how people use them. This page is for the maintainer who makes one.
 
@@ -96,6 +97,10 @@ Work through these steps in order:
 Check that CI is green on `main` and that `moon.mod` gives the new
 version. When `.moonbit-version` or the imports in `moon.mod` changed
 since the last release, check that [NOTICE](../NOTICE) still names what
-the binary holds, with the right versions. Then push the tag `v<version>`. A pre-release tag, such as
-`v<version>-rc.1`, tries the publishing path first. The packages stay
-public, so nothing else needs doing in their settings.
+the binary holds, with the right versions. The release workflow fails
+when NOTICE does not name the toolchain or a module of `moon.mod` with its
+version; the runtime, mimalloc and simdutf come with the toolchain and are
+checked by hand. Then push the tag
+`v<version>`. A pre-release tag, such as `v<version>-rc.1`, tries the
+publishing path first. The packages stay public, so nothing else needs
+doing in their settings.
