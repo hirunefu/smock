@@ -91,7 +91,7 @@ Stub without `request` matches every request of its Mock.
 | `query` | each listed parameter is present, and one of its values, decoded, is exactly the given value, or matches the given `{ "pattern": … }` as a whole. [`$not` and `$exists`](#negation-and-presence) are about the parameter as a whole. Parameters that are not listed are ignored. |
 | `headers` | each listed header is present, its name compared case-insensitively, and one of its values is exactly the given value, or matches the given `{ "pattern": … }` as a whole. [`$not` and `$exists`](#negation-and-presence) are about the header as a whole. Headers that are not listed are ignored. |
 | `cookies` | each listed cookie is present in a `Cookie` header, its name compared exactly, and one of its values, as sent, is exactly the given value, or matches the given `{ "pattern": … }` as a whole. See [Cookies](#cookies). [`$not` and `$exists`](#negation-and-presence) are about the cookie as a whole. Cookies that are not listed are ignored. |
-| `body` | a string: the body is exactly this text in UTF-8. `{ "pattern": … }`: the pattern matches the whole body. `{ "json": … }`: the body parses as JSON and contains the given value, which may hold patterns and [operators](#operators-in-json-conditions). `{ "xml": … }`: the body parses as XML, and the value at each [path](#xml-bodies) meets its condition. |
+| `body` | a string: the body is exactly this text in UTF-8. `{ "pattern": … }`: the pattern matches the whole body. `{ "json": … }`: the body parses as JSON and contains the given value, which may hold patterns and [operators](#operators-in-json-conditions). `{ "form": … }`: the Content-Type says the body is a form, and each listed [field](#form-fields) meets its condition. `{ "xml": … }`: the body parses as XML, and the value at each [path](#xml-bodies) meets its condition. |
 
 Query parameters are decoded as HTML forms encode them: `%20` and `+` both
 stand for a space, so `?q=a+b` meets `"query": { "q": "a b" }`. A parameter
@@ -171,9 +171,10 @@ pattern. Unlike an exact value, the inner pattern also meets a number,
 
 ### Pattern conditions
 
-The path, a query parameter, a header, the body, a value inside a `json`
-condition and the value at an [XML path](#xml-bodies) can each be given as
-a pattern instead of an exact value, in RE2 syntax:
+The path, a query parameter, a header, a cookie, the body, a value inside
+a `json` condition, a [form field](#form-fields) and the value at an
+[XML path](#xml-bodies) can each be given as a pattern instead of an exact
+value, in RE2 syntax:
 
 ```json
 {
@@ -227,15 +228,16 @@ users.json: /stubs/2/request/body/json/email/pattern: is not a valid pattern: po
 
 ### Negation and presence
 
-A query parameter's, a header's or a cookie's value, or the value at an
+A query parameter's, a header's, a cookie's or a
+[form field's](#form-fields) value, or the value at an
 [XML path](#xml-bodies), can also be an operator: an object whose only key
 starts with `$`.
 
 - `{ "$not": <condition> }` holds exactly when the condition does not.
   `<condition>` is an exact value, a pattern or another operator.
-- `{ "$exists": true }` holds when the parameter, header or cookie is
-  present, with any value, even an empty one. `{ "$exists": false }` holds
-  when it is absent.
+- `{ "$exists": true }` holds when the parameter, header, cookie or form
+  field is present, with any value, even an empty one.
+  `{ "$exists": false }` holds when it is absent.
 
 ```yaml
 request:
@@ -376,6 +378,49 @@ A cookie name can repeat, such as when a cookie is set for two paths. Then
 the condition holds when any one of its values matches, as for a query
 parameter, and `{ "$not": "1" }` holds only when none of them is `1`.
 Names are literal, even when they start with `$`.
+
+### Form fields
+
+A `form` body condition matches the fields of an
+`application/x-www-form-urlencoded` body, as HTML forms send it, by name:
+
+```yaml
+request:
+  method: POST
+  path: /login
+  body:
+    form:
+      username: alice
+      remember: { $not: "1" }
+```
+
+This Stub answers a login from `alice` that does not ask to be remembered,
+such as `username=alice` or `remember=0&username=alice`, whatever the order
+of the fields.
+
+- Fields are decoded as query parameters are: `+` and `%20` both stand for
+  a space, `%2B` is a `+`, and a field without `=` has the empty value. So
+  `user+name=Alice%20Smith` meets `"user name": "Alice Smith"`.
+- Names are compared exactly, case and all. They are literal, even when
+  they start with `$`.
+- The condition is any value condition: an exact value, a pattern, `$not`
+  or `$exists`. When a field repeats, as in `tag=a&tag=b`, the condition
+  holds when any one of its values matches, and `$not` holds when none
+  does. An empty body has no fields.
+- Fields that are not listed are ignored.
+
+A form condition holds only when the request's Content-Type says that the
+body is a form: its media type is `application/x-www-form-urlencoded`,
+compared case-insensitively, with any parameters, such as
+`; charset=UTF-8`. When a request has several Content-Type fields, the
+first one counts. Any other Content-Type, or none, fails every listed
+field, `$not` and `$exists: false` included, so a JSON or text body never
+meets a form condition by accident. `{ "form": {} }` lists no field, so it
+holds for every request, as an empty `query` does.
+
+The body is read as a form at most once per request, and only when smock
+tries a Stub with a `form` condition. `multipart/form-data` bodies are not
+read as forms: match them with a `pattern` on the body.
 
 ### XML bodies
 
@@ -731,18 +776,19 @@ a tie, the one tried first. The request's Ephemeral Stubs are candidates
 too, in the order they are tried, and the header names them by their ID,
 such as `eph-3`. Each of these counts as one condition: the method, the
 path, each listed query parameter, each listed header, each listed cookie,
-the body or each path of an [`xml` condition](#xml-bodies), and the state
-a [`scenario` clause](#scenarios) requires. They are named `method`,
+the body or each field of a [`form` condition](#form-fields) or each path
+of an [`xml` condition](#xml-bodies), and the state a
+[`scenario` clause](#scenarios) requires. They are named `method`,
 `path`, `query:<name>`, `header:<name>` (in lower case), `cookie:<name>`,
-`body` or `xml:<path>`, and `scenario:<name>`, in that order. A parameter,
-a header, a cookie or an XML path counts once whatever its condition,
-operators included. The header is ASCII only and never carries what a
-condition expects or what the request sent: the Stub ID, query, header,
-cookie and Scenario names, and XML paths are percent-encoded where they
-hold anything other than the characters of an HTTP token, so
-`/order/@status` is sent as `xml:%2Forder%2F%40status`. A Mock without
-Stubs, and a request for a Host that no Mock answers, get no
-`Smock-Near-Miss` header.
+`body`, `form:<name>` or `xml:<path>`, and `scenario:<name>`, in that
+order. A parameter, a header, a cookie, a form field or an XML path counts
+once whatever its condition, operators included. The header is ASCII only
+and never carries what a condition expects or what the request sent: the
+Stub ID, query, header, cookie, form field and Scenario names, and XML
+paths are percent-encoded where they hold anything other than the
+characters of an HTTP token, so `/order/@status` is sent as
+`xml:%2Forder%2F%40status`. A Mock without Stubs, and a request for a Host
+that no Mock answers, get no `Smock-Near-Miss` header.
 
 A request that matches pays nothing for this: smock counts failed
 conditions only once every Stub has failed to match.
@@ -754,10 +800,12 @@ with `GET /v1/journal/unmatched`
 ([README](../README.md#verifying-calls-and-unmatched-requests)).
 
 What the Stub expects is the condition as the Stub writes it, operators
-included. What the request sent is every value of the parameter, header or
-cookie, or of the nodes an XML path selects, in order, and none when it is
-absent or the body is not XML. A request with `Authorization: Bearer abc`
-fails the [negation example](#negation-and-presence) like this:
+included. What the request sent is every value of the parameter, header,
+cookie or form field, or of the nodes an XML path selects, in order, and
+none when it is absent, or when the body is not a form or not XML. So a
+request whose Content-Type is not a form's shows no value for any field of
+a `form` condition. A request with `Authorization: Bearer abc` fails the
+[negation example](#negation-and-presence) like this:
 
 ```json
 {
@@ -772,7 +820,7 @@ shown with U+FFFD in place of each sequence that is not, so a failed exact
 `body` condition can show an expected and an actual value that look the
 same. The Journal entry itself keeps the body's bytes, in base64, up to
 `--journal-body-limit`, and the Near miss in it cuts the body, and each
-value taken from an XML body, to the same limit.
+value taken from a form or an XML body, to the same limit.
 
 `noMatch.headers` adds header fields to the response when no Stub
 matches, such as CORS headers. Without them, a browser client that calls
@@ -1476,10 +1524,10 @@ A Stub `s` is shadowed by an earlier Stub `t` when `t` has a subset of
 - `t` has no method, or the same method as `s`;
 - `t` has no path, the same exact path as `s`, or a pattern that matches
   `s`'s exact path;
-- each of `t`'s query, header and body conditions is also in `s`, written
-  the same way (header names in any case), operators included; each path
-  of `t`'s `xml` condition is in `s`'s, in any order, with the same
-  condition;
+- each of `t`'s query, header, cookie and body conditions is also in `s`,
+  written the same way (header names in any case), operators included;
+  each field of `t`'s `form` condition and each path of its `xml`
+  condition is in `s`'s, in any order, with the same condition;
 - `t` has no `requires`, or `s` names the same [Scenario](#scenarios) with
   the same `requires`. `moveTo` plays no part, since it does not change
   whether a Stub matches.
