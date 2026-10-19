@@ -163,14 +163,15 @@
           "additionalProperties": { "$ref": "#/$defs/valueCondition" }
         },
         "body": {
-          "description": "The request body: an exact string, a pattern that must match the whole body, or a json condition.",
+          "description": "The request body: an exact string, a pattern that must match the whole body, a json condition, or a form condition.",
           "anyOf": [
             {
               "description": "The exact body, as text in UTF-8.",
               "type": "string"
             },
             { "$ref": "#/$defs/pattern" },
-            { "$ref": "#/$defs/jsonCondition" }
+            { "$ref": "#/$defs/jsonCondition" },
+            { "$ref": "#/$defs/formCondition" }
           ]
         }
       },
@@ -233,6 +234,19 @@
         }
       },
       "required": ["json"],
+      "additionalProperties": false
+    },
+    "formCondition": {
+      "description": "A form condition: conditions on the fields of an application/x-www-form-urlencoded body.",
+      "type": "object",
+      "properties": {
+        "form": {
+          "description": "Form fields, by name. They are decoded as query parameters are: `+` and `%20` both stand for a space, and a field without `=` has the empty value. Each listed field must be present, and one of its values must equal the given string or match the given pattern as a whole; when a field is repeated, any of its values may match. `$not` and `$exists` are about the field as a whole: see valueCondition. A request whose Content-Type is not a form's fails every listed field, `$not` included: its media type must be application/x-www-form-urlencoded, compared case-insensitively, with any parameters. An empty body with that Content-Type has no fields. Names are literal, even when they start with `$`. Fields that are not listed are ignored.",
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/valueCondition" }
+        }
+      },
+      "required": ["form"],
       "additionalProperties": false
     },
     "response": {

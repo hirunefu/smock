@@ -785,7 +785,7 @@ fn File::read_conditions(
 
 ///|
 /// Reads a condition on the request body: an exact text, or an object
-/// holding a `json` condition or a pattern.
+/// holding a `json` condition, a pattern or a `form` condition.
 fn File::read_body_condition(
   self : File,
   pointer : String,
@@ -812,14 +812,24 @@ fn File::read_body_condition(
           self.compile(field, source) is Some(pattern) {
           out = Some(BodyCondition::Pattern(pattern))
         }
+      "form" =>
+        out = Some(
+          BodyCondition::Form(
+            ReadOnlyArray::from_array(self.read_value_conditions(field, value)),
+          ),
+        )
       _ => self.unknown_field(field)
     }
   }
-  match (condition.contains("json"), condition.contains("pattern")) {
-    (true, true) =>
-      self.error(pointer, "needs \"json\" or \"pattern\", not both")
-    (false, false) => self.error(pointer, "needs \"json\" or \"pattern\"")
-    _ => ()
+  let given = ["json", "pattern", "form"].filter(key => condition.contains(key))
+  let listed = "\"json\", \"pattern\" and \"form\""
+  match given.length() {
+    0 => self.error(pointer, "needs one of \{listed}")
+    1 => ()
+    _ => {
+      let given = given.map(key => "\"\{key}\"").join(" and ")
+      self.error(pointer, "has \{given}; give exactly one of \{listed}")
+    }
   }
   out
 }

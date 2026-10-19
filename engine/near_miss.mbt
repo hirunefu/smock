@@ -14,7 +14,7 @@ pub(all) struct NearMiss {
   /// Where the Stub comes from.
   stub_source : StubSource
   /// The conditions it failed, in the order method, path, query
-  /// parameters, headers, body, Scenario state.
+  /// parameters, headers, body or form fields, Scenario state.
   failed : Array[FailedCondition]
 } derive(Debug)
 
@@ -25,10 +25,11 @@ pub(all) struct FailedCondition {
   condition : Condition
   expected : Expected
   /// The values the request carries for the condition, in order: one for
-  /// the method, the path and the body; every value of a query parameter or
-  /// header, which may be repeated; none when it is absent. The path and
-  /// query values are percent-decoded, as conditions compare them. For a
-  /// Scenario, the one state it is in for the request's Session.
+  /// the method, the path and the body; every value of a query parameter,
+  /// header or form field, which may be repeated; none when it is absent.
+  /// The path, query and form values are percent-decoded, as conditions
+  /// compare them. For a Scenario, the one state it is in for the
+  /// request's Session.
   actual : Array[String]
 } derive(Debug)
 
@@ -42,6 +43,8 @@ pub(all) enum Condition {
   /// The header with this name, in lower case.
   Header(String)
   Body
+  /// The field of a form body with this name.
+  Form(String)
   /// The state that the Stub's Scenario clause requires of the Scenario
   /// with this name.
   Scenario(String)
@@ -49,7 +52,8 @@ pub(all) enum Condition {
 
 ///|
 /// The name of the condition, as the Near miss reports it: `method`,
-/// `path`, `query:<name>`, `header:<name>`, `body` or `scenario:<name>`.
+/// `path`, `query:<name>`, `header:<name>`, `body`, `form:<name>` or
+/// `scenario:<name>`.
 pub fn Condition::to_string(self : Condition) -> String {
   match self {
     Method => "method"
@@ -57,6 +61,7 @@ pub fn Condition::to_string(self : Condition) -> String {
     Query(name) => "query:\{name}"
     Header(name) => "header:\{name}"
     Body => "body"
+    Form(name) => "form:\{name}"
     Scenario(name) => "scenario:\{name}"
   }
 }
@@ -114,15 +119,16 @@ pub impl ToJson for Expected with fn to_json(self) {
 ///|
 /// The `Smock-Near-Miss` header value: `<stub-id>; failed=<condition>,...`.
 /// It is ASCII only and carries no expected or actual value: the Stub ID
-/// and the names of query parameters, headers and Scenarios are written as
-/// `header_safe` writes them, so no name can add a field or change the
-/// header's meaning.
+/// and the names of query parameters, headers, form fields and Scenarios
+/// are written as `header_safe` writes them, so no name can add a field or
+/// change the header's meaning.
 fn NearMiss::header_value(self : NearMiss) -> String {
   let failed = self.failed
     .map(failed => {
       match failed.condition {
         Query(name) => "query:\{header_safe(name)}"
         Header(name) => "header:\{header_safe(name)}"
+        Form(name) => "form:\{header_safe(name)}"
         Scenario(name) => "scenario:\{header_safe(name)}"
         condition => condition.to_string()
       }
@@ -139,7 +145,9 @@ priv enum Failed {
   Path(@definitions.ValueCondition)
   Query(String, @definitions.ValueCondition)
   Header(String, @definitions.ValueCondition)
+  /// An exact, pattern or `json` condition on the body.
   Body(@definitions.BodyCondition)
+  Form(String, @definitions.ValueCondition)
   /// The Scenario `name`, the state the Stub requires of it, and the state
   /// it is in.
   Scenario(name~ : String, required~ : String, current~ : String)
@@ -183,7 +191,8 @@ fn Incoming::near_miss(
 
 ///|
 /// The conditions among `conditions` that the request fails, each counted
-/// once, in the order method, path, query parameters, headers, body.
+/// once, in the order method, path, query parameters, headers, body or
+/// form fields.
 fn Incoming::failed(
   self : Incoming,
   conditions : @definitions.Conditions,
@@ -205,8 +214,15 @@ fn Incoming::failed(
       out.push(Failed::Header(condition.0, condition.1))
     }
   }
-  if conditions.body is Some(body) && !self.body_meets(body) {
-    out.push(Failed::Body(body))
+  match conditions.body {
+    Some(Form(fields)) =>
+      for condition in fields {
+        if !self.form_meets(condition) {
+          out.push(Failed::Form(condition.0, condition.1))
+        }
+      }
+    Some(body) => if !self.body_meets(body) { out.push(Failed::Body(body)) }
+    None => ()
   }
   out
 }
@@ -248,8 +264,21 @@ fn Incoming::explain(self : Incoming, failed : Failed) -> FailedCondition {
           Exact(bytes) => Exact(@utf8.decode_lossy(bytes))
           Pattern(pattern) => Pattern(pattern.source)
           Json(condition) => Json(condition.to_json())
+          Form(_) => abort("a form condition fails field by field")
         },
         actual: [@utf8.decode_lossy(self.request.body)],
+      }
+    Form(name, value) =>
+      {
+        condition: Form(name),
+        expected: expected(value),
+        actual: self
+        .form_fields()
+        .unwrap_or([])
+        .iter()
+        .filter(field => field.0 == name)
+        .map(field => field.1)
+        .collect(),
       }
     Scenario(name~, required~, current~) =>
       {

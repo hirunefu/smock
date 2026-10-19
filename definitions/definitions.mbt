@@ -384,6 +384,10 @@ pub enum BodyCondition {
   Pattern(Pattern)
   /// The body parses as JSON and contains the condition's value.
   Json(JsonCondition)
+  /// `form`: fields of an application/x-www-form-urlencoded body, as
+  /// (name, condition): each condition must hold for the decoded values of
+  /// the field with that name, as `ValueCondition::holds` says.
+  Form(ReadOnlyArray[(String, ValueCondition)])
 } derive(Debug, Eq)
 
 ///|
