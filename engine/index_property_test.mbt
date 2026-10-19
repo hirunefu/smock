@@ -84,9 +84,8 @@ struct IndexTally {
   /// path`, `path pattern` or `no path` for a Stub from a Definition file,
   /// `ephemeral` for an Ephemeral Stub, or `no match`; the numbers answered
   /// by a Stub from a Definition file with an operator, and with a cookie
-  /// condition; and the number
-  /// answered by a Stub with a Scenario clause that moved its Scenario to
-  /// another state, or kept it in the same one.
+  /// condition; and the number answered by a Stub with a Scenario clause
+  /// that moved its Scenario to another state, or kept it in the same one.
   counts : Map[String, Int]
 }
 
@@ -121,14 +120,14 @@ test "the match index picks the same Stub and makes the same Scenario moves as t
   inspect(
     tally.to_string(),
     content=(
-      #|exact path: 880
-      #|path pattern: 1332
-      #|no path: 1798
-      #|ephemeral: 352
-      #|no match: 7638
-      #|with an operator: 626
-      #|with a cookie condition: 315
-      #|Scenario moved: 244
+      #|exact path: 886
+      #|path pattern: 1328
+      #|no path: 1805
+      #|ephemeral: 353
+      #|no match: 7628
+      #|with an operator: 683
+      #|with a cookie condition: 307
+      #|Scenario moved: 246
       #|Scenario kept: 674
     ),
   )
@@ -256,8 +255,8 @@ fn gen_ephemeral_stubs(rand : @random.Rand) -> Array[(String, String?, Json)] {
 ///|
 /// A generated definition set: its Definition files as (name, JSON text),
 /// the kind of path condition of each Stub, by Stub ID, the IDs of the
-/// Stubs with an operator in a query, header or cookie condition, and the
-/// IDs of the Stubs with a cookie condition.
+/// Stubs with an operator in a query, header, cookie or `json` condition,
+/// and the IDs of the Stubs with a cookie condition.
 struct GeneratedSet {
   files : Array[(String, String)]
   kinds : Map[String, String]
@@ -388,6 +387,9 @@ fn gen_stub(rand : @random.Rand, id : String) -> (Json, String) {
           { "k": 1 },
           { "k": [1, 2] },
           Json::empty_object(),
+          { "k": { "$includes": 2 } },
+          { "z": { "$exists": false } },
+          { "$not": { "k": 1 } },
         ]
         { "json": values[rand.int(limit=values.length())] }
       }

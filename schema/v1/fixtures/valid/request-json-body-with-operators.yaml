@@ -1,0 +1,28 @@
+mocks:
+  - name: orders
+stubs:
+  - id: create-order
+    mock: orders
+    request:
+      method: POST
+      path: /orders
+      body:
+        json:
+          tags: { $includes: urgent }
+          items: { $not: [] }
+          coupon: { $exists: true }
+          gift: { $exists: false }
+          lines: { $includes: { sku: { pattern: "A-.*" }, qty: { $not: 0 } } }
+          notes: { $not: { $includes: { $not: { pattern: ".+" } } } }
+          $$ref: "#/a"
+          $$schema: { $exists: true }
+    response:
+      status: 201
+  - id: any-json
+    mock: orders
+    request:
+      path: /orders
+      body:
+        json: { $exists: true }
+    response:
+      status: 400
