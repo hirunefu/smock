@@ -184,6 +184,11 @@ fn Incoming::body_meets(
         None => false
       }
     Form(fields) => {
+      // A body that is not a form fails even a condition with no field, as
+      // a body that is not JSON fails `json: {}`.
+      if self.form_fields() is None {
+        return false
+      }
       for i in 0..<fields.length() {
         if !self.form_meets(fields[i]) {
           return false
@@ -192,6 +197,10 @@ fn Incoming::body_meets(
       true
     }
     Xml(conditions) => {
+      // A body that is not XML fails even a condition with no path.
+      if self.body_xml() is None {
+        return false
+      }
       for i in 0..<conditions.length() {
         if !self.xml_meets(conditions[i]) {
           return false

@@ -114,24 +114,44 @@ test "a form condition holds only when the media type of the Content-Type is a f
 }
 
 ///|
-test "an empty form condition has no field to fail, so it holds for every body, as an empty query condition does" {
+test "an empty form condition holds only when the Content-Type says the body is a form, as an empty json condition needs JSON; its failure counts once, as body" {
   let h = stubs([
     (
-      #|{ "id": "any", "mock": "m", "request": { "body": { "form": {} } },
+      #|{ "id": "any-form", "mock": "m", "request": { "body": { "form": {} } },
       #|  "response": { "status": 200 } }
     ),
   ])
   inspect(
     posted(h, [
       (Some(form_type), "a=1"),
+      (Some(form_type), ""),
+      (Some("Application/X-WWW-Form-URLEncoded; charset=UTF-8"), "a=1"),
       (Some("application/json"), "{}"),
-      (None, ""),
+      (None, "a=1"),
     ]),
     content=(
-      #|[application/x-www-form-urlencoded] "a=1" -> any
-      #|[application/json] "{}" -> any
-      #|"" -> any
+      #|[application/x-www-form-urlencoded] "a=1" -> any-form
+      #|[application/x-www-form-urlencoded] "" -> any-form
+      #|[Application/X-WWW-Form-URLEncoded; charset=UTF-8] "a=1" -> any-form
+      #|[application/json] "{}" -> none
+      #|"a=1" -> none
     ),
+  )
+  json_inspect(
+    explanation(
+      h,
+      "POST",
+      "/",
+      headers=[("Content-Type", "application/json")],
+      body="{}",
+    ),
+    content={
+      "stub": "any-form",
+      "stubSource": "file",
+      "failed": [
+        { "condition": "body", "expected": { "form": {} }, "actual": ["{}"] },
+      ],
+    },
   )
 }
 

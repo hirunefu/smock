@@ -247,7 +247,7 @@
       "type": "object",
       "properties": {
         "form": {
-          "description": "Form fields, by name. They are decoded as query parameters are: `+` and `%20` both stand for a space, and a field without `=` has the empty value. Each listed field must be present, and one of its values must equal the given string or match the given pattern as a whole; when a field is repeated, any of its values may match. `$not` and `$exists` are about the field as a whole: see valueCondition. A request whose Content-Type is not a form's fails every listed field, `$not` included: its media type must be application/x-www-form-urlencoded, compared case-insensitively, with any parameters. An empty body with that Content-Type has no fields. Names are literal, even when they start with `$`. Fields that are not listed are ignored.",
+          "description": "Form fields, by name. They are decoded as query parameters are: `+` and `%20` both stand for a space, and a field without `=` has the empty value. Each listed field must be present, and one of its values must equal the given string or match the given pattern as a whole; when a field is repeated, any of its values may match. `$not` and `$exists` are about the field as a whole: see valueCondition. The condition holds only when the request's Content-Type is a form's: its media type must be application/x-www-form-urlencoded, compared case-insensitively, with any parameters. Any other Content-Type, or none, fails every listed field, `$not` included, and fails `{}`, which lists no field. An empty body with the form Content-Type has no fields. Names are literal, even when they start with `$`. Fields that are not listed are ignored.",
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/valueCondition" }
         }
@@ -256,7 +256,7 @@
       "additionalProperties": false
     },
     "xmlCondition": {
-      "description": "An xml condition: the body parses as XML, and the value at each path meets its condition. The Content-Type is not consulted. A body that is not well-formed XML fails every condition, `$not` included, and so does a body with a DOCTYPE, in an encoding other than UTF-8, or with elements nested more than 256 deep.",
+      "description": "An xml condition: the body parses as XML, and the value at each path meets its condition. The Content-Type is not consulted. A body that is not well-formed XML fails every condition, `$not` included, and fails `{}`, which lists no path; so does a body with a DOCTYPE, in an encoding other than UTF-8, or with elements nested more than 256 deep.",
       "type": "object",
       "properties": {
         "xml": {

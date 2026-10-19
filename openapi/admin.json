@@ -1646,7 +1646,7 @@
             "pattern": "^(method|path|body|query:[\\s\\S]*|header:.+|cookie:[\\s\\S]*|form:[\\s\\S]*|xml:/.+|scenario:[\\s\\S]+)$"
           },
           "expected": {
-            "description": "The condition as the Stub gives it, operators included: an exact string, a pattern, an operator such as `{\"$not\": ...}` or `{\"$exists\": false}`, or a json condition. For `scenario:<name>`, the state the Stub requires, as an exact string.",
+            "description": "The condition as the Stub gives it, operators included: an exact string, a pattern, an operator such as `{\"$not\": ...}` or `{\"$exists\": false}`, a json condition, or a form or xml condition with no field or path, `{\"form\": {}}` or `{\"xml\": {}}`, which fails as `body`. For `scenario:<name>`, the state the Stub requires, as an exact string.",
             "anyOf": [
               {
                 "$ref": "../schema/v1/definitions.json#/$defs/valueCondition"

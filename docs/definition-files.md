@@ -416,7 +416,8 @@ compared case-insensitively, with any parameters, such as
 first one counts. Any other Content-Type, or none, fails every listed
 field, `$not` and `$exists: false` included, so a JSON or text body never
 meets a form condition by accident. `{ "form": {} }` lists no field, so it
-holds for every request, as an empty `query` does.
+holds for any request whose Content-Type says the body is a form, as
+`{ "json": {} }` holds for any body that is a JSON object.
 
 The body is read as a form at most once per request, and only when smock
 tries a Stub with a `form` condition. `multipart/form-data` bodies are not
@@ -487,7 +488,8 @@ selects:
   `{ "$exists": true }` holds when it selects at least one, even an empty
   element.
 
-The Content-Type is not consulted, as for `json`. The body is parsed at
+The Content-Type is not consulted, as for `json`. `{ "xml": {} }` lists no
+path, so it holds for any body that parses as XML. The body is parsed at
 most once per request, and only when smock tries a Stub with an `xml`
 condition. smock reads a restricted form of XML, so that no request can
 read files or exhaust memory through it:
@@ -502,8 +504,8 @@ read files or exhaust memory through it:
 - It must be well-formed: one root element, matching tags, no repeated
   attribute, no `<` or bare `&` in text.
 
-A body that breaks one of these rules fails every `xml` condition, `$not`
-and `$exists: false` included. It is not an error: the request gets
+A body that breaks one of these rules fails every `xml` condition, even
+one with no path, and `$not` and `$exists: false` included. It is not an error: the request gets
 another Stub or the no-match response.
 
 Paths are compiled once, when smock loads the Definition files. A path
@@ -782,7 +784,9 @@ of an [`xml` condition](#xml-bodies), and the state a
 `path`, `query:<name>`, `header:<name>` (in lower case), `cookie:<name>`,
 `body`, `form:<name>` or `xml:<path>`, and `scenario:<name>`, in that
 order. A parameter, a header, a cookie, a form field or an XML path counts
-once whatever its condition, operators included. The header is ASCII only
+once whatever its condition, operators included. A `form` or `xml`
+condition with no field or path counts as `body`, as `{ "json": {} }`
+does. The header is ASCII only
 and never carries what a condition expects or what the request sent: the
 Stub ID, query, header, cookie, form field and Scenario names, and XML
 paths are percent-encoded where they hold anything other than the

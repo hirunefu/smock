@@ -271,6 +271,43 @@ test "a body that is not well-formed XML, or has a DOCTYPE, another encoding or 
 }
 
 ///|
+test "an empty xml condition holds only for a body that parses as XML, as an empty json condition needs JSON; its failure counts once, as body" {
+  let h = stubs([
+    (
+      #|{ "id": "any-xml", "mock": "m", "request": { "body": { "xml": {} } },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  inspect(
+    winners(h, [
+      ("POST", "/", [], "<a/>"),
+      ("POST", "/", [("Content-Type", "application/json")], "<a>1</a>"),
+      ("POST", "/", [], "{}"),
+      ("POST", "/", [], "<a><b></a>"),
+      ("POST", "/", [], ""),
+    ]),
+    content=(
+      #|POST / "<a/>" -> any-xml
+      #|POST / [Content-Type: application/json] "<a>1</a>" -> any-xml
+      #|POST / "{}" -> none
+      #|POST / "<a><b></a>" -> none
+      #|POST / -> none
+    ),
+  )
+  json_inspect(explanation(h, "POST", "/", body="<a><b></a>"), content={
+    "stub": "any-xml",
+    "stubSource": "file",
+    "failed": [
+      {
+        "condition": "body",
+        "expected": { "xml": {} },
+        "actual": ["<a><b></a>"],
+      },
+    ],
+  })
+}
+
+///|
 test "the Content-Type is not consulted: an XML body matches whatever the request says it is" {
   let h = stubs([
     (
