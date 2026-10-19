@@ -577,13 +577,17 @@ curl localhost:8080/users/1                                           # 200, fro
 - `GET /v1/mocks/{mock}/scenarios` lists the calling Session's Scenarios of
   the Mock, those its file Stubs and the Session's own Ephemeral Stubs
   name, by name. Each has its current `state` and its known `states`:
-  `Started` first, then every state those Stubs name for it.
+  `Started` first, then every state those Stubs name for it. A Scenario
+  that the Session still holds a state for after it deleted the Ephemeral
+  Stubs that named it is listed too, with `["Started"]` as its known
+  states.
   `PUT /v1/mocks/{mock}/scenarios/{scenario}` with `{"state":"Paid"}` sets
   the state for the calling Session, so that a test can start in the middle
-  of a flow; `{"state":"Started"}` resets one Scenario. A Scenario that no
-  such Stub names gets 404 `unknown_scenario`, and a state outside the
-  known states 400 `unknown_state`, so a typo cannot leave a Scenario in a
-  state that nothing matches.
+  of a flow; `{"state":"Started"}` resets one Scenario, including one that
+  only a deleted Ephemeral Stub named, which clears its state. A Scenario
+  that the list does not show gets 404 `unknown_scenario`, and a state
+  outside the known states 400 `unknown_state`, so a typo cannot leave a
+  Scenario in a state that nothing matches.
 - `GET` lists and `DELETE /v1/mocks/{mock}/stubs/{id}` deletes the calling
   Session's Ephemeral Stubs of the Mock. `POST /v1/reset` with
   `{"scope":"session"}` clears the calling Session's Ephemeral Stubs,
