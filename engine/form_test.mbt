@@ -156,6 +156,37 @@ test "an empty form condition holds only when the Content-Type says the body is 
 }
 
 ///|
+test "with several Content-Type fields, the first one says whether the body is a form" {
+  let h = stubs([
+    (
+      #|{ "id": "alice", "mock": "m",
+      #|  "request": { "body": { "form": { "username": "alice" } } },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  inspect(
+    winners(h, [
+      (
+        "POST",
+        "/",
+        [("Content-Type", form_type), ("Content-Type", "application/json")],
+        "username=alice",
+      ),
+      (
+        "POST",
+        "/",
+        [("Content-Type", "application/json"), ("content-type", form_type)],
+        "username=alice",
+      ),
+    ]),
+    content=(
+      #|POST / [Content-Type: application/x-www-form-urlencoded] [Content-Type: application/json] "username=alice" -> alice
+      #|POST / [Content-Type: application/json] [content-type: application/x-www-form-urlencoded] "username=alice" -> none
+    ),
+  )
+}
+
+///|
 test "a form field takes patterns, $not and $exists as a query parameter does: a repeated field matches when any value does, and $not when none does" {
   let one = (stub : String) => {
     stubs([
@@ -412,6 +443,59 @@ test "the Journal keeps the values of failed form fields up to its body limit in
       #|2 entries, 1192 bytes, 0 evicted
     ),
   )
+}
+
+///|
+test "a form value that decodes longer than the body, as each byte that is not UTF-8 becomes U+FFFD, is cut to the Journal body limit though the body is not" {
+  let h = harness(
+    [
+      (
+        "m.json",
+        (
+          #|{ "mocks": [{ "name": "m" }],
+          #|  "stubs": [{ "id": "u", "mock": "m",
+          #|    "request": { "body": { "form": { "u": "x" } } },
+          #|    "response": { "status": 200 } }] }
+        ),
+      ),
+    ],
+    journal=@engine.JournalSettings(body_limit=20),
+  )
+  // 14 bytes, whose value decodes to twelve U+FFFD, 36 bytes in UTF-8.
+  let body = b"u=\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+  let outcome = h.engine.handle(
+    {
+      meth: "POST",
+      target: "/",
+      version: "HTTP/1.1",
+      headers: [("Content-Type", form_type)],
+      body,
+    },
+    session=None,
+    now=h.now,
+    rand=h.rand,
+  )
+  guard outcome.journal is Some(entry) else { fail("no entry") }
+  h.engine.commit(entry)
+  json_inspect(h.answered(None), content={
+    "host": null,
+    "mock": "m",
+    "viaDefault": true,
+    "stub": null,
+    "nearMiss": {
+      "stub": "u",
+      "stubSource": "file",
+      "failed": [
+        {
+          "condition": "form:u",
+          "expected": "x",
+          "actual": ["������"],
+        },
+      ],
+    },
+    "status": 404,
+    "fault": null,
+  })
 }
 
 ///|
