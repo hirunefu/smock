@@ -514,8 +514,8 @@ problem on stderr.
 
 [docs/definition-files.md](docs/definition-files.md) describes the format:
 how Stubs match requests (method, path, query parameters, headers and
-body, exactly, by RE2 pattern or as JSON, and negated or by presence with
-`$not` and `$exists`), the order they are tried in (priority, then
+body, exactly, by RE2 pattern, as JSON or by paths into XML, and negated or
+by presence with `$not` and `$exists`), the order they are tried in (priority, then
 file-name order), what a Mock answers when nothing matches, responses with
 inline bodies, body files, JSON or Server-Sent Events, response templates,
 Faults, the JSON Schema, editor support and writing Definition files in

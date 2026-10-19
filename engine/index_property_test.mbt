@@ -77,12 +77,14 @@ let index_requests_per_case : Int = 40
 ///|
 /// What the generated requests matched, to show that the property test
 /// reaches every kind of Stub and requests that match nothing, Stubs with
-/// operators, and Stubs that move a Scenario or keep its state.
+/// operators or `xml` conditions, and Stubs that move a Scenario or keep
+/// its state.
 struct IndexTally {
   /// The number of requests per kind of Stub that answered them: `exact
   /// path`, `path pattern` or `no path` for a Stub from a Definition file,
   /// `ephemeral` for an Ephemeral Stub, or `no match`; the number answered
-  /// by a Stub from a Definition file with an operator; and the number
+  /// by a Stub from a Definition file with an operator, and with an `xml`
+  /// condition; and the number
   /// answered by a Stub with a Scenario clause that moved its Scenario to
   /// another state, or kept it in the same one.
   counts : Map[String, Int]
@@ -98,6 +100,7 @@ fn IndexTally::IndexTally() -> IndexTally {
       ("ephemeral", 0),
       ("no match", 0),
       ("with an operator", 0),
+      ("with an xml condition", 0),
       ("Scenario moved", 0),
       ("Scenario kept", 0),
     ]),
@@ -118,14 +121,15 @@ test "the match index picks the same Stub and makes the same Scenario moves as t
   inspect(
     tally.to_string(),
     content=(
-      #|exact path: 881
-      #|path pattern: 1315
-      #|no path: 2026
-      #|ephemeral: 409
-      #|no match: 7369
-      #|with an operator: 398
-      #|Scenario moved: 253
-      #|Scenario kept: 813
+      #|exact path: 885
+      #|path pattern: 1233
+      #|no path: 1874
+      #|ephemeral: 391
+      #|no match: 7617
+      #|with an operator: 351
+      #|with an xml condition: 16
+      #|Scenario moved: 238
+      #|Scenario kept: 756
     ),
   )
 }
@@ -188,6 +192,10 @@ fn check_index_case(case : Int, tally : IndexTally) -> Unit raise {
     if matched_id(outcome) is Some(id) && generated.with_operators.contains(id) {
       tally.counts["with an operator"] = tally.counts["with an operator"] + 1
     }
+    if matched_id(outcome) is Some(id) && generated.with_xml.contains(id) {
+      tally.counts["with an xml condition"] = tally.counts["with an xml condition"] +
+        1
+    }
     if outcome.scenario is Some({ from, to, .. }) {
       let kind = if from == to { "Scenario kept" } else { "Scenario moved" }
       tally.counts[kind] = tally.counts.get(kind).unwrap_or(0) + 1
@@ -247,12 +255,14 @@ fn gen_ephemeral_stubs(rand : @random.Rand) -> Array[(String, String?, Json)] {
 
 ///|
 /// A generated definition set: its Definition files as (name, JSON text),
-/// the kind of path condition of each Stub, by Stub ID, and the IDs of the
-/// Stubs with an operator in a query or header condition.
+/// the kind of path condition of each Stub, by Stub ID, the IDs of the
+/// Stubs with an operator in a query, header or `xml` condition, and the
+/// IDs of the Stubs with an `xml` condition.
 struct GeneratedSet {
   files : Array[(String, String)]
   kinds : Map[String, String]
   with_operators : Set[String]
+  with_xml : Set[String]
 }
 
 ///|
@@ -271,7 +281,7 @@ fn chance(rand : @random.Rand, percent : Int) -> Bool {
 ///|
 /// Generates a definition set of two Mocks, `m`, the Default Mock, and
 /// `o`, whose Stubs are spread over one to four files. The Stubs mix exact,
-/// pattern, operator and `json` conditions, some with a priority and some
+/// pattern, operator, `json` and `xml` conditions, some with a priority and some
 /// without, and many share exact paths and priorities, so that ties are
 /// decided by file-name order and position in the file.
 fn gen_definition_set(rand : @random.Rand) -> GeneratedSet {
@@ -289,6 +299,7 @@ fn gen_definition_set(rand : @random.Rand) -> GeneratedSet {
   ]
   let kinds = Map([])
   let with_operators = Set([])
+  let with_xml = Set([])
   let mut next_id = 0
   for name in names[:1 + rand.int(limit=4)] {
     let stubs = []
@@ -301,11 +312,14 @@ fn gen_definition_set(rand : @random.Rand) -> GeneratedSet {
       if stub.stringify().contains("\"$") {
         with_operators.add(id)
       }
+      if stub.stringify().contains("\"xml\"") {
+        with_xml.add(id)
+      }
     }
     let file : Json = { "stubs": Json::array(stubs) }
     files.push((name, file.stringify()))
   }
-  { files, kinds, with_operators, }
+  { files, kinds, with_operators, with_xml, }
 }
 
 ///|
@@ -358,9 +372,18 @@ fn gen_stub(rand : @random.Rand, id : String) -> (Json, String) {
     )
   }
   if chance(rand, 25) {
-    request["body"] = match rand.int(limit=3) {
+    request["body"] = match rand.int(limit=4) {
       0 => Json::string(pick(rand, ["hi", "{\"k\":1}"]))
       1 => gen_pattern(rand, ["h.*", "\\{.*"])
+      2 =>
+        {
+          "xml": gen_value_conditions(
+            rand,
+            ["/k", "/k/@v", "/a/k"],
+            ["1", "2"],
+            ["[0-9]+"],
+          ),
+        }
       _ => {
         let values : Array[Json] = [
           { "k": 1 },
@@ -457,6 +480,7 @@ fn gen_request(rand : @random.Rand) -> @engine.Request {
   }
   let body = pick(rand, [
     "", "hi", "{\"k\":1}", "{\"k\":[1,2]}", "{\"k\": 1, \"z\": 0}", "[1]", "hello",
+    "<k>1</k>", "<k v='2'>1</k>", "<k/>", "<a><k>2</k></a>",
   ])
   {
     meth: pick(rand, ["GET", "GET", "GET", "POST", "PUT", "get"]),

@@ -1491,7 +1491,7 @@
             "oneOf": [{ "$ref": "#/components/schemas/ScenarioMove" }, { "type": "null" }]
           },
           "nearMiss": {
-            "description": "When no Stub matched and the Mock had candidate Stubs: the Near miss. Otherwise null. The actual value of a failed body condition is truncated as the recorded request body is.",
+            "description": "When no Stub matched and the Mock had candidate Stubs: the Near miss. Otherwise null. The actual value of a failed body condition, and each actual value of a failed XML path, is truncated as the recorded request body is.",
             "oneOf": [
               {
                 "$ref": "#/components/schemas/NearMiss"
@@ -1614,7 +1614,7 @@
         "additionalProperties": false
       },
       "NearMiss": {
-        "description": "The Stub that came closest to matching a request that matched nothing: the candidate with the fewest failed conditions, the earlier one in matching order on a tie. Each of method, path, each listed query parameter, each listed header, body, and the state a `scenario` clause requires counts as one condition.",
+        "description": "The Stub that came closest to matching a request that matched nothing: the candidate with the fewest failed conditions, the earlier one in matching order on a tie. Each of method, path, each listed query parameter, each listed header, body, each path of an xml body condition, and the state a `scenario` clause requires counts as one condition.",
         "type": "object",
         "properties": {
           "stub": {
@@ -1626,7 +1626,7 @@
             "enum": ["file", "ephemeral"]
           },
           "failed": {
-            "description": "The conditions it failed, in the order method, path, query parameters, headers, body, Scenario state.",
+            "description": "The conditions it failed, in the order method, path, query parameters, headers, body or XML paths, Scenario state.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/FailedCondition"
@@ -1641,9 +1641,9 @@
         "type": "object",
         "properties": {
           "condition": {
-            "description": "The condition: `method`, `path`, `query:<name>`, `header:<name>` (in lower case), `body` or `scenario:<name>`, the state the Stub's `scenario` clause requires of the Scenario with that name. Names are as the Stub gives them; the `Smock-Near-Miss` header carries the same conditions with each name percent-encoded. A query parameter name can be any text, even empty.",
+            "description": "The condition: `method`, `path`, `query:<name>`, `header:<name>` (in lower case), `body`, `xml:<path>`, a path of an xml body condition, or `scenario:<name>`, the state the Stub's `scenario` clause requires of the Scenario with that name. Names and paths are as the Stub gives them; the `Smock-Near-Miss` header carries the same conditions with each name and path percent-encoded. A query parameter name can be any text, even empty.",
             "type": "string",
-            "pattern": "^(method|path|body|query:[\\s\\S]*|header:.+|scenario:[\\s\\S]+)$"
+            "pattern": "^(method|path|body|query:[\\s\\S]*|header:.+|xml:/.+|scenario:[\\s\\S]+)$"
           },
           "expected": {
             "description": "The condition as the Stub gives it, operators included: an exact string, a pattern, an operator such as `{\"$not\": ...}` or `{\"$exists\": false}`, or a json condition. For `scenario:<name>`, the state the Stub requires, as an exact string.",
@@ -1657,7 +1657,7 @@
             ]
           },
           "actual": {
-            "description": "The values the request carries for the condition, in order: one for method, path and body; every value of a query parameter or header, which may be repeated; none when it is absent. For `scenario:<name>`, the one state the Scenario is in for the request's Session: `Started` when the Session has not moved it. A body that is not UTF-8 is shown with U+FFFD in place of each sequence that is not; the Journal entry's request body keeps its bytes.",
+            "description": "The values the request carries for the condition, in order: one for method, path and body; every value of a query parameter or header, which may be repeated, or of the nodes an XML path selects; none when it is absent, or when the body is not XML. For `scenario:<name>`, the one state the Scenario is in for the request's Session: `Started` when the Session has not moved it. A body that is not UTF-8 is shown with U+FFFD in place of each sequence that is not; the Journal entry's request body keeps its bytes.",
             "type": "array",
             "items": {
               "type": "string"

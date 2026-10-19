@@ -90,7 +90,7 @@ Stub without `request` matches every request of its Mock.
 | `path` | its path, percent-decoded and without the query, is exactly this. `/users/a%20b` meets `"/users/a b"`. `{ "pattern": … }`: the pattern matches the whole path. |
 | `query` | each listed parameter is present, and one of its values, decoded, is exactly the given value, or matches the given `{ "pattern": … }` as a whole. [`$not` and `$exists`](#negation-and-presence) are about the parameter as a whole. Parameters that are not listed are ignored. |
 | `headers` | each listed header is present, its name compared case-insensitively, and one of its values is exactly the given value, or matches the given `{ "pattern": … }` as a whole. [`$not` and `$exists`](#negation-and-presence) are about the header as a whole. Headers that are not listed are ignored. |
-| `body` | a string: the body is exactly this text in UTF-8. `{ "pattern": … }`: the pattern matches the whole body. `{ "json": … }`: the body parses as JSON and contains the given value, which may hold patterns. |
+| `body` | a string: the body is exactly this text in UTF-8. `{ "pattern": … }`: the pattern matches the whole body. `{ "json": … }`: the body parses as JSON and contains the given value, which may hold patterns. `{ "xml": … }`: the body parses as XML, and the value at each [path](#xml-bodies) meets its condition. |
 
 Query parameters are decoded as HTML forms encode them: `%20` and `+` both
 stand for a space, so `?q=a+b` meets `"query": { "q": "a b" }`. A parameter
@@ -166,9 +166,9 @@ pattern. Unlike an exact value, the inner pattern also meets a number,
 
 ### Pattern conditions
 
-The path, a query parameter, a header, the body and a value inside a
-`json` condition can each be given as a pattern instead of an exact value,
-in RE2 syntax:
+The path, a query parameter, a header, the body, a value inside a `json`
+condition and the value at an [XML path](#xml-bodies) can each be given as
+a pattern instead of an exact value, in RE2 syntax:
 
 ```json
 {
@@ -222,8 +222,9 @@ users.json: /stubs/2/request/body/json/email/pattern: is not a valid pattern: po
 
 ### Negation and presence
 
-A query parameter's or a header's value can also be an operator: an object
-whose only key starts with `$`.
+A query parameter's or a header's value, or the value at an
+[XML path](#xml-bodies), can also be an operator: an object whose only key
+starts with `$`.
 
 - `{ "$not": <condition> }` holds exactly when the condition does not.
   `<condition>` is an exact value, a pattern or another operator.
@@ -269,6 +270,98 @@ convention, so the message about an unknown operator suggests it:
 users.json: /stubs/0/request/query/status/$nto: is not an operator: the operators here are $not, $exists; write $$nto for a literal key that starts with $
 users.json: /stubs/1/request/headers/Authorization/pattern: is not allowed beside "$not": an operator is the only key of its object
 users.json: /stubs/2/request/query/debug/$exists: must be true or false
+```
+
+### XML bodies
+
+An `xml` body condition maps paths into an XML body to value conditions.
+It matches SOAP and other XML requests by meaning rather than by bytes:
+
+```yaml
+request:
+  method: POST
+  path: /soap
+  body:
+    xml:
+      /Envelope/Body/GetUser/id: "42"
+      /Envelope/Body/GetUser/@lang: { pattern: "en|ja" }
+      /Envelope/Header/Trace: { $exists: false }
+```
+
+This Stub answers a request for user 42, in English or Japanese, without a
+`Trace` header element, such as
+
+```xml
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <u:GetUser xmlns:u="urn:users" lang="en">
+      <u:id>42</u:id>
+    </u:GetUser>
+  </soap:Body>
+</soap:Envelope>
+```
+
+A path is `/` followed by one or more element names separated by `/`,
+optionally ending in `/@` and an attribute name:
+
+- The first name is the root element's. Each further name selects the
+  children with that name of the elements selected so far. A final
+  `@name` selects that attribute of each of them.
+- Names are local names. A prefix in the body is ignored, so a client that
+  writes `S:Envelope` instead of `soap:Envelope` still matches, and a path
+  names no prefix. Namespace URIs are not compared, so elements that
+  differ only by namespace cannot be told apart.
+- There are no wildcards, predicates, indexes, `//`, axes or functions.
+
+What a node's value is:
+
+- An element's value is all the text in it and in its descendants, in
+  order, CDATA included, trimmed of whitespace at both ends. So
+  `<id>\n  42\n</id>` and `<id><![CDATA[42]]></id>` both have the value
+  `42`, and comments in the text are skipped.
+- An attribute's value is its text with each tab and line break turned
+  into a space.
+- References are decoded: `&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`, and
+  character references such as `&#38;`.
+- Namespace declarations, `xmlns` and `xmlns:p`, are not attributes, so
+  a path that ends in `@xmlns` makes the definition set invalid.
+
+The condition is any value condition: an exact value, a pattern, `$not` or
+`$exists`. A path is a name whose values are the values of the nodes it
+selects:
+
+- When a path selects several nodes, such as repeated elements, the
+  condition holds when any one of them meets it.
+- When it selects none, only `$not` and `$exists: false` hold.
+  `{ "$exists": true }` holds when it selects at least one, even an empty
+  element.
+
+The Content-Type is not consulted, as for `json`. The body is parsed at
+most once per request, and only when smock tries a Stub with an `xml`
+condition. A body that is not XML that smock reads fails every `xml`
+condition, `$not` and `$exists: false` included; it is not an error, and
+the request gets another Stub or the no-match response. smock reads a
+restricted form of XML, so that no request can read files or exhaust
+memory through it:
+
+- The body is UTF-8, optionally with a byte order mark. An XML declaration
+  that names another encoding fails.
+- Any DOCTYPE fails, so no entity is ever declared or expanded. This rules
+  out external entities (XXE) and entity expansion bombs. Only the five
+  predefined entities and character references are decoded.
+- Elements nest at most 256 deep.
+- The body is no longer than `--body-limit` allows (10 MiB by default).
+- It must be well-formed: one root element, matching tags, no repeated
+  attribute, no `<` or bare `&` in text.
+
+Paths are compiled once, when smock loads the Definition files. A path
+that does not compile makes the definition set invalid, with the JSON
+Pointer of the path and the position of the problem in it, counted in
+characters from 0. A `/` in a path is written `~1` in a JSON Pointer:
+
+```console
+soap.json: /stubs/0/request/body/xml/~1Envelope~1~1id: is not a valid XML path: position 9: // (descendants) is not supported in smock's XML paths
+soap.json: /stubs/1/request/body/xml/~1soap:Envelope: is not a valid XML path: position 1: prefix soap: is not supported in smock's XML paths; name the local name only
 ```
 
 ### Which Stub answers
@@ -530,14 +623,16 @@ The Near miss is the Stub of the Mock that failed the fewest conditions; on
 a tie, the one tried first. The request's Ephemeral Stubs are candidates
 too, in the order they are tried, and the header names them by their ID,
 such as `eph-3`. Each of these counts as one condition: the method, the
-path, each listed query parameter, each listed header, the body, and the
-state a [`scenario` clause](#scenarios) requires. They are named `method`,
-`path`, `query:<name>`, `header:<name>` (in lower case), `body` and
-`scenario:<name>`, in that order. A parameter or a header counts once
-whatever its condition, operators included. The header is ASCII only and never
-carries what a condition expects or what the request sent: the Stub ID and
-query, header and Scenario names are percent-encoded where they hold
-anything other than the characters of an HTTP token. A Mock without Stubs,
+path, each listed query parameter, each listed header, the body or each
+path of an [`xml` condition](#xml-bodies), and the state a
+[`scenario` clause](#scenarios) requires. They are named `method`, `path`,
+`query:<name>`, `header:<name>` (in lower case), `body` or `xml:<path>`,
+and `scenario:<name>`, in that order. A parameter, a header or an XML path
+counts once whatever its condition, operators included. The header is
+ASCII only and never carries what a condition expects or what the request
+sent: the Stub ID, query, header and Scenario names, and XML paths are
+percent-encoded where they hold anything other than the characters of an
+HTTP token, so `/order/@status` is sent as `xml:%2Forder%2F%40status`. A Mock without Stubs,
 and a request for a Host that no Mock answers, get no `Smock-Near-Miss`
 header.
 
@@ -552,8 +647,9 @@ with `GET /v1/journal/unmatched`
 
 What the Stub expects is the condition as the Stub writes it, operators
 included. What the request sent is every value of the parameter or header,
-in order, and none when it is absent. A request with `Authorization: Bearer
-abc` fails the [negation example](#negation-and-presence) like this:
+or of the nodes an XML path selects, in order, and none when it is absent
+or the body is not XML. A request with `Authorization: Bearer abc` fails
+the [negation example](#negation-and-presence) like this:
 
 ```json
 {
@@ -567,7 +663,8 @@ What the request sent is shown as text. A body that is not valid UTF-8 is
 shown with U+FFFD in place of each sequence that is not, so a failed exact
 `body` condition can show an expected and an actual value that look the
 same. The Journal entry itself keeps the body's bytes, in base64, up to
-`--journal-body-limit`.
+`--journal-body-limit`, and the Near miss in it cuts the body, and each
+value taken from an XML body, to the same limit.
 
 `noMatch.headers` adds header fields to the response when no Stub
 matches, such as CORS headers. Without them, a browser client that calls
@@ -1270,7 +1367,9 @@ A Stub `s` is shadowed by an earlier Stub `t` when `t` has a subset of
 - `t` has no path, the same exact path as `s`, or a pattern that matches
   `s`'s exact path;
 - each of `t`'s query, header and body conditions is also in `s`, written
-  the same way (header names in any case), operators included;
+  the same way (header names in any case), operators included; each path
+  of `t`'s `xml` condition is in `s`'s, in any order, with the same
+  condition;
 - `t` has no `requires`, or `s` names the same [Scenario](#scenarios) with
   the same `requires`. `moveTo` plays no part, since it does not change
   whether a Stub matches.

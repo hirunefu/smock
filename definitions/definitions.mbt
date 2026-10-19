@@ -265,7 +265,8 @@ pub struct Conditions {
   /// for the values of the header with that name, as
   /// `ValueCondition::holds` says. Names are compared case-insensitively.
   headers : ReadOnlyArray[(String, ValueCondition)]
-  /// The body.
+  /// The body: its text, a pattern, a `json` condition, or conditions on
+  /// the values at paths into it as XML.
   body : BodyCondition?
 } derive(Debug, Eq)
 
@@ -384,6 +385,12 @@ pub enum BodyCondition {
   Pattern(Pattern)
   /// The body parses as JSON and contains the condition's value.
   Json(JsonCondition)
+  /// An `xml` condition, as (path, condition): the body parses as XML, and
+  /// each condition holds for the values of the nodes its path selects, as
+  /// `ValueCondition::holds` says, a path that selects nothing being a name
+  /// that is absent. A body that does not parse fails every one of them,
+  /// operators included.
+  Xml(ReadOnlyArray[(@xml.Path, ValueCondition)])
 } derive(Debug, Eq)
 
 ///|
