@@ -29,8 +29,35 @@ test "parse once, then select several paths" {
 - `Document::select(path)` returns the values of the nodes the path
   selects, in document order. It returns none when the path selects
   nothing.
+- `Document::first_node(path)` and `Document::next_node(path, node)` walk
+  the same nodes one at a time, and return -1 after the last.
+  `Document::value_is(path, node, text)` compares a node's value with a
+  string in place, and `Document::utf8_value(path, node)` gives the value
+  in UTF-8. None of them allocates, except `utf8_value` for a value that
+  needs decoding, such as text with a reference or CDATA.
 - A `Path` shows as it is written, and two paths are equal when they are
   written the same.
+
+Walking suits a matcher that only needs to know whether some node has a
+value: it reads no value it does not need, and builds no array or string.
+
+```mbt check
+///|
+test "walk the nodes and compare their values in place" {
+  let document = @xml.parse(
+    b"<order><item sku='a-1'/><item sku='b-2'/></order>"[:],
+  )
+  let skus = @xml.compile_path("/order/item/@sku")
+  let mut found = false
+  let mut node = document.first_node(skus)
+  while node >= 0 && !found {
+    found = document.value_is(skus, node, "b-2")
+    node = document.next_node(skus, node)
+  }
+  inspect(found, content="true")
+  inspect(document.first_node(@xml.compile_path("/order/note")), content="-1")
+}
+```
 
 Both errors carry a position and a message, and show as
 `position <n>: <message>`. A `ParseError`'s position is a byte offset into
@@ -160,7 +187,9 @@ not bound the size of the input; smock bounds the size of a request body.
 A document refers to the input rather than copying it, and keeps only
 where each element's name starts and how deep the element is: five bytes
 per element. A path's values are read from the input when it selects
-them, so selecting takes time linear in the size of the document.
+them. Selecting, or walking every node a path selects, takes time linear
+in the size of the document, and a binary search among the elements for
+each element whose attributes it selects.
 
 ### Differences from XML 1.0 and Namespaces in XML
 

@@ -1,8 +1,16 @@
 #!/bin/sh
 # Prints the notes of a GitHub release in Markdown. They name the MoonBit
-# toolchain the release was built with, say that the binaries need OpenSSL
-# at run time, and point to LICENSE and NOTICE. The release workflow
-# (.github/workflows/release.yml) uses them.
+# toolchain the release was built with, carry the version's changes from
+# CHANGELOG.md, say that the binaries need OpenSSL at run time, and point to
+# LICENSE and NOTICE. The release workflow (.github/workflows/release.yml)
+# uses them.
+#
+# The changes are the lines under the CHANGELOG.md heading
+# "## [<version>]". A version that is not a pre-release must have them, or
+# the script fails, so that no release goes out without its changes. A
+# pre-release (<version>-<pre-release>, such as 0.2.0-rc.1, or the
+# development version of a run by hand) takes its own section, else that of
+# the version it leads up to, else "## [Unreleased]", else none.
 #
 # usage: scripts/release-notes.sh <version> <commit> <toolchain> <image>
 # example: scripts/release-notes.sh 0.1.0 0123456789ab "moonc v0.10.14+7d59c7ec9" ghcr.io/hirunefu/smock
@@ -14,6 +22,49 @@ if [ "$#" -ne 4 ]; then
 fi
 version=$1 commit=$2 toolchain=$3 image=$4
 readme=https://github.com/hirunefu/smock/blob/v$version/README.md
+changelog=$(dirname "$0")/../CHANGELOG.md
+
+if [ ! -f "$changelog" ]; then
+  echo "release-notes: $changelog does not exist" >&2
+  exit 1
+fi
+
+# Prints the section of CHANGELOG.md under the heading "## [$1]", which a
+# date may follow: the lines up to the next such heading or the link
+# definitions at the end, without blank lines at either end. Prints nothing
+# when there is no such section.
+section() {
+  awk -v heading="## [$1]" '
+    index($0, heading) == 1 && (length($0) == length(heading) || substr($0, length(heading) + 1, 1) == " ") {
+      found = 1
+      next
+    }
+    found && (/^## / || /^\[[^]]*\]: /) { exit }
+    found { lines[++n] = $0 }
+    END {
+      first = 1
+      while (first <= n && lines[first] == "") first++
+      last = n
+      while (last >= first && lines[last] == "") last--
+      for (i = first; i <= last; i++) print lines[i]
+    }
+  ' "$changelog"
+}
+
+case $version in
+*-*)
+  changes=$(section "$version")
+  [ -n "$changes" ] || changes=$(section "${version%%-*}")
+  [ -n "$changes" ] || changes=$(section Unreleased)
+  ;;
+*)
+  changes=$(section "$version")
+  if [ -z "$changes" ]; then
+    echo "release-notes: CHANGELOG.md has no section for $version. Move its changes from \"## [Unreleased]\" to \"## [$version] - <date>\" before tagging v$version (docs/releasing.md)." >&2
+    exit 1
+  fi
+  ;;
+esac
 
 cat <<NOTES
 smock $version, built from commit \`$commit\` with the MoonBit toolchain
@@ -23,6 +74,13 @@ the binaries:
 \`\`\`
 smock $version (commit $commit, $toolchain)
 \`\`\`
+NOTES
+
+if [ -n "$changes" ]; then
+  printf '\n## Changes\n\n%s\n' "$changes"
+fi
+
+cat <<NOTES
 
 ## Container image
 

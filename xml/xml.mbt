@@ -11,7 +11,7 @@ pub struct Document {
   priv input : BytesView
   /// Where the local name of each element starts in `input`, in document
   /// order: the order of their start tags, the root element's first.
-  priv names : Array[Int]
+  priv name_starts : Array[Int]
   /// How deep each of them is, less one: 0 for the root element.
   priv depths : Array[Byte]
 }
@@ -56,5 +56,5 @@ pub impl Show for ParseError with fn output(self, logger) {
 pub fn parse(input : BytesView) -> Document raise ParseError {
   let parser = Parser::new(input)
   parser.document()
-  { input, names: parser.names, depths: parser.depths, }
+  { input, name_starts: parser.name_starts, depths: parser.depths, }
 }

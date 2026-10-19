@@ -14,7 +14,7 @@ priv struct Parser {
   attribute_ends : Array[Int]
   /// Where the local name of each element read so far starts, in document
   /// order: the order of their start tags.
-  names : Array[Int]
+  name_starts : Array[Int]
   /// How deep each of them is, less one: 0 for the root element.
   depths : Array[Byte]
   /// Where the start tag of each open element begins, the root element's
@@ -28,13 +28,14 @@ priv struct Parser {
 }
 
 ///|
+/// A parser at the start of `input`, which has read nothing yet.
 fn Parser::new(input : BytesView) -> Parser {
   {
     input,
     pos: 0,
     attribute_starts: [],
     attribute_ends: [],
-    names: [],
+    name_starts: [],
     depths: [],
     open_tags: [],
     open_name_starts: [],
@@ -44,8 +45,10 @@ fn Parser::new(input : BytesView) -> Parser {
 
 ///|
 /// How deep elements may nest, the root element being at depth 1. A deeper
-/// document is refused, so that selection, which recurses into elements,
-/// stays within a bounded stack.
+/// document is refused. Neither parsing nor selection recurses, so the
+/// limit is not about the stack: it bounds the elements the parser keeps
+/// open, and lets a document keep each element's depth, less one, in a
+/// byte.
 let max_depth = 256
 
 ///|
@@ -376,7 +379,7 @@ fn Parser::start_tag(self : Parser) -> Unit raise ParseError {
   let name_start = self.pos
   self.qualified_name()
   let name_end = self.pos
-  self.names.push(local_start(self.input, name_start, name_end))
+  self.name_starts.push(local_start(self.input, name_start, name_end))
   self.depths.push(self.open_tags.length().to_byte())
   self.attribute_starts.clear()
   self.attribute_ends.clear()

@@ -163,7 +163,10 @@ priv enum Failed {
   Query(String, @definitions.ValueCondition)
   Header(String, @definitions.ValueCondition)
   Cookie(String, @definitions.ValueCondition)
-  /// An exact, pattern or `json` condition on the body.
+  /// A condition on the body as a whole: an exact, pattern or `json`
+  /// condition, or a `form` or `xml` condition with no field or path,
+  /// which fails when the request's Content-Type does not say the body is
+  /// a form, or the body is not XML.
   Body(@definitions.BodyCondition)
   Form(String, @definitions.ValueCondition)
   Xml(@xml.Path, @definitions.ValueCondition)
@@ -337,8 +340,10 @@ fn Incoming::explain(self : Incoming, failed : Failed) -> FailedCondition {
 /// What a value condition expects, as the Stub writes it.
 fn expected(condition : @definitions.ValueCondition) -> Expected {
   match condition {
-    Exact(text) => Exact(text)
-    Pattern(pattern) => Pattern(pattern.source)
+    Has(Exact(text)) => Exact(text)
+    Has(Pattern(pattern)) => Pattern(pattern.source)
+    // The test that every value passes is that of `$exists: true`.
+    Has(Any) => Exists(true)
     Not(inner) => Not(expected(inner))
     Exists(present) => Exists(present)
   }

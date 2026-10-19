@@ -264,15 +264,17 @@ test "the snapshot holds each pattern compiled when the set is loaded, ready to 
     content=(
       #|{
       #|  meth: None,
-      #|  path: Some(Pattern(Pattern("/users/[0-9]+"))),
-      #|  query: <ReadOnlyArray: [("q", Pattern(Pattern("a|b")))]>,
-      #|  headers: <ReadOnlyArray: [("x-a", Pattern(Pattern("1+")))]>,
+      #|  path: Some(Has(Pattern(Pattern("/users/[0-9]+")))),
+      #|  query: <ReadOnlyArray: [("q", Has(Pattern(Pattern("a|b"))))]>,
+      #|  headers: <ReadOnlyArray: [("x-a", Has(Pattern(Pattern("1+"))))]>,
       #|  cookies: <ReadOnlyArray: []>,
       #|  body: Some(Pattern(Pattern("(?s).*"))),
       #|}
     ),
   )
-  guard request.path is Some(Pattern(path)) else { fail("no path pattern") }
+  guard request.path is Some(Has(Pattern(path))) else {
+    fail("no path pattern")
+  }
   debug_inspect(
     [
       path.matches(b"/users/42"),

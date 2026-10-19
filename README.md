@@ -679,13 +679,13 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   4 KiB of each body (`--journal-body-limit`), cut at a character boundary
   when the body is UTF-8. The Near miss of an entry keeps the values of
   form fields and XML paths up to the same limit in total, each counting
-  32 bytes more, so that many small values cannot outgrow the bound. When it is full, the oldest entries are evicted,
-  and smock counts the evicted entries of each Session: `evicted` in the
-  query's result says how many of the calling Session's entries may be
-  missing. Requests without a Session have their own count. A Session's
-  count is kept until that Session, or everything, is reset (a reset of
-  one Mock keeps it), so the counts grow with the number of Sessions whose
-  entries were evicted.
+  32 bytes more, so that many small values cannot outgrow the bound. When
+  the Journal is full, the oldest entries are evicted, and smock counts
+  the evicted entries of each Session: `evicted` in the query's result
+  says how many of the calling Session's entries may be missing. Requests
+  without a Session have their own count. A Session's count is kept until
+  that Session, or everything, is reset (a reset of one Mock keeps it), so
+  the counts grow with the number of Sessions whose entries were evicted.
 - `--journal off` records nothing, and a Mock with `"journal": false`
   ([docs/definition-files.md](docs/definition-files.md#turning-the-journal-off-for-a-mock))
   records none of its requests, so that a high-rate load test pays nothing

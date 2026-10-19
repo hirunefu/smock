@@ -17,3 +17,7 @@ The cgroup is read only by the native server (`server/memory_limit.mbt`); the ru
 
 - The same flags give a different Journal in a different Pod: under 52Mi the bound is 13 MiB, about 8,400 entries of the benchmark's mix, so the byte bound, not the 10,000-entry bound, decides when entries are evicted there. From a 256Mi limit up nothing changes. The startup log says which bound is in use and why.
 - The default is no longer one number, so `smock serve --help` describes the rule instead of printing a default for `--journal-max-bytes`.
+
+## Follow-up, 2026-10-20
+
+Request conditions on form fields and XML paths add values to what an entry counts. An entry's Near miss keeps the values of failed form fields and XML paths, in order, until their total reaches `--journal-body-limit`; the last one kept is cut, and the rest are left out. Each value kept counts its bytes and a fixed 32 bytes more (provisional), toward that total and toward the byte bound, so that a body with many empty or tiny values cannot make an entry take far more than it counts. Before the total and the 32 bytes, one 4 MiB request could keep tens of MiB in a single entry that counted under a kilobyte. This note does not change the decision.

@@ -130,6 +130,38 @@ test "an element's value is all the text in it, CDATA and references included, t
 }
 
 ///|
+test "a pattern matches an element's value after references and CDATA are decoded, and an attribute's after its whitespace is normalised" {
+  let h = stubs([
+    (
+      #|{ "id": "note", "mock": "m",
+      #|  "request": { "body": { "xml": { "/note": { "pattern": "Tom & Jerry.*" } } } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "v", "mock": "m",
+      #|  "request": { "body": { "xml": { "/a/@v": { "pattern": "x y" } } } },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  inspect(
+    winners(h, [
+      ("POST", "/", [], "<note> Tom &amp; Jerry </note>"),
+      ("POST", "/", [], "<note><![CDATA[Tom & Jerry]]> &lt;3</note>"),
+      ("POST", "/", [], "<note>Tom and Jerry</note>"),
+      ("POST", "/", [], "<a v='x\ty'/>"),
+      ("POST", "/", [], "<a v='x&#9;y'/>"),
+    ]),
+    content=(
+      #|POST / "<note> Tom &amp; Jerry </note>" -> note
+      #|POST / "<note><![CDATA[Tom & Jerry]]> &lt;3</note>" -> note
+      #|POST / "<note>Tom and Jerry</note>" -> none
+      #|POST / "<a v='x\ty'/>" -> v
+      #|POST / "<a v='x&#9;y'/>" -> none
+    ),
+  )
+}
+
+///|
 test "a path that selects several elements matches when any one of them meets the condition" {
   let h = stubs([
     (

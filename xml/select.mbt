@@ -14,17 +14,104 @@
 /// XML's attribute-value normalisation (XML 1.0 §3.3.3): each literal
 /// whitespace character in it is a space.
 ///
-/// Selecting takes time linear in the size of the document.
+/// Selecting takes time linear in the size of the document, and a binary
+/// search among the elements for each element whose attributes it
+/// selects. To read the values without this array and these strings, walk
+/// the same nodes with `first_node` and `next_node`, and read each with
+/// `value_is` or `utf8_value`.
 pub fn Document::select(self : Document, path : Path) -> Array[String] {
+  let values = []
+  let mut node = self.first_node(path)
+  while node >= 0 {
+    values.push(@utf8.decode_lossy(self.utf8_value(path, node)))
+    node = self.next_node(path, node)
+  }
+  values
+}
+
+///|
+/// The first node that `path` selects in the document, in document order,
+/// as `select` selects them, or -1 when it selects none.
+///
+/// A node is a number that only `next_node`, `value_is` and `utf8_value`
+/// read, with the same document and path. With them, a caller walks the
+/// nodes one at a time, and stops when it has what it needs. Walking
+/// allocates nothing, and neither does `value_is`.
+pub fn Document::first_node(self : Document, path : Path) -> Int {
+  self.node_from(path, 0, 0)
+}
+
+///|
+/// The node that `path` selects after `node`, a node that it selects, in
+/// document order, or -1 when `node` is the last.
+pub fn Document::next_node(self : Document, path : Path, node : Int) -> Int {
+  let steps = path.elements.length()
+  match path.attribute {
+    // An element node is the element's index.
+    None => self.node_from(path, node + 1, steps)
+    // An attribute node is where the quote that opens its value is.
+    Some(name) => {
+      let next = self.attribute_from(value_end(self.input, node) + 1, name)
+      if next >= 0 {
+        return next
+      }
+      self.node_from(path, self.element_at(node) + 1, steps)
+    }
+  }
+}
+
+///|
+/// Whether the value of `node`, a node that `path` selects, is `text`, as
+/// `select` reads the value. It is compared in place, with no allocation.
+pub fn Document::value_is(
+  self : Document,
+  path : Path,
+  node : Int,
+  text : StringView,
+) -> Bool {
+  match path.attribute {
+    None => self.element_value_is(node, text)
+    Some(_) => attribute_value_is(self.input, node, text)
+  }
+}
+
+///|
+/// The value of `node`, a node that `path` selects, in UTF-8, as `select`
+/// reads it. It is a view of the input when the input holds the value as
+/// it is, as it does for an element that holds only text without
+/// references or carriage returns, and for an attribute without
+/// references or whitespace other than spaces. Otherwise it is decoded
+/// into new bytes.
+pub fn Document::utf8_value(
+  self : Document,
+  path : Path,
+  node : Int,
+) -> BytesView {
+  match path.attribute {
+    None => self.element_utf8(node)
+    Some(_) => attribute_utf8(self.input, node)
+  }
+}
+
+///|
+/// The first node that `path` selects among the elements from the one at
+/// index `element` on, or -1. `matched` is how many steps the latest
+/// elements before it at depths 1, 2 and so on meet, in turn: none before
+/// the root element, and every step after an element that the path's
+/// element steps select.
+fn Document::node_from(
+  self : Document,
+  path : Path,
+  element : Int,
+  matched : Int,
+) -> Int {
   // Plain loops, with no closure or iterator, since a request may be
   // matched against many paths. The elements come in document order, each
   // after its ancestors, so the ancestors of an element are the latest
-  // elements before it at each smaller depth. `matched` is how many steps
-  // the latest elements at depths 1, 2 and so on meet, in turn.
-  let values = []
+  // elements before it at each smaller depth.
   let steps = path.elements.length()
-  let mut matched = 0
-  for i in 0..<self.names.length() {
+  let mut matched = matched
+  for i in element..<self.name_starts.length() {
     let depth = self.depths[i].to_int() + 1
     // Below the last step, or below an element that does not meet its
     // step, no element is selected.
@@ -32,18 +119,46 @@ pub fn Document::select(self : Document, path : Path) -> Array[String] {
       continue
     }
     matched = depth - 1
-    if !self.name_is(self.names[i], path.elements[depth - 1]) {
+    if !self.name_is(self.name_starts[i], path.elements[depth - 1]) {
       continue
     }
     matched = depth
-    if depth == steps {
-      match path.attribute {
-        Some(name) => self.attribute_values(self.names[i], name, values)
-        None => values.push(self.element_value(self.names[i]))
+    if depth < steps {
+      continue
+    }
+    match path.attribute {
+      None => return i
+      Some(name) => {
+        let start = name_end(self.input, self.name_starts[i])
+        let node = self.attribute_from(start, name)
+        if node >= 0 {
+          return node
+        }
       }
     }
   }
-  values
+  -1
+}
+
+///|
+/// The index of the element whose start tag holds byte `i` of the input,
+/// after the element's name: the last element whose local name starts
+/// before it.
+fn Document::element_at(self : Document, i : Int) -> Int {
+  // The local names start in document order, which is the order of the
+  // bytes, so a binary search finds it. name_starts[low] < i, and
+  // name_starts[high] >= i when high is an index.
+  let mut low = 0
+  let mut high = self.name_starts.length()
+  while high - low > 1 {
+    let middle = low + (high - low) / 2
+    if self.name_starts[middle] < i {
+      low = middle
+    } else {
+      high = middle
+    }
+  }
+  low
 }
 
 ///|
@@ -57,18 +172,14 @@ fn Document::name_is(self : Document, start : Int, name : Bytes) -> Bool {
 }
 
 ///|
-/// Pushes to `values` the value of each attribute named `name`, by its
-/// local name, in the start tag of the element whose local name starts at
-/// byte `start` of the input. Namespace declarations are not attributes
-/// here.
-fn Document::attribute_values(
-  self : Document,
-  start : Int,
-  name : Bytes,
-  values : Array[String],
-) -> Unit {
+/// The first attribute named `name`, by its local name, in the start tag
+/// that holds byte `i` of the input, from byte `i` on, where an attribute
+/// or the end of the tag may start: the index of the quote that opens its
+/// value, or -1 when none has that name. Namespace declarations are not
+/// attributes here.
+fn Document::attribute_from(self : Document, i : Int, name : Bytes) -> Int {
   let input = self.input
-  let mut i = name_end(input, start)
+  let mut i = i
   while true {
     i = skip_spaces(input, i)
     if input[i] is (b'>' | b'/') {
@@ -77,169 +188,317 @@ fn Document::attribute_values(
     let qname = i
     i = name_end(input, i)
     let qname_end = i
-    i = skip_spaces(input, i)
     // The `=`, then the quoted value.
-    i = skip_spaces(input, i + 1)
-    let quote = input[i]
-    let value = i + 1
-    i = value
-    while input[i] != quote {
-      i += 1
-    }
+    i = skip_spaces(input, skip_spaces(input, i) + 1)
     if !is_namespace_declaration(input[qname:qname_end]) &&
       self.name_is(local_start(input, qname, qname_end), name) {
-      values.push(attribute_value(input[value:i]))
+      return i
     }
-    i += 1
+    i = value_end(input, i) + 1
   }
+  -1
 }
 
 ///|
-/// The element's value, for the element whose local name starts at byte
-/// `start` of the input: its XPath string-value (its text and the text of
-/// every descendant, in document order), trimmed of XML whitespace.
-fn Document::element_value(self : Document, start : Int) -> String {
+/// Whether the value of the element at index `element` is `text`: its
+/// XPath string-value, trimmed of XML whitespace, compared one character
+/// at a time.
+fn Document::element_value_is(
+  self : Document,
+  element : Int,
+  text : StringView,
+) -> Bool {
+  // The value is trimmed, so it neither starts nor ends with whitespace.
+  let length = text.length()
+  if length > 0 &&
+    (is_space(text[0].to_int()) || is_space(text[length - 1].to_int())) {
+    return false
+  }
   let input = self.input
-  let content = tag_end(input, start)
-  if input[content - 2] == b'/' {
-    // An empty-element tag has no content.
-    return ""
-  }
-  // Most elements that a path selects hold only text, with no reference
-  // or line end to decode: their value is that text, trimmed.
-  let mut i = content
-  while !(input[i] is (b'<' | b'&' | b'\r')) {
-    i += 1
-  }
-  if input[i] == b'<' && input[i + 1] == b'/' {
-    let mut first = content
-    let mut last = i
-    while first < last && is_space(input[first].to_int()) {
-      first += 1
+  let content = tag_end(input, self.name_starts[element])
+  let end = content_end(input, content)
+  // How much of `text` the characters read so far match, in UTF-16 code
+  // units, whitespace before the first character left out.
+  let mut matched = 0
+  let mut cursor = content
+  while true {
+    let c = text_char(input, cursor, end)
+    let code_point = char_of(c)
+    if code_point < 0 {
+      break
     }
-    while last > first && is_space(input[last - 1].to_int()) {
-      last -= 1
+    cursor = next_of(c)
+    if matched == length {
+      // Only whitespace may follow the text.
+      if !is_space(code_point) {
+        return false
+      }
+    } else if matched > 0 || !is_space(code_point) {
+      matched = text_continues(text, matched, code_point)
+      if matched < 0 {
+        return false
+      }
     }
-    return @utf8.decode_lossy(input[first:last])
   }
-  let text = StringBuilder()
-  write_text(input, content, text)
-  text.to_string().trim(chars=" \t\n\r").to_owned()
+  matched == length
 }
 
 ///|
-/// Writes the text of the content that starts at byte `start` of `input`,
-/// a well-formed document, up to the end tag that closes it: its character
-/// data and CDATA, with references decoded and line ends as line feeds,
-/// and the text of every element in it. Comments and processing
-/// instructions are skipped.
-fn write_text(input : BytesView, start : Int, out : StringBuilder) -> Unit {
+/// The value of the element at index `element` in UTF-8: its XPath
+/// string-value, trimmed of XML whitespace.
+fn Document::element_utf8(self : Document, element : Int) -> BytesView {
+  let input = self.input
+  let content = tag_end(input, self.name_starts[element])
+  let end = content_end(input, content)
+  // Most elements that a path selects hold only text, with no reference
+  // or line end to decode: their value is that text, trimmed, in place.
+  let mut i = content
+  while i < end && !(input[i] is (b'<' | b'&' | b'\r')) {
+    i += 1
+  }
+  if i == end {
+    return trimmed(input, content, end)
+  }
+  let value = @buffer.Buffer(size_hint=end - content)
+  let mut cursor = content
+  while true {
+    let c = text_char(input, cursor, end)
+    if char_of(c) < 0 {
+      break
+    }
+    value.write_char_utf8(char_of(c).unsafe_to_char())
+    cursor = next_of(c)
+  }
+  let value = value.to_bytes()
+  trimmed(value, 0, value.length())
+}
+
+///|
+/// `input[start:end]` without the XML whitespace at its start and end.
+fn trimmed(input : BytesView, start : Int, end : Int) -> BytesView {
+  let mut start = start
+  let mut end = end
+  while start < end && is_space(input[start].to_int()) {
+    start += 1
+  }
+  while end > start && is_space(input[end - 1].to_int()) {
+    end -= 1
+  }
+  input[start:end]
+}
+
+///|
+/// Where the content that starts at byte `start` of `input` ends: the
+/// index of the end tag that closes it, in a well-formed document. The
+/// content of an empty-element tag, which `start` follows, ends where it
+/// starts.
+fn content_end(input : BytesView, start : Int) -> Int {
+  if input[start - 2] == b'/' {
+    return start
+  }
   // How many elements are open, the one whose content this is included.
   let mut open = 1
   let mut i = start
   while true {
-    match input[i] {
-      b'<' =>
-        if input[i + 1] == b'/' {
-          open -= 1
-          if open == 0 {
-            break
-          }
-          i = skip_past(input, i, b'>')
-        } else if looking_at(input, i, b"<!--") {
-          i += 4
-          while !looking_at(input, i, b"-->") {
-            i += 1
-          }
-          i += 3
-        } else if looking_at(input, i, b"<![CDATA[") {
-          i += 9
-          while !looking_at(input, i, b"]]>") {
-            i = write_char(input, i, out)
-          }
-          i += 3
-        } else if input[i + 1] == b'?' {
-          i += 2
-          while !looking_at(input, i, b"?>") {
-            i += 1
-          }
-          i += 2
-        } else {
-          let end = tag_end(input, i + 1)
-          if input[end - 2] != b'/' {
-            open += 1
-          }
-          i = end
-        }
-      b'&' => {
-        let reference = reference_char(input, i)
-        out.write_char(char_of(reference).unsafe_to_char())
-        i = next_of(reference)
-      }
-      _ => i = write_char(input, i, out)
+    if input[i] != b'<' {
+      i += 1
+      continue
     }
+    let next = markup_end(input, i)
+    match input[i + 1] {
+      b'/' => {
+        open -= 1
+        if open == 0 {
+          break
+        }
+      }
+      // A comment, a CDATA section or a processing instruction.
+      b'!' | b'?' => ()
+      // A start tag, or an empty-element tag, which ends in `/>`.
+      _ => if input[next - 2] != b'/' { open += 1 }
+    }
+    i = next
+  }
+  i
+}
+
+///|
+/// The index after the markup that starts at byte `i` of `input`, a `<` in
+/// the content of an element of a well-formed document: a start tag or an
+/// empty-element tag, an end tag, a comment, a CDATA section or a
+/// processing instruction.
+fn markup_end(input : BytesView, i : Int) -> Int {
+  match input[i + 1] {
+    b'/' => skip_past(input, i, b'>')
+    b'?' => skip_past_literal(input, i + 2, b"?>")
+    b'!' =>
+      if input[i + 2] == b'-' {
+        skip_past_literal(input, i + 4, b"-->")
+      } else {
+        skip_past_literal(input, i + 9, b"]]>")
+      }
+    _ => tag_end(input, i + 1)
   }
 }
 
 ///|
-/// Writes the character at byte `i` of `input`, well-formed UTF-8, to
-/// `out`, a line end (CR LF, or a lone CR) as a line feed, and returns the
-/// index after it.
-fn write_char(input : BytesView, i : Int, out : StringBuilder) -> Int {
+/// The character of the text of an element's content at `cursor`, and the
+/// cursor after it, packed as `char_of` and `next_of` read them. The code
+/// point is -1 when the text ends at `end`, the end tag that closes the
+/// element.
+///
+/// A cursor is the index of a byte of `input`, where the content's
+/// character data, references and markup are read: a reference stands for
+/// its character, a line end (CR LF, or a lone CR) for a line feed, and
+/// markup other than CDATA for nothing. Inside a CDATA section, whose
+/// characters are text as they are written but for line ends, the cursor
+/// is -1 less the index, so that it says where it is with no allocation.
+fn text_char(input : BytesView, cursor : Int, end : Int) -> Int64 {
+  let mut cdata = cursor < 0
+  let mut i = if cdata { -cursor - 1 } else { cursor }
+  while i < end {
+    if cdata {
+      if looking_at(input, i, b"]]>") {
+        cdata = false
+        i += 3
+        continue
+      }
+      let c = line_char(input, i)
+      return packed_char(char_of(c), -next_of(c) - 1)
+    }
+    match input[i] {
+      b'<' =>
+        if looking_at(input, i, b"<![CDATA[") {
+          cdata = true
+          i += 9
+        } else {
+          i = markup_end(input, i)
+        }
+      b'&' => return reference_char(input, i)
+      _ => return line_char(input, i)
+    }
+  }
+  packed_char(-1, end)
+}
+
+///|
+/// The character at byte `i` of `input`, well-formed UTF-8, and the index
+/// after it, packed as `char_of` and `next_of` read them. A line end (CR
+/// LF, or a lone CR) is a line feed.
+fn line_char(input : BytesView, i : Int) -> Int64 {
   if input[i] == b'\r' {
-    out.write_char('\n')
-    return if i + 1 < input.length() && input[i + 1] == b'\n' {
+    let next = if i + 1 < input.length() && input[i + 1] == b'\n' {
       i + 2
     } else {
       i + 1
     }
+    return packed_char('\n', next)
   }
   let decoded = decode(input, i)
-  out.write_char(code_point(decoded).unsafe_to_char())
-  i + byte_length(decoded)
+  packed_char(code_point(decoded), i + byte_length(decoded))
 }
 
 ///|
-/// The value of an attribute, from its raw text `raw`, between the quotes
-/// of a well-formed document, after XML's attribute-value normalisation
+/// Whether the value of the attribute whose value the quote at byte
+/// `quote` of `input` opens is `text`, after XML's attribute-value
+/// normalisation, compared one character at a time.
+fn attribute_value_is(
+  input : BytesView,
+  quote : Int,
+  text : StringView,
+) -> Bool {
+  let end = value_end(input, quote)
+  let mut matched = 0
+  let mut i = quote + 1
+  while i < end {
+    let c = attribute_char(input, i)
+    matched = text_continues(text, matched, char_of(c))
+    if matched < 0 {
+      return false
+    }
+    i = next_of(c)
+  }
+  matched == text.length()
+}
+
+///|
+/// The value of the attribute whose value the quote at byte `quote` of
+/// `input` opens, in UTF-8, after XML's attribute-value normalisation
 /// (XML 1.0 §3.3.3): each literal whitespace character is a space, a line
 /// end (CR LF) is one space, and references are decoded.
-fn attribute_value(raw : BytesView) -> String {
+fn attribute_utf8(input : BytesView, quote : Int) -> BytesView {
+  let end = value_end(input, quote)
   let mut plain = true
-  for i in 0..<raw.length() {
-    if raw[i] is (b'&' | b'\t' | b'\n' | b'\r') {
+  for i in (quote + 1)..<end {
+    if input[i] is (b'&' | b'\t' | b'\n' | b'\r') {
       plain = false
       break
     }
   }
   if plain {
-    return @utf8.decode_lossy(raw)
+    return input[quote + 1:end]
   }
-  let value = StringBuilder()
-  let mut i = 0
-  while i < raw.length() {
-    match raw[i] {
-      b'&' => {
-        let reference = reference_char(raw, i)
-        value.write_char(char_of(reference).unsafe_to_char())
-        i = next_of(reference)
-      }
-      b'\t' | b'\n' => {
-        value.write_char(' ')
-        i += 1
-      }
-      b'\r' => {
-        value.write_char(' ')
-        i += if i + 1 < raw.length() && raw[i + 1] == b'\n' { 2 } else { 1 }
-      }
-      _ => {
-        let decoded = decode(raw, i)
-        value.write_char(code_point(decoded).unsafe_to_char())
-        i += byte_length(decoded)
-      }
+  let value = @buffer.Buffer(size_hint=end - quote)
+  let mut i = quote + 1
+  while i < end {
+    let c = attribute_char(input, i)
+    value.write_char_utf8(char_of(c).unsafe_to_char())
+    i = next_of(c)
+  }
+  value.to_bytes()
+}
+
+///|
+/// The character of an attribute's value at byte `i` of `input`, inside
+/// the quotes of a well-formed document, after XML's attribute-value
+/// normalisation, and the index after it, packed as `char_of` and
+/// `next_of` read them.
+fn attribute_char(input : BytesView, i : Int) -> Int64 {
+  match input[i] {
+    b'&' => reference_char(input, i)
+    b'\t' | b'\n' => packed_char(' ', i + 1)
+    // The closing quote follows, so `i + 1` is in the input.
+    b'\r' => packed_char(' ', if input[i + 1] == b'\n' { i + 2 } else { i + 1 })
+    _ => {
+      let decoded = decode(input, i)
+      packed_char(code_point(decoded), i + byte_length(decoded))
     }
   }
-  value.to_string()
+}
+
+///|
+/// The index of the quote that closes the attribute value that the quote
+/// at byte `quote` of `input` opens.
+fn value_end(input : BytesView, quote : Int) -> Int {
+  let mut i = quote + 1
+  while input[i] != input[quote] {
+    i += 1
+  }
+  i
+}
+
+///|
+/// Where `text` continues after the character `code_point`, when `text`
+/// has it at UTF-16 code unit `i`: the index after it, or -1 when `text`
+/// has another character there, or ends before.
+fn text_continues(text : StringView, i : Int, code_point : Int) -> Int {
+  if code_point < 0x10000 {
+    return if i < text.length() && text[i].to_int() == code_point {
+      i + 1
+    } else {
+      -1
+    }
+  }
+  // A character outside the BMP is a surrogate pair in `text`.
+  let high = 0xD800 + ((code_point - 0x10000) >> 10)
+  let low = 0xDC00 + ((code_point - 0x10000) & 0x3FF)
+  if i + 1 < text.length() &&
+    text[i].to_int() == high &&
+    text[i + 1].to_int() == low {
+    i + 2
+  } else {
+    -1
+  }
 }
 
 ///|
@@ -257,6 +516,16 @@ fn skip_past(input : BytesView, i : Int, byte : Byte) -> Int {
     i += 1
   }
   i + 1
+}
+
+///|
+/// The index after the first `literal` at or after byte `i` of `input`.
+fn skip_past_literal(input : BytesView, i : Int, literal : Bytes) -> Int {
+  let mut i = i
+  while !looking_at(input, i, literal) {
+    i += 1
+  }
+  i + literal.length()
 }
 
 ///|
@@ -352,20 +621,21 @@ fn reference_char(input : BytesView, i : Int) -> Int64 {
 }
 
 ///|
-/// A character and the index after it, packed as `reference_char` returns
-/// them, with no allocation.
+/// A character and the index or cursor after it, packed in one `Int64`,
+/// rather than a tuple, so that reading a value allocates nothing. Either
+/// may be negative.
 fn packed_char(code_point : Int, next : Int) -> Int64 {
-  (code_point.to_int64() << 32) | next.to_int64()
+  (code_point.to_int64() << 32) | (next.to_int64() & 0xFFFFFFFFL)
 }
 
 ///|
-/// The code point of what `reference_char` returned.
+/// The code point of what `packed_char` packed.
 fn char_of(c : Int64) -> Int {
   (c >> 32).to_int()
 }
 
 ///|
-/// The index after what `reference_char` returned.
+/// The index or cursor after the character that `packed_char` packed.
 fn next_of(c : Int64) -> Int {
   (c & 0xFFFFFFFFL).to_int()
 }

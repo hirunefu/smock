@@ -239,17 +239,13 @@ fn Incoming::form_meets(
 }
 
 ///|
-/// Whether the encoded form value `value` meets `wanted`, a test that
-/// `ValueCondition::value_test` gave. Only a pattern needs the value
-/// decoded; an exact value is compared in place.
-fn form_value_meets(
-  value : BytesView,
-  wanted : @definitions.ValueCondition,
-) -> Bool {
+/// Whether the encoded form value `value` passes `wanted`. Only a pattern
+/// needs the value decoded; an exact value is compared in place.
+fn form_value_meets(value : BytesView, wanted : @definitions.ValueTest) -> Bool {
   match wanted {
-    Exists(present) => present
+    Any => true
     Exact(text) => form_text_is(value, text)
-    _ => wanted.meets(form_decode(value))
+    Pattern(pattern) => pattern.matches(form_utf8(value))
   }
 }
 
@@ -341,13 +337,22 @@ fn Incoming::xml_meets(
   guard self.body_xml() is Some(document) else { return false }
   let (path, value) = condition
   let wanted = value.value_test()
-  let values = document.select(path)
+  // The selected nodes are walked one at a time, with no list of them or of
+  // their values: `$exists` reads no value, an exact value is compared in
+  // place, and only a pattern may need a value decoded.
   let mut found = false
-  for i in 0..<values.length() {
-    if wanted.meets(values[i]) {
+  let mut node = document.first_node(path)
+  while node >= 0 {
+    let meets = match wanted {
+      Any => true
+      Exact(text) => document.value_is(path, node, text)
+      Pattern(pattern) => pattern.matches(document.utf8_value(path, node))
+    }
+    if meets {
       found = true
       break
     }
+    node = document.next_node(path, node)
   }
   value.holds(found~)
 }

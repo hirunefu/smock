@@ -759,12 +759,12 @@ fn File::read_conditions(
       "path" =>
         match value {
           String(value) if value.has_prefix("/") =>
-            path = Some(ValueCondition::Exact(value))
+            path = Some(ValueCondition::Has(Exact(value)))
           String(_) => self.error(field, "must start with /")
           Object(condition) =>
             path = self
               .read_pattern(field, condition)
-              .map(pattern => ValueCondition::Pattern(pattern))
+              .map(pattern => ValueCondition::Has(Pattern(pattern)))
           _ => self.error(field, "must be a string or an object")
         }
       "query" => query = self.read_value_conditions(field, value)
@@ -960,8 +960,7 @@ fn File::read_json_operator(
   pointer : String,
   members : Map[String, Json],
 ) -> Expected? {
-  guard self.read_operator(pointer, members, json_operators, literal_keys=true)
-    is Some((key, operand)) else {
+  guard self.read_operator(pointer, members, InJson) is Some((key, operand)) else {
     return None
   }
   let at = child_pointer(pointer, key)
@@ -1017,7 +1016,7 @@ fn File::read_value_condition(
   json : Json,
 ) -> ValueCondition? {
   let members = match json {
-    String(value) => return Some(Exact(value))
+    String(value) => return Some(Has(Exact(value)))
     Object(members) => members
     _ => {
       self.error(pointer, "must be a string or an object")
@@ -1025,15 +1024,11 @@ fn File::read_value_condition(
     }
   }
   guard operator_key(members) is Some(_) else {
-    return self.read_pattern(pointer, members).map(pattern => Pattern(pattern))
+    return self
+      .read_pattern(pointer, members)
+      .map(pattern => Has(Pattern(pattern)))
   }
-  guard self.read_operator(
-      pointer,
-      members,
-      value_operators,
-      literal_keys=false,
-    )
-    is Some((key, operand)) else {
+  guard self.read_operator(pointer, members, InValue) is Some((key, operand)) else {
     return None
   }
   let at = child_pointer(pointer, key)
@@ -1047,8 +1042,29 @@ fn File::read_value_condition(
 }
 
 ///|
-/// The operators of a query parameter's, a header's or a cookie's value, in
-/// the order messages list them.
+/// Where an operator object is, which decides the operators it may use and
+/// how its unknown keys are reported.
+priv enum OperatorPosition {
+  /// A value inside a `json` condition, where `$$name` writes a literal
+  /// key that starts with `$`.
+  InJson
+  /// The value of a query parameter, a header, a cookie, a form field or
+  /// an XML path. Names are literal there, so `$$` has no meaning.
+  InValue
+}
+
+///|
+/// The operators allowed in the position, in the order messages list them.
+fn OperatorPosition::operators(self : OperatorPosition) -> Array[String] {
+  match self {
+    InJson => json_operators
+    InValue => value_operators
+  }
+}
+
+///|
+/// The operators of a value condition outside `json`, in the order
+/// messages list them.
 let value_operators : Array[String] = ["$not", "$exists"]
 
 ///|
@@ -1079,15 +1095,15 @@ fn is_operator_like(key : String) -> Bool {
 }
 
 ///|
-/// Reads `members`, an operator object at `pointer`, and returns its
-/// operator and the operator's operand. An operator is the only key of its
-/// object, and it is one of `operators`, those allowed in its position;
-/// each key that breaks this is reported, and then there is none. What is
+/// Reads `members`, an operator object at `pointer` in `position`, and
+/// returns its operator and the operator's operand. An operator is the only
+/// key of its object, and it is one of those allowed in its position; each
+/// key that breaks this is reported, and then there is none. What is
 /// reported does not depend on the order of the keys:
 ///
 /// - each key that starts with `$` and is no operator at all is not an
-///   operator; with `literal_keys`, in a `json` condition, the message
-///   suggests `$$` for a literal key;
+///   operator; in a `json` condition, the message suggests `$$` for a
+///   literal key;
 /// - each operator not allowed here is allowed only in a `json` condition;
 /// - any other key is not allowed beside the operator, the first of
 ///   `json_operators` among the keys. When there is none, the object is
@@ -1097,15 +1113,15 @@ fn File::read_operator(
   self : File,
   pointer : String,
   members : Map[String, Json],
-  operators : Array[String],
-  literal_keys~ : Bool,
+  position : OperatorPosition,
 ) -> (String, Json)? {
+  let operators = position.operators()
   let operator = json_operators.search_by(key => members.contains(key))
   let mut valid = true
   for key, _ in members {
     let at = child_pointer(pointer, key)
     if is_operator_like(key) && !json_operators.contains(key) {
-      let hint = if literal_keys {
+      let hint = if position is InJson {
         "; write \{("$" + key).escape()} for the literal key \{key.escape()}"
       } else {
         ""
