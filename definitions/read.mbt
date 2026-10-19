@@ -875,9 +875,9 @@ fn File::read_xml_conditions(
 }
 
 ///|
-/// Reads a `json` condition, the value at `pointer`, and compiles each
-/// pattern in it. It has none when a pattern does not compile, and each one
-/// that does not is reported.
+/// Reads a `json` condition, the value at `pointer`, with its operators,
+/// and compiles each pattern in it. It has none when it is malformed, and
+/// each problem is reported.
 fn File::read_json_condition(
   self : File,
   pointer : String,
@@ -891,8 +891,10 @@ fn File::read_json_condition(
 ///|
 /// Reads `json`, the value at `pointer` in a `json` condition, as matching
 /// expects it. An object whose only member is `pattern`, with a string, is
-/// a pattern object, and its pattern is compiled. It has none when a
-/// pattern in it does not compile, and each one that does not is reported.
+/// a pattern object, and its pattern is compiled. An object with a key that
+/// starts with `$` but not with `$$` is an operator object; a key that
+/// starts with `$$` writes the literal key without its first `$`. It has
+/// none when it is malformed, and each problem is reported.
 fn File::read_json_condition_value(
   self : File,
   pointer : String,
@@ -905,12 +907,15 @@ fn File::read_json_condition_value(
           .compile(child_pointer(pointer, "pattern"), source)
           .map(pattern => Expected::Pattern(pattern))
       }
+      if operator_key(members) is Some(key) {
+        return self.read_json_operator(pointer, members, key)
+      }
       let keys = []
       let values = []
       for key, value in members {
         if self.read_json_condition_value(child_pointer(pointer, key), value)
           is Some(expected) {
-          keys.push(key)
+          keys.push(if key.has_prefix("$$") { key[1:].to_owned() } else { key })
           values.push(expected)
         }
       }
@@ -932,6 +937,34 @@ fn File::read_json_condition_value(
       Some(Array(FixedArray::from_array(values)))
     }
     _ => Some(Scalar(json))
+  }
+}
+
+///|
+/// Reads `members`, the operator object at `pointer` in a `json` condition
+/// whose operator is `key`, with its operand read as a value of a `json`
+/// condition in turn. It has none when it is malformed.
+fn File::read_json_operator(
+  self : File,
+  pointer : String,
+  members : Map[String, Json],
+  key : String,
+) -> Expected? {
+  guard self.read_operator(pointer, members, key, json_operators)
+    is Some(operand) else {
+    return None
+  }
+  let at = child_pointer(pointer, key)
+  match key {
+    "$not" =>
+      self
+      .read_json_condition_value(at, operand)
+      .map(expected => Expected::Not(expected))
+    "$includes" =>
+      self
+      .read_json_condition_value(at, operand)
+      .map(expected => Expected::Includes(expected))
+    _ => self.read_exists(at, operand).map(present => Exists(present))
   }
 }
 
@@ -1029,6 +1062,10 @@ fn operator_key(members : Map[String, Json]) -> String? {
 /// of its object, and it is one of `operators`, those allowed in its
 /// position; each key that breaks this is reported, and then there is no
 /// operand.
+///
+/// When `key` is no operator at all, the object is most likely literal
+/// JSON with keys that start with `$`, so each such key is reported as no
+/// operator, and the keys beside them are not.
 fn File::read_operator(
   self : File,
   pointer : String,
@@ -1036,6 +1073,20 @@ fn File::read_operator(
   key : String,
   operators : Array[String],
 ) -> Json? {
+  guard json_operators.contains(key) else {
+    let listed = operators.join(", ")
+    for other, _ in members {
+      if other.has_prefix("$") &&
+        !other.has_prefix("$$") &&
+        !json_operators.contains(other) {
+        self.error(
+          child_pointer(pointer, other),
+          "is not an operator: the operators here are \{listed}; write $\{other} for a literal key that starts with $",
+        )
+      }
+    }
+    return None
+  }
   let mut valid = true
   for other, _ in members {
     let at = child_pointer(pointer, other)
@@ -1045,15 +1096,8 @@ fn File::read_operator(
         "is not allowed beside \{key.escape()}: an operator is the only key of its object",
       )
       valid = false
-    } else if json_operators.contains(key) && !operators.contains(key) {
-      self.error(at, "is allowed only in a json condition")
-      valid = false
     } else if !operators.contains(key) {
-      let listed = operators.join(", ")
-      self.error(
-        at,
-        "is not an operator: the operators here are \{listed}; write $\{key} for a literal key that starts with $",
-      )
+      self.error(at, "is allowed only in a json condition")
       valid = false
     }
   }

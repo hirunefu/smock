@@ -123,13 +123,13 @@ test "the match index picks the same Stub and makes the same Scenario moves as t
     content=(
       #|exact path: 885
       #|path pattern: 1233
-      #|no path: 1874
-      #|ephemeral: 391
-      #|no match: 7617
-      #|with an operator: 351
+      #|no path: 1875
+      #|ephemeral: 384
+      #|no match: 7623
+      #|with an operator: 374
       #|with an xml condition: 16
       #|Scenario moved: 238
-      #|Scenario kept: 756
+      #|Scenario kept: 751
     ),
   )
 }
@@ -256,8 +256,8 @@ fn gen_ephemeral_stubs(rand : @random.Rand) -> Array[(String, String?, Json)] {
 ///|
 /// A generated definition set: its Definition files as (name, JSON text),
 /// the kind of path condition of each Stub, by Stub ID, the IDs of the
-/// Stubs with an operator in a query, header or `xml` condition, and the
-/// IDs of the Stubs with an `xml` condition.
+/// Stubs with an operator in a query, header, `json` or `xml` condition,
+/// and the IDs of the Stubs with an `xml` condition.
 struct GeneratedSet {
   files : Array[(String, String)]
   kinds : Map[String, String]
@@ -389,6 +389,9 @@ fn gen_stub(rand : @random.Rand, id : String) -> (Json, String) {
           { "k": 1 },
           { "k": [1, 2] },
           Json::empty_object(),
+          { "k": { "$includes": 2 } },
+          { "z": { "$exists": false } },
+          { "$not": { "k": 1 } },
         ]
         { "json": values[rand.int(limit=values.length())] }
       }

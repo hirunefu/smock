@@ -396,9 +396,11 @@ pub enum BodyCondition {
 ///|
 /// A `json` condition on the request body: a JSON value the body must
 /// contain, in which an object whose only member is `pattern`, with a
-/// string, is a pattern. `File::read_json_condition` reads one. The value
-/// is the condition's own copy, which nothing outside can change, so the
-/// snapshot stays as it was loaded.
+/// string, is a pattern, an object whose only key is `$not`, `$exists` or
+/// `$includes` is an operator, and a key `$$name` is the key `$name`.
+/// `File::read_json_condition` reads one. The value is the condition's own
+/// copy, as written, which nothing outside can change, so the snapshot
+/// stays as it was loaded.
 pub struct JsonCondition {
   priv value : Json
   /// The value, read into arrays, so that matching it walks no map.
@@ -406,9 +408,10 @@ pub struct JsonCondition {
 }
 
 ///|
-/// A JSON value as a condition expects it: an object as its keys and the
-/// values expected under them, in order; an array as the values expected
-/// in it; a pattern object as its pattern; any other value as itself.
+/// A JSON value as a condition expects it: an object as its keys, `$$name`
+/// read as `$name`, and the values expected under them, in order; an array
+/// as the values expected in it; a pattern object as its pattern; an
+/// operator object as its operator; any other value as itself.
 priv enum Expected {
   Object(FixedArray[String], FixedArray[Expected])
   Array(FixedArray[Expected])
@@ -416,6 +419,14 @@ priv enum Expected {
   /// string.
   Pattern(Pattern)
   Scalar(Json)
+  /// `$not`: the value does not meet the condition, or is missing.
+  Not(Expected)
+  /// `$exists`: the value is present, whatever it is, when true, and
+  /// missing when false.
+  Exists(Bool)
+  /// `$includes`: the value is an array with an element that meets the
+  /// condition.
+  Includes(Expected)
 }
 
 ///|
@@ -425,6 +436,13 @@ priv enum Expected {
 /// contains the listed one; an array has the same length, and each element
 /// contains the listed one; any other value is equal, numbers by their
 /// value (see `same_number`).
+///
+/// An operator is about the value in its place: `$not` holds when the
+/// value does not contain its condition, `$exists` when the value is
+/// present or missing, as it says, and `$includes` when the value is an
+/// array with an element that contains its condition. A missing key meets
+/// only `$exists: false` and `$not` of a condition that it does not meet,
+/// and `actual` itself is always present.
 pub fn JsonCondition::matches(self : JsonCondition, actual : Json) -> Bool {
   contains(actual, self.expected)
 }
@@ -434,11 +452,25 @@ fn contains(actual : Json, expected : Expected) -> Bool {
   match (expected, actual) {
     (Object(keys, values), Object(actual)) => {
       for i in 0..<keys.length() {
-        guard actual.get(keys[i]) is Some(value) && contains(value, values[i]) else {
+        let met = match actual.get(keys[i]) {
+          Some(value) => contains(value, values[i])
+          None => missing_meets(values[i])
+        }
+        if !met {
           return false
         }
       }
       true
+    }
+    (Not(inner), _) => !contains(actual, inner)
+    (Exists(present), _) => present
+    (Includes(inner), Array(actual)) => {
+      for i in 0..<actual.length() {
+        if contains(actual[i], inner) {
+          return true
+        }
+      }
+      false
     }
     (Array(expected), Array(actual)) => {
       if expected.length() != actual.length() {
@@ -464,6 +496,18 @@ fn contains(actual : Json, expected : Expected) -> Bool {
     (Pattern(pattern), True) => pattern.matches(b"true")
     (Pattern(pattern), False) => pattern.matches(b"false")
     (Scalar(True), True) | (Scalar(False), False) | (Scalar(Null), Null) => true
+    _ => false
+  }
+}
+
+///|
+/// Whether a missing key meets `expected`: only an operator can, as
+/// `$exists: false` or `$not` of a condition that a missing key does not
+/// meet.
+fn missing_meets(expected : Expected) -> Bool {
+  match expected {
+    Not(inner) => !missing_meets(inner)
+    Exists(present) => !present
     _ => false
   }
 }
@@ -601,9 +645,10 @@ pub impl ToJson for JsonCondition with fn to_json(self) {
 
 ///|
 /// Conditions are equal when their values are, with numbers compared as
-/// matching compares them. Patterns are compared as written: whether an
-/// object is a pattern object depends only on its members, so equal values
-/// hold the same patterns in the same places.
+/// matching compares them. Patterns and operators are compared as written:
+/// whether an object is a pattern object or an operator object depends
+/// only on its members, so equal values hold the same patterns and
+/// operators in the same places.
 pub impl Eq for JsonCondition with fn equal(self, other) {
   same_value(self.value, other.value)
 }

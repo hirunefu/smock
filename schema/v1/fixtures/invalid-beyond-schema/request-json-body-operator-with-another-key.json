@@ -1,0 +1,26 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "create-user",
+      "mock": "users",
+      "request": {
+        "body": {
+          "json": {
+            "tags": {
+              "$includes": "admin",
+              "length": 1
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 201
+      }
+    }
+  ]
+}
