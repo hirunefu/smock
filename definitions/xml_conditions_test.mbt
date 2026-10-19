@@ -73,7 +73,7 @@ test "an xml condition's values are read as query values are, and the body takes
     ]),
     content=(
       #|a.json: /stubs/0/request/body/xml/~1a: must be a string or an object
-      #|a.json: /stubs/0/request/body/xml/~1b/$nto: is not an operator: the operators here are $not, $exists; write $$nto for a literal key that starts with $
+      #|a.json: /stubs/0/request/body/xml/~1b/$nto: is not an operator: the operators here are "$not" and "$exists"
       #|a.json: /stubs/0/request/body/xml/~1c/$includes: is allowed only in a json condition
       #|a.json: /stubs/0/request/body/xml/~1d/pattern: is not a valid pattern: position 0: missing closing )
       #|a.json: /stubs/0/request/body/xml/~1e/$exists: must be true or false

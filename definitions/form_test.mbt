@@ -45,12 +45,12 @@ test "a malformed form condition is a diagnostic at its JSON Pointer, and a body
       #|a.json: /stubs/0/request/body/form: must be an object
       #|a.json: /stubs/1/request/body/form/a: must be a string or an object
       #|a.json: /stubs/1/request/body/form/b/pattern: is not a valid pattern: position 0: missing closing )
-      #|a.json: /stubs/1/request/body/form/c/$nto: is not an operator: the operators here are $not, $exists; write $$nto for a literal key that starts with $
+      #|a.json: /stubs/1/request/body/form/c/$nto: is not an operator: the operators here are "$not" and "$exists"
       #|a.json: /stubs/1/request/body/form/d/$includes: is allowed only in a json condition
       #|a.json: /stubs/1/request/body/form/e/$exists: must be true or false
       #|a.json: /stubs/1/request/body/form/f/pattern: is not allowed beside "$not": an operator is the only key of its object
       #|a.json: /stubs/2/request/body: has "json" and "form"; give only one of "json", "pattern", "form" or "xml"
-      #|a.json: /stubs/3/request/body: has "json" and "pattern" and "form"; give only one of "json", "pattern", "form" or "xml"
+      #|a.json: /stubs/3/request/body: has "json", "pattern" and "form"; give only one of "json", "pattern", "form" or "xml"
     ),
   )
 }

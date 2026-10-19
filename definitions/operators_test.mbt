@@ -66,9 +66,9 @@ test "a malformed operator in a query or header value is a diagnostic at its JSO
       ),
     ]),
     content=(
-      #|a.json: /stubs/0/request/query/q/$nto: is not an operator: the operators here are $not, $exists; write $$nto for a literal key that starts with $
-      #|a.json: /stubs/0/request/headers/X-A/$not/$regex: is not an operator: the operators here are $not, $exists; write $$regex for a literal key that starts with $
-      #|a.json: /stubs/0/request/headers/X-B/$: is not an operator: the operators here are $not, $exists; write $$ for a literal key that starts with $
+      #|a.json: /stubs/0/request/query/q/$nto: is not an operator: the operators here are "$not" and "$exists"
+      #|a.json: /stubs/0/request/headers/X-A/$not/$regex: is not an operator: the operators here are "$not" and "$exists"
+      #|a.json: /stubs/0/request/headers/X-B/$: is not an operator: the operators here are "$not" and "$exists"
       #|a.json: /stubs/1/request/query/q/pattern: is not allowed beside "$not": an operator is the only key of its object
       #|a.json: /stubs/1/request/headers/X-A/pattern: is not allowed beside "$exists": an operator is the only key of its object
       #|a.json: /stubs/1/request/headers/X-B/$exists: is not allowed beside "$not": an operator is the only key of its object
@@ -79,6 +79,76 @@ test "a malformed operator in a query or header value is a diagnostic at its JSO
       #|a.json: /stubs/4/request/query/q/$not: must be a string or an object
       #|a.json: /stubs/4/request/query/r/$not: needs "pattern"
       #|a.json: /stubs/4/request/headers/X-A/$not/pattern: is not a valid pattern: position 0: missing closing )
+    ),
+  )
+}
+
+///|
+test "unknown $ keys, operators allowed only in json and keys beside an operator are reported the same whatever the order of the keys" {
+  // Each object is given twice, its keys in one order and then the other.
+  let objects = [
+    (
+      "query", "{ \"$foo\": 1, \"$not\": \"2\" }", "{ \"$not\": \"2\", \"$foo\": 1 }",
+    ),
+    (
+      "query", "{ \"$foo\": 1, \"$includes\": \"2\" }", "{ \"$includes\": \"2\", \"$foo\": 1 }",
+    ),
+    (
+      "query", "{ \"$exists\": true, \"$not\": \"2\" }", "{ \"$not\": \"2\", \"$exists\": true }",
+    ),
+    (
+      "query", "{ \"pattern\": \"x\", \"$includes\": \"2\" }", "{ \"$includes\": \"2\", \"pattern\": \"x\" }",
+    ),
+    (
+      "json", "{ \"$foo\": 1, \"$not\": 2, \"b\": 3 }", "{ \"b\": 3, \"$not\": 2, \"$foo\": 1 }",
+    ),
+    (
+      "json", "{ \"$includes\": 1, \"$exists\": true }", "{ \"$exists\": true, \"$includes\": 1 }",
+    ),
+  ]
+  let out = []
+  for object in objects {
+    let (place, first, second) = object
+    let stub = (object : String) => {
+      let request = if place == "query" {
+        "\"request\": { \"query\": { \"q\": \{object} } }"
+      } else {
+        "\"request\": { \"body\": { \"json\": { \"q\": \{object} } } }"
+      }
+      stub_with("s", request)
+    }
+    // The problems come in the order of the keys, so they are compared as
+    // sets.
+    let problems = (object : String) => {
+      let lines = stub_problems([stub(object)])
+        .split("\n")
+        .map(line => line.to_owned())
+        .to_array()
+      lines.sort()
+      lines.join("\n")
+    }
+    let one = problems(first)
+    let other = problems(second)
+    out.push(
+      if one == other {
+        one
+      } else {
+        "\{one}\n  but reversed:\n\{other}"
+      },
+    )
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|a.json: /stubs/0/request/query/q/$foo: is not an operator: the operators here are "$not" and "$exists"
+      #|a.json: /stubs/0/request/query/q/$includes: is allowed only in a json condition
+      #|a.json: /stubs/0/request/query/q/$foo: is not an operator: the operators here are "$not" and "$exists"
+      #|a.json: /stubs/0/request/query/q/$exists: is not allowed beside "$not": an operator is the only key of its object
+      #|a.json: /stubs/0/request/query/q/$includes: is allowed only in a json condition
+      #|a.json: /stubs/0/request/query/q/pattern: is not allowed beside "$includes": an operator is the only key of its object
+      #|a.json: /stubs/0/request/body/json/q/b: is not allowed beside "$not": an operator is the only key of its object
+      #|a.json: /stubs/0/request/body/json/q/$foo: is not an operator: the operators here are "$not", "$exists" and "$includes"; write "$$foo" for the literal key "$foo"
+      #|a.json: /stubs/0/request/body/json/q/$includes: is not allowed beside "$exists": an operator is the only key of its object
     ),
   )
 }

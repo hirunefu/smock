@@ -269,12 +269,11 @@ operator.
 Keys that start with `$` in a value are reserved for operators. An unknown
 one, an operator beside another key, or an `$exists` that is not `true` or
 `false` makes the definition set invalid, as `$includes` does here: it is
-only allowed in a `json` condition. Response templates write a literal key
-that starts with `$` as `$$name`, and conditions follow the same
-convention, so the message about an unknown operator suggests it:
+only allowed in a `json` condition. Each such key is reported, whatever the
+order of the keys:
 
 ```console
-users.json: /stubs/0/request/query/status/$nto: is not an operator: the operators here are $not, $exists; write $$nto for a literal key that starts with $
+users.json: /stubs/0/request/query/status/$nto: is not an operator: the operators here are "$not" and "$exists"
 users.json: /stubs/1/request/headers/Authorization/pattern: is not allowed beside "$not": an operator is the only key of its object
 users.json: /stubs/2/request/query/debug/$exists: must be true or false
 ```
@@ -286,7 +285,10 @@ the value of a member, or an element of an array. An operator is about the
 value in its place.
 
 - `{ "$not": <condition> }` holds when the value does not meet the
-  condition. A missing key meets no condition, so it meets `$not`.
+  condition. A missing key meets `$not` of any condition that a missing
+  key does not meet: `{ "$not": "x" }` holds when the key is missing, but
+  `{ "$not": { "$exists": false } }` does not, since a missing key meets
+  `$exists: false`.
 - `{ "$exists": true }` holds when the key is present, whatever its value,
   even `null`. `{ "$exists": false }` holds when the key is missing. At the
   root, `{ "$exists": true }` holds for any JSON body.
@@ -327,11 +329,12 @@ that has a line whose `sku` starts with `A-`.
 A key that starts with `$` is written `$$` and the rest, as in
 [response templates](#structured-templates): `{ "$$ref": "#/a" }` matches
 a body with the key `$ref`. A key that starts with one `$` and is not an
-operator makes the definition set invalid, and so do an operator beside
-another key and an `$exists` that is not `true` or `false`:
+operator makes the definition set invalid, with a message that suggests
+`$$`, and so do an operator beside another key and an `$exists` that is
+not `true` or `false`:
 
 ```console
-orders.json: /stubs/0/request/body/json/schema/$ref: is not an operator: the operators here are $not, $exists, $includes; write $$ref for a literal key that starts with $
+orders.json: /stubs/0/request/body/json/schema/$ref: is not an operator: the operators here are "$not", "$exists" and "$includes"; write "$$ref" for the literal key "$ref"
 orders.json: /stubs/1/request/body/json/tags/length: is not allowed beside "$includes": an operator is the only key of its object
 ```
 

@@ -424,7 +424,7 @@ test "an Ephemeral Stub may use json operators, and a malformed one is rejected 
     ]),
     content=(
       #|eph-1
-      #|/request/body/json/a/$nto: is not an operator: the operators here are $not, $exists, $includes; write $$nto for a literal key that starts with $
+      #|/request/body/json/a/$nto: is not an operator: the operators here are "$not", "$exists" and "$includes"; write "$$nto" for the literal key "$nto"
       #|/request/body/json/b/c: is not allowed beside "$not": an operator is the only key of its object
       #|POST / "{\"tags\":[\"urgent\"],\"$ref\":null}" -> eph-1
       #|POST / "{\"tags\":[\"urgent\"]}" -> none

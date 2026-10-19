@@ -357,7 +357,7 @@ test "an Ephemeral Stub may have cookie conditions, and a malformed one is rejec
     ),
     content=(
       #|/request/cookies/a: must be a string or an object
-      #|/request/cookies/b/$nto: is not an operator: the operators here are $not, $exists; write $$nto for a literal key that starts with $
+      #|/request/cookies/b/$nto: is not an operator: the operators here are "$not" and "$exists"
       #|/request/cookies/c/pattern: is not a valid pattern: position 0: missing closing )
     ),
   )
