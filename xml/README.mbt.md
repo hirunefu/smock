@@ -155,6 +155,11 @@ attribute names of a tag with more than eight attributes are sorted, in
 O(n log n) time for n attributes, to find a repeated one. The module does
 not bound the size of the input; smock bounds the size of a request body.
 
+A document refers to the input rather than copying it, and keeps only
+where each element's name starts and how deep the element is: five bytes
+per element. A path's values are read from the input when it selects
+them, so selecting takes time linear in the size of the document.
+
 ### Differences from XML 1.0 and Namespaces in XML
 
 - A non-validating XML processor must read a DOCTYPE's internal subset.

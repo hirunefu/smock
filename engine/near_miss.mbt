@@ -316,13 +316,7 @@ fn Incoming::explain(self : Incoming, failed : Failed) -> FailedCondition {
       {
         condition: Form(name),
         expected: expected(value),
-        actual: self
-        .form_fields()
-        .unwrap_or([])
-        .iter()
-        .filter(field => field.0 == name)
-        .map(field => field.1)
-        .collect(),
+        actual: self.form_values(name),
       }
     Xml(path, value) =>
       {

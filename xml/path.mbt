@@ -5,10 +5,11 @@
 pub struct Path {
   /// The path as written.
   priv source : String
-  /// The local names of the elements, the root element's first.
-  priv elements : Array[String]
-  /// The local name of the attribute, when the path ends in one.
-  priv attribute : String?
+  /// The local names of the elements, the root element's first, in UTF-8,
+  /// as selection compares them with a document.
+  priv elements : Array[Bytes]
+  /// The local name of the attribute in UTF-8, when the path ends in one.
+  priv attribute : Bytes?
 }
 
 ///|
@@ -138,7 +139,11 @@ pub fn compile_path(source : String) -> Path raise PathError {
       elements.push(name)
     }
   }
-  { source, elements, attribute, }
+  {
+    source,
+    elements: elements.map(name => @utf8.encode(name)),
+    attribute: attribute.map(name => @utf8.encode(name)),
+  }
 }
 
 ///|

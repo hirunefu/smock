@@ -1,25 +1,45 @@
 ///|
-/// Reads a document from its bytes, one construct at a time.
+/// Reads a document from its bytes, one construct at a time. It checks the
+/// whole input, and keeps of it only where each element's name starts and
+/// how deep the element is: the document reads everything else from the
+/// input again when a path selects it.
 priv struct Parser {
   input : BytesView
   /// The byte offset of the next byte to read.
   mut pos : Int
-  /// The qualified names of the attributes of the start tag being read.
-  names : Array[String]
-  /// Where each of `names` starts, in the same order.
-  offsets : Array[Int]
+  /// Where the qualified name of each attribute of the start tag being read
+  /// starts, in order.
+  attribute_starts : Array[Int]
+  /// Where each of them ends, in the same order.
+  attribute_ends : Array[Int]
+  /// Where the local name of each element read so far starts, in document
+  /// order: the order of their start tags.
+  names : Array[Int]
+  /// How deep each of them is, less one: 0 for the root element.
+  depths : Array[Byte]
+  /// Where the start tag of each open element begins, the root element's
+  /// first: the elements whose end tags are not read yet.
+  open_tags : Array[Int]
+  /// Where the qualified name of each open element starts, which its end
+  /// tag repeats.
+  open_name_starts : Array[Int]
+  /// Where each of those names ends.
+  open_name_ends : Array[Int]
 }
 
 ///|
-/// An element whose end tag is not read yet.
-priv struct Open {
-  /// The qualified name, which the end tag repeats.
-  qname : String
-  /// Where its start tag begins.
-  start : Int
-  element : Element
-  /// Whether it is an empty-element tag, which has no end tag.
-  empty : Bool
+fn Parser::new(input : BytesView) -> Parser {
+  {
+    input,
+    pos: 0,
+    attribute_starts: [],
+    attribute_ends: [],
+    names: [],
+    depths: [],
+    open_tags: [],
+    open_name_starts: [],
+    open_name_ends: [],
+  }
 }
 
 ///|
@@ -87,8 +107,8 @@ fn Parser::looking_at(self : Parser, literal : Bytes) -> Bool {
 }
 
 ///|
-/// Reads the whole document and returns its root element.
-fn Parser::document(self : Parser) -> Element raise ParseError {
+/// Reads the whole document.
+fn Parser::document(self : Parser) -> Unit raise ParseError {
   if self.looking_at(b"\xEF\xBB\xBF") {
     self.pos += 3
   }
@@ -113,7 +133,7 @@ fn Parser::document(self : Parser) -> Element raise ParseError {
       fail_at(start, "text is not allowed before the root element")
     }
   }
-  let root = self.root()
+  self.root()
   self.misc()
   if self.peek() >= 0 {
     let start = self.pos
@@ -124,7 +144,6 @@ fn Parser::document(self : Parser) -> Element raise ParseError {
       start, "only comments, processing instructions and whitespace may follow the root element",
     )
   }
-  root
 }
 
 ///|
@@ -265,12 +284,15 @@ fn Parser::processing_instruction(self : Parser) -> Unit raise ParseError {
   let start = self.pos
   self.pos += 2
   let at = self.pos
-  let target = self.name()
-  if target.to_lower() == "xml" {
-    if target == "xml" {
+  self.skip_name()
+  if self.is_xml(at, self.pos) {
+    if self.looking_back(at, b"xml") {
       fail_at(start, "the XML declaration must come first")
     }
-    fail_at(at, "processing instruction target \{target} is reserved")
+    fail_at(
+      at,
+      "processing instruction target \{self.text(at, self.pos)} is reserved",
+    )
   }
   if !self.skip_space() && !self.looking_at(b"?>") {
     fail_at(self.pos, "expected whitespace or ?>")
@@ -285,19 +307,16 @@ fn Parser::processing_instruction(self : Parser) -> Unit raise ParseError {
 }
 
 ///|
-/// Reads a CDATA section that begins at the next byte, `<![CDATA[`, and
-/// writes its text to `out`, with line ends as line feeds (XML 1.0 §2.7).
-fn Parser::cdata(self : Parser, out : StringBuilder) -> Unit raise ParseError {
+/// Reads a CDATA section that begins at the next byte, `<![CDATA[`
+/// (XML 1.0 §2.7).
+fn Parser::cdata(self : Parser) -> Unit raise ParseError {
   let start = self.pos
   self.pos += 9
   while !self.looking_at(b"]]>") {
     match self.peek() {
       -1 => fail_at(start, "a CDATA section is not closed")
-      '\r' => {
-        self.line_end()
-        out.write_char('\n')
-      }
-      _ => out.write_char(self.char().unsafe_to_char())
+      '\r' => self.line_end()
+      _ => self.char() |> ignore
     }
   }
   self.pos += 3
@@ -306,69 +325,61 @@ fn Parser::cdata(self : Parser, out : StringBuilder) -> Unit raise ParseError {
 ///|
 /// Reads the root element, which starts at the next byte, with everything
 /// in it. Open elements are kept on a stack rather than in recursive calls.
-fn Parser::root(self : Parser) -> Element raise ParseError {
-  let stack : Array[Open] = []
-  let text = StringBuilder()
-  let root = self.start_tag()
-  if !root.empty {
-    stack.push(root)
-  }
-  while stack.last() is Some(open) {
+fn Parser::root(self : Parser) -> Unit raise ParseError {
+  self.start_tag()
+  while self.open_tags.length() > 0 {
+    let top = self.open_tags.length() - 1
     match self.peek() {
-      -1 => fail_at(open.start, "element \{open.qname} is not closed")
+      -1 => {
+        let name = self.text(
+          self.open_name_starts[top],
+          self.open_name_ends[top],
+        )
+        fail_at(self.open_tags[top], "element \{name} is not closed")
+      }
       '<' =>
         if self.looking_at(b"<!--") {
           self.comment()
         } else if self.looking_at(b"<![CDATA[") {
-          self.cdata(text)
+          self.cdata()
         } else if self.looking_at(b"<!DOCTYPE") {
           fail_at(self.pos, doctype_message)
         } else if self.looking_at(b"<!") {
           fail_at(self.pos, "expected a comment or a CDATA section after <!")
         } else if self.looking_at(b"<?") {
           self.processing_instruction()
+        } else if self.looking_at(b"</") {
+          self.end_tag()
         } else {
-          if !text.is_empty() {
-            open.element.children.push(Text(text.to_string()))
-            text.reset()
+          if self.open_tags.length() == max_depth {
+            fail_at(self.pos, "elements nest deeper than \{max_depth}")
           }
-          if self.looking_at(b"</") {
-            self.end_tag(open)
-            stack.pop() |> ignore
-          } else {
-            if stack.length() == max_depth {
-              fail_at(self.pos, "elements nest deeper than \{max_depth}")
-            }
-            let child = self.start_tag()
-            open.element.children.push(Child(child.element))
-            if !child.empty {
-              stack.push(child)
-            }
-          }
+          self.start_tag()
         }
       ']' if self.looking_at(b"]]>") =>
         fail_at(self.pos, "]]> is not allowed in text")
-      '&' => self.reference(text)
-      '\r' => {
-        self.line_end()
-        text.write_char('\n')
-      }
-      _ => text.write_char(self.char().unsafe_to_char())
+      '&' => self.reference()
+      '\r' => self.line_end()
+      _ => self.char() |> ignore
     }
   }
-  root.element
 }
 
 ///|
-/// Reads a start tag or an empty-element tag that begins at the next byte.
-/// The element of an empty-element tag is closed: `Open::empty` is true.
-fn Parser::start_tag(self : Parser) -> Open raise ParseError {
+/// Reads a start tag or an empty-element tag that begins at the next byte,
+/// and keeps where the element's local name starts and how deep it is. The
+/// element of a start tag is open until its end tag; that of an
+/// empty-element tag is closed.
+fn Parser::start_tag(self : Parser) -> Unit raise ParseError {
   let start = self.pos
   self.pos += 1
-  let qname = self.qualified_name()
-  let element = { name: local_name(qname), attributes: [], children: [], }
-  self.names.clear()
-  self.offsets.clear()
+  let name_start = self.pos
+  self.qualified_name()
+  let name_end = self.pos
+  self.names.push(local_start(self.input, name_start, name_end))
+  self.depths.push(self.open_tags.length().to_byte())
+  self.attribute_starts.clear()
+  self.attribute_ends.clear()
   let mut empty = false
   while true {
     let spaced = self.skip_space()
@@ -384,37 +395,42 @@ fn Parser::start_tag(self : Parser) -> Open raise ParseError {
       }
       _ if spaced => {
         let at = self.pos
-        let name = self.qualified_name()
-        self.names.push(name)
-        self.offsets.push(at)
+        self.qualified_name()
+        self.attribute_starts.push(at)
+        self.attribute_ends.push(self.pos)
         self.equals()
-        let value = self.attribute_value()
-        // Namespace declarations are not attributes for selection.
-        if name != "xmlns" && !name.has_prefix("xmlns:") {
-          element.attributes.push({ name: local_name(name), value, })
-        }
+        self.attribute_value()
       }
       _ => fail_at(self.pos, "expected whitespace, > or />")
     }
   }
-  unique(self.names, self.offsets)
-  { qname, start, element, empty, }
+  self.unique()
+  if !empty {
+    self.open_tags.push(start)
+    self.open_name_starts.push(name_start)
+    self.open_name_ends.push(name_end)
+  }
 }
 
 ///|
-/// Raises an error when a name repeats among `names`, the attribute names
-/// of a tag, which start at `offsets` (XML 1.0 §3.1, WFC: Unique Att
-/// Spec). The error is at the first repetition. A tag with many attributes
-/// is checked by sorting rather than with a hash set, so that no set of
-/// names makes it slow; a tag with a few, as most have, is checked in
-/// place, with no allocation.
-fn unique(names : Array[String], offsets : Array[Int]) -> Unit raise ParseError {
-  let n = names.length()
+/// Raises an error when a name repeats among the attribute names of the
+/// start tag just read (XML 1.0 §3.1, WFC: Unique Att Spec). The error is
+/// at the first repetition. A tag with many attributes is checked by
+/// sorting rather than with a hash set, so that no set of names makes it
+/// slow; a tag with a few, as most have, is checked in place, with no
+/// allocation.
+fn Parser::unique(self : Parser) -> Unit raise ParseError {
+  let starts = self.attribute_starts
+  let ends = self.attribute_ends
+  let n = starts.length()
   if n <= 8 {
     for j in 1..<n {
       for i in 0..<j {
-        if names[i] == names[j] {
-          fail_at(offsets[j], "attribute \{names[j]} is repeated")
+        if self.input[starts[i]:ends[i]] == self.input[starts[j]:ends[j]] {
+          fail_at(
+            starts[j],
+            "attribute \{self.text(starts[j], ends[j])} is repeated",
+          )
         }
       }
     }
@@ -422,7 +438,7 @@ fn unique(names : Array[String], offsets : Array[Int]) -> Unit raise ParseError 
   }
   let sorted = Array(capacity=n)
   for i in 0..<n {
-    sorted.push((names[i], offsets[i]))
+    sorted.push((self.input[starts[i]:ends[i]], starts[i]))
   }
   sorted.sort()
   let mut first = -1
@@ -433,20 +449,29 @@ fn unique(names : Array[String], offsets : Array[Int]) -> Unit raise ParseError 
     }
   }
   if first >= 0 {
-    fail_at(sorted[first].1, "attribute \{sorted[first].0} is repeated")
+    let at = sorted[first].1
+    fail_at(
+      at,
+      "attribute \{self.text(at, at + sorted[first].0.length())} is repeated",
+    )
   }
 }
 
 ///|
-/// Reads the end tag of `open`, which begins at the next byte, `</`.
-fn Parser::end_tag(self : Parser, open : Open) -> Unit raise ParseError {
+/// Reads the end tag of the innermost open element, which begins at the
+/// next byte, `</`, and closes the element.
+fn Parser::end_tag(self : Parser) -> Unit raise ParseError {
   let start = self.pos
   self.pos += 2
-  let qname = self.name()
-  if qname != open.qname {
+  let name_start = self.pos
+  self.skip_name()
+  let top = self.open_tags.length() - 1
+  let open_start = self.open_name_starts[top]
+  let open_end = self.open_name_ends[top]
+  if self.input[name_start:self.pos] != self.input[open_start:open_end] {
     fail_at(
       start,
-      "end tag </\{qname}> does not match start tag <\{open.qname}>",
+      "end tag </\{self.text(name_start, self.pos)}> does not match start tag <\{self.text(open_start, open_end)}>",
     )
   }
   self.skip_space() |> ignore
@@ -454,50 +479,40 @@ fn Parser::end_tag(self : Parser, open : Open) -> Unit raise ParseError {
     fail_at(self.pos, "expected >")
   }
   self.pos += 1
+  self.open_tags.pop() |> ignore
+  self.open_name_starts.pop() |> ignore
+  self.open_name_ends.pop() |> ignore
 }
 
 ///|
-/// Reads a quoted attribute value and normalises it (XML 1.0 §3.3.3): each
-/// whitespace character becomes a space, and a line end (CR LF) becomes one
-/// space.
-fn Parser::attribute_value(self : Parser) -> String raise ParseError {
+/// Reads a quoted attribute value (XML 1.0 §3.1 [10]). Selection
+/// normalises it when a path selects it.
+fn Parser::attribute_value(self : Parser) -> Unit raise ParseError {
   let quote = self.peek()
   if quote != '"' && quote != '\'' {
     fail_at(self.pos, "expected a quoted attribute value")
   }
   let start = self.pos
   self.pos += 1
-  let value = StringBuilder()
   while self.peek() != quote {
     match self.peek() {
       -1 => fail_at(start, "an attribute value is not closed")
       '<' =>
         fail_at(self.pos, "< is not allowed in an attribute value; write &lt;")
-      '\r' => {
-        self.line_end()
-        value.write_char(' ')
-      }
-      '\t' | '\n' => {
-        self.pos += 1
-        value.write_char(' ')
-      }
-      '&' => self.reference(value)
-      _ => value.write_char(self.char().unsafe_to_char())
+      '\r' => self.line_end()
+      '&' => self.reference()
+      _ => self.char() |> ignore
     }
   }
   self.pos += 1
-  value.to_string()
 }
 
 ///|
-/// Reads a reference that begins at the next byte, `&`, and writes the
-/// character it stands for to `out`: a character reference (`&#N;` or
-/// `&#xH;`), or one of the five predefined entities. With no DTD, no other
-/// entity is declared (XML 1.0 §4.1, WFC: Entity Declared).
-fn Parser::reference(
-  self : Parser,
-  out : StringBuilder,
-) -> Unit raise ParseError {
+/// Reads a reference that begins at the next byte, `&`: a character
+/// reference (`&#N;` or `&#xH;`), or one of the five predefined entities.
+/// With no DTD, no other entity is declared (XML 1.0 §4.1, WFC: Entity
+/// Declared).
+fn Parser::reference(self : Parser) -> Unit raise ParseError {
   let start = self.pos
   self.pos += 1
   if self.peek() == '#' {
@@ -536,24 +551,19 @@ fn Parser::reference(
         "\{self.ascii(start, self.pos)} is not a character XML allows",
       )
     }
-    out.write_char(code.unsafe_to_char())
     return
   }
   if !(self.pos < self.input.length() &&
     is_name_start(code_point(decode(self.input, self.pos)))) {
     fail_at(start, "& starts a reference; write &amp; for &")
   }
-  let name = self.name()
+  let name = self.pos
+  self.skip_name()
+  let end = self.pos
   self.semicolon()
-  let c = match name {
-    "lt" => '<'
-    "gt" => '>'
-    "amp" => '&'
-    "apos" => '\''
-    "quot" => '"'
-    _ => fail_at(start, "entity &\{name}; is not declared")
+  if predefined_entity(self.input[name:end]) < 0 {
+    fail_at(start, "entity &\{self.text(name, end)}; is not declared")
   }
-  out.write_char(c)
 }
 
 ///|
@@ -596,36 +606,29 @@ fn Parser::skip_space(self : Parser) -> Bool {
 }
 
 ///|
-/// The local name of a qualified name: the part after the colon, if there
-/// is one (Namespaces in XML 1.0 §4).
-fn local_name(qname : String) -> String {
-  match qname.find(":") {
-    Some(i) => qname[i + 1:].to_owned()
-    None => qname
-  }
-}
-
-///|
-/// Reads the name of an element or an attribute: a local name, or a
-/// prefix, a colon and a local name (Namespaces in XML 1.0 §4 [7]).
-fn Parser::qualified_name(self : Parser) -> String raise ParseError {
+/// Reads the name of an element or an attribute that begins at the next
+/// byte: a local name, or a prefix, a colon and a local name (Namespaces in
+/// XML 1.0 §4 [7]).
+fn Parser::qualified_name(self : Parser) -> Unit raise ParseError {
   let start = self.pos
-  let name = self.name()
-  match name.find(":") {
-    Some(0) => fail_at(start, "name \{name} has an empty prefix")
-    Some(i) if i == name.length() - 1 =>
-      fail_at(start, "name \{name} has an empty local name")
-    Some(i) if name[i + 1:].contains(":") =>
-      fail_at(start, "name \{name} has more than one colon")
-    _ => name
+  self.skip_name()
+  let end = self.pos
+  let colon = find_colon(self.input, start, end)
+  if colon == start {
+    fail_at(start, "name \{self.text(start, end)} has an empty prefix")
+  }
+  if colon == end - 1 {
+    fail_at(start, "name \{self.text(start, end)} has an empty local name")
+  }
+  if colon >= 0 && find_colon(self.input, colon + 1, end) >= 0 {
+    fail_at(start, "name \{self.text(start, end)} has more than one colon")
   }
 }
 
 ///|
 /// Reads a name (XML 1.0 §2.3 [5]) that begins at the next byte.
-fn Parser::name(self : Parser) -> String raise ParseError {
+fn Parser::skip_name(self : Parser) -> Unit raise ParseError {
   let start = self.pos
-  let name = StringBuilder()
   while self.pos < self.input.length() {
     let decoded = decode(self.input, self.pos)
     if decoded < 0 {
@@ -635,11 +638,40 @@ fn Parser::name(self : Parser) -> String raise ParseError {
     if !(if self.pos == start { is_name_start(c) } else { is_name_char(c) }) {
       break
     }
-    name.write_char(c.unsafe_to_char())
     self.pos += byte_length(decoded)
   }
   if self.pos == start {
     fail_at(start, "expected a name")
   }
-  name.to_string()
+}
+
+///|
+/// Whether the input from byte `start` to byte `end` is `xml` in any case,
+/// which processing instruction targets may not be.
+fn Parser::is_xml(self : Parser, start : Int, end : Int) -> Bool {
+  // A letter's lower case is its upper case with the bit 0x20 set.
+  end - start == 3 &&
+  (self.input[start].to_int() | 0x20) == 'x' &&
+  (self.input[start + 1].to_int() | 0x20) == 'm' &&
+  (self.input[start + 2].to_int() | 0x20) == 'l'
+}
+
+///|
+/// Whether the input from byte `start` is `literal`, which is ASCII.
+fn Parser::looking_back(self : Parser, start : Int, literal : Bytes) -> Bool {
+  self.input[start:start + literal.length()] == literal[:]
+}
+
+///|
+/// The input from byte `start` to byte `end`, which are well-formed UTF-8,
+/// as a string: a name, for an error message.
+fn Parser::text(self : Parser, start : Int, end : Int) -> String {
+  let text = StringBuilder()
+  let mut i = start
+  while i < end {
+    let decoded = decode(self.input, i)
+    text.write_char(code_point(decoded).unsafe_to_char())
+    i += byte_length(decoded)
+  }
+  text.to_string()
 }

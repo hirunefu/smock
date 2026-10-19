@@ -173,6 +173,24 @@ test "CDATA is text, and comments and processing instructions are skipped" {
 }
 
 ///|
+test "values are read past attribute values that hold > or /, and past comments and processing instructions that hold >" {
+  let xml = "<a k='>'><b c=\"/>\" d='x/'>1<b>2</b><!-- > --><?p > ?>3</b><b/><e f='/' />4</a>"
+  debug_inspect(
+    [
+      values(xml, "/a"),
+      values(xml, "/a/b"),
+      values(xml, "/a/b/b"),
+      values(xml, "/a/b/@c"),
+      values(xml, "/a/e/@f"),
+      values(xml, "/a/@k"),
+    ],
+    content=(
+      #|[["1234"], ["123", ""], ["2"], ["/>"], ["/"], [">"]]
+    ),
+  )
+}
+
+///|
 test "comments, processing instructions and whitespace may surround the root element" {
   let xml =
     #|<?xml-stylesheet href="style.xsl" type="text/xsl"?>

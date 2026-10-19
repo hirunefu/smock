@@ -1,39 +1,19 @@
 ///|
 /// A parsed XML document. Parse it once with `parse`, then select values
 /// from it with any number of compiled paths.
+///
+/// It refers to the input rather than copying it, and keeps of it only
+/// where each element's local name starts and how deep the element is:
+/// five bytes per element. Values are read from the input when a path
+/// selects them.
 pub struct Document {
-  /// The root element.
-  priv root : Element
-}
-
-///|
-/// An element: its local name, its attributes, and its content in document
-/// order.
-priv struct Element {
-  /// The local name: the qualified name without its prefix.
-  name : String
-  /// The attributes, in document order.
-  attributes : Array[Attribute]
-  /// The text and the child elements, in document order.
-  children : Array[Node]
-}
-
-///|
-/// An attribute of an element.
-priv struct Attribute {
-  /// The local name: the qualified name without its prefix.
-  name : String
-  /// The value, normalised.
-  value : String
-}
-
-///|
-/// A piece of an element's content.
-priv enum Node {
-  /// Character data and CDATA, with references decoded and line ends as
-  /// line feeds.
-  Text(String)
-  Child(Element)
+  /// The input, a well-formed document.
+  priv input : BytesView
+  /// Where the local name of each element starts in `input`, in document
+  /// order: the order of their start tags, the root element's first.
+  priv names : Array[Int]
+  /// How deep each of them is, less one: 0 for the root element.
+  priv depths : Array[Byte]
 }
 
 ///|
@@ -74,5 +54,7 @@ pub impl Show for ParseError with fn output(self, logger) {
 /// attribute names of a tag with more than eight attributes are sorted, in
 /// O(n log n) time for n attributes, to find a repeated one.
 pub fn parse(input : BytesView) -> Document raise ParseError {
-  { root: Parser::{ input, pos: 0, names: [], offsets: [], }.document(), }
+  let parser = Parser::new(input)
+  parser.document()
+  { input, names: parser.names, depths: parser.depths, }
 }
