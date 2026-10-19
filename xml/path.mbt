@@ -51,7 +51,9 @@ pub impl Show for PathError with fn output(self, logger) {
 ///
 /// Raises `PathError` for anything else. XPath that the paths leave out,
 /// such as `//`, wildcards, predicates, indexes, axes and functions, is an
-/// error whose message says it is not supported.
+/// error whose message says it is not supported. So is a final `@xmlns`:
+/// namespace declarations are not attributes here, so it could never
+/// select anything.
 pub fn compile_path(source : String) -> Path raise PathError {
   let chars : Array[Char] = source.iter().collect()
   let n = chars.length()
@@ -123,6 +125,14 @@ pub fn compile_path(source : String) -> Path raise PathError {
       }
     }
     if is_attribute {
+      // The parser keeps no namespace declaration, so such a path would
+      // never select anything.
+      if name == "xmlns" {
+        raise PathError(
+          position=start,
+          message="@xmlns is a namespace declaration, which smock's XML paths never select",
+        )
+      }
       attribute = Some(name)
     } else {
       elements.push(name)

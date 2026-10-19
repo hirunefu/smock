@@ -323,3 +323,48 @@ test "element and attribute names are a local name with at most one prefix" {
     ),
   )
 }
+
+///|
+test "UTF-8 of every length is read in text, names and attribute values; overlong, surrogate, out-of-range and cut-off sequences are rejected" {
+  let read = @xml.parse(
+    b"<\xC3\xA9 a='\xE2\x82\xAC'>\xF0\x9F\x98\x80\xC3\xA9</\xC3\xA9>",
+  )
+  debug_inspect(
+    [
+      read.select(@xml.compile_path("/é")),
+      read.select(@xml.compile_path("/é/@a")),
+    ],
+    content=(
+      #|[["😀é"], ["€"]]
+    ),
+  )
+  let rejected = [
+    b"<a>\x80</a>", b"<a>\xC1\xBF</a>", b"<a>\xE0\x9F\xBF</a>", b"<a>\xF0\x8F\xBF\xBF</a>",
+    b"<a>\xF4\x90\x80\x80</a>", b"<a>\xF5\x80\x80\x80</a>", b"<a>\xED\xBF\xBF</a>",
+    b"<a>\xE2\x82</a>", b"<a>\xF0\x9F\x98</a>", b"<a\xE2\x82/>", b"<a>\xE2\x82",
+  ]
+  inspect(
+    rejected.map(error_of).join("\n"),
+    content=(
+      #|position 3: the input is not UTF-8
+      #|position 3: the input is not UTF-8
+      #|position 3: the input is not UTF-8
+      #|position 3: the input is not UTF-8
+      #|position 3: the input is not UTF-8
+      #|position 3: the input is not UTF-8
+      #|position 3: the input is not UTF-8
+      #|position 3: the input is not UTF-8
+      #|position 3: the input is not UTF-8
+      #|position 2: the input is not UTF-8
+      #|position 3: the input is not UTF-8
+    ),
+  )
+  // A reference's name starts with any name character, ASCII or not.
+  inspect(
+    [error_of(b"<a>&\xC3\xA9;</a>"), error_of(b"<a>&\xFF;</a>")].join("\n"),
+    content=(
+      #|position 3: entity &é; is not declared
+      #|position 3: & starts a reference; write &amp; for &
+    ),
+  )
+}

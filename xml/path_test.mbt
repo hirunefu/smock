@@ -111,3 +111,16 @@ test "a compiled path shows as written, and paths written the same are equal" {
   assert_eq(path, @xml.compile_path("/order/item/@sku"))
   assert_not_eq(path, @xml.compile_path("/order/item"))
 }
+
+///|
+test "a path that ends in @xmlns is a compile error, since namespace declarations are never selected" {
+  inspect(
+    path_errors(["/a/@xmlns", "/a/@xmlns:p", "/a/@xmlnsx", "/xmlns/@a"]),
+    content=(
+      #|/a/@xmlns => position 4: @xmlns is a namespace declaration, which smock's XML paths never select
+      #|/a/@xmlns:p => position 4: prefix xmlns: is not supported in smock's XML paths; name the local name only
+      #|/a/@xmlnsx => compiled
+      #|/xmlns/@a => compiled
+    ),
+  )
+}
