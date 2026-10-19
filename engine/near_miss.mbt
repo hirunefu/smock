@@ -62,7 +62,8 @@ pub fn Condition::to_string(self : Condition) -> String {
 }
 
 ///|
-/// The value a condition expects, as the Stub gives it.
+/// The value a condition expects, as the Stub gives it, operators
+/// included.
 pub(all) enum Expected {
   /// Exactly this text.
   Exact(String)
@@ -70,6 +71,10 @@ pub(all) enum Expected {
   Pattern(String)
   /// A `json` condition: the body parses as JSON and contains this value.
   Json(Json)
+  /// `$not`: the condition inside does not hold.
+  Not(Expected)
+  /// `$exists`: the name is present when true, absent when false.
+  Exists(Bool)
 } derive(Debug)
 
 ///|
@@ -93,13 +98,16 @@ pub impl ToJson for FailedCondition with fn to_json(self) {
 }
 
 ///|
-/// An exact value is a string, a pattern `{"pattern": ...}` and a `json`
-/// condition `{"json": ...}`, as in Definition files.
+/// An exact value is a string, a pattern `{"pattern": ...}`, a `json`
+/// condition `{"json": ...}` and an operator `{"$not": ...}` or
+/// `{"$exists": ...}`, as in Definition files.
 pub impl ToJson for Expected with fn to_json(self) {
   match self {
     Exact(text) => Json::string(text)
     Pattern(source) => { "pattern": Json::string(source) }
     Json(value) => { "json": value }
+    Not(expected) => { "$not": ToJson::to_json(expected) }
+    Exists(present) => { "$exists": Json::boolean(present) }
   }
 }
 
@@ -184,16 +192,16 @@ fn Incoming::failed(
   if conditions.meth is Some(meth) && meth != self.request.meth {
     out.push(Failed::Method(meth))
   }
-  if conditions.path is Some(path) && !value_meets(self.path, path) {
+  if conditions.path is Some(path) && !path.meets(self.path) {
     out.push(Failed::Path(path))
   }
   for condition in conditions.query {
-    if !self.has_parameter(condition) {
+    if !self.query_meets(condition) {
       out.push(Failed::Query(condition.0, condition.1))
     }
   }
   for condition in conditions.headers {
-    if !self.has_header(condition) {
+    if !self.header_meets(condition) {
       out.push(Failed::Header(condition.0, condition.1))
     }
   }
@@ -253,9 +261,12 @@ fn Incoming::explain(self : Incoming, failed : Failed) -> FailedCondition {
 }
 
 ///|
+/// What a value condition expects, as the Stub writes it.
 fn expected(condition : @definitions.ValueCondition) -> Expected {
   match condition {
     Exact(text) => Exact(text)
     Pattern(pattern) => Pattern(pattern.source)
+    Not(inner) => Not(expected(inner))
+    Exists(present) => Exists(present)
   }
 }

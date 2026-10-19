@@ -88,8 +88,8 @@ Stub without `request` matches every request of its Mock.
 |---|---|
 | `method` | its method is exactly this, case and all, such as `GET`. |
 | `path` | its path, percent-decoded and without the query, is exactly this. `/users/a%20b` meets `"/users/a b"`. `{ "pattern": … }`: the pattern matches the whole path. |
-| `query` | each listed parameter is present, and one of its values, decoded, is exactly the given value, or matches the given `{ "pattern": … }` as a whole. Parameters that are not listed are ignored. |
-| `headers` | each listed header is present, its name compared case-insensitively, and one of its values is exactly the given value, or matches the given `{ "pattern": … }` as a whole. Headers that are not listed are ignored. |
+| `query` | each listed parameter is present, and one of its values, decoded, is exactly the given value, or matches the given `{ "pattern": … }` as a whole. [`$not` and `$exists`](#negation-and-presence) are about the parameter as a whole. Parameters that are not listed are ignored. |
+| `headers` | each listed header is present, its name compared case-insensitively, and one of its values is exactly the given value, or matches the given `{ "pattern": … }` as a whole. [`$not` and `$exists`](#negation-and-presence) are about the header as a whole. Headers that are not listed are ignored. |
 | `body` | a string: the body is exactly this text in UTF-8. `{ "pattern": … }`: the pattern matches the whole body. `{ "json": … }`: the body parses as JSON and contains the given value, which may hold patterns. |
 
 Query parameters are decoded as HTML forms encode them: `%20` and `+` both
@@ -218,6 +218,57 @@ pattern, counted in characters from 0:
 users.json: /stubs/0/request/path/pattern: is not a valid pattern: position 7: missing closing )
 users.json: /stubs/1/request/headers/X-Region/pattern: is not a valid pattern: position 0: Unicode class \p{Greek} is not supported in smock's RE2 subset
 users.json: /stubs/2/request/body/json/email/pattern: is not a valid pattern: position 0: missing closing )
+```
+
+### Negation and presence
+
+A query parameter's or a header's value can also be an operator: an object
+whose only key starts with `$`.
+
+- `{ "$not": <condition> }` holds exactly when the condition does not.
+  `<condition>` is an exact value, a pattern or another operator.
+- `{ "$exists": true }` holds when the parameter or header is present, with
+  any value, even an empty one. `{ "$exists": false }` holds when it is
+  absent.
+
+```yaml
+request:
+  headers:
+    Authorization: { $not: { pattern: "Bearer .*" } }
+    X-Debug: { $exists: false }
+  query:
+    status: { $not: draft }
+```
+
+This Stub answers a request without a Bearer token, without `X-Debug`, and
+whose `status` is not `draft`.
+
+An operator is about the name as a whole, not about one value:
+
+- An exact value or a pattern holds when one of the values meets it, so it
+  fails when the name is absent.
+- `$not` holds when its condition does not. So `{ "$not": "draft" }` holds
+  when no `status` is `draft`, including when there is no `status` at all.
+  `?status=draft&status=x` does not meet it. A request without
+  `Authorization` meets `{ "$not": { "pattern": "Bearer .*" } }`.
+- Operators nest: `{ "$not": { "$not": "a" } }` is `"a"`, and
+  `{ "$not": { "$exists": true } }` is `{ "$exists": false }`.
+
+Names are always literal: `"query": { "$filter": "name eq 'a'" }` matches the
+parameter `$filter`, as OData clients send it. Only a value can be an
+operator.
+
+Keys that start with `$` in a value are reserved for operators. An unknown
+one, an operator beside another key, or an `$exists` that is not `true` or
+`false` makes the definition set invalid, as `$includes` does here: it is
+only allowed in a `json` condition. Response templates write a literal key
+that starts with `$` as `$$name`, and conditions follow the same
+convention, so the message about an unknown operator suggests it:
+
+```console
+users.json: /stubs/0/request/query/status/$nto: is not an operator: the operators here are $not, $exists; write $$nto for a literal key that starts with $
+users.json: /stubs/1/request/headers/Authorization/pattern: is not allowed beside "$not": an operator is the only key of its object
+users.json: /stubs/2/request/query/debug/$exists: must be true or false
 ```
 
 ### Which Stub answers
@@ -482,7 +533,8 @@ such as `eph-3`. Each of these counts as one condition: the method, the
 path, each listed query parameter, each listed header, the body, and the
 state a [`scenario` clause](#scenarios) requires. They are named `method`,
 `path`, `query:<name>`, `header:<name>` (in lower case), `body` and
-`scenario:<name>`, in that order. The header is ASCII only and never
+`scenario:<name>`, in that order. A parameter or a header counts once
+whatever its condition, operators included. The header is ASCII only and never
 carries what a condition expects or what the request sent: the Stub ID and
 query, header and Scenario names are percent-encoded where they hold
 anything other than the characters of an HTTP token. A Mock without Stubs,
@@ -497,6 +549,19 @@ unmatched request: every condition it failed, with what the Stub expects
 and what the request sent. A test lists its Session's unmatched requests
 with `GET /v1/journal/unmatched`
 ([README](../README.md#verifying-calls-and-unmatched-requests)).
+
+What the Stub expects is the condition as the Stub writes it, operators
+included. What the request sent is every value of the parameter or header,
+in order, and none when it is absent. A request with `Authorization: Bearer
+abc` fails the [negation example](#negation-and-presence) like this:
+
+```json
+{
+  "condition": "header:authorization",
+  "expected": { "$not": { "pattern": "Bearer .*" } },
+  "actual": ["Bearer abc"]
+}
+```
 
 What the request sent is shown as text. A body that is not valid UTF-8 is
 shown with U+FFFD in place of each sequence that is not, so a failed exact
@@ -1205,7 +1270,7 @@ A Stub `s` is shadowed by an earlier Stub `t` when `t` has a subset of
 - `t` has no path, the same exact path as `s`, or a pattern that matches
   `s`'s exact path;
 - each of `t`'s query, header and body conditions is also in `s`, written
-  the same way (header names in any case);
+  the same way (header names in any case), operators included;
 - `t` has no `requires`, or `s` names the same [Scenario](#scenarios) with
   the same `requires`. `moveTo` plays no part, since it does not change
   whether a Stub matches.
@@ -1216,9 +1281,10 @@ states. Two Stubs with the same request that require the same state are
 still reported.
 
 smock does not compare two patterns, or a pattern or `json` condition with
-another condition: it warns only when the shadowing is certain, so a
-warning is never a false alarm, but some Stubs that can never match are
-not reported.
+another condition, and does not reason about operators: a value and its
+`$not` are not seen to exclude each other. It warns only when the
+shadowing is certain, so a warning is never a false alarm, but some Stubs
+that can never match are not reported.
 
 #### A state that no Stub moves to
 

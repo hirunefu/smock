@@ -1,0 +1,24 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "get-user",
+      "mock": "users",
+      "request": {
+        "headers": {
+          "Authorization": {
+            "$not": "Bearer x",
+            "pattern": "Bearer .*"
+          }
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

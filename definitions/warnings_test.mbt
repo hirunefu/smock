@@ -357,6 +357,53 @@ test "what the subset test cannot prove is not reported: containment between two
 }
 
 ///|
+test "an operator on a query or header value shadows only the same operator, written the same way; one the later Stub lacks gives no warning" {
+  inspect(
+    verdicts([
+      (
+        "{ \"headers\": { \"Authorization\": { \"$not\": { \"pattern\": \"Bearer .*\" } } } }",
+        "{ \"path\": \"/a\", \"headers\": { \"authorization\": { \"$not\": { \"pattern\": \"Bearer .*\" } } } }",
+      ),
+      (
+        "{ \"query\": { \"a\": { \"$exists\": false } } }", "{ \"path\": \"/a\" }",
+      ),
+      (
+        "{ \"query\": { \"a\": { \"$not\": \"1\" } } }", "{ \"query\": { \"b\": { \"$not\": \"1\" } } }",
+      ),
+      (
+        "{ \"query\": { \"a\": { \"$not\": \"1\" } } }", "{ \"query\": { \"a\": \"1\" } }",
+      ),
+      (
+        "{ \"query\": { \"a\": \"1\" } }", "{ \"query\": { \"a\": { \"$not\": \"1\" } } }",
+      ),
+      (
+        "{ \"query\": { \"a\": { \"$not\": \"1\" } } }", "{ \"query\": { \"a\": { \"$not\": { \"pattern\": \"1\" } } } }",
+      ),
+      (
+        "{ \"query\": { \"a\": { \"$exists\": true } } }", "{ \"query\": { \"a\": { \"$exists\": false } } }",
+      ),
+      (
+        "{ \"query\": { \"a\": { \"$exists\": true } } }", "{ \"query\": { \"a\": { \"$exists\": true }, \"b\": \"2\" } }",
+      ),
+      (
+        "{ \"headers\": { \"X-A\": { \"$not\": { \"$not\": \"1\" } } } }", "{ \"headers\": { \"X-A\": \"1\" } }",
+      ),
+    ]),
+    content=(
+      #|t { "headers": { "Authorization": { "$not": { "pattern": "Bearer .*" } } } } / s { "path": "/a", "headers": { "authorization": { "$not": { "pattern": "Bearer .*" } } } } -> shadowed
+      #|t { "query": { "a": { "$exists": false } } } / s { "path": "/a" } -> not reported
+      #|t { "query": { "a": { "$not": "1" } } } / s { "query": { "b": { "$not": "1" } } } -> not reported
+      #|t { "query": { "a": { "$not": "1" } } } / s { "query": { "a": "1" } } -> not reported
+      #|t { "query": { "a": "1" } } / s { "query": { "a": { "$not": "1" } } } -> not reported
+      #|t { "query": { "a": { "$not": "1" } } } / s { "query": { "a": { "$not": { "pattern": "1" } } } } -> not reported
+      #|t { "query": { "a": { "$exists": true } } } / s { "query": { "a": { "$exists": false } } } -> not reported
+      #|t { "query": { "a": { "$exists": true } } } / s { "query": { "a": { "$exists": true }, "b": "2" } } -> shadowed
+      #|t { "headers": { "X-A": { "$not": { "$not": "1" } } } } / s { "headers": { "X-A": "1" } } -> not reported
+    ),
+  )
+}
+
+///|
 test "a json condition with patterns shadows only one written the same way, patterns included" {
   inspect(
     verdicts([
