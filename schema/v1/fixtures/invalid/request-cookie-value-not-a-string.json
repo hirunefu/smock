@@ -1,0 +1,21 @@
+{
+  "mocks": [
+    {
+      "name": "shop"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "cart",
+      "mock": "shop",
+      "request": {
+        "cookies": {
+          "count": 1
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

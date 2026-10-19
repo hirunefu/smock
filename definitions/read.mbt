@@ -714,6 +714,7 @@ fn no_conditions() -> Conditions {
     path: None,
     query: ReadOnlyArray::from_array([]),
     headers: ReadOnlyArray::from_array([]),
+    cookies: ReadOnlyArray::from_array([]),
     body: None,
   }
 }
@@ -745,6 +746,7 @@ fn File::read_conditions(
   let mut path = None
   let mut query = []
   let mut headers = []
+  let mut cookies = []
   let mut body = None
   for key, value in request {
     let field = child_pointer(pointer, key)
@@ -770,6 +772,7 @@ fn File::read_conditions(
         headers = self
           .read_value_conditions(field, value, header_names=true)
           .map(header => (header.0.to_lower(), header.1))
+      "cookies" => cookies = self.read_value_conditions(field, value)
       "body" => body = self.read_body_condition(field, value)
       _ => self.unknown_field(field)
     }
@@ -779,6 +782,7 @@ fn File::read_conditions(
     path,
     query: ReadOnlyArray::from_array(query),
     headers: ReadOnlyArray::from_array(headers),
+    cookies: ReadOnlyArray::from_array(cookies),
     body,
   }
 }
@@ -982,8 +986,8 @@ fn File::read_value_condition(
 }
 
 ///|
-/// The operators of a query parameter's or a header's value, in the order
-/// messages list them.
+/// The operators of a query parameter's, a header's or a cookie's value, in
+/// the order messages list them.
 let value_operators : Array[String] = ["$not", "$exists"]
 
 ///|

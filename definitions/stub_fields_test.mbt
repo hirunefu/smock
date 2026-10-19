@@ -267,6 +267,7 @@ test "the snapshot holds each pattern compiled when the set is loaded, ready to 
       #|  path: Some(Pattern(Pattern("/users/[0-9]+"))),
       #|  query: <ReadOnlyArray: [("q", Pattern(Pattern("a|b")))]>,
       #|  headers: <ReadOnlyArray: [("x-a", Pattern(Pattern("1+")))]>,
+      #|  cookies: <ReadOnlyArray: []>,
       #|  body: Some(Pattern(Pattern("(?s).*"))),
       #|}
     ),

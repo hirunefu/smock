@@ -513,10 +513,10 @@ sample that cannot be read or is not valid exit with status 1, with the
 problem on stderr.
 
 [docs/definition-files.md](docs/definition-files.md) describes the format:
-how Stubs match requests (method, path, query parameters, headers and
-body, exactly, by RE2 pattern or as JSON, negated or by presence with
-`$not` and `$exists`, and by array element with `$includes`), the order
-they are tried in (priority, then
+how Stubs match requests (method, path, query parameters, headers,
+cookies and body, exactly, by RE2 pattern or as JSON, negated or by
+presence with `$not` and `$exists`, and by array element with
+`$includes`), the order they are tried in (priority, then
 file-name order), what a Mock answers when nothing matches, responses with
 inline bodies, body files, JSON or Server-Sent Events, response templates,
 Faults, the JSON Schema, editor support and writing Definition files in

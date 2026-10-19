@@ -53,6 +53,11 @@ fn Incoming::meets(
       return false
     }
   }
+  for i in 0..<conditions.cookies.length() {
+    if !self.cookie_meets(conditions.cookies[i]) {
+      return false
+    }
+  }
   match conditions.body {
     Some(condition) => self.body_meets(condition)
     None => true

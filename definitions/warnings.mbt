@@ -114,12 +114,13 @@ fn shadows(t : Stub, s : Stub) -> Bool {
 /// - `t`'s method is absent or equal to `s`'s.
 /// - `t`'s path is absent, equal to `s`'s exact path, or a pattern that
 ///   matches `s`'s exact path.
-/// - Each of `t`'s query, header and body conditions also appears,
-///   identically, in `s`. Header names are in lower case, so they compare
-///   case-insensitively, as in matching. A `json` condition with patterns
-///   is identical only to one with the same patterns in the same places,
-///   and a value condition with operators only to one with the same
-///   operators around an identical condition.
+/// - Each of `t`'s query, header, cookie and body conditions also
+///   appears, identically, in `s`. Header names are in lower case, so they
+///   compare case-insensitively, as in matching; cookie names compare
+///   exactly. A `json` condition with patterns is identical only to one
+///   with the same patterns in the same places, and a value condition with
+///   operators only to one with the same operators around an identical
+///   condition.
 ///
 /// A subset of conjuncts is sound whatever the conditions mean, operators
 /// included. Containment between two patterns is not attempted, and
@@ -142,5 +143,6 @@ fn request_shadows(t : Conditions, s : Conditions) -> Bool {
   path &&
   t.query.iter().all(condition => s.query.contains(condition)) &&
   t.headers.iter().all(condition => s.headers.contains(condition)) &&
+  t.cookies.iter().all(condition => s.cookies.contains(condition)) &&
   (t.body is None || t.body == s.body)
 }
