@@ -1,5 +1,5 @@
-// The conformance table: for each construct of the R1 subset, patterns with
-// the result RE2 gives for them. Each row is
+// The conformance table: for each construct of smock's RE2 subset,
+// patterns with the result RE2 gives for them. Each row is
 //
 //   (pattern, input, leftmost match as "start-end" byte offsets or "none",
 //    whether the pattern matches the whole input)

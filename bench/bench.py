@@ -22,8 +22,8 @@ usage:
                                           check a run's summary against the targets as they are now
 
 It needs Linux, python3 (3.10 or later), oha, openssl, taskset, and a systemd
-user manager that may set CPU quotas and memory limits. The README's
-Benchmark section says how to run it and how to read what it writes.
+user manager that may set CPU quotas and memory limits. bench/README.md says
+how to run it and how to read what it writes.
 """
 
 import argparse
@@ -526,13 +526,13 @@ class Smock:
         if self.cpu_max() != quota:
             raise BenchError(
                 f"smock's cgroup has cpu.max {self.cpu_max()!r}, not {quota!r}: the systemd user manager "
-                "cannot set CPU quotas. It needs the cpu controller delegated to it (see the README).")
+                "cannot set CPU quotas. It needs the cpu controller delegated to it (see bench/README.md).")
         expected = (memory_max(self.memory_limit), "0")
         if self.memory_limit is not None and (self.memory_max(), self.memory_swap_max()) != expected:
             raise BenchError(
                 f"smock's cgroup has memory.max {self.memory_max()!r} and memory.swap.max "
                 f"{self.memory_swap_max()!r}, not {expected[0]!r} and {expected[1]!r}: the systemd user manager "
-                "cannot set memory limits. It needs the memory controller delegated to it (see the README).")
+                "cannot set memory limits. It needs the memory controller delegated to it (see bench/README.md).")
         while self.admin("GET", "/readyz")[0] != 200:
             if self.process.poll() is not None or time.monotonic() > deadline:
                 self.not_started("did not become ready")
@@ -824,7 +824,7 @@ class Run:
                              "or name one with --smock")
         for tool in (self.oha, "openssl", "taskset", "lscpu", "systemd-run", "systemctl"):
             if not shutil.which(tool):
-                raise BenchError(f"{tool} is not on PATH: the README's Benchmark section lists what a run needs")
+                raise BenchError(f"{tool} is not on PATH: bench/README.md lists what a run needs")
         self.oha_version = subprocess.run([self.oha, "--version"], capture_output=True, text=True,
                                           check=True).stdout.strip()
         if self.oha_version.split()[-1] != self.plan["load_generator"]["version"]:

@@ -200,11 +200,11 @@ in RE2 syntax:
   matches only when all of them hold. Stubs with patterns are tried in the
   same order as any other Stub.
 
-smock supports a subset of RE2 syntax, which the
-[RE2 module's README](../re2/README.mbt.md#syntax-in-r1) lists: literals,
-`.`, bracket classes, `\d`, `\w` and `\s`, anchors and word boundaries,
-groups, alternation, repetitions (counts up to 1000) and the flags `i`, `s`
-and `m`. Matching takes time linear in the length of the value, whatever
+smock supports a subset of RE2 syntax, smock's RE2 subset, which the
+[RE2 module's README](../re2/README.mbt.md#syntax-in-the-subset) lists:
+literals, `.`, bracket classes, `\d`, `\w` and `\s`, anchors and word
+boundaries, groups, alternation, repetitions (counts up to 1000) and the
+flags `i`, `s` and `m`. Matching takes time linear in the length of the value, whatever
 the pattern, so no pattern can stall smock.
 
 Patterns are compiled once, when smock loads the Definition files. A
@@ -216,7 +216,7 @@ pattern, counted in characters from 0:
 
 ```console
 users.json: /stubs/0/request/path/pattern: is not a valid pattern: position 7: missing closing )
-users.json: /stubs/1/request/headers/X-Region/pattern: is not a valid pattern: position 0: Unicode class \p{Greek} is not supported in R1
+users.json: /stubs/1/request/headers/X-Region/pattern: is not a valid pattern: position 0: Unicode class \p{Greek} is not supported in smock's RE2 subset
 users.json: /stubs/2/request/body/json/email/pattern: is not a valid pattern: position 0: missing closing )
 ```
 
@@ -1022,10 +1022,8 @@ and that URL is also its `$id`. Its source is
 without `version` is read as version 1; any other version is rejected.
 
 The Schema describes every field of format version 1, and smock implements
-them all. A field the Schema defines but smock does not implement yet would
-be rejected with a message saying it is not supported yet, so that a file
-never means something smock silently ignores. smock also rejects any field
-the Schema does not define.
+them all. smock rejects any field the Schema does not define, so that a
+file never means something smock silently ignores.
 
 ## Reloading
 
@@ -1135,7 +1133,8 @@ served). Each reload also writes one log entry: `definitions reloaded` with
 failed` with the digest still served and every error.
 `scenarioStatesReset` is the number of Scenario states the reload sent
 back to `Started`, 0 when there are none. The states dropped with a
-removed Mock are not counted. The Prometheus counter
+removed Mock are not counted. Like every log field, these are a diagnostic
+aid, not part of the compatibility promise. The Prometheus counter
 `smock_definition_reloads_total` counts reloads by `result`. A failed reload
 does not change readiness: `/readyz` on the admin port still passes, so one
 bad commit does not drain every Pod.

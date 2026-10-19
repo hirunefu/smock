@@ -14,3 +14,7 @@ A smock Pod runs a single single-threaded process, and capacity grows by adding 
 
 - A CPU limit above one core does not make a Pod faster; Helm values should request about one core per Pod and scale replicas instead.
 - CPU limits below one core (CFS throttling of the single thread) were not measured yet and must be covered by the release benchmark.
+
+## Follow-up, 2026-10-19
+
+The release benchmark has since measured smock's real request path, under CPU limits below one core too. On GKE Autopilot, one process under a 1-CPU limit served about 19,000 to 21,000 requests per second over plain HTTP on x86 nodes, and about 50,000 on Arm. The chart's [sizing table](../../charts/smock/README.md#sizing) has the numbers for each Pod size, and [bench/README.md](../../bench/README.md#targets) the provisional targets and where they come from. This note does not change the decision.

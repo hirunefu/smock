@@ -1,6 +1,6 @@
 # Before merging into main
 
-Work lands on an integration branch (such as `integration/r1`), and the
+Work lands on an integration branch (`integration/<name>`), and the
 integration branch is merged into `main` when it is ready. Benchmarks run on
 a developer's machine by default. The full benchmark and a run on real GKE
 Autopilot happen only here, before that merge (the decision on #4):
@@ -21,8 +21,8 @@ pre-merge run compares with them.
 
 - [ ] **CI is green on the integration branch**, and its issues are done.
 - [ ] **Run the local Autopilot plan** on the usual machine, the full plan
-  (about 20 minutes), as the README's
-  [GKE Autopilot profiles](../README.md#gke-autopilot-profiles) section
+  (about 20 minutes), as the benchmark's
+  [GKE Autopilot profiles](../bench/README.md#gke-autopilot-profiles) section
   says: plugged in, other programs closed, the CPU frequency governor at
   `performance`.
 
@@ -51,18 +51,18 @@ pre-merge run compares with them.
   p99.9 only where both runs measured at least 10,000 requests at the
   step: the rest swing from run to run, and the report shows them for
   reference without failing
-  ([Comparing runs](../README.md#comparing-runs)). Its first lines say
+  ([Comparing runs](../bench/README.md#comparing-runs)). Its first lines say
   whether the machine, the plan or anything else besides smock differed,
   and which steps count. A change to the plan's `about` alone is no
   difference, but a run from before runs recorded the plan's hash without
-  it, such as R1's, has only its file's hash: the first comparison with
-  one may show the plan as changed when only its description did.
+  it, such as the pre-merge run of 0d984c8, has only its file's hash: the
+  first comparison with one may show the plan as changed when only its
+  description did.
 - [ ] **Run the benchmark on GKE Autopilot** with `scripts/gke-bench.sh`
-  ([On GKE Autopilot](../README.md#on-gke-autopilot)). It needs gcloud
+  ([On GKE Autopilot](../bench/README.md#on-gke-autopilot)). It needs gcloud
   logged in (`gcloud auth login`), docker, kubectl, and the MoonBit
   toolchain or a release binary, and the project and region in the
-  environment. The pre-merge run is on x86 (amd64) nodes, the
-  architecture of the maintainer's production environment, in zone
+  environment. The pre-merge run is on x86 (amd64) nodes, in zone
   us-central1-a, whatever machine starts it: Autopilot has x86 Pods in
   every region, and plenty of them, and us-central1 costs less than
   Tokyo. Keep to one architecture and one zone from run to run, so that
@@ -76,7 +76,7 @@ pre-merge run compares with them.
   First a dry run, which only reads:
 
   ```sh
-  gh run list -R hirunefu/smock --workflow CI --branch integration/r1 --event push --limit 1 --json databaseId,headSha
+  gh run list -R hirunefu/smock --workflow CI --branch integration/<name> --event push --limit 1 --json databaseId,headSha
   dir=$(mktemp -d)
   gh run download <run-id> -R hirunefu/smock -n smock-linux-amd64 --dir "$dir"
   export GKE_BENCH_PROJECT=<project ID> GKE_BENCH_REGION=us-central1 GKE_BENCH_ZONE=us-central1-a
@@ -149,11 +149,12 @@ pre-merge run compares with them.
 
   Under the small CPU limits (autopilot-burst-min and autopilot-min), a
   regression of smock's CPU a request, or a step that now saturates, may
-  be the node's. In #39, smock's CPU a request differed by close to 2×
-  between ek-standard-8 nodes with the same CPU, far more than between
-  R1's binary and R2's on one node. Before you treat such a regression as
+  be the node's. In the GKE runs that compared the binaries of 0d984c8
+  and 52ee405, smock's CPU a request differed by close to 2× between
+  ek-standard-8 nodes with the same CPU, far more than between the two
+  binaries on one node. Before you treat such a regression as
   smock's, settle it on one node
-  ([Comparing smock binaries on one node](../README.md#comparing-smock-binaries-on-one-node)).
+  ([Comparing smock binaries on one node](../bench/README.md#comparing-smock-binaries-on-one-node)).
   Run `main`'s binary and the integration branch's as variants, the
   latter twice as an A/A pair. It is expected to cost about $0.33 in
   us-central1, and at most $0.77:
@@ -183,25 +184,14 @@ pre-merge run compares with them.
   through a pull request, which holds the summary,
 
   ```sh
-  gh pr create --base main --head integration/r1 --title "Merge integration/r1" --body-file <summary>
+  gh pr create --base main --head integration/<name> --title "Merge integration/<name>" --body-file <summary>
   gh pr merge --merge
   ```
 
   or locally, with the summary in the merge commit's message:
 
   ```sh
-  git switch main && git merge --no-ff integration/r1 && git push
-  ```
-
-- [ ] **Restore the agent skills.** `main` once tracked the skills under
-  `.agents/skills/`, which the integration branches leave untracked
-  (`.gitignore`), so the merge deletes them from the working tree.
-  `skills-lock.json` records them; restore them and link them for Claude
-  Code:
-
-  ```sh
-  npx skills experimental_install
-  mkdir -p .claude/skills && for s in .agents/skills/*; do ln -sfn "../../$s" ".claude/skills/${s##*/}"; done
+  git switch main && git merge --no-ff integration/<name> && git push
   ```
 
 - [ ] **Keep the results** of both runs as the baseline of the next

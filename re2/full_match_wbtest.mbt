@@ -1,7 +1,7 @@
 // `full_match` against the Pike VM, which decides it by following every
-// way through the program: for random patterns over every construct of R1,
-// assertions and flags included, and random inputs, ill-formed UTF-8
-// included, both must agree.
+// way through the program: for random patterns over every construct of
+// smock's RE2 subset, assertions and flags included, and random inputs,
+// ill-formed UTF-8 included, both must agree.
 
 ///|
 /// Pieces of patterns: characters of one and two bytes, a `\n`, classes,

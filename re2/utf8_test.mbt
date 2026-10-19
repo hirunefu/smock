@@ -83,10 +83,10 @@ test "every byte and byte pair is matched without an error" {
 }
 
 ///|
-test "where R1 differs from RE2 on input that is not well-formed UTF-8" {
+test "where smock's RE2 subset differs from RE2 on input that is not well-formed UTF-8" {
   // RE2 reads these as one character: an overlong encoding, a surrogate
-  // and a code point past U+10FFFF. R1 reads only well-formed UTF-8, so
-  // each of their bytes is not a character.
+  // and a code point past U+10FFFF. The subset reads only well-formed
+  // UTF-8, so each of their bytes is not a character.
   inspect(on_bytes("(?s).", b"\xe0\x80\x80"), content="search none, full false")
   inspect(on_bytes("(?s).", b"\xed\xa0\x80"), content="search none, full false")
   inspect(
@@ -94,14 +94,15 @@ test "where R1 differs from RE2 on input that is not well-formed UTF-8" {
     content="search none, full false",
   )
   // RE2 can find an empty match inside a multi-byte character (here 2-2,
-  // between the two bytes of é). R1 matches at code point boundaries only.
+  // between the two bytes of é). The subset matches at code point
+  // boundaries only.
   inspect(on("\\B", "aé"), content="search 3-3, full false")
 }
 
 ///|
 test "(?i) folds ASCII letters only" {
-  // Unicode case folding is not in R1: RE2 would also match É for é, and
-  // the Kelvin sign K (U+212A) for k.
+  // Unicode case folding is not in the subset: RE2 would also match É for
+  // é, and the Kelvin sign K (U+212A) for k.
   inspect(on("(?i)é", "É"), content="search none, full false")
   inspect(on("(?i)é", "é"), content="search 0-2, full true")
   inspect(on("(?i)k", "\u{212A}"), content="search none, full false")
