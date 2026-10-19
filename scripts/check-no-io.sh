@@ -24,7 +24,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-modules="http1 re2 yaml"
+modules="http1 re2 xml yaml"
 
 # The packages of smock/smock that decide a response, and the packages of
 # smock/smock they import.
@@ -102,7 +102,7 @@ for package in $packages; do
     case $dep in
     moonbitlang/core/env) fail "$pkg imports $dep, which reads the process environment" ;;
     moonbitlang/core/*) ;;
-    smock/http1 | smock/http1/* | smock/re2 | smock/re2/* | smock/yaml | smock/yaml/*) ;;
+    smock/http1 | smock/http1/* | smock/re2 | smock/re2/* | smock/xml | smock/xml/* | smock/yaml | smock/yaml/*) ;;
     smock/smock/*)
       case " $packages " in
       *" ${dep#smock/smock/} "*) ;;
