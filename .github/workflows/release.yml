@@ -18,8 +18,10 @@
 #    (scripts/package-helm-chart.sh), and pushes it as an OCI artifact to
 #    oci://ghcr.io/hirunefu/charts/smock.
 # 4. release: creates the GitHub release with the linux/amd64 and
-#    linux/arm64 binaries (the same binaries as in the image), the SBOMs, and
-#    notes that name the MoonBit toolchain (scripts/release-notes.sh).
+#    linux/arm64 binaries (the same binaries as in the image), the SBOMs,
+#    LICENSE and NOTICE (which names the third-party software the binaries
+#    link statically), and notes that name the MoonBit toolchain
+#    (scripts/release-notes.sh).
 #
 # Run it by hand from the Actions tab to try it before a tag: it builds and
 # smoke-tests both architectures, packages the chart, keeps the binaries,
@@ -307,6 +309,11 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
+      # For LICENSE and NOTICE, from the tagged commit.
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
       - uses: actions/download-artifact@v8
         with:
           path: out
@@ -319,4 +326,5 @@ jobs:
           gh release create "$GITHUB_REF_NAME" --verify-tag $prerelease \
             --title "smock $VERSION" --notes-file out/release-notes.md \
             "out/smock-$VERSION-linux-amd64" "out/smock-$VERSION-linux-arm64" \
-            "out/smock-$VERSION-linux-amd64.spdx.json" "out/smock-$VERSION-linux-arm64.spdx.json"
+            "out/smock-$VERSION-linux-amd64.spdx.json" "out/smock-$VERSION-linux-arm64.spdx.json" \
+            LICENSE NOTICE
