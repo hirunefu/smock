@@ -152,12 +152,12 @@
           ]
         },
         "query": {
-          "description": "Query parameters, by name. Each listed parameter must be present, and its percent-decoded value must equal the given string or match the given pattern as a whole. When a parameter is repeated, any of its values may match. Parameters that are not listed are ignored.",
+          "description": "Query parameters, by name. Each listed parameter must be present, and its percent-decoded value must equal the given string or match the given pattern as a whole. When a parameter is repeated, any of its values may match. `$not` and `$exists` are about the parameter as a whole: see valueCondition. Names are literal, even when they start with `$`, such as `$filter`. Parameters that are not listed are ignored.",
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/valueCondition" }
         },
         "headers": {
-          "description": "Header fields, by name. Names are compared case-insensitively. Each listed header must be present, and its value must equal the given string or match the given pattern as a whole. When a header is repeated, any of its values may match. Each header field line is one value: a line that joins values with commas, such as `b, a`, matches only as a whole. Headers that are not listed are ignored.",
+          "description": "Header fields, by name. Names are compared case-insensitively. Each listed header must be present, and its value must equal the given string or match the given pattern as a whole. When a header is repeated, any of its values may match. Each header field line is one value: a line that joins values with commas, such as `b, a`, matches only as a whole. `$not` and `$exists` are about the header as a whole: see valueCondition. Headers that are not listed are ignored.",
           "type": "object",
           "propertyNames": { "$ref": "#/$defs/headerName" },
           "additionalProperties": { "$ref": "#/$defs/valueCondition" }
@@ -177,14 +177,40 @@
       "additionalProperties": false
     },
     "valueCondition": {
-      "description": "A condition on a value: an exact string, or a pattern that must match the whole value.",
+      "description": "A condition on the values of a name, such as a query parameter: an exact string or a pattern, which one of the values must meet, or an operator about the name as a whole. An object whose only key starts with `$` is an operator; any other `$` key is reserved.",
       "anyOf": [
         {
           "description": "The exact value.",
           "type": "string"
         },
-        { "$ref": "#/$defs/pattern" }
+        { "$ref": "#/$defs/pattern" },
+        { "$ref": "#/$defs/notCondition" },
+        { "$ref": "#/$defs/existsCondition" }
       ]
+    },
+    "notCondition": {
+      "description": "Negation: the condition holds exactly when the given one does not. So `{\"$not\": \"a\"}` holds when no value is `a`, or when the name is absent, and a negated pattern holds when no value matches it. Operators nest.",
+      "type": "object",
+      "properties": {
+        "$not": {
+          "description": "The condition to negate.",
+          "$ref": "#/$defs/valueCondition"
+        }
+      },
+      "required": ["$not"],
+      "additionalProperties": false
+    },
+    "existsCondition": {
+      "description": "Presence: with true, the name is present, with any value, even empty; with false, it is absent.",
+      "type": "object",
+      "properties": {
+        "$exists": {
+          "description": "Whether the name is present.",
+          "type": "boolean"
+        }
+      },
+      "required": ["$exists"],
+      "additionalProperties": false
     },
     "pattern": {
       "description": "A pattern condition, in RE2 syntax. The pattern must match the whole value, not only part of it. Patterns are compiled when the definitions are loaded, and a pattern that does not compile makes the definition set invalid.",

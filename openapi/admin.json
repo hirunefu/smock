@@ -1646,8 +1646,15 @@
             "pattern": "^(method|path|body|query:[\\s\\S]*|header:.+|scenario:[\\s\\S]+)$"
           },
           "expected": {
-            "description": "The condition as the Stub gives it: an exact string, a pattern, or a json condition. For `scenario:<name>`, the state the Stub requires, as an exact string.",
-            "$ref": "../schema/v1/definitions.json#/$defs/request/properties/body"
+            "description": "The condition as the Stub gives it, operators included: an exact string, a pattern, an operator such as `{\"$not\": ...}` or `{\"$exists\": false}`, or a json condition. For `scenario:<name>`, the state the Stub requires, as an exact string.",
+            "anyOf": [
+              {
+                "$ref": "../schema/v1/definitions.json#/$defs/valueCondition"
+              },
+              {
+                "$ref": "../schema/v1/definitions.json#/$defs/request/properties/body"
+              }
+            ]
           },
           "actual": {
             "description": "The values the request carries for the condition, in order: one for method, path and body; every value of a query parameter or header, which may be repeated; none when it is absent. For `scenario:<name>`, the one state the Scenario is in for the request's Session: `Started` when the Session has not moved it. A body that is not UTF-8 is shown with U+FFFD in place of each sequence that is not; the Journal entry's request body keeps its bytes.",

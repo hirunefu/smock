@@ -117,10 +117,15 @@ fn shadows(t : Stub, s : Stub) -> Bool {
 /// - Each of `t`'s query, header and body conditions also appears,
 ///   identically, in `s`. Header names are in lower case, so they compare
 ///   case-insensitively, as in matching. A `json` condition with patterns
-///   is identical only to one with the same patterns in the same places.
+///   is identical only to one with the same patterns in the same places,
+///   and a value condition with operators only to one with the same
+///   operators around an identical condition.
 ///
-/// Containment between two patterns is not attempted: what cannot be
-/// proven this way is not reported.
+/// A subset of conjuncts is sound whatever the conditions mean, operators
+/// included. Containment between two patterns is not attempted, and
+/// neither is any reasoning about operators, such as a value and its
+/// negation excluding each other: what cannot be proven this way is not
+/// reported.
 fn request_shadows(t : Conditions, s : Conditions) -> Bool {
   let meth = match t.meth {
     None => true

@@ -40,16 +40,16 @@ fn Incoming::meets(
   if conditions.meth is Some(meth) && meth != self.request.meth {
     return false
   }
-  if conditions.path is Some(path) && !value_meets(self.path, path) {
+  if conditions.path is Some(path) && !path.meets(self.path) {
     return false
   }
   for i in 0..<conditions.query.length() {
-    if !self.has_parameter(conditions.query[i]) {
+    if !self.query_meets(conditions.query[i]) {
       return false
     }
   }
   for i in 0..<conditions.headers.length() {
-    if !self.has_header(conditions.headers[i]) {
+    if !self.header_meets(conditions.headers[i]) {
       return false
     }
   }
@@ -60,22 +60,26 @@ fn Incoming::meets(
 }
 
 ///|
-/// Whether the request has a query parameter with the name of `condition`
-/// and a decoded value that meets it. A repeated parameter matches when
-/// any of its values does.
-fn Incoming::has_parameter(
+/// Whether `condition`, on a query parameter, holds for the request: an
+/// exact value or a pattern holds when one of the parameter's decoded
+/// values meets it, so a repeated parameter matches when any of its values
+/// does; an operator is about all of them (see `ValueCondition::holds`).
+fn Incoming::query_meets(
   self : Incoming,
   condition : (String, @definitions.ValueCondition),
 ) -> Bool {
   let (name, value) = condition
+  let wanted = value.value_test()
   let parameters = self.query_parameters()
+  let mut found = false
   for i in 0..<parameters.length() {
     let parameter = parameters[i]
-    if parameter.0 == name && value_meets(parameter.1, value) {
-      return true
+    if parameter.0 == name && wanted.meets(parameter.1) {
+      found = true
+      break
     }
   }
-  false
+  value.holds(found~)
 }
 
 ///|
@@ -93,33 +97,25 @@ fn Incoming::query_parameters(self : Incoming) -> Array[(String, String)] {
 }
 
 ///|
-/// Whether the request has a header with the name of `condition`, which is
-/// in lower case, and a value that meets it. Names are compared
-/// case-insensitively. A repeated header matches when any of its values
-/// does.
-fn Incoming::has_header(
+/// Whether `condition`, on a header whose name is in lower case, holds for
+/// the request, as `query_meets` says for a query parameter. Names are
+/// compared case-insensitively, and each header field line is one value.
+fn Incoming::header_meets(
   self : Incoming,
   condition : (String, @definitions.ValueCondition),
 ) -> Bool {
   let (lower_name, value) = condition
+  let wanted = value.value_test()
   let headers = self.request.headers
+  let mut found = false
   for i in 0..<headers.length() {
     let header = headers[i]
-    if is_name(header.0, lower_name) && value_meets(header.1, value) {
-      return true
+    if is_name(header.0, lower_name) && wanted.meets(header.1) {
+      found = true
+      break
     }
   }
-  false
-}
-
-///|
-/// Whether `value` meets `condition`: it is exactly the given text, or the
-/// pattern matches the whole of it.
-fn value_meets(value : String, condition : @definitions.ValueCondition) -> Bool {
-  match condition {
-    Exact(exact) => value == exact
-    Pattern(pattern) => pattern.matches(@utf8.encode(value))
-  }
+  value.holds(found~)
 }
 
 ///|

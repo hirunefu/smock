@@ -257,12 +257,13 @@ pub struct Conditions {
   /// The path: the percent-decoded path of the request, without its query,
   /// meets it.
   path : ValueCondition?
-  /// Query parameters as (name, condition): each must be present, and one
-  /// of its decoded values must meet the condition.
+  /// Query parameters as (name, condition): each condition must hold for
+  /// the decoded values of the parameter with that name, as
+  /// `ValueCondition::holds` says.
   query : ReadOnlyArray[(String, ValueCondition)]
-  /// Headers as (name in lower case, condition): each must be present, and
-  /// one of its values must meet the condition. Names are compared
-  /// case-insensitively.
+  /// Headers as (name in lower case, condition): each condition must hold
+  /// for the values of the header with that name, as
+  /// `ValueCondition::holds` says. Names are compared case-insensitively.
   headers : ReadOnlyArray[(String, ValueCondition)]
   /// The body.
   body : BodyCondition?
@@ -270,13 +271,78 @@ pub struct Conditions {
 
 ///|
 /// A condition on a value of a request, such as its path or a header
-/// value.
+/// value, as the Stub writes it, operators included.
+///
+/// A query parameter or a header is a name that the request carries any
+/// number of values under. An exact value or a pattern holds when one of
+/// the values meets it, so it fails when the name is absent; an operator
+/// is about the name as a whole. The path is a name with exactly one value.
 pub enum ValueCondition {
   /// The value is exactly this text.
   Exact(String)
   /// The pattern matches the whole value.
   Pattern(Pattern)
+  /// `$not`: the condition does not hold. With an exact value or a pattern
+  /// inside, no value of the name meets it, or the name is absent.
+  Not(ValueCondition)
+  /// `$exists`: the name is present, with any value, when true, and absent
+  /// when false.
+  Exists(Bool)
 } derive(Debug, Eq)
+
+///|
+/// Whether `value`, the one value of a name such as the path, meets the
+/// condition: it is exactly the given text, or the pattern matches the
+/// whole of it; an operator holds as `holds` says for a name with this one
+/// value.
+pub fn ValueCondition::meets(self : ValueCondition, value : String) -> Bool {
+  match self {
+    Exact(exact) => value == exact
+    Pattern(pattern) => pattern.matches(@utf8.encode(value))
+    Not(inner) => !inner.meets(value)
+    Exists(present) => present
+  }
+}
+
+///|
+/// The test that each value of a name is given for the condition: the
+/// exact value or the pattern inside its operators, or, for `$exists`, a
+/// test that every value passes.
+///
+/// Whether a name holds the condition depends only on whether one of its
+/// values passes this test, which `holds` turns into the outcome. So a
+/// matcher, whatever the operators, scans the values of a name once with
+/// `meets`, stops at the first that passes, and gives `holds` the result.
+pub fn ValueCondition::value_test(self : ValueCondition) -> ValueCondition {
+  match self {
+    Not(inner) => inner.value_test()
+    Exists(_) => any_value
+    Exact(_) | Pattern(_) => self
+  }
+}
+
+///|
+/// The test that every value passes, so that a name has a value that passes
+/// it exactly when the name is present.
+let any_value : ValueCondition = Exists(true)
+
+///|
+/// Whether the condition holds for a name, given whether one of the name's
+/// values passes `value_test`, `found`:
+///
+/// - an exact value or a pattern holds when one does, so it fails when the
+///   name is absent;
+/// - `$not` holds when its condition does not: with an exact value or a
+///   pattern inside, when none does, or the name is absent;
+/// - `$exists` holds when the name is present, with any value, or absent,
+///   as it says.
+pub fn ValueCondition::holds(self : ValueCondition, found~ : Bool) -> Bool {
+  match self {
+    Not(inner) => !inner.holds(found~)
+    Exists(present) => found == present
+    Exact(_) | Pattern(_) => found
+  }
+}
 
 ///|
 /// A pattern condition: an RE2 pattern, in the subset the RE2 module

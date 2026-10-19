@@ -887,8 +887,9 @@ fn File::read_json_condition_value(
 
 ///|
 /// Reads conditions on named values, such as query parameters: an object
-/// whose members are names and exact values or pattern conditions. With
-/// `header_names`, each name must be a valid header name.
+/// whose members are names and value conditions. Names are literal, even
+/// when they start with `$`. With `header_names`, each name must be a valid
+/// header name.
 fn File::read_value_conditions(
   self : File,
   pointer : String,
@@ -906,16 +907,124 @@ fn File::read_value_conditions(
       self.error(field, "is not a valid header name")
       continue
     }
-    match value {
-      String(value) => out.push((name, ValueCondition::Exact(value)))
-      Object(condition) =>
-        if self.read_pattern(field, condition) is Some(pattern) {
-          out.push((name, ValueCondition::Pattern(pattern)))
-        }
-      _ => self.error(field, "must be a string or an object")
+    if self.read_value_condition(field, value) is Some(condition) {
+      out.push((name, condition))
     }
   }
   out
+}
+
+///|
+/// Reads a value condition, the value at `pointer`: an exact value, a
+/// pattern condition, or an operator object, whose operand is read in
+/// turn. It has none when it is malformed.
+fn File::read_value_condition(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> ValueCondition? {
+  let members = match json {
+    String(value) => return Some(Exact(value))
+    Object(members) => members
+    _ => {
+      self.error(pointer, "must be a string or an object")
+      return None
+    }
+  }
+  guard operator_key(members) is Some(key) else {
+    return self.read_pattern(pointer, members).map(pattern => Pattern(pattern))
+  }
+  guard self.read_operator(pointer, members, key, value_operators)
+    is Some(operand) else {
+    return None
+  }
+  let at = child_pointer(pointer, key)
+  match key {
+    "$not" =>
+      self
+      .read_value_condition(at, operand)
+      .map(condition => ValueCondition::Not(condition))
+    _ => self.read_exists(at, operand).map(present => Exists(present))
+  }
+}
+
+///|
+/// The operators of a query parameter's or a header's value, in the order
+/// messages list them.
+let value_operators : Array[String] = ["$not", "$exists"]
+
+///|
+/// The operators of a value in a `json` condition, in the order messages
+/// list them. One of them where it is not allowed is reported as allowed
+/// only in a `json` condition, not as unknown.
+let json_operators : Array[String] = ["$not", "$exists", "$includes"]
+
+///|
+/// The key of `members`, an object in a value position, that makes it an
+/// operator object, if any: the first key that starts with `$` but not with
+/// `$$`, which writes a literal key that starts with `$` in a `json`
+/// condition.
+fn operator_key(members : Map[String, Json]) -> String? {
+  for key, _ in members {
+    if key.has_prefix("$") && !key.has_prefix("$$") {
+      return Some(key)
+    }
+  }
+  None
+}
+
+///|
+/// Reads `members`, the operator object at `pointer` whose operator is
+/// `key`, and returns the operator's operand. An operator is the only key
+/// of its object, and it is one of `operators`, those allowed in its
+/// position; each key that breaks this is reported, and then there is no
+/// operand.
+fn File::read_operator(
+  self : File,
+  pointer : String,
+  members : Map[String, Json],
+  key : String,
+  operators : Array[String],
+) -> Json? {
+  let mut valid = true
+  for other, _ in members {
+    let at = child_pointer(pointer, other)
+    if other != key {
+      self.error(
+        at,
+        "is not allowed beside \{key.escape()}: an operator is the only key of its object",
+      )
+      valid = false
+    } else if json_operators.contains(key) && !operators.contains(key) {
+      self.error(at, "is allowed only in a json condition")
+      valid = false
+    } else if !operators.contains(key) {
+      let listed = operators.join(", ")
+      self.error(
+        at,
+        "is not an operator: the operators here are \{listed}; write $\{key} for a literal key that starts with $",
+      )
+      valid = false
+    }
+  }
+  if valid {
+    members.get(key)
+  } else {
+    None
+  }
+}
+
+///|
+/// Reads the operand of `$exists`, the value at `pointer`: true or false.
+fn File::read_exists(self : File, pointer : String, json : Json) -> Bool? {
+  match json {
+    True => Some(true)
+    False => Some(false)
+    _ => {
+      self.error(pointer, "must be true or false")
+      None
+    }
+  }
 }
 
 ///|

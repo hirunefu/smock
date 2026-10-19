@@ -514,7 +514,8 @@ problem on stderr.
 
 [docs/definition-files.md](docs/definition-files.md) describes the format:
 how Stubs match requests (method, path, query parameters, headers and
-body, exactly, by RE2 pattern or as JSON), the order they are tried in (priority, then
+body, exactly, by RE2 pattern or as JSON, and negated or by presence with
+`$not` and `$exists`), the order they are tried in (priority, then
 file-name order), what a Mock answers when nothing matches, responses with
 inline bodies, body files, JSON or Server-Sent Events, response templates,
 Faults, the JSON Schema, editor support and writing Definition files in
@@ -659,9 +660,10 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   Server-Sent Events is recorded when its last event is written, and a
   request ended by a connection Fault when the connection closes.
 - The filter takes a Mock, a method, a path and headers, with the
-  semantics of Stub conditions (exact or `{ "pattern": … }`), and a time
-  range on when the request was received: `since` (included) and `until`
-  (excluded), as RFC 3339 date-times. Every member is optional. Entries
+  semantics of Stub conditions (exact, `{ "pattern": … }`, and `$not` and
+  `$exists` for headers), and a time range on when the request was
+  received: `since` (included) and `until` (excluded), as RFC 3339
+  date-times. Every member is optional. Entries
   come oldest first, at most `limit` of them (100 by default, at most
   10000); `more` says whether more passed the filter.
 - Each entry has a sequence number, `seq`: 1 for the first entry the
