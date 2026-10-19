@@ -88,9 +88,9 @@ Stub without `request` matches every request of its Mock.
 |---|---|
 | `method` | its method is exactly this, case and all, such as `GET`. |
 | `path` | its path, percent-decoded and without the query, is exactly this. `/users/a%20b` meets `"/users/a b"`. `{ "pattern": … }`: the pattern matches the whole path. |
-| `query` | each listed parameter is present, and one of its values, decoded, is exactly the given value, or matches the given `{ "pattern": … }` as a whole. [`$not` and `$exists`](#negation-and-presence) are about the parameter as a whole. Parameters that are not listed are ignored. |
-| `headers` | each listed header is present, its name compared case-insensitively, and one of its values is exactly the given value, or matches the given `{ "pattern": … }` as a whole. [`$not` and `$exists`](#negation-and-presence) are about the header as a whole. Headers that are not listed are ignored. |
-| `cookies` | each listed cookie is present in a `Cookie` header, its name compared exactly, and one of its values, as sent, is exactly the given value, or matches the given `{ "pattern": … }` as a whole. See [Cookies](#cookies). [`$not` and `$exists`](#negation-and-presence) are about the cookie as a whole. Cookies that are not listed are ignored. |
+| `query` | for each listed parameter, one of its values, decoded, is exactly the given value, or matches the given `{ "pattern": … }` as a whole, so an absent parameter fails. [`$not` and `$exists`](#negation-and-presence) are about the parameter as a whole instead, and may hold for an absent one. Parameters that are not listed are ignored. |
+| `headers` | for each listed header, its name compared case-insensitively, one of its values is exactly the given value, or matches the given `{ "pattern": … }` as a whole, so an absent header fails. [`$not` and `$exists`](#negation-and-presence) are about the header as a whole instead, and may hold for an absent one. Headers that are not listed are ignored. |
+| `cookies` | for each listed cookie, its name compared exactly, one of its values in the `Cookie` headers, as sent, is exactly the given value, or matches the given `{ "pattern": … }` as a whole, so an absent cookie fails. See [Cookies](#cookies). [`$not` and `$exists`](#negation-and-presence) are about the cookie as a whole instead, and may hold for an absent one. Cookies that are not listed are ignored. |
 | `body` | a string: the body is exactly this text in UTF-8. `{ "pattern": … }`: the pattern matches the whole body. `{ "json": … }`: the body parses as JSON and contains the given value, which may hold patterns and [operators](#operators-in-json-conditions). `{ "form": … }`: the Content-Type says the body is a form, and each listed [field](#form-fields) meets its condition. `{ "xml": … }`: the body parses as XML, and the value at each [path](#xml-bodies) meets its condition. |
 
 Query parameters are decoded as HTML forms encode them: `%20` and `+` both
@@ -269,12 +269,11 @@ operator.
 Keys that start with `$` in a value are reserved for operators. An unknown
 one, an operator beside another key, or an `$exists` that is not `true` or
 `false` makes the definition set invalid, as `$includes` does here: it is
-only allowed in a `json` condition. Response templates write a literal key
-that starts with `$` as `$$name`, and conditions follow the same
-convention, so the message about an unknown operator suggests it:
+only allowed in a `json` condition. Each such key is reported, whatever the
+order of the keys:
 
 ```console
-users.json: /stubs/0/request/query/status/$nto: is not an operator: the operators here are $not, $exists; write $$nto for a literal key that starts with $
+users.json: /stubs/0/request/query/status/$nto: is not an operator: the operators here are "$not" and "$exists"
 users.json: /stubs/1/request/headers/Authorization/pattern: is not allowed beside "$not": an operator is the only key of its object
 users.json: /stubs/2/request/query/debug/$exists: must be true or false
 ```
@@ -286,7 +285,10 @@ the value of a member, or an element of an array. An operator is about the
 value in its place.
 
 - `{ "$not": <condition> }` holds when the value does not meet the
-  condition. A missing key meets no condition, so it meets `$not`.
+  condition. A missing key meets `$not` of any condition that a missing
+  key does not meet: `{ "$not": "x" }` holds when the key is missing, but
+  `{ "$not": { "$exists": false } }` does not, since a missing key meets
+  `$exists: false`.
 - `{ "$exists": true }` holds when the key is present, whatever its value,
   even `null`. `{ "$exists": false }` holds when the key is missing. At the
   root, `{ "$exists": true }` holds for any JSON body.
@@ -327,11 +329,12 @@ that has a line whose `sku` starts with `A-`.
 A key that starts with `$` is written `$$` and the rest, as in
 [response templates](#structured-templates): `{ "$$ref": "#/a" }` matches
 a body with the key `$ref`. A key that starts with one `$` and is not an
-operator makes the definition set invalid, and so do an operator beside
-another key and an `$exists` that is not `true` or `false`:
+operator makes the definition set invalid, with a message that suggests
+`$$`, and so do an operator beside another key and an `$exists` that is
+not `true` or `false`:
 
 ```console
-orders.json: /stubs/0/request/body/json/schema/$ref: is not an operator: the operators here are $not, $exists, $includes; write $$ref for a literal key that starts with $
+orders.json: /stubs/0/request/body/json/schema/$ref: is not an operator: the operators here are "$not", "$exists" and "$includes"; write "$$ref" for the literal key "$ref"
 orders.json: /stubs/1/request/body/json/tags/length: is not allowed beside "$includes": an operator is the only key of its object
 ```
 
@@ -416,7 +419,8 @@ compared case-insensitively, with any parameters, such as
 first one counts. Any other Content-Type, or none, fails every listed
 field, `$not` and `$exists: false` included, so a JSON or text body never
 meets a form condition by accident. `{ "form": {} }` lists no field, so it
-holds for every request, as an empty `query` does.
+holds for any request whose Content-Type says the body is a form, as
+`{ "json": {} }` holds for any body that is a JSON object.
 
 The body is read as a form at most once per request, and only when smock
 tries a Stub with a `form` condition. `multipart/form-data` bodies are not
@@ -475,7 +479,9 @@ What a node's value is:
 - References are decoded: `&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`, and
   character references such as `&#38;`.
 - Namespace declarations, `xmlns` and `xmlns:p`, are not attributes, so
-  a path that ends in `@xmlns` makes the definition set invalid.
+  a path that ends in `@xmlns` makes the definition set invalid. An
+  attribute with a prefix and the local name `xmlns`, such as `p:xmlns`,
+  cannot be selected either.
 
 The condition is any value condition: an exact value, a pattern, `$not` or
 `$exists`. A path is a name whose values are the values of the nodes it
@@ -487,7 +493,8 @@ selects:
   `{ "$exists": true }` holds when it selects at least one, even an empty
   element.
 
-The Content-Type is not consulted, as for `json`. The body is parsed at
+The Content-Type is not consulted, as for `json`. `{ "xml": {} }` lists no
+path, so it holds for any body that parses as XML. The body is parsed at
 most once per request, and only when smock tries a Stub with an `xml`
 condition. smock reads a restricted form of XML, so that no request can
 read files or exhaust memory through it:
@@ -502,8 +509,8 @@ read files or exhaust memory through it:
 - It must be well-formed: one root element, matching tags, no repeated
   attribute, no `<` or bare `&` in text.
 
-A body that breaks one of these rules fails every `xml` condition, `$not`
-and `$exists: false` included. It is not an error: the request gets
+A body that breaks one of these rules fails every `xml` condition, even
+one with no path, and `$not` and `$exists: false` included. It is not an error: the request gets
 another Stub or the no-match response.
 
 Paths are compiled once, when smock loads the Definition files. A path
@@ -782,7 +789,9 @@ of an [`xml` condition](#xml-bodies), and the state a
 `path`, `query:<name>`, `header:<name>` (in lower case), `cookie:<name>`,
 `body`, `form:<name>` or `xml:<path>`, and `scenario:<name>`, in that
 order. A parameter, a header, a cookie, a form field or an XML path counts
-once whatever its condition, operators included. The header is ASCII only
+once whatever its condition, operators included. A `form` or `xml`
+condition with no field or path counts as `body`, as `{ "json": {} }`
+does. The header is ASCII only
 and never carries what a condition expects or what the request sent: the
 Stub ID, query, header, cookie, form field and Scenario names, and XML
 paths are percent-encoded where they hold anything other than the
@@ -819,8 +828,11 @@ What the request sent is shown as text. A body that is not valid UTF-8 is
 shown with U+FFFD in place of each sequence that is not, so a failed exact
 `body` condition can show an expected and an actual value that look the
 same. The Journal entry itself keeps the body's bytes, in base64, up to
-`--journal-body-limit`, and the Near miss in it cuts the body, and each
-value taken from a form or an XML body, to the same limit.
+`--journal-body-limit`, and the Near miss in it cuts the body to the same
+limit. It also keeps the values taken from a form or an XML body up to that
+limit in total: each value counts its bytes and 32 more, the value that
+reaches the limit is cut there, and the values after it are left out. So
+even a body of many empty fields adds little to an entry.
 
 `noMatch.headers` adds header fields to the response when no Stub
 matches, such as CORS headers. Without them, a browser client that calls
@@ -1224,7 +1236,9 @@ body file that is not UTF-8 are checked then.
 ### Rendering a template
 
 `smock render` and the Admin render operation render a Stub for a sample
-request, templates included, and show the time and the seed they used.
+request, templates included, and show the time and the seed they used. A
+sample's cookies come from its `headers.Cookie`, and its form fields from
+its body when its `headers.Content-Type` says the body is a form.
 `--time` (the Admin API's `time`) is the time of the request; `--seed`
 (`seed`) gives the output the request takes from its Stub's source as the
 first output of a generator seeded with it, so a rendering with seed `S`

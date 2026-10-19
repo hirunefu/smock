@@ -121,7 +121,8 @@ fn shadows(t : Stub, s : Stub) -> Bool {
 ///   with the same patterns in the same places, and a value condition with
 ///   operators only to one with the same operators around an identical
 ///   condition. The fields of a `form` condition and the paths of an `xml`
-///   condition are conditions of their own, as query parameters are: each
+///   condition are conditions of their own, as query parameters are,
+///   beside the body being a form or XML, which both Stubs then need: each
 ///   of `t`'s fields or paths appears, written the same, with an identical
 ///   condition in `s`'s `form` or `xml` condition.
 ///

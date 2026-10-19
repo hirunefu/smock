@@ -248,7 +248,7 @@ test "an Ephemeral Stub may use operators, and a malformed one is rejected with 
       ),
     ),
     content=(
-      #|/request/query/q/$nto: is not an operator: the operators here are $not, $exists; write $$nto for a literal key that starts with $
+      #|/request/query/q/$nto: is not an operator: the operators here are "$not" and "$exists"
       #|/request/query/r/$exists: must be true or false
       #|/request/headers/X-A/pattern: is not allowed beside "$not": an operator is the only key of its object
       #|/request/headers/X-B/$includes: is allowed only in a json condition
@@ -425,7 +425,10 @@ test "a Journal filter's header values take $not and $exists, as a Stub's do, an
         .collect()
       "[\{values.join(", ")}]"
     })
-    out.push("\{filter} -> \{traces.join(" ")}")
+    // Each entry shows its X-Trace values, `[]` for an entry without one.
+    out.push(
+      "\{filter} -> \{page.entries.length()} entries, X-Trace \{traces.join(" ")}",
+    )
   }
   let problems = try
     @engine.JournalQuery::from_json(
@@ -442,12 +445,12 @@ test "a Journal filter's header values take $not and $exists, as a Stub's do, an
   inspect(
     "\{out.join("\n")}\n\{problems}",
     content=(
-      #|{ "X-Trace": { "$exists": false } } -> []
-      #|{ "X-Trace": { "$exists": true } } -> [a] [b, a]
-      #|{ "x-trace": { "$not": "a" } } -> []
-      #|{ "X-Trace": { "$not": { "pattern": "[c-z]" } } } -> [] [a] [b, a]
+      #|{ "X-Trace": { "$exists": false } } -> 1 entries, X-Trace []
+      #|{ "X-Trace": { "$exists": true } } -> 2 entries, X-Trace [a] [b, a]
+      #|{ "x-trace": { "$not": "a" } } -> 1 entries, X-Trace []
+      #|{ "X-Trace": { "$not": { "pattern": "[c-z]" } } } -> 3 entries, X-Trace [] [a] [b, a]
       #|/filter/headers/X-A/$exists: must be true or false
-      #|/filter/headers/X-B/$nto: is not an operator: the operators here are $not, $exists; write $$nto for a literal key that starts with $
+      #|/filter/headers/X-B/$nto: is not an operator: the operators here are "$not" and "$exists"
     ),
   )
 }

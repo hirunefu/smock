@@ -394,14 +394,14 @@ pub enum BodyCondition {
   /// A `form` condition, as (name, condition): the body is a form, as the
   /// request's Content-Type says, and each condition holds for the decoded
   /// values of the field with that name, as `ValueCondition::holds` says.
-  /// A body that is not a form fails every one of them, operators
-  /// included.
+  /// A body that is not a form fails the condition, even one with no
+  /// field, and every one of them, operators included.
   Form(ReadOnlyArray[(String, ValueCondition)])
   /// An `xml` condition, as (path, condition): the body parses as XML, and
   /// each condition holds for the values of the nodes its path selects, as
   /// `ValueCondition::holds` says, a path that selects nothing being a name
-  /// that is absent. A body that does not parse fails every one of them,
-  /// operators included.
+  /// that is absent. A body that does not parse fails the condition, even
+  /// one with no path, and every one of them, operators included.
   Xml(ReadOnlyArray[(@xml.Path, ValueCondition)])
 } derive(Debug, Eq)
 

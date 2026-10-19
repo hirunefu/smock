@@ -59,8 +59,7 @@ pub(all) enum Condition {
 ///|
 /// The name of the condition, as the Near miss reports it: `method`,
 /// `path`, `query:<name>`, `header:<name>`, `cookie:<name>`, `body`,
-/// `form:<name>`, `xml:<path>` or
-/// `scenario:<name>`.
+/// `form:<name>`, `xml:<path>` or `scenario:<name>`.
 pub fn Condition::to_string(self : Condition) -> String {
   match self {
     Method => "method"
@@ -76,8 +75,7 @@ pub fn Condition::to_string(self : Condition) -> String {
 }
 
 ///|
-/// The value a condition expects, as the Stub gives it, operators
-/// included.
+/// The value a condition expects, as the Stub gives it, operators included.
 pub(all) enum Expected {
   /// Exactly this text.
   Exact(String)
@@ -89,6 +87,11 @@ pub(all) enum Expected {
   Not(Expected)
   /// `$exists`: the name is present when true, absent when false.
   Exists(Bool)
+  /// A `form` condition with no field: the request's Content-Type says
+  /// that its body is a form.
+  Form
+  /// An `xml` condition with no path: the body parses as XML.
+  Xml
 } derive(Debug)
 
 ///|
@@ -113,8 +116,9 @@ pub impl ToJson for FailedCondition with fn to_json(self) {
 
 ///|
 /// An exact value is a string, a pattern `{"pattern": ...}`, a `json`
-/// condition `{"json": ...}` and an operator `{"$not": ...}` or
-/// `{"$exists": ...}`, as in Definition files.
+/// condition `{"json": ...}`, an operator `{"$not": ...}` or
+/// `{"$exists": ...}`, and an empty `form` or `xml` condition
+/// `{"form": {}}` or `{"xml": {}}`, as in Definition files.
 pub impl ToJson for Expected with fn to_json(self) {
   match self {
     Exact(text) => Json::string(text)
@@ -122,6 +126,8 @@ pub impl ToJson for Expected with fn to_json(self) {
     Json(value) => { "json": value }
     Not(expected) => { "$not": ToJson::to_json(expected) }
     Exists(present) => { "$exists": Json::boolean(present) }
+    Form => { "form": {} }
+    Xml => { "xml": {} }
   }
 }
 
@@ -129,9 +135,8 @@ pub impl ToJson for Expected with fn to_json(self) {
 /// The `Smock-Near-Miss` header value: `<stub-id>; failed=<condition>,...`.
 /// It is ASCII only and carries no expected or actual value: the Stub ID,
 /// the names of query parameters, headers, cookies, form fields and
-/// Scenarios, and XML paths are
-/// written as `header_safe` writes them, so no name can add a field or
-/// change the header's meaning.
+/// Scenarios, and XML paths are written as `header_safe` writes them, so
+/// no name can add a field or change the header's meaning.
 fn NearMiss::header_value(self : NearMiss) -> String {
   let failed = self.failed
     .map(failed => {
@@ -207,7 +212,8 @@ fn Incoming::near_miss(
 /// The conditions among `conditions` that the request fails, each counted
 /// once, in the order method, path, query parameters, headers, cookies,
 /// body. The fields of a `form` condition and the paths of an `xml`
-/// condition count one by one, in the Stub's order.
+/// condition count one by one, in the Stub's order; such a condition with
+/// no field or path counts as the body.
 fn Incoming::failed(
   self : Incoming,
   conditions : @definitions.Conditions,
@@ -235,13 +241,13 @@ fn Incoming::failed(
     }
   }
   match conditions.body {
-    Some(Form(fields)) =>
+    Some(Form(fields)) if fields.length() > 0 =>
       for condition in fields {
         if !self.form_meets(condition) {
           out.push(Failed::Form(condition.0, condition.1))
         }
       }
-    Some(Xml(paths)) =>
+    Some(Xml(paths)) if paths.length() > 0 =>
       for condition in paths {
         if !self.xml_meets(condition) {
           out.push(Failed::Xml(condition.0, condition.1))
@@ -296,10 +302,10 @@ fn Incoming::explain(self : Incoming, failed : Failed) -> FailedCondition {
           Exact(bytes) => Exact(@utf8.decode_lossy(bytes))
           Pattern(pattern) => Pattern(pattern.source)
           Json(condition) => Json(condition.to_json())
-          // Each field of a `form` condition, and each path of an `xml`
-          // condition, fails on its own, as `Form` or `Xml`.
-          Form(_) => abort("a form condition fails field by field")
-          Xml(_) => abort("an xml condition fails path by path")
+          // Only a condition with no field or path fails as the body; any
+          // other fails field by field, or path by path.
+          Form(_) => Form
+          Xml(_) => Xml
         },
         actual: [@utf8.decode_lossy(self.request.body)],
       }
@@ -307,13 +313,7 @@ fn Incoming::explain(self : Incoming, failed : Failed) -> FailedCondition {
       {
         condition: Form(name),
         expected: expected(value),
-        actual: self
-        .form_fields()
-        .unwrap_or([])
-        .iter()
-        .filter(field => field.0 == name)
-        .map(field => field.1)
-        .collect(),
+        actual: self.form_values(name),
       }
     Xml(path, value) =>
       {

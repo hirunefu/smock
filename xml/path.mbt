@@ -5,10 +5,11 @@
 pub struct Path {
   /// The path as written.
   priv source : String
-  /// The local names of the elements, the root element's first.
-  priv elements : Array[String]
-  /// The local name of the attribute, when the path ends in one.
-  priv attribute : String?
+  /// The local names of the elements, the root element's first, in UTF-8,
+  /// as selection compares them with a document.
+  priv elements : Array[Bytes]
+  /// The local name of the attribute in UTF-8, when the path ends in one.
+  priv attribute : Bytes?
 }
 
 ///|
@@ -52,8 +53,9 @@ pub impl Show for PathError with fn output(self, logger) {
 /// Raises `PathError` for anything else. XPath that the paths leave out,
 /// such as `//`, wildcards, predicates, indexes, axes and functions, is an
 /// error whose message says it is not supported. So is a final `@xmlns`:
-/// namespace declarations are not attributes here, so it could never
-/// select anything.
+/// `xmlns` names namespace declarations, which are not attributes here.
+/// An attribute with a prefix and the local name `xmlns`, such as
+/// `p:xmlns`, cannot be selected either.
 pub fn compile_path(source : String) -> Path raise PathError {
   let chars : Array[Char] = source.iter().collect()
   let n = chars.length()
@@ -125,12 +127,12 @@ pub fn compile_path(source : String) -> Path raise PathError {
       }
     }
     if is_attribute {
-      // The parser keeps no namespace declaration, so such a path would
-      // never select anything.
+      // Namespace declarations are not attributes for selection, and a path
+      // that seems to select them is refused rather than selecting nothing.
       if name == "xmlns" {
         raise PathError(
           position=start,
-          message="@xmlns is a namespace declaration, which smock's XML paths never select",
+          message="@xmlns is not supported in smock's XML paths: xmlns names namespace declarations, which are not attributes here",
         )
       }
       attribute = Some(name)
@@ -138,7 +140,11 @@ pub fn compile_path(source : String) -> Path raise PathError {
       elements.push(name)
     }
   }
-  { source, elements, attribute, }
+  {
+    source,
+    elements: elements.map(name => @utf8.encode(name)),
+    attribute: attribute.map(name => @utf8.encode(name)),
+  }
 }
 
 ///|

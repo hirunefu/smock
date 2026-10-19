@@ -115,3 +115,42 @@ fn is_name_char(c : Int) -> Bool {
   is_name_start(c) ||
   c is ('-' | '.' | '0'..='9' | 0xB7 | 0x300..=0x36F | 0x203F..=0x2040)
 }
+
+///|
+/// The character that the predefined entity `name` stands for (XML 1.0
+/// §4.6), or -1 when it is none of them.
+fn predefined_entity(name : BytesView) -> Int {
+  match name {
+    [b'l', b't'] => '<'
+    [b'g', b't'] => '>'
+    [b'a', b'm', b'p'] => '&'
+    [b'a', b'p', b'o', b's'] => '\''
+    [b'q', b'u', b'o', b't'] => '"'
+    _ => -1
+  }
+}
+
+///|
+/// The index of the first colon of `input` from byte `start` to byte `end`,
+/// or -1.
+fn find_colon(input : BytesView, start : Int, end : Int) -> Int {
+  for i in start..<end {
+    if input[i] == b':' {
+      return i
+    }
+  }
+  -1
+}
+
+///|
+/// Where the local name of the qualified name of `input` from byte `start`
+/// to byte `end` starts: after its colon, if it has one (Namespaces in XML
+/// 1.0 §4).
+fn local_start(input : BytesView, start : Int, end : Int) -> Int {
+  let colon = find_colon(input, start, end)
+  if colon < 0 {
+    start
+  } else {
+    colon + 1
+  }
+}

@@ -29,11 +29,12 @@ priv enum ParsedBody {
 }
 
 ///|
-/// The request body as a form: not read yet, read into its decoded fields
-/// as (name, value), in request order, or not a form.
+/// The request body as a form: not read yet, read into where each of its
+/// fields starts, in request order, as `field_starts` finds them, or not a
+/// form. Names and values are decoded only when they are compared.
 priv enum FormBody {
   NotRead
-  Fields(Array[(String, String)])
+  Fields(FixedArray[Int])
   NotForm
 }
 
@@ -155,7 +156,7 @@ fn Incoming::header_meets(
 ///|
 /// Whether the header name `name` is `lower_name`, which is in lower case,
 /// in any case. Header names are ASCII.
-fn is_name(name : String, lower_name : String) -> Bool {
+fn is_name(name : StringView, lower_name : String) -> Bool {
   if name.length() != lower_name.length() {
     return false
   }
@@ -184,6 +185,11 @@ fn Incoming::body_meets(
         None => false
       }
     Form(fields) => {
+      // A body that is not a form fails even a condition with no field, as
+      // a body that is not JSON fails `json: {}`.
+      if self.form_fields() is None {
+        return false
+      }
       for i in 0..<fields.length() {
         if !self.form_meets(fields[i]) {
           return false
@@ -192,6 +198,10 @@ fn Incoming::body_meets(
       true
     }
     Xml(conditions) => {
+      // A body that is not XML fails even a condition with no path.
+      if self.body_xml() is None {
+        return false
+      }
       for i in 0..<conditions.length() {
         if !self.xml_meets(conditions[i]) {
           return false
@@ -210,13 +220,17 @@ fn Incoming::form_meets(
   self : Incoming,
   condition : (String, @definitions.ValueCondition),
 ) -> Bool {
-  guard self.form_fields() is Some(fields) else { return false }
+  guard self.form_fields() is Some(starts) else { return false }
+  let body = self.request.body
   let (name, value) = condition
   let wanted = value.value_test()
   let mut found = false
-  for i in 0..<fields.length() {
-    let field = fields[i]
-    if field.0 == name && wanted.meets(field.1) {
+  for i in 0..<starts.length() {
+    let start = starts[i]
+    let end = piece_end(body, start)
+    let equals = name_end(body, start, end)
+    if form_text_is(body[start:equals], name) &&
+      form_value_meets(field_value(body, equals, end), wanted) {
       found = true
       break
     }
@@ -225,17 +239,50 @@ fn Incoming::form_meets(
 }
 
 ///|
-/// The decoded fields of the request body, as (name, value), in request
-/// order, or `None` when the body is not a form, as `is_form` says. They
-/// are decoded at most once.
-fn Incoming::form_fields(self : Incoming) -> Array[(String, String)]? {
+/// Whether the encoded form value `value` meets `wanted`, a test that
+/// `ValueCondition::value_test` gave. Only a pattern needs the value
+/// decoded; an exact value is compared in place.
+fn form_value_meets(
+  value : BytesView,
+  wanted : @definitions.ValueCondition,
+) -> Bool {
+  match wanted {
+    Exists(present) => present
+    Exact(text) => form_text_is(value, text)
+    _ => wanted.meets(form_decode(value))
+  }
+}
+
+///|
+/// The decoded values of the field `name` of the request body, in request
+/// order, none when the body is not a form, as `is_form` says.
+fn Incoming::form_values(self : Incoming, name : String) -> Array[String] {
+  let values = []
+  guard self.form_fields() is Some(starts) else { return values }
+  let body = self.request.body
+  for i in 0..<starts.length() {
+    let start = starts[i]
+    let end = piece_end(body, start)
+    let equals = name_end(body, start, end)
+    if form_text_is(body[start:equals], name) {
+      values.push(form_decode(field_value(body, equals, end)))
+    }
+  }
+  values
+}
+
+///|
+/// Where each field of the request body starts, as `field_starts` finds
+/// them, or `None` when the body is not a form, as `is_form` says. They are
+/// found at most once.
+fn Incoming::form_fields(self : Incoming) -> FixedArray[Int]? {
   match self.form {
-    Fields(fields) => return Some(fields)
+    Fields(starts) => return Some(starts)
     NotForm => return None
     NotRead => ()
   }
   self.form = if is_form(self.request.headers) {
-    Fields(urlencoded(self.request.body))
+    Fields(field_starts(self.request.body))
   } else {
     NotForm
   }
@@ -256,7 +303,7 @@ fn is_form(headers : Array[(String, String)]) -> Bool {
         None => value[:]
       }
       return is_name(
-        media_type.trim(chars=" \t").to_owned(),
+        media_type.trim(chars=" \t"),
         "application/x-www-form-urlencoded",
       )
     }

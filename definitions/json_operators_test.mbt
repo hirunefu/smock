@@ -69,17 +69,17 @@ test "a malformed operator in a json condition is a diagnostic at its JSON Point
       ),
     ]),
     content=(
-      #|a.json: /stubs/0/request/body/json/a/$nto: is not an operator: the operators here are $not, $exists, $includes; write $$nto for a literal key that starts with $
-      #|a.json: /stubs/0/request/body/json/b/0/$ref: is not an operator: the operators here are $not, $exists, $includes; write $$ref for a literal key that starts with $
-      #|a.json: /stubs/0/request/body/json/c/$not/$regex: is not an operator: the operators here are $not, $exists, $includes; write $$regex for a literal key that starts with $
+      #|a.json: /stubs/0/request/body/json/a/$nto: is not an operator: the operators here are "$not", "$exists" and "$includes"; write "$$nto" for the literal key "$nto"
+      #|a.json: /stubs/0/request/body/json/b/0/$ref: is not an operator: the operators here are "$not", "$exists" and "$includes"; write "$$ref" for the literal key "$ref"
+      #|a.json: /stubs/0/request/body/json/c/$not/$regex: is not an operator: the operators here are "$not", "$exists" and "$includes"; write "$$regex" for the literal key "$regex"
       #|a.json: /stubs/1/request/body/json/a/b: is not allowed beside "$not": an operator is the only key of its object
       #|a.json: /stubs/1/request/body/json/c/pattern: is not allowed beside "$includes": an operator is the only key of its object
-      #|a.json: /stubs/1/request/body/json/d/$not: is not allowed beside "$exists": an operator is the only key of its object
+      #|a.json: /stubs/1/request/body/json/d/$exists: is not allowed beside "$not": an operator is the only key of its object
       #|a.json: /stubs/2/request/body/json/a/$exists: must be true or false
       #|a.json: /stubs/2/request/body/json/b/$includes/$exists: must be true or false
       #|a.json: /stubs/3/request/body/json/a/$not/pattern: is not a valid pattern: position 0: missing closing )
-      #|a.json: /stubs/3/request/body/json/b/$includes/0/$nope: is not an operator: the operators here are $not, $exists, $includes; write $$nope for a literal key that starts with $
-      #|a.json: /stubs/4/request/body/json/$schema: is not an operator: the operators here are $not, $exists, $includes; write $$schema for a literal key that starts with $
+      #|a.json: /stubs/3/request/body/json/b/$includes/0/$nope: is not an operator: the operators here are "$not", "$exists" and "$includes"; write "$$nope" for the literal key "$nope"
+      #|a.json: /stubs/4/request/body/json/$schema: is not an operator: the operators here are "$not", "$exists" and "$includes"; write "$$schema" for the literal key "$schema"
     ),
   )
 }
@@ -100,9 +100,9 @@ test "unknown $ keys beside literal keys are each reported, and nothing else, as
       ),
     ]),
     content=(
-      #|a.json: /stubs/0/request/body/json/schema/$id: is not an operator: the operators here are $not, $exists, $includes; write $$id for a literal key that starts with $
-      #|a.json: /stubs/0/request/body/json/schema/$schema: is not an operator: the operators here are $not, $exists, $includes; write $$schema for a literal key that starts with $
-      #|a.json: /stubs/1/request/query/q/$nto: is not an operator: the operators here are $not, $exists; write $$nto for a literal key that starts with $
+      #|a.json: /stubs/0/request/body/json/schema/$id: is not an operator: the operators here are "$not", "$exists" and "$includes"; write "$$id" for the literal key "$id"
+      #|a.json: /stubs/0/request/body/json/schema/$schema: is not an operator: the operators here are "$not", "$exists" and "$includes"; write "$$schema" for the literal key "$schema"
+      #|a.json: /stubs/1/request/query/q/$nto: is not an operator: the operators here are "$not" and "$exists"
     ),
   )
 }

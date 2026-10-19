@@ -39,7 +39,7 @@ test "a malformed cookie condition is a diagnostic at its JSON Pointer, with the
       #|a.json: /stubs/1/request/cookies/c/pattern: is not a valid pattern: position 0: missing closing )
       #|a.json: /stubs/1/request/cookies/d/regex: is not a known field
       #|a.json: /stubs/1/request/cookies/d: needs "pattern"
-      #|a.json: /stubs/1/request/cookies/e/$nto: is not an operator: the operators here are $not, $exists; write $$nto for a literal key that starts with $
+      #|a.json: /stubs/1/request/cookies/e/$nto: is not an operator: the operators here are "$not" and "$exists"
       #|a.json: /stubs/1/request/cookies/f/$includes: is allowed only in a json condition
       #|a.json: /stubs/1/request/cookies/g/$exists: must be true or false
       #|a.json: /stubs/1/request/cookies/h/pattern: is not allowed beside "$not": an operator is the only key of its object

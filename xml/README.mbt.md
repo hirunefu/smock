@@ -85,7 +85,9 @@ optionally ending in `/@` and an attribute name.
   client chose. Namespace URIs are not compared, so elements that differ
   only by namespace cannot be told apart.
 - Namespace declarations (`xmlns` and `xmlns:*`) are not attributes that a
-  path selects, so a path that ends in `@xmlns` is a compile error.
+  path selects, so a path that ends in `@xmlns` is a compile error. An
+  attribute with a prefix and the local name `xmlns`, such as `p:xmlns`,
+  cannot be selected either.
 - A path selects every element it reaches, so a repeated element gives
   one value per element.
 
@@ -154,6 +156,11 @@ input. It takes time linear in the length of the input, except that the
 attribute names of a tag with more than eight attributes are sorted, in
 O(n log n) time for n attributes, to find a repeated one. The module does
 not bound the size of the input; smock bounds the size of a request body.
+
+A document refers to the input rather than copying it, and keeps only
+where each element's name starts and how deep the element is: five bytes
+per element. A path's values are read from the input when it selects
+them, so selecting takes time linear in the size of the document.
 
 ### Differences from XML 1.0 and Namespaces in XML
 

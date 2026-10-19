@@ -834,10 +834,11 @@ fn File::read_body_condition(
   match given.length() {
     0 => self.error(pointer, "needs \{listed_body_kinds}")
     1 => ()
-    _ => {
-      let given = given.map(kind => "\"\{kind}\"").join(" and ")
-      self.error(pointer, "has \{given}; give only one of \{listed_body_kinds}")
-    }
+    _ =>
+      self.error(
+        pointer,
+        "has \{quoted_list(given, "and")}; give only one of \{listed_body_kinds}",
+      )
   }
   out
 }
@@ -848,7 +849,7 @@ let body_kinds : Array[String] = ["json", "pattern", "form", "xml"]
 
 ///|
 /// The kinds of body condition, as messages list them.
-let listed_body_kinds : String = "\"json\", \"pattern\", \"form\" or \"xml\""
+let listed_body_kinds : String = quoted_list(body_kinds, "or")
 
 ///|
 /// Reads an `xml` condition, the object at `pointer`: paths into an XML
@@ -917,8 +918,8 @@ fn File::read_json_condition_value(
           .compile(child_pointer(pointer, "pattern"), source)
           .map(pattern => Expected::Pattern(pattern))
       }
-      if operator_key(members) is Some(key) {
-        return self.read_json_operator(pointer, members, key)
+      if operator_key(members) is Some(_) {
+        return self.read_json_operator(pointer, members)
       }
       let keys = []
       let values = []
@@ -951,17 +952,16 @@ fn File::read_json_condition_value(
 }
 
 ///|
-/// Reads `members`, the operator object at `pointer` in a `json` condition
-/// whose operator is `key`, with its operand read as a value of a `json`
-/// condition in turn. It has none when it is malformed.
+/// Reads `members`, the operator object at `pointer` in a `json` condition,
+/// with its operand read as a value of a `json` condition in turn. It has
+/// none when it is malformed.
 fn File::read_json_operator(
   self : File,
   pointer : String,
   members : Map[String, Json],
-  key : String,
 ) -> Expected? {
-  guard self.read_operator(pointer, members, key, json_operators)
-    is Some(operand) else {
+  guard self.read_operator(pointer, members, json_operators, literal_keys=true)
+    is Some((key, operand)) else {
     return None
   }
   let at = child_pointer(pointer, key)
@@ -1024,11 +1024,16 @@ fn File::read_value_condition(
       return None
     }
   }
-  guard operator_key(members) is Some(key) else {
+  guard operator_key(members) is Some(_) else {
     return self.read_pattern(pointer, members).map(pattern => Pattern(pattern))
   }
-  guard self.read_operator(pointer, members, key, value_operators)
-    is Some(operand) else {
+  guard self.read_operator(
+      pointer,
+      members,
+      value_operators,
+      literal_keys=false,
+    )
+    is Some((key, operand)) else {
     return None
   }
   let at = child_pointer(pointer, key)
@@ -1059,7 +1064,7 @@ let json_operators : Array[String] = ["$not", "$exists", "$includes"]
 /// condition.
 fn operator_key(members : Map[String, Json]) -> String? {
   for key, _ in members {
-    if key.has_prefix("$") && !key.has_prefix("$$") {
+    if is_operator_like(key) {
       return Some(key)
     }
   }
@@ -1067,54 +1072,78 @@ fn operator_key(members : Map[String, Json]) -> String? {
 }
 
 ///|
-/// Reads `members`, the operator object at `pointer` whose operator is
-/// `key`, and returns the operator's operand. An operator is the only key
-/// of its object, and it is one of `operators`, those allowed in its
-/// position; each key that breaks this is reported, and then there is no
-/// operand.
+/// Whether `key`, in an object in a value position, is reserved for
+/// operators: it starts with `$` but not with `$$`.
+fn is_operator_like(key : String) -> Bool {
+  key.has_prefix("$") && !key.has_prefix("$$")
+}
+
+///|
+/// Reads `members`, an operator object at `pointer`, and returns its
+/// operator and the operator's operand. An operator is the only key of its
+/// object, and it is one of `operators`, those allowed in its position;
+/// each key that breaks this is reported, and then there is none. What is
+/// reported does not depend on the order of the keys:
 ///
-/// When `key` is no operator at all, the object is most likely literal
-/// JSON with keys that start with `$`, so each such key is reported as no
-/// operator, and the keys beside them are not.
+/// - each key that starts with `$` and is no operator at all is not an
+///   operator; with `literal_keys`, in a `json` condition, the message
+///   suggests `$$` for a literal key;
+/// - each operator not allowed here is allowed only in a `json` condition;
+/// - any other key is not allowed beside the operator, the first of
+///   `json_operators` among the keys. When there is none, the object is
+///   most likely literal JSON with keys that start with `$`, so only those
+///   keys are reported.
 fn File::read_operator(
   self : File,
   pointer : String,
   members : Map[String, Json],
-  key : String,
   operators : Array[String],
-) -> Json? {
-  guard json_operators.contains(key) else {
-    let listed = operators.join(", ")
-    for other, _ in members {
-      if other.has_prefix("$") &&
-        !other.has_prefix("$$") &&
-        !json_operators.contains(other) {
-        self.error(
-          child_pointer(pointer, other),
-          "is not an operator: the operators here are \{listed}; write $\{other} for a literal key that starts with $",
-        )
-      }
-    }
-    return None
-  }
+  literal_keys~ : Bool,
+) -> (String, Json)? {
+  let operator = json_operators.search_by(key => members.contains(key))
   let mut valid = true
-  for other, _ in members {
-    let at = child_pointer(pointer, other)
-    if other != key {
+  for key, _ in members {
+    let at = child_pointer(pointer, key)
+    if is_operator_like(key) && !json_operators.contains(key) {
+      let hint = if literal_keys {
+        "; write \{("$" + key).escape()} for the literal key \{key.escape()}"
+      } else {
+        ""
+      }
       self.error(
         at,
-        "is not allowed beside \{key.escape()}: an operator is the only key of its object",
+        "is not an operator: the operators here are \{quoted_list(operators, "and")}\{hint}",
       )
       valid = false
-    } else if !operators.contains(key) {
+    } else if json_operators.contains(key) && !operators.contains(key) {
       self.error(at, "is allowed only in a json condition")
+      valid = false
+    } else if operator is Some(i) && key != json_operators[i] {
+      self.error(
+        at,
+        "is not allowed beside \{json_operators[i].escape()}: an operator is the only key of its object",
+      )
       valid = false
     }
   }
-  if valid {
-    members.get(key)
-  } else {
-    None
+  match operator {
+    Some(i) if valid => {
+      let key = json_operators[i]
+      members.get(key).map(operand => (key, operand))
+    }
+    _ => None
+  }
+}
+
+///|
+/// `words`, each in quotes, separated by commas, with `last` before the
+/// last one: `"a"`, `"a" or "b"`, `"a", "b" or "c"`.
+fn quoted_list(words : Array[String], last : String) -> String {
+  let quoted = words.map(word => word.escape())
+  match quoted.length() {
+    0 => ""
+    1 => quoted[0]
+    n => quoted[:n - 1].join(", ") + " \{last} " + quoted[n - 1]
   }
 }
 

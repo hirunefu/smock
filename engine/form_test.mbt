@@ -114,23 +114,74 @@ test "a form condition holds only when the media type of the Content-Type is a f
 }
 
 ///|
-test "an empty form condition has no field to fail, so it holds for every body, as an empty query condition does" {
+test "an empty form condition holds only when the Content-Type says the body is a form, as an empty json condition needs JSON; its failure counts once, as body" {
   let h = stubs([
     (
-      #|{ "id": "any", "mock": "m", "request": { "body": { "form": {} } },
+      #|{ "id": "any-form", "mock": "m", "request": { "body": { "form": {} } },
       #|  "response": { "status": 200 } }
     ),
   ])
   inspect(
     posted(h, [
       (Some(form_type), "a=1"),
+      (Some(form_type), ""),
+      (Some("Application/X-WWW-Form-URLEncoded; charset=UTF-8"), "a=1"),
       (Some("application/json"), "{}"),
-      (None, ""),
+      (None, "a=1"),
     ]),
     content=(
-      #|[application/x-www-form-urlencoded] "a=1" -> any
-      #|[application/json] "{}" -> any
-      #|"" -> any
+      #|[application/x-www-form-urlencoded] "a=1" -> any-form
+      #|[application/x-www-form-urlencoded] "" -> any-form
+      #|[Application/X-WWW-Form-URLEncoded; charset=UTF-8] "a=1" -> any-form
+      #|[application/json] "{}" -> none
+      #|"a=1" -> none
+    ),
+  )
+  json_inspect(
+    explanation(
+      h,
+      "POST",
+      "/",
+      headers=[("Content-Type", "application/json")],
+      body="{}",
+    ),
+    content={
+      "stub": "any-form",
+      "stubSource": "file",
+      "failed": [
+        { "condition": "body", "expected": { "form": {} }, "actual": ["{}"] },
+      ],
+    },
+  )
+}
+
+///|
+test "with several Content-Type fields, the first one says whether the body is a form" {
+  let h = stubs([
+    (
+      #|{ "id": "alice", "mock": "m",
+      #|  "request": { "body": { "form": { "username": "alice" } } },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  inspect(
+    winners(h, [
+      (
+        "POST",
+        "/",
+        [("Content-Type", form_type), ("Content-Type", "application/json")],
+        "username=alice",
+      ),
+      (
+        "POST",
+        "/",
+        [("Content-Type", "application/json"), ("content-type", form_type)],
+        "username=alice",
+      ),
+    ]),
+    content=(
+      #|POST / [Content-Type: application/x-www-form-urlencoded] [Content-Type: application/json] "username=alice" -> alice
+      #|POST / [Content-Type: application/json] [content-type: application/x-www-form-urlencoded] "username=alice" -> none
     ),
   )
 }
@@ -321,22 +372,28 @@ test "the Near miss shows a failed form field as the Stub writes it, with every 
 }
 
 ///|
-test "the Journal truncates each value of a failed form field to its body limit, as it truncates the body, and counts the values as truncated" {
+test "the Journal keeps the values of failed form fields up to its body limit in total, as it cuts the body, cutting the last one kept, and counts them as kept" {
   let h = harness(
     [("m.json", form_login)],
-    journal=@engine.JournalSettings(body_limit=8),
+    journal=@engine.JournalSettings(body_limit=60),
   )
   let headers = [("Content-Type", form_type), ("X-Csrf", "t")]
+  let body = (e : Int) => {
+    "username=" +
+    "b".repeat(20) +
+    "&remember=" +
+    "%C3%A9".repeat(e) +
+    "&remember=1"
+  }
   let _ = h.record(
     "POST",
     "/login?next=/",
     headers~,
-    body="username=" +
-      "b".repeat(20) +
-      "&remember=1&remember=" +
-      "%C3%A9".repeat(5),
+    body=body(50),
     session="s",
   )
+  // The username takes 20 bytes and 32 more, which leaves 8 bytes, four é,
+  // of the first remember value, and none for the second.
   json_inspect(h.answered(Some("s")), content={
     "host": null,
     "mock": "m",
@@ -349,7 +406,7 @@ test "the Journal truncates each value of a failed form field to its body limit,
         {
           "condition": "form:username",
           "expected": "alice",
-          "actual": ["bbbbbbbb"],
+          "actual": ["bbbbbbbbbbbbbbbbbbbb"],
         },
         {
           "condition": "form:pass word",
@@ -359,7 +416,7 @@ test "the Journal truncates each value of a failed form field to its body limit,
         {
           "condition": "form:remember",
           "expected": { "$not": "1" },
-          "actual": ["1", "éééé"],
+          "actual": ["éééé"],
         },
         {
           "condition": "form:é",
@@ -376,19 +433,69 @@ test "the Journal truncates each value of a failed form field to its body limit,
     "POST",
     "/login?next=/",
     headers~,
-    body="username=" +
-      "b".repeat(200) +
-      "&remember=1&remember=" +
-      "%C3%A9".repeat(50),
+    body=body(500),
     session="s",
   )
   inspect(
     "\{one}\n\{h.stats()}",
     content=(
-      #|1 entries, 458 bytes, 0 evicted
-      #|2 entries, 916 bytes, 0 evicted
+      #|1 entries, 596 bytes, 0 evicted
+      #|2 entries, 1192 bytes, 0 evicted
     ),
   )
+}
+
+///|
+test "a form value that decodes longer than the body, as each byte that is not UTF-8 becomes U+FFFD, is cut to the Journal body limit though the body is not" {
+  let h = harness(
+    [
+      (
+        "m.json",
+        (
+          #|{ "mocks": [{ "name": "m" }],
+          #|  "stubs": [{ "id": "u", "mock": "m",
+          #|    "request": { "body": { "form": { "u": "x" } } },
+          #|    "response": { "status": 200 } }] }
+        ),
+      ),
+    ],
+    journal=@engine.JournalSettings(body_limit=20),
+  )
+  // 14 bytes, whose value decodes to twelve U+FFFD, 36 bytes in UTF-8.
+  let body = b"u=\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+  let outcome = h.engine.handle(
+    {
+      meth: "POST",
+      target: "/",
+      version: "HTTP/1.1",
+      headers: [("Content-Type", form_type)],
+      body,
+    },
+    session=None,
+    now=h.now,
+    rand=h.rand,
+  )
+  guard outcome.journal is Some(entry) else { fail("no entry") }
+  h.engine.commit(entry)
+  json_inspect(h.answered(None), content={
+    "host": null,
+    "mock": "m",
+    "viaDefault": true,
+    "stub": null,
+    "nearMiss": {
+      "stub": "u",
+      "stubSource": "file",
+      "failed": [
+        {
+          "condition": "form:u",
+          "expected": "x",
+          "actual": ["������"],
+        },
+      ],
+    },
+    "status": 404,
+    "fault": null,
+  })
 }
 
 ///|
@@ -457,7 +564,7 @@ test "an Ephemeral Stub may have a form condition, and a malformed one is reject
       #|username=alice -> eph-1
       #|username=alice&remember=1 -> none
       #|username=bob -> none
-      #|/request/body/form/a/$nto: is not an operator: the operators here are $not, $exists; write $$nto for a literal key that starts with $
+      #|/request/body/form/a/$nto: is not an operator: the operators here are "$not" and "$exists"
       #|/request/body: has "pattern" and "form"; give only one of "json", "pattern", "form" or "xml"
     ),
   )

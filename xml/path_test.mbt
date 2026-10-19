@@ -113,11 +113,11 @@ test "a compiled path shows as written, and paths written the same are equal" {
 }
 
 ///|
-test "a path that ends in @xmlns is a compile error, since namespace declarations are never selected" {
+test "a path that ends in @xmlns is a compile error, since namespace declarations are not attributes here" {
   inspect(
     path_errors(["/a/@xmlns", "/a/@xmlns:p", "/a/@xmlnsx", "/xmlns/@a"]),
     content=(
-      #|/a/@xmlns => position 4: @xmlns is a namespace declaration, which smock's XML paths never select
+      #|/a/@xmlns => position 4: @xmlns is not supported in smock's XML paths: xmlns names namespace declarations, which are not attributes here
       #|/a/@xmlns:p => position 4: prefix xmlns: is not supported in smock's XML paths; name the local name only
       #|/a/@xmlnsx => compiled
       #|/xmlns/@a => compiled

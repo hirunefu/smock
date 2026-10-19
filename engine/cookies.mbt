@@ -4,7 +4,7 @@
 // of a part separates the name from the value. Values stay as sent: quotes
 // are part of them, as RFC 6265bis says, and nothing is percent-decoded.
 // The fields are scanned in place, with no list of cookies built per
-// request.
+// request, and a value is copied only for a pattern to match it.
 
 ///|
 /// Whether `condition`, on the cookie with this name, holds for the
@@ -30,7 +30,9 @@ fn Incoming::cookie_meets(
 
 ///|
 /// Whether `field`, the value of a `Cookie` field, has a cookie named
-/// `name` whose value meets `wanted`.
+/// `name` whose value meets `wanted`, a test that
+/// `ValueCondition::value_test` gave. An exact value and `$exists` are
+/// compared in place; only a pattern needs the value as a string.
 fn has_cookie(
   field : String,
   name : String,
@@ -38,9 +40,17 @@ fn has_cookie(
 ) -> Bool {
   for start = 0; start <= field.length(); {
     let end = part_end(field, start)
-    if cookie_value(field, start, end, name) is Some(value) &&
-      wanted.meets(value) {
-      return true
+    let last = trimmed_end(field, start, end)
+    let value = cookie_value(field, start, last, name)
+    if value >= 0 {
+      let meets = match wanted {
+        Exists(present) => present
+        Exact(text) => field[value:last] == text
+        _ => wanted.meets(field[value:last].to_owned())
+      }
+      if meets {
+        return true
+      }
     }
     continue end + 1
   }
@@ -60,8 +70,10 @@ fn cookie_values(
     let field = header.1
     for start = 0; start <= field.length(); {
       let end = part_end(field, start)
-      if cookie_value(field, start, end, name) is Some(value) {
-        out.push(value)
+      let last = trimmed_end(field, start, end)
+      let value = cookie_value(field, start, last, name)
+      if value >= 0 {
+        out.push(field[value:last].to_owned())
       }
       continue end + 1
     }
@@ -81,37 +93,43 @@ fn part_end(field : String, start : Int) -> Int {
 }
 
 ///|
-/// The value of the cookie in `field[start:end]`, one part of a `Cookie`
-/// field value, if its name is `name`. The part is trimmed of spaces and
-/// tabs, and its first `=` separates the name from the value. A part
-/// without `=` has no cookie.
-fn cookie_value(
-  field : String,
-  start : Int,
-  end : Int,
-  name : String,
-) -> String? {
-  let mut start = start
+/// The end of `field[start:end]`, one part of a `Cookie` field value,
+/// trimmed of spaces and tabs.
+fn trimmed_end(field : String, start : Int, end : Int) -> Int {
   let mut end = end
-  while start < end && is_blank(field[start]) {
-    start += 1
-  }
   while end > start && is_blank(field[end - 1]) {
     end -= 1
+  }
+  end
+}
+
+///|
+/// Where the value of the cookie in `field[start:end]` starts, if its name
+/// is `name`, or -1. The part, one part of a `Cookie` field value whose end
+/// is trimmed, is trimmed of spaces and tabs at its start too, and its
+/// first `=` separates the name from the value, which runs to `end`. A part
+/// without `=` has no cookie.
+///
+/// It returns an index, rather than an optional view, so that no part
+/// allocates.
+fn cookie_value(field : String, start : Int, end : Int, name : String) -> Int {
+  let mut start = start
+  while start < end && is_blank(field[start]) {
+    start += 1
   }
   let mut equals = start
   while equals < end && field[equals] != '=' {
     equals += 1
   }
   if equals == end || equals - start != name.length() {
-    return None
+    return -1
   }
   for i in 0..<name.length() {
     if field[start + i] != name[i] {
-      return None
+      return -1
     }
   }
-  Some(field[equals + 1:end].to_owned())
+  equals + 1
 }
 
 ///|
