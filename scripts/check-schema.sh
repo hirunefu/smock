@@ -15,9 +15,6 @@
 #   invalid-beyond-schema/  the Schema accepts it, but smock rejects it for
 #                           a reason the Schema cannot see, such as a rule
 #                           across the files of a definition set
-#   not-supported-yet/      the Schema accepts it, but smock rejects it as
-#                           "not supported yet": it uses a field smock does
-#                           not implement yet
 #
 # Each definitions directory also gets the files under body-files/ as its
 # body-file subdirectory (files/, the default), so that fixtures can refer
@@ -88,11 +85,11 @@ done
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 count=0
-for category in valid invalid invalid-beyond-schema not-supported-yet; do
+for category in valid invalid invalid-beyond-schema; do
   case $category in
   valid) schema_expects=valid smock_expects=valid ;;
   invalid) schema_expects=invalid smock_expects=invalid ;;
-  *) schema_expects=valid smock_expects=invalid ;;
+  invalid-beyond-schema) schema_expects=valid smock_expects=invalid ;;
   esac
   for fixture in "$fixtures/$category"/*; do
     [ -e "$fixture" ] || continue
@@ -136,9 +133,6 @@ for category in valid invalid invalid-beyond-schema not-supported-yet; do
     fi
     if [ "$smock_says" != "$smock_expects" ]; then
       fail "$fixture: smock should say $smock_expects"
-    fi
-    if [ "$category" = not-supported-yet ] && ! grep -q 'not supported yet' "$tmp/smock.out"; then
-      fail "$fixture: smock should reject it as not supported yet"
     fi
   done
 done

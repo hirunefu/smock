@@ -3,8 +3,8 @@
 # when started by hand from the Actions tab, never on a schedule, on pull
 # requests or on pushes (scripts/check-benchmark-workflow.sh checks that):
 # benchmarks run on a developer's machine, and on GKE Autopilot before an
-# integration branch is merged into main (docs/merging-into-main.md). The
-# README's Benchmark section says what a run measures and writes.
+# integration branch is merged into main (docs/merging-into-main.md).
+# bench/README.md says what a run measures and writes.
 name: Benchmark
 
 on:

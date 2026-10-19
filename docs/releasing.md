@@ -43,7 +43,8 @@ status operation with a token file, which must name the same build as
 `smock --version`. Then, without certificate files, it checks HTTPS with
 the self-signed certificate smock generates, on the same read-only root
 filesystem. It also checks that the image adds nothing to its base but
-the smock binary, and that the image is for the machine it runs on.
+the smock binary, `LICENSE` and `NOTICE`, and that the image is for the
+machine it runs on.
 
 ## The first release
 
@@ -68,6 +69,8 @@ Work through these steps in order:
    the public Rekor transparency log keeps it for good, so a tag pushed
    while private would leave "private" there. It would also create the
    packages private, and the links in the release notes would answer 404.
+   Then, under Settings → Security, turn on private vulnerability
+   reporting, which [SECURITY.md](../SECURITY.md) tells reporters to use.
 4. **Publish the JSON Schema.** In the repository settings, under Pages,
    set Source to GitHub Actions, then run `.github/workflows/schema-pages.yml`
    by hand. Going public does not start it, and the Schema's `$id`
@@ -91,6 +94,8 @@ Work through these steps in order:
 ## Every release after
 
 Check that CI is green on `main` and that `moon.mod` gives the new
-version, then push the tag `v<version>`. A pre-release tag, such as
+version. When `.moonbit-version` or the imports in `moon.mod` changed
+since the last release, check that [NOTICE](../NOTICE) still names what
+the binary holds, with the right versions. Then push the tag `v<version>`. A pre-release tag, such as
 `v<version>-rc.1`, tries the publishing path first. The packages stay
 public, so nothing else needs doing in their settings.

@@ -755,8 +755,9 @@ Each release publishes the image `ghcr.io/hirunefu/smock:<version>` for
 linux/amd64 and linux/arm64. The image of each architecture it is made of
 also keeps a tag of its own, `<version>-amd64` and `<version>-arm64`; use
 `<version>`, which picks the one for the machine. The image is distroless
-(`gcr.io/distroless/base-debian13`): it holds the smock binary and what the
-binary links dynamically, glibc and OpenSSL 3, and has no shell. smock runs
+(`gcr.io/distroless/base-debian13`): it holds the smock binary, what the
+binary links dynamically (glibc and OpenSSL 3), and smock's `LICENSE` and
+`NOTICE` under `/usr/share/doc/smock/`, and has no shell. smock runs
 as UID 65532 and writes nothing to the filesystem, so the root filesystem can
 be read-only:
 
@@ -957,4 +958,7 @@ Autopilot and in CI, what a run writes and how to compare runs. The
 
 ## Licence
 
-Apache-2.0. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE). The binary also holds third-party
+software under its own licences, which [NOTICE](NOTICE) names. The image
+holds both files under `/usr/share/doc/smock/`, and each release attaches
+them next to the binaries.
