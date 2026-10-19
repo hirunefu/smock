@@ -1015,11 +1015,13 @@ share_images() {
 }
 
 # Writes the build context of an image of smock into DIRECTORY (the first
-# argument): the binary (the second), the benchmark's definitions and
-# their Scenario variant, which a scenarios variant serves.
+# argument): the binary (the second), LICENSE and NOTICE, which the
+# Dockerfile copies too, the benchmark's definitions and their Scenario
+# variant, which a scenarios variant serves.
 smock_context() {
   mkdir -p "$1/dist"
   cp "$2" "$1/dist/smock"
+  cp "$ROOT/LICENSE" "$ROOT/NOTICE" "$1/"
   cp -r "$ROOT/bench/definitions" "$1/definitions"
   cp -r "$ROOT/bench/definitions-scenarios" "$1/definitions-scenarios"
 }

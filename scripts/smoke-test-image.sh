@@ -5,7 +5,8 @@
 # - the image runs as a numeric UID other than 0;
 # - the image is for this machine, so it runs here without emulation;
 # - the image is its distroless base (the FROM of Dockerfile) plus the smock
-#   binary and nothing else;
+#   binary, LICENSE and NOTICE, and nothing else, and those two files are
+#   the repository's;
 # - smock links OpenSSL (libssl.so.3, libcrypto.so.3) dynamically;
 # - run as the image's own UID, with a read-only root filesystem, no
 #   capabilities and no privilege escalation, `smock --version` names the
@@ -59,8 +60,8 @@ esac
 [ "$platform" = "$host" ] || fail "the image is for $platform, but this machine is $host"
 echo "smoke-test-image: the image is for $platform, this machine"
 
-# The image is its base (the FROM of Dockerfile) plus the smock binary, and
-# nothing else.
+# The image is its base (the FROM of Dockerfile) plus the smock binary,
+# LICENSE and NOTICE, and nothing else.
 # files <image>: the paths in the image's filesystem, sorted.
 files() {
   id=$(docker create --platform "$platform" "$1" none)
@@ -71,15 +72,24 @@ base=$(sed -n 's/^FROM //p' Dockerfile)
 files "$base" >"$tmp/base-files"
 files "$image" >"$tmp/image-files"
 added=$(comm -13 "$tmp/base-files" "$tmp/image-files" | grep -v '/$' || true)
-[ "$added" = usr/local/bin/smock ] ||
-  fail "the image should add only usr/local/bin/smock to $base, but adds:" \
+expected=$(printf '%s\n' usr/local/bin/smock usr/share/doc/smock/LICENSE usr/share/doc/smock/NOTICE)
+[ "$added" = "$expected" ] ||
+  fail "the image should add only smock, LICENSE and NOTICE to $base, but adds:" \
     "$(echo "$added" | head -n 10 | tr '\n' ' ')"
-echo "smoke-test-image: the image adds only usr/local/bin/smock to its base"
+echo "smoke-test-image: the image adds only smock, LICENSE and NOTICE to its base"
 
-# smock links OpenSSL dynamically, from the base.
+# The licence files are the repository's, and smock links OpenSSL
+# dynamically, from the base.
 id=$(docker create "$image")
 docker cp --quiet "$id:/usr/local/bin/smock" "$tmp/smock"
+for file in LICENSE NOTICE; do
+  docker cp --quiet "$id:/usr/share/doc/smock/$file" "$tmp/$file"
+done
 docker rm "$id" >/dev/null
+for file in LICENSE NOTICE; do
+  cmp -s "$file" "$tmp/$file" || fail "/usr/share/doc/smock/$file in the image is not $file"
+done
+echo "smoke-test-image: /usr/share/doc/smock/ holds LICENSE and NOTICE"
 for library in libssl.so.3 libcrypto.so.3; do
   readelf --dynamic "$tmp/smock" | grep -q "(NEEDED).*\[$library\]" ||
     fail "smock does not link $library dynamically"

@@ -1,48 +1,48 @@
 # Getting started on GKE
 
 This guide takes a reader who is new to smock from nothing to smock
-answering requests on GKE Autopilot. No release of smock exists yet, so
-no image, Helm chart or binary is published: the guide takes the
-linux/amd64 binary that CI builds from `main`, packs it into an image,
-pushes the image to Artifact Registry in a Google Cloud project, and
-installs the Helm chart from a checkout of the repository.
-[After the first release](#after-the-first-release) says what changes
-then.
+answering requests on GKE Autopilot. It installs a release: the Helm
+chart that each release publishes runs the image of the same release,
+which the cluster pulls from ghcr.io.
+[Appendix: an unreleased commit](#appendix-an-unreleased-commit) runs a
+commit that no release holds yet, from CI's binary and a checkout of the
+repository.
 
 - The steps run in order, in one shell: each block works as it is after
-  the blocks before it, once placeholders such as `<project ID>` are
-  filled in.
-- Nothing costs money until
-  [Push it to Artifact Registry](#push-it-to-artifact-registry).
-  From there on, the project is billed for the stored image, the
-  cluster and smock's Pod until [Clean up](#clean-up) deletes them;
-  Google's GKE pricing page gives the rates.
+  the blocks before it, once placeholders such as `<project ID>` and
+  `<version>` are filled in.
+- Nothing costs money until the cluster is created, in
+  [Create an Autopilot cluster](#create-an-autopilot-cluster). From
+  there on, the project is billed for the cluster and smock's Pod until
+  [Clean up](#clean-up) deletes them; Google's GKE pricing page gives
+  the rates.
 - smock itself runs on GKE Autopilot in the benchmark, and the Helm
   chart is tested on kind. The GKE commands below follow GKE's
-  documentation of 2026-10-13. On 2026-10-17 the guide ran as written
-  in us-central1, on GKE Autopilot and on a Standard cluster, in a
-  project whose node service account had no roles, with every one of
-  its [Next steps](#next-steps); the outputs it shows are from those
-  runs.
+  documentation of 2026-10-13. On 2026-10-17, before the first release,
+  the guide ran in us-central1, on GKE Autopilot and on a Standard
+  cluster, in a project whose node service account had no roles, with
+  every one of its [Next steps](#next-steps). Those runs took the image
+  and the chart from CI's binary and a checkout, as the
+  [appendix](#appendix-an-unreleased-commit) does, and the outputs the
+  guide shows are from them. The steps with the published image and
+  chart have not run on GKE yet.
 
 ## What you need
 
 A machine with a POSIX shell (Linux, macOS, or Windows with WSL), and:
 
-- Read access to the private repository `hirunefu/smock`, and the GitHub
-  CLI, gh, logged in (`gh auth login`): it clones the repository and
-  downloads CI's binary.
 - A Google Cloud project with billing turned on, and the gcloud CLI
   logged in (`gcloud auth login`). Owner on the project is simplest.
   Otherwise the steps need roles that enable services (Service Usage
-  Admin), create a repository and grant access to it (Artifact Registry
-  Administrator), grant a role on the project (Project IAM Admin), create
-  a cluster and install into it (Kubernetes Engine Admin), and let the
+  Admin), grant a role on the project (Project IAM Admin), create a
+  cluster and install into it (Kubernetes Engine Admin), and let the
   cluster's nodes run as the Compute Engine default service account
   (Service Account User on that account).
-- docker with BuildKit, which Docker 23 or later uses by default, and a
-  running Docker daemon.
-- kubectl (CI uses 1.37.1) and helm 3.8 or later (CI uses 4.3.0).
+- docker and a running Docker daemon, to check Definition files with
+  smock's image. On Linux with glibc 2.34 or later and OpenSSL 3, the
+  release binary checks them without docker.
+- kubectl (CI uses 1.37.1) and helm 3.8 or later (CI uses 4.3.0), which
+  installs charts from OCI registries such as ghcr.io.
 - curl, jq, openssl and base64.
 
 The guide assumes the basics of Kubernetes and Helm: Pods, Services,
@@ -79,50 +79,41 @@ token, which the chart reads from a Secret. smock watches the
 definitions directory and reloads the files when they change, so new
 Definition files are served without a restart.
 
-## Get the smock binary
+## Choose a release
 
-smock is built for Linux only. CI builds a release binary for
-linux/amd64 and for linux/arm64 on every push, and keeps each for seven
-days after the run. GKE Autopilot runs x86 (amd64) nodes by default, so
-take the amd64 binary from the latest successful run on `main`, and
-check out the commit it was built from, so that the chart matches the
-binary:
+smock is built for Linux, for amd64 and arm64. Each release publishes,
+under the same version:
 
-```sh
-gh repo clone hirunefu/smock
-cd smock
-run=$(gh run list -R hirunefu/smock --workflow CI --branch main --event push --status success \
-  --limit 1 --json databaseId --jq '.[0].databaseId')
-commit=$(gh run view "$run" -R hirunefu/smock --json headSha --jq .headSha)
-git switch --detach "$commit"     # HEAD is now at <commit> <subject>
-dir=$(mktemp -d)
-gh run download "$run" -R hirunefu/smock -n smock-linux-amd64 --dir "$dir"   # writes $dir/smock
-file "$dir/smock"                 # ELF 64-bit LSB pie executable, x86-64, ...
-```
+- the container image `ghcr.io/hirunefu/smock:<version>`, for
+  linux/amd64 and linux/arm64;
+- the Helm chart `oci://ghcr.io/hirunefu/charts/smock`, whose version
+  and app version are the release's, so that it runs the image of the
+  same release;
+- the binaries `smock-<version>-linux-amd64` and
+  `smock-<version>-linux-arm64`, the ones in the image, on the release's
+  page under [Releases](https://github.com/hirunefu/smock/releases).
 
-If `gh run download` finds no artifact, see
-[Troubleshooting](#troubleshooting).
-
-On a Linux x86_64 machine, the binary can also be built from source. It
-needs OpenSSL 3 (`libssl-dev`), python3, git and a C compiler, and
-`scripts/install-moonbit.sh` installs the pinned MoonBit toolchain into
-`~/.moon`, replacing any toolchain there:
+The version is the release's tag without its `v`. Take the latest
+release:
 
 ```sh
-scripts/install-moonbit.sh
-export PATH="$HOME/.moon/bin:$PATH"
-moon update
-scripts/build-release.sh          # writes dist/smock
+curl -fsSL https://api.github.com/repos/hirunefu/smock/releases/latest | jq -r .tag_name   # v<version>
+export VERSION=<version>
+export IMAGE=ghcr.io/hirunefu/smock:$VERSION
 ```
 
-Then the check step below runs `dist/smock check defs` in place of
-`"$dir/smock" check defs`, and the image step skips its `cp` line.
-macOS cannot build the Linux binary.
+The image is signed, and the README's
+[Verify the image](../README.md#verify-the-image) says how to check the
+signature and fetch the image's SBOM. The README's
+[Container image and release binaries](../README.md#container-image-and-release-binaries)
+and [charts/smock/README.md](../charts/smock/README.md) describe the
+image and the chart.
 
 ## Write and check a Definition file
 
-Make a directory `defs` at the top of the checkout (`mkdir defs`), and
-save this Definition file in it as `defs/users.yaml`:
+Make a directory for the guide's files, with a directory `defs` in it,
+and work there (`mkdir -p smock-on-gke/defs && cd smock-on-gke`). Save
+this Definition file as `defs/users.yaml`:
 
 ```yaml
 mocks:
@@ -144,58 +135,27 @@ as compact JSON with `Content-Type: application/json`.
 
 smock does not start with Definition files that are not valid, so check
 them before installing. `smock check` reads a definitions directory as
-`smock serve` does. On Linux x86_64 with glibc 2.34 or later and OpenSSL
-3, such as Ubuntu 22.04 or later, run the binary itself:
+`smock serve` does. The image's entrypoint is smock, so the image checks
+the directory, mounted read-only:
 
 ```sh
-"$dir/smock" check defs           # prints nothing and exits with status 0
+docker run --rm -v "$PWD/defs:/defs:ro" "$IMAGE" check /defs   # prints nothing and exits with status 0
 ```
 
 A problem is printed with the file and the JSON Pointer of the value,
 such as `users.yaml: /stubs/0/response/status: must be an integer from
-200 to 599`, and the exit status is 1. On any other machine, check the
-file with the image, at the end of the next step.
+200 to 599`, and the exit status is 1. docker pulls the image of this
+machine's architecture, so it runs without emulation on x86 and on Arm
+machines, an Arm Mac included.
 
-## Build the image
-
-The Dockerfile copies `dist/smock` onto a distroless base and runs
-nothing, so any machine builds the amd64 image without emulation, an
-Arm Mac included. The image's name says where it goes in Artifact
-Registry: `<location>-docker.pkg.dev/<project ID>/<repository>/smock`.
-The variables set here serve the later steps too; `us-central1` is an
-example, and the cluster goes in the same region. The tag is the
-commit, so that it names the build:
+On Linux with glibc 2.34 or later and OpenSSL 3, such as Ubuntu 22.04 or
+later, the release binary checks the directory too:
 
 ```sh
-mkdir -p dist
-cp "$dir/smock" dist/smock
-export PROJECT=<project ID> LOCATION=us-central1 REPO=smock
-export IMAGE=$LOCATION-docker.pkg.dev/$PROJECT/$REPO/smock TAG=$(git rev-parse --short=12 HEAD)
-docker build --platform linux/amd64 --provenance=false --tag "$IMAGE:$TAG" .
-docker image inspect "$IMAGE:$TAG" --format '{{.Os}}/{{.Architecture}} {{.Config.User}}'   # linux/amd64 65532:65532
-```
-
-The image's entrypoint is smock, so it can check the definitions
-directory too, mounted read-only:
-
-```sh
-docker run --rm -v "$PWD/defs:/defs:ro" "$IMAGE:$TAG" check /defs   # prints nothing and exits with status 0
-```
-
-docker runs the amd64 image natively on an x86 machine, and Docker
-Desktop runs it under emulation on an Arm Mac.
-
-## Push it to Artifact Registry
-
-From here on, the project is billed. Enable Artifact Registry and GKE
-in the project, make a Docker repository, let docker log in to it
-through gcloud, and push the image:
-
-```sh
-gcloud services enable artifactregistry.googleapis.com container.googleapis.com --project="$PROJECT"
-gcloud artifacts repositories create "$REPO" --repository-format=docker --location="$LOCATION" --project="$PROJECT"
-gcloud auth configure-docker "$LOCATION-docker.pkg.dev"
-docker push "$IMAGE:$TAG"
+arch=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+curl -fsSL -o smock "https://github.com/hirunefu/smock/releases/download/v$VERSION/smock-$VERSION-linux-$arch"
+chmod +x smock
+./smock check defs                # prints nothing and exits with status 0
 ```
 
 ## Create an Autopilot cluster
@@ -205,27 +165,35 @@ it is asked to run, and bills the Pods' resource requests. The chart's
 defaults, one CPU and 1 GiB with requests equal to limits, are valid
 there as they are, and Autopilot keeps them unchanged.
 
-The nodes pull the image and send their logs and metrics as the Compute
-Engine default service account, `<project number>-compute@developer.gserviceaccount.com`.
+Name the project and a region, and enable GKE in the project. The
+variables serve the later steps too; `us-central1` is an example:
+
+```sh
+export PROJECT=<project ID> LOCATION=us-central1
+gcloud services enable container.googleapis.com --project="$PROJECT"
+```
+
+The nodes pull smock's image from ghcr.io, so they need a route to the
+internet: private nodes, which have no external addresses, need Cloud
+NAT for it. They send their logs and metrics as the Compute Engine
+default service account, `<project number>-compute@developer.gserviceaccount.com`.
 In a project whose organisation turns off the automatic Editor grant to
 that account, as organisations created on or after 2024-05-03 do by
-default, it has no roles, and the nodes cannot pull the image. Grant
-it the two that GKE's documentation asks for (2026-10-13): reading the
-repository, and GKE's default node role on the project. A role the
-account already has changes nothing:
+default, it has no roles. Grant it GKE's default node role on the
+project, which GKE's documentation asks for (2026-10-13), so that the
+nodes can send them. A role the account already has changes nothing:
 
 ```sh
 N=$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')
-gcloud artifacts repositories add-iam-policy-binding "$REPO" --location="$LOCATION" --project="$PROJECT" \
-  --member="serviceAccount:$N-compute@developer.gserviceaccount.com" --role=roles/artifactregistry.reader
 gcloud projects add-iam-policy-binding "$PROJECT" --condition=None \
   --member="serviceAccount:$N-compute@developer.gserviceaccount.com" --role=roles/container.defaultNodeServiceAccount
 ```
 
-Right after the services are enabled, the account may not exist yet;
-then wait a minute and run the two grants again.
+Right after the service is enabled, the account may not exist yet; then
+wait a minute and run the grant again.
 
-Then create the cluster and point kubectl at it:
+From here on, the project is billed. Create the cluster and point
+kubectl at it:
 
 ```sh
 gcloud components install gke-gcloud-auth-plugin
@@ -245,35 +213,32 @@ kubectl get namespaces            # default, kube-system and others
 
 ## Install smock
 
-Install the chart from the checkout into a namespace of its own,
-`mocks`. The chart reads the Admin API token from a Secret, and puts the
-Definition file into a ConfigMap that it mounts as smock's definitions
-directory:
+Install the release's chart into a namespace of its own, `mocks`. The
+chart reads the Admin API token from a Secret, and puts the Definition
+file into a ConfigMap that it mounts as smock's definitions directory:
 
 ```sh
 kubectl create namespace mocks
 kubectl --namespace mocks create secret generic smock-admin-token \
   --from-literal=token="$(openssl rand -hex 32)"
-helm upgrade --install smock charts/smock --namespace mocks \
-  --set image.repository="$IMAGE" --set image.tag="$TAG" \
+helm upgrade --install smock oci://ghcr.io/hirunefu/charts/smock --version "$VERSION" --namespace mocks \
   --set adminAuth.tokenSecret.name=smock-admin-token \
   --set-file 'definitions.configMap.files.users\.yaml=defs/users.yaml' \
   --wait --timeout 10m
 kubectl --namespace mocks get pods          # smock-<hash>   1/1   Running
 ```
 
-- `image.repository` and `image.tag` name the image pushed above.
-  Without them, the chart asks for `ghcr.io/hirunefu/smock:0.0.0-dev`,
-  which does not exist.
+- helm pulls the chart from ghcr.io. Its app version, the release's
+  version, picks the image, so the Pod runs `$IMAGE`,
+  `ghcr.io/hirunefu/smock:<version>`.
 - `--set-file` puts `defs/users.yaml` into the ConfigMap as the file
   `users.yaml`; the `\.` keeps the dot inside the key.
 - `helm upgrade --install` installs the release the first time and
   upgrades it afterwards, so the same command also repairs a failed
   install. `--wait` returns once the Pod is ready, after Autopilot adds
   a node for it, which took about a minute on 2026-10-17.
-- helm then prints the chart's notes, which name the chart's app
-  version, `smock 0.0.0-dev` in a checkout. The Pod runs the image
-  pushed above all the same.
+- helm then prints the chart's notes, which name the release,
+  `smock <version>`.
 
 ## Send a request and call the Admin API
 
@@ -324,12 +289,13 @@ The Admin API needs the token from the Secret:
 ```sh
 TOKEN=$(kubectl --namespace mocks get secret smock-admin-token --output jsonpath='{.data.token}' | base64 --decode)
 curl -H "Authorization: Bearer $TOKEN" localhost:9090/v1/status
-# {"version":"0.0.0-ci.<n>","commit":"<commit>","toolchain":"moonc v<version>","digest":"<digest>","lastReload":null,"mocks":[{"name":"users","hosts":[],"default":true}],"warnings":[]}
+# {"version":"<version>","commit":"<commit>","toolchain":"moonc v<MoonBit version>","digest":"<digest>","lastReload":null,"mocks":[{"name":"users","hosts":[],"default":true}],"warnings":[]}
 ```
 
-`version` and `commit` name CI's build, and `digest` names the
-definition set, the set of Definition files that smock serves;
-`lastReload` stays `null` until the files change.
+`version`, `commit` and `toolchain` name the release's build, as
+`smock --version` does, and `digest` names the definition set, the set
+of Definition files that smock serves; `lastReload` stays `null` until
+the files change.
 [openapi/admin.json](../openapi/admin.json) describes every operation of
 the Admin API.
 
@@ -337,7 +303,7 @@ the Admin API.
 
 When you are done with this guide and its [Next steps](#next-steps),
 stop the port-forwards, delete the release and the namespace, then the
-cluster and the repository, which ends the charges:
+cluster, which ends the charges:
 
 ```sh
 jobs                              # [1] and [2]: the two port-forwards
@@ -345,15 +311,13 @@ kill %1 %2
 helm uninstall smock --namespace mocks
 kubectl delete namespace mocks    # also deletes the token Secret
 gcloud container clusters delete smock --location="$LOCATION" --project="$PROJECT"
-gcloud artifacts repositories delete "$REPO" --location="$LOCATION" --project="$PROJECT"
 ```
 
-Both gcloud commands ask for confirmation, and deleting the cluster
-takes several minutes. Deleting the repository also deletes its grant;
-the project's grant of `roles/container.defaultNodeServiceAccount`
+gcloud asks for confirmation, and deleting the cluster takes several
+minutes. The project's grant of `roles/container.defaultNodeServiceAccount`
 stays, and `gcloud projects remove-iam-policy-binding` with the same
-flags removes it. `docker image rm "$IMAGE:$TAG"` and `rm -r "$dir"`
-remove the local copies.
+flags removes it. `docker image rm "$IMAGE"` removes the local copy of
+the image, and `rm smock` the binary, if you downloaded it.
 
 ## Next steps
 
@@ -392,8 +356,8 @@ file once the kubelet refreshes the mounted ConfigMap, within a minute
 or two. Repeat the status call until it shows `"swapped"`:
 
 ```sh
-docker run --rm -v "$PWD/defs:/defs:ro" "$IMAGE:$TAG" check /defs
-helm upgrade smock charts/smock --namespace mocks --reuse-values \
+docker run --rm -v "$PWD/defs:/defs:ro" "$IMAGE" check /defs
+helm upgrade smock oci://ghcr.io/hirunefu/charts/smock --version "$VERSION" --namespace mocks --reuse-values \
   --set-file 'definitions.configMap.files.users\.yaml=defs/users.yaml'
 curl -s -H "Authorization: Bearer $TOKEN" localhost:9090/v1/status | jq '.lastReload.result'   # null, then "swapped"
 curl localhost:8080/users/42      # {"id":42,"name":"<a made-up name>"}
@@ -469,8 +433,8 @@ mocks:
 Check the directory, and upgrade the release with both files:
 
 ```sh
-docker run --rm -v "$PWD/defs:/defs:ro" "$IMAGE:$TAG" check /defs
-helm upgrade smock charts/smock --namespace mocks --reuse-values \
+docker run --rm -v "$PWD/defs:/defs:ro" "$IMAGE" check /defs
+helm upgrade smock oci://ghcr.io/hirunefu/charts/smock --version "$VERSION" --namespace mocks --reuse-values \
   --set-file 'definitions.configMap.files.users\.yaml=defs/users.yaml' \
   --set-file 'definitions.configMap.files.orders\.yaml=defs/orders.yaml'
 ```
@@ -489,7 +453,7 @@ and region, give the Service `smock` an internal passthrough load
 balancer:
 
 ```sh
-helm upgrade smock charts/smock --namespace mocks --reuse-values \
+helm upgrade smock oci://ghcr.io/hirunefu/charts/smock --version "$VERSION" --namespace mocks --reuse-values \
   --set service.type=LoadBalancer \
   --set-string 'service.annotations.networking\.gke\.io/load-balancer-type=Internal'
 kubectl --namespace mocks get service smock    # EXTERNAL-IP: an address inside the VPC
@@ -589,7 +553,7 @@ change the Pods' resources. GKE reserves 1060m of the two shared vCPUs
 of an `e2-medium` node, the default machine type (GKE's documentation,
 2026-10-13), so such a node cannot take smock's one-CPU Pod, which stays
 Pending. In place of `create-auto`, create a zonal cluster with a larger
-machine type, after the same grants, and use the zone for
+machine type, after the same grant, and use the zone for
 `get-credentials` and for deleting it too:
 
 ```sh
@@ -621,9 +585,8 @@ got 250m and 512Mi as both its requests and its limits.
 
 Autopilot also runs Arm (arm64) Pods, in us-central1, us-east1,
 us-west1, europe-west1, europe-west2, europe-west4 and asia-southeast1
-(GKE's documentation, 2026-10-13). Download `smock-linux-arm64` in place
-of `smock-linux-amd64`, build with `--platform linux/arm64`, and add
-this flag to the install:
+(GKE's documentation, 2026-10-13). The image is for linux/arm64 too, so
+this flag on the install is all it takes:
 
 ```sh
   --set-string 'nodeSelector.cloud\.google\.com/compute-class=autopilot-arm'
@@ -644,8 +607,7 @@ this flag to the install:
   helm print a warning,
   `Key 'kubernetes.io/arch' is not recommended with node selector`, and
   the Pod runs on an Arm node all the same.
-- Without the compute class, the Pod runs on an x86 node, restarts, and
-  its log says `exec /usr/local/bin/smock: exec format error`.
+- Without the compute class, the Pod runs on an x86 node.
 
 On 2026-10-17, with GKE 1.36.4, the Pod ran on a `c4a-standard-4` node
 about a minute and a half after the install started, and answered as
@@ -655,18 +617,14 @@ above.
 
 | Symptom | Cause and fix |
 |---|---|
-| `gh run download` says `no valid artifacts found to download` or `no artifact matches any of the names or patterns provided`. | CI keeps the binaries for seven days after the run, and only when the run's build passed. A collaborator with write access can run CI on `main` again within 30 days of the run (`gh run rerun <run-id> -R hirunefu/smock`). They can also start the release workflow by hand (`gh workflow run release.yml -R hirunefu/smock --ref main`): it publishes nothing, and keeps the artifact `build-linux-amd64`, which holds `smock-0.0.0-dev.<n>-linux-amd64`, for 90 days. Take it from that run with `--workflow release.yml --event workflow_dispatch` in the run lookup and `-n build-linux-amd64`, and copy the file to `dist/smock`. Otherwise build from source on Linux x86_64, as in [Get the smock binary](#get-the-smock-binary). |
-| `docker build` says `unknown flag: --provenance` or `the --chmod option requires BuildKit`. | The legacy builder is in use. Use Docker 23 or later, or buildx, without `DOCKER_BUILDKIT=0`. |
-| `docker run ... check /defs` says `exec format error`. | docker cannot run amd64 images on this Arm machine. On Linux arm64, download `smock-linux-arm64` into another directory the same way and run that binary's `check defs`. |
-| `docker push` is denied. | Run `gcloud auth configure-docker "$LOCATION-docker.pkg.dev"`, and check that the account may write to the repository. |
+| `helm upgrade --install` cannot pull the chart, and says `not found`. | `$VERSION` names no release. It is a release's tag without its `v`; [Choose a release](#choose-a-release) prints the latest tag. |
 | kubectl says that `gke-gcloud-auth-plugin` is not found. | Install the plugin, as in [Create an Autopilot cluster](#create-an-autopilot-cluster), then run `get-credentials` again. |
 | helm says `adminAuth.tokenSecret.name is empty, but Admin API authentication is on`. | Create the token Secret and pass its name with `--set adminAuth.tokenSecret.name=smock-admin-token`. |
 | `helm upgrade --install` waits the whole `--timeout`, then fails with `resource Deployment/mocks/smock not ready. status: InProgress, message: Available: 0/1` and `context deadline exceeded`. | The Pod did not become ready. `kubectl --namespace mocks get pods` shows its status; find it in the rows below. |
 | The Pod stays in `ContainerCreating`, and `kubectl --namespace mocks describe pod` says `MountVolume.SetUp failed for volume "admin-token" : secret "smock-admin-token" not found`. | The token Secret is not in the namespace `mocks`, for example because it was created without `--namespace mocks`. Create it as in [Install smock](#install-smock): the Pod then starts by itself, and running `helm upgrade --install` again marks the release `deployed`. |
 | helm says `cannot reuse a name that is still in use`. | A failed `helm install` left the release behind. Use `helm upgrade --install`, as in [Install smock](#install-smock). |
-| The Pod is in `ErrImagePull` or `ImagePullBackOff`. | `kubectl --namespace mocks describe pod` names the image and the error. When it says `failed to fetch oauth token` and `403 Forbidden` for an image in Artifact Registry, the node service account may not read the repository: make the grants in [Create an Autopilot cluster](#create-an-autopilot-cluster); the kubelet keeps retrying the pull. When it names `ghcr.io/hirunefu/smock:0.0.0-dev`, `image.repository` or `image.tag` is missing, and that image does not exist. |
+| The Pod is in `ErrImagePull` or `ImagePullBackOff`. | `kubectl --namespace mocks describe pod` names the image and the error. When the error says that the node cannot reach `ghcr.io`, the nodes have no route to the internet: see [Create an Autopilot cluster](#create-an-autopilot-cluster). The kubelet keeps retrying the pull. With an image of an unreleased commit, see [Troubleshooting an unreleased commit](#troubleshooting-an-unreleased-commit). |
 | The Pod is in `CrashLoopBackOff`, and its log says `invalid definitions`. | smock does not start with Definition files that are not valid, and `helm --wait` fails after its timeout. The log entry names the file, the JSON Pointer and the error: fix the file, check it, and run `helm upgrade --install` again. |
-| The Pod is in `CrashLoopBackOff`, and its log says `exec format error`. | The image holds a binary of another architecture than the node: `file dist/smock` must say x86-64 for x86 nodes, and ARM aarch64 for Arm nodes, which also need the compute class in [Arm nodes](#arm-nodes). |
 | The Pod is `Pending`. | On Autopilot, for a few minutes while GKE adds a node. On a Standard cluster, `Insufficient cpu` in `kubectl --namespace mocks describe pod` means that the node is too small: see [On a Standard cluster](#on-a-standard-cluster). |
 | curl gets `Empty reply from server` or `Connection refused`, and kubectl printed `error: lost connection to pod`; or, just after an upgrade, curl still gets the previous files' answers. | A port-forward follows one Pod. When that Pod is replaced, such as by `kubectl rollout restart` or an upgrade that restarts the Pods, the port-forward reaches the old Pod while it shuts down, then ends. Stop the port-forward (`kill %1 %2`) and start it again. |
 | curl gets an answer that the guide does not show, such as 404 `{"error":"no Stub matched"}` with `Smock-Mock: default; via=default` and no `Smock-Near-Miss`, or the Admin API answers 401; or a port-forward prints `unable to listen on any of the requested ports`. | Something else on the machine, such as a local smock, already listens on 8080 or 9090. When it listens on IPv4 only, as smock does, kubectl forwards on `[::1]` alone and says so only on its standard output, which the commands above discard, so curl can reach the other program. `ss -ltnp \| grep -E ':(8080\|9090)'` (`lsof -i :8080` on macOS) shows it. Forward other local ports, such as `18080:80` and `19090:9090`, and send the requests there. |
@@ -675,28 +633,165 @@ above.
 | A changed file is not served. | The kubelet refreshes the ConfigMap within a minute or two. If `.lastReload.result` is `"failed"`, `.lastReload.errors` lists the problems, and the running Pod keeps serving the previous definition set; a new Pod does not start until the file is fixed and upgraded. |
 | Ephemeral Stubs and the Journal are empty after an upgrade. | They live in the Pod, and the upgrade replaced it: with body files in the chart's values, adding, removing or renaming a file restarts the Pods, as does a new image. |
 
-## After the first release
+## Appendix: an unreleased commit
 
-Each release publishes the image `ghcr.io/hirunefu/smock:<version>`, for
-linux/amd64 and linux/arm64, and the Helm chart
-`oci://ghcr.io/hirunefu/charts/smock`, whose app version picks the image
-of the same release. Then the binary, the image build, Artifact Registry
-and the checkout all fall away, and the install names the published
-chart:
+The steps above install a release. To run a commit that no release
+holds yet, such as the head of `main`, take the binary that CI builds
+from it, pack it into an image, push the image to Artifact Registry in
+the project, and install the chart from a checkout of that commit. The
+runs of 2026-10-17 took this path. Besides
+[What you need](#what-you-need), it needs:
+
+- read access to the repository `hirunefu/smock`, and the GitHub CLI,
+  gh, logged in (`gh auth login`): it clones the repository and
+  downloads CI's binary;
+- docker with BuildKit, which Docker 23 or later uses by default;
+- without Owner on the project, Artifact Registry Administrator, to
+  create a repository and grant access to it.
+
+The guide then changes in four places:
+
+1. In place of [Choose a release](#choose-a-release), get CI's binary
+   and check out its commit, as below. Make `defs` at the top of the
+   checkout (`mkdir defs`). On Linux x86_64 with glibc 2.34 or later and
+   OpenSSL 3, `"$dir/smock" check defs` checks it; on any other machine,
+   the image does, once it is built.
+2. After [Create an Autopilot cluster](#create-an-autopilot-cluster),
+   build the image and push it to Artifact Registry.
+3. In [Install smock](#install-smock), install the chart from the
+   checkout. In the later steps, `charts/smock` takes the place of
+   `oci://ghcr.io/hirunefu/charts/smock --version "$VERSION"`.
+4. After [Clean up](#clean-up), delete the repository in Artifact
+   Registry too.
+
+### Get CI's binary
+
+smock is built for Linux only. CI builds a release binary for
+linux/amd64 and for linux/arm64 on every push, and keeps each for seven
+days after the run. GKE Autopilot runs x86 (amd64) nodes by default, so
+take the amd64 binary from the latest successful run on `main`, and
+check out the commit it was built from, so that the chart matches the
+binary:
 
 ```sh
-helm upgrade --install smock oci://ghcr.io/hirunefu/charts/smock --version <version> \
-  --namespace mocks \
+gh repo clone hirunefu/smock
+cd smock
+run=$(gh run list -R hirunefu/smock --workflow CI --branch main --event push --status success \
+  --limit 1 --json databaseId --jq '.[0].databaseId')
+commit=$(gh run view "$run" -R hirunefu/smock --json headSha --jq .headSha)
+git switch --detach "$commit"     # HEAD is now at <commit> <subject>
+dir=$(mktemp -d)
+gh run download "$run" -R hirunefu/smock -n smock-linux-amd64 --dir "$dir"   # writes $dir/smock
+file "$dir/smock"                 # ELF 64-bit LSB pie executable, x86-64, ...
+```
+
+If `gh run download` finds no artifact, see
+[Troubleshooting an unreleased commit](#troubleshooting-an-unreleased-commit).
+
+On a Linux x86_64 machine, the binary can also be built from source. It
+needs OpenSSL 3 (`libssl-dev`), python3, git and a C compiler, and
+`scripts/install-moonbit.sh` installs the pinned MoonBit toolchain into
+`~/.moon`, replacing any toolchain there:
+
+```sh
+scripts/install-moonbit.sh
+export PATH="$HOME/.moon/bin:$PATH"
+moon update
+scripts/build-release.sh          # writes dist/smock
+```
+
+Then `dist/smock check defs` checks the directory, and the image step
+below skips its `cp` line. macOS cannot build the Linux binary.
+
+For [Arm nodes](#arm-nodes), download `smock-linux-arm64` in place of
+`smock-linux-amd64`, and build the image with `--platform linux/arm64`.
+Without the compute class, a Pod of that image runs on an x86 node,
+restarts, and its log says `exec /usr/local/bin/smock: exec format error`.
+
+### Build the image and push it to Artifact Registry
+
+The Dockerfile copies `dist/smock`, LICENSE and NOTICE onto a distroless
+base and runs nothing, so any machine builds the amd64 image without
+emulation, an Arm Mac included. The image's name says where it goes in
+Artifact Registry: `<location>-docker.pkg.dev/<project ID>/<repository>/smock`.
+The tag is the commit, so that it names the build, and `IMAGE` names
+this image in the later steps:
+
+```sh
+mkdir -p dist
+cp "$dir/smock" dist/smock
+export REPO=smock TAG=$(git rev-parse --short=12 HEAD)
+export IMAGE=$LOCATION-docker.pkg.dev/$PROJECT/$REPO/smock:$TAG
+docker build --platform linux/amd64 --provenance=false --tag "$IMAGE" .
+docker image inspect "$IMAGE" --format '{{.Os}}/{{.Architecture}} {{.Config.User}}'   # linux/amd64 65532:65532
+docker run --rm -v "$PWD/defs:/defs:ro" "$IMAGE" check /defs   # prints nothing and exits with status 0
+```
+
+docker runs the amd64 image natively on an x86 machine, and Docker
+Desktop runs it under emulation on an Arm Mac.
+
+Enable Artifact Registry in the project, make a Docker repository, let
+docker log in to it through gcloud, and push the image. Then let the
+nodes' service account read the repository, which GKE's documentation
+asks for (2026-10-13): without that grant, in a project where the
+account has no roles, the nodes cannot pull the image.
+
+```sh
+gcloud services enable artifactregistry.googleapis.com --project="$PROJECT"
+gcloud artifacts repositories create "$REPO" --repository-format=docker --location="$LOCATION" --project="$PROJECT"
+gcloud auth configure-docker "$LOCATION-docker.pkg.dev"
+docker push "$IMAGE"
+gcloud artifacts repositories add-iam-policy-binding "$REPO" --location="$LOCATION" --project="$PROJECT" \
+  --member="serviceAccount:$N-compute@developer.gserviceaccount.com" --role=roles/artifactregistry.reader
+```
+
+The project is billed for the stored image too, until the repository
+is deleted.
+
+### Install the chart from the checkout
+
+The install names the chart in the checkout and the image pushed above:
+
+```sh
+kubectl create namespace mocks
+kubectl --namespace mocks create secret generic smock-admin-token \
+  --from-literal=token="$(openssl rand -hex 32)"
+helm upgrade --install smock charts/smock --namespace mocks \
+  --set image.repository="$LOCATION-docker.pkg.dev/$PROJECT/$REPO/smock" --set image.tag="$TAG" \
   --set adminAuth.tokenSecret.name=smock-admin-token \
   --set-file 'definitions.configMap.files.users\.yaml=defs/users.yaml' \
   --wait --timeout 10m
 ```
 
-The published image checks the definitions directory as above, with
-`ghcr.io/hirunefu/smock:<version>` in place of `"$IMAGE:$TAG"`. GitHub
-creates both packages private, and the README's
-[Making a release](../README.md#making-a-release) says to make them
-public after the first release. Until they are public, neither helm nor
-the nodes can pull them without credentials.
-[Container image and release binaries](../README.md#container-image-and-release-binaries)
-and [charts/smock/README.md](../charts/smock/README.md) describe both.
+- `image.repository` and `image.tag` name the image pushed above.
+  Without them, the chart asks for `ghcr.io/hirunefu/smock:0.0.0-dev`,
+  which does not exist. The later upgrades keep them, with
+  `--reuse-values`.
+- helm prints the chart's notes, which name the chart's app version,
+  `smock 0.0.0-dev` in a checkout. The Pod runs the image pushed above
+  all the same.
+- The Admin API's status names CI's build, with a `version` such as
+  `0.0.0-ci.<n>` and the commit.
+
+### Delete the repository
+
+After [Clean up](#clean-up), delete the repository in Artifact Registry,
+which ends its charges:
+
+```sh
+gcloud artifacts repositories delete "$REPO" --location="$LOCATION" --project="$PROJECT"
+```
+
+gcloud asks for confirmation. Deleting the repository also deletes its
+grant. `rm -r "$dir"` removes CI's binary.
+
+### Troubleshooting an unreleased commit
+
+| Symptom | Cause and fix |
+|---|---|
+| `gh run download` says `no valid artifacts found to download` or `no artifact matches any of the names or patterns provided`. | CI keeps the binaries for seven days after the run, and only when the run's build passed. A collaborator with write access can run CI on `main` again within 30 days of the run (`gh run rerun <run-id> -R hirunefu/smock`). They can also start the release workflow by hand (`gh workflow run release.yml -R hirunefu/smock --ref main`): it publishes nothing, and keeps the artifact `build-linux-amd64`, which holds `smock-0.0.0-dev.<n>-linux-amd64`, for 90 days. Take it from that run with `--workflow release.yml --event workflow_dispatch` in the run lookup and `-n build-linux-amd64`, and copy the file to `dist/smock`. Otherwise build from source on Linux x86_64, as in [Get CI's binary](#get-cis-binary). |
+| `docker build` says `unknown flag: --provenance` or `the --chmod option requires BuildKit`. | The legacy builder is in use. Use Docker 23 or later, or buildx, without `DOCKER_BUILDKIT=0`. |
+| `docker run ... check /defs` says `exec format error`. | docker cannot run amd64 images on this Arm machine. On Linux arm64, download `smock-linux-arm64` into another directory the same way and run that binary's `check defs`. |
+| `docker push` is denied. | Run `gcloud auth configure-docker "$LOCATION-docker.pkg.dev"`, and check that the account may write to the repository. |
+| The Pod is in `ErrImagePull` or `ImagePullBackOff`. | `kubectl --namespace mocks describe pod` names the image and the error. When it says `failed to fetch oauth token` and `403 Forbidden` for an image in Artifact Registry, the node service account may not read the repository: make the grant in [Build the image and push it to Artifact Registry](#build-the-image-and-push-it-to-artifact-registry); the kubelet keeps retrying the pull. When it names `ghcr.io/hirunefu/smock:0.0.0-dev`, `image.repository` or `image.tag` is missing, and that image does not exist. |
+| The Pod is in `CrashLoopBackOff`, and its log says `exec format error`. | The image holds a binary of another architecture than the node: `file dist/smock` must say x86-64 for x86 nodes, and ARM aarch64 for Arm nodes, which also need the compute class in [Arm nodes](#arm-nodes). |

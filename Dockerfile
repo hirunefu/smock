@@ -1,6 +1,7 @@
 # The smock container image. It packs a binary already built natively on the
 # machine that builds the image (scripts/build-release.sh writes dist/smock),
-# so the image holds exactly the release binary of its architecture. Nothing
+# so the image holds exactly the release binary of its architecture, with
+# LICENSE and NOTICE, which name the software linked into it. Nothing
 # is compiled or run here, so a machine of another architecture can build
 # the image with no emulation from a binary of the image's architecture, as
 # the GKE benchmark does (bench/test_gke.py checks that nothing is RUN). See
@@ -9,8 +10,8 @@
 # The base is distroless and provides what the binary links dynamically:
 # glibc and OpenSSL 3, which smock uses for TLS. It has no shell and no
 # package manager. It is pinned by the digest of its multi-architecture
-# index; scripts/smoke-test-image.sh checks that smock is the only file this
-# image adds to it.
+# index; scripts/smoke-test-image.sh checks that smock, LICENSE and NOTICE
+# are the only files this image adds to it.
 FROM gcr.io/distroless/base-debian13:nonroot@sha256:a0d70d6a97cd697d9362bc2aae4a6560dd65817e365d0043b07325a97975dc91
 
 LABEL org.opencontainers.image.title="smock" \
@@ -19,6 +20,7 @@ LABEL org.opencontainers.image.title="smock" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 COPY --chmod=0755 dist/smock /usr/local/bin/smock
+COPY --chmod=0644 LICENSE NOTICE /usr/share/doc/smock/
 
 # The base's nonroot user, by number, so that Kubernetes can check
 # runAsNonRoot. smock writes nothing to the filesystem, so the root

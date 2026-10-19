@@ -75,10 +75,6 @@ covers part of the need, the item says what.
   ([editor support](definition-files.md#editor-support)).
 - **Windows and macOS.** smock runs on Linux, on amd64 and arm64, or in a
   Linux container.
-- **A published image.** No release exists yet, so there is nothing to
-  pull in place of `mockoon/cli`.
-  [Running it where Mockoon ran](#running-it-where-mockoon-ran) says how
-  to build one.
 
 ## How the models differ
 
@@ -1128,67 +1124,69 @@ a test that names its Session sees its own
 
 ## Running it where Mockoon ran
 
-No release of smock exists yet, so there is no binary to download from a
-release and no image to pull. Until there is:
+Each release of smock publishes binaries, an image and a Helm chart,
+all under the release's version: its tag without the `v`. Take the
+latest release, listed under
+[Releases](https://github.com/hirunefu/smock/releases), and put its
+version in place of `<version>` below.
 
-- **On Linux.** CI keeps the binaries `smock-linux-amd64` and
-  `smock-linux-arm64` for seven days after each push to `main`, and
-  downloading them needs read access to the repository. Each needs glibc
-  2.34 or later and OpenSSL 3 (on Debian and Ubuntu, the `libssl3`
-  package, or `libssl3t64` on newer releases):
+- **On Linux.** The release has the binaries
+  `smock-<version>-linux-amd64` and `smock-<version>-linux-arm64`. Each
+  needs glibc 2.34 or later and OpenSSL 3 (on Debian and Ubuntu, the
+  `libssl3` package, or `libssl3t64` on newer releases):
 
   ```sh
-  gh run list -R hirunefu/smock --workflow CI --branch main --event push --status success --limit 1 --json databaseId
-  gh run download <run-id> -R hirunefu/smock -n smock-linux-amd64 --dir bin   # writes bin/smock
+  curl -fsSL --create-dirs -o bin/smock \
+    https://github.com/hirunefu/smock/releases/download/v<version>/smock-<version>-linux-amd64
   chmod +x bin/smock
   SMOCK_ADMIN_TOKEN=change-me bin/smock serve --dir defs
   ```
 
   `smock serve` needs a token for its Admin API; `--admin-auth off`
   turns the Admin API's authentication off for local use.
-- **In Docker**, in place of `mockoon/cli`.
-  [Get the smock binary](getting-started-on-gke.md#get-the-smock-binary)
-  and [Build the image](getting-started-on-gke.md#build-the-image), in
-  getting-started-on-gke.md, build an image from CI's linux/amd64 binary
-  in a checkout; the same steps with `smock-linux-arm64` and
-  `--platform linux/arm64` give one for an Arm machine. An image for
-  local use needs no registry, so tag it `smock:dev` in place of
-  `"$IMAGE:$TAG"`. Mount the definitions directory, readable by UID
-  65532, and map port 3000 to 8080, so that clients keep the port they
-  used for Mockoon
+- **In Docker**, `ghcr.io/hirunefu/smock:<version>` in place of
+  `mockoon/cli`. It is for linux/amd64 and linux/arm64, so docker pulls
+  the one for the machine. Mount the definitions directory, readable by
+  UID 65532, and map port 3000 to 8080, so that clients keep the port
+  they used for Mockoon
   ([Environments told apart by port](#environments-told-apart-by-port)
   covers several environments):
 
   ```sh
   export SMOCK_ADMIN_TOKEN=change-me
   docker run --rm --read-only -e SMOCK_ADMIN_TOKEN -p 3000:8080 -p 9090:9090 \
-    -v "$PWD/defs:/defs:ro" smock:dev serve --dir /defs
+    -v "$PWD/defs:/defs:ro" ghcr.io/hirunefu/smock:<version> serve --dir /defs
   ```
 
 - **On Kubernetes.**
   [getting-started-on-gke.md](getting-started-on-gke.md) installs the
-  chart from the checkout. The Definition file and its body files go in
-  as values. The command reuses that guide's namespace `mocks`, token
-  Secret and image (`$IMAGE` and `$TAG`), so run it in that guide's
-  shell, at the repository's root, before that guide's clean-up. It
+  release's chart. The Definition file and its body files go in as
+  values. The command reuses that guide's namespace `mocks`, token
+  Secret and `$VERSION`, so run it in that guide's shell, in
+  `docs/examples/from-mockoon/`, before that guide's clean-up. It
   upgrades that guide's release `smock` to serve the example in place of
   its Definition file:
 
   ```sh
-  helm upgrade --install smock charts/smock --namespace mocks \
-    --set image.repository="$IMAGE" --set image.tag="$TAG" \
+  helm upgrade --install smock oci://ghcr.io/hirunefu/charts/smock --version "$VERSION" --namespace mocks \
     --set adminAuth.tokenSecret.name=smock-admin-token \
-    --set-file 'definitions.configMap.files.users-api\.yaml=docs/examples/from-mockoon/defs/users-api.yaml' \
-    --set-file 'definitions.configMap.bodyFiles.users\.json=docs/examples/from-mockoon/defs/files/users.json' \
-    --set-file 'definitions.configMap.bodyFiles.inactive-users\.json=docs/examples/from-mockoon/defs/files/inactive-users.json' \
+    --set-file 'definitions.configMap.files.users-api\.yaml=defs/users-api.yaml' \
+    --set-file 'definitions.configMap.bodyFiles.users\.json=defs/files/users.json' \
+    --set-file 'definitions.configMap.bodyFiles.inactive-users\.json=defs/files/inactive-users.json' \
     --wait --timeout 10m
   ```
 
+  After that guide's
+  [appendix](getting-started-on-gke.md#appendix-an-unreleased-commit),
+  name the chart and the image as its install does instead, with the
+  chart's path from here, `../../../charts/smock`.
   Adding body files replaces the Pod. That guide's port-forwards reach
   the old Pod, with the old files, until it stops, and then end, so stop
   them (`kill %1 %2`) and start them again. `localhost:8080/api/v1/users`
-  then reaches `users-api`, whose `hosts` lists `localhost`. This ran on
-  GKE Autopilot on 2026-10-17.
+  then reaches `users-api`, whose `hosts` lists `localhost`. The example
+  as it stood on 2026-10-17, before it had Scenario Stubs, ran this way
+  on GKE Autopilot that day, from an image of CI's binary and the chart
+  in a checkout; its Scenario Stubs were checked with a local smock only.
   Values hold text only, so binary body files need git-sync or a
   ConfigMap of one's own
   ([charts/smock/README.md](../charts/smock/README.md)).
@@ -1206,6 +1204,12 @@ release and no image to pull. Until there is:
   ([Environments told apart by port](#environments-told-apart-by-port)).
   Then read the unmatched requests as in
   [Checking the migration](#checking-the-migration).
+- **An unreleased commit.** To run a commit that no release holds yet,
+  take CI's binary or build one, as in the
+  [appendix](getting-started-on-gke.md#appendix-an-unreleased-commit)
+  of getting-started-on-gke.md. An image built there for local use needs
+  no registry, so tag it `smock:dev` in place of `"$IMAGE"`, and run it
+  as above with `smock:dev` in place of `ghcr.io/hirunefu/smock:<version>`.
 
 ## Mapping reference
 
@@ -1341,5 +1345,5 @@ write a fixed value. Leaving the member out changes the body's shape.
 | The admin API, under `/mockoon-admin` | The Admin API, on its own port, 9090 by default. |
 | `PURGE /mockoon-admin/state` | `POST /v1/reset` with `{"scope":"all"}`, which clears the Ephemeral Stubs, the Journal and every Scenario state, so that sequences and request counts start over. |
 | `PUT /mockoon-admin/environment` | Edit the files; smock reloads them. |
-| The `mockoon/cli` image | An image built from CI's binary, until a release publishes one. |
+| The `mockoon/cli` image | `ghcr.io/hirunefu/smock:<version>`, from a release. |
 | `import`, `export` | No counterpart. |
