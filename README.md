@@ -11,16 +11,17 @@ Mockoon environments, routes and rules onto Mocks and Stubs.
 
 ## Layout
 
-The repository is a MoonBit workspace (`moon.work`) of four modules:
+The repository is a MoonBit workspace (`moon.work`) of five modules:
 
 | Directory | Module | What it is |
 |---|---|---|
 | `.` | `smock/smock` | smock itself. Its parts are packages of this module. |
 | `http1/` | `smock/http1` | The HTTP/1.1 codec. |
 | `re2/` | `smock/re2` | RE2-syntax regular expressions. |
+| `xml/` | `smock/xml` | An XML parser that refuses DTDs, with simple paths that select values (documented in `xml/README.mbt.md`). |
 | `yaml/` | `smock/yaml` | Safe-subset YAML: `parse` turns a document into the tree `@json.parse` gives for the equivalent JSON (documented in `yaml/yaml.mbt`). |
 
-The three protocol modules do no I/O and do not depend on smock, so they can
+The four protocol modules do no I/O and do not depend on smock, so they can
 be published on mooncakes on their own. `scripts/check-no-io.sh` checks
 that.
 
