@@ -200,11 +200,11 @@ in RE2 syntax:
   matches only when all of them hold. Stubs with patterns are tried in the
   same order as any other Stub.
 
-smock supports a subset of RE2 syntax, which the
-[RE2 module's README](../re2/README.mbt.md#syntax-in-r1) lists: literals,
-`.`, bracket classes, `\d`, `\w` and `\s`, anchors and word boundaries,
-groups, alternation, repetitions (counts up to 1000) and the flags `i`, `s`
-and `m`. Matching takes time linear in the length of the value, whatever
+smock supports a subset of RE2 syntax, smock's RE2 subset, which the
+[RE2 module's README](../re2/README.mbt.md#syntax-in-the-subset) lists:
+literals, `.`, bracket classes, `\d`, `\w` and `\s`, anchors and word
+boundaries, groups, alternation, repetitions (counts up to 1000) and the
+flags `i`, `s` and `m`. Matching takes time linear in the length of the value, whatever
 the pattern, so no pattern can stall smock.
 
 Patterns are compiled once, when smock loads the Definition files. A
@@ -216,7 +216,7 @@ pattern, counted in characters from 0:
 
 ```console
 users.json: /stubs/0/request/path/pattern: is not a valid pattern: position 7: missing closing )
-users.json: /stubs/1/request/headers/X-Region/pattern: is not a valid pattern: position 0: Unicode class \p{Greek} is not supported in R1
+users.json: /stubs/1/request/headers/X-Region/pattern: is not a valid pattern: position 0: Unicode class \p{Greek} is not supported in smock's RE2 subset
 users.json: /stubs/2/request/body/json/email/pattern: is not a valid pattern: position 0: missing closing )
 ```
 

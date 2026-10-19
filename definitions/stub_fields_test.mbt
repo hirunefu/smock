@@ -179,14 +179,14 @@ test "a pattern that does not compile is a diagnostic at the JSON Pointer of its
       #|a.json: /stubs/0/request/query/q/pattern: is not a valid pattern: position 1: bad repetition operator **
       #|a.json: /stubs/0/request/headers/X-A~1B: is not a valid header name
       #|a.json: /stubs/0/request/body/pattern: is not a valid pattern: position 1: invalid repetition size {1001}
-      #|a.json: /stubs/1/request/path/pattern: is not a valid pattern: position 6: non-ASCII capture group name (?P<é> is not supported in R1
+      #|a.json: /stubs/1/request/path/pattern: is not a valid pattern: position 6: non-ASCII capture group name (?P<é> is not supported in smock's RE2 subset
       #|a.json: /stubs/2/request/query/~0q/pattern: is not a valid pattern: position 0: unexpected )
     ),
   )
 }
 
 ///|
-test "a pattern with syntax outside the R1 subset, or that is not RE2 syntax, is rejected the same way" {
+test "a pattern with syntax outside smock's RE2 subset, or that is not RE2 syntax, is rejected the same way" {
   let stub = (i : Int, pattern : String) => {
     stub_with(
       "s\{i}",
@@ -200,11 +200,11 @@ test "a pattern with syntax outside the R1 subset, or that is not RE2 syntax, is
       ].mapi(stub),
     ),
     content=(
-      #|a.json: /stubs/0/request/path/pattern: is not a valid pattern: position 1: Unicode class \p{Greek} is not supported in R1
-      #|a.json: /stubs/1/request/path/pattern: is not a valid pattern: position 1: Unicode class \pL is not supported in R1
-      #|a.json: /stubs/2/request/path/pattern: is not a valid pattern: position 2: POSIX class [:alpha:] is not supported in R1
-      #|a.json: /stubs/3/request/path/pattern: is not a valid pattern: position 3: flag U is not supported in R1
-      #|a.json: /stubs/4/request/path/pattern: is not a valid pattern: position 1: hexadecimal escape \x is not supported in R1
+      #|a.json: /stubs/0/request/path/pattern: is not a valid pattern: position 1: Unicode class \p{Greek} is not supported in smock's RE2 subset
+      #|a.json: /stubs/1/request/path/pattern: is not a valid pattern: position 1: Unicode class \pL is not supported in smock's RE2 subset
+      #|a.json: /stubs/2/request/path/pattern: is not a valid pattern: position 2: POSIX class [:alpha:] is not supported in smock's RE2 subset
+      #|a.json: /stubs/3/request/path/pattern: is not a valid pattern: position 3: flag U is not supported in smock's RE2 subset
+      #|a.json: /stubs/4/request/path/pattern: is not a valid pattern: position 1: hexadecimal escape \x is not supported in smock's RE2 subset
       #|a.json: /stubs/5/request/path/pattern: is not a valid pattern: position 1: lookahead (?= is not RE2 syntax
       #|a.json: /stubs/6/request/path/pattern: is not a valid pattern: position 4: backreference \1 is not RE2 syntax
     ),
@@ -238,7 +238,7 @@ test "a pattern object in a json condition that does not compile is a diagnostic
     content=(
       #|a.json: /stubs/0/request/body/json/email/pattern: is not a valid pattern: position 0: missing closing )
       #|a.json: /stubs/0/request/body/json/tags/1/pattern: is not a valid pattern: position 1: invalid repetition size {1001}
-      #|a.json: /stubs/0/request/body/json/a~1b/c~0d/pattern: is not a valid pattern: position 0: Unicode class \p{Greek} is not supported in R1
+      #|a.json: /stubs/0/request/body/json/a~1b/c~0d/pattern: is not a valid pattern: position 0: Unicode class \p{Greek} is not supported in smock's RE2 subset
       #|a.json: /stubs/1/request/body/json/pattern: is not a valid pattern: position 0: lookahead (?= is not RE2 syntax
     ),
   )

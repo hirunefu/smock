@@ -12,7 +12,7 @@ let pattern_users : String =
 
 ///|
 /// A Definition file in YAML with two patterns that do not compile: one is
-/// not valid RE2 syntax, the other uses syntax outside the R1 subset.
+/// not valid RE2 syntax, the other uses syntax outside smock's RE2 subset.
 let bad_patterns : String =
   #|mocks: [{ name: orders }]
   #|stubs:
@@ -57,7 +57,7 @@ async test "smock check reports a pattern that does not compile on one line, wit
         content=(
           #|status 1
           #|20-orders.yaml: /stubs/0/request/path/pattern: is not a valid pattern: position 8: missing closing )
-          #|20-orders.yaml: /stubs/0/request/headers/X-Region/pattern: is not a valid pattern: position 0: Unicode class \p{Greek} is not supported in R1
+          #|20-orders.yaml: /stubs/0/request/headers/X-Region/pattern: is not a valid pattern: position 0: Unicode class \p{Greek} is not supported in smock's RE2 subset
           #|
         ),
       )
@@ -80,7 +80,7 @@ async test "smock serve exits with status 1 at startup when a pattern does not c
           #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
           #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
           #|{"level":"error","msg":"invalid definitions","file":"20-orders.yaml","pointer":"/stubs/0/request/path/pattern","error":"is not a valid pattern: position 8: missing closing )"}
-          #|{"level":"error","msg":"invalid definitions","file":"20-orders.yaml","pointer":"/stubs/0/request/headers/X-Region/pattern","error":"is not a valid pattern: position 0: Unicode class \\p{Greek} is not supported in R1"}
+          #|{"level":"error","msg":"invalid definitions","file":"20-orders.yaml","pointer":"/stubs/0/request/headers/X-Region/pattern","error":"is not a valid pattern: position 0: Unicode class \\p{Greek} is not supported in smock's RE2 subset"}
         ),
       )
     },
