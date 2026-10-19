@@ -233,7 +233,7 @@ fn Journal::entry(
     status,
     fault: plan.fault,
     template_error,
-    size: 256 + 2 * text + body.length() + value_bytes * values,
+    size: 256 + 2 * text + body.length() + value_overhead * values,
   }
 }
 
@@ -241,7 +241,24 @@ fn Journal::entry(
 /// What each value taken from a form or an XML body costs an entry, besides
 /// its text: towards the values it keeps, and towards the Journal's byte
 /// bound. So even empty values add up.
-let value_bytes : Int = 32
+let value_overhead : Int = 32
+
+///|
+/// How many bytes an entry keeps of a value taken from a form or an XML
+/// body, `length` bytes of UTF-8, after values whose cost so far is `kept`,
+/// with the body limit `limit`: all of them while they fit, as many as are
+/// left when they do not, or -1, to leave the value out, once the values
+/// have taken the whole limit. Each value kept costs its bytes and
+/// `value_overhead` more. `needs_cut` and `cut` both follow this rule.
+fn value_room(length : Int, kept~ : Int, limit~ : Int) -> Int {
+  if kept >= limit {
+    -1
+  } else if length > limit - kept {
+    limit - kept
+  } else {
+    length
+  }
+}
 
 ///|
 /// Whether the Near miss holds something that an entry with the body limit
@@ -259,10 +276,10 @@ fn NearMiss::needs_cut(
       Form(_) | Xml(_) =>
         for j in 0..<failed.actual.length() {
           let length = utf8_length(failed.actual[j])
-          if kept >= limit || length > limit - kept {
+          if value_room(length, kept~, limit~) != length {
             return true
           }
-          kept += length + value_bytes
+          kept += length + value_overhead
         }
       _ => ()
     }
@@ -273,10 +290,9 @@ fn NearMiss::needs_cut(
 ///|
 /// The Near miss as an entry with the body limit `limit` keeps it: the
 /// body's value is `body`, the body cut to the limit, when `truncated`; the
-/// values taken from a form or an XML body are kept in order while their
-/// total, each counting its bytes in UTF-8 and `value_bytes` more, is below
-/// the limit, the last one kept cut to what is left; the others are left
-/// out.
+/// values taken from a form or an XML body are kept in order as
+/// `value_room` says, the last one kept cut to what is left, and the others
+/// are left out.
 fn NearMiss::cut(
   self : NearMiss,
   body : Bytes,
@@ -286,23 +302,25 @@ fn NearMiss::cut(
   let failed = []
   let mut kept = 0
   for i in 0..<self.failed.length() {
-    let condition = self.failed[i]
-    match condition.condition {
+    let failed_condition = self.failed[i]
+    match failed_condition.condition {
       Body if truncated =>
-        failed.push({ ..condition, actual: [@utf8.decode_lossy(body)], })
+        failed.push({ ..failed_condition, actual: [@utf8.decode_lossy(body)], })
       Form(_) | Xml(_) => {
         let actual = []
-        for j in 0..<condition.actual.length() {
-          if kept >= limit {
+        for j in 0..<failed_condition.actual.length() {
+          let value = failed_condition.actual[j]
+          let room = value_room(utf8_length(value), kept~, limit~)
+          if room < 0 {
             break
           }
-          let value = truncate_text(condition.actual[j], limit - kept)
+          let value = truncate_text(value, room)
           actual.push(value)
-          kept += utf8_length(value) + value_bytes
+          kept += utf8_length(value) + value_overhead
         }
-        failed.push({ ..condition, actual, })
+        failed.push({ ..failed_condition, actual, })
       }
-      _ => failed.push(condition)
+      _ => failed.push(failed_condition)
     }
   }
   { ..self, failed, }

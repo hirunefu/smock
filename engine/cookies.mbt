@@ -40,7 +40,7 @@ fn has_cookie(
   for start = 0; start <= field.length(); {
     let end = part_end(field, start)
     let last = trimmed_end(field, start, end)
-    let value = cookie_value(field, start, last, name)
+    let value = cookie_value_start(field, start, last, name)
     if value >= 0 {
       let meets = match wanted {
         Any => true
@@ -70,7 +70,7 @@ fn cookie_values(
     for start = 0; start <= field.length(); {
       let end = part_end(field, start)
       let last = trimmed_end(field, start, end)
-      let value = cookie_value(field, start, last, name)
+      let value = cookie_value_start(field, start, last, name)
       if value >= 0 {
         out.push(field[value:last].to_owned())
       }
@@ -111,7 +111,12 @@ fn trimmed_end(field : String, start : Int, end : Int) -> Int {
 ///
 /// It returns an index, rather than an optional view, so that no part
 /// allocates.
-fn cookie_value(field : String, start : Int, end : Int, name : String) -> Int {
+fn cookie_value_start(
+  field : String,
+  start : Int,
+  end : Int,
+  name : String,
+) -> Int {
   let mut start = start
   while start < end && is_blank(field[start]) {
     start += 1
