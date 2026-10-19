@@ -788,7 +788,8 @@ chart and lists every value with its default.
 
 The image and the image of each architecture are signed with cosign, without
 a key: each signature's certificate names the release workflow at the
-release's tag. With cosign 2.6 or later:
+release's tag. The release signs with cosign 3, which stores signatures as
+OCI 1.1 referrers, so verify with cosign 3 or later:
 
 ```sh
 cosign verify ghcr.io/hirunefu/smock:<version> \
@@ -821,12 +822,13 @@ checks.
 ### Release binaries
 
 Each GitHub release has the binaries `smock-<version>-linux-amd64` and
-`smock-<version>-linux-arm64`, the same builds as in the image (Linux only in
-R1). They link OpenSSL 3 dynamically, so they need it at run time: on Debian
-and Ubuntu, the `libssl3` package (`libssl3t64` on newer releases). Make the
-downloaded file executable with `chmod +x`. The release notes name the
-MoonBit toolchain the release was built with, which `smock --version` also
-prints.
+`smock-<version>-linux-arm64`, the same builds as in the image; smock runs
+on Linux only. They link glibc and OpenSSL 3 dynamically, so they need
+glibc 2.34 or later and OpenSSL 3 at run time: on Debian and Ubuntu, the
+`libssl3` package (`libssl3t64` on newer releases). Debian 12, Ubuntu 22.04,
+RHEL 9 and their successors have both. Make the downloaded file executable
+with `chmod +x`. The release notes name the MoonBit toolchain the release
+was built with, which `smock --version` also prints.
 
 ### Making a release
 
