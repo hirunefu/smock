@@ -162,8 +162,13 @@
           "propertyNames": { "$ref": "#/$defs/headerName" },
           "additionalProperties": { "$ref": "#/$defs/valueCondition" }
         },
+        "cookies": {
+          "description": "Cookies, by name, from every Cookie header field of the request. Each field is split on `;`, each part is trimmed of spaces and tabs, and the first `=` of a part separates the name from the value; a part without `=` is skipped. Names are compared exactly, case and all, and values exactly as sent: quotes are part of a value, and nothing is percent-decoded. An exact value or a pattern holds when one of the cookie's values equals the given string or matches the given pattern as a whole, so a repeated cookie matches when any of its values does. `$not` and `$exists` are about the cookie as a whole: see valueCondition. Names are literal, even when they start with `$`. Cookies that are not listed are ignored.",
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/valueCondition" }
+        },
         "body": {
-          "description": "The request body: an exact string, a pattern that must match the whole body, a json condition, or a form condition.",
+          "description": "The request body: an exact string, a pattern that must match the whole body, a json condition, a form condition, or an xml condition.",
           "anyOf": [
             {
               "description": "The exact body, as text in UTF-8.",
@@ -171,7 +176,8 @@
             },
             { "$ref": "#/$defs/pattern" },
             { "$ref": "#/$defs/jsonCondition" },
-            { "$ref": "#/$defs/formCondition" }
+            { "$ref": "#/$defs/formCondition" },
+            { "$ref": "#/$defs/xmlCondition" }
           ]
         }
       },
@@ -247,6 +253,20 @@
         }
       },
       "required": ["form"],
+      "additionalProperties": false
+    },
+    "xmlCondition": {
+      "description": "An xml condition: the body parses as XML, and the value at each path meets its condition. The Content-Type is not consulted. A body that is not well-formed XML fails every condition, `$not` included, and so does a body with a DOCTYPE, in an encoding other than UTF-8, or with elements nested more than 256 deep.",
+      "type": "object",
+      "properties": {
+        "xml": {
+          "description": "Paths into the body, each with a value condition. A path is `/` and element names separated by `/`, optionally ending in `/@` and an attribute name, such as `/Envelope/Body/GetUser/id` or `/order/@status`. Names are local names: a path names no prefix, and prefixes in the body are ignored. A path selects every element it reaches from the root element by child steps, or that attribute of each of them; the condition holds when one of their values meets it, and with none selected only `$not` and `$exists: false` hold. An element's value is all the text in it, CDATA included, trimmed of whitespace. Paths are compiled when the definitions are loaded: `//`, wildcards, predicates, functions and a prefix make the definition set invalid, as does a final `@xmlns`, since namespace declarations are not attributes.",
+          "type": "object",
+          "propertyNames": { "pattern": "^/" },
+          "additionalProperties": { "$ref": "#/$defs/valueCondition" }
+        }
+      },
+      "required": ["xml"],
       "additionalProperties": false
     },
     "response": {

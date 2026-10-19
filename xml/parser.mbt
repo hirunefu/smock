@@ -4,9 +4,10 @@ priv struct Parser {
   input : BytesView
   /// The byte offset of the next byte to read.
   mut pos : Int
-  /// The qualified names of the attributes of the start tag being read,
-  /// with their offsets.
-  names : Array[(String, Int)]
+  /// The qualified names of the attributes of the start tag being read.
+  names : Array[String]
+  /// Where each of `names` starts, in the same order.
+  offsets : Array[Int]
 }
 
 ///|
@@ -57,10 +58,12 @@ fn Parser::peek(self : Parser) -> Int {
 /// Raises an error when the bytes there are not well-formed UTF-8, or not
 /// a character XML allows (XML 1.0 §2.2).
 fn Parser::char(self : Parser) -> Int raise ParseError {
-  let (c, length) = decode(self.input, self.pos)
-  if c < 0 {
+  let decoded = decode(self.input, self.pos)
+  if decoded < 0 {
     fail_at(self.pos, not_utf8_message)
   }
+  let c = code_point(decoded)
+  let length = byte_length(decoded)
   if !is_char(c) {
     let hex = c.to_string(radix=16).to_upper().pad_start(4, '0')
     fail_at(self.pos, "U+\{hex} is not a character XML allows")
@@ -135,18 +138,20 @@ fn Parser::declaration(self : Parser) -> Unit raise ParseError {
   }
   self.pos += 7
   self.equals()
-  let (version, at) = self.quoted()
+  let at = self.pos + 1
+  let version = self.quoted()
   // A 1.0 processor reads any version 1.x as 1.0 (XML 1.0 §2.8 [26]).
   guard version.strip_prefix("1.") is Some(minor) &&
     minor != "" &&
-    minor.iter().all(c => c is ('0'..='9')) else {
+    is_digits(minor) else {
     fail_at(at, "XML version \{version} is not supported")
   }
   let mut spaced = self.skip_space()
   if spaced && self.looking_at(b"encoding") {
     self.pos += 8
     self.equals()
-    let (encoding, at) = self.quoted()
+    let at = self.pos + 1
+    let encoding = self.quoted()
     // Encoding names are compared case-insensitively (XML 1.0 §4.3.3).
     if encoding.to_lower() != "utf-8" {
       fail_at(
@@ -159,7 +164,8 @@ fn Parser::declaration(self : Parser) -> Unit raise ParseError {
   if spaced && self.looking_at(b"standalone") {
     self.pos += 10
     self.equals()
-    let (standalone, at) = self.quoted()
+    let at = self.pos + 1
+    let standalone = self.quoted()
     if standalone != "yes" && standalone != "no" {
       fail_at(at, "standalone must be yes or no")
     }
@@ -183,9 +189,20 @@ fn Parser::equals(self : Parser) -> Unit raise ParseError {
 }
 
 ///|
+/// Whether `text` is all ASCII digits.
+fn is_digits(text : StringView) -> Bool {
+  for c in text {
+    if !(c is ('0'..='9')) {
+      return false
+    }
+  }
+  true
+}
+
+///|
 /// Reads a value of the XML declaration, in single or double quotes, and
-/// returns it with the byte offset where it starts.
-fn Parser::quoted(self : Parser) -> (String, Int) raise ParseError {
+/// returns it. The value starts one byte after where it is read from.
+fn Parser::quoted(self : Parser) -> String raise ParseError {
   let quote = self.peek()
   if quote != '"' && quote != '\'' {
     fail_at(self.pos, "expected a quoted value")
@@ -200,7 +217,7 @@ fn Parser::quoted(self : Parser) -> (String, Int) raise ParseError {
     value.write_char(self.char().unsafe_to_char())
   }
   self.pos += 1
-  (value.to_string(), open + 1)
+  value.to_string()
 }
 
 ///|
@@ -351,6 +368,7 @@ fn Parser::start_tag(self : Parser) -> Open raise ParseError {
   let qname = self.qualified_name()
   let element = { name: local_name(qname), attributes: [], children: [], }
   self.names.clear()
+  self.offsets.clear()
   let mut empty = false
   while true {
     let spaced = self.skip_space()
@@ -367,7 +385,8 @@ fn Parser::start_tag(self : Parser) -> Open raise ParseError {
       _ if spaced => {
         let at = self.pos
         let name = self.qualified_name()
-        self.names.push((name, at))
+        self.names.push(name)
+        self.offsets.push(at)
         self.equals()
         let value = self.attribute_value()
         // Namespace declarations are not attributes for selection.
@@ -378,29 +397,33 @@ fn Parser::start_tag(self : Parser) -> Open raise ParseError {
       _ => fail_at(self.pos, "expected whitespace, > or />")
     }
   }
-  unique(self.names)
+  unique(self.names, self.offsets)
   { qname, start, element, empty, }
 }
 
 ///|
 /// Raises an error when a name repeats among `names`, the attribute names
-/// of a tag with their offsets (XML 1.0 §3.1, WFC: Unique Att Spec). The
-/// error is at the first repetition. A tag with many attributes is checked
-/// by sorting rather than with a hash set, so that no set of names makes
-/// it slow.
-fn unique(names : Array[(String, Int)]) -> Unit raise ParseError {
+/// of a tag, which start at `offsets` (XML 1.0 §3.1, WFC: Unique Att
+/// Spec). The error is at the first repetition. A tag with many attributes
+/// is checked by sorting rather than with a hash set, so that no set of
+/// names makes it slow; a tag with a few, as most have, is checked in
+/// place, with no allocation.
+fn unique(names : Array[String], offsets : Array[Int]) -> Unit raise ParseError {
   let n = names.length()
   if n <= 8 {
     for j in 1..<n {
       for i in 0..<j {
-        if names[i].0 == names[j].0 {
-          fail_at(names[j].1, "attribute \{names[j].0} is repeated")
+        if names[i] == names[j] {
+          fail_at(offsets[j], "attribute \{names[j]} is repeated")
         }
       }
     }
     return
   }
-  let sorted = names.copy()
+  let sorted = Array(capacity=n)
+  for i in 0..<n {
+    sorted.push((names[i], offsets[i]))
+  }
   sorted.sort()
   let mut first = -1
   for i in 1..<n {
@@ -517,7 +540,7 @@ fn Parser::reference(
     return
   }
   if !(self.pos < self.input.length() &&
-    is_name_start(decode(self.input, self.pos).0)) {
+    is_name_start(code_point(decode(self.input, self.pos)))) {
     fail_at(start, "& starts a reference; write &amp; for &")
   }
   let name = self.name()
@@ -604,15 +627,16 @@ fn Parser::name(self : Parser) -> String raise ParseError {
   let start = self.pos
   let name = StringBuilder()
   while self.pos < self.input.length() {
-    let (c, length) = decode(self.input, self.pos)
-    if c < 0 {
+    let decoded = decode(self.input, self.pos)
+    if decoded < 0 {
       fail_at(self.pos, not_utf8_message)
     }
+    let c = code_point(decoded)
     if !(if self.pos == start { is_name_start(c) } else { is_name_char(c) }) {
       break
     }
     name.write_char(c.unsafe_to_char())
-    self.pos += length
+    self.pos += byte_length(decoded)
   }
   if self.pos == start {
     fail_at(start, "expected a name")

@@ -22,7 +22,7 @@ test "a form condition is read as the Schema defines it: field names, literal ev
 }
 
 ///|
-test "a malformed form condition is a diagnostic at its JSON Pointer, and a body condition gives exactly one of json, pattern and form" {
+test "a malformed form condition is a diagnostic at its JSON Pointer, and a body condition gives only one kind of condition" {
   inspect(
     stub_problems([
       stub_with("a", "\"request\": { \"body\": { \"form\": [\"a=1\"] } }"),
@@ -49,8 +49,8 @@ test "a malformed form condition is a diagnostic at its JSON Pointer, and a body
       #|a.json: /stubs/1/request/body/form/d/$includes: is allowed only in a json condition
       #|a.json: /stubs/1/request/body/form/e/$exists: must be true or false
       #|a.json: /stubs/1/request/body/form/f/pattern: is not allowed beside "$not": an operator is the only key of its object
-      #|a.json: /stubs/2/request/body: has "json" and "form"; give exactly one of "json", "pattern" and "form"
-      #|a.json: /stubs/3/request/body: has "json" and "pattern" and "form"; give exactly one of "json", "pattern" and "form"
+      #|a.json: /stubs/2/request/body: has "json" and "form"; give only one of "json", "pattern", "form" or "xml"
+      #|a.json: /stubs/3/request/body: has "json" and "pattern" and "form"; give only one of "json", "pattern", "form" or "xml"
     ),
   )
 }

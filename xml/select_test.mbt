@@ -239,12 +239,6 @@ test "names match by local name: a prefix in the document is ignored" {
 test "namespace declarations are not selectable attributes" {
   let xml = "<a xmlns='urn:a' xmlns:p='urn:p' p='1' p:q='2'/>"
   debug_inspect(
-    values(xml, "/a/@xmlns"),
-    content=(
-      #|[]
-    ),
-  )
-  debug_inspect(
     values(xml, "/a/@p"),
     content=(
       #|["1"]

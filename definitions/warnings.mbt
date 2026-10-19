@@ -114,14 +114,16 @@ fn shadows(t : Stub, s : Stub) -> Bool {
 /// - `t`'s method is absent or equal to `s`'s.
 /// - `t`'s path is absent, equal to `s`'s exact path, or a pattern that
 ///   matches `s`'s exact path.
-/// - Each of `t`'s query, header and body conditions also appears,
-///   identically, in `s`. Header names are in lower case, so they compare
-///   case-insensitively, as in matching. A `form` condition is a condition
-///   on each of its fields, so each of them appears in `s`'s `form`
-///   condition. A `json` condition with patterns is identical only to one
+/// - Each of `t`'s query, header, cookie and body conditions also
+///   appears, identically, in `s`. Header names are in lower case, so they
+///   compare case-insensitively, as in matching; cookie names compare
+///   exactly. A `json` condition with patterns is identical only to one
 ///   with the same patterns in the same places, and a value condition with
 ///   operators only to one with the same operators around an identical
-///   condition.
+///   condition. The fields of a `form` condition and the paths of an `xml`
+///   condition are conditions of their own, as query parameters are: each
+///   of `t`'s fields or paths appears, written the same, with an identical
+///   condition in `s`'s `form` or `xml` condition.
 ///
 /// A subset of conjuncts is sound whatever the conditions mean, operators
 /// included. Containment between two patterns is not attempted, and
@@ -143,12 +145,15 @@ fn request_shadows(t : Conditions, s : Conditions) -> Bool {
   let body = match (t.body, s.body) {
     (None, _) => true
     (Some(Form(t_fields)), Some(Form(s_fields))) =>
-      t_fields.iter().all(field => s_fields.contains(field))
+      t_fields.iter().all(condition => s_fields.contains(condition))
+    (Some(Xml(t_paths)), Some(Xml(s_paths))) =>
+      t_paths.iter().all(condition => s_paths.contains(condition))
     (t_body, s_body) => t_body == s_body
   }
   meth &&
   path &&
   t.query.iter().all(condition => s.query.contains(condition)) &&
   t.headers.iter().all(condition => s.headers.contains(condition)) &&
+  t.cookies.iter().all(condition => s.cookies.contains(condition)) &&
   body
 }

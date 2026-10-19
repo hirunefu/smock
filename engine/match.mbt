@@ -16,6 +16,8 @@ priv struct Incoming {
   mut json : ParsedBody
   /// The body read as a form, once a `form` condition needs it.
   mut form : FormBody
+  /// The body parsed as XML, once an `xml` condition needs it.
+  mut xml : ParsedXml
 }
 
 ///|
@@ -36,6 +38,15 @@ priv enum FormBody {
 }
 
 ///|
+/// The request body as XML: not parsed yet, parsed, or not a document that
+/// the XML module accepts.
+priv enum ParsedXml {
+  XmlNotParsed
+  XmlParsed(@xml.Document)
+  NotXml
+}
+
+///|
 fn Incoming::new(request : Request) -> Incoming {
   {
     request,
@@ -43,6 +54,7 @@ fn Incoming::new(request : Request) -> Incoming {
     query: None,
     json: NotParsed,
     form: NotRead,
+    xml: XmlNotParsed,
   }
 }
 
@@ -67,6 +79,11 @@ fn Incoming::meets(
   }
   for i in 0..<conditions.headers.length() {
     if !self.header_meets(conditions.headers[i]) {
+      return false
+    }
+  }
+  for i in 0..<conditions.cookies.length() {
+    if !self.cookie_meets(conditions.cookies[i]) {
       return false
     }
   }
@@ -174,6 +191,14 @@ fn Incoming::body_meets(
       }
       true
     }
+    Xml(conditions) => {
+      for i in 0..<conditions.length() {
+        if !self.xml_meets(conditions[i]) {
+          return false
+        }
+      }
+      true
+    }
   }
 }
 
@@ -255,4 +280,45 @@ fn Incoming::body_json(self : Incoming) -> Json? {
   }
   self.json = parsed
   self.body_json()
+}
+
+///|
+/// Whether `condition`, on the values at a path into an XML body, holds for
+/// the request, as `query_meets` says for a query parameter: the nodes the
+/// path selects are the values of a name, which is absent when there are
+/// none. A body that is not XML fails every such condition.
+fn Incoming::xml_meets(
+  self : Incoming,
+  condition : (@xml.Path, @definitions.ValueCondition),
+) -> Bool {
+  guard self.body_xml() is Some(document) else { return false }
+  let (path, value) = condition
+  let wanted = value.value_test()
+  let values = document.select(path)
+  let mut found = false
+  for i in 0..<values.length() {
+    if wanted.meets(values[i]) {
+      found = true
+      break
+    }
+  }
+  value.holds(found~)
+}
+
+///|
+/// The request body parsed as XML, or `None` when it is not a document that
+/// the XML module accepts. It is parsed at most once.
+fn Incoming::body_xml(self : Incoming) -> @xml.Document? {
+  match self.xml {
+    XmlParsed(document) => return Some(document)
+    NotXml => return None
+    XmlNotParsed => ()
+  }
+  let parsed = try @xml.parse(self.request.body) catch {
+    _ => NotXml
+  } noraise {
+    document => XmlParsed(document)
+  }
+  self.xml = parsed
+  self.body_xml()
 }

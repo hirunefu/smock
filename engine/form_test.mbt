@@ -458,7 +458,7 @@ test "an Ephemeral Stub may have a form condition, and a malformed one is reject
       #|username=alice&remember=1 -> none
       #|username=bob -> none
       #|/request/body/form/a/$nto: is not an operator: the operators here are $not, $exists; write $$nto for a literal key that starts with $
-      #|/request/body: has "pattern" and "form"; give exactly one of "json", "pattern" and "form"
+      #|/request/body: has "pattern" and "form"; give only one of "json", "pattern", "form" or "xml"
     ),
   )
 }

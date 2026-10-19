@@ -714,6 +714,7 @@ fn no_conditions() -> Conditions {
     path: None,
     query: ReadOnlyArray::from_array([]),
     headers: ReadOnlyArray::from_array([]),
+    cookies: ReadOnlyArray::from_array([]),
     body: None,
   }
 }
@@ -745,6 +746,7 @@ fn File::read_conditions(
   let mut path = None
   let mut query = []
   let mut headers = []
+  let mut cookies = []
   let mut body = None
   for key, value in request {
     let field = child_pointer(pointer, key)
@@ -770,6 +772,7 @@ fn File::read_conditions(
         headers = self
           .read_value_conditions(field, value, header_names=true)
           .map(header => (header.0.to_lower(), header.1))
+      "cookies" => cookies = self.read_value_conditions(field, value)
       "body" => body = self.read_body_condition(field, value)
       _ => self.unknown_field(field)
     }
@@ -779,13 +782,15 @@ fn File::read_conditions(
     path,
     query: ReadOnlyArray::from_array(query),
     headers: ReadOnlyArray::from_array(headers),
+    cookies: ReadOnlyArray::from_array(cookies),
     body,
   }
 }
 
 ///|
 /// Reads a condition on the request body: an exact text, or an object
-/// holding a `json` condition, a pattern or a `form` condition.
+/// holding one of the kinds `body_kinds` lists: a `json` condition, a
+/// pattern, a `form` condition or an `xml` condition.
 fn File::read_body_condition(
   self : File,
   pointer : String,
@@ -818,20 +823,65 @@ fn File::read_body_condition(
             ReadOnlyArray::from_array(self.read_value_conditions(field, value)),
           ),
         )
+      "xml" =>
+        out = self
+          .read_xml_conditions(field, value)
+          .map(conditions => BodyCondition::Xml(conditions))
       _ => self.unknown_field(field)
     }
   }
-  let given = ["json", "pattern", "form"].filter(key => condition.contains(key))
-  let listed = "\"json\", \"pattern\" and \"form\""
+  let given = body_kinds.filter(kind => condition.contains(kind))
   match given.length() {
-    0 => self.error(pointer, "needs one of \{listed}")
+    0 => self.error(pointer, "needs \{listed_body_kinds}")
     1 => ()
     _ => {
-      let given = given.map(key => "\"\{key}\"").join(" and ")
-      self.error(pointer, "has \{given}; give exactly one of \{listed}")
+      let given = given.map(kind => "\"\{kind}\"").join(" and ")
+      self.error(pointer, "has \{given}; give only one of \{listed_body_kinds}")
     }
   }
   out
+}
+
+///|
+/// The kinds of body condition an object may hold, exactly one of them.
+let body_kinds : Array[String] = ["json", "pattern", "form", "xml"]
+
+///|
+/// The kinds of body condition, as messages list them.
+let listed_body_kinds : String = "\"json\", \"pattern\", \"form\" or \"xml\""
+
+///|
+/// Reads an `xml` condition, the object at `pointer`: paths into an XML
+/// body, each compiled, and their value conditions. It has none when a path
+/// does not compile or a condition is malformed, and each problem is
+/// reported.
+fn File::read_xml_conditions(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> ReadOnlyArray[(@xml.Path, ValueCondition)]? {
+  guard json is Object(members) else {
+    self.error(pointer, "must be an object")
+    return None
+  }
+  let out = []
+  for source, value in members {
+    let field = child_pointer(pointer, source)
+    let path = try @xml.compile_path(source) catch {
+      error => {
+        self.error(field, "is not a valid XML path: \{error}")
+        None
+      }
+    } noraise {
+      path => Some(path)
+    }
+    if self.read_value_condition(field, value) is Some(condition) &&
+      path is Some(path) {
+      out.push((path, condition))
+    }
+  }
+  guard out.length() == members.length() else { return None }
+  Some(ReadOnlyArray::from_array(out))
 }
 
 ///|
@@ -992,8 +1042,8 @@ fn File::read_value_condition(
 }
 
 ///|
-/// The operators of a query parameter's or a header's value, in the order
-/// messages list them.
+/// The operators of a query parameter's, a header's or a cookie's value, in
+/// the order messages list them.
 let value_operators : Array[String] = ["$not", "$exists"]
 
 ///|

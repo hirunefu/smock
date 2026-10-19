@@ -1,0 +1,23 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "get-user",
+      "mock": "users",
+      "request": {
+        "body": {
+          "xml": {
+            "/Envelope//id": "42"
+          }
+        }
+      },
+      "response": {
+        "status": 200
+      }
+    }
+  ]
+}

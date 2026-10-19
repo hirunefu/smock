@@ -14,7 +14,8 @@ pub(all) struct NearMiss {
   /// Where the Stub comes from.
   stub_source : StubSource
   /// The conditions it failed, in the order method, path, query
-  /// parameters, headers, body or form fields, Scenario state.
+  /// parameters, headers, cookies, body, form fields or XML paths,
+  /// Scenario state.
   failed : Array[FailedCondition]
 } derive(Debug)
 
@@ -26,10 +27,11 @@ pub(all) struct FailedCondition {
   expected : Expected
   /// The values the request carries for the condition, in order: one for
   /// the method, the path and the body; every value of a query parameter,
-  /// header or form field, which may be repeated; none when it is absent.
-  /// The path, query and form values are percent-decoded, as conditions
-  /// compare them. For a Scenario, the one state it is in for the
-  /// request's Session.
+  /// header, cookie or form field, which may be repeated, or of the nodes
+  /// an XML path selects; none when it is absent, or when the body is not a
+  /// form or not XML. The path, query and form values are percent-decoded,
+  /// as conditions compare them. For a Scenario, the one state it is in for
+  /// the request's Session.
   actual : Array[String]
 } derive(Debug)
 
@@ -42,9 +44,13 @@ pub(all) enum Condition {
   Query(String)
   /// The header with this name, in lower case.
   Header(String)
+  /// The cookie with this name.
+  Cookie(String)
   Body
   /// The field of a form body with this name.
   Form(String)
+  /// The path into an XML body, as the Stub writes it.
+  Xml(String)
   /// The state that the Stub's Scenario clause requires of the Scenario
   /// with this name.
   Scenario(String)
@@ -52,7 +58,8 @@ pub(all) enum Condition {
 
 ///|
 /// The name of the condition, as the Near miss reports it: `method`,
-/// `path`, `query:<name>`, `header:<name>`, `body`, `form:<name>` or
+/// `path`, `query:<name>`, `header:<name>`, `cookie:<name>`, `body`,
+/// `form:<name>`, `xml:<path>` or
 /// `scenario:<name>`.
 pub fn Condition::to_string(self : Condition) -> String {
   match self {
@@ -60,8 +67,10 @@ pub fn Condition::to_string(self : Condition) -> String {
     Path => "path"
     Query(name) => "query:\{name}"
     Header(name) => "header:\{name}"
+    Cookie(name) => "cookie:\{name}"
     Body => "body"
     Form(name) => "form:\{name}"
+    Xml(path) => "xml:\{path}"
     Scenario(name) => "scenario:\{name}"
   }
 }
@@ -118,9 +127,10 @@ pub impl ToJson for Expected with fn to_json(self) {
 
 ///|
 /// The `Smock-Near-Miss` header value: `<stub-id>; failed=<condition>,...`.
-/// It is ASCII only and carries no expected or actual value: the Stub ID
-/// and the names of query parameters, headers, form fields and Scenarios
-/// are written as `header_safe` writes them, so no name can add a field or
+/// It is ASCII only and carries no expected or actual value: the Stub ID,
+/// the names of query parameters, headers, cookies, form fields and
+/// Scenarios, and XML paths are
+/// written as `header_safe` writes them, so no name can add a field or
 /// change the header's meaning.
 fn NearMiss::header_value(self : NearMiss) -> String {
   let failed = self.failed
@@ -128,7 +138,9 @@ fn NearMiss::header_value(self : NearMiss) -> String {
       match failed.condition {
         Query(name) => "query:\{header_safe(name)}"
         Header(name) => "header:\{header_safe(name)}"
+        Cookie(name) => "cookie:\{header_safe(name)}"
         Form(name) => "form:\{header_safe(name)}"
+        Xml(path) => "xml:\{header_safe(path)}"
         Scenario(name) => "scenario:\{header_safe(name)}"
         condition => condition.to_string()
       }
@@ -145,9 +157,11 @@ priv enum Failed {
   Path(@definitions.ValueCondition)
   Query(String, @definitions.ValueCondition)
   Header(String, @definitions.ValueCondition)
+  Cookie(String, @definitions.ValueCondition)
   /// An exact, pattern or `json` condition on the body.
   Body(@definitions.BodyCondition)
   Form(String, @definitions.ValueCondition)
+  Xml(@xml.Path, @definitions.ValueCondition)
   /// The Scenario `name`, the state the Stub requires of it, and the state
   /// it is in.
   Scenario(name~ : String, required~ : String, current~ : String)
@@ -191,8 +205,9 @@ fn Incoming::near_miss(
 
 ///|
 /// The conditions among `conditions` that the request fails, each counted
-/// once, in the order method, path, query parameters, headers, body or
-/// form fields.
+/// once, in the order method, path, query parameters, headers, cookies,
+/// body. The fields of a `form` condition and the paths of an `xml`
+/// condition count one by one, in the Stub's order.
 fn Incoming::failed(
   self : Incoming,
   conditions : @definitions.Conditions,
@@ -214,6 +229,11 @@ fn Incoming::failed(
       out.push(Failed::Header(condition.0, condition.1))
     }
   }
+  for condition in conditions.cookies {
+    if !self.cookie_meets(condition) {
+      out.push(Failed::Cookie(condition.0, condition.1))
+    }
+  }
   match conditions.body {
     Some(Form(fields)) =>
       for condition in fields {
@@ -221,8 +241,14 @@ fn Incoming::failed(
           out.push(Failed::Form(condition.0, condition.1))
         }
       }
-    Some(body) => if !self.body_meets(body) { out.push(Failed::Body(body)) }
-    None => ()
+    Some(Xml(paths)) =>
+      for condition in paths {
+        if !self.xml_meets(condition) {
+          out.push(Failed::Xml(condition.0, condition.1))
+        }
+      }
+    Some(body) if !self.body_meets(body) => out.push(Failed::Body(body))
+    _ => ()
   }
   out
 }
@@ -257,6 +283,12 @@ fn Incoming::explain(self : Incoming, failed : Failed) -> FailedCondition {
         .map(header => header.1)
         .collect(),
       }
+    Cookie(name, value) =>
+      {
+        condition: Cookie(name),
+        expected: expected(value),
+        actual: cookie_values(self.request.headers, name),
+      }
     Body(body) =>
       {
         condition: Body,
@@ -264,7 +296,10 @@ fn Incoming::explain(self : Incoming, failed : Failed) -> FailedCondition {
           Exact(bytes) => Exact(@utf8.decode_lossy(bytes))
           Pattern(pattern) => Pattern(pattern.source)
           Json(condition) => Json(condition.to_json())
+          // Each field of a `form` condition, and each path of an `xml`
+          // condition, fails on its own, as `Form` or `Xml`.
           Form(_) => abort("a form condition fails field by field")
+          Xml(_) => abort("an xml condition fails path by path")
         },
         actual: [@utf8.decode_lossy(self.request.body)],
       }
@@ -279,6 +314,15 @@ fn Incoming::explain(self : Incoming, failed : Failed) -> FailedCondition {
         .filter(field => field.0 == name)
         .map(field => field.1)
         .collect(),
+      }
+    Xml(path, value) =>
+      {
+        condition: Xml(path.to_string()),
+        expected: expected(value),
+        actual: match self.body_xml() {
+          Some(document) => document.select(path)
+          None => []
+        },
       }
     Scenario(name~, required~, current~) =>
       {

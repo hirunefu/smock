@@ -151,7 +151,10 @@ fn Journal::entry(
   let limit = self.settings.body_limit
   let body = truncate(request.body, limit)
   // The body's value in the Near miss is truncated like the body, and so is
-  // each value of a form field, so that no entry holds a whole body.
+  // each value taken from a form or an XML body, so that no entry holds a
+  // whole body. A value taken from an XML body is never longer than the
+  // body, so only a truncated body can give one over the limit; a form
+  // value can be longer, as each byte that is not UTF-8 becomes U+FFFD.
   let truncated = body.length() < request.body.length()
   let near_miss = match near_miss {
     Some(near_miss) if truncated || near_miss.has_form_field() =>
@@ -162,6 +165,11 @@ fn Journal::entry(
             Body if truncated =>
               { ..failed, actual: [@utf8.decode_lossy(body)], }
             Form(_) =>
+              {
+                ..failed,
+                actual: failed.actual.map(value => truncate_text(value, limit)),
+              }
+            Xml(_) if truncated =>
               {
                 ..failed,
                 actual: failed.actual.map(value => truncate_text(value, limit)),
