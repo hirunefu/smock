@@ -90,6 +90,7 @@ Stub without `request` matches every request of its Mock.
 | `path` | its path, percent-decoded and without the query, is exactly this. `/users/a%20b` meets `"/users/a b"`. `{ "pattern": … }`: the pattern matches the whole path. |
 | `query` | each listed parameter is present, and one of its values, decoded, is exactly the given value, or matches the given `{ "pattern": … }` as a whole. [`$not` and `$exists`](#negation-and-presence) are about the parameter as a whole. Parameters that are not listed are ignored. |
 | `headers` | each listed header is present, its name compared case-insensitively, and one of its values is exactly the given value, or matches the given `{ "pattern": … }` as a whole. [`$not` and `$exists`](#negation-and-presence) are about the header as a whole. Headers that are not listed are ignored. |
+| `cookies` | each listed cookie is present in a `Cookie` header, its name compared exactly, and one of its values, as sent, is exactly the given value, or matches the given `{ "pattern": … }` as a whole. See [Cookies](#cookies). [`$not` and `$exists`](#negation-and-presence) are about the cookie as a whole. Cookies that are not listed are ignored. |
 | `body` | a string: the body is exactly this text in UTF-8. `{ "pattern": … }`: the pattern matches the whole body. `{ "json": … }`: the body parses as JSON and contains the given value, which may hold patterns. |
 
 Query parameters are decoded as HTML forms encode them: `%20` and `+` both
@@ -222,14 +223,14 @@ users.json: /stubs/2/request/body/json/email/pattern: is not a valid pattern: po
 
 ### Negation and presence
 
-A query parameter's or a header's value can also be an operator: an object
-whose only key starts with `$`.
+A query parameter's, a header's or a cookie's value can also be an operator:
+an object whose only key starts with `$`.
 
 - `{ "$not": <condition> }` holds exactly when the condition does not.
   `<condition>` is an exact value, a pattern or another operator.
-- `{ "$exists": true }` holds when the parameter or header is present, with
-  any value, even an empty one. `{ "$exists": false }` holds when it is
-  absent.
+- `{ "$exists": true }` holds when the parameter, header or cookie is
+  present, with any value, even an empty one. `{ "$exists": false }` holds
+  when it is absent.
 
 ```yaml
 request:
@@ -270,6 +271,38 @@ users.json: /stubs/0/request/query/status/$nto: is not an operator: the operator
 users.json: /stubs/1/request/headers/Authorization/pattern: is not allowed beside "$not": an operator is the only key of its object
 users.json: /stubs/2/request/query/debug/$exists: must be true or false
 ```
+
+### Cookies
+
+`cookies` matches the cookies of the request by name:
+
+```yaml
+request:
+  cookies:
+    session: { pattern: "sess_.*" }
+    debug: { $not: "1" }
+```
+
+This Stub answers a request whose `session` cookie starts with `sess_` and
+that has no `debug` cookie with the value `1`.
+
+smock reads cookies from the `Cookie` header like this:
+
+- Every `Cookie` field of the request is read, so cookies that a client or
+  a proxy splits over several lines still match.
+- Each field is split on `;`, and each part is trimmed of spaces and tabs.
+- The first `=` of a part separates the name from the value, so `a=b=c` is
+  the cookie `a` with the value `b=c`. A part without `=` is skipped.
+- Names are compared exactly, case and all: `Session` is not `session`.
+- Values are compared exactly as sent. Quotes are part of a value, as
+  RFC 6265bis says, so `token="abc"` meets `"token": "\"abc\""` but not
+  `"token": "abc"`. Nothing is percent-decoded, so `name=a%20b` meets
+  `"name": "a%20b"`, not `"name": "a b"`.
+
+A cookie name can repeat, such as when a cookie is set for two paths. Then
+the condition holds when any one of its values matches, as for a query
+parameter, and `{ "$not": "1" }` holds only when none of them is `1`.
+Names are literal, even when they start with `$`.
 
 ### Which Stub answers
 
@@ -530,13 +563,14 @@ The Near miss is the Stub of the Mock that failed the fewest conditions; on
 a tie, the one tried first. The request's Ephemeral Stubs are candidates
 too, in the order they are tried, and the header names them by their ID,
 such as `eph-3`. Each of these counts as one condition: the method, the
-path, each listed query parameter, each listed header, the body, and the
-state a [`scenario` clause](#scenarios) requires. They are named `method`,
-`path`, `query:<name>`, `header:<name>` (in lower case), `body` and
-`scenario:<name>`, in that order. A parameter or a header counts once
-whatever its condition, operators included. The header is ASCII only and never
-carries what a condition expects or what the request sent: the Stub ID and
-query, header and Scenario names are percent-encoded where they hold
+path, each listed query parameter, each listed header, each listed cookie,
+the body, and the state a [`scenario` clause](#scenarios) requires. They
+are named `method`, `path`, `query:<name>`, `header:<name>` (in lower
+case), `cookie:<name>`, `body` and `scenario:<name>`, in that order. A
+parameter, a header or a cookie counts once whatever its condition,
+operators included. The header is ASCII only and never carries what a
+condition expects or what the request sent: the Stub ID and query, header,
+cookie and Scenario names are percent-encoded where they hold
 anything other than the characters of an HTTP token. A Mock without Stubs,
 and a request for a Host that no Mock answers, get no `Smock-Near-Miss`
 header.
@@ -551,9 +585,10 @@ with `GET /v1/journal/unmatched`
 ([README](../README.md#verifying-calls-and-unmatched-requests)).
 
 What the Stub expects is the condition as the Stub writes it, operators
-included. What the request sent is every value of the parameter or header,
-in order, and none when it is absent. A request with `Authorization: Bearer
-abc` fails the [negation example](#negation-and-presence) like this:
+included. What the request sent is every value of the parameter, header or
+cookie, in order, and none when it is absent. A request with
+`Authorization: Bearer abc` fails the
+[negation example](#negation-and-presence) like this:
 
 ```json
 {
