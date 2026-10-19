@@ -31,7 +31,7 @@ A named state machine within a Mock; its current state decides which Stubs can m
 _Avoid_: Flow state, state store, workflow
 
 **Upstream**:
-The real service a Mock impersonates; a Mock can forward requests it does not match to its Upstream and record the exchanges as Definition files.
+The real service a Mock impersonates. Forwarding the requests a Mock does not match to its Upstream, and recording the exchanges as Definition files, are not implemented.
 _Avoid_: Backend, origin, target
 
 **Fault**:
@@ -39,7 +39,7 @@ A deliberate failure a Stub injects into its response, such as a delay drawn fro
 _Avoid_: Chaos, toxic, error injection
 
 **Plugin**:
-User-supplied Wasm code that extends how Stubs match requests or build responses, run in a sandbox.
+User-supplied Wasm code that extends how Stubs match requests or build responses, run in a sandbox (not implemented).
 _Avoid_: Extension, script, injection
 
 **Near miss**:
