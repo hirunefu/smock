@@ -20,8 +20,10 @@
 # 4. release: creates the GitHub release with the linux/amd64 and
 #    linux/arm64 binaries (the same binaries as in the image), the SBOMs,
 #    LICENSE and NOTICE (which names the third-party software the binaries
-#    link statically), and notes that name the MoonBit toolchain
-#    (scripts/release-notes.sh).
+#    link statically), and notes that name the MoonBit toolchain and carry
+#    the version's section of CHANGELOG.md (scripts/release-notes.sh, which
+#    fails for a tag that is not a pre-release when CHANGELOG.md has no
+#    section for it).
 #
 # Run it by hand from the Actions tab to try it before a tag: it builds and
 # smoke-tests both architectures, packages the chart, keeps the binaries,
