@@ -158,11 +158,13 @@ It watches the directory and swaps in the new definition set when the files
 change, ConfigMap updates included; an invalid set is reported and the
 current one keeps serving
 ([docs/definition-files.md](docs/definition-files.md#reloading)). Logs go
-to stderr, one JSON object per line; JSON is the only log format. A usage
-error, such as an unknown flag, a missing argument or an invalid setting
-value, is not a log entry: smock writes it to stderr as plain text, before
-any log entry, and exits with status 2. `smock serve --help` lists the
-settings:
+to stderr, one JSON object per line; JSON is the only log format. Log
+entries are a diagnostic aid: their messages and fields may change in any
+release and are not part of the compatibility promise, unlike the
+Definition file format and the Admin API. A usage error, such as an
+unknown flag, a missing argument or an invalid setting value, is not a log
+entry: smock writes it to stderr as plain text, before any log entry, and
+exits with status 2. `smock serve --help` lists the settings:
 
 | Flag | Variable | Default |
 |---|---|---|
@@ -195,6 +197,13 @@ settings:
 A request over a limit gets its status with `Connection: close`, then the
 connection closes; a timeout closes the connection without a response.
 Neither is logged.
+
+Known limitation: after a 400, 413 or 431 (and a 501 or 505), smock closes
+the connection without reading the rest of the request. A client that is
+still sending it, such as a body over `--body-limit`, may then get a
+connection reset instead of the error response. smock would need to close
+only its sending side first (a half-close), which the async library it is
+built on does not offer yet.
 
 On SIGTERM, smock drains instead of dropping requests, so that a rolling
 update does not fail the tests running against the old Pod. SIGINT and

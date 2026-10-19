@@ -1135,7 +1135,8 @@ served). Each reload also writes one log entry: `definitions reloaded` with
 failed` with the digest still served and every error.
 `scenarioStatesReset` is the number of Scenario states the reload sent
 back to `Started`, 0 when there are none. The states dropped with a
-removed Mock are not counted. The Prometheus counter
+removed Mock are not counted. Like every log field, these are a diagnostic
+aid, not part of the compatibility promise. The Prometheus counter
 `smock_definition_reloads_total` counts reloads by `result`. A failed reload
 does not change readiness: `/readyz` on the admin port still passes, so one
 bad commit does not drain every Pod.
