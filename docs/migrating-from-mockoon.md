@@ -3,7 +3,7 @@
 This guide turns a Mockoon environment into Definition files for smock.
 It is written for Mockoon 9.x environment files, whose `lastMigration` is
 33, and its statements about Mockoon were checked against Mockoon 9.9.0,
-its documentation and its source on 2026-10-17 and 2026-10-18. It starts
+its documentation and its source from 2026-10-17 to 2026-10-20. It starts
 with what smock does not do, so that a reader whose environments depend
 on one of those features can stop there. A worked example then
 translates one environment step by step, and a reference at the end maps
@@ -51,11 +51,10 @@ covers part of the need, the item says what.
   and can check in the Journal that the request that fired it arrived.
 - **WebSockets.** smock serves HTTP/1.1 and HTTPS. It can stream
   Server-Sent Events, which only a client written for them reads.
-- **Request conditions beyond equality and patterns.** Negation
-  (`invert`), a pattern on the elements of a JSON array, the `null`,
-  `empty_array`, `array_includes` and `valid_json_schema` operators, and
-  conditions on form fields, XML or cookies by name have no direct
-  counterpart. [Rules](#rules) gives the workarounds that exist.
+- **Schema validation and multipart bodies.** The `valid_json_schema`
+  operator has no counterpart, and a multipart body can be matched only
+  by a pattern on the whole body. [Rules](#rules) maps the other rules,
+  `invert` and rules on cookies, form fields and XML bodies included.
 - **Most Handlebars helpers.** smock's templates are not Handlebars, and
   have no arithmetic, array literals, string functions, date formats,
   JWT decoding, cookie reading, local or environment variables, or
@@ -308,7 +307,7 @@ The query rule of `GET users` becomes `query: { status: inactive }`, and
 the two AND rules of `POST users` become `headers: { X-Api-Key: secret }`
 and `body: { json: { role: admin } }` on one Stub.
 
-Five things need care when translating rules; [Rules](#rules) maps
+Seven things need care when translating rules; [Rules](#rules) maps
 every kind:
 
 - **A Mockoon regex matches anywhere in the value; a smock pattern
@@ -322,12 +321,26 @@ every kind:
   so write values with the type that clients send. Where they send both,
   a pattern meets both, since it reads a number or a boolean by its text:
   `{ json: { count: { pattern: "1" } } }`. An array that contains the
-  value meets a Mockoon `equals` rule, while a `json` array needs every
-  element, in order, and a pattern never meets an array; a pattern on the
-  whole body can test for "contains".
-- **Mockoon reads JSON, form, multipart and XML bodies; a `json`
-  condition reads JSON only.** A form field can be matched only by a
-  pattern on the whole body
+  value also meets a Mockoon `equals` rule, while a `json` array needs
+  every element, in order. For "contains", write `$includes`:
+  `{ json: { tags: { $includes: b } } }` holds when an element of `tags`
+  is `"b"`. It never holds for a value that is not an array, which the
+  `equals` rule also meets, so where clients send `tags` as a single
+  value too, add a Stub with `tags: b`.
+- **Mockoon reads JSON and form bodies with the same rules; each smock
+  body condition reads one format.** Mockoon parses a body by its
+  Content-Type, and a rule's path reads whatever came out. In smock,
+  `json` reads JSON, `form` reads `application/x-www-form-urlencoded`
+  forms, and `xml` reads XML. So the rule body `role` equals `admin`
+  becomes `body: { json: { role: admin } }` for clients that send JSON,
+  and `body: { form: { role: admin } }` for clients that send forms; when
+  clients send both, write a Stub for each. A form field's name is
+  literal, as a query parameter's is: the rule `user.name`, which Mockoon
+  reads from the field `user[name]`, becomes
+  `form: { "user[name]": Alice }`. As in Mockoon, a body is read as a
+  form only when its Content-Type says it is one, though smock compares
+  the media type in any case, and Mockoon only in lower case. A multipart
+  body can be matched only by a pattern on the whole body
   ([Behaviour that differs](#behaviour-that-differs)).
 - **A regex on a field of a JSON body becomes a pattern in the field's
   place.** The rule body `email` regex `@example\.com$` becomes:
@@ -347,10 +360,11 @@ every kind:
   `Infinity`; smock keeps every digit of an integer, and reads a number
   beyond a 64-bit float's range as written. Mockoon reads `null` as empty
   text and an object as `[object Object]`, and tests each element of an
-  array; a smock pattern never meets `null`, an object or an array, so
-  only a pattern on the whole body can look for one element. An array
-  index in the path, such as `items.0`, has no counterpart, since a
-  `json` array needs every element.
+  array; a smock pattern never meets `null`, an object or an array. A
+  regex on the elements of an array becomes `$includes` with a pattern,
+  `{ tags: { $includes: { pattern: "a.*" } } }`. An array index in the
+  path, such as `items.0`, has no counterpart: a `json` array needs every
+  element, and `$includes` finds an element wherever it sits.
 
   A body key named `pattern`, alone in its object and given a string,
   makes that object a pattern. For the rule body `filter.pattern` equals
@@ -358,41 +372,87 @@ every kind:
   which never meets the object that clients send. Nest a pattern in it
   instead: `{ filter: { pattern: { pattern: 'a\.b' } } }`
   ([json conditions](definition-files.md#how-a-stub-matches-a-request)).
-- **An inverted rule turns the route around.** smock has no negation.
-  Mockoon reaches the responses after an inverted rule only when the
-  rule's condition holds, so their Stubs get that condition, and they
-  move in front of the inverted response's Stub, which drops the
-  condition and becomes the general Stub. Responses before it keep their
-  place. Take a route `GET accounts/:id` in another environment,
-  `accounts-api`, also with the prefix `api/v1`. Its responses are a 401
-  with the inverted rule header `Authorization` regex `^Bearer\s+\S+`, a
-  404 for params `id` equals `0`, and the default 200. They become:
+- **A rule on an XML body names an element by an XML path.** Mockoon
+  turns an XML body into an object with xml-js, so its paths end in
+  `_text` or name `_attributes`. An `xml` condition names elements and
+  attributes by a path instead: `user.name._text` becomes `/user/name`,
+  and `user._attributes.id` becomes `/user/@id`, as in
+  `body: { xml: { /user/name: Alice, /user/@id: "7" } }`
+  ([XML bodies](definition-files.md#xml-bodies)). The values differ in
+  four ways. Mockoon keeps namespace prefixes, so a rule on
+  `soap:Envelope.soap:Body.u:GetUser.u:id._text` fails when a client
+  writes `S:Envelope`; smock ignores prefixes, and the path is
+  `/Envelope/Body/GetUser/id`. Mockoon compares the text as written,
+  without CDATA or the text of child elements, so `<name> Alice </name>`
+  fails `Alice`; smock trims an element's text, and includes both. When
+  an element repeats, Mockoon's path reaches an array and fails, unless
+  an index such as `user.name.1._text` picks one; smock's path holds
+  when any one of them meets the condition, and has no indexes. And
+  Mockoon reads a body as XML only with the Content-Type
+  `application/xml`, `text/xml` or `application/soap+xml`, while smock
+  parses it whatever its Content-Type. Rules on `_declaration` have no
+  counterpart.
+- **A cookie rule becomes a `cookies` condition on the value as sent.**
+  The rule cookie `session` equals `abc` becomes
+  `cookies: { session: abc }`. Mockoon decodes the value and strips
+  surrounding quotes, so its rule `abc` also meets `session="abc"`, and
+  a rule `a b` meets `session=a%20b`. smock compares the value as the
+  client sent it: write that form, such as `session: a%20b`, or a
+  pattern that meets each form, such as `{ pattern: '"?abc"?' }`.
+  Mockoon also trims spaces around `=` and reads only the first cookie
+  of a name that repeats; smock does not trim there, and tests every
+  cookie of the name. Both compare names case and all
+  ([Cookies](definition-files.md#cookies)).
+- **An inverted rule becomes `$not`.** `{ $not: … }` around the rule's
+  value or pattern holds when the rule's condition does not, so, like
+  the inverted rule, it holds when the name or key is absent. Take a
+  route `GET accounts/:id` in another environment, `accounts-api`, also
+  with the prefix `api/v1`. Its responses are a 401 with the inverted
+  rule header `Authorization` regex `^Bearer\s+\S+`, a 404 for params
+  `id` equals `0`, and the default 200. They become three Stubs, in the
+  same order:
 
   ```yaml
-  - id: account-unknown
-    mock: accounts-api
-    request:
-      method: GET
-      path: /api/v1/accounts/0
-      headers: { Authorization: { pattern: 'Bearer\s+\S+.*' } }
-    response: { status: 404, json: { error: unknown } }
-
-  - id: account-found
+  - id: account-unauthorized
     mock: accounts-api
     request:
       method: GET
       path: { pattern: "/api/v1/accounts/[^/]+" }
-      headers: { Authorization: { pattern: 'Bearer\s+\S+.*' } }
-    response: { status: 200, json: { id: 1 } }
+      headers: { Authorization: { $not: { pattern: 'Bearer\s+\S+.*' } } }
+    response: { status: 401, json: { error: unauthorized } }
 
-  - id: account-unauthorized
+  - id: account-unknown
+    mock: accounts-api
+    request: { method: GET, path: /api/v1/accounts/0 }
+    response: { status: 404, json: { error: unknown } }
+
+  - id: account-found
     mock: accounts-api
     request: { method: GET, path: { pattern: "/api/v1/accounts/[^/]+" } }
-    response: { status: 401, json: { error: unauthorized } }
+    response: { status: 200, json: { id: 1 } }
   ```
 
-  This needs the rule's condition as a smock condition, so a regex
-  outside RE2 cannot be turned around.
+  A request without `Authorization`, or with `Basic …`, gets the 401
+  from both.
+
+  Two kinds of inverted rule still need the route turned around. `$not`
+  goes only where a value goes, so an inverted rule on the path, the
+  method, `params` or the whole body as text has no place for it. And a
+  body of the wrong format fails every condition on it, `$not` included:
+  a body that is not JSON fails `json`, one whose Content-Type is not a
+  form's fails `form`, and one that is not XML fails `xml`. Mockoon's
+  inverted rule holds for such a body, so a `POST` without a body gets
+  the inverted response from Mockoon, and the next Stub's from smock.
+  Where clients send such bodies, turn the route around too.
+
+  To turn a route around, give the rule's condition to the Stubs of the
+  responses after the inverted one, since Mockoon reaches them only when
+  that condition holds, and move them in front of the inverted response's
+  Stub, which drops the condition and becomes the general Stub. Responses
+  before it keep their place. For the inverted rule body `role` equals
+  `admin` on a 403, followed by the default 200, the 200's Stub gets
+  `body: { json: { role: admin } }` and goes first, and the 403's Stub
+  follows it without a body condition.
 
 ### Bodies, headers and templates
 
@@ -931,8 +991,8 @@ carry `application/json`, and its `OPTIONS` answer none.
 ## Behaviour that differs
 
 Even a faithful translation answers some requests differently. These
-differences were checked against Mockoon CLI 9.9.0 on 2026-10-17 and
-2026-10-18, most of them by sending the same requests to both servers,
+differences were checked against Mockoon CLI 9.9.0 from 2026-10-17 to
+2026-10-20, most of them by sending the same requests to both servers,
 with the example or with small environments made to test them:
 
 - **Paths.** Mockoon matches paths case-insensitively, accepts a trailing
@@ -942,12 +1002,17 @@ with the example or with small environments made to test them:
   that, use a pattern such as `(?i)/api/v1/users/?`.
 - **Request bodies.** Mockoon parses JSON, form, multipart and XML bodies
   by their Content-Type before its rules read them
-  ([supported body formats](https://mockoon.com/docs/latest/requests/supported-body-formats/)).
-  A `json` condition parses the body as JSON whatever its Content-Type,
-  and nothing else. So the form `name=Alice&role=admin`, sent with the
-  key to `POST /api/v1/users`, gets 201 from Mockoon and 403 from smock,
-  and the same JSON without a Content-Type gets 403 from Mockoon and 201
-  from smock. In a template, `${body.x}` reads JSON bodies only.
+  ([supported body formats](https://mockoon.com/docs/latest/requests/supported-body-formats/)),
+  and a rule with a path reads whichever it got. Each smock body
+  condition reads one format: `json` and `xml` parse the body whatever
+  its Content-Type, and `form` reads it only with the form Content-Type.
+  So the form `name=Alice&role=admin`, sent with the key to
+  `POST /api/v1/users`, gets 201 from Mockoon and 403 from smock, whose
+  `create-user` has only a `json` condition, and the same JSON without a
+  Content-Type gets 403 from Mockoon and 201 from smock. A second Stub
+  with `body: { form: { role: admin } }` would take the form, but its
+  answer could not repeat the name: in a template, `${body.x}` reads
+  JSON bodies only.
 - **Content-Type.** Mockoon adds `; charset=utf-8` to the Content-Type of
   a body it sends as text: an inline body, whatever its type, so
   `application/json; charset=utf-8` and `text/plain; charset=utf-8`, and
@@ -1057,13 +1122,14 @@ another pattern ([warnings](definition-files.md#warnings)), so it misses
 two Stubs in the wrong order whose paths are both patterns: with
 `get-user` declared before `get-user-missing`, `smock check` prints
 nothing, and `GET /api/v1/users/000` gets 200. Those are the Stubs of
-routes with parameters, and of inverted rules turned around, so check
-them with `smock render` or with requests, as below.
+routes with parameters, so check them with `smock render` or with
+requests, as below.
 
 `smock render` shows, without a server, what one Stub answers to a
 sample request, and which of the Stub's conditions the sample fails. The
 sample is JSON, `{method, path, query, headers, body}`, with the path and
-the query values decoded, and `--seed` makes the fake data repeatable:
+the query values decoded and the cookies in `headers.Cookie`, and
+`--seed` makes the fake data repeatable:
 
 ```sh
 echo '{"method":"GET","path":"/api/v1/users/42","query":{"lang":"ja"}}' >sample.json
@@ -1098,8 +1164,8 @@ both /api/v1/users/
 8080 404 application/json {"error":"no Stub matched"}
 ```
 
-The last two pairs are differences from the section above, a form body
-and a trailing slash.
+The last two pairs are differences from the section above: a form body,
+which the example's Stubs do not read, and a trailing slash.
 
 Last, run the clients' own tests against smock. The Journal records
 every request, and `GET /v1/journal/unmatched` on the Admin API lists
@@ -1255,20 +1321,26 @@ counterpart, and name those that have none.
 |---|---|
 | `query` | `query: { status: inactive }`; a rule on a nested name such as `filter.name` becomes the parameter's literal name, `query: { "filter[name]": Alice }`. |
 | `header` | `headers: { X-Api-Key: secret }`, the name in any case. |
-| `body` with a path | `body: { json: { role: admin } }`, a subset match on JSON bodies, with types compared. With `regex`, a pattern in the value's place, `body: { json: { email: { pattern: '.*@example\.com' } } }`, which also meets a number or a boolean by its text, but never `null`, an object or an array ([Paths and request conditions](#paths-and-request-conditions)). A key named `pattern`, alone in its object, takes a pattern as its value: `{ filter: { pattern: { pattern: 'a\.b' } } }`. |
+| `body` with a path, on a JSON body | `body: { json: { role: admin } }`, a subset match on JSON bodies, with types compared. With `regex`, a pattern in the value's place, `body: { json: { email: { pattern: '.*@example\.com' } } }`, which also meets a number or a boolean by its text, but never `null`, an object or an array ([Paths and request conditions](#paths-and-request-conditions)). A key named `pattern`, alone in its object, takes a pattern as its value: `{ filter: { pattern: { pattern: 'a\.b' } } }`. |
+| `body` with a path, on a form body | `body: { form: { role: admin } }`, which, as in Mockoon, needs the form Content-Type. A nested name such as `user.name` becomes the field's literal name, `form: { "user[name]": Alice }`. A Stub reads one format, so a rule that clients meet with JSON and with forms needs a Stub for each. |
+| `body` with a path, on an XML body | `body: { xml: { /user/name: Alice } }`: `user.name._text` becomes `/user/name`, and `user._attributes.id` becomes `/user/@id`. smock ignores namespace prefixes, trims the text, and parses the body whatever its Content-Type ([Paths and request conditions](#paths-and-request-conditions)). `_declaration` and array indexes have no counterpart. |
+| `body` on a multipart body | No counterpart: a `pattern` on the whole body. |
 | `body` without a path | `body: "<the whole body>"`, or a `pattern`. |
 | `params` | Part of the path's `pattern`, widened with `[^/]*` so that it stays within its segment. |
 | `path` | `path`, exact or a `pattern`. Mockoon also tests the URL with its query string. |
 | `method` | `method`, in upper case. |
-| `cookie` | A pattern on the Cookie header: `headers: { Cookie: { pattern: '(.*;\s*)?session=abc(;.*)?' } }`. |
-| Operator `equals` | The value itself; with the type that clients send in a `json` condition, or as a pattern there, which meets a string, a number or a boolean by its text. |
-| Operator `regex` | `{ pattern: … }`, widened to match the whole value: `admin` becomes `.*admin.*`, or `[^/]*admin[^/]*` in a path, and `^0+$` becomes `0+`. |
+| `cookie` | `cookies: { session: abc }`, the name compared exactly. The value is compared as sent, where Mockoon decodes it and strips quotes, and every cookie of a repeated name is tested, where Mockoon reads the first ([Paths and request conditions](#paths-and-request-conditions)). |
+| Operator `equals` | The value itself; with the type that clients send in a `json` condition, or as a pattern there, which meets a string, a number or a boolean by its text. On an array, `{ $includes: … }`, since Mockoon's `equals` holds when any element does. |
+| Operator `regex` | `{ pattern: … }`, widened to match the whole value: `admin` becomes `.*admin.*`, or `[^/]*admin[^/]*` in a path, and `^0+$` becomes `0+`. On an array, `{ $includes: { pattern: … } }`. |
 | Operator `regex_i` | The same, with `(?i)` in front. |
 | A `modifier` that starts with `$` (JSONPath) | The same path as nested keys in a `json` condition; JSONPath filters, wildcards and array indexes have no counterpart. |
 | `rulesOperator: AND` | All the conditions on one Stub. |
 | `rulesOperator: OR` | One Stub per rule. |
-| `invert` | No counterpart: the Stubs of the later responses get the rule's condition and go first, and the inverted response's Stub follows them without it ([Paths and request conditions](#paths-and-request-conditions)). |
-| Operators `null`, `empty_array`, `array_includes`, `valid_json_schema` | No counterpart. |
+| `invert` | `{ $not: … }` around the rule's value or pattern, which, like the inverted rule, also holds when the name or key is absent: `headers: { Authorization: { $not: { pattern: 'Bearer\s+\S+.*' } } }`. An inverted rule on the path, the method, `params` or the whole body as text, or one that must hold for a body of the wrong format, turns the route around: the Stubs of the later responses get the rule's condition and go first, and the inverted response's Stub follows them without it ([Paths and request conditions](#paths-and-request-conditions)). |
+| Operator `null` | No single condition: a Stub for each case, each with the response. `{ $exists: false }` for an absent name or key, `""` for an empty value, and in a `json` condition also `null`: the rule query `a` null becomes two Stubs, with `query: { a: { $exists: false } }` and `query: { a: "" }`. A body that does not parse as JSON fails all three, though Mockoon's rule holds for it. Inverted: `{ pattern: "(?s).+" }`, which in a `json` condition meets a non-empty string, a number or a boolean, but not an object or an array. |
+| Operator `empty_array` | `[]` in a `json` condition, which meets only an empty array. Inverted: `{ $not: [] }`, which, as in Mockoon, a missing key and a value that is not an array also meet. |
+| Operator `array_includes` | `{ $includes: … }`, which holds only for an array: `body: { json: { tags: { $includes: admin } } }`. Mockoon compares the elements as text, so `1` meets `1` and `"1"`; `{ $includes: { pattern: "1" } }` does too. |
+| Operator `valid_json_schema` | No counterpart. |
 | Target `request_number` | A chain of states of the route's Scenario: a Stub for each of the first requests, each moving the Scenario on, then a Stub for the later ones that requires the last state ([Answers that change between requests](#answers-that-change-between-requests)). Only the Stubs with `moveTo` count. |
 | Targets `global_var`, `data_bucket`, `templating` | No counterpart ([Answers that change between requests](#answers-that-change-between-requests)). |
 
