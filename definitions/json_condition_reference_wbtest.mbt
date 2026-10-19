@@ -68,8 +68,9 @@ fn json_condition(value : Json) -> JsonCondition {
 fn random_json(rand : @random.Rand, depth : Int) -> Json {
   let scalars : Array[String] = [
     "1", "1.0", "10e-1", "2", "-0", "0", "12345678901234567890", "12345678901234567891",
-    "1e400", "\"a\"", "\"b\"", "\"1\"", "true", "false", "null", "{\"pattern\":\"[0-9]+\"}",
-    "{\"pattern\":\"a|true\"}", "{\"pattern\":\"(?s).*\"}", "{\"pattern\":\"1e400|-?0\"}",
+    "1.2345678901234567890e19", "1e400", "\"a\"", "\"b\"", "\"1\"", "true", "false",
+    "null", "{\"pattern\":\"[0-9]+\"}", "{\"pattern\":\"a|true\"}", "{\"pattern\":\"(?s).*\"}",
+    "{\"pattern\":\"1e400|-?0\"}",
   ]
   if depth == 0 || rand.int(limit=3) == 0 {
     return @json.parse(scalars[rand.int(limit=scalars.length())]) catch {
@@ -162,6 +163,7 @@ fn rewritten(json : Json, rand : @random.Rand) -> Json {
         ["0", "-0", "0.0"],
         ["2", "2.0", "0.2e1"],
         ["1e400", "10E+399"],
+        ["12345678901234567890", "1.2345678901234567890e19"],
       ]
       let text = json.stringify()
       guard alike.iter().find_first(group => group.contains(text))
@@ -178,13 +180,10 @@ fn rewritten(json : Json, rand : @random.Rand) -> Json {
 
 ///|
 /// The shadowed-Stub warning takes a Stub's body condition to cover only an
-/// equal one. The numbers drawn here never pair one kept as text with an
-/// equal one that is not, such as 12345678901234567890 and
-/// 1.2345678901234567890e19. `same_number` is not transitive on such
-/// numbers: it compares two kept as text exactly and any other pair as
-/// Doubles. So those two conditions are equal, yet a body's
-/// 12345678901234567891 meets only the second. That gap has nothing to do
-/// with patterns.
+/// equal one. The numbers drawn here include 12345678901234567890, kept as
+/// text, and 1.2345678901234567890e19, which has its Double but is not kept
+/// as text: a body's 12345678901234567891 meets only the second, so the two
+/// must not be equal.
 test "json conditions that are equal match the same bodies, patterns included, as the shadowed-Stub warning needs" {
   let rand = @random.Rand::chacha8(seed=b"smock json condition equality!!!")
   let differ = []
