@@ -666,9 +666,9 @@ deletes what it made.
 ### Comparing smock binaries on one node
 
 One binary used 15 to 25% more or less CPU a request from one node to
-another in the GKE runs of 52ee405, and close to twice as much
-on one ek-standard-8 node as on another with the same CPU in a later run:
-more than the difference between binaries those runs were to measure.
+another in the GKE runs of 52ee405, and close to twice as much on one
+ek-standard-8 node as on another with the same CPU in a later run: more
+than the difference between binaries those runs were to measure.
 `--variant` compares 2 to 4 smock binaries,
 or one binary with other options, on one node instead. Under each
 profile, each variant runs in a Pod of its own with the profile's
@@ -687,8 +687,8 @@ is the plan for it: HTTP keep-alive at the two lowest rates of
 `bench/plan-autopilot.json`'s ladders under 50m and 250m, where the
 binary of 52ee405 used more CPU a request than that of 0d984c8, and at
 half the lowest, since the newer binary came near its CPU limit from the
-second step and a pair in which a run saturated does not count; and two rates under 1 CPU as a
-control.
+second step and a pair in which a run saturated does not count; and two
+rates under 1 CPU as a control.
 
 ```sh
 old=$(mktemp -d) new=$(mktemp -d)
