@@ -341,22 +341,28 @@ test "the Near miss shows a failed form field as the Stub writes it, with every 
 }
 
 ///|
-test "the Journal truncates each value of a failed form field to its body limit, as it truncates the body, and counts the values as truncated" {
+test "the Journal keeps the values of failed form fields up to its body limit in total, as it cuts the body, cutting the last one kept, and counts them as kept" {
   let h = harness(
     [("m.json", form_login)],
-    journal=@engine.JournalSettings(body_limit=8),
+    journal=@engine.JournalSettings(body_limit=60),
   )
   let headers = [("Content-Type", form_type), ("X-Csrf", "t")]
+  let body = (e : Int) => {
+    "username=" +
+    "b".repeat(20) +
+    "&remember=" +
+    "%C3%A9".repeat(e) +
+    "&remember=1"
+  }
   let _ = h.record(
     "POST",
     "/login?next=/",
     headers~,
-    body="username=" +
-      "b".repeat(20) +
-      "&remember=1&remember=" +
-      "%C3%A9".repeat(5),
+    body=body(50),
     session="s",
   )
+  // The username takes 20 bytes and 32 more, which leaves 8 bytes, four é,
+  // of the first remember value, and none for the second.
   json_inspect(h.answered(Some("s")), content={
     "host": null,
     "mock": "m",
@@ -369,7 +375,7 @@ test "the Journal truncates each value of a failed form field to its body limit,
         {
           "condition": "form:username",
           "expected": "alice",
-          "actual": ["bbbbbbbb"],
+          "actual": ["bbbbbbbbbbbbbbbbbbbb"],
         },
         {
           "condition": "form:pass word",
@@ -379,7 +385,7 @@ test "the Journal truncates each value of a failed form field to its body limit,
         {
           "condition": "form:remember",
           "expected": { "$not": "1" },
-          "actual": ["1", "éééé"],
+          "actual": ["éééé"],
         },
         {
           "condition": "form:é",
@@ -396,17 +402,14 @@ test "the Journal truncates each value of a failed form field to its body limit,
     "POST",
     "/login?next=/",
     headers~,
-    body="username=" +
-      "b".repeat(200) +
-      "&remember=1&remember=" +
-      "%C3%A9".repeat(50),
+    body=body(500),
     session="s",
   )
   inspect(
     "\{one}\n\{h.stats()}",
     content=(
-      #|1 entries, 458 bytes, 0 evicted
-      #|2 entries, 916 bytes, 0 evicted
+      #|1 entries, 596 bytes, 0 evicted
+      #|2 entries, 1192 bytes, 0 evicted
     ),
   )
 }

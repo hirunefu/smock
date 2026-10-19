@@ -16,10 +16,13 @@ pub struct JournalSettings {
   /// The most bytes its entries take, as each entry counts them: 256 for
   /// its fixed fields, two for each UTF-16 code unit of the text it holds
   /// (the request line, the header fields, the Session, Host, Mock and
-  /// Stub names, the Scenario move and the Near miss), and the bytes of
-  /// its truncated body.
+  /// Stub names, the Scenario move and the Near miss), 32 for each value
+  /// its Near miss keeps from a form or an XML body, and the bytes of its
+  /// truncated body.
   max_bytes : Int
-  /// The most bytes of a request body an entry keeps.
+  /// The most bytes of a request body an entry keeps, and of the values its
+  /// Near miss keeps from a form or an XML body, in total, each value
+  /// counting 32 bytes more.
   body_limit : Int
 } derive(Debug)
 
@@ -150,34 +153,11 @@ fn Journal::entry(
   // which allocate no closures or tuples.
   let limit = self.settings.body_limit
   let body = truncate(request.body, limit)
-  // The body's value in the Near miss is truncated like the body, and so is
-  // each value taken from a form or an XML body, so that no entry holds a
-  // whole body. A value taken from an XML body is never longer than the
-  // body, so only a truncated body can give one over the limit; a form
-  // value can be longer, as each byte that is not UTF-8 becomes U+FFFD.
   let truncated = body.length() < request.body.length()
+  // The Near miss is rebuilt only when it holds something to cut.
   let near_miss = match near_miss {
-    Some(near_miss) if truncated || near_miss.has_form_field() =>
-      Some({
-        ..near_miss,
-        failed: near_miss.failed.map(failed => {
-          match failed.condition {
-            Body if truncated =>
-              { ..failed, actual: [@utf8.decode_lossy(body)], }
-            Form(_) =>
-              {
-                ..failed,
-                actual: failed.actual.map(value => truncate_text(value, limit)),
-              }
-            Xml(_) if truncated =>
-              {
-                ..failed,
-                actual: failed.actual.map(value => truncate_text(value, limit)),
-              }
-            _ => failed
-          }
-        }),
-      })
+    Some(near_miss) if near_miss.needs_cut(truncated~, limit~) =>
+      Some(near_miss.cut(body, truncated~, limit~))
     _ => near_miss
   }
   let mock = match resolution {
@@ -213,11 +193,15 @@ fn Journal::entry(
   if scenario is Some(moved) {
     text += moved.name.length() + moved.from.length() + moved.to.length()
   }
+  let mut values = 0
   if near_miss is Some(near_miss) {
     text += near_miss.stub.length()
     for failed in near_miss.failed {
       for value in failed.actual {
         text += value.length()
+      }
+      if failed.condition is (Form(_) | Xml(_)) {
+        values += failed.actual.length()
       }
       // A Scenario condition also shows the Scenario and the state the
       // Stub requires; the state it is in is its actual value.
@@ -249,8 +233,106 @@ fn Journal::entry(
     status,
     fault: plan.fault,
     template_error,
-    size: 256 + 2 * text + body.length(),
+    size: 256 + 2 * text + body.length() + value_bytes * values,
   }
+}
+
+///|
+/// What each value taken from a form or an XML body costs an entry, besides
+/// its text: towards the values it keeps, and towards the Journal's byte
+/// bound. So even empty values add up.
+let value_bytes : Int = 32
+
+///|
+/// Whether the Near miss holds something that an entry with the body limit
+/// `limit` cuts, as `cut` says. `truncated` says whether the body is cut.
+fn NearMiss::needs_cut(
+  self : NearMiss,
+  truncated~ : Bool,
+  limit~ : Int,
+) -> Bool {
+  let mut kept = 0
+  for i in 0..<self.failed.length() {
+    let failed = self.failed[i]
+    match failed.condition {
+      Body => if truncated { return true }
+      Form(_) | Xml(_) =>
+        for j in 0..<failed.actual.length() {
+          let length = utf8_length(failed.actual[j])
+          if kept >= limit || length > limit - kept {
+            return true
+          }
+          kept += length + value_bytes
+        }
+      _ => ()
+    }
+  }
+  false
+}
+
+///|
+/// The Near miss as an entry with the body limit `limit` keeps it: the
+/// body's value is `body`, the body cut to the limit, when `truncated`; the
+/// values taken from a form or an XML body are kept in order while their
+/// total, each counting its bytes in UTF-8 and `value_bytes` more, is below
+/// the limit, the last one kept cut to what is left; the others are left
+/// out.
+fn NearMiss::cut(
+  self : NearMiss,
+  body : Bytes,
+  truncated~ : Bool,
+  limit~ : Int,
+) -> NearMiss {
+  let failed = []
+  let mut kept = 0
+  for i in 0..<self.failed.length() {
+    let condition = self.failed[i]
+    match condition.condition {
+      Body if truncated =>
+        failed.push({ ..condition, actual: [@utf8.decode_lossy(body)], })
+      Form(_) | Xml(_) => {
+        let actual = []
+        for j in 0..<condition.actual.length() {
+          if kept >= limit {
+            break
+          }
+          let value = truncate_text(condition.actual[j], limit - kept)
+          actual.push(value)
+          kept += utf8_length(value) + value_bytes
+        }
+        failed.push({ ..condition, actual, })
+      }
+      _ => failed.push(condition)
+    }
+  }
+  { ..self, failed, }
+}
+
+///|
+/// The length of `text` in UTF-8, in bytes. A surrogate that is not part of
+/// a pair counts as U+FFFD does.
+fn utf8_length(text : String) -> Int {
+  let mut length = 0
+  let mut i = 0
+  while i < text.length() {
+    let c = text[i].to_int()
+    if c < 0x80 {
+      length += 1
+    } else if c < 0x800 {
+      length += 2
+    } else if c >= 0xD800 &&
+      c <= 0xDBFF &&
+      i + 1 < text.length() &&
+      text[i + 1].to_int() >= 0xDC00 &&
+      text[i + 1].to_int() <= 0xDFFF {
+      length += 4
+      i += 1
+    } else {
+      length += 3
+    }
+    i += 1
+  }
+  length
 }
 
 ///|
@@ -260,17 +342,6 @@ fn text_length(name : String?) -> Int {
     Some(name) => name.length()
     None => 0
   }
-}
-
-///|
-/// Whether one of the conditions the Near miss failed is a form field.
-fn NearMiss::has_form_field(self : NearMiss) -> Bool {
-  for failed in self.failed {
-    if failed.condition is Form(_) {
-      return true
-    }
-  }
-  false
 }
 
 ///|

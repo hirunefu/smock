@@ -193,7 +193,7 @@ exits with status 2. `smock serve --help` lists the settings:
 | `--journal` | `SMOCK_JOURNAL` | `on`: requests are recorded in the [Journal](#the-journal); `off` records none |
 | `--journal-max-entries` | `SMOCK_JOURNAL_MAX_ENTRIES` | 10000: beyond it, the oldest entries are evicted |
 | `--journal-max-bytes` | `SMOCK_JOURNAL_MAX_BYTES` | a quarter of smock's memory limit (cgroup v2 `memory.max`), at least 1048576 bytes (1 MiB) and at most 67108864 (64 MiB); 64 MiB without a limit ([The Journal](#the-journal)): beyond it, the oldest entries are evicted |
-| `--journal-body-limit` | `SMOCK_JOURNAL_BODY_LIMIT` | 4096 bytes (4 KiB): the most of a request body an entry keeps |
+| `--journal-body-limit` | `SMOCK_JOURNAL_BODY_LIMIT` | 4096 bytes (4 KiB): the most of a request body an entry keeps, and of the form and XML values its Near miss keeps, in total |
 
 A request over a limit gets its status with `Connection: close`, then the
 connection closes; a timeout closes the connection without a response.
@@ -675,7 +675,9 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
 - The Journal is one ring buffer per process, bounded by entry count and by
   bytes (`--journal-max-entries`, `--journal-max-bytes`), and keeps at most
   4 KiB of each body (`--journal-body-limit`), cut at a character boundary
-  when the body is UTF-8. When it is full, the oldest entries are evicted,
+  when the body is UTF-8. The Near miss of an entry keeps the values of
+  form fields and XML paths up to the same limit in total, each counting
+  32 bytes more, so that many small values cannot outgrow the bound. When it is full, the oldest entries are evicted,
   and smock counts the evicted entries of each Session: `evicted` in the
   query's result says how many of the calling Session's entries may be
   missing. Requests without a Session have their own count. A Session's

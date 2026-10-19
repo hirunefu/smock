@@ -495,7 +495,7 @@ test "the Near miss prefers the Stub with the fewest failed conditions, counting
 }
 
 ///|
-test "XML values in a Journal entry's Near miss are truncated to the body limit, as the body is, and count toward the byte bound" {
+test "XML values in a Journal entry's Near miss are kept up to the body limit in total, as the body is cut, and count toward the byte bound" {
   let h = harness(
     [
       (
@@ -503,41 +503,49 @@ test "XML values in a Journal entry's Near miss are truncated to the body limit,
         (
           #|{ "mocks": [{ "name": "m" }],
           #|  "stubs": [{ "id": "note", "mock": "m",
-          #|    "request": { "body": { "xml": { "/order/note": "ok", "/order/@id": "1" } } },
+          #|    "request": { "body": { "xml": { "/order/@id": "1", "/order/note": "ok" } } },
           #|    "response": { "status": 200 } }] }
         ),
       ),
     ],
-    journal=@engine.JournalSettings(body_limit=15),
+    journal=@engine.JournalSettings(body_limit=50),
   )
   let _ = h.record(
     "POST",
     "/",
     body="<order id='2'><note>\{"é".repeat(30)}</note></order>",
   )
+  // The id takes 1 byte and 32 more, which leaves 17 bytes of the note:
+  // eight é, since a ninth would be split.
   json_inspect(h.answered(None), content={
-    "host": Json::null(),
+    "host": null,
     "mock": "m",
     "viaDefault": true,
-    "stub": Json::null(),
+    "stub": null,
     "nearMiss": {
       "stub": "note",
       "stubSource": "file",
       "failed": [
+        { "condition": "xml:/order/@id", "expected": "1", "actual": ["2"] },
         {
           "condition": "xml:/order/note",
           "expected": "ok",
-          "actual": ["ééééééé"],
+          "actual": ["éééééééé"],
         },
-        { "condition": "xml:/order/@id", "expected": "1", "actual": ["2"] },
       ],
     },
     "status": 404,
-    "fault": Json::null(),
+    "fault": null,
   })
   // POST, /, HTTP/1.1, the Mock m, the Near miss's Stub note and its actual
-  // values, seven é and 2, hold 26 code units; the body is cut to 15 bytes.
-  inspect(h.stats(), content="1 entries, 323 bytes, 0 evicted")
+  // values, 2 and eight é, hold 27 code units; the body is cut to 50 bytes,
+  // and each of the two values counts 32 bytes more.
+  inspect(
+    h.stats(),
+    content=(
+      #|1 entries, 424 bytes, 0 evicted
+    ),
+  )
 }
 
 ///|

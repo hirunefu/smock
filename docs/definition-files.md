@@ -823,8 +823,11 @@ What the request sent is shown as text. A body that is not valid UTF-8 is
 shown with U+FFFD in place of each sequence that is not, so a failed exact
 `body` condition can show an expected and an actual value that look the
 same. The Journal entry itself keeps the body's bytes, in base64, up to
-`--journal-body-limit`, and the Near miss in it cuts the body, and each
-value taken from a form or an XML body, to the same limit.
+`--journal-body-limit`, and the Near miss in it cuts the body to the same
+limit. It also keeps the values taken from a form or an XML body up to that
+limit in total: each value counts its bytes and 32 more, the value that
+reaches the limit is cut there, and the values after it are left out. So
+even a body of many empty fields adds little to an entry.
 
 `noMatch.headers` adds header fields to the response when no Stub
 matches, such as CORS headers. Without them, a browser client that calls
