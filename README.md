@@ -858,37 +858,8 @@ was built with, which `smock --version` also prints.
 
 ### Making a release
 
-Pushing a tag `v<major>.<minor>.<patch>` (or `v<major>.<minor>.<patch>-<pre-release>`)
-runs `.github/workflows/release.yml`. On an amd64 and an arm64 runner, each
-building for its own architecture without emulation, it builds smock with
-the toolchain in `.moonbit-version`, builds the image and runs
-`scripts/smoke-test-image.sh` on it. Only then does it push, combine, sign
-and attest the image, verify it with `scripts/verify-image.sh`, push the
-Helm chart packaged by `scripts/package-helm-chart.sh`, and create the
-GitHub release with notes from `scripts/release-notes.sh`. It never runs
-on pull requests. Started by hand from the Actions tab, it builds and
-smoke-tests everything and keeps the binaries, images, chart and notes as
-workflow artifacts, but publishes nothing. `scripts/check-release-workflow.sh`, run in
-CI, checks those rules. After the first release, make the
-`ghcr.io/hirunefu/smock` and `ghcr.io/hirunefu/charts/smock` packages public
-in their settings; GitHub creates them private.
-
-To smoke-test the image locally (needs docker, curl, openssl, readelf and jq):
-
-```sh
-scripts/build-release.sh
-docker build --tag smock:dev .
-scripts/smoke-test-image.sh smock:dev 0.0.0-dev "$(git rev-parse --short=12 HEAD)" "moonc $(moonc -v | cut -d' ' -f1)"
-```
-
-It runs the image as its own UID with a read-only root filesystem, no
-capabilities and no privilege escalation, and checks `smock --version`, a
-Stub on the plain port, HTTPS with a test certificate, and the Admin API
-status operation with a token file, which must name the same build as
-`smock --version`. Then, without certificate files, it checks HTTPS with
-the self-signed certificate smock generates, on the same read-only root
-filesystem. It also checks that the image adds nothing to its base but
-the smock binary, and that the image is for the machine it runs on.
+[docs/releasing.md](docs/releasing.md) describes how a release is made and
+published, for the maintainer.
 
 ## Toolchain
 
