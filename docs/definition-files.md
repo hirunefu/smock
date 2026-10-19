@@ -388,9 +388,10 @@ optionally ending in `/@` and an attribute name:
 What a node's value is:
 
 - An element's value is all the text in it and in its descendants, in
-  order, CDATA included, trimmed of whitespace at both ends. So
-  `<id>\n  42\n</id>` and `<id><![CDATA[42]]></id>` both have the value
-  `42`, and comments in the text are skipped.
+  order, CDATA included, trimmed of whitespace at both ends. Comments are
+  skipped. So `<id>42</id>`, `<id><![CDATA[42]]></id>`, and an `id`
+  element with `42` indented on a line of its own all have the value
+  `42`.
 - An attribute's value is its text with each tab and line break turned
   into a space.
 - References are decoded: `&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`, and
@@ -410,11 +411,8 @@ selects:
 
 The Content-Type is not consulted, as for `json`. The body is parsed at
 most once per request, and only when smock tries a Stub with an `xml`
-condition. A body that is not XML that smock reads fails every `xml`
-condition, `$not` and `$exists: false` included; it is not an error, and
-the request gets another Stub or the no-match response. smock reads a
-restricted form of XML, so that no request can read files or exhaust
-memory through it:
+condition. smock reads a restricted form of XML, so that no request can
+read files or exhaust memory through it:
 
 - The body is UTF-8, optionally with a byte order mark. An XML declaration
   that names another encoding fails.
@@ -425,6 +423,10 @@ memory through it:
 - The body is no longer than `--body-limit` allows (10 MiB by default).
 - It must be well-formed: one root element, matching tags, no repeated
   attribute, no `<` or bare `&` in text.
+
+A body that breaks one of these rules fails every `xml` condition, `$not`
+and `$exists: false` included. It is not an error: the request gets
+another Stub or the no-match response.
 
 Paths are compiled once, when smock loads the Definition files. A path
 that does not compile makes the definition set invalid, with the JSON

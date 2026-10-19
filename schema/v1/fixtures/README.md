@@ -26,7 +26,8 @@ disagree.
   the last of them.
   So do a `json` condition with an unknown `$` key, or with an operator
   beside another key: the Schema leaves the `json` value open, because any
-  literal JSON is valid there.
+  literal JSON is valid there. So does an `xml` condition with a path that
+  does not compile: the Schema checks only that a path starts with `/`.
 
 A field joins the Schema only together with smock's support for it, so no
 fixture is accepted by the Schema and rejected by smock for a field smock
