@@ -5,8 +5,7 @@ for the services a system depends on, on Kubernetes and on developers'
 machines. It is written in MoonBit ([ADR 0001](docs/adr/0001-moonbit-with-c-only-for-tls.md)).
 The domain terms are defined in [GLOSSARY.md](GLOSSARY.md).
 [docs/getting-started-on-gke.md](docs/getting-started-on-gke.md) takes a
-first-time reader to smock answering requests on GKE Autopilot, before a
-release exists.
+first-time reader to smock answering requests on GKE Autopilot.
 [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) maps
 Mockoon environments, routes and rules onto Mocks and Stubs.
 
@@ -132,6 +131,21 @@ Autopilot before an integration branch is merged into `main` (see
 [Benchmark](#benchmark)).
 
 ## Run
+
+Each release publishes the container image, the Helm chart and Linux
+binaries ([Container image and release binaries](#container-image-and-release-binaries)).
+To run the binary, download the one for your machine (`amd64` or `arm64`)
+from the [latest release](https://github.com/hirunefu/smock/releases/latest),
+with `<version>` its version without the `v`:
+
+```sh
+curl -fLo smock https://github.com/hirunefu/smock/releases/download/v<version>/smock-<version>-linux-amd64
+chmod +x smock
+SMOCK_ADMIN_TOKEN=change-me ./smock serve --dir defs
+```
+
+To run a commit that no release has yet, build it from a checkout
+([Build and test](#build-and-test)):
 
 ```sh
 moon build --target native
@@ -752,10 +766,13 @@ The image's command is `serve`; arguments replace it (`... smock:<version>
 port 8443 and the admin port 9090. Files mounted into the container must be
 readable by UID 65532.
 
-Until the first release,
-[docs/getting-started-on-gke.md](docs/getting-started-on-gke.md) builds the
-image from the binary that CI keeps, and installs the chart below from a
-checkout.
+To run a commit that no release has yet, build the image from a checkout
+with `scripts/build-release.sh` and `docker build --tag smock:dev .`, or
+from the release binary that CI keeps for 7 days after each push (the
+`smock-linux-amd64` and `smock-linux-arm64` artifacts of its run), copied to
+`dist/smock`. Push it to a registry the cluster can pull from, then install
+the chart below from the checkout's `charts/smock`, with `image.repository`
+and `image.tag` naming that image.
 
 ### Helm chart
 
