@@ -789,7 +789,8 @@ fn File::read_conditions(
 
 ///|
 /// Reads a condition on the request body: an exact text, or an object
-/// holding a `json` condition or a pattern.
+/// holding one of the kinds `body_kinds` lists: a `json` condition, a
+/// pattern, or an `xml` condition.
 fn File::read_body_condition(
   self : File,
   pointer : String,
@@ -816,16 +817,65 @@ fn File::read_body_condition(
           self.compile(field, source) is Some(pattern) {
           out = Some(BodyCondition::Pattern(pattern))
         }
+      "xml" =>
+        out = self
+          .read_xml_conditions(field, value)
+          .map(conditions => BodyCondition::Xml(conditions))
       _ => self.unknown_field(field)
     }
   }
-  match (condition.contains("json"), condition.contains("pattern")) {
-    (true, true) =>
-      self.error(pointer, "needs \"json\" or \"pattern\", not both")
-    (false, false) => self.error(pointer, "needs \"json\" or \"pattern\"")
-    _ => ()
+  let given = body_kinds.filter(kind => condition.contains(kind))
+  match given.length() {
+    0 => self.error(pointer, "needs \{listed_body_kinds}")
+    1 => ()
+    _ => {
+      let given = given.map(kind => "\"\{kind}\"").join(" and ")
+      self.error(pointer, "has \{given}; give only one of \{listed_body_kinds}")
+    }
   }
   out
+}
+
+///|
+/// The kinds of body condition an object may hold, exactly one of them.
+let body_kinds : Array[String] = ["json", "pattern", "xml"]
+
+///|
+/// The kinds of body condition, as messages list them.
+let listed_body_kinds : String = "\"json\", \"pattern\" or \"xml\""
+
+///|
+/// Reads an `xml` condition, the object at `pointer`: paths into an XML
+/// body, each compiled, and their value conditions. It has none when a path
+/// does not compile or a condition is malformed, and each problem is
+/// reported.
+fn File::read_xml_conditions(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> ReadOnlyArray[(@xml.Path, ValueCondition)]? {
+  guard json is Object(members) else {
+    self.error(pointer, "must be an object")
+    return None
+  }
+  let out = []
+  for source, value in members {
+    let field = child_pointer(pointer, source)
+    let path = try @xml.compile_path(source) catch {
+      error => {
+        self.error(field, "is not a valid XML path: \{error}")
+        None
+      }
+    } noraise {
+      path => Some(path)
+    }
+    if self.read_value_condition(field, value) is Some(condition) &&
+      path is Some(path) {
+      out.push((path, condition))
+    }
+  }
+  guard out.length() == members.length() else { return None }
+  Some(ReadOnlyArray::from_array(out))
 }
 
 ///|

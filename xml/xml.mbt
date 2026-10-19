@@ -69,8 +69,10 @@ pub impl Show for ParseError with fn output(self, logger) {
 /// Raises `ParseError` for input that breaks any of these rules or is not
 /// well-formed.
 ///
-/// Parsing does no I/O, takes time linear in the length of `input`, and
-/// ends with a document or an error for every input.
+/// Parsing does no I/O and ends with a document or an error for every
+/// input. It takes time linear in the length of `input`, except that the
+/// attribute names of a tag with more than eight attributes are sorted, in
+/// O(n log n) time for n attributes, to find a repeated one.
 pub fn parse(input : BytesView) -> Document raise ParseError {
-  { root: Parser::{ input, pos: 0, names: [], }.document(), }
+  { root: Parser::{ input, pos: 0, names: [], offsets: [], }.document(), }
 }

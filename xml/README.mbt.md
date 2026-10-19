@@ -85,7 +85,7 @@ optionally ending in `/@` and an attribute name.
   client chose. Namespace URIs are not compared, so elements that differ
   only by namespace cannot be told apart.
 - Namespace declarations (`xmlns` and `xmlns:*`) are not attributes that a
-  path selects.
+  path selects, so a path that ends in `@xmlns` is a compile error.
 - A path selects every element it reaches, so a repeated element gives
   one value per element.
 
@@ -149,9 +149,11 @@ ends (CR LF, or a lone CR) are read as line feeds. The XML declaration may
 give a version 1.x, the encoding UTF-8 and `standalone`; it may only come
 first.
 
-Parsing does no I/O, takes time linear in the length of the input, and
-ends with a document or an error for every input. The module does not
-bound the size of the input; smock bounds the size of a request body.
+Parsing does no I/O and ends with a document or an error for every
+input. It takes time linear in the length of the input, except that the
+attribute names of a tag with more than eight attributes are sorted, in
+O(n log n) time for n attributes, to find a repeated one. The module does
+not bound the size of the input; smock bounds the size of a request body.
 
 ### Differences from XML 1.0 and Namespaces in XML
 
