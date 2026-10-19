@@ -55,7 +55,7 @@ async fn scope_unavailable() -> String? {
     Some("systemd-run --user failed with exit status \{status}: \{text}")
   } else if text != scope_memory_max {
     Some(
-      "a scope with MemoryMax=\{scope_memory_max} got memory.max \{text.escape()}: the systemd user manager needs the memory controller delegated to it (see the README's benchmark section)",
+      "a scope with MemoryMax=\{scope_memory_max} got memory.max \{text.escape()}: the systemd user manager needs the memory controller delegated to it (see bench/README.md)",
     )
   } else {
     None

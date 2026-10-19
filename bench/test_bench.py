@@ -2,7 +2,7 @@
 
 Most tests run the benchmark through its command line against the real smock
 binary, at a few hundred requests per second for a few seconds, and read the
-files it writes. They need what a benchmark run needs (see the README): a
+files it writes. They need what a benchmark run needs (see bench/README.md): a
 release build of smock (dist/smock, or SMOCK_BENCH_SMOCK), oha (on PATH, or
 OHA), openssl, taskset, and a systemd user manager that can set CPU quotas.
 The tests of the targets read a targets file with bench.py's read_targets and

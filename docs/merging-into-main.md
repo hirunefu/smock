@@ -21,8 +21,8 @@ pre-merge run compares with them.
 
 - [ ] **CI is green on the integration branch**, and its issues are done.
 - [ ] **Run the local Autopilot plan** on the usual machine, the full plan
-  (about 20 minutes), as the README's
-  [GKE Autopilot profiles](../README.md#gke-autopilot-profiles) section
+  (about 20 minutes), as the benchmark's
+  [GKE Autopilot profiles](../bench/README.md#gke-autopilot-profiles) section
   says: plugged in, other programs closed, the CPU frequency governor at
   `performance`.
 
@@ -51,14 +51,14 @@ pre-merge run compares with them.
   p99.9 only where both runs measured at least 10,000 requests at the
   step: the rest swing from run to run, and the report shows them for
   reference without failing
-  ([Comparing runs](../README.md#comparing-runs)). Its first lines say
+  ([Comparing runs](../bench/README.md#comparing-runs)). Its first lines say
   whether the machine, the plan or anything else besides smock differed,
   and which steps count. A change to the plan's `about` alone is no
   difference, but a run from before runs recorded the plan's hash without
   it, such as R1's, has only its file's hash: the first comparison with
   one may show the plan as changed when only its description did.
 - [ ] **Run the benchmark on GKE Autopilot** with `scripts/gke-bench.sh`
-  ([On GKE Autopilot](../README.md#on-gke-autopilot)). It needs gcloud
+  ([On GKE Autopilot](../bench/README.md#on-gke-autopilot)). It needs gcloud
   logged in (`gcloud auth login`), docker, kubectl, and the MoonBit
   toolchain or a release binary, and the project and region in the
   environment. The pre-merge run is on x86 (amd64) nodes, the
@@ -153,7 +153,7 @@ pre-merge run compares with them.
   between ek-standard-8 nodes with the same CPU, far more than between
   R1's binary and R2's on one node. Before you treat such a regression as
   smock's, settle it on one node
-  ([Comparing smock binaries on one node](../README.md#comparing-smock-binaries-on-one-node)).
+  ([Comparing smock binaries on one node](../bench/README.md#comparing-smock-binaries-on-one-node)).
   Run `main`'s binary and the integration branch's as variants, the
   latter twice as an A/A pair. It is expected to cost about $0.33 in
   us-central1, and at most $0.77:
