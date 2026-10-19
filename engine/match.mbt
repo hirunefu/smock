@@ -14,6 +14,8 @@ priv struct Incoming {
   mut query : Array[(String, String)]?
   /// The body parsed as JSON, once a `json` condition needs it.
   mut json : ParsedBody
+  /// The body read as a form, once a `form` condition needs it.
+  mut form : FormBody
   /// The body parsed as XML, once an `xml` condition needs it.
   mut xml : ParsedXml
 }
@@ -24,6 +26,15 @@ priv enum ParsedBody {
   NotParsed
   Parsed(Json)
   NotJson
+}
+
+///|
+/// The request body as a form: not read yet, read into its decoded fields
+/// as (name, value), in request order, or not a form.
+priv enum FormBody {
+  NotRead
+  Fields(Array[(String, String)])
+  NotForm
 }
 
 ///|
@@ -42,6 +53,7 @@ fn Incoming::new(request : Request) -> Incoming {
     path: decoded_path(request.target),
     query: None,
     json: NotParsed,
+    form: NotRead,
     xml: XmlNotParsed,
   }
 }
@@ -171,6 +183,14 @@ fn Incoming::body_meets(
         Some(body) => expected.matches(body)
         None => false
       }
+    Form(fields) => {
+      for i in 0..<fields.length() {
+        if !self.form_meets(fields[i]) {
+          return false
+        }
+      }
+      true
+    }
     Xml(conditions) => {
       for i in 0..<conditions.length() {
         if !self.xml_meets(conditions[i]) {
@@ -180,6 +200,68 @@ fn Incoming::body_meets(
       true
     }
   }
+}
+
+///|
+/// Whether `condition`, on a field of a form body, holds for the request,
+/// as `query_meets` says for a query parameter. A body that is not a form
+/// fails it, whatever its operators.
+fn Incoming::form_meets(
+  self : Incoming,
+  condition : (String, @definitions.ValueCondition),
+) -> Bool {
+  guard self.form_fields() is Some(fields) else { return false }
+  let (name, value) = condition
+  let wanted = value.value_test()
+  let mut found = false
+  for i in 0..<fields.length() {
+    let field = fields[i]
+    if field.0 == name && wanted.meets(field.1) {
+      found = true
+      break
+    }
+  }
+  value.holds(found~)
+}
+
+///|
+/// The decoded fields of the request body, as (name, value), in request
+/// order, or `None` when the body is not a form, as `is_form` says. They
+/// are decoded at most once.
+fn Incoming::form_fields(self : Incoming) -> Array[(String, String)]? {
+  match self.form {
+    Fields(fields) => return Some(fields)
+    NotForm => return None
+    NotRead => ()
+  }
+  self.form = if is_form(self.request.headers) {
+    Fields(urlencoded(self.request.body))
+  } else {
+    NotForm
+  }
+  self.form_fields()
+}
+
+///|
+/// Whether the request's Content-Type, its first Content-Type field, says
+/// that its body is a form: its media type, compared case-insensitively and
+/// without its parameters, is application/x-www-form-urlencoded.
+fn is_form(headers : Array[(String, String)]) -> Bool {
+  for i in 0..<headers.length() {
+    let header = headers[i]
+    if is_name(header.0, "content-type") {
+      let value = header.1
+      let media_type = match value.find(";") {
+        Some(end) => value[:end]
+        None => value[:]
+      }
+      return is_name(
+        media_type.trim(chars=" \t").to_owned(),
+        "application/x-www-form-urlencoded",
+      )
+    }
+  }
+  false
 }
 
 ///|

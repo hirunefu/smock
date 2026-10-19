@@ -514,10 +514,10 @@ problem on stderr.
 
 [docs/definition-files.md](docs/definition-files.md) describes the format:
 how Stubs match requests (method, path, query parameters, headers,
-cookies and body, exactly, by RE2 pattern, as JSON or by paths into XML,
-negated or by presence with `$not` and `$exists`, and by array element
-with `$includes`), the order they are tried in (priority, then
-file-name order), what a Mock answers when nothing matches, responses with
+cookies and body, exactly, by RE2 pattern, as JSON, by form field or by
+paths into XML, negated or by presence with `$not` and `$exists`, and by
+array element with `$includes`), the order they are tried in (priority,
+then file-name order), what a Mock answers when nothing matches, responses with
 inline bodies, body files, JSON or Server-Sent Events, response templates,
 Faults, the JSON Schema, editor support and writing Definition files in
 another configuration language.

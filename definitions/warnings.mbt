@@ -120,9 +120,10 @@ fn shadows(t : Stub, s : Stub) -> Bool {
 ///   exactly. A `json` condition with patterns is identical only to one
 ///   with the same patterns in the same places, and a value condition with
 ///   operators only to one with the same operators around an identical
-///   condition. The paths of an `xml` condition are conditions of their
-///   own, as query parameters are: each of `t`'s paths appears, written the
-///   same, with an identical condition in `s`'s `xml` condition.
+///   condition. The fields of a `form` condition and the paths of an `xml`
+///   condition are conditions of their own, as query parameters are: each
+///   of `t`'s fields or paths appears, written the same, with an identical
+///   condition in `s`'s `form` or `xml` condition.
 ///
 /// A subset of conjuncts is sound whatever the conditions mean, operators
 /// included. Containment between two patterns is not attempted, and
@@ -143,6 +144,8 @@ fn request_shadows(t : Conditions, s : Conditions) -> Bool {
   }
   let body = match (t.body, s.body) {
     (None, _) => true
+    (Some(Form(t_fields)), Some(Form(s_fields))) =>
+      t_fields.iter().all(condition => s_fields.contains(condition))
     (Some(Xml(t_paths)), Some(Xml(s_paths))) =>
       t_paths.iter().all(condition => s_paths.contains(condition))
     (t_body, s_body) => t_body == s_body

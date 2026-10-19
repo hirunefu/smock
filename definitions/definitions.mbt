@@ -391,6 +391,12 @@ pub enum BodyCondition {
   Pattern(Pattern)
   /// The body parses as JSON and contains the condition's value.
   Json(JsonCondition)
+  /// A `form` condition, as (name, condition): the body is a form, as the
+  /// request's Content-Type says, and each condition holds for the decoded
+  /// values of the field with that name, as `ValueCondition::holds` says.
+  /// A body that is not a form fails every one of them, operators
+  /// included.
+  Form(ReadOnlyArray[(String, ValueCondition)])
   /// An `xml` condition, as (path, condition): the body parses as XML, and
   /// each condition holds for the values of the nodes its path selects, as
   /// `ValueCondition::holds` says, a path that selects nothing being a name

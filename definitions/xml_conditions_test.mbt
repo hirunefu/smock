@@ -81,9 +81,9 @@ test "an xml condition's values are read as query values are, and the body takes
       #|a.json: /stubs/0/request/body/xml/~1g~1~1h: is not a valid XML path: position 2: // (descendants) is not supported in smock's XML paths
       #|a.json: /stubs/0/request/body/xml/~1g~1~1h/$exists: must be true or false
       #|a.json: /stubs/1/request/body/xml: must be an object
-      #|a.json: /stubs/2/request/body: has "json" and "xml"; give only one of "json", "pattern" or "xml"
+      #|a.json: /stubs/2/request/body: has "json" and "xml"; give only one of "json", "pattern", "form" or "xml"
       #|a.json: /stubs/3/request/body/xmll: is not a known field
-      #|a.json: /stubs/3/request/body: needs "json", "pattern" or "xml"
+      #|a.json: /stubs/3/request/body: needs "json", "pattern", "form" or "xml"
     ),
   )
 }

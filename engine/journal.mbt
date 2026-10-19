@@ -148,27 +148,31 @@ fn Journal::entry(
 ) -> JournalEntry {
   // An entry is made for every request, so it is built with plain matches,
   // which allocate no closures or tuples.
-  let body = truncate(request.body, self.settings.body_limit)
+  let limit = self.settings.body_limit
+  let body = truncate(request.body, limit)
   // The body's value in the Near miss is truncated like the body, and so is
-  // each value taken from an XML body, so that no entry holds a whole body.
-  // A value taken from an XML body is never longer than the body, so only
-  // a truncated body can give one over the limit.
+  // each value taken from a form or an XML body, so that no entry holds a
+  // whole body. A value taken from an XML body is never longer than the
+  // body, so only a truncated body can give one over the limit; a form
+  // value can be longer, as each byte that is not UTF-8 becomes U+FFFD.
   let truncated = body.length() < request.body.length()
   let near_miss = match near_miss {
-    Some(near_miss) if truncated =>
+    Some(near_miss) if truncated || near_miss.has_form_field() =>
       Some({
         ..near_miss,
         failed: near_miss.failed.map(failed => {
           match failed.condition {
-            Body => { ..failed, actual: [@utf8.decode_lossy(body)], }
-            Xml(_) =>
+            Body if truncated =>
+              { ..failed, actual: [@utf8.decode_lossy(body)], }
+            Form(_) =>
               {
                 ..failed,
-                actual: failed.actual.map(value => {
-                  @utf8.decode_lossy(
-                    truncate(@utf8.encode(value), self.settings.body_limit),
-                  )
-                }),
+                actual: failed.actual.map(value => truncate_text(value, limit)),
+              }
+            Xml(_) if truncated =>
+              {
+                ..failed,
+                actual: failed.actual.map(value => truncate_text(value, limit)),
               }
             _ => failed
           }
@@ -255,6 +259,32 @@ fn text_length(name : String?) -> Int {
   match name {
     Some(name) => name.length()
     None => 0
+  }
+}
+
+///|
+/// Whether one of the conditions the Near miss failed is a form field.
+fn NearMiss::has_form_field(self : NearMiss) -> Bool {
+  for failed in self.failed {
+    if failed.condition is Form(_) {
+      return true
+    }
+  }
+  false
+}
+
+///|
+/// `text` cut to at most `limit` bytes of UTF-8, as `truncate` cuts a body.
+fn truncate_text(text : String, limit : Int) -> String {
+  // A UTF-16 code unit takes at most three bytes of UTF-8.
+  if text.length() <= limit / 3 {
+    return text
+  }
+  let bytes = @utf8.encode(text)
+  if bytes.length() <= limit {
+    text
+  } else {
+    @utf8.decode_lossy(truncate(bytes, limit))
   }
 }
 

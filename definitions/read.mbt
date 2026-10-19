@@ -790,7 +790,7 @@ fn File::read_conditions(
 ///|
 /// Reads a condition on the request body: an exact text, or an object
 /// holding one of the kinds `body_kinds` lists: a `json` condition, a
-/// pattern, or an `xml` condition.
+/// pattern, a `form` condition or an `xml` condition.
 fn File::read_body_condition(
   self : File,
   pointer : String,
@@ -817,6 +817,12 @@ fn File::read_body_condition(
           self.compile(field, source) is Some(pattern) {
           out = Some(BodyCondition::Pattern(pattern))
         }
+      "form" =>
+        out = Some(
+          BodyCondition::Form(
+            ReadOnlyArray::from_array(self.read_value_conditions(field, value)),
+          ),
+        )
       "xml" =>
         out = self
           .read_xml_conditions(field, value)
@@ -838,11 +844,11 @@ fn File::read_body_condition(
 
 ///|
 /// The kinds of body condition an object may hold, exactly one of them.
-let body_kinds : Array[String] = ["json", "pattern", "xml"]
+let body_kinds : Array[String] = ["json", "pattern", "form", "xml"]
 
 ///|
 /// The kinds of body condition, as messages list them.
-let listed_body_kinds : String = "\"json\", \"pattern\" or \"xml\""
+let listed_body_kinds : String = "\"json\", \"pattern\", \"form\" or \"xml\""
 
 ///|
 /// Reads an `xml` condition, the object at `pointer`: paths into an XML

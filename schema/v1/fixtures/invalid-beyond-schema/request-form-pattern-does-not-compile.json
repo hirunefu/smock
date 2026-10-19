@@ -1,0 +1,26 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "login",
+      "mock": "users",
+      "request": {
+        "method": "POST",
+        "body": {
+          "form": {
+            "password": {
+              "pattern": "(.{8,}"
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 204
+      }
+    }
+  ]
+}
