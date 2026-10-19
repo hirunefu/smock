@@ -234,6 +234,41 @@ test "shadowing needs t's body condition to be absent or to appear identically i
 }
 
 ///|
+/// Matching compares an integer above 2^53 in a body with one in a
+/// condition by its digits, and with any other number by its Double. So
+/// `12345678901234567890` and `1.2345678901234567890e19`, equal as
+/// Doubles, match different bodies: `12345678901234567891` meets only the
+/// second.
+test "a json condition's integer above 2^53 shadows only the same integer, not a number written with a fraction or an exponent that has its Double" {
+  inspect(
+    verdicts([
+      (
+        "{ \"body\": { \"json\": { \"id\": 12345678901234567890 } } }", "{ \"body\": { \"json\": { \"id\": 1.2345678901234567890e19 } } }",
+      ),
+      (
+        "{ \"body\": { \"json\": { \"id\": 1.2345678901234567890e19 } } }", "{ \"body\": { \"json\": { \"id\": 12345678901234567890 } } }",
+      ),
+      (
+        "{ \"body\": { \"json\": { \"id\": 12345678901234567890 } } }", "{ \"body\": { \"json\": { \"id\": 12345678901234567890 } } }",
+      ),
+      (
+        "{ \"body\": { \"json\": { \"id\": 1.2345678901234567890e19 } } }", "{ \"body\": { \"json\": { \"id\": 12345678901234567000.0 } } }",
+      ),
+      (
+        "{ \"body\": { \"json\": [1e3, 0] } }", "{ \"body\": { \"json\": [1000, -0] } }",
+      ),
+    ]),
+    content=(
+      #|t { "body": { "json": { "id": 12345678901234567890 } } } / s { "body": { "json": { "id": 1.2345678901234567890e19 } } } -> not reported
+      #|t { "body": { "json": { "id": 1.2345678901234567890e19 } } } / s { "body": { "json": { "id": 12345678901234567890 } } } -> not reported
+      #|t { "body": { "json": { "id": 12345678901234567890 } } } / s { "body": { "json": { "id": 12345678901234567890 } } } -> shadowed
+      #|t { "body": { "json": { "id": 1.2345678901234567890e19 } } } / s { "body": { "json": { "id": 12345678901234567000.0 } } } -> shadowed
+      #|t { "body": { "json": [1e3, 0] } } / s { "body": { "json": [1000, -0] } } -> shadowed
+    ),
+  )
+}
+
+///|
 test "every condition of t must be in s for a warning" {
   inspect(
     verdicts([

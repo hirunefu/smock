@@ -396,9 +396,14 @@ fn contains(actual : Json, expected : Expected) -> Bool {
 }
 
 ///|
-/// Whether `a` and `b` are the same JSON value: objects with the same keys
-/// and the same value for each, arrays of the same values in the same
-/// order, and scalars as `contains` compares them.
+/// Whether `a` and `b` are the same JSON value, so that conditions on them
+/// match the same bodies: objects with the same keys and the same value for
+/// each, arrays of the same values in the same order, and scalars as
+/// `contains` compares them, except that a number kept as text is never
+/// the same as one that is not. `same_number` compares a body's number kept
+/// as text with the first by its text and with the second by its Double, so
+/// 12345678901234567890 and 1.2345678901234567890e19, equal as Doubles,
+/// match different bodies.
 fn same_value(a : Json, b : Json) -> Bool {
   match (a, b) {
     (Object(a), Object(b)) =>
@@ -418,7 +423,7 @@ fn same_value(a : Json, b : Json) -> Bool {
       true
     }
     (Number(a, repr=a_text), Number(b, repr=b_text)) =>
-      same_number(a, a_text, b, b_text)
+      (a_text is None) == (b_text is None) && same_number(a, a_text, b, b_text)
     _ => a == b
   }
 }
