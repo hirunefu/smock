@@ -369,7 +369,7 @@
       "type": "object",
       "properties": {
         "kind": {
-          "description": "reset: read the request, then reset the connection (RST). close: close the connection without writing anything (FIN). partial: write the status line, the headers and the first half of the body, then close the connection. A request that asks for 100 Continue (Expect: 100-continue) gets it before its body is read, and so before any of these.",
+          "description": "reset: reset the connection (RST) without writing anything. close: close the connection without writing anything (FIN). partial: write the status line, the headers and the first half of the body, then close the connection. Each comes once the whole request, body included, has been read, and after the Stub's delay, if one applies. A request that asks for 100 Continue (Expect: 100-continue) gets it before its body is read, and so before any of these.",
           "enum": ["reset", "close", "partial"]
         },
         "probability": { "$ref": "#/$defs/probability" }

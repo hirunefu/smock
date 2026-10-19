@@ -11,7 +11,6 @@ disagree.
 | `valid/` | accepts it | accepts it |
 | `invalid/` | rejects it | rejects it |
 | `invalid-beyond-schema/` | accepts it | rejects it, for a reason the Schema cannot see |
-| `not-supported-yet/` | accepts it | rejects it as "not supported yet" |
 
 - `invalid-beyond-schema/` holds files that break a rule the Schema cannot
   express, such as a rule across the Mocks and files of a definition set:
@@ -25,10 +24,10 @@ disagree.
   `headers` that give two names that differ only in case, and JSON files
   that repeat a key in one object, which a JSON Schema validator reads as
   the last of them.
-- `not-supported-yet/` holds files that use a field the Schema defines but
-  smock does not implement yet. When a ticket implements the field, it moves
-  them to `valid/`, or to `invalid-beyond-schema/` when they stay invalid
-  for another reason.
+
+A field joins the Schema only together with smock's support for it, so no
+fixture is accepted by the Schema and rejected by smock for a field smock
+lacks.
 
 Each definitions directory also gets the files under `body-files/` as its
 body-file subdirectory (`files/`, the default), so a fixture can refer to

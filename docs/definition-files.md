@@ -1022,10 +1022,8 @@ and that URL is also its `$id`. Its source is
 without `version` is read as version 1; any other version is rejected.
 
 The Schema describes every field of format version 1, and smock implements
-them all. A field the Schema defines but smock does not implement yet would
-be rejected with a message saying it is not supported yet, so that a file
-never means something smock silently ignores. smock also rejects any field
-the Schema does not define.
+them all. smock rejects any field the Schema does not define, so that a
+file never means something smock silently ignores.
 
 ## Reloading
 
