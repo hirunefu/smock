@@ -161,7 +161,7 @@ async test "after malformed or ambiguous framing, smock answers what came before
       ),
     )
   })
-  // Rejected requests are not logged: R1 writes no per-request log lines.
+  // Rejected requests are not logged: smock writes no per-request log lines.
   inspect(
     log_entries(stopped.logs),
     content=(

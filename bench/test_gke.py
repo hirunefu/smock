@@ -249,8 +249,8 @@ class Manifests(Helper):
 # A second smock image, of another binary than SMOCK_IMAGE's.
 OTHER_IMAGE = "registry.example/smock-bench/smock@sha256:" + "3" * 64
 
-# Two variants of smock, as --variant takes them: R1's binary, the
-# baseline, and R2's.
+# Two variants of smock, as --variant takes them: an older binary, the
+# baseline, and a newer one.
 TWO_VARIANTS = (f"r1={SMOCK_IMAGE}", f"r2={OTHER_IMAGE}")
 
 
@@ -551,7 +551,7 @@ class SameNodePlan(Helper):
         plan = json.loads((BENCH / "plan-same-node.json").read_text())
         autopilot = json.loads((BENCH / "plan-autopilot.json").read_text())
         [case] = plan["cases"]
-        # Under 50m and 250m, R2's binary saturated from the second step of
+        # Under 50m and 250m, 52ee405's binary saturated from the second step of
         # the autopilot plan's ladder (0.94 to 0.97 of its limit at 250
         # requests/s under 50m in the runs of 2026-10-16, 0.80 to 0.85 at
         # 1,250 under 250m), so each has a step below the ladder's lowest in
@@ -2586,7 +2586,7 @@ class SameNode(VariantRun):
                       "to decide (with 3 that differ, p cannot be below 0.25).", markdown)
 
     def test_too_few_pairs_to_reach_the_threshold_are_too_few_to_decide_not_no_difference(self):
-        # b is higher than a in every pair, as R2's binary under 50m, where
+        # b is higher than a in every pair, as 52ee405's binary under 50m, where
         # only the lowest step's runs do not saturate.
         def verdict(rounds, failed=()):
             us = {"a": {500: [30.0] * rounds, 1000: [40.0] * rounds},
