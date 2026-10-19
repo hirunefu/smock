@@ -85,7 +85,9 @@ optionally ending in `/@` and an attribute name.
   client chose. Namespace URIs are not compared, so elements that differ
   only by namespace cannot be told apart.
 - Namespace declarations (`xmlns` and `xmlns:*`) are not attributes that a
-  path selects, so a path that ends in `@xmlns` is a compile error.
+  path selects, so a path that ends in `@xmlns` is a compile error. An
+  attribute with a prefix and the local name `xmlns`, such as `p:xmlns`,
+  cannot be selected either.
 - A path selects every element it reaches, so a repeated element gives
   one value per element.
 

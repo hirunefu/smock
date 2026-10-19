@@ -495,32 +495,34 @@ returns for a sample request before a test relies on it. The sample is JSON,
 `{method, path, query, headers, body, session}`, every member optional
 (`GET /` without query, headers, body or Session); the path and the query
 values are given percent-decoded, as Stub conditions compare them, and a
-repeated parameter or header takes an array of values. smock reads the
-directory as `smock serve` does, body files included, and prints the
-rendering as JSON, the same as the Admin render operation's result without
-its `warnings`: the Stub's status, headers and body (`utf-8` text, or
-`base64`) or its Server-Sent Events, and the conditions the sample fails,
-with expected and actual values as in a Near miss (empty when it meets them
-all). The Stub is rendered even when the sample fails them, and a
-[templated](docs/definition-files.md#templates) response is rendered for
-the sample. `--time` (RFC 3339) and `--seed` fix the clock and the random
-source of the rendering; without a seed, it uses the Stub's `fault.seed`,
-or a fresh one. The rendering shows the `time` and the `seed` it used, so
-it can be repeated exactly, and a template that fails for the sample shows
-the 500 a request would get and its `templateError`. An invalid definitions directory
-prints the messages `smock check` prints, and it, an unknown Stub ID and a
-sample that cannot be read or is not valid exit with status 1, with the
-problem on stderr.
+repeated parameter or header takes an array of values. Cookies come from
+`headers.Cookie`, as a request's come from its `Cookie` fields, and form
+fields from the body, read as a form when `headers.Content-Type` says it is
+one. smock reads the directory as `smock serve` does, body files included,
+and prints the rendering as JSON, the same as the Admin render operation's
+result without its `warnings`: the Stub's status, headers and body (`utf-8`
+text, or `base64`) or its Server-Sent Events, and the conditions the sample
+fails, with expected and actual values as in a Near miss (empty when it
+meets them all). The Stub is rendered even when the sample fails them, and a
+[templated](docs/definition-files.md#templates) response is rendered for the
+sample. `--time` (RFC 3339) and `--seed` fix the clock and the random source
+of the rendering; without a seed, it uses the Stub's `fault.seed`, or a
+fresh one. The rendering shows the `time` and the `seed` it used, so it can
+be repeated exactly, and a template that fails for the sample shows the 500
+a request would get and its `templateError`. An invalid definitions
+directory prints the messages `smock check` prints, and it, an unknown Stub
+ID and a sample that cannot be read or is not valid exit with status 1, with
+the problem on stderr.
 
 [docs/definition-files.md](docs/definition-files.md) describes the format:
-how Stubs match requests (method, path, query parameters, headers,
-cookies and body, exactly, by RE2 pattern, as JSON, by form field or by
-paths into XML, negated or by presence with `$not` and `$exists`, and by
-array element with `$includes`), the order they are tried in (priority,
-then file-name order), what a Mock answers when nothing matches, responses with
-inline bodies, body files, JSON or Server-Sent Events, response templates,
-Faults, the JSON Schema, editor support and writing Definition files in
-another configuration language.
+how Stubs match requests (method, path, query parameters, headers, cookies
+and body, exactly, by RE2 pattern, as JSON, by form field or by paths into
+XML, negated or by presence with `$not` and `$exists`, and by array element
+with `$includes`), the order they are tried in (priority, then file-name
+order), what a Mock answers when nothing matches, responses with inline
+bodies, body files, JSON or Server-Sent Events, response templates, Faults,
+the JSON Schema, editor support and writing Definition files in another
+configuration language.
 [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) turns a
 Mockoon environment into Definition files.
 

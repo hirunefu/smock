@@ -46,7 +46,7 @@ test "a malformed path is a diagnostic at its JSON Pointer, with the position of
       #|a.json: /stubs/0/request/body/xml/: is not a valid XML path: position 0: a path starts with /
       #|a.json: /stubs/0/request/body/xml/~1order~1text(): is not a valid XML path: position 7: function text() is not supported in smock's XML paths
       #|a.json: /stubs/0/request/body/xml/~1a~1b c: is not a valid XML path: position 4: expected / or the end of the path
-      #|a.json: /stubs/0/request/body/xml/~1a~1@xmlns: is not a valid XML path: position 4: @xmlns is a namespace declaration, which smock's XML paths never select
+      #|a.json: /stubs/0/request/body/xml/~1a~1@xmlns: is not a valid XML path: position 4: @xmlns is not supported in smock's XML paths: xmlns names namespace declarations, which are not attributes here
     ),
   )
 }

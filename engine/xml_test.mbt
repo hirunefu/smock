@@ -593,7 +593,7 @@ test "an Ephemeral Stub may have an xml condition, and a malformed path is rejec
     content=(
       #|eph-1: eph-1, no Stub
       #|/request/body/xml/~1a~1~1b: is not a valid XML path: position 2: // (descendants) is not supported in smock's XML paths
-      #|/request/body/xml/~1a~1@xmlns: is not a valid XML path: position 4: @xmlns is a namespace declaration, which smock's XML paths never select
+      #|/request/body/xml/~1a~1@xmlns: is not a valid XML path: position 4: @xmlns is not supported in smock's XML paths: xmlns names namespace declarations, which are not attributes here
       #|/request/body/xml/~1c/$includes: is allowed only in a json condition
     ),
   )

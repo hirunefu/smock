@@ -88,9 +88,9 @@ Stub without `request` matches every request of its Mock.
 |---|---|
 | `method` | its method is exactly this, case and all, such as `GET`. |
 | `path` | its path, percent-decoded and without the query, is exactly this. `/users/a%20b` meets `"/users/a b"`. `{ "pattern": … }`: the pattern matches the whole path. |
-| `query` | each listed parameter is present, and one of its values, decoded, is exactly the given value, or matches the given `{ "pattern": … }` as a whole. [`$not` and `$exists`](#negation-and-presence) are about the parameter as a whole. Parameters that are not listed are ignored. |
-| `headers` | each listed header is present, its name compared case-insensitively, and one of its values is exactly the given value, or matches the given `{ "pattern": … }` as a whole. [`$not` and `$exists`](#negation-and-presence) are about the header as a whole. Headers that are not listed are ignored. |
-| `cookies` | each listed cookie is present in a `Cookie` header, its name compared exactly, and one of its values, as sent, is exactly the given value, or matches the given `{ "pattern": … }` as a whole. See [Cookies](#cookies). [`$not` and `$exists`](#negation-and-presence) are about the cookie as a whole. Cookies that are not listed are ignored. |
+| `query` | for each listed parameter, one of its values, decoded, is exactly the given value, or matches the given `{ "pattern": … }` as a whole, so an absent parameter fails. [`$not` and `$exists`](#negation-and-presence) are about the parameter as a whole instead, and may hold for an absent one. Parameters that are not listed are ignored. |
+| `headers` | for each listed header, its name compared case-insensitively, one of its values is exactly the given value, or matches the given `{ "pattern": … }` as a whole, so an absent header fails. [`$not` and `$exists`](#negation-and-presence) are about the header as a whole instead, and may hold for an absent one. Headers that are not listed are ignored. |
+| `cookies` | for each listed cookie, its name compared exactly, one of its values in the `Cookie` headers, as sent, is exactly the given value, or matches the given `{ "pattern": … }` as a whole, so an absent cookie fails. See [Cookies](#cookies). [`$not` and `$exists`](#negation-and-presence) are about the cookie as a whole instead, and may hold for an absent one. Cookies that are not listed are ignored. |
 | `body` | a string: the body is exactly this text in UTF-8. `{ "pattern": … }`: the pattern matches the whole body. `{ "json": … }`: the body parses as JSON and contains the given value, which may hold patterns and [operators](#operators-in-json-conditions). `{ "form": … }`: the Content-Type says the body is a form, and each listed [field](#form-fields) meets its condition. `{ "xml": … }`: the body parses as XML, and the value at each [path](#xml-bodies) meets its condition. |
 
 Query parameters are decoded as HTML forms encode them: `%20` and `+` both
@@ -479,7 +479,9 @@ What a node's value is:
 - References are decoded: `&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`, and
   character references such as `&#38;`.
 - Namespace declarations, `xmlns` and `xmlns:p`, are not attributes, so
-  a path that ends in `@xmlns` makes the definition set invalid.
+  a path that ends in `@xmlns` makes the definition set invalid. An
+  attribute with a prefix and the local name `xmlns`, such as `p:xmlns`,
+  cannot be selected either.
 
 The condition is any value condition: an exact value, a pattern, `$not` or
 `$exists`. A path is a name whose values are the values of the nodes it
@@ -1234,7 +1236,9 @@ body file that is not UTF-8 are checked then.
 ### Rendering a template
 
 `smock render` and the Admin render operation render a Stub for a sample
-request, templates included, and show the time and the seed they used.
+request, templates included, and show the time and the seed they used. A
+sample's cookies come from its `headers.Cookie`, and its form fields from
+its body when its `headers.Content-Type` says the body is a form.
 `--time` (the Admin API's `time`) is the time of the request; `--seed`
 (`seed`) gives the output the request takes from its Stub's source as the
 first output of a generator seeded with it, so a rendering with seed `S`

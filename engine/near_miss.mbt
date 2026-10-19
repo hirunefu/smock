@@ -59,8 +59,7 @@ pub(all) enum Condition {
 ///|
 /// The name of the condition, as the Near miss reports it: `method`,
 /// `path`, `query:<name>`, `header:<name>`, `cookie:<name>`, `body`,
-/// `form:<name>`, `xml:<path>` or
-/// `scenario:<name>`.
+/// `form:<name>`, `xml:<path>` or `scenario:<name>`.
 pub fn Condition::to_string(self : Condition) -> String {
   match self {
     Method => "method"
@@ -76,8 +75,7 @@ pub fn Condition::to_string(self : Condition) -> String {
 }
 
 ///|
-/// The value a condition expects, as the Stub gives it, operators
-/// included.
+/// The value a condition expects, as the Stub gives it, operators included.
 pub(all) enum Expected {
   /// Exactly this text.
   Exact(String)
@@ -137,9 +135,8 @@ pub impl ToJson for Expected with fn to_json(self) {
 /// The `Smock-Near-Miss` header value: `<stub-id>; failed=<condition>,...`.
 /// It is ASCII only and carries no expected or actual value: the Stub ID,
 /// the names of query parameters, headers, cookies, form fields and
-/// Scenarios, and XML paths are
-/// written as `header_safe` writes them, so no name can add a field or
-/// change the header's meaning.
+/// Scenarios, and XML paths are written as `header_safe` writes them, so
+/// no name can add a field or change the header's meaning.
 fn NearMiss::header_value(self : NearMiss) -> String {
   let failed = self.failed
     .map(failed => {
