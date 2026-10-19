@@ -265,7 +265,7 @@ async fn quota_scope_unavailable() -> String? {
     Some("systemd-run --user failed with exit status \{status}: \{text}")
   } else if text != "50000 100000" {
     Some(
-      "a scope with CPUQuota=50% got cpu.max \{text.escape()}: the systemd user manager needs the cpu controller delegated to it (see the README's benchmark section)",
+      "a scope with CPUQuota=50% got cpu.max \{text.escape()}: the systemd user manager needs the cpu controller delegated to it (see bench/README.md)",
     )
   } else {
     None

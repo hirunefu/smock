@@ -1,8 +1,8 @@
 #!/bin/sh
 # Prints the notes of a GitHub release in Markdown. They name the MoonBit
-# toolchain the release was built with and say that the binaries need
-# OpenSSL at run time. The release workflow (.github/workflows/release.yml)
-# uses them.
+# toolchain the release was built with, say that the binaries need OpenSSL
+# at run time, and point to LICENSE and NOTICE. The release workflow
+# (.github/workflows/release.yml) uses them.
 #
 # usage: scripts/release-notes.sh <version> <commit> <toolchain> <image>
 # example: scripts/release-notes.sh 0.1.0 0123456789ab "moonc v0.10.14+7d59c7ec9" ghcr.io/hirunefu/smock
@@ -50,9 +50,16 @@ lists its values.
 - \`smock-$version-linux-arm64\`
 
 They are the binaries in the image. They link OpenSSL 3 dynamically, so they
-need OpenSSL 3 (\`libssl.so.3\` and \`libcrypto.so.3\`) and glibc at run time:
+need OpenSSL 3 (\`libssl.so.3\` and \`libcrypto.so.3\`) and glibc 2.34 or later at run time:
 on Debian and Ubuntu, the \`libssl3\` package (\`libssl3t64\` on newer
 releases).
 
 The SBOM of each image is attached as \`smock-$version-linux-<arch>.spdx.json\`.
+
+## Licence
+
+smock is licensed under the Apache License, Version 2.0 (\`LICENSE\`). The
+binaries also link third-party software statically, and \`NOTICE\` names it
+with its licences. Both files are attached, and the image holds them in
+\`/usr/share/doc/smock/\`.
 NOTES

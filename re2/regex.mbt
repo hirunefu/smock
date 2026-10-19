@@ -36,9 +36,10 @@ pub(all) struct Match {
 /// problem is, counted in characters (code points) from 0; `message` says
 /// what the problem is.
 ///
-/// A message that ends in "is not supported in R1" names RE2 syntax that this
-/// release leaves out. One that ends in "is not RE2 syntax" names syntax that
-/// RE2 does not have, such as a backreference or a lookahead.
+/// A message that ends in "is not supported in smock's RE2 subset" names RE2
+/// syntax that the subset leaves out. One that ends in "is not RE2 syntax"
+/// names syntax that RE2 does not have, such as a backreference or a
+/// lookahead.
 pub(all) suberror CompileError {
   CompileError(position~ : Int, message~ : String)
 } derive(Eq, Debug)
@@ -51,8 +52,8 @@ pub impl Show for CompileError with fn output(self, logger) {
 }
 
 ///|
-/// Compiles `pattern`, written in the R1 subset of RE2 syntax (see the
-/// module's README). Raises `CompileError` for anything outside the subset,
+/// Compiles `pattern`, written in smock's RE2 subset (see the module's
+/// README). Raises `CompileError` for anything outside the subset,
 /// and when the pattern exceeds a limit: a repetition count above 1000,
 /// nested repetition counts whose product is above 1000, a compiled program
 /// of more than 100 000 instructions, or groups nested more than 100 deep.

@@ -1,6 +1,6 @@
 // Text templates: a header value, a body, or a field of a Server-Sent
 // Event. `${ expr }` inserts a value, written as text, and `$${` writes a
-// literal `${`. Text templates have no loops and no conditionals in R1.
+// literal `${`. Text templates have no loops and no conditionals.
 
 ///|
 /// A problem in a template, found when it is parsed: a JSON Pointer to the

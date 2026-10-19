@@ -15,7 +15,7 @@ fn errors(patterns : Array[String]) -> String {
 }
 
 ///|
-test "RE2 syntax left out of R1 is rejected as not supported in R1" {
+test "RE2 syntax left out of the subset is rejected as not supported in it" {
   inspect(
     errors([
       "\\pL", "\\p{Greek}", "\\PN", "\\P{L}", "a[\\p{L}]", "\\n", "\\t", "\\r", "\\f",
@@ -23,30 +23,30 @@ test "RE2 syntax left out of R1 is rejected as not supported in R1" {
       "\\C", "[[:alpha:]]", "[x[:^digit:]]", "(?U)a*", "(?iU)a*", "(?<name>a)", "(?P<é>x)",
     ]),
     content=(
-      #|\pL => position 0: Unicode class \pL is not supported in R1
-      #|\p{Greek} => position 0: Unicode class \p{Greek} is not supported in R1
-      #|\PN => position 0: Unicode class \PN is not supported in R1
-      #|\P{L} => position 0: Unicode class \P{L} is not supported in R1
-      #|a[\p{L}] => position 2: Unicode class \p{L} is not supported in R1
-      #|\n => position 0: escape \n is not supported in R1
-      #|\t => position 0: escape \t is not supported in R1
-      #|\r => position 0: escape \r is not supported in R1
-      #|\f => position 0: escape \f is not supported in R1
-      #|\v => position 0: escape \v is not supported in R1
-      #|\a => position 0: escape \a is not supported in R1
-      #|\x41 => position 0: hexadecimal escape \x is not supported in R1
-      #|\x{263a} => position 0: hexadecimal escape \x is not supported in R1
-      #|\0 => position 0: octal escape \0 is not supported in R1
-      #|\12 => position 0: octal escape \12 is not supported in R1
-      #|[\101] => position 1: octal escape \10 is not supported in R1
-      #|\Qa.b\E => position 0: quoting with \Q...\E is not supported in R1
-      #|\C => position 0: \C (any byte) is not supported in R1
-      #|[[:alpha:]] => position 1: POSIX class [:alpha:] is not supported in R1
-      #|[x[:^digit:]] => position 2: POSIX class [:^digit:] is not supported in R1
-      #|(?U)a* => position 2: flag U is not supported in R1
-      #|(?iU)a* => position 3: flag U is not supported in R1
-      #|(?<name>a) => position 0: named group (?<name>...) is not supported in R1; use (?P<name>...)
-      #|(?P<é>x) => position 0: non-ASCII capture group name (?P<é> is not supported in R1
+      #|\pL => position 0: Unicode class \pL is not supported in smock's RE2 subset
+      #|\p{Greek} => position 0: Unicode class \p{Greek} is not supported in smock's RE2 subset
+      #|\PN => position 0: Unicode class \PN is not supported in smock's RE2 subset
+      #|\P{L} => position 0: Unicode class \P{L} is not supported in smock's RE2 subset
+      #|a[\p{L}] => position 2: Unicode class \p{L} is not supported in smock's RE2 subset
+      #|\n => position 0: escape \n is not supported in smock's RE2 subset
+      #|\t => position 0: escape \t is not supported in smock's RE2 subset
+      #|\r => position 0: escape \r is not supported in smock's RE2 subset
+      #|\f => position 0: escape \f is not supported in smock's RE2 subset
+      #|\v => position 0: escape \v is not supported in smock's RE2 subset
+      #|\a => position 0: escape \a is not supported in smock's RE2 subset
+      #|\x41 => position 0: hexadecimal escape \x is not supported in smock's RE2 subset
+      #|\x{263a} => position 0: hexadecimal escape \x is not supported in smock's RE2 subset
+      #|\0 => position 0: octal escape \0 is not supported in smock's RE2 subset
+      #|\12 => position 0: octal escape \12 is not supported in smock's RE2 subset
+      #|[\101] => position 1: octal escape \10 is not supported in smock's RE2 subset
+      #|\Qa.b\E => position 0: quoting with \Q...\E is not supported in smock's RE2 subset
+      #|\C => position 0: \C (any byte) is not supported in smock's RE2 subset
+      #|[[:alpha:]] => position 1: POSIX class [:alpha:] is not supported in smock's RE2 subset
+      #|[x[:^digit:]] => position 2: POSIX class [:^digit:] is not supported in smock's RE2 subset
+      #|(?U)a* => position 2: flag U is not supported in smock's RE2 subset
+      #|(?iU)a* => position 3: flag U is not supported in smock's RE2 subset
+      #|(?<name>a) => position 0: named group (?<name>...) is not supported in smock's RE2 subset; use (?P<name>...)
+      #|(?P<é>x) => position 0: non-ASCII capture group name (?P<é> is not supported in smock's RE2 subset
     ),
   )
 }

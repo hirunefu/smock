@@ -1,5 +1,5 @@
 ///|
-/// The protocols the TLS port accepts by ALPN. HTTP/2 comes in R2.
+/// The protocols the TLS port accepts by ALPN: HTTP/1.1 only.
 let alpn : Array[String] = ["http/1.1"]
 
 ///|

@@ -127,6 +127,21 @@ fn[T] fail_at(position : Int, message : String) -> T raise CompileError {
 }
 
 ///|
+/// Fails at `position` because `what` is RE2 syntax that smock's RE2 subset
+/// leaves out, with `hint` after the message when there is one.
+fn[T] fail_unsupported(
+  position : Int,
+  what : String,
+  hint? : String,
+) -> T raise CompileError {
+  let message = "\{what} is not supported in smock's RE2 subset"
+  match hint {
+    Some(hint) => fail_at(position, "\{message}; \{hint}")
+    None => fail_at(position, message)
+  }
+}
+
+///|
 /// What `Parser::peek` returns past the end of the pattern. No code point
 /// is negative.
 const END : Int = -1
@@ -356,7 +371,7 @@ fn Parser::literal(self : Parser, c : Int) -> Node {
 
 ///|
 /// The ranges with every ASCII letter in them added in its other case.
-/// Case folding in R1 is ASCII only.
+/// Case folding in smock's RE2 subset is ASCII only.
 fn fold_ascii(ranges : Array[(Int, Int)]) -> Array[(Int, Int)] {
   let out = ranges.copy()
   for r in ranges {
@@ -412,7 +427,7 @@ fn Parser::parse_group(self : Parser) -> Node? raise CompileError {
 
 ///|
 /// Rejects the `(?` constructs of other regular-expression dialects, and
-/// `(?<name>`, which RE2 has but R1 leaves out.
+/// `(?<name>`, which RE2 has but the subset leaves out.
 fn Parser::reject_group_syntax(
   self : Parser,
   open : Int,
@@ -424,8 +439,10 @@ fn Parser::reject_group_syntax(
     '<' if c2 == '=' || c2 == '!' =>
       "lookbehind (?<\{self.text(open + 3, open + 4)}"
     '<' =>
-      fail_at(
-        open, "named group (?<name>...) is not supported in R1; use (?P<name>...)",
+      fail_unsupported(
+        open,
+        "named group (?<name>...)",
+        hint="use (?P<name>...)",
       )
     '>' => "atomic group (?>"
     '#' => "comment (?#"
@@ -468,9 +485,9 @@ fn Parser::parse_group_name(
   }
   if valid && !ascii {
     // RE2 also accepts Unicode word characters in names.
-    fail_at(
+    fail_unsupported(
       open,
-      "non-ASCII capture group name \{self.text(open, end + 1)} is not supported in R1",
+      "non-ASCII capture group name \{self.text(open, end + 1)}",
     )
   }
   if !valid {
@@ -504,7 +521,7 @@ fn Parser::parse_flags(
         self.pos = i + 1
         return (flags, c == ':')
       }
-      'U' => fail_at(i, "flag U is not supported in R1")
+      'U' => fail_unsupported(i, "flag U")
       _ if c == END => fail_at(open, "missing closing )")
       _ if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') =>
         fail_at(i, "flag \{self.text(i, i + 1)} is not RE2 syntax")
@@ -559,16 +576,13 @@ fn Parser::parse_char_escape(
   let escape = self.text(start, start + 2)
   match c {
     '1'..='7' if self.peek(start + 2) >= '0' && self.peek(start + 2) <= '7' =>
-      fail_at(
-        start,
-        "octal escape \{self.text(start, start + 3)} is not supported in R1",
-      )
+      fail_unsupported(start, "octal escape \{self.text(start, start + 3)}")
     '1'..='9' | 'k' | 'g' =>
       fail_at(start, "backreference \{escape} is not RE2 syntax")
-    '0' => fail_at(start, "octal escape \{escape} is not supported in R1")
-    'x' => fail_at(start, "hexadecimal escape \{escape} is not supported in R1")
+    '0' => fail_unsupported(start, "octal escape \{escape}")
+    'x' => fail_unsupported(start, "hexadecimal escape \{escape}")
     'a' | 'f' | 'n' | 'r' | 't' | 'v' =>
-      fail_at(start, "escape \{escape} is not supported in R1")
+      fail_unsupported(start, "escape \{escape}")
     'p' | 'P' => {
       let end = if self.peek(start + 2) == '{' {
         let mut i = start + 3
@@ -579,10 +593,7 @@ fn Parser::parse_char_escape(
       } else {
         start + 3
       }
-      fail_at(
-        start,
-        "Unicode class \{self.text(start, end)} is not supported in R1",
-      )
+      fail_unsupported(start, "Unicode class \{self.text(start, end)}")
     }
     // Assertions and \Q and \C reach here only inside a class, Perl classes
     // only as the end of a range.
@@ -591,8 +602,8 @@ fn Parser::parse_char_escape(
         start,
         "escape \{escape} inside a character class is not RE2 syntax",
       )
-    'Q' => fail_at(start, "quoting with \\Q...\\E is not supported in R1")
-    'C' => fail_at(start, "\\C (any byte) is not supported in R1")
+    'Q' => fail_unsupported(start, "quoting with \\Q...\\E")
+    'C' => fail_unsupported(start, "\\C (any byte)")
     'd' | 'D' | 's' | 'S' | 'w' | 'W' =>
       fail_at(start, "\{escape} cannot end a character class range")
     _ => fail_at(start, "escape \{escape} is not RE2 syntax")
@@ -714,7 +725,7 @@ fn Parser::reject_posix_class(self : Parser) -> Unit raise CompileError {
   }
   let class = self.text(start, end + 2)
   if posix_classes.contains(self.text(name_start, end)) {
-    fail_at(start, "POSIX class \{class} is not supported in R1")
+    fail_unsupported(start, "POSIX class \{class}")
   }
   fail_at(start, "invalid POSIX class \{class}")
 }

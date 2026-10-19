@@ -1,3 +1,6 @@
-# The image packs only the release binary (see Dockerfile).
+# The image packs only the release binary, LICENSE and NOTICE (see
+# Dockerfile).
 *
 !dist/smock
+!LICENSE
+!NOTICE

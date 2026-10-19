@@ -5,9 +5,9 @@ length of the input, so that no pattern can make matching stall. The module
 does no I/O and depends only on `moonbitlang/core`. It builds for every
 MoonBit target and is tested on native and `wasm-gc`.
 
-It supports a subset of RE2 syntax, called R1 below, with RE2's meaning for
-each construct. Everything else is a compile error that says where in the
-pattern the problem is.
+It supports a subset of RE2 syntax, listed below, with RE2's meaning for
+each construct. Everything else is a compile error
+that says where in the pattern the problem is.
 
 ## Use
 
@@ -53,7 +53,7 @@ test "compile errors say where the problem is" {
 }
 ```
 
-## Syntax in R1
+## Syntax in the subset
 
 | Construct | Meaning |
 |---|---|
@@ -102,10 +102,10 @@ test "invalid UTF-8 is not matched, but searched around" {
 }
 ```
 
-### Not in R1
+### Not in the subset
 
-RE2 syntax that R1 leaves out is a compile error whose message says it is not
-supported in R1:
+RE2 syntax that the subset leaves out is a compile error whose message says it
+is not supported in smock's RE2 subset:
 
 - Unicode classes `\pL`, `\p{Greek}`, `\PL`, and Unicode case folding: `(?i)`
   folds ASCII letters only;
@@ -121,7 +121,7 @@ lookbehind, atomic groups, possessive quantifiers, recursion, comments,
 
 ```mbt check
 ///|
-test "what R1 and RE2 leave out" {
+test "what the subset and RE2 leave out" {
   let message = pattern => {
     try @re2.compile(pattern) catch {
       e => e.to_string()
@@ -131,7 +131,7 @@ test "what R1 and RE2 leave out" {
   }
   inspect(
     message("\\p{Greek}"),
-    content="position 0: Unicode class \\p{Greek} is not supported in R1",
+    content="position 0: Unicode class \\p{Greek} is not supported in smock's RE2 subset",
   )
   inspect(
     message("(a)\\1"),
@@ -174,7 +174,7 @@ check linear growth on pathological patterns without timing anything.
 
 ## Differences from RE2
 
-Besides what R1 leaves out:
+Besides what the subset leaves out:
 
 - RE2 matches bytes, so an empty match can fall inside a multi-byte
   character: RE2 finds `\B` in `aé` between the two bytes of `é`. Here
