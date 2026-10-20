@@ -1,9 +1,11 @@
 import {
   "smock/http1",
+  "smock/xml",
   "smock/smock/definitions",
   "smock/smock/log",
   "smock/smock/prng",
   "smock/smock/template",
+  "moonbitlang/core/buffer",
   "moonbitlang/core/deque",
   "moonbitlang/core/encoding/base64",
   "moonbitlang/core/encoding/percent",

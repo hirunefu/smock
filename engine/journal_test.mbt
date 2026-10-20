@@ -271,6 +271,106 @@ test "an entry counts 256 bytes, two for each UTF-16 code unit of its text and t
 }
 
 ///|
+/// The failed conditions of the newest entry's Near miss, one per line, each
+/// with the length in bytes of every value the entry keeps for it.
+fn Harness::kept_values(self : Harness) -> String raise {
+  guard self.answered(None)
+    is { "nearMiss": { "failed": Array(failed), .. }, .. } else {
+    fail("no Near miss")
+  }
+  failed
+  .map(failed => {
+    guard failed
+      is { "condition": String(condition), "actual": Array(actual), .. } else {
+      return "?"
+    }
+    let lengths = actual.map(value => {
+      match value {
+        String(text) => @utf8.encode(text).length().to_string()
+        _ => "?"
+      }
+    })
+    "\{condition}: \{actual.length()} kept [\{lengths.join(", ")}]"
+  })
+  .join("\n")
+}
+
+///|
+test "an entry keeps form and XML values up to the body limit in total, each counting its bytes and 32 more, so that many values, even empty ones, cannot take it past the limit" {
+  let form = harness(
+    [
+      (
+        "m.json",
+        (
+          #|{ "mocks": [{ "name": "m" }],
+          #|  "stubs": [{ "id": "f", "mock": "m",
+          #|    "request": { "body": { "form": { "a": "x", "b": "x" } } },
+          #|    "response": { "status": 200 } }] }
+        ),
+      ),
+    ],
+    journal=@engine.JournalSettings(body_limit=1000),
+  )
+  let headers = [("Content-Type", "application/x-www-form-urlencoded")]
+  let lines = []
+  // Values of 90 bytes: eight take 976 bytes, the ninth is cut to the 24
+  // left, and the values after it, b's included, are left out.
+  let _ = form.record(
+    "POST",
+    "/",
+    headers~,
+    body=("a=" + "v".repeat(90) + "&").repeat(500) + "b=w",
+  )
+  lines.push(form.kept_values())
+  lines.push(form.stats())
+  // Empty values: 32 of them reach the limit.
+  let _ = form.record("POST", "/", headers~, body="a&".repeat(50000))
+  lines.push(form.kept_values())
+  lines.push(form.stats())
+  let xml = harness(
+    [
+      (
+        "m.json",
+        (
+          #|{ "mocks": [{ "name": "m" }],
+          #|  "stubs": [{ "id": "x", "mock": "m",
+          #|    "request": { "body": { "xml": { "/r/a": "x", "/r/@b": "x" } } },
+          #|    "response": { "status": 200 } }] }
+        ),
+      ),
+    ],
+    journal=@engine.JournalSettings(body_limit=1000),
+  )
+  let _ = xml.record(
+    "POST",
+    "/",
+    body="<r b='w'>" + ("<a>" + "v".repeat(90) + "</a>").repeat(500) + "</r>",
+  )
+  lines.push(xml.kept_values())
+  lines.push(xml.stats())
+  let _ = xml.record("POST", "/", body="<r>" + "<a/>".repeat(50000) + "</r>")
+  lines.push(xml.kept_values())
+  lines.push(xml.stats())
+  inspect(
+    lines.join("\n"),
+    content=(
+      #|form:a: 9 kept [90, 90, 90, 90, 90, 90, 90, 90, 24]
+      #|form:b: 0 kept []
+      #|1 entries, 3152 bytes, 0 evicted
+      #|form:a: 32 kept [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      #|form:b: 0 kept []
+      #|2 entries, 5552 bytes, 0 evicted
+      #|xml:/r/a: 9 kept [90, 90, 90, 90, 90, 90, 90, 90, 24]
+      #|xml:/r/@b: 0 kept []
+      #|1 entries, 3062 bytes, 0 evicted
+      #|xml:/r/a: 32 kept [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      #|xml:/r/@b: 0 kept []
+      #|2 entries, 5372 bytes, 0 evicted
+    ),
+  )
+}
+
+///|
 test "when the byte bound is reached, the oldest entries are evicted; an entry over the whole bound is evicted at once" {
   let body = "x".repeat(3000)
   let h = harness(

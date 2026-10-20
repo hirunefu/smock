@@ -1,22 +1,44 @@
 // `JsonCondition::matches` as it was before conditions were read into
-// arrays when loaded, with pattern objects added, kept as the oracle for
-// the one of today: for any condition value and any body, both must agree.
-// The file also checks, with the same random values, what the
-// shadowed-Stub warning needs of `JsonCondition`'s equality.
+// arrays when loaded, with pattern objects, operators and `$$` keys added,
+// kept as the oracle for the one of today: for any condition value and any
+// body, both must agree. The file also checks, with the same random
+// values, what the shadowed-Stub warning needs of `JsonCondition`'s
+// equality.
 
 ///|
 fn reference_contains(actual : Json, expected : Json) -> Bool {
+  reference_holds(Some(actual), expected)
+}
+
+///|
+/// Whether `actual`, the value in the condition's place, or none when its
+/// key is missing, meets `expected`.
+fn reference_holds(actual : Json?, expected : Json) -> Bool {
   match (expected, actual) {
     (Object(members), _) if members.length() == 1 &&
       members.get("pattern") is Some(String(source)) =>
-      reference_pattern(source, actual)
-    (Object(expected), Object(actual)) =>
+      actual is Some(actual) && reference_pattern(source, actual)
+    (Object(members), _) if members.length() == 1 &&
+      members.get("$not") is Some(inner) => !reference_holds(actual, inner)
+    (Object(members), _) if members.length() == 1 &&
+      members.get("$exists") is Some(present) =>
+      (actual is Some(_)) == (present is True)
+    (Object(members), _) if members.length() == 1 &&
+      members.get("$includes") is Some(inner) =>
+      actual is Some(Array(items)) &&
+      items.iter().any(item => reference_holds(Some(item), inner))
+    (Object(expected), Some(Object(actual))) =>
       expected
       .iter()
       .all(entry => {
-        actual.get(entry.0) is Some(value) && reference_contains(value, entry.1)
+        let key = if entry.0.has_prefix("$$") {
+          entry.0[1:].to_owned()
+        } else {
+          entry.0
+        }
+        reference_holds(actual.get(key), entry.1)
       })
-    (Array(expected), Array(actual)) => {
+    (Array(expected), Some(Array(actual))) => {
       if expected.length() != actual.length() {
         return false
       }
@@ -27,10 +49,12 @@ fn reference_contains(actual : Json, expected : Json) -> Bool {
       }
       true
     }
-    (Number(expected, repr=expected_text), Number(actual, repr=actual_text)) =>
-      same_number(expected, expected_text, actual, actual_text)
-    (String(expected), String(actual)) => expected == actual
-    (True, True) | (False, False) | (Null, Null) => true
+    (
+      Number(expected, repr=expected_text),
+      Some(Number(actual, repr=actual_text)),
+    ) => same_number(expected, expected_text, actual, actual_text)
+    (String(expected), Some(String(actual))) => expected == actual
+    (True, Some(True)) | (False, Some(False)) | (Null, Some(Null)) => true
     _ => false
   }
 }
@@ -62,25 +86,31 @@ fn json_condition(value : Json) -> JsonCondition {
 /// A random JSON value, `depth` levels deep at most, over few keys and few
 /// scalars, so that conditions and bodies often share parts: numbers equal
 /// by value but written apart, integers too large for a Double, strings,
-/// booleans, null and pattern objects. A `pattern` key gives literal
-/// objects that look like pattern objects, and pattern objects too when it
-/// is the only key and has a string.
+/// booleans, null, pattern objects and `$exists`. A `pattern` key gives
+/// literal objects that look like pattern objects, and pattern objects too
+/// when it is the only key and has a string. `$not` and `$includes` hold
+/// another such value, and the key `$$a` is the literal key `$a` in a
+/// condition. As a body, each is literal JSON.
 fn random_json(rand : @random.Rand, depth : Int) -> Json {
   let scalars : Array[String] = [
     "1", "1.0", "10e-1", "2", "-0", "0", "12345678901234567890", "12345678901234567891",
     "1.2345678901234567890e19", "1e400", "\"a\"", "\"b\"", "\"1\"", "true", "false",
     "null", "{\"pattern\":\"[0-9]+\"}", "{\"pattern\":\"a|true\"}", "{\"pattern\":\"(?s).*\"}",
-    "{\"pattern\":\"1e400|-?0\"}",
+    "{\"pattern\":\"1e400|-?0\"}", "{\"$exists\":true}", "{\"$exists\":false}",
   ]
   if depth == 0 || rand.int(limit=3) == 0 {
     return @json.parse(scalars[rand.int(limit=scalars.length())]) catch {
       _ => Json::null()
     }
   }
+  if rand.int(limit=4) == 0 {
+    let operator = ["$not", "$includes"][rand.int(limit=2)]
+    return Json::object(Map([(operator, random_json(rand, depth - 1))]))
+  }
   if rand.int(limit=2) == 0 {
     let members = Map([])
     for _ in 0..<rand.int(limit=4) {
-      members[["a", "b", "c", "pattern"][rand.int(limit=4)]] = random_json(
+      members[["a", "b", "c", "pattern", "$$a"][rand.int(limit=5)]] = random_json(
         rand,
         depth - 1,
       )
@@ -122,16 +152,34 @@ test "a json condition matches the bodies it matched before conditions were read
 }
 
 ///|
-/// `json` with members added to its objects, at any depth, and now and then
-/// a value changed.
+/// A body grown from the condition `json`: its value with members added to
+/// its objects, at any depth, and now and then a value changed. An operator
+/// gives a value that often meets it: an array that holds the value of
+/// `$includes` among others, and any value for `$not` and `$exists`, whose
+/// key is now and then left out. The key `$$a` gives the key `$a`.
 fn grown(json : Json, rand : @random.Rand) -> Json {
   if rand.int(limit=10) == 0 {
     return random_json(rand, 2)
   }
   match json {
+    Object(members) if members.length() == 1 &&
+      members.get("$includes") is Some(inner) => {
+      let items = Array::makei(rand.int(limit=3), _ => random_json(rand, 1))
+      items.insert(rand.int(limit=items.length() + 1), grown(inner, rand))
+      Json::array(items)
+    }
+    Object(members) if members.length() == 1 &&
+      (members.contains("$not") || members.contains("$exists")) =>
+      random_json(rand, 1)
     Object(members) => {
       let out = Map([])
       for key, value in members {
+        if value is Object(operator) &&
+          (operator.contains("$not") || operator.contains("$exists")) &&
+          rand.int(limit=2) == 0 {
+          continue
+        }
+        let key = if key.has_prefix("$$") { key[1:].to_owned() } else { key }
         out[key] = grown(value, rand)
       }
       if rand.int(limit=2) == 0 {

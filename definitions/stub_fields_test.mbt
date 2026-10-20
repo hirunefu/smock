@@ -81,8 +81,8 @@ test "a malformed query, header or body condition is a diagnostic at its JSON Po
       #|a.json: /stubs/1/request/headers/X-B: must be a string or an object
       #|a.json: /stubs/1/request/headers/a~1b: is not a valid header name
       #|a.json: /stubs/2/request/body: must be a string or an object
-      #|a.json: /stubs/3/request/body: needs "json" or "pattern"
-      #|a.json: /stubs/4/request/body: needs "json" or "pattern", not both
+      #|a.json: /stubs/3/request/body: needs "json", "pattern", "form" or "xml"
+      #|a.json: /stubs/4/request/body: has "json" and "pattern"; give only one of "json", "pattern", "form" or "xml"
       #|a.json: /stubs/5/request/body/exact: is not a known field
       #|a.json: /stubs/6/request/body: must be a string or an object
     ),
@@ -264,14 +264,17 @@ test "the snapshot holds each pattern compiled when the set is loaded, ready to 
     content=(
       #|{
       #|  meth: None,
-      #|  path: Some(Pattern(Pattern("/users/[0-9]+"))),
-      #|  query: <ReadOnlyArray: [("q", Pattern(Pattern("a|b")))]>,
-      #|  headers: <ReadOnlyArray: [("x-a", Pattern(Pattern("1+")))]>,
+      #|  path: Some(Has(Pattern(Pattern("/users/[0-9]+")))),
+      #|  query: <ReadOnlyArray: [("q", Has(Pattern(Pattern("a|b"))))]>,
+      #|  headers: <ReadOnlyArray: [("x-a", Has(Pattern(Pattern("1+"))))]>,
+      #|  cookies: <ReadOnlyArray: []>,
       #|  body: Some(Pattern(Pattern("(?s).*"))),
       #|}
     ),
   )
-  guard request.path is Some(Pattern(path)) else { fail("no path pattern") }
+  guard request.path is Some(Has(Pattern(path))) else {
+    fail("no path pattern")
+  }
   debug_inspect(
     [
       path.matches(b"/users/42"),

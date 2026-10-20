@@ -1,0 +1,19 @@
+mocks:
+  - name: users
+stubs:
+  - id: no-bearer
+    mock: users
+    request:
+      path: /users/1
+      headers:
+        Authorization: { $not: { pattern: "Bearer .*" } }
+        X-Debug: { $exists: false }
+        X-Tenant: { $exists: true }
+        X-Role: { $not: { $not: admin } }
+      query:
+        status: { $not: draft }
+        page: { $not: { $exists: false } }
+        $filter: name eq 'a'
+        $top: { $exists: true }
+    response:
+      status: 401

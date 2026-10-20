@@ -1,0 +1,27 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "login",
+      "mock": "users",
+      "request": {
+        "method": "POST",
+        "body": {
+          "form": {
+            "username": "alice"
+          },
+          "json": {
+            "username": "alice"
+          }
+        }
+      },
+      "response": {
+        "status": 204
+      }
+    }
+  ]
+}

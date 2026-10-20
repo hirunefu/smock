@@ -1,0 +1,24 @@
+mocks:
+  - name: users
+stubs:
+  - id: login
+    mock: users
+    request:
+      method: POST
+      path: /login
+      body:
+        form:
+          username: alice
+          password: { pattern: ".{8,}" }
+          remember: { $not: "1" }
+          coupon: { $exists: false }
+          $filter: { $exists: true }
+          "": ""
+    response:
+      status: 204
+  - id: any-form
+    mock: users
+    request:
+      body: { form: {} }
+    response:
+      status: 400

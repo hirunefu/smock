@@ -186,8 +186,8 @@ pub(all) struct Rendering {
   /// response is then the 500 a request would get.
   template_error : TemplateError?
   /// The conditions the sample fails, as in a Near miss, in the order
-  /// method, path, query parameters, headers, body. Empty when it meets
-  /// them all.
+  /// method, path, query parameters, headers, cookies, body, form fields
+  /// or XML paths. Empty when it meets them all.
   failed : Array[FailedCondition]
 } derive(Debug)
 

@@ -11,16 +11,17 @@ Mockoon environments, routes and rules onto Mocks and Stubs.
 
 ## Layout
 
-The repository is a MoonBit workspace (`moon.work`) of four modules:
+The repository is a MoonBit workspace (`moon.work`) of five modules:
 
 | Directory | Module | What it is |
 |---|---|---|
 | `.` | `smock/smock` | smock itself. Its parts are packages of this module. |
 | `http1/` | `smock/http1` | The HTTP/1.1 codec. |
 | `re2/` | `smock/re2` | RE2-syntax regular expressions. |
+| `xml/` | `smock/xml` | An XML parser that refuses DTDs, with simple paths that select values (documented in `xml/README.mbt.md`). |
 | `yaml/` | `smock/yaml` | Safe-subset YAML: `parse` turns a document into the tree `@json.parse` gives for the equivalent JSON (documented in `yaml/yaml.mbt`). |
 
-The three protocol modules do no I/O and do not depend on smock, so they can
+The four protocol modules do no I/O and do not depend on smock, so they can
 be published on mooncakes on their own. `scripts/check-no-io.sh` checks
 that.
 
@@ -192,7 +193,7 @@ exits with status 2. `smock serve --help` lists the settings:
 | `--journal` | `SMOCK_JOURNAL` | `on`: requests are recorded in the [Journal](#the-journal); `off` records none |
 | `--journal-max-entries` | `SMOCK_JOURNAL_MAX_ENTRIES` | 10000: beyond it, the oldest entries are evicted |
 | `--journal-max-bytes` | `SMOCK_JOURNAL_MAX_BYTES` | a quarter of smock's memory limit (cgroup v2 `memory.max`), at least 1048576 bytes (1 MiB) and at most 67108864 (64 MiB); 64 MiB without a limit ([The Journal](#the-journal)): beyond it, the oldest entries are evicted |
-| `--journal-body-limit` | `SMOCK_JOURNAL_BODY_LIMIT` | 4096 bytes (4 KiB): the most of a request body an entry keeps |
+| `--journal-body-limit` | `SMOCK_JOURNAL_BODY_LIMIT` | 4096 bytes (4 KiB): the most of a request body an entry keeps, and of the form and XML values its Near miss keeps, in total |
 
 A request over a limit gets its status with `Connection: close`, then the
 connection closes; a timeout closes the connection without a response.
@@ -494,30 +495,34 @@ returns for a sample request before a test relies on it. The sample is JSON,
 `{method, path, query, headers, body, session}`, every member optional
 (`GET /` without query, headers, body or Session); the path and the query
 values are given percent-decoded, as Stub conditions compare them, and a
-repeated parameter or header takes an array of values. smock reads the
-directory as `smock serve` does, body files included, and prints the
-rendering as JSON, the same as the Admin render operation's result without
-its `warnings`: the Stub's status, headers and body (`utf-8` text, or
-`base64`) or its Server-Sent Events, and the conditions the sample fails,
-with expected and actual values as in a Near miss (empty when it meets them
-all). The Stub is rendered even when the sample fails them, and a
-[templated](docs/definition-files.md#templates) response is rendered for
-the sample. `--time` (RFC 3339) and `--seed` fix the clock and the random
-source of the rendering; without a seed, it uses the Stub's `fault.seed`,
-or a fresh one. The rendering shows the `time` and the `seed` it used, so
-it can be repeated exactly, and a template that fails for the sample shows
-the 500 a request would get and its `templateError`. An invalid definitions directory
-prints the messages `smock check` prints, and it, an unknown Stub ID and a
-sample that cannot be read or is not valid exit with status 1, with the
-problem on stderr.
+repeated parameter or header takes an array of values. Cookies come from
+`headers.Cookie`, as a request's come from its `Cookie` fields, and form
+fields from the body, read as a form when `headers.Content-Type` says it is
+one. smock reads the directory as `smock serve` does, body files included,
+and prints the rendering as JSON, the same as the Admin render operation's
+result without its `warnings`: the Stub's status, headers and body (`utf-8`
+text, or `base64`) or its Server-Sent Events, and the conditions the sample
+fails, with expected and actual values as in a Near miss (empty when it
+meets them all). The Stub is rendered even when the sample fails them, and a
+[templated](docs/definition-files.md#templates) response is rendered for the
+sample. `--time` (RFC 3339) and `--seed` fix the clock and the random source
+of the rendering; without a seed, it uses the Stub's `fault.seed`, or a
+fresh one. The rendering shows the `time` and the `seed` it used, so it can
+be repeated exactly, and a template that fails for the sample shows the 500
+a request would get and its `templateError`. An invalid definitions
+directory prints the messages `smock check` prints, and it, an unknown Stub
+ID and a sample that cannot be read or is not valid exit with status 1, with
+the problem on stderr.
 
 [docs/definition-files.md](docs/definition-files.md) describes the format:
-how Stubs match requests (method, path, query parameters, headers and
-body, exactly, by RE2 pattern or as JSON), the order they are tried in (priority, then
-file-name order), what a Mock answers when nothing matches, responses with
-inline bodies, body files, JSON or Server-Sent Events, response templates,
-Faults, the JSON Schema, editor support and writing Definition files in
-another configuration language.
+how Stubs match requests (method, path, query parameters, headers, cookies
+and body, exactly, by RE2 pattern, as JSON, by form field or by paths into
+XML, negated or by presence with `$not` and `$exists`, and by array element
+with `$includes`), the order they are tried in (priority, then file-name
+order), what a Mock answers when nothing matches, responses with inline
+bodies, body files, JSON or Server-Sent Events, response templates, Faults,
+the JSON Schema, editor support and writing Definition files in another
+configuration language.
 [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) turns a
 Mockoon environment into Definition files.
 
@@ -658,9 +663,10 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   Server-Sent Events is recorded when its last event is written, and a
   request ended by a connection Fault when the connection closes.
 - The filter takes a Mock, a method, a path and headers, with the
-  semantics of Stub conditions (exact or `{ "pattern": … }`), and a time
-  range on when the request was received: `since` (included) and `until`
-  (excluded), as RFC 3339 date-times. Every member is optional. Entries
+  semantics of Stub conditions (exact, `{ "pattern": … }`, and `$not` and
+  `$exists` for headers), and a time range on when the request was
+  received: `since` (included) and `until` (excluded), as RFC 3339
+  date-times. Every member is optional. Entries
   come oldest first, at most `limit` of them (100 by default, at most
   10000); `more` says whether more passed the filter.
 - Each entry has a sequence number, `seq`: 1 for the first entry the
@@ -671,13 +677,15 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
 - The Journal is one ring buffer per process, bounded by entry count and by
   bytes (`--journal-max-entries`, `--journal-max-bytes`), and keeps at most
   4 KiB of each body (`--journal-body-limit`), cut at a character boundary
-  when the body is UTF-8. When it is full, the oldest entries are evicted,
-  and smock counts the evicted entries of each Session: `evicted` in the
-  query's result says how many of the calling Session's entries may be
-  missing. Requests without a Session have their own count. A Session's
-  count is kept until that Session, or everything, is reset (a reset of
-  one Mock keeps it), so the counts grow with the number of Sessions whose
-  entries were evicted.
+  when the body is UTF-8. The Near miss of an entry keeps the values of
+  form fields and XML paths up to the same limit in total, each counting
+  32 bytes more, so that many small values cannot outgrow the bound. When
+  the Journal is full, the oldest entries are evicted, and smock counts
+  the evicted entries of each Session: `evicted` in the query's result
+  says how many of the calling Session's entries may be missing. Requests
+  without a Session have their own count. A Session's count is kept until
+  that Session, or everything, is reset (a reset of one Mock keeps it), so
+  the counts grow with the number of Sessions whose entries were evicted.
 - `--journal off` records nothing, and a Mock with `"journal": false`
   ([docs/definition-files.md](docs/definition-files.md#turning-the-journal-off-for-a-mock))
   records none of its requests, so that a high-rate load test pays nothing

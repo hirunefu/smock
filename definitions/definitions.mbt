@@ -257,26 +257,119 @@ pub struct Conditions {
   /// The path: the percent-decoded path of the request, without its query,
   /// meets it.
   path : ValueCondition?
-  /// Query parameters as (name, condition): each must be present, and one
-  /// of its decoded values must meet the condition.
+  /// Query parameters as (name, condition): each condition must hold for
+  /// the decoded values of the parameter with that name, as
+  /// `ValueCondition::holds` says.
   query : ReadOnlyArray[(String, ValueCondition)]
-  /// Headers as (name in lower case, condition): each must be present, and
-  /// one of its values must meet the condition. Names are compared
-  /// case-insensitively.
+  /// Headers as (name in lower case, condition): each condition must hold
+  /// for the values of the header with that name, as
+  /// `ValueCondition::holds` says. Names are compared case-insensitively.
   headers : ReadOnlyArray[(String, ValueCondition)]
-  /// The body.
+  /// Cookies as (name, condition): each condition must hold for the values
+  /// of the cookies with that name, from every `Cookie` field, as
+  /// `ValueCondition::holds` says. Names are compared exactly, case and
+  /// all, and values as sent.
+  cookies : ReadOnlyArray[(String, ValueCondition)]
+  /// The body: its text, a pattern, a `json` condition, conditions on the
+  /// fields of a form, or conditions on the values at paths into it as
+  /// XML.
   body : BodyCondition?
 } derive(Debug, Eq)
 
 ///|
 /// A condition on a value of a request, such as its path or a header
-/// value.
+/// value, as the Stub writes it, operators included.
+///
+/// A query parameter, a header or a cookie is a name that the request
+/// carries any number of values under. An exact value or a pattern holds
+/// when one of the values meets it, so it fails when the name is absent; an
+/// operator is about the name as a whole. The path is a name with exactly
+/// one value.
 pub enum ValueCondition {
+  /// An exact value or a pattern: one of the name's values passes the
+  /// test.
+  Has(ValueTest)
+  /// `$not`: the condition does not hold. With an exact value or a pattern
+  /// inside, no value of the name meets it, or the name is absent.
+  Not(ValueCondition)
+  /// `$exists`: the name is present, with any value, when true, and absent
+  /// when false.
+  Exists(Bool)
+} derive(Debug, Eq)
+
+///|
+/// The test that each value of a name is given for a value condition, as
+/// `ValueCondition::value_test` gives it.
+pub enum ValueTest {
   /// The value is exactly this text.
   Exact(String)
   /// The pattern matches the whole value.
   Pattern(Pattern)
+  /// Every value passes, so that a name has a value that passes it exactly
+  /// when the name is present: the test of `$exists`. A Stub writes
+  /// `$exists: true` as `Exists(true)`, not as a condition that has this
+  /// test.
+  Any
 } derive(Debug, Eq)
+
+///|
+/// Whether `value` passes the test.
+pub fn ValueTest::meets(self : ValueTest, value : String) -> Bool {
+  match self {
+    Exact(exact) => value == exact
+    Pattern(pattern) => pattern.matches(@utf8.encode(value))
+    Any => true
+  }
+}
+
+///|
+/// Whether `value`, the one value of a name such as the path, meets the
+/// condition: it is exactly the given text, or the pattern matches the
+/// whole of it; an operator holds as `holds` says for a name with this one
+/// value.
+pub fn ValueCondition::meets(self : ValueCondition, value : String) -> Bool {
+  match self {
+    Has(wanted) => wanted.meets(value)
+    Not(inner) => !inner.meets(value)
+    Exists(present) => present
+  }
+}
+
+///|
+/// The test that each value of a name is given for the condition: the
+/// exact value or the pattern inside its operators, or, for `$exists`, the
+/// test that every value passes.
+///
+/// Whether a name holds the condition depends only on whether one of its
+/// values passes this test, which `holds` turns into the outcome. So a
+/// matcher, whatever the operators, scans the values of a name once, stops
+/// at the first that passes, and gives `holds` the result. The test is
+/// part of the condition, so getting it allocates nothing.
+pub fn ValueCondition::value_test(self : ValueCondition) -> ValueTest {
+  match self {
+    Has(wanted) => wanted
+    Not(inner) => inner.value_test()
+    Exists(_) => Any
+  }
+}
+
+///|
+/// Whether the condition holds for a name, given whether one of the name's
+/// values passes `value_test`, `found`:
+///
+/// - an exact value or a pattern holds when one does, so it fails when the
+///   name is absent;
+/// - `$not` holds when its condition does not: with an exact value or a
+///   pattern inside, when none does, or the name is absent;
+/// - `$exists` holds when the name is present, with any value, or absent,
+///   as it says.
+pub fn ValueCondition::holds(self : ValueCondition, found~ : Bool) -> Bool {
+  match self {
+    Has(_) => found
+    Not(inner) => !inner.holds(found~)
+    Exists(present) => found == present
+  }
+}
 
 ///|
 /// A pattern condition: an RE2 pattern, in the subset the RE2 module
@@ -318,14 +411,28 @@ pub enum BodyCondition {
   Pattern(Pattern)
   /// The body parses as JSON and contains the condition's value.
   Json(JsonCondition)
+  /// A `form` condition, as (name, condition): the body is a form, as the
+  /// request's Content-Type says, and each condition holds for the decoded
+  /// values of the field with that name, as `ValueCondition::holds` says.
+  /// A body that is not a form fails the condition, even one with no
+  /// field, and every one of them, operators included.
+  Form(ReadOnlyArray[(String, ValueCondition)])
+  /// An `xml` condition, as (path, condition): the body parses as XML, and
+  /// each condition holds for the values of the nodes its path selects, as
+  /// `ValueCondition::holds` says, a path that selects nothing being a name
+  /// that is absent. A body that does not parse fails the condition, even
+  /// one with no path, and every one of them, operators included.
+  Xml(ReadOnlyArray[(@xml.Path, ValueCondition)])
 } derive(Debug, Eq)
 
 ///|
 /// A `json` condition on the request body: a JSON value the body must
 /// contain, in which an object whose only member is `pattern`, with a
-/// string, is a pattern. `File::read_json_condition` reads one. The value
-/// is the condition's own copy, which nothing outside can change, so the
-/// snapshot stays as it was loaded.
+/// string, is a pattern, an object whose only key is `$not`, `$exists` or
+/// `$includes` is an operator, and a key `$$name` is the key `$name`.
+/// `File::read_json_condition` reads one. The value is the condition's own
+/// copy, as written, which nothing outside can change, so the snapshot
+/// stays as it was loaded.
 pub struct JsonCondition {
   priv value : Json
   /// The value, read into arrays, so that matching it walks no map.
@@ -333,9 +440,10 @@ pub struct JsonCondition {
 }
 
 ///|
-/// A JSON value as a condition expects it: an object as its keys and the
-/// values expected under them, in order; an array as the values expected
-/// in it; a pattern object as its pattern; any other value as itself.
+/// A JSON value as a condition expects it: an object as its keys, `$$name`
+/// read as `$name`, and the values expected under them, in order; an array
+/// as the values expected in it; a pattern object as its pattern; an
+/// operator object as its operator; any other value as itself.
 priv enum Expected {
   Object(FixedArray[String], FixedArray[Expected])
   Array(FixedArray[Expected])
@@ -343,6 +451,15 @@ priv enum Expected {
   /// string.
   Pattern(Pattern)
   Scalar(Json)
+  /// `$not`: the value does not meet the condition. A missing key meets it
+  /// when it does not meet the condition inside, as `missing_meets` says.
+  Not(Expected)
+  /// `$exists`: the value is present, whatever it is, when true, and
+  /// missing when false.
+  Exists(Bool)
+  /// `$includes`: the value is an array with an element that meets the
+  /// condition.
+  Includes(Expected)
 }
 
 ///|
@@ -352,6 +469,13 @@ priv enum Expected {
 /// contains the listed one; an array has the same length, and each element
 /// contains the listed one; any other value is equal, numbers by their
 /// value (see `same_number`).
+///
+/// An operator is about the value in its place: `$not` holds when the
+/// value does not contain its condition, `$exists` when the value is
+/// present or missing, as it says, and `$includes` when the value is an
+/// array with an element that contains its condition. A missing key meets
+/// only `$exists: false` and `$not` of a condition that it does not meet,
+/// and `actual` itself is always present.
 pub fn JsonCondition::matches(self : JsonCondition, actual : Json) -> Bool {
   contains(actual, self.expected)
 }
@@ -361,11 +485,25 @@ fn contains(actual : Json, expected : Expected) -> Bool {
   match (expected, actual) {
     (Object(keys, values), Object(actual)) => {
       for i in 0..<keys.length() {
-        guard actual.get(keys[i]) is Some(value) && contains(value, values[i]) else {
+        let met = match actual.get(keys[i]) {
+          Some(value) => contains(value, values[i])
+          None => missing_meets(values[i])
+        }
+        if !met {
           return false
         }
       }
       true
+    }
+    (Not(inner), _) => !contains(actual, inner)
+    (Exists(present), _) => present
+    (Includes(inner), Array(actual)) => {
+      for i in 0..<actual.length() {
+        if contains(actual[i], inner) {
+          return true
+        }
+      }
+      false
     }
     (Array(expected), Array(actual)) => {
       if expected.length() != actual.length() {
@@ -391,6 +529,18 @@ fn contains(actual : Json, expected : Expected) -> Bool {
     (Pattern(pattern), True) => pattern.matches(b"true")
     (Pattern(pattern), False) => pattern.matches(b"false")
     (Scalar(True), True) | (Scalar(False), False) | (Scalar(Null), Null) => true
+    _ => false
+  }
+}
+
+///|
+/// Whether a missing key meets `expected`: only an operator can, as
+/// `$exists: false` or `$not` of a condition that a missing key does not
+/// meet.
+fn missing_meets(expected : Expected) -> Bool {
+  match expected {
+    Not(inner) => !missing_meets(inner)
+    Exists(present) => !present
     _ => false
   }
 }
@@ -528,9 +678,10 @@ pub impl ToJson for JsonCondition with fn to_json(self) {
 
 ///|
 /// Conditions are equal when their values are, with numbers compared as
-/// matching compares them. Patterns are compared as written: whether an
-/// object is a pattern object depends only on its members, so equal values
-/// hold the same patterns in the same places.
+/// matching compares them. Patterns and operators are compared as written:
+/// whether an object is a pattern object or an operator object depends
+/// only on its members, so equal values hold the same patterns and
+/// operators in the same places.
 pub impl Eq for JsonCondition with fn equal(self, other) {
   same_value(self.value, other.value)
 }

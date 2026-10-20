@@ -1,0 +1,16 @@
+mocks:
+  - name: users
+stubs:
+  - id: get-user
+    mock: users
+    request:
+      method: POST
+      path: /soap
+      body:
+        xml:
+          /Envelope/Body/GetUser/id: "42"
+          /Envelope/Body/GetUser/@lang: { pattern: "en|ja" }
+          /Envelope/Header/Trace: { $exists: false }
+          /Envelope/Body/GetUser/role: { $not: admin }
+    response:
+      status: 200

@@ -1357,7 +1357,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":1,"session":null,"host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"nearMiss":{"stub":"get-user","stubSource":"file","failed":[{"condition":"cookie:id","expected":"1","actual":[]}]},"status":404,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":1,"session":null,"host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"nearMiss":{"stub":"get-user","stubSource":"file","failed":[{"condition":"trailer:x-id","expected":"1","actual":[]}]},"status":404,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
         ),
       },
     ),

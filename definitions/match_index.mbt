@@ -42,7 +42,7 @@ fn MatchIndex::new(stubs : ReadOnlyArray[Stub]) -> MatchIndex {
   }
   for position, stub in stubs {
     match (stub.request.path, stub.request.meth) {
-      (Some(Exact(path)), meth) => {
+      (Some(Has(Exact(path))), meth) => {
         let stubs = match index.by_path.get(path) {
           Some(stubs) => stubs
           None => {

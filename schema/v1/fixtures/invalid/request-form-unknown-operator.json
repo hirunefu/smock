@@ -1,0 +1,26 @@
+{
+  "mocks": [
+    {
+      "name": "users"
+    }
+  ],
+  "stubs": [
+    {
+      "id": "login",
+      "mock": "users",
+      "request": {
+        "method": "POST",
+        "body": {
+          "form": {
+            "remember": {
+              "$nto": "1"
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 204
+      }
+    }
+  ]
+}

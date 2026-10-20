@@ -16,10 +16,13 @@ pub struct JournalSettings {
   /// The most bytes its entries take, as each entry counts them: 256 for
   /// its fixed fields, two for each UTF-16 code unit of the text it holds
   /// (the request line, the header fields, the Session, Host, Mock and
-  /// Stub names, the Scenario move and the Near miss), and the bytes of
-  /// its truncated body.
+  /// Stub names, the Scenario move and the Near miss), 32 for each value
+  /// its Near miss keeps from a form or an XML body, and the bytes of its
+  /// truncated body.
   max_bytes : Int
-  /// The most bytes of a request body an entry keeps.
+  /// The most bytes of a request body an entry keeps, and of the values its
+  /// Near miss keeps from a form or an XML body, in total, each value
+  /// counting 32 bytes more.
   body_limit : Int
 } derive(Debug)
 
@@ -148,21 +151,13 @@ fn Journal::entry(
 ) -> JournalEntry {
   // An entry is made for every request, so it is built with plain matches,
   // which allocate no closures or tuples.
-  let body = truncate(request.body, self.settings.body_limit)
-  // The body's value in the Near miss is truncated like the body, so that
-  // no entry holds a whole body.
+  let limit = self.settings.body_limit
+  let body = truncate(request.body, limit)
   let truncated = body.length() < request.body.length()
+  // The Near miss is rebuilt only when it holds something to cut.
   let near_miss = match near_miss {
-    Some(near_miss) if truncated =>
-      Some({
-        ..near_miss,
-        failed: near_miss.failed.map(failed => {
-          match failed.condition {
-            Body => { ..failed, actual: [@utf8.decode_lossy(body)], }
-            _ => failed
-          }
-        }),
-      })
+    Some(near_miss) if near_miss.needs_cut(truncated~, limit~) =>
+      Some(near_miss.cut(body, truncated~, limit~))
     _ => near_miss
   }
   let mock = match resolution {
@@ -198,11 +193,15 @@ fn Journal::entry(
   if scenario is Some(moved) {
     text += moved.name.length() + moved.from.length() + moved.to.length()
   }
+  let mut values = 0
   if near_miss is Some(near_miss) {
     text += near_miss.stub.length()
     for failed in near_miss.failed {
       for value in failed.actual {
         text += value.length()
+      }
+      if failed.condition is (Form(_) | Xml(_)) {
+        values += failed.actual.length()
       }
       // A Scenario condition also shows the Scenario and the state the
       // Stub requires; the state it is in is its actual value.
@@ -234,8 +233,124 @@ fn Journal::entry(
     status,
     fault: plan.fault,
     template_error,
-    size: 256 + 2 * text + body.length(),
+    size: 256 + 2 * text + body.length() + value_overhead * values,
   }
+}
+
+///|
+/// What each value taken from a form or an XML body costs an entry, besides
+/// its text: towards the values it keeps, and towards the Journal's byte
+/// bound. So even empty values add up.
+let value_overhead : Int = 32
+
+///|
+/// How many bytes an entry keeps of a value taken from a form or an XML
+/// body, `length` bytes of UTF-8, after values whose cost so far is `kept`,
+/// with the body limit `limit`: all of them while they fit, as many as are
+/// left when they do not, or -1, to leave the value out, once the values
+/// have taken the whole limit. Each value kept costs its bytes and
+/// `value_overhead` more. `needs_cut` and `cut` both follow this rule.
+fn value_room(length : Int, kept~ : Int, limit~ : Int) -> Int {
+  if kept >= limit {
+    -1
+  } else if length > limit - kept {
+    limit - kept
+  } else {
+    length
+  }
+}
+
+///|
+/// Whether the Near miss holds something that an entry with the body limit
+/// `limit` cuts, as `cut` says. `truncated` says whether the body is cut.
+fn NearMiss::needs_cut(
+  self : NearMiss,
+  truncated~ : Bool,
+  limit~ : Int,
+) -> Bool {
+  let mut kept = 0
+  for i in 0..<self.failed.length() {
+    let failed = self.failed[i]
+    match failed.condition {
+      Body => if truncated { return true }
+      Form(_) | Xml(_) =>
+        for j in 0..<failed.actual.length() {
+          let length = utf8_length(failed.actual[j])
+          if value_room(length, kept~, limit~) != length {
+            return true
+          }
+          kept += length + value_overhead
+        }
+      _ => ()
+    }
+  }
+  false
+}
+
+///|
+/// The Near miss as an entry with the body limit `limit` keeps it: the
+/// body's value is `body`, the body cut to the limit, when `truncated`; the
+/// values taken from a form or an XML body are kept in order as
+/// `value_room` says, the last one kept cut to what is left, and the others
+/// are left out.
+fn NearMiss::cut(
+  self : NearMiss,
+  body : Bytes,
+  truncated~ : Bool,
+  limit~ : Int,
+) -> NearMiss {
+  let failed = []
+  let mut kept = 0
+  for i in 0..<self.failed.length() {
+    let failed_condition = self.failed[i]
+    match failed_condition.condition {
+      Body if truncated =>
+        failed.push({ ..failed_condition, actual: [@utf8.decode_lossy(body)], })
+      Form(_) | Xml(_) => {
+        let actual = []
+        for j in 0..<failed_condition.actual.length() {
+          let value = failed_condition.actual[j]
+          let room = value_room(utf8_length(value), kept~, limit~)
+          if room < 0 {
+            break
+          }
+          let value = truncate_text(value, room)
+          actual.push(value)
+          kept += utf8_length(value) + value_overhead
+        }
+        failed.push({ ..failed_condition, actual, })
+      }
+      _ => failed.push(failed_condition)
+    }
+  }
+  { ..self, failed, }
+}
+
+///|
+/// The length of `text` in UTF-8, in bytes. A surrogate that is not part of
+/// a pair counts as U+FFFD does.
+fn utf8_length(text : String) -> Int {
+  let mut length = 0
+  let mut i = 0
+  while i < text.length() {
+    let c = text[i].to_int()
+    if c < 0x80 {
+      length += 1
+    } else if c < 0x800 {
+      length += 2
+    } else if c >= 0xD800 &&
+      c <= 0xDBFF &&
+      i + 1 < text.length() &&
+      text[i + 1].to_int() >= 0xDC00 &&
+      text[i + 1].to_int() <= 0xDFFF {
+      length += 4
+      i += 1
+    } else {
+      length += 3
+    }
+    i += 1
+  }
+  length
 }
 
 ///|
@@ -244,6 +359,21 @@ fn text_length(name : String?) -> Int {
   match name {
     Some(name) => name.length()
     None => 0
+  }
+}
+
+///|
+/// `text` cut to at most `limit` bytes of UTF-8, as `truncate` cuts a body.
+fn truncate_text(text : String, limit : Int) -> String {
+  // A UTF-16 code unit takes at most three bytes of UTF-8.
+  if text.length() <= limit / 3 {
+    return text
+  }
+  let bytes = @utf8.encode(text)
+  if bytes.length() <= limit {
+    text
+  } else {
+    @utf8.decode_lossy(truncate(bytes, limit))
   }
 }
 

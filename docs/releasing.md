@@ -95,12 +95,24 @@ Work through these steps in order:
 ## Every release after
 
 Check that CI is green on `main` and that `moon.mod` gives the new
-version. When `.moonbit-version` or the imports in `moon.mod` changed
-since the last release, check that [NOTICE](../NOTICE) still names what
-the binary holds, with the right versions. The release workflow fails
-when NOTICE does not name the toolchain or a module of `moon.mod` with its
-version; the runtime, mimalloc and simdutf come with the toolchain and are
-checked by hand. Then push the tag
-`v<version>`. A pre-release tag, such as `v<version>-rc.1`, tries the
-publishing path first. The packages stay public, so nothing else needs
-doing in their settings.
+version.
+
+In [CHANGELOG.md](../CHANGELOG.md), move the entries under
+`## [Unreleased]` to a new section `## [<version>] - <date>` below it,
+leave `## [Unreleased]` empty, and update the links at the end. The
+release notes include that section under "Changes".
+`scripts/release-notes.sh` fails the release workflow, before anything is
+built, when a tag that is not a pre-release has no section of its own. A
+pre-release tag, such as `v<version>-rc.1`, takes its own section if there
+is one, else the section of `<version>`, else `Unreleased`.
+
+When `.moonbit-version` or the imports in `moon.mod` changed since the
+last release, check that [NOTICE](../NOTICE) still names what the binary
+holds, with the right versions. The release workflow fails when NOTICE
+does not name the toolchain or a module of `moon.mod` with its version;
+the runtime, mimalloc and simdutf come with the toolchain and are checked
+by hand.
+
+Then push the tag `v<version>`. A pre-release tag, such as
+`v<version>-rc.1`, tries the publishing path first. The packages stay
+public, so nothing else needs doing in their settings.

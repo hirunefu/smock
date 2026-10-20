@@ -714,6 +714,7 @@ fn no_conditions() -> Conditions {
     path: None,
     query: ReadOnlyArray::from_array([]),
     headers: ReadOnlyArray::from_array([]),
+    cookies: ReadOnlyArray::from_array([]),
     body: None,
   }
 }
@@ -745,6 +746,7 @@ fn File::read_conditions(
   let mut path = None
   let mut query = []
   let mut headers = []
+  let mut cookies = []
   let mut body = None
   for key, value in request {
     let field = child_pointer(pointer, key)
@@ -757,12 +759,12 @@ fn File::read_conditions(
       "path" =>
         match value {
           String(value) if value.has_prefix("/") =>
-            path = Some(ValueCondition::Exact(value))
+            path = Some(ValueCondition::Has(Exact(value)))
           String(_) => self.error(field, "must start with /")
           Object(condition) =>
             path = self
               .read_pattern(field, condition)
-              .map(pattern => ValueCondition::Pattern(pattern))
+              .map(pattern => ValueCondition::Has(Pattern(pattern)))
           _ => self.error(field, "must be a string or an object")
         }
       "query" => query = self.read_value_conditions(field, value)
@@ -770,6 +772,7 @@ fn File::read_conditions(
         headers = self
           .read_value_conditions(field, value, header_names=true)
           .map(header => (header.0.to_lower(), header.1))
+      "cookies" => cookies = self.read_value_conditions(field, value)
       "body" => body = self.read_body_condition(field, value)
       _ => self.unknown_field(field)
     }
@@ -779,13 +782,15 @@ fn File::read_conditions(
     path,
     query: ReadOnlyArray::from_array(query),
     headers: ReadOnlyArray::from_array(headers),
+    cookies: ReadOnlyArray::from_array(cookies),
     body,
   }
 }
 
 ///|
 /// Reads a condition on the request body: an exact text, or an object
-/// holding a `json` condition or a pattern.
+/// holding one of the kinds `body_kinds` lists: a `json` condition, a
+/// pattern, a `form` condition or an `xml` condition.
 fn File::read_body_condition(
   self : File,
   pointer : String,
@@ -812,22 +817,78 @@ fn File::read_body_condition(
           self.compile(field, source) is Some(pattern) {
           out = Some(BodyCondition::Pattern(pattern))
         }
+      "form" =>
+        out = Some(
+          BodyCondition::Form(
+            ReadOnlyArray::from_array(self.read_value_conditions(field, value)),
+          ),
+        )
+      "xml" =>
+        out = self
+          .read_xml_conditions(field, value)
+          .map(conditions => BodyCondition::Xml(conditions))
       _ => self.unknown_field(field)
     }
   }
-  match (condition.contains("json"), condition.contains("pattern")) {
-    (true, true) =>
-      self.error(pointer, "needs \"json\" or \"pattern\", not both")
-    (false, false) => self.error(pointer, "needs \"json\" or \"pattern\"")
-    _ => ()
+  let given = body_kinds.filter(kind => condition.contains(kind))
+  match given.length() {
+    0 => self.error(pointer, "needs \{listed_body_kinds}")
+    1 => ()
+    _ =>
+      self.error(
+        pointer,
+        "has \{quoted_list(given, "and")}; give only one of \{listed_body_kinds}",
+      )
   }
   out
 }
 
 ///|
-/// Reads a `json` condition, the value at `pointer`, and compiles each
-/// pattern in it. It has none when a pattern does not compile, and each one
-/// that does not is reported.
+/// The kinds of body condition an object may hold, exactly one of them.
+let body_kinds : Array[String] = ["json", "pattern", "form", "xml"]
+
+///|
+/// The kinds of body condition, as messages list them.
+let listed_body_kinds : String = quoted_list(body_kinds, "or")
+
+///|
+/// Reads an `xml` condition, the object at `pointer`: paths into an XML
+/// body, each compiled, and their value conditions. It has none when a path
+/// does not compile or a condition is malformed, and each problem is
+/// reported.
+fn File::read_xml_conditions(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> ReadOnlyArray[(@xml.Path, ValueCondition)]? {
+  guard json is Object(members) else {
+    self.error(pointer, "must be an object")
+    return None
+  }
+  let out = []
+  for source, value in members {
+    let field = child_pointer(pointer, source)
+    let path = try @xml.compile_path(source) catch {
+      error => {
+        self.error(field, "is not a valid XML path: \{error}")
+        None
+      }
+    } noraise {
+      path => Some(path)
+    }
+    if self.read_value_condition(field, value) is Some(condition) &&
+      path is Some(path) {
+      out.push((path, condition))
+    }
+  }
+  guard out.length() == members.length() else { return None }
+  Some(ReadOnlyArray::from_array(out))
+}
+
+///|
+/// Reads a `json` condition, the value at `pointer`, with its operators,
+/// and compiles each pattern in it. It has none when it is malformed, and
+/// each problem is reported.
 fn File::read_json_condition(
   self : File,
   pointer : String,
@@ -841,8 +902,10 @@ fn File::read_json_condition(
 ///|
 /// Reads `json`, the value at `pointer` in a `json` condition, as matching
 /// expects it. An object whose only member is `pattern`, with a string, is
-/// a pattern object, and its pattern is compiled. It has none when a
-/// pattern in it does not compile, and each one that does not is reported.
+/// a pattern object, and its pattern is compiled. An object with a key that
+/// starts with `$` but not with `$$` is an operator object; a key that
+/// starts with `$$` writes the literal key without its first `$`. It has
+/// none when it is malformed, and each problem is reported.
 fn File::read_json_condition_value(
   self : File,
   pointer : String,
@@ -855,12 +918,15 @@ fn File::read_json_condition_value(
           .compile(child_pointer(pointer, "pattern"), source)
           .map(pattern => Expected::Pattern(pattern))
       }
+      if operator_key(members) is Some(_) {
+        return self.read_json_operator(pointer, members)
+      }
       let keys = []
       let values = []
       for key, value in members {
         if self.read_json_condition_value(child_pointer(pointer, key), value)
           is Some(expected) {
-          keys.push(key)
+          keys.push(if key.has_prefix("$$") { key[1:].to_owned() } else { key })
           values.push(expected)
         }
       }
@@ -886,9 +952,36 @@ fn File::read_json_condition_value(
 }
 
 ///|
+/// Reads `members`, the operator object at `pointer` in a `json` condition,
+/// with its operand read as a value of a `json` condition in turn. It has
+/// none when it is malformed.
+fn File::read_json_operator(
+  self : File,
+  pointer : String,
+  members : Map[String, Json],
+) -> Expected? {
+  guard self.read_operator(pointer, members, InJson) is Some((key, operand)) else {
+    return None
+  }
+  let at = child_pointer(pointer, key)
+  match key {
+    "$not" =>
+      self
+      .read_json_condition_value(at, operand)
+      .map(expected => Expected::Not(expected))
+    "$includes" =>
+      self
+      .read_json_condition_value(at, operand)
+      .map(expected => Expected::Includes(expected))
+    _ => self.read_exists(at, operand).map(present => Exists(present))
+  }
+}
+
+///|
 /// Reads conditions on named values, such as query parameters: an object
-/// whose members are names and exact values or pattern conditions. With
-/// `header_names`, each name must be a valid header name.
+/// whose members are names and value conditions. Names are literal, even
+/// when they start with `$`. With `header_names`, each name must be a valid
+/// header name.
 fn File::read_value_conditions(
   self : File,
   pointer : String,
@@ -906,16 +999,181 @@ fn File::read_value_conditions(
       self.error(field, "is not a valid header name")
       continue
     }
-    match value {
-      String(value) => out.push((name, ValueCondition::Exact(value)))
-      Object(condition) =>
-        if self.read_pattern(field, condition) is Some(pattern) {
-          out.push((name, ValueCondition::Pattern(pattern)))
-        }
-      _ => self.error(field, "must be a string or an object")
+    if self.read_value_condition(field, value) is Some(condition) {
+      out.push((name, condition))
     }
   }
   out
+}
+
+///|
+/// Reads a value condition, the value at `pointer`: an exact value, a
+/// pattern condition, or an operator object, whose operand is read in
+/// turn. It has none when it is malformed.
+fn File::read_value_condition(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> ValueCondition? {
+  let members = match json {
+    String(value) => return Some(Has(Exact(value)))
+    Object(members) => members
+    _ => {
+      self.error(pointer, "must be a string or an object")
+      return None
+    }
+  }
+  guard operator_key(members) is Some(_) else {
+    return self
+      .read_pattern(pointer, members)
+      .map(pattern => Has(Pattern(pattern)))
+  }
+  guard self.read_operator(pointer, members, InValue) is Some((key, operand)) else {
+    return None
+  }
+  let at = child_pointer(pointer, key)
+  match key {
+    "$not" =>
+      self
+      .read_value_condition(at, operand)
+      .map(condition => ValueCondition::Not(condition))
+    _ => self.read_exists(at, operand).map(present => Exists(present))
+  }
+}
+
+///|
+/// Where an operator object is, which decides the operators it may use and
+/// how its unknown keys are reported.
+priv enum OperatorPosition {
+  /// A value inside a `json` condition, where `$$name` writes a literal
+  /// key that starts with `$`.
+  InJson
+  /// The value of a query parameter, a header, a cookie, a form field or
+  /// an XML path. Names are literal there, so `$$` has no meaning.
+  InValue
+}
+
+///|
+/// The operators allowed in the position, in the order messages list them.
+fn OperatorPosition::operators(self : OperatorPosition) -> Array[String] {
+  match self {
+    InJson => json_operators
+    InValue => value_operators
+  }
+}
+
+///|
+/// The operators of a value condition outside `json`, in the order
+/// messages list them.
+let value_operators : Array[String] = ["$not", "$exists"]
+
+///|
+/// The operators of a value in a `json` condition, in the order messages
+/// list them. One of them where it is not allowed is reported as allowed
+/// only in a `json` condition, not as unknown.
+let json_operators : Array[String] = ["$not", "$exists", "$includes"]
+
+///|
+/// The key of `members`, an object in a value position, that makes it an
+/// operator object, if any: the first key that starts with `$` but not with
+/// `$$`, which writes a literal key that starts with `$` in a `json`
+/// condition.
+fn operator_key(members : Map[String, Json]) -> String? {
+  for key, _ in members {
+    if is_operator_like(key) {
+      return Some(key)
+    }
+  }
+  None
+}
+
+///|
+/// Whether `key`, in an object in a value position, is reserved for
+/// operators: it starts with `$` but not with `$$`.
+fn is_operator_like(key : String) -> Bool {
+  key.has_prefix("$") && !key.has_prefix("$$")
+}
+
+///|
+/// Reads `members`, an operator object at `pointer` in `position`, and
+/// returns its operator and the operator's operand. An operator is the only
+/// key of its object, and it is one of those allowed in its position; each
+/// key that breaks this is reported, and then there is none. What is
+/// reported does not depend on the order of the keys:
+///
+/// - each key that starts with `$` and is no operator at all is not an
+///   operator; in a `json` condition, the message suggests `$$` for a
+///   literal key;
+/// - each operator not allowed here is allowed only in a `json` condition;
+/// - any other key is not allowed beside the operator, the first of
+///   `json_operators` among the keys. When there is none, the object is
+///   most likely literal JSON with keys that start with `$`, so only those
+///   keys are reported.
+fn File::read_operator(
+  self : File,
+  pointer : String,
+  members : Map[String, Json],
+  position : OperatorPosition,
+) -> (String, Json)? {
+  let operators = position.operators()
+  let operator = json_operators.search_by(key => members.contains(key))
+  let mut valid = true
+  for key, _ in members {
+    let at = child_pointer(pointer, key)
+    if is_operator_like(key) && !json_operators.contains(key) {
+      let hint = if position is InJson {
+        "; write \{("$" + key).escape()} for the literal key \{key.escape()}"
+      } else {
+        ""
+      }
+      self.error(
+        at,
+        "is not an operator: the operators here are \{quoted_list(operators, "and")}\{hint}",
+      )
+      valid = false
+    } else if json_operators.contains(key) && !operators.contains(key) {
+      self.error(at, "is allowed only in a json condition")
+      valid = false
+    } else if operator is Some(i) && key != json_operators[i] {
+      self.error(
+        at,
+        "is not allowed beside \{json_operators[i].escape()}: an operator is the only key of its object",
+      )
+      valid = false
+    }
+  }
+  match operator {
+    Some(i) if valid => {
+      let key = json_operators[i]
+      members.get(key).map(operand => (key, operand))
+    }
+    _ => None
+  }
+}
+
+///|
+/// `words`, each in quotes, separated by commas, with `last` before the
+/// last one: `"a"`, `"a" or "b"`, `"a", "b" or "c"`.
+fn quoted_list(words : Array[String], last : String) -> String {
+  let quoted = words.map(word => word.escape())
+  match quoted.length() {
+    0 => ""
+    1 => quoted[0]
+    n => quoted[:n - 1].join(", ") + " \{last} " + quoted[n - 1]
+  }
+}
+
+///|
+/// Reads the operand of `$exists`, the value at `pointer`: true or false.
+fn File::read_exists(self : File, pointer : String, json : Json) -> Bool? {
+  match json {
+    True => Some(true)
+    False => Some(false)
+    _ => {
+      self.error(pointer, "must be true or false")
+      None
+    }
+  }
 }
 
 ///|
