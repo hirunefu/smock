@@ -8,6 +8,8 @@ of each GitHub release include its section
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-21
+
 ### Added
 
 - Operators in request conditions. `$not` negates a condition, and
@@ -51,5 +53,6 @@ of each GitHub release include its section
 
 - The first public release.
 
-[Unreleased]: https://github.com/hirunefu/smock/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/hirunefu/smock/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/hirunefu/smock/releases/tag/v0.2.0
 [0.1.0]: https://github.com/hirunefu/smock/releases/tag/v0.1.0
