@@ -35,6 +35,16 @@ test "a file above the bound is an error with the file that gives its size" {
 }
 
 ///|
+test "messages write counts in groups of three digits" {
+  inspect(
+    [0, 7, 999, max_documents, 12345, 1234567].map(count_text).join(" "),
+    content=(
+      #|0 7 999 1,000 12,345 1,234,567
+    ),
+  )
+}
+
+///|
 test "a file that would not load, or would give a warning, is an error with the file, with no pointer, that calls it a smock bug and names where the problem is" {
   inspect(
     checked(
