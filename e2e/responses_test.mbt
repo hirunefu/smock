@@ -66,6 +66,7 @@ async test "smock serve answers from a body file, matches exact and json conditi
         content=(
           #|HTTP/1.1 200 OK
           #|Content-Type: application/json
+          #|Accept-Ranges: bytes
           #|Smock-Mock: teapot; via=default
           #|Content-Length: 33
           #|
@@ -167,6 +168,7 @@ async test "smock serve reads body files from the body-file subdirectory its set
             smock.send("GET", "/users/1"),
             content=(
               #|HTTP/1.1 200 OK
+              #|Accept-Ranges: bytes
               #|Smock-Mock: users; via=default
               #|Content-Length: 12
               #|
