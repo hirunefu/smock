@@ -244,7 +244,7 @@ fn Context::eval(
           }
         missing => missing
       }
-    Call(helper, args) => {
+    Call(helper, args, text) => {
       // The arguments, evaluated in order; a missing one makes the call's
       // value missing too.
       let values = []
@@ -259,6 +259,12 @@ fn Context::eval(
         Time(time) => present(self.time(time, at))
         Conversion(conversion) => Present(convert(conversion, values, at))
         Strings(string) => present(string_value(string, values, at))
+        Encoding(encoding) => present(encoding_value(encoding, values, at))
+        Jwt(jwt) =>
+          match jwt_value(jwt, values, at) {
+            Some(json) => present(json)
+            None => Missing(text)
+          }
       }
     }
   }

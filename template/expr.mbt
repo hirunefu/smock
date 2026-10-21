@@ -23,8 +23,9 @@ priv enum Expr {
   /// A reference to a request field, a listed environment variable, a
   /// Variable, `loop.index` or a loop variable, with its source text.
   Ref(Root, Array[Step], String)
-  /// A call of a helper, with its arguments.
-  Call(Helper, Array[Expr])
+  /// A call of a helper, with its arguments and its source text, which
+  /// names it when it gives a missing value.
+  Call(Helper, Array[Expr], String)
   /// A call followed by steps into what it gives, with the source text of
   /// the whole.
   Walk(Expr, Array[Step], String)
@@ -77,6 +78,10 @@ priv enum Helper {
   /// `indexOf`, `includes`, `replace`, `replaceAll`, `split`, `join`,
   /// `uppercase`, `lowercase` and `trim` (strings.mbt).
   Strings(StringHelper)
+  /// base64, base64url and percent-encoding (encoding.mbt).
+  Encoding(EncodingHelper)
+  /// `jwtPayload` and `jwtHeader` (jwt.mbt).
+  Jwt(JwtHelper)
 }
 
 ///|
@@ -568,7 +573,7 @@ priv struct CallSite {
 /// and gives `None` for a name that is not one of them, so a family is
 /// added without changing the others.
 let families : Array[(CallSite) -> Helper? raise Syntax] = [
-  fake_helper, time_helper, conversion_helper, string_helper,
+  fake_helper, time_helper, conversion_helper, string_helper, encoding_helper, jwt_helper,
 ]
 
 ///|
@@ -592,7 +597,11 @@ fn Parser::call(self : Parser, name : String, start : Int) -> Expr raise Syntax 
   let site = { name, start, args, text: self.text, }
   for family in families {
     if family(site) is Some(helper) {
-      return Call(helper, args.map(arg => arg.1))
+      return Call(
+        helper,
+        args.map(arg => arg.1),
+        String::from_array(self.chars[start:self.i]),
+      )
     }
   }
   raise Syntax(

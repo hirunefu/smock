@@ -76,7 +76,7 @@ let max_range : Int = 1000
 /// The values of a literal `range(a, b)`, if `expr` is one.
 fn literal_range(expr : Expr) -> Int? {
   match expr {
-    Call(Conversion(Range), [Literal(Number(a, ..)), Literal(Number(b, ..))]) => {
+    Call(Conversion(Range), [Literal(Number(a, ..)), Literal(Number(b, ..))], _) => {
       let count = b - a + 1.0
       Some(if count < 0.0 { 0 } else { count.to_int() })
     }
