@@ -82,7 +82,9 @@ fn write_json(out : @buffer.Buffer, json : Json) -> Unit {
 ///|
 /// Writes `json`, which sits `depth` levels deep, as indented JSON in UTF-8.
 /// Anything but a collection with members is written as compact JSON, so
-/// that numbers and strings are the same in both forms.
+/// that numbers and strings are the same in both forms. It walks the tree
+/// as `write_json` does, with line breaks; a change to how either writes
+/// keys, members or scalars is made in both.
 fn write_indented_json(out : @buffer.Buffer, json : Json, depth : Int) -> Unit {
   match json {
     Array(items) if !items.is_empty() => {

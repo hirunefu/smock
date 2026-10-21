@@ -1,7 +1,8 @@
 ///|
-/// The problems of one conversion, in order: those with the file, then the
-/// document-level ones, then each operation's, in the order the document
-/// writes them.
+/// The state of one conversion: its options, the documents given and those
+/// still needed, and the problems found so far, in order: those with the
+/// file, then the document-level ones, then each operation's, in the order
+/// the document writes them. The converter's steps are its methods.
 ///
 /// A problem is reported at a place: a JSON Pointer into the root
 /// document, such as `/paths/~1pets`, or into another document, written

@@ -266,6 +266,7 @@ fn within(segment : String, error : WriteError) -> WriteError {
 }
 
 ///|
+/// Writes `spaces` spaces.
 fn Writer::indent(self : Writer, spaces : Int) -> Unit {
   for _ in 0..<spaces {
     self.out.write_byte(b' ')
@@ -490,11 +491,15 @@ fn is_printable(code : Int) -> Bool {
 }
 
 ///|
+/// Whether `code` is the first half of a UTF-16 surrogate pair, U+D800 to
+/// U+DBFF.
 fn is_high_surrogate(code : Int) -> Bool {
   code >= 0xD800 && code <= 0xDBFF
 }
 
 ///|
+/// Whether `code` is the second half of a UTF-16 surrogate pair, U+DC00 to
+/// U+DFFF.
 fn is_low_surrogate(code : Int) -> Bool {
   code >= 0xDC00 && code <= 0xDFFF
 }

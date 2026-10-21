@@ -167,7 +167,7 @@ pub impl Show for WriteError with fn output(self, logger) {
 /// that holds a control character, a tab or a line break is quoted too.
 /// Inside double quotes, `"`, `\`, control characters, U+2028, U+2029,
 /// U+FEFF, U+FFFE and U+FFFF are escapes, such as `\n`, `\t`, `\e`, `\x01`
-/// and `﻿`. Every other character is written as itself.
+/// and `\uFEFF`. Every other character is written as itself.
 ///
 /// Numbers: `repr`, the text a number was read from, when it has one. The
 /// JSON parser keeps it for an integer beyond 2^53, so its digits stay the
