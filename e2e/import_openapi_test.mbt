@@ -111,7 +111,9 @@ async test "smock import-openapi prints each warning as smock check does, naming
       #|        }
       #|      }
       #|    },
-      #|    "/pets/{petId}": { "get": { "responses": { "200": {} } } }
+      #|    "/pets/{petId}": {
+      #|      "get": { "callbacks": { "onChange": {} }, "responses": { "200": {} } }
+      #|    }
       #|  }
       #|}
     ),
@@ -129,8 +131,8 @@ async test "smock import-openapi prints each warning as smock check does, naming
         ),
         content=(
           #|status 0
-          #|<dir>/api/petstore.json: /paths/~1pets~1{petId}/get: warning: left out: paths with parameters are not imported yet
-          #|wrote <dir>/defs/petstore.json: 2 Stubs from 1 operations, 1 warnings
+          #|<dir>/api/petstore.json: /paths/~1pets~1{petId}/get/callbacks: warning: callbacks are not imported
+          #|wrote <dir>/defs/petstore.json: 3 Stubs from 2 operations, 1 warnings
           #|
         ),
       )
@@ -785,4 +787,82 @@ async test "smock serves an imported response's sampled body with its Content-Ty
       })
     },
   )
+}
+
+///|
+/// The guide's document for paths with parameters: `getPetById` on
+/// `GET /pets/{petId}`, written before `getMyPet` on `GET /pets/mine`.
+let pets_by_id_document : String =
+  #|{
+  #|  "openapi": "3.1.0",
+  #|  "info": { "title": "Petstore", "version": "1.0.0" },
+  #|  "paths": {
+  #|    "/pets/{petId}": {
+  #|      "get": { "operationId": "getPetById", "responses": { "200": {} } }
+  #|    },
+  #|    "/pets/mine": {
+  #|      "get": { "operationId": "getMyPet", "responses": { "200": {} } }
+  #|    }
+  #|  }
+  #|}
+
+///|
+async test "smock serves an imported file with a pattern: /pets/mine gets its own Stub, /pets/7 the pattern's, and /pets/a%2Fb neither" {
+  with_petstore(pets_by_id_document, dir => {
+    inspect(
+      import_openapi(
+        [
+          "\{dir}/api/petstore.json",
+          "--mock",
+          "petstore",
+          "--output",
+          "\{dir}/defs/petstore.yaml",
+        ],
+        dir~,
+      ),
+      content=(
+        #|status 0
+        #|wrote <dir>/defs/petstore.yaml: 2 Stubs from 2 operations, 0 warnings
+        #|
+      ),
+    )
+    let _ = with_smock(["--dir", "\{dir}/defs", "--port", "0"], smock => {
+      let lines = []
+      for path in ["/pets/mine", "/pets/7", "/pets/a%2Fb"] {
+        let response = smock.request("GET", path, headers=[
+          ("Host", "localhost"),
+          baggage("patterns"),
+        ])
+        lines.push("\{path}: \{response.split("\n").next().unwrap_or("")}")
+      }
+      inspect(
+        lines.join("\n"),
+        content=(
+          #|/pets/mine: HTTP/1.1 200 OK
+          #|/pets/7: HTTP/1.1 200 OK
+          #|/pets/a%2Fb: HTTP/1.1 404 Not Found
+        ),
+      )
+      json_inspect(smock.answered("patterns"), content=[
+        {
+          "Smock-Status": null,
+          "status": 200,
+          "stub": "petstore.getMyPet.200",
+          "stubSource": "file",
+        },
+        {
+          "Smock-Status": null,
+          "status": 200,
+          "stub": "petstore.getPetById.200",
+          "stubSource": "file",
+        },
+        {
+          "Smock-Status": null,
+          "status": 404,
+          "stub": null,
+          "stubSource": null,
+        },
+      ])
+    })
+  })
 }
