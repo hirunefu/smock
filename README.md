@@ -43,8 +43,8 @@ Packages of `smock/smock`:
 - `engine`: decides the response to each request from the snapshot,
   including its Faults, and renders a named Stub's response for a sample
   request, for `smock render` and the Admin render operation. It also holds
-  the Ephemeral Stubs and the Scenario state per Mock and Session, and the
-  Journal, with its bound,
+  the Ephemeral Stubs, the Scenario state and the Variables per Mock and
+  Session, and the Journal, with its bound,
   eviction counts and query filter, applies the Admin API operations on
   them (verification and the unmatched requests included), and reads the Session a request carries in its W3C Baggage header. `Engine(snapshot, match_index=false)` tries every Stub in
   matching order instead of using the index; tests check the index against
@@ -55,8 +55,9 @@ Packages of `smock/smock`:
   family (fake data with its word and name lists, time, conversions and
   strings), and escaping by media type. It parses a template once, with
   the values of the environment variables `--template-env` lists, which its
-  caller reads, and renders it for a request, the time and one 64-bit draw,
-  and writes JSON with smock's own number form.
+  caller reads, and renders it for a request, the time, one 64-bit draw and
+  the Variables it reads, and writes JSON with smock's own number form. It
+  renders the values of a Stub's `variables` as JSON too.
 - `prng`: the seeded pseudo-random generator that Fault decisions and
   template helpers draw from. Its sequence for a seed is fixed, the same on
   every target.
