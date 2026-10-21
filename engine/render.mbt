@@ -313,12 +313,7 @@ pub fn Engine::render(
   let mut context = None
   let mut failed = None
   if stub.writes_variables() {
-    let first = @template.Context::new(
-      template_input(incoming),
-      now~,
-      rand=@template.helper_generator(draw),
-      vars=sample.vars,
-    )
+    let first = first_context(incoming, now~, draw~, vars=Some(sample.vars))
     let values = Array(capacity=stub.variables.values.length())
     try render_values(stub.variables, first, Some(sample.vars), values) catch {
       RenderError(at~, message~) => failed = Some({ at, message, })
@@ -346,28 +341,23 @@ pub fn Engine::render(
         (None, Some(_)) => pick_response(stub, draw)
       }
       let response = stub.responses[response_index.unwrap_or(0)].response
-      let (plan, template_error) = match response.template {
-        None if response.serves_ranges =>
-          (range_response(response, incoming.request), None)
-        None => (stub_response(response), None)
-        Some(template) =>
-          respond(
-            stub.id,
-            response.status,
-            template,
-            match context {
-              Some(context) => context
-              None =>
-                @template.Context::new(
-                  template_input(incoming),
-                  now~,
-                  rand=@template.helper_generator(draw),
-                  vars=sample.vars,
-                )
-            },
-          )
+      try
+        plan_response(
+          response,
+          incoming,
+          context,
+          now~,
+          draw~,
+          vars=Some(sample.vars),
+        )
+      catch {
+        RenderError(at~, message~) => {
+          let error = { at, message, }
+          (response_index, template_failed(stub.id, error), Some(error))
+        }
+      } noraise {
+        plan => (response_index, plan, None)
       }
-      (response_index, plan, template_error)
     }
   }
   {
