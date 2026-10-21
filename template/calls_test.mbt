@@ -10,7 +10,13 @@ fn rendered(source : String, input? : @template.Input = request) -> String {
   match
     @template.Text::parse(source, pointer="/response/body", kind=Body(Plain)) {
     Ok(text) =>
-      text.render(@template.Context::new(input, now=nine, draw=1)) catch {
+      text.render(
+        @template.Context::new(
+          input,
+          now=nine,
+          rand=@template.helper_generator(1),
+        ),
+      ) catch {
         RenderError(at~, message~) => "error at \{at}: \{message}"
       }
     Err(problem) => "problem at \{problem.pointer}: \{problem.message}"
@@ -24,7 +30,11 @@ fn rendered_json(source : String, input? : @template.Input = request) -> String 
   let source = @json.parse(source) catch { _ => abort("not JSON: \{source}") }
   match @template.Structured::parse(source, pointer="/response/json") {
     Ok(structured) => {
-      let context = @template.Context::new(input, now=nine, draw=1)
+      let context = @template.Context::new(
+        input,
+        now=nine,
+        rand=@template.helper_generator(1),
+      )
       @utf8.decode_lossy(structured.render(context)) catch {
         RenderError(at~, message~) => "error at \{at}: \{message}"
       }
