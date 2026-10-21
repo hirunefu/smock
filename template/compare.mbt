@@ -1,5 +1,7 @@
 // Comparing JSON values by what they mean rather than how they are written:
-// numbers by their value, as `json` conditions compare them.
+// numbers by their value, which `json` conditions, `find` and list filters
+// share, and members with a value taken as text, as `find` and list
+// filters compare them.
 
 ///|
 /// Whether two parsed JSON numbers, `a` and `b`, have the same value.
@@ -90,5 +92,41 @@ fn canonical_number(text : String) -> String {
   } else {
     let exponent_sign = if exponent_negative { "-" } else { "" }
     "\{sign}\{significant}e\{exponent_sign}\{exponent}+\{shift}"
+  }
+}
+
+///|
+/// A value that members are compared with, as `find` and list filters
+/// compare them: a text, such as a query parameter's value, and the JSON
+/// number it is, if it is one, read once for every member compared with
+/// it.
+pub struct FilterValue {
+  priv text : String
+  priv number : Json?
+}
+
+///|
+/// The value whose text is `text`.
+pub fn FilterValue::FilterValue(text : String) -> FilterValue {
+  { text, number: number_of(text), }
+}
+
+///|
+/// Whether the member value `actual` meets the value: a string equal to
+/// its text; a number, when the text is a JSON number of equal value,
+/// compared as `json` conditions compare numbers (see `same_number`), so
+/// `12.50` meets `12.5` and integers beyond 2^53 compare exactly; or
+/// `true`, `false` or `null`, when the text is that word. An object or an
+/// array never meets it.
+pub fn FilterValue::matches(self : FilterValue, actual : Json) -> Bool {
+  match actual {
+    String(text) => text == self.text
+    Number(n, repr~) =>
+      self.number is Some(Number(m, repr=m_text)) &&
+      same_number(n, repr, m, m_text)
+    True => self.text == "true"
+    False => self.text == "false"
+    Null => self.text == "null"
+    Object(_) | Array(_) => false
   }
 }

@@ -271,6 +271,11 @@ fn Context::eval(
           }
         Arithmetic(arithmetic) =>
           present(arithmetic_value(arithmetic, values, at))
+        Find =>
+          match find_value(values, at) {
+            Some(json) => present(json)
+            None => Missing(text)
+          }
       }
     }
   }

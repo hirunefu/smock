@@ -13,6 +13,10 @@ priv enum Kind {
   TextOrArray
   /// An array.
   Array
+  /// A string, such as the name of a member.
+  Name
+  /// A string, a number, a boolean or null, taken as its text.
+  Scalar
   /// A number without a fraction, or a string that is one.
   Integer
   /// A number, or a string that is one.
@@ -31,6 +35,8 @@ fn Kind::wanted(self : Kind) -> String {
     Text => "a string, a number or a boolean"
     TextOrArray => "a string, a number, a boolean or an array"
     Array => "an array"
+    Name => "a string"
+    Scalar => "a string, a number, a boolean or null"
     Integer => "an integer, or a string that is one"
     Numeric => "a number, or a string that is one"
     Date =>
@@ -45,6 +51,8 @@ fn Kind::accepts(self : Kind, json : Json) -> Bool {
     Text => text_value(json) is Some(_)
     TextOrArray => json is Array(_) || text_value(json) is Some(_)
     Array => json is Array(_)
+    Name => json is String(_)
+    Scalar => scalar_text(json) is Some(_)
     Integer => integer_value(json) is Some(_)
     Numeric => numeric_value(json) is Some(_)
     Date => date_of(json) is Some(ms) && ms >= earliest && ms <= latest
@@ -123,6 +131,16 @@ fn text_value(json : Json) -> String? {
     True => Some("true")
     False => Some("false")
     Null | Object(_) | Array(_) => None
+  }
+}
+
+///|
+/// `json` as a scalar taken as text, if it is one: as `text_value` takes
+/// it, and `null` as that word.
+fn scalar_text(json : Json) -> String? {
+  match json {
+    Null => Some("null")
+    _ => text_value(json)
   }
 }
 

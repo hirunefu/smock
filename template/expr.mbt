@@ -87,6 +87,8 @@ priv enum Helper {
   /// `modulo`, `ceil`, `floor`, `round`, `toFixed` and `parseInt`
   /// (arithmetic.mbt, decimal.mbt).
   Arithmetic(ArithmeticHelper)
+  /// `find`: an element of an array, picked by a member (find.mbt).
+  Find
 }
 
 ///|
@@ -594,7 +596,7 @@ priv struct CallSite {
 /// added without changing the others.
 let families : Array[(CallSite) -> Helper? raise Syntax] = [
   fake_helper, time_helper, conversion_helper, string_helper, encoding_helper, jwt_helper,
-  arithmetic_helper,
+  arithmetic_helper, find_helper,
 ]
 
 ///|
