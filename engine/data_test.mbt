@@ -315,6 +315,7 @@ test "rendering a Stub reads each bucket's initial value" {
       #|  "variables": {
       #|    "seen": 3
       #|  },
+      #|  "dataWrites": [],
       #|  "response": {
       #|    "status": 200,
       #|    "headers": [

@@ -70,6 +70,7 @@ test "a sample request that meets every condition renders the Stub's status, hea
       #|  "seed": 7,
       #|  "responseIndex": null,
       #|  "variables": {},
+      #|  "dataWrites": [],
       #|  "response": {
       #|    "status": 201,
       #|    "headers": [
@@ -115,6 +116,7 @@ test "a sample request that fails several conditions still renders the Stub's re
       #|  "seed": 7,
       #|  "responseIndex": null,
       #|  "variables": {},
+      #|  "dataWrites": [],
       #|  "response": {
       #|    "status": 201,
       #|    "headers": [
@@ -198,6 +200,7 @@ test "a Stub that answers from a body file renders the bytes of the file, as tex
       #|  "seed": 7,
       #|  "responseIndex": null,
       #|  "variables": {},
+      #|  "dataWrites": [],
       #|  "response": {
       #|    "status": 200,
       #|    "headers": [
@@ -228,6 +231,7 @@ test "a Stub that answers from a body file renders the bytes of the file, as tex
       #|  "seed": 7,
       #|  "responseIndex": null,
       #|  "variables": {},
+      #|  "dataWrites": [],
       #|  "response": {
       #|    "status": 200,
       #|    "headers": [
@@ -412,6 +416,7 @@ test "a Stub with Faults renders its plain response: rendering decides no Fault"
       #|  "seed": 42,
       #|  "responseIndex": null,
       #|  "variables": {},
+      #|  "dataWrites": [],
       #|  "response": {
       #|    "status": 200,
       #|    "headers": [],
@@ -520,6 +525,7 @@ test "a Stub that streams Server-Sent Events renders its events, with the Conten
       #|  "seed": 7,
       #|  "responseIndex": null,
       #|  "variables": {},
+      #|  "dataWrites": [],
       #|  "response": {
       #|    "status": 200,
       #|    "headers": [

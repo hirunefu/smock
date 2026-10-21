@@ -25,6 +25,11 @@ pub(all) struct SampleRequest {
   /// request finds before the Stub writes its own. A rendering reads
   /// these, never the live Variables.
   vars : Map[String, Json]
+  /// The values of Data buckets of the Stub's Mock that templates read as
+  /// `data.NAME`, by the bucket's name, in place of their initial values:
+  /// the data the request finds before the Stub writes. A rendering reads
+  /// these, never a Session's copies.
+  data : Map[String, Json]
 } derive(Debug)
 
 ///|
@@ -50,10 +55,12 @@ pub fn InvalidSample::message(self : InvalidSample) -> String {
 ///|
 /// Reads a sample request from its JSON form, the `SampleRequest` schema:
 /// an object whose members are all optional. The method defaults to GET,
-/// the path to `/`, the body to empty, and there is no Session and no
-/// Variable by default. Query parameters and header fields map a name to a
-/// value, or to the values of a repeated one, in order, and `vars` the name
-/// of each Variable to its value.
+/// the path to `/`, the body to empty, and there is no Session, no
+/// Variable and no data by default. Query parameters and header fields map
+/// a name to a value, or to the values of a repeated one, in order, `vars`
+/// the name of each Variable to its value, and `data` the name of each
+/// Data bucket to its value. Whether the Stub's Mock declares those buckets
+/// is for the rendering to check.
 pub fn SampleRequest::from_json(
   json : Json,
 ) -> SampleRequest raise InvalidSample {
@@ -67,6 +74,7 @@ pub fn SampleRequest::from_json(
   let mut body = ""
   let mut session = None
   let mut vars = Map([])
+  let mut data = Map([])
   for name, value in members {
     let at = @definitions.child_pointer("", name)
     match name {
@@ -103,10 +111,15 @@ pub fn SampleRequest::from_json(
             raise InvalidSample(pointer=at, message="must be a string or null")
         }
       "vars" => vars = sample_vars(value, at)
+      "data" =>
+        match value {
+          Object(buckets) => data = buckets
+          _ => raise InvalidSample(pointer=at, message="must be an object")
+        }
       _ => raise InvalidSample(pointer=at, message="is not a known field")
     }
   }
-  { meth, path, query, headers, body, session, vars, }
+  { meth, path, query, headers, body, session, vars, data, }
 }
 
 ///|
@@ -208,25 +221,53 @@ pub(all) struct Rendering {
   /// The index of the response rendered among the Stub's `responses`,
   /// counted from 0: the one asked for, or else the one the seed picks.
   /// `None` for a Stub with `response`, and when no response was picked
-  /// because a value of the Stub's `variables` failed to render.
+  /// because the Stub's writes failed.
   response_index : Int?
   /// The values the Stub's `variables` would write, by name, in the order
-  /// written: none when it has none, or when a value failed to render.
-  /// Rendering writes none of them.
+  /// written: none when it has none, or when its writes failed. Rendering
+  /// writes none of them.
   variables : Map[String, Json]
+  /// The writes the Stub's `dataWrites` would make, in order: none when it
+  /// has none, or when its writes failed. Rendering writes none of them.
+  data_writes : Array[RenderedWrite]
   status : Int
   /// The header fields smock sends, in order, without those that depend on
   /// the connection, such as Content-Length.
   headers : Array[(String, String)]
   body : Body
-  /// Why the Stub's template could not be rendered, when it could not: the
-  /// response is then the 500 a request would get.
+  /// Why the Stub's template, or a value or key of its writes, could not be
+  /// rendered, when it could not: the response is then the 500 a request
+  /// would get.
   template_error : TemplateError?
   /// The conditions the sample fails, as in a Near miss, in the order
   /// method, path, query parameters, headers, cookies, body, form fields
   /// or XML paths. Empty when it meets them all.
   failed : Array[FailedCondition]
 } derive(Debug)
+
+///|
+/// A write that a Stub's `dataWrites` would make, as a rendering shows it.
+pub(all) struct RenderedWrite {
+  op : @definitions.DataOp
+  /// The name of the Data bucket written to.
+  bucket : String
+  /// The rendered key, when the write has `key`.
+  key : String?
+  /// The rendered value, with the new key filled in for an `append` to a
+  /// keyed bucket; `None` for a `remove`, which has no value.
+  value : Json?
+} derive(Debug)
+
+///|
+/// The `RenderedWrite` schema of the Admin API document.
+pub impl ToJson for RenderedWrite with fn to_json(self) {
+  {
+    "op": Json::string(self.op.name()),
+    "bucket": Json::string(self.bucket),
+    "key": self.key.map_or(Json::null(), key => Json::string(key)),
+    "value": self.value.unwrap_or(Json::null()),
+  }
+}
 
 ///|
 /// Why a Stub cannot be rendered.
@@ -236,6 +277,17 @@ pub suberror RenderFailure {
   /// The Stub `stub` has no response at `index`: it has `count`, with the
   /// indexes 0 to `count - 1`.
   UnknownResponse(stub~ : String, index~ : Int, count~ : Int)
+  /// The sample's `data` gives a value for the Data bucket `bucket`, which
+  /// the Stub's Mock `mock` does not declare.
+  UnknownSampleBucket(mock~ : String, bucket~ : String)
+  /// The sample's `data` gives a value for the Data bucket `bucket`, keyed
+  /// by the member `key`, that breaks the rules of keyed buckets in each of
+  /// the ways `problems` gives, with JSON Pointers into that value.
+  InvalidSampleData(
+    bucket~ : String,
+    key~ : String,
+    problems~ : Array[@definitions.KeyedProblem]
+  )
 } derive(Debug)
 
 ///|
@@ -252,6 +304,15 @@ pub fn RenderFailure::message(self : RenderFailure) -> String {
         "its responses run from 0 to \{count - 1}"
       }
       "the Stub \{stub.escape()} has no response \{index}: \{indexes}"
+    }
+    UnknownSampleBucket(mock~, bucket~) =>
+      "the sample request's data names the Data bucket \{bucket.escape()}, which the Mock \{mock.escape()} does not declare"
+    InvalidSampleData(bucket~, key~, problems~) => {
+      let at = @definitions.child_pointer("/data", bucket)
+      let each = problems.map(problem => {
+        "\{at}\{problem.pointer} \{problem.message}"
+      })
+      "the sample request's data breaks the rules of the Data bucket \{bucket.escape()}, keyed by \{key.escape()}: \{each.join("; ")}"
     }
   }
 }
@@ -274,18 +335,27 @@ pub fn RenderFailure::message(self : RenderFailure) -> String {
 ///   0. Without it, the rendering shows the one the seed picks. A Stub with
 ///   `response` takes 0 only.
 ///
-/// The values of the Stub's `variables` are rendered against the sample's
-/// `vars`, and the response reads those with the Stub's values written
-/// over them, as the response to a request sees its writes. Templates read
-/// the initial value of each Data bucket of the Stub's Mock, never a
-/// Session's copy, also when the sample names a Session. A value that
-/// fails to render gives the 500 a request would get, and no response is
-/// picked. A response that serves byte ranges answers the sample's `Range`
-/// field, as it answers a request's: with 206, 416 or the whole body.
+/// The values of the Stub's `variables`, then the keys and values of its
+/// `dataWrites`, are rendered against the sample's `vars` and `data`, and
+/// the writes are applied to the sample's data. The response reads the
+/// sample's `vars` with the Stub's values written over them, and the
+/// sample's data after the writes, as the response to a request sees its
+/// writes. A Data bucket that the sample's `data` does not name has its
+/// initial value; a Session's copy is never read, also when the sample
+/// names a Session. A value or a key that fails to render, or a write that
+/// cannot be applied to the sample's data, gives the 500 a request would
+/// get, shows no write, and picks no response. No bound on per-Session
+/// state applies. A response that serves byte ranges answers the sample's
+/// `Range` field, as it answers a request's: with 206, 416 or the whole
+/// body.
 ///
-/// Rendering decides no Fault, and changes nothing in the engine: no
-/// generator advances, and no Variable or copy of a Data bucket is written
-/// or read.
+/// Raises `UnknownSampleBucket` or `InvalidSampleData` when the sample's
+/// `data` names a bucket that the Stub's Mock does not declare, or gives a
+/// keyed bucket a value that breaks its rules.
+///
+/// Rendering decides no Fault, and changes nothing in the engine or in the
+/// sample: no generator advances, and no Variable or copy of a Data bucket
+/// is written or read.
 pub fn Engine::render(
   self : Engine,
   id : String,
@@ -296,6 +366,7 @@ pub fn Engine::render(
   fresh_seed~ : () -> UInt64,
 ) -> Rendering raise RenderFailure {
   guard self.file_stub(id) is Some((stub, mock)) else { raise UnknownStub(id) }
+  check_sample_data(sample.data, mock)
   match stub.serves {
     Ordinary(ordinary) => {
       let count = ordinary.responses.length()
@@ -308,47 +379,56 @@ pub fn Engine::render(
         (None, _) => fresh_seed()
       }
       let incoming = Incoming::new(sample.to_request())
+      // The sample's data stands for the copies of a Session.
+      let copies = if sample.data.is_empty() { None } else { Some(sample.data) }
       // The steps of the match decision that build the response, as for a
-      // request: the one draw, the Variables' values, the pick, then rendering
-      // and planning, which answers the sample's Range field. No Scenario
-      // moves, no Variable is written, and no Fault is decided.
+      // request: the one draw, the writes, the pick, then rendering and
+      // planning, which answers the sample's Range field. No Scenario moves,
+      // nothing is written, and no Fault is decided.
       let draw = @prng.Generator(seed).uint64()
-      // The values render against the sample's `vars`, drawing from the helper
-      // generator first; the response renders on from there, and reads the
-      // sample's `vars` with the values written over them.
-      let variables = Map([])
+      // The writes render against the sample's `vars` and data, drawing from
+      // the helper generator first, and apply to the sample's data; the
+      // response renders on from there, and reads the state they leave.
+      let mut variables = Map([])
+      let mut data_writes = []
       let mut context = None
       let mut failed = None
-      if ordinary.writes_variables() {
+      if ordinary.writes_variables() || ordinary.writes_data() {
         let first = first_context(
           incoming,
           now~,
           draw~,
           vars=Some(sample.vars),
           data=mock.initial_data,
-          copies=None,
+          copies~,
         )
-        let values = Array(capacity=ordinary.variables.values.length())
         try
-          render_values(ordinary.variables, first, Some(sample.vars), values)
+          preview_writes(
+            ordinary,
+            mock.buckets,
+            first,
+            sample.vars,
+            sample.data,
+          )
         catch {
-          RenderError(at~, message~) =>
-            failed = Some(TemplateError::{ at, message, })
+          ValueFailed(error) =>
+            failed = Some((template_failed(stub.id, error), Some(error)))
+          ApplyFailed(error) =>
+            failed = Some((data_write_failed(stub.id, error), None))
+          // Never raised: a rendering applies no bound.
+          StateLimitReached(message) =>
+            failed = Some((state_limit_reached(stub.id, message), None))
         } noraise {
-          last => {
-            let after = sample.vars.copy()
-            for i, name in ordinary.variables.names {
-              variables[name] = values[i]
-              after[name] = values[i]
-            }
-            context = Some(last.next(vars=after))
+          preview => {
+            variables = preview.variables
+            data_writes = preview.writes
+            context = Some(preview.context)
           }
         }
       }
       let (response_index, plan, template_error) = match failed {
-        // A value that failed to render picks no response, whichever was
-        // asked for.
-        Some(error) => (None, template_failed(stub.id, error), Some(error))
+        // Writes that failed pick no response, whichever was asked for.
+        Some((plan, error)) => (None, plan, error)
         None => {
           let response_index = match (response_index, ordinary.total_weight) {
             // A Stub with `response` shows no index, whichever it was asked
@@ -367,7 +447,7 @@ pub fn Engine::render(
               draw~,
               vars=Some(sample.vars),
               data=mock.initial_data,
-              copies=None,
+              copies~,
             )
           catch {
             RenderError(at~, message~) => {
@@ -386,6 +466,7 @@ pub fn Engine::render(
         seed,
         response_index,
         variables,
+        data_writes,
         status: plan.status,
         headers: plan.headers,
         body: plan.body,
@@ -393,6 +474,125 @@ pub fn Engine::render(
         failed: incoming
         .failed(ordinary.request)
         .map(failed => incoming.explain(failed)),
+      }
+    }
+  }
+}
+
+///|
+/// What a Stub's writes would leave, as a rendering shows them: the values
+/// of its `variables`, the writes of its `dataWrites`, and the rendering
+/// the response continues with.
+priv struct Preview {
+  variables : Map[String, Json]
+  writes : Array[RenderedWrite]
+  context : @template.Context
+}
+
+///|
+/// The writes of `ordinary`, a Stub that writes Variables or Data buckets,
+/// whose Mock declares the buckets `buckets`, as a rendering for a sample
+/// request with the Variables `vars` and the data `data` shows them. The
+/// values and keys render as at the match decision, from `first`, the
+/// first rendering for the sample; the writes apply in order to the
+/// sample's data, or else to a bucket's initial value, with new `uuid` keys
+/// drawn from the helper generator then. No bound applies, and nothing is
+/// written: neither `vars` nor `data` changes.
+///
+/// Returns the values and the writes, with the rendering the response
+/// continues with, which reads `vars` with the values written over them and
+/// the data after the writes. Raises `ValueFailed` when a value or a key
+/// fails to render, and `ApplyFailed` when a write cannot be applied.
+fn preview_writes(
+  ordinary : @definitions.Ordinary,
+  buckets : ReadOnlyArray[@definitions.DataBucket],
+  first : @template.Context,
+  vars : Map[String, Json],
+  data : Map[String, Json],
+) -> Preview raise WriteFailure {
+  let writes = ordinary.data_writes
+  let values = Array(capacity=ordinary.variables.values.length())
+  let keys = Array(capacity=writes.length())
+  let write_values = Array(capacity=writes.length())
+  let last = render_writes(
+    ordinary,
+    first,
+    Some(vars),
+    values,
+    keys,
+    write_values,
+  ) catch {
+    RenderError(at~, message~) => raise ValueFailed({ at, message, })
+  }
+  // The sample's data stands for the Session's copies. Writes change those
+  // in place, so they change copies of them, and the sample stays as it is.
+  let copies = Map([])
+  for name, value in data {
+    copies[name] = deep_copy(value)
+  }
+  let working = WorkingCopies::new(Some({ values: copies, bytes: Map([]), }))
+  let rand = last.generator()
+  let shown = []
+  for i in 0..<writes.length() {
+    let write = writes[i]
+    let value = write_values[i]
+    // Each value is shown as it rendered, before later writes can change
+    // it in place. Only an `append` is shown after it applies, with the new
+    // key it got; a `set` with a key is shown without the key it gets.
+    let rendered = match write.op {
+      Append | Remove => None
+      Replace | Merge => Some(deep_copy(value))
+    }
+    working.apply(i, write, keys[i], value, buckets, rand)
+    shown.push({
+      op: write.op,
+      bucket: write.bucket,
+      key: keys[i],
+      value: match write.op {
+        Append => Some(deep_copy(value))
+        Remove => None
+        Replace | Merge => rendered
+      },
+    })
+  }
+  for i in 0..<working.names.length() {
+    copies[working.names[i]] = working.values[i]
+  }
+  let variables = Map([])
+  let after = vars.copy()
+  for i, name in ordinary.variables.names {
+    variables[name] = values[i]
+    after[name] = values[i]
+  }
+  {
+    variables,
+    writes: shown,
+    context: if writes.length() == 0 {
+      last.next(vars=after)
+    } else {
+      last.next(vars=after, copies~)
+    },
+  }
+}
+
+///|
+/// Checks `data`, the data of a sample request, against the Data buckets of
+/// `mock`, the Mock of the Stub to render: each must be a bucket it
+/// declares, and the value of a keyed bucket must keep the rules of keyed
+/// buckets. Raises `UnknownSampleBucket` or `InvalidSampleData` for the
+/// first that does not.
+fn check_sample_data(
+  data : Map[String, Json],
+  mock : @definitions.Mock,
+) -> Unit raise RenderFailure {
+  for name, value in data {
+    guard bucket_named(mock, name) is Some(bucket) else {
+      raise UnknownSampleBucket(mock=mock.name, bucket=name)
+    }
+    if bucket.key is Some(key) {
+      let problems = @definitions.keyed_problems(value, key~)
+      if !problems.is_empty() {
+        raise InvalidSampleData(bucket=name, key~, problems~)
       }
     }
   }
@@ -432,6 +632,9 @@ pub impl ToJson for Rendering with fn to_json(self) {
       Json::number(index.to_double())
     }),
     "variables": Json::object(self.variables),
+    "dataWrites": Json::array(
+      self.data_writes.map(write => ToJson::to_json(write)),
+    ),
     "response": {
       "status": Json::number(self.status.to_double()),
       "headers": Json::array(
