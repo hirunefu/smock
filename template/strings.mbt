@@ -35,6 +35,27 @@ priv enum StringHelper {
 }
 
 ///|
+/// The helper's name, for messages.
+fn StringHelper::name(self : StringHelper) -> String {
+  match self {
+    Len => "len"
+    Concat => "concat"
+    PadStart => "padStart"
+    PadEnd => "padEnd"
+    Substr => "substr"
+    IndexOf => "indexOf"
+    Includes => "includes"
+    Replace => "replace"
+    ReplaceAll => "replaceAll"
+    Split => "split"
+    Join => "join"
+    Uppercase => "uppercase"
+    Lowercase => "lowercase"
+    Trim => "trim"
+  }
+}
+
+///|
 /// The string helper that `site` calls, checked. `None` when it calls a
 /// helper of another family.
 fn string_helper(site : CallSite) -> Helper? raise Syntax {
@@ -108,6 +129,7 @@ fn string_value(
   values : Array[Json],
   at : String,
 ) -> Json raise RenderError {
+  let name = helper.name()
   match helper {
     Len =>
       match values[0] {
@@ -118,7 +140,7 @@ fn string_value(
             None =>
               raise RenderError(
                 at~,
-                message=argument_problem("len", 0, TextOrArray, json),
+                message=argument_problem(name, 0, TextOrArray, json),
               )
           }
       }
@@ -126,11 +148,11 @@ fn string_value(
       let texts = []
       let mut bytes = 0L
       for k, json in values {
-        let text = text_argument("concat", k, json, at)
+        let text = text_argument(name, k, json, at)
         bytes += utf8_length(text).to_int64()
         texts.push(text)
       }
-      check_result("concat", bytes, at)
+      check_result(name, bytes, at)
       let out = StringBuilder()
       for text in texts {
         out.write_string(text)
@@ -139,7 +161,6 @@ fn string_value(
     }
     PadStart | PadEnd => {
       let at_start = helper is PadStart
-      let name = if at_start { "padStart" } else { "padEnd" }
       let text = text_argument(name, 0, values[0], at)
       let length = integer_argument(name, 1, values[1], at)
       let pad = if values.length() > 2 {
@@ -150,60 +171,59 @@ fn string_value(
       Json::string(padded(text, length, pad, at_start, name, at))
     }
     Substr => {
-      let text = text_argument("substr", 0, values[0], at)
-      let from = integer_argument("substr", 1, values[1], at)
+      let text = text_argument(name, 0, values[0], at)
+      let from = integer_argument(name, 1, values[1], at)
       let length = if values.length() > 2 {
-        Some(integer_argument("substr", 2, values[2], at))
+        Some(integer_argument(name, 2, values[2], at))
       } else {
         None
       }
-      Json::string(substring(text, from, length, at))
+      Json::string(substring(text, from, length, name, at))
     }
     IndexOf => {
-      let text = text_argument("indexOf", 0, values[0], at)
-      let search = text_argument("indexOf", 1, values[1], at)
+      let text = text_argument(name, 0, values[0], at)
+      let search = text_argument(name, 1, values[1], at)
       let from = if values.length() > 2 {
-        integer_argument("indexOf", 2, values[2], at)
+        integer_argument(name, 2, values[2], at)
       } else {
         0
       }
       Json::number(index_of(text, search, from).to_double())
     }
     Includes => {
-      let text = text_argument("includes", 0, values[0], at)
-      let search = text_argument("includes", 1, values[1], at)
+      let text = text_argument(name, 0, values[0], at)
+      let search = text_argument(name, 1, values[1], at)
       Json::boolean(text.contains(search))
     }
     Replace | ReplaceAll => {
       let all = helper is ReplaceAll
-      let name = if all { "replaceAll" } else { "replace" }
       let text = text_argument(name, 0, values[0], at)
       let search = text_argument(name, 1, values[1], at)
       let replacement = text_argument(name, 2, values[2], at)
       Json::string(replaced(text, search, replacement, all, name, at))
     }
     Split => {
-      let text = text_argument("split", 0, values[0], at)
-      let separator = text_argument("split", 1, values[1], at)
-      Json::array(split_text(text, separator, at))
+      let text = text_argument(name, 0, values[0], at)
+      let separator = text_argument(name, 1, values[1], at)
+      Json::array(split_text(text, separator, name, at))
     }
     Join => {
       guard values[0] is Array(items) else {
         raise RenderError(
           at~,
-          message=argument_problem("join", 0, Array, values[0]),
+          message=argument_problem(name, 0, Array, values[0]),
         )
       }
-      let separator = text_argument("join", 1, values[1], at)
-      Json::string(joined(items, separator, at))
+      let separator = text_argument(name, 1, values[1], at)
+      Json::string(joined(items, separator, name, at))
     }
     Uppercase | Lowercase => {
       let to_upper = helper is Uppercase
-      let name = if to_upper { "uppercase" } else { "lowercase" }
       let text = text_argument(name, 0, values[0], at)
       Json::string(case_mapped(text, to_upper, name, at))
     }
-    Trim => Json::string(trimmed(text_argument("trim", 0, values[0], at), at))
+    Trim =>
+      Json::string(trimmed(text_argument(name, 0, values[0], at), name, at))
   }
 }
 
@@ -270,13 +290,14 @@ fn padded(
 
 ///|
 /// The code points of `text` from `from`, `length` of them or by default
-/// the rest, as `substr` inserted at `at` gives them. A negative `from`
+/// the rest, as `substr`, the helper `name`, inserted at `at` gives them. A negative `from`
 /// counts from the end. Positions out of range clamp, so a negative
 /// `length` gives an empty text.
 fn substring(
   text : String,
   from : Int,
   length : Int?,
+  name : String,
   at : String,
 ) -> String raise RenderError {
   let count = text.char_length()
@@ -301,7 +322,7 @@ fn substring(
   let begin = char_offset(text, start, 0)
   let end = char_offset(text, taken, begin)
   let part = text.view(start_offset=begin, end_offset=end)
-  check_result("substr", utf8_length(part).to_int64(), at)
+  check_result(name, utf8_length(part).to_int64(), at)
   part.to_owned()
 }
 
@@ -372,14 +393,15 @@ fn replaced(
 }
 
 ///|
-/// `text` split at each occurrence of `separator`, as `split` inserted at
-/// `at` gives it. The occurrences are found from the start, without
+/// `text` split at each occurrence of `separator`, as `split`, the helper
+/// `name`, inserted at `at` gives it. The occurrences are found from the start, without
 /// overlap, and an empty separator splits into code points. An empty text
 /// gives one empty string, whatever the separator. The array is bounded, as
 /// its compact JSON, before it is built.
 fn split_text(
   text : String,
   separator : String,
+  name : String,
   at : String,
 ) -> Array[Json] raise RenderError {
   if text == "" {
@@ -390,7 +412,7 @@ fn split_text(
   let text_bytes = json_string_content_length(text).to_int64()
   if separator == "" {
     let count = text.char_length()
-    check_result("split", text_bytes + 3L * count.to_int64() + 1L, at)
+    check_result(name, text_bytes + 3L * count.to_int64() + 1L, at)
     let items : Array[Json] = Array(capacity=count)
     for c in text {
       items.push(Json::string(c.to_string()))
@@ -405,7 +427,7 @@ fn split_text(
   }
   let separator_bytes = json_string_content_length(separator).to_int64()
   check_result(
-    "split",
+    name,
     text_bytes -
     count.to_int64() * separator_bytes +
     3L * (count.to_int64() + 1L) +
@@ -431,12 +453,14 @@ fn split_text(
 
 ///|
 /// The elements of `items` written as text, `null` as an empty text, with
-/// `separator` between them, as `join` inserted at `at` gives them. An
+/// `separator` between them, as `join`, the helper `name`, inserted at `at`
+/// gives them. An
 /// object or an array as an element is a render error. The result is
 /// bounded before it is built.
 fn joined(
   items : Array[Json],
   separator : String,
+  name : String,
   at : String,
 ) -> String raise RenderError {
   let texts = []
@@ -449,7 +473,7 @@ fn joined(
     } else {
       raise RenderError(
         at~,
-        message="join(): element [\{i}] of argument 1 must be a string, a number, a boolean or null, not \{kind_of(item)}",
+        message="\{name}(): element [\{i}] of argument 1 must be a string, a number, a boolean or null, not \{kind_of(item)}",
       )
     }
     bytes += utf8_length(text).to_int64()
@@ -458,7 +482,7 @@ fn joined(
   if texts.length() > 1 {
     bytes += (texts.length() - 1).to_int64() * utf8_length(separator).to_int64()
   }
-  check_result("join", bytes, at)
+  check_result(name, bytes, at)
   let out = StringBuilder()
   for i, text in texts {
     if i > 0 {
@@ -515,9 +539,13 @@ fn case_mapped(
 
 ///|
 /// `text` without the code points that have the property White_Space at
-/// either end, as `trim` inserted at `at` gives it, bounded before it is
-/// built.
-fn trimmed(text : String, at : String) -> String raise RenderError {
+/// either end, as `trim`, the helper `name`, inserted at `at` gives it,
+/// bounded before it is built.
+fn trimmed(
+  text : String,
+  name : String,
+  at : String,
+) -> String raise RenderError {
   // In UTF-16 code units, where the first code point that is not
   // White_Space starts (-1 while there is none) and where the last one
   // ends; and, in bytes of UTF-8, the same places.
@@ -544,7 +572,7 @@ fn trimmed(text : String, at : String) -> String raise RenderError {
   if start < 0 {
     return ""
   }
-  check_result("trim", end_bytes - start_bytes, at)
+  check_result(name, end_bytes - start_bytes, at)
   if start == 0 && end == units {
     text
   } else {

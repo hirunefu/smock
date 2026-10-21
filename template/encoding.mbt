@@ -21,6 +21,19 @@ priv enum EncodingHelper {
 }
 
 ///|
+/// The helper's name, for messages.
+fn EncodingHelper::name(self : EncodingHelper) -> String {
+  match self {
+    Base64 => "base64"
+    Base64Url => "base64url"
+    Base64Decode => "base64Decode"
+    Base64UrlDecode => "base64urlDecode"
+    UrlEncode => "urlEncode"
+    UrlDecode => "urlDecode"
+  }
+}
+
+///|
 /// The encoding helper that `site` calls, checked. `None` when it calls a
 /// helper of another family.
 fn encoding_helper(site : CallSite) -> Helper? raise Syntax {
@@ -45,16 +58,15 @@ fn encoding_value(
   values : Array[Json],
   at : String,
 ) -> Json raise RenderError {
+  let name = helper.name()
   match helper {
     Base64 | Base64Url => {
       let url = helper is Base64Url
-      let name = if url { "base64url" } else { "base64" }
       let bytes = @utf8.encode(text_argument(name, 0, values[0], at))
       Json::string(base64_encoded(bytes, url, name, at))
     }
     Base64Decode | Base64UrlDecode => {
       let url = helper is Base64UrlDecode
-      let name = if url { "base64urlDecode" } else { "base64Decode" }
       let text = text_argument(name, 0, values[0], at)
       let length = base64_length(text, url) catch {
         NotDecodable(problem) =>
@@ -69,19 +81,19 @@ fn encoding_value(
       Json::string(decoded)
     }
     UrlEncode => {
-      let bytes = @utf8.encode(text_argument("urlEncode", 0, values[0], at))
-      Json::string(percent_encoded(bytes, at))
+      let bytes = @utf8.encode(text_argument(name, 0, values[0], at))
+      Json::string(percent_encoded(bytes, name, at))
     }
     UrlDecode => {
-      let text = text_argument("urlDecode", 0, values[0], at)
+      let text = text_argument(name, 0, values[0], at)
       let length = percent_length(text) catch {
         NotDecodable(problem) =>
-          raise RenderError(at~, message="urlDecode(): \{problem}")
+          raise RenderError(at~, message="\{name}(): \{problem}")
       }
       // Bounded as for base64Decode.
-      check_result("urlDecode", length.to_int64(), at)
+      check_result(name, length.to_int64(), at)
       let decoded = @utf8.decode_lossy(percent_decoded(text, length))
-      check_result("urlDecode", utf8_length(decoded).to_int64(), at)
+      check_result(name, utf8_length(decoded).to_int64(), at)
       Json::string(decoded)
     }
   }
@@ -267,14 +279,18 @@ let upper_hex_digits : String = "0123456789ABCDEF"
 
 ///|
 /// `bytes` percent-encoded, each byte but the unreserved characters as `%`
-/// and two upper-case hex digits, as `urlEncode` inserted at `at` gives
-/// them, bounded before they are written.
-fn percent_encoded(bytes : Bytes, at : String) -> String raise RenderError {
+/// and two upper-case hex digits, as `urlEncode`, the helper `name`,
+/// inserted at `at` gives them, bounded before they are written.
+fn percent_encoded(
+  bytes : Bytes,
+  name : String,
+  at : String,
+) -> String raise RenderError {
   let mut length = 0L
   for b in bytes {
     length += if is_unreserved(b) { 1L } else { 3L }
   }
-  check_result("urlEncode", length, at)
+  check_result(name, length, at)
   let out = StringBuilder(size_hint=length.to_int())
   for b in bytes {
     if is_unreserved(b) {
