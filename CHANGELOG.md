@@ -22,6 +22,14 @@ of each GitHub release include its section
   concrete path comes before a templated one, so `/pets/mine` gets its own
   Stub and `/pets/7` the pattern's. Two patterns that can match the same
   request keep the document's order.
+- `smock import-openapi` puts the path of the server URL in front of every
+  path, so the mock answers where the real service does: under the server
+  `https://api.example.com/v1`, `/pets/{petId}` becomes the pattern
+  `/v1/pets/[^/]+`. The server is the first of the operation's, its Path
+  Item's or the document's, with its variables replaced by their
+  defaults. Its host is not used. `--base-path` replaces the prefix, to
+  mount the API where the system under test calls it, and `--base-path /`
+  means none.
 - `smock import-openapi` gives every documented response a Stub, not only
   the main one. A request selects it with the header `Smock-Status`,
   whose value is the response key as the document writes it, such as

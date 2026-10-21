@@ -32,7 +32,13 @@ fn deep_sample(schema : Json, output : String) -> String {
       },
     },
   }
-  let document = { top, openapi: "3.1.0", title: "", info_version: "", }
+  let document = {
+    top,
+    openapi: "3.1.0",
+    title: "",
+    info_version: "",
+    prefix: "",
+  }
   let conversion = report.file(document, report.operations(document))
   let lines = conversion.problems().map(problem => problem.to_string())
   match conversion {

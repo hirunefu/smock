@@ -4,14 +4,21 @@
 
 ///|
 /// Converts `document`, a JSON OpenAPI document named `petstore.json`, into
-/// the Definition file `output` for the Mock `mock`, and renders what came
-/// out, as `import_json` does.
+/// the Definition file `output` for the Mock `mock`, with the base path
+/// `base_path`, if given, and renders what came out, as `import_json`
+/// does.
 fn import_to(
   document : String,
   output? : String = "defs/petstore.yaml",
   mock? : String = "petstore",
+  base_path? : String,
 ) -> String {
-  let options = @importopenapi.Options(root="petstore.json", mock~, output~)
+  let options = @importopenapi.Options(
+    root="petstore.json",
+    mock~,
+    output~,
+    base_path?,
+  )
   rendered(
     @importopenapi.convert([("petstore.json", @utf8.encode(document))], options),
   )
