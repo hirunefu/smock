@@ -1051,3 +1051,68 @@ test "dataValue and serializedValue are read in every OpenAPI version, and a 3.2
     ),
   )
 }
+
+///|
+test "in 3.0 and 3.1 a Media Type Object is read as written: its $ref is not followed, but ignored with a warning" {
+  let responses =
+    #|{
+    #|  "200": { "content": { "application/json": { "$ref": "#/nowhere", "example": { "name": "Tom" } } } },
+    #|  "404": { "content": { "application/json": { "$ref": "https://example.com/pet.json" } } },
+    #|  "500": { "content": { "application/json": { "$ref": "#/components/schemas/Pet" } } }
+    #|}
+  let v30 = examples_of(responses, openapi="3.0.3")
+  assert_eq(v30, examples_of(responses, openapi="3.1.0"))
+  inspect(
+    v30,
+    content=(
+      #|petstore.json: /paths/~1r/get/responses/200/content/application~1json/$ref: warning: ignored: a Media Type is a reference only from OpenAPI 3.2
+      #|petstore.json: /paths/~1r/get/responses/404/content/application~1json/$ref: warning: ignored: a Media Type is a reference only from OpenAPI 3.2
+      #|petstore.json: /paths/~1r/get/responses/500/content/application~1json/$ref: warning: ignored: a Media Type is a reference only from OpenAPI 3.2
+      #|  # GET /r, 404
+      #|  - id: petstore.r.404
+      #|    mock: petstore
+      #|    request:
+      #|      method: GET
+      #|      path: /r
+      #|      headers:
+      #|        Smock-Status: "404"
+      #|    response:
+      #|      status: 404
+      #|      headers:
+      #|        Content-Type: application/json
+      #|  # GET /r, 500
+      #|  - id: petstore.r.500
+      #|    mock: petstore
+      #|    request:
+      #|      method: GET
+      #|      path: /r
+      #|      headers:
+      #|        Smock-Status: "500"
+      #|    response:
+      #|      status: 500
+      #|      headers:
+      #|        Content-Type: application/json
+      #|  # GET /r, 200
+      #|  - id: petstore.r.200
+      #|    mock: petstore
+      #|    request:
+      #|      method: GET
+      #|      path: /r
+      #|    response:
+      #|      status: 200
+      #|      json:
+      #|        name: Tom
+      #|
+    ),
+  )
+  inspect(
+    examples_of(responses),
+    content=(
+      #|petstore.json: /paths/~1r/get/responses/200/content/application~1json/$ref: the document has nothing at /nowhere
+      #|petstore.json: /paths/~1r/get/responses/404/content/application~1json/$ref: smock reads no URLs and no absolute paths: bundle the document into one file first, with another tool
+      #|petstore.json: /paths/~1r/get/responses/500/content/application~1json/$ref: the document has nothing at /components/schemas/Pet
+      #|nothing written
+      #|
+    ),
+  )
+}

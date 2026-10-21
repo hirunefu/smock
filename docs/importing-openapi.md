@@ -300,7 +300,7 @@ Stub for each response it answers, and for each further named example
 | `callbacks` | Not imported, with one warning per operation. |
 | `webhooks` | Not imported, with one warning: they are requests the API sends, not ones it answers. |
 | `security`, `links`, descriptions, tags and `x-` extensions | Nothing, and no warning. |
-| A `$ref` to a Path Item, a Response, a Header, an Example or, as 3.2 allows, a Media Type, in the same document or in another file under `--ref-dir` | Followed, as if the part it names were written in place (see [References and bundling](#references-and-bundling)). |
+| A `$ref` to a Path Item, a Response, a Header, an Example or, as 3.2 allows, a Media Type, in the same document or in another file under `--ref-dir` | Followed, as if the part it names were written in place (see [References and bundling](#references-and-bundling)). In 3.0 and 3.1, which allow no reference in place of a Media Type, a `$ref` in a media type is ignored, with a warning, and the rest of it is read as written. |
 | A `$ref` in a schema | Followed too, into other files as well. A recursive schema gives a finite sample ([Schema references and recursion](#schema-references-and-recursion)). |
 | Fields beside a Path Item's `$ref` | Ignored, with a warning, since OpenAPI leaves their meaning undefined. |
 
@@ -1345,6 +1345,10 @@ This imports `listPets` as if both parts were written in place.
 - The fields beside a Path Item's `$ref` are ignored, with a warning, but
   `x-` extensions. The fields beside the `$ref` of a Response, a Header
   or an Example are ignored, as OpenAPI asks.
+- A media type is a reference only from OpenAPI 3.2. In 3.0 and 3.1 a
+  `$ref` in a media type is ignored, with a warning, and the rest of the
+  media type is read as written. A common slip is a `$ref` to a schema
+  written in place of the media type's `schema`.
 - A `$ref` inside example data, in `example`, `value` or `dataValue`, is
   data, not a reference: it is copied as written.
 - `$id` at the root of the document, and 3.2's `$self`, are ignored: a

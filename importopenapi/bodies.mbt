@@ -205,11 +205,46 @@ fn is_json_media_type(key : String) -> Bool {
 }
 
 ///|
+/// The Media Type Object `json`, written at `pointer` in a `content` map:
+/// where it is, after following its `$ref` in OpenAPI 3.2, and its fields.
+/// Only 3.2 allows a Reference Object there. In 3.0 and 3.1 the object is
+/// read as written, and a `$ref` member in it is ignored, with a warning.
+/// `None` after reporting an error.
+fn Report::media_type_object(
+  self : Report,
+  document : Document,
+  pointer : String,
+  json : Json,
+) -> (String, Map[String, Json])? {
+  if document.openapi.has_prefix("3.2.") {
+    guard self.followed(document, pointer, json) is Some({ pointer, json, }) else {
+      return None
+    }
+    guard json is Object(media_type) else {
+      self.error_at(pointer, "must be an object")
+      return None
+    }
+    return Some((pointer, media_type))
+  }
+  guard json is Object(media_type) else {
+    self.error_at(pointer, "must be an object")
+    return None
+  }
+  if media_type.contains("$ref") {
+    self.warning_at(
+      @definitions.child_pointer(pointer, "$ref"),
+      "ignored: a Media Type is a reference only from OpenAPI 3.2",
+    )
+  }
+  Some((pointer, media_type))
+}
+
+///|
 /// What the Media Type Object `json` at `pointer`, of the media type `key`,
-/// answers with, after following its `$ref`. The first source that gives
-/// a value gives the body: its `examples`, whose first is the body and
-/// whose others get Stubs of their own; its `example`; then a sample of its
-/// `schema`. With none, the body is empty. A media type with both
+/// answers with, after following its `$ref` in 3.2. The first source that
+/// gives a value gives the body: its `examples`, whose first is the body
+/// and whose others get Stubs of their own; its `example`; then a sample
+/// of its `schema`. With none, the body is empty. A media type with both
 /// `example` and `examples` uses `examples`, with a warning.
 fn Report::media_type(
   self : Report,
@@ -218,11 +253,8 @@ fn Report::media_type(
   key : String,
   json : Json,
 ) -> Answers {
-  guard self.followed(document, pointer, json) is Some({ pointer, json, }) else {
-    return no_answers()
-  }
-  guard json is Object(media_type) else {
-    self.error_at(pointer, "must be an object")
+  guard self.media_type_object(document, pointer, json)
+    is Some((pointer, media_type)) else {
     return no_answers()
   }
   let example_pointer = @definitions.child_pointer(pointer, "example")

@@ -355,7 +355,7 @@ test "a Header Object that is not an object, or whose $ref cannot be followed, i
 }
 
 ///|
-test "a header described with content takes its value the same way from its media type, after following its $ref: its example, else the first of its examples, else a sample of its schema" {
+test "a header described with content takes its value the same way from its media type, after following its $ref in 3.2: its example, else the first of its examples, else a sample of its schema" {
   inspect(
     responses_of(
       (
@@ -385,6 +385,7 @@ test "a header described with content takes its value the same way from its medi
         #|  }
         #|}
       ),
+      openapi="3.2.0",
     ),
     content=(
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Two/content/text~1csv: warning: left out: a header's content has one media type, here "text/plain"
@@ -419,6 +420,47 @@ test "a header described with content takes its value the same way from its medi
     content=(
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Content/content: must be an object
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Media-Type/content/text~1plain: must be an object
+      #|nothing written
+      #|
+    ),
+  )
+}
+
+///|
+test "in 3.0 and 3.1 the Media Type Object of a header's content is read as written: its $ref is not followed, but ignored with a warning" {
+  let responses =
+    #|{
+    #|  "200": {
+    #|    "headers": {
+    #|      "X-Broken": { "content": { "text/plain": { "$ref": "#/nowhere", "example": "abc" } } },
+    #|      "X-Url": { "content": { "text/plain": { "$ref": "https://example.com/header.json" } } },
+    #|      "X-Schema": { "content": { "text/plain": { "$ref": "#/components/schemas/Pet" } } }
+    #|    }
+    #|  }
+    #|}
+  let v30 = responses_of(responses, openapi="3.0.3")
+  assert_eq(v30, responses_of(responses, openapi="3.1.0"))
+  inspect(
+    v30,
+    content=(
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Broken/content/text~1plain/$ref: warning: ignored: a Media Type is a reference only from OpenAPI 3.2
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Url/content/text~1plain/$ref: warning: ignored: a Media Type is a reference only from OpenAPI 3.2
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Schema/content/text~1plain/$ref: warning: ignored: a Media Type is a reference only from OpenAPI 3.2
+      #|response:
+      #|  status: 200
+      #|  headers:
+      #|    X-Broken: abc
+      #|    X-Url: ""
+      #|    X-Schema: ""
+      #|
+    ),
+  )
+  inspect(
+    responses_of(responses, openapi="3.2.0"),
+    content=(
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Broken/content/text~1plain/$ref: the document has nothing at /nowhere
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Url/content/text~1plain/$ref: smock reads no URLs and no absolute paths: bundle the document into one file first, with another tool
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Schema/content/text~1plain/$ref: the document has nothing at /components/schemas/Pet
       #|nothing written
       #|
     ),

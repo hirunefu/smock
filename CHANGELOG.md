@@ -93,7 +93,7 @@ of each GitHub release include its section
   Anchors, aliases and tags stay errors, each at its pointer; the guide
   shows how to convert such a document to JSON first.
 - `smock import-openapi` follows a `$ref` where it reads a Path Item, a
-  Response, a Header, an Example or a Media Type: within the document, by
+  Response, a Header, an Example or, in 3.2, a Media Type: within the document, by
   its JSON Pointer fragment, and into other files by their relative paths.
   Other files are read only under `--ref-dir`, by default the document's
   directory, so a downloaded document cannot copy a secret into a

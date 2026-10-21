@@ -119,8 +119,8 @@ fn Report::header_value(
 
 ///|
 /// The value of the Media Type Object `json` of a header's `content`,
-/// written at `pointer`, after following its `$ref`: its `example`, else
-/// the first of its `examples` that gives one, else a sample of its
+/// written at `pointer`, after following its `$ref` in 3.2: its `example`,
+/// else the first of its `examples` that gives one, else a sample of its
 /// `schema`. `None` when it has none of these, or after reporting an
 /// error.
 fn Report::header_media_type(
@@ -129,11 +129,8 @@ fn Report::header_media_type(
   pointer : String,
   json : Json,
 ) -> Value? {
-  guard self.followed(document, pointer, json) is Some({ pointer, json, }) else {
-    return None
-  }
-  guard json is Object(media_type) else {
-    self.error_at(pointer, "must be an object")
+  guard self.media_type_object(document, pointer, json)
+    is Some((pointer, media_type)) else {
     return None
   }
   match self.header_example(document, pointer, media_type) {
