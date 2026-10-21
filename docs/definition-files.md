@@ -1258,6 +1258,8 @@ code points, so an emoji or a Japanese character counts as one.
 | `len(x)` | text, or an array | The length of the text in code points, or the number of elements of the array. |
 | `concat(a, b, …)` | 2 to 100 texts | The texts joined. |
 | `padStart(s, length, pad)`, `padEnd(s, length, pad)` | text; an integer; text, by default one space | `s` padded at its start or end to `length` code points, the pad repeated and cut to fit, as JavaScript does. A text that long already, or an empty pad, is unchanged. |
+| `uppercase(s)`, `lowercase(s)` | text | `s` with each code point mapped to its upper or lower case, one code point to one. |
+| `trim(s)` | text | `s` without White_Space at either end. |
 
 ```yaml
 response:
@@ -1271,6 +1273,34 @@ response:
 
 `?n=42` with the body `{"first":"Ann","last":"Lee","items":["a","b"]}` gets
 `{"code":"000042","name":"Ann Lee","lines":[1,2]}`.
+
+`uppercase`, `lowercase` and `trim` read the data of Unicode 18.0.0, which
+is built into smock. That data does not change within format version 1, so
+they give the same output on every machine and in every release.
+
+- Case mapping is the simple one in the Unicode Character Database: each
+  code point maps to one code point, whatever the locale. There is no
+  special casing, so `ß`, whose upper case is two letters, stays `ß`, and
+  `İ` becomes `i`. Characters without case, such as digits, Japanese text
+  or emoji, stay as they are.
+- `trim` removes the code points with the Unicode property White_Space:
+  tab, line feed, the other ASCII spaces and line breaks, and those beyond
+  ASCII, such as U+00A0 NO-BREAK SPACE and U+3000 IDEOGRAPHIC SPACE. U+200B
+  ZERO WIDTH SPACE and U+FEFF ZERO WIDTH NO-BREAK SPACE are not White_Space,
+  so they stay.
+
+```yaml
+response:
+  status: 200
+  template: true
+  json:
+    code: ${uppercase(body.code)}
+    name: ${trim(query.name)}
+```
+
+The body `{"code":"straße-ç"}` with `?name=%E3%80%80Ann%20` (an ideographic
+space before the name, a space after it) gets
+`{"code":"STRAßE-Ç","name":"Ann"}`.
 
 The string helpers, and the families added after them, read their
 arguments by one set of rules:

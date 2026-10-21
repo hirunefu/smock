@@ -17,6 +17,9 @@ of each GitHub release include its section
 - Template helpers for text: `len`, `concat`, `padStart` and `padEnd`.
   Lengths count Unicode code points. A text argument may be a number or a
   boolean, taken as its text.
+- Template helpers `uppercase`, `lowercase` and `trim`, from the data of
+  Unicode 18.0.0, built in: simple case mapping, one code point to one and
+  with no locale (`ß` stays `ß`), and White_Space removed at both ends.
 - A helper call can be followed by steps, as a reference can:
   `${range(1, 3)[1]}` gives `2`.
 - The bounds of `range(a, b)` can be any expression that gives an integer,
