@@ -173,3 +173,72 @@ test "a helper whose result takes more than 1 MiB of UTF-8 is a render error" {
     ),
   )
 }
+
+///|
+/// A request whose body is the integer `n` digits long, 1 then 0s.
+fn of_digits(n : Int) -> @template.Input {
+  { ..request, body: @utf8.encode("1" + "0".repeat(n - 1)), }
+}
+
+///|
+test "json(), number() and raw() are held to the 1 MiB result bound, in a header value as in a body" {
+  let mib = 1024 * 1024
+  let length = (out : String) => {
+    if out.has_prefix("error") {
+      out
+    } else {
+      "\{out.length()} characters"
+    }
+  }
+  let header = (source : String, input : @template.Input) => {
+    match
+      @template.Text::parse(
+        source,
+        pointer="/response/headers/X",
+        kind=HeaderValue,
+      ) {
+      Ok(text) =>
+        length(
+          text.render(
+            @template.Context::new(
+              input,
+              now=nine,
+              rand=@template.helper_generator(1),
+            ),
+          ) catch {
+            RenderError(at~, message~) => "error at \{at}: \{message}"
+          },
+        )
+      Err(problem) => problem.message
+    }
+  }
+  let body = (source : String, input : @template.Input) => {
+    length(rendered(source, input~))
+  }
+  inspect(
+    [
+      header("${json(bodyText)}", of_size(mib - 2)),
+      header("${json(bodyText)}", of_size(mib - 1)),
+      body("${json(bodyText)}", of_size(mib - 1)),
+      header("${raw(bodyText)}", of_size(mib)),
+      header("${raw(bodyText)}", of_size(mib + 1)),
+      body("${raw(bodyText)}", of_size(mib + 1)),
+      header("${number(bodyText)}", of_digits(mib)),
+      header("${number(bodyText)}", of_digits(mib + 1)),
+      header("${number(body)}", of_digits(mib + 1)),
+      body("${number(bodyText)}", of_digits(mib + 1)),
+    ].join("\n"),
+    content=(
+      #|1048576 characters
+      #|error at /response/headers/X: json(): the result takes more than 1 MiB
+      #|error at /response/body: json(): the result takes more than 1 MiB
+      #|1048576 characters
+      #|error at /response/headers/X: raw(): the result takes more than 1 MiB
+      #|error at /response/body: raw(): the result takes more than 1 MiB
+      #|1048576 characters
+      #|error at /response/headers/X: number(): the result takes more than 1 MiB
+      #|error at /response/headers/X: number(): the result takes more than 1 MiB
+      #|error at /response/body: number(): the result takes more than 1 MiB
+    ),
+  )
+}
