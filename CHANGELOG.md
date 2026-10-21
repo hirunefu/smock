@@ -97,6 +97,12 @@ of each GitHub release include its section
   declare, or that repeats, is a usage error. `--declare-mock off` writes
   only Stubs, for a Mock declared by hand in another file, such as to set
   `default`, `noMatch` or `journal`.
+- The README documents `smock import-openapi` and its flags. The Mockoon
+  migration guide no longer lists OpenAPI import among what smock does not
+  do: an environment that Mockoon imported from an OpenAPI document can be
+  imported into smock from the same document. The import guide has notes
+  for Mockoon users and for Prism users, where `Prefer: code=404` is
+  `Smock-Status: 404`, and says how to deploy a large output.
 - `write` in the `smock/yaml` module turns a JSON tree into a YAML
   document, with comments, that the module's own parser reads back as the
   same tree. A string is quoted only when it would not read back as the
