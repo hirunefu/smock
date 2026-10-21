@@ -10,9 +10,10 @@
 // Its parts are kept apart, so that each can grow on its own: the document
 // and its version (document.mbt), the operations under `paths`
 // (operations.mbt), paths (paths.mbt), responses (responses.mbt), bodies
-// and headers (bodies.mbt), examples (examples.mbt), references and the
-// documents they name (references.mbt), and the file it writes
-// (output.mbt).
+// and headers (bodies.mbt), examples (examples.mbt), samples of schemas
+// (samples.mbt), with numbers within their bounds (numbers.mbt) and the
+// exact decimals they need (decimal.mbt), references and the documents
+// they name (references.mbt), and the file it writes (output.mbt).
 
 ///|
 /// The most documents a conversion reads, the root included.
