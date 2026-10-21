@@ -2037,12 +2037,18 @@ users.yaml: /stubs/0/response/json/id: template: column 3: unknown helper "fake.
 users.yaml: /stubs/1/response/bodyFile: template: line 3, column 5: unknown helper "fake.nickname": not one of the helpers smock has
 ```
 
-Every name (an `env` name must be listed), loop variable and helper, the
-names of `variables`, the number of arguments of each call and the kinds
-and bounds of its literal arguments, date formats, offsets and durations,
-the keys of `$each` and `$if` objects, reserved keys, `${` in a key or in
-`Content-Type`, `json()` and `raw()` in `json`, and a templated body file
-that is not UTF-8 are checked then.
+These are checked when the files are loaded:
+
+- every name, loop variable and helper;
+- an `env` name, which must be listed with `--template-env`;
+- the names of `variables`;
+- the number of arguments of each call, and the kinds and bounds of its
+  literal arguments;
+- date formats, offsets and durations;
+- the keys of `$each` and `$if` objects, and reserved keys;
+- `${` in a key or in `Content-Type`;
+- `json()` and `raw()` in `json`;
+- a templated body file that is not UTF-8.
 
 ### Rendering a template
 
@@ -2059,10 +2065,11 @@ has none. A Stub with [`responses`](#several-responses) renders the
 response the seed picks, and the rendering shows its index as
 `responseIndex` (null for a Stub with `response`). `--response <i>` (the
 Admin API's `response=<i>`) renders the response at index `i` instead,
-from 0; a Stub with `response` takes 0 only. Any other index fails: the
-Admin API answers 400 `invalid_request`, and `smock render` exits with
-status 1. With the same time, seed and index, a rendering is the same on
-every run. A template that fails for the sample shows the 500 and the
+from 0; a Stub with `response` takes 0 only. An index the Stub does not
+have fails: the Admin API answers 400 `invalid_request`, and `smock render`
+exits with status 1. A value that is not an integer from 0 to 99 is refused
+before rendering: 400 `invalid_request`, or a usage error with status 2.
+With the same time, seed and index, a rendering is the same on every run. A template that fails for the sample shows the 500 and the
 error. A response that serves [byte ranges](#range-requests) answers the
 sample's `Range` header, so the rendering shows the 206 or the 416 a
 request would get.
