@@ -277,8 +277,8 @@ fn Sampler::merged_sample(self : Sampler, merged : Merged, room : Int) -> Json? 
   }
   match self.type_of(merged) {
     "boolean" => Some(Json::boolean(true))
-    // Until numbers are sampled within their bounds.
-    "number" | "integer" => Some(Json::number(0))
+    "number" => Some(self.number(merged, false).to_json())
+    "integer" => Some(self.number(merged, true).to_json())
     "string" => Some(Json::string(self.string(merged)))
     "array" => Some(self.array(merged, room))
     "object" => Some(self.object(merged, room))

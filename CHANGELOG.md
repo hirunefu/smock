@@ -41,8 +41,7 @@ of each GitHub release include its section
   schema of one media type, written in the file as `json` or `body`, with
   the media type as the Content-Type. Formats such as `date-time`, `uuid`
   and `email` give valid samples. Nothing is random and nothing is
-  templated. Numbers sample as 0 so far, and schema references are not
-  used yet.
+  templated. Schema references are not used yet.
 - `smock import-openapi` takes bodies from the document's examples first:
   a media type's `examples`, then its `example`, then a sample of its
   schema. The first named example is the response's body. Every further
@@ -54,6 +53,11 @@ of each GitHub release include its section
   take their first branch that is not only null, so a nullable field
   written as a `oneOf` with a null branch gets a sample of the other
   branch. `not`, `if`, `then`, `else` and `discriminator` are ignored.
+- `smock import-openapi` samples numbers within `minimum`, `maximum` and
+  their exclusive forms, so clients that check ranges accept them: 0 when
+  the bounds allow it, else the nearest bound, moved inside an exclusive
+  one. The arithmetic is exact on the bounds' decimal text, with no float,
+  so every platform writes the same digits.
 - `smock import-openapi` writes YAML when the name of `--output` ends in
   `.yaml` or `.yml`, and JSON when it ends in `.json`. A YAML file starts
   with a comment that names the document and says not to edit the file,

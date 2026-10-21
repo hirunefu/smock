@@ -11,8 +11,10 @@
 // and its version (document.mbt), the operations under `paths`
 // (operations.mbt), paths (paths.mbt), servers and base paths
 // (servers.mbt), responses (responses.mbt), bodies and headers
-// (bodies.mbt), examples (examples.mbt), references (references.mbt), and
-// the file it writes (output.mbt).
+// (bodies.mbt), examples (examples.mbt), samples of schemas (samples.mbt),
+// with numbers within their bounds (numbers.mbt) and the exact decimals
+// they need (decimal.mbt), references (references.mbt), and the file it
+// writes (output.mbt).
 
 ///|
 /// What a conversion needs besides the documents.
