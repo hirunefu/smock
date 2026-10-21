@@ -15,6 +15,8 @@ priv enum Kind {
   Array
   /// A number without a fraction, or a string that is one.
   Integer
+  /// A number, or a string that is one.
+  Numeric
   /// A date in the years 0 to 9999: an RFC 3339 date-time with an offset,
   /// a date `YYYY-MM-DD`, or a number without a fraction, read as
   /// milliseconds since the Unix epoch. When rendered, another value is
@@ -30,6 +32,7 @@ fn Kind::wanted(self : Kind) -> String {
     TextOrArray => "a string, a number, a boolean or an array"
     Array => "an array"
     Integer => "an integer, or a string that is one"
+    Numeric => "a number, or a string that is one"
     Date =>
       "a date: an RFC 3339 date-time with an offset, a date YYYY-MM-DD or epoch milliseconds, in the years 0 to 9999"
   }
@@ -43,6 +46,7 @@ fn Kind::accepts(self : Kind, json : Json) -> Bool {
     TextOrArray => json is Array(_) || text_value(json) is Some(_)
     Array => json is Array(_)
     Integer => integer_value(json) is Some(_)
+    Numeric => numeric_value(json) is Some(_)
     Date => date_of(json) is Some(ms) && ms >= earliest && ms <= latest
   }
 }

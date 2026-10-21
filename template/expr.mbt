@@ -80,6 +80,10 @@ priv enum Helper {
   Encoding(EncodingHelper)
   /// `jwtPayload` and `jwtHeader` (jwt.mbt).
   Jwt(JwtHelper)
+  /// Exact decimal arithmetic: `add`, `subtract`, `multiply`, `divide`,
+  /// `modulo`, `ceil`, `floor`, `round`, `toFixed` and `parseInt`
+  /// (arithmetic.mbt, decimal.mbt).
+  Arithmetic(ArithmeticHelper)
 }
 
 ///|
@@ -561,6 +565,7 @@ priv struct CallSite {
 /// added without changing the others.
 let families : Array[(CallSite) -> Helper? raise Syntax] = [
   fake_helper, time_helper, conversion_helper, string_helper, encoding_helper, jwt_helper,
+  arithmetic_helper,
 ]
 
 ///|

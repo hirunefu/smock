@@ -1,0 +1,21 @@
+mocks:
+  - name: cart
+stubs:
+  - id: total
+    mock: cart
+    request: { method: POST, path: /cart/total }
+    response:
+      status: 200
+      template: true
+      headers:
+        X-Page: ${add(query.page ?? 1, 1)}
+      json:
+        total: ${multiply(body.price, body.qty)}
+        left: ${subtract(body.budget ?? 100, multiply(body.price, body.qty))}
+        third: ${divide(10, 3)}
+        odd: ${modulo(body.qty, 2)}
+        up: ${ceil(body.price)}
+        down: ${floor(body.price)}
+        nearest: ${round(body.price)}
+        price: ${toFixed(body.price, 3)}
+        whole: ${parseInt('42.9')}
