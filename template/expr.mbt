@@ -2,10 +2,11 @@
 //
 //     expr    = value { "??" value }
 //     value   = ref | literal | call
-//     ref     = root { "." name | "[" integer "]" | "[" string "]" }
+//     ref     = root steps
+//     steps   = { "." name | "[" integer "]" | "[" string "]" }
 //     root    = "method" | "path" | "query" | "header" | "body" | "bodyText"
 //             | "loop" | loop variable
-//     call    = function "(" [ expr { "," expr } ] ")"
+//     call    = function "(" [ expr { "," expr } ] ")" steps
 //     cond    = [ "!" ] expr [ ( "==" | "!=" ) literal ]
 //     literal = string | number | "true" | "false" | "null"
 //     string  = "'" … "'" | '"' … '"'      (with \' \" \\ escapes)
@@ -24,6 +25,9 @@ priv enum Expr {
   Ref(Root, Array[Step], String)
   /// A call of a helper, with its arguments.
   Call(Helper, Array[Expr])
+  /// A call followed by steps into what it gives, with the source text of
+  /// the whole.
+  Walk(Expr, Array[Step], String)
   /// `a ?? b ?? …`: the first of them that is present.
   Fallback(Array[Expr])
 }
@@ -372,18 +376,19 @@ fn Parser::named(self : Parser, start : Int) -> Expr raise Syntax {
   }
   if after < self.chars.length() && self.chars[after] == '(' {
     self.i = after + 1
-    return self.call(dotted.join("."), start)
+    let call = self.call(dotted.join("."), start)
+    let steps = self.steps()
+    if steps.is_empty() {
+      return call
+    }
+    return Walk(call, steps, String::from_array(self.chars[start:self.i]))
   }
   self.reference(first, start)
 }
 
 ///|
-/// Parses the rest of a reference that starts with `root`.
-fn Parser::reference(
-  self : Parser,
-  root : String,
-  start : Int,
-) -> Expr raise Syntax {
+/// Parses `steps`: `.name`, `[n]` and `['name']`, as many as there are.
+fn Parser::steps(self : Parser) -> Array[Step] raise Syntax {
   let steps = []
   for ;; {
     if self.eat(".") {
@@ -425,6 +430,17 @@ fn Parser::reference(
       break
     }
   }
+  steps
+}
+
+///|
+/// Parses the rest of a reference that starts with `root`.
+fn Parser::reference(
+  self : Parser,
+  root : String,
+  start : Int,
+) -> Expr raise Syntax {
+  let steps = self.steps()
   let text = String::from_array(self.chars[start:self.i])
   let with_name = (root : Root) => {
     match steps {
@@ -539,6 +555,26 @@ fn Parser::call(self : Parser, name : String, start : Int) -> Expr raise Syntax 
     start,
     "unknown helper \{name.escape()}: not one of the helpers smock has",
   )
+}
+
+///|
+/// The literals that `expr` can give: itself when it is a literal, or each
+/// alternative of a fallback that is one. A helper checks them when the
+/// template is parsed.
+fn literals(expr : Expr) -> Array[Json] {
+  match expr {
+    Literal(json) => [json]
+    Fallback(alternatives) => {
+      let found = []
+      for alternative in alternatives {
+        if alternative is Literal(json) {
+          found.push(json)
+        }
+      }
+      found
+    }
+    _ => []
+  }
 }
 
 ///|

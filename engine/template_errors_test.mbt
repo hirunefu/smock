@@ -38,7 +38,7 @@ test "a text template that does not parse is reported with the file, the JSON Po
     "${fake.pick(query.a)}", "${fake.words(0)}", "${for x in body.items}", "${if body.a}",
     "${params.id}", "${loop.index}", "${path.x}", "${path[1].x}", "${query}", "${query.a.b}",
     "${header[0]}", "${method.x}", "${bodyText[0]}", "${'open}", "${'a\\nb'}", "${007}",
-    "${1.}", "${body.a == 1}", "${!body.a}", "${range(query.a, 3)}", "${range(1, 1001)}",
+    "${1.}", "${body.a == 1}", "${!body.a}", "${range('1', 3)}", "${range(1, 1001)}",
     "${number()}", "${json(body, 1)}", "${body[01]}", "${body[}", "${query['a'}",
   ]
   inspect(
@@ -85,7 +85,7 @@ test "a text template that does not parse is reported with the file, the JSON Po
       #|m.yaml: /stubs/34/response/body: template: column 3: expected digits after the decimal point
       #|m.yaml: /stubs/35/response/body: template: column 10: == and != are allowed only in the condition of $if
       #|m.yaml: /stubs/36/response/body: template: column 3: !, == and != are allowed only in the condition of $if
-      #|m.yaml: /stubs/37/response/body: template: column 9: range() takes integers: integer literals, or number(…) of a request value
+      #|m.yaml: /stubs/37/response/body: template: column 9: range() takes integers from -9007199254740991 to 9007199254740991, not "1"
       #|m.yaml: /stubs/38/response/body: template: column 3: range(1, 1001) gives 1001 values; range gives at most 1000
       #|m.yaml: /stubs/39/response/body: template: column 3: number() takes 1 argument, not 0
       #|m.yaml: /stubs/40/response/body: template: column 3: json() takes 1 argument, not 2

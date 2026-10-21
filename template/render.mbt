@@ -184,6 +184,15 @@ fn Context::eval(
         Some(json) => present(json)
         None => Missing(text)
       }
+    Walk(call, steps, text) =>
+      match self.eval(call, frames, at) {
+        Present(value) =>
+          match walk(value.json, steps) {
+            Some(json) => present(json)
+            None => Missing(text)
+          }
+        missing => missing
+      }
     Call(helper, args) => {
       // The arguments, evaluated in order; a missing one makes the call's
       // value missing too.
@@ -318,6 +327,16 @@ fn number_of(text : String) -> Json? {
     Some(number)
   } else {
     None
+  }
+}
+
+///|
+/// `json` for a message: a string, a number, `true`, `false` or `null` as
+/// JSON, and an object or an array by its kind.
+fn described(json : Json) -> String {
+  match json {
+    Object(_) | Array(_) => kind_of(json)
+    _ => compact_json(json)
   }
 }
 

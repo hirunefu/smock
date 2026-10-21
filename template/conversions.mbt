@@ -6,7 +6,7 @@
 priv enum ConversionHelper {
   /// `number(x)`, which takes any expression.
   Number
-  /// `range(a, b)`, whose arguments are integer literals or `number(…)`.
+  /// `range(a, b)`, whose bounds are any expressions that give integers.
   Range
   /// `json(x)`: text templates only.
   JsonText
@@ -25,18 +25,19 @@ fn conversion_helper(site : CallSite) -> Helper? raise Syntax {
     }
     "range" => {
       site.count(2)
+      // Each bound may be any expression; a literal one, or a literal
+      // alternative of a fallback, is checked now.
       for arg in site.args {
-        if !is_range_bound(arg.1) {
-          raise Syntax(
-            arg.0,
-            "range() takes integers: integer literals, or number(…) of a request value",
-          )
+        for literal in literals(arg.1) {
+          if range_integer(literal) is None {
+            raise Syntax(arg.0, range_problem(literal))
+          }
         }
       }
       match (site.args[0].1, site.args[1].1) {
-        (Literal(_), Literal(_)) => {
-          let a = site.integer(0, -max_integer, max_integer)
-          let b = site.integer(1, -max_integer, max_integer)
+        (Literal(a), Literal(b)) => {
+          let a = range_integer(a).unwrap()
+          let b = range_integer(b).unwrap()
           if b - a + 1L > max_range.to_int64() {
             raise Syntax(
               site.start,
@@ -70,18 +71,6 @@ fn conversion_helper(site : CallSite) -> Helper? raise Syntax {
 ///|
 /// The most values `range` gives.
 let max_range : Int = 1000
-
-///|
-/// Whether `expr` can bound a range: an integer literal, `number(…)`, or a
-/// fallback of those.
-fn is_range_bound(expr : Expr) -> Bool {
-  match expr {
-    Literal(Number(n, ..)) => n == n.floor()
-    Call(Conversion(Number), _) => true
-    Fallback(alternatives) => alternatives.iter().all(is_range_bound)
-    _ => false
-  }
-}
 
 ///|
 /// The values of a literal `range(a, b)`, if `expr` is one.
@@ -157,13 +146,25 @@ fn convert(
 ///|
 /// `json` as a bound of `range`: an integer from -(2^53 - 1) to 2^53 - 1.
 fn range_bound(json : Json, at : String) -> Int64 raise RenderError {
+  match range_integer(json) {
+    Some(n) => n
+    None => raise RenderError(at~, message=range_problem(json))
+  }
+}
+
+///|
+/// `json` as a bound of `range`, if it is one: an integer number from
+/// -(2^53 - 1) to 2^53 - 1. A string is not a number here.
+fn range_integer(json : Json) -> Int64? {
   match json {
     Number(n, ..) if n == n.floor() && n.abs() <= max_integer.to_double() =>
-      n.to_int64()
-    _ =>
-      raise RenderError(
-        at~,
-        message="range() takes integers from -\{max_integer} to \{max_integer}, not \{compact_json(json)}",
-      )
+      Some(n.to_int64())
+    _ => None
   }
+}
+
+///|
+/// What is wrong with `json`, which is not a bound of `range`.
+fn range_problem(json : Json) -> String {
+  "range() takes integers from -\{max_integer} to \{max_integer}, not \{described(json)}"
 }
