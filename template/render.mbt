@@ -422,10 +422,7 @@ fn number_of(text : String) -> Json? {
   let parser = {
     chars,
     i: 0,
-    vars: [],
-    in_loop: false,
-    text: false,
-    env: no_env,
+    scope: { vars: [], in_loop: false, text: false, env: no_env, },
   }
   let number = parser.number() catch { _ => return None }
   if parser.i == chars.length() {

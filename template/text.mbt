@@ -121,7 +121,8 @@ pub fn Text::parse(
   env? : Env = no_env,
 ) -> Result[Text, Problem] {
   let chars = source.iter().collect()
-  try parse_parts(chars, [], false, text=true, env~) catch {
+  let scope = { vars: [], in_loop: false, text: true, env, }
+  try parse_parts(chars, scope) catch {
     Syntax(at, message) =>
       Err({ pointer, message: "template: \{position(chars, at)}\{message}", })
   } noraise {
@@ -155,20 +156,12 @@ fn position(chars : Array[Char], at : Int) -> String {
 }
 
 ///|
-/// Parses the parts of a template, `chars`: literal text and `${ expr }`.
-/// `vars` are the loop variables in scope, and `in_loop` says whether it is
-/// inside a `$each`. With `text`, `json()` and `raw()` are allowed. `env`
-/// holds the environment variables it may read.
-fn parse_parts(
-  chars : Array[Char],
-  vars : Array[String],
-  in_loop : Bool,
-  text~ : Bool,
-  env~ : Env,
-) -> Array[Part] raise Syntax {
+/// Parses the parts of a template, `chars`: literal text and `${ expr }`,
+/// whose expressions can name what `scope` holds.
+fn parse_parts(chars : Array[Char], scope : Scope) -> Array[Part] raise Syntax {
   let parts = []
   let literal = StringBuilder()
-  let parser = { chars, i: 0, vars, in_loop, text, env, }
+  let parser = { chars, i: 0, scope, }
   while parser.i < chars.length() {
     if parser.eat("$${") {
       literal.write_string("${")

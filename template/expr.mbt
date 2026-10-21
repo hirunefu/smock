@@ -124,10 +124,10 @@ let root_names : Array[String] = [
 let max_integer : Int64 = 9_007_199_254_740_991L
 
 ///|
-/// Parses expressions in `chars`, from `i` on.
-priv struct Parser {
-  chars : Array[Char]
-  mut i : Int
+/// What the expressions of a template can name where they are parsed. An
+/// inner scope, such as the `do` of a `$each`, is derived from the outer
+/// one.
+priv struct Scope {
   /// The loop variables in scope, innermost last.
   vars : Array[String]
   /// Whether the expression is inside a `$each`, where `loop.index` is.
@@ -136,6 +136,15 @@ priv struct Parser {
   text : Bool
   /// The environment variables `env.NAME` may read.
   env : Env
+}
+
+///|
+/// Parses expressions in `chars`, from `i` on.
+priv struct Parser {
+  chars : Array[Char]
+  mut i : Int
+  /// What the expressions can name.
+  scope : Scope
 }
 
 ///|
@@ -482,7 +491,7 @@ fn Parser::reference(
     }
     Ref(root, steps, text)
   }
-  if self.vars.contains(root) {
+  if self.scope.vars.contains(root) {
     return Ref(LoopVar(root), steps, text)
   }
   match root {
@@ -492,7 +501,7 @@ fn Parser::reference(
     "env" =>
       match steps {
         [Name(name)] =>
-          match self.env.values.get(name) {
+          match self.scope.env.values.get(name) {
             Some(value) => Ref(Env(value.map(Json::string)), steps, text)
             None =>
               raise Syntax(
@@ -528,7 +537,7 @@ fn Parser::reference(
           )
       }
     "loop" => {
-      if !self.in_loop {
+      if !self.scope.in_loop {
         raise Syntax(start, "loop.index is only inside $each")
       }
       match steps {
@@ -600,7 +609,7 @@ fn Parser::call(self : Parser, name : String, start : Int) -> Expr raise Syntax 
       self.expect(",", ", or )")
     }
   }
-  let site = { name, start, args, text: self.text, }
+  let site = { name, start, args, text: self.scope.text, }
   for family in families {
     if family(site) is Some(helper) {
       return Call(
