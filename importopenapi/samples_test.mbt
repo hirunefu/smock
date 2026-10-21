@@ -615,37 +615,3 @@ test "an allOf, oneOf or anyOf that is not an array, and a branch that is not a 
     ),
   )
 }
-
-///|
-test "until its ticket, a schema $ref is an error at the $ref that says it is not followed yet, in a branch too; a $ref in example data is data" {
-  inspect(
-    samples_of([
-      "{ \"type\": \"object\", \"properties\": { \"pet\": { \"$ref\": \"#/components/schemas/Pet\" } } }",
-      "{ \"type\": \"array\", \"items\": { \"$ref\": \"#/components/schemas/Pet\", \"type\": \"string\" } }",
-      "{ \"type\": \"object\", \"properties\": { \"pet\": { \"$ref\": \"#/components/schemas/Pet\", \"writeOnly\": true } } }",
-      "{ \"allOf\": [{ \"$ref\": \"#/components/schemas/Pet\" }], \"example\": { \"$ref\": \"#/x\" } }",
-      "{ \"type\": \"object\", \"example\": { \"$ref\": \"#/x\" } }",
-    ]),
-    content=(
-      #|{ "type": "object", "properties": { "pet": { "$ref": "#/components/schemas/Pet" } } } => petstore.json: /schema/properties/pet/$ref: schema references are not followed yet: write the schema it names in its place
-      #|nothing written
-      #|{ "type": "array", "items": { "$ref": "#/components/schemas/Pet", "type": "string" } } => petstore.json: /schema/items/$ref: schema references are not followed yet: write the schema it names in its place
-      #|nothing written
-      #|{ "type": "object", "properties": { "pet": { "$ref": "#/components/schemas/Pet", "writeOnly": true } } } => {}
-      #|{ "allOf": [{ "$ref": "#/components/schemas/Pet" }], "example": { "$ref": "#/x" } } => petstore.json: /schema/allOf/0/$ref: schema references are not followed yet: write the schema it names in its place
-      #|nothing written
-      #|{ "type": "object", "example": { "$ref": "#/x" } } => {"$ref":"#/x"}
-      #|
-    ),
-  )
-  inspect(
-    sample_of(
-      "{ \"type\": \"object\", \"properties\": { \"pet\": { \"$ref\": \"#/components/schemas/Pet\", \"writeOnly\": true } } }",
-      openapi="3.0.3",
-    ),
-    content=(
-      #|petstore.json: /schema/properties/pet/$ref: schema references are not followed yet: write the schema it names in its place
-      #|nothing written
-    ),
-  )
-}

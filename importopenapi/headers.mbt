@@ -192,8 +192,9 @@ fn Report::header_example(
 
 ///|
 /// The sample of the `schema` of `object`, a Header Object or the Media
-/// Type Object of its `content`, written at `pointer`. `None` when it has
-/// none, or when the schema gives no value.
+/// Type Object of its `content`, written at `pointer`, within the bounds of
+/// a body's sample. `None` when it has none, when the schema gives no
+/// value, or when the sample would pass them.
 fn Report::header_sample(
   self : Report,
   document : Document,
@@ -203,11 +204,13 @@ fn Report::header_sample(
   let schema_pointer = @definitions.child_pointer(pointer, "schema")
   match object.get("schema") {
     None => None
-    Some(Object(_) | True | False as json) =>
-      match self.sampler(document).sample(schema_pointer, json, body_nesting) {
+    Some(Object(_) | True | False as json) => {
+      let part = "the header's value"
+      match self.body_sample(document, schema_pointer, json, part~).value {
         Some(sample) => Some(Sampled(schema_pointer, sample))
         None => None
       }
+    }
     Some(_) => {
       self.error_at(schema_pointer, "must be a schema, an object or a boolean")
       None

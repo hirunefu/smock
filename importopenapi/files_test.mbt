@@ -711,3 +711,150 @@ test "a referenced document need not be an OpenAPI document: its openapi field i
     ),
   )
 }
+
+///|
+test "a schema $ref into another file is followed from the file it is in, a schema that names itself there ends, and a $id inside that file is an error at it, while one at its root is ignored" {
+  let root =
+    #|openapi: 3.1.0
+    #|paths:
+    #|  /nodes:
+    #|    get:
+    #|      operationId: getNode
+    #|      responses:
+    #|        200:
+    #|          description: OK
+    #|          content:
+    #|            application/json:
+    #|              schema:
+    #|                $ref: schemas/node.yaml#/Node
+  let node =
+    #|$id: https://example.com/schemas/node.yaml
+    #|Node:
+    #|  type: object
+    #|  required: [name]
+    #|  properties:
+    #|    name:
+    #|      $ref: common.yaml#/Name
+    #|    children:
+    #|      type: array
+    #|      items:
+    #|        $ref: "#/Node"
+  let common =
+    #|Name:
+    #|  type: string
+    #|  example: Rex
+  inspect(
+    import_files([
+      ("openapi.yaml", root),
+      ("schemas/node.yaml", node),
+      ("schemas/common.yaml", common),
+    ]),
+    content=(
+      #|1 Stubs from 1 operations
+      #|{
+      #|  "version": 1,
+      #|  "mocks": [
+      #|    {
+      #|      "name": "petstore"
+      #|    }
+      #|  ],
+      #|  "stubs": [
+      #|    {
+      #|      "id": "petstore.getNode.200",
+      #|      "mock": "petstore",
+      #|      "request": {
+      #|        "method": "GET",
+      #|        "path": "/nodes"
+      #|      },
+      #|      "response": {
+      #|        "status": 200,
+      #|        "json": {
+      #|          "name": "Rex",
+      #|          "children": []
+      #|        }
+      #|      }
+      #|    }
+      #|  ]
+      #|}
+      #|
+    ),
+  )
+  let pet =
+    #|Pet:
+    #|  $id: https://example.com/pet
+    #|  type: object
+    #|  properties:
+    #|    owner:
+    #|      $ref: common.yaml#/Name
+  inspect(
+    import_files([
+      ("openapi.yaml", root.replace(old="node.yaml#/Node", new="pet.yaml#/Pet")),
+      ("schemas/pet.yaml", pet),
+      ("schemas/common.yaml", common),
+    ]),
+    content=(
+      #|api/schemas/pet.yaml: /Pet/$id: a $ref lies under this $id, which would change what the $ref names: smock does not resolve $id
+      #|nothing written
+      #|
+    ),
+  )
+}
+
+///|
+test "a file that cannot be read, which only the discarded first sample of a schema reached, is not reported, and the problems found before that sample stay" {
+  inspect(
+    in_rounds([
+      (
+        "openapi.yaml",
+        (
+          #|openapi: 3.1.0
+          #|webhooks:
+          #|  newPet: {}
+          #|paths:
+          #|  /a:
+          #|    get:
+          #|      operationId: getA
+          #|      callbacks:
+          #|        onEvent: {}
+          #|      responses:
+          #|        200:
+          #|          description: OK
+          #|          content:
+          #|            application/json:
+          #|              schema:
+          #|                $ref: missing.yaml#/A
+          #|  /b:
+          #|    get:
+          #|      operationId: getB
+          #|      responses:
+          #|        200:
+          #|          description: OK
+          #|          content:
+          #|            application/json:
+          #|              schema:
+          #|                type: object
+          #|                properties:
+          #|                  pet:
+          #|                    type: object
+          #|                    properties:
+          #|                      details:
+          #|                        type: object
+          #|                        properties:
+          #|                          extra:
+          #|                            $ref: missing.yaml#/B
+          #|                          blob:
+          #|                            type: string
+          #|                            minLength: 70000
+        ),
+      ),
+    ]),
+    content=(
+      #|round 1 asks for missing.yaml
+      #|api/openapi.yaml: /webhooks: warning: webhooks are not imported: they are requests the API sends, not ones it answers
+      #|api/openapi.yaml: /paths/~1a/get/responses/200/content/application~1json/schema/$ref: api/missing.yaml cannot be read: no such file
+      #|api/openapi.yaml: /paths/~1a/get/callbacks: warning: callbacks are not imported
+      #|nothing written
+      #|
+    ),
+  )
+}

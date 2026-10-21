@@ -13,6 +13,22 @@ let body_nesting : Int = max_nesting - 4
 let max_sample_items : Int = 100
 
 ///|
+/// The most collections a sample nests: an object or an array inside as
+/// many others is null.
+let max_sample_depth : Int = 32
+
+///|
+/// The most bytes of compact JSON that a sample with every property takes:
+/// 64 KiB. A larger one is made again, cut to its required parts below the
+/// first level.
+let max_full_sample_bytes : Int = 64 * 1024
+
+///|
+/// The most bytes of compact JSON that a cut sample takes: 1 MiB. A larger
+/// one leaves the body empty.
+let max_cut_sample_bytes : Int = 1024 * 1024
+
+///|
 /// The sample of each `format` that has its own, from the table in the
 /// guide. Any other format gives the sample of a string without one.
 let format_samples : Map[String, String] = {
@@ -76,20 +92,110 @@ let number_keywords : Array[String] = [
 let string_keywords : Array[String] = ["minLength", "maxLength", "pattern"]
 
 ///|
+/// A sample has passed the bytes it may take, so that it stops at once.
+priv suberror Passed
+
+///|
 /// Draws one fixed sample from a schema. The sample depends only on the
 /// schema: nothing is random. A keyword that the sampler reads but that has
 /// the wrong type is ignored, with a warning at its pointer.
 priv struct Sampler {
   report : Report
+  /// The document whose schemas it samples, where a `$ref` is followed.
+  document : Document
   /// Whether the document is OpenAPI 3.0, whose schemas have no
-  /// `examples`.
+  /// `examples`, and where the keywords beside a `$ref` are ignored.
   v30 : Bool
+  /// The pointers of the schemas merged into those whose samples are
+  /// being generated: the samples that hold the one being generated now.
+  generating : Array[String]
+  /// Whether the sample is cut: below its first level, objects have only
+  /// their required properties, and arrays only `minItems` items.
+  cut : Bool
+  /// How many more bytes of compact JSON the sample may take.
+  mut left : Int
 }
 
 ///|
-/// The sampler for the schemas of `document`.
-fn Report::sampler(self : Report, document : Document) -> Sampler {
-  { report: self, v30: document.openapi.has_prefix("3.0."), }
+/// A sampler for the schemas of `document`, whose sample is `cut` or not.
+fn Report::sampler(self : Report, document : Document, cut~ : Bool) -> Sampler {
+  {
+    report: self,
+    document,
+    v30: document.openapi.has_prefix("3.0."),
+    generating: [],
+    cut,
+    left: if cut {
+      max_cut_sample_bytes
+    } else {
+      max_full_sample_bytes
+    },
+  }
+}
+
+///|
+/// A body sampled from a schema: the sample, or `None` when there is none,
+/// and whether it was cut to its required parts.
+priv struct BodySample {
+  value : Json?
+  cut : Bool
+}
+
+///|
+/// The sample of the schema `json` at `pointer`, as a body. It is first
+/// made with every property. When its compact JSON would pass 64 KiB, it is
+/// made again with only the required properties, and only `minItems`
+/// items, none when it is 0, in every object and array nested more than one
+/// level below the body. When that would pass 1 MiB, there is no body, with
+/// a warning. Each sample stops as soon as it passes its bound. Only the
+/// problems of the sample that is written are reported. A header's value
+/// is sampled the same way, with `part` naming it in the warning.
+fn Report::body_sample(
+  self : Report,
+  document : Document,
+  pointer : String,
+  json : Json,
+  part? : String = "the body",
+) -> BodySample {
+  let mark = self.mark()
+  for cut in [false, true] {
+    let sampler = self.sampler(document, cut~)
+    try sampler.sample(pointer, json, 0) catch {
+      Passed => self.rollback(mark)
+    } noraise {
+      value => return { value, cut, }
+    }
+  }
+  self.warning_at(
+    pointer,
+    "left out: \{part} is empty, since its sample would be more than \{size_text(max_cut_sample_bytes)}, even cut to its required parts",
+  )
+  { value: None, cut: false, }
+}
+
+///|
+/// Takes `bytes` from what the sample may still take, or stops it when
+/// they are more.
+fn Sampler::charge(self : Sampler, bytes : Int) -> Unit raise Passed {
+  if bytes > self.left {
+    raise Passed
+  }
+  self.left -= bytes
+}
+
+///|
+/// `json`, after taking its compact JSON from what the sample may still
+/// take.
+fn Sampler::charged(self : Sampler, json : Json) -> Json raise Passed {
+  self.charge(compact_size(json, self.left))
+  json
+}
+
+///|
+/// Whether a collection inside `depth` sampled collections is cut: in a
+/// cut sample, those nested more than one level below the body are.
+fn Sampler::cuts(self : Sampler, depth : Int) -> Bool {
+  self.cut && depth >= 2
 }
 
 ///|
@@ -110,17 +216,23 @@ priv struct Layer {
 /// layer that has one gives it; `properties` are joined by name.
 priv struct Merged {
   layers : Array[Layer]
+  /// The pointers of the schemas that a `$ref` named, merged into it. In
+  /// 3.0, one that has a `$ref` itself is not a layer.
+  refs : Array[String]
   /// Whether one of them is the schema `false`, so that it gives no value.
   mut never : Bool
   /// Whether a `oneOf` or `anyOf` in it has only branches that are only
   /// null, so that the sample is null.
   mut only_null : Bool
+  /// Whether a `$ref` in it names a schema whose sample is being generated,
+  /// so that it would hold itself.
+  mut recursive : Bool
 }
 
 ///|
 /// A merged schema with nothing in it yet.
 fn Merged::new() -> Merged {
-  { layers: [], never: false, only_null: false, }
+  { layers: [], refs: [], never: false, only_null: false, recursive: false, }
 }
 
 ///|
@@ -137,19 +249,19 @@ fn Sampler::is_schema(self : Sampler, pointer : String, json : Json) -> Bool {
 }
 
 ///|
-/// The sample of the schema `json` at `pointer`, whose collections may
-/// nest `room` levels deep, or `None` when it gives no value: it is
-/// `false`, or a value it names would nest deeper than `room`. The schema
-/// is first merged with its branches.
+/// The sample of the schema `json` at `pointer`, inside `depth` sampled
+/// collections, or `None` when it gives no value: it is `false`, it would
+/// hold itself, or a value it names would nest too deep for the file. The
+/// schema is first merged with its branches.
 fn Sampler::sample(
   self : Sampler,
   pointer : String,
   json : Json,
-  room : Int,
-) -> Json? {
+  depth : Int,
+) -> Json? raise Passed {
   let merged = Merged::new()
   self.merge(merged, pointer, json, false)
-  self.merged_sample(merged, room)
+  self.merged_sample(merged, depth)
 }
 
 ///|
@@ -176,7 +288,26 @@ fn Sampler::merge(
     }
     _ => return
   }
+  // In 3.0, a schema with a `$ref` is the schema it names: the keywords
+  // beside it are ignored.
+  if self.v30 && schema.contains("$ref") {
+    if self.referenced(merged, pointer, schema) is Some(target) {
+      self.merge(merged, target.pointer, target.json, branch)
+    }
+    return
+  }
+  if schema.contains("$dynamicRef") {
+    self.report.error_at(
+      @definitions.child_pointer(pointer, "$dynamicRef"),
+      "smock does not follow $dynamicRef: write a $ref with a JSON Pointer, such as #/components/schemas/Pet",
+    )
+  }
   merged.layers.push({ pointer, schema, branch, })
+  // From 3.1, the schema a `$ref` names is merged with the keywords beside
+  // it, which come first, as part of the same schema.
+  if self.referenced(merged, pointer, schema) is Some(target) {
+    self.merge(merged, target.pointer, target.json, branch)
+  }
   let all_of = @definitions.child_pointer(pointer, "allOf")
   match schema.get("allOf") {
     None => ()
@@ -226,6 +357,87 @@ fn Sampler::merge(
 }
 
 ///|
+/// The schema that the `$ref` of `schema`, at `pointer`, names, or `None`
+/// when it has none, or after reporting why it cannot be followed. It is
+/// followed by the rules of other references, except that a cycle is
+/// allowed. `None` too when it names a schema whose sample is being
+/// generated, which makes `merged` recursive, or one already merged into
+/// `merged`, which is skipped.
+fn Sampler::referenced(
+  self : Sampler,
+  merged : Merged,
+  pointer : String,
+  schema : Map[String, Json],
+) -> Part? {
+  guard schema.get("$ref") is Some(reference) else { return None }
+  let at = @definitions.child_pointer(pointer, "$ref")
+  guard reference is String(reference) else {
+    self.report.error_at(at, "must be a string")
+    return None
+  }
+  if self.under_id(pointer) {
+    return None
+  }
+  guard self.report.target(self.document, at, reference) is Some(target) else {
+    return None
+  }
+  guard self.is_schema(target.pointer, target.json) else { return None }
+  if self.generating.contains(target.pointer) {
+    merged.recursive = true
+    return None
+  }
+  if merged.refs.contains(target.pointer) {
+    return None
+  }
+  for layer in merged.layers {
+    if layer.pointer == target.pointer {
+      return None
+    }
+  }
+  merged.refs.push(target.pointer)
+  Some(target)
+}
+
+///|
+/// Whether a `$id` lies above the schema at the place `pointer` in its
+/// document, or in it, so that it would change what a `$ref` in the schema
+/// names. Each one is reported, since smock does not resolve `$id`. A
+/// `$id` at the root of a document is not: the document's location is its
+/// base. In 3.0, a `$id` beside a `$ref` is ignored with the other fields
+/// there.
+fn Sampler::under_id(self : Sampler, pointer : String) -> Bool {
+  let (number, pointer) = number_of(pointer)
+  guard pointer_keys(pointer) is Some(keys) else { return false }
+  let mut json = self.report.tree(self.document, number)
+  let mut at = place_in(number, "")
+  let mut found = false
+  for key in keys {
+    let value = match json {
+      Object(object) => object.get(key)
+      Array(items) =>
+        match array_index(key) {
+          Some(i) if i < items.length() => Some(items[i])
+          _ => None
+        }
+      _ => None
+    }
+    guard value is Some(value) else { break }
+    at = @definitions.child_pointer(at, key)
+    json = value
+    if value is Object(schema) &&
+      schema.get("$id") is Some(String(_)) &&
+      !(self.v30 && schema.contains("$ref")) {
+      self.report.error_at(
+        @definitions.child_pointer(at, "$id"),
+        "a $ref lies under this $id, which would change what the $ref names: smock does not resolve $id",
+      )
+      found = true
+    }
+  }
+  found
+}
+
+///|
 /// Whether the schema `json` allows only null: its `type` is `"null"`, or
 /// a type array of only `"null"`, or its `const` is null, or its `enum`
 /// holds only null.
@@ -249,40 +461,57 @@ fn is_only_null(json : Json) -> Bool {
 }
 
 ///|
-/// The sample of the merged schema `merged`, whose collections may nest
-/// `room` levels deep, or `None` when it gives no value. Per keyword, the
-/// first of `const`, the first of `examples` (from 3.1), `example`,
-/// `default` and the first of `enum` gives the sample, as written. Else
-/// the type does.
-fn Sampler::merged_sample(self : Sampler, merged : Merged, room : Int) -> Json? {
-  if merged.never {
+/// The sample of the merged schema `merged`, inside `depth` sampled
+/// collections, or `None` when it gives no value. Per keyword, the first
+/// of `const`, the first of `examples` (from 3.1), `example`, `default`
+/// and the first of `enum` gives the sample, as written. Else the type
+/// does. An object or an array inside 32 others is null.
+fn Sampler::merged_sample(
+  self : Sampler,
+  merged : Merged,
+  depth : Int,
+) -> Json? raise Passed {
+  if merged.never || merged.recursive {
     return None
   }
-  // Until schema references are followed.
-  let mut referenced = false
-  for layer in merged.layers {
-    if layer.schema.contains("$ref") {
-      self.report.error_at(
-        @definitions.child_pointer(layer.pointer, "$ref"),
-        "schema references are not followed yet: write the schema it names in its place",
-      )
-      referenced = true
-    }
-  }
-  if referenced || merged.only_null {
-    return Some(Json::null())
+  if merged.only_null {
+    return Some(self.charged(Json::null()))
   }
   if self.value(merged) is Some((at, value)) {
-    return self.copied(at, value, room)
+    // Its size counts before its depth is checked, so that a large value
+    // stops the sample before it is walked.
+    let bytes = compact_size(value, self.left)
+    self.charge(bytes)
+    guard self.report.copied(at, value, body_nesting - depth) is Some(value) else {
+      self.left += bytes
+      return None
+    }
+    return Some(value)
   }
   match self.type_of(merged) {
-    "boolean" => Some(Json::boolean(true))
-    "number" => Some(self.number(merged, false).to_json())
-    "integer" => Some(self.number(merged, true).to_json())
-    "string" => Some(Json::string(self.string(merged)))
-    "array" => Some(self.array(merged, room))
-    "object" => Some(self.object(merged, room))
-    _ => Some(Json::null())
+    "boolean" => Some(self.charged(Json::boolean(true)))
+    "number" => Some(self.charged(self.number(merged, false).to_json()))
+    "integer" => Some(self.charged(self.number(merged, true).to_json()))
+    "string" => Some(self.string(merged))
+    "array" | "object" if depth >= max_sample_depth =>
+      Some(self.charged(Json::null()))
+    "array" | "object" as kind => {
+      // The schemas merged into it are being generated until its members
+      // are.
+      let held = self.generating.length()
+      for layer in merged.layers {
+        self.generating.push(layer.pointer)
+      }
+      self.generating.append(merged.refs)
+      let sample = if kind == "array" {
+        self.array(merged, depth)
+      } else {
+        self.object(merged, depth)
+      }
+      self.generating.truncate(held)
+      Some(sample)
+    }
+    _ => Some(self.charged(Json::null()))
   }
 }
 
@@ -349,14 +578,14 @@ fn Sampler::first_of(
 /// in it stays as written; or `None` when it would nest deeper than `room`
 /// levels, which the parsers would not read back. It is then left out,
 /// with a warning.
-fn Sampler::copied(
-  self : Sampler,
+fn Report::copied(
+  self : Report,
   pointer : String,
   value : Json,
   room : Int,
 ) -> Json? {
   if nests_deeper(value, room) {
-    self.report.warning_at(
+    self.warning_at(
       pointer,
       "left out: the value would nest deeper than \{max_nesting} levels in the file, the most the parsers read",
     )
@@ -499,11 +728,11 @@ fn Sampler::count(
 ///|
 /// The sample of a string: the one of its `format` when the format has
 /// one, whatever its length bounds; else `"string"`, repeated or cut to
-/// fit `minLength` and `maxLength`.
-fn Sampler::string(self : Sampler, merged : Merged) -> String {
+/// fit `minLength` and `maxLength`. Its bytes are taken before it is made.
+fn Sampler::string(self : Sampler, merged : Merged) -> Json raise Passed {
   if self.format(merged) is Some(format) &&
     format_samples.get(format) is Some(sample) {
-    return sample
+    return self.charged(Json::string(sample))
   }
   let word = "string"
   let min = self.count(merged, "minLength")
@@ -515,24 +744,34 @@ fn Sampler::string(self : Sampler, merged : Merged) -> String {
   if min is Some((_, min)) && length < min {
     length = min
   }
+  // The quotes and the letters, which need no escape.
+  self.charge(2)
+  self.charge(length)
   let sample = StringBuilder()
   for i in 0..<length {
     sample.write_char(word.unsafe_get(i % word.length()).unsafe_to_char())
   }
-  sample.to_string()
+  Json::string(sample.to_string())
 }
 
 ///|
-/// The sample of an array: `minItems` items, at least 1 and at most 100,
-/// with a warning past 100, and none when `maxItems` is 0. The items come
-/// from `prefixItems`, then `items`, and stop where neither gives one.
-fn Sampler::array(self : Sampler, merged : Merged, room : Int) -> Json {
+/// The sample of an array inside `depth` sampled collections: `minItems`
+/// items, at least 1 and at most 100, with a warning past 100, and none
+/// when `maxItems` is 0. When the sample is cut there, only `minItems`
+/// items, none when it is 0. The items come from `prefixItems`, then
+/// `items`, and stop where neither gives one.
+fn Sampler::array(
+  self : Sampler,
+  merged : Merged,
+  depth : Int,
+) -> Json raise Passed {
+  self.charge(2)
   let items : Array[Json] = []
   let min = self.count(merged, "minItems")
   if self.count(merged, "maxItems") is Some((_, 0)) {
     return Json::array(items)
   }
-  let mut length = 1
+  let mut length = if self.cuts(depth) { 0 } else { 1 }
   if min is Some((at, min)) && min > length {
     length = min
     if length > max_sample_items {
@@ -546,6 +785,9 @@ fn Sampler::array(self : Sampler, merged : Merged, room : Int) -> Json {
   let mut prefix_at = ""
   let mut prefix : Array[Json] = []
   for layer in merged.layers {
+    if length == 0 {
+      break
+    }
     let at = @definitions.child_pointer(layer.pointer, "prefixItems")
     match layer.schema.get("prefixItems") {
       None => continue
@@ -557,41 +799,88 @@ fn Sampler::array(self : Sampler, merged : Merged, room : Int) -> Json {
       Some(_) => self.report.warning_at(at, "ignored: must be an array")
     }
   }
-  // Every item after `prefixItems` is the same sample of `items`.
+  // Every item after `prefixItems` is the same sample of `items`, which
+  // takes its bytes again for each.
   let mut rest : Json? = None
   let mut rest_drawn = false
+  let mut rest_bytes = 0
   for i in 0..<length {
     let item = if i < prefix.length() {
       let at = @definitions.child_pointer(prefix_at, i.to_string())
       if !self.is_schema(at, prefix[i]) {
         break
       }
-      self.sample(at, prefix[i], room - 1)
+      self.sample(at, prefix[i], depth + 1)
+    } else if rest_drawn {
+      if rest is Some(_) {
+        self.charge(rest_bytes)
+      }
+      rest
     } else {
-      if !rest_drawn {
-        rest_drawn = true
-        for layer in merged.layers {
-          let at = @definitions.child_pointer(layer.pointer, "items")
-          if layer.schema.get("items") is Some(json) && self.is_schema(at, json) {
-            rest = self.sample(at, json, room - 1)
-            break
-          }
+      rest_drawn = true
+      let before = self.left
+      for layer in merged.layers {
+        let at = @definitions.child_pointer(layer.pointer, "items")
+        if layer.schema.get("items") is Some(json) && self.is_schema(at, json) {
+          rest = self.sample(at, json, depth + 1)
+          break
         }
       }
+      rest_bytes = before - self.left
       rest
     }
     guard item is Some(item) else { break }
+    // The comma before it.
+    if i > 0 {
+      self.charge(1)
+    }
     items.push(item)
   }
   Json::array(items)
 }
 
 ///|
-/// The sample of an object: every property in `properties`, required or
-/// not, in the order written, except `writeOnly` ones and those whose
-/// schema is `false`. The `properties` of the layers are joined by name: a
-/// property met again is merged with the one met first, as a branch.
-fn Sampler::object(self : Sampler, merged : Merged, room : Int) -> Json {
+/// The names in the `required` of each layer of `merged`, joined. One that
+/// is not an array, or a name in it that is not a string, is ignored, with
+/// a warning.
+fn Sampler::required(self : Sampler, merged : Merged) -> Array[String] {
+  let names = []
+  for layer in merged.layers {
+    let at = @definitions.child_pointer(layer.pointer, "required")
+    match layer.schema.get("required") {
+      None => ()
+      Some(Array(items)) =>
+        for i, item in items {
+          match item {
+            String(name) => if !names.contains(name) { names.push(name) }
+            _ =>
+              self.report.warning_at(
+                @definitions.child_pointer(at, i.to_string()),
+                "ignored: must be a string",
+              )
+          }
+        }
+      Some(_) => self.report.warning_at(at, "ignored: must be an array")
+    }
+  }
+  names
+}
+
+///|
+/// The sample of an object inside `depth` sampled collections: every
+/// property in `properties`, required or not, in the order written, except
+/// `writeOnly` ones and those whose schema is `false`. When the sample is
+/// cut there, only the required ones. The `properties` of the layers are
+/// joined by name: a property met again is merged with the one met first,
+/// as a branch. A property that would hold the object again is left out,
+/// or null when it is required.
+fn Sampler::object(
+  self : Sampler,
+  merged : Merged,
+  depth : Int,
+) -> Json raise Passed {
+  self.charge(2)
+  let cut = self.cuts(depth)
   let properties : Map[String, Array[(String, Json)]] = Map([])
   for layer in merged.layers {
     let at = @definitions.child_pointer(layer.pointer, "properties")
@@ -608,37 +897,66 @@ fn Sampler::object(self : Sampler, merged : Merged, room : Int) -> Json {
       Some(_) => self.report.warning_at(at, "ignored: must be an object")
     }
   }
+  let required = self.required(merged)
   let members : Map[String, Json] = Map([])
   for name, met in properties {
+    if cut && !required.contains(name) {
+      continue
+    }
     let property = Merged::new()
     let mut schemas = false
+    let mut own_write_only = false
     for (at, json) in met {
-      if self.is_schema(at, json) {
-        self.merge(property, at, json, property.layers.length() > 0)
-        schemas = true
+      if !self.is_schema(at, json) {
+        continue
       }
+      // A property that is `writeOnly` itself is left out before the
+      // schema that a `$ref` beside it names is read.
+      if !schemas && self.is_own_write_only(json) {
+        own_write_only = true
+        break
+      }
+      self.merge(property, at, json, property.layers.length() > 0)
+      schemas = true
     }
-    if !schemas {
+    if !schemas || own_write_only {
       continue
     }
     if self.write_only(property) {
       continue
     }
-    if self.merged_sample(property, room - 1) is Some(value) {
-      members[name] = value
+    let value = if !property.recursive {
+      self.merged_sample(property, depth + 1)
+    } else if required.contains(name) {
+      Some(self.charged(Json::null()))
+    } else {
+      None
     }
+    guard value is Some(value) else { continue }
+    // The name, the colon, and the comma before them.
+    self.charge(
+      compact_size(Json::string(name), self.left) +
+      (if members.is_empty() { 1 } else { 2 }),
+    )
+    members[name] = value
   }
   Json::object(members)
 }
 
 ///|
+/// Whether the schema `json` has `writeOnly: true` of its own. In 3.0, the
+/// fields beside a `$ref` are ignored.
+fn Sampler::is_own_write_only(self : Sampler, json : Json) -> Bool {
+  json is Object(schema) &&
+  schema.get("writeOnly") is Some(True) &&
+  !(self.v30 && schema.contains("$ref"))
+}
+
+///|
 /// Whether the merged property `merged` is `writeOnly`, so that a response
-/// leaves it out. In 3.0, the fields beside a `$ref` are ignored.
+/// leaves it out.
 fn Sampler::write_only(self : Sampler, merged : Merged) -> Bool {
   for layer in merged.layers {
-    if self.v30 && layer.schema.contains("$ref") {
-      continue
-    }
     match layer.schema.get("writeOnly") {
       None => ()
       Some(False) => return false
@@ -651,4 +969,51 @@ fn Sampler::write_only(self : Sampler, merged : Merged) -> Bool {
     }
   }
   false
+}
+
+///|
+/// The length of `json` as compact JSON in UTF-8, as smock writes it, or a
+/// length above `limit` as soon as it passes it, so that a large value is
+/// not walked to its end.
+fn compact_size(json : Json, limit : Int) -> Int {
+  match json {
+    Null | True => 4
+    False => 5
+    Number(n, repr~) => @template.number_text(n, repr).length()
+    String(s) => {
+      let mut size = 2
+      for c in s {
+        if size > limit {
+          break
+        }
+        size += match c {
+          '"' | '\\' | '\n' | '\r' | '\t' | '\b' | '\u{0c}' => 2
+          _ if c < ' ' => 6
+          _ => char_bytes(c)
+        }
+      }
+      size
+    }
+    Array(items) => {
+      let mut size = if items.is_empty() { 2 } else { 1 + items.length() }
+      for item in items {
+        if size > limit {
+          break
+        }
+        size += compact_size(item, limit - size)
+      }
+      size
+    }
+    Object(members) => {
+      let mut size = if members.is_empty() { 2 } else { 1 + members.length() }
+      for name, value in members {
+        if size > limit {
+          break
+        }
+        size += compact_size(Json::string(name), limit - size) + 1
+        size += compact_size(value, limit - size)
+      }
+      size
+    }
+  }
 }

@@ -22,11 +22,13 @@ priv enum Body {
 let no_payload : Payload = { content_type: None, body: Empty, }
 
 ///|
-/// One body a response answers with: what it sends, and the name of the
-/// media type's named example it comes from, if it comes from one.
+/// One body a response answers with: what it sends, the name of the media
+/// type's named example it comes from, if it comes from one, and whether
+/// it is a sample of the schema cut to its required parts.
 priv struct Answer {
   example : String?
   payload : Payload
+  cut : Bool
 }
 
 ///|
@@ -48,7 +50,11 @@ priv struct Answers {
 ///|
 /// No Content-Type, an empty body and no header, and no named example.
 fn no_answers() -> Answers {
-  { first: { example: None, payload: no_payload, }, named: [], headers: [], }
+  {
+    first: { example: None, payload: no_payload, cut: false, },
+    named: [],
+    headers: [],
+  }
 }
 
 ///|
@@ -237,28 +243,35 @@ fn Report::media_type(
   }
   if media_type.get("example") is Some(value) {
     let payload = self.example_payload(
-      document,
       pointer,
       key,
       Data(example_pointer, value),
     )
-    return { first: { example: None, payload, }, named: [], headers: [], }
+    return {
+      first: { example: None, payload, cut: false, },
+      named: [],
+      headers: [],
+    }
   }
   let schema_pointer = @definitions.child_pointer(pointer, "schema")
+  let mut cut = false
   let value = match media_type.get("schema") {
     None => None
-    Some(Object(_) | True | False as json) =>
-      match self.sampler(document).sample(schema_pointer, json, body_nesting) {
+    Some(Object(_) | True | False as json) => {
+      let sample = self.body_sample(document, schema_pointer, json)
+      cut = sample.cut
+      match sample.value {
         Some(sample) => Some(Sampled(schema_pointer, sample))
         None => None
       }
+    }
     Some(_) => {
       self.error_at(schema_pointer, "must be a schema, an object or a boolean")
       None
     }
   }
   {
-    first: { example: None, payload: self.payload(pointer, key, value), },
+    first: { example: None, payload: self.payload(pointer, key, value), cut, },
     named: [],
     headers: [],
   }
@@ -360,16 +373,22 @@ fn body_bytes(body : Body) -> Int {
 fn utf8_length(s : String) -> Int {
   let mut n = 0
   for c in s {
-    let code = c.to_int()
-    n += if code < 0x80 {
-      1
-    } else if code < 0x800 {
-      2
-    } else if code < 0x10000 {
-      3
-    } else {
-      4
-    }
+    n += char_bytes(c)
   }
   n
+}
+
+///|
+/// The length of `c` in UTF-8, in bytes.
+fn char_bytes(c : Char) -> Int {
+  let code = c.to_int()
+  if code < 0x80 {
+    1
+  } else if code < 0x800 {
+    2
+  } else if code < 0x10000 {
+    3
+  } else {
+    4
+  }
 }

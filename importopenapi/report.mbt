@@ -85,6 +85,47 @@ fn Report::add(self : Report, problem : Problem) -> Bool {
 }
 
 ///|
+/// How far the problems have come at some point: how many there are, and
+/// where the document-level ones end, so that those reported after it can
+/// be dropped.
+priv struct Mark {
+  problems : Int
+  document_end : Int
+}
+
+///|
+/// How far the problems have come now.
+fn Report::mark(self : Report) -> Mark {
+  { problems: self.problems.length(), document_end: self.document_end, }
+}
+
+///|
+/// Drops the problems reported after `mark`, as if they had not been
+/// reported: those of a sample that is made again. Those reported among
+/// the document-level problems since, such as a file that cannot be read,
+/// are dropped too.
+fn Report::rollback(self : Report, mark : Mark) -> Unit {
+  let inserted = self.document_end - mark.document_end
+  while self.problems.length() > mark.problems + inserted {
+    guard self.problems.pop() is Some(problem) else { break }
+    self.unreport(problem)
+  }
+  for _ in 0..<inserted {
+    self.unreport(self.problems.remove(mark.document_end))
+  }
+  self.document_end = mark.document_end
+}
+
+///|
+/// Counts `problem`, just removed from the problems, as not reported.
+fn Report::unreport(self : Report, problem : Problem) -> Unit {
+  self.reported.remove(problem.to_string())
+  if problem.is_error() {
+    self.errors -= 1
+  }
+}
+
+///|
 /// Reports an error at `pointer` in the file, before every other problem.
 fn Report::output_error(
   self : Report,

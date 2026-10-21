@@ -26,15 +26,15 @@ fn Report::examples(
       continue
     }
     if first is None {
-      let payload = self.example_payload(document, media_pointer, key, value)
-      first = Some({ example: Some(name), payload, })
+      let payload = self.example_payload(media_pointer, key, value)
+      first = Some({ example: Some(name), payload, cut: false, })
     } else if !is_sendable(name) {
       self.warning_at(
         at, "left out: no Stub selects this example, since a request cannot send its name in Smock-Example: a name must be non-empty, of visible ASCII characters and spaces, with no space at either end",
       )
     } else {
-      let payload = self.example_payload(document, media_pointer, key, value)
-      named.push({ example: Some(name), payload, })
+      let payload = self.example_payload(media_pointer, key, value)
+      named.push({ example: Some(name), payload, cut: false, })
     }
   }
   match first {
@@ -110,14 +110,13 @@ fn Report::example_value(
 /// for the file is left out of the body, with a warning.
 fn Report::example_payload(
   self : Report,
-  document : Document,
   pointer : String,
   key : String,
   value : Value,
 ) -> Payload {
   let value = match value {
     Data(at, json) =>
-      match self.sampler(document).copied(at, json, body_nesting) {
+      match self.copied(at, json, body_nesting) {
         Some(json) => Some(Data(at, json))
         None => None
       }

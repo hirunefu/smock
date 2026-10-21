@@ -465,3 +465,30 @@ test "a response that has no body still sends its headers: a 204, and a response
     ),
   )
 }
+
+///|
+test "a header's sample is bounded as a body's: one that would pass 1 MiB, even cut to its required parts, leaves the value empty, with a warning, and stops as soon as it passes" {
+  inspect(
+    responses_of(
+      (
+        #|{
+        #|  "200": {
+        #|    "headers": {
+        #|      "X-Huge": { "schema": { "type": "string", "minLength": 1000000000 } },
+        #|      "X-Small": { "schema": { "type": "string", "minLength": 3 } }
+        #|    }
+        #|  }
+        #|}
+      ),
+    ),
+    content=(
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Huge/schema: warning: left out: the header's value is empty, since its sample would be more than 1 MiB, even cut to its required parts
+      #|response:
+      #|  status: 200
+      #|  headers:
+      #|    X-Huge: ""
+      #|    X-Small: string
+      #|
+    ),
+  )
+}

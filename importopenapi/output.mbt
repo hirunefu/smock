@@ -152,8 +152,9 @@ fn Report::flags(self : Report) -> String {
 ///|
 /// The comment above `stub`, a Stub of this operation, which maps it back
 /// to the document: the method, the path as written, the response key, the
-/// name of the named example its body comes from, if any, `deprecated`
-/// when the operation is, and the first line of its summary. A name that a
+/// name of the named example its body comes from, if any, `sample cut`
+/// when its body is a sample cut to its required parts, `deprecated` when
+/// the operation is, and the first line of its summary. A name that a
 /// request cannot send is quoted.
 fn Imported::comment(self : Imported, stub : Stub) -> String {
   let comment = StringBuilder()
@@ -161,6 +162,9 @@ fn Imported::comment(self : Imported, stub : Stub) -> String {
   if stub.example is Some(example) {
     let example = if is_sendable(example) { example } else { example.escape() }
     comment.write_string(", example \{example}")
+  }
+  if stub.cut {
+    comment.write_string(", sample cut")
   }
   if self.deprecated {
     comment.write_string(", deprecated")

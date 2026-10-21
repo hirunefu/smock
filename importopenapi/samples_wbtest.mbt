@@ -102,3 +102,100 @@ test "a value nested so deep that the file would pass the parsers' limit of 1024
     ),
   )
 }
+
+///|
+test "compact_size gives the length of the compact JSON smock writes, and stops past its limit" {
+  let values : Array[Json] = [
+    Json::null(),
+    true,
+    false,
+    Json::number(1.5),
+    Json::number(10, repr="10.000"),
+    "plain",
+    "quote \" backslash \\ tab \t newline \n return \r back \b feed \u{0c}",
+    "control \u{01}\u{1f} DEL \u{7f}",
+    "café 中文 😀",
+    [],
+    {},
+    [1, [2, [3, []]], { "a": {} }],
+    { "k\"ey": "v", "é": [true, null], "": { "x": -0.25 } },
+  ]
+  for value in values {
+    let bytes = @template.compact_json_bytes(value).length()
+    assert_eq(compact_size(value, 1000), bytes)
+    assert_true(compact_size(value, bytes) == bytes)
+    if bytes > 4 {
+      assert_true(compact_size(value, bytes - 2) > bytes - 2)
+    }
+  }
+  // A long value is not walked to its end.
+  let long : Json = { "a": ["x".repeat(1000000), "y".repeat(1000000)] }
+  let size = compact_size(long, 1000)
+  assert_true(size > 1000 && size < 1010)
+}
+
+///|
+test "a sample takes exactly the bytes of its compact JSON" {
+  let schemas : Array[Json] = [
+    {
+      "type": "object",
+      "required": ["self"],
+      "properties": {
+        "k\"é": { "const": "a\tb\u{01}c 😀" },
+        "n": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": Json::number(1.0e-18, repr="1e-18"),
+        },
+        "i": { "type": "integer", "minimum": 12 },
+        "f": { "format": "date-time" },
+        "s": { "minLength": 9 },
+        "b": { "type": "boolean" },
+        "z": { "type": "null" },
+        "tuple": {
+          "prefixItems": [{ "type": "string" }, { "type": "integer" }],
+          "items": { "type": "object", "properties": { "x": {} } },
+          "minItems": 5,
+        },
+        "w": { "writeOnly": true, "type": "string" },
+        "self": { "$ref": "#/components/schemas/Node" },
+        "kids": { "items": { "$ref": "#/components/schemas/Node" } },
+        "deep": { "$ref": "#/components/schemas/Chain" },
+      },
+    },
+  ]
+  let mut chain : Json = { "type": "string" }
+  for _ in 0..<40 {
+    chain = { "type": "array", "items": chain }
+  }
+  let top : Map[String, Json] = {
+    "openapi": "3.1.0",
+    "components": {
+      "schemas": {
+        "Node": { "type": "object", "properties": { "n": schemas[0] } },
+        "Chain": chain,
+      },
+    },
+  }
+  let document = {
+    top,
+    openapi: "3.1.0",
+    title: "",
+    info_version: "",
+    prefix: "",
+  }
+  for schema in schemas {
+    let report = Report::new(
+      Options(root="api.json", mock="m", output="m.json"),
+    )
+    let sampler = report.sampler(document, cut=false)
+    let sample = sampler.sample("/s", schema, 0) catch {
+      Passed => fail("the sample passed its bound")
+    }
+    guard sample is Some(sample) else { fail("no sample") }
+    assert_eq(
+      max_full_sample_bytes - sampler.left,
+      @template.compact_json_bytes(sample).length(),
+    )
+  }
+}
