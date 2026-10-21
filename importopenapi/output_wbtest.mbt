@@ -6,10 +6,12 @@
 ///|
 /// The problems that checking `text` as the file gives, with the bound
 /// `max_bytes`, one per line, then whether it passed.
-fn checked(text : String, max_bytes? : Int = max_file_bytes) -> String {
-  let report = Report::new(
-    Options(root="api.json", mock="m", output="defs/m.json"),
-  )
+fn checked(
+  text : String,
+  max_bytes? : Int = max_file_bytes,
+  output? : String = "defs/m.json",
+) -> String {
+  let report = Report::new(Options(root="api.json", mock="m", output~))
   let passed = report.checked(@utf8.encode(text), max_bytes~)
   let lines = report.problems().map(problem => problem.to_string())
   lines.push("passed: \{passed}")
@@ -75,6 +77,49 @@ test "problems with the file come before the document's" {
       #|api.json: /webhooks: warning: webhooks are not imported
       #|api.json: /paths: warning: there is no operation to import
       #|api.json: /paths/~1a/get/operationId: must be a non-empty string
+    ),
+  )
+}
+
+///|
+test "a file the YAML writer cannot write is an error with the file that calls it a smock bug" {
+  let report = Report::new(
+    Options(root="api.json", mock="m", output="defs/m.yaml"),
+  )
+  let document = { top: {}, openapi: "3.1.0", title: "", info_version: "", }
+  let file : Json = {
+    "version": 1,
+    "stubs": [{ "id": Json::number(0.0 / 0.0) }],
+  }
+  assert_true(report.yaml_file(file, document, []) is None)
+  inspect(
+    report.problems().map(problem => problem.to_string()).join("\n"),
+    content=(
+      #|defs/m.yaml: /stubs/0/id: smock bug: the file cannot be written as YAML: a number must be finite, or keep the text it was read from
+    ),
+  )
+}
+
+///|
+test "a YAML file is checked as YAML, by its name" {
+  inspect(
+    checked(
+      (
+        #|# A comment.
+        #|version: 1
+        #|mocks:
+        #|  - name: m
+        #|stubs:
+        #|  - id: a
+        #|    mock: m
+        #|    response:
+        #|      status: "200"
+      ),
+      output="defs/m.yaml",
+    ),
+    content=(
+      #|defs/m.yaml: /stubs/0/response/status: smock bug: the file would not load: must be an integer from 200 to 599
+      #|passed: false
     ),
   )
 }
