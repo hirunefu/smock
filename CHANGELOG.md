@@ -39,6 +39,13 @@ of each GitHub release include its section
   such as `len(body.items)`.
 - A helper's result above 1 MiB is a render error, found before the
   result is built.
+- Template helpers for arithmetic: `add`, `subtract`, `multiply`,
+  `divide`, `modulo`, `ceil`, `floor`, `round`, `toFixed` and `parseInt`.
+  They compute in exact decimal with integers only, so `add(0.1, 0.2)` is
+  `0.3` on every target. `divide` rounds half to even at 10 decimal
+  places, `round` and `toFixed` round half away from zero, and numbers
+  have at most 18 digits before the point and 18 after. A numeric argument
+  may be a string that is a JSON number, such as `query.page`.
 - `--template-env` (`SMOCK_TEMPLATE_ENV`) on `smock serve`, `smock check`
   and `smock render` lists, separated by commas, the environment variables
   templates may read. Their values are read once, at startup, and every

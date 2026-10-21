@@ -235,6 +235,8 @@ fn Context::eval(
             Some(json) => present(json)
             None => Missing(text)
           }
+        Arithmetic(arithmetic) =>
+          present(arithmetic_value(arithmetic, values, at))
       }
     }
   }
