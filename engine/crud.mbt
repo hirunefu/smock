@@ -41,12 +41,12 @@ fn crud_call(crud : @definitions.Crud, incoming : Incoming) -> CrudCall {
 
 ///|
 /// The answer of the CRUD Stub `stub` of the Mock `mock`, which serves
-/// `crud`, to a request of `session` that asked `call` of it, without
-/// Faults. It reads the copy of the bucket that the Session holds, or else
-/// the bucket's initial value, and writes nothing:
+/// `crud`, to the request `incoming` of `session` that asked `call` of it,
+/// without Faults. It reads the copy of the bucket that the Session holds,
+/// or else the bucket's initial value, and writes nothing:
 ///
-/// - a list answers 200 with the bucket's items, a plain array, and their
-///   number in `X-Total-Count` and `X-Filtered-Count`;
+/// - a list answers 200 with the items its query keeps, a plain array, or
+///   400 when smock cannot read its query (see `crud_list`);
 /// - a read answers 200 with the item whose key has the text of the item
 ///   path, or 404 when there is none.
 ///
@@ -61,6 +61,7 @@ fn Engine::crud_answer(
   stub : String,
   crud : @definitions.Crud,
   call : CrudCall,
+  incoming : Incoming,
   session : String?,
 ) -> ResponsePlan {
   // A matched Stub always has the Mock that answered.
@@ -89,13 +90,7 @@ fn Engine::crud_answer(
   // Every write keeps the rules of a keyed bucket, so it holds an array.
   guard value is Array(items) else { abort("a keyed bucket holds an array") }
   match call.op {
-    List => {
-      let count = items.length().to_string()
-      crud_plan(crud, 200, @template.compact_json_bytes(value), [
-        ("X-Total-Count", count),
-        ("X-Filtered-Count", count),
-      ])
-    }
+    List => crud_list(crud, stub, value, items, incoming.query_parameters())
     Read => {
       let text = call.key.unwrap_or("")
       match item_index(items, key, text) {

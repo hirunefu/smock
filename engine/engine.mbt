@@ -623,7 +623,7 @@ pub fn Engine::handle(
           let call = crud_call(crud, incoming)
           crud_called = Some(call)
           with_faults(
-            self.crud_answer(mock, stub.id, crud, call, session),
+            self.crud_answer(mock, stub.id, crud, call, incoming, session),
             stub,
             draw,
           )
