@@ -495,33 +495,22 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
     (false, false) => self.error(pointer, "needs \"response\" or \"responses\"")
     _ => ()
   }
-  match weighted {
-    Some((responses, total)) =>
-      Some({
-        id,
-        mock,
-        priority,
-        request,
-        scenario,
-        responses: ReadOnlyArray::from_array(responses),
-        total_weight: Some(total),
-        fault,
-      })
-    None => {
-      // A Stub with `response` has that one response, of weight 1.
-      let responses = ReadOnlyArray::from_array([{ weight: 1, response, }])
-      Some({
-        id,
-        mock,
-        priority,
-        request,
-        scenario,
-        responses,
-        total_weight: None,
-        fault,
-      })
-    }
+  // A Stub with `response` has that one response, of weight 1, and takes
+  // no pick.
+  let (responses, total_weight) = match weighted {
+    Some((responses, total)) => (responses, Some(total))
+    None => ([{ weight: 1, response, }], None)
   }
+  Some({
+    id,
+    mock,
+    priority,
+    request,
+    scenario,
+    responses: ReadOnlyArray::from_array(responses),
+    total_weight,
+    fault,
+  })
 }
 
 ///|
