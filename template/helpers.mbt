@@ -4,17 +4,10 @@
 
 ///|
 /// A number drawn uniformly from 0 to `count - 1`: rejection sampling, so
-/// that every value is equally likely.
+/// that every value is equally likely, as the pick among a Stub's
+/// `responses` draws.
 fn below(rand : @prng.Generator, count : UInt64) -> UInt64 {
-  // 2^64 mod count: the outputs below it would make the low values more
-  // likely, so they are drawn again.
-  let threshold = (0UL - count) % count
-  for ;; {
-    let u = rand.uint64()
-    if u >= threshold {
-      return u % count
-    }
-  }
+  rand.below(count)
 }
 
 ///|
