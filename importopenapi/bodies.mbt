@@ -332,16 +332,17 @@ fn Report::payload(
         _ if is_json_media_type(key) => JsonValue(value)
         String(text) => Text(text)
         _ if range => JsonValue(value)
-        Number(n, repr~) => Text(@template.number_text(n, repr))
-        True => Text("true")
-        False => Text("false")
-        _ => {
-          self.warning_at(
-            at,
-            "left out: the body is empty, since a \{key.escape()} body cannot hold \{kind_of(value)}",
-          )
-          Empty
-        }
+        _ =>
+          match scalar_text(value) {
+            Some(text) => Text(text)
+            None => {
+              self.warning_at(
+                at,
+                "left out: the body is empty, since a \{key.escape()} body cannot hold \{kind_of(value)}",
+              )
+              Empty
+            }
+          }
       }
   }
   let body = match value {
@@ -367,6 +368,20 @@ fn Report::payload(
     Some(key)
   }
   { content_type, body, }
+}
+
+///|
+/// The text of `json`, when it is a string, a number or a boolean: a
+/// string as it is, a number as smock writes numbers, and a boolean as
+/// `true` or `false`. A body and a header write such a value as text.
+fn scalar_text(json : Json) -> String? {
+  match json {
+    String(text) => Some(text)
+    Number(n, repr~) => Some(@template.number_text(n, repr))
+    True => Some("true")
+    False => Some("false")
+    _ => None
+  }
 }
 
 ///|

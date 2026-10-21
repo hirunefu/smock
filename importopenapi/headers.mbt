@@ -261,16 +261,3 @@ fn Report::header_text(self : Report, value : Value?) -> String? {
   }
   Some(text)
 }
-
-///|
-/// The text of `json` in a header, when it is a string, a number or a
-/// boolean.
-fn scalar_text(json : Json) -> String? {
-  match json {
-    String(text) => Some(text)
-    Number(n, repr~) => Some(@template.number_text(n, repr))
-    True => Some("true")
-    False => Some("false")
-    _ => None
-  }
-}
