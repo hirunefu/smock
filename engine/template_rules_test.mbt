@@ -202,6 +202,97 @@ test "templates read the method, the decoded path and its segments, the query, t
 }
 
 ///|
+/// A Stub that echoes the request's cookies, as the cookie root's ticket
+/// shows it.
+let cookie_echo : String =
+  #|  - id: cookies
+  #|    mock: m
+  #|    response:
+  #|      status: 200
+  #|      template: true
+  #|      json:
+  #|        session: ${cookie.session ?? null}
+  #|        themes: { $each: cookie.theme, as: t, do: "${t}" }
+
+///|
+/// A request's `Cookie` fields: `theme` twice in the first and once in the
+/// second, and a quoted `session`.
+let two_cookie_fields : Array[(String, String)] = [
+  ("Cookie", "theme=dark; session=\"s1\""),
+  ("Cookie", "theme=light"),
+]
+
+///|
+test "cookie.NAME is the first value of the cookie from every Cookie field, quotes kept; $each walks every value; a part without = holds no cookie" {
+  let h = harness([("m.yaml", "mocks:\n  - name: m\nstubs:\n\{cookie_echo}")])
+  inspect(
+    [
+      response(h.send("GET", "/", headers=two_cookie_fields)),
+      response(h.send("GET", "/", headers=[("Cookie", "session; theme")])),
+    ].join("\n"),
+    content=(
+      #|200
+      #|Content-Type: application/json
+      #|Smock-Mock: m; via=default
+      #|{"session":"\"s1\"","themes":["dark","light"]}
+      #|200
+      #|Content-Type: application/json
+      #|Smock-Mock: m; via=default
+      #|{"session":null,"themes":[]}
+    ),
+  )
+}
+
+///|
+test "an Ephemeral Stub and a rendering read cookies as a request's template does; a sample's cookies come from its headers.Cookie" {
+  let h = harness([("m.yaml", "mocks:\n  - name: m\nstubs:\n\{cookie_echo}")])
+  let added = h.engine.add_ephemeral_stub(
+    mock="m",
+    session=Some("test-a"),
+    @json.parse(
+      (
+        #|{ "response": { "status": 200, "template": true,
+        #|  "json": { "session": "${cookie.session ?? null}",
+        #|    "themes": { "$each": "cookie.theme", "as": "t", "do": "${t}" } } } }
+      ),
+    ),
+  )
+  inspect(added.id, content="eph-1")
+  let ephemeral = h.send(
+    "GET",
+    "/",
+    headers=two_cookie_fields,
+    session="test-a",
+  )
+  guard @json.parse(
+      render_with(
+        h,
+        "cookies",
+        {
+          "path": "/",
+          "headers": { "Cookie": ["theme=dark; session=\"s1\"", "theme=light"] },
+        },
+        now=fixed_now,
+        seed=1,
+      ),
+    )
+    is { "response": { "body": { "data": String(rendered), .. }, .. }, .. } else {
+    fail("the rendering has no body in text")
+  }
+  inspect(
+    "matched \{matched_id(ephemeral).unwrap_or("none")}:\n\{response(ephemeral)}\nrendering: \{rendered}",
+    content=(
+      #|matched eph-1:
+      #|200
+      #|Content-Type: application/json
+      #|Smock-Mock: m; via=default
+      #|{"session":"\"s1\"","themes":["dark","light"]}
+      #|rendering: {"session":"\"s1\"","themes":["dark","light"]}
+    ),
+  )
+}
+
+///|
 test "body is missing when the request body is not JSON, and bodyText has U+FFFD for bytes that are not UTF-8" {
   let h = one_response(
     (

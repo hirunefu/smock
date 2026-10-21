@@ -48,6 +48,8 @@ pub struct Context {
   /// The bytes of body or events rendered so far.
   priv mut output : Int
   priv mut body : ParsedBody
+  /// The request's cookies, by name, once a template has read one.
+  priv mut cookies : Map[String, Array[String]]?
 }
 
 ///|
@@ -79,7 +81,16 @@ pub fn Context::new(
   now~ : Int64,
   rand~ : @prng.Generator,
 ) -> Context {
-  { input, now, elapsed: 0L, rand, iterations: 0, output: 0, body: NotParsed, }
+  {
+    input,
+    now,
+    elapsed: 0L,
+    rand,
+    iterations: 0,
+    output: 0,
+    body: NotParsed,
+    cookies: None,
+  }
 }
 
 ///|
@@ -194,6 +205,15 @@ fn Context::eval(
         Some(json) => present(json)
         None => Missing(text)
       }
+    Walk(call, steps, text) =>
+      match self.eval(call, frames, at) {
+        Present(value) =>
+          match walk(value.json, steps) {
+            Some(json) => present(json)
+            None => Missing(text)
+          }
+        missing => missing
+      }
     Call(helper, args) => {
       // The arguments, evaluated in order; a missing one makes the call's
       // value missing too.
@@ -205,85 +225,10 @@ fn Context::eval(
         }
       }
       match helper {
-        Number =>
-          match values[0] {
-            Number(_) as n => present(n)
-            String(text) =>
-              match number_of(text) {
-                Some(n) => present(n)
-                None =>
-                  raise RenderError(
-                    at~,
-                    message="number(): \{text.escape()} is not a JSON number",
-                  )
-              }
-            other =>
-              raise RenderError(
-                at~,
-                message="number() takes a string or a number, not \{kind_of(other)}",
-              )
-          }
-        Range => {
-          let bound = (json : Json) => {
-            match json {
-              Number(n, ..) if n == n.floor() &&
-                n.abs() <= max_integer.to_double() => n.to_int64()
-              _ =>
-                raise RenderError(
-                  at~,
-                  message="range() takes integers from -\{max_integer} to \{max_integer}, not \{compact_json(json)}",
-                )
-            }
-          }
-          let a = bound(values[0])
-          let b = bound(values[1])
-          let count = b - a + 1L
-          if count > max_range.to_int64() {
-            raise RenderError(
-              at~,
-              message="range(\{a}, \{b}) gives \{count} values; range gives at most \{max_range}",
-            )
-          }
-          let items = []
-          let mut n = a
-          while n <= b {
-            items.push(Json::number(n.to_double()))
-            n += 1L
-          }
-          present(Json::array(items))
-        }
-        JsonText =>
-          Present({
-            json: Json::string(compact_json(values[0])),
-            form: JsonOutput,
-          })
-        Raw =>
-          match values[0] {
-            Object(_) | Array(_) =>
-              raise RenderError(
-                at~,
-                message="raw() takes a string, a number, true, false or null, not an object or an array",
-              )
-            json => Present({ json, form: RawText, })
-          }
-        Now(seconds) => {
-          let ms = self.now + self.elapsed + seconds * 1000L
-          // From 0000-01-01 to 9999-12-31, which RFC 3339 can write.
-          if ms < -62_167_219_200_000L || ms > 253_402_300_799_999L {
-            raise RenderError(
-              at~,
-              message="now(): the time is outside the years 0 to 9999",
-            )
-          }
-          present(Json::string(@log.format_time(ms)))
-        }
-        NowMillis(seconds) =>
-          present(
-            Json::number(
-              (self.now + self.elapsed + seconds * 1000L).to_double(),
-            ),
-          )
-        fake => present(draw(fake, self.rand))
+        Fake(fake) => present(draw(fake, self.rand))
+        Time(time) => present(self.time(time, at))
+        Conversion(conversion) => Present(convert(conversion, values, at))
+        Strings(string) => present(string_value(string, values, at))
       }
     }
   }
@@ -329,6 +274,15 @@ fn Context::reference(
           header_values(request.headers, name).iter().head().map(Json::string)
         _ => None
       }
+    Cookie =>
+      match steps {
+        [Name(name)] =>
+          match self.cookie_values(name) {
+            Some(values) => Some(Json::string(values[0]))
+            None => None
+          }
+        _ => None
+      }
     Body =>
       match self.parsed_body() {
         Some(json) => walk(json, steps)
@@ -356,6 +310,21 @@ fn header_values(
 ) -> Array[String] {
   let lower = name.to_lower()
   headers.filter(h => h.0.to_lower() == lower).map(h => h.1)
+}
+
+///|
+/// The values of the cookie named `name`, in order, or `None` when the
+/// request has none. The cookies are read from the request at most once,
+/// when a template first reads one.
+fn Context::cookie_values(self : Context, name : String) -> Array[String]? {
+  match self.cookies {
+    Some(cookies) => cookies.get(name)
+    None => {
+      let cookies = @cookies.parse(self.input.headers)
+      self.cookies = Some(cookies)
+      cookies.get(name)
+    }
+  }
 }
 
 ///|
@@ -408,6 +377,16 @@ fn number_of(text : String) -> Json? {
 }
 
 ///|
+/// `json` for a message: a string, a number, `true`, `false` or `null` as
+/// JSON, and an object or an array by its kind.
+fn described(json : Json) -> String {
+  match json {
+    Object(_) | Array(_) => kind_of(json)
+    _ => compact_json(json)
+  }
+}
+
+///|
 /// What kind of JSON value `json` is, for a message.
 fn kind_of(json : Json) -> String {
   match json {
@@ -422,8 +401,8 @@ fn kind_of(json : Json) -> String {
 
 ///|
 /// The elements a `$each` over `expr` walks: an array, or every value of a
-/// query parameter or a header, none when it is absent. `Err` gives the
-/// source text of the reference that names nothing.
+/// query parameter, a header or a cookie, none when it is absent. `Err`
+/// gives the source text of the reference that names nothing.
 fn Context::elements(
   self : Context,
   expr : Expr,
@@ -439,6 +418,11 @@ fn Context::elements(
       )
     Ref(Header, [Name(name)], _) =>
       Ok(header_values(self.input.headers, name).map(Json::string))
+    Ref(Cookie, [Name(name)], _) =>
+      match self.cookie_values(name) {
+        Some(values) => Ok(values.map(Json::string))
+        None => Ok([])
+      }
     Fallback(alternatives) => {
       let mut last = ""
       for alternative in alternatives {

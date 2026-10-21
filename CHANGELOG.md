@@ -10,6 +10,19 @@ of each GitHub release include its section
 
 ### Added
 
+- `cookie.NAME` in templates reads a cookie as cookie conditions read it,
+  from every `Cookie` field, with quotes kept and nothing percent-decoded.
+  It is the first value of the cookie, and `$each` over it walks every
+  value.
+- Template helpers for text: `len`, `concat`, `padStart` and `padEnd`.
+  Lengths count Unicode code points. A text argument may be a number or a
+  boolean, taken as its text.
+- A helper call can be followed by steps, as a reference can:
+  `${range(1, 3)[1]}` gives `2`.
+- The bounds of `range(a, b)` can be any expression that gives an integer,
+  such as `len(body.items)`.
+- A helper's result above 1 MiB is a render error, found before the
+  result is built.
 - `responses`: a Stub can give 1 to 100 responses with integer weights,
   from 1 to 1,000,000, instead of `response`. Each matched request gets
   one of them, picked with the probability of its weight over the sum of
@@ -23,6 +36,12 @@ of each GitHub release include its section
 - `smock render` and the Admin render operation show `responseIndex`, and
   render a given response with `--response <i>` and the `response` query
   parameter.
+
+### Changed
+
+- A loop variable named `cookie` now fails to load, since `cookie` is a
+  request field in templates. No valid file changes meaning: rename the
+  loop variable. The Definition file format is still version 1.
 
 ## [0.2.0] - 2026-10-21
 
