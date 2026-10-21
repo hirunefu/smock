@@ -109,10 +109,10 @@ of each GitHub release include its section
   By default it is an eighth of smock's memory limit, at least 1 MiB and
   at most 64 MiB, as ADR 0004's rule gives the Journal a quarter; smock
   logs the bound at startup. Each space of a Mock and a Session counts its
-  Session key, and each Variable its name and its value's compact JSON,
-  with fixed bytes for each space, Variable and JSON value. A request whose
-  writes would pass the bound writes nothing, picks no response and gets
-  507 `state limit reached`.
+  Mock name and Session key, and each Variable its name and its value's
+  compact JSON, with fixed bytes for each space, Variable and JSON value.
+  A request whose writes would pass the bound writes nothing, picks no
+  response and gets 507 `state limit reached`.
 - The metrics `smock_state_bytes`, the bytes the state bound counts, and
   `smock_state_writes_refused_total`, the writes it refused, from requests
   and Admin API sets.
