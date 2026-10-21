@@ -11,11 +11,17 @@ of each GitHub release include its section
 ### Added
 
 - `smock import-openapi` converts an OpenAPI 3.0, 3.1 or 3.2 document
-  into a Definition file, once. Each operation at a path without
-  parameters becomes Stubs that match its method and exact path. By
-  default, they answer its main status. Parts that are not imported yet
-  are left out with a warning. smock never reads OpenAPI when it serves.
-  See [docs/importing-openapi.md](docs/importing-openapi.md).
+  into a Definition file, once. Each operation becomes Stubs that match
+  its method and path. By default, they answer its main status. Parts
+  that are not imported yet are left out with a warning. smock never reads
+  OpenAPI when it serves. See
+  [docs/importing-openapi.md](docs/importing-openapi.md).
+- `smock import-openapi` turns a path with parameters, such as
+  `/pets/{petId}`, into a pattern in which each parameter matches text
+  within one segment, and keeps a path without parameters exact. A
+  concrete path comes before a templated one, so `/pets/mine` gets its own
+  Stub and `/pets/7` the pattern's. Two patterns that can match the same
+  request keep the document's order.
 - `smock import-openapi` gives every documented response a Stub, not only
   the main one. A request selects it with the header `Smock-Status`,
   whose value is the response key as the document writes it, such as

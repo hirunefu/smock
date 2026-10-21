@@ -115,11 +115,12 @@ uvx --from openapi-spec-validator==0.9.0 openapi-spec-validator api/petstore.jso
 ## What is generated
 
 The file declares one Mock, named by `--mock`, with no other field. Then
-come the Stubs of each operation, in the order the document writes the
-operations: path keys, then methods in the order each Path Item writes
-them. An operation has a Stub for each response it answers: first those
-of its other responses, in the order the document writes them, then its
-main Stub.
+come the Stubs of each operation. Operations at concrete paths come before
+those at templated paths. Otherwise, they keep the order the document
+writes them in: path keys, then methods in the order each Path Item writes
+them ([Paths with parameters](#paths-with-parameters)). An operation has a
+Stub for each response it answers: first those of its other responses, in
+the order the document writes them, then its main Stub.
 
 | In the document | In the Definition file |
 |---|---|
@@ -130,13 +131,14 @@ main Stub.
 | A key of 3.2's `additionalOperations` | The `method`, as written. |
 | `head` | `HEAD` is answered only where the document has `head`. |
 | A path key without parameters | The exact `path`, percent-decoded as smock decodes request paths, so that the match index finds it. |
+| A path key with parameters, such as `/pets/{petId}` | A `path` pattern, in which each parameter matches text within one segment: `pattern: /pets/[^/]+` ([Paths with parameters](#paths-with-parameters)). |
 | `operationId` | The Stub ID `<mock>.<operationId>.<key>`, where `<key>` is the response's key as written, such as `petstore.listPets.200` and `petstore.listPets.default`. |
 | No `operationId` | The Stub ID `<mock>.<METHOD> <path>.<key>`, with the path as written, such as `petstore.GET /pets.200`. |
 | The main response | The `status` of the main Stub (see below). |
 | Another response | The `status` of its Stub (see below), which also has the request condition `Smock-Status: <key>` ([Selecting responses](#selecting-responses)). |
 | A response's `content` | The body, as `json` or `body`, from one media type, with its `Content-Type` in `headers` ([Bodies](#bodies)). |
 | A media type's `schema` | One fixed sample of the schema, written in the file ([Samples from schemas](#samples-from-schemas)). |
-| Parameters, request bodies, `Content-Type`, `Accept` and `security` | No condition, so a request without a documented parameter still gets the documented answer. |
+| Parameters, request bodies, `Content-Type`, `Accept` and `security` | No condition, so a request without a documented parameter still gets the documented answer. A path parameter's schema does not narrow its pattern either. |
 | `deprecated: true` | The operation is imported like any other. In YAML, the Stub's comment says `deprecated`. No `Deprecation` header is added, since the document does not declare one. |
 | `callbacks` | Not imported, with one warning per operation. |
 | `webhooks` | Not imported, with one warning: they are requests the API sends, not ones it answers. |
@@ -148,6 +150,86 @@ A Stub matches on its method and its path, and the Stub of a response
 other than the main one on `Smock-Status` too. The file holds only
 `status`, `headers`, and `json` or `body` in its responses: no
 `template`, `responses`, `variables`, `fault`, `scenario` or `priority`.
+
+### Paths with parameters
+
+A path key with parameters becomes a pattern. Each `{name}` in it becomes
+`[^/]+`, which matches text within one path segment. Take three
+operations, written in this order:
+
+```json
+"/pets/{petId}": { "get": { "operationId": "getPetById", "responses": { "200": {} } } },
+"/pets/mine": { "get": { "operationId": "getMyPet", "responses": { "200": {} } } },
+"/files/{name}.json": { "get": { "operationId": "getFile", "responses": { "200": {} } } }
+```
+
+The file has their Stubs in this order:
+
+```yaml
+stubs:
+  # GET /pets/mine, 200
+  - id: petstore.getMyPet.200
+    mock: petstore
+    request:
+      method: GET
+      path: /pets/mine
+    response:
+      status: 200
+  # GET /files/{name}.json, 200
+  - id: petstore.getFile.200
+    mock: petstore
+    request:
+      method: GET
+      path:
+        pattern: /files/[^/]+\.json
+    response:
+      status: 200
+  # GET /pets/{petId}, 200
+  - id: petstore.getPetById.200
+    mock: petstore
+    request:
+      method: GET
+      path:
+        pattern: /pets/[^/]+
+    response:
+      status: 200
+```
+
+So `GET /pets/mine` gets its own Stub, and `GET /pets/7` the pattern's.
+
+- Literal text is percent-decoded as smock decodes request paths. Then
+  its ASCII punctuation other than `/` is escaped with `\`, so that it
+  stands for itself. So `/files/{name}.{ext}` becomes
+  `/files/[^/]+\.[^/]+`.
+- A parameter's schema does not narrow its pattern: an integer does not
+  become `[0-9]+`, and an `enum` does not become a list of values. A
+  request with a mistyped value still gets the documented answer, not the
+  Mock's 404.
+- smock decodes the path of a request before it matches it, so `%2F` is a
+  `/`. A value with an encoded `/`, as in `/pets/a%2Fb`, never fills one
+  segment. This agrees with OpenAPI 3.2.1.
+
+The operations are sorted, so that a concrete path comes before a
+templated one, as OpenAPI asks:
+
+- Each path is split on `/`, and the paths are compared segment by
+  segment from the left. A literal segment comes first, then a segment
+  that mixes literal text and parameters, such as `{name}.json`, then a
+  segment that is one parameter.
+- When one path runs out first, and its segments are of the same kinds as
+  the other's so far, the shorter path comes first. So `/pets` comes
+  before `/pets/mine`.
+- Otherwise, the document's order is kept: path keys first, then methods.
+  The Stubs of one operation keep their order.
+- So an exact path always comes before a pattern that matches it, and
+  `smock check` gives no warning. No `priority` is written.
+- Problems still come in the order the document writes the operations.
+
+Two patterns that can match the same request, such as
+`/files/{name}.{ext}` and `/files/{name}.json`, keep the document's order.
+The first one answers `/files/a.json`, and there is no warning, since
+`smock check` does not compare two patterns. So list the specific one
+first in the document.
 
 ### The main response
 
@@ -320,7 +402,8 @@ are written as they are, with no escaping.
 - When two operations' method and path come out the same, the first in
   document order is kept, and the later one is left out with a warning.
   Two paths that decode alike, such as `/a%2Fb` and `/a/b`, are the same
-  path.
+  path. Two templated paths that differ only in their parameters' names,
+  such as `/pets/{id}` and `/pets/{petId}`, give the same pattern.
 - Operations that are left out take part in neither check.
 
 ## Selecting responses
@@ -576,8 +659,8 @@ api/petstore.json: /paths/~1pets/get/responses/200/content/application~1xml: war
   serves the rest.
 - Problems with `--output` come first, named by `--output` as given. Then
   the document-level ones. Then each operation's, in the order the
-  document writes the operations, and within an operation in the order of
-  its responses.
+  document writes the operations, whatever the order of their Stubs, and
+  within an operation in the order of its responses.
 - One summary line ends the output: `wrote <file>: <n> Stubs from <m>
   operations, <w> warnings`, or `nothing written: <e> errors`.
 
@@ -611,9 +694,13 @@ command does.
 - The file nests at most 1024 levels, the most the parsers read. A value
   of `const`, `examples`, `example`, `default` or `enum` that would nest
   deeper is left out of its body, with a warning.
+- Each operation at a templated path adds pattern Stubs, one per
+  response. The match index does not find them
+  ([Which Stub answers](definition-files.md#which-stub-answers)), so each
+  request of that method scans the Mock's pattern Stubs, in order. A
+  document with many templated paths makes each request slower.
 - These parts are not imported yet. Each is left out with a warning,
   unless this list says otherwise:
-  - operations at paths with parameters, such as `/pets/{petId}`;
   - the paths of `servers`, so no prefix is added to the paths;
   - response headers;
   - the `example` and `examples` of media types: the body is sampled from
