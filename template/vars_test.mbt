@@ -278,3 +278,38 @@ test "a template knows whether it reads vars, wherever it does" {
     ),
   )
 }
+
+///|
+test "a Variable's number is the decimal its kept text writes, exponent included, wherever an integer is taken" {
+  let at = (text : String, float : Double) => {
+    with_vars("\"${substr('abcdefghijklmnopqrstuvwxyz', vars.n)}\"", vars={
+      "n": Json::number(float, repr=text),
+    })
+  }
+  inspect(
+    [
+      at("1.5E+1", 15.0),
+      at("-2.50e1", -25.0),
+      at("1000e-3", 1.0),
+      at("1.0000000000000000001e1", 10.0),
+      at("100000000000000000001e-20", 1.0),
+      with_vars(
+        "{ \"$each\": \"range(1, vars.n)\", \"as\": \"i\", \"do\": \"${i}\" }",
+        vars={ "n": Json::number(3.0, repr="3.0e0") },
+      ),
+      with_vars(
+        "{ \"$each\": \"range(1, vars.n)\", \"as\": \"i\", \"do\": \"${i}\" }",
+        vars={ "n": Json::number(3.0, repr="30000000000000000001e-19") },
+      ),
+    ].join("\n"),
+    content=(
+      #|"pqrstuvwxyz"
+      #|"bcdefghijklmnopqrstuvwxyz"
+      #|"bcdefghijklmnopqrstuvwxyz"
+      #|error at /variables/v: substr(): argument 2 must be an integer, or a string that is one, not 1.0000000000000000001e1
+      #|error at /variables/v: substr(): argument 2 must be an integer, or a string that is one, not 100000000000000000001e-20
+      #|[1,2,3]
+      #|error at /variables/v/$each: range() takes integers from -9007199254740991 to 9007199254740991, not 30000000000000000001e-19
+    ),
+  )
+}

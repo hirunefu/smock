@@ -154,10 +154,14 @@ fn range_bound(json : Json, at : String) -> Int64 raise RenderError {
 
 ///|
 /// `json` as a bound of `range`, if it is one: an integer number from
-/// -(2^53 - 1) to 2^53 - 1. A string is not a number here.
+/// -(2^53 - 1) to 2^53 - 1. A number that keeps its text is the decimal its
+/// text writes, as for any integer argument. A string is not a number
+/// here.
 fn range_integer(json : Json) -> Int64? {
   match json {
-    Number(n, ..) if n == n.floor() && n.abs() <= max_integer.to_double() =>
+    Number(n, repr~) if n == n.floor() &&
+      n.abs() <= max_integer.to_double() &&
+      (repr is None || (repr is Some(text) && writes_integer(text))) =>
       Some(n.to_int64())
     _ => None
   }

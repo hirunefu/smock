@@ -155,10 +155,15 @@ fn numeric_value(json : Json) -> Json? {
 
 ///|
 /// `json` as an integer argument, if it is one: a numeric value without a
-/// fraction. It is clamped to the range of an `Int`, which is beyond the
-/// length of any text.
+/// fraction. A number that keeps its text, such as an arithmetic result,
+/// is the decimal its text writes, whose fraction its float can lose. It is
+/// clamped to the range of an `Int`, which is beyond the length of any
+/// text.
 fn integer_value(json : Json) -> Int? {
   guard numeric_value(json) is Some(Number(n, ..)) && n == n.floor() else {
+    return None
+  }
+  if json is Number(_, repr=Some(text)) && !writes_integer(text) {
     return None
   }
   if n >= 2147483647.0 {
@@ -168,6 +173,57 @@ fn integer_value(json : Json) -> Int? {
   } else {
     Some(n.to_int())
   }
+}
+
+///|
+/// Whether `text`, the JSON number a number keeps as its text, writes an
+/// integer: no digit but 0 after the point, once the exponent has moved
+/// the point.
+fn writes_integer(text : String) -> Bool {
+  // Where the digits end, and where the point is among them.
+  let mut end = 0
+  while end < text.length() && !(text[end] is ('e' | 'E')) {
+    end += 1
+  }
+  let mut point = end
+  for i in 0..<end {
+    if text[i] == '.' {
+      point = i
+      break
+    }
+  }
+  // How many places the exponent moves the point to the right. Past the
+  // length of the text, a further move changes nothing.
+  let mut shift = 0
+  if end < text.length() {
+    let mut i = end + 1
+    let negative = i < text.length() && text[i] == '-'
+    if i < text.length() && text[i] is ('+' | '-') {
+      i += 1
+    }
+    while i < text.length() {
+      if shift <= text.length() {
+        shift = shift * 10 + (text[i].to_int() - '0'.to_int())
+      }
+      i += 1
+    }
+    if negative {
+      shift = -shift
+    }
+  }
+  // A digit k places after the point stays after it when k > shift; one k
+  // places before it moves after it when k <= -shift.
+  for i in (point + 1)..<end {
+    if text[i] != '0' && i - point > shift {
+      return false
+    }
+  }
+  for i in 0..<point {
+    if text[i] is ('1'..='9') && point - i <= -shift {
+      return false
+    }
+  }
+  true
 }
 
 ///|

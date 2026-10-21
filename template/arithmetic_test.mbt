@@ -348,3 +348,27 @@ test "a result is a number, which other helpers, steps and conditions take as on
     ),
   )
 }
+
+///|
+test "a result whose kept text has a fraction is not an integer, though its float has none; one whose fraction is only zeros is" {
+  inspect(
+    [
+      rendered("${substr('abcdef', add(1, '0.000000000000000001'))}"),
+      rendered("${json(range(1, add(3, '0.000000000000000001')))}"),
+      rendered_json(
+        "{ \"$each\": \"range(1, add(3, '0.000000000000000001'))\", \"as\": \"n\", \"do\": \"${n}\" }",
+      ),
+      rendered("${substr('abcdef', toFixed(1, 2))}"),
+      rendered("${json(range(1, toFixed(3, 1)))}"),
+      rendered("${substr('abcdef', '1.0000000000000000001')}"),
+    ].join("\n"),
+    content=(
+      #|error at /response/body: substr(): argument 2 must be an integer, or a string that is one, not 1.000000000000000001
+      #|error at /response/body: range() takes integers from -9007199254740991 to 9007199254740991, not 3.000000000000000001
+      #|error at /response/json/$each: range() takes integers from -9007199254740991 to 9007199254740991, not 3.000000000000000001
+      #|bcdef
+      #|[1,2,3]
+      #|bcdef
+    ),
+  )
+}

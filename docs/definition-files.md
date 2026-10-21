@@ -1638,7 +1638,9 @@ response:
   `places` decimals instead, and writes `toFixed(-0.001, 2)` as `0.00`.
 - Other helpers and conditions take a result as a number, so
   `padStart(s, add(n, 1))`, `range(1, add(n, 1))` and
-  `$if: add(a, b) == 3` all work.
+  `$if: add(a, b) == 3` all work. Where an integer is taken, a result is
+  the decimal it writes, so one with a fraction is not an integer, however
+  small: `substr(s, add(1, '0.000000000000000001'))` is an error.
 - A zero divisor of `divide` or `modulo`, even a literal 0, is an error
   when the template is rendered.
 
