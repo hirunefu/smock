@@ -23,13 +23,20 @@ of each GitHub release include its section
   Stub names, the main response answers. A test that reaches the Mock
   through its system under test adds an Ephemeral Stub for its Session
   instead, as the guide shows.
+- `smock import-openapi` gives responses a body: one fixed sample of the
+  schema of one media type, written in the file as `json` or `body`, with
+  the media type as the Content-Type. Formats such as `date-time`, `uuid`
+  and `email` give valid samples. Nothing is random and nothing is
+  templated. Numbers sample as 0 so far, and `allOf`, `oneOf`, `anyOf`,
+  schema references and the document's examples are not used yet.
 - `smock import-openapi` writes YAML when the name of `--output` ends in
   `.yaml` or `.yml`, and JSON when it ends in `.json`. A YAML file starts
   with a comment that names the document and says not to edit the file,
   and each Stub has a comment that maps it back to the document's
   operation.
 - `smock import-openapi` follows a `$ref` within the document where it
-  reads a Path Item or a Response, by its JSON Pointer fragment. A URL, an
+  reads a Path Item, a Response or a Media Type, by its JSON Pointer
+  fragment. A URL, an
   absolute path or another file is an error that suggests bundling the
   document into one file first.
 - `write` in the `smock/yaml` module turns a JSON tree into a YAML

@@ -129,9 +129,8 @@ async test "smock import-openapi prints each warning as smock check does, naming
         ),
         content=(
           #|status 0
-          #|<dir>/api/petstore.json: /paths/~1pets/get/responses/404/content/application~1json: warning: left out: response bodies are not imported yet
           #|<dir>/api/petstore.json: /paths/~1pets~1{petId}/get: warning: left out: paths with parameters are not imported yet
-          #|wrote <dir>/defs/petstore.json: 2 Stubs from 1 operations, 2 warnings
+          #|wrote <dir>/defs/petstore.json: 2 Stubs from 1 operations, 1 warnings
           #|
         ),
       )
@@ -372,7 +371,6 @@ async test "smock import-openapi writes nothing and exits 1 when the output cann
         content=(
           #|status 1
           #|<dir>/nowhere/petstore.json: cannot be written: its directory does not exist
-          #|<dir>/api/petstore.json: /paths/~1pets/get/responses/404/content/application~1json: warning: left out: response bodies are not imported yet
           #|nothing written: 1 errors
           #|
         ),
@@ -683,4 +681,108 @@ async test "a test whose requests cannot set Smock-Status selects the imported 4
       ])
     })
   })
+}
+
+///|
+async test "smock serves an imported response's sampled body with its Content-Type" {
+  with_petstore(
+    (
+      #|{
+      #|  "openapi": "3.1.0",
+      #|  "paths": {
+      #|    "/pets/mine": {
+      #|      "get": {
+      #|        "operationId": "getPet",
+      #|        "responses": {
+      #|          "200": {
+      #|            "content": {
+      #|              "application/json": {
+      #|                "schema": {
+      #|                  "type": "object",
+      #|                  "properties": {
+      #|                    "id": { "type": "string", "format": "uuid" },
+      #|                    "tags": { "type": "array", "items": { "type": "string" } }
+      #|                  }
+      #|                }
+      #|              }
+      #|            }
+      #|          },
+      #|          "404": {
+      #|            "content": {
+      #|              "application/problem+json": {
+      #|                "schema": { "type": "object", "properties": { "title": { "const": "Not Found" } } }
+      #|              }
+      #|            }
+      #|          }
+      #|        }
+      #|      }
+      #|    },
+      #|    "/version": {
+      #|      "get": {
+      #|        "responses": {
+      #|          "200": { "content": { "text/plain; charset=utf-8": { "schema": { "const": "1.2.3" } } } }
+      #|        }
+      #|      }
+      #|    }
+      #|  }
+      #|}
+    ),
+    dir => {
+      inspect(
+        import_openapi(
+          [
+            "\{dir}/api/petstore.json",
+            "--mock",
+            "petstore",
+            "--output",
+            "\{dir}/defs/petstore.yaml",
+          ],
+          dir~,
+        ),
+        content=(
+          #|status 0
+          #|wrote <dir>/defs/petstore.yaml: 3 Stubs from 2 operations, 0 warnings
+          #|
+        ),
+      )
+      let _ = with_smock(["--dir", "\{dir}/defs", "--port", "0"], smock => {
+        let answers = []
+        for
+          request in [
+            ("/pets/mine", None),
+            ("/pets/mine", Some("404")),
+            ("/version", None),
+          ] {
+          let headers = [("Host", "localhost")]
+          if request.1 is Some(key) {
+            headers.push(("Smock-Status", key))
+          }
+          answers.push(smock.request("GET", request.0, headers~))
+        }
+        inspect(
+          answers.join("\n"),
+          content=(
+            #|HTTP/1.1 200 OK
+            #|Content-Type: application/json
+            #|Smock-Mock: petstore; via=default
+            #|Content-Length: 63
+            #|
+            #|{"id":"00000000-0000-4000-8000-000000000000","tags":["string"]}
+            #|HTTP/1.1 404 Not Found
+            #|Content-Type: application/problem+json
+            #|Smock-Mock: petstore; via=default
+            #|Content-Length: 21
+            #|
+            #|{"title":"Not Found"}
+            #|HTTP/1.1 200 OK
+            #|Content-Type: text/plain; charset=utf-8
+            #|Smock-Mock: petstore; via=default
+            #|Content-Length: 5
+            #|
+            #|1.2.3
+          ),
+        )
+      })
+    },
+  )
 }

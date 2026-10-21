@@ -161,17 +161,27 @@ fn base_name(path : String) -> String {
 ///|
 /// A Stub of the Mock `mock` as the file writes it: `id`, `mock`, `request`
 /// (`method`, `path`, then `headers` with `Smock-Status` for a response
-/// other than the main one), then `response` (`status`).
+/// other than the main one), then `response` (`status`, `headers` with
+/// the Content-Type, then `json` or `body`).
 fn Stub::to_json(self : Stub, mock : String) -> Json {
   let request : Map[String, Json] = { "method": self.meth, "path": self.path }
   if self.selected {
     request["headers"] = { "Smock-Status": self.response }
   }
+  let response : Map[String, Json] = { "status": self.status.to_json() }
+  if self.payload.content_type is Some(content_type) {
+    response["headers"] = { "Content-Type": content_type }
+  }
+  match self.payload.body {
+    Empty => ()
+    JsonValue(json) => response["json"] = json
+    Text(text) => response["body"] = Json::string(text)
+  }
   {
     "id": self.id,
     "mock": mock,
     "request": Json::object(request),
-    "response": { "status": self.status.to_json() },
+    "response": Json::object(response),
   }
 }
 

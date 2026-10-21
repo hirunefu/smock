@@ -133,12 +133,14 @@ main Stub.
 | No `operationId` | The Stub ID `<mock>.<METHOD> <path>.<key>`, with the path as written, such as `petstore.GET /pets.200`. |
 | The main response | The `status` of the main Stub (see below). |
 | Another response | The `status` of its Stub (see below), which also has the request condition `Smock-Status: <key>` ([Selecting responses](#selecting-responses)). |
+| A response's `content` | The body, as `json` or `body`, from one media type, with its `Content-Type` in `headers` ([Bodies](#bodies)). |
+| A media type's `schema` | One fixed sample of the schema, written in the file ([Samples from schemas](#samples-from-schemas)). |
 | Parameters, request bodies, `Content-Type`, `Accept` and `security` | No condition, so a request without a documented parameter still gets the documented answer. |
 | `deprecated: true` | The operation is imported like any other. In YAML, the Stub's comment says `deprecated`. No `Deprecation` header is added, since the document does not declare one. |
 | `callbacks` | Not imported, with one warning per operation. |
 | `webhooks` | Not imported, with one warning: they are requests the API sends, not ones it answers. |
 | `security`, `links`, descriptions, tags and `x-` extensions | Nothing, and no warning. |
-| A `$ref` to a Path Item or a Response in the same document | Followed, as if the part it names were written in place (see [References and bundling](#references-and-bundling)). |
+| A `$ref` to a Path Item, a Response or, as 3.2 allows, a Media Type in the same document | Followed, as if the part it names were written in place (see [References and bundling](#references-and-bundling)). |
 | Fields beside a Path Item's `$ref` | Ignored, with a warning, since OpenAPI leaves their meaning undefined. |
 
 A Stub matches on its method and its path, and the Stub of a response
@@ -176,6 +178,137 @@ Every other response gets a Stub of its own, which a request selects with
 - `default`, when it is not the main response, answers 500.
 - `1XX`, and explicit codes from 100 to 199, get no Stub, with a warning:
   smock answers with a status from 200 to 599.
+
+### Bodies
+
+A response's body comes from one of its media types, and is one fixed
+sample of that media type's schema, written in the file. Nothing is
+random and nothing is templated, so a reviewer sees what the mock answers,
+and tests repeat. A `200` response whose `application/json` schema is
+
+```yaml
+type: object
+properties:
+  id: { type: string, format: uuid }
+  born: { type: string, format: date }
+  tags: { type: array, items: { type: string } }
+  password: { type: string, writeOnly: true }
+```
+
+answers
+
+```yaml
+response:
+  status: 200
+  json:
+    id: 00000000-0000-4000-8000-000000000000
+    born: "2000-01-01"
+    tags:
+      - string
+```
+
+- **One media type.** It is `application/json`, with any parameters, else
+  the first `+json` type, else the first key. Media types are compared
+  case-insensitively, without their parameters. The response's other
+  media types are left out, with a warning.
+- **Content-Type.** It is written in `headers`, with the key as the
+  document writes it. It is not written for plain `application/json` with
+  a `json` body, since smock sends that Content-Type itself, nor for a
+  range such as `*/*`. A key with a control character is left out, with a
+  warning, since a header cannot hold it.
+- **`json` or `body`.** A JSON media type, `application/json` or
+  `*/*+json`, gives `json`. Under a range such as `*/*` or
+  `application/*`, a value that is not a string gives `json` too, so smock
+  sends it as JSON: some generators write `*/*` for every response. Any
+  other media type gives `body`: a string as it is, and a number or a
+  boolean as smock writes it. An object, an array or null there gives an
+  empty body, with a warning.
+- **No body.** A response without `content`, or with an empty one, has no
+  body and no Content-Type. A media type with neither an example nor a
+  schema has an empty body and its Content-Type, with no warning. 204, 205
+  and 304 responses, and responses to HEAD, have no body and no
+  Content-Type: content that the document gives them is left out, with a
+  warning.
+- **Order.** In `response`, `status` comes first, then `headers`, then
+  `json` or `body`.
+
+### Samples from schemas
+
+The sample depends only on the schema. For each schema, nested ones
+included, the first of these gives it:
+
+1. `const`;
+2. the first of `examples`, in 3.1 and 3.2;
+3. `example`;
+4. `default`;
+5. the first of `enum`;
+6. the type.
+
+The values of `const`, `examples`, `example`, `default` and `enum` are
+copied as data: a `$ref` member in them stays as written.
+
+The type is the first type other than `null` in a type array, in every
+version, and `null` when it is the only one. Without a type, the sample
+takes the one the keywords imply, tried in this order:
+
+| Type | Keywords |
+|---|---|
+| object | `properties`, `required`, `additionalProperties`, `patternProperties`, `propertyNames`, `minProperties`, `maxProperties` |
+| array | `items`, `prefixItems`, `contains`, `minItems`, `maxItems`, `uniqueItems` |
+| integer | `format` `int32` or `int64` |
+| number | `format` `float` or `double`, or `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf` |
+| string | `minLength`, `maxLength`, `pattern`, or any other `format` |
+
+Else the sample is null. `nullable` changes nothing. The schema `true`
+samples as null. The schema `false` gives no value: a property whose
+schema is `false` is left out, and as the whole body it gives an empty
+body.
+
+- **Strings** sample as the fixed sample of their `format`, from the
+  table below. Any other format, or none, gives `"string"`, repeated or
+  cut to fit `minLength` and `maxLength`. Length bounds do not change a
+  format's sample.
+- **Booleans** sample as `true`, and numbers as 0.
+- **Arrays** have `minItems` items, at least 1 and at most 100, with a
+  warning past 100. `maxItems: 0` gives `[]`. Items come from
+  `prefixItems`, then `items`, and the array ends where neither gives one.
+  An array with neither gives `[]`.
+- **Objects** have every property in `properties`, required or not, in
+  the order written, except `writeOnly` ones. `additionalProperties` and
+  `patternProperties` add nothing. A name in `required` that no property
+  defines is not added.
+
+| `format` | Sample |
+|---|---|
+| `date-time` | `2000-01-01T00:00:00Z` |
+| `date` | `2000-01-01` |
+| `time` | `00:00:00Z` |
+| `duration` | `P1D` |
+| `email`, `idn-email` | `user@example.com` |
+| `hostname`, `idn-hostname` | `example.com` |
+| `ipv4` | `192.0.2.1` |
+| `ipv6` | `2001:db8::1` |
+| `uri`, `uri-reference`, `iri`, `iri-reference` | `https://example.com/` |
+| `uri-template` | `https://example.com/{id}` |
+| `uuid` | `00000000-0000-4000-8000-000000000000` |
+| `json-pointer` | `/a` |
+| `relative-json-pointer` | `0` |
+| `regex` | `.*` |
+| `byte` | `c3RyaW5n` |
+
+The sampler does not honour these keywords, so a sample may not satisfy
+them: `pattern`, `multipleOf`, `uniqueItems`, `contains`,
+`minProperties`, `maxProperties`, `propertyNames`, the `dependent`
+keywords, the `unevaluated` keywords and the `content` keywords. They are
+ignored without a warning.
+
+A keyword the sampler reads that has the wrong type, such as
+`minItems: "3"`, is ignored, with a warning at its pointer. A Media Type
+Object that is not an object, or a `schema` that is neither an object nor
+a boolean, is an error.
+
+The file has no template, so `${` in a value and keys that start with `$`
+are written as they are, with no escaping.
 
 ### IDs and conditions that repeat
 
@@ -275,7 +408,7 @@ Session with `POST /v1/reset` and `{"scope":"session"}`.
 
 Documents describe shared parts once, under `components`, and point at
 them with `$ref`. The command follows a reference within the document
-where it reads a Path Item or a Response:
+where it reads a Path Item, a Response or, as 3.2 allows, a Media Type:
 
 ```json
 {
@@ -349,7 +482,7 @@ A bundler fetches what the URLs name. smock never does.
 Each problem is one line on stdout, in the form `smock check` uses:
 
 ```
-api/petstore.json: /paths/~1pets/get/responses/404/content/application~1json: warning: left out: response bodies are not imported yet
+api/petstore.json: /paths/~1pets/get/responses/200/content/application~1xml: warning: left out: a response answers with one media type, here "application/json"
 ```
 
 - The document is named as given on the command line, and the place is
@@ -361,7 +494,8 @@ api/petstore.json: /paths/~1pets/get/responses/404/content/application~1json: wa
   impossible, such as invalid JSON, an unsupported version, a reference
   that cannot be followed, a malformed path, a field of the wrong type or
   IDs that collide. A warning names a
-  part of the document that was left out; the file still serves the rest.
+  part of the document that was left out or changed; the file still
+  serves the rest.
 - Problems with `--output` come first, named by `--output` as given. Then
   the document-level ones. Then each operation's, in the order the
   document writes the operations, and within an operation in the order of
@@ -394,11 +528,23 @@ command does.
 
 - The file is at most 64 MiB. A larger output is an error that gives its
   size, and nothing is written.
+- A sampled array has at most 100 items. A larger `minItems` gives 100
+  items, with a warning.
+- The file nests at most 1024 levels, the most the parsers read. A value
+  of `const`, `examples`, `example`, `default` or `enum` that would nest
+  deeper is left out of its body, with a warning.
 - These parts are not imported yet. Each is left out with a warning,
   unless this list says otherwise:
   - operations at paths with parameters, such as `/pets/{petId}`;
   - the paths of `servers`, so no prefix is added to the paths;
-  - response bodies and response headers;
+  - response headers;
+  - the `example` and `examples` of media types: the body is sampled from
+    the schema;
+  - `minimum`, `maximum` and their exclusive forms: numbers sample as 0,
+    without a warning;
+  - `allOf`, `oneOf` and `anyOf`, which add nothing to a sample, without
+    a warning;
+  - schema references: a `$ref` in a schema is an error;
   - references to other files: such a `$ref` is an error, so bundle the
     document first (see [References and bundling](#references-and-bundling));
   - YAML documents: a `.yaml` or `.yml` document is a usage error;

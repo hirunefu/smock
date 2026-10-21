@@ -18,6 +18,8 @@ priv struct Stub {
   /// Whether a request selects it with the header `Smock-Status:
   /// <response>`, as for every response but the main one.
   selected : Bool
+  /// What the response sends besides its status.
+  payload : Payload
 }
 
 ///|
@@ -212,7 +214,7 @@ fn Report::operation(
     )
   }
   self.servers_left_out(pointer, operation)
-  guard self.responses(document, pointer, operation) is Some(responses) else {
+  guard self.responses(document, pointer, meth, operation) is Some(responses) else {
     return
   }
   let name = operation_id.unwrap_or("\{meth} \{key}")
@@ -225,6 +227,7 @@ fn Report::operation(
       response: response.key,
       status: response.status,
       selected: !response.main,
+      payload: response.payload,
     })
   }
   if operation_id is Some(operation_id) &&
