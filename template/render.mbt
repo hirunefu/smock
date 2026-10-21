@@ -290,7 +290,7 @@ fn Context::reference(
     Method => Some(Json::string(request.meth))
     BodyText => Some(Json::string(@utf8.decode_lossy(request.body)))
     Env(value) => value
-    Vars(name) =>
+    Variable(name) =>
       match self.vars {
         Some(vars) =>
           match vars.get(name) {
@@ -342,7 +342,7 @@ fn Context::reference(
       }
     LoopIndex =>
       frames.last().map(frame => Json::number(frame.index.to_double()))
-    Var(name) => {
+    LoopVar(name) => {
       for i = frames.length() - 1; i >= 0; i = i - 1 {
         if frames[i].name == name {
           return walk(frames[i].element, steps)

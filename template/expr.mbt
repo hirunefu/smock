@@ -48,10 +48,10 @@ priv enum Root {
   Env(Json?)
   /// `vars.NAME`: the Variable `NAME` of the request's Mock and Session, by
   /// its name. The steps of the reference go into its value.
-  Vars(String)
+  Variable(String)
   LoopIndex
   /// A loop variable, by its name.
-  Var(String)
+  LoopVar(String)
 }
 
 ///|
@@ -483,7 +483,7 @@ fn Parser::reference(
     Ref(root, steps, text)
   }
   if self.vars.contains(root) {
-    return Ref(Var(root), steps, text)
+    return Ref(LoopVar(root), steps, text)
   }
   match root {
     "method" => alone(Method)
@@ -508,7 +508,7 @@ fn Parser::reference(
       }
     "vars" =>
       match steps {
-        [Name(name), .. rest] => Ref(Vars(name), rest.to_owned(), text)
+        [Name(name), .. rest] => Ref(Variable(name), rest.to_owned(), text)
         _ =>
           raise Syntax(
             start,
@@ -556,9 +556,9 @@ fn root_word(root : Root) -> String {
     Body => "body"
     BodyText => "bodyText"
     Env(_) => "env"
-    Vars(_) => "vars"
+    Variable(_) => "vars"
     LoopIndex => "loop"
-    Var(name) => name
+    LoopVar(name) => name
   }
 }
 
