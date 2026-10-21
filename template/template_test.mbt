@@ -136,3 +136,43 @@ test "a number is written in its shortest form, or as the text it kept" {
   // A helper's output, such as `fake.decimal`, keeps its decimals.
   inspect(text(Json::number(1.5, repr="1.50")), content="1.50")
 }
+
+///|
+test "indented JSON keeps member order, indents two spaces per level, and writes numbers and strings as compact JSON does" {
+  let indented = (json : Json) => {
+    @utf8.decode(@template.indented_json_bytes(json))
+  }
+  inspect(
+    indented(
+      @json.parse(
+        "{\"big\": 12345678901234567890, \"float\": 1.50, \"text\": \"a\\\"b\\\\c\\n\\u0001é/\", \"empty\": {}, \"none\": [], \"list\": [1e3, [], {\"x\": null}, true, false, -0.25]}",
+      ),
+    ),
+    content=(
+      #|{
+      #|  "big": 12345678901234567890,
+      #|  "float": 1.5,
+      #|  "text": "a\"b\\c\n\u0001é/",
+      #|  "empty": {},
+      #|  "none": [],
+      #|  "list": [
+      #|    1000,
+      #|    [],
+      #|    {
+      #|      "x": null
+      #|    },
+      #|    true,
+      #|    false,
+      #|    -0.25
+      #|  ]
+      #|}
+    ),
+  )
+  // A value that is not a collection, or an empty one, takes one line.
+  inspect(
+    [Json::number(0.1), Json::string("a\tb"), Json::object({}), Json::array([])]
+    .map(indented)
+    .join(" "),
+    content="0.1 \"a\\tb\" {} []",
+  )
+}
