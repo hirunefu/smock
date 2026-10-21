@@ -103,7 +103,14 @@ async test "smock import-openapi prints each warning as smock check does, naming
       #|{
       #|  "openapi": "3.0.3",
       #|  "paths": {
-      #|    "/pets": { "get": { "responses": { "404": {}, "200": {} } } },
+      #|    "/pets": {
+      #|      "get": {
+      #|        "responses": {
+      #|          "404": { "content": { "application/json": {} } },
+      #|          "200": {}
+      #|        }
+      #|      }
+      #|    },
       #|    "/pets/{petId}": { "get": { "responses": { "200": {} } } }
       #|  }
       #|}
@@ -122,9 +129,9 @@ async test "smock import-openapi prints each warning as smock check does, naming
         ),
         content=(
           #|status 0
-          #|<dir>/api/petstore.json: /paths/~1pets/get/responses/404: warning: left out: only the main response, 200, is imported yet
+          #|<dir>/api/petstore.json: /paths/~1pets/get/responses/404/content/application~1json: warning: left out: response bodies are not imported yet
           #|<dir>/api/petstore.json: /paths/~1pets~1{petId}/get: warning: left out: paths with parameters are not imported yet
-          #|wrote <dir>/defs/petstore.json: 1 Stubs from 1 operations, 2 warnings
+          #|wrote <dir>/defs/petstore.json: 2 Stubs from 1 operations, 2 warnings
           #|
         ),
       )
@@ -276,7 +283,7 @@ async test "smock import-openapi --help names its argument and its flags, none o
       #|status 0
       #|Usage: smock import-openapi --mock <mock> --output <output> <document>
       #|
-      #|Convert an OpenAPI 3.0, 3.1 or 3.2 document into a Definition file, once: it declares one Mock, with a Stub for each operation that matches its method and path and answers its main response. smock never reads OpenAPI when it serves. Prints every problem, one per line, as smock check does, then a summary line, and exits with status 1 if nothing was written.
+      #|Convert an OpenAPI 3.0, 3.1 or 3.2 document into a Definition file, once: it declares one Mock, with a Stub for each response of each operation, which matches the operation's method and path. The main response answers by default, and each other one when the request sends Smock-Status with its key as the document writes it, such as Smock-Status: 404. smock never reads OpenAPI when it serves. Prints every problem, one per line, as smock check does, then a summary line, and exits with status 1 if nothing was written.
       #|
       #|Arguments:
       #|  document  The OpenAPI document: a JSON file, whose name ends in .json.
@@ -338,7 +345,16 @@ async test "smock import-openapi writes nothing and exits 1 when the output cann
     (
       #|{
       #|  "openapi": "3.1.0",
-      #|  "paths": { "/pets": { "get": { "responses": { "200": {}, "404": {} } } } }
+      #|  "paths": {
+      #|    "/pets": {
+      #|      "get": {
+      #|        "responses": {
+      #|          "200": {},
+      #|          "404": { "content": { "application/json": {} } }
+      #|        }
+      #|      }
+      #|    }
+      #|  }
       #|}
     ),
     dir => {
@@ -356,7 +372,7 @@ async test "smock import-openapi writes nothing and exits 1 when the output cann
         content=(
           #|status 1
           #|<dir>/nowhere/petstore.json: cannot be written: its directory does not exist
-          #|<dir>/api/petstore.json: /paths/~1pets/get/responses/404: warning: left out: only the main response, 200, is imported yet
+          #|<dir>/api/petstore.json: /paths/~1pets/get/responses/404/content/application~1json: warning: left out: response bodies are not imported yet
           #|nothing written: 1 errors
           #|
         ),
@@ -484,5 +500,187 @@ async test "smock import-openapi writes the same bytes from two working director
     let absolute = @fs.read_file("\{dir}/defs/absolute.yaml").binary()
     assert_eq(relative, absolute)
     assert_false(@utf8.decode_lossy(relative).contains(dir))
+  })
+}
+
+///|
+/// The guide's document for selecting responses: `getPet` on
+/// `GET /pets/mine`, with a 200 and a 404.
+let my_pet_document : String =
+  #|{
+  #|  "openapi": "3.1.0",
+  #|  "info": { "title": "Petstore", "version": "1.0.0" },
+  #|  "paths": {
+  #|    "/pets/mine": {
+  #|      "get": {
+  #|        "operationId": "getPet",
+  #|        "responses": {
+  #|          "200": { "description": "My pet" },
+  #|          "404": { "description": "No pet" }
+  #|        }
+  #|      }
+  #|    }
+  #|  }
+  #|}
+
+///|
+/// Imports `my_pet_document` into `<dir>/defs/petstore.yaml`, then runs
+/// `f` with a smock that serves `<dir>/defs`.
+async fn serving_my_pet(dir : String, f : async (Smock) -> Unit) -> Unit {
+  inspect(
+    import_openapi(
+      [
+        "\{dir}/api/petstore.json",
+        "--mock",
+        "petstore",
+        "--output",
+        "\{dir}/defs/petstore.yaml",
+      ],
+      dir~,
+    ),
+    content=(
+      #|status 0
+      #|wrote <dir>/defs/petstore.yaml: 2 Stubs from 1 operations, 0 warnings
+      #|
+    ),
+  )
+  let _ = with_smock(["--dir", "\{dir}/defs", "--port", "0"], f)
+}
+
+///|
+/// What the Journal holds for `session`, in order: for each request,
+/// its `Smock-Status` if it sent one, the status, the Stub that answered
+/// and where that Stub came from.
+async fn Smock::answered(self : Smock, session : String) -> Json {
+  match self.journal(session~) {
+    (200, Object({ "entries": Array(entries), .. })) => {
+      let answered : Array[Json] = []
+      for entry in entries {
+        guard entry
+          is Object(
+            {
+              "request": Object({ "headers": Array(headers), .. }),
+              "status": status,
+              "stub": stub,
+              "stubSource": source,
+              ..
+            }
+          ) else {
+          fail("unexpected entry: \{entry.stringify()}")
+        }
+        let mut selector = Json::null()
+        for header in headers {
+          if header is Object({ "name": String(name), "value": value, .. }) &&
+            name.to_lower() == "smock-status" {
+            selector = value
+          }
+        }
+        answered.push({
+          "Smock-Status": selector,
+          "status": status,
+          "stub": stub,
+          "stubSource": source,
+        })
+      }
+      Json::array(answered)
+    }
+    (status, body) => fail("unexpected Journal: \{status} \{body.stringify()}")
+  }
+}
+
+///|
+async test "smock serves an imported file with Smock-Status: a request gets the main response without it, the response it names with it, and the main one when no Stub names its value; the Journal names the Stub that answered" {
+  with_petstore(my_pet_document, dir => {
+    serving_my_pet(dir, smock => {
+      let lines = []
+      for selector in [None, Some("404"), Some("503")] {
+        let headers = [("Host", "localhost"), baggage("selecting")]
+        if selector is Some(key) {
+          headers.push(("Smock-Status", key))
+        }
+        let response = smock.request("GET", "/pets/mine", headers~)
+        lines.push(response.split("\n").next().unwrap_or("").to_owned())
+      }
+      inspect(
+        lines.join("\n"),
+        content=(
+          #|HTTP/1.1 200 OK
+          #|HTTP/1.1 404 Not Found
+          #|HTTP/1.1 200 OK
+        ),
+      )
+      json_inspect(smock.answered("selecting"), content=[
+        {
+          "Smock-Status": null,
+          "status": 200,
+          "stub": "petstore.getPet.200",
+          "stubSource": "file",
+        },
+        {
+          "Smock-Status": "404",
+          "status": 404,
+          "stub": "petstore.getPet.404",
+          "stubSource": "file",
+        },
+        {
+          "Smock-Status": "503",
+          "status": 200,
+          "stub": "petstore.getPet.200",
+          "stubSource": "file",
+        },
+      ])
+    })
+  })
+}
+
+///|
+async test "a test whose requests cannot set Smock-Status selects the imported 404 for its Session only, with the guide's Ephemeral Stub that copies the generated response" {
+  with_petstore(my_pet_document, dir => {
+    serving_my_pet(dir, smock => {
+      let added = smock.admin(
+        "POST",
+        "/v1/mocks/petstore/stubs",
+        headers=[baggage("pet-missing")],
+        body=(
+          #|{"request":{"method":"GET","path":"/pets/mine"},"response":{"status":404}}
+        ),
+      )
+      inspect(added.status, content="201")
+      let lines = []
+      for session in [Some("pet-missing"), Some("other"), None] {
+        let response = smock.request(
+          "GET",
+          "/pets/mine",
+          headers=[("Host", "localhost"), ..session_headers(session)],
+        )
+        lines.push(
+          "\{session.unwrap_or("no Session")}: \{response.split("\n").next().unwrap_or("")}",
+        )
+      }
+      inspect(
+        lines.join("\n"),
+        content=(
+          #|pet-missing: HTTP/1.1 404 Not Found
+          #|other: HTTP/1.1 200 OK
+          #|no Session: HTTP/1.1 200 OK
+        ),
+      )
+      json_inspect(smock.answered("pet-missing"), content=[
+        {
+          "Smock-Status": null,
+          "status": 404,
+          "stub": "eph-1",
+          "stubSource": "ephemeral",
+        },
+      ])
+      json_inspect(smock.answered("other"), content=[
+        {
+          "Smock-Status": null,
+          "status": 200,
+          "stub": "petstore.getPet.200",
+          "stubSource": "file",
+        },
+      ])
+    })
   })
 }

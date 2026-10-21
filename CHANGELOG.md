@@ -12,10 +12,17 @@ of each GitHub release include its section
 
 - `smock import-openapi` converts a JSON OpenAPI 3.0, 3.1 or 3.2 document
   into a Definition file, once. Each operation at a path without
-  parameters becomes a Stub that matches its method and exact path and
-  answers its main status. Parts that are not imported yet are left out
-  with a warning. smock never reads OpenAPI when it serves. See
-  [docs/importing-openapi.md](docs/importing-openapi.md).
+  parameters becomes Stubs that match its method and exact path. By
+  default, they answer its main status. Parts that are not imported yet
+  are left out with a warning. smock never reads OpenAPI when it serves.
+  See [docs/importing-openapi.md](docs/importing-openapi.md).
+- `smock import-openapi` gives every documented response a Stub, not only
+  the main one. A request selects it with the header `Smock-Status`,
+  whose value is the response key as the document writes it, such as
+  `404`, `4XX` or `default`. Without the header, or with a key that no
+  Stub names, the main response answers. A test that reaches the Mock
+  through its system under test adds an Ephemeral Stub for its Session
+  instead, as the guide shows.
 - `smock import-openapi` writes YAML when the name of `--output` ends in
   `.yaml` or `.yml`, and JSON when it ends in `.json`. A YAML file starts
   with a comment that names the document and says not to edit the file,

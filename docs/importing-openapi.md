@@ -114,22 +114,25 @@ uvx --from openapi-spec-validator==0.9.0 openapi-spec-validator api/petstore.jso
 ## What is generated
 
 The file declares one Mock, named by `--mock`, with no other field. Then
-come the Stubs, one per operation, in the order the document writes the
+come the Stubs of each operation, in the order the document writes the
 operations: path keys, then methods in the order each Path Item writes
-them.
+them. An operation has a Stub for each response it answers: first those
+of its other responses, in the order the document writes them, then its
+main Stub.
 
 | In the document | In the Definition file |
 |---|---|
 | The document | `version: 1`, then `mocks` with the one Mock, then `stubs`. In YAML, a comment at the top names the document, its `info.title` and `info.version`, its OpenAPI version and `--mock`. |
-| An operation | One Stub, the operation's main Stub. In YAML, a comment above it gives the method, the path as written and the response key. |
+| An operation | One Stub per response: the main Stub, and one for each other response. In YAML, a comment above each gives the method, the path as written and the response key. |
 | `summary` | In YAML, its first line ends the Stub's comment. Control characters become spaces. |
 | `get`, `put`, `post`, `delete`, `options`, `head`, `patch`, `trace`, and 3.2's `query` | The `method`, in upper case. |
 | A key of 3.2's `additionalOperations` | The `method`, as written. |
 | `head` | `HEAD` is answered only where the document has `head`. |
 | A path key without parameters | The exact `path`, percent-decoded as smock decodes request paths, so that the match index finds it. |
-| `operationId` | The Stub ID `<mock>.<operationId>.<key>`, where `<key>` is the main response's key, such as `petstore.listPets.200`. |
+| `operationId` | The Stub ID `<mock>.<operationId>.<key>`, where `<key>` is the response's key as written, such as `petstore.listPets.200` and `petstore.listPets.default`. |
 | No `operationId` | The Stub ID `<mock>.<METHOD> <path>.<key>`, with the path as written, such as `petstore.GET /pets.200`. |
-| The main response | The `status` (see below). |
+| The main response | The `status` of the main Stub (see below). |
+| Another response | The `status` of its Stub (see below), which also has the request condition `Smock-Status: <key>` ([Selecting responses](#selecting-responses)). |
 | Parameters, request bodies, `Content-Type`, `Accept` and `security` | No condition, so a request without a documented parameter still gets the documented answer. |
 | `deprecated: true` | The operation is imported like any other. In YAML, the Stub's comment says `deprecated`. No `Deprecation` header is added, since the document does not declare one. |
 | `callbacks` | Not imported, with one warning per operation. |
@@ -138,7 +141,8 @@ them.
 | A `$ref` to a Path Item or a Response in the same document | Followed, as if the part it names were written in place (see [References and bundling](#references-and-bundling)). |
 | Fields beside a Path Item's `$ref` | Ignored, with a warning, since OpenAPI leaves their meaning undefined. |
 
-A Stub matches on its method and its path only. The file holds only
+A Stub matches on its method and its path, and the Stub of a response
+other than the main one on `Smock-Status` too. The file holds only
 `status`, `headers`, and `json` or `body` in its responses: no
 `template`, `responses`, `variables`, `fault`, `scenario` or `priority`.
 
@@ -162,6 +166,17 @@ An explicit code answers itself, and a range answers its first code: 200,
   to `5XX` in upper case, `default` or an `x-` extension is left out,
   with a warning. `x-` keys are ignored.
 
+### The other responses
+
+Every other response gets a Stub of its own, which a request selects with
+`Smock-Status` ([Selecting responses](#selecting-responses)). Its status:
+
+- An explicit code from 200 to 599 answers itself.
+- `2XX` to `5XX` answer 200, 300, 400 and 500, as for the main response.
+- `default`, when it is not the main response, answers 500.
+- `1XX`, and explicit codes from 100 to 199, get no Stub, with a warning:
+  smock answers with a status from 200 to 599.
+
 ### IDs and conditions that repeat
 
 - Two imported operations with the same `operationId` are an error that
@@ -173,6 +188,88 @@ An explicit code answers itself, and a range answers its first code: 200,
   Two paths that decode alike, such as `/a%2Fb` and `/a/b`, are the same
   path.
 - Operations that are left out take part in neither check.
+
+## Selecting responses
+
+Without `Smock-Status`, a request gets the main response. With it, it
+gets the response whose key the header names, as the document writes it.
+Take an operation with a 200 and a 404:
+
+```json
+"/pets/mine": {
+  "get": {
+    "operationId": "getPet",
+    "responses": {
+      "200": { "description": "My pet" },
+      "404": { "description": "No pet" }
+    }
+  }
+}
+```
+
+The file has a Stub for each response, the 404's first:
+
+```yaml
+stubs:
+  # GET /pets/mine, 404
+  - id: petstore.getPet.404
+    mock: petstore
+    request:
+      method: GET
+      path: /pets/mine
+      headers:
+        Smock-Status: "404"
+    response:
+      status: 404
+  # GET /pets/mine, 200
+  - id: petstore.getPet.200
+    mock: petstore
+    request:
+      method: GET
+      path: /pets/mine
+    response:
+      status: 200
+```
+
+```sh
+curl localhost:8080/pets/mine                          # 200
+curl -H "Smock-Status: 404" localhost:8080/pets/mine   # 404
+curl -H "Smock-Status: 503" localhost:8080/pets/mine   # 200: no Stub names 503
+```
+
+- The value is the key as written: `404`, `4XX` or `default`. Only that
+  exact key selects: `Smock-Status: 503` reaches neither `5XX` nor
+  `default`.
+- A value that no Stub names falls through to the main Stub. The Journal
+  and the metrics name the Stub that answered, such as
+  `petstore.getPet.404`.
+- The main Stub comes after the other responses' Stubs, so it never
+  shadows them, and `smock check` gives no warning.
+- `Smock-Status` is an ordinary header condition. smock gives it no
+  meaning of its own, and hand-written Stubs may use it too.
+
+### Through the system under test
+
+A test whose requests reach the Mock through the system under test
+cannot set `Smock-Status` on them. Instead, it adds an Ephemeral Stub for
+its Session through the Admin API: the generated Stub's method, path and
+`response`, without `Smock-Status`. The Session's requests then get that
+response, and other Sessions still get the main one. The system under
+test must pass the Session on, in the `baggage` header of its calls
+([Sessions and Ephemeral Stubs](../README.md#sessions-and-ephemeral-stubs)).
+Below, the second `curl` stands for such a call:
+
+```sh
+curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=pet-missing" \
+  -d '{"request":{"method":"GET","path":"/pets/mine"},"response":{"status":404}}' \
+  localhost:9090/v1/mocks/petstore/stubs
+curl -H "baggage: smock-session=pet-missing" localhost:8080/pets/mine   # 404
+curl -H "baggage: smock-session=other" localhost:8080/pets/mine         # 200, from the file
+curl localhost:8080/pets/mine                                           # 200, from the file
+```
+
+When the test is done, it deletes the Ephemeral Stub, or resets its
+Session with `POST /v1/reset` and `{"scope":"session"}`.
 
 ## References and bundling
 
@@ -221,8 +318,8 @@ This imports `listPets` as if both parts were written in place.
   reference names a part by its fragment.
 - References in the parts the command does not read are not followed, so
   a broken one there is no error. These parts are request bodies,
-  parameters, `security`, `callbacks`, `webhooks`, `links`, and
-  components that no imported operation reaches.
+  parameters, `security`, `callbacks`, `webhooks`, `links`, 1xx
+  responses, and components that no imported operation reaches.
 
 Each of these is an error at the `$ref`:
 
@@ -252,7 +349,7 @@ A bundler fetches what the URLs name. smock never does.
 Each problem is one line on stdout, in the form `smock check` uses:
 
 ```
-api/petstore.json: /paths/~1pets/get/responses/404: warning: left out: only the main response, 200, is imported yet
+api/petstore.json: /paths/~1pets/get/responses/404/content/application~1json: warning: left out: response bodies are not imported yet
 ```
 
 - The document is named as given on the command line, and the place is
@@ -301,7 +398,6 @@ command does.
   unless this list says otherwise:
   - operations at paths with parameters, such as `/pets/{petId}`;
   - the paths of `servers`, so no prefix is added to the paths;
-  - responses other than the main one;
   - response bodies and response headers;
   - references to other files: such a `$ref` is an error, so bundle the
     document first (see [References and bundling](#references-and-bundling));

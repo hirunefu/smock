@@ -7,11 +7,11 @@ let headers_smock_sets : Array[String] = [
 ]
 
 ///|
-/// Reads the main response `json` at `pointer`, after following its
-/// `$ref`. Until bodies and headers are imported, each media type of its
-/// content and each header it documents is left out, with a warning that
-/// names it.
-fn Report::main_response_parts(
+/// Reads the response `json` at `pointer`, one the operation answers,
+/// after following its `$ref`. Until bodies and headers are imported, each
+/// media type of its content and each header it documents is left out,
+/// with a warning that names it.
+fn Report::response_parts(
   self : Report,
   document : Document,
   pointer : String,

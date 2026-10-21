@@ -53,6 +53,69 @@ test "a Path Item $ref and a Response $ref are followed within the document, as 
 }
 
 ///|
+test "a $ref in a response other than the main one is followed too, and one that cannot be followed is an error at the $ref" {
+  inspect(
+    stubs_of(
+      (
+        #|{
+        #|  "openapi": "3.1.0",
+        #|  "paths": {
+        #|    "/pets/mine": {
+        #|      "get": {
+        #|        "operationId": "getPet",
+        #|        "responses": {
+        #|          "200": { "description": "My pet" },
+        #|          "404": { "$ref": "#/components/responses/NotFound" },
+        #|          "default": { "$ref": "#/components/responses/Problem" }
+        #|        }
+        #|      }
+        #|    }
+        #|  },
+        #|  "components": {
+        #|    "responses": {
+        #|      "NotFound": { "description": "No pet" },
+        #|      "Problem": { "$ref": "#/components/responses/Error" },
+        #|      "Error": { "description": "Error", "content": { "application/problem+json": {} } }
+        #|    }
+        #|  }
+        #|}
+      ),
+    ),
+    content=(
+      #|petstore.json: /components/responses/Error/content/application~1problem+json: warning: left out: response bodies are not imported yet
+      #|petstore.getPet.404: GET /pets/mine -> 404
+      #|petstore.getPet.default: GET /pets/mine -> 500
+      #|petstore.getPet.200: GET /pets/mine -> 200
+      #|
+    ),
+  )
+  inspect(
+    stubs_of(
+      (
+        #|{
+        #|  "openapi": "3.1.0",
+        #|  "paths": {
+        #|    "/pets/mine": {
+        #|      "get": {
+        #|        "responses": {
+        #|          "200": { "description": "My pet" },
+        #|          "404": { "$ref": "#/components/responses/Missing" }
+        #|        }
+        #|      }
+        #|    }
+        #|  }
+        #|}
+      ),
+    ),
+    content=(
+      #|petstore.json: /paths/~1pets~1mine/get/responses/404/$ref: the document has nothing at /components/responses/Missing
+      #|nothing written
+      #|
+    ),
+  )
+}
+
+///|
 test "a problem in a referenced part is reported where it is written, once however many references reach it, and operations reached through a Path Item $ref keep the order of the path keys; a $ref that names a Reference Object is followed on" {
   inspect(
     stubs_of(
@@ -89,9 +152,9 @@ test "a problem in a referenced part is reported where it is written, once howev
     ),
     content=(
       #|petstore.json: /components/pathItems/B/servers: warning: left out: the paths of servers are not added as a prefix yet
-      #|petstore.json: /components/pathItems/B/put/responses/404: warning: left out: only the main response, 200, is imported yet
       #|petstore.json: /components/responses/Ok/headers/X-Rate-Limit: warning: left out: response headers are not imported yet
       #|petstore.json: /components/responses/Ok/content/application~1json: warning: left out: response bodies are not imported yet
+      #|petstore.PUT /b.404: PUT /b -> 404
       #|petstore.PUT /b.200: PUT /b -> 200
       #|petstore.GET /b.200: GET /b -> 200
       #|petstore.GET /a.200: GET /a -> 200
@@ -350,7 +413,7 @@ test "$id at the root of the document and 3.2's $self are ignored: a reference n
 }
 
 ///|
-test "references in parts the converter does not read are not followed, and a broken one there is no error: request bodies, parameters, security, callbacks, webhooks, links, other responses, unreached components, and $ref where OpenAPI allows no Reference Object" {
+test "references in parts the converter does not read are not followed, and a broken one there is no error: request bodies, parameters, security, callbacks, webhooks, links, 1xx responses, unreached components, and $ref where OpenAPI allows no Reference Object" {
   inspect(
     stubs_of(
       (
@@ -367,7 +430,7 @@ test "references in parts the converter does not read are not followed, and a br
         #|        "callbacks": { "onEvent": { "$ref": "#/nowhere" } },
         #|        "responses": {
         #|          "200": { "description": "OK", "links": { "next": { "$ref": "#/nowhere" } } },
-        #|          "404": { "$ref": "#/nowhere" }
+        #|          "101": { "$ref": "#/nowhere" }
         #|        }
         #|      }
         #|    },
@@ -385,7 +448,7 @@ test "references in parts the converter does not read are not followed, and a br
     content=(
       #|petstore.json: /webhooks: warning: webhooks are not imported: they are requests the API sends, not ones it answers
       #|petstore.json: /paths/~1a/get/callbacks: warning: callbacks are not imported
-      #|petstore.json: /paths/~1a/get/responses/404: warning: left out: only the main response, 200, is imported yet
+      #|petstore.json: /paths/~1a/get/responses/101: warning: left out: smock answers with a status from 200 to 599
       #|petstore.json: /paths/~1b/get/responses/$ref: warning: left out: a response key is a status code from 100 to 599, a range from 1XX to 5XX, default or an x- extension
       #|petstore.json: /paths/~1b/get/responses: warning: has no responses: the operation answers 200 with an empty body
       #|petstore.GET /a.200: GET /a -> 200
