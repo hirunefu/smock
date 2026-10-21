@@ -199,6 +199,7 @@ async test "a missing body file or a body-file path that leaves its subdirectory
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"invalid definitions","file":"users.json","pointer":"/stubs/0/response/bodyFile","error":"no body file \"users/2.json\" in the body-file subdirectory"}
         #|{"level":"error","msg":"invalid definitions","file":"users.json","pointer":"/stubs/1/response/bodyFile","error":"must be a path inside the body-file subdirectory, such as users/1.json, with no name starting with ."}
@@ -228,6 +229,7 @@ async test "two header names in a response that differ only in case stop smock s
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"invalid definitions","file":"users.json","pointer":"/stubs/0/response/headers/set-cookie","error":"the header name \"Set-Cookie\" is already given: header names are case-insensitive"}
         #|---
@@ -255,6 +257,7 @@ async test "an empty header array and an array for Content-Type stop smock serve
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"invalid definitions","file":"users.json","pointer":"/stubs/0/response/headers/Set-Cookie","error":"must not be an empty array"}
         #|{"level":"error","msg":"invalid definitions","file":"users.json","pointer":"/stubs/0/response/headers/content-type","error":"must be a string"}
@@ -290,6 +293,7 @@ async test "a Smock-Mock response header stops smock serve and fails smock check
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"invalid definitions","file":"a.yaml","pointer":"/stubs/0/response/headers/smock-mock","error":"is set by smock and cannot be given"}
         #|---
@@ -382,6 +386,7 @@ async test "a noMatch header that smock sets stops smock serve and fails smock c
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"invalid definitions","file":"users.json","pointer":"/mocks/0/noMatch/headers/content-type","error":"is set by smock and cannot be given"}
         #|{"level":"error","msg":"invalid definitions","file":"users.json","pointer":"/mocks/0/noMatch/headers/Smock-Near-Miss","error":"is set by smock and cannot be given"}

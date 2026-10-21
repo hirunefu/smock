@@ -834,17 +834,17 @@ fn render_response(response : @http.Response, body : String) -> String {
 ///|
 /// The log lines as JSON objects without their time, with the values that
 /// differ from build to build and run to run replaced by `*`. The Journal's
-/// byte bound differs from machine to machine unless a flag or a variable
-/// sets it: it follows the memory limit of smock's cgroup. Then its bound,
-/// its source and the memory limit, or why it could not be read, are all
-/// `*`, as `memoryLimit`.
+/// byte bound and the per-Session state's differ from machine to machine
+/// unless a flag or a variable sets them: they follow the memory limit of
+/// smock's cgroup. Then a bound, its source and the memory limit, or why it
+/// could not be read, are all `*`, as `memoryLimit`.
 fn log_entries(logs : Array[String]) -> String {
   logs
   .map(line => {
     let entry = @json.parse(line) catch { _ => return "not JSON: \{line}" }
     guard entry is Object(fields) else { return "not an object: \{line}" }
     let from_memory_limit = fields.get("msg")
-      is Some(String("journal byte bound")) &&
+      is Some(String("journal byte bound" | "state byte bound")) &&
       !(fields.get("source") is Some(String("flag" | "variable")))
     let out : Map[String, Json] = Map([])
     for key, value in fields {
