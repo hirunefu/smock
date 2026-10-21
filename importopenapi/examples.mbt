@@ -57,11 +57,8 @@ fn Report::example_value(
   json : Json,
   serialized_first~ : Bool,
 ) -> Value? {
-  guard self.followed(document, pointer, json) is Some({ pointer, json, }) else {
-    return None
-  }
-  guard json is Object(example) else {
-    self.error_at(pointer, "must be an object")
+  guard self.followed_object(document, pointer, json)
+    is Some((pointer, example)) else {
     return None
   }
   let serialized = match example.get("serializedValue") {

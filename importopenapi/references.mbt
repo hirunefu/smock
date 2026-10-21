@@ -62,6 +62,30 @@ fn Report::followed(
 }
 
 ///|
+/// The object `json`, written at `pointer` where the converter reads an
+/// object that may be a Reference Object, after following each `$ref`, as
+/// `Report::followed` does: where it is, and its fields. `None` after
+/// reporting why a `$ref` cannot be followed, or that the part it leads to
+/// is not an object, at that part.
+fn Report::followed_object(
+  self : Report,
+  document : Document,
+  pointer : String,
+  json : Json,
+  path_item? : Bool = false,
+) -> (String, Map[String, Json])? {
+  guard self.followed(document, pointer, json, path_item~)
+    is Some({ pointer, json, }) else {
+    return None
+  }
+  guard json is Object(object) else {
+    self.error_at(pointer, "must be an object")
+    return None
+  }
+  Some((pointer, object))
+}
+
+///|
 /// The part that `reference`, the `$ref` at `pointer`, names, or `None`
 /// after reporting why it cannot be followed, or while the document it
 /// names is not given yet.

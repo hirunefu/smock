@@ -127,12 +127,8 @@ fn Report::path_item(
   json : Json,
 ) -> Unit {
   guard self.path_key(pointer, key) else { return }
-  guard self.followed(document, pointer, json, path_item=true)
-    is Some({ pointer, json, }) else {
-    return
-  }
-  guard json is Object(item) else {
-    self.error_at(pointer, "must be an object")
+  guard self.followed_object(document, pointer, json, path_item=true)
+    is Some((pointer, item)) else {
     return
   }
   let prefix = self.prefix(pointer, item, outer=document.prefix)

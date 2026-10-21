@@ -52,11 +52,7 @@ fn Report::headers(
       continue
     }
     names[lower] = name
-    guard self.followed(document, at, json) is Some({ pointer: at, json, }) else {
-      continue
-    }
-    guard json is Object(header) else {
-      self.error_at(at, "must be an object")
+    guard self.followed_object(document, at, json) is Some((at, header)) else {
       continue
     }
     let value = self.header_value(document, at, header)

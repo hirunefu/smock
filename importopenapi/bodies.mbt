@@ -86,11 +86,8 @@ fn Report::response_parts(
   status~ : Int,
   meth~ : String,
 ) -> Answers {
-  guard self.followed(document, pointer, json) is Some({ pointer, json, }) else {
-    return no_answers()
-  }
-  guard json is Object(response) else {
-    self.error_at(pointer, "must be an object")
+  guard self.followed_object(document, pointer, json)
+    is Some((pointer, response)) else {
     return no_answers()
   }
   let mut answers = no_answers()
@@ -217,14 +214,7 @@ fn Report::media_type_object(
   json : Json,
 ) -> (String, Map[String, Json])? {
   if document.openapi.has_prefix("3.2.") {
-    guard self.followed(document, pointer, json) is Some({ pointer, json, }) else {
-      return None
-    }
-    guard json is Object(media_type) else {
-      self.error_at(pointer, "must be an object")
-      return None
-    }
-    return Some((pointer, media_type))
+    return self.followed_object(document, pointer, json)
   }
   guard json is Object(media_type) else {
     self.error_at(pointer, "must be an object")
