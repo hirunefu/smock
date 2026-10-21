@@ -4,6 +4,14 @@ mocks:
   - name: users-api
     hosts: [localhost, users-api]
 
+# The data bucket "orders", with its initial value. Its key is the CRUD
+# route's crudKey.
+data:
+  - mock: users-api
+    name: orders
+    key: id
+    json: [{ id: 1, item: book }, { id: 2, item: pen }]
+
 stubs:
   # GET users: lists the users; ?status=inactive lists the inactive ones.
   # The response with a rule comes first, the default response last.
@@ -62,15 +70,11 @@ stubs:
     request: { method: POST, path: /api/v1/users }
     response: { status: 403, json: { error: forbidden } }
 
-  # orders: a CRUD route on the data bucket "orders". Only the list is
-  # kept, with the bucket's initial value.
-  - id: list-orders
+  # orders: a CRUD route on the data bucket "orders". It lists, creates,
+  # reads, replaces, updates and deletes orders.
+  - id: orders
     mock: users-api
-    request: { method: GET, path: /api/v1/orders }
-    response:
-      status: 200
-      headers: { X-Total-Count: "2", X-Filtered-Count: "2" }
-      json: [{ id: 1, item: book }, { id: 2, item: pen }]
+    crud: { bucket: orders, path: /api/v1/orders }
 
   # GET exports/:id: SEQUENTIAL, so its responses take turns. Each answer
   # moves the Scenario "export" to the next one, and the last back to
