@@ -831,37 +831,6 @@ test "a field the converter reads that has the wrong JSON type is an error at it
 }
 
 ///|
-test "until references are followed, a $ref where the converter reads one is an error; a $ref in a part it does not read is not" {
-  inspect(
-    stubs_of(
-      with_paths(
-        (
-          #|{
-          #|  "/a": { "$ref": "#/components/pathItems/A" },
-          #|  "/b": {
-          #|    "get": {
-          #|      "responses": {
-          #|        "200": { "$ref": "#/components/responses/Ok" },
-          #|        "404": { "$ref": "#/components/responses/NotFound" }
-          #|      },
-          #|      "parameters": [{ "$ref": "#/nowhere" }]
-          #|    }
-          #|  }
-          #|}
-        ),
-      ),
-    ),
-    content=(
-      #|petstore.json: /paths/~1a/$ref: references are not followed yet: write the part it names in its place
-      #|petstore.json: /paths/~1b/get/responses/200/$ref: references are not followed yet: write the part it names in its place
-      #|petstore.json: /paths/~1b/get/responses/404: warning: left out: only the main response, 200, is imported yet
-      #|nothing written
-      #|
-    ),
-  )
-}
-
-///|
 test "until the paths of servers are read, no prefix is added, and each list of servers is left out with a warning" {
   inspect(
     stubs_of(

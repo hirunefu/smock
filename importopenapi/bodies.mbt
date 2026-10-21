@@ -7,19 +7,21 @@ let headers_smock_sets : Array[String] = [
 ]
 
 ///|
-/// Reads the main response `json` at `pointer`. Until bodies and headers
-/// are imported, each media type of its content and each header it
-/// documents is left out, with a warning that names it.
+/// Reads the main response `json` at `pointer`, after following its
+/// `$ref`. Until bodies and headers are imported, each media type of its
+/// content and each header it documents is left out, with a warning that
+/// names it.
 fn Report::main_response_parts(
   self : Report,
+  document : Document,
   pointer : String,
   json : Json,
 ) -> Unit {
-  guard json is Object(response) else {
-    self.root_error(pointer, "must be an object")
+  guard self.followed(document, pointer, json) is Some({ pointer, json, }) else {
     return
   }
-  if self.reference(pointer, response) {
+  guard json is Object(response) else {
+    self.root_error(pointer, "must be an object")
     return
   }
   for field, value in response {

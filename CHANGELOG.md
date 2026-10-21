@@ -21,6 +21,10 @@ of each GitHub release include its section
   with a comment that names the document and says not to edit the file,
   and each Stub has a comment that maps it back to the document's
   operation.
+- `smock import-openapi` follows a `$ref` within the document where it
+  reads a Path Item or a Response, by its JSON Pointer fragment. A URL, an
+  absolute path or another file is an error that suggests bundling the
+  document into one file first.
 - `write` in the `smock/yaml` module turns a JSON tree into a YAML
   document, with comments, that the module's own parser reads back as the
   same tree. A string is quoted only when it would not read back as the

@@ -5,6 +5,10 @@
 priv struct Report {
   options : Options
   problems : Array[Problem]
+  /// Each problem reported in a document so far, as it prints. A part
+  /// that several references reach is read once per reference, but each
+  /// of its problems is reported once, where it is written.
+  reported : Set[String]
   /// How many of the problems are errors.
   mut errors : Int
   /// Where the problems with the file end. They are found last, but come
@@ -18,30 +22,47 @@ priv struct Report {
 
 ///|
 fn Report::new(options : Options) -> Report {
-  { options, problems: [], errors: 0, output_end: 0, document_end: 0, }
+  {
+    options,
+    problems: [],
+    reported: Set([]),
+    errors: 0,
+    output_end: 0,
+    document_end: 0,
+  }
 }
 
 ///|
-/// Reports an error at `pointer` in `file`.
+/// Reports an error at `pointer` in `file`, unless it is reported already.
 fn Report::error(
   self : Report,
   file : String,
   pointer : String,
   message : String,
 ) -> Unit {
-  self.problems.push(Error({ file, pointer, message, }))
-  self.errors += 1
+  if self.add(Error({ file, pointer, message, })) {
+    self.errors += 1
+  }
 }
 
 ///|
-/// Reports a warning at `pointer` in `file`.
+/// Reports a warning at `pointer` in `file`, unless it is reported
+/// already.
 fn Report::warning(
   self : Report,
   file : String,
   pointer : String,
   message : String,
 ) -> Unit {
-  self.problems.push(Warning({ file, pointer, message, }))
+  self.add(Warning({ file, pointer, message, })) |> ignore
+}
+
+///|
+/// Adds `problem`, and returns whether it was not reported already.
+fn Report::add(self : Report, problem : Problem) -> Bool {
+  guard self.reported.add_and_check(problem.to_string()) else { return false }
+  self.problems.push(problem)
+  true
 }
 
 ///|
