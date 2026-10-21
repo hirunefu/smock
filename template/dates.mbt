@@ -288,20 +288,20 @@ fn shift_of(text : String) -> Result[Shift, String?] {
 /// months first, the day clamped to the end of the month, then days, then
 /// the time. `None` when the result is outside the years 0 to 9999.
 fn shifted(ms : Int64, shift : Shift) -> Int64? {
-  let mut days = floor_div(ms, day_ms)
+  let mut days = @log.floor_div(ms, day_ms)
   let of_day = ms - days * day_ms
   if shift.months != 0L {
     let date = civil(ms)
     let months = date.year.to_int64() * 12L +
       (date.month - 1).to_int64() +
       shift.months
-    let year = floor_div(months, 12L)
+    let year = @log.floor_div(months, 12L)
     if year < 0L || year > 9999L {
       return None
     }
     let month = (months - year * 12L).to_int() + 1
-    let last_day = days_in_month(year.to_int(), month)
-    days = days_from_civil(
+    let last_day = @log.days_in_month(year.to_int(), month)
+    days = @log.days_from_civil(
       year.to_int(),
       month,
       if date.day > last_day {
@@ -317,38 +317,6 @@ fn shifted(ms : Int64, shift : Shift) -> Int64? {
   } else {
     Some(result)
   }
-}
-
-///|
-/// The number of days in `month` of `year`.
-fn days_in_month(year : Int, month : Int) -> Int {
-  match month {
-    2 =>
-      if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 {
-        29
-      } else {
-        28
-      }
-    4 | 6 | 9 | 11 => 30
-    _ => 31
-  }
-}
-
-///|
-/// The days from 1970-01-01 to `year`-`month`-`day`, for years from 0 to
-/// 9999, after Howard Hinnant's `days_from_civil`.
-fn days_from_civil(year : Int, month : Int, day : Int) -> Int64 {
-  // Years start in March, so that the leap day ends them.
-  let y = (if month <= 2 { year - 1 } else { year }).to_int64()
-  let era = floor_div(y, 400L)
-  let year_of_era = y - era * 400L
-  let m = (if month > 2 { month - 3 } else { month + 9 }).to_int64()
-  let day_of_year = (153L * m + 2L) / 5L + day.to_int64() - 1L
-  let day_of_era = year_of_era * 365L +
-    year_of_era / 4L -
-    year_of_era / 100L +
-    day_of_year
-  era * 146_097L + day_of_era - 719_468L
 }
 
 ///|
@@ -417,40 +385,19 @@ priv struct Civil {
 ///|
 /// The date and time of the instant `ms`.
 fn civil(ms : Int64) -> Civil {
-  let days = floor_div(ms, day_ms)
+  let days = @log.floor_div(ms, day_ms)
   let of_day = (ms - days * day_ms).to_int()
-  // After Howard Hinnant's `civil_from_days`: years start in March, so
-  // that the leap day ends them.
-  let z = days + 719_468L
-  let era = floor_div(z, 146_097L)
-  let doe = z - era * 146_097L
-  let yoe = (doe - doe / 1460L + doe / 36_524L - doe / 146_096L) / 365L
-  let doy = doe - (365L * yoe + yoe / 4L - yoe / 100L)
-  let mp = (5L * doy + 2L) / 153L
-  let day = doy - (153L * mp + 2L) / 5L + 1L
-  let month = if mp < 10L { mp + 3L } else { mp - 9L }
-  let year = yoe + era * 400L + (if month <= 2L { 1L } else { 0L })
+  let (year, month, day) = @log.civil_from_days(days)
   {
     year: year.to_int(),
     month: month.to_int(),
     day: day.to_int(),
     // 1970-01-01 was a Thursday.
-    weekday: (days - floor_div(days, 7L) * 7L + 4L).to_int() % 7,
+    weekday: (days - @log.floor_div(days, 7L) * 7L + 4L).to_int() % 7,
     hour: of_day / 3_600_000,
     minute: of_day / 60_000 % 60,
     second: of_day / 1000 % 60,
     milli: of_day % 1000,
-  }
-}
-
-///|
-/// `a` divided by `b`, rounded toward negative infinity.
-fn floor_div(a : Int64, b : Int64) -> Int64 {
-  let q = a / b
-  if a % b != 0L && (a < 0L) != (b < 0L) {
-    q - 1L
-  } else {
-    q
   }
 }
 
