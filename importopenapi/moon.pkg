@@ -1,0 +1,8 @@
+import {
+  "smock/http1",
+  "smock/smock/definitions",
+  "smock/smock/template",
+  "moonbitlang/core/encoding/percent",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/json",
+}
