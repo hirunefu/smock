@@ -19,6 +19,9 @@ pub struct Engine {
   priv scenarios : ScenarioStates
   /// The Journal: the entries committed, oldest first, within its bound.
   priv journal : Journal
+  /// The environment variables templates may read, with the values read
+  /// at startup: every reload and Ephemeral Stub is read with them.
+  priv env : @template.Env
 }
 
 ///|
@@ -134,10 +137,15 @@ pub(all) enum Body {
 /// the oracle the index is checked against.
 ///
 /// `journal` bounds the Journal and says whether it is on.
+///
+/// `env` holds the environment variables templates may read, with the
+/// values `snapshot` was loaded with: by default, none. Each reload and
+/// each Ephemeral Stub is read with them, so they are read only once.
 pub fn Engine::Engine(
   snapshot : @definitions.Snapshot,
   match_index? : Bool = true,
   journal? : JournalSettings = JournalSettings(),
+  env? : @template.Env = @template.Env([]),
 ) -> Engine {
   {
     snapshot,
@@ -147,6 +155,7 @@ pub fn Engine::Engine(
     ephemeral: EphemeralStubs::new(),
     scenarios: ScenarioStates::new(),
     journal: Journal::new(journal),
+    env,
   }
 }
 
@@ -255,6 +264,7 @@ pub fn ReloadOutcome::name(self : ReloadOutcome) -> String {
 ///|
 /// Reloads the definitions from `set`, read with the problems
 /// `read_problems`, at the time `at` (milliseconds since the Unix epoch).
+/// Templates read the environment variables the engine was created with.
 /// Every file is validated and a whole new snapshot is built:
 ///
 /// - When it is valid and its digest differs from the served one, it
@@ -279,7 +289,7 @@ pub fn Engine::reload(
   let old_digest = self.snapshot.digest
   let mut scenario_states_reset = 0
   let (result, errors) : (ReloadOutcome, Array[@definitions.Diagnostic]) = match
-    @definitions.load(set, read_problems~) {
+    @definitions.load(set, read_problems~, env=self.env) {
     Ok(snapshot) if snapshot.digest == old_digest => (Unchanged, [])
     Ok(snapshot) => {
       self.snapshot = snapshot

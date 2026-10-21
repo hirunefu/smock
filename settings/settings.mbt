@@ -44,6 +44,9 @@ pub(all) struct ServeSettings {
   log_format : LogFormat
   /// The body-file subdirectory of the definitions directory.
   body_file_dir : String
+  /// The environment variables templates may read, as `--template-env`
+  /// lists them: each name once, in the order given.
+  template_env : Array[String]
   /// The most bytes a request head may take: its request line and header
   /// fields.
   header_size_limit : Int
@@ -88,28 +91,34 @@ pub(all) struct TlsFiles {
 
 ///|
 /// The settings of `smock check`. The definitions directory is its
-/// argument. The body-file subdirectory is the `smock serve` setting of the
-/// same name, flag and variable, so that both read a directory the same
-/// way.
+/// argument. The body-file subdirectory and the environment variables
+/// templates may read are the `smock serve` settings of the same names,
+/// flags and variables, so that both load a directory the same way.
 pub(all) struct CheckSettings {
   /// The definitions directory.
   dir : String
   /// The body-file subdirectory of the definitions directory.
   body_file_dir : String
+  /// The environment variables templates may read, as `--template-env`
+  /// lists them: each name once, in the order given.
+  template_env : Array[String]
 } derive(Debug)
 
 ///|
-/// The settings of `smock render`. The definitions directory and the
-/// body-file subdirectory are the `smock serve` settings of the same names,
-/// flags and variables, so that both read a directory the same way. The
-/// Stub ID is its argument, and the sample request, the time and the seed
-/// are flags of its own, without variables: they belong to one rendering,
-/// not to a process.
+/// The settings of `smock render`. The definitions directory, the
+/// body-file subdirectory and the environment variables templates may read
+/// are the `smock serve` settings of the same names, flags and variables,
+/// so that both load a directory the same way. The Stub ID is its argument,
+/// and the sample request, the time and the seed are flags of its own,
+/// without variables: they belong to one rendering, not to a process.
 pub(all) struct RenderSettings {
   /// The definitions directory.
   dir : String
   /// The body-file subdirectory of the definitions directory.
   body_file_dir : String
+  /// The environment variables templates may read, as `--template-env`
+  /// lists them: each name once, in the order given.
+  template_env : Array[String]
   /// The ID of the Stub to render.
   stub : String
   /// The file that holds the sample request, as JSON.
@@ -166,6 +175,13 @@ let body_file_dir_setting : Setting = {
   name: "body-file-dir",
   about: "The body-file subdirectory of the definitions directory.",
   default: Some("files"),
+}
+
+///|
+let template_env_setting : Setting = {
+  name: "template-env",
+  about: "The environment variables templates may read as env.NAME, separated by commas, such as REGION,API_BASE. Their values are read once, at startup. A listed value can show in responses, renderings and template error messages, so list only values that may be shown. A name is letters, digits and _, starting with a letter or _, and cannot start with SMOCK_. None by default.",
+  default: None,
 }
 
 ///|
@@ -232,6 +248,7 @@ let serve_settings : Array[Setting] = [
   },
   { name: "log-format", about: "The log format: json.", default: Some("json"), },
   body_file_dir_setting,
+  template_env_setting,
   {
     name: "header-size-limit",
     about: "The most bytes a request head (request line and header fields) may take. Larger heads get 431.",
@@ -296,8 +313,10 @@ let journal_defaults : @engine.JournalSettings = @engine.JournalSettings()
 
 ///|
 /// The settings of `smock check`: those of `smock serve` that decide how
-/// the definitions directory is read.
-let check_settings : Array[Setting] = [body_file_dir_setting]
+/// the definitions directory is loaded.
+let check_settings : Array[Setting] = [
+  body_file_dir_setting, template_env_setting,
+]
 
 ///|
 /// The environment variable of a setting: `SMOCK_` and its name in upper
@@ -358,6 +377,7 @@ pub fn render_command() -> @argparse.Command {
         required=true,
       ),
       option(body_file_dir_setting),
+      option(template_env_setting),
       @argparse.OptionArg(
         "request",
         long="request",
@@ -476,6 +496,7 @@ pub fn ServeSettings::from_matches(
     session_member,
     log_format,
     body_file_dir,
+    template_env: template_env_value(matches),
     header_size_limit: int_value(
       matches,
       "header-size-limit",
@@ -667,7 +688,11 @@ pub fn CheckSettings::from_matches(
   if dir == "" {
     raise InvalidArgument(name="dir", value=dir, reason="must not be empty")
   }
-  { dir, body_file_dir: body_file_dir(matches), }
+  {
+    dir,
+    body_file_dir: body_file_dir(matches),
+    template_env: template_env_value(matches),
+  }
 }
 
 ///|
@@ -712,6 +737,7 @@ pub fn RenderSettings::from_matches(
   {
     dir,
     body_file_dir: body_file_dir(matches),
+    template_env: template_env_value(matches),
     stub: value(matches, "stub-id").unwrap_or(""),
     request_file,
     time,
@@ -728,6 +754,54 @@ fn body_file_dir(matches : @argparse.Matches) -> String raise InvalidSetting {
     )
   }
   dir
+}
+
+///|
+/// The names `--template-env` lists, separated by commas: each once, in
+/// the order given, and none when it is not given or empty. A name is
+/// letters, digits and `_`, starting with a letter or `_`, and does not
+/// start with `SMOCK_`, so that smock's own variables, such as the Admin
+/// API token, never reach a template.
+fn template_env_value(
+  matches : @argparse.Matches,
+) -> Array[String] raise InvalidSetting {
+  let setting = template_env_setting.name
+  let names = []
+  guard value(matches, setting) is Some(text) && text != "" else {
+    return names
+  }
+  for part in text.split(",") {
+    let name = part.to_owned()
+    if !is_variable_name(name) {
+      raise invalid(
+        setting,
+        text,
+        "\{name.escape()} is not a variable name: letters, digits and _, starting with a letter or _",
+      )
+    }
+    if name.has_prefix("SMOCK_") {
+      raise invalid(
+        setting,
+        text,
+        "\{name.escape()} starts with SMOCK_: smock's own variables cannot be listed",
+      )
+    }
+    if !names.contains(name) {
+      names.push(name)
+    }
+  }
+  names
+}
+
+///|
+/// Whether `name` is an environment variable name templates may read:
+/// ASCII letters, digits and `_`, starting with a letter or `_`.
+fn is_variable_name(name : String) -> Bool {
+  name != "" &&
+  !name[0].unsafe_to_char().is_ascii_digit() &&
+  name
+  .iter()
+  .all(c => c.is_ascii_alphabetic() || c.is_ascii_digit() || c == '_')
 }
 
 ///|

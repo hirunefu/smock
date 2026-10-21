@@ -112,14 +112,16 @@ pub fn Text::is_literal(self : Text) -> Bool {
 
 ///|
 /// Parses `source` as a text template of the kind `kind`, for the field at
-/// `pointer`, within the Stub.
+/// `pointer`, within the Stub. `env` holds the environment variables it may
+/// read; by default, none.
 pub fn Text::parse(
   source : String,
   pointer~ : String,
   kind~ : TextKind,
+  env? : Env = no_env,
 ) -> Result[Text, Problem] {
   let chars = source.iter().collect()
-  try parse_parts(chars, [], false, text=true) catch {
+  try parse_parts(chars, [], false, text=true, env~) catch {
     Syntax(at, message) =>
       Err({ pointer, message: "template: \{position(chars, at)}\{message}", })
   } noraise {
@@ -155,16 +157,18 @@ fn position(chars : Array[Char], at : Int) -> String {
 ///|
 /// Parses the parts of a template, `chars`: literal text and `${ expr }`.
 /// `vars` are the loop variables in scope, and `in_loop` says whether it is
-/// inside a `$each`. With `text`, `json()` and `raw()` are allowed.
+/// inside a `$each`. With `text`, `json()` and `raw()` are allowed. `env`
+/// holds the environment variables it may read.
 fn parse_parts(
   chars : Array[Char],
   vars : Array[String],
   in_loop : Bool,
   text~ : Bool,
+  env~ : Env,
 ) -> Array[Part] raise Syntax {
   let parts = []
   let literal = StringBuilder()
-  let parser = { chars, i: 0, vars, in_loop, text, }
+  let parser = { chars, i: 0, vars, in_loop, text, env, }
   while parser.i < chars.length() {
     if parser.eat("$${") {
       literal.write_string("${")

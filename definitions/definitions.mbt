@@ -860,9 +860,15 @@ pub fn normalize_host(host : String) -> String {
 /// `read_problems` are the problems the caller had reading the set, such
 /// as a file that cannot be read. A set read with problems is invalid
 /// whatever its files hold; they come first among its problems.
+///
+/// `env` holds the environment variables that templates may read, as
+/// `--template-env` lists them, with the values the caller read: by
+/// default, none. A template that reads another name is a problem. The
+/// values are not part of the digest.
 pub fn load(
   set : DefinitionSet,
   read_problems? : Array[Diagnostic] = [],
+  env? : @template.Env = @template.Env([]),
 ) -> Result[Snapshot, Array[Diagnostic]] {
   let files = sorted_by_name(set.files).map(file => {
     (file.0, parse_file(file.0, file.1))
@@ -870,6 +876,7 @@ pub fn load(
   let reader = Reader::new(
     declared=declared_mocks(files),
     body_files=Map::from_array(set.body_files),
+    env~,
   )
   for file in files {
     reader.read_file(file.0, file.1)
