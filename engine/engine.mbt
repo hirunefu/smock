@@ -524,6 +524,7 @@ pub fn Engine::handle(
             None if response.serves_ranges => range_response(response, request)
             None => stub_response(response)
             Some(template) => {
+              // Only a response that reads Variables looks them up.
               let context = match context {
                 Some(context) => context
                 None =>
@@ -531,7 +532,11 @@ pub fn Engine::handle(
                     template_input(incoming),
                     now~,
                     rand=@template.helper_generator(draw),
-                    vars?=self.variables.of(stub.mock, session),
+                    vars?=if response.reads_variables {
+                      self.variables.of(stub.mock, session)
+                    } else {
+                      None
+                    },
                   )
               }
               let (plan, error) = respond(

@@ -33,6 +33,8 @@ pub struct Structured {
   /// The JSON Pointer to the field, within the Stub.
   pointer : String
   priv root : Node
+  /// Whether an expression of the template reads the `vars` root.
+  priv vars_read : Bool
 }
 
 ///|
@@ -46,6 +48,14 @@ pub impl Eq for Structured with fn equal(self, other) {
 /// Shows the template as it is written.
 pub impl Debug for Structured with fn to_repr(self) {
   Repr::ctor("Structured", [(None, Debug::to_repr(self.source))])
+}
+
+///|
+/// Whether the template reads Variables: whether one of its expressions
+/// reads the `vars` root, wherever it is. One that does not renders the
+/// same whatever Variables it is given.
+pub fn Structured::reads_vars(self : Structured) -> Bool {
+  self.vars_read
 }
 
 ///|
@@ -70,7 +80,13 @@ pub fn Structured::parse(
   } else {
     ("json", "one response")
   }
-  let scope = { vars: [], in_loop: false, text: false, env, }
+  let scope = {
+    vars: [],
+    in_loop: false,
+    text: false,
+    env,
+    reads_vars: Ref(false),
+  }
   let root = parse_node(source, pointer, scope, Some(root_name), problems)
   if problems.is_empty() {
     let least = least_iterations(root)
@@ -82,7 +98,7 @@ pub fn Structured::parse(
     }
   }
   if problems.is_empty() {
-    Ok({ source, pointer, root, })
+    Ok({ source, pointer, root, vars_read: scope.reads_vars.val, })
   } else {
     Err(problems)
   }

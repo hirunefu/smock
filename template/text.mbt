@@ -87,6 +87,8 @@ pub struct Text {
   pointer : String
   kind : TextKind
   priv parts : Array[Part]
+  /// Whether an expression of the template reads the `vars` root.
+  priv vars_read : Bool
 }
 
 ///|
@@ -102,6 +104,14 @@ pub impl Eq for Text with fn equal(self, other) {
 /// Shows the template as it is written.
 pub impl Debug for Text with fn to_repr(self) {
   Repr::ctor("Text", [(None, Repr::string(self.source))])
+}
+
+///|
+/// Whether the template reads Variables: whether one of its expressions
+/// reads the `vars` root, wherever it is. One that does not renders the
+/// same whatever Variables it is given.
+pub fn Text::reads_vars(self : Text) -> Bool {
+  self.vars_read
 }
 
 ///|
@@ -121,12 +131,19 @@ pub fn Text::parse(
   env? : Env = no_env,
 ) -> Result[Text, Problem] {
   let chars = source.iter().collect()
-  let scope = { vars: [], in_loop: false, text: true, env, }
+  let scope = {
+    vars: [],
+    in_loop: false,
+    text: true,
+    env,
+    reads_vars: Ref(false),
+  }
   try parse_parts(chars, scope) catch {
     Syntax(at, message) =>
       Err({ pointer, message: "template: \{position(chars, at)}\{message}", })
   } noraise {
-    parts => Ok({ source, pointer, kind, parts, })
+    parts =>
+      Ok({ source, pointer, kind, parts, vars_read: scope.reads_vars.val, })
   }
 }
 

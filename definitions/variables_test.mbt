@@ -96,3 +96,66 @@ test "a name that is empty, too long or has other characters, variables that are
     ),
   )
 }
+
+///|
+test "a response reads Variables when one of its templates reads vars: a header, the body, its json or an event" {
+  let file =
+    #|mocks:
+    #|  - name: m
+    #|stubs:
+    #|  - id: static
+    #|    mock: m
+    #|    response: { status: 200, body: "${vars.x}" }
+    #|  - id: plain
+    #|    mock: m
+    #|    variables: { x: "${vars.x ?? 0}" }
+    #|    response:
+    #|      status: 200
+    #|      template: true
+    #|      headers: { A: "${query.a ?? ''}" }
+    #|      json: { a: "${path}", b: "$${vars.x}" }
+    #|  - id: reads
+    #|    mock: m
+    #|    responses:
+    #|      - { status: 200, template: true, headers: { A: "${vars.x ?? ''}" } }
+    #|      - { status: 200, template: true, body: "${vars.x ?? ''}" }
+    #|      - status: 200
+    #|        template: true
+    #|        json: { $each: "range(1, 2)", as: i, do: "${vars.x ?? i}" }
+    #|      - status: 200
+    #|        template: true
+    #|        events: [{ data: "a" }, { id: "${vars.x ?? 1}", data: "b" }]
+    #|      - status: 200
+    #|        template: true
+    #|        events: [{ json: { x: "${vars.x ?? 1}" } }]
+    #|      - status: 200
+    #|        template: true
+    #|        events: [{ event: "${path}", data: "a" }]
+  let set : @definitions.DefinitionSet = {
+    files: [("a.yaml", @utf8.encode(file))],
+    body_files: [],
+  }
+  let snapshot = match @definitions.load(set) {
+    Ok(snapshot) => snapshot
+    Err(diagnostics) => fail(diagnostics.map(d => d.to_string()).join("\n"))
+  }
+  let out = []
+  for stub in snapshot.mocks[0].stubs {
+    for i, weighted in stub.responses {
+      out.push("\{stub.id} \{i}: \{weighted.response.reads_variables}")
+    }
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|static 0: false
+      #|plain 0: false
+      #|reads 0: true
+      #|reads 1: true
+      #|reads 2: true
+      #|reads 3: true
+      #|reads 4: true
+      #|reads 5: false
+    ),
+  )
+}

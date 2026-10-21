@@ -228,3 +228,53 @@ test "the next rendering for a request reads its own Variables, draws on from th
     ),
   )
 }
+
+///|
+test "a template knows whether it reads vars, wherever it does" {
+  let structured = (source : String) => {
+    match parsed(source, variable=false) {
+      Ok(template) => "\{template.reads_vars()} \{source}"
+      Err(problems) => problems
+    }
+  }
+  let text = (source : String) => {
+    match @template.Text::parse(source, pointer="/h", kind=HeaderValue) {
+      Ok(template) => "\{template.reads_vars()} \{source}"
+      Err(problem) => problem.message
+    }
+  }
+  inspect(
+    [
+      text("plain"),
+      text("${query.a ?? 'none'} $${vars.x}"),
+      text("${vars.x}"),
+      text("${query.a ?? vars.x ?? 0}"),
+      text("${len(concat('a', vars.x ?? ''))}"),
+      structured("{ \"a\": \"${body.x}\", \"b\": [1, \"${len('x')}\"] }"),
+      structured("{ \"a\": [1, { \"b\": \"${vars.x ?? 0}\" }] }"),
+      structured(
+        "{ \"$each\": \"vars.tags\", \"as\": \"t\", \"do\": \"${t}\" }",
+      ),
+      structured(
+        "{ \"$each\": \"range(1, 2)\", \"as\": \"t\", \"do\": \"${vars.x}\" }",
+      ),
+      structured("{ \"$if\": \"vars.x == 1\", \"then\": 1, \"else\": 2 }"),
+      structured(
+        "{ \"$if\": \"query.x\", \"then\": 1, \"else\": \"${vars.x}\" }",
+      ),
+    ].join("\n"),
+    content=(
+      #|false plain
+      #|false ${query.a ?? 'none'} $${vars.x}
+      #|true ${vars.x}
+      #|true ${query.a ?? vars.x ?? 0}
+      #|true ${len(concat('a', vars.x ?? ''))}
+      #|false { "a": "${body.x}", "b": [1, "${len('x')}"] }
+      #|true { "a": [1, { "b": "${vars.x ?? 0}" }] }
+      #|true { "$each": "vars.tags", "as": "t", "do": "${t}" }
+      #|true { "$each": "range(1, 2)", "as": "t", "do": "${vars.x}" }
+      #|true { "$if": "vars.x == 1", "then": 1, "else": 2 }
+      #|true { "$if": "query.x", "then": 1, "else": "${vars.x}" }
+    ),
+  )
+}

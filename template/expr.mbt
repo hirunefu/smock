@@ -136,6 +136,9 @@ priv struct Scope {
   text : Bool
   /// The environment variables `env.NAME` may read.
   env : Env
+  /// Set when an expression reads the `vars` root, in this scope or one
+  /// derived from it, which share it: the template reads Variables.
+  reads_vars : Ref[Bool]
 }
 
 ///|
@@ -517,7 +520,10 @@ fn Parser::reference(
       }
     "vars" =>
       match steps {
-        [Name(name), .. rest] => Ref(Variable(name), rest.to_owned(), text)
+        [Name(name), .. rest] => {
+          self.scope.reads_vars.val = true
+          Ref(Variable(name), rest.to_owned(), text)
+        }
         _ =>
           raise Syntax(
             start,

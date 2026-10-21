@@ -99,6 +99,7 @@ fn File::read_response(
       body: Bytes(b""),
       template: None,
       serves_ranges: false,
+      reads_variables: false,
     }
   }
   for key, value in response {
@@ -139,12 +140,14 @@ fn File::read_response(
     headers.iter().map(header => (header.0, header.1)),
   )
   if template {
+    let template = self.parse_templates(stub_pointer, headers, body)
     return {
       status,
       headers: static_headers,
       body: Bytes(b""),
-      template: self.parse_templates(stub_pointer, headers, body),
+      template,
       serves_ranges: false,
+      reads_variables: template is Some(template) && template.reads_variables(),
     }
   }
   // A 200 from a body file, without templates, serves byte ranges, unless
@@ -177,7 +180,14 @@ fn File::read_response(
         ),
       )
   }
-  { status, headers: static_headers, body, template: None, serves_ranges, }
+  {
+    status,
+    headers: static_headers,
+    body,
+    template: None,
+    serves_ranges,
+    reads_variables: false,
+  }
 }
 
 ///|
