@@ -1,7 +1,8 @@
 // Variables: named JSON values, kept per Mock and per Session. A Stub's
-// `variables` write them at the match decision, in `Engine::handle`, which
-// is synchronous and single-threaded, so reading them and writing them
-// needs no lock (ADR 0003). Templates read them as `vars.NAME`.
+// `variables` write them at the match decision, in `Engine::handle`, and
+// the Admin API lists, sets and deletes them. Both are synchronous and
+// single-threaded, so reading them and writing them needs no lock (ADR
+// 0003). Templates read them as `vars.NAME`.
 
 ///|
 /// The Variables of each Mock and Session: by Mock, then by Session (`None`
@@ -115,6 +116,35 @@ fn VariableStore::write(
 }
 
 ///|
+/// Removes the Variable `name` of `mock` for `session` and gives back the
+/// bytes it counted, and those of its space when it was the space's last
+/// Variable, so that no map is left empty. Returns whether there was such
+/// a Variable.
+fn VariableStore::remove(
+  self : VariableStore,
+  mock : String,
+  session : String?,
+  name : String,
+) -> Bool {
+  guard self.by_mock.get(mock) is Some(by_session) &&
+    by_session.get(session) is Some(variables) &&
+    variables.get(name) is Some(value) else {
+    return false
+  }
+  let mut bytes = variable_name_bytes(name) + value_bytes(value)
+  variables.remove(name)
+  if variables.is_empty() {
+    bytes += space_bytes(mock, session)
+    by_session.remove(session)
+    if by_session.is_empty() {
+      self.by_mock.remove(mock)
+    }
+  }
+  self.state.add(-bytes)
+  true
+}
+
+///|
 /// Clears the Variables of every Mock and Session for which `remove`
 /// holds, gives back the bytes they and their spaces counted, and returns
 /// how many it cleared. It leaves no map empty.
@@ -142,6 +172,95 @@ fn VariableStore::remove_where(
     }
   }
   count
+}
+
+///|
+/// The Variables of the Mock `mock` for `session`, or for the no-Session
+/// space when it is `None`, by name, in byte-wise order of their names.
+/// Another Session's Variables are never among them.
+///
+/// Raises `UnknownMock` when no Mock has the name `mock`.
+pub fn Engine::list_variables(
+  self : Engine,
+  mock~ : String,
+  session~ : String?,
+) -> Map[String, Json] raise AdminError {
+  self.check_mock(mock)
+  let listed = Map([])
+  guard self.variables.of(mock, session) is Some(variables) else {
+    return listed
+  }
+  let names = variables.keys().collect()
+  names.sort_by((a, b) => @utf8.encode(a).lexical_compare(@utf8.encode(b)))
+  for name in names {
+    listed[name] = variables[name]
+  }
+  listed
+}
+
+///|
+/// Sets the Variable `name` of the Mock `mock` to `value` for `session`, or
+/// for the no-Session space when it is `None`, as a Stub's `variables`
+/// would: the value replaces the one it had, and `null` is stored, not
+/// deleted. The write counts against the bound on per-Session state as a
+/// Stub's writes do, and is taken only if it fits.
+///
+/// Raises `UnknownMock` when no Mock has the name `mock`,
+/// `InvalidVariableName` when `name` cannot name a Variable, and
+/// `StateLimitReached` when the write would take the count above the
+/// bound, which counts the refusal; then nothing is written.
+pub fn Engine::set_variable(
+  self : Engine,
+  mock~ : String,
+  session~ : String?,
+  name~ : String,
+  value : Json,
+) -> Unit raise AdminError {
+  self.check_mock(mock)
+  check_variable_name(name)
+  let names = ReadOnlyArray::from_array([name])
+  let values = [value]
+  let growth = VariableStore::growth(
+    mock,
+    session,
+    self.variables.of(mock, session),
+    names,
+    values,
+  )
+  if !self.state.fits(growth) {
+    raise StateLimitReached(self.state.refuse(growth))
+  }
+  self.variables.write(mock, session, names, values, growth~)
+}
+
+///|
+/// Deletes the Variable `name` of the Mock `mock` for `session`, or for
+/// the no-Session space when it is `None`, so that templates miss it
+/// again, and gives back the bytes it counted against the bound on
+/// per-Session state. Another Session's Variables are unknown here.
+///
+/// Raises `UnknownMock` when no Mock has the name `mock`,
+/// `InvalidVariableName` when `name` cannot name a Variable, and
+/// `UnknownVariable` when `session` has no Variable `name` in the Mock.
+pub fn Engine::delete_variable(
+  self : Engine,
+  mock~ : String,
+  session~ : String?,
+  name~ : String,
+) -> Unit raise AdminError {
+  self.check_mock(mock)
+  check_variable_name(name)
+  if !self.variables.remove(mock, session, name) {
+    raise UnknownVariable(mock~, name~)
+  }
+}
+
+///|
+/// Raises `InvalidVariableName` unless `name` can name a Variable.
+fn check_variable_name(name : String) -> Unit raise AdminError {
+  if !@definitions.is_variable_name(name) {
+    raise InvalidVariableName(name)
+  }
 }
 
 ///|

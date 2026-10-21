@@ -1126,6 +1126,90 @@ async test "the contract checker rejects responses that break the document" {
       },
     ),
     (
+      "a list of Variables",
+      "GET",
+      "/v1/mocks/shop/variables",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"variables":{"cart":{"items":[1]},"user":null},"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a list of Variables with a name that is not a Variable name",
+      "GET",
+      "/v1/mocks/shop/variables",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"variables":{"a.b":1},"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a Variable set without its value",
+      "PUT",
+      "/v1/mocks/shop/variables/user",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"name":"user","warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a Variable set to null",
+      "PUT",
+      "/v1/mocks/shop/variables/user",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"name":"user","value":null,"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a Variable set refused by the state bound",
+      "PUT",
+      "/v1/mocks/shop/variables/user",
+      {
+        status: 507,
+        headers: replica,
+        body: (
+          #|{"error":"state_limit_reached","message":"m","warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a deleted Variable with its value",
+      "DELETE",
+      "/v1/mocks/shop/variables/user",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"name":"user","value":"ann","warnings":[]}
+        ),
+      },
+    ),
+    (
+      "an unset Variable",
+      "DELETE",
+      "/v1/mocks/shop/variables/user",
+      {
+        status: 404,
+        headers: replica,
+        body: (
+          #|{"error":"unknown_variable","message":"m","warnings":[]}
+        ),
+      },
+    ),
+    (
       "a Journal page with an unmatched request",
       "POST",
       "/v1/journal/query",
@@ -1515,7 +1599,7 @@ async test "the contract checker rejects responses that break the document" {
       #|a digest that is not 12 hex digits: /digest: "xyz" does not match ^[0-9a-f]{12}$
       #|status without a digest: /digest: null is not of type string
       #|a 401 without WWW-Authenticate: header WWW-Authenticate is missing
-      #|an error code the document does not list: /error: "nope" is not one of ["unauthorized","not_found","method_not_allowed","malformed_json","invalid_request","invalid_stub","unknown_mock","unknown_stub","unknown_scenario","unknown_state","journal_off","not_started","not_ready","bad_request","content_too_large","header_fields_too_large","not_implemented","http_version_not_supported"]
+      #|an error code the document does not list: /error: "nope" is not one of ["unauthorized","not_found","method_not_allowed","malformed_json","invalid_request","invalid_stub","unknown_mock","unknown_stub","unknown_scenario","unknown_state","unknown_variable","state_limit_reached","journal_off","not_started","not_ready","bad_request","content_too_large","header_fields_too_large","not_implemented","http_version_not_supported"]
       #|an undocumented field: /extra: no value is allowed here
       #|a failed reload with its errors: conforms
       #|a reload result the document does not list: /lastReload: {"at":"2026-10-13T01:02:03.004Z","result":"reloaded","err... matches 0 of oneOf, not 1
@@ -1545,6 +1629,13 @@ async test "the contract checker rejects responses that break the document" {
       #|a reset without the count of Variables: /removed: variables is missing
       #|a reset with a count of Variables below 0: /removed/variables: -1 is below 0
       #|a reset with a scope the document does not list: /scope: "replica" is not one of ["session","mock","all"]
+      #|a list of Variables: conforms
+      #|a list of Variables with a name that is not a Variable name: /variables (name a.b): "a.b" does not match ^[A-Za-z0-9_-]{1,128}$
+      #|a Variable set without its value: : value is missing
+      #|a Variable set to null: conforms
+      #|a Variable set refused by the state bound: conforms
+      #|a deleted Variable with its value: /value: no value is allowed here
+      #|an unset Variable: conforms
       #|a Journal page with an unmatched request: conforms
       #|a Journal entry for an Ephemeral Stub: conforms
       #|a Journal entry with the index of the response picked: conforms

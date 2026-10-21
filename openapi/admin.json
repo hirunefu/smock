@@ -3,7 +3,7 @@
   "info": {
     "title": "smock Admin API",
     "version": "1",
-    "summary": "Inspect and change a running smock: Ephemeral Stubs, Scenarios, the Journal, verification, rendering and status.",
+    "summary": "Inspect and change a running smock: Ephemeral Stubs, Scenarios, Variables, the Journal, verification, rendering and status.",
     "description": "The Admin API is JSON over HTTP/1.1 on smock's admin port (`--admin-port`, 9090 by default), separate from the plain and TLS ports.\n\n- **Authentication.** Every operation needs `Authorization: Bearer <token>`. smock reads the token from the file named by `--admin-token-file` (`SMOCK_ADMIN_TOKEN_FILE`) or from the environment variable `SMOCK_ADMIN_TOKEN`, and refuses to start when authentication is on and neither gives a token, or when both the file and the variable are set. A missing or wrong token gets 401 with `WWW-Authenticate: Bearer`. `--admin-auth off` (`SMOCK_ADMIN_AUTH=off`) turns authentication off for local use; then no operation needs a token. The probes (`/startupz`, `/readyz`, `/livez`) and `/metrics` never need one.\n- **Replicas.** Every response, errors included, names the replica that handled it in the `Smock-Replica` header: the Pod's hostname, or the host name outside Kubernetes. Replicas share no state: each one keeps its own Ephemeral Stubs, Scenario state, Variables and Journal. When smock is told that its deployment runs more than one replica (`--replicas`, `SMOCK_REPLICAS`, default 1), every JSON response carries a `per_replica_state` warning.\n- **Warnings.** Every JSON response, errors included, has a `warnings` array, empty when there is nothing to warn about.\n- **Errors.** Every error is a JSON object `{error, message, warnings}`: `error` is a code from the ErrorCode schema and `message` says what went wrong. A request for a path this document does not list gets 404 with `not_found`; a method a path does not support gets 405 with `method_not_allowed` and an `Allow` header. Request bodies are JSON: a body that is not valid JSON gets 400 with `malformed_json`. Requests over the size limits of `smock serve` (`--header-size-limit`, `--header-count-limit`, `--body-limit`) get 431 or 413 in the same form, and the connection closes.\n- **Sessions.** Session-scoped operations name their Session the way mocked requests do: by default the `smock-session` member of the W3C `baggage` header. The header and the member are `smock serve` settings. Without a Session, an operation acts on the no-Session space: the requests and Ephemeral Stubs that carry no Session.\n- **Mocks** come only from Definition files. The Admin API adds Ephemeral Stubs to existing Mocks.",
     "license": {
       "name": "Apache-2.0",
@@ -33,6 +33,10 @@
     {
       "name": "Scenarios",
       "description": "The state of each Scenario of a Mock, kept per Session: listing the calling Session's Scenarios and setting the state of one."
+    },
+    {
+      "name": "Variables",
+      "description": "Named JSON values kept per Mock and Session, which templates read as `vars.NAME`: listing the calling Session's Variables, and setting and deleting one."
     },
     {
       "name": "Reset",
@@ -349,6 +353,198 @@
           },
           "404": {
             "description": "The Mock does not exist (`unknown_mock`), or no Stub of the Mock names the Scenario, in the Definition files or among the calling Session's Ephemeral Stubs, and the calling Session holds no state for it (`unknown_scenario`). A Scenario that only another Session's Ephemeral Stubs name is unknown.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/mocks/{mock}/variables": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Mock"
+        },
+        {
+          "$ref": "#/components/parameters/Session"
+        }
+      ],
+      "get": {
+        "operationId": "listVariables",
+        "tags": ["Variables"],
+        "summary": "List the calling Session's Variables of a Mock",
+        "description": "The Variables of the Mock that the calling Session's requests and its own set operations wrote, by name, with their values, sorted by name byte-wise. Another Session's Variables are never shown. Without a Session, the Variables of the no-Session space.",
+        "responses": {
+          "200": {
+            "description": "The Variables.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VariableList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/UnknownMock"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/mocks/{mock}/variables/{name}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Mock"
+        },
+        {
+          "name": "name",
+          "in": "path",
+          "required": true,
+          "description": "The name of the Variable. Any other name gets 400 `invalid_request`.",
+          "schema": {
+            "$ref": "#/components/schemas/VariableName"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/Session"
+        }
+      ],
+      "put": {
+        "operationId": "setVariable",
+        "tags": ["Variables"],
+        "summary": "Set one of the calling Session's Variables",
+        "description": "Sets the Variable of the Mock to the value in the body, for the calling Session, so that a test can arrange the state its requests read. The value replaces the one the Variable had; `null` is stored, not deleted. Other Sessions keep their own Variables. The write counts against the bound on per-Session state (`--state-max-bytes`) as a Stub's writes do: a write that would take the count above it writes nothing, gets 507 `state_limit_reached`, and counts in `smock_state_writes_refused_total`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VariableValue"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The Variable was set.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VariableSet"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not valid JSON (`malformed_json`), or it is empty or the name is not a Variable name (`invalid_request`).",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/UnknownMock"
+          },
+          "507": {
+            "description": "The write would take the count of per-Session state above its bound, `--state-max-bytes` (`state_limit_reached`). Nothing was written.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteVariable",
+        "tags": ["Variables"],
+        "summary": "Delete one of the calling Session's Variables",
+        "description": "Deletes the Variable of the Mock for the calling Session, so that `vars.NAME` is missing again, and gives back the bytes it counted against the bound on per-Session state. Only a Variable that the calling Session holds can be deleted: another Session's is unknown here.",
+        "responses": {
+          "200": {
+            "description": "The Variable was deleted.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VariableDeleted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The name is not a Variable name (`invalid_request`).",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "The Mock does not exist (`unknown_mock`), or the calling Session has no Variable with this name in it (`unknown_variable`).",
             "headers": {
               "Smock-Replica": {
                 "$ref": "#/components/headers/Smock-Replica"
@@ -985,7 +1181,7 @@
         "additionalProperties": false
       },
       "ErrorCode": {
-        "description": "What kind of error it is:\n\n- `unauthorized` (401): no bearer token, or the wrong one.\n- `not_found` (404): no operation at this path.\n- `method_not_allowed` (405): the path does not take this method.\n- `malformed_json` (400): the body is not valid JSON.\n- `invalid_request` (400): the body or a parameter does not have the shape the operation takes.\n- `invalid_stub` (400): an Ephemeral Stub is not valid; the message is the one `smock check` gives.\n- `unknown_mock` (404): no Mock has this name.\n- `unknown_stub` (404): no Stub has this ID, or the calling Session has no Ephemeral Stub with it.\n- `unknown_scenario` (404): no Stub of the Mock names this Scenario, in the Definition files or among the calling Session's Ephemeral Stubs, and the calling Session holds no state for it.\n- `unknown_state` (400): the state is not one of the known states of the Scenario for the calling Session.\n- `journal_off` (409): the Journal is off globally, or for the Mock that the request's filter names.\n- `not_started` (503): the first definition set has not loaded yet.\n- `not_ready` (503): smock is not ready to serve, such as while it drains after SIGTERM.\n- `bad_request` (400): the HTTP request itself is malformed.\n- `content_too_large` (413): the body is over `--body-limit`.\n- `header_fields_too_large` (431): the request head is over `--header-size-limit` or `--header-count-limit`.\n- `not_implemented` (501): this build does not implement the operation, or the request uses a transfer coding other than chunked.\n- `http_version_not_supported` (505): the request is not HTTP/1.x.",
+        "description": "What kind of error it is:\n\n- `unauthorized` (401): no bearer token, or the wrong one.\n- `not_found` (404): no operation at this path.\n- `method_not_allowed` (405): the path does not take this method.\n- `malformed_json` (400): the body is not valid JSON.\n- `invalid_request` (400): the body or a parameter does not have the shape the operation takes.\n- `invalid_stub` (400): an Ephemeral Stub is not valid; the message is the one `smock check` gives.\n- `unknown_mock` (404): no Mock has this name.\n- `unknown_stub` (404): no Stub has this ID, or the calling Session has no Ephemeral Stub with it.\n- `unknown_scenario` (404): no Stub of the Mock names this Scenario, in the Definition files or among the calling Session's Ephemeral Stubs, and the calling Session holds no state for it.\n- `unknown_state` (400): the state is not one of the known states of the Scenario for the calling Session.\n- `unknown_variable` (404): the calling Session has no Variable with this name in the Mock.\n- `state_limit_reached` (507): setting a Variable would take the count of per-Session state above its bound (`--state-max-bytes`); nothing was written.\n- `journal_off` (409): the Journal is off globally, or for the Mock that the request's filter names.\n- `not_started` (503): the first definition set has not loaded yet.\n- `not_ready` (503): smock is not ready to serve, such as while it drains after SIGTERM.\n- `bad_request` (400): the HTTP request itself is malformed.\n- `content_too_large` (413): the body is over `--body-limit`.\n- `header_fields_too_large` (431): the request head is over `--header-size-limit` or `--header-count-limit`.\n- `not_implemented` (501): this build does not implement the operation, or the request uses a transfer coding other than chunked.\n- `http_version_not_supported` (505): the request is not HTTP/1.x.",
         "enum": [
           "unauthorized",
           "not_found",
@@ -997,6 +1193,8 @@
           "unknown_stub",
           "unknown_scenario",
           "unknown_state",
+          "unknown_variable",
+          "state_limit_reached",
           "journal_off",
           "not_started",
           "not_ready",
@@ -1279,6 +1477,66 @@
           }
         },
         "required": ["scenario", "warnings"],
+        "additionalProperties": false
+      },
+      "VariableName": {
+        "description": "The name of a Variable: 1 to 128 ASCII letters, digits, `_` and `-`.",
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{1,128}$"
+      },
+      "VariableValue": {
+        "description": "The value of a Variable: any JSON value."
+      },
+      "VariableList": {
+        "description": "The calling Session's Variables of a Mock.",
+        "type": "object",
+        "properties": {
+          "variables": {
+            "description": "The Variables, by name, sorted by name byte-wise, each with its value.",
+            "type": "object",
+            "propertyNames": {
+              "$ref": "#/components/schemas/VariableName"
+            },
+            "additionalProperties": {
+              "$ref": "#/components/schemas/VariableValue"
+            }
+          },
+          "warnings": {
+            "$ref": "#/components/schemas/Warnings"
+          }
+        },
+        "required": ["variables", "warnings"],
+        "additionalProperties": false
+      },
+      "VariableSet": {
+        "description": "The Variable that was set, with its value.",
+        "type": "object",
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/VariableName"
+          },
+          "value": {
+            "$ref": "#/components/schemas/VariableValue"
+          },
+          "warnings": {
+            "$ref": "#/components/schemas/Warnings"
+          }
+        },
+        "required": ["name", "value", "warnings"],
+        "additionalProperties": false
+      },
+      "VariableDeleted": {
+        "description": "The Variable that was deleted.",
+        "type": "object",
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/VariableName"
+          },
+          "warnings": {
+            "$ref": "#/components/schemas/Warnings"
+          }
+        },
+        "required": ["name", "warnings"],
         "additionalProperties": false
       },
       "ResetRequest": {
@@ -1861,7 +2119,7 @@
             "maximum": 99
           },
           "variables": {
-            "description": "The values the Stub's `variables` would write, by name, in the order written, rendered against the sample's `vars`. Empty when the Stub has none, and when a value failed to render. A rendering writes none of them.",
+            "description": "The values the Stub's `variables` would write, by name, in the order written, rendered against the sample's `vars`. Empty when the Stub has none, and when a value failed to render. A rendering writes none of them, so the state bound never applies to them.",
             "type": "object",
             "propertyNames": {
               "pattern": "^[A-Za-z0-9_-]{1,128}$"

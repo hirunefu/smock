@@ -315,7 +315,7 @@ let serve_settings : Array[Setting] = [
   },
   {
     name: "state-max-bytes",
-    about: "The most bytes the per-Session state of the whole process takes, across every Mock and Session: each Mock and Session that holds Variables counts its Mock name, its Session key and 64; each Variable counts its name, 64, and its value as compact JSON with 16 more per JSON value in it. A request whose writes would pass it writes nothing and gets 507. Scenario state does not count. Default: an eighth of the memory limit of smock's cgroup (cgroup v2 memory.max), at least \{min_byte_bound} (1 MiB) and at most \{@engine.default_state_max_bytes} (64 MiB); \{@engine.default_state_max_bytes} when there is no limit or it cannot be read.",
+    about: "The most bytes the per-Session state of the whole process takes, across every Mock and Session: each Mock and Session that holds Variables counts its Mock name, its Session key and 64; each Variable counts its name, 64, and its value as compact JSON with 16 more per JSON value in it. A request or an Admin API set whose writes would pass it writes nothing and gets 507. Scenario state does not count. Default: an eighth of the memory limit of smock's cgroup (cgroup v2 memory.max), at least \{min_byte_bound} (1 MiB) and at most \{@engine.default_state_max_bytes} (64 MiB); \{@engine.default_state_max_bytes} when there is no limit or it cannot be read.",
     default: None,
   },
 ]

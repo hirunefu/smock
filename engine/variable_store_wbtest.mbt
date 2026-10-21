@@ -141,3 +141,66 @@ test "clearing Variables with a reset and dropping them with a reload leave no e
     ),
   )
 }
+
+///|
+test "setting and deleting Variables through the Admin API leaves no empty map behind" {
+  let files =
+    #|{ "mocks": [{ "name": "shop", "default": true }, { "name": "bank", "hosts": ["bank.svc"] }],
+    #|  "stubs": [] }
+  let set : @definitions.DefinitionSet = {
+    files: [("shop.json", @utf8.encode(files))],
+    body_files: [],
+  }
+  guard @definitions.load(set) is Ok(snapshot) else { fail("not loaded") }
+  let engine = Engine(snapshot)
+  let out = []
+  let show = (label : String) => {
+    out.push("\{label}: \{@debug.to_string(engine.variables.by_mock)}")
+  }
+  engine.set_variable(mock="shop", session=Some("test-a"), name="a", 1)
+  engine.set_variable(mock="shop", session=Some("test-a"), name="b", 2)
+  engine.set_variable(mock="shop", session=None, name="a", 3)
+  engine.set_variable(mock="bank", session=Some("test-a"), name="a", 4)
+  show("set")
+  engine.delete_variable(mock="shop", session=Some("test-a"), name="a")
+  show("delete a of shop, test-a")
+  engine.delete_variable(mock="shop", session=Some("test-a"), name="b")
+  show("delete b of shop, test-a")
+  engine.delete_variable(mock="shop", session=Some("test-b"), name="a") catch {
+    _ => ()
+  }
+  engine.set_variable(mock="shop", session=Some("test-b"), name="a.b", 5) catch {
+    _ => ()
+  }
+  show("an unknown Variable and a bad name, test-b")
+  engine.delete_variable(mock="shop", session=None, name="a")
+  show("delete a of shop, no Session")
+  engine.delete_variable(mock="bank", session=Some("test-a"), name="a")
+  show("delete a of bank, test-a")
+  inspect(
+    out.join("\n"),
+    content=(
+      #|set: {
+      #|  "shop": {
+      #|    Some("test-a"): { "a": Number(1), "b": Number(2) },
+      #|    None: { "a": Number(3) },
+      #|  },
+      #|  "bank": { Some("test-a"): { "a": Number(4) } },
+      #|}
+      #|delete a of shop, test-a: {
+      #|  "shop": { Some("test-a"): { "b": Number(2) }, None: { "a": Number(3) } },
+      #|  "bank": { Some("test-a"): { "a": Number(4) } },
+      #|}
+      #|delete b of shop, test-a: {
+      #|  "shop": { None: { "a": Number(3) } },
+      #|  "bank": { Some("test-a"): { "a": Number(4) } },
+      #|}
+      #|an unknown Variable and a bad name, test-b: {
+      #|  "shop": { None: { "a": Number(3) } },
+      #|  "bank": { Some("test-a"): { "a": Number(4) } },
+      #|}
+      #|delete a of shop, no Session: { "bank": { Some("test-a"): { "a": Number(4) } } }
+      #|delete a of bank, test-a: {}
+    ),
+  )
+}

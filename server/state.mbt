@@ -27,7 +27,7 @@ fn StateMetrics::register(metrics : @metrics.Registry) -> StateMetrics {
   let refused = metrics
     .counter(
       "smock_state_writes_refused_total",
-      help="Requests whose writes to per-Session state were refused with 507, since they would pass its bound (--state-max-bytes).",
+      help="Requests and Admin API sets whose writes to per-Session state were refused with 507, since they would pass its bound (--state-max-bytes).",
       labels=[],
     )
     .labels([])

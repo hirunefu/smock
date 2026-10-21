@@ -1,6 +1,6 @@
 // The errors of the Admin API operations the engine carries out: on
-// Ephemeral Stubs, Scenarios, resets, Journal queries and verifications;
-// and the warnings every Admin API response carries.
+// Ephemeral Stubs, Scenarios, Variables, resets, Journal queries and
+// verifications; and the warnings every Admin API response carries.
 
 ///|
 /// Why the engine refused an Admin API operation.
@@ -21,6 +21,14 @@ pub suberror AdminError {
     state~ : String,
     known~ : Array[String]
   )
+  /// The name cannot name a Variable: it is not 1 to
+  /// `@definitions.max_variable_name` ASCII letters, digits, `_` and `-`.
+  InvalidVariableName(String)
+  /// The calling Session has no Variable with this name in the Mock.
+  UnknownVariable(mock~ : String, name~ : String)
+  /// The write would take the count of per-Session state above its bound,
+  /// for the reason given, so nothing was written.
+  StateLimitReached(String)
   /// The Ephemeral Stub to add is not valid. The problems have no file;
   /// their JSON Pointers point into the Stub as it was given.
   InvalidStub(Array[@definitions.Diagnostic])

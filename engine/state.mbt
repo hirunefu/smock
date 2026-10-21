@@ -23,8 +23,8 @@ priv struct StateBound {
   /// The bytes the count holds now. It never passes `max_bytes`, since a
   /// write that would take it there is refused.
   mut bytes : Int
-  /// The requests whose writes the bound refused, since the process
-  /// started.
+  /// The writes the bound refused, since the process started: a request's
+  /// or an Admin API set's.
   mut refused : Int64
 }
 
@@ -49,8 +49,9 @@ fn StateBound::add(self : StateBound, more : Int64) -> Unit {
 }
 
 ///|
-/// Counts a request whose writes, which would grow the count by `more`
-/// bytes, do not fit, and says why, as the 507 tells the client.
+/// Counts a refusal of writes, a request's or an Admin API set's, which
+/// would grow the count by `more` bytes and do not fit, and says why, as
+/// the 507 tells the client.
 fn StateBound::refuse(self : StateBound, more : Int64) -> String {
   self.refused += 1L
   "the writes would take per-Session state from \{self.bytes} to \{self.bytes.to_int64() + more} bytes, above its bound of \{self.max_bytes} (--state-max-bytes)"
@@ -61,14 +62,16 @@ fn StateBound::refuse(self : StateBound, more : Int64) -> String {
 pub(all) struct StateStats {
   /// The bytes the count holds now.
   bytes : Int
-  /// The requests whose writes the bound refused since the process
-  /// started, whatever resets came since: each refused request once.
+  /// The writes the bound refused since the process started, whatever
+  /// resets came since: each refused request once, and each refused Admin
+  /// API set once.
   writes_refused : Int64
 } derive(Debug)
 
 ///|
-/// What the bound on per-Session state counts now, and how many requests'
-/// writes it has refused since the process started.
+/// What the bound on per-Session state counts now, and how many writes,
+/// from requests and Admin API sets, it has refused since the process
+/// started.
 pub fn Engine::state_stats(self : Engine) -> StateStats {
   { bytes: self.state.bytes, writes_refused: self.state.refused, }
 }
