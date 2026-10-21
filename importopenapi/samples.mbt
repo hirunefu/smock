@@ -1042,20 +1042,7 @@ fn compact_size(json : Json, limit : Int) -> Int {
     Null | True => 4
     False => 5
     Number(n, repr~) => @template.number_text(n, repr).length()
-    String(s) => {
-      let mut size = 2
-      for c in s {
-        if size > limit {
-          break
-        }
-        size += match c {
-          '"' | '\\' | '\n' | '\r' | '\t' | '\b' | '\u{0c}' => 2
-          _ if c < ' ' => 6
-          _ => char_bytes(c)
-        }
-      }
-      size
-    }
+    String(s) => @template.json_string_bytes(s, limit~)
     Array(items) => {
       let mut size = if items.is_empty() { 2 } else { 1 + items.length() }
       for item in items {
@@ -1072,7 +1059,7 @@ fn compact_size(json : Json, limit : Int) -> Int {
         if size > limit {
           break
         }
-        size += compact_size(Json::string(name), limit - size) + 1
+        size += @template.json_string_bytes(name, limit=limit - size) + 1
         size += compact_size(value, limit - size)
       }
       size

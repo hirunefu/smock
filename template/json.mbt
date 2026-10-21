@@ -141,8 +141,33 @@ pub fn number_text(n : Double, repr : String?) -> String {
 }
 
 ///|
+/// The length of `s` as a JSON string in UTF-8, its quotes included, as
+/// compact JSON writes it with `write_json_string_content`, or a length
+/// above `limit` as soon as it passes it, so that a long string is not
+/// walked to its end. The OpenAPI import bounds its samples with it.
+pub fn json_string_bytes(s : String, limit~ : Int) -> Int {
+  let mut size = 2
+  for c in s {
+    if size > limit {
+      break
+    }
+    let code = c.to_int()
+    size += match c {
+      '"' | '\\' | '\n' | '\r' | '\t' | '\b' | '\u{0c}' => 2
+      _ if c < ' ' => 6
+      _ if code < 0x80 => 1
+      _ if code < 0x800 => 2
+      _ if code < 0x10000 => 3
+      _ => 4
+    }
+  }
+  size
+}
+
+///|
 /// Writes `s` as the content of a JSON string: `"` and `\` escaped, and
-/// control characters as escapes.
+/// control characters as escapes. A change to the escapes is made in
+/// `json_string_bytes` too.
 fn write_json_string_content(out : StringBuilder, s : String) -> Unit {
   for c in s {
     match c {

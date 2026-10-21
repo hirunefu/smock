@@ -176,3 +176,18 @@ test "indented JSON keeps member order, indents two spaces per level, and writes
     content="0.1 \"a\\tb\" {} []",
   )
 }
+
+///|
+test "json_string_bytes gives the length of a string as compact JSON writes it, quotes and escapes included, and stops past its limit" {
+  for
+    s in [
+      "", "plain", "\"quoted\" \\ back", "\n\r\t\u{08}\u{0c}", "\u{01}\u{1f}", "é",
+      "日本", "😀", "\u{7f}\u{2028}",
+    ] {
+    let bytes = @template.compact_json_bytes(Json::string(s)).length()
+    assert_eq(@template.json_string_bytes(s, limit=1000), bytes)
+  }
+  let long = "a".repeat(100)
+  assert_true(@template.json_string_bytes(long, limit=10) > 10)
+  assert_true(@template.json_string_bytes(long, limit=10) < 102)
+}
