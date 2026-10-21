@@ -32,7 +32,13 @@ fn deep_sample(schema : Json, output : String) -> String {
       },
     },
   }
-  let document = { top, openapi: "3.1.0", title: "", info_version: "", }
+  let document = {
+    top,
+    openapi: "3.1.0",
+    title: "",
+    info_version: "",
+    prefix: "",
+  }
   let conversion = report.file(document, report.operations(document))
   let lines = conversion.problems().map(problem => problem.to_string())
   match conversion {
@@ -171,7 +177,13 @@ test "a sample takes exactly the bytes of its compact JSON" {
       },
     },
   }
-  let document = { top, openapi: "3.1.0", title: "", info_version: "", }
+  let document = {
+    top,
+    openapi: "3.1.0",
+    title: "",
+    info_version: "",
+    prefix: "",
+  }
   for schema in schemas {
     let report = Report::new(
       Options(root="api.json", mock="m", output="m.json"),

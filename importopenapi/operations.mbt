@@ -123,7 +123,7 @@ fn Report::path_item(
   pointer : String,
   json : Json,
 ) -> Unit {
-  guard self.path(pointer, key) is Some(path) else { return }
+  guard self.path_key(pointer, key) else { return }
   guard self.followed(document, pointer, json, path_item=true)
     is Some({ pointer, json, }) else {
     return
@@ -132,7 +132,7 @@ fn Report::path_item(
     self.root_error(pointer, "must be an object")
     return
   }
-  self.servers_left_out(pointer, item)
+  let prefix = self.prefix(pointer, item, outer=document.prefix)
   for field, value in item {
     let field_pointer = @definitions.child_pointer(pointer, field)
     if fixed_methods.contains(field) {
@@ -141,7 +141,7 @@ fn Report::path_item(
         imported,
         taken,
         key,
-        path,
+        prefix,
         field.to_upper(),
         field_pointer,
         value,
@@ -164,7 +164,7 @@ fn Report::path_item(
           )
         } else {
           self.operation(
-            document, imported, taken, key, path, meth, operation_pointer, operation,
+            document, imported, taken, key, prefix, meth, operation_pointer, operation,
           )
         }
       }
@@ -174,14 +174,15 @@ fn Report::path_item(
 
 ///|
 /// Reads the operation `json`, for the method `meth` at the path key
-/// `key`, and imports it, unless a rule leaves it out with a warning.
+/// `key`, whose Path Item puts `prefix` in front of its paths, and imports
+/// it, unless a rule leaves it out with a warning.
 fn Report::operation(
   self : Report,
   document : Document,
   imported : Array[Imported],
   taken : Taken,
   key : String,
-  path : Path,
+  prefix : String,
   meth : String,
   pointer : String,
   json : Json,
@@ -190,6 +191,8 @@ fn Report::operation(
     self.root_error(pointer, "must be an object")
     return
   }
+  let prefix = self.prefix(pointer, operation, outer=prefix)
+  let path = matched_path(key, prefix~)
   // An exact path starts with /, so its conditions never read as a
   // pattern's.
   let (conditions, described) = match path.condition {
@@ -245,7 +248,6 @@ fn Report::operation(
       "callbacks are not imported",
     )
   }
-  self.servers_left_out(pointer, operation)
   guard self.responses(document, pointer, meth, operation) is Some(responses) else {
     return
   }

@@ -132,8 +132,9 @@ fn Report::header(self : Report, document : Document) -> Array[String] {
 ///|
 /// The flags that shape the file, as the header comment lists them, in a
 /// fixed order: `--mock`, then `--hosts` when the Mock has Hosts, then
-/// `--declare-mock off` when the file does not declare it. `on` is the
-/// default and is not listed, so that giving it changes no byte.
+/// `--declare-mock off` when the file does not declare it, then
+/// `--base-path`, as given, when there is one. `on` is the default and is
+/// not listed, so that giving it changes no byte.
 fn Report::flags(self : Report) -> String {
   let flags = ["--mock \{self.options.mock}"]
   if !self.options.hosts.is_empty() {
@@ -141,6 +142,9 @@ fn Report::flags(self : Report) -> String {
   }
   if !self.options.declare_mock {
     flags.push("--declare-mock off")
+  }
+  if self.options.base_path is Some(base_path) {
+    flags.push("--base-path \{base_path}")
   }
   flags.join(" ")
 }
