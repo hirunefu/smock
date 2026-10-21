@@ -838,10 +838,7 @@ pub fn ImportOpenapiSettings::from_matches(
   if mock == "" {
     raise InvalidOption(flag="mock", value=mock, reason="must not be empty")
   }
-  let ref_dir = value(matches, "ref-dir")
-  if ref_dir is Some("") {
-    raise InvalidOption(flag="ref-dir", value="", reason="must not be empty")
-  }
+  let ref_dir = file_value(matches, "ref-dir", invalid_value=invalid_option)
   let output = value(matches, "output").unwrap_or("")
   if !@definitions.is_json_or_yaml_name(output) {
     raise InvalidOption(
@@ -857,10 +854,18 @@ pub fn ImportOpenapiSettings::from_matches(
       reason="must not name a file that starts with ., which smock skips",
     )
   }
-  let declare_mock = on_or_off(matches, "declare-mock")
+  let declare_mock = on_off_value(
+    matches,
+    "declare-mock",
+    invalid_value=invalid_option,
+  )
   let hosts = hosts_value(matches, declare_mock~)
   let base_path = base_path_value(matches)
-  let overwrite = on_or_off(matches, "overwrite")
+  let overwrite = on_off_value(
+    matches,
+    "overwrite",
+    invalid_value=invalid_option,
+  )
   {
     document,
     ref_dir,
@@ -870,25 +875,6 @@ pub fn ImportOpenapiSettings::from_matches(
     output,
     base_path,
     overwrite,
-  }
-}
-
-///|
-/// The value of the flag `name` of `import-openapi`, which takes `on` or
-/// `off` and has a default.
-fn on_or_off(
-  matches : @argparse.Matches,
-  name : String,
-) -> Bool raise InvalidSetting {
-  match value(matches, name) {
-    Some("on") => true
-    Some("off") => false
-    other =>
-      raise InvalidOption(
-        flag=name,
-        value=other.unwrap_or(""),
-        reason="must be on or off",
-      )
   }
 }
 
@@ -964,15 +950,6 @@ fn base_path_value(matches : @argparse.Matches) -> String? raise InvalidSetting 
 }
 
 ///|
-/// The OpenAPI document's base name: its name under its own directory,
-/// where references are followed by default.
-pub fn ImportOpenapiSettings::document_name(
-  self : ImportOpenapiSettings,
-) -> String {
-  base_name(self.document)
-}
-
-///|
 /// The OpenAPI document's name under the directory that references are
 /// followed in, `/`-separated, from the real paths of the directories,
 /// once symlinks, `.` and `..` are resolved: `ref_dir`, that of
@@ -989,7 +966,9 @@ pub fn ImportOpenapiSettings::document_name_under(
   ref_dir~ : String?,
   document_dir~ : String?,
 ) -> String raise InvalidSetting {
-  let name = self.document_name()
+  // Its base name: its name under its own directory, where references are
+  // followed by default.
+  let name = base_name(self.document)
   guard self.ref_dir is Some(given) else { return name }
   guard ref_dir is Some(ref_dir) else {
     raise InvalidOption(
@@ -1002,15 +981,34 @@ pub fn ImportOpenapiSettings::document_name_under(
   if document_dir == ref_dir {
     return name
   }
-  let prefix = if ref_dir.has_suffix("/") { ref_dir } else { "\{ref_dir}/" }
-  guard document_dir.has_prefix(prefix) else {
+  guard is_under(document_dir, ref_dir) else {
     raise InvalidArgument(
       name="document",
       value=self.document,
       reason="must lie under --ref-dir \{given.escape()}",
     )
   }
-  "\{document_dir[prefix.length():]}/\{name}"
+  "\{document_dir[under(ref_dir).length():]}/\{name}"
+}
+
+///|
+/// Whether the real path `real` lies below the directory whose real path
+/// is `directory`, once symlinks, `.` and `..` are resolved in both. The
+/// directory itself does not. `import-openapi` reads the documents that
+/// references name only under `--ref-dir`, which this decides.
+pub fn is_under(real : String, directory : String) -> Bool {
+  real.has_prefix(under(directory))
+}
+
+///|
+/// What the paths below the directory `directory` start with: it, then
+/// `/`.
+fn under(directory : String) -> String {
+  if directory.has_suffix("/") {
+    directory
+  } else {
+    "\{directory}/"
+  }
 }
 
 ///|
@@ -1079,13 +1077,16 @@ fn token_value(
 }
 
 ///|
-/// The value of a file setting, which must not be empty when given.
+/// The value of a file setting, which must not be empty when given. The
+/// problem is made with `invalid_value`, by default that of a setting with
+/// an environment variable.
 fn file_value(
   matches : @argparse.Matches,
   name : String,
+  invalid_value? : (String, String, String) -> InvalidSetting = invalid,
 ) -> String? raise InvalidSetting {
   match value(matches, name) {
-    Some("") => raise invalid(name, "", "must not be empty")
+    Some("") => raise invalid_value(name, "", "must not be empty")
     other => other
   }
 }
@@ -1106,21 +1107,37 @@ fn int_value(
 }
 
 ///|
-/// The value of a setting that is `on` or `off`, as true or false.
+/// The value of a setting that is `on` or `off`, as true or false. The
+/// problem is made with `invalid_value`, by default that of a setting with
+/// an environment variable.
 fn on_off_value(
   matches : @argparse.Matches,
   name : String,
+  invalid_value? : (String, String, String) -> InvalidSetting = invalid,
 ) -> Bool raise InvalidSetting {
   match value(matches, name) {
     Some("on") => true
     Some("off") => false
-    other => raise invalid(name, other.unwrap_or(""), "must be on or off")
+    other => raise invalid_value(name, other.unwrap_or(""), "must be on or off")
   }
 }
 
 ///|
+/// The problem with the value `value` of the setting `name`, which has an
+/// environment variable, and why: `reason`.
 fn invalid(name : String, value : String, reason : String) -> InvalidSetting {
   InvalidSetting(flag=name, env=env_name(name), value~, reason~)
+}
+
+///|
+/// The problem with the value `value` of the flag `name`, which has no
+/// environment variable, and why: `reason`.
+fn invalid_option(
+  name : String,
+  value : String,
+  reason : String,
+) -> InvalidSetting {
+  InvalidOption(flag=name, value~, reason~)
 }
 
 ///|

@@ -119,24 +119,6 @@ async fn real_path(path : String) -> String? {
 }
 
 ///|
-/// Whether the real path `real` is within the directory whose real path is
-/// `inside`, below it.
-fn within(real : String, inside : String) -> Bool {
-  real.has_prefix(under(inside))
-}
-
-///|
-/// What the real paths within the directory whose real path is `inside`
-/// start with: it, then `/`.
-fn under(inside : String) -> String {
-  if inside.has_suffix("/") {
-    inside
-  } else {
-    "\{inside}/"
-  }
-}
-
-///|
 /// Converts with `converter`, whose options are `options`, until it needs
 /// no more documents. Each round reads the documents it asks for, at most
 /// `room` bytes in all, or tells it why one cannot be read. Returns what it
@@ -200,7 +182,7 @@ async fn read_referenced(
   let real = @fs.realpath(path) catch {
     err => return Err(Other(@server.read_failure(err)))
   }
-  guard within(real, inside) else { return Err(SymlinkOutside) }
+  guard @settings.is_under(real, inside) else { return Err(SymlinkOutside) }
   let bytes = read_at_most(path, limit) catch {
     err => return Err(Other(@server.read_failure(err)))
   }
