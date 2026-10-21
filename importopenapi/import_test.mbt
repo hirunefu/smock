@@ -486,9 +486,15 @@ test "the main response is the lowest explicit 2xx code, then 2XX; else default,
     "{ \"5XX\": {}, \"4XX\": {}, \"3XX\": {} }", "{ \"5XX\": {}, \"4XX\": {} }",
     "{ \"5XX\": {} }", "{ \"599\": {} }",
   ]
+  // The main Stub comes last.
   let mains = cases.map(responses => {
     let stubs = main_of(responses)
-    stubs.split("\n").filter(line => line.has_prefix("petstore.r.")).join("")
+    stubs
+    .split("\n")
+    .filter(line => line.has_prefix("petstore.r."))
+    .collect()
+    .last()
+    .unwrap_or("")
   })
   inspect(
     mains.join("\n"),
@@ -506,7 +512,7 @@ test "the main response is the lowest explicit 2xx code, then 2XX; else default,
 }
 
 ///|
-test "until their tickets, each other response, each media type of the main response's content and each header it documents is left out with a warning that names it, in the order the document writes them" {
+test "until their tickets, each media type of a response's content and each header it documents is left out with a warning that names it, in the order the document writes them" {
   inspect(
     main_of(
       (
@@ -521,19 +527,21 @@ test "until their tickets, each other response, each media type of the main resp
         #|    "content": { "application/json": {}, "application/xml": {} },
         #|    "links": { "next": {} }
         #|  },
-        #|  "default": { "description": "Error" },
+        #|  "default": { "description": "Error", "headers": { "Retry-After": {} } },
         #|  "1XX": {},
         #|  "x-codes": { "anything": true }
         #|}
       ),
     ),
     content=(
-      #|petstore.json: /paths/~1r/get/responses/404: warning: left out: only the main response, 200, is imported yet
+      #|petstore.json: /paths/~1r/get/responses/404/content/application~1json: warning: left out: response bodies are not imported yet
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Rate-Limit: warning: left out: response headers are not imported yet
       #|petstore.json: /paths/~1r/get/responses/200/content/application~1json: warning: left out: response bodies are not imported yet
       #|petstore.json: /paths/~1r/get/responses/200/content/application~1xml: warning: left out: response bodies are not imported yet
-      #|petstore.json: /paths/~1r/get/responses/default: warning: left out: only the main response, 200, is imported yet
+      #|petstore.json: /paths/~1r/get/responses/default/headers/Retry-After: warning: left out: response headers are not imported yet
       #|petstore.json: /paths/~1r/get/responses/1XX: warning: left out: smock answers with a status from 200 to 599
+      #|petstore.r.404: GET /r -> 404
+      #|petstore.r.default: GET /r -> 500
       #|petstore.r.200: GET /r -> 200
       #|
     ),
@@ -796,7 +804,7 @@ test "a field the converter reads that has the wrong JSON type is an error at it
           #|    "put": { "operationId": "", "responses": { "200": {} } },
           #|    "post": { "operationId": 7, "responses": [] },
           #|    "patch": {
-          #|      "responses": { "200": [], "404": "not read" },
+          #|      "responses": { "200": [], "404": "Not found" },
           #|      "requestBody": { "content": { "application/json": { "schema": { "$ref": "#/nowhere" } } } },
           #|      "parameters": "broken"
           #|    },
@@ -813,7 +821,7 @@ test "a field the converter reads that has the wrong JSON type is an error at it
       #|petstore.json: /paths/~1b/post/operationId: must be a non-empty string
       #|petstore.json: /paths/~1b/post/responses: must be an object
       #|petstore.json: /paths/~1b/patch/responses/200: must be an object
-      #|petstore.json: /paths/~1b/patch/responses/404: warning: left out: only the main response, 200, is imported yet
+      #|petstore.json: /paths/~1b/patch/responses/404: must be an object
       #|petstore.json: /paths/~1b/delete/responses/200/content: must be an object
       #|petstore.json: /paths/~1b/delete/responses/200/headers: must be an object
       #|nothing written
@@ -854,7 +862,7 @@ test "until references are followed, a $ref where the converter reads one is an 
     content=(
       #|petstore.json: /paths/~1a/$ref: references are not followed yet: write the part it names in its place
       #|petstore.json: /paths/~1b/get/responses/200/$ref: references are not followed yet: write the part it names in its place
-      #|petstore.json: /paths/~1b/get/responses/404: warning: left out: only the main response, 200, is imported yet
+      #|petstore.json: /paths/~1b/get/responses/404/$ref: references are not followed yet: write the part it names in its place
       #|nothing written
       #|
     ),
@@ -898,7 +906,13 @@ test "problems come in order: the document-level ones, then each operation's in 
         #|{
         #|  "paths": {
         #|    "/b": {
-        #|      "get": { "responses": { "404": {}, "200": { "content": { "text/plain": {} } }, "500": {} } },
+        #|      "get": {
+        #|        "responses": {
+        #|          "404": { "content": { "application/json": {} } },
+        #|          "200": { "content": { "text/plain": {} } },
+        #|          "500": { "headers": { "X-Error": {} } }
+        #|        }
+        #|      },
         #|      "put": { "operationId": 1 }
         #|    },
         #|    "/a/{id}": { "get": {} }
@@ -912,9 +926,9 @@ test "problems come in order: the document-level ones, then each operation's in 
     content=(
       #|petstore.json: /servers: warning: left out: the paths of servers are not added as a prefix yet
       #|petstore.json: /webhooks: warning: webhooks are not imported: they are requests the API sends, not ones it answers
-      #|petstore.json: /paths/~1b/get/responses/404: warning: left out: only the main response, 200, is imported yet
+      #|petstore.json: /paths/~1b/get/responses/404/content/application~1json: warning: left out: response bodies are not imported yet
       #|petstore.json: /paths/~1b/get/responses/200/content/text~1plain: warning: left out: response bodies are not imported yet
-      #|petstore.json: /paths/~1b/get/responses/500: warning: left out: only the main response, 200, is imported yet
+      #|petstore.json: /paths/~1b/get/responses/500/headers/X-Error: warning: left out: response headers are not imported yet
       #|petstore.json: /paths/~1b/put/operationId: must be a non-empty string
       #|petstore.json: /paths/~1b/put: warning: has no responses: the operation answers 200 with an empty body
       #|petstore.json: /paths/~1a~1{id}/get: warning: left out: paths with parameters are not imported yet

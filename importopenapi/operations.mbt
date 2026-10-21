@@ -15,6 +15,9 @@ priv struct Stub {
   /// The key of the response it answers, as the document writes it.
   response : String
   status : Int
+  /// Whether a request selects it with the header `Smock-Status:
+  /// <response>`, as for every response but the main one.
+  selected : Bool
 }
 
 ///|
@@ -202,20 +205,34 @@ fn Report::operation(
     )
   }
   self.servers_left_out(pointer, operation)
-  guard self.main_response(pointer, operation) is Some(main) else { return }
+  guard self.responses(pointer, operation) is Some(responses) else { return }
   let name = operation_id.unwrap_or("\{meth} \{key}")
-  let id = "\{self.options.mock}.\{name}.\{main.key}"
+  let stubs = []
+  for response in responses {
+    stubs.push({
+      id: "\{self.options.mock}.\{name}.\{response.key}",
+      meth,
+      path,
+      response: response.key,
+      status: response.status,
+      selected: !response.main,
+    })
+  }
   if operation_id is Some(operation_id) &&
     taken.operation_ids.get(operation_id) is Some(earlier) {
     self.root_error(
       id_pointer,
       "the operationId \{operation_id.escape()} is already used at \{self.place(earlier)}",
     )
-  } else if taken.ids.get(id) is Some(earlier) {
-    self.root_error(
-      pointer,
-      "the Stub ID \{id.escape()} is already generated for the operation at \{self.place(earlier)}",
-    )
+  } else {
+    for stub in stubs {
+      if taken.ids.get(stub.id) is Some(earlier) {
+        self.root_error(
+          pointer,
+          "the Stub ID \{stub.id.escape()} is already generated for the operation at \{self.place(earlier)}",
+        )
+      }
+    }
   }
   // The first place keeps its claim, so that each repeat names it.
   taken.conditions[conditions] = pointer
@@ -223,13 +240,10 @@ fn Report::operation(
     !taken.operation_ids.contains(operation_id) {
     taken.operation_ids[operation_id] = id_pointer
   }
-  if !taken.ids.contains(id) {
-    taken.ids[id] = pointer
+  for stub in stubs {
+    if !taken.ids.contains(stub.id) {
+      taken.ids[stub.id] = pointer
+    }
   }
-  imported.push({
-    key,
-    summary,
-    deprecated,
-    stubs: [{ id, meth, path, response: main.key, status: main.status, }],
-  })
+  imported.push({ key, summary, deprecated, stubs, })
 }

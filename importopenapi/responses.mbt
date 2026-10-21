@@ -50,11 +50,14 @@ fn ResponseKey::is_informational(self : ResponseKey) -> Bool {
 }
 
 ///|
-/// The response an operation answers by default: its key as the document
-/// writes it, and the status it answers with.
-priv struct Main {
+/// A response an operation answers: its key as the document writes it, and
+/// the status it answers with.
+priv struct Response {
   key : String
   status : Int
+  /// Whether it is the main response, which a request gets without
+  /// `Smock-Status`. A request gets any other one with `Smock-Status: <key>`.
+  main : Bool
 }
 
 ///|
@@ -62,7 +65,7 @@ priv struct Main {
 /// `2XX`; else `default`; else the lowest explicit code from 300 to 599,
 /// then `3XX`, `4XX` and `5XX`. An explicit code answers itself, `default`
 /// answers 200, and a range its first code. `None` when there is none.
-fn main_of(keys : Array[(String, ResponseKey)]) -> Main? {
+fn main_of(keys : Array[(String, ResponseKey)]) -> Response? {
   let mut lowest_success : (String, Int)? = None
   let mut lowest_other : (String, Int)? = None
   let ranges : Array[String?] = [None, None, None, None, None, None]
@@ -83,41 +86,44 @@ fn main_of(keys : Array[(String, ResponseKey)]) -> Main? {
     }
   }
   if lowest_success is Some((key, status)) {
-    return Some({ key, status, })
+    return Some({ key, status, main: true, })
   }
   if ranges[2] is Some(key) {
-    return Some({ key, status: 200, })
+    return Some({ key, status: 200, main: true, })
   }
   if default is Some(key) {
-    return Some({ key, status: 200, })
+    return Some({ key, status: 200, main: true, })
   }
   if lowest_other is Some((key, status)) {
-    return Some({ key, status, })
+    return Some({ key, status, main: true, })
   }
   for digit in 3..<=5 {
     if ranges[digit] is Some(key) {
-      return Some({ key, status: digit * 100, })
+      return Some({ key, status: digit * 100, main: true, })
     }
   }
   None
 }
 
 ///|
-/// Reads the responses of the operation at `pointer`, and returns its main
-/// response, or `None` when the operation is left out or its responses
-/// cannot be read. Problems come in the order of the responses.
-fn Report::main_response(
+/// Reads the responses of the operation at `pointer`, and returns those it
+/// answers: the other responses, in the order the document writes them,
+/// then the main one. `None` when the operation is left out or its
+/// responses cannot be read. An explicit code answers itself, a range its
+/// first code, and `default`, when it is not the main response, 500.
+/// Problems come in the order of the responses.
+fn Report::responses(
   self : Report,
   pointer : String,
   operation : Map[String, Json],
-) -> Main? {
+) -> Array[Response]? {
   let responses_pointer = @definitions.child_pointer(pointer, "responses")
   let responses = match operation.get("responses") {
     None => {
       self.root_warning(
         pointer, "has no responses: the operation answers 200 with an empty body",
       )
-      return Some({ key: "200", status: 200, })
+      return Some([{ key: "200", status: 200, main: true, }])
     }
     Some(Object(responses)) => responses
     Some(_) => {
@@ -130,41 +136,46 @@ fn Report::main_response(
     keys.push((key, response_key(key)))
   }
   let main = main_of(keys)
+  let answered = []
   for entry in keys {
     let (key, kind) = entry
     let response_pointer = @definitions.child_pointer(responses_pointer, key)
-    match kind {
-      Extension => ()
-      Malformed =>
+    let status = match kind {
+      Extension => continue
+      Malformed => {
         self.root_warning(
           response_pointer, "left out: a response key is a status code from 100 to 599, a range from 1XX to 5XX, default or an x- extension",
         )
-      _ if kind.is_informational() =>
+        continue
+      }
+      Code(code) if code >= 200 => code
+      Range(digit) if digit >= 2 => digit * 100
+      Default => 500
+      // 1XX, or an explicit code from 100 to 199.
+      _ => {
         if main is Some(_) {
           self.root_warning(
             response_pointer, "left out: smock answers with a status from 200 to 599",
           )
         }
-      _ =>
-        match main {
-          Some(main) if main.key == key =>
-            self.main_response_parts(
-              response_pointer,
-              responses.get(key).unwrap_or(Json::null()),
-            )
-          // Until the other responses are imported.
-          Some(main) =>
-            self.root_warning(
-              response_pointer,
-              "left out: only the main response, \{main.key}, is imported yet",
-            )
-          // A response that is not informational makes a main one.
-          None => ()
-        }
+        continue
+      }
+    }
+    // A response that is not informational makes a main one.
+    guard main is Some(main) else { continue }
+    self.response_parts(
+      response_pointer,
+      responses.get(key).unwrap_or(Json::null()),
+    )
+    if key != main.key {
+      answered.push({ key, status, main: false, })
     }
   }
   match main {
-    Some(main) => Some(main)
+    Some(main) => {
+      answered.push(main)
+      Some(answered)
+    }
     None if keys.iter().any(entry => entry.1.is_informational()) => {
       self.root_warning(
         responses_pointer, "left out: the operation has only 1xx responses, and smock answers with a status from 200 to 599",
@@ -175,7 +186,7 @@ fn Report::main_response(
       self.root_warning(
         responses_pointer, "has no responses: the operation answers 200 with an empty body",
       )
-      Some({ key: "200", status: 200, })
+      Some([{ key: "200", status: 200, main: true, }])
     }
   }
 }
