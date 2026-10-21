@@ -53,13 +53,13 @@ fn Report::document(self : Report, root : Content) -> Document? {
 /// repeated key is an error. Or why it cannot be parsed. The input must be
 /// UTF-8, and a leading byte order mark is skipped.
 fn parse(name : String, bytes : Bytes) -> Content {
-  let yaml = name.has_suffix(".yaml") || name.has_suffix(".yml")
-  if !yaml && !name.has_suffix(".json") {
+  if !@definitions.is_json_or_yaml_name(name) {
     return Invalid(
       pointer="",
       message="an OpenAPI document's name ends in .json, .yaml or .yml",
     )
   }
+  let yaml = @definitions.is_yaml_name(name)
   let text = @utf8.decode(bytes, ignore_bom=true) catch {
     _ => return Invalid(pointer="", message="not valid UTF-8")
   }

@@ -827,7 +827,7 @@ pub fn ImportOpenapiSettings::from_matches(
   matches : @argparse.Matches,
 ) -> ImportOpenapiSettings raise InvalidSetting {
   let document = value(matches, "document").unwrap_or("")
-  if !is_json_or_yaml(document) {
+  if !@definitions.is_json_or_yaml_name(document) {
     raise InvalidArgument(
       name="document",
       value=document,
@@ -843,7 +843,7 @@ pub fn ImportOpenapiSettings::from_matches(
     raise InvalidOption(flag="ref-dir", value="", reason="must not be empty")
   }
   let output = value(matches, "output").unwrap_or("")
-  if !is_json_or_yaml(output) {
+  if !@definitions.is_json_or_yaml_name(output) {
     raise InvalidOption(
       flag="output",
       value=output,
@@ -961,16 +961,6 @@ fn base_path_value(matches : @argparse.Matches) -> String? raise InvalidSetting 
     )
   }
   Some(path)
-}
-
-///|
-/// Whether a file's name ends in an extension of the files
-/// `import-openapi` reads and writes, in lower case, as for Definition
-/// files: `.json` for JSON, or `.yaml` and `.yml` for YAML.
-fn is_json_or_yaml(path : String) -> Bool {
-  path.has_suffix(".json") ||
-  path.has_suffix(".yaml") ||
-  path.has_suffix(".yml")
 }
 
 ///|

@@ -199,9 +199,7 @@ fn Report::referenced(
     )
     return None
   }
-  if !(path.has_suffix(".json") ||
-    path.has_suffix(".yaml") ||
-    path.has_suffix(".yml")) {
+  if !@definitions.is_json_or_yaml_name(path) {
     self.error_at(
       pointer, "a referenced file's name must end in .json, .yaml or .yml",
     )

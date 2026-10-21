@@ -5,6 +5,22 @@
 // Mock) are beyond the Schema.
 
 ///|
+/// Whether a file named `name` is YAML, as a Definition file: its name ends
+/// in `.yaml` or `.yml`, in lower case.
+pub fn is_yaml_name(name : String) -> Bool {
+  name.has_suffix(".yaml") || name.has_suffix(".yml")
+}
+
+///|
+/// Whether a file named `name` is JSON or YAML, as a Definition file: its
+/// name ends in `.json`, `.yaml` or `.yml`, in lower case. Other files are
+/// not Definition files, and the OpenAPI import reads and writes only
+/// such names too.
+pub fn is_json_or_yaml_name(name : String) -> Bool {
+  name.has_suffix(".json") || is_yaml_name(name)
+}
+
+///|
 /// Parses a Definition file, JSON or YAML, into its top-level object, or
 /// the problem that stops it from being read. A YAML file gives the tree of
 /// the equivalent JSON file, so everything after parsing is shared.
@@ -15,10 +31,10 @@ fn parse_file(
   let problem = (pointer : String, message : String) => {
     Err(Diagnostic::{ file: name, pointer, message, })
   }
-  let yaml = name.has_suffix(".yaml") || name.has_suffix(".yml")
-  if !yaml && !name.has_suffix(".json") {
+  if !is_json_or_yaml_name(name) {
     return problem("", "a Definition file name ends in .json, .yaml or .yml")
   }
+  let yaml = is_yaml_name(name)
   let text = @utf8.decode(bytes) catch {
     _ => return problem("", "not valid UTF-8")
   }

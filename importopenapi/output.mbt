@@ -30,7 +30,7 @@ fn Report::file(
   }
   file["stubs"] = Json::array(stubs)
   let file = Json::object(file)
-  let bytes = if is_yaml(self.options.output) {
+  let bytes = if @definitions.is_yaml_name(self.options.output) {
     guard self.yaml_file(file, document, imported) is Some(bytes) else {
       return Failed(self.problems)
     }
@@ -58,13 +58,6 @@ fn Report::mock(self : Report) -> Json {
     mock["hosts"] = self.options.hosts.to_json()
   }
   Json::object(mock)
-}
-
-///|
-/// Whether the file `name` is written as YAML: its name ends in `.yaml` or
-/// `.yml`, as for Definition files.
-fn is_yaml(name : String) -> Bool {
-  name.has_suffix(".yaml") || name.has_suffix(".yml")
 }
 
 ///|
