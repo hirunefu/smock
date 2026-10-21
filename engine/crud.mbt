@@ -61,8 +61,8 @@ priv struct CrudAnswer {
 /// `crud`, to the request `incoming` of `session`, which took the draw
 /// `draw`, without Faults:
 ///
-/// - a list answers 200 with the bucket's items, a plain array, and their
-///   number in `X-Total-Count` and `X-Filtered-Count`;
+/// - a list answers 200 with the items its query keeps, a plain array, or
+///   400 when smock cannot read its query (see `crud_list`);
 /// - a read answers 200 with the item whose key has the text of the item
 ///   path, or 404 when there is none;
 /// - a create, replace, update or delete writes, as `Engine::crud_write`
@@ -132,11 +132,7 @@ fn Engine::crud_answer(
   // Every write keeps the rules of a keyed bucket, so it holds an array.
   guard value is Array(items) else { abort("a keyed bucket holds an array") }
   let plan = if call.op is List {
-    let count = items.length().to_string()
-    crud_plan(crud, 200, @template.compact_json_bytes(value), [
-      ("X-Total-Count", count),
-      ("X-Filtered-Count", count),
-    ])
+    crud_list(crud, stub, value, items, incoming.query_parameters())
   } else {
     let text = call.key.unwrap_or("")
     match item_index(items, key, text) {

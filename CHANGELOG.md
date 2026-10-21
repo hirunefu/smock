@@ -218,7 +218,7 @@ of each GitHub release include its section
   take over one of its requests. `crud.headers`, such as CORS headers, go
   on every answer, and `fault` works as on any Stub. An Ephemeral Stub can
   be a CRUD Stub. Each Journal entry gains `crud`, the operation and its
-  key. List queries, its Near miss, warnings and rendering come later.
+  key. Its Near miss, warnings and rendering come later.
 - CRUD Stubs write: `POST <path>` creates an item and answers 201 with it
   and its `Location`, `PUT <path>/<key>` replaces the item, `PATCH
   <path>/<key>` merges the body into it shallowly, and `DELETE
@@ -233,6 +233,18 @@ of each GitHub release include its section
   item is 404, no integer key left 500 `no new key`, and the state bound
   507, a delete's included. A connection Fault replaces the answer, but
   not the write.
+- List queries: a CRUD Stub's list reads its query in smock's own syntax.
+  A parameter filters on the item member of its name, as `find` compares,
+  and a repeated name holds when any of its values does. `$sort=a,-b`
+  sorts by members, by type first and then by value, with strings by
+  Unicode code point; absent members, objects and arrays go last, and the
+  sort is stable. `$offset` and `$limit` page the list. `X-Filtered-Count`
+  counts the items that pass the filters, before paging, and the body
+  stays a plain array. `$$name` filters on the member `$name`, and any
+  other name that starts with `$`, such as OData's `$top`, is 400
+  `invalid query parameter`, as are malformed or repeated `$sort`,
+  `$offset` and `$limit`. A client's own parameters, such as `page`, are
+  filters too, so its list comes back `[]`.
 - docs/migrating-from-mockoon.md maps Mockoon's helpers, `RANDOM` routes,
   global variables, Range requests, dates, cookies and environment
   variables onto smock, with each difference called out.

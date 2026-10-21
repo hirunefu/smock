@@ -2600,8 +2600,8 @@ A Session that sends `POST /api/v1/orders` with
 `DELETE /api/v1/orders/1004` answers it once more and removes it. Another
 Session still sees the three orders.
 
-For now, a list does not read the query. Filtering, sorting and paging
-lists come in a later version.
+A list can be filtered, sorted and paged with a
+[list query](#list-queries).
 
 #### The shape of a CRUD Stub
 
@@ -2634,7 +2634,7 @@ lists come in a later version.
 
 | Request | Answer |
 |---|---|
-| `GET <path>` | 200, the bucket's items as a plain JSON array, with `X-Total-Count` and `X-Filtered-Count`, both the number of items. The query is not read yet. |
+| `GET <path>` | 200, the items that its [list query](#list-queries) keeps, as a plain JSON array, with `X-Total-Count` and `X-Filtered-Count`. Without a query, every item, and both counts are the number of items. 400 when smock cannot read the query. |
 | `GET <path>/<key>` | 200, the item whose key has the text `<key>`, or 404 with the body above. |
 
 - A read sees the copy of the request's Session when it holds one, and
@@ -2648,8 +2648,102 @@ lists come in a later version.
   numbers written as smock writes them, so a stored `9.90` comes back as
   `9.9`. The answers are not templates, so the 1 MiB bound on a rendered
   body does not apply: a list is as large as its bucket.
-- The 404 is the CRUD Stub's own answer. The request counts as matched,
-  under the Stub's ID, and gets no [Near miss](#when-no-stub-matches).
+- The 404 and the 400 are the CRUD Stub's own answers. The request counts
+  as matched, under the Stub's ID, and gets no
+  [Near miss](#when-no-stub-matches).
+
+#### List queries
+
+A list reads its query in smock's own syntax: filters by member, `$sort`,
+`$offset` and `$limit`. So
+`GET /api/v1/orders?status=paid&$sort=-id&$limit=10` lists the paid
+orders, highest `id` first, at most ten. A read ignores the query.
+
+Parameters are decoded as [`query` conditions](#how-a-stub-matches-a-request)
+decode them: `%20` and `+` both stand for a space, and a parameter without
+`=` has the empty value.
+
+**Filters.** A name that does not start with `$` filters on the item
+member of that name.
+
+- Names are top-level members, taken literally: `a.b` names the member
+  `a.b`, not `b` inside `a`.
+- Every name must hold. A repeated name holds when any of its values does,
+  so `?status=paid&status=pending` lists both.
+- A member meets a value as [`find`](#helpers) compares: a string equal to
+  the value; a number of equal value, so `?total=12.5` finds `12.50`, and
+  integers beyond 2^53 compare exactly; `true`, `false` and `null` by
+  those words. So `?id=1002` finds the order whose `id` is `1002` or
+  `"1002"`. Objects, arrays and absent members never meet a value.
+
+**Names that start with `$`** are smock's. `$sort`, `$offset` and `$limit`
+are read below, and `$$name` filters on the member `$name`. Any other
+name that starts with `$` is 400, so an OData client's `$top` gets an
+error rather than a wrong list.
+
+**Sort.** `$sort=customerId,-total` sorts by `customerId`, ascending, and
+then, among items that tie, by `total`, descending.
+
+- The value is a comma-separated list of member names, each after an
+  optional `-`. Names are literal, and `$$` is not an escape here. A
+  member whose name starts with `-` or holds `,` cannot be a sort key.
+- Ascending, values order by type first: null, false, true, numbers,
+  strings. Numbers order by value, compared as `json` conditions compare
+  them, so large integers order exactly. Strings order by Unicode code
+  point, case-sensitive, with no locale rules: `B` comes before `a`.
+  Descending reverses that whole order.
+- Items whose member is absent, an object or an array go last, in either
+  direction. They tie with each other on that member, so the next sort
+  key, or the bucket's order, decides between them.
+- The sort is stable: items that tie keep the bucket's order. Without
+  `$sort`, items keep the bucket's order.
+
+**Paging.** `$offset` skips that many items, 0 by default. `$limit` keeps
+at most that many, with no limit by default.
+
+- Both are decimal digits: `$offset` from 0 and `$limit` from 1.
+- A number too large to hold counts as the largest: an offset past the
+  end gives `[]`, and such a limit keeps every item.
+
+**Order and counts.** The list applies the filters, then `$sort`, then
+`$offset` and `$limit`, wherever they stand in the query. `X-Total-Count`
+is the number of items in the bucket, and `X-Filtered-Count` the number
+that pass the filters, before paging. The body stays the plain array.
+
+**Errors.** A query that smock cannot read answers 400 with the Stub's
+`crud.headers`, and names the first such parameter in the query:
+
+```json
+{"error":"invalid query parameter","stub":"orders","parameter":"$top"}
+```
+
+These are 400: a name that starts with `$` other than the three above; an
+empty sort name, as in `$sort=`, `$sort=a,,b` or `$sort=-`, or one that
+starts with `-`, as in `$sort=--a`; an `$offset` or a `$limit` that is not
+decimal digits, or a `$limit` of 0; and `$sort`, `$offset` or `$limit`
+given twice.
+
+**A client's own parameters are filters too.** A client that sends its
+own paging or tracking parameters, such as `page` or `_`, gets `[]` with
+`X-Filtered-Count: 0`, since no item has the member `page` or `_`. An
+ordinary Stub before the CRUD Stub can answer such lists from
+[`data.NAME`](#reading-buckets-in-templates):
+
+```yaml
+- id: orders-by-page
+  mock: shop
+  request:
+    method: GET
+    path: /api/v1/orders
+    query: { page: { $exists: true } }
+  response:
+    status: 200
+    template: true
+    json: "${data.orders}"
+- id: orders
+  mock: shop
+  crud: { bucket: orders, path: /api/v1/orders }
+```
 
 #### Writes
 
@@ -2815,13 +2909,13 @@ the write. A connection Fault replaces the answer, but not the write, and
 #### CRUD Stubs in the Journal
 
 Each [Journal](../README.md#the-journal) entry has `crud`: null, or the
-operation and its key. A list records `{"op":"list","key":null}`. A read,
-a replace, an update and a delete record `read`, `replace`, `update` and
-`delete` with the item path's key text, whatever the outcome, such as
-`{"op":"read","key":"9999"}` for the 404 above. A create records `create`
-with the key of the item stored, the body's key on a 409, and else null.
-`crud` counts toward the entry's bytes, and `responseIndex` is null for a
-CRUD Stub's answers.
+operation and its key. A list records `{"op":"list","key":null}`,
+whatever its query. A read, a replace, an update and a delete record
+`read`, `replace`, `update` and `delete` with the item path's key text,
+whatever the outcome, such as `{"op":"read","key":"9999"}` for the 404
+above. A create records `create` with the key of the item stored, the
+body's key on a 409, and else null. `crud` counts toward the entry's
+bytes, and `responseIndex` is null for a CRUD Stub's answers.
 
 `dataWritten` names the bucket after a write, and is `[]` after a list, a
 read, or any failure. `dataError` stays null: a CRUD Stub's failures are
