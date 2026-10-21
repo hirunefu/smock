@@ -343,7 +343,7 @@ fn Sampler::merge(
     Some(_) => self.report.warning_at(all_of, "ignored: must be an array")
   }
   for keyword in ["oneOf", "anyOf"] {
-    let one_of = @definitions.child_pointer(pointer, keyword)
+    let branches_pointer = @definitions.child_pointer(pointer, keyword)
     match schema.get(keyword) {
       None => ()
       Some(Array(branches)) => {
@@ -351,7 +351,7 @@ fn Sampler::merge(
         let mut nevers = false
         let mut taken = false
         for i, json in branches {
-          let at = @definitions.child_pointer(one_of, i.to_string())
+          let at = @definitions.child_pointer(branches_pointer, i.to_string())
           if !self.is_schema(at, json) {
             continue
           }
@@ -374,7 +374,8 @@ fn Sampler::merge(
           merged.never = true
         }
       }
-      Some(_) => self.report.warning_at(one_of, "ignored: must be an array")
+      Some(_) =>
+        self.report.warning_at(branches_pointer, "ignored: must be an array")
     }
   }
 }

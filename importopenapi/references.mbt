@@ -111,7 +111,7 @@ fn Report::target(
   let (number, json) = if path == "" {
     (source, self.tree(document, source))
   } else {
-    guard self.referenced(document, pointer, source, path.to_owned())
+    guard self.referenced_document(document, pointer, source, path.to_owned())
       is Some(found) else {
       return None
     }
@@ -181,7 +181,7 @@ fn Report::tree(self : Report, document : Document, number : Int?) -> Json {
 /// it, and must lie under the directory that references are followed in.
 /// A document that cannot be read or parsed is reported among the
 /// document-level problems.
-fn Report::referenced(
+fn Report::referenced_document(
   self : Report,
   document : Document,
   pointer : String,
