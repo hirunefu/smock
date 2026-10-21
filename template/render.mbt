@@ -152,6 +152,15 @@ pub fn Context::next(
 }
 
 ///|
+/// The request's helper generator, which this rendering draws from, as
+/// every rendering for the request does. What the request draws outside
+/// its templates, such as the new `uuid` keys of its data writes, draws
+/// from it too, on from where the renderings before stopped.
+pub fn Context::generator(self : Context) -> @prng.Generator {
+  self.rand
+}
+
+///|
 /// Moves the clock of `now()` and `nowMillis()` on by `ms` milliseconds:
 /// the delay of the next event, whose templates then read the time of the
 /// request plus the delays of the events up to and including it.

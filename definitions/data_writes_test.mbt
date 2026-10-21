@@ -110,7 +110,7 @@ test "dataWrites holds 1 to 100 writes, each an object with a known op, a bucket
 }
 
 ///|
-test "a write names a bucket of the Stub's Mock, takes key only on a keyed bucket, and does not write to a keyed bucket yet" {
+test "a write names a bucket of the Stub's Mock, and takes key only on a keyed bucket" {
   inspect(
     write_problems(
       (
@@ -120,9 +120,6 @@ test "a write names a bucket of the Stub's Mock, takes key only on a keyed bucke
         #|      - { op: set, bucket: visit, value: 1 }
         #|      - { op: set, bucket: visits, key: "${path[1]}", value: 1 }
         #|      - { op: remove, bucket: visits, key: "${path[1]}" }
-        #|      - { op: set, bucket: orders, value: [] }
-        #|      - { op: append, bucket: orders, value: { id: 1 } }
-        #|      - { op: remove, bucket: orders, key: "${path[1]}" }
         #|    response: { status: 200 }
       ),
     ),
@@ -130,9 +127,99 @@ test "a write names a bucket of the Stub's Mock, takes key only on a keyed bucke
       #|a.yaml: /stubs/0/dataWrites/0/bucket: the Mock has no Data bucket "visit"
       #|a.yaml: /stubs/0/dataWrites/1/key: is allowed only on a keyed bucket, and the Data bucket "visits" has no "key"
       #|a.yaml: /stubs/0/dataWrites/2/key: is allowed only on a keyed bucket, and the Data bucket "visits" has no "key"
-      #|a.yaml: /stubs/0/dataWrites/3/bucket: the Data bucket "orders" is keyed, and dataWrites cannot write to a keyed bucket yet
-      #|a.yaml: /stubs/0/dataWrites/4/bucket: the Data bucket "orders" is keyed, and dataWrites cannot write to a keyed bucket yet
-      #|a.yaml: /stubs/0/dataWrites/5/bucket: the Data bucket "orders" is keyed, and dataWrites cannot write to a keyed bucket yet
+    ),
+  )
+}
+
+///|
+test "keyed buckets take set, merge and remove with key, append, and set without key, with literal and templated values" {
+  inspect(
+    write_problems(
+      (
+        #|  - id: keyed
+        #|    mock: m
+        #|    dataWrites:
+        #|      - { op: merge, bucket: orders, key: "${path[3]}", value: { status: paid, paidAt: "${now()}" } }
+        #|      - { op: merge, bucket: orders, key: "1002", value: "${body}" }
+        #|      - { op: set, bucket: orders, key: "${path[3]}", value: { id: 1002, status: pending } }
+        #|      - { op: set, bucket: orders, key: "a-$${x}", value: "${body}" }
+        #|      - { op: remove, bucket: orders, key: "${data.orders[0].id}" }
+        #|      - { op: append, bucket: orders, value: { status: new } }
+        #|      - { op: append, bucket: orders, value: { id: "a-1", status: new } }
+        #|      - { op: append, bucket: orders, value: "${body}" }
+        #|      - { op: set, bucket: orders, value: [] }
+        #|      - { op: set, bucket: orders, value: [{ id: 1 }, { id: "2", note: null }] }
+        #|      - { op: set, bucket: orders, value: "${data.orders}" }
+        #|    response: { status: 200 }
+      ),
+    ),
+    content="valid",
+  )
+}
+
+///|
+test "on a keyed bucket, merge needs key, and a literal value that already breaks its op does not load" {
+  inspect(
+    write_problems(
+      (
+        #|  - id: keyed
+        #|    mock: m
+        #|    dataWrites:
+        #|      - { op: merge, bucket: orders, value: { status: paid } }
+        #|      - { op: set, bucket: orders, key: "1", value: [1] }
+        #|      - { op: set, bucket: orders, key: "1", value: null }
+        #|      - { op: merge, bucket: orders, key: "1", value: paid }
+        #|      - { op: append, bucket: orders, value: 1 }
+        #|      - { op: append, bucket: orders, value: [{ id: 1 }] }
+        #|      - { op: append, bucket: orders, value: { id: null } }
+        #|      - { op: append, bucket: orders, value: { id: "a/b" } }
+        #|      - { op: append, bucket: orders, value: { id: 1.5 } }
+        #|      - { op: set, bucket: orders, value: {} }
+        #|      - { op: set, bucket: orders, value: [1, {}, { id: 1 }, { id: 1.0 }, { id: "" }] }
+        #|      - { op: set, bucket: orders, value: [{ id: "${body.id}" }, 1] }
+        #|      - { op: append, bucket: orders, value: { id: "${body.id}" } }
+        #|    response: { status: 200 }
+      ),
+    ),
+    content=(
+      #|a.yaml: /stubs/0/dataWrites/0: "merge" into the keyed Data bucket "orders" needs "key": the bucket holds an array, and "merge" with "key" merges into one of its items
+      #|a.yaml: /stubs/0/dataWrites/1/value: must be an object: "set" with "key" makes one item of the keyed bucket this value
+      #|a.yaml: /stubs/0/dataWrites/2/value: must be an object: "set" with "key" makes one item of the keyed bucket this value
+      #|a.yaml: /stubs/0/dataWrites/3/value: must be an object: "merge" with "key" merges the members of an object into one item
+      #|a.yaml: /stubs/0/dataWrites/4/value: must be an object: "append" adds an item to the keyed bucket
+      #|a.yaml: /stubs/0/dataWrites/5/value: must be an object: "append" adds an item to the keyed bucket
+      #|a.yaml: /stubs/0/dataWrites/6/value/id: must be a key: a non-empty string without /, or an integer from -9007199254740991 to 9007199254740991
+      #|a.yaml: /stubs/0/dataWrites/7/value/id: must be a key: a non-empty string without /, or an integer from -9007199254740991 to 9007199254740991
+      #|a.yaml: /stubs/0/dataWrites/8/value/id: must be a key: a non-empty string without /, or an integer from -9007199254740991 to 9007199254740991
+      #|a.yaml: /stubs/0/dataWrites/9/value: must be an array of objects, since the bucket has "key"
+      #|a.yaml: /stubs/0/dataWrites/10/value/0: must be an object with the key member "id"
+      #|a.yaml: /stubs/0/dataWrites/10/value/1: needs the key member "id"
+      #|a.yaml: /stubs/0/dataWrites/10/value/3/id: has the key text "1", as item 2 does
+      #|a.yaml: /stubs/0/dataWrites/10/value/4/id: must be a key: a non-empty string without /, or an integer from -9007199254740991 to 9007199254740991
+    ),
+  )
+}
+
+///|
+test "key is a text template, always parsed: its problems are reported at its pointer" {
+  inspect(
+    write_problems(
+      (
+        #|  - id: keys
+        #|    mock: m
+        #|    dataWrites:
+        #|      - { op: remove, bucket: orders, key: "${path[3]" }
+        #|      - { op: set, bucket: orders, key: "${data.order[0].id}", value: {} }
+        #|      - { op: merge, bucket: orders, key: 1002, value: {} }
+        #|      - { op: remove, bucket: orders, key: "${x}" }
+        #|    response: { status: 200 }
+      ),
+    ),
+    content=(
+      #|a.yaml: /stubs/0/dataWrites/0/key: template: column 1: the ${ is not closed
+      #|a.yaml: /stubs/0/dataWrites/1/key: template: column 3: data.order[0].id: the Mock has no Data bucket "order"
+      #|a.yaml: /stubs/0/dataWrites/2/key: must be a string
+      #|a.yaml: /stubs/0/dataWrites/3/key: template: column 3: unknown name "x": not a request field, a loop variable or a helper
     ),
   )
 }
@@ -230,13 +317,14 @@ test "a write may name a bucket that another file declares for the Stub's Mock, 
 }
 
 ///|
-test "a Stub keeps its writes in the order written, each with its op, bucket and value" {
+test "a Stub keeps its writes in the order written, each with its op, bucket, key and value" {
   let file =
     #|mocks:
     #|  - name: m
     #|data:
     #|  - { mock: m, name: visits, json: 0 }
     #|  - { mock: m, name: cart, json: [] }
+    #|  - { mock: m, name: orders, key: id, json: [] }
     #|stubs:
     #|  - id: a
     #|    mock: m
@@ -244,6 +332,8 @@ test "a Stub keeps its writes in the order written, each with its op, bucket and
     #|      - { op: append, bucket: cart, value: { sku: "${body.sku}" } }
     #|      - { op: set, bucket: visits, value: 1 }
     #|      - { op: merge, bucket: cart, value: "${body}" }
+    #|      - { op: merge, bucket: orders, key: "${path[1]}", value: { paid: true } }
+    #|      - { op: remove, bucket: orders, key: "1001" }
     #|    response: { status: 200 }
     #|  - id: b
     #|    mock: m
@@ -261,22 +351,33 @@ test "a Stub keeps its writes in the order written, each with its op, bucket and
     let Ordinary(ordinary) = stub.serves
     out.push("\{stub.id}: writes data \{ordinary.writes_data()}")
     for write in ordinary.data_writes {
-      let literal = match write.value.literal() {
-        Some(value) => value.stringify()
-        None => "none"
+      let key = match write.key {
+        Some(key) =>
+          " key at \{key.pointer}: \{key.source.escape()}, literal \{key.is_literal()};"
+        None => ""
       }
-      out.push(
-        "  \{write.op.name()} \{write.bucket} at \{write.value.pointer}: \{write.value.source.stringify()}, literal \{literal}",
-      )
+      let value = match write.value {
+        Some(value) => {
+          let literal = match value.literal() {
+            Some(literal) => literal.stringify()
+            None => "none"
+          }
+          " value at \{value.pointer}: \{value.source.stringify()}, literal \{literal}"
+        }
+        None => " no value"
+      }
+      out.push("  \{write.op.name()} \{write.bucket}:\{key}\{value}")
     }
   }
   inspect(
     out.join("\n"),
     content=(
       #|a: writes data true
-      #|  append cart at /dataWrites/0/value: {"sku":"${body.sku}"}, literal none
-      #|  set visits at /dataWrites/1/value: 1, literal 1
-      #|  merge cart at /dataWrites/2/value: "${body}", literal none
+      #|  append cart: value at /dataWrites/0/value: {"sku":"${body.sku}"}, literal none
+      #|  set visits: value at /dataWrites/1/value: 1, literal 1
+      #|  merge cart: value at /dataWrites/2/value: "${body}", literal none
+      #|  merge orders: key at /dataWrites/3/key: "${path[1]}", literal false; value at /dataWrites/3/value: {"paid":true}, literal {"paid":true}
+      #|  remove orders: key at /dataWrites/4/key: "1001", literal true; no value
       #|b: writes data false
     ),
   )

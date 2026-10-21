@@ -182,9 +182,21 @@ of each GitHub release include its section
   gives 500 `data write failed`, and writes past the state bound give 507.
   The response sees the data after the writes, and the writes stand
   whatever follows. Only a Session's first write to a bucket copies it.
-  Writes to keyed buckets come later. An Ephemeral Stub takes `dataWrites`
-  too. Each Journal entry gains `dataWritten`, the buckets written, and
-  `dataError`, why a write failed to apply.
+  An Ephemeral Stub takes `dataWrites` too. Each Journal entry gains
+  `dataWritten`, the buckets written, and `dataError`, why a write failed
+  to apply.
+- `dataWrites` writes keyed Data buckets item by item. `set`, `merge` and
+  `remove` take the `key` of one item, a text template compared as a key
+  text, so `${path[3]}` finds the order whose `id` is `1002` or `"1002"`.
+  `append` adds an item at the end. A value's key member may be absent or
+  hold the item's key, and the item keeps its stored key value. An item
+  that `append` adds without a key gets a new one, as the bucket's
+  `newKey` says: one more than the highest integer key, skipping integers
+  whose text a string key has, or a version 4 UUID from the request's
+  helpers, which `fault.seed` repeats. A key that no item has, a value
+  that would break the bucket's rules, and running out of integer keys
+  (`no new key`) fail the write, and nothing is written. A Stub's response
+  cannot read a key that its own `append` made.
 - docs/migrating-from-mockoon.md maps Mockoon's helpers, `RANDOM` routes,
   global variables, Range requests, dates, cookies and environment
   variables onto smock, with each difference called out.

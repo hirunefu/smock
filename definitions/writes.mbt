@@ -4,38 +4,52 @@
 
 ///|
 /// One write of a Stub's `dataWrites`: what it does, the bucket it writes
-/// to, and the template of its value.
+/// to, and the templates of its key and its value.
 pub struct DataWrite {
   op : DataOp
   /// The name of the bucket written to, one of the buckets of the Stub's
   /// Mock when the Stub was read.
   bucket : String
+  /// The template of the key of the one item written to, when the write
+  /// has `key`: a text template whose pointer is `/dataWrites/<i>/key`,
+  /// always parsed, whose output is compared as a key text. Only a write
+  /// to a keyed bucket has it: `set` and `merge` may, and `remove` always
+  /// does.
+  key : @template.Text?
   /// The template of the value, a structured template whose pointer is
   /// `/dataWrites/<i>/value`, parsed whether or not a response has
-  /// `template` on.
-  value : @template.Structured
+  /// `template` on. Every op but `remove` has one.
+  value : @template.Structured?
 } derive(Debug, Eq)
 
 ///|
 /// What a write does to its bucket, by its `op`.
 pub enum DataOp {
-  /// `set`: the bucket becomes the value.
+  /// `set`: the bucket becomes the value; with a key, the item with that
+  /// key does, in its place.
   Replace
   /// `merge`: the members of the value, an object, are merged into the
-  /// bucket, which holds an object: each replaces the member of the same
-  /// name in its place, or is added at the end.
+  /// bucket, which holds an object, or with a key into the item with that
+  /// key: each replaces the member of the same name in its place, or is
+  /// added at the end.
   Merge
   /// `append`: the value is appended to the bucket, which holds an array.
+  /// In a keyed bucket, it is an item, which gets a new key when it has
+  /// none.
   Append
+  /// `remove`: the item with the key is removed from the keyed bucket.
+  Remove
 } derive(Debug, Eq)
 
 ///|
-/// The op's name, as `dataWrites` writes it: `set`, `merge` or `append`.
+/// The op's name, as `dataWrites` writes it: `set`, `merge`, `append` or
+/// `remove`.
 pub fn DataOp::name(self : DataOp) -> String {
   match self {
     Replace => "set"
     Merge => "merge"
     Append => "append"
+    Remove => "remove"
   }
 }
 
@@ -49,19 +63,20 @@ let no_data_writes : ReadOnlyArray[DataWrite] = ReadOnlyArray::from_array([])
 
 ///|
 /// The Data buckets of one Mock, as the Stubs of the Mock see them when
-/// they are read: the names their templates may read, and whether each
-/// bucket is keyed.
+/// they are read: the names their templates may read, and the key member
+/// of each keyed bucket.
 priv struct MockBuckets {
   /// The buckets templates may read as `data.NAME`.
   templates : @template.Buckets
-  /// Whether each bucket is keyed, by its name.
-  keyed : Map[String, Bool]
+  /// The key member of each bucket, by its name: `None` for a bucket
+  /// without `key`, and `""` for one whose `key` is reported as wrong.
+  keys : Map[String, String?]
 }
 
 ///|
-/// The buckets `keyed` names, each with whether it is keyed.
-fn MockBuckets::new(keyed : Map[String, Bool]) -> MockBuckets {
-  { templates: @template.Buckets(keyed.keys().collect()), keyed, }
+/// The buckets `keys` names, each with its key member, if it is keyed.
+fn MockBuckets::new(keys : Map[String, String?]) -> MockBuckets {
+  { templates: @template.Buckets(keys.keys().collect()), keys, }
 }
 
 ///|
@@ -74,9 +89,8 @@ let no_mock_buckets : MockBuckets = MockBuckets::new(Map([]))
 /// the Data buckets `buckets` of the Stub's Mock. Each write is an object
 /// with `op`, `bucket`, and the members its op takes: `value`, a
 /// structured template parsed whether or not a response has `template` on,
-/// and `key`. Returns the writes in the order written.
-///
-/// Writes to keyed buckets, and so `remove` and `key`, do not load yet.
+/// and `key`, a text template, always parsed. Returns the writes in the
+/// order written.
 fn File::read_data_writes(
   self : File,
   stub_pointer : String,
@@ -124,6 +138,7 @@ fn File::read_data_write(
   // The op's name, as written, when it is one of the four.
   let mut op_name = None
   let mut bucket = None
+  let mut key = None
   let mut value = None
   for name, field_value in members {
     let field = child_pointer(pointer, name)
@@ -138,6 +153,20 @@ fn File::read_data_write(
             )
         }
       "bucket" => bucket = self.name(field, field_value)
+      "key" =>
+        if self.string(field, field_value) is Some(source) {
+          match
+            @template.Text::parse(
+              source,
+              pointer=template_pointer(stub_pointer, field),
+              kind=Body(Plain),
+              env=self.env,
+              buckets=buckets.templates,
+            ) {
+            Ok(template) => key = Some(template)
+            Err(problem) => self.report_template_problem(stub_pointer, problem)
+          }
+        }
       "value" =>
         match
           @template.Structured::parse(
@@ -153,68 +182,130 @@ fn File::read_data_write(
               self.report_template_problem(stub_pointer, problem)
             }
         }
-      "key" => self.string(field, field_value) |> ignore
       _ => self.unknown_field(field)
     }
   }
   self.require(members, pointer, "op")
   self.require(members, pointer, "bucket")
   let key_pointer = child_pointer(pointer, "key")
+  let value_pointer = child_pointer(pointer, "value")
+  let has_key = members.contains("key")
   // The members each op takes: `remove` takes `key` alone, `append`
   // `value` alone, and `set` and `merge` `value` and, optionally, `key`.
   if op_name is Some(op) {
     if op == "remove" {
       self.require(members, pointer, "key")
       if members.contains("value") {
-        self.error(child_pointer(pointer, "value"), "\"remove\" takes no value")
+        self.error(value_pointer, "\"remove\" takes no value")
       }
     } else {
       self.require(members, pointer, "value")
-      if op == "append" && members.contains("key") {
+      if op == "append" && has_key {
         self.error(key_pointer, "\"append\" takes no key")
       }
     }
   }
+  // A literal value that already breaks its op never loads.
+  let literal = match value {
+    Some(template) => template.literal()
+    None => None
+  }
+  // The key member of the bucket, when it is keyed.
+  let mut keyed_by = None
   if bucket is Some(name) {
-    match buckets.keyed.get(name) {
+    match buckets.keys.get(name) {
       None =>
         self.error(
           child_pointer(pointer, "bucket"),
           "the Mock has no Data bucket \{name.escape()}",
         )
-      Some(true) =>
-        self.error(
-          child_pointer(pointer, "bucket"),
-          "the Data bucket \{name.escape()} is keyed, and dataWrites cannot write to a keyed bucket yet",
-        )
-      Some(false) =>
-        if members.contains("key") && op_name != Some("append") {
+      Some(None) =>
+        if has_key && op_name != Some("append") {
           self.error(
             key_pointer,
             "is allowed only on a keyed bucket, and the Data bucket \{name.escape()} has no \"key\"",
           )
         }
+      Some(Some(key_member)) => {
+        keyed_by = Some(key_member)
+        if op_name == Some("merge") && !has_key {
+          self.error(
+            pointer,
+            "\"merge\" into the keyed Data bucket \{name.escape()} needs \"key\": the bucket holds an array, and \"merge\" with \"key\" merges into one of its items",
+          )
+        }
+      }
     }
   }
-  // A literal value that already breaks its op never loads.
-  if op_name == Some("merge") &&
-    value is Some(template) &&
-    template.literal() is Some(literal) &&
-    !(literal is Object(_)) {
-    self.error(
-      child_pointer(pointer, "value"),
-      "must be an object: \"merge\" merges the members of an object into the bucket",
-    )
+  match (keyed_by, literal) {
+    // A `key` that is reported as wrong checks nothing more.
+    (Some(""), _) | (_, None) => ()
+    (Some(key_member), Some(literal)) =>
+      self.check_keyed_literal(
+        value_pointer, op_name, has_key, key_member, literal,
+      )
+    (None, Some(literal)) =>
+      if op_name == Some("merge") && !(literal is Object(_)) {
+        self.error(
+          value_pointer, "must be an object: \"merge\" merges the members of an object into the bucket",
+        )
+      }
   }
-  guard self.diagnostics.length() == reported &&
-    bucket is Some(bucket) &&
-    value is Some(value) else {
+  guard self.diagnostics.length() == reported && bucket is Some(bucket) else {
     return None
   }
   let op : DataOp = match op_name {
     Some("merge") => Merge
     Some("append") => Append
+    Some("remove") => Remove
     _ => Replace
   }
-  Some({ op, bucket, value, })
+  Some({ op, bucket, key, value, })
+}
+
+///|
+/// Reports how `literal`, the literal value at `pointer` of a write whose
+/// op is named `op`, with `key` or not as `has_key` says, breaks its op on
+/// a bucket keyed by the member `key_member`, if it does: an item that
+/// `set` or `merge` with `key` writes, or that `append` adds, must be an
+/// object, an added item's key member must hold a key, and the value of
+/// `set` without `key` must keep the rules of keyed buckets.
+fn File::check_keyed_literal(
+  self : File,
+  pointer : String,
+  op : String?,
+  has_key : Bool,
+  key_member : String,
+  literal : Json,
+) -> Unit {
+  match (op, has_key) {
+    (Some("set"), true) =>
+      if !(literal is Object(_)) {
+        self.error(
+          pointer, "must be an object: \"set\" with \"key\" makes one item of the keyed bucket this value",
+        )
+      }
+    (Some("merge"), true) =>
+      if !(literal is Object(_)) {
+        self.error(
+          pointer, "must be an object: \"merge\" with \"key\" merges the members of an object into one item",
+        )
+      }
+    (Some("append"), _) =>
+      match literal {
+        Object(item) =>
+          if item.get(key_member) is Some(key) && key_text(key) is None {
+            self.error(child_pointer(pointer, key_member), not_a_key)
+          }
+        _ =>
+          self.error(
+            pointer, "must be an object: \"append\" adds an item to the keyed bucket",
+          )
+      }
+    (Some("set"), false) =>
+      for problem in keyed_problems(literal, key=key_member) {
+        self.error(pointer + problem.pointer, problem.message)
+      }
+    _ => ()
+  }
 }

@@ -2188,7 +2188,7 @@ a list of buckets. Each entry has these members, and no others:
   the Stubs that use it. A Stub may read a bucket declared in any file,
   earlier or later.
 - Two Mocks may use the same name. Each has its own bucket.
-- `newKey` needs `key`. What it does comes with keyed writes.
+- `newKey` needs `key`. [New keys](#new-keys) says what it does.
 
 ### Initial values
 
@@ -2219,9 +2219,11 @@ key.
 - No two items have the same key text, so `42` and `"42"` collide.
 
 A key cannot hold `/`, since a path segment cannot carry it once
-percent-decoded. These rules are errors when loading, reported with the
-JSON Pointer of the item or its key. For a `jsonFile`, the problem is
-reported at `jsonFile`, with the file's name and the pointer in it:
+percent-decoded. Every write keeps these rules, [writes by
+key](#writes-by-key) and the Admin API included. In an initial value,
+they are errors when loading, reported with the JSON Pointer of the item
+or its key. For a `jsonFile`, the problem is reported at `jsonFile`, with
+the file's name and the pointer in it:
 
 ```text
 shop.yaml: /data/0/json/2/id: has the key text "1001", as item 0 does
@@ -2314,9 +2316,10 @@ Three calls in one Session answer `{"visits":1}`, `{"visits":2}` and
 
   | `op` | Members | Effect |
   |---|---|---|
-  | `set` | `value` | The bucket becomes the value. |
-  | `merge` | `value` | A shallow merge of the value, an object, into the bucket, which must hold an object. Each member replaces the member of the same name in its place, or is added at the end. `null` is stored as null. |
-  | `append` | `value` | The value is appended to the bucket, which must hold an array. |
+  | `set` | `value`, optional `key` | The bucket becomes the value. With `key`, the item with that key does, in its place. |
+  | `merge` | `value`, optional `key` | A shallow merge of the value, an object, into the bucket, which must hold an object. Each member replaces the member of the same name in its place, or is added at the end. `null` is stored as null. With `key`, the merge is into the item with that key. |
+  | `append` | `value` | The value is appended to the bucket, which must hold an array. In a keyed bucket, it is an item, which gets a [new key](#new-keys) when it has none. |
+  | `remove` | `key` | The item with that key is removed from the keyed bucket. |
 
 - `bucket` names a bucket of the Stub's Mock, as written. It is never a
   template.
@@ -2324,16 +2327,85 @@ Three calls in one Session answer `{"visits":1}`, `{"visits":2}` and
   template](#structured-templates), whether or not a response has
   `template: true`: `${…}` inserts a value, and `$${` writes `${`. As at
   the root of `json`, a `$if` at its root needs `else`.
-- Each value is bounded as a rendered body is: at most 1 MiB of compact
-  JSON, and at most 10,000 loop iterations. Past either is a render error.
+- `key` names one item of a keyed bucket. It is a text template, always
+  parsed, and its output is compared as a [key text](#keys-and-key-texts).
+  Only a keyed bucket takes it ([Writes by key](#writes-by-key)).
+- Each key and each value is bounded as a rendered body is: at most 1 MiB
+  of output, and at most 10,000 loop iterations. Past either is a render
+  error.
 - A counter is a `set` with a helper, as above. `merge` and `append` keep
   the rest of the bucket: `{ op: append, bucket: cart, value: "${body}" }`
   adds the request's body to a cart.
-- Writes to keyed buckets, with `key`, and the op `remove` come in a later
-  version. For now they are errors when loading.
 - An [Ephemeral Stub](../README.md#sessions-and-ephemeral-stubs) takes
   `dataWrites` too, over the buckets of its Mock, and writes the copies of
   its Session.
+
+#### Writes by key
+
+A keyed bucket is written item by item. `set`, `merge` and `remove` take
+the `key` of the item, and `append` adds one:
+
+```yaml
+- id: pay-order
+  mock: shop
+  request: { method: POST, path: { pattern: "/api/v1/orders/[^/]+/pay" } }
+  dataWrites:
+    - { op: merge, bucket: orders, key: "${path[3]}", value: { status: paid, paidAt: "${now()}" } }
+  response:
+    status: 200
+    template: true
+    json: "${find(data.orders, 'id', path[3])}"
+```
+
+`POST /api/v1/orders/1002/pay` marks order 1002 paid for that Session,
+and answers the paid order, which [`find`](#helpers) picks.
+`POST /api/v1/orders/9999/pay` answers 500 `data write failed`, since no
+order has that key, and writes nothing.
+
+- `key` is compared as a key text, so `${path[3]}` finds the order whose
+  `id` is `1002` or `"1002"`. A key that no item has fails the write: a
+  missing item is never skipped, so a Stub never answers as if the item
+  were there.
+- `set` with `key` makes the item the value, an object, in its place.
+  `merge` with `key` merges the value, an object, into the item, as
+  `merge` merges into a bucket.
+- The value's key member may be absent, or hold the item's key text. The
+  item keeps its stored key value, so `42` stays a number when the value
+  holds `"42"`. When `set` gives no key member, the key is added as the
+  item's last member. Any other key fails the write.
+- `remove` removes the item.
+- `append` adds the value, an object, at the end. A key member that holds
+  a valid key that no item has is kept. A value without the key member
+  gets a [new key](#new-keys), added as its last member.
+- `set` without `key` replaces the whole bucket. Its value must keep the
+  [rules of keyed buckets](#keys-and-key-texts).
+- `merge` without `key` cannot write to a keyed bucket, which holds an
+  array. It is an error when loading.
+
+A Stub's response cannot read a key that its own `append` made, since a
+template has no index from the end of an array. A Stub that must answer
+the new item takes the key from the request, and puts it in the value.
+A CRUD Stub answers what it creates.
+
+As for other writes, only a Session's first write to a bucket copies it,
+and the [state bound](#copies-and-the-state-bound) counts what each item
+changed.
+
+#### New keys
+
+A keyed bucket makes a key for an item that `append` adds without one, as
+its `newKey` says:
+
+- `integer`, the default: one more than the highest integer key, or 1
+  when there is none. String keys are not counted, but when a string key
+  already has the new key's text, the next integer is tried, until one is
+  free. A deleted highest key can be given again.
+- `uuid`: a version 4 UUID, as `fake.uuid()` makes it, drawn again while
+  an item has it. It comes from the request's helpers, so [`fault.seed`
+  and `--seed`](#seeds) repeat it.
+
+When the new integer key would pass 2^53 - 1, the write fails with
+`no new key`, and nothing is written.
 
 #### When data is written
 
@@ -2341,20 +2413,22 @@ The writes are made at the match decision, together with the Stub's
 [Variables](#when-variables-are-written), in this order:
 
 1. The Scenario moves, and the request takes its one random draw.
-2. The value of each Variable is rendered, then the value of each write,
-   in the order written, all against the state from before this request,
-   Variables included. So `${add(data.visits, 1)}` counts, and a write
-   that reads `vars.NAME` sees the Variable as it was before the request.
+2. The value of each Variable is rendered, then each write, in the order
+   written, its `key` before its `value`, all against the state from
+   before this request, Variables included. So `${add(data.visits, 1)}`
+   counts, and a write that reads `vars.NAME` sees the Variable as it was
+   before the request.
 3. The writes are applied in order, as if to working copies of the
-   buckets: a write sees what the writes before it did.
+   buckets: a write sees what the writes before it did. New keys are made
+   here.
 4. The [state bound](#copies-and-the-state-bound) is checked.
 5. The Variables and the copies are stored at once.
 6. The response is picked, rendered and planned. It sees the data after
    the writes.
 
 The helpers draw for the values of the Variables first, then for each
-write's value, then for the response, so [`fault.seed` and
-`--seed`](#seeds) replay them.
+write's key and value, then for the new `uuid` keys, in write order, then
+for the response, so [`fault.seed` and `--seed`](#seeds) replay them.
 
 Only a Session's first write to a bucket copies the bucket. Later writes
 change the copy in place, and the state bound counts what each adds or
@@ -2370,9 +2444,9 @@ smock before it, also while that request's delay still runs.
 The writes are all or nothing. When any of steps 2 to 4 fails, nothing is
 written, Variables included:
 
-- A value that fails to render gives the [template
+- A key or a value that fails to render gives the [template
   failure](#missing-values-and-render-errors): 500, with an `at` under
-  `/dataWrites/<i>/value`.
+  `/dataWrites/<i>/key` or `/dataWrites/<i>/value`.
 - A write that cannot be applied gives 500, with
   `Content-Type: application/json`, the write's pointer and what went
   wrong:
@@ -2381,9 +2455,17 @@ written, Variables included:
   {"error":"data write failed","stub":"visit","at":"/dataWrites/0","message":"the Data bucket \"visits\" holds a number, and \"merge\" needs an object"}
   ```
 
-  A `merge` whose value is not an object, a `merge` into a bucket that
-  holds no object, and an `append` to a bucket that holds no array cannot
-  be applied.
+  These writes cannot be applied:
+
+  - a `merge` whose value is not an object, a `merge` into a bucket that
+    holds no object, and an `append` to a bucket that holds no array;
+  - a write by key that names a key that no item has;
+  - a write that would break the rules of a keyed bucket: an `append` or
+    an item `set` or `merge` whose value is not an object, an item `set`
+    or `merge` whose value holds another key, an `append` whose key is
+    not a key or is another item's, and a `set` without `key` whose value
+    is not an array of objects with valid, unique keys;
+  - an `append` when no integer key is left (`no new key`).
 - Writes that would pass the state bound get 507, as Variables do, and
   count in `smock_state_writes_refused_total`.
 
@@ -2391,10 +2473,14 @@ After any of these, no response is picked. The Scenario move stands, the
 Stub's delay still applies, and a connection Fault still replaces the
 answer, as for a template failure.
 
-An Ephemeral Stub is not read again at a reload. When a reload removes
-its bucket, or gives the bucket `key`, its write fails to apply in the
-same way, and nothing is written. Its template reads of a removed bucket
-are missing, so `${add(data.visits ?? 0, 1)}` still renders.
+An Ephemeral Stub is not read again at a reload. Its write fails to apply
+in the same way, and nothing is written, when a reload removes its
+bucket, takes `key` from the bucket of a write with `key`, or gives `key`
+to the bucket of a `merge` without `key`. A `set` or `append` without
+`key` still applies when a reload gives its bucket `key`, and fails only
+when what it writes breaks the bucket's rules. Its template reads of a
+removed bucket are missing, so `${add(data.visits ?? 0, 1)}` still
+renders.
 
 These are errors when loading, reported by `smock check`, at startup, by
 a reload, which then keeps the files it serves, and as 400 `invalid_stub`
@@ -2404,10 +2490,14 @@ for an Ephemeral Stub:
 - an op given a member it does not take, or without one it needs, such as
   `append` with `key` or `set` without `value`;
 - `dataWrites` with no write, or with more than 100;
-- `key` on a bucket without `key`;
+- `key` on a bucket without `key`, and `merge` without `key` on a keyed
+  bucket;
 - a literal value, one with no `${`, `$each` or `$if`, that already breaks
-  its op, such as a `merge` value that is not an object;
-- for now, a write to a keyed bucket.
+  its op: a `merge` value that is not an object, an item that `set` or
+  `merge` with `key` writes or that `append` adds to a keyed bucket that
+  is not an object, a key member of such an `append` that holds no key,
+  and a `set` value without `key` that breaks the rules of a keyed
+  bucket.
 
 #### Writes in the Journal
 
@@ -2419,8 +2509,8 @@ toward the entry's bytes.
 
 - A request whose writes fail to render or to apply, or meet the state
   bound, records `dataWritten: []`, `variablesWritten: []` and
-  `responseIndex: null`. A value that fails to render also records
-  `templateError`.
+  `responseIndex: null`. A key or a value that fails to render also
+  records `templateError`.
 - A response that fails to render after the writes were stored lists
   them, since nothing undoes them.
 

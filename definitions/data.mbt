@@ -76,6 +76,10 @@ pub fn key_text(json : Json) -> String? {
 }
 
 ///|
+/// What is wrong with a key member that holds no key, as `key_text` says.
+pub let not_a_key : String = "must be a key: a non-empty string without /, or an integer from \{-max_integer_key} to \{max_integer_key}"
+
+///|
 /// A way the value of a keyed bucket breaks the rules of keyed buckets: a
 /// JSON Pointer (RFC 6901) into the value, `""` for the value itself, and
 /// what is wrong there.
@@ -120,11 +124,7 @@ pub fn keyed_problems(value : Json, key~ : String) -> Array[KeyedProblem] {
     }
     let member_at = child_pointer(at, key)
     match key_text(key_value) {
-      None =>
-        problems.push({
-          pointer: member_at,
-          message: "must be a key: a non-empty string without /, or an integer from \{-max_integer_key} to \{max_integer_key}",
-        })
+      None => problems.push({ pointer: member_at, message: not_a_key, })
       Some(text) =>
         match seen.get(text) {
           Some(earlier) =>
@@ -141,13 +141,15 @@ pub fn keyed_problems(value : Json, key~ : String) -> Array[KeyedProblem] {
 
 ///|
 /// The names of the Data buckets that the parsed files declare, by the
-/// name of their Mock, in declaration order, each with whether it is
-/// keyed, so that a Stub may read and write a bucket declared in any file,
-/// earlier or later.
+/// name of their Mock, in declaration order, each with its key member when
+/// it is keyed, so that a Stub may read and write a bucket declared in any
+/// file, earlier or later. A `key` that is not a string, a problem reported
+/// where the bucket is read, gives the key member `""`, which no bucket
+/// can have.
 fn declared_buckets(
   files : Array[(String, Result[Map[String, Json], Diagnostic])],
-) -> Map[String, Map[String, Bool]] {
-  let names : Map[String, Map[String, Bool]] = Map([])
+) -> Map[String, Map[String, String?]] {
+  let names : Map[String, Map[String, String?]] = Map([])
   for file in files {
     guard file.1 is Ok(top) && top.get("data") is Some(Array(entries)) else {
       continue
@@ -158,10 +160,14 @@ fn declared_buckets(
         entry.get("name") is Some(String(name)) else {
         continue
       }
-      let keyed = entry.contains("key")
+      let key = match entry.get("key") {
+        Some(String(key)) => Some(key)
+        Some(_) => Some("")
+        None => None
+      }
       match names.get(mock) {
-        Some(declared) => declared[name] = keyed
-        None => names[mock] = Map([(name, keyed)])
+        Some(declared) => declared[name] = key
+        None => names[mock] = Map([(name, key)])
       }
     }
   }

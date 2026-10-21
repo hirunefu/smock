@@ -278,6 +278,22 @@ pub fn Text::render(self : Text, context : Context) -> String raise RenderError 
 }
 
 ///|
+/// Renders the template for the request of `context` as a value, such as
+/// the key of a data write, rather than as a body. It is bounded as a
+/// rendered body is, at most 1 MiB, and the messages about its bounds say
+/// it is a value.
+///
+/// Raises `RenderError` when a value it inserts is missing, a value is of
+/// a type it cannot write, or a bound is exceeded.
+pub fn Text::render_value(
+  self : Text,
+  context : Context,
+) -> String raise RenderError {
+  context.of_value = true
+  self.render(context)
+}
+
+///|
 /// `value` as a text template writes it, escaped as `escaping` says.
 fn written(
   value : Value,
