@@ -121,9 +121,10 @@ pub(all) struct ResponsePlan {
 
 ///|
 /// A response body: bytes sent at once, or a stream of Server-Sent Events,
-/// each written after waiting its `delay_ms` milliseconds.
+/// each written after waiting its `delay_ms` milliseconds. The bytes may be
+/// a view of a body file's bytes, such as the byte range a 206 sends.
 pub(all) enum Body {
-  Bytes(Bytes)
+  Bytes(BytesView)
   Events(ReadOnlyArray[@definitions.SseEvent])
 } derive(Debug)
 
@@ -470,8 +471,10 @@ pub fn Engine::handle(
       response_index = pick_response(stub, draw)
       let response = stub.responses[response_index.unwrap_or(0)].response
       // 5. Rendering and planning: the response as written, or rendered
-      //    from its templates.
+      //    from its templates. One that serves byte ranges answers the
+      //    request's Range field.
       let plan = match response.template {
+        None if response.serves_ranges => range_response(response, request)
         None => stub_response(response)
         Some(template) => {
           let (plan, error) = respond(

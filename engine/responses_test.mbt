@@ -101,11 +101,13 @@ test "a Stub answers with the bytes of its body file, named relative to the body
     content=(
       #|200
       #|Content-Type: application/json
+      #|Accept-Ranges: bytes
       #|Smock-Mock: m; via=default
       #|{"id":1,"name":"Alice"}
       #|
       #|---
       #|200
+      #|Accept-Ranges: bytes
       #|Smock-Mock: m; via=default
       #|{"id":1,"name":"Alice"}
       #|

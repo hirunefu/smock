@@ -142,7 +142,7 @@ fn describe(outcome : @engine.Outcome) -> String {
 }
 
 ///|
-fn text(bytes : Bytes) -> String {
+fn text(bytes : BytesView) -> String {
   @utf8.decode_lossy(bytes).escape()
 }
 

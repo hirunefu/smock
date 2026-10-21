@@ -98,6 +98,7 @@ fn File::read_response(
       headers: ReadOnlyArray::from_array([]),
       body: Bytes(b""),
       template: None,
+      serves_ranges: false,
     }
   }
   for key, value in response {
@@ -143,8 +144,16 @@ fn File::read_response(
       headers: static_headers,
       body: Bytes(b""),
       template: self.parse_templates(stub_pointer, headers, body),
+      serves_ranges: false,
     }
   }
+  // A 200 from a body file, without templates, serves byte ranges, unless
+  // its headers give Content-Range or Accept-Ranges themselves.
+  let serves_ranges = status == 200 &&
+    body is File(_, _) &&
+    !headers
+    .iter()
+    .any(header => header.0.to_lower() is ("content-range" | "accept-ranges"))
   let body : ResponseBody = match body {
     NoBody => Bytes(b"")
     Inline(_, text) => Bytes(@utf8.encode(text))
@@ -168,7 +177,7 @@ fn File::read_response(
         ),
       )
   }
-  { status, headers: static_headers, body, template: None, }
+  { status, headers: static_headers, body, template: None, serves_ranges, }
 }
 
 ///|
