@@ -229,6 +229,8 @@ fn Context::eval(
         Time(time) => present(self.time(time, at))
         Conversion(conversion) => Present(convert(conversion, values, at))
         Strings(string) => present(string_value(string, values, at))
+        Arithmetic(arithmetic) =>
+          present(arithmetic_value(arithmetic, values, at))
       }
     }
   }

@@ -73,6 +73,10 @@ priv enum Helper {
   /// Text and arrays: `len`, `concat`, `padStart` and `padEnd`
   /// (strings.mbt).
   Strings(StringHelper)
+  /// Exact decimal arithmetic: `add`, `subtract`, `multiply`, `divide`,
+  /// `modulo`, `ceil`, `floor`, `round`, `toFixed` and `parseInt`
+  /// (arithmetic.mbt, decimal.mbt).
+  Arithmetic(ArithmeticHelper)
 }
 
 ///|
@@ -553,7 +557,7 @@ priv struct CallSite {
 /// and gives `None` for a name that is not one of them, so a family is
 /// added without changing the others.
 let families : Array[(CallSite) -> Helper? raise Syntax] = [
-  fake_helper, time_helper, conversion_helper, string_helper,
+  fake_helper, time_helper, conversion_helper, string_helper, arithmetic_helper,
 ]
 
 ///|
