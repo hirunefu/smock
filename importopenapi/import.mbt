@@ -25,6 +25,14 @@ pub struct Options {
   /// The name of the one Mock the file declares. Every Stub ID starts with
   /// it.
   mock : String
+  /// The Hosts the Mock is declared with, as given, such as
+  /// `petstore.test`. The caller checks them as a Definition file would,
+  /// and that none repeats: the converter writes them as they are. Empty
+  /// when the Mock has no Hosts, or is not declared.
+  hosts : Array[String]
+  /// Whether the file declares the Mock. When it does not, the file holds
+  /// only Stubs, for a Mock that another file declares.
+  declare_mock : Bool
   /// The Definition file to write, as `--output` gives it. Problems with
   /// the file itself name it so. Its name picks the format: YAML when it
   /// ends in `.yaml` or `.yml`, else JSON. Nothing else of it reaches the
@@ -34,15 +42,18 @@ pub struct Options {
 
 ///|
 /// The options of a conversion of the document `root` into a Definition
-/// file `output` that declares the Mock `mock`. Problems name the root
-/// document `root_label`, by default `root`.
+/// file `output` that declares the Mock `mock`, with the Hosts `hosts`, by
+/// default none, or that holds only its Stubs when `declare_mock` is false.
+/// Problems name the root document `root_label`, by default `root`.
 pub fn Options::Options(
   root~ : String,
   mock~ : String,
   output~ : String,
   root_label? : String = root,
+  hosts? : Array[String] = [],
+  declare_mock? : Bool = true,
 ) -> Options {
-  { root, root_label, mock, output, }
+  { root, root_label, mock, hosts, declare_mock, output, }
 }
 
 ///|

@@ -27,6 +27,8 @@ async fn import_openapi(settings : @settings.ImportOpenapiSettings) -> Int {
       root=name,
       root_label=document,
       mock=settings.mock,
+      hosts=settings.hosts,
+      declare_mock=settings.declare_mock,
       output~,
     ),
   )

@@ -68,6 +68,12 @@ of each GitHub release include its section
   A directory, a symlink, the document itself and an `--output` whose
   directory does not exist are refused. The guide shows how to keep hand
   changes in another file, and how CI can check that the file is current.
+- `smock import-openapi --hosts` gives the imported Mock its Hosts, so it
+  can share a definitions directory with other Mocks. The document's
+  `servers` never become Hosts. A Host that a Definition file could not
+  declare, or that repeats, is a usage error. `--declare-mock off` writes
+  only Stubs, for a Mock declared by hand in another file, such as to set
+  `default`, `noMatch` or `journal`.
 - `write` in the `smock/yaml` module turns a JSON tree into a YAML
   document, with comments, that the module's own parser reads back as the
   same tree. A string is quoted only when it would not read back as the

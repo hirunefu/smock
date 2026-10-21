@@ -93,6 +93,12 @@ The arguments:
   ID starts with it, and it names the Mock in metric labels and Admin API
   paths. It is not taken from the document's title, which changes between
   versions.
+- `--hosts <h1,h2>`: the Mock's Hosts, separated by commas, such as
+  `petstore.test,pets.internal:8080`. None by default. The document's
+  `servers` never become Hosts ([The Mock and its Hosts](#the-mock-and-its-hosts)).
+- `--declare-mock on|off`: whether the file declares the Mock. It is `on`
+  by default. With `off`, the file holds only Stubs, for a Mock declared
+  by hand in another file.
 - `--output <file>`: the Definition file to write. Its name picks the
   format: `.yaml` or `.yml` writes YAML, with the comments above, and
   `.json` writes JSON, which has no comments. Both hold the same Stubs.
@@ -118,8 +124,10 @@ uvx --from openapi-spec-validator==0.9.0 openapi-spec-validator api/petstore.jso
 
 ## What is generated
 
-The file declares one Mock, named by `--mock`, with no other field. Then
-come the Stubs of each operation. Operations at concrete paths come before
+The file declares one Mock, named by `--mock`, with the Hosts of `--hosts`
+and no other field, unless `--declare-mock` is `off`
+([The Mock and its Hosts](#the-mock-and-its-hosts)). Then come the Stubs
+of each operation. Operations at concrete paths come before
 those at templated paths. Otherwise, they keep the order the document
 writes them in: path keys, then methods in the order each Path Item writes
 them ([Paths with parameters](#paths-with-parameters)). An operation has a
@@ -128,7 +136,7 @@ Stub for each response it answers, and for each further named example
 
 | In the document | In the Definition file |
 |---|---|
-| The document | `version: 1`, then `mocks` with the one Mock, then `stubs`. In YAML, a comment at the top names the document, its `info.title` and `info.version`, its OpenAPI version and `--mock`. |
+| The document | `version: 1`, then `mocks` with the one Mock, unless `--declare-mock` is `off`, then `stubs`. In YAML, a comment at the top names the document, its `info.title` and `info.version`, its OpenAPI version, `--mock`, then `--hosts` and `--declare-mock off` when given. |
 | An operation | One Stub per response: the main Stub, and one for each other response. One more Stub per further named example. In YAML, a comment above each gives the method, the path as written, the response key and the example's name. |
 | `summary` | In YAML, its first line ends the Stub's comment. Control characters become spaces. |
 | `get`, `put`, `post`, `delete`, `options`, `head`, `patch`, `trace`, and 3.2's `query` | The `method`, in upper case. |
@@ -551,6 +559,70 @@ json:
   path. Two templated paths that differ only in their parameters' names,
   such as `/pets/{id}` and `/pets/{petId}`, give the same pattern.
 - Operations that are left out take part in neither check.
+
+## The Mock and its Hosts
+
+The file declares one Mock. How it shares the definitions directory with
+other Mocks depends on what else the directory holds:
+
+- **The only Mock.** The only Mock of a definitions directory is the
+  Default Mock, which answers every request whatever its Host. It needs no
+  Hosts, as in the [Quick start](#quick-start).
+- **Several Mocks.** Each request goes to the Mock whose Hosts include its
+  Host, and otherwise to the Default Mock
+  ([Hosts and the Default Mock](definition-files.md#hosts-and-the-default-mock)).
+  So give the imported Mock its Hosts with `--hosts`:
+
+  ```sh
+  smock import-openapi api/petstore.json --mock petstore --hosts petstore.test,pets.internal:8080 --output definitions/petstore.yaml
+  ```
+
+  The file then declares:
+
+  ```yaml
+  mocks:
+    - name: petstore
+      hosts:
+        - petstore.test
+        - pets.internal:8080
+  ```
+
+  The document's `servers` never become Hosts. They name the real
+  service, while the names that callers use for the mock are a choice of
+  each deployment.
+- **The Mock's other fields.** To set `default`, `noMatch` or `journal`,
+  declare the Mock by hand in another file, with its Hosts if it needs
+  them:
+
+  ```yaml
+  # definitions/petstore-mock.yaml
+  version: 1
+  mocks:
+    - name: petstore
+      default: true
+      noMatch:
+        status: 501
+  ```
+
+  Then import with `--declare-mock off`. The file then holds `version`
+  and `stubs` only, and its Stubs belong to the Mock that the other file
+  declares. `--hosts` is refused with it: give the Hosts where the Mock is
+  declared.
+
+  ```sh
+  smock import-openapi api/petstore.json --mock petstore --declare-mock off --output definitions/petstore.yaml
+  ```
+
+Each Host must be one a Definition file can declare, as `smock check`
+checks it: a host name or an IP address, with a port of digits if any,
+and no wildcard. A Host that is not one, or that is the same as another
+once compared as smock compares Hosts (in lower case, without the port
+and a trailing dot), is a usage error, so it never reaches the file.
+
+The command does not read the rest of the definitions directory. So run
+`smock check` on the directory after importing: a Mock declared twice, a
+Host used by two Mocks or a Stub ID used twice shows there. So does a file
+imported with `--declare-mock off` whose Mock no file declares.
 
 ## Selecting responses
 
@@ -1023,9 +1095,10 @@ for 3.0, 3.1 or 3.2; the patch is ignored. A Swagger 2.0 document is an
 error: convert it to OpenAPI 3.0 first.
 
 Before it writes, the command loads its own output with the loader
-`smock check` uses. The output must be valid and give no warning. If not,
-nothing is written, and the message calls it a smock bug: please report
-it.
+`smock check` uses, as a set of its own. With `--declare-mock off`, a
+stand-in file declares the Mock, as the hand-written one would. The output must
+be valid and give no warning. If not, nothing is written, and the message
+calls it a smock bug: please report it.
 
 The same document and flags always give the same bytes, on every
 platform, so a generated file changes only when the document or the
