@@ -63,6 +63,11 @@ Packages of `smock/smock`:
 - `cookies`: reads the cookies of a request from its `Cookie` fields, for
   cookie conditions, the Near miss and the `cookie` root of templates, so
   that all of them read cookies by the same rules.
+- `unicode`: simple case mapping and the White_Space property, for the
+  template helpers `uppercase`, `lowercase` and `trim`, from the data of
+  one pinned Unicode version (18.0.0). `scripts/gen-unicode-data.py`
+  generated the data from the Unicode Character Database; it changes only
+  with a new format version.
 - `defdir`: reads the definitions directory and loads it, for
   `smock serve`, `smock check` and `smock render`, and takes the stamp of
   it that a poll compares (native).

@@ -12,6 +12,12 @@ priv enum StringHelper {
   PadStart
   /// `padEnd(s, length, pad?)`: padded at the end.
   PadEnd
+  /// `uppercase(s)`: each code point mapped to its simple upper case.
+  Uppercase
+  /// `lowercase(s)`: each code point mapped to its simple lower case.
+  Lowercase
+  /// `trim(s)`: without White_Space at either end.
+  Trim
 }
 
 ///|
@@ -34,6 +40,18 @@ fn string_helper(site : CallSite) -> Helper? raise Syntax {
     "padEnd" => {
       site.takes([Text, Integer, Text], least=2, most=3)
       PadEnd
+    }
+    "uppercase" => {
+      site.takes([Text], least=1, most=1)
+      Uppercase
+    }
+    "lowercase" => {
+      site.takes([Text], least=1, most=1)
+      Lowercase
+    }
+    "trim" => {
+      site.takes([Text], least=1, most=1)
+      Trim
     }
     _ => return None
   }
@@ -89,6 +107,13 @@ fn string_value(
       }
       Json::string(padded(text, length, pad, at_start, name, at))
     }
+    Uppercase | Lowercase => {
+      let to_upper = helper is Uppercase
+      let name = if to_upper { "uppercase" } else { "lowercase" }
+      let text = text_argument(name, 0, values[0], at)
+      Json::string(case_mapped(text, to_upper, name, at))
+    }
+    Trim => Json::string(trimmed(text_argument("trim", 0, values[0], at), at))
   }
 }
 
@@ -151,4 +176,67 @@ fn padded(
     out.write_string(text)
   }
   out.to_string()
+}
+
+///|
+/// `text` with each code point mapped to its simple upper case, or lower
+/// case, as the helper `name` inserted at `at` gives it. A mapping may take
+/// more or fewer bytes of UTF-8 than the code point it maps, so the result
+/// is measured, and bounded, before it is built.
+fn case_mapped(
+  text : String,
+  to_upper : Bool,
+  name : String,
+  at : String,
+) -> String raise RenderError {
+  let mut bytes = 0L
+  for c in text {
+    let mapped = if to_upper { @unicode.upper(c) } else { @unicode.lower(c) }
+    bytes += char_utf8_length(mapped).to_int64()
+  }
+  check_result(name, bytes, at)
+  let out = StringBuilder()
+  for c in text {
+    out.write_char(if to_upper { @unicode.upper(c) } else { @unicode.lower(c) })
+  }
+  out.to_string()
+}
+
+///|
+/// `text` without the code points that have the property White_Space at
+/// either end, as `trim` inserted at `at` gives it, bounded before it is
+/// built.
+fn trimmed(text : String, at : String) -> String raise RenderError {
+  // In UTF-16 code units, where the first code point that is not
+  // White_Space starts (-1 while there is none) and where the last one
+  // ends; and, in bytes of UTF-8, the same places.
+  let mut start = -1
+  let mut end = 0
+  let mut start_bytes = 0L
+  let mut end_bytes = 0L
+  let mut units = 0
+  let mut bytes = 0L
+  for c in text {
+    let width = if c.to_int() > 0xFFFF { 2 } else { 1 }
+    let utf8 = char_utf8_length(c).to_int64()
+    if !@unicode.is_white_space(c) {
+      if start < 0 {
+        start = units
+        start_bytes = bytes
+      }
+      end = units + width
+      end_bytes = bytes + utf8
+    }
+    units += width
+    bytes += utf8
+  }
+  if start < 0 {
+    return ""
+  }
+  check_result("trim", end_bytes - start_bytes, at)
+  if start == 0 && end == units {
+    text
+  } else {
+    text[start:end].to_owned()
+  }
 }
