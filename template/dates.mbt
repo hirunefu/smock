@@ -108,14 +108,14 @@ fn date_format(format : String) -> Result[Array[DatePart], String] {
       ('T', 1) => EpochMillis
       _ => return Err(token_problem(format, c, run))
     }
-    if text.to_string() != "" {
+    if !text.is_empty() {
       parts.push(Written(text.to_string()))
       text.reset()
     }
     parts.push(part)
     i = j
   }
-  if text.to_string() != "" {
+  if !text.is_empty() {
     parts.push(Written(text.to_string()))
   }
   Ok(parts)
