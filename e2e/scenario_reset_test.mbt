@@ -53,18 +53,18 @@ async test "over the Admin API, each reset scope also clears Scenario state, and
       inspect(
         out.join("\n"),
         content=(
-          #|reset test-a: 200 {"scope":"session","removed":{"ephemeralStubs":0,"journalEntries":1,"scenarioStates":1},"warnings":[]}
+          #|reset test-a: 200 {"scope":"session","removed":{"ephemeralStubs":0,"journalEntries":1,"scenarioStates":1,"variables":0},"warnings":[]}
           #|test-a GET: 200 {"status":"pending"}
           #|test-b GET: 200 {"status":"paid"}
           #|no Session GET: 200 {"status":"paid"}
-          #|reset the no-Session space: 200 {"scope":"session","removed":{"ephemeralStubs":0,"journalEntries":2,"scenarioStates":1},"warnings":[]}
+          #|reset the no-Session space: 200 {"scope":"session","removed":{"ephemeralStubs":0,"journalEntries":2,"scenarioStates":1,"variables":0},"warnings":[]}
           #|no Session GET: 200 {"status":"pending"}
           #|test-a pays: 200, no body
-          #|reset payments: 200 {"scope":"mock","removed":{"ephemeralStubs":0,"journalEntries":5,"scenarioStates":2},"warnings":[]}
+          #|reset payments: 200 {"scope":"mock","removed":{"ephemeralStubs":0,"journalEntries":5,"scenarioStates":2,"variables":0},"warnings":[]}
           #|test-a GET: 200 {"status":"pending"}
           #|test-b GET: 200 {"status":"pending"}
           #|test-b pays: 200, no body
-          #|reset all: 200 {"scope":"all","removed":{"ephemeralStubs":0,"journalEntries":3,"scenarioStates":1},"warnings":[]}
+          #|reset all: 200 {"scope":"all","removed":{"ephemeralStubs":0,"journalEntries":3,"scenarioStates":1,"variables":0},"warnings":[]}
           #|test-b GET: 200 {"status":"pending"}
           #|reset an unknown Mock: 404 {"error":"unknown_mock","message":"no Mock is named \"orders\": Mocks come only from Definition files","warnings":[]}
         ),
@@ -75,10 +75,10 @@ async test "over the Admin API, each reset scope also clears Scenario state, and
         stopped.logs.filter(line => line.contains("\"msg\":\"reset\"")),
       ),
       content=(
-        #|{"level":"info","msg":"reset","scope":"session","session":"test-a","removed":{"ephemeralStubs":0,"journalEntries":1,"scenarioStates":1}}
-        #|{"level":"info","msg":"reset","scope":"session","session":null,"removed":{"ephemeralStubs":0,"journalEntries":2,"scenarioStates":1}}
-        #|{"level":"info","msg":"reset","scope":"mock","mock":"payments","removed":{"ephemeralStubs":0,"journalEntries":5,"scenarioStates":2}}
-        #|{"level":"info","msg":"reset","scope":"all","removed":{"ephemeralStubs":0,"journalEntries":3,"scenarioStates":1}}
+        #|{"level":"info","msg":"reset","scope":"session","session":"test-a","removed":{"ephemeralStubs":0,"journalEntries":1,"scenarioStates":1,"variables":0}}
+        #|{"level":"info","msg":"reset","scope":"session","session":null,"removed":{"ephemeralStubs":0,"journalEntries":2,"scenarioStates":1,"variables":0}}
+        #|{"level":"info","msg":"reset","scope":"mock","mock":"payments","removed":{"ephemeralStubs":0,"journalEntries":5,"scenarioStates":2,"variables":0}}
+        #|{"level":"info","msg":"reset","scope":"all","removed":{"ephemeralStubs":0,"journalEntries":3,"scenarioStates":1,"variables":0}}
       ),
     )
   })

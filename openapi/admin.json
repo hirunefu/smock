@@ -4,7 +4,7 @@
     "title": "smock Admin API",
     "version": "1",
     "summary": "Inspect and change a running smock: Ephemeral Stubs, Scenarios, the Journal, verification, rendering and status.",
-    "description": "The Admin API is JSON over HTTP/1.1 on smock's admin port (`--admin-port`, 9090 by default), separate from the plain and TLS ports.\n\n- **Authentication.** Every operation needs `Authorization: Bearer <token>`. smock reads the token from the file named by `--admin-token-file` (`SMOCK_ADMIN_TOKEN_FILE`) or from the environment variable `SMOCK_ADMIN_TOKEN`, and refuses to start when authentication is on and neither gives a token, or when both the file and the variable are set. A missing or wrong token gets 401 with `WWW-Authenticate: Bearer`. `--admin-auth off` (`SMOCK_ADMIN_AUTH=off`) turns authentication off for local use; then no operation needs a token. The probes (`/startupz`, `/readyz`, `/livez`) and `/metrics` never need one.\n- **Replicas.** Every response, errors included, names the replica that handled it in the `Smock-Replica` header: the Pod's hostname, or the host name outside Kubernetes. Replicas share no state: each one keeps its own Ephemeral Stubs, Scenario state and Journal. When smock is told that its deployment runs more than one replica (`--replicas`, `SMOCK_REPLICAS`, default 1), every JSON response carries a `per_replica_state` warning.\n- **Warnings.** Every JSON response, errors included, has a `warnings` array, empty when there is nothing to warn about.\n- **Errors.** Every error is a JSON object `{error, message, warnings}`: `error` is a code from the ErrorCode schema and `message` says what went wrong. A request for a path this document does not list gets 404 with `not_found`; a method a path does not support gets 405 with `method_not_allowed` and an `Allow` header. Request bodies are JSON: a body that is not valid JSON gets 400 with `malformed_json`. Requests over the size limits of `smock serve` (`--header-size-limit`, `--header-count-limit`, `--body-limit`) get 431 or 413 in the same form, and the connection closes.\n- **Sessions.** Session-scoped operations name their Session the way mocked requests do: by default the `smock-session` member of the W3C `baggage` header. The header and the member are `smock serve` settings. Without a Session, an operation acts on the no-Session space: the requests and Ephemeral Stubs that carry no Session.\n- **Mocks** come only from Definition files. The Admin API adds Ephemeral Stubs to existing Mocks.",
+    "description": "The Admin API is JSON over HTTP/1.1 on smock's admin port (`--admin-port`, 9090 by default), separate from the plain and TLS ports.\n\n- **Authentication.** Every operation needs `Authorization: Bearer <token>`. smock reads the token from the file named by `--admin-token-file` (`SMOCK_ADMIN_TOKEN_FILE`) or from the environment variable `SMOCK_ADMIN_TOKEN`, and refuses to start when authentication is on and neither gives a token, or when both the file and the variable are set. A missing or wrong token gets 401 with `WWW-Authenticate: Bearer`. `--admin-auth off` (`SMOCK_ADMIN_AUTH=off`) turns authentication off for local use; then no operation needs a token. The probes (`/startupz`, `/readyz`, `/livez`) and `/metrics` never need one.\n- **Replicas.** Every response, errors included, names the replica that handled it in the `Smock-Replica` header: the Pod's hostname, or the host name outside Kubernetes. Replicas share no state: each one keeps its own Ephemeral Stubs, Scenario state, Variables and Journal. When smock is told that its deployment runs more than one replica (`--replicas`, `SMOCK_REPLICAS`, default 1), every JSON response carries a `per_replica_state` warning.\n- **Warnings.** Every JSON response, errors included, has a `warnings` array, empty when there is nothing to warn about.\n- **Errors.** Every error is a JSON object `{error, message, warnings}`: `error` is a code from the ErrorCode schema and `message` says what went wrong. A request for a path this document does not list gets 404 with `not_found`; a method a path does not support gets 405 with `method_not_allowed` and an `Allow` header. Request bodies are JSON: a body that is not valid JSON gets 400 with `malformed_json`. Requests over the size limits of `smock serve` (`--header-size-limit`, `--header-count-limit`, `--body-limit`) get 431 or 413 in the same form, and the connection closes.\n- **Sessions.** Session-scoped operations name their Session the way mocked requests do: by default the `smock-session` member of the W3C `baggage` header. The header and the member are `smock serve` settings. Without a Session, an operation acts on the no-Session space: the requests and Ephemeral Stubs that carry no Session.\n- **Mocks** come only from Definition files. The Admin API adds Ephemeral Stubs to existing Mocks.",
     "license": {
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
@@ -36,7 +36,7 @@
     },
     {
       "name": "Reset",
-      "description": "Clearing Ephemeral Stubs, Journal entries and Scenario state."
+      "description": "Clearing Ephemeral Stubs, Journal entries, Scenario state and Variables."
     },
     {
       "name": "Journal",
@@ -377,8 +377,8 @@
       "post": {
         "operationId": "reset",
         "tags": ["Reset"],
-        "summary": "Clear Ephemeral Stubs, Journal entries and Scenario state for a Session, a Mock or everything",
-        "description": "- `session`: the calling Session's Ephemeral Stubs, Journal entries, Scenario state and eviction count, across all Mocks. Without a Session, the no-Session space.\n- `mock`: every Session's Ephemeral Stubs, Journal entries and Scenario state of one Mock.\n- `all`: every Ephemeral Stub, the whole Journal, every Scenario state and every eviction count.\n\nA Scenario whose state is cleared is back in `Started`. What Definition files declare is never changed.",
+        "summary": "Clear Ephemeral Stubs, Journal entries, Scenario state and Variables for a Session, a Mock or everything",
+        "description": "- `session`: the calling Session's Ephemeral Stubs, Journal entries, Scenario state, Variables and eviction count, across all Mocks. Without a Session, the no-Session space.\n- `mock`: every Session's Ephemeral Stubs, Journal entries, Scenario state and Variables of one Mock.\n- `all`: every Ephemeral Stub, the whole Journal, every Scenario state, every Variable and every eviction count.\n\nA Scenario whose state is cleared is back in `Started`, and a Variable that is cleared is unset. What Definition files declare is never changed.",
         "requestBody": {
           "required": true,
           "content": {
@@ -955,7 +955,7 @@
         "type": "object",
         "properties": {
           "code": {
-            "description": "What the warning is about. `per_replica_state`: the deployment runs more than one replica (`--replicas`), each keeps its own Ephemeral Stubs, Scenario state and Journal, and this response comes from the replica in `Smock-Replica` alone.",
+            "description": "What the warning is about. `per_replica_state`: the deployment runs more than one replica (`--replicas`), each keeps its own Ephemeral Stubs, Scenario state, Variables and Journal, and this response comes from the replica in `Smock-Replica` alone.",
             "enum": ["per_replica_state"]
           },
           "message": {
@@ -1289,7 +1289,7 @@
             "type": "object",
             "properties": {
               "scope": {
-                "description": "The calling Session's Ephemeral Stubs, Journal entries, Scenario state and eviction count, across all Mocks.",
+                "description": "The calling Session's Ephemeral Stubs, Journal entries, Scenario state, Variables and eviction count, across all Mocks.",
                 "const": "session"
               }
             },
@@ -1301,7 +1301,7 @@
             "type": "object",
             "properties": {
               "scope": {
-                "description": "Every Session's Ephemeral Stubs, Journal entries and Scenario state of one Mock. The eviction counts, which are per Session, stay.",
+                "description": "Every Session's Ephemeral Stubs, Journal entries, Scenario state and Variables of one Mock. The eviction counts, which are per Session, stay.",
                 "const": "mock"
               },
               "mock": {
@@ -1318,7 +1318,7 @@
             "type": "object",
             "properties": {
               "scope": {
-                "description": "Every Ephemeral Stub, the whole Journal, every Scenario state and every eviction count.",
+                "description": "Every Ephemeral Stub, the whole Journal, every Scenario state, every Variable and every eviction count.",
                 "const": "all"
               }
             },
@@ -1353,9 +1353,14 @@
                 "description": "How many Scenario states were cleared, each the state of one Mock, Session and Scenario that was not `Started`. Those Scenarios are back in `Started`.",
                 "type": "integer",
                 "minimum": 0
+              },
+              "variables": {
+                "description": "How many Variables were cleared, each of one Mock, Session and name.",
+                "type": "integer",
+                "minimum": 0
               }
             },
-            "required": ["ephemeralStubs", "journalEntries", "scenarioStates"],
+            "required": ["ephemeralStubs", "journalEntries", "scenarioStates", "variables"],
             "additionalProperties": false
           },
           "warnings": {

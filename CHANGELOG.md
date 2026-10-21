@@ -83,6 +83,10 @@ of each GitHub release include its section
   of them. Ephemeral Stubs take `variables` too.
 - Journal entries record `variablesWritten`, the names of the Variables a
   request wrote.
+- `POST /v1/reset` clears the Variables in its scope and says how many it
+  cleared, in `removed.variables` of its response and its log entry. A
+  reload keeps Variables, except those of a Mock the new files no longer
+  declare. The `per_replica_state` warning names Variables too.
 - `smock render` and the Admin render operation show `variables`, the
   values a Stub would write, and take the Variables templates read from
   the sample's optional `vars` object, never from the live Variables. The
