@@ -70,7 +70,8 @@ priv enum Step {
 priv enum Helper {
   /// Fake data, `fake.*` (fake.mbt).
   Fake(FakeHelper)
-  /// The time of the request, `now` and `nowMillis` (time.mbt).
+  /// The time of the request and dates: `now`, `nowMillis`, `dateFormat`
+  /// and `dateTimeShift` (time.mbt, dates.mbt).
   Time(TimeHelper)
   /// `number`, `range`, `json` and `raw` (conversions.mbt).
   Conversion(ConversionHelper)

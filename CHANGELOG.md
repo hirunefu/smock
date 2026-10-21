@@ -33,6 +33,14 @@ of each GitHub release include its section
   `${jwtPayload(header.authorization).sub ?? 'anonymous'}`. A leading
   `Bearer` is removed. They only decode: no signature is ever checked. A
   malformed token is missing, so `??` applies.
+- Template helpers for dates: `now(format)`, `dateFormat(date, format,
+  offset)` and `dateTimeShift(date, duration)`. Formats use date-fns
+  tokens, with English names only; the week-numbering year (`YYYY`) and
+  the day of the year (`DD`) are load errors. Offsets are `Z` or `±HH:MM`.
+  Shifts take ISO 8601 durations such as `P1M`, and a month shift clamps
+  to the end of the month. A date is an RFC 3339 date-time, a date
+  `YYYY-MM-DD` or epoch milliseconds; anything else is missing, so `??`
+  applies.
 - A helper call can be followed by steps, as a reference can:
   `${range(1, 3)[1]}` gives `2`.
 - The bounds of `range(a, b)` can be any expression that gives an integer,

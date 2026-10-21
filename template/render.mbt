@@ -256,7 +256,11 @@ fn Context::eval(
       }
       match helper {
         Fake(fake) => present(draw(fake, self.rand))
-        Time(time) => present(self.time(time, at))
+        Time(time) =>
+          match self.time(time, values, at) {
+            Some(json) => present(json)
+            None => Missing(text)
+          }
         Conversion(conversion) => Present(convert(conversion, values, at))
         Strings(string) => present(string_value(string, values, at))
         Encoding(encoding) => present(encoding_value(encoding, values, at))

@@ -17,6 +17,11 @@ priv enum Kind {
   Integer
   /// A number, or a string that is one.
   Numeric
+  /// A date in the years 0 to 9999: an RFC 3339 date-time with an offset,
+  /// a date `YYYY-MM-DD`, or a number without a fraction, read as
+  /// milliseconds since the Unix epoch. When rendered, another value is
+  /// missing rather than an error.
+  Date
 }
 
 ///|
@@ -28,6 +33,8 @@ fn Kind::wanted(self : Kind) -> String {
     Array => "an array"
     Integer => "an integer, or a string that is one"
     Numeric => "a number, or a string that is one"
+    Date =>
+      "a date: an RFC 3339 date-time with an offset, a date YYYY-MM-DD or epoch milliseconds, in the years 0 to 9999"
   }
 }
 
@@ -40,6 +47,7 @@ fn Kind::accepts(self : Kind, json : Json) -> Bool {
     Array => json is Array(_)
     Integer => integer_value(json) is Some(_)
     Numeric => numeric_value(json) is Some(_)
+    Date => date_of(json) is Some(ms) && ms >= earliest && ms <= latest
   }
 }
 
@@ -53,6 +61,38 @@ fn CallSite::takes(
   least~ : Int,
   most~ : Int,
 ) -> Unit raise Syntax {
+  self.count_between(least~, most~)
+  for k in 0..<self.args.length() {
+    self.check_kind(
+      k,
+      kinds[if k < kinds.length() { k } else { kinds.length() - 1 }],
+    )
+  }
+}
+
+///|
+/// Checks that each literal of argument `k`, from 0, is of the kind
+/// `kind`.
+fn CallSite::check_kind(
+  self : CallSite,
+  k : Int,
+  kind : Kind,
+) -> Unit raise Syntax {
+  let (at, arg) = self.args[k]
+  for literal in literals(arg) {
+    if !kind.accepts(literal) {
+      raise Syntax(at, argument_problem(self.name, k, kind, literal))
+    }
+  }
+}
+
+///|
+/// Checks that the call has from `least` to `most` arguments.
+fn CallSite::count_between(
+  self : CallSite,
+  least~ : Int,
+  most~ : Int,
+) -> Unit raise Syntax {
   let n = self.args.length()
   if least == most {
     self.count(least)
@@ -63,14 +103,6 @@ fn CallSite::takes(
       "\{least} to \{most} arguments"
     }
     raise Syntax(self.start, "\{self.name}() takes \{what}, not \{n}")
-  }
-  for k, arg in self.args {
-    let kind = kinds[if k < kinds.length() { k } else { kinds.length() - 1 }]
-    for literal in literals(arg.1) {
-      if !kind.accepts(literal) {
-        raise Syntax(arg.0, argument_problem(self.name, k, kind, literal))
-      }
-    }
   }
 }
 
