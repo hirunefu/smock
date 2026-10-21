@@ -8,6 +8,15 @@ of each GitHub release include its section
 
 ## [Unreleased]
 
+### Added
+
+- `smock import-openapi` converts a JSON OpenAPI 3.0, 3.1 or 3.2 document
+  into a Definition file, once. Each operation at a path without
+  parameters becomes a Stub that matches its method and exact path and
+  answers its main status. Parts that are not imported yet are left out
+  with a warning. smock never reads OpenAPI when it serves. See
+  [docs/importing-openapi.md](docs/importing-openapi.md).
+
 ## [0.2.0] - 2026-10-21
 
 ### Added
