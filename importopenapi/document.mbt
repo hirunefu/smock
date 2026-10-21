@@ -57,14 +57,13 @@ fn Report::parsed(
     }
   }
   if yaml {
-    return Some(
-      @yaml.parse(text, openapi=true) catch {
-        ParseError(pointer~, message~) => {
-          self.error(label, pointer, message)
-          return None
-        }
-      },
-    )
+    let json = @yaml.parse(text, openapi=true) catch {
+      ParseError(pointer~, message~) => {
+        self.error(label, pointer, message)
+        return None
+      }
+    }
+    return Some(json)
   }
   let json = @json.parse(text) catch {
     err => {

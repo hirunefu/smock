@@ -619,7 +619,8 @@ and nothing is written:
 - more than one document, directives such as `%YAML 1.2`, and explicit
   keys (`?`);
 - a hexadecimal or octal integer above 2^53 - 1: write it in decimal;
-- `.inf` and `.nan`, in any spelling, which JSON cannot hold;
+- infinity and NaN, such as `.inf`, `-.Inf` and `.NaN`, which JSON
+  cannot hold;
 - tabs in indentation, and text that is not UTF-8.
 
 For example:
