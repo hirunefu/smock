@@ -279,9 +279,11 @@ pub fn Engine::render(
         stub.id,
         response.status,
         template,
-        incoming,
-        now~,
-        rand=@template.helper_generator(draw),
+        @template.Context::new(
+          template_input(incoming),
+          now~,
+          rand=@template.helper_generator(draw),
+        ),
       )
   }
   {

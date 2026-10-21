@@ -53,9 +53,8 @@ fn pick_response(stub : @definitions.Stub, draw : UInt64) -> Int? {
 
 ///|
 /// The plan of a response with `template` on, of the Stub with the ID
-/// `stub`, rendered for the request `incoming`, received at `now`, without
-/// Faults. `status` is the response's status. The helpers draw from `rand`,
-/// the request's helper generator.
+/// `stub`, rendered in `context`, the response's rendering for the
+/// request, without Faults. `status` is the response's status.
 ///
 /// When a template cannot be rendered, the plan is a 500 that says so, and
 /// the error comes with it.
@@ -63,18 +62,8 @@ fn respond(
   stub : String,
   status : Int,
   template : @definitions.ResponseTemplate,
-  incoming : Incoming,
-  now~ : Int64,
-  rand~ : @prng.Generator,
+  context : @template.Context,
 ) -> (ResponsePlan, TemplateError?) {
-  let input : @template.Input = {
-    meth: incoming.request.meth,
-    path: incoming.path,
-    query: incoming.query_parameters(),
-    headers: incoming.request.headers,
-    body: incoming.request.body,
-  }
-  let context = @template.Context::new(input, now~, rand~)
   try render_template(status, template, context) catch {
     RenderError(at~, message~) => {
       let error = { at, message, }

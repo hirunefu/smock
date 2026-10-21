@@ -79,6 +79,10 @@ pub struct JournalEntry {
   /// Stub that matched, counted from 0. `None` for a Stub with `response`,
   /// and when no Stub matched.
   response_index : Int?
+  /// The names of the Variables the request wrote, in the order written:
+  /// none when the Stub that matched writes none, when no Stub matched, or
+  /// when a value failed to render.
+  variables_written : ReadOnlyArray[String]
   /// The Near miss, when no Stub matched and the Mock had candidates.
   near_miss : NearMiss?
   /// The response status, or `None` when a connection Fault ended the
@@ -148,6 +152,7 @@ fn Journal::entry(
   matched~ : MatchedStub?,
   scenario~ : ScenarioMove?,
   response_index~ : Int?,
+  variables_written~ : ReadOnlyArray[String],
   near_miss~ : NearMiss?,
   plan~ : ResponsePlan,
   template_error~ : TemplateError?,
@@ -198,6 +203,9 @@ fn Journal::entry(
   if scenario is Some(moved) {
     text += moved.name.length() + moved.from.length() + moved.to.length()
   }
+  for i in 0..<variables_written.length() {
+    text += variables_written[i].length()
+  }
   let mut values = 0
   if near_miss is Some(near_miss) {
     text += near_miss.stub.length()
@@ -235,6 +243,7 @@ fn Journal::entry(
     stub_source,
     scenario,
     response_index,
+    variables_written,
     near_miss,
     status,
     fault: plan.fault,
@@ -418,6 +427,7 @@ let vacated : JournalEntry = {
   stub_source: None,
   scenario: None,
   response_index: None,
+  variables_written: none_written,
   near_miss: None,
   status: None,
   fault: None,
@@ -892,6 +902,9 @@ pub impl ToJson for JournalEntry with fn to_json(self) {
     "responseIndex": self.response_index.map_or(Json::null(), index => {
       Json::number(index.to_double())
     }),
+    "variablesWritten": Json::array(
+      self.variables_written.iter().map(Json::string).collect(),
+    ),
     "nearMiss": self.near_miss.map_or(Json::null(), near_miss => {
       ToJson::to_json(near_miss)
     }),

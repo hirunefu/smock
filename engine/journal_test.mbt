@@ -91,6 +91,7 @@ test "a committed entry records the request, its Session, Host and Mock, the Stu
         "stubSource": "file",
         "scenario": Json::null(),
         "responseIndex": Json::null(),
+        "variablesWritten": [],
         "nearMiss": Json::null(),
         "status": 200,
         "fault": Json::null(),
