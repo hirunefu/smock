@@ -580,6 +580,37 @@ test "a response gives at most one of body, bodyFile, json and events" {
 }
 
 ///|
+test "the snapshot holds a Stub's response as its only response, of weight 1, whether static or templated" {
+  let file =
+    #|{ "mocks": [{ "name": "m" }],
+    #|  "stubs": [
+    #|    { "id": "static", "mock": "m", "response": { "status": 204 } },
+    #|    { "id": "templated", "mock": "m",
+    #|      "response": { "status": 201, "template": true, "body": "${method}" } } ] }
+  let set : @definitions.DefinitionSet = {
+    files: [("a.json", @utf8.encode(file))],
+    body_files: [],
+  }
+  guard @definitions.load(set) is Ok(snapshot) else { fail("not loaded") }
+  let out = []
+  for stub in snapshot.mocks[0].stubs {
+    for i, weighted in stub.responses {
+      let response = weighted.response
+      out.push(
+        "\{stub.id} \{i}: weight \{weighted.weight}, status \{response.status}, template \{response.template is Some(_)}",
+      )
+    }
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|static 0: weight 1, status 204, template false
+      #|templated 0: weight 1, status 201, template true
+    ),
+  )
+}
+
+///|
 /// A Stub of Mock `m` whose response streams `events`, given as JSON.
 fn events_stub(i : Int, events : String) -> String {
   "{ \"id\": \"s\{i}\", \"mock\": \"m\", \"response\": { \"status\": 200, \"events\": \{events} } }"
