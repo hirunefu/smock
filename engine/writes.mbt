@@ -51,20 +51,21 @@ let no_buckets_written : ReadOnlyArray[String] = ReadOnlyArray::from_array([])
 /// the buckets `buckets`:
 ///
 /// - The value of each of its `variables` is rendered, in the order
-///   written, then the value of each of its `dataWrites`, all against the
-///   state of `mock` and `session` from before the request. `first` is the
-///   first rendering for the request, which reads that state; each value
-///   has a rendering of its own, with its own bounds, and they draw from
-///   the request's helper generator in turn.
+///   written, then the key and the value of each of its `dataWrites`, all
+///   against the state of `mock` and `session` from before the request.
+///   `first` is the first rendering for the request, which reads that
+///   state; each key and value has a rendering of its own, with its own
+///   bounds, and they draw from the request's helper generator in turn.
 /// - The writes of `dataWrites` are applied in order, as if to working
-///   copies of the buckets.
+///   copies of the buckets. New `uuid` keys draw from the helper generator
+///   then, in write order.
 /// - The bound on per-Session state is checked.
 /// - The Variables and the copies are stored at once.
 ///
 /// Returns the rendering the response continues with, which reads the
-/// state after the writes, and the buckets written. When a value fails to
-/// render, a write cannot be applied, or the writes do not fit, it raises
-/// why and writes nothing; the bound counts a refusal.
+/// state after the writes, and the buckets written. When a key or a value
+/// fails to render, a write cannot be applied, or the writes do not fit,
+/// it raises why and writes nothing; the bound counts a refusal.
 fn Engine::write_state(
   self : Engine,
   mock : String,
@@ -77,14 +78,36 @@ fn Engine::write_state(
   let writes = ordinary.data_writes
   let before = self.store.variables_of(mock, session)
   let values = Array(capacity=variables.values.length())
+  let write_keys = Array(capacity=writes.length())
   let write_values = Array(capacity=writes.length())
   let last = try {
     let mut context = render_values(variables, first, before, values)
+    // Whether `context` has rendered nothing yet: only `first` may not
+    // have, when the Stub writes no Variable.
+    let mut fresh = values.length() == 0
     for i in 0..<writes.length() {
-      if i > 0 || values.length() > 0 {
-        context = context.next(vars?=before)
+      let write = writes[i]
+      match write.key {
+        Some(key) => {
+          if !fresh {
+            context = context.next(vars?=before)
+          }
+          fresh = false
+          write_keys.push(Some(key.render_value(context)))
+        }
+        None => write_keys.push(None)
       }
-      write_values.push(writes[i].value.render_value(context))
+      match write.value {
+        Some(value) => {
+          if !fresh {
+            context = context.next(vars?=before)
+          }
+          fresh = false
+          write_values.push(value.render_value(context))
+        }
+        // A `remove` has no value.
+        None => write_values.push(Json::null())
+      }
     }
     context
   } catch {
@@ -98,8 +121,10 @@ fn Engine::write_state(
       apply_writes(
         self.store.copies_of(mock, session),
         writes,
+        write_keys,
         write_values,
         buckets,
+        last.generator(),
       ),
     )
   }
@@ -153,21 +178,24 @@ fn Engine::write_state(
 }
 
 ///|
-/// Applies `writes`, a Stub's `dataWrites`, with their rendered values
-/// `values`, in order, to working copies of the buckets `buckets` of the
-/// Stub's Mock, in a space that holds the copies `stored`. Raises
-/// `ApplyFailed` when a write cannot be applied, and then leaves the copies
-/// as they were.
+/// Applies `writes`, a Stub's `dataWrites`, with their rendered keys
+/// `keys` and values `values`, in order, to working copies of the buckets
+/// `buckets` of the Stub's Mock, in a space that holds the copies `stored`.
+/// New `uuid` keys draw from `rand`, the request's helper generator.
+/// Raises `ApplyFailed` when a write cannot be applied, and then leaves the
+/// copies as they were.
 fn apply_writes(
   stored : Copies?,
   writes : ReadOnlyArray[@definitions.DataWrite],
+  keys : Array[String?],
   values : Array[Json],
   buckets : ReadOnlyArray[@definitions.DataBucket],
+  rand : @prng.Generator,
 ) -> WorkingCopies raise WriteFailure {
   let working = WorkingCopies::new(stored)
   errdefer working.undo()
   for i in 0..<writes.length() {
-    working.apply(i, writes[i], values[i], buckets)
+    working.apply(i, writes[i], keys[i], values[i], buckets, rand)
   }
   working
 }
@@ -195,6 +223,11 @@ priv enum Undo {
   Member(Map[String, Json], String, Json?)
   /// An element was appended to an array: remove it.
   Element(Array[Json])
+  /// The element at an index of an array was replaced: put back the one
+  /// before.
+  Replaced(Array[Json], Int, Json)
+  /// The element at an index of an array was removed: insert it back.
+  Removed(Array[Json], Int, Json)
 }
 
 ///|
@@ -278,15 +311,18 @@ fn WorkingCopies::reach(
 
 ///|
 /// Applies `write`, the write at index `index` of a Stub's `dataWrites`,
-/// with its rendered value `value`, to the working copies. `buckets` are
-/// the buckets the Stub's Mock declares now. Raises `ApplyFailed`, with
-/// why, when it cannot be applied.
+/// with its rendered key `key`, if it has one, and its rendered value
+/// `value`, to the working copies. `buckets` are the buckets the Stub's
+/// Mock declares now, and new `uuid` keys draw from `rand`. Raises
+/// `ApplyFailed`, with why, when it cannot be applied.
 fn WorkingCopies::apply(
   self : WorkingCopies,
   index : Int,
   write : @definitions.DataWrite,
+  key : String?,
   value : Json,
   buckets : ReadOnlyArray[@definitions.DataBucket],
+  rand : @prng.Generator,
 ) -> Unit raise WriteFailure {
   let at = "/dataWrites/\{index}"
   let mut declared = None
@@ -304,14 +340,72 @@ fn WorkingCopies::apply(
       "the Mock has no Data bucket \{write.bucket.escape()} since a reload",
     )
   }
-  if bucket.key is Some(_) {
-    raise apply_failed(
-      at,
-      "the Data bucket \{bucket.name.escape()} has \"key\" since a reload, and dataWrites cannot write to a keyed bucket yet",
-    )
+  guard bucket.key is Some(key_member) else {
+    if key is Some(_) {
+      raise apply_failed(
+        at,
+        "the Data bucket \{bucket.name.escape()} has no \"key\" since a reload, and a write with \"key\" needs a keyed bucket",
+      )
+    }
+    return self.apply_whole(at, write.op, bucket, value)
+  }
+  // Without a key, `set` replaces the whole bucket, and `append` adds an
+  // item, as with a key.
+  if key is None {
+    match write.op {
+      Replace => {
+        let problems = @definitions.keyed_problems(value, key=key_member)
+        if !problems.is_empty() {
+          raise apply_failed(
+            at,
+            broken_rules(bucket.name, key_member, problems),
+          )
+        }
+        return self.apply_whole(at, write.op, bucket, value)
+      }
+      Merge =>
+        raise apply_failed(
+          at,
+          "the Data bucket \{bucket.name.escape()} has \"key\" since a reload, and \"merge\" without \"key\" cannot write to a keyed bucket",
+        )
+      Remove => return self.apply_whole(at, write.op, bucket, value)
+      Append => ()
+    }
   }
   let i = self.reach(bucket.name, bucket.initial)
-  match write.op {
+  let failure = try {
+    match key {
+      None => self.append_item(i, bucket, key_member, value, rand) |> ignore
+      Some(key) =>
+        match write.op {
+          Replace => self.set_item(i, bucket, key_member, key, value) |> ignore
+          Merge => self.merge_item(i, bucket, key_member, key, value) |> ignore
+          Remove => self.remove_item(i, bucket, key_member, key) |> ignore
+          // An `append` never has a key.
+          Append =>
+            self.append_item(i, bucket, key_member, value, rand) |> ignore
+        }
+    }
+    return
+  } catch {
+    failure => failure
+  }
+  raise apply_failed(at, failure.message(bucket.name, key_member, write.op))
+}
+
+///|
+/// Applies a write without a key, whose op is `op`, with its rendered
+/// value `value`, to the whole of `bucket`. Raises `ApplyFailed`, at `at`,
+/// when it cannot be applied.
+fn WorkingCopies::apply_whole(
+  self : WorkingCopies,
+  at : String,
+  op : @definitions.DataOp,
+  bucket : @definitions.DataBucket,
+  value : Json,
+) -> Unit raise WriteFailure {
+  let i = self.reach(bucket.name, bucket.initial)
+  match op {
     Replace => {
       self.values[i] = value
       self.sources[i] = Own
@@ -330,24 +424,8 @@ fn WorkingCopies::apply(
           "the Data bucket \{bucket.name.escape()} holds \{kind_of(self.values[i])}, and \"merge\" needs an object",
         )
       }
-      let target = self.own(i, bucket.name)
-      guard target is Object(object) else { return }
-      let stored = self.sources[i] is Stored
-      let mut more = 0L
-      for name, member_value in members {
-        let old = object.get(name)
-        match old {
-          Some(old) => more += value_bytes(member_value) - value_bytes(old)
-          None =>
-            more += member_bytes(name, member_value) +
-              (if object.is_empty() { 0L } else { 1L })
-        }
-        if stored {
-          self.changes.push(Member(object, name, old))
-        }
-        object[name] = member_value
-      }
-      self.bytes[i] += more
+      guard self.own(i, bucket.name) is Object(object) else { return }
+      self.merge_members(i, object, members, except=None)
     }
     Append => {
       guard self.values[i] is Array(_) else {
@@ -356,16 +434,62 @@ fn WorkingCopies::apply(
           "the Data bucket \{bucket.name.escape()} holds \{kind_of(self.values[i])}, and \"append\" needs an array",
         )
       }
-      let target = self.own(i, bucket.name)
-      guard target is Array(array) else { return }
-      self.bytes[i] += value_bytes(value) +
-        (if array.is_empty() { 0L } else { 1L })
-      if self.sources[i] is Stored {
-        self.changes.push(Element(array))
-      }
-      array.push(value)
+      guard self.own(i, bucket.name) is Array(array) else { return }
+      self.push_element(i, array, value)
     }
+    // A `remove` always has a key, so this is never reached.
+    Remove => raise apply_failed(at, "\"remove\" needs \"key\"")
   }
+}
+
+///|
+/// Merges `members` into `object`, a part of the value of the bucket at
+/// index `i`, which is ready to change in place: each replaces the member
+/// of the same name in its place, or is added at the end. The member named
+/// `except`, if any, is left as it is. The bucket's count follows.
+fn WorkingCopies::merge_members(
+  self : WorkingCopies,
+  i : Int,
+  object : Map[String, Json],
+  members : Map[String, Json],
+  except~ : String?,
+) -> Unit {
+  let stored = self.sources[i] is Stored
+  let mut more = 0L
+  for name, member_value in members {
+    if except is Some(skipped) && name == skipped {
+      continue
+    }
+    let old = object.get(name)
+    match old {
+      Some(old) => more += value_bytes(member_value) - value_bytes(old)
+      None =>
+        more += member_bytes(name, member_value) +
+          (if object.is_empty() { 0L } else { 1L })
+    }
+    if stored {
+      self.changes.push(Member(object, name, old))
+    }
+    object[name] = member_value
+  }
+  self.bytes[i] += more
+}
+
+///|
+/// Appends `element` to `array`, the value of the bucket at index `i`,
+/// which is ready to change in place. The bucket's count follows.
+fn WorkingCopies::push_element(
+  self : WorkingCopies,
+  i : Int,
+  array : Array[Json],
+  element : Json,
+) -> Unit {
+  self.bytes[i] += value_bytes(element) +
+    (if array.is_empty() { 0L } else { 1L })
+  if self.sources[i] is Stored {
+    self.changes.push(Element(array))
+  }
+  array.push(element)
 }
 
 ///|
@@ -434,6 +558,8 @@ fn WorkingCopies::undo(self : WorkingCopies) -> Unit {
       Member(object, name, Some(value)) => object[name] = value
       Member(object, name, None) => object.remove(name)
       Element(array) => array.pop() |> ignore
+      Replaced(array, index, element) => array[index] = element
+      Removed(array, index, element) => array.insert(index, element)
     }
   }
   self.changes.clear()

@@ -123,9 +123,9 @@ fn File::read_crud(
     match name {
       "bucket" =>
         if self.name(field, value) is Some(name) {
-          match buckets.keyed.get(name) {
-            Some(true) => bucket = Some(name)
-            Some(false) =>
+          match buckets.keys.get(name) {
+            Some(Some(_)) => bucket = Some(name)
+            Some(None) =>
               self.error(
                 field,
                 "the Data bucket \{name.escape()} has no \"key\": a CRUD Stub serves only a keyed bucket",

@@ -113,55 +113,6 @@ fn Engine::crud_answer(
 }
 
 ///|
-/// The index of the item of `items`, the value of a bucket keyed by the
-/// member `key`, whose key has the text `text`, if any. A key is compared
-/// by its text, as `@definitions.key_text` gives it, without making the
-/// text: a string as it is, and an integer by its value, when `text` is
-/// the text of an integer.
-fn item_index(items : Array[Json], key : String, text : String) -> Int? {
-  let integer = integer_of(text)
-  for i in 0..<items.length() {
-    guard items[i] is Object(members) else { continue }
-    match members.get(key) {
-      Some(String(s)) if s == text => return Some(i)
-      Some(Number(n, ..)) if integer is Some(wanted) && n == wanted =>
-        return Some(i)
-      _ => ()
-    }
-  }
-  None
-}
-
-///|
-/// The integer whose key text is `text`, if there is one: decimal digits
-/// with no leading zero, after `-` when it is negative, from
-/// `-@definitions.max_integer_key` to `@definitions.max_integer_key`. So
-/// `42` and `-7` have one, and `042`, `-0`, `+1` and `4.2e1` do not.
-fn integer_of(text : String) -> Double? {
-  let negative = text.has_prefix("-")
-  let start = if negative { 1 } else { 0 }
-  let digits = text.length() - start
-  // 2^53 - 1 has 16 digits.
-  if digits < 1 ||
-    digits > 16 ||
-    (text[start] == '0' && (digits > 1 || negative)) {
-    return None
-  }
-  let mut value = 0L
-  for i in start..<text.length() {
-    let c = text[i]
-    if c < '0' || c > '9' {
-      return None
-    }
-    value = value * 10L + (c.to_int() - '0'.to_int()).to_int64()
-  }
-  if value > @definitions.max_integer_key {
-    return None
-  }
-  Some(if negative { -value.to_double() } else { value.to_double() })
-}
-
-///|
 /// An answer of a CRUD Stub that serves `crud`: `status`, with `body`, a
 /// JSON value in compact JSON, its `Content-Type`, then smock's
 /// `headers`, then the Stub's `crud.headers`.

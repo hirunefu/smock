@@ -34,9 +34,11 @@ disagree.
   keyed bucket whose value is not an array of objects with valid, unique
   keys, and a template that reads a bucket its Mock does not declare. So
   do writes of `dataWrites`: a write to a bucket its Mock does not
-  declare, `key` on a bucket without `key`, and a literal `merge` value
-  that is not an object. So do CRUD Stubs: a `crud.bucket` that its Mock
-  does not declare, or that has no `key`, and `crud.headers` that give two
+  declare, `key` on a bucket without `key`, `merge` without `key` on a
+  keyed bucket, a literal `merge` value that is not an object, and a
+  literal value that breaks a keyed bucket's rules, such as an item that
+  is not an object. So do CRUD Stubs: a `crud.bucket` that its Mock does
+  not declare, or that has no `key`, and `crud.headers` that give two
   names that differ only in case.
 
 A field joins the Schema only together with smock's support for it, so no

@@ -121,13 +121,13 @@ priv struct Reader {
 ///|
 fn Reader::new(
   declared~ : Set[String],
-  buckets~ : Map[String, Map[String, Bool]],
+  buckets~ : Map[String, Map[String, String?]],
   body_files~ : Map[String, Bytes],
   env~ : @template.Env,
 ) -> Reader {
   let mock_buckets = Map([])
-  for mock, keyed in buckets {
-    mock_buckets[mock] = MockBuckets::new(keyed)
+  for mock, keys in buckets {
+    mock_buckets[mock] = MockBuckets::new(keys)
   }
   {
     diagnostics: [],

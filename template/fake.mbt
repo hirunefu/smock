@@ -145,17 +145,22 @@ fn choose(rand : @prng.Generator, items : Array[String]) -> String {
 }
 
 ///|
+/// A version 4 UUID, in lower case, drawn from `rand` as `fake.uuid()`
+/// draws it: two outputs, the first for its high half.
+pub fn uuid(rand : @prng.Generator) -> String {
+  // Version 4 (random), variant 10xx.
+  let high = (rand.uint64() & 0xFFFFFFFFFFFF0FFFUL) | 0x4000UL
+  let low = (rand.uint64() & 0x3FFFFFFFFFFFFFFFUL) | 0x8000000000000000UL
+  let h = hex(high, 16)
+  let l = hex(low, 16)
+  "\{h[0:8]}-\{h[8:12]}-\{h[12:16]}-\{l[0:4]}-\{l[4:16]}"
+}
+
+///|
 /// What the fake-data helper `helper` gives, drawn from `rand`.
 fn draw(helper : FakeHelper, rand : @prng.Generator) -> Json {
   match helper {
-    Uuid => {
-      // Version 4 (random), variant 10xx.
-      let high = (rand.uint64() & 0xFFFFFFFFFFFF0FFFUL) | 0x4000UL
-      let low = (rand.uint64() & 0x3FFFFFFFFFFFFFFFUL) | 0x8000000000000000UL
-      let h = hex(high, 16)
-      let l = hex(low, 16)
-      Json::string("\{h[0:8]}-\{h[8:12]}-\{h[12:16]}-\{l[0:4]}-\{l[4:16]}")
-    }
+    Uuid => Json::string(uuid(rand))
     Int(min, max) => Json::number(between(rand, min, max).to_double())
     FakeDecimal(min, max, places) => {
       let mut scale = 1L
