@@ -1232,6 +1232,7 @@ take, and which of them must be literals.
 | Helper | Arguments | Output |
 |---|---|---|
 | `now()`, `now(s)` | `s`: an integer literal, seconds, may be negative | The time of the request plus `s` seconds, RFC 3339 in UTC with milliseconds. |
+| `now(format)` | `format`: a string literal, a format as for **Dates** below | The time of the request, in UTC, written in `format`. |
 | `nowMillis()`, `nowMillis(s)` | as for `now` | The same instant in milliseconds since the Unix epoch. |
 
 **Conversions.** Each argument may be any expression.
@@ -1402,6 +1403,84 @@ whose payload is `{"sub":"u-42"}`, the body is
 `{"user":"u-42","alg":"HS256"}`. Without the header, or with a malformed
 token, it is `{"user":"anonymous","alg":null}`.
 
+**Dates.** The date may be any expression. The format, the offset and the
+duration are string literals.
+
+| Helper | Arguments | Output |
+|---|---|---|
+| `dateFormat(date, format, offset)` | a date; a format; an offset, by default `Z` | `date` at `offset`, written in `format`. |
+| `dateTimeShift(date, duration)` | a date; a duration | `date` shifted by `duration`, RFC 3339 in UTC with milliseconds, as `now()` writes it. |
+
+- A date is an RFC 3339 date-time with an offset, such as
+  `2026-01-31T19:00:00+09:00`; a date `YYYY-MM-DD`, read as midnight in
+  UTC; or a number without a fraction, read as milliseconds since the Unix
+  epoch, such as `nowMillis()` gives. A date is an instant: the offset it
+  was written with is not kept.
+- Anything else is missing, so `??` gives a fallback: a date-time without
+  an offset, a date that does not exist, such as `2026-02-30`, a number
+  with a fraction, or a string of digits. Write `number(query.ts)` to read
+  milliseconds from the query. A literal that is not a date is an error
+  when the files are loaded.
+- An offset is `Z`, or `+HH:MM` or `-HH:MM` with `HH` up to 23 and `MM` up
+  to 59, as RFC 3339 writes one. There are no time-zone names and no local
+  time.
+- A duration is an ISO 8601 duration with an optional sign, such as `P1M`,
+  `-P2D`, `PT90M` or `P1Y2M3DT4H5M6S`: `P`, then years `Y`, months `M` and
+  days `D`, then `T`, hours `H`, minutes `M` and seconds `S`. Each amount
+  is optional, a whole number of at most 9 digits, in that order. Weeks
+  (`W`) and fractions are errors when the files are loaded.
+- A shift applies years and months first, on the UTC calendar. When the
+  day does not exist in the month it reaches, it is that month's last day,
+  so January 31 plus `P1M` is February 28, or 29 in a leap year. Then it
+  applies days, then hours, minutes and seconds.
+- A date, or a time that a date helper writes, outside the years 0 to 9999
+  is an error when the template is rendered. `dateFormat` checks the date
+  at its offset too.
+
+A format uses date-fns tokens, as Mockoon's are, so most Mockoon formats
+carry over:
+
+| Token | Writes | At 2026-03-05T14:07:08.045Z |
+|---|---|---|
+| `yyyy`, `yy` | The year in four digits, or its last two. | `2026`, `26` |
+| `M`, `MM`, `MMM`, `MMMM` | The month: its number, with a leading zero, or its short or full name. | `3`, `03`, `Mar`, `March` |
+| `d`, `dd` | The day of the month. | `5`, `05` |
+| `EEE`, `EEEE` | The day of the week, short or full. | `Thu`, `Thursday` |
+| `H`, `HH` | The hour from 0 to 23. | `14`, `14` |
+| `h`, `hh`, `a` | The hour from 1 to 12, and `AM` or `PM`. | `2`, `02`, `PM` |
+| `m`, `mm`, `s`, `ss` | Minutes and seconds. | `7`, `07`, `8`, `08` |
+| `S`, `SS`, `SSS` | Tenths, hundredths or milliseconds of the second. | `0`, `04`, `045` |
+| `X`, `XX`, `XXX` | The offset: `Z` when it is zero, otherwise `+09` (`+0530` when the minutes are not zero), `+0900` or `+09:00`. | `Z`, `Z`, `Z` |
+| `x`, `xx`, `xxx` | The same, with `+00`, `+0000` or `+00:00` when it is zero. | `+00`, `+0000`, `+00:00` |
+| `t`, `T` | Seconds, or milliseconds, since the Unix epoch. | `1772719628`, `1772719628045` |
+| `'…'`, `''` | The text between the quotes as it is, and one quote. | |
+
+- Names are in English only, so no output depends on a locale.
+- Characters that are not ASCII letters are written as they are. Quote
+  letters to write them: unquoted, `T` writes milliseconds and `at` is `a`
+  then `t`, so write `'T'` and `'at'`.
+- `YYYY`, `YY` and `Y` (the week-numbering year) and `D` and `DD` (the day
+  of the year) are errors when the files are loaded, so they never write a
+  wrong date at the turn of a year: write `yyyy` and `dd`. So is any other
+  unquoted ASCII letter, a run of a letter of a length the table does not
+  list, such as `yyy`, and a quote that is not closed.
+- As in date-fns, `yyyy` and `yy` write the year of the era, so the year
+  0, 1 BC, is written `0001`.
+
+```yaml
+response:
+  status: 200
+  template: true
+  json:
+    today: ${now('yyyy-MM-dd')}
+    due: ${dateFormat(dateTimeShift(now(), 'P1M'), 'yyyy-MM-dd', '+09:00')}
+    issued: ${dateFormat(query.issued ?? now(), "EEE, d MMM yyyy 'at' HH:mm XXX", '+09:00')}
+```
+
+A request received at 2026-01-31T10:00:00Z with
+`?issued=2026-03-05T14:07:08Z` gets
+`{"today":"2026-01-31","due":"2026-02-28","issued":"Thu, 5 Mar 2026 at 23:07 +09:00"}`.
+
 The string helpers, and the families added after them, read their
 arguments by one set of rules:
 
@@ -1413,8 +1492,8 @@ arguments by one set of rules:
   hold, such as `1e300`, is out of range, so as a position it clamps as
   other positions do.
 - A value of the wrong kind from the request is an error when the template
-  is rendered; the JWT helpers give a missing value instead. A literal of
-  the wrong kind, such as
+  is rendered; the JWT helpers, and the date helpers for a date, give a
+  missing value instead. A literal of the wrong kind, such as
   `padStart(query.n, 'six')` or `concat(null, 'a')`, is an error when the
   files are loaded, and so is a literal alternative of a fallback, such as
   the `true` of `padStart(query.n, query.width ?? true)`.
@@ -1438,9 +1517,9 @@ then `data` or `json`). So a seeded Stub repeats its helper output on
 every run, on native and on wasm-gc alike, and adding fake data never
 changes its Faults or its picks.
 
-`now()` and `nowMillis()` read the time smock received the request at,
-never the clock while rendering; in an event, they add the delays of the
-events up to and including it:
+`now()`, `now(format)` and `nowMillis()` read the time smock received the
+request at, never the clock while rendering; in an event, they add the
+delays of the events up to and including it:
 
 ```yaml
 response:
@@ -1566,7 +1645,7 @@ users.yaml: /stubs/1/response/bodyFile: template: line 3, column 5: unknown help
 
 Every name (an `env` name must be listed), loop variable and helper, the
 number of arguments of each call and the kinds of its literal arguments,
-the keys of `$each` and `$if` objects, reserved keys, `${` in a key or in
+date formats, offsets and durations, the keys of `$each` and `$if` objects, reserved keys, `${` in a key or in
 `Content-Type`, `json()` and `raw()` in `json`, and a templated body file
 that is not UTF-8 are checked then.
 
