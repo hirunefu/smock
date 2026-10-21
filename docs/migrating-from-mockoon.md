@@ -1605,6 +1605,16 @@ smock render --dir defs --request sample.json --seed 7 get-user |
 # [200,"{\"id\":\"42\",\"name\":\"Sebastian Garcia\",\"lang\":\"ja\"}",[]]
 ```
 
+It renders the CRUD Stub too, with the answer its operation would give
+from the bucket's initial value, or from the sample's `data`, and writes
+nothing. So a list query can be checked before clients send it:
+
+```sh
+echo '{"method":"GET","path":"/api/v1/orders","query":{"item":"book"}}' >sample.json
+smock render --dir defs --request sample.json orders | jq -c '[.response.status, .response.body.data]'
+# [200,"[{\"id\":1,\"item\":\"book\"}]"]
+```
+
 Then run both servers, send each the same requests, and compare the
 status, the Content-Type and the body, its keys sorted by `jq -S`. This
 bash function sends one request to Mockoon on port 3000 and to smock on
