@@ -148,6 +148,9 @@ priv struct Scope {
   /// Set when an expression reads the `vars` root, in this scope or one
   /// derived from it, which share it: the template reads Variables.
   reads_vars : Ref[Bool]
+  /// Set when an expression reads the `data` root, in this scope or one
+  /// derived from it, which share it: the template reads Data buckets.
+  reads_data : Ref[Bool]
 }
 
 ///|
@@ -541,8 +544,10 @@ fn Parser::reference(
       }
     "data" =>
       match steps {
-        [Name(name), .. rest] if self.scope.buckets.names.contains(name) =>
+        [Name(name), .. rest] if self.scope.buckets.names.contains(name) => {
+          self.scope.reads_data.val = true
           Ref(Data(name), rest.to_owned(), text)
+        }
         [Name(name), ..] =>
           raise Syntax(
             start,

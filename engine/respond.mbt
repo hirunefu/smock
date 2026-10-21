@@ -60,7 +60,7 @@ fn pick_response(ordinary : @definitions.Ordinary, draw : UInt64) -> Int? {
 /// field. A response with `template` on is rendered in `context`, the
 /// rendering for the request that the Stub's Variables left, or, without
 /// one, in the request's first rendering, made here from `now`, `draw`,
-/// `vars` and `data` as `first_context` makes it.
+/// `vars`, `data` and `copies` as `first_context` makes it.
 ///
 /// Raises `RenderError` when a template cannot be rendered: the request
 /// then gets `template_failed`.
@@ -72,6 +72,7 @@ fn plan_response(
   draw~ : UInt64,
   vars~ : Map[String, Json]?,
   data~ : Map[String, Json],
+  copies~ : Map[String, Json]?,
 ) -> ResponsePlan raise @template.RenderError {
   match response.template {
     None if response.serves_ranges => range_response(response, incoming.request)
@@ -79,7 +80,7 @@ fn plan_response(
     Some(template) => {
       let context = match context {
         Some(context) => context
-        None => first_context(incoming, now~, draw~, vars~, data~)
+        None => first_context(incoming, now~, draw~, vars~, data~, copies~)
       }
       render_template(response.status, template, context)
     }
@@ -90,14 +91,16 @@ fn plan_response(
 /// The first rendering for the request `incoming`, received at `now`
 /// (milliseconds since the Unix epoch), whose one draw is `draw`: its
 /// helpers draw from the request's helper generator, made from `draw`,
-/// `vars.NAME` reads `vars`, and `data.NAME` reads `data`, each by name.
-/// Every rendering for the request that follows from it reads `data` too.
+/// `vars.NAME` reads `vars`, and `data.NAME` reads the copy in `copies`, or
+/// else the initial value in `data`, each by name. Every rendering for the
+/// request that follows from it reads the same data.
 fn first_context(
   incoming : Incoming,
   now~ : Int64,
   draw~ : UInt64,
   vars~ : Map[String, Json]?,
   data~ : Map[String, Json],
+  copies~ : Map[String, Json]?,
 ) -> @template.Context {
   @template.Context::new(
     template_input(incoming),
@@ -105,6 +108,7 @@ fn first_context(
     rand=@template.helper_generator(draw),
     vars?,
     data~,
+    copies?,
   )
 }
 

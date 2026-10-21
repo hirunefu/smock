@@ -3,8 +3,8 @@
   "info": {
     "title": "smock Admin API",
     "version": "1",
-    "summary": "Inspect and change a running smock: Ephemeral Stubs, Scenarios, Variables, the Journal, verification, rendering and status.",
-    "description": "The Admin API is JSON over HTTP/1.1 on smock's admin port (`--admin-port`, 9090 by default), separate from the plain and TLS ports.\n\n- **Authentication.** Every operation needs `Authorization: Bearer <token>`. smock reads the token from the file named by `--admin-token-file` (`SMOCK_ADMIN_TOKEN_FILE`) or from the environment variable `SMOCK_ADMIN_TOKEN`, and refuses to start when authentication is on and neither gives a token, or when both the file and the variable are set. A missing or wrong token gets 401 with `WWW-Authenticate: Bearer`. `--admin-auth off` (`SMOCK_ADMIN_AUTH=off`) turns authentication off for local use; then no operation needs a token. The probes (`/startupz`, `/readyz`, `/livez`) and `/metrics` never need one.\n- **Replicas.** Every response, errors included, names the replica that handled it in the `Smock-Replica` header: the Pod's hostname, or the host name outside Kubernetes. Replicas share no state: each one keeps its own Ephemeral Stubs, Scenario state, Variables and Journal. When smock is told that its deployment runs more than one replica (`--replicas`, `SMOCK_REPLICAS`, default 1), every JSON response carries a `per_replica_state` warning.\n- **Warnings.** Every JSON response, errors included, has a `warnings` array, empty when there is nothing to warn about.\n- **Errors.** Every error is a JSON object `{error, message, warnings}`: `error` is a code from the ErrorCode schema and `message` says what went wrong. A request for a path this document does not list gets 404 with `not_found`; a method a path does not support gets 405 with `method_not_allowed` and an `Allow` header. Request bodies are JSON: a body that is not valid JSON gets 400 with `malformed_json`. Requests over the size limits of `smock serve` (`--header-size-limit`, `--header-count-limit`, `--body-limit`) get 431 or 413 in the same form, and the connection closes.\n- **Sessions.** Session-scoped operations name their Session the way mocked requests do: by default the `smock-session` member of the W3C `baggage` header. The header and the member are `smock serve` settings. Without a Session, an operation acts on the no-Session space: the requests and Ephemeral Stubs that carry no Session.\n- **Mocks** come only from Definition files. The Admin API adds Ephemeral Stubs to existing Mocks.",
+    "summary": "Inspect and change a running smock: Ephemeral Stubs, Scenarios, Variables, Data buckets, the Journal, verification, rendering and status.",
+    "description": "The Admin API is JSON over HTTP/1.1 on smock's admin port (`--admin-port`, 9090 by default), separate from the plain and TLS ports.\n\n- **Authentication.** Every operation needs `Authorization: Bearer <token>`. smock reads the token from the file named by `--admin-token-file` (`SMOCK_ADMIN_TOKEN_FILE`) or from the environment variable `SMOCK_ADMIN_TOKEN`, and refuses to start when authentication is on and neither gives a token, or when both the file and the variable are set. A missing or wrong token gets 401 with `WWW-Authenticate: Bearer`. `--admin-auth off` (`SMOCK_ADMIN_AUTH=off`) turns authentication off for local use; then no operation needs a token. The probes (`/startupz`, `/readyz`, `/livez`) and `/metrics` never need one.\n- **Replicas.** Every response, errors included, names the replica that handled it in the `Smock-Replica` header: the Pod's hostname, or the host name outside Kubernetes. Replicas share no state: each one keeps its own Ephemeral Stubs, Scenario state, Variables, copies of Data buckets and Journal. When smock is told that its deployment runs more than one replica (`--replicas`, `SMOCK_REPLICAS`, default 1), every JSON response carries a `per_replica_state` warning.\n- **Warnings.** Every JSON response, errors included, has a `warnings` array, empty when there is nothing to warn about.\n- **Errors.** Every error is a JSON object `{error, message, warnings}`: `error` is a code from the ErrorCode schema and `message` says what went wrong. A request for a path this document does not list gets 404 with `not_found`; a method a path does not support gets 405 with `method_not_allowed` and an `Allow` header. Request bodies are JSON: a body that is not valid JSON gets 400 with `malformed_json`. Requests over the size limits of `smock serve` (`--header-size-limit`, `--header-count-limit`, `--body-limit`) get 431 or 413 in the same form, and the connection closes.\n- **Sessions.** Session-scoped operations name their Session the way mocked requests do: by default the `smock-session` member of the W3C `baggage` header. The header and the member are `smock serve` settings. Without a Session, an operation acts on the no-Session space: the requests and Ephemeral Stubs that carry no Session.\n- **Mocks** come only from Definition files. The Admin API adds Ephemeral Stubs to existing Mocks.",
     "license": {
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
@@ -37,6 +37,10 @@
     {
       "name": "Variables",
       "description": "Named JSON values kept per Mock and Session, which templates read as `vars.NAME`: listing the calling Session's Variables, and setting and deleting one."
+    },
+    {
+      "name": "Data buckets",
+      "description": "Named JSON values that a Mock declares in Definition files, which templates read as `data.NAME`. Each Session reads a bucket's initial value until it first writes to it, which gives it its own copy: listing a Mock's buckets, and reading, setting and dropping the calling Session's copy of one."
     },
     {
       "name": "Reset",
@@ -557,6 +561,204 @@
                 }
               }
             }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/mocks/{mock}/data": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Mock"
+        },
+        {
+          "$ref": "#/components/parameters/Session"
+        }
+      ],
+      "get": {
+        "operationId": "listDataBuckets",
+        "tags": ["Data buckets"],
+        "summary": "List the Data buckets of a Mock",
+        "description": "The Data buckets the Mock declares in the Definition files, sorted by name byte-wise, each with its key and new keys and whether the calling Session holds its own copy. Values are not shown: read a bucket for its value. Without a Session, the copies of the no-Session space.",
+        "responses": {
+          "200": {
+            "description": "The buckets.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataBucketList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/UnknownMock"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/mocks/{mock}/data/{bucket}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Mock"
+        },
+        {
+          "name": "bucket",
+          "in": "path",
+          "required": true,
+          "description": "The name of a Data bucket of the Mock. A name the Mock does not declare gets 404 `unknown_bucket`.",
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        {
+          "$ref": "#/components/parameters/Session"
+        }
+      ],
+      "get": {
+        "operationId": "readDataBucket",
+        "tags": ["Data buckets"],
+        "summary": "Read a Data bucket as the calling Session sees it",
+        "description": "The bucket with the value the calling Session reads: its own copy, when it holds one, or else the bucket's initial value. Reading never makes a copy. Another Session's copy is never shown.",
+        "responses": {
+          "200": {
+            "description": "The bucket.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataBucketReply"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/UnknownBucket"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "put": {
+        "operationId": "setDataBucket",
+        "tags": ["Data buckets"],
+        "summary": "Set the calling Session's copy of a Data bucket",
+        "description": "Makes the value in the body the calling Session's copy of the bucket, in place of the copy it had, so that a test can arrange the data its requests read. A value equal to the initial one makes a copy too. A keyed bucket's value must keep the rules of keyed buckets: an array of objects, each with a valid key that no other item's key text repeats; otherwise nothing is written and the reply is 400 `invalid_data`. Other Sessions keep their own copies. The copy counts against the bound on per-Session state (`--state-max-bytes`) as a Stub's writes do: a copy that would take the count above it writes nothing, gets 507 `state_limit_reached`, and counts in `smock_state_writes_refused_total`. `--body-limit` bounds the body.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataValue"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The copy was set. The bucket, as a read gives it.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataBucketReply"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not valid JSON (`malformed_json`), it is empty (`invalid_request`), or the value breaks the rules of a keyed bucket (`invalid_data`). Nothing was written.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/UnknownBucket"
+          },
+          "507": {
+            "description": "The copy would take the count of per-Session state above its bound, `--state-max-bytes` (`state_limit_reached`). Nothing was written.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "dropDataBucketCopy",
+        "tags": ["Data buckets"],
+        "summary": "Drop the calling Session's copy of a Data bucket",
+        "description": "Drops the calling Session's copy of the bucket, so that the bucket reads its initial value again, and gives back the bytes the copy counted against the bound on per-Session state. Without a copy, nothing changes, and the reply is the same. Another Session's copy is never dropped.",
+        "responses": {
+          "200": {
+            "description": "The calling Session holds no copy of the bucket now. The bucket, as a read gives it.",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataBucketReply"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/UnknownBucket"
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -1092,6 +1294,21 @@
           }
         }
       },
+      "UnknownBucket": {
+        "description": "No Mock has this name (`unknown_mock`), or the Mock declares no Data bucket with this name (`unknown_bucket`). Mocks and their Data buckets come only from Definition files.",
+        "headers": {
+          "Smock-Replica": {
+            "$ref": "#/components/headers/Smock-Replica"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
       "JournalOff": {
         "description": "The Journal is off (`journal_off`), so there is no count or entry to trust: globally (`--journal off`), or for the Mock that the filter of a query or a verification names (`\"journal\": false` in the Definition files). Only a filter that names such a Mock is refused: a filter that names no Mock is answered from the requests that were recorded, which leave out those of Mocks whose Journal is off.",
         "headers": {
@@ -1151,7 +1368,7 @@
         "type": "object",
         "properties": {
           "code": {
-            "description": "What the warning is about. `per_replica_state`: the deployment runs more than one replica (`--replicas`), each keeps its own Ephemeral Stubs, Scenario state, Variables and Journal, and this response comes from the replica in `Smock-Replica` alone.",
+            "description": "What the warning is about. `per_replica_state`: the deployment runs more than one replica (`--replicas`), each keeps its own Ephemeral Stubs, Scenario state, Variables, copies of Data buckets and Journal, and this response comes from the replica in `Smock-Replica` alone.",
             "enum": ["per_replica_state"]
           },
           "message": {
@@ -1181,7 +1398,7 @@
         "additionalProperties": false
       },
       "ErrorCode": {
-        "description": "What kind of error it is:\n\n- `unauthorized` (401): no bearer token, or the wrong one.\n- `not_found` (404): no operation at this path.\n- `method_not_allowed` (405): the path does not take this method.\n- `malformed_json` (400): the body is not valid JSON.\n- `invalid_request` (400): the body or a parameter does not have the shape the operation takes.\n- `invalid_stub` (400): an Ephemeral Stub is not valid; the message is the one `smock check` gives.\n- `unknown_mock` (404): no Mock has this name.\n- `unknown_stub` (404): no Stub has this ID, or the calling Session has no Ephemeral Stub with it.\n- `unknown_scenario` (404): no Stub of the Mock names this Scenario, in the Definition files or among the calling Session's Ephemeral Stubs, and the calling Session holds no state for it.\n- `unknown_state` (400): the state is not one of the known states of the Scenario for the calling Session.\n- `unknown_variable` (404): the calling Session has no Variable with this name in the Mock.\n- `state_limit_reached` (507): setting a Variable would take the count of per-Session state above its bound (`--state-max-bytes`); nothing was written.\n- `journal_off` (409): the Journal is off globally, or for the Mock that the request's filter names.\n- `not_started` (503): the first definition set has not loaded yet.\n- `not_ready` (503): smock is not ready to serve, such as while it drains after SIGTERM.\n- `bad_request` (400): the HTTP request itself is malformed.\n- `content_too_large` (413): the body is over `--body-limit`.\n- `header_fields_too_large` (431): the request head is over `--header-size-limit` or `--header-count-limit`.\n- `not_implemented` (501): this build does not implement the operation, or the request uses a transfer coding other than chunked.\n- `http_version_not_supported` (505): the request is not HTTP/1.x.",
+        "description": "What kind of error it is:\n\n- `unauthorized` (401): no bearer token, or the wrong one.\n- `not_found` (404): no operation at this path.\n- `method_not_allowed` (405): the path does not take this method.\n- `malformed_json` (400): the body is not valid JSON.\n- `invalid_request` (400): the body or a parameter does not have the shape the operation takes.\n- `invalid_stub` (400): an Ephemeral Stub is not valid; the message is the one `smock check` gives.\n- `unknown_mock` (404): no Mock has this name.\n- `unknown_stub` (404): no Stub has this ID, or the calling Session has no Ephemeral Stub with it.\n- `unknown_scenario` (404): no Stub of the Mock names this Scenario, in the Definition files or among the calling Session's Ephemeral Stubs, and the calling Session holds no state for it.\n- `unknown_state` (400): the state is not one of the known states of the Scenario for the calling Session.\n- `unknown_variable` (404): the calling Session has no Variable with this name in the Mock.\n- `unknown_bucket` (404): the Mock declares no Data bucket with this name.\n- `invalid_data` (400): the value breaks the rules of a keyed Data bucket; nothing was written.\n- `state_limit_reached` (507): setting a Variable or a copy of a Data bucket would take the count of per-Session state above its bound (`--state-max-bytes`); nothing was written.\n- `journal_off` (409): the Journal is off globally, or for the Mock that the request's filter names.\n- `not_started` (503): the first definition set has not loaded yet.\n- `not_ready` (503): smock is not ready to serve, such as while it drains after SIGTERM.\n- `bad_request` (400): the HTTP request itself is malformed.\n- `content_too_large` (413): the body is over `--body-limit`.\n- `header_fields_too_large` (431): the request head is over `--header-size-limit` or `--header-count-limit`.\n- `not_implemented` (501): this build does not implement the operation, or the request uses a transfer coding other than chunked.\n- `http_version_not_supported` (505): the request is not HTTP/1.x.",
         "enum": [
           "unauthorized",
           "not_found",
@@ -1194,6 +1411,8 @@
           "unknown_scenario",
           "unknown_state",
           "unknown_variable",
+          "unknown_bucket",
+          "invalid_data",
           "state_limit_reached",
           "journal_off",
           "not_started",
@@ -1537,6 +1756,101 @@
           }
         },
         "required": ["name", "warnings"],
+        "additionalProperties": false
+      },
+      "DataBucketName": {
+        "description": "The name of a Data bucket: 1 to 128 ASCII letters, digits, `_` and `-`.",
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{1,128}$"
+      },
+      "DataBucketKey": {
+        "description": "The member that holds each item's key, taken literally, when the bucket is keyed; `null` for a bucket without `key`.",
+        "type": ["string", "null"],
+        "minLength": 1
+      },
+      "DataBucketNewKey": {
+        "description": "How a keyed bucket makes new keys: `integer` unless the bucket gives `newKey`; `null` for a bucket without `key`.",
+        "enum": ["integer", "uuid", null]
+      },
+      "DataValue": {
+        "description": "The value of a Data bucket: any JSON value. A keyed bucket's value is an array of objects, each with a key in its key member: a non-empty string without `/`, or an integer from -(2^53 - 1) to 2^53 - 1. No two items have keys with the same text, so `42` and `\"42\"` collide."
+      },
+      "DataBucketSummary": {
+        "description": "A Data bucket of the Mock, as the calling Session sees it, without its value.",
+        "type": "object",
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/DataBucketName"
+          },
+          "key": {
+            "$ref": "#/components/schemas/DataBucketKey"
+          },
+          "newKey": {
+            "$ref": "#/components/schemas/DataBucketNewKey"
+          },
+          "written": {
+            "description": "Whether the calling Session holds its own copy of the bucket. Until it writes to the bucket, it reads the initial value.",
+            "type": "boolean"
+          }
+        },
+        "required": ["name", "key", "newKey", "written"],
+        "additionalProperties": false
+      },
+      "DataBucket": {
+        "description": "A Data bucket of the Mock, as the calling Session sees it, with the value it reads.",
+        "type": "object",
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/DataBucketName"
+          },
+          "key": {
+            "$ref": "#/components/schemas/DataBucketKey"
+          },
+          "newKey": {
+            "$ref": "#/components/schemas/DataBucketNewKey"
+          },
+          "written": {
+            "description": "Whether the calling Session holds its own copy of the bucket.",
+            "type": "boolean"
+          },
+          "value": {
+            "$ref": "#/components/schemas/DataValue",
+            "description": "What the calling Session reads: its own copy, or else the bucket's initial value."
+          }
+        },
+        "required": ["name", "key", "newKey", "written", "value"],
+        "additionalProperties": false
+      },
+      "DataBucketList": {
+        "description": "The Data buckets of a Mock.",
+        "type": "object",
+        "properties": {
+          "data": {
+            "description": "The buckets, sorted by name byte-wise.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DataBucketSummary"
+            }
+          },
+          "warnings": {
+            "$ref": "#/components/schemas/Warnings"
+          }
+        },
+        "required": ["data", "warnings"],
+        "additionalProperties": false
+      },
+      "DataBucketReply": {
+        "description": "One Data bucket of a Mock.",
+        "type": "object",
+        "properties": {
+          "bucket": {
+            "$ref": "#/components/schemas/DataBucket"
+          },
+          "warnings": {
+            "$ref": "#/components/schemas/Warnings"
+          }
+        },
+        "required": ["bucket", "warnings"],
         "additionalProperties": false
       },
       "ResetRequest": {

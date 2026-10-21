@@ -35,6 +35,8 @@ pub struct Structured {
   priv root : Node
   /// Whether an expression of the template reads the `vars` root.
   priv vars_read : Bool
+  /// Whether an expression of the template reads the `data` root.
+  priv data_read : Bool
 }
 
 ///|
@@ -56,6 +58,14 @@ pub impl Debug for Structured with fn to_repr(self) {
 /// same whatever Variables it is given.
 pub fn Structured::reads_vars(self : Structured) -> Bool {
   self.vars_read
+}
+
+///|
+/// Whether the template reads Data buckets: whether one of its expressions
+/// reads the `data` root, wherever it is. One that does not renders the
+/// same whatever the buckets hold.
+pub fn Structured::reads_data(self : Structured) -> Bool {
+  self.data_read
 }
 
 ///|
@@ -88,6 +98,7 @@ pub fn Structured::parse(
     env,
     buckets,
     reads_vars: Ref(false),
+    reads_data: Ref(false),
   }
   let root = parse_node(source, pointer, scope, Some(root_name), problems)
   if problems.is_empty() {
@@ -100,7 +111,13 @@ pub fn Structured::parse(
     }
   }
   if problems.is_empty() {
-    Ok({ source, pointer, root, vars_read: scope.reads_vars.val, })
+    Ok({
+      source,
+      pointer,
+      root,
+      vars_read: scope.reads_vars.val,
+      data_read: scope.reads_data.val,
+    })
   } else {
     Err(problems)
   }

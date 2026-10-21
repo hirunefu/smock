@@ -103,6 +103,7 @@ fn File::read_response(
       template: None,
       serves_ranges: false,
       reads_variables: false,
+      reads_data: false,
     }
   }
   for key, value in response {
@@ -151,6 +152,7 @@ fn File::read_response(
       template,
       serves_ranges: false,
       reads_variables: template is Some(template) && template.reads_variables(),
+      reads_data: template is Some(template) && template.reads_data(),
     }
   }
   // A 200 from a body file, without templates, serves byte ranges, unless
@@ -190,6 +192,7 @@ fn File::read_response(
     template: None,
     serves_ranges,
     reads_variables: false,
+    reads_data: false,
   }
 }
 

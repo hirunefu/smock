@@ -390,3 +390,65 @@ test "a template that reads no bucket of its Mock, or a loop variable named data
     ),
   )
 }
+
+///|
+test "a response reads Data buckets when one of its templates reads data: a header, the body, its json or an event" {
+  let file =
+    #|mocks:
+    #|  - name: m
+    #|data:
+    #|  - { mock: m, name: d, json: 1 }
+    #|stubs:
+    #|  - id: static
+    #|    mock: m
+    #|    response: { status: 200, body: "${data.d}" }
+    #|  - id: plain
+    #|    mock: m
+    #|    variables: { x: "${data.d}" }
+    #|    response:
+    #|      status: 200
+    #|      template: true
+    #|      headers: { A: "${vars.x ?? ''}" }
+    #|      json: { a: "${path}", b: "$${data.d}" }
+    #|  - id: reads
+    #|    mock: m
+    #|    responses:
+    #|      - { status: 200, template: true, headers: { A: "${data.d}" } }
+    #|      - { status: 200, template: true, body: "${data.d}" }
+    #|      - status: 200
+    #|        template: true
+    #|        json: { $each: "range(1, 2)", as: i, do: "${data.d}" }
+    #|      - status: 200
+    #|        template: true
+    #|        events: [{ data: "a" }, { id: "${data.d}", data: "b" }]
+    #|      - status: 200
+    #|        template: true
+    #|        events: [{ json: { x: "${data.d}" } }]
+    #|      - status: 200
+    #|        template: true
+    #|        events: [{ event: "${path}", data: "a" }]
+  let snapshot = match load_data([("a.yaml", file)]) {
+    Ok(snapshot) => snapshot
+    Err(diagnostics) => fail(diagnostics.map(d => d.to_string()).join("\n"))
+  }
+  let out = []
+  for stub in snapshot.mocks[0].stubs {
+    let Ordinary(ordinary) = stub.serves
+    for i, weighted in ordinary.responses {
+      out.push("\{stub.id} \{i}: \{weighted.response.reads_data}")
+    }
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|static 0: false
+      #|plain 0: false
+      #|reads 0: true
+      #|reads 1: true
+      #|reads 2: true
+      #|reads 3: true
+      #|reads 4: true
+      #|reads 5: false
+    ),
+  )
+}

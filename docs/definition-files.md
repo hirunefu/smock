@@ -683,7 +683,7 @@ share one state of their own, which is the simplest for a developer
 running smock locally.
 
 Each replica keeps its own state, as it keeps its own Ephemeral Stubs,
-Variables and Journal. Tests that rely on Scenarios need one replica, or
+Variables, copies of Data buckets and Journal. Tests that rely on Scenarios need one replica, or
 session affinity. State is lost on restart.
 
 Ephemeral Stubs take the same clause, including Scenarios and states that
@@ -1981,7 +1981,8 @@ a test in progress.
 #### The state bound
 
 One byte bound holds the per-Session state of the whole process, across
-every Mock and Session, so that Variables cannot exhaust a small Pod.
+every Mock and Session, so that Variables and the copies of [Data
+buckets](#data-buckets) cannot exhaust a small Pod.
 
 - `--state-max-bytes` or `SMOCK_STATE_MAX_BYTES` sets it, in bytes, from 1
   to 1073741824 (1 GiB), as `--journal-max-bytes` takes.
@@ -2006,7 +2007,8 @@ The bound keeps one count, up to date on each write:
 
 - A space, one Mock with one Session or with no Session, counts its Mock
   name and its Session key once, plus 64 bytes, while it holds any
-  Variable. The no-Session space has no key to count.
+  Variable or [copy of a Data bucket](#copies-and-the-state-bound). The
+  no-Session space has no key to count.
 - Each Variable counts its name, 64 bytes, and its value.
 - A value counts its compact JSON as smock writes it, plus 16 bytes for
   each JSON value in it: each object, array, string, number, boolean and
@@ -2017,9 +2019,9 @@ So `count: 1`, the only Variable of the Mock `shop` in the Session
 `run-42`, counts 74 bytes for its space (4 + 6 + 64) and 86 for itself
 (5 + 64 + 1 + 16). The fixed bytes keep long Session keys and many tiny
 values from taking far more memory than the bound counts. A write that
-replaces a value counts the new size in place of the old. When a space's
-last Variable goes, the space's bytes go too, so resets and reloads that
-drop Variables give their bytes back. Scenario state does not count, and
+replaces a value counts the new size in place of the old. When a space
+holds nothing more, its bytes go too, so resets and reloads that drop
+Variables give their bytes back. Scenario state does not count, and
 is not bounded.
 
 A request whose writes would take the count above the bound writes none of
@@ -2052,7 +2054,7 @@ a request whose body would take the count above 1 MiB gets 507, with
 An Admin API set follows the same rule. One that would take the count
 above the bound writes nothing and gets 507 `state_limit_reached`, in the
 Admin API's error form, with the same message. A delete gives back the
-Variable's bytes, and its space's with the space's last Variable.
+Variable's bytes, and its space's when the space holds nothing more.
 
 Two metrics on the admin port, without labels, show how close the process
 is to the bound: `smock_state_bytes`, the bytes the count holds now, and
@@ -2155,7 +2157,9 @@ stubs:
 ```
 
 With `files/orders.json` holding orders 1001 to 1003, `GET /api/v1/orders`
-answers the three orders. Every Session reads the initial value.
+answers the three orders. Each Session reads the initial value until it
+first writes to the bucket, which gives it its own copy ([Session
+copies](#session-copies)).
 
 ### Declaring a bucket
 
@@ -2245,10 +2249,119 @@ of a Stub of the bucket's Mock, the values of `variables` included.
   loop variable cannot be named `data`.
 - A request that the [Default Mock](#hosts-and-the-default-mock) answers
   reads the Default Mock's buckets.
-- For now, every Session reads the initial value.
+- A template reads the copy of the request's Session when it holds one,
+  and else the initial value ([Session copies](#session-copies)).
 - An [Ephemeral Stub](../README.md#sessions-and-ephemeral-stubs) reads the
-  buckets of its Mock. After a reload removes a bucket, its reads of that
-  bucket are missing, so `??` gives a fallback.
+  buckets of its Mock, and the copies of its Session. After a reload
+  removes a bucket, its reads of that bucket are missing, so `??` gives a
+  fallback.
+
+### Session copies
+
+A Session reads a bucket's initial value until it first writes to the
+bucket. That write gives the Session its own copy, which its requests read
+from then on. Other Sessions still read the initial value, or their own
+copies. For now, a test writes its Session's copy through the Admin API
+([Data buckets through the Admin
+API](#data-buckets-through-the-admin-api)).
+
+- Reads never copy, so a Session that only reads costs no memory.
+- Copies are kept per Mock, per
+  [Session](../README.md#sessions-and-ephemeral-stubs) and per bucket, in
+  the process. Requests without a Session share one copy of each bucket,
+  as they share Scenario state.
+- Each replica keeps its own copies, and they are lost on restart.
+- `smock render` and the Admin render operation read each bucket's initial
+  value, also when the sample names a Session that holds a copy. A
+  rendering never reads a Session's copy.
+
+### Data buckets through the Admin API
+
+A test can arrange and inspect the data of its own Session through the
+Admin API. Each operation names its Session as other Admin API calls do,
+and one without a Session works on the Mock's no-Session space:
+
+- `GET /v1/mocks/{mock}/data` lists the Mock's buckets by name, in
+  byte-wise order, without their values. `key` and `newKey` are `null` for
+  a bucket without `key`, and `newKey` is `integer` for a keyed bucket that
+  gives none. `written` is true when the Session holds its own copy:
+
+  ```json
+  {"data":[{"name":"orders","key":"id","newKey":"integer","written":true},{"name":"visits","key":null,"newKey":null,"written":false}],"warnings":[]}
+  ```
+
+- `GET /v1/mocks/{mock}/data/{bucket}` reads one, with the value the
+  Session reads, its copy or else the initial value:
+  `{"bucket":{"name":"visits","key":null,"newKey":null,"written":false,"value":0},"warnings":[]}`.
+- `PUT /v1/mocks/{mock}/data/{bucket}` sets the Session's copy. The body
+  is the value itself, any JSON. It replaces the copy the Session had, and
+  makes a copy even when the value equals the initial one. The reply is the
+  bucket, as a read gives it.
+- `DELETE /v1/mocks/{mock}/data/{bucket}` drops the Session's copy, so the
+  bucket reads its initial value again. The reply is the bucket, as a read
+  gives it, also when there was no copy.
+
+So a test in the Session `checkout-42` that sends
+`PUT /v1/mocks/shop/data/orders` with `[{"id":1,"status":"paid"}]` gets
+that one order from `GET /api/v1/orders`, while another Session still gets
+the three orders of `orders.json`. `DELETE /v1/mocks/shop/data/orders`
+brings them back for `checkout-42`.
+
+- A Mock that does not exist gets 404 `unknown_mock`, and a bucket that the
+  Mock does not declare 404 `unknown_bucket`. Path segments are
+  percent-decoded.
+- A body that is not JSON gets 400 `malformed_json`, and a set without a
+  body 400 `invalid_request`. `--body-limit` bounds the body.
+- A value that breaks the rules of a keyed bucket ([Keys and key
+  texts](#keys-and-key-texts)) gets 400 `invalid_data`, with each problem
+  in the message, and writes nothing.
+- A set counts against [the state bound](#copies-and-the-state-bound): one
+  that would pass it gets 507 `state_limit_reached` and writes nothing. A
+  drop gives back the bytes the copy counted.
+- Another Session's copies are never listed, read, set or dropped, and no
+  operation lists the Sessions.
+- Each set, and each drop of a copy, writes a log entry that names the
+  Mock, the Session and the bucket, but not the value. A drop logs
+  `Data bucket copy dropped`:
+
+  ```json
+  {"time":"2026-10-22T09:00:00.000Z","level":"info","msg":"Data bucket set","mock":"shop","session":"checkout-42","bucket":"orders"}
+  ```
+
+### Copies and the state bound
+
+Copies count toward [the state bound](#the-state-bound), together with
+Variables, under one rule:
+
+- A space, one Mock with one Session or with no Session, counts its Mock
+  name and its Session key once, plus 64 bytes, while it holds any
+  Variable or copy.
+- Each copy counts its bucket's name, 64 bytes, and its value: its compact
+  JSON as smock writes it, plus 16 bytes for each JSON value in it.
+- Initial values do not count. They are part of the definition set, as
+  body files are.
+
+So `visits: 7`, the only copy of the Mock `shop` in the Session `run-42`,
+counts 74 bytes for its space (4 + 6 + 64) and 87 for itself
+(6 + 64 + 1 + 16). A Variable in the same space adds only its own bytes.
+`smock_state_bytes` counts the copies too.
+
+- A write that would take the count above the bound writes nothing and
+  gets 507. It counts in `smock_state_writes_refused_total`.
+- Reads never fail, also when the count is at the bound.
+- A dropped copy gives its bytes back, and a space's bytes go when it
+  holds nothing more.
+
+Nothing expires a copy, so plan for growth:
+
+- A copy costs the full size of its bucket for each Session that writes to
+  it. A large bucket that many Sessions write fills the bound fast.
+- Give each virtual user of a load test one Session, and reset it at the
+  end.
+- A bucket whose initial value alone counts more than the bound refuses
+  every write whose copy does not fit, such as a write that leaves the
+  bucket as large as it started. `smock check` cannot see this, since it
+  does not know the bound.
 
 ## Faults
 

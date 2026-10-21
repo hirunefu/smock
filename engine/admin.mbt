@@ -1,6 +1,7 @@
 // The errors of the Admin API operations the engine carries out: on
-// Ephemeral Stubs, Scenarios, Variables, resets, Journal queries and
-// verifications; and the warnings every Admin API response carries.
+// Ephemeral Stubs, Scenarios, Variables, Data buckets, resets, Journal
+// queries and verifications; and the warnings every Admin API response
+// carries.
 
 ///|
 /// Why the engine refused an Admin API operation.
@@ -26,6 +27,16 @@ pub suberror AdminError {
   InvalidVariableName(String)
   /// The calling Session has no Variable with this name in the Mock.
   UnknownVariable(mock~ : String, name~ : String)
+  /// The Mock declares no Data bucket with this name.
+  UnknownBucket(mock~ : String, bucket~ : String)
+  /// The value breaks the rules of the Data bucket, which is keyed by the
+  /// member `key`, in each of the ways `problems` gives, so nothing was
+  /// written.
+  InvalidData(
+    bucket~ : String,
+    key~ : String,
+    problems~ : Array[@definitions.KeyedProblem]
+  )
   /// The write would take the count of per-Session state above its bound,
   /// for the reason given, so nothing was written.
   StateLimitReached(String)
@@ -50,8 +61,9 @@ pub(all) struct AdminWarning {
 /// The warnings every Admin API response of the replica named `replica`
 /// carries, in a deployment of `replicas` replicas (`--replicas`). Replicas
 /// share no state, so with more than one, a `per_replica_state` warning
-/// says that each keeps its own Ephemeral Stubs, Scenario state, Variables
-/// and Journal and that the response comes from `replica` alone.
+/// says that each keeps its own Ephemeral Stubs, Scenario state, Variables,
+/// copies of Data buckets and Journal and that the response comes from
+/// `replica` alone.
 pub fn admin_warnings(
   replicas~ : Int,
   replica~ : String,
@@ -62,7 +74,7 @@ pub fn admin_warnings(
   [
     {
       code: "per_replica_state",
-      message: "This deployment runs \{replicas} replicas (--replicas), and each one keeps its own Ephemeral Stubs, Scenario state, Variables and Journal. This response comes from \{replica} alone.",
+      message: "This deployment runs \{replicas} replicas (--replicas), and each one keeps its own Ephemeral Stubs, Scenario state, Variables, copies of Data buckets and Journal. This response comes from \{replica} alone.",
     },
   ]
 }
