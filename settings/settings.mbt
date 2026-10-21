@@ -825,11 +825,11 @@ fn template_env_value(
   }
   for part in text.split(",") {
     let name = part.to_owned()
-    if !is_variable_name(name) {
+    if !is_environment_variable_name(name) {
       raise invalid(
         setting,
         text,
-        "\{name.escape()} is not a variable name: letters, digits and _, starting with a letter or _",
+        "\{name.escape()} is not an environment variable name: letters, digits and _, starting with a letter or _",
       )
     }
     if name.has_prefix("SMOCK_") {
@@ -849,7 +849,7 @@ fn template_env_value(
 ///|
 /// Whether `name` is an environment variable name templates may read:
 /// ASCII letters, digits and `_`, starting with a letter or `_`.
-fn is_variable_name(name : String) -> Bool {
+fn is_environment_variable_name(name : String) -> Bool {
   name != "" &&
   !name[0].unsafe_to_char().is_ascii_digit() &&
   name

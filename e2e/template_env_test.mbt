@@ -174,9 +174,9 @@ async test "a name --template-env may not list is a usage error on serve, check 
       out.join("\n"),
       content=(
         #|status 2: smock serve: invalid value "SMOCK_ADMIN_TOKEN" for --template-env (SMOCK_TEMPLATE_ENV): "SMOCK_ADMIN_TOKEN" starts with SMOCK_: smock's own variables cannot be listed
-        #|status 2: smock serve: invalid value "REGION,1ZONE" for --template-env (SMOCK_TEMPLATE_ENV): "1ZONE" is not a variable name: letters, digits and _, starting with a letter or _
+        #|status 2: smock serve: invalid value "REGION,1ZONE" for --template-env (SMOCK_TEMPLATE_ENV): "1ZONE" is not an environment variable name: letters, digits and _, starting with a letter or _
         #|status 2: smock check: invalid value "SMOCK_ADMIN_TOKEN" for --template-env (SMOCK_TEMPLATE_ENV): "SMOCK_ADMIN_TOKEN" starts with SMOCK_: smock's own variables cannot be listed
-        #|status 2: smock check: invalid value "API-BASE" for --template-env (SMOCK_TEMPLATE_ENV): "API-BASE" is not a variable name: letters, digits and _, starting with a letter or _
+        #|status 2: smock check: invalid value "API-BASE" for --template-env (SMOCK_TEMPLATE_ENV): "API-BASE" is not an environment variable name: letters, digits and _, starting with a letter or _
         #|status 2: smock render: invalid value "REGION,SMOCK_DIR" for --template-env (SMOCK_TEMPLATE_ENV): "SMOCK_DIR" starts with SMOCK_: smock's own variables cannot be listed
       ),
     )

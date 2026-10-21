@@ -93,15 +93,15 @@ test "a name that is not letters, digits and _ starting with a letter or _, or t
       listed("render", ["--template-env", "a.b"]),
     ].join("\n"),
     content=(
-      #|invalid value "1REGION" for --template-env (SMOCK_TEMPLATE_ENV): "1REGION" is not a variable name: letters, digits and _, starting with a letter or _
-      #|invalid value "REGION,API-BASE" for --template-env (SMOCK_TEMPLATE_ENV): "API-BASE" is not a variable name: letters, digits and _, starting with a letter or _
-      #|invalid value "REGION, ZONE" for --template-env (SMOCK_TEMPLATE_ENV): " ZONE" is not a variable name: letters, digits and _, starting with a letter or _
-      #|invalid value "REGION,,ZONE" for --template-env (SMOCK_TEMPLATE_ENV): "" is not a variable name: letters, digits and _, starting with a letter or _
-      #|invalid value "REGION," for --template-env (SMOCK_TEMPLATE_ENV): "" is not a variable name: letters, digits and _, starting with a letter or _
-      #|invalid value "RÉGION" for --template-env (SMOCK_TEMPLATE_ENV): "RÉGION" is not a variable name: letters, digits and _, starting with a letter or _
+      #|invalid value "1REGION" for --template-env (SMOCK_TEMPLATE_ENV): "1REGION" is not an environment variable name: letters, digits and _, starting with a letter or _
+      #|invalid value "REGION,API-BASE" for --template-env (SMOCK_TEMPLATE_ENV): "API-BASE" is not an environment variable name: letters, digits and _, starting with a letter or _
+      #|invalid value "REGION, ZONE" for --template-env (SMOCK_TEMPLATE_ENV): " ZONE" is not an environment variable name: letters, digits and _, starting with a letter or _
+      #|invalid value "REGION,,ZONE" for --template-env (SMOCK_TEMPLATE_ENV): "" is not an environment variable name: letters, digits and _, starting with a letter or _
+      #|invalid value "REGION," for --template-env (SMOCK_TEMPLATE_ENV): "" is not an environment variable name: letters, digits and _, starting with a letter or _
+      #|invalid value "RÉGION" for --template-env (SMOCK_TEMPLATE_ENV): "RÉGION" is not an environment variable name: letters, digits and _, starting with a letter or _
       #|invalid value "SMOCK_ADMIN_TOKEN" for --template-env (SMOCK_TEMPLATE_ENV): "SMOCK_ADMIN_TOKEN" starts with SMOCK_: smock's own variables cannot be listed
       #|invalid value "REGION,SMOCK_PORT" for --template-env (SMOCK_TEMPLATE_ENV): "SMOCK_PORT" starts with SMOCK_: smock's own variables cannot be listed
-      #|invalid value "a.b" for --template-env (SMOCK_TEMPLATE_ENV): "a.b" is not a variable name: letters, digits and _, starting with a letter or _
+      #|invalid value "a.b" for --template-env (SMOCK_TEMPLATE_ENV): "a.b" is not an environment variable name: letters, digits and _, starting with a letter or _
     ),
   )
 }
