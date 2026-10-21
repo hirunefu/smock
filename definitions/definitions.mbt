@@ -144,7 +144,6 @@ pub struct Stub {
   request : Conditions
   /// The Stub's Scenario clause, if it has `scenario`.
   scenario : ScenarioClause?
-  response : Response
   /// The Stub's responses, in the order written, each with its weight. A
   /// matched request gets one of them. A Stub with `response` has that one,
   /// of weight 1.
