@@ -234,6 +234,9 @@ pub(all) struct Removed {
   scenario_states : Int
   /// How many Variables, each of one Mock, Session and name.
   variables : Int
+  /// How many copies of Data buckets, each of one Mock, Session and bucket,
+  /// whose buckets read their initial values again.
+  data_buckets : Int
 } derive(Debug)
 
 ///|
@@ -245,20 +248,23 @@ pub(all) struct Removed {
 ///
 /// Raises `UnknownMock` when the scope is a Mock that no Mock has the name
 /// of and that the Journal holds no entries of. A Mock that a reload
-/// removed has no Ephemeral Stubs, Scenario state or Variables left, but
-/// the entries it recorded remain, and a reset of it clears them.
+/// removed has no Ephemeral Stubs, Scenario state, Variables or copies
+/// left, but the entries it recorded remain, and a reset of it clears them.
 pub fn Engine::reset(
   self : Engine,
   scope : ResetScope,
 ) -> Removed raise AdminError {
   match scope {
-    Session(session) =>
+    Session(session) => {
+      let cleared = self.store.remove_where((_, s) => s == session)
       {
         ephemeral_stubs: self.ephemeral.remove_where((_, s) => s == session),
         journal_entries: self.journal.reset_session(session),
         scenario_states: self.scenarios.remove_where((_, s) => s == session),
-        variables: self.store.remove_where((_, s) => s == session),
+        variables: cleared.variables,
+        data_buckets: cleared.copies,
       }
+    }
     Mock(mock) => {
       let journal_entries = self.journal.remove_where(entry => {
         entry.mock == Some(mock)
@@ -266,19 +272,24 @@ pub fn Engine::reset(
       if journal_entries == 0 {
         self.check_mock(mock)
       }
+      let cleared = self.store.remove_where((m, _) => m == mock)
       {
         ephemeral_stubs: self.ephemeral.remove_where((m, _) => m == mock),
         journal_entries,
         scenario_states: self.scenarios.remove_where((m, _) => m == mock),
-        variables: self.store.remove_where((m, _) => m == mock),
+        variables: cleared.variables,
+        data_buckets: cleared.copies,
       }
     }
-    All =>
+    All => {
+      let cleared = self.store.remove_where((_, _) => true)
       {
         ephemeral_stubs: self.ephemeral.remove_where((_, _) => true),
         journal_entries: self.journal.reset_all(),
         scenario_states: self.scenarios.remove_where((_, _) => true),
-        variables: self.store.remove_where((_, _) => true),
+        variables: cleared.variables,
+        data_buckets: cleared.copies,
       }
+    }
   }
 }

@@ -160,6 +160,17 @@ of each GitHub release include its section
   writes nothing and gets 507 `state_limit_reached`. Each set and each
   drop of a copy is logged. The `per_replica_state` warning names the
   copies of Data buckets.
+- `POST /v1/reset` drops the copies of Data buckets in its scope, which
+  give their bytes back to the state bound, and says how many it dropped,
+  in `removed.dataBuckets` of its response and its log entry. A reload
+  that swaps in new files drops the copies of a Mock that is gone, of a
+  bucket the new files no longer declare, and of a bucket whose initial
+  value or `key` changed; it keeps the others, so editing an unrelated
+  Stub keeps a test's data. Initial values are compared as compact JSON,
+  so moving one between `json` and `jsonFile` is no change, and a change
+  of `newKey` keeps the copies. The `definitions reloaded` log entry says
+  how many copies the reload dropped, in `dataBucketsReset`. Nothing
+  expires a copy.
 - A Stub's `dataWrites` writes to the Data buckets of its Mock when it
   matches: 1 to 100 writes, applied in order, each `set` (the bucket
   becomes the value), `merge` (a shallow merge of an object into the

@@ -1073,7 +1073,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"scope":"all","removed":{"ephemeralStubs":1,"scenarioStates":0,"variables":0},"warnings":[]}
+          #|{"scope":"all","removed":{"ephemeralStubs":1,"scenarioStates":0,"variables":0,"dataBuckets":0},"warnings":[]}
         ),
       },
     ),
@@ -1085,7 +1085,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"scope":"session","removed":{"ephemeralStubs":0,"journalEntries":2,"variables":3},"warnings":[]}
+          #|{"scope":"session","removed":{"ephemeralStubs":0,"journalEntries":2,"variables":3,"dataBuckets":0},"warnings":[]}
         ),
       },
     ),
@@ -1097,7 +1097,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"scope":"mock","removed":{"ephemeralStubs":0,"journalEntries":2,"scenarioStates":1},"warnings":[]}
+          #|{"scope":"mock","removed":{"ephemeralStubs":0,"journalEntries":2,"scenarioStates":1,"dataBuckets":0},"warnings":[]}
         ),
       },
     ),
@@ -1109,7 +1109,31 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"scope":"all","removed":{"ephemeralStubs":0,"journalEntries":0,"scenarioStates":0,"variables":-1},"warnings":[]}
+          #|{"scope":"all","removed":{"ephemeralStubs":0,"journalEntries":0,"scenarioStates":0,"variables":-1,"dataBuckets":0},"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a reset without the count of copies of Data buckets",
+      "POST",
+      "/v1/reset",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"scope":"session","removed":{"ephemeralStubs":0,"journalEntries":2,"scenarioStates":0,"variables":3},"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a reset with a count of copies of Data buckets below 0",
+      "POST",
+      "/v1/reset",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"scope":"all","removed":{"ephemeralStubs":0,"journalEntries":0,"scenarioStates":0,"variables":0,"dataBuckets":-1},"warnings":[]}
         ),
       },
     ),
@@ -1121,7 +1145,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"scope":"replica","removed":{"ephemeralStubs":0,"journalEntries":0,"scenarioStates":0,"variables":0},"warnings":[]}
+          #|{"scope":"replica","removed":{"ephemeralStubs":0,"journalEntries":0,"scenarioStates":0,"variables":0,"dataBuckets":0},"warnings":[]}
         ),
       },
     ),
@@ -1628,6 +1652,8 @@ async test "the contract checker rejects responses that break the document" {
       #|a reset without the count of Scenario states: /removed: scenarioStates is missing
       #|a reset without the count of Variables: /removed: variables is missing
       #|a reset with a count of Variables below 0: /removed/variables: -1 is below 0
+      #|a reset without the count of copies of Data buckets: /removed: dataBuckets is missing
+      #|a reset with a count of copies of Data buckets below 0: /removed/dataBuckets: -1 is below 0
       #|a reset with a scope the document does not list: /scope: "replica" is not one of ["session","mock","all"]
       #|a list of Variables: conforms
       #|a list of Variables with a name that is not a Variable name: /variables (name a.b): "a.b" does not match ^[A-Za-z0-9_-]{1,128}$

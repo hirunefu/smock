@@ -2,7 +2,8 @@
 // until it first writes to the bucket, which makes its own copy, kept in
 // the per-Session store beside its Variables. Reads never copy. The Admin
 // API lists a Mock's buckets, and reads, sets and drops the calling
-// Session's copy of one.
+// Session's copy of one. Resets drop the copies in their scope, and a
+// reload drops the copies of a bucket it changed.
 
 ///|
 /// A Data bucket of a Mock as one Session sees it, as the Admin API shows
@@ -125,13 +126,47 @@ fn Engine::declared_bucket(
   mock : String,
   bucket : String,
 ) -> @definitions.DataBucket raise AdminError {
-  let declared = self.mock_named(mock)
-  for candidate in declared.buckets {
+  match bucket_named(self.mock_named(mock), bucket) {
+    Some(declared) => declared
+    None => raise UnknownBucket(mock~, bucket~)
+  }
+}
+
+///|
+/// The Data bucket named `bucket` that `mock` declares, if any.
+fn bucket_named(
+  mock : @definitions.Mock,
+  bucket : String,
+) -> @definitions.DataBucket? {
+  for candidate in mock.buckets {
     if candidate.name == bucket {
-      return candidate
+      return Some(candidate)
     }
   }
-  raise UnknownBucket(mock~, bucket~)
+  None
+}
+
+///|
+/// Whether a reload from the Mock `before` to the Mock `after`, which have
+/// the same name, changed its Data bucket `bucket` so that the copies of it
+/// are dropped: when one of them does not declare it, or when its `key` or
+/// its initial value differs. The initial values are compared as compact
+/// JSON, so moving one between `json` and `jsonFile` is no change. A change
+/// of `newKey` alone keeps the copies, since their data stays valid.
+fn bucket_changed(
+  before : @definitions.Mock?,
+  after : @definitions.Mock?,
+  bucket : String,
+) -> Bool {
+  guard before is Some(before) &&
+    bucket_named(before, bucket) is Some(before) &&
+    after is Some(after) &&
+    bucket_named(after, bucket) is Some(after) else {
+    return true
+  }
+  before.key != after.key ||
+  @template.compact_json_bytes(before.initial) !=
+  @template.compact_json_bytes(after.initial)
 }
 
 ///|

@@ -109,7 +109,7 @@ async test "over the Admin API, a Session reset clears the Session's Variables, 
       inspect(
         out.join("\n"),
         content=(
-          #|reset test-a: 200 {"scope":"session","removed":{"ephemeralStubs":0,"journalEntries":1,"scenarioStates":0,"variables":2},"warnings":[]}
+          #|reset test-a: 200 {"scope":"session","removed":{"ephemeralStubs":0,"journalEntries":1,"scenarioStates":0,"variables":2,"dataBuckets":0},"warnings":[]}
           #|test-a GET /me: 200 {"user":null}
           #|test-b GET /me: 200 {"user":"bob"}
         ),
@@ -120,7 +120,7 @@ async test "over the Admin API, a Session reset clears the Session's Variables, 
         stopped.logs.filter(line => line.contains("\"msg\":\"reset\"")),
       ),
       content=(
-        #|{"level":"info","msg":"reset","scope":"session","session":"test-a","removed":{"ephemeralStubs":0,"journalEntries":1,"scenarioStates":0,"variables":2}}
+        #|{"level":"info","msg":"reset","scope":"session","session":"test-a","removed":{"ephemeralStubs":0,"journalEntries":1,"scenarioStates":0,"variables":2,"dataBuckets":0}}
       ),
     )
   })
