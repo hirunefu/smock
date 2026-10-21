@@ -1326,6 +1326,82 @@ The body `{"code":"straße-ç"}` with `?name=%E3%80%80Ann%20` (an ideographic
 space before the name, a space after it) gets
 `{"code":"STRAßE-Ç","name":"Ann"}`.
 
+**Encodings.** Each argument may be any expression.
+
+| Helper | Arguments | Output |
+|---|---|---|
+| `base64(s)` | text | The UTF-8 bytes of `s` in base64, with `=` padding. |
+| `base64url(s)` | text | The same in base64url, the URL-safe alphabet, without padding. |
+| `base64Decode(s)`, `base64urlDecode(s)` | text | The bytes that `s` encodes in base64, or in base64url, as text. |
+| `urlEncode(s)` | text | The UTF-8 bytes of `s` percent-encoded, as RFC 3986 says, with upper-case hex digits. Only `A-Z a-z 0-9 - . _ ~` stay as they are, so a space becomes `%20`. |
+| `urlDecode(s)` | text | `s` with each percent-escape decoded. `+` stays `+`. |
+
+The decoders are strict, so a malformed input is an error, not a partial
+result:
+
+- `base64Decode` takes only the standard alphabet, `A-Z a-z 0-9 + /`, and
+  `base64urlDecode` only the URL-safe one, `A-Z a-z 0-9 - _`. Any other
+  character, whitespace included, is an error.
+- Padding may be left out. Padding that is given must be complete and at
+  the end: `Zg==` and `Zg` both give `f`, but `Zg=`, `Zg===` and `Zg==Zg==`
+  are errors. Bits after the last byte are ignored.
+- In `urlDecode`, a `%` that two hex digits, in either case, do not follow
+  is an error.
+- Decoded bytes that are not UTF-8 become U+FFFD, as in `bodyText`.
+
+```yaml
+response:
+  status: 200
+  template: true
+  headers:
+    Location: /search?q=${urlEncode(query.q)}
+  json:
+    token: ${base64url(query.token)}
+    basic: ${base64(concat(body.user, ':', body.password))}
+    text: ${base64Decode(body.data)}
+```
+
+`?q=a%20b%26c&token=a%2Bb` with the body
+`{"user":"ann","password":"pw","data":"aGk="}` gets
+`Location: /search?q=a%20b%26c` and
+`{"token":"YSti","basic":"YW5uOnB3","text":"hi"}`.
+
+**JWTs.** The argument may be any expression.
+
+| Helper | Arguments | Output |
+|---|---|---|
+| `jwtPayload(token)`, `jwtHeader(token)` | text | The payload, or the header, of the JWT `token`, as a JSON object. Read a claim with a step, such as `jwtPayload(header.authorization).sub`. |
+
+- smock only decodes the token. It never checks the signature, the `alg`
+  or a claim such as `exp`, so it reads an unsigned or forged token like
+  any other. Never rely on a mock to verify tokens.
+- A leading `Bearer`, in any case, is removed when spaces or tabs follow
+  it, and they go with it. So `header.authorization` can be passed as it
+  is.
+- A token is a JWS in compact form: three base64url parts separated by
+  `.`, padding optional, the first two each the UTF-8 of a JSON object.
+  The third part, the signature, may be empty.
+- Anything else is missing, so `??` gives a fallback: no token, a
+  malformed one, wrong padding (an error in `base64urlDecode`), a JWE of
+  five parts, or a value that is not text.
+- A member name that repeats keeps its last value, as RFC 7519 allows for
+  claims.
+
+```yaml
+response:
+  status: 200
+  template: true
+  json:
+    user: ${jwtPayload(header.authorization).sub ?? 'anonymous'}
+    alg: ${jwtHeader(header.authorization).alg ?? null}
+```
+
+With
+`Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1LTQyIn0.c2ln`,
+whose payload is `{"sub":"u-42"}`, the body is
+`{"user":"u-42","alg":"HS256"}`. Without the header, or with a malformed
+token, it is `{"user":"anonymous","alg":null}`.
+
 The string helpers, and the families added after them, read their
 arguments by one set of rules:
 
@@ -1337,7 +1413,8 @@ arguments by one set of rules:
   hold, such as `1e300`, is out of range, so as a position it clamps as
   other positions do.
 - A value of the wrong kind from the request is an error when the template
-  is rendered. A literal of the wrong kind, such as
+  is rendered; the JWT helpers give a missing value instead. A literal of
+  the wrong kind, such as
   `padStart(query.n, 'six')` or `concat(null, 'a')`, is an error when the
   files are loaded, and so is a literal alternative of a fallback, such as
   the `true` of `padStart(query.n, query.width ?? true)`.
@@ -1407,7 +1484,8 @@ an error unless `??` gives a fallback (`${query.lang ?? 'en'}`,
 `${body.note ?? null}`); a loop over an absent query parameter or header
 runs zero times, and in `$if` a missing value is never an error: it is
 false, and it equals no literal (so `query.x != 'a'` holds when `x` is
-absent). A call with a missing argument is missing too.
+absent). A call with a missing argument is missing too, and so is a JWT
+helper's call on what is not a token.
 
 Type errors are errors as well: a loop over what is not an array,
 `number(x)` of text that is not a JSON number, a `range` bound that is not
