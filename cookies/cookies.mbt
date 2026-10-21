@@ -5,9 +5,11 @@
 // compared exactly, case and all. Values stay as sent: quotes are part of
 // them, as RFC 6265bis says, and nothing is percent-decoded.
 //
-// Cookie conditions scan the fields in place with `find` and `value_end`,
-// which allocate nothing; the Near miss takes every cookie at once with
-// `parse`.
+// Cookie conditions, the Near miss and the `cookie` root of templates all
+// read cookies here, so that what a condition matches is what a template
+// inserts. Conditions scan the fields in place with `find` and
+// `value_end`, which allocate nothing; the Near miss and templates take
+// every cookie at once with `parse`.
 
 ///|
 /// Whether a header field named `name` holds cookies: whether its name is

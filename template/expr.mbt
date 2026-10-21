@@ -3,8 +3,8 @@
 //     expr    = value { "??" value }
 //     value   = ref | literal | call
 //     ref     = root { "." name | "[" integer "]" | "[" string "]" }
-//     root    = "method" | "path" | "query" | "header" | "body" | "bodyText"
-//             | "loop" | loop variable
+//     root    = "method" | "path" | "query" | "header" | "cookie" | "body"
+//             | "bodyText" | "loop" | loop variable
 //     call    = function "(" [ expr { "," expr } ] ")"
 //     cond    = [ "!" ] expr [ ( "==" | "!=" ) literal ]
 //     literal = string | number | "true" | "false" | "null"
@@ -35,6 +35,7 @@ priv enum Root {
   Path
   Query
   Header
+  Cookie
   Body
   BodyText
   LoopIndex
@@ -105,7 +106,7 @@ let reserved : Array[String] = ["for", "if", "else", "end", "each", "params"]
 /// The names of request fields and `loop`, which a loop variable cannot
 /// take.
 let root_names : Array[String] = [
-  "method", "path", "query", "header", "body", "bodyText", "loop",
+  "method", "path", "query", "header", "cookie", "body", "bodyText", "loop",
 ]
 
 ///|
@@ -467,6 +468,7 @@ fn Parser::reference(
     "body" => Ref(Body, steps, text)
     "query" => with_name(Query)
     "header" => with_name(Header)
+    "cookie" => with_name(Cookie)
     "path" =>
       match steps {
         [] | [Index(_)] => Ref(Path, steps, text)
@@ -501,6 +503,7 @@ fn root_word(root : Root) -> String {
     Path => "path"
     Query => "query"
     Header => "header"
+    Cookie => "cookie"
     Body => "body"
     BodyText => "bodyText"
     LoopIndex => "loop"

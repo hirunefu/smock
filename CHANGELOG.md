@@ -8,6 +8,19 @@ of each GitHub release include its section
 
 ## [Unreleased]
 
+### Added
+
+- `cookie.NAME` in templates reads a cookie as cookie conditions read it,
+  from every `Cookie` field, with quotes kept and nothing percent-decoded.
+  It is the first value of the cookie, and `$each` over it walks every
+  value.
+
+### Changed
+
+- A loop variable named `cookie` now fails to load, since `cookie` is a
+  request field in templates. No valid file changes meaning: rename the
+  loop variable. The Definition file format is still version 1.
+
 ## [0.2.0] - 2026-10-21
 
 ### Added

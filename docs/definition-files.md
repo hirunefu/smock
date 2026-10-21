@@ -377,6 +377,9 @@ smock reads cookies from the `Cookie` header like this:
   `"token": "abc"`. Nothing is percent-decoded, so `name=a%20b` meets
   `"name": "a%20b"`, not `"name": "a b"`.
 
+Templates read cookies the same way, with
+[`cookie.NAME`](#inserting-values).
+
 A cookie name can repeat, such as when a cookie is set for two paths. Then
 the condition holds when any one of its values matches, as for a query
 parameter, and `{ "$not": "1" }` holds only when none of them is `1`.
@@ -1070,6 +1073,7 @@ operator and no user-defined function. The words `for`, `if`, `else`,
 | `path[n]` | Segment `n` of that path, counted from 0 after the leading `/`: for `/users/42`, `path[0]` is `users` and `path[1]` is `42`. |
 | `query.NAME` | The first decoded value of the query parameter. |
 | `header.NAME` | The first value of the header, its name compared case-insensitively; each field line is one value. |
+| `cookie.NAME` | The first value of the cookie, read from every `Cookie` field as [cookie conditions](#cookies) read it. |
 | `body` | The body parsed as JSON. `body.a.b`, `body.items[0]` and `body['odd.key']` walk into it. |
 | `bodyText` | The body as text; bytes that are not UTF-8 become U+FFFD. |
 | `loop.index` | The position in the innermost `$each`, from 0. |
@@ -1077,6 +1081,28 @@ operator and no user-defined function. The words `for`, `if`, `else`,
 
 A name in a reference is ASCII letters, digits, `_` and `-`; write any other
 name as `['…']`, such as `query['page size']`.
+
+`cookie.NAME` reads cookies exactly as a cookie condition does, so what a
+condition matched is what a template inserts:
+
+- Every `Cookie` field counts. Each is split on `;`, and each part is
+  trimmed of spaces and tabs.
+- The first `=` of a part separates the name from the value. A part
+  without `=` holds no cookie.
+- Names are compared exactly, case and all.
+- Values stay as sent: quotes are kept, and nothing is percent-decoded. So
+  `Cookie: session="s1"` gives `"s1"` with its quotes.
+- An absent cookie is missing, so `??` gives a fallback, as in
+  `${cookie.session ?? null}`.
+
+```yaml
+json:
+  session: ${cookie.session ?? null}
+  themes: { $each: cookie.theme, as: t, do: "${t}" }
+```
+
+A request with `Cookie: theme=dark; session="s1"` and a second line
+`Cookie: theme=light` gets `{"session":"\"s1\"","themes":["dark","light"]}`.
 
 ### Structured templates
 
@@ -1087,8 +1113,10 @@ In `json`:
   gives a string, each value written as text.
 - `{ "$each": expr, "as": name, "do": template }` gives an array, one
   element per item. It walks an array (from `body` or a loop variable),
-  every value of a query parameter or a header (none when it is absent), or
-  `range(a, b)`.
+  every value of a query parameter, a header or a cookie (none when it is
+  absent), or `range(a, b)`. The name in `as` cannot be a request field
+  (`method`, `path`, `query`, `header`, `cookie`, `body` or `bodyText`),
+  `loop` or a reserved word.
 - `{ "$if": cond, "then": template, "else": template }` gives `then` or
   `else`. Without `else`, a false condition leaves the member or the array
   element out; at the root of `json`, `else` is required. A condition is

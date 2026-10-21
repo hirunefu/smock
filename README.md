@@ -59,7 +59,8 @@ Packages of `smock/smock`:
   template helpers draw from. Its sequence for a seed is fixed, the same on
   every target.
 - `cookies`: reads the cookies of a request from its `Cookie` fields, for
-  cookie conditions and the Near miss.
+  cookie conditions, the Near miss and the `cookie` root of templates, so
+  that all of them read cookies by the same rules.
 - `defdir`: reads the definitions directory and loads it, for
   `smock serve`, `smock check` and `smock render`, and takes the stamp of
   it that a poll compares (native).
