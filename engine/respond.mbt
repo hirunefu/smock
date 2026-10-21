@@ -41,7 +41,11 @@ fn respond(
     headers: incoming.request.headers,
     body: incoming.request.body,
   }
-  let context = @template.Context::new(input, now~, draw~)
+  let context = @template.Context::new(
+    input,
+    now~,
+    rand=@template.helper_generator(draw),
+  )
   try render_template(stub.response.status, template, context) catch {
     RenderError(at~, message~) => {
       let error = { at, message, }
