@@ -373,6 +373,10 @@ async test "smock import-openapi rejects bad arguments as usage errors, on stder
       "api.json", "--mock", "m", "--output", "m.json", "--hosts", "a.test", "--declare-mock",
       "off",
     ],
+    [
+      "api.json", "--mock", "m", "--output", "m.json", "--hosts", "", "--declare-mock",
+      "off",
+    ],
     ["api.json", "--mock", "m", "--output", "m.json", "--declare-mock", "yes"],
     ["api.json", "--mock", "m", "--output", "m.json", "--base-path", "v1"],
     ["api.json", "--mock", "m", "--output", "m.json", "--base-path", ""],
@@ -430,6 +434,8 @@ async test "smock import-openapi rejects bad arguments as usage errors, on stder
       #|  status 2: smock import-openapi: invalid value "[::1],::1" for --hosts: "::1" is the same Host as "[::1]": Hosts are compared in lower case, without the port and a trailing dot
       #|api.json --mock m --output m.json --hosts a.test --declare-mock off
       #|  status 2: smock import-openapi: invalid value "a.test" for --hosts: must not be given with --declare-mock off: give the Hosts where the Mock is declared
+      #|api.json --mock m --output m.json --hosts  --declare-mock off
+      #|  status 2: smock import-openapi: invalid value "" for --hosts: must not be given with --declare-mock off: give the Hosts where the Mock is declared
       #|api.json --mock m --output m.json --declare-mock yes
       #|  status 2: smock import-openapi: invalid value "yes" for --declare-mock: must be on or off
       #|api.json --mock m --output m.json --base-path v1

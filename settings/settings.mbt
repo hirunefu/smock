@@ -896,22 +896,25 @@ fn on_or_off(
 /// The Hosts `--hosts` lists, separated by commas, in the order given, and
 /// none when it is not given or empty. Each is a Host a Definition file can
 /// declare, by the check `smock check` makes, and none is the same as an
-/// earlier one once normalised. So a Host taken here always loads. They are
-/// refused when the file does not declare the Mock (`declare_mock` false).
+/// earlier one once normalised. So a Host taken here always loads. The flag
+/// is refused when the file does not declare the Mock (`declare_mock`
+/// false), even empty: `--hosts ""` means no Hosts only for a declared
+/// Mock.
 fn hosts_value(
   matches : @argparse.Matches,
   declare_mock~ : Bool,
 ) -> Array[String] raise InvalidSetting {
   let hosts = []
-  guard value(matches, "hosts") is Some(text) && text != "" else {
-    return hosts
-  }
+  guard value(matches, "hosts") is Some(text) else { return hosts }
   if !declare_mock {
     raise InvalidOption(
       flag="hosts",
       value=text,
       reason="must not be given with --declare-mock off: give the Hosts where the Mock is declared",
     )
+  }
+  if text == "" {
+    return hosts
   }
   let normalised : Map[String, String] = Map([])
   for part in text.split(",") {
