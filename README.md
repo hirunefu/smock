@@ -7,8 +7,8 @@ The domain terms are defined in [GLOSSARY.md](GLOSSARY.md).
 [docs/getting-started-on-gke.md](docs/getting-started-on-gke.md) takes a
 first-time reader to smock answering requests on GKE Autopilot.
 [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) maps
-Mockoon environments, routes, rules and helpers onto Mocks, Stubs and
-templates.
+Mockoon environments, routes, rules, helpers and data buckets onto Mocks,
+Stubs, templates and Data buckets.
 
 ## Layout
 
@@ -391,9 +391,9 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   `smock_journal_evictions_total` show the [Journal](#the-journal)'s size
   and evictions, without labels; `smock_state_bytes` and
   `smock_state_writes_refused_total` show the bytes of per-Session state
-  that [the state bound](docs/definition-files.md#the-state-bound) counts
-  and the writes it refused, from requests and Admin API sets, without
-  labels.
+  that [the state bound](docs/definition-files.md#the-state-bound) counts,
+  Variables and copies of Data buckets, and the writes it refused, from
+  requests, CRUD Stubs and Admin API sets, without labels.
 - What smock's process and its cgroup use is read when `/metrics` is
   scraped, so serving requests costs nothing for it. The standard process
   metrics of Prometheus's client libraries: `process_cpu_seconds_total`
@@ -575,8 +575,11 @@ bodies, body files that serve byte ranges, JSON or Server-Sent Events,
 several responses picked at random by weight (`responses`), response
 templates and their helpers (fake data, time and dates, conversions,
 strings, encodings, JWTs and arithmetic), Variables that keep a value from
-one request for the next, Faults, the JSON Schema, editor support and
-writing Definition files in another configuration language.
+one request for the next, Data buckets that a Mock declares with their
+initial values and that each Session reads and writes in a copy of its
+own, CRUD Stubs that serve a bucket as a REST resource with filters,
+sorting and paging, Faults, the JSON Schema, editor support and writing
+Definition files in another configuration language.
 [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) turns a
 Mockoon environment into Definition files.
 
@@ -711,9 +714,12 @@ curl localhost:8080/users/1                                           # 200, fro
   a restart. They survive a [reload](docs/definition-files.md#reloading) of
   the Definition files, except those of a Mock the new files no longer
   declare.
-- Adding, deleting, setting a Scenario's state and resetting each write a
-  log entry (`Ephemeral Stub added`, `Ephemeral Stub deleted`, `Scenario
-  state set`, `reset`); requests write none.
+- Adding and deleting an Ephemeral Stub, setting a Scenario's state,
+  setting and deleting a Variable, setting a Data bucket, dropping a copy
+  and resetting each write a log entry (`Ephemeral Stub added`,
+  `Ephemeral Stub deleted`, `Scenario state set`, `Variable set`,
+  `Variable deleted`, `Data bucket set`, `Data bucket copy dropped`,
+  `reset`); requests write none.
 
 ## The Journal
 
@@ -742,11 +748,11 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   buckets](docs/definition-files.md#writing-buckets-datawrites) it wrote,
   as `dataWritten`, and why a data write failed, as `dataError`; the
   operation a [CRUD Stub](docs/definition-files.md#crud-stubs) served and
-  its key, as `crud`; the status, or the connection Fault; when the request was received and
-  how long the response took; and the digest of the definition set that
-  answered. A request for a Host that no Mock answers is recorded too,
-  with no Mock; one the HTTP/1.1 codec rejects (400, 413, 431, 501 or 505)
-  is not.
+  its key, as `crud`; the status, or the connection Fault; when the
+  request was received and how long the response took; and the digest of
+  the definition set that answered. A request for a Host that no Mock
+  answers is recorded too, with no Mock; one the HTTP/1.1 codec rejects
+  (400, 413, 431, 501 or 505) is not.
 - A request is in the Journal as soon as its client has the whole
   response: smock records it just before it writes the response's last
   bytes, so a query made right after a call always finds it. A stream of

@@ -187,7 +187,7 @@
       ]
     },
     "crud": {
-      "description": "What a CRUD Stub serves: a keyed Data bucket of the Stub's Mock, as a REST resource at path. GET path lists the bucket's items, a plain JSON array, with X-Total-Count and X-Filtered-Count; GET path/KEY reads the item whose key has the text KEY, or answers 404. Reads see the request's Session's copy of the bucket, or else its initial value. Any other method or path shape does not match the Stub, so later Stubs are tried. A CRUD Stub is tried in the usual order, so an earlier Stub can take over one of its requests. Its answers are compact JSON with Content-Type: application/json, never templated, and fault works on it as on any Stub.",
+      "description": "What a CRUD Stub serves: a keyed Data bucket of the Stub's Mock, as a REST resource at path. GET path lists the bucket's items that its list query keeps (filters by member, $sort, $offset and $limit), a plain JSON array, with X-Total-Count and X-Filtered-Count; POST path creates an item and answers 201 with it and its Location. GET, PUT, PATCH and DELETE on path/KEY read, replace, update with a shallow merge and delete the item whose key has the text KEY, or answer 404. Reads see the request's Session's copy of the bucket, or else its initial value, and writes go to that Session's copy. Any other method or path shape does not match the Stub, so later Stubs are tried. A CRUD Stub is tried in the usual order, so an earlier Stub can take over one of its requests. Its answers are compact JSON with Content-Type: application/json, never templated, and fault works on it as on any Stub.",
       "type": "object",
       "properties": {
         "bucket": {

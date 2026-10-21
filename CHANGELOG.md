@@ -268,7 +268,11 @@ of each GitHub release include its section
   Admin render answer 400 `invalid_request`.
 - docs/migrating-from-mockoon.md maps Mockoon's helpers, `RANDOM` routes,
   global variables, Range requests, dates, cookies and environment
-  variables onto smock, with each difference called out.
+  variables onto smock, with each difference called out. It also maps
+  data buckets, CRUD routes and their list parameters, the `data` and
+  `dataRaw` helpers, `setData` and the purge of data buckets onto Data
+  buckets, CRUD Stubs, list queries and `dataWrites`, and its worked
+  example serves its orders from a Data bucket with a CRUD Stub.
 
 ### Changed
 
