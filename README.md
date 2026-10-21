@@ -966,9 +966,15 @@ kind that CI uses.
 `scripts/check-schema.sh` runs the external validator check-jsonschema
 through `uvx` (or `pipx`) and needs `jq`; `scripts/check-openapi.sh` runs
 openapi-spec-validator the same way. The Admin API tests in `e2e/` check
-every response against `openapi/admin.json` (`e2e/contract_test.mbt`). Adding a fixture file under
-`schema/v1/fixtures/` adds it to the cross-check; the README there says
-which directory a fixture belongs in.
+every response against `openapi/admin.json` (`e2e/contract_test.mbt`).
+`e2e/import_openapi_golden_test.mbt` imports `openapi/admin.json`, the
+example of [docs/importing-openapi.md](docs/importing-openapi.md) and the
+OAI's Petstore (`e2e/golden/documents/`) with the binary, and compares each
+result with its committed golden file. A change to what the import writes,
+or to one of these documents, regenerates the golden file in the same
+change, with the command that the failing test prints. Adding a fixture
+file under `schema/v1/fixtures/` adds it to the cross-check; the README
+there says which directory a fixture belongs in.
 
 CI runs all of these on linux/amd64 and linux/arm64
 (`.github/workflows/build-test.yml`).

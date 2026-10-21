@@ -16,6 +16,13 @@ of each GitHub release include its section
   that it does not import, such as callbacks, are left out with a warning.
   smock never reads OpenAPI when it serves. See
   [docs/importing-openapi.md](docs/importing-openapi.md).
+- The quick start of [docs/importing-openapi.md](docs/importing-openapi.md)
+  imports an example beside the Mockoon one, in
+  `docs/examples/from-openapi/`: a small OpenAPI document with a server
+  path, a templated path, named examples and a 404, and the file that its
+  import writes. smock's tests import it, the Admin API's own document and
+  the OAI's Petstore again, and compare each result with its committed
+  file, so every change to what the import writes shows up in review.
 - `smock import-openapi` turns a path with parameters, such as
   `/pets/{petId}`, into a pattern in which each parameter matches text
   within one segment, and keeps a path without parameters exact. A
