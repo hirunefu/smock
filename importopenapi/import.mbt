@@ -10,8 +10,8 @@
 // Its parts are kept apart, so that each can grow on its own: the document
 // and its version (document.mbt), the operations under `paths`
 // (operations.mbt), paths (paths.mbt), responses (responses.mbt), bodies
-// and headers (bodies.mbt), references (references.mbt), and the file it
-// writes (output.mbt).
+// and headers (bodies.mbt), examples (examples.mbt), references
+// (references.mbt), and the file it writes (output.mbt).
 
 ///|
 /// What a conversion needs besides the documents.
