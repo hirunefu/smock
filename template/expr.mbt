@@ -48,10 +48,10 @@ priv enum Root {
   Env(Json?)
   /// `vars.NAME`: the Variable `NAME` of the request's Mock and Session, by
   /// its name. The steps of the reference go into its value.
-  Vars(String)
+  Variable(String)
   LoopIndex
   /// A loop variable, by its name.
-  Var(String)
+  LoopVar(String)
 }
 
 ///|
@@ -124,10 +124,10 @@ let root_names : Array[String] = [
 let max_integer : Int64 = 9_007_199_254_740_991L
 
 ///|
-/// Parses expressions in `chars`, from `i` on.
-priv struct Parser {
-  chars : Array[Char]
-  mut i : Int
+/// What the expressions of a template can name where they are parsed. An
+/// inner scope, such as the `do` of a `$each`, is derived from the outer
+/// one.
+priv struct Scope {
   /// The loop variables in scope, innermost last.
   vars : Array[String]
   /// Whether the expression is inside a `$each`, where `loop.index` is.
@@ -136,6 +136,18 @@ priv struct Parser {
   text : Bool
   /// The environment variables `env.NAME` may read.
   env : Env
+  /// Set when an expression reads the `vars` root, in this scope or one
+  /// derived from it, which share it: the template reads Variables.
+  reads_vars : Ref[Bool]
+}
+
+///|
+/// Parses expressions in `chars`, from `i` on.
+priv struct Parser {
+  chars : Array[Char]
+  mut i : Int
+  /// What the expressions can name.
+  scope : Scope
 }
 
 ///|
@@ -482,8 +494,8 @@ fn Parser::reference(
     }
     Ref(root, steps, text)
   }
-  if self.vars.contains(root) {
-    return Ref(Var(root), steps, text)
+  if self.scope.vars.contains(root) {
+    return Ref(LoopVar(root), steps, text)
   }
   match root {
     "method" => alone(Method)
@@ -492,7 +504,7 @@ fn Parser::reference(
     "env" =>
       match steps {
         [Name(name)] =>
-          match self.env.values.get(name) {
+          match self.scope.env.values.get(name) {
             Some(value) => Ref(Env(value.map(Json::string)), steps, text)
             None =>
               raise Syntax(
@@ -508,7 +520,10 @@ fn Parser::reference(
       }
     "vars" =>
       match steps {
-        [Name(name), .. rest] => Ref(Vars(name), rest.to_owned(), text)
+        [Name(name), .. rest] => {
+          self.scope.reads_vars.val = true
+          Ref(Variable(name), rest.to_owned(), text)
+        }
         _ =>
           raise Syntax(
             start,
@@ -528,7 +543,7 @@ fn Parser::reference(
           )
       }
     "loop" => {
-      if !self.in_loop {
+      if !self.scope.in_loop {
         raise Syntax(start, "loop.index is only inside $each")
       }
       match steps {
@@ -556,9 +571,9 @@ fn root_word(root : Root) -> String {
     Body => "body"
     BodyText => "bodyText"
     Env(_) => "env"
-    Vars(_) => "vars"
+    Variable(_) => "vars"
     LoopIndex => "loop"
-    Var(name) => name
+    LoopVar(name) => name
   }
 }
 
@@ -600,7 +615,7 @@ fn Parser::call(self : Parser, name : String, start : Int) -> Expr raise Syntax 
       self.expect(",", ", or )")
     }
   }
-  let site = { name, start, args, text: self.text, }
+  let site = { name, start, args, text: self.scope.text, }
   for family in families {
     if family(site) is Some(helper) {
       return Call(

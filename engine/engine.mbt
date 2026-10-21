@@ -154,7 +154,7 @@ pub fn Engine::Engine(
   snapshot : @definitions.Snapshot,
   match_index? : Bool = true,
   journal? : JournalSettings = JournalSettings(),
-  env? : @template.Env = @template.Env([]),
+  env? : @template.Env = @template.no_env,
   state_max_bytes? : Int = default_state_max_bytes,
 ) -> Engine {
   let state = StateBound::new(state_max_bytes)
@@ -490,11 +490,11 @@ pub fn Engine::handle(
       let mut context : @template.Context? = None
       let mut failed : ResponsePlan? = None
       if stub.writes_variables() {
-        let first = @template.Context::new(
-          template_input(incoming),
+        let first = first_context(
+          incoming,
           now~,
-          rand=@template.helper_generator(draw),
-          vars?=self.variables.of(stub.mock, session),
+          draw~,
+          vars=self.variables.of(stub.mock, session),
         )
         try self.write_variables(stub, session, first) catch {
           ValueFailed(error) => {
@@ -519,29 +519,24 @@ pub fn Engine::handle(
           let response = stub.responses[response_index.unwrap_or(0)].response
           // 5. Rendering and planning: the response as written, or rendered
           //    from its templates. One that serves byte ranges answers the
-          //    request's Range field.
-          match response.template {
-            None if response.serves_ranges => range_response(response, request)
-            None => stub_response(response)
-            Some(template) => {
-              let context = match context {
-                Some(context) => context
-                None =>
-                  @template.Context::new(
-                    template_input(incoming),
-                    now~,
-                    rand=@template.helper_generator(draw),
-                    vars?=self.variables.of(stub.mock, session),
-                  )
-              }
-              let (plan, error) = respond(
-                stub.id,
-                response.status,
-                template,
-                context,
-              )
-              template_error = error
-              plan
+          //    request's Range field. Only a response that reads Variables,
+          //    and does not continue from their values, looks them up.
+          plan_response(
+            response,
+            incoming,
+            context,
+            now~,
+            draw~,
+            vars=if context is None && response.reads_variables {
+              self.variables.of(stub.mock, session)
+            } else {
+              None
+            },
+          ) catch {
+            RenderError(at~, message~) => {
+              let error = { at, message, }
+              template_error = Some(error)
+              template_failed(stub.id, error)
             }
           }
         }

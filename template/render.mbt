@@ -290,7 +290,7 @@ fn Context::reference(
     Method => Some(Json::string(request.meth))
     BodyText => Some(Json::string(@utf8.decode_lossy(request.body)))
     Env(value) => value
-    Vars(name) =>
+    Variable(name) =>
       match self.vars {
         Some(vars) =>
           match vars.get(name) {
@@ -342,7 +342,7 @@ fn Context::reference(
       }
     LoopIndex =>
       frames.last().map(frame => Json::number(frame.index.to_double()))
-    Var(name) => {
+    LoopVar(name) => {
       for i = frames.length() - 1; i >= 0; i = i - 1 {
         if frames[i].name == name {
           return walk(frames[i].element, steps)
@@ -422,10 +422,13 @@ fn number_of(text : String) -> Json? {
   let parser = {
     chars,
     i: 0,
-    vars: [],
-    in_loop: false,
-    text: false,
-    env: no_env,
+    scope: {
+      vars: [],
+      in_loop: false,
+      text: false,
+      env: no_env,
+      reads_vars: Ref(false),
+    },
   }
   let number = parser.number() catch { _ => return None }
   if parser.i == chars.length() {

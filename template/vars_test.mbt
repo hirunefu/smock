@@ -228,3 +228,88 @@ test "the next rendering for a request reads its own Variables, draws on from th
     ),
   )
 }
+
+///|
+test "a template knows whether it reads vars, wherever it does" {
+  let structured = (source : String) => {
+    match parsed(source, variable=false) {
+      Ok(template) => "\{template.reads_vars()} \{source}"
+      Err(problems) => problems
+    }
+  }
+  let text = (source : String) => {
+    match @template.Text::parse(source, pointer="/h", kind=HeaderValue) {
+      Ok(template) => "\{template.reads_vars()} \{source}"
+      Err(problem) => problem.message
+    }
+  }
+  inspect(
+    [
+      text("plain"),
+      text("${query.a ?? 'none'} $${vars.x}"),
+      text("${vars.x}"),
+      text("${query.a ?? vars.x ?? 0}"),
+      text("${len(concat('a', vars.x ?? ''))}"),
+      structured("{ \"a\": \"${body.x}\", \"b\": [1, \"${len('x')}\"] }"),
+      structured("{ \"a\": [1, { \"b\": \"${vars.x ?? 0}\" }] }"),
+      structured(
+        "{ \"$each\": \"vars.tags\", \"as\": \"t\", \"do\": \"${t}\" }",
+      ),
+      structured(
+        "{ \"$each\": \"range(1, 2)\", \"as\": \"t\", \"do\": \"${vars.x}\" }",
+      ),
+      structured("{ \"$if\": \"vars.x == 1\", \"then\": 1, \"else\": 2 }"),
+      structured(
+        "{ \"$if\": \"query.x\", \"then\": 1, \"else\": \"${vars.x}\" }",
+      ),
+    ].join("\n"),
+    content=(
+      #|false plain
+      #|false ${query.a ?? 'none'} $${vars.x}
+      #|true ${vars.x}
+      #|true ${query.a ?? vars.x ?? 0}
+      #|true ${len(concat('a', vars.x ?? ''))}
+      #|false { "a": "${body.x}", "b": [1, "${len('x')}"] }
+      #|true { "a": [1, { "b": "${vars.x ?? 0}" }] }
+      #|true { "$each": "vars.tags", "as": "t", "do": "${t}" }
+      #|true { "$each": "range(1, 2)", "as": "t", "do": "${vars.x}" }
+      #|true { "$if": "vars.x == 1", "then": 1, "else": 2 }
+      #|true { "$if": "query.x", "then": 1, "else": "${vars.x}" }
+    ),
+  )
+}
+
+///|
+test "a Variable's number is the decimal its kept text writes, exponent included, wherever an integer is taken" {
+  let at = (text : String, float : Double) => {
+    with_vars("\"${substr('abcdefghijklmnopqrstuvwxyz', vars.n)}\"", vars={
+      "n": Json::number(float, repr=text),
+    })
+  }
+  inspect(
+    [
+      at("1.5E+1", 15.0),
+      at("-2.50e1", -25.0),
+      at("1000e-3", 1.0),
+      at("1.0000000000000000001e1", 10.0),
+      at("100000000000000000001e-20", 1.0),
+      with_vars(
+        "{ \"$each\": \"range(1, vars.n)\", \"as\": \"i\", \"do\": \"${i}\" }",
+        vars={ "n": Json::number(3.0, repr="3.0e0") },
+      ),
+      with_vars(
+        "{ \"$each\": \"range(1, vars.n)\", \"as\": \"i\", \"do\": \"${i}\" }",
+        vars={ "n": Json::number(3.0, repr="30000000000000000001e-19") },
+      ),
+    ].join("\n"),
+    content=(
+      #|"pqrstuvwxyz"
+      #|"bcdefghijklmnopqrstuvwxyz"
+      #|"bcdefghijklmnopqrstuvwxyz"
+      #|error at /variables/v: substr(): argument 2 must be an integer, or a string that is one, not 1.0000000000000000001e1
+      #|error at /variables/v: substr(): argument 2 must be an integer, or a string that is one, not 100000000000000000001e-20
+      #|[1,2,3]
+      #|error at /variables/v/$each: range() takes integers from -9007199254740991 to 9007199254740991, not 30000000000000000001e-19
+    ),
+  )
+}

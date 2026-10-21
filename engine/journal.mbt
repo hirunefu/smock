@@ -78,11 +78,12 @@ pub struct JournalEntry {
   scenario : ScenarioMove?
   /// The index of the response the pick chose among the `responses` of the
   /// Stub that matched, counted from 0. `None` for a Stub with `response`,
-  /// and when no Stub matched.
+  /// when no Stub matched, and when no response was picked: a value failed
+  /// to render, or the state bound refused the writes.
   response_index : Int?
   /// The names of the Variables the request wrote, in the order written:
-  /// none when the Stub that matched writes none, when no Stub matched, or
-  /// when a value failed to render.
+  /// none when the Stub that matched writes none, when no Stub matched,
+  /// when a value failed to render, or when the state bound refused them.
   variables_written : ReadOnlyArray[String]
   /// The Near miss, when no Stub matched and the Mock had candidates.
   near_miss : NearMiss?

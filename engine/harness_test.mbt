@@ -28,7 +28,7 @@ fn harness(
   process_seed? : UInt64 = 1,
   journal? : @engine.JournalSettings = @engine.JournalSettings(),
   match_index? : Bool = true,
-  env? : @template.Env = @template.Env([]),
+  env? : @template.Env = @template.no_env,
   state_max_bytes? : Int = @engine.default_state_max_bytes,
 ) -> Harness {
   let set : @definitions.DefinitionSet = {

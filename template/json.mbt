@@ -244,8 +244,8 @@ fn CompactReader::string(self : CompactReader) -> String {
           b'f' => out.write_byte(b'\x0c')
           b'u' => {
             // `\u00XX`, for a control character.
-            let high = hex_digit(bytes[self.i + 2])
-            let low = hex_digit(bytes[self.i + 3])
+            let high = hex_value(bytes[self.i + 2].to_int().unsafe_to_char())
+            let low = hex_value(bytes[self.i + 3].to_int().unsafe_to_char())
             self.i += 4
             out.write_byte((high * 16 + low).to_byte())
           }
@@ -275,17 +275,5 @@ fn CompactReader::number(self : CompactReader) -> Json {
     // Written from a value that is not a JSON number, such as an infinity:
     // it keeps its text.
     _ => Json::number(0.0 / 0.0, repr=text)
-  }
-}
-
-///|
-/// The value of the hexadecimal digit `byte`, written in lower case as
-/// `write_json_string_content` writes it.
-fn hex_digit(byte : Byte) -> Int {
-  let c = byte.to_int()
-  if c >= '0'.to_int() && c <= '9'.to_int() {
-    c - '0'.to_int()
-  } else {
-    c - 'a'.to_int() + 10
   }
 }

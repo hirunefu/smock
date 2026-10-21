@@ -52,25 +52,66 @@ fn pick_response(stub : @definitions.Stub, draw : UInt64) -> Int? {
 }
 
 ///|
-/// The plan of a response with `template` on, of the Stub with the ID
-/// `stub`, rendered in `context`, the response's rendering for the
-/// request, without Faults. `status` is the response's status.
+/// Step 5 of the match decision, rendering and planning: the plan of
+/// `response`, one of a Stub's responses, for the request `incoming`,
+/// without Faults. A response as written gets its plan as written, or,
+/// when it serves byte ranges, the one that answers the request's Range
+/// field. A response with `template` on is rendered in `context`, the
+/// rendering for the request that the Stub's Variables left, or, without
+/// one, in the request's first rendering, made here from `now`, `draw` and
+/// `vars` as `first_context` makes it.
 ///
-/// When a template cannot be rendered, the plan is a 500 that says so, and
-/// the error comes with it.
-fn respond(
-  stub : String,
-  status : Int,
-  template : @definitions.ResponseTemplate,
-  context : @template.Context,
-) -> (ResponsePlan, TemplateError?) {
-  try render_template(status, template, context) catch {
-    RenderError(at~, message~) => {
-      let error = { at, message, }
-      (template_failed(stub, error), Some(error))
+/// Raises `RenderError` when a template cannot be rendered: the request
+/// then gets `template_failed`.
+fn plan_response(
+  response : @definitions.Response,
+  incoming : Incoming,
+  context : @template.Context?,
+  now~ : Int64,
+  draw~ : UInt64,
+  vars~ : Map[String, Json]?,
+) -> ResponsePlan raise @template.RenderError {
+  match response.template {
+    None if response.serves_ranges => range_response(response, incoming.request)
+    None => stub_response(response)
+    Some(template) => {
+      let context = match context {
+        Some(context) => context
+        None => first_context(incoming, now~, draw~, vars~)
+      }
+      render_template(response.status, template, context)
     }
-  } noraise {
-    plan => (plan, None)
+  }
+}
+
+///|
+/// The first rendering for the request `incoming`, received at `now`
+/// (milliseconds since the Unix epoch), whose one draw is `draw`: its
+/// helpers draw from the request's helper generator, made from `draw`, and
+/// `vars.NAME` reads `vars`, by name.
+fn first_context(
+  incoming : Incoming,
+  now~ : Int64,
+  draw~ : UInt64,
+  vars~ : Map[String, Json]?,
+) -> @template.Context {
+  @template.Context::new(
+    template_input(incoming),
+    now~,
+    rand=@template.helper_generator(draw),
+    vars?,
+  )
+}
+
+///|
+/// The request as templates see it.
+fn template_input(incoming : Incoming) -> @template.Input {
+  {
+    meth: incoming.request.meth,
+    path: incoming.path,
+    query: incoming.query_parameters(),
+    headers: incoming.request.headers,
+    body: incoming.request.body,
   }
 }
 

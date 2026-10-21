@@ -137,7 +137,7 @@ pub(all) struct RenderSettings {
   seed : UInt64?
   /// The index of the response to render among the Stub's `responses`,
   /// or `None` for the one the seed picks.
-  response : Int?
+  response_index : Int?
 } derive(Debug)
 
 ///|
@@ -180,6 +180,8 @@ priv struct Setting {
 }
 
 ///|
+/// The body-file subdirectory: a setting of smock serve that smock check
+/// and smock render share, as they share `template_env_setting`.
 let body_file_dir_setting : Setting = {
   name: "body-file-dir",
   about: "The body-file subdirectory of the definitions directory.",
@@ -187,6 +189,9 @@ let body_file_dir_setting : Setting = {
 }
 
 ///|
+/// The environment variables templates may read: a setting of smock serve
+/// that smock check and smock render share, so that all three load a
+/// directory the same way.
 let template_env_setting : Setting = {
   name: "template-env",
   about: "The environment variables templates may read as env.NAME, separated by commas, such as REGION,API_BASE. Their values are read once, at startup. A listed value can show in responses, renderings and template error messages, so list only values that may be shown. A name is letters, digits and _, starting with a letter or _, and cannot start with SMOCK_. None by default.",
@@ -369,8 +374,9 @@ pub fn check_command() -> @argparse.Command {
 
 ///|
 /// The `render` subcommand: the Stub ID as its argument, the definitions
-/// directory and the body-file subdirectory as `smock serve` takes them,
-/// and the sample request, the time, the seed and the response.
+/// directory, the body-file subdirectory and the environment variables
+/// templates may read as `smock serve` takes them, and the sample request,
+/// the time, the seed and the response.
 pub fn render_command() -> @argparse.Command {
   @argparse.Command(
     "render",
@@ -661,10 +667,18 @@ pub fn parse_seed(text : String) -> UInt64? {
 /// prefix or separator. `None` when it is not one. Whether the Stub has a
 /// response at that index is the rendering's to say.
 pub fn parse_response_index(text : String) -> Int? {
+  // Two digits hold every index below max_responses (100).
   match decimal(text, max_digits=2) {
     Some(n) if n < @definitions.max_responses.to_uint64() => Some(n.to_int())
     _ => None
   }
+}
+
+///|
+/// Why a value is not the index of a response, as `--response` and the
+/// render operation's `response` query parameter say it.
+pub fn response_index_reason() -> String {
+  "must be an integer from 0 to \{@definitions.max_responses - 1}"
 }
 
 ///|
@@ -767,7 +781,7 @@ pub fn RenderSettings::from_matches(
           raise InvalidOption(flag="seed", value=text, reason=seed_reason())
       }
   }
-  let response = match value(matches, "response") {
+  let response_index = match value(matches, "response") {
     None => None
     Some(text) =>
       match parse_response_index(text) {
@@ -776,7 +790,7 @@ pub fn RenderSettings::from_matches(
           raise InvalidOption(
             flag="response",
             value=text,
-            reason="must be an integer from 0 to \{@definitions.max_responses - 1}",
+            reason=response_index_reason(),
           )
       }
   }
@@ -788,7 +802,7 @@ pub fn RenderSettings::from_matches(
     request_file,
     time,
     seed,
-    response,
+    response_index,
   }
 }
 
@@ -819,11 +833,11 @@ fn template_env_value(
   }
   for part in text.split(",") {
     let name = part.to_owned()
-    if !is_variable_name(name) {
+    if !is_environment_variable_name(name) {
       raise invalid(
         setting,
         text,
-        "\{name.escape()} is not a variable name: letters, digits and _, starting with a letter or _",
+        "\{name.escape()} is not an environment variable name: letters, digits and _, starting with a letter or _",
       )
     }
     if name.has_prefix("SMOCK_") {
@@ -843,7 +857,7 @@ fn template_env_value(
 ///|
 /// Whether `name` is an environment variable name templates may read:
 /// ASCII letters, digits and `_`, starting with a letter or `_`.
-fn is_variable_name(name : String) -> Bool {
+fn is_environment_variable_name(name : String) -> Bool {
   name != "" &&
   !name[0].unsafe_to_char().is_ascii_digit() &&
   name

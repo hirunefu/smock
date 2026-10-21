@@ -95,10 +95,17 @@ fn convert(
   match helper {
     Number =>
       match values[0] {
-        Number(_) as n => { json: n, form: Ordinary, }
+        // A number that keeps its text, as a big integer does, can be long.
+        Number(_) as n => {
+          check_result("number", compact_length(n), at)
+          { json: n, form: Ordinary, }
+        }
         String(text) =>
           match number_of(text) {
-            Some(n) => { json: n, form: Ordinary, }
+            Some(n) => {
+              check_result("number", compact_length(n), at)
+              { json: n, form: Ordinary, }
+            }
             None =>
               raise RenderError(
                 at~,
@@ -129,8 +136,10 @@ fn convert(
       }
       { json: Json::array(items), form: Ordinary, }
     }
-    JsonText =>
+    JsonText => {
+      check_result("json", compact_length(values[0]), at)
       { json: Json::string(compact_json(values[0])), form: JsonOutput, }
+    }
     Raw =>
       match values[0] {
         Object(_) | Array(_) =>
@@ -138,7 +147,15 @@ fn convert(
             at~,
             message="raw() takes a string, a number, true, false or null, not an object or an array",
           )
-        json => { json, form: RawText, }
+        json => {
+          // Written as it is: a string without quotes or escapes.
+          let bytes = match json {
+            String(s) => utf8_length(s).to_int64()
+            other => compact_length(other)
+          }
+          check_result("raw", bytes, at)
+          { json, form: RawText, }
+        }
       }
   }
 }
@@ -154,10 +171,14 @@ fn range_bound(json : Json, at : String) -> Int64 raise RenderError {
 
 ///|
 /// `json` as a bound of `range`, if it is one: an integer number from
-/// -(2^53 - 1) to 2^53 - 1. A string is not a number here.
+/// -(2^53 - 1) to 2^53 - 1. A number that keeps its text is the decimal its
+/// text writes, as for any integer argument. A string is not a number
+/// here.
 fn range_integer(json : Json) -> Int64? {
   match json {
-    Number(n, ..) if n == n.floor() && n.abs() <= max_integer.to_double() =>
+    Number(n, repr~) if n == n.floor() &&
+      n.abs() <= max_integer.to_double() &&
+      (repr is None || (repr is Some(text) && writes_integer(text))) =>
       Some(n.to_int64())
     _ => None
   }

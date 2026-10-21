@@ -63,21 +63,6 @@ async fn scope_unavailable() -> String? {
 }
 
 ///|
-/// The `journal byte bound` log entry, without its time.
-fn journal_bound_entry(logs : Array[String]) -> String {
-  for line in logs {
-    let entry = @json.parse(line) catch { _ => continue }
-    guard entry is Object(fields) &&
-      fields.get("msg") is Some(String("journal byte bound")) else {
-      continue
-    }
-    fields.remove("time")
-    return Json::object(fields).stringify()
-  }
-  "no journal byte bound entry in:\n\{logs.join("\n")}"
-}
-
-///|
 async test "journal byte bound: a quarter of the memory limit of smock's cgroup, unless the flag or the variable sets it" {
   if scope_unavailable() is Some(reason) {
     println(
@@ -99,7 +84,7 @@ async test "journal byte bound: a quarter of the memory limit of smock's cgroup,
       under=in_scope,
       _ => (),
     )
-    out.push(journal_bound_entry(stopped.logs))
+    out.push(startup_entry(stopped.logs, "journal byte bound"))
   }
   inspect(
     out.join("\n"),
@@ -142,7 +127,7 @@ async test "journal byte bound: the Journal holds no more than the bound smock l
       },
     )
     inspect(
-      journal_bound_entry(stopped.logs),
+      startup_entry(stopped.logs, "journal byte bound"),
       content=(
         #|{"level":"info","msg":"journal byte bound","maxBytes":1000,"source":"flag"}
       ),

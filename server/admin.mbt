@@ -538,7 +538,7 @@ fn render(admin : Admin, call : Call) -> Reply {
           )
       }
   }
-  let response = match query_parameter(request.target, "response") {
+  let response_index = match query_parameter(request.target, "response") {
     Err(message) => return invalid(message)
     Ok(None) => None
     Ok(Some(text)) =>
@@ -546,7 +546,7 @@ fn render(admin : Admin, call : Call) -> Reply {
         Some(index) => Some(index)
         None =>
           return invalid(
-            "the response query parameter must be an integer from 0 to \{@definitions.max_responses - 1}",
+            "the response query parameter \{@settings.response_index_reason()}",
           )
       }
   }
@@ -563,7 +563,7 @@ fn render(admin : Admin, call : Call) -> Reply {
       sample,
       now~,
       seed?,
-      response?,
+      response_index?,
       fresh_seed=@settings.random_seed,
     ) catch {
       UnknownStub(_) as err =>

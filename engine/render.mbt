@@ -239,6 +239,8 @@ pub suberror RenderFailure {
 } derive(Debug)
 
 ///|
+/// Why the Stub cannot be rendered, as smock render and the Admin render
+/// operation say it.
 pub fn RenderFailure::message(self : RenderFailure) -> String {
   match self {
     UnknownStub(id) =>
@@ -268,8 +270,8 @@ pub fn RenderFailure::message(self : RenderFailure) -> String {
 ///   matched request of a Stub with `fault.seed` set to `seed` gets.
 ///   Without it, the rendering uses the Stub's `fault.seed`, or, when it
 ///   has none, `fresh_seed()`.
-/// - `response` is the index of the response to render, counted from 0.
-///   Without it, the rendering shows the one the seed picks. A Stub with
+/// - `response_index` is the index of the response to render, counted from
+///   0. Without it, the rendering shows the one the seed picks. A Stub with
 ///   `response` takes 0 only.
 ///
 /// The values of the Stub's `variables` are rendered against the sample's
@@ -287,12 +289,12 @@ pub fn Engine::render(
   sample : SampleRequest,
   now~ : Int64,
   seed? : UInt64,
-  response? : Int,
+  response_index? : Int,
   fresh_seed~ : () -> UInt64,
 ) -> Rendering raise RenderFailure {
   guard self.file_stub(id) is Some(stub) else { raise UnknownStub(id) }
   let count = stub.responses.length()
-  if response is Some(index) && (index < 0 || index >= count) {
+  if response_index is Some(index) && (index < 0 || index >= count) {
     raise UnknownResponse(stub=stub.id, index~, count~)
   }
   let seed = match (seed, stub.fault) {
@@ -313,12 +315,7 @@ pub fn Engine::render(
   let mut context = None
   let mut failed = None
   if stub.writes_variables() {
-    let first = @template.Context::new(
-      template_input(incoming),
-      now~,
-      rand=@template.helper_generator(draw),
-      vars=sample.vars,
-    )
+    let first = first_context(incoming, now~, draw~, vars=Some(sample.vars))
     let values = Array(capacity=stub.variables.values.length())
     try render_values(stub.variables, first, Some(sample.vars), values) catch {
       RenderError(at~, message~) => failed = Some({ at, message, })
@@ -338,7 +335,7 @@ pub fn Engine::render(
     // asked for.
     Some(error) => (None, template_failed(stub.id, error), Some(error))
     None => {
-      let response_index = match (response, stub.total_weight) {
+      let response_index = match (response_index, stub.total_weight) {
         // A Stub with `response` shows no index, whichever it was asked
         // for.
         (_, None) => None
@@ -346,28 +343,23 @@ pub fn Engine::render(
         (None, Some(_)) => pick_response(stub, draw)
       }
       let response = stub.responses[response_index.unwrap_or(0)].response
-      let (plan, template_error) = match response.template {
-        None if response.serves_ranges =>
-          (range_response(response, incoming.request), None)
-        None => (stub_response(response), None)
-        Some(template) =>
-          respond(
-            stub.id,
-            response.status,
-            template,
-            match context {
-              Some(context) => context
-              None =>
-                @template.Context::new(
-                  template_input(incoming),
-                  now~,
-                  rand=@template.helper_generator(draw),
-                  vars=sample.vars,
-                )
-            },
-          )
+      try
+        plan_response(
+          response,
+          incoming,
+          context,
+          now~,
+          draw~,
+          vars=Some(sample.vars),
+        )
+      catch {
+        RenderError(at~, message~) => {
+          let error = { at, message, }
+          (response_index, template_failed(stub.id, error), Some(error))
+        }
+      } noraise {
+        plan => (response_index, plan, None)
       }
-      (response_index, plan, template_error)
     }
   }
   {

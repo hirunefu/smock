@@ -13,7 +13,7 @@ pub fn ephemeral_stub(
   json : Json,
   id~ : String,
   mock~ : String,
-  env? : @template.Env = @template.Env([]),
+  env? : @template.Env = @template.no_env,
 ) -> Result[Stub, Array[Diagnostic]] {
   let diagnostics = []
   let file = File::{ name: "", diagnostics, body_files: None, env, }

@@ -87,6 +87,8 @@ pub struct Text {
   pointer : String
   kind : TextKind
   priv parts : Array[Part]
+  /// Whether an expression of the template reads the `vars` root.
+  priv vars_read : Bool
 }
 
 ///|
@@ -102,6 +104,14 @@ pub impl Eq for Text with fn equal(self, other) {
 /// Shows the template as it is written.
 pub impl Debug for Text with fn to_repr(self) {
   Repr::ctor("Text", [(None, Repr::string(self.source))])
+}
+
+///|
+/// Whether the template reads Variables: whether one of its expressions
+/// reads the `vars` root, wherever it is. One that does not renders the
+/// same whatever Variables it is given.
+pub fn Text::reads_vars(self : Text) -> Bool {
+  self.vars_read
 }
 
 ///|
@@ -121,11 +131,19 @@ pub fn Text::parse(
   env? : Env = no_env,
 ) -> Result[Text, Problem] {
   let chars = source.iter().collect()
-  try parse_parts(chars, [], false, text=true, env~) catch {
+  let scope = {
+    vars: [],
+    in_loop: false,
+    text: true,
+    env,
+    reads_vars: Ref(false),
+  }
+  try parse_parts(chars, scope) catch {
     Syntax(at, message) =>
       Err({ pointer, message: "template: \{position(chars, at)}\{message}", })
   } noraise {
-    parts => Ok({ source, pointer, kind, parts, })
+    parts =>
+      Ok({ source, pointer, kind, parts, vars_read: scope.reads_vars.val, })
   }
 }
 
@@ -155,20 +173,12 @@ fn position(chars : Array[Char], at : Int) -> String {
 }
 
 ///|
-/// Parses the parts of a template, `chars`: literal text and `${ expr }`.
-/// `vars` are the loop variables in scope, and `in_loop` says whether it is
-/// inside a `$each`. With `text`, `json()` and `raw()` are allowed. `env`
-/// holds the environment variables it may read.
-fn parse_parts(
-  chars : Array[Char],
-  vars : Array[String],
-  in_loop : Bool,
-  text~ : Bool,
-  env~ : Env,
-) -> Array[Part] raise Syntax {
+/// Parses the parts of a template, `chars`: literal text and `${ expr }`,
+/// whose expressions can name what `scope` holds.
+fn parse_parts(chars : Array[Char], scope : Scope) -> Array[Part] raise Syntax {
   let parts = []
   let literal = StringBuilder()
-  let parser = { chars, i: 0, vars, in_loop, text, env, }
+  let parser = { chars, i: 0, scope, }
   while parser.i < chars.length() {
     if parser.eat("$${") {
       literal.write_string("${")

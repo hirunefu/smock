@@ -83,10 +83,10 @@ async fn main {
 /// to stderr.
 async fn render(settings : @settings.RenderSettings) -> Int {
   let snapshot = match
-    @defdir.load(
-      Some(settings.dir),
+    load_definitions(
+      settings.dir,
       body_file_dir=settings.body_file_dir,
-      env=@server.template_env(settings.template_env),
+      template_env=settings.template_env,
     ) {
     Ok(snapshot) => snapshot
     Err(diagnostics) => {
@@ -126,7 +126,7 @@ async fn render(settings : @settings.RenderSettings) -> Int {
     sample,
     now=settings.time.unwrap_or(@async.now()),
     seed?=settings.seed,
-    response?=settings.response,
+    response_index?=settings.response_index,
     fresh_seed=@settings.random_seed,
   ) catch {
     err => {
@@ -158,10 +158,10 @@ async fn check(settings : @settings.CheckSettings) -> Int {
     )
   }
   match
-    @defdir.load(
-      Some(dir),
+    load_definitions(
+      dir,
       body_file_dir=settings.body_file_dir,
-      env=@server.template_env(settings.template_env),
+      template_env=settings.template_env,
     ) {
     Ok(snapshot) => {
       for warning in snapshot.warnings() {
@@ -176,4 +176,21 @@ async fn check(settings : @settings.CheckSettings) -> Int {
       1
     }
   }
+}
+
+///|
+/// Loads the definitions directory `dir` as `smock serve` does, with its
+/// body files in `body_file_dir`, for `smock check` and `smock render`.
+/// Templates may read the environment variables `template_env` lists, with
+/// their values from smock's own environment.
+async fn load_definitions(
+  dir : String,
+  body_file_dir~ : String,
+  template_env~ : Array[String],
+) -> Result[@definitions.Snapshot, Array[@definitions.Diagnostic]] {
+  @defdir.load(
+    Some(dir),
+    body_file_dir~,
+    env=@server.template_env(template_env),
+  )
 }

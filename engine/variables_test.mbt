@@ -523,6 +523,63 @@ test "Variables are kept per Mock: requests without a Session share one space pe
 }
 
 ///|
+test "with a Variable in another Mock, a response that does not read vars renders as ever, and one that reads them sees its own Mock's" {
+  let h = harness([
+    (
+      "mocks.yaml",
+      (
+        #|mocks:
+        #|  - { name: a, hosts: [a.svc] }
+        #|  - { name: b, hosts: [b.svc] }
+        #|stubs:
+        #|  - id: set
+        #|    mock: a
+        #|    request: { method: POST, path: /set }
+        #|    variables: { who: "${query.who}" }
+        #|    response: { status: 204 }
+        #|  - id: plain
+        #|    mock: b
+        #|    request: { method: GET, path: /plain }
+        #|    response:
+        #|      status: 200
+        #|      template: true
+        #|      headers: { X-Path: "${path}" }
+        #|      body: "${method} $${vars.who}"
+        #|  - id: read-a
+        #|    mock: a
+        #|    request: { method: GET, path: /read }
+        #|    response:
+        #|      status: 200
+        #|      template: true
+        #|      json: { who: "${vars.who ?? 'nobody'}" }
+        #|  - id: read-b
+        #|    mock: b
+        #|    request: { method: GET, path: /read }
+        #|    response:
+        #|      status: 200
+        #|      template: true
+        #|      json: { who: "${vars.who ?? 'nobody'}" }
+      ),
+    ),
+  ])
+  ignore(h.send("POST", "http://a.svc/set?who=ann"))
+  inspect(
+    [
+      response(h.send("GET", "http://b.svc/plain")),
+      reply(h.send("GET", "http://a.svc/read")),
+      reply(h.send("GET", "http://b.svc/read")),
+    ].join("\n"),
+    content=(
+      #|200
+      #|X-Path: /plain
+      #|GET ${vars.who}
+      #|200 {"who":"ann"}
+      #|200 {"who":"nobody"}
+    ),
+  )
+}
+
+///|
 test "an Ephemeral Stub takes variables, writes its Session's Variables, and is refused with a value that does not parse or a bad name" {
   let h = harness([failing])
   let out = []
@@ -628,13 +685,13 @@ fn Harness::render_vars(
   self : Harness,
   id : String,
   sample : Json,
-  response? : Int,
+  response_index? : Int,
 ) -> String raise {
   let rendering = self.engine.render(
     id,
     @engine.SampleRequest::from_json(sample),
     now=self.now,
-    response?,
+    response_index?,
     fresh_seed=() => 7,
   )
   guard rendering.to_json()
@@ -746,9 +803,9 @@ test "a value that fails to render shows the 500 a request would get, with no va
   inspect(
     [
       h.render_vars("fail", fails),
-      h.render_vars("fail", fails, response=1),
+      h.render_vars("fail", fails, response_index=1),
       h.render_vars("fail", renders),
-      h.render_vars("fail", renders, response=0),
+      h.render_vars("fail", renders, response_index=0),
       // Without a Fault, the template failure is the response as it is.
       h.render_vars("reset", { "method": "POST", "path": "/reset" }),
     ].join("\n"),

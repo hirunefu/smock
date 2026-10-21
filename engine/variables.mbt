@@ -264,18 +264,6 @@ fn check_variable_name(name : String) -> Unit raise AdminError {
 }
 
 ///|
-/// The request as templates see it.
-fn template_input(incoming : Incoming) -> @template.Input {
-  {
-    meth: incoming.request.meth,
-    path: incoming.path,
-    query: incoming.query_parameters(),
-    headers: incoming.request.headers,
-    body: incoming.request.body,
-  }
-}
-
-///|
 /// Why a request's writes were not taken: nothing was written.
 priv suberror WriteFailure {
   /// A value failed to render: the request gets the template failure.

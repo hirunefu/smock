@@ -12,6 +12,15 @@ priv enum JwtHelper {
 }
 
 ///|
+/// The helper's name, for messages.
+fn JwtHelper::name(self : JwtHelper) -> String {
+  match self {
+    Payload => "jwtPayload"
+    Header => "jwtHeader"
+  }
+}
+
+///|
 /// The JWT helper that `site` calls, checked. `None` when it calls a
 /// helper of another family.
 fn jwt_helper(site : CallSite) -> Helper? raise Syntax {
@@ -60,12 +69,10 @@ fn jwt_value(
   ignore(base64_length(token[second + 1:], true)) catch {
     NotDecodable(_) => return None
   }
-  let of_payload = helper is Payload
-  let name = if of_payload { "jwtPayload" } else { "jwtHeader" }
-  let part = if of_payload { payload } else { header }
+  let part = if helper is Payload { payload } else { header }
   // A part is measured once parsed: as compact JSON, it can take more or
   // fewer bytes than the text it was parsed from.
-  check_result(name, compact_length(part), at)
+  check_result(helper.name(), compact_length(part), at)
   Some(part)
 }
 
