@@ -207,8 +207,21 @@ of each GitHub release include its section
   take over one of its requests. `crud.headers`, such as CORS headers, go
   on every answer, and `fault` works as on any Stub. An Ephemeral Stub can
   be a CRUD Stub. Each Journal entry gains `crud`, the operation and its
-  key. Writes through a CRUD Stub, list queries, its Near miss, warnings
-  and rendering come later.
+  key. List queries, its Near miss, warnings and rendering come later.
+- CRUD Stubs write: `POST <path>` creates an item and answers 201 with it
+  and its `Location`, `PUT <path>/<key>` replaces the item, `PATCH
+  <path>/<key>` merges the body into it shallowly, and `DELETE
+  <path>/<key>` removes it and answers the removed item. Each is one write
+  by key, as `dataWrites` makes, to the Session's copy, made at the match
+  decision before any delay, all or nothing, within the state bound. The
+  body must be a JSON object, whatever its Content-Type (400 `body is not
+  a JSON object`). A create without the key member gets a new key, added
+  last; a key that is not one is 400 `invalid key`, and a taken one 409
+  `key already exists`. A replace or update keeps the item's key, and a
+  body that holds another is 400 `key does not match the path`. A missing
+  item is 404, no integer key left 500 `no new key`, and the state bound
+  507, a delete's included. A connection Fault replaces the answer, but
+  not the write.
 - docs/migrating-from-mockoon.md maps Mockoon's helpers, `RANDOM` routes,
   global variables, Range requests, dates, cookies and environment
   variables onto smock, with each difference called out.

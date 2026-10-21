@@ -81,7 +81,7 @@ test "a CRUD Stub lists its bucket at its path and reads an item at the path plu
 }
 
 ///|
-test "other methods and path shapes fall through to later Stubs, then to the Mock's no-match answer" {
+test "a CRUD Stub matches GET and POST at its path, and GET, PUT, PATCH and DELETE at an item path; other methods and path shapes fall through to later Stubs, then to the Mock's no-match answer" {
   let h = harness(
     crud_shop(
       stubs=(
@@ -139,14 +139,14 @@ test "other methods and path shapes fall through to later Stubs, then to the Moc
       #|HEAD /api/v1/orders: 299 Some("anything-under-orders"); alone: 404 None
       #|OPTIONS /api/v1/orders/1001: 299 Some("anything-under-orders"); alone: 404 None
       #|get /api/v1/orders: 299 Some("anything-under-orders"); alone: 404 None
-      #|POST /api/v1/orders: 299 Some("anything-under-orders"); alone: 404 None
+      #|POST /api/v1/orders: 400 Some("orders"); alone: 400 Some("orders")
       #|PUT /api/v1/orders: 299 Some("anything-under-orders"); alone: 404 None
       #|PATCH /api/v1/orders: 299 Some("anything-under-orders"); alone: 404 None
       #|DELETE /api/v1/orders: 299 Some("anything-under-orders"); alone: 404 None
       #|POST /api/v1/orders/1001: 299 Some("anything-under-orders"); alone: 404 None
-      #|PUT /api/v1/orders/1001: 299 Some("anything-under-orders"); alone: 404 None
-      #|PATCH /api/v1/orders/1001: 299 Some("anything-under-orders"); alone: 404 None
-      #|DELETE /api/v1/orders/1001: 299 Some("anything-under-orders"); alone: 404 None
+      #|PUT /api/v1/orders/1001: 400 Some("orders"); alone: 400 Some("orders")
+      #|PATCH /api/v1/orders/1001: 400 Some("orders"); alone: 400 Some("orders")
+      #|DELETE /api/v1/orders/1001: 200 Some("orders"); alone: 200 Some("orders")
       #|GET /api/v1/orders/: 299 Some("anything-under-orders"); alone: 404 None
       #|GET /api/v1/orders//: 299 Some("anything-under-orders"); alone: 404 None
       #|GET /api/v1/orders/1001/: 299 Some("anything-under-orders"); alone: 404 None
