@@ -160,10 +160,15 @@ fn base_name(path : String) -> String {
 
 ///|
 /// A Stub of the Mock `mock` as the file writes it: `id`, `mock`, `request`
-/// (`method`, `path`, then `headers` with `Smock-Status` for a response
-/// other than the main one), then `response` (`status`).
+/// (`method`, `path`, an exact path or `{ pattern }`, then `headers` with
+/// `Smock-Status` for a response other than the main one), then `response`
+/// (`status`).
 fn Stub::to_json(self : Stub, mock : String) -> Json {
-  let request : Map[String, Json] = { "method": self.meth, "path": self.path }
+  let path : Json = match self.path {
+    Exact(path) => path.to_json()
+    Pattern(pattern) => { "pattern": pattern.to_json() }
+  }
+  let request : Map[String, Json] = { "method": self.meth, "path": path }
   if self.selected {
     request["headers"] = { "Smock-Status": self.response }
   }

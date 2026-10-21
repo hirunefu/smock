@@ -10,8 +10,8 @@ let fixed_methods : Array[String] = [
 priv struct Stub {
   id : String
   meth : String
-  /// The exact path it matches.
-  path : String
+  /// The path it matches.
+  path : PathCondition
   /// The key of the response it answers, as the document writes it.
   response : String
   status : Int
@@ -29,6 +29,9 @@ priv struct Imported {
   summary : String
   /// Whether it is `deprecated`.
   deprecated : Bool
+  /// The kind of each segment of the path its Stubs match, by which
+  /// operations are sorted.
+  segments : Array[Segment]
   stubs : Array[Stub]
 }
 
@@ -37,7 +40,8 @@ priv struct Imported {
 /// takes it again is reported.
 priv struct Taken {
   /// The method and path conditions of each imported operation, as
-  /// `<METHOD> <path>`, and the operation's pointer.
+  /// `<METHOD> <path>` or `<METHOD> pattern <pattern>`, and the
+  /// operation's pointer.
   conditions : Map[String, String]
   /// Each `operationId` of an imported operation, its pointer, and the
   /// path key of the operation.
@@ -48,8 +52,11 @@ priv struct Taken {
 
 ///|
 /// Reads every operation under `paths`, in document order: path keys, then
-/// methods in the order each Path Item writes them. Returns the imported
-/// ones, in that order, with their Stubs.
+/// methods in the order each Path Item writes them, so that problems come
+/// in that order. Returns the imported ones with their Stubs, sorted by
+/// how specific their paths are, so that a concrete path comes before a
+/// templated one. The sort is stable: operations whose paths have the same
+/// kinds of segments keep the document's order.
 fn Report::operations(self : Report, document : Document) -> Array[Imported] {
   let imported = []
   let taken = { conditions: {}, operation_ids: {}, ids: {}, }
@@ -77,7 +84,21 @@ fn Report::operations(self : Report, document : Document) -> Array[Imported] {
       pointer, "there is no operation to import: the file has no Stubs",
     )
   }
-  imported
+  // sort_by is not stable, so ties are ordered by their place in the
+  // document.
+  let order = Array::makei(imported.length(), i => i)
+  order.sort_by((a, b) => {
+    let by_path = compare_specificity(
+      imported[a].segments,
+      imported[b].segments,
+    )
+    if by_path != 0 {
+      by_path
+    } else {
+      a.compare(b)
+    }
+  })
+  order.map(i => imported[i])
 }
 
 ///|
@@ -150,7 +171,7 @@ fn Report::operation(
   imported : Array[Imported],
   taken : Taken,
   key : String,
-  path : PathKind,
+  path : Path,
   meth : String,
   pointer : String,
   json : Json,
@@ -159,17 +180,20 @@ fn Report::operation(
     self.root_error(pointer, "must be an object")
     return
   }
-  guard path is Exact(path) else {
-    self.root_warning(
-      pointer, "left out: paths with parameters are not imported yet",
-    )
-    return
+  // An exact path starts with /, so its conditions never read as a
+  // pattern's.
+  let (conditions, described) = match path.condition {
+    Exact(path) => ("\{meth} \{path}", "\{meth} \{path.escape()}")
+    Pattern(pattern) =>
+      (
+        "\{meth} pattern \{pattern}",
+        "\{meth} with the path pattern \{pattern.escape()}",
+      )
   }
-  let conditions = "\{meth} \{path}"
   if taken.conditions.get(conditions) is Some(earlier) {
     self.root_warning(
       pointer,
-      "left out: \{meth} \{path.escape()} is already answered by the operation at \{self.place(earlier)}, which comes first",
+      "left out: \{described} is already answered by the operation at \{self.place(earlier)}, which comes first",
     )
     return
   }
@@ -221,7 +245,7 @@ fn Report::operation(
     stubs.push({
       id: "\{self.options.mock}.\{name}.\{response.key}",
       meth,
-      path,
+      path: path.condition,
       response: response.key,
       status: response.status,
       selected: !response.main,
@@ -262,5 +286,5 @@ fn Report::operation(
       taken.ids[stub.id] = pointer
     }
   }
-  imported.push({ key, summary, deprecated, stubs, })
+  imported.push({ key, summary, deprecated, segments: path.segments, stubs, })
 }
