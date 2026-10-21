@@ -144,9 +144,22 @@ pub struct Stub {
   request : Conditions
   /// The Stub's Scenario clause, if it has `scenario`.
   scenario : ScenarioClause?
-  response : Response
+  /// The Stub's responses, in the order written, each with its weight. A
+  /// matched request gets one of them. A Stub with `response` has that one,
+  /// of weight 1.
+  responses : ReadOnlyArray[WeightedResponse]
   /// The Faults the Stub injects when it matches, if it has `fault`.
   fault : Fault?
+} derive(Debug, Eq)
+
+///|
+/// One of a Stub's responses, with its weight: the chance that a matched
+/// request gets it is its weight over the sum of the weights of the Stub's
+/// responses.
+pub struct WeightedResponse {
+  /// A positive integer.
+  weight : Int
+  response : Response
 } derive(Debug, Eq)
 
 ///|
