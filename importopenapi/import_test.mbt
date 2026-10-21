@@ -871,7 +871,6 @@ test "problems come in order: the document-level ones, then each operation's in 
       #|petstore.json: /servers: warning: left out: the paths of servers are not added as a prefix yet
       #|petstore.json: /webhooks: warning: webhooks are not imported: they are requests the API sends, not ones it answers
       #|petstore.json: /paths/~1b/get/responses/404/content/text~1xml: warning: left out: a response answers with one media type, here "application/json"
-      #|petstore.json: /paths/~1b/get/responses/200/content/text~1plain/example: warning: left out: examples are not imported yet
       #|petstore.json: /paths/~1b/get/responses/500/headers/X-Error: warning: left out: response headers are not imported yet
       #|petstore.json: /paths/~1b/put/operationId: must be a non-empty string
       #|petstore.json: /paths/~1b/put: warning: has no responses: the operation answers 200 with an empty body
