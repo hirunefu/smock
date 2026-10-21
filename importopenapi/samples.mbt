@@ -449,16 +449,7 @@ fn Sampler::under_id(self : Sampler, pointer : String) -> Bool {
   let mut at = place_in(number, "")
   let mut found = false
   for key in keys {
-    let value = match json {
-      Object(object) => object.get(key)
-      Array(items) =>
-        match array_index(key) {
-          Some(i) if i < items.length() => Some(items[i])
-          _ => None
-        }
-      _ => None
-    }
-    guard value is Some(value) else { break }
+    guard step(json, key) is Some(value) else { break }
     at = @definitions.child_pointer(at, key)
     json = value
     if value is Object(schema) &&

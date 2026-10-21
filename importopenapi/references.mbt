@@ -109,16 +109,7 @@ fn Report::target(
   let mut target_pointer = ""
   let mut json = json
   for key in keys {
-    let value = match json {
-      Object(object) => object.get(key)
-      Array(items) =>
-        match array_index(key) {
-          Some(i) if i < items.length() => Some(items[i])
-          _ => None
-        }
-      _ => None
-    }
-    guard value is Some(value) else {
+    guard step(json, key) is Some(value) else {
       if path == "" {
         self.error_at(pointer, "the document has nothing at \{target}")
       } else {
@@ -386,6 +377,22 @@ fn pointer_keys(pointer : String) -> Array[String]? {
     keys.push(key.to_string())
   }
   Some(keys)
+}
+
+///|
+/// The member `key` of `json`, an object, or its item at the index that
+/// `key` gives, an array: one step of a JSON Pointer. `None` when there is
+/// none.
+fn step(json : Json, key : String) -> Json? {
+  match json {
+    Object(object) => object.get(key)
+    Array(items) =>
+      match array_index(key) {
+        Some(i) if i < items.length() => Some(items[i])
+        _ => None
+      }
+    _ => None
+  }
 }
 
 ///|
