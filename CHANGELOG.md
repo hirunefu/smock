@@ -41,12 +41,6 @@ of each GitHub release include its section
   to the end of the month. A date is an RFC 3339 date-time, a date
   `YYYY-MM-DD` or epoch milliseconds; anything else is missing, so `??`
   applies.
-- A helper call can be followed by steps, as a reference can:
-  `${range(1, 3)[1]}` gives `2`.
-- The bounds of `range(a, b)` can be any expression that gives an integer,
-  such as `len(body.items)`.
-- A helper's result above 1 MiB is a render error, found before the
-  result is built.
 - Template helpers for arithmetic: `add`, `subtract`, `multiply`,
   `divide`, `modulo`, `ceil`, `floor`, `round`, `toFixed` and `parseInt`.
   They compute in exact decimal with integers only, so `add(0.1, 0.2)` is
@@ -54,6 +48,12 @@ of each GitHub release include its section
   places, `round` and `toFixed` round half away from zero, and numbers
   have at most 18 digits before the point and 18 after. A numeric argument
   may be a string that is a JSON number, such as `query.page`.
+- A helper call can be followed by steps, as a reference can:
+  `${range(1, 3)[1]}` gives `2`.
+- The bounds of `range(a, b)` can be any expression that gives an integer,
+  such as `len(body.items)`.
+- A helper's result above 1 MiB is a render error, found before the
+  result is built.
 - `--template-env` (`SMOCK_TEMPLATE_ENV`) on `smock serve`, `smock check`
   and `smock render` lists, separated by commas, the environment variables
   templates may read. Their values are read once, at startup, and every
@@ -70,8 +70,10 @@ of each GitHub release include its section
   seed's Fault decisions and helper output as they are. Ephemeral Stubs
   take `responses` with inline bodies.
 - Journal entries record `responseIndex`, the index of the response a
-  request got, or null for a Stub with `response` and for a request no
-  Stub matched.
+  request got. It is null for a Stub with `response`, for a request no
+  Stub matched, and when no response was picked, because a value of the
+  Stub's `variables` failed to render or the state bound refused its
+  writes.
 - `smock render` and the Admin render operation show `responseIndex`, and
   render a given response with `--response <i>` and the `response` query
   parameter.
@@ -122,6 +124,9 @@ of each GitHub release include its section
   nothing and gets 507 `state_limit_reached`; a delete gives the bytes
   back. A delete of an unset Variable gets 404 `unknown_variable`. Each set
   and delete is logged.
+- docs/migrating-from-mockoon.md maps Mockoon's helpers, `RANDOM` routes,
+  global variables, Range requests, dates, cookies and environment
+  variables onto smock, with each difference called out.
 
 ### Changed
 
