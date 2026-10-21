@@ -898,9 +898,9 @@ smock import-openapi api/petstore.json --mock petstore --output definitions/pets
   its references name, which would be replaced by its own conversion. A
   file that references name is known only once it is read, so that
   refusal comes after the conversion, just before the file would be
-  written. The directory of `--output` must
-  exist: the command makes no directory. Each refusal is an error about
-  `--output`, with exit status 1.
+  written. The directory of `--output` must exist: the command makes no
+  directory. Each refusal is an error about `--output`, with exit status
+  1.
 
 ### Overrides
 
