@@ -91,7 +91,7 @@
       "unevaluatedProperties": false
     },
     "stub": {
-      "description": "The shape of a Stub, without its ID and its Mock: the conditions a request must meet, the Scenario state it needs or moves to, the response to return, and the Faults to inject. A Stub in a Definition file adds id and mock to it (see fileStub). The Admin API adds Ephemeral Stubs in this shape, and gives the Mock and the Session itself. This definition does not close itself to other properties so that those two can extend it; each of them closes it with unevaluatedProperties: false.",
+      "description": "The shape of a Stub, without its ID and its Mock: the conditions a request must meet, the Scenario state it needs or moves to, the response to return (response) or the weighted responses to pick from (responses), and the Faults to inject. A Stub in a Definition file adds id and mock to it (see fileStub). The Admin API adds Ephemeral Stubs in this shape, and gives the Mock and the Session itself. This definition does not close itself to other properties so that those two can extend it; each of them closes it with unevaluatedProperties: false.",
       "type": "object",
       "properties": {
         "priority": {
@@ -103,9 +103,19 @@
         "request": { "$ref": "#/$defs/request" },
         "scenario": { "$ref": "#/$defs/scenario" },
         "response": { "$ref": "#/$defs/response" },
+        "responses": {
+          "description": "Several responses instead of one: a matched request gets one of them, picked at random, each with the probability of its weight over the sum of the weights. 1 to 100 responses, in the order written. The pick draws from the request's one random draw, so fault.seed and --seed replay it, and it leaves the Faults and the template helpers as they would be with response. Give exactly one of response and responses.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/weightedResponse" }
+        },
         "fault": { "$ref": "#/$defs/fault" }
       },
-      "required": ["response"]
+      "oneOf": [
+        { "description": "One response.", "required": ["response"] },
+        { "description": "Several weighted responses.", "required": ["responses"] }
+      ]
     },
     "scenario": {
       "description": "The Stub's Scenario clause. A Scenario is a named state machine within the Stub's Mock: it has no declaration, exists because Stubs name it, and starts in the state `Started`. Its state is kept per Mock and per Session: requests without a Session share their own. With requires, the Stub matches only while the Scenario is in that state; without it, in every state. With moveTo, the Scenario moves to that state the moment the Stub is chosen, whatever then happens to the response, even a delay, a connection Fault or a template error. Give requires, moveTo or both. Names are compared byte for byte.",
@@ -271,6 +281,25 @@
     },
     "response": {
       "description": "The response to return when the Stub matches. Its body is given inline (body), read from a body file (bodyFile), given as JSON (json), or streamed as Server-Sent Events (events). Give at most one of them; without any, the body is empty. With template true, the header values, the body and the events are templates, parsed when the definitions are loaded and rendered for each request: see docs/definition-files.md, Templates.",
+      "$ref": "#/$defs/responseFields",
+      "unevaluatedProperties": false
+    },
+    "weightedResponse": {
+      "description": "One of a Stub's responses: a response, as response gives it, with a weight.",
+      "$ref": "#/$defs/responseFields",
+      "properties": {
+        "weight": {
+          "description": "The response's weight: it is picked with the probability of its weight over the sum of the weights of the Stub's responses, so weights 9 and 1 give it nine requests in ten. Default 1.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000,
+          "default": 1
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "responseFields": {
+      "description": "The fields of a response: its status, its headers, its body and whether it is a template. This definition does not close itself to other properties so that weightedResponse can add weight; response and weightedResponse each close it with unevaluatedProperties: false.",
       "type": "object",
       "properties": {
         "status": {
@@ -323,8 +352,7 @@
         "json": {
           "properties": { "events": false }
         }
-      },
-      "additionalProperties": false
+      }
     },
     "event": {
       "description": "One Server-Sent Event. Give exactly one of data and json.",

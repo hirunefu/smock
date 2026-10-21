@@ -102,9 +102,9 @@ pub(all) struct CheckSettings {
 /// The settings of `smock render`. The definitions directory and the
 /// body-file subdirectory are the `smock serve` settings of the same names,
 /// flags and variables, so that both read a directory the same way. The
-/// Stub ID is its argument, and the sample request, the time and the seed
-/// are flags of its own, without variables: they belong to one rendering,
-/// not to a process.
+/// Stub ID is its argument, and the sample request, the time, the seed and
+/// the response are flags of its own, without variables: they belong to
+/// one rendering, not to a process.
 pub(all) struct RenderSettings {
   /// The definitions directory.
   dir : String
@@ -120,6 +120,9 @@ pub(all) struct RenderSettings {
   /// The seed of the random source the rendering draws from, from 0 to
   /// 2^53 - 1, or `None` for a fresh one.
   seed : UInt64?
+  /// The index of the response to render among the Stub's `responses`,
+  /// or `None` for the one the seed picks.
+  response : Int?
 } derive(Debug)
 
 ///|
@@ -337,11 +340,11 @@ pub fn check_command() -> @argparse.Command {
 ///|
 /// The `render` subcommand: the Stub ID as its argument, the definitions
 /// directory and the body-file subdirectory as `smock serve` takes them,
-/// and the sample request, the time and the seed.
+/// and the sample request, the time, the seed and the response.
 pub fn render_command() -> @argparse.Command {
   @argparse.Command(
     "render",
-    about="Render a Stub's response for a sample request, as the Admin API render operation does, and print it as JSON: the time and the seed it used, the status, the headers and the body or events, rendered from the Stub's templates when it has them, and the Stub's conditions the sample fails, with expected and actual values. Exits with status 1 if the definitions directory is invalid, no Stub has the ID, or the sample request is not valid.",
+    about="Render a Stub's response for a sample request, as the Admin API render operation does, and print it as JSON: the time and the seed it used, the status, the headers and the body or events, rendered from the Stub's templates when it has them, and the Stub's conditions the sample fails, with expected and actual values. A Stub with responses renders the response the seed picks, or the one --response names, and the output shows its index. Exits with status 1 if the definitions directory is invalid, no Stub has the ID, the Stub has no response at the index given, or the sample request is not valid.",
     positionals=[
       @argparse.PositionArg(
         "stub-id",
@@ -373,6 +376,11 @@ pub fn render_command() -> @argparse.Command {
         "seed",
         long="seed",
         about="The seed of the random source the rendering draws from, from 0 to \{max_seed}. Default: the Stub's fault.seed, or a fresh seed when it has none.",
+      ),
+      @argparse.OptionArg(
+        "response",
+        long="response",
+        about="The index of the response to render among the Stub's responses, from 0. A Stub with response takes 0 only. Default: the response the seed picks.",
       ),
     ],
   )
@@ -614,6 +622,19 @@ pub fn parse_seed(text : String) -> UInt64? {
 }
 
 ///|
+/// The index of a response that `text` gives, as `--response` and the
+/// render operation's `response` query parameter take it: a decimal integer
+/// from 0 to one less than the most responses a Stub has, without a sign,
+/// prefix or separator. `None` when it is not one. Whether the Stub has a
+/// response at that index is the rendering's to say.
+pub fn parse_response_index(text : String) -> Int? {
+  match decimal(text, max_digits=2) {
+    Some(n) if n < @definitions.max_responses.to_uint64() => Some(n.to_int())
+    _ => None
+  }
+}
+
+///|
 /// A fresh seed from the platform's entropy, from 0 to 2^53 - 1, like the
 /// seeds `--seed` takes: what `smock serve`, `smock render` and the Admin
 /// render operation use when no seed is given.
@@ -709,6 +730,19 @@ pub fn RenderSettings::from_matches(
           raise InvalidOption(flag="seed", value=text, reason=seed_reason())
       }
   }
+  let response = match value(matches, "response") {
+    None => None
+    Some(text) =>
+      match parse_response_index(text) {
+        Some(index) => Some(index)
+        None =>
+          raise InvalidOption(
+            flag="response",
+            value=text,
+            reason="must be an integer from 0 to \{@definitions.max_responses - 1}",
+          )
+      }
+  }
   {
     dir,
     body_file_dir: body_file_dir(matches),
@@ -716,6 +750,7 @@ pub fn RenderSettings::from_matches(
     request_file,
     time,
     seed,
+    response,
   }
 }
 

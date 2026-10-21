@@ -229,6 +229,7 @@ async test "smock render and the Admin render operation show templated events; g
           #|  "mock": "market",
           #|  "time": "2026-10-13T09:00:00.000Z",
           #|  "seed": 7,
+          #|  "responseIndex": null,
           #|  "response": {
           #|    "status": 200,
           #|    "headers": [

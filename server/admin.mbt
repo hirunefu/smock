@@ -484,8 +484,11 @@ fn liveness_probe(admin : Admin, _call : Call) -> Reply {
 /// `smock render` does. The `time` and `seed` query parameters give the
 /// time the sample is received at and the seed of the random source the
 /// rendering draws from; without them, the time is now and the seed is the
-/// Stub's `fault.seed`, or a fresh one when it has none. The rendering
-/// shows the time and the seed it used. Rendering changes nothing.
+/// Stub's `fault.seed`, or a fresh one when it has none. The `response`
+/// query parameter names the response to render among the Stub's
+/// `responses`; without it, the seed picks one. The rendering shows the
+/// time, the seed and the response index it used. Rendering changes
+/// nothing.
 fn render(admin : Admin, call : Call) -> Reply {
   let invalid = (message : String) => {
     admin.error(400, "invalid_request", message)
@@ -521,6 +524,18 @@ fn render(admin : Admin, call : Call) -> Reply {
           )
       }
   }
+  let response = match query_parameter(request.target, "response") {
+    Err(message) => return invalid(message)
+    Ok(None) => None
+    Ok(Some(text)) =>
+      match @settings.parse_response_index(text) {
+        Some(index) => Some(index)
+        None =>
+          return invalid(
+            "the response query parameter must be an integer from 0 to \{@definitions.max_responses - 1}",
+          )
+      }
+  }
   guard call.body is Some(json) else {
     return invalid("the body must be a sample request: a JSON object")
   }
@@ -529,8 +544,17 @@ fn render(admin : Admin, call : Call) -> Reply {
   }
   let rendering = admin
     .engine()
-    .render(id, sample, now~, seed?, fresh_seed=@settings.random_seed) catch {
-      err => return admin.error(404, "unknown_stub", err.message())
+    .render(
+      id,
+      sample,
+      now~,
+      seed?,
+      response?,
+      fresh_seed=@settings.random_seed,
+    ) catch {
+      UnknownStub(_) as err =>
+        return admin.error(404, "unknown_stub", err.message())
+      UnknownResponse(..) as err => return invalid(err.message())
     }
   admin.result(rendering)
 }

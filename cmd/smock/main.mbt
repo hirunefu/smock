@@ -77,7 +77,8 @@ async fn main {
 /// render operation's result without its warnings. Returns the exit status:
 /// 0 when it rendered, 1 when the definition set is invalid, with the
 /// messages `smock check` prints, when the sample request cannot be read or
-/// is not valid, or when no Stub has the ID. Every problem goes to stderr.
+/// is not valid, when no Stub has the ID, or when the Stub has no response
+/// at the index `--response` gives. Every problem goes to stderr.
 async fn render(settings : @settings.RenderSettings) -> Int {
   let snapshot = match
     @defdir.load(Some(settings.dir), body_file_dir=settings.body_file_dir) {
@@ -119,6 +120,7 @@ async fn render(settings : @settings.RenderSettings) -> Int {
     sample,
     now=settings.time.unwrap_or(@async.now()),
     seed?=settings.seed,
+    response?=settings.response,
     fresh_seed=@settings.random_seed,
   ) catch {
     err => {
