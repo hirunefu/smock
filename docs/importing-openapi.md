@@ -229,9 +229,10 @@ The operations are sorted, so that a concrete path comes before a
 templated one, as OpenAPI asks:
 
 - Each path, with the server's path or `--base-path` in front, is split
-  on `/`, and the paths are compared segment by segment from the left. A literal segment comes first, then a segment
-  that mixes literal text and parameters, such as `{name}.json`, then a
-  segment that is one parameter.
+  on `/`, and the paths are compared segment by segment from the left. A
+  literal segment comes first, then a segment that mixes literal text and
+  parameters, such as `{name}.json`, then a segment that is one
+  parameter.
 - When one path runs out first, and its segments are of the same kinds as
   the other's so far, the shorter path comes first. So `/pets` comes
   before `/pets/mine`.
@@ -288,8 +289,8 @@ So `GET /v1/pets/7` gets the Stub, and `GET /pets/7` does not.
   `https://api.example.com/v1` and `http://localhost:8080`, only the first
   is used, and a warning names it. Servers that differ only in their
   host give no warning.
-- Every `servers` list the command reads is checked, even one that an
-  inner list overrides for every operation.
+- Every `servers` list is read and checked, even one that an inner list
+  overrides for every operation.
 
 `--base-path` mounts the API where the system under test calls it
 instead:
