@@ -97,25 +97,48 @@ fn moves_of(stubs : ReadOnlyArray[Stub]) -> Map[String, Set[String]] {
 
 ///|
 /// Whether the Stub `t`, tried before the Stub `s`, provably matches every
-/// request that `s` matches, in every state `s` can match in: `t`'s request
-/// conditions shadow `s`'s, and either `t` has no `requires`, or `s` names
-/// the same Scenario with the same `requires`. `moveTo` plays no part: it
-/// does not change whether a Stub matches.
+/// request that `s` matches, in every state `s` can match in.
 ///
-/// No CRUD Stub shadows a Stub, or is shadowed, for now.
+/// - Two ordinary Stubs: `t`'s request conditions shadow `s`'s, and either
+///   `t` has no `requires`, or `s` names the same Scenario with the same
+///   `requires`. `moveTo` plays no part: it does not change whether a Stub
+///   matches.
+/// - A CRUD Stub `t` matches by method and path alone, in every state. It
+///   shadows an ordinary Stub `s` whose exact method and exact path it
+///   serves, whatever `s`'s other conditions or `requires`, and a CRUD Stub
+///   `s` with the same path.
+/// - An ordinary Stub `t` shadows a CRUD Stub `s` only when it matches
+///   every request: it has no request conditions and no `requires`.
+///
+/// A partial overlap is not reported: an ordinary Stub with no method
+/// condition after a CRUD Stub still matches the methods the CRUD Stub
+/// does not serve.
 fn shadows(t : Stub, s : Stub) -> Bool {
   match (t.serves, s.serves) {
-    (Ordinary(t), Ordinary(s)) => {
-      let in_states_of_s = match t.scenario {
-        None | Some({ requires: None, .. }) => true
-        Some({ name, requires, .. }) =>
-          s.scenario is Some(clause) &&
-          clause.name == name &&
-          clause.requires == requires
-      }
-      in_states_of_s && request_shadows(t.request, s.request)
-    }
-    (Crud(_), _) | (_, Crud(_)) => false
+    (Ordinary(t), Ordinary(s)) =>
+      in_states_of(t, s) && request_shadows(t.request, s.request)
+    (Crud(t), Ordinary(s)) =>
+      s.request.meth is Some(meth) &&
+      s.request.path is Some(Has(Exact(path))) &&
+      t.operation(meth, path) is Some(_)
+    (Crud(t), Crud(s)) => t.path == s.path
+    (Ordinary(t), Crud(_)) =>
+      t.scenario is (None | Some({ requires: None, .. })) &&
+      t.request == no_conditions()
+  }
+}
+
+///|
+/// Whether the ordinary Stub `t` matches in every state that the ordinary
+/// Stub `s` can match in: `t` has no `requires`, or `s` names the same
+/// Scenario with the same `requires`.
+fn in_states_of(t : Ordinary, s : Ordinary) -> Bool {
+  match t.scenario {
+    None | Some({ requires: None, .. }) => true
+    Some({ name, requires, .. }) =>
+      s.scenario is Some(clause) &&
+      clause.name == name &&
+      clause.requires == requires
   }
 }
 

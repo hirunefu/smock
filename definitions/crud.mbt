@@ -54,30 +54,33 @@ pub fn CrudOp::name(self : CrudOp) -> String {
 }
 
 ///|
-/// The operation a request with the method `meth` and the path `path`,
-/// percent-decoded and without the query, asks of the CRUD Stub, if any:
-/// GET and POST at the list path, and GET, PUT, PATCH and DELETE at an
-/// item path. The path is compared byte for byte, as `path` conditions
-/// compare it, so `/api/v1/orders/` and `/API/v1/orders` are neither the
-/// list path nor an item path of `/api/v1/orders`, and the method exactly.
-/// Any other method or path shape, such as HEAD, PUT on the list, POST on
-/// an item, or a path deeper than an item's, asks nothing of the Stub,
-/// which then does not match.
+/// The shape of a request path that a CRUD Stub serves.
+pub enum CrudShape {
+  /// The Stub's path, where it lists and creates.
+  ListPath
+  /// The Stub's path, then `/`, then one non-empty segment, the key text:
+  /// where it reads, replaces, updates and deletes.
+  ItemPath
+} derive(Debug, Eq)
+
+///|
+/// The shape of `path`, a request path percent-decoded and without the
+/// query, for the CRUD Stub: its list path, an item path, or neither. The
+/// path is compared byte for byte, as `path` conditions compare it, so
+/// `/api/v1/orders/` and `/API/v1/orders` are neither the list path nor an
+/// item path of `/api/v1/orders`, and neither is a path deeper than an
+/// item's.
 ///
 /// Every request of the Stub's Mock may be tested against it, so the test
 /// allocates nothing: it compares the path's prefix in place.
-pub fn Crud::operation(self : Crud, meth : String, path : String) -> CrudOp? {
+pub fn Crud::shape(self : Crud, path : String) -> CrudShape? {
   let list = self.path
   let n = list.length()
   if !path.has_prefix(list) {
     return None
   }
   if path.length() == n {
-    return match meth {
-      "GET" => Some(List)
-      "POST" => Some(Create)
-      _ => None
-    }
+    return Some(ListPath)
   }
   if path.length() == n + 1 || path[n] != '/' {
     return None
@@ -87,14 +90,62 @@ pub fn Crud::operation(self : Crud, meth : String, path : String) -> CrudOp? {
       return None
     }
   }
-  match meth {
-    "GET" => Some(Read)
-    "PUT" => Some(Replace)
-    "PATCH" => Some(Update)
-    "DELETE" => Some(Delete)
-    _ => None
+  Some(ItemPath)
+}
+
+///|
+/// The operation a request with the method `meth` and the path `path`,
+/// percent-decoded and without the query, asks of the CRUD Stub, if any:
+/// GET and POST at the list path, and GET, PUT, PATCH and DELETE at an
+/// item path, as `shape` finds them. The method is compared exactly. Any
+/// other method or path shape, such as HEAD, PUT on the list, POST on an
+/// item, or a path deeper than an item's, asks nothing of the Stub, which
+/// then does not match. `crud_methods` lists the same methods.
+///
+/// Like `shape`, it allocates nothing.
+pub fn Crud::operation(self : Crud, meth : String, path : String) -> CrudOp? {
+  match self.shape(path) {
+    Some(ListPath) =>
+      match meth {
+        "GET" => Some(List)
+        "POST" => Some(Create)
+        _ => None
+      }
+    Some(ItemPath) =>
+      match meth {
+        "GET" => Some(Read)
+        "PUT" => Some(Replace)
+        "PATCH" => Some(Update)
+        "DELETE" => Some(Delete)
+        _ => None
+      }
+    None => None
   }
 }
+
+///|
+/// The methods a CRUD Stub serves at a path of the shape `shape`, or at
+/// either shape when it is `None`, each once, in the order of its
+/// operations: GET, POST, PUT, PATCH, DELETE. They are those that
+/// `Crud::operation` serves.
+pub fn crud_methods(shape : CrudShape?) -> ReadOnlyArray[String] {
+  match shape {
+    Some(ListPath) => list_methods
+    Some(ItemPath) => item_methods
+    None => any_shape_methods
+  }
+}
+
+///|
+let list_methods : ReadOnlyArray[String] = ["GET", "POST"]
+
+///|
+let item_methods : ReadOnlyArray[String] = ["GET", "PUT", "PATCH", "DELETE"]
+
+///|
+let any_shape_methods : ReadOnlyArray[String] = [
+  "GET", "POST", "PUT", "PATCH", "DELETE",
+]
 
 ///|
 /// The key text of `path`, an item path of the CRUD Stub, as `operation`
