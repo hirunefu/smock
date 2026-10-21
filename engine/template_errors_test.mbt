@@ -271,6 +271,38 @@ test "a structured template that does not parse is reported at the JSON Pointer 
 }
 
 ///|
+test "cookie takes exactly one name, as query does, and a loop variable cannot be named cookie" {
+  inspect(
+    template_problems(
+      (
+        #|  - id: s
+        #|    mock: m
+        #|    response:
+        #|      status: 200
+        #|      template: true
+        #|      headers: { X-Session: "${cookie}" }
+        #|      json:
+        #|        a: ${cookie.a.b}
+        #|        b: ${cookie[0]}
+        #|        c: "${cookie['a'] ?? cookie}"
+        #|        d: { $each: cookie, as: c, do: "${c}" }
+        #|        e: { $each: cookie.theme, as: cookie, do: "${cookie}" }
+        #|        f: { $each: body.items, as: Cookie, do: "${Cookie.name}" }
+        #|        g: "${cookie.a} ${cookie['a b']} ${cookie.A-b_1}"
+      ),
+    ),
+    content=(
+      #|m.yaml: /stubs/0/response/headers/X-Session: template: column 3: cookie: cookie takes exactly one name, such as cookie.x or cookie['x y']
+      #|m.yaml: /stubs/0/response/json/a: template: column 3: cookie.a.b: cookie takes exactly one name, such as cookie.x or cookie['x y']
+      #|m.yaml: /stubs/0/response/json/b: template: column 3: cookie[0]: cookie takes exactly one name, such as cookie.x or cookie['x y']
+      #|m.yaml: /stubs/0/response/json/c: template: column 18: cookie: cookie takes exactly one name, such as cookie.x or cookie['x y']
+      #|m.yaml: /stubs/0/response/json/d/$each: template: column 1: cookie: cookie takes exactly one name, such as cookie.x or cookie['x y']
+      #|m.yaml: /stubs/0/response/json/e/as: template: "cookie" cannot be a loop variable: it is a request field, env, loop or a reserved word
+    ),
+  )
+}
+
+///|
 /// A response whose templates have a problem in each kind of field.
 let broken_response : String =
   #|{ "status": 200, "template": true,

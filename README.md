@@ -60,6 +60,9 @@ Packages of `smock/smock`:
 - `prng`: the seeded pseudo-random generator that Fault decisions and
   template helpers draw from. Its sequence for a seed is fixed, the same on
   every target.
+- `cookies`: reads the cookies of a request from its `Cookie` fields, for
+  cookie conditions, the Near miss and the `cookie` root of templates, so
+  that all of them read cookies by the same rules.
 - `defdir`: reads the definitions directory and loads it, for
   `smock serve`, `smock check` and `smock render`, and takes the stamp of
   it that a poll compares (native).
@@ -109,7 +112,7 @@ Packages of `smock/smock`:
 A package that does I/O or uses FFI declares `supported_targets = "native"`.
 Every other package also builds for `wasm-gc`, and CI tests it there. The
 packages that decide a response, `definitions`, `engine` and `template`,
-and the ones they import, `prng` and `log`, must stay that way: `scripts/check-no-io.sh`
+and the ones they import, `prng`, `cookies` and `log`, must stay that way: `scripts/check-no-io.sh`
 fails if one of them leaves out `wasm-gc`, reads the environment, binds C
 or imports a package that does I/O.
 

@@ -160,3 +160,84 @@ test "compact JSON keeps member order and writes each number in its shortest for
     ),
   )
 }
+
+///|
+test "cookie.NAME is the first value of the cookie, read from every Cookie field as sent, and missing when absent" {
+  let input : @template.Input = {
+    ..request,
+    headers: [
+      ("Cookie", "theme=dark; session=\"s1\";flag; a=b=c ;empty="),
+      ("X-Cookie", "other=1"),
+      ("cookie", " \ttheme=light\t; pct=a%20b"),
+    ],
+  }
+  let render = (source : String) => {
+    match
+      @template.Text::parse(source, pointer="/response/body", kind=Body(Plain)) {
+      Ok(text) =>
+        text.render(
+          @template.Context::new(
+            input,
+            now=nine,
+            rand=@template.helper_generator(1),
+          ),
+        ) catch {
+          RenderError(at~, message~) => "error at \{at}: \{message}"
+        }
+      Err(problem) => "problem at \{problem.pointer}: \{problem.message}"
+    }
+  }
+  inspect(
+    [
+      render(
+        "${cookie.theme} ${cookie.session} ${cookie.a} [${cookie.empty}] ${cookie.pct} ${cookie['pct']}",
+      ),
+      render(
+        "${cookie.flag ?? 'no flag'}, ${cookie.Theme ?? 'no Theme'}, ${cookie.other ?? 'no other'}",
+      ),
+      render("${cookie.none}"),
+    ].join("\n"),
+    content=(
+      #|dark "s1" b=c [] a%20b a%20b
+      #|no flag, no Theme, no other
+      #|error at /response/body: cookie.none is missing
+    ),
+  )
+}
+
+///|
+test "$each over cookie.NAME walks every value of the cookie in order, from every Cookie field, and none when it is absent" {
+  let input : @template.Input = {
+    ..request,
+    headers: [
+      ("Cookie", "theme=dark; session=\"s1\"; theme=dim"),
+      ("Cookie", "theme=light"),
+    ],
+  }
+  let template = @json.parse(
+    (
+      #|{ "session": "${cookie.session ?? null}",
+      #|  "themes": { "$each": "cookie.theme", "as": "t", "do": "${loop.index}=${t}" },
+      #|  "none": { "$each": "cookie.none", "as": "t", "do": "${t}" },
+      #|  "fallback": { "$each": "cookie.none ?? cookie.session", "as": "s", "do": "${s}" } }
+    ),
+  )
+  guard @template.Structured::parse(template, pointer="/response/json")
+    is Ok(structured) else {
+    fail("the template does not parse")
+  }
+  inspect(
+    @utf8.decode(
+      structured.render(
+        @template.Context::new(
+          input,
+          now=nine,
+          rand=@template.helper_generator(1),
+        ),
+      ),
+    ),
+    content=(
+      #|{"session":"\"s1\"","themes":["0=dark","1=dim","2=light"],"none":[],"fallback":[]}
+    ),
+  )
+}

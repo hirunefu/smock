@@ -10,6 +10,10 @@ of each GitHub release include its section
 
 ### Added
 
+- `cookie.NAME` in templates reads a cookie as cookie conditions read it,
+  from every `Cookie` field, with quotes kept and nothing percent-decoded.
+  It is the first value of the cookie, and `$each` over it walks every
+  value.
 - `--template-env` (`SMOCK_TEMPLATE_ENV`) on `smock serve`, `smock check`
   and `smock render` lists, separated by commas, the environment variables
   templates may read. Their values are read once, at startup, and every
@@ -21,9 +25,9 @@ of each GitHub release include its section
 
 ### Changed
 
-- A loop variable named `env` now fails to load, since `env` is a template
-  root. No valid file changes meaning. The Definition file format is still
-  version 1.
+- A loop variable named `cookie` or `env` now fails to load, since `cookie`
+  and `env` are template roots. No valid file changes meaning: rename the
+  loop variable. The Definition file format is still version 1.
 
 ## [0.2.0] - 2026-10-21
 

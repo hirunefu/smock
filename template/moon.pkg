@@ -1,4 +1,5 @@
 import {
+  "smock/smock/cookies",
   "smock/smock/log",
   "smock/smock/prng",
   "moonbitlang/core/buffer",

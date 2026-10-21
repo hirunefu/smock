@@ -1756,7 +1756,7 @@
             }
           },
           "headers": {
-            "description": "Header fields, by name: a value, or the values of a repeated field. Cookie conditions read the cookies of `Cookie`, as they read a request's Cookie fields, and form conditions read the body as a form when `Content-Type` says it is one.",
+            "description": "Header fields, by name: a value, or the values of a repeated field. Cookie conditions and the `cookie` root of templates read the cookies of `Cookie`, as they read a request's Cookie fields, and form conditions read the body as a form when `Content-Type` says it is one.",
             "type": "object",
             "additionalProperties": {
               "$ref": "#/components/schemas/SampleValues"
