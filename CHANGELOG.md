@@ -14,6 +14,15 @@ of each GitHub release include its section
   from every `Cookie` field, with quotes kept and nothing percent-decoded.
   It is the first value of the cookie, and `$each` over it walks every
   value.
+- Template helpers for text: `len`, `concat`, `padStart` and `padEnd`.
+  Lengths count Unicode code points. A text argument may be a number or a
+  boolean, taken as its text.
+- A helper call can be followed by steps, as a reference can:
+  `${range(1, 3)[1]}` gives `2`.
+- The bounds of `range(a, b)` can be any expression that gives an integer,
+  such as `len(body.items)`.
+- A helper's result above 1 MiB is a render error, found before the
+  result is built.
 
 ### Changed
 

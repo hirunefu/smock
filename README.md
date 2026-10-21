@@ -51,8 +51,9 @@ Packages of `smock/smock`:
   it.
 - `template`: response templates: text templates (`${ expr }` in a body,
   a body file, a header value or an event field) and structured templates
-  (`json` with `$each` and `$if`), the expression grammar, the fake-data
-  helpers and their word and name lists, and escaping by media type. It
+  (`json` with `$each` and `$if`), the expression grammar, the helpers by
+  family (fake data with its word and name lists, time, conversions and
+  strings), and escaping by media type. It
   parses a template once and renders it for a request, the time and one
   64-bit draw, and writes JSON with smock's own number form.
 - `prng`: the seeded pseudo-random generator that Fault decisions and
