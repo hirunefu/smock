@@ -268,8 +268,8 @@ pub fn RenderFailure::message(self : RenderFailure) -> String {
 ///   matched request of a Stub with `fault.seed` set to `seed` gets.
 ///   Without it, the rendering uses the Stub's `fault.seed`, or, when it
 ///   has none, `fresh_seed()`.
-/// - `response` is the index of the response to render, counted from 0.
-///   Without it, the rendering shows the one the seed picks. A Stub with
+/// - `response_index` is the index of the response to render, counted from
+///   0. Without it, the rendering shows the one the seed picks. A Stub with
 ///   `response` takes 0 only.
 ///
 /// The values of the Stub's `variables` are rendered against the sample's
@@ -287,12 +287,12 @@ pub fn Engine::render(
   sample : SampleRequest,
   now~ : Int64,
   seed? : UInt64,
-  response? : Int,
+  response_index? : Int,
   fresh_seed~ : () -> UInt64,
 ) -> Rendering raise RenderFailure {
   guard self.file_stub(id) is Some(stub) else { raise UnknownStub(id) }
   let count = stub.responses.length()
-  if response is Some(index) && (index < 0 || index >= count) {
+  if response_index is Some(index) && (index < 0 || index >= count) {
     raise UnknownResponse(stub=stub.id, index~, count~)
   }
   let seed = match (seed, stub.fault) {
@@ -333,7 +333,7 @@ pub fn Engine::render(
     // asked for.
     Some(error) => (None, template_failed(stub.id, error), Some(error))
     None => {
-      let response_index = match (response, stub.total_weight) {
+      let response_index = match (response_index, stub.total_weight) {
         // A Stub with `response` shows no index, whichever it was asked
         // for.
         (_, None) => None

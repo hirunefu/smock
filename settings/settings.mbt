@@ -137,7 +137,7 @@ pub(all) struct RenderSettings {
   seed : UInt64?
   /// The index of the response to render among the Stub's `responses`,
   /// or `None` for the one the seed picks.
-  response : Int?
+  response_index : Int?
 } derive(Debug)
 
 ///|
@@ -767,7 +767,7 @@ pub fn RenderSettings::from_matches(
           raise InvalidOption(flag="seed", value=text, reason=seed_reason())
       }
   }
-  let response = match value(matches, "response") {
+  let response_index = match value(matches, "response") {
     None => None
     Some(text) =>
       match parse_response_index(text) {
@@ -788,7 +788,7 @@ pub fn RenderSettings::from_matches(
     request_file,
     time,
     seed,
-    response,
+    response_index,
   }
 }
 

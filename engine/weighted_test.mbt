@@ -237,13 +237,13 @@ test "the Journal records the index of the chosen response, and null for a Stub 
 
 ///|
 /// Renders the Stub `id` for `GET /` with `seed`, and the response at
-/// `response` when it is given, and shows the rendering's response index
+/// `response_index` when it is given, and shows the rendering's response index
 /// and status, or why it cannot be rendered.
 fn Harness::render_pick(
   self : Harness,
   id : String,
   seed? : UInt64,
-  response? : Int,
+  response_index? : Int,
 ) -> String {
   try
     self.engine.render(
@@ -251,7 +251,7 @@ fn Harness::render_pick(
       @engine.SampleRequest::from_json({}),
       now=self.now,
       seed?,
-      response?,
+      response_index?,
       fresh_seed=() => 7,
     )
   catch {
@@ -298,14 +298,14 @@ test "rendering shows the index of the response the seed picks, or renders the o
       // seed 7, the 503 (see above).
       h.render_pick("get-prices"),
       h.render_pick("get-prices", seed=7),
-      h.render_pick("get-prices", response=0),
-      h.render_pick("get-prices", response=1),
-      h.render_pick("get-prices", response=2),
-      h.render_pick("get-prices", response=-1),
+      h.render_pick("get-prices", response_index=0),
+      h.render_pick("get-prices", response_index=1),
+      h.render_pick("get-prices", response_index=2),
+      h.render_pick("get-prices", response_index=-1),
       h.render_pick("plain"),
-      h.render_pick("plain", response=0),
-      h.render_pick("plain", response=1),
-      h.render_pick("none", response=0),
+      h.render_pick("plain", response_index=0),
+      h.render_pick("plain", response_index=1),
+      h.render_pick("none", response_index=0),
     ].join("\n"),
     content=(
       #|responseIndex 1, status 503

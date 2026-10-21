@@ -685,13 +685,13 @@ fn Harness::render_vars(
   self : Harness,
   id : String,
   sample : Json,
-  response? : Int,
+  response_index? : Int,
 ) -> String raise {
   let rendering = self.engine.render(
     id,
     @engine.SampleRequest::from_json(sample),
     now=self.now,
-    response?,
+    response_index?,
     fresh_seed=() => 7,
   )
   guard rendering.to_json()
@@ -803,9 +803,9 @@ test "a value that fails to render shows the 500 a request would get, with no va
   inspect(
     [
       h.render_vars("fail", fails),
-      h.render_vars("fail", fails, response=1),
+      h.render_vars("fail", fails, response_index=1),
       h.render_vars("fail", renders),
-      h.render_vars("fail", renders, response=0),
+      h.render_vars("fail", renders, response_index=0),
       // Without a Fault, the template failure is the response as it is.
       h.render_vars("reset", { "method": "POST", "path": "/reset" }),
     ].join("\n"),

@@ -126,7 +126,7 @@ async fn render(settings : @settings.RenderSettings) -> Int {
     sample,
     now=settings.time.unwrap_or(@async.now()),
     seed?=settings.seed,
-    response?=settings.response,
+    response_index?=settings.response_index,
     fresh_seed=@settings.random_seed,
   ) catch {
     err => {

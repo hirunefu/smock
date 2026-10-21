@@ -538,7 +538,7 @@ fn render(admin : Admin, call : Call) -> Reply {
           )
       }
   }
-  let response = match query_parameter(request.target, "response") {
+  let response_index = match query_parameter(request.target, "response") {
     Err(message) => return invalid(message)
     Ok(None) => None
     Ok(Some(text)) =>
@@ -563,7 +563,7 @@ fn render(admin : Admin, call : Call) -> Reply {
       sample,
       now~,
       seed?,
-      response?,
+      response_index?,
       fresh_seed=@settings.random_seed,
     ) catch {
       UnknownStub(_) as err =>
