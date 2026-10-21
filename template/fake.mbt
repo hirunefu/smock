@@ -118,18 +118,10 @@ fn CallSite::ordered(
 }
 
 ///|
-/// A number drawn uniformly from 0 to `count - 1`: rejection sampling, so
-/// that every value is equally likely, as the pick among a Stub's
-/// `responses` draws.
-fn below(rand : @prng.Generator, count : UInt64) -> UInt64 {
-  rand.below(count)
-}
-
-///|
 /// An integer drawn uniformly from `min` to `max`, both included.
 fn between(rand : @prng.Generator, min : Int64, max : Int64) -> Int64 {
   min +
-  below(rand, (max - min).reinterpret_as_uint64() + 1UL).reinterpret_as_int64()
+  rand.below((max - min).reinterpret_as_uint64() + 1UL).reinterpret_as_int64()
 }
 
 ///|
@@ -149,7 +141,7 @@ fn hex(u : UInt64, n : Int) -> String {
 ///|
 /// One of `items`, each equally likely.
 fn choose(rand : @prng.Generator, items : Array[String]) -> String {
-  items[below(rand, items.length().to_uint64()).to_int()]
+  items[rand.below(items.length().to_uint64()).to_int()]
 }
 
 ///|
@@ -178,7 +170,7 @@ fn draw(helper : FakeHelper, rand : @prng.Generator) -> Json {
       Json::number(steps.to_double() / scale.to_double(), repr=text)
     }
     Bool => Json::boolean(rand.uint64() >> 63 == 1UL)
-    Pick(values) => values[below(rand, values.length().to_uint64()).to_int()]
+    Pick(values) => values[rand.below(values.length().to_uint64()).to_int()]
     Hex(n) => {
       let out = StringBuilder()
       let mut left = n
@@ -202,7 +194,7 @@ fn draw(helper : FakeHelper, rand : @prng.Generator) -> Json {
     Email => {
       let first = choose(rand, first_names).to_lower()
       let last = choose(rand, last_names).to_lower()
-      let nn = below(rand, 100UL).to_int().to_string().pad_start(2, '0')
+      let nn = rand.below(100UL).to_int().to_string().pad_start(2, '0')
       Json::string("\{first}.\{last}\{nn}@example.com")
     }
   }
