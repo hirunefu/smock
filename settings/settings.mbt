@@ -124,14 +124,23 @@ pub(all) struct RenderSettings {
 
 ///|
 /// The settings of `smock import-openapi`. The OpenAPI document is its
-/// argument, and the Mock, the output, the base path and whether the output
-/// may be replaced are flags of its own, without variables: they belong to
-/// one import, not to a process.
+/// argument, and the Mock, its Hosts, whether the file declares it, the
+/// output, the base path and whether the output may be replaced are flags
+/// of its own, without variables: they belong to one import, not to a
+/// process.
 pub(all) struct ImportOpenapiSettings {
   /// The OpenAPI document, a JSON or YAML file, as given.
   document : String
   /// The name of the Mock the Definition file declares.
   mock : String
+  /// The Hosts the Mock is declared with, as given, in that order: each
+  /// one a Definition file can declare, and none the same as another once
+  /// normalised. Empty when none is given.
+  hosts : Array[String]
+  /// Whether the Definition file declares the Mock. When it does not, it
+  /// holds only Stubs, for a Mock declared by hand in another file, and
+  /// `hosts` is empty.
+  declare_mock : Bool
   /// The Definition file to write, a JSON or YAML file, as given. Its name
   /// picks the format.
   output : String
@@ -401,12 +410,12 @@ pub fn render_command() -> @argparse.Command {
 
 ///|
 /// The `import-openapi` subcommand: the OpenAPI document as its argument,
-/// and the Mock, the output, the base path and whether to replace the
-/// output as flags without variables.
+/// and the Mock, its Hosts, whether to declare it, the output, the base
+/// path and whether to replace the output as flags without variables.
 pub fn import_openapi_command() -> @argparse.Command {
   @argparse.Command(
     "import-openapi",
-    about="Convert an OpenAPI 3.0, 3.1 or 3.2 document into a Definition file, once: it declares one Mock, with a Stub for each response of each operation, and for each further named example, which matches the operation's method and path. The main response answers by default, and each other one when the request sends Smock-Status with its key as the document writes it, such as Smock-Status: 404. A further named example answers when the request sends Smock-Example with its name too, such as Smock-Example: dog. smock never reads OpenAPI when it serves. Prints every problem, one per line, as smock check does, then a summary line, and exits with status 1 if nothing was written.",
+    about="Convert an OpenAPI 3.0, 3.1 or 3.2 document into a Definition file, once: it declares one Mock, unless --declare-mock is off, with a Stub for each response of each operation, and for each further named example, which matches the operation's method and path. The main response answers by default, and each other one when the request sends Smock-Status with its key as the document writes it, such as Smock-Status: 404. A further named example answers when the request sends Smock-Example with its name too, such as Smock-Example: dog. smock never reads OpenAPI when it serves. Prints every problem, one per line, as smock check does, then a summary line, and exits with status 1 if nothing was written.",
     positionals=[
       @argparse.PositionArg(
         "document",
@@ -420,6 +429,17 @@ pub fn import_openapi_command() -> @argparse.Command {
         long="mock",
         about="The name of the Mock the Definition file declares. Every Stub ID starts with it.",
         required=true,
+      ),
+      @argparse.OptionArg(
+        "hosts",
+        long="hosts",
+        about="The Mock's Hosts, separated by commas, such as petstore.test,pets.internal:8080. None by default: the only Mock of a definitions directory is the Default Mock and needs none; with several Mocks, give its Hosts. The document's servers never become Hosts.",
+      ),
+      @argparse.OptionArg(
+        "declare-mock",
+        long="declare-mock",
+        about="Whether the file declares the Mock: on or off. Off, it holds only the Stubs, for a Mock declared by hand in another file, such as to set default, noMatch or journal; --hosts is then refused.",
+        default_values=["on"],
       ),
       @argparse.OptionArg(
         "output",
@@ -787,8 +807,10 @@ pub fn RenderSettings::from_matches(
 /// Reads and checks the settings from the parsed `import-openapi`
 /// subcommand. The document and the output name a JSON or YAML file, in
 /// lower case, as Definition files do, and the output's name does not
-/// start with `.`, since smock skips such files. `--base-path` starts with
-/// `/` and holds no `?` or `#`. `--overwrite` is `on` or `off`.
+/// start with `.`, since smock skips such files. `--declare-mock` and
+/// `--overwrite` are `on` or `off`. `--hosts` lists Hosts, separated by
+/// commas, only when the file declares the Mock. `--base-path` starts with
+/// `/` and holds no `?` or `#`.
 pub fn ImportOpenapiSettings::from_matches(
   matches : @argparse.Matches,
 ) -> ImportOpenapiSettings raise InvalidSetting {
@@ -819,34 +841,98 @@ pub fn ImportOpenapiSettings::from_matches(
       reason="must not name a file that starts with ., which smock skips",
     )
   }
-  let base_path = value(matches, "base-path")
-  if base_path is Some(path) {
-    if !path.has_prefix("/") {
-      raise InvalidOption(
-        flag="base-path",
-        value=path,
-        reason="must start with /",
-      )
-    }
-    if path.contains_char('?') || path.contains_char('#') {
-      raise InvalidOption(
-        flag="base-path",
-        value=path,
-        reason="must not hold ? or #: a query or a fragment is not part of a path",
-      )
-    }
-  }
-  let overwrite = match value(matches, "overwrite") {
+  let declare_mock = on_or_off(matches, "declare-mock")
+  let hosts = hosts_value(matches, declare_mock~)
+  let base_path = base_path_value(matches)
+  let overwrite = on_or_off(matches, "overwrite")
+  { document, mock, hosts, declare_mock, output, base_path, overwrite, }
+}
+
+///|
+/// The value of the flag `name` of `import-openapi`, which takes `on` or
+/// `off` and has a default.
+fn on_or_off(
+  matches : @argparse.Matches,
+  name : String,
+) -> Bool raise InvalidSetting {
+  match value(matches, name) {
     Some("on") => true
     Some("off") => false
     other =>
       raise InvalidOption(
-        flag="overwrite",
+        flag=name,
         value=other.unwrap_or(""),
         reason="must be on or off",
       )
   }
-  { document, mock, output, base_path, overwrite, }
+}
+
+///|
+/// The Hosts `--hosts` lists, separated by commas, in the order given, and
+/// none when it is not given or empty. Each is a Host a Definition file can
+/// declare, by the check `smock check` makes, and none is the same as an
+/// earlier one once normalised. So a Host taken here always loads. They are
+/// refused when the file does not declare the Mock (`declare_mock` false).
+fn hosts_value(
+  matches : @argparse.Matches,
+  declare_mock~ : Bool,
+) -> Array[String] raise InvalidSetting {
+  let hosts = []
+  guard value(matches, "hosts") is Some(text) && text != "" else {
+    return hosts
+  }
+  if !declare_mock {
+    raise InvalidOption(
+      flag="hosts",
+      value=text,
+      reason="must not be given with --declare-mock off: give the Hosts where the Mock is declared",
+    )
+  }
+  let normalised : Map[String, String] = Map([])
+  for part in text.split(",") {
+    let host = part.to_owned()
+    if @definitions.host_problem(host) is Some(problem) {
+      raise InvalidOption(
+        flag="hosts",
+        value=text,
+        reason="\{host.escape()} \{problem}",
+      )
+    }
+    let name = @definitions.normalize_host(host)
+    if normalised.get(name) is Some(earlier) {
+      raise InvalidOption(
+        flag="hosts",
+        value=text,
+        reason="\{host.escape()} is the same Host as \{earlier.escape()}: Hosts are compared in lower case, without the port and a trailing dot",
+      )
+    }
+    normalised[name] = host
+    hosts.push(host)
+  }
+  hosts
+}
+
+///|
+/// The path `--base-path` gives, as given, or `None` when it is not given.
+/// It starts with `/`, as a request's path does, and holds no `?` or `#`,
+/// which would start a query or a fragment.
+fn base_path_value(matches : @argparse.Matches) -> String? raise InvalidSetting {
+  guard value(matches, "base-path") is Some(path) else { return None }
+  if !path.has_prefix("/") {
+    raise InvalidOption(
+      flag="base-path",
+      value=path,
+      reason="must start with /",
+    )
+  }
+  if path.contains_char('?') || path.contains_char('#') {
+    raise InvalidOption(
+      flag="base-path",
+      value=path,
+      reason="must not hold ? or #: a query or a fragment is not part of a path",
+    )
+  }
+  Some(path)
 }
 
 ///|

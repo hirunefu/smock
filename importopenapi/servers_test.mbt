@@ -456,3 +456,36 @@ test "the servers of a Path Item reached through a $ref are read where they are 
     ),
   )
 }
+
+///|
+test "the comment at the top lists --base-path after --hosts and --declare-mock" {
+  let lines = []
+  for
+    hosts_and_declare in [
+      (["petstore.test", "pets.internal:8080"], true),
+      ([], false),
+    ] {
+    let (hosts, declare_mock) = hosts_and_declare
+    let options = @importopenapi.Options(
+      root="petstore.json",
+      mock="petstore",
+      output="defs/petstore.yaml",
+      hosts~,
+      declare_mock~,
+      base_path="/mock/petstore",
+    )
+    let conversion = @importopenapi.convert(
+      [("petstore.json", @utf8.encode(pets_by_id_under_v1))],
+      options,
+    )
+    guard conversion is Converted(file~, ..) else { fail("not converted") }
+    lines.push(@utf8.decode_lossy(file).split("\n").nth(1).unwrap().to_owned())
+  }
+  inspect(
+    lines.join("\n"),
+    content=(
+      #|# (Petstore 1.0.0, OpenAPI 3.1.0), with --mock petstore --hosts petstore.test,pets.internal:8080 --base-path /mock/petstore.
+      #|# (Petstore 1.0.0, OpenAPI 3.1.0), with --mock petstore --declare-mock off --base-path /mock/petstore.
+    ),
+  )
+}

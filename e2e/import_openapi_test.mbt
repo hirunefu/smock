@@ -352,6 +352,28 @@ async test "smock import-openapi rejects bad arguments as usage errors, on stder
     ["--mock", "m", "--output", "m.json"],
     ["api.json", "--mock", "m", "--output", "m.json", "--overwrite", "yes"],
     ["api.json", "--mock", "m", "--output", "m.json", "--overwrite", ""],
+    ["api.json", "--mock", "m", "--output", "m.json", "--hosts", ":8080"],
+    [
+      "api.json", "--mock", "m", "--output", "m.json", "--hosts", "a.test,users:http",
+    ],
+    [
+      "api.json", "--mock", "m", "--output", "m.json", "--hosts", "*.example.com",
+    ],
+    [
+      "api.json", "--mock", "m", "--output", "m.json", "--hosts", "a.test,,b.test",
+    ],
+    [
+      "api.json", "--mock", "m", "--output", "m.json", "--hosts", "a.test, b.test",
+    ],
+    [
+      "api.json", "--mock", "m", "--output", "m.json", "--hosts", "pets.test,b.test,PETS.test.:8080",
+    ],
+    ["api.json", "--mock", "m", "--output", "m.json", "--hosts", "[::1],::1"],
+    [
+      "api.json", "--mock", "m", "--output", "m.json", "--hosts", "a.test", "--declare-mock",
+      "off",
+    ],
+    ["api.json", "--mock", "m", "--output", "m.json", "--declare-mock", "yes"],
     ["api.json", "--mock", "m", "--output", "m.json", "--base-path", "v1"],
     ["api.json", "--mock", "m", "--output", "m.json", "--base-path", ""],
     ["api.json", "--mock", "m", "--output", "m.json", "--base-path", "/v1?x=1"],
@@ -392,6 +414,24 @@ async test "smock import-openapi rejects bad arguments as usage errors, on stder
       #|  status 2: smock import-openapi: invalid value "yes" for --overwrite: must be on or off
       #|api.json --mock m --output m.json --overwrite 
       #|  status 2: smock import-openapi: invalid value "" for --overwrite: must be on or off
+      #|api.json --mock m --output m.json --hosts :8080
+      #|  status 2: smock import-openapi: invalid value ":8080" for --hosts: ":8080" must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|api.json --mock m --output m.json --hosts a.test,users:http
+      #|  status 2: smock import-openapi: invalid value "a.test,users:http" for --hosts: "users:http" must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|api.json --mock m --output m.json --hosts *.example.com
+      #|  status 2: smock import-openapi: invalid value "*.example.com" for --hosts: "*.example.com" must be an exact name: Hosts have no wildcards
+      #|api.json --mock m --output m.json --hosts a.test,,b.test
+      #|  status 2: smock import-openapi: invalid value "a.test,,b.test" for --hosts: "" must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|api.json --mock m --output m.json --hosts a.test, b.test
+      #|  status 2: smock import-openapi: invalid value "a.test, b.test" for --hosts: " b.test" must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080
+      #|api.json --mock m --output m.json --hosts pets.test,b.test,PETS.test.:8080
+      #|  status 2: smock import-openapi: invalid value "pets.test,b.test,PETS.test.:8080" for --hosts: "PETS.test.:8080" is the same Host as "pets.test": Hosts are compared in lower case, without the port and a trailing dot
+      #|api.json --mock m --output m.json --hosts [::1],::1
+      #|  status 2: smock import-openapi: invalid value "[::1],::1" for --hosts: "::1" is the same Host as "[::1]": Hosts are compared in lower case, without the port and a trailing dot
+      #|api.json --mock m --output m.json --hosts a.test --declare-mock off
+      #|  status 2: smock import-openapi: invalid value "a.test" for --hosts: must not be given with --declare-mock off: give the Hosts where the Mock is declared
+      #|api.json --mock m --output m.json --declare-mock yes
+      #|  status 2: smock import-openapi: invalid value "yes" for --declare-mock: must be on or off
       #|api.json --mock m --output m.json --base-path v1
       #|  status 2: smock import-openapi: invalid value "v1" for --base-path: must start with /
       #|api.json --mock m --output m.json --base-path 
@@ -412,18 +452,21 @@ async test "smock import-openapi --help names its argument and its flags, none o
       #|status 0
       #|Usage: smock import-openapi --mock <mock> --output <output> [options] <document>
       #|
-      #|Convert an OpenAPI 3.0, 3.1 or 3.2 document into a Definition file, once: it declares one Mock, with a Stub for each response of each operation, and for each further named example, which matches the operation's method and path. The main response answers by default, and each other one when the request sends Smock-Status with its key as the document writes it, such as Smock-Status: 404. A further named example answers when the request sends Smock-Example with its name too, such as Smock-Example: dog. smock never reads OpenAPI when it serves. Prints every problem, one per line, as smock check does, then a summary line, and exits with status 1 if nothing was written.
+      #|Convert an OpenAPI 3.0, 3.1 or 3.2 document into a Definition file, once: it declares one Mock, unless --declare-mock is off, with a Stub for each response of each operation, and for each further named example, which matches the operation's method and path. The main response answers by default, and each other one when the request sends Smock-Status with its key as the document writes it, such as Smock-Status: 404. A further named example answers when the request sends Smock-Example with its name too, such as Smock-Example: dog. smock never reads OpenAPI when it serves. Prints every problem, one per line, as smock check does, then a summary line, and exits with status 1 if nothing was written.
       #|
       #|Arguments:
       #|  document  The OpenAPI document: a JSON file, whose name ends in .json, or a YAML file, read as YAML 1.2, whose name ends in .yaml or .yml.
       #|
       #|Options:
-      #|  -h, --help               Show help information.
-      #|  --mock <mock>            The name of the Mock the Definition file declares. Every Stub ID starts with it.
-      #|  --output <output>        The Definition file to write. Its name picks the format: .yaml or .yml writes YAML, with comments that map each Stub back to the document, and .json writes JSON. Its directory must exist. The file is written to a temporary file whose name starts with ., then renamed, so a smock that watches the directory never reads half a file.
-      #|  --base-path <base-path>  A path to put in front of every path, such as /mock/petstore, to mount the API where the system under test calls it. It replaces the paths of the document's servers, which are then not read: / means no prefix. It must start with / and hold no ? or #. By default, the path of the first server of the operation, else of its Path Item, else of the document, is put in front.
-      #|  --overwrite <overwrite>  Whether an existing --output is replaced: on or off. Off, an existing file is refused before the document is read, and nothing is written. Either way, a directory, a symlink or the document itself is refused. [default: off]
+      #|  -h, --help                     Show help information.
+      #|  --mock <mock>                  The name of the Mock the Definition file declares. Every Stub ID starts with it.
+      #|  --hosts <hosts>                The Mock's Hosts, separated by commas, such as petstore.test,pets.internal:8080. None by default: the only Mock of a definitions directory is the Default Mock and needs none; with several Mocks, give its Hosts. The document's servers never become Hosts.
+      #|  --declare-mock <declare-mock>  Whether the file declares the Mock: on or off. Off, it holds only the Stubs, for a Mock declared by hand in another file, such as to set default, noMatch or journal; --hosts is then refused. [default: on]
+      #|  --output <output>              The Definition file to write. Its name picks the format: .yaml or .yml writes YAML, with comments that map each Stub back to the document, and .json writes JSON. Its directory must exist. The file is written to a temporary file whose name starts with ., then renamed, so a smock that watches the directory never reads half a file.
+      #|  --base-path <base-path>        A path to put in front of every path, such as /mock/petstore, to mount the API where the system under test calls it. It replaces the paths of the document's servers, which are then not read: / means no prefix. It must start with / and hold no ? or #. By default, the path of the first server of the operation, else of its Path Item, else of the document, is put in front.
+      #|  --overwrite <overwrite>        Whether an existing --output is replaced: on or off. Off, an existing file is refused before the document is read, and nothing is written. Either way, a directory, a symlink or the document itself is refused. [default: off]
       #|
+
     ),
   )
 }
@@ -1356,6 +1399,194 @@ async test "smock serves an imported file with Smock-Example: alone it selects t
           "stub": "petstore.getPet.200",
           "stubSource": "file",
         },
+      ])
+    })
+  })
+}
+
+///|
+/// What the Journal holds for `session`, in order: for each request, the
+/// Mock and the Stub that answered, and the status.
+async fn Smock::answered_by(self : Smock, session : String) -> Json {
+  match self.journal(session~) {
+    (200, Object({ "entries": Array(entries), .. })) => {
+      let answered : Array[Json] = []
+      for entry in entries {
+        guard entry is Object(entry) else {
+          fail("unexpected entry: \{entry.stringify()}")
+        }
+        answered.push({
+          "mock": entry.get("mock").unwrap_or(Json::null()),
+          "stub": entry.get("stub").unwrap_or(Json::null()),
+          "status": entry.get("status").unwrap_or(Json::null()),
+        })
+      }
+      Json::array(answered)
+    }
+    (status, body) => fail("unexpected Journal: \{status} \{body.stringify()}")
+  }
+}
+
+///|
+async test "a Mock imported with --hosts answers requests for its Hosts beside a hand-written Default Mock, and smock check accepts the directory" {
+  with_petstore(petstore_document, dir => {
+    @fs.write_file(
+      "\{dir}/defs/users.yaml",
+      (
+        #|version: 1
+        #|mocks:
+        #|  - name: users
+        #|    hosts:
+        #|      - users.test
+        #|    default: true
+        #|stubs:
+        #|  - id: users.pets
+        #|    mock: users
+        #|    request:
+        #|      method: GET
+        #|      path: /pets
+        #|    response:
+        #|      status: 204
+      ),
+    )
+    inspect(
+      import_openapi(
+        [
+          "api/petstore.json", "--mock", "petstore", "--hosts", "petstore.test,pets.internal:8080",
+          "--output", "defs/petstore.yaml",
+        ],
+        cwd=dir,
+      ),
+      content=(
+        #|status 0
+        #|wrote defs/petstore.yaml: 1 Stubs from 1 operations, 0 warnings
+        #|
+      ),
+    )
+    inspect(
+      @fs.read_file("\{dir}/defs/petstore.yaml").text(),
+      content=(
+        #|# Generated by smock import-openapi from petstore.json
+        #|# (Petstore 1.0.0, OpenAPI 3.1.0), with --mock petstore --hosts petstore.test,pets.internal:8080.
+        #|# Do not edit: the next import replaces this file.
+        #|version: 1
+        #|mocks:
+        #|  - name: petstore
+        #|    hosts:
+        #|      - petstore.test
+        #|      - pets.internal:8080
+        #|stubs:
+        #|  # GET /pets, 200
+        #|  - id: petstore.listPets.200
+        #|    mock: petstore
+        #|    request:
+        #|      method: GET
+        #|      path: /pets
+        #|    response:
+        #|      status: 200
+        #|
+      ),
+    )
+    inspect(
+      exit_report(smock_output(["check", "defs"], cwd=dir)),
+      content=(
+        #|status 0
+        #|
+      ),
+    )
+    let _ = with_smock(["--dir", "\{dir}/defs", "--port", "0"], smock => {
+      for
+        host in [
+          "petstore.test", "PETS.internal:9090", "users.test", "other.test",
+        ] {
+        let _ = smock.request("GET", "/pets", headers=[
+          ("Host", host),
+          baggage("hosts"),
+        ])
+      }
+      json_inspect(smock.answered_by("hosts"), content=[
+        { "mock": "petstore", "stub": "petstore.listPets.200", "status": 200 },
+        { "mock": "petstore", "stub": "petstore.listPets.200", "status": 200 },
+        { "mock": "users", "stub": "users.pets", "status": 204 },
+        { "mock": "users", "stub": "users.pets", "status": 204 },
+      ])
+    })
+  })
+}
+
+///|
+async test "a file imported with --declare-mock off holds only Stubs, for the Mock a hand-written file declares with its own settings: smock check accepts the directory, and smock serves both" {
+  with_petstore(petstore_document, dir => {
+    @fs.write_file(
+      "\{dir}/defs/petstore-mock.yaml",
+      (
+        #|version: 1
+        #|mocks:
+        #|  - name: petstore
+        #|    default: true
+        #|    noMatch:
+        #|      status: 501
+      ),
+    )
+    inspect(
+      import_openapi(
+        [
+          "api/petstore.json", "--mock", "petstore", "--declare-mock", "off", "--output",
+          "defs/petstore.yaml",
+        ],
+        cwd=dir,
+      ),
+      content=(
+        #|status 0
+        #|wrote defs/petstore.yaml: 1 Stubs from 1 operations, 0 warnings
+        #|
+      ),
+    )
+    inspect(
+      @fs.read_file("\{dir}/defs/petstore.yaml").text(),
+      content=(
+        #|# Generated by smock import-openapi from petstore.json
+        #|# (Petstore 1.0.0, OpenAPI 3.1.0), with --mock petstore --declare-mock off.
+        #|# Do not edit: the next import replaces this file.
+        #|version: 1
+        #|stubs:
+        #|  # GET /pets, 200
+        #|  - id: petstore.listPets.200
+        #|    mock: petstore
+        #|    request:
+        #|      method: GET
+        #|      path: /pets
+        #|    response:
+        #|      status: 200
+        #|
+      ),
+    )
+    inspect(
+      exit_report(smock_output(["check", "defs"], cwd=dir)),
+      content=(
+        #|status 0
+        #|
+      ),
+    )
+    let _ = with_smock(["--dir", "\{dir}/defs", "--port", "0"], smock => {
+      let lines = []
+      for target in ["/pets", "/owners"] {
+        let response = smock.request("GET", target, headers=[
+          ("Host", "localhost"),
+          baggage("declared"),
+        ])
+        lines.push(response.split("\n").next().unwrap_or("").to_owned())
+      }
+      inspect(
+        lines.join("\n"),
+        content=(
+          #|HTTP/1.1 200 OK
+          #|HTTP/1.1 501 Not Implemented
+        ),
+      )
+      json_inspect(smock.answered_by("declared"), content=[
+        { "mock": "petstore", "stub": "petstore.listPets.200", "status": 200 },
+        { "mock": "petstore", "stub": null, "status": 501 },
       ])
     })
   })
