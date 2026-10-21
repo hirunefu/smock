@@ -106,7 +106,7 @@
           "minLength": 1
         },
         "newKey": {
-          "description": "How a keyed bucket makes new keys: integer, one more than the highest integer key, or uuid, a version 4 UUID. Only a bucket with key takes it. Default integer.",
+          "description": "How a keyed bucket makes a key for an item that an append adds without one: integer, one more than the highest integer key (string keys are not counted, and an integer whose text a string key has is skipped), or 1 when there is none; or uuid, a version 4 UUID from the request's helpers, which fault.seed repeats. Only a bucket with key takes it. Default integer.",
           "enum": ["integer", "uuid"],
           "default": "integer"
         }
@@ -174,10 +174,10 @@
       ]
     },
     "dataWrite": {
-      "description": "A write to a Data bucket of the Stub's Mock: its op, the bucket, and the members the op takes. set and merge take value and, for a keyed bucket, key; append takes value; remove takes key. smock does not write to keyed buckets yet, so it rejects key and remove for now.",
+      "description": "A write to a Data bucket of the Stub's Mock: its op, the bucket, and the members the op takes. set and merge take value and, for a keyed bucket, key; append takes value; remove takes key. On a keyed bucket, merge needs key, and every write keeps the rules of keyed buckets: a write by key to a key that no item has, or one that would break the rules, writes nothing.",
       "oneOf": [
         {
-          "description": "set: the bucket becomes the value. With key, the item with that key becomes the value, in its place.",
+          "description": "set: the bucket becomes the value, which in a keyed bucket must be an array of objects with valid, unique keys. With key, the item with that key becomes the value, an object, in its place. The value's key member may be absent, and is then added as its last member, or hold the item's key text; the item keeps its stored key value.",
           "type": "object",
           "properties": {
             "op": { "description": "The op: set.", "const": "set" },
@@ -189,7 +189,7 @@
           "additionalProperties": false
         },
         {
-          "description": "merge: a shallow merge of the value, which must be an object, into the bucket, which must hold an object. Each member of the value replaces the member of the same name in its place, or is added at the end; null is stored as null. With key, the merge is into the item with that key.",
+          "description": "merge: a shallow merge of the value, which must be an object, into the bucket, which must hold an object. Each member of the value replaces the member of the same name in its place, or is added at the end; null is stored as null. With key, the merge is into the item with that key, whose key member the value may leave out or give the item's key text. A keyed bucket takes merge only with key.",
           "type": "object",
           "properties": {
             "op": { "description": "The op: merge.", "const": "merge" },
@@ -201,7 +201,7 @@
           "additionalProperties": false
         },
         {
-          "description": "append: the value is appended to the bucket, which must hold an array.",
+          "description": "append: the value is appended to the bucket, which must hold an array. In a keyed bucket, the value is an item, an object: a valid key that no item has is kept, and an item without the key member gets a new key, as the bucket's newKey says, added as its last member.",
           "type": "object",
           "properties": {
             "op": { "description": "The op: append.", "const": "append" },
@@ -230,11 +230,11 @@
       "pattern": "^[A-Za-z0-9_-]{1,128}$"
     },
     "dataWriteKey": {
-      "description": "The key of the item written to, in a keyed bucket: a text template, always parsed, compared as a key text. Only a keyed bucket takes it.",
+      "description": "The key of the item written to, in a keyed bucket: a text template, always parsed, whether or not a response has template: true, and compared as a key text, so ${path[3]} finds the item whose key is 1002 or \"1002\". It renders before the write's value, and is bounded as a rendered body is. Only a keyed bucket takes it.",
       "type": "string"
     },
     "dataWriteValue": {
-      "description": "The value of the write: any JSON, and always a structured template, whether or not a response has template: true. ${…} inserts a value, $${ writes ${, and a $if at its root needs else. It is rendered against the state from before the request, and bounded as a rendered body is: at most 1 MiB of compact JSON and 10,000 loop iterations. A value with no ${, $each or $if that breaks its op, such as a merge value that is not an object, is an error when loading."
+      "description": "The value of the write: any JSON, and always a structured template, whether or not a response has template: true. ${…} inserts a value, $${ writes ${, and a $if at its root needs else. It is rendered against the state from before the request, and bounded as a rendered body is: at most 1 MiB of compact JSON and 10,000 loop iterations. A value with no ${, $each or $if that breaks its op, such as a merge value that is not an object, or a set value without key that breaks the rules of a keyed bucket, is an error when loading."
     },
     "scenario": {
       "description": "The Stub's Scenario clause. A Scenario is a named state machine within the Stub's Mock: it has no declaration, exists because Stubs name it, and starts in the state `Started`. Its state is kept per Mock and per Session: requests without a Session share their own. With requires, the Stub matches only while the Scenario is in that state; without it, in every state. With moveTo, the Scenario moves to that state the moment the Stub is chosen, whatever then happens to the response, even a delay, a connection Fault or a template error. Give requires, moveTo or both. Names are compared byte for byte.",

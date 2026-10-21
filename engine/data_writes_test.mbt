@@ -753,7 +753,7 @@ test "a Stub with responses writes once, whichever response is picked" {
 }
 
 ///|
-test "an Ephemeral Stub writes its Session's copies; after a reload removes its bucket, or gives it a key, the write fails to apply and nothing is written" {
+test "an Ephemeral Stub writes its Session's copies; after a reload removes its bucket, or gives it a key that its append breaks, the write fails to apply and nothing is written" {
   let files = (data : String) => {
     [
       shop_file(
@@ -848,7 +848,7 @@ test "an Ephemeral Stub writes its Session's copies; after a reload removes its 
       #|another Session reads the initial value: 0
       #|state: calls {"calls":2}, visits 2
       #|log keyed: Swapped
-      #|visit: 500 {"error":"data write failed","stub":"eph-1","at":"/dataWrites/1","message":"the Data bucket \"log\" has \"key\" since a reload, and dataWrites cannot write to a keyed bucket yet"}; status 500, responseIndex null, variablesWritten [], dataWritten [], dataError /dataWrites/1: the Data bucket "log" has "key" since a reload, and dataWrites cannot write to a keyed bucket yet, templateError none
+      #|visit: 500 {"error":"data write failed","stub":"eph-1","at":"/dataWrites/1","message":"the value of \"append\" to a keyed bucket must be an object, and it is a string"}; status 500, responseIndex null, variablesWritten [], dataWritten [], dataError /dataWrites/1: the value of "append" to a keyed bucket must be an object, and it is a string, templateError none
       #|state: calls {"calls":2}, visits 2
       #|visits removed: Swapped
       #|visit: 500 {"error":"data write failed","stub":"eph-1","at":"/dataWrites/0","message":"the Mock has no Data bucket \"visits\" since a reload"}; status 500, responseIndex null, variablesWritten [], dataWritten [], dataError /dataWrites/0: the Mock has no Data bucket "visits" since a reload, templateError none
@@ -992,7 +992,7 @@ test "an Ephemeral Stub whose writes would not load is refused, with the problem
         #|    { "op": "set", "bucket": "visit", "value": 1 },
         #|    { "op": "set", "bucket": "visits", "key": "1", "value": 1 },
         #|    { "op": "merge", "bucket": "visits", "value": [] },
-        #|    { "op": "append", "bucket": "orders", "value": { "id": 1 } },
+        #|    { "op": "merge", "bucket": "orders", "value": { "id": 1 } },
         #|    { "op": "remove", "bucket": "visits" } ],
         #|  "response": { "status": 200 } }
       ),
@@ -1001,7 +1001,7 @@ test "an Ephemeral Stub whose writes would not load is refused, with the problem
       #|/dataWrites/0/bucket: the Mock has no Data bucket "visit"
       #|/dataWrites/1/key: is allowed only on a keyed bucket, and the Data bucket "visits" has no "key"
       #|/dataWrites/2/value: must be an object: "merge" merges the members of an object into the bucket
-      #|/dataWrites/3/bucket: the Data bucket "orders" is keyed, and dataWrites cannot write to a keyed bucket yet
+      #|/dataWrites/3: "merge" into the keyed Data bucket "orders" needs "key": the bucket holds an array, and "merge" with "key" merges into one of its items
       #|/dataWrites/4: needs "key"
     ),
   )

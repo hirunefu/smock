@@ -18,16 +18,16 @@ pub fn ephemeral_stub(
   buckets? : ReadOnlyArray[DataBucket] = ReadOnlyArray::from_array([]),
 ) -> Result[Stub, Array[Diagnostic]] {
   let diagnostics = []
-  let keyed = Map([])
+  let keys = Map([])
   for bucket in buckets {
-    keyed[bucket.name] = bucket.key is Some(_)
+    keys[bucket.name] = bucket.key
   }
   let file = File::{
     name: "",
     diagnostics,
     body_files: None,
     env,
-    buckets: Map::from_array([(mock, MockBuckets::new(keyed))]),
+    buckets: Map::from_array([(mock, MockBuckets::new(keys))]),
   }
   guard json is Object(fields) else {
     file.error("", "must be an object")
