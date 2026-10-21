@@ -180,6 +180,8 @@ priv struct Setting {
 }
 
 ///|
+/// The body-file subdirectory: a setting of smock serve that smock check
+/// and smock render share, as they share `template_env_setting`.
 let body_file_dir_setting : Setting = {
   name: "body-file-dir",
   about: "The body-file subdirectory of the definitions directory.",
@@ -187,6 +189,9 @@ let body_file_dir_setting : Setting = {
 }
 
 ///|
+/// The environment variables templates may read: a setting of smock serve
+/// that smock check and smock render share, so that all three load a
+/// directory the same way.
 let template_env_setting : Setting = {
   name: "template-env",
   about: "The environment variables templates may read as env.NAME, separated by commas, such as REGION,API_BASE. Their values are read once, at startup. A listed value can show in responses, renderings and template error messages, so list only values that may be shown. A name is letters, digits and _, starting with a letter or _, and cannot start with SMOCK_. None by default.",
@@ -369,8 +374,9 @@ pub fn check_command() -> @argparse.Command {
 
 ///|
 /// The `render` subcommand: the Stub ID as its argument, the definitions
-/// directory and the body-file subdirectory as `smock serve` takes them,
-/// and the sample request, the time, the seed and the response.
+/// directory, the body-file subdirectory and the environment variables
+/// templates may read as `smock serve` takes them, and the sample request,
+/// the time, the seed and the response.
 pub fn render_command() -> @argparse.Command {
   @argparse.Command(
     "render",

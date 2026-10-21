@@ -239,6 +239,8 @@ pub suberror RenderFailure {
 } derive(Debug)
 
 ///|
+/// Why the Stub cannot be rendered, as smock render and the Admin render
+/// operation say it.
 pub fn RenderFailure::message(self : RenderFailure) -> String {
   match self {
     UnknownStub(id) =>

@@ -352,11 +352,12 @@ fn days_from_civil(year : Int, month : Int, day : Int) -> Int64 {
 }
 
 ///|
-/// The first and last instants a date can be, 0000-01-01T00:00:00.000Z
-/// and 9999-12-31T23:59:59.999Z, which RFC 3339 can write.
+/// The first instant a date can be, 0000-01-01T00:00:00.000Z, which RFC
+/// 3339 can write.
 let earliest : Int64 = -62_167_219_200_000L
 
 ///|
+/// The last instant a date can be, 9999-12-31T23:59:59.999Z.
 let latest : Int64 = 253_402_300_799_999L
 
 ///|
