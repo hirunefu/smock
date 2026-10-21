@@ -195,85 +195,9 @@ fn Context::eval(
         }
       }
       match helper {
-        Number =>
-          match values[0] {
-            Number(_) as n => present(n)
-            String(text) =>
-              match number_of(text) {
-                Some(n) => present(n)
-                None =>
-                  raise RenderError(
-                    at~,
-                    message="number(): \{text.escape()} is not a JSON number",
-                  )
-              }
-            other =>
-              raise RenderError(
-                at~,
-                message="number() takes a string or a number, not \{kind_of(other)}",
-              )
-          }
-        Range => {
-          let bound = (json : Json) => {
-            match json {
-              Number(n, ..) if n == n.floor() &&
-                n.abs() <= max_integer.to_double() => n.to_int64()
-              _ =>
-                raise RenderError(
-                  at~,
-                  message="range() takes integers from -\{max_integer} to \{max_integer}, not \{compact_json(json)}",
-                )
-            }
-          }
-          let a = bound(values[0])
-          let b = bound(values[1])
-          let count = b - a + 1L
-          if count > max_range.to_int64() {
-            raise RenderError(
-              at~,
-              message="range(\{a}, \{b}) gives \{count} values; range gives at most \{max_range}",
-            )
-          }
-          let items = []
-          let mut n = a
-          while n <= b {
-            items.push(Json::number(n.to_double()))
-            n += 1L
-          }
-          present(Json::array(items))
-        }
-        JsonText =>
-          Present({
-            json: Json::string(compact_json(values[0])),
-            form: JsonOutput,
-          })
-        Raw =>
-          match values[0] {
-            Object(_) | Array(_) =>
-              raise RenderError(
-                at~,
-                message="raw() takes a string, a number, true, false or null, not an object or an array",
-              )
-            json => Present({ json, form: RawText, })
-          }
-        Now(seconds) => {
-          let ms = self.now + self.elapsed + seconds * 1000L
-          // From 0000-01-01 to 9999-12-31, which RFC 3339 can write.
-          if ms < -62_167_219_200_000L || ms > 253_402_300_799_999L {
-            raise RenderError(
-              at~,
-              message="now(): the time is outside the years 0 to 9999",
-            )
-          }
-          present(Json::string(@log.format_time(ms)))
-        }
-        NowMillis(seconds) =>
-          present(
-            Json::number(
-              (self.now + self.elapsed + seconds * 1000L).to_double(),
-            ),
-          )
-        fake => present(draw(fake, self.rand))
+        Fake(fake) => present(draw(fake, self.rand))
+        Time(time) => present(self.time(time, at))
+        Conversion(conversion) => Present(convert(conversion, values, at))
       }
     }
   }
