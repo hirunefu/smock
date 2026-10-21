@@ -402,7 +402,7 @@ pub fn render_command() -> @argparse.Command {
 pub fn import_openapi_command() -> @argparse.Command {
   @argparse.Command(
     "import-openapi",
-    about="Convert an OpenAPI 3.0, 3.1 or 3.2 document into a Definition file, once: it declares one Mock, with a Stub for each response of each operation, which matches the operation's method and path. The main response answers by default, and each other one when the request sends Smock-Status with its key as the document writes it, such as Smock-Status: 404. smock never reads OpenAPI when it serves. Prints every problem, one per line, as smock check does, then a summary line, and exits with status 1 if nothing was written.",
+    about="Convert an OpenAPI 3.0, 3.1 or 3.2 document into a Definition file, once: it declares one Mock, with a Stub for each response of each operation, and for each further named example, which matches the operation's method and path. The main response answers by default, and each other one when the request sends Smock-Status with its key as the document writes it, such as Smock-Status: 404. A further named example answers when the request sends Smock-Example with its name too, such as Smock-Example: dog. smock never reads OpenAPI when it serves. Prints every problem, one per line, as smock check does, then a summary line, and exits with status 1 if nothing was written.",
     positionals=[
       @argparse.PositionArg(
         "document",

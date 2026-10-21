@@ -18,6 +18,12 @@ priv struct Stub {
   /// Whether a request selects it with the header `Smock-Status:
   /// <response>`, as for every response but the main one.
   selected : Bool
+  /// The name of the media type's named example its body comes from, if it
+  /// comes from one.
+  example : String?
+  /// Whether a request selects it with the header `Smock-Example:
+  /// <example>`, as for every named example but the first.
+  named : Bool
   /// What the response sends besides its status.
   payload : Payload
 }
@@ -242,17 +248,26 @@ fn Report::operation(
     return
   }
   let name = operation_id.unwrap_or("\{meth} \{key}")
+  // The Stubs that select with more headers come first, so that none is
+  // shadowed: the other responses' named examples, the other responses,
+  // the main response's named examples, then the main Stub. The main
+  // response comes last among the responses.
   let stubs = []
   for response in responses {
-    stubs.push({
-      id: "\{self.options.mock}.\{name}.\{response.key}",
-      meth,
-      path: path.condition,
-      response: response.key,
-      status: response.status,
-      selected: !response.main,
-      payload: response.payload,
-    })
+    if !response.main {
+      for answer in response.answers.named {
+        stubs.push(self.stub(name, meth, path, response, answer, named=true))
+      }
+    }
+  }
+  for response in responses {
+    if response.main {
+      for answer in response.answers.named {
+        stubs.push(self.stub(name, meth, path, response, answer, named=true))
+      }
+    }
+    let answer = response.answers.first
+    stubs.push(self.stub(name, meth, path, response, answer, named=false))
   }
   if operation_id is Some(operation_id) &&
     taken.operation_ids.get(operation_id) is Some((earlier, earlier_key)) {
@@ -290,4 +305,35 @@ fn Report::operation(
     }
   }
   imported.push({ key, summary, deprecated, segments: path.segments, stubs, })
+}
+
+///|
+/// The Stub of the operation `name`, for the method `meth` at `path`, that
+/// gives `answer`, one of `response`'s. A `named` one is selected by
+/// `Smock-Example` too, and its ID ends in the example's name.
+fn Report::stub(
+  self : Report,
+  name : String,
+  meth : String,
+  path : Path,
+  response : Response,
+  answer : Answer,
+  named~ : Bool,
+) -> Stub {
+  let id = match answer.example {
+    Some(example) if named =>
+      "\{self.options.mock}.\{name}.\{response.key}.\{example}"
+    _ => "\{self.options.mock}.\{name}.\{response.key}"
+  }
+  {
+    id,
+    meth,
+    path: path.condition,
+    response: response.key,
+    status: response.status,
+    selected: !response.main,
+    example: answer.example,
+    named,
+    payload: answer.payload,
+  }
 }

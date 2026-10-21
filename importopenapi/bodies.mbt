@@ -30,10 +30,52 @@ priv enum Body {
 let no_payload : Payload = { content_type: None, body: Empty, }
 
 ///|
+/// One body a response answers with: what it sends, and the name of the
+/// media type's named example it comes from, if it comes from one.
+priv struct Answer {
+  example : String?
+  payload : Payload
+}
+
+///|
+/// What a response answers with, from its one media type.
+priv struct Answers {
+  /// The answer of the response's own Stub.
+  first : Answer
+  /// The further named examples, in the order the document writes them.
+  /// Each gets a Stub of its own, which a request selects with
+  /// `Smock-Example: <name>`.
+  named : Array[Answer]
+}
+
+///|
+/// No Content-Type and an empty body, and no named example.
+fn no_answers() -> Answers {
+  { first: { example: None, payload: no_payload, }, named: [], }
+}
+
+///|
+/// A value a body is written from.
+priv enum Value {
+  /// A sample of the schema, at its pointer.
+  Sampled(String, Json)
+  /// Example data, at its pointer: a media type's `example`, or an
+  /// Example Object's `dataValue` or `value`.
+  Data(String, Json)
+  /// An Example Object's `serializedValue`, at its pointer: the exact text
+  /// of the body.
+  Serialized(String, String)
+}
+
+///|
+/// The largest body an example gives: 1 MiB of compact JSON, or of text.
+let max_example_bytes : Int = 1024 * 1024
+
+///|
 /// Reads the response `json` at `pointer`, one the operation answers with
 /// `status` to the method `meth`, after following its `$ref`, and returns
-/// what it sends. Until headers are imported, each header it documents is
-/// left out, with a warning that names it.
+/// what it answers with. Until headers are imported, each header it
+/// documents is left out, with a warning that names it.
 fn Report::response_parts(
   self : Report,
   document : Document,
@@ -41,20 +83,20 @@ fn Report::response_parts(
   json : Json,
   status~ : Int,
   meth~ : String,
-) -> Payload {
+) -> Answers {
   guard self.followed(document, pointer, json) is Some({ pointer, json, }) else {
-    return no_payload
+    return no_answers()
   }
   guard json is Object(response) else {
     self.root_error(pointer, "must be an object")
-    return no_payload
+    return no_answers()
   }
-  let mut payload = no_payload
+  let mut answers = no_answers()
   for field, value in response {
     let field_pointer = @definitions.child_pointer(pointer, field)
     match (field, value) {
       ("content", Object(content)) =>
-        payload = self.content(document, field_pointer, content, status~, meth~)
+        answers = self.content(document, field_pointer, content, status~, meth~)
       ("headers", Object(headers)) =>
         for name, _ in headers {
           if !headers_smock_sets.contains(name.to_lower()) {
@@ -69,15 +111,15 @@ fn Report::response_parts(
       _ => ()
     }
   }
-  payload
+  answers
 }
 
 ///|
-/// What the `content` of a response sends: its one media type, with a
-/// body sampled from that media type's schema. The response's other media
-/// types are left out, with a warning. 204, 205 and 304 responses, and
-/// responses to HEAD, send no body and no Content-Type: content that the
-/// document gives them is left out, with a warning.
+/// What the `content` of a response answers with: its one media type,
+/// with bodies from that media type's examples or its schema. The
+/// response's other media types are left out, with a warning. 204, 205 and
+/// 304 responses, and responses to HEAD, send no body and no Content-Type:
+/// content that the document gives them is left out, with a warning.
 fn Report::content(
   self : Report,
   document : Document,
@@ -85,21 +127,21 @@ fn Report::content(
   content : Map[String, Json],
   status~ : Int,
   meth~ : String,
-) -> Payload {
-  guard media_type_of(content) is Some(chosen) else { return no_payload }
+) -> Answers {
+  guard media_type_of(content) is Some(chosen) else { return no_answers() }
   if meth == "HEAD" {
     self.root_warning(pointer, "left out: a response to HEAD has no body")
-    return no_payload
+    return no_answers()
   }
   if status is (204 | 205 | 304) {
     self.root_warning(pointer, "left out: a \{status} response has no body")
-    return no_payload
+    return no_answers()
   }
-  let mut payload = no_payload
+  let mut answers = no_answers()
   for key, json in content {
     let at = @definitions.child_pointer(pointer, key)
     if key == chosen {
-      payload = self.media_type(document, at, key, json)
+      answers = self.media_type(document, at, key, json)
     } else {
       self.root_warning(
         at,
@@ -107,7 +149,7 @@ fn Report::content(
       )
     }
   }
-  payload
+  answers
 }
 
 ///|
@@ -160,55 +202,92 @@ fn is_range(essence : String) -> Bool {
 }
 
 ///|
+/// Whether the media type `key` is a JSON media type: `application/json`
+/// or `*/*+json`, with any parameters.
+fn is_json_media_type(key : String) -> Bool {
+  @template.escaping_for(Some(key)) is JsonString
+}
+
+///|
 /// What the Media Type Object `json` at `pointer`, of the media type `key`,
-/// sends, after following its `$ref`: a sample of its `schema`, or an empty
-/// body when it has none. Until examples are imported, its `example` and
-/// `examples` are left out, with a warning.
+/// answers with, after following its `$ref`. The first source that gives
+/// a value gives the body: its `examples`, whose first is the body and
+/// whose others get Stubs of their own; its `example`; then a sample of its
+/// `schema`. With none, the body is empty. A media type with both
+/// `example` and `examples` uses `examples`, with a warning.
 fn Report::media_type(
   self : Report,
   document : Document,
   pointer : String,
   key : String,
   json : Json,
-) -> Payload {
+) -> Answers {
   guard self.followed(document, pointer, json) is Some({ pointer, json, }) else {
-    return no_payload
+    return no_answers()
   }
   guard json is Object(media_type) else {
     self.root_error(pointer, "must be an object")
-    return no_payload
+    return no_answers()
   }
-  let mut value = None
-  for field, json in media_type {
-    let at = @definitions.child_pointer(pointer, field)
-    match field {
-      "schema" =>
-        if json is (Object(_) | True | False) {
-          if self.sampler(document).sample(at, json, body_nesting)
-            is Some(sample) {
-            value = Some((at, sample))
-          }
-        } else {
-          self.root_error(at, "must be a schema, an object or a boolean")
+  let example_pointer = @definitions.child_pointer(pointer, "example")
+  let examples_pointer = @definitions.child_pointer(pointer, "examples")
+  match media_type.get("examples") {
+    None => ()
+    Some(Object(examples)) =>
+      if self.examples(document, pointer, examples_pointer, key, examples)
+        is Some(answers) {
+        if media_type.contains("example") {
+          self.root_warning(
+            example_pointer, "ignored: the media type has examples, which come first",
+          )
         }
-      "example" | "examples" =>
-        self.root_warning(at, "left out: examples are not imported yet")
-      _ => ()
+        return answers
+      }
+    Some(_) => self.root_error(examples_pointer, "must be an object")
+  }
+  if media_type.get("example") is Some(value) {
+    let payload = self.example_payload(
+      document,
+      pointer,
+      key,
+      Data(example_pointer, value),
+    )
+    return { first: { example: None, payload, }, named: [], }
+  }
+  let schema_pointer = @definitions.child_pointer(pointer, "schema")
+  let value = match media_type.get("schema") {
+    None => None
+    Some(Object(_) | True | False as json) =>
+      match self.sampler(document).sample(schema_pointer, json, body_nesting) {
+        Some(sample) => Some(Sampled(schema_pointer, sample))
+        None => None
+      }
+    Some(_) => {
+      self.root_error(
+        schema_pointer, "must be a schema, an object or a boolean",
+      )
+      None
     }
   }
-  self.payload(pointer, key, value)
+  {
+    first: { example: None, payload: self.payload(pointer, key, value), },
+    named: [],
+  }
 }
 
 ///|
 /// What a response of the media type `key`, written at `pointer`, sends
-/// for `value`, the body's value and the pointer it comes from, or `None`
-/// for an empty body.
+/// for `value`, or `None` for an empty body.
 ///
 /// A JSON media type, `application/json` or `*/*+json`, gives `json`.
 /// Under a range such as `*/*`, a value that is not a string gives `json`
 /// too, so smock sends it as JSON. Otherwise a string is the body as it is,
 /// and a number or a boolean as smock writes it; an object, an array or
-/// null gives an empty body, with a warning where the value comes from.
+/// null gives an empty body, with a warning where the value comes from. A
+/// `serializedValue` is the body as it is, whatever the media type.
+///
+/// An example's body above 1 MiB, its compact JSON or its text, is left
+/// empty, with a warning where the value comes from.
 ///
 /// The Content-Type is the key as written, except for a range, and for
 /// plain `application/json` with a `json` body, which smock sends with
@@ -218,30 +297,44 @@ fn Report::payload(
   self : Report,
   pointer : String,
   key : String,
-  value : (String, Json)?,
+  value : Value?,
 ) -> Payload {
   let range = is_range(essence_of(key))
   let body = match value {
     None => Empty
-    Some((_, value)) if @template.escaping_for(Some(key)) is JsonString =>
-      JsonValue(value)
-    Some((_, String(text))) => Text(text)
-    Some((_, value)) if range => JsonValue(value)
-    Some((_, Number(n, repr~))) => Text(@template.number_text(n, repr))
-    Some((_, True)) => Text("true")
-    Some((_, False)) => Text("false")
-    Some((at, value)) => {
-      let kind = match value {
-        Object(_) => "an object"
-        Array(_) => "an array"
-        _ => "null"
+    Some(Serialized(_, text)) => Text(text)
+    Some(Sampled(at, value) | Data(at, value)) =>
+      match value {
+        _ if is_json_media_type(key) => JsonValue(value)
+        String(text) => Text(text)
+        _ if range => JsonValue(value)
+        Number(n, repr~) => Text(@template.number_text(n, repr))
+        True => Text("true")
+        False => Text("false")
+        _ => {
+          let kind = match value {
+            Object(_) => "an object"
+            Array(_) => "an array"
+            _ => "null"
+          }
+          self.root_warning(
+            at,
+            "left out: the body is empty, since a \{key.escape()} body cannot hold \{kind}",
+          )
+          Empty
+        }
       }
+  }
+  let body = match value {
+    Some(Data(at, _) | Serialized(at, _)) if body_bytes(body) >
+      max_example_bytes => {
       self.root_warning(
         at,
-        "left out: the body is empty, since a \{key.escape()} body cannot hold \{kind}",
+        "left out: the body is empty, since the example is more than \{size_text(max_example_bytes)}",
       )
       Empty
     }
+    _ => body
   }
   let content_type = if range ||
     (body is JsonValue(_) && key.to_lower() == "application/json") {
@@ -255,4 +348,34 @@ fn Report::payload(
     Some(key)
   }
   { content_type, body, }
+}
+
+///|
+/// The length of `body` as smock sends it, in bytes: the compact JSON of a
+/// `json` body, or the text of a `body`, in UTF-8.
+fn body_bytes(body : Body) -> Int {
+  match body {
+    Empty => 0
+    JsonValue(json) => @template.compact_json_bytes(json).length()
+    Text(text) => utf8_length(text)
+  }
+}
+
+///|
+/// The length of `s` in UTF-8, in bytes.
+fn utf8_length(s : String) -> Int {
+  let mut n = 0
+  for c in s {
+    let code = c.to_int()
+    n += if code < 0x80 {
+      1
+    } else if code < 0x800 {
+      2
+    } else if code < 0x10000 {
+      3
+    } else {
+      4
+    }
+  }
+  n
 }

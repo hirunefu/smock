@@ -58,8 +58,8 @@ priv struct Response {
   /// Whether it is the main response, which a request gets without
   /// `Smock-Status`. A request gets any other one with `Smock-Status: <key>`.
   main : Bool
-  /// What it sends besides its status.
-  payload : Payload
+  /// What it answers with besides its status.
+  answers : Answers
 }
 
 ///|
@@ -88,20 +88,25 @@ fn main_of(keys : Array[(String, ResponseKey)]) -> Response? {
     }
   }
   if lowest_success is Some((key, status)) {
-    return Some({ key, status, main: true, payload: no_payload, })
+    return Some({ key, status, main: true, answers: no_answers(), })
   }
   if ranges[2] is Some(key) {
-    return Some({ key, status: 200, main: true, payload: no_payload, })
+    return Some({ key, status: 200, main: true, answers: no_answers(), })
   }
   if default is Some(key) {
-    return Some({ key, status: 200, main: true, payload: no_payload, })
+    return Some({ key, status: 200, main: true, answers: no_answers(), })
   }
   if lowest_other is Some((key, status)) {
-    return Some({ key, status, main: true, payload: no_payload, })
+    return Some({ key, status, main: true, answers: no_answers(), })
   }
   for digit in 3..<=5 {
     if ranges[digit] is Some(key) {
-      return Some({ key, status: digit * 100, main: true, payload: no_payload, })
+      return Some({
+        key,
+        status: digit * 100,
+        main: true,
+        answers: no_answers(),
+      })
     }
   }
   None
@@ -129,7 +134,7 @@ fn Report::responses(
         pointer, "has no responses: the operation answers 200 with an empty body",
       )
       return Some([
-        { key: "200", status: 200, main: true, payload: no_payload, },
+        { key: "200", status: 200, main: true, answers: no_answers(), },
       ])
     }
     Some(Object(responses)) => responses
@@ -144,7 +149,7 @@ fn Report::responses(
   }
   let main = main_of(keys)
   let answered = []
-  let mut main_payload = no_payload
+  let mut main_answers = no_answers()
   for entry in keys {
     let (key, kind) = entry
     let response_pointer = @definitions.child_pointer(responses_pointer, key)
@@ -172,7 +177,7 @@ fn Report::responses(
     // A response that is not informational makes a main one.
     guard main is Some(main) else { continue }
     let is_main = key == main.key
-    let payload = self.response_parts(
+    let answers = self.response_parts(
       document,
       response_pointer,
       responses.get(key).unwrap_or(Json::null()),
@@ -180,14 +185,14 @@ fn Report::responses(
       meth~,
     )
     if is_main {
-      main_payload = payload
+      main_answers = answers
     } else {
-      answered.push({ key, status, main: false, payload, })
+      answered.push({ key, status, main: false, answers, })
     }
   }
   match main {
     Some(main) => {
-      answered.push({ ..main, payload: main_payload, })
+      answered.push({ ..main, answers: main_answers, })
       Some(answered)
     }
     None if keys.iter().any(entry => entry.1.is_informational()) => {
@@ -200,7 +205,7 @@ fn Report::responses(
       self.root_warning(
         responses_pointer, "has no responses: the operation answers 200 with an empty body",
       )
-      Some([{ key: "200", status: 200, main: true, payload: no_payload, }])
+      Some([{ key: "200", status: 200, main: true, answers: no_answers(), }])
     }
   }
 }
