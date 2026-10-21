@@ -77,8 +77,10 @@ The comments are there for the reader:
   file ([Overrides](#overrides)).
 - The comment above each Stub maps it back to the document: the method,
   the path as the document writes it, the response key, the name of the
-  example its body comes from, if any, `deprecated` when the operation
-  is, and the first line of the operation's `summary`.
+  example its body comes from, if any, `sample cut` when its body is a
+  sample cut to its required parts ([Sample size](#sample-size)),
+  `deprecated` when the operation is, and the first line of the
+  operation's `summary`.
 - The comments hold no path and no smock version. So the same import gives
   the same bytes from any directory, and after an upgrade that does not
   change the conversion. No home directory reaches a committed file
