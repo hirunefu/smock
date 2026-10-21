@@ -8,6 +8,23 @@ of each GitHub release include its section
 
 ## [Unreleased]
 
+### Added
+
+- `--template-env` (`SMOCK_TEMPLATE_ENV`) on `smock serve`, `smock check`
+  and `smock render` lists, separated by commas, the environment variables
+  templates may read. Their values are read once, at startup, and every
+  load, reload and Ephemeral Stub uses them. A name that starts with
+  `SMOCK_` cannot be listed.
+- The template root `env.NAME` gives the value of a listed variable as a
+  string, and is missing when it is unset. A name that is not listed is an
+  error when loading.
+
+### Changed
+
+- A loop variable named `env` now fails to load, since `env` is a template
+  root. No valid file changes meaning. The Definition file format is still
+  version 1.
+
 ## [0.2.0] - 2026-10-21
 
 ### Added

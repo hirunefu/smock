@@ -1072,6 +1072,7 @@ operator and no user-defined function. The words `for`, `if`, `else`,
 | `header.NAME` | The first value of the header, its name compared case-insensitively; each field line is one value. |
 | `body` | The body parsed as JSON. `body.a.b`, `body.items[0]` and `body['odd.key']` walk into it. |
 | `bodyText` | The body as text; bytes that are not UTF-8 become U+FFFD. |
+| `env.NAME` | The value of an environment variable that `--template-env` lists, as a string; see [Environment variables](#environment-variables). |
 | `loop.index` | The position in the innermost `$each`, from 0. |
 | a loop variable | The current element of the `$each` that names it with `as`. |
 
@@ -1216,6 +1217,53 @@ the response. A stream is rendered whole before its head is sent, so a
 failed event also gives this 500 and no stream. The Journal entry records
 the 500 and `templateError`, and no log line is written.
 
+### Environment variables
+
+A template can read an environment variable only when it is listed with
+`--template-env` (`SMOCK_TEMPLATE_ENV`), names separated by commas.
+`env.NAME` gives its value as a string.
+
+```yaml
+response:
+  status: 200
+  template: true
+  json:
+    region: ${env.REGION ?? 'local'}
+```
+
+With `smock serve --template-env REGION` and `REGION=eu-west-1`, the
+response is `{"region":"eu-west-1"}`, and with `REGION` unset,
+`{"region":"local"}`. Without `--template-env REGION`, the file does not
+load.
+
+- `env` takes exactly one name: `env.REGION` or `env['REGION']`. `${env}`
+  alone and `env.REGION.x` are errors when loading. A loop variable cannot
+  be named `env`.
+- A name that is not listed is an error when loading, so `smock check`
+  catches a typo.
+- A listed variable that is unset is missing, so `??` gives a fallback. A
+  variable set to the empty string is present.
+- A listed name is ASCII letters, digits and `_`, starting with a letter or
+  `_`. A name that starts with `SMOCK_` cannot be listed, so smock's own
+  variables, such as `SMOCK_ADMIN_TOKEN`, never reach a template. Either
+  mistake is a usage error: smock exits with status 2.
+- The values are read once, at startup. Every load uses them: the first
+  one, each reload and each Ephemeral Stub that is added. A reload does
+  not read them again, so restart smock to change a value.
+- `smock check` and `smock render` take the same flag and variable, and
+  read the values from their own environment, so that they accept the same
+  templates as `smock serve`.
+- The values are not part of the
+  [definition set digest](#reloading).
+
+A listed value reaches only what a template that reads it produces: a
+response, a rendering, or a template error message that quotes it, such as
+`number(): "eighty" is not a JSON number`. Such a message goes into the 500
+of the failed template and into the Journal entry's `templateError`.
+smock writes no value in its logs or in the Admin API status, and the
+Journal holds one only inside such a message. So list only values that may
+be shown to whoever can send requests to smock or read its Journal.
+
 ### Errors when loading
 
 A template problem found when the files are loaded is reported with the
@@ -1228,10 +1276,11 @@ users.yaml: /stubs/0/response/json/id: template: column 3: unknown helper "fake.
 users.yaml: /stubs/1/response/bodyFile: template: line 3, column 5: unknown helper "fake.nickname": not one of the helpers smock has
 ```
 
-Every name, loop variable and helper, the number and the literal arguments
-of each call, the keys of `$each` and `$if` objects, reserved keys, `${` in
-a key or in `Content-Type`, `json()` and `raw()` in `json`, and a templated
-body file that is not UTF-8 are checked then.
+Every name (an `env` name must be listed), loop variable and helper, the
+number and the literal arguments of each call, the keys of `$each` and
+`$if` objects, reserved keys, `${` in a key or in `Content-Type`, `json()`
+and `raw()` in `json`, and a templated body file that is not UTF-8 are
+checked then.
 
 ### Rendering a template
 
@@ -1480,7 +1529,9 @@ JSON Pointer to the value, and exits with status 1. A valid directory
 prints nothing, apart from [warnings](#warnings), and exits with status 0.
 A directory that does not exist is an empty definition set, as for
 `smock serve`, so it passes too; `smock check` then says on stderr that the
-directory does not exist, so that a mistyped path is noticed.
+directory does not exist, so that a mistyped path is noticed. Give it the
+`--template-env` that `smock serve` gets, with the same variables set, so
+that it accepts the same [templates](#environment-variables).
 
 ```console
 $ smock check defs
