@@ -48,6 +48,8 @@ pub struct Context {
   /// The bytes of body or events rendered so far.
   priv mut output : Int
   priv mut body : ParsedBody
+  /// The request's cookies, by name, once a template has read one.
+  priv mut cookies : Map[String, Array[String]]?
 }
 
 ///|
@@ -79,7 +81,16 @@ pub fn Context::new(
   now~ : Int64,
   rand~ : @prng.Generator,
 ) -> Context {
-  { input, now, elapsed: 0L, rand, iterations: 0, output: 0, body: NotParsed, }
+  {
+    input,
+    now,
+    elapsed: 0L,
+    rand,
+    iterations: 0,
+    output: 0,
+    body: NotParsed,
+    cookies: None,
+  }
 }
 
 ///|
@@ -329,6 +340,15 @@ fn Context::reference(
           header_values(request.headers, name).iter().head().map(Json::string)
         _ => None
       }
+    Cookie =>
+      match steps {
+        [Name(name)] =>
+          match self.cookie_values(name) {
+            Some(values) => Some(Json::string(values[0]))
+            None => None
+          }
+        _ => None
+      }
     Body =>
       match self.parsed_body() {
         Some(json) => walk(json, steps)
@@ -356,6 +376,21 @@ fn header_values(
 ) -> Array[String] {
   let lower = name.to_lower()
   headers.filter(h => h.0.to_lower() == lower).map(h => h.1)
+}
+
+///|
+/// The values of the cookie named `name`, in order, or `None` when the
+/// request has none. The cookies are read from the request at most once,
+/// when a template first reads one.
+fn Context::cookie_values(self : Context, name : String) -> Array[String]? {
+  match self.cookies {
+    Some(cookies) => cookies.get(name)
+    None => {
+      let cookies = @cookies.parse(self.input.headers)
+      self.cookies = Some(cookies)
+      cookies.get(name)
+    }
+  }
 }
 
 ///|
@@ -422,8 +457,8 @@ fn kind_of(json : Json) -> String {
 
 ///|
 /// The elements a `$each` over `expr` walks: an array, or every value of a
-/// query parameter or a header, none when it is absent. `Err` gives the
-/// source text of the reference that names nothing.
+/// query parameter, a header or a cookie, none when it is absent. `Err`
+/// gives the source text of the reference that names nothing.
 fn Context::elements(
   self : Context,
   expr : Expr,
@@ -439,6 +474,11 @@ fn Context::elements(
       )
     Ref(Header, [Name(name)], _) =>
       Ok(header_values(self.input.headers, name).map(Json::string))
+    Ref(Cookie, [Name(name)], _) =>
+      match self.cookie_values(name) {
+        Some(values) => Ok(values.map(Json::string))
+        None => Ok([])
+      }
     Fallback(alternatives) => {
       let mut last = ""
       for alternative in alternatives {

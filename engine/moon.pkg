@@ -1,6 +1,7 @@
 import {
   "smock/http1",
   "smock/xml",
+  "smock/smock/cookies",
   "smock/smock/definitions",
   "smock/smock/log",
   "smock/smock/prng",
