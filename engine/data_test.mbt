@@ -42,6 +42,13 @@ let data_files : Array[(String, String)] = [
       #|    mock: shop
       #|    request: { method: GET, path: /api/v1/visits }
       #|    response: { status: 200, template: true, body: "visits: ${data.visits}" }
+      #|  - id: get-order
+      #|    mock: shop
+      #|    request: { method: GET, path: { pattern: "/api/v1/orders/[^/]+" } }
+      #|    response:
+      #|      status: 200
+      #|      template: true
+      #|      json: "${find(data.orders, 'id', path[3]) ?? 'no such order'}"
     ),
   ),
   (
@@ -116,6 +123,24 @@ test "steps, $each and len read into a bucket, in every template of a Stub and i
       #|{"count":3,"seen":3,"first":1001,"status":"paid","paid":[1001,null,1003],"missing":"none"}
       #|200
       #|visits: 0
+    ),
+  )
+}
+
+///|
+test "find picks an item of a bucket by its key, compared as text" {
+  let h = harness(data_files, body_files=data_body_files)
+  inspect(
+    h.get_from("shop.example.com", "/api/v1/orders/1002") +
+    "\n" +
+    h.get_from("shop.example.com", "/api/v1/orders/1004"),
+    content=(
+      #|200
+      #|Content-Type: application/json
+      #|{"id":1002,"customerId":7,"status":"pending","total":9.9}
+      #|200
+      #|Content-Type: application/json
+      #|"no such order"
     ),
   )
 }

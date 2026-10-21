@@ -2237,6 +2237,9 @@ of a Stub of the bucket's Mock, the values of `variables` included.
 
 - Steps go into the value: `${data.orders[0].id}`. `data['orders']` is the
   same as `data.orders`.
+- [`find`](#helpers) picks an item by its key:
+  `${find(data.orders, 'id', path[3]) ?? null}` answers the order of
+  `/api/v1/orders/1002`, whose `id` is `1002` or `"1002"`.
 - The first step must name a bucket of the Stub's Mock. An unknown name,
   an index (`${data[0]}`) and `${data}` alone are errors when loading. A
   loop variable cannot be named `data`.
