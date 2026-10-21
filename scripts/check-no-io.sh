@@ -26,9 +26,9 @@ cd "$(dirname "$0")/.."
 
 modules="http1 re2 xml yaml"
 
-# The packages of smock/smock that decide a response, and the packages of
-# smock/smock they import.
-packages="definitions engine template prng log"
+# The packages of smock/smock that decide a response, the packages of
+# smock/smock they import, and the OpenAPI import's converter.
+packages="definitions engine template prng log importopenapi"
 
 # Prints every quoted string inside the import blocks of a moon.mod or moon.pkg.
 imports() {

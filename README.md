@@ -31,8 +31,8 @@ Packages of `smock/smock`:
   `moonbitlang/x`'s `@sys.exit`, since neither core nor
   `moonbitlang/async` exposes one; smock itself binds no C for it.
 - `settings`: the settings of `smock serve`, each a flag with a matching
-  `SMOCK_<NAME>` environment variable, and the arguments of `smock check`
-  and `smock render`; also the rule that derives the Journal's byte bound
+  `SMOCK_<NAME>` environment variable, and the arguments of `smock check`,
+  `smock render` and `smock import-openapi`; also the rule that derives the Journal's byte bound
   from a memory limit, which `server` reads from the cgroup at startup.
 - `definitions`: reads a definition set, given as (name, bytes) pairs of
   JSON and YAML files, into an immutable snapshot, or into diagnostics
@@ -55,6 +55,14 @@ Packages of `smock/smock`:
   helpers and their word and name lists, and escaping by media type. It
   parses a template once and renders it for a request, the time and one
   64-bit draw, and writes JSON with smock's own number form.
+- `importopenapi`: converts an OpenAPI document into a Definition file,
+  for `smock import-openapi`. It takes the documents as (name, bytes)
+  pairs and returns the file's bytes with the warnings, or the errors,
+  each with a JSON Pointer into the document; `cmd/smock` reads the
+  document and writes the file. Before it returns a file, it loads it
+  with `definitions`, as `smock check` would. Its parts are kept apart:
+  the document and its version, operations, paths, responses, bodies and
+  references.
 - `prng`: the seeded pseudo-random generator that Fault decisions and
   template helpers draw from. Its sequence for a seed is fixed, the same on
   every target.
@@ -107,7 +115,8 @@ Packages of `smock/smock`:
 A package that does I/O or uses FFI declares `supported_targets = "native"`.
 Every other package also builds for `wasm-gc`, and CI tests it there. The
 packages that decide a response, `definitions`, `engine` and `template`,
-and the ones they import, `prng` and `log`, must stay that way: `scripts/check-no-io.sh`
+the ones they import, `prng` and `log`, and the OpenAPI converter,
+`importopenapi`, must stay that way: `scripts/check-no-io.sh`
 fails if one of them leaves out `wasm-gc`, reads the environment, binds C
 or imports a package that does I/O.
 
@@ -884,7 +893,7 @@ moon test --target wasm-gc     # every package that does no I/O
 moon check --deny-warn --target all
 moon fmt --check
 moon bench -p smock/smock/engine --release   # match index lookups: 100 vs 10,000 Stubs
-scripts/check-no-io.sh         # no I/O in the protocol modules and the packages that decide a response
+scripts/check-no-io.sh         # no I/O in the protocol modules, the packages that decide a response and the OpenAPI converter
 scripts/check-no-c.sh          # the C boundary of ADR 0001
 scripts/test-openssl-asan.sh   # the OpenSSL bindings under AddressSanitizer and LeakSanitizer
 scripts/build-release.sh       # dist/smock

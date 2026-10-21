@@ -123,6 +123,19 @@ pub(all) struct RenderSettings {
 } derive(Debug)
 
 ///|
+/// The settings of `smock import-openapi`. The OpenAPI document is its
+/// argument, and the Mock and the output are flags of its own, without
+/// variables: they belong to one import, not to a process.
+pub(all) struct ImportOpenapiSettings {
+  /// The OpenAPI document, a JSON file, as given.
+  document : String
+  /// The name of the Mock the Definition file declares.
+  mock : String
+  /// The Definition file to write, a new JSON file, as given.
+  output : String
+} derive(Debug)
+
+///|
 /// A setting or an argument was given a value it cannot take.
 pub suberror InvalidSetting {
   InvalidSetting(
@@ -373,6 +386,37 @@ pub fn render_command() -> @argparse.Command {
         "seed",
         long="seed",
         about="The seed of the random source the rendering draws from, from 0 to \{max_seed}. Default: the Stub's fault.seed, or a fresh seed when it has none.",
+      ),
+    ],
+  )
+}
+
+///|
+/// The `import-openapi` subcommand: the OpenAPI document as its argument,
+/// and the Mock and the output as flags without variables.
+pub fn import_openapi_command() -> @argparse.Command {
+  @argparse.Command(
+    "import-openapi",
+    about="Convert an OpenAPI 3.0, 3.1 or 3.2 document into a Definition file, once: it declares one Mock, with a Stub for each operation that matches its method and path and answers its main response. smock never reads OpenAPI when it serves. Prints every problem, one per line, as smock check does, then a summary line, and exits with status 1 if nothing was written.",
+    positionals=[
+      @argparse.PositionArg(
+        "document",
+        about="The OpenAPI document: a JSON file, whose name ends in .json.",
+        num_args=@argparse.ValueRange::single(),
+      ),
+    ],
+    options=[
+      @argparse.OptionArg(
+        "mock",
+        long="mock",
+        about="The name of the Mock the Definition file declares. Every Stub ID starts with it.",
+        required=true,
+      ),
+      @argparse.OptionArg(
+        "output",
+        long="output",
+        about="The Definition file to write, whose name ends in .json. It must not exist: the file is created new.",
+        required=true,
       ),
     ],
   )
@@ -716,6 +760,99 @@ pub fn RenderSettings::from_matches(
     request_file,
     time,
     seed,
+  }
+}
+
+///|
+/// Reads and checks the settings from the parsed `import-openapi`
+/// subcommand. The document and the output name a JSON or YAML file, in
+/// lower case, as Definition files do, and the output's name does not
+/// start with `.`, since smock skips such files. YAML is not read or
+/// written yet.
+pub fn ImportOpenapiSettings::from_matches(
+  matches : @argparse.Matches,
+) -> ImportOpenapiSettings raise InvalidSetting {
+  let document = value(matches, "document").unwrap_or("")
+  match file_format(document) {
+    Some(JsonFile) => ()
+    Some(YamlFile) =>
+      raise InvalidArgument(
+        name="document",
+        value=document,
+        reason="YAML documents are not supported yet: give a .json document",
+      )
+    None =>
+      raise InvalidArgument(
+        name="document",
+        value=document,
+        reason="must name a .json, .yaml or .yml file",
+      )
+  }
+  let mock = value(matches, "mock").unwrap_or("")
+  if mock == "" {
+    raise InvalidOption(flag="mock", value=mock, reason="must not be empty")
+  }
+  let output = value(matches, "output").unwrap_or("")
+  match file_format(output) {
+    None =>
+      raise InvalidOption(
+        flag="output",
+        value=output,
+        reason="must name a .json, .yaml or .yml file",
+      )
+    _ if base_name(output).has_prefix(".") =>
+      raise InvalidOption(
+        flag="output",
+        value=output,
+        reason="must not name a file that starts with ., which smock skips",
+      )
+    Some(YamlFile) =>
+      raise InvalidOption(
+        flag="output",
+        value=output,
+        reason="YAML output is not supported yet: give a .json file",
+      )
+    Some(JsonFile) => ()
+  }
+  { document, mock, output, }
+}
+
+///|
+/// The formats of the files `import-openapi` reads and writes.
+priv enum FileFormat {
+  JsonFile
+  YamlFile
+}
+
+///|
+/// The format a file's name gives, by its extension in lower case, as for
+/// Definition files: `.json`, or `.yaml` and `.yml`. `None` for any other
+/// name.
+fn file_format(path : String) -> FileFormat? {
+  if path.has_suffix(".json") {
+    Some(JsonFile)
+  } else if path.has_suffix(".yaml") || path.has_suffix(".yml") {
+    Some(YamlFile)
+  } else {
+    None
+  }
+}
+
+///|
+/// The name the converter gives the OpenAPI document: its name within its
+/// directory, under which a document names the files it refers to.
+pub fn ImportOpenapiSettings::document_name(
+  self : ImportOpenapiSettings,
+) -> String {
+  base_name(self.document)
+}
+
+///|
+/// The last name of `path`, after its last `/`.
+fn base_name(path : String) -> String {
+  match path.rev_find("/") {
+    Some(i) => path[i + 1:].to_owned()
+    None => path
   }
 }
 

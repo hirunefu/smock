@@ -10,6 +10,12 @@ of each GitHub release include its section
 
 ### Added
 
+- `smock import-openapi` converts a JSON OpenAPI 3.0, 3.1 or 3.2 document
+  into a Definition file, once. Each operation at a path without
+  parameters becomes a Stub that matches its method and exact path and
+  answers its main status. Parts that are not imported yet are left out
+  with a warning. smock never reads OpenAPI when it serves. See
+  [docs/importing-openapi.md](docs/importing-openapi.md).
 - `write` in the `smock/yaml` module turns a JSON tree into a YAML
   document, with comments, that the module's own parser reads back as the
   same tree. A string is quoted only when it would not read back as the
