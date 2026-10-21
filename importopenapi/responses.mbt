@@ -129,14 +129,7 @@ fn Report::responses(
 ) -> Array[Response]? {
   let responses_pointer = @definitions.child_pointer(pointer, "responses")
   let responses = match operation.get("responses") {
-    None => {
-      self.warning_at(
-        pointer, "has no responses: the operation answers 200 with an empty body",
-      )
-      return Some([
-        { key: "200", status: 200, main: true, answers: no_answers(), },
-      ])
-    }
+    None => return self.no_responses(pointer)
     Some(Object(responses)) => responses
     Some(_) => {
       self.error_at(responses_pointer, "must be an object")
@@ -201,11 +194,16 @@ fn Report::responses(
       )
       None
     }
-    None => {
-      self.warning_at(
-        responses_pointer, "has no responses: the operation answers 200 with an empty body",
-      )
-      Some([{ key: "200", status: 200, main: true, answers: no_answers(), }])
-    }
+    None => self.no_responses(responses_pointer)
   }
+}
+
+///|
+/// The responses of an operation that has none, after a warning at `at`:
+/// one main 200 with an empty body.
+fn Report::no_responses(self : Report, at : String) -> Array[Response]? {
+  self.warning_at(
+    at, "has no responses: the operation answers 200 with an empty body",
+  )
+  Some([{ key: "200", status: 200, main: true, answers: no_answers(), }])
 }
