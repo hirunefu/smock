@@ -8,6 +8,13 @@ of each GitHub release include its section
 
 ## [Unreleased]
 
+### Added
+
+- `write` in the `smock/yaml` module turns a JSON tree into a YAML
+  document, with comments, that the module's own parser reads back as the
+  same tree. A string is quoted only when it would not read back as the
+  same string. The OpenAPI import will write YAML Definition files with it.
+
 ## [0.2.0] - 2026-10-21
 
 ### Added

@@ -16,6 +16,7 @@ import {
   "moonbitlang/core/json",
   "moonbitlang/core/string",
   "smock/re2",
+  "smock/yaml",
 } for "test"
 
 supported_targets = "native"
