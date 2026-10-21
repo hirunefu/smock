@@ -900,7 +900,9 @@ unmatched requests is refused.
 
 ## Responses
 
-A Stub's `response` has a `status`, `headers`, and a body.
+A Stub's `response` has a `status`, `headers`, and a body. A Stub can give
+several responses to pick from instead
+([Several responses](#several-responses)).
 
 `headers` maps each header name to a string or to an array of strings.
 An array sends one field per value, in order, where the name stands.
@@ -1006,6 +1008,58 @@ shortest form that reads back as the same 64-bit float: `9.90` is sent as
 the exact bytes matter, use `body`. A response gives at most one of `body`,
 `bodyFile`, `json` and `events`, and an event gives exactly one of `data`
 and `json`, which is sent as one `data:` line of compact JSON.
+
+### Several responses
+
+A Stub can give `responses`, a list of responses with weights, instead of
+`response`. Each matched request gets one of them, picked at random. This
+Stub answers about one request in ten with a 503:
+
+```yaml
+- id: get-prices
+  mock: market
+  request: { method: GET, path: /prices }
+  responses:
+    - { weight: 9, status: 200, json: { price: 101 } }
+    - { weight: 1, status: 503, headers: { Retry-After: "5" }, json: { error: unavailable } }
+  fault: { seed: 7 }
+```
+
+- A Stub gives exactly one of `response` and `responses`.
+- `responses` holds 1 to 100 responses, in the order written. Each is a
+  response as `response` gives it, with its own status, headers, body,
+  body file, `json` or events, and `template`, plus `weight`.
+- `weight` is an integer from 1 to 1,000,000, by default 1. A response is
+  picked with the probability of its weight over the sum of the weights:
+  9 and 1 give the 200 to nine requests in ten.
+- The request conditions, the `fault` and the `scenario` clause stay one
+  per Stub, whichever response is picked.
+- A problem in a response is reported at its JSON Pointer, with the
+  response's index counted from 0, such as `/stubs/0/responses/1/json`. A
+  template that fails for a request points at the field within the Stub
+  the same way, such as `"at":"/responses/1/json/id"`.
+- An [Ephemeral Stub](../README.md#sessions-and-ephemeral-stubs) can give
+  `responses` too, with inline bodies only: `bodyFile` is refused in any
+  of them.
+- The shadow warning, the Near miss and the traffic metrics look at the
+  request conditions only, never at the responses.
+
+The pick takes nothing from the Stub's random source beyond the one draw
+every matched request takes (see [Helpers](#helpers)): it draws from a
+generator of its own, seeded with that draw XOR a fixed constant. It draws
+a number below the sum of the weights, each equally likely, and takes the
+response whose share of the running total holds it, in the order written.
+So the Fault decisions and the helper output for a seed are the same with
+`responses` as with `response`, and [`fault.seed` and `--seed`](#seeds)
+replay the picks as they replay the Faults. A Stub with `response` takes no
+pick.
+
+The [Journal](../README.md#the-journal) records which response each
+request got, as `responseIndex`, its index from 0. It is null for a Stub
+with `response`, and for a request that no Stub matched. `smock render` and
+the Admin render operation show the index the seed picks, and
+`--response <i>` (the Admin API's `response=<i>`) renders the response at
+index `i` ([Rendering a template](#rendering-a-template)).
 
 ## Templates
 
@@ -1271,13 +1325,15 @@ The word and name lists are part of format version 1. A matched request
 takes exactly one 64-bit output from its Stub's random source (its own
 generator with `fault.seed`, otherwise the process generator, see
 [Seeds](#seeds)), whatever its template draws: the Fault decisions draw
-from a generator seeded with it, and the helpers from another one seeded
-with it XOR a fixed constant, in render order (header values in the order
+from a generator seeded with it, the pick among
+[`responses`](#several-responses) from another one seeded with it XOR a
+fixed constant, and the helpers from a third one seeded with it XOR another
+constant, in render order (header values in the order
 written, an array's values in order, then the body, members and loop
 iterations in order, or the events in order, each event's `event`, `id`,
 then `data` or `json`). So a seeded Stub repeats its helper output on
 every run, on native and on wasm-gc alike, and adding fake data never
-changes its Faults.
+changes its Faults or its picks.
 
 `now()` and `nowMillis()` read the time smock received the request at,
 never the clock while rendering; in an event, they add the delays of the
@@ -1421,8 +1477,15 @@ its body when its `headers.Content-Type` says the body is a form.
 first output of a generator seeded with it, so a rendering with seed `S`
 shows what the first matched request of a Stub with `fault.seed: S` gets.
 Without a seed they use the Stub's `fault.seed`, or a fresh seed when it
-has none. With the same time and seed, a rendering is the same on every
-run. A template that fails for the sample shows the 500 and the error.
+has none. A Stub with [`responses`](#several-responses) renders the
+response the seed picks, and the rendering shows its index as
+`responseIndex` (null for a Stub with `response`). `--response <i>` (the
+Admin API's `response=<i>`) renders the response at index `i` instead,
+from 0; a Stub with `response` takes 0 only. Any other index fails: the
+Admin API answers 400 `invalid_request`, and `smock render` exits with
+status 1. With the same time, seed and index, a rendering is the same on
+every run. A template that fails for the sample shows the 500 and the
+error.
 
 ## Faults
 
@@ -1499,7 +1562,8 @@ without waiting for it.
 ### Seeds
 
 Each matched request draws whether its delay and its connection Fault
-apply, and how long the delay is.
+apply, and how long the delay is, and, for a Stub with
+[`responses`](#several-responses), which response it gets.
 
 - A Stub with a `seed`, from 0 to 9007199254740991, has its own generator.
   smock creates it when it loads the Definition files, and again from the
@@ -1507,8 +1571,8 @@ apply, and how long the delay is.
   advances once per request the Stub matches. An Ephemeral Stub with a seed
   gets its own generator when it is added, which a reload keeps. So the n-th
   request a seeded Stub matches gets the same Faults in every run, whatever
-  requests other Stubs get. The generator is a fixed algorithm, the same on
-  every platform.
+  requests other Stubs get, and the same response among `responses`. The
+  generator is a fixed algorithm, the same on every platform.
 - Stubs without a seed draw from the process generator, which they share.
   smock picks its seed at startup and logs it:
 
@@ -1517,7 +1581,8 @@ apply, and how long the delay is.
   ```
 
   To replay a run, start smock with that seed (`--seed`, `SMOCK_SEED`): the
-  same requests in the same order then get the same Faults.
+  same requests in the same order then get the same Faults and the same
+  responses.
 
 ## The JSON Schema
 

@@ -1,0 +1,20 @@
+{
+  "mocks": [{ "name": "web" }],
+  "stubs": [
+    {
+      "id": "greeting",
+      "mock": "web",
+      "request": { "method": "GET", "path": "/greeting" },
+      "responses": [
+        {
+          "weight": 3,
+          "status": 200,
+          "template": true,
+          "headers": { "Content-Type": "text/html", "X-Name": "${query.name ?? 'guest'}" },
+          "bodyFile": "greeting.html"
+        },
+        { "status": 503, "bodyFile": "users/1.json" }
+      ]
+    }
+  ]
+}
