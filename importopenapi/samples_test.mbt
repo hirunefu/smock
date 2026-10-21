@@ -403,24 +403,238 @@ test "pattern, multipleOf, uniqueItems, contains, property counts, propertyNames
 }
 
 ///|
-test "until their tickets, allOf, oneOf and anyOf add nothing, and a schema $ref is an error at the $ref that says it is not followed yet; a $ref in example data is data" {
+test "allOf is merged in order, and a oneOf with a null branch first takes the branch after it" {
   inspect(
     samples_of([
-      "{ \"allOf\": [{ \"type\": \"string\" }] }", "{ \"type\": \"object\", \"oneOf\": [{ \"properties\": { \"a\": { \"type\": \"string\" } } }], \"anyOf\": [{ \"type\": \"null\" }] }",
+      (
+        #|{
+        #|  "allOf": [
+        #|    { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "format": "uuid" } } },
+        #|    {
+        #|      "type": "object",
+        #|      "properties": {
+        #|        "email": { "oneOf": [{ "type": "null" }, { "type": "string", "format": "email" }] }
+        #|      }
+        #|    }
+        #|  ]
+        #|}
+      ),
+    ]),
+    content=(
+      #|{
+      #|  "allOf": [
+      #|    { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "format": "uuid" } } },
+      #|    {
+      #|      "type": "object",
+      #|      "properties": {
+      #|        "email": { "oneOf": [{ "type": "null" }, { "type": "string", "format": "email" }] }
+      #|      }
+      #|    }
+      #|  ]
+      #|} => {"id":"00000000-0000-4000-8000-000000000000","email":"user@example.com"}
+      #|
+    ),
+  )
+}
+
+///|
+test "in allOf, properties are joined by name, the schema's own first, and a property met again is merged the same way; required is joined; nested allOf is merged too" {
+  inspect(
+    samples_of([
+      "{ \"allOf\": [{ \"properties\": { \"owner\": { \"type\": \"object\", \"properties\": { \"name\": { \"type\": \"string\" } } }, \"tags\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } } } }, { \"properties\": { \"owner\": { \"properties\": { \"email\": { \"format\": \"email\" } } }, \"id\": { \"format\": \"uuid\" } } }] }",
+      "{ \"properties\": { \"b\": { \"type\": \"boolean\" } }, \"allOf\": [{ \"properties\": { \"a\": { \"type\": \"string\" }, \"b\": { \"type\": \"string\" } } }] }",
+      "{ \"allOf\": [{ \"allOf\": [{ \"type\": \"object\", \"properties\": { \"x\": { \"type\": \"boolean\" } } }] }, { \"properties\": { \"y\": { \"type\": \"string\" } } }] }",
+      "{ \"allOf\": [{ \"required\": [\"id\"] }, { \"required\": [\"name\"] }] }",
+      "{ \"allOf\": [{ \"properties\": { \"password\": { \"type\": \"string\" } } }, { \"properties\": { \"password\": { \"writeOnly\": true } } }] }",
+      "{ \"properties\": { \"a\": { \"type\": \"string\" }, \"b\": true }, \"allOf\": [{ \"properties\": { \"a\": false, \"b\": { \"type\": \"boolean\" } } }] }",
+    ]),
+    content=(
+      #|{ "allOf": [{ "properties": { "owner": { "type": "object", "properties": { "name": { "type": "string" } } }, "tags": { "type": "array", "items": { "type": "string" } } } }, { "properties": { "owner": { "properties": { "email": { "format": "email" } } }, "id": { "format": "uuid" } } }] } => {"owner":{"name":"string","email":"user@example.com"},"tags":["string"],"id":"00000000-0000-4000-8000-000000000000"}
+      #|{ "properties": { "b": { "type": "boolean" } }, "allOf": [{ "properties": { "a": { "type": "string" }, "b": { "type": "string" } } }] } => {"b":true,"a":"string"}
+      #|{ "allOf": [{ "allOf": [{ "type": "object", "properties": { "x": { "type": "boolean" } } }] }, { "properties": { "y": { "type": "string" } } }] } => {"x":true,"y":"string"}
+      #|{ "allOf": [{ "required": ["id"] }, { "required": ["name"] }] } => {}
+      #|{ "allOf": [{ "properties": { "password": { "type": "string" } } }, { "properties": { "password": { "writeOnly": true } } }] } => {}
+      #|{ "properties": { "a": { "type": "string" }, "b": true }, "allOf": [{ "properties": { "a": false, "b": { "type": "boolean" } } }] } => {"b":true}
+      #|
+    ),
+  )
+}
+
+///|
+test "in allOf, for any other keyword, the schema's own value wins, then the first branch that has one; true adds nothing and false gives no value" {
+  inspect(
+    samples_of([
+      "{ \"maxLength\": 3, \"allOf\": [{ \"type\": \"string\", \"maxLength\": 5 }, { \"type\": \"integer\", \"minLength\": 2 }] }",
+      "{ \"type\": \"string\", \"allOf\": [{ \"type\": \"integer\" }] }", "{ \"type\": \"string\", \"allOf\": [{ \"format\": \"date\" }, { \"format\": \"uuid\" }] }",
+      "{ \"allOf\": [{ \"type\": \"array\", \"items\": { \"type\": \"string\" } }, { \"items\": { \"type\": \"boolean\" }, \"minItems\": 2 }] }",
+      "{ \"allOf\": [true, { \"type\": \"boolean\" }] }", "{ \"allOf\": [{ \"type\": \"string\" }, false] }",
+      "{ \"allOf\": [] }",
+    ]),
+    content=(
+      #|{ "maxLength": 3, "allOf": [{ "type": "string", "maxLength": 5 }, { "type": "integer", "minLength": 2 }] } => "str"
+      #|{ "type": "string", "allOf": [{ "type": "integer" }] } => "string"
+      #|{ "type": "string", "allOf": [{ "format": "date" }, { "format": "uuid" }] } => "2000-01-01"
+      #|{ "allOf": [{ "type": "array", "items": { "type": "string" } }, { "items": { "type": "boolean" }, "minItems": 2 }] } => ["string","string"]
+      #|{ "allOf": [true, { "type": "boolean" }] } => true
+      #|{ "allOf": [{ "type": "string" }, false] } => no body
+      #|{ "allOf": [] } => null
+      #|
+    ),
+  )
+}
+
+///|
+test "a branch's const, examples, example, default and enum are used only when the merged schema is not an object; the schema's own are used on an object too" {
+  inspect(
+    samples_of([
+      "{ \"allOf\": [{ \"type\": \"object\", \"properties\": { \"a\": { \"type\": \"string\" } }, \"example\": { \"a\": \"branch\" } }] }",
+      "{ \"allOf\": [{ \"type\": \"object\", \"properties\": { \"a\": { \"type\": \"string\" } } }], \"example\": { \"a\": \"own\" } }",
+      "{ \"allOf\": [{ \"example\": { \"k\": 1 } }, { \"properties\": { \"k\": { \"type\": \"boolean\" } } }] }",
+      "{ \"allOf\": [{ \"example\": { \"k\": 1 } }] }", "{ \"description\": \"d\", \"allOf\": [{ \"type\": \"string\", \"enum\": [\"b1\", \"b2\"] }] }",
+      "{ \"type\": \"string\", \"default\": \"own\", \"allOf\": [{ \"default\": \"branch\", \"examples\": [\"x\"] }] }",
+      "{ \"type\": \"string\", \"example\": \"own\", \"allOf\": [{ \"const\": \"c\" }] }",
+      "{ \"allOf\": [{ \"properties\": { \"n\": { \"type\": \"string\", \"example\": \"first\" } } }, { \"properties\": { \"n\": { \"example\": \"again\" } } }] }",
+    ]),
+    content=(
+      #|{ "allOf": [{ "type": "object", "properties": { "a": { "type": "string" } }, "example": { "a": "branch" } }] } => {"a":"string"}
+      #|{ "allOf": [{ "type": "object", "properties": { "a": { "type": "string" } } }], "example": { "a": "own" } } => {"a":"own"}
+      #|{ "allOf": [{ "example": { "k": 1 } }, { "properties": { "k": { "type": "boolean" } } }] } => {"k":true}
+      #|{ "allOf": [{ "example": { "k": 1 } }] } => {"k":1}
+      #|{ "description": "d", "allOf": [{ "type": "string", "enum": ["b1", "b2"] }] } => "b1"
+      #|{ "type": "string", "default": "own", "allOf": [{ "default": "branch", "examples": ["x"] }] } => "x"
+      #|{ "type": "string", "example": "own", "allOf": [{ "const": "c" }] } => "c"
+      #|{ "allOf": [{ "properties": { "n": { "type": "string", "example": "first" } } }, { "properties": { "n": { "example": "again" } } }] } => {"n":"first"}
+      #|
+    ),
+  )
+  inspect(
+    sample_of(
+      "{ \"allOf\": [{ \"type\": \"string\", \"examples\": [\"x\"], \"example\": \"e\" }] }",
+      openapi="3.0.3",
+    ),
+    content="\"e\"",
+  )
+}
+
+///|
+test "oneOf and anyOf take their first branch that is not only null, merged with the schema's own keywords; when every branch is only null, the sample is null" {
+  inspect(
+    samples_of([
+      "{ \"anyOf\": [{ \"type\": \"null\" }, { \"type\": \"string\", \"format\": \"date\" }] }",
+      "{ \"oneOf\": [{ \"type\": [\"null\"] }, { \"const\": null }, { \"enum\": [null] }, { \"type\": \"boolean\" }] }",
+      "{ \"oneOf\": [{ \"type\": \"integer\" }, { \"type\": \"string\" }] }", "{ \"anyOf\": [{ \"type\": \"null\", \"description\": \"none\" }, { \"type\": [\"string\", \"null\"] }] }",
+      "{ \"oneOf\": [{ \"type\": \"null\" }, { \"type\": \"string\", \"example\": \"picked\" }] }",
+      "{ \"type\": \"string\", \"maxLength\": 2, \"oneOf\": [{ \"type\": \"null\" }, { \"type\": \"integer\", \"minLength\": 4 }] }",
+      "{ \"type\": \"object\", \"properties\": { \"a\": { \"type\": \"string\" } }, \"oneOf\": [{ \"properties\": { \"b\": { \"type\": \"boolean\" } } }] }",
+      "{ \"anyOf\": [{ \"properties\": { \"c\": { \"type\": \"integer\" } } }], \"oneOf\": [{ \"properties\": { \"b\": { \"type\": \"boolean\" } } }], \"allOf\": [{ \"properties\": { \"a\": { \"type\": \"string\" } } }] }",
+      "{ \"oneOf\": [{ \"type\": \"null\" }] }", "{ \"type\": \"object\", \"properties\": { \"a\": { \"type\": \"string\" } }, \"anyOf\": [{ \"type\": \"null\" }, { \"enum\": [null, null] }] }",
+      "{ \"type\": \"string\", \"oneOf\": [] }", "{ \"oneOf\": [false, { \"type\": \"null\" }, { \"type\": \"boolean\" }] }",
+      "{ \"anyOf\": [false, { \"type\": \"null\" }] }", "{ \"type\": \"string\", \"oneOf\": [false] }",
+    ]),
+    content=(
+      #|{ "anyOf": [{ "type": "null" }, { "type": "string", "format": "date" }] } => "2000-01-01"
+      #|{ "oneOf": [{ "type": ["null"] }, { "const": null }, { "enum": [null] }, { "type": "boolean" }] } => true
+      #|{ "oneOf": [{ "type": "integer" }, { "type": "string" }] } => 0
+      #|{ "anyOf": [{ "type": "null", "description": "none" }, { "type": ["string", "null"] }] } => "string"
+      #|{ "oneOf": [{ "type": "null" }, { "type": "string", "example": "picked" }] } => "picked"
+      #|{ "type": "string", "maxLength": 2, "oneOf": [{ "type": "null" }, { "type": "integer", "minLength": 4 }] } => "stri"
+      #|{ "type": "object", "properties": { "a": { "type": "string" } }, "oneOf": [{ "properties": { "b": { "type": "boolean" } } }] } => {"a":"string","b":true}
+      #|{ "anyOf": [{ "properties": { "c": { "type": "integer" } } }], "oneOf": [{ "properties": { "b": { "type": "boolean" } } }], "allOf": [{ "properties": { "a": { "type": "string" } } }] } => {"a":"string","b":true,"c":0}
+      #|{ "oneOf": [{ "type": "null" }] } => null
+      #|{ "type": "object", "properties": { "a": { "type": "string" } }, "anyOf": [{ "type": "null" }, { "enum": [null, null] }] } => null
+      #|{ "type": "string", "oneOf": [] } => "string"
+      #|{ "oneOf": [false, { "type": "null" }, { "type": "boolean" }] } => true
+      #|{ "anyOf": [false, { "type": "null" }] } => null
+      #|{ "type": "string", "oneOf": [false] } => no body
+      #|
+    ),
+  )
+}
+
+///|
+test "not, if, then, else and discriminator are ignored, without a warning, even when they have the wrong type" {
+  inspect(
+    samples_of([
+      "{ \"type\": \"object\", \"properties\": { \"a\": { \"type\": \"string\" } }, \"not\": { \"required\": [\"a\"] }, \"if\": { \"properties\": { \"a\": { \"const\": \"x\" } } }, \"then\": { \"properties\": { \"b\": { \"type\": \"boolean\" } } }, \"else\": { \"type\": \"string\" } }",
+      "{ \"not\": { \"type\": \"string\" }, \"then\": { \"minLength\": 1 } }", "{ \"oneOf\": [{ \"type\": \"object\", \"properties\": { \"kind\": { \"const\": \"cat\" } } }, { \"type\": \"object\", \"properties\": { \"kind\": { \"const\": \"dog\" } } }], \"discriminator\": { \"propertyName\": \"kind\", \"mapping\": { \"dog\": \"#/components/schemas/Dog\" } } }",
+      "{ \"type\": \"string\", \"discriminator\": 5, \"not\": 5, \"if\": \"x\", \"then\": [], \"else\": null }",
+    ]),
+    content=(
+      #|{ "type": "object", "properties": { "a": { "type": "string" } }, "not": { "required": ["a"] }, "if": { "properties": { "a": { "const": "x" } } }, "then": { "properties": { "b": { "type": "boolean" } } }, "else": { "type": "string" } } => {"a":"string"}
+      #|{ "not": { "type": "string" }, "then": { "minLength": 1 } } => null
+      #|{ "oneOf": [{ "type": "object", "properties": { "kind": { "const": "cat" } } }, { "type": "object", "properties": { "kind": { "const": "dog" } } }], "discriminator": { "propertyName": "kind", "mapping": { "dog": "#/components/schemas/Dog" } } } => {"kind":"cat"}
+      #|{ "type": "string", "discriminator": 5, "not": 5, "if": "x", "then": [], "else": null } => "string"
+      #|
+    ),
+  )
+}
+
+///|
+test "an allOf, oneOf or anyOf that is not an array, and a branch that is not a schema, are ignored with a warning; a wrong-typed keyword in a branch is warned at the branch" {
+  inspect(
+    samples_of([
+      "{ \"type\": \"string\", \"allOf\": { \"minLength\": 8 } }", "{ \"oneOf\": \"x\", \"anyOf\": 5, \"type\": \"boolean\" }",
+      "{ \"allOf\": [5, { \"type\": \"boolean\" }] }", "{ \"oneOf\": [{ \"type\": \"null\" }, \"string\", { \"type\": \"integer\" }, 7] }",
+      "{ \"anyOf\": [null, { \"type\": \"null\" }] }", "{ \"allOf\": [{ \"type\": \"string\", \"minLength\": \"3\" }] }",
+      "{ \"type\": \"string\", \"maxLength\": \"2\", \"allOf\": [{ \"maxLength\": 3 }] }",
+      "{ \"allOf\": [{ \"properties\": { \"a\": \"string\" } }, { \"properties\": [] }] }",
+      "{ \"properties\": { \"a\": 5 }, \"allOf\": [{ \"properties\": { \"a\": { \"type\": \"boolean\" } } }] }",
+    ]),
+    content=(
+      #|{ "type": "string", "allOf": { "minLength": 8 } } => petstore.json: /schema/allOf: warning: ignored: must be an array
+      #|"string"
+      #|{ "oneOf": "x", "anyOf": 5, "type": "boolean" } => petstore.json: /schema/oneOf: warning: ignored: must be an array
+      #|petstore.json: /schema/anyOf: warning: ignored: must be an array
+      #|true
+      #|{ "allOf": [5, { "type": "boolean" }] } => petstore.json: /schema/allOf/0: warning: ignored: must be a schema, an object or a boolean
+      #|true
+      #|{ "oneOf": [{ "type": "null" }, "string", { "type": "integer" }, 7] } => petstore.json: /schema/oneOf/1: warning: ignored: must be a schema, an object or a boolean
+      #|0
+      #|{ "anyOf": [null, { "type": "null" }] } => petstore.json: /schema/anyOf/0: warning: ignored: must be a schema, an object or a boolean
+      #|null
+      #|{ "allOf": [{ "type": "string", "minLength": "3" }] } => petstore.json: /schema/allOf/0/minLength: warning: ignored: must be a non-negative integer
+      #|"string"
+      #|{ "type": "string", "maxLength": "2", "allOf": [{ "maxLength": 3 }] } => petstore.json: /schema/maxLength: warning: ignored: must be a non-negative integer
+      #|"str"
+      #|{ "allOf": [{ "properties": { "a": "string" } }, { "properties": [] }] } => petstore.json: /schema/allOf/1/properties: warning: ignored: must be an object
+      #|petstore.json: /schema/allOf/0/properties/a: warning: ignored: must be a schema, an object or a boolean
+      #|{}
+      #|{ "properties": { "a": 5 }, "allOf": [{ "properties": { "a": { "type": "boolean" } } }] } => petstore.json: /schema/properties/a: warning: ignored: must be a schema, an object or a boolean
+      #|{"a":true}
+      #|
+    ),
+  )
+  let many = sample_of(
+    "{ \"type\": \"array\", \"items\": { \"type\": \"boolean\" }, \"minItems\": \"many\", \"allOf\": [{ \"minItems\": 250 }] }",
+  )
+  inspect(
+    many.split("\n").map(line => line.to_owned()).collect()[:2].join("\n"),
+    content=(
+      #|petstore.json: /schema/minItems: warning: ignored: must be a non-negative integer
+      #|petstore.json: /schema/allOf/0/minItems: warning: changed: the sample has 100 items, the most a sample has, not 250
+    ),
+  )
+}
+
+///|
+test "until its ticket, a schema $ref is an error at the $ref that says it is not followed yet, in a branch too; a $ref in example data is data" {
+  inspect(
+    samples_of([
       "{ \"type\": \"object\", \"properties\": { \"pet\": { \"$ref\": \"#/components/schemas/Pet\" } } }",
       "{ \"type\": \"array\", \"items\": { \"$ref\": \"#/components/schemas/Pet\", \"type\": \"string\" } }",
       "{ \"type\": \"object\", \"properties\": { \"pet\": { \"$ref\": \"#/components/schemas/Pet\", \"writeOnly\": true } } }",
       "{ \"allOf\": [{ \"$ref\": \"#/components/schemas/Pet\" }], \"example\": { \"$ref\": \"#/x\" } }",
+      "{ \"type\": \"object\", \"example\": { \"$ref\": \"#/x\" } }",
     ]),
     content=(
-      #|{ "allOf": [{ "type": "string" }] } => null
-      #|{ "type": "object", "oneOf": [{ "properties": { "a": { "type": "string" } } }], "anyOf": [{ "type": "null" }] } => {}
       #|{ "type": "object", "properties": { "pet": { "$ref": "#/components/schemas/Pet" } } } => petstore.json: /schema/properties/pet/$ref: schema references are not followed yet: write the schema it names in its place
       #|nothing written
       #|{ "type": "array", "items": { "$ref": "#/components/schemas/Pet", "type": "string" } } => petstore.json: /schema/items/$ref: schema references are not followed yet: write the schema it names in its place
       #|nothing written
       #|{ "type": "object", "properties": { "pet": { "$ref": "#/components/schemas/Pet", "writeOnly": true } } } => {}
-      #|{ "allOf": [{ "$ref": "#/components/schemas/Pet" }], "example": { "$ref": "#/x" } } => {"$ref":"#/x"}
+      #|{ "allOf": [{ "$ref": "#/components/schemas/Pet" }], "example": { "$ref": "#/x" } } => petstore.json: /schema/allOf/0/$ref: schema references are not followed yet: write the schema it names in its place
+      #|nothing written
+      #|{ "type": "object", "example": { "$ref": "#/x" } } => {"$ref":"#/x"}
       #|
     ),
   )
