@@ -151,7 +151,7 @@ test "without a type, the sample takes the one the keywords imply: object, array
       #|{ "additionalProperties": { "type": "string" } } => {}
       #|{ "uniqueItems": true, "format": "int64" } => []
       #|{ "contains": {} } => []
-      #|{ "format": "int64", "minimum": 1 } => 0
+      #|{ "format": "int64", "minimum": 1 } => 1
       #|{ "format": "double", "minLength": 1 } => 0
       #|{ "exclusiveMaximum": 5, "pattern": "^a" } => 0
       #|{ "multipleOf": 2 } => 0
@@ -230,7 +230,7 @@ test "a string samples as the fixed sample of its format, whatever its length bo
 }
 
 ///|
-test "booleans sample as true, and numbers as 0 until numbers are sampled within their bounds" {
+test "booleans sample as true, and numbers within their bounds, as numbers_test.mbt shows" {
   inspect(
     samples_of([
       "{ \"type\": \"boolean\" }", "{ \"type\": \"integer\" }", "{ \"type\": \"number\", \"minimum\": 5 }",
@@ -238,7 +238,7 @@ test "booleans sample as true, and numbers as 0 until numbers are sampled within
     content=(
       #|{ "type": "boolean" } => true
       #|{ "type": "integer" } => 0
-      #|{ "type": "number", "minimum": 5 } => 0
+      #|{ "type": "number", "minimum": 5 } => 5
       #|
     ),
   )
