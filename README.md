@@ -208,6 +208,7 @@ exits with status 2. `smock serve --help` lists the settings:
 | `--journal-max-entries` | `SMOCK_JOURNAL_MAX_ENTRIES` | 10000: beyond it, the oldest entries are evicted |
 | `--journal-max-bytes` | `SMOCK_JOURNAL_MAX_BYTES` | a quarter of smock's memory limit (cgroup v2 `memory.max`), at least 1048576 bytes (1 MiB) and at most 67108864 (64 MiB); 64 MiB without a limit ([The Journal](#the-journal)): beyond it, the oldest entries are evicted |
 | `--journal-body-limit` | `SMOCK_JOURNAL_BODY_LIMIT` | 4096 bytes (4 KiB): the most of a request body an entry keeps, and of the form and XML values its Near miss keeps, in total |
+| `--state-max-bytes` | `SMOCK_STATE_MAX_BYTES` | an eighth of smock's memory limit (cgroup v2 `memory.max`), at least 1048576 bytes (1 MiB) and at most 67108864 (64 MiB); 64 MiB without a limit ([The state bound](docs/definition-files.md#the-state-bound)): the most bytes the per-Session state of the whole process takes; a request whose writes would pass it gets 507 |
 
 A request over a limit gets its status with `Connection: close`, then the
 connection closes; a timeout closes the connection without a response.
@@ -387,7 +388,10 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   `smock_tls_certificate_expiry_timestamp_seconds` gives when each
   certificate expires; `smock_journal_entries`, `smock_journal_bytes` and
   `smock_journal_evictions_total` show the [Journal](#the-journal)'s size
-  and evictions, without labels.
+  and evictions, without labels; `smock_state_bytes` and
+  `smock_state_writes_refused_total` show the bytes of per-Session state
+  that [the state bound](docs/definition-files.md#the-state-bound) counts
+  and the requests whose writes it refused, without labels.
 - What smock's process and its cgroup use is read when `/metrics` is
   scraped, so serving requests costs nothing for it. The standard process
   metrics of Prometheus's client libraries: `process_cpu_seconds_total`

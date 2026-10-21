@@ -102,6 +102,18 @@ of each GitHub release include its section
   `Accept-Ranges` itself is left alone. A `partial` Fault cuts the range
   in half. `smock render` and the Admin render operation apply the rule to
   the sample's `Range` header.
+- `--state-max-bytes` (`SMOCK_STATE_MAX_BYTES`) bounds, in bytes, the
+  per-Session state of the whole process, across every Mock and Session.
+  By default it is an eighth of smock's memory limit, at least 1 MiB and
+  at most 64 MiB, as ADR 0004's rule gives the Journal a quarter; smock
+  logs the bound at startup. Each space of a Mock and a Session counts its
+  Session key, and each Variable its name and its value's compact JSON,
+  with fixed bytes for each space, Variable and JSON value. A request whose
+  writes would pass the bound writes nothing, picks no response and gets
+  507 `state limit reached`.
+- The metrics `smock_state_bytes`, the bytes the state bound counts, and
+  `smock_state_writes_refused_total`, the requests whose writes it
+  refused.
 
 ### Changed
 

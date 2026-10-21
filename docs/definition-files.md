@@ -1817,7 +1817,8 @@ In one Session, `POST /login` with `{"user":"ann"}` gets
 - Variables are kept per Mock and per Session, like Scenario state.
   Requests without a Session share one space per Mock. Each replica keeps
   its own, and they are lost on restart. A reset clears them, and a reload
-  keeps them ([Resets and reloads](#resets-and-reloads)).
+  keeps them ([Resets and reloads](#resets-and-reloads)). One byte bound
+  holds all of them ([The state bound](#the-state-bound)).
 - An [Ephemeral Stub](../README.md#sessions-and-ephemeral-stubs) takes
   `variables` too, and writes the Variables of its Session.
 
@@ -1834,7 +1835,8 @@ order:
    request, and two values that read each other see the old values. The
    values draw their helper output first, and the response's helpers draw
    on from there, so [`fault.seed` and `--seed`](#seeds) replay them.
-4. All the values are written at once.
+4. All the values are written at once, if they fit within [the state
+   bound](#the-state-bound).
 5. The response is picked, as for any Stub with
    [`responses`](#several-responses), then rendered. It sees the new
    values.
@@ -1844,14 +1846,16 @@ request gets the [template failure](#missing-values-and-render-errors),
 500 with an `at` under `/variables/NAME`, such as
 `"at":"/variables/user","message":"body.user is missing"`. No response is
 picked. The Scenario move stands, and the delay and the connection Fault
-apply as for any template failure.
+apply as for any template failure. Writes that would pass the state bound
+are refused the same way, with 507.
 
 Each value is bounded as a rendered body is: at most 1 MiB of compact JSON,
 and at most 10,000 loop iterations. Past either is a render error.
 
 Once written, a value stays: a delay, a connection Fault or a response
 that fails to render does not undo the write, and the next request sees
-it. Nothing expires a Variable.
+it. Nothing expires a Variable, but the state bound limits what all of
+them take.
 
 #### Reading Variables
 
@@ -1873,7 +1877,8 @@ it. Nothing expires a Variable.
 Each [Journal](../README.md#the-journal) entry records the names of the
 Variables the request wrote, in the order written, as `variablesWritten`.
 It is empty for a Stub without `variables`, for a request that no Stub
-matched, and when a value failed to render.
+matched, when a value failed to render, and when the state bound refused
+the writes.
 
 #### Resets and reloads
 
@@ -1895,6 +1900,83 @@ one that no Stub writes any more, except those of a Mock the new files no
 longer declare, which are dropped. A reload that fails, or finds the files
 unchanged, keeps them all. So editing the files does not wipe the state of
 a test in progress.
+
+#### The state bound
+
+One byte bound holds the per-Session state of the whole process, across
+every Mock and Session, so that Variables cannot exhaust a small Pod.
+
+- `--state-max-bytes` or `SMOCK_STATE_MAX_BYTES` sets it, in bytes, from 1
+  to 1073741824 (1 GiB), as `--journal-max-bytes` takes.
+- Without either, it follows smock's memory limit, as the Journal's byte
+  bound does ([ADR
+  0004](adr/0004-journal-byte-bound-follows-the-memory-limit.md)): an
+  eighth of the memory limit of smock's cgroup (cgroup v2 `memory.max`),
+  rounded down, at least 1 MiB and at most 64 MiB. Without a limit, or
+  when it cannot be read, the bound is 64 MiB. Under a 52Mi limit it is
+  6.5 MiB; from a 512Mi limit up, it is 64 MiB.
+- smock reads the limit once at startup, for this bound and the Journal's,
+  and logs the bound with its `source`: `flag`, `variable`, `memoryLimit`
+  (an eighth of the limit), `minimum` (1 MiB) or `default` (64 MiB), and
+  the `memoryLimit` it read, or `memoryLimitError`, why it could not read
+  one:
+
+  ```json
+  {"time":"2026-10-21T09:00:00.000Z","level":"info","msg":"state byte bound","maxBytes":6815744,"source":"memoryLimit","memoryLimit":54525952}
+  ```
+
+The bound keeps one count, up to date on each write:
+
+- A space, one Mock with one Session or with no Session, counts its Mock
+  name and its Session key once, plus 64 bytes, while it holds any
+  Variable. The no-Session space has no key to count.
+- Each Variable counts its name, 64 bytes, and its value.
+- A value counts its compact JSON as smock writes it, plus 16 bytes for
+  each JSON value in it: each object, array, string, number, boolean and
+  null.
+- Names, Session keys and JSON count their bytes in UTF-8.
+
+So `count: 1`, the only Variable of the Mock `shop` in the Session
+`run-42`, counts 74 bytes for its space (4 + 6 + 64) and 86 for itself
+(5 + 64 + 1 + 16). The fixed bytes keep long Session keys and many tiny
+values from taking far more memory than the bound counts. A write that
+replaces a value counts the new size in place of the old. When a space's
+last Variable goes, the space's bytes go too, so resets and reloads that
+drop Variables give their bytes back. Scenario state does not count, and
+is not bounded.
+
+A request whose writes would take the count above the bound writes none of
+them. Under `smock serve --state-max-bytes 1048576`, with this Stub:
+
+```yaml
+- id: add-cart-item
+  mock: shop
+  request: { method: POST, path: /cart/items }
+  variables:
+    last: ${body}
+  response: { status: 201 }
+```
+
+a request whose body would take the count above 1 MiB gets 507, with
+`Content-Type: application/json`:
+
+```json
+{"error":"state limit reached","stub":"add-cart-item","message":"the writes would take per-Session state from 1048000 to 1049100 bytes, above its bound of 1048576 (--state-max-bytes)"}
+```
+
+- No response is picked, and nothing is written.
+- The Scenario move stands. The Stub's delay still applies, and a
+  connection Fault still replaces the response, as for a template failure.
+- The Journal entry records status 507, `responseIndex: null` and
+  `variablesWritten: []`.
+- A write that does not grow the count, such as one that replaces a value
+  with a smaller one, always fits.
+
+Two metrics on the admin port, without labels, show how close the process
+is to the bound: `smock_state_bytes`, the bytes the count holds now, and
+`smock_state_writes_refused_total`, the requests whose writes it refused,
+each once. smock reads them when `/metrics` is scraped. `smock render` and
+the Admin render operation write nothing, so they never meet the bound.
 
 ### Errors when loading
 
