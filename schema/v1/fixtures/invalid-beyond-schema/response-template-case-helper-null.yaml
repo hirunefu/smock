@@ -1,0 +1,10 @@
+mocks:
+  - name: codes
+stubs:
+  - id: code
+    mock: codes
+    response:
+      status: 200
+      template: true
+      json:
+        code: ${uppercase(null)}
