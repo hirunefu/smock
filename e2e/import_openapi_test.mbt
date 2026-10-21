@@ -188,7 +188,7 @@ async test "smock import-openapi writes nothing and exits 1 when the document ha
 }
 
 ///|
-async test "smock import-openapi refuses an existing --output before it reads the document, even one that does not exist, and leaves the file as it was" {
+async test "smock import-openapi without --overwrite on refuses an existing --output before it reads the document, even one that does not exist, and leaves the file as it was" {
   with_petstore(petstore_document, dir => {
     @fs.write_file("\{dir}/defs/petstore.json", "hand-written")
     for document in ["api/petstore.json", "api/missing.json"] {
@@ -205,7 +205,7 @@ async test "smock import-openapi refuses an existing --output before it reads th
         ),
         content=(
           #|status 1
-          #|<dir>/defs/petstore.json: already exists, and smock import-openapi does not replace a file
+          #|<dir>/defs/petstore.json: already exists, and smock import-openapi replaces a file only with --overwrite on
           #|nothing written: 1 errors
           #|
         ),
@@ -214,6 +214,122 @@ async test "smock import-openapi refuses an existing --output before it reads th
     inspect(
       @fs.read_file("\{dir}/defs/petstore.json").text(),
       content="hand-written",
+    )
+  })
+}
+
+///|
+async test "smock import-openapi without --overwrite on keeps a file that appears at --output while it reads the document: nothing is written, that problem comes first, and the exit status is 1" {
+  with_petstore(petstore_document, dir => {
+    // A FIFO as the document holds smock in its read until the test has
+    // made the output, after smock checked that it did not exist.
+    let document = "\{dir}/api/fifo.json"
+    let (status, _) = collect_output_merged("mkfifo", [document])
+    inspect(status, content="0")
+    let output = "\{dir}/defs/petstore.json"
+    @async.with_task_group(group => {
+      let run = group.spawn(() => {
+        import_openapi(
+          [document, "--mock", "petstore", "--output", output],
+          dir~,
+        )
+      })
+      // Opening the FIFO waits until smock opens it for reading.
+      let fifo = @async.with_timeout_opt(patience_ms, () => {
+        @fs.open(document, mode=WriteOnly)
+      })
+      guard fifo is Some(fifo) else { fail("smock did not read the document") }
+      @fs.write_file(output, "hand-written")
+      fifo.write(
+        (
+          #|{ "openapi": "3.1.0", "paths": {} }
+        ),
+      )
+      fifo.close()
+      inspect(
+        run.wait(),
+        content=(
+          #|status 1
+          #|<dir>/defs/petstore.json: cannot be written: it exists now, and is not replaced
+          #|<dir>/api/fifo.json: /paths: warning: there is no operation to import: the file has no Stubs
+          #|nothing written: 1 errors
+          #|
+        ),
+      )
+    })
+    inspect(listing("\{dir}/defs"), content="petstore.json")
+    inspect(@fs.read_file(output).text(), content="hand-written")
+  })
+}
+
+///|
+/// The names in `dir`, hidden ones included, in byte-wise order, one per
+/// line, so that a test sees every file a run leaves behind.
+async fn listing(dir : String) -> String {
+  @fs.readdir(dir, sort=true).join("\n")
+}
+
+///|
+async test "smock import-openapi --overwrite on replaces an existing --output, and leaves nothing else new in its directory" {
+  with_petstore(petstore_document, dir => {
+    @fs.write_file("\{dir}/defs/petstore.json", "an earlier import")
+    @fs.write_file("\{dir}/defs/other.yaml", "version: 1\n")
+    inspect(
+      import_openapi(
+        [
+          "\{dir}/api/petstore.json",
+          "--mock",
+          "petstore",
+          "--output",
+          "\{dir}/defs/petstore.json",
+          "--overwrite",
+          "on",
+        ],
+        dir~,
+      ),
+      content=(
+        #|status 0
+        #|wrote <dir>/defs/petstore.json: 1 Stubs from 1 operations, 0 warnings
+        #|
+      ),
+    )
+    inspect(
+      @fs.read_file("\{dir}/defs/petstore.json").text(),
+      content=(
+        #|{
+        #|  "version": 1,
+        #|  "mocks": [
+        #|    {
+        #|      "name": "petstore"
+        #|    }
+        #|  ],
+        #|  "stubs": [
+        #|    {
+        #|      "id": "petstore.listPets.200",
+        #|      "mock": "petstore",
+        #|      "request": {
+        #|        "method": "GET",
+        #|        "path": "/pets"
+        #|      },
+        #|      "response": {
+        #|        "status": 200
+        #|      }
+        #|    }
+        #|  ]
+        #|}
+        #|
+      ),
+    )
+    inspect(
+      listing("\{dir}/defs"),
+      content=(
+        #|other.yaml
+        #|petstore.json
+      ),
+    )
+    inspect(
+      @fs.read_file("\{dir}/defs/other.yaml").text(),
+      content="version: 1\n",
     )
   })
 }
@@ -233,7 +349,8 @@ async test "smock import-openapi rejects bad arguments as usage errors, on stder
     ["api.json", "--mock", "m"],
     ["api.json", "--output", "m.json"],
     ["--mock", "m", "--output", "m.json"],
-    ["api.json", "--mock", "m", "--output", "m.json", "--overwrite", "on"],
+    ["api.json", "--mock", "m", "--output", "m.json", "--overwrite", "yes"],
+    ["api.json", "--mock", "m", "--output", "m.json", "--overwrite", ""],
   ]
   let reports = []
   for args in cases {
@@ -268,8 +385,10 @@ async test "smock import-openapi rejects bad arguments as usage errors, on stder
       #|  status 2: error: the following required argument was not provided: 'mock'
       #|--mock m --output m.json
       #|  status 2: error: 'document' requires at least 1 values but only 0 were provided
-      #|api.json --mock m --output m.json --overwrite on
-      #|  status 2: error: unexpected argument '--overwrite' found
+      #|api.json --mock m --output m.json --overwrite yes
+      #|  status 2: smock import-openapi: invalid value "yes" for --overwrite: must be on or off
+      #|api.json --mock m --output m.json --overwrite 
+      #|  status 2: smock import-openapi: invalid value "" for --overwrite: must be on or off
     ),
   )
 }
@@ -280,7 +399,7 @@ async test "smock import-openapi --help names its argument and its flags, none o
     import_openapi(["--help"]),
     content=(
       #|status 0
-      #|Usage: smock import-openapi --mock <mock> --output <output> <document>
+      #|Usage: smock import-openapi --mock <mock> --output <output> [options] <document>
       #|
       #|Convert an OpenAPI 3.0, 3.1 or 3.2 document into a Definition file, once: it declares one Mock, with a Stub for each response of each operation, which matches the operation's method and path. The main response answers by default, and each other one when the request sends Smock-Status with its key as the document writes it, such as Smock-Status: 404. smock never reads OpenAPI when it serves. Prints every problem, one per line, as smock check does, then a summary line, and exits with status 1 if nothing was written.
       #|
@@ -288,9 +407,10 @@ async test "smock import-openapi --help names its argument and its flags, none o
       #|  document  The OpenAPI document: a JSON file, whose name ends in .json.
       #|
       #|Options:
-      #|  -h, --help         Show help information.
-      #|  --mock <mock>      The name of the Mock the Definition file declares. Every Stub ID starts with it.
-      #|  --output <output>  The Definition file to write. Its name picks the format: .yaml or .yml writes YAML, with comments that map each Stub back to the document, and .json writes JSON. It must not exist: the file is created new.
+      #|  -h, --help               Show help information.
+      #|  --mock <mock>            The name of the Mock the Definition file declares. Every Stub ID starts with it.
+      #|  --output <output>        The Definition file to write. Its name picks the format: .yaml or .yml writes YAML, with comments that map each Stub back to the document, and .json writes JSON. Its directory must exist. The file is written to a temporary file whose name starts with ., then renamed, so a smock that watches the directory never reads half a file.
+      #|  --overwrite <overwrite>  Whether an existing --output is replaced: on or off. Off, an existing file is refused before the document is read, and nothing is written. Either way, a directory, a symlink or the document itself is refused. [default: off]
       #|
     ),
   )
@@ -339,44 +459,96 @@ async test "smock serves an imported file like any other: its main status answer
 }
 
 ///|
-async test "smock import-openapi writes nothing and exits 1 when the output cannot be written, and names that problem first" {
-  with_petstore(
-    (
-      #|{
-      #|  "openapi": "3.1.0",
-      #|  "paths": {
-      #|    "/pets": {
-      #|      "get": {
-      #|        "responses": {
-      #|          "200": {},
-      #|          "404": { "content": { "application/json": {} } }
-      #|        }
-      #|      }
-      #|    }
-      #|  }
-      #|}
-    ),
-    dir => {
-      inspect(
-        import_openapi(
-          [
-            "\{dir}/api/petstore.json",
-            "--mock",
-            "petstore",
-            "--output",
-            "\{dir}/nowhere/petstore.json",
-          ],
-          dir~,
-        ),
-        content=(
-          #|status 1
-          #|<dir>/nowhere/petstore.json: cannot be written: its directory does not exist
-          #|nothing written: 1 errors
-          #|
-        ),
+async test "smock import-openapi refuses a symlink, a directory, a missing directory and the document itself as --output, even with --overwrite on, before it reads the document, and leaves both directories as they were" {
+  with_petstore(petstore_document, dir => {
+    @fs.write_file("\{dir}/defs/real.json", "hand-written")
+    @fs.symlink(target="real.json", "\{dir}/defs/link.json")
+    @fs.symlink(target="missing.json", "\{dir}/defs/dangling.json")
+    @fs.mkdir("\{dir}/defs/dir.json")
+    @fs.symlink(target="../api", "\{dir}/defs/api-link")
+    let before = "\{listing("\{dir}/defs")}\n--\n\{listing("\{dir}/api")}"
+    // The first outputs are refused before the missing document is read.
+    let cases = [
+      ("defs/link.json", "api/missing.json"),
+      ("defs/dangling.json", "api/missing.json"),
+      ("defs/dir.json", "api/missing.json"),
+      ("defs/nowhere/petstore.json", "api/missing.json"),
+      ("defs/real.json/petstore.json", "api/missing.json"),
+      ("api/petstore.json", "api/petstore.json"),
+      ("defs/../api/petstore.json", "api/petstore.json"),
+      ("defs/api-link/petstore.json", "api/petstore.json"),
+    ]
+    let reports = []
+    for case in cases {
+      let (output, document) = case
+      let report = import_openapi(
+        [
+          "\{dir}/\{document}",
+          "--mock",
+          "petstore",
+          "--output",
+          "\{dir}/\{output}",
+          "--overwrite",
+          "on",
+        ],
+        dir~,
       )
-    },
-  )
+      reports.push("\{output}, from \{document}:\n\{report}")
+    }
+    inspect(
+      reports.join(""),
+      content=(
+        #|defs/link.json, from api/missing.json:
+        #|status 1
+        #|<dir>/defs/link.json: is a symlink, and smock import-openapi replaces only a regular file
+        #|nothing written: 1 errors
+        #|defs/dangling.json, from api/missing.json:
+        #|status 1
+        #|<dir>/defs/dangling.json: is a symlink, and smock import-openapi replaces only a regular file
+        #|nothing written: 1 errors
+        #|defs/dir.json, from api/missing.json:
+        #|status 1
+        #|<dir>/defs/dir.json: is a directory, and smock import-openapi replaces only a regular file
+        #|nothing written: 1 errors
+        #|defs/nowhere/petstore.json, from api/missing.json:
+        #|status 1
+        #|<dir>/defs/nowhere/petstore.json: cannot be written: its directory does not exist
+        #|nothing written: 1 errors
+        #|defs/real.json/petstore.json, from api/missing.json:
+        #|status 1
+        #|<dir>/defs/real.json/petstore.json: cannot be written: its directory does not exist
+        #|nothing written: 1 errors
+        #|api/petstore.json, from api/petstore.json:
+        #|status 1
+        #|<dir>/api/petstore.json: is the document being imported, and smock import-openapi does not replace it with its own conversion
+        #|nothing written: 1 errors
+        #|defs/../api/petstore.json, from api/petstore.json:
+        #|status 1
+        #|<dir>/defs/../api/petstore.json: is the document being imported, and smock import-openapi does not replace it with its own conversion
+        #|nothing written: 1 errors
+        #|defs/api-link/petstore.json, from api/petstore.json:
+        #|status 1
+        #|<dir>/defs/api-link/petstore.json: is the document being imported, and smock import-openapi does not replace it with its own conversion
+        #|nothing written: 1 errors
+        #|
+      ),
+    )
+    inspect(
+      "\{listing("\{dir}/defs")}\n--\n\{listing("\{dir}/api")}",
+      content=before,
+    )
+    inspect(
+      @fs.read_file("\{dir}/defs/real.json").text(),
+      content="hand-written",
+    )
+    assert_true(
+      @fs.kind("\{dir}/defs/link.json", follow_symlink=false) is SymLink,
+    )
+    inspect(
+      @fs.read_file("\{dir}/api/petstore.json").text() == petstore_document,
+      content="true",
+    )
+  })
 }
 
 ///|
@@ -680,6 +852,57 @@ async test "a test whose requests cannot set Smock-Status selects the imported 4
         },
       ])
     })
+  })
+}
+
+///|
+async test "the guide's override in another file survives a re-import with --overwrite on, and smock check warns about each generated Stub it shadows, the Smock-Status one included" {
+  with_petstore(my_pet_document, dir => {
+    let args = [
+      "api/petstore.json", "--mock", "petstore", "--output", "defs/petstore.yaml",
+    ]
+    inspect(
+      import_openapi(args, cwd=dir),
+      content=(
+        #|status 0
+        #|wrote defs/petstore.yaml: 2 Stubs from 1 operations, 0 warnings
+        #|
+      ),
+    )
+    @fs.write_file(
+      "\{dir}/defs/petstore-overrides.yaml",
+      (
+        #|version: 1
+        #|stubs:
+        #|  - id: petstore.getPet.none
+        #|    mock: petstore
+        #|    priority: 1
+        #|    request:
+        #|      method: GET
+        #|      path: /pets/mine
+        #|    response:
+        #|      status: 404
+        #|      json:
+        #|        message: You have no pet
+      ),
+    )
+    inspect(
+      import_openapi([..args, "--overwrite", "on"], cwd=dir),
+      content=(
+        #|status 0
+        #|wrote defs/petstore.yaml: 2 Stubs from 1 operations, 0 warnings
+        #|
+      ),
+    )
+    inspect(
+      exit_report(smock_output(["check", "defs"], cwd=dir)),
+      content=(
+        #|status 0
+        #|petstore.yaml: /stubs/0: warning: the Stub "petstore.getPet.404" can never match: the Stub "petstore.getPet.none" at petstore-overrides.yaml: /stubs/0 is tried first and matches every request this one would
+        #|petstore.yaml: /stubs/1: warning: the Stub "petstore.getPet.200" can never match: the Stub "petstore.getPet.none" at petstore-overrides.yaml: /stubs/0 is tried first and matches every request this one would
+        #|
+      ),
+    )
   })
 }
 
