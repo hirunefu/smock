@@ -50,6 +50,13 @@ of each GitHub release include its section
   the bounds allow it, else the nearest bound, moved inside an exclusive
   one. The arithmetic is exact on the bounds' decimal text, with no float,
   so every platform writes the same digits.
+- `smock import-openapi` writes the headers a response documents in the
+  Stub's response, with their example, else a sample of their schema, so
+  clients that read them see them. A number, a boolean and an array of
+  these are written as text, an array joined with `,`. `Content-Type`,
+  `Content-Length`, `Transfer-Encoding` and `Connection` are skipped. A
+  header smock cannot send, such as one whose value is an object, is left
+  out with a warning.
 - `smock import-openapi` writes YAML when the name of `--output` ends in
   `.yaml` or `.yml`, and JSON when it ends in `.json`. A YAML file starts
   with a comment that names the document and says not to edit the file,
@@ -61,9 +68,9 @@ of each GitHub release include its section
   Anchors, aliases and tags stay errors, each at its pointer; the guide
   shows how to convert such a document to JSON first.
 - `smock import-openapi` follows a `$ref` within the document where it
-  reads a Path Item, a Response, an Example or a Media Type, by its JSON
-  Pointer fragment. A URL, an absolute path or another file is an error
-  that suggests bundling the document into one file first.
+  reads a Path Item, a Response, a Header, an Example or a Media Type, by
+  its JSON Pointer fragment. A URL, an absolute path or another file is an
+  error that suggests bundling the document into one file first.
 - `smock import-openapi --overwrite on` replaces an earlier output, so a
   changed document reaches the mock when the command runs again. Without
   it, an existing `--output` is refused before the document is read. The

@@ -152,12 +152,13 @@ Stub for each response it answers, and for each further named example
 | A media type's `examples` | The first gives the body. Each further one gets a Stub of its own, which also has the request condition `Smock-Example: <name>` ([Bodies from examples](#bodies-from-examples)). |
 | A media type's `example` | The body, when the media type has no `examples`. |
 | A media type's `schema` | One fixed sample of the schema, written in the file, when the media type has no example ([Samples from schemas](#samples-from-schemas)). |
+| A response's `headers` | Each header in `headers`, after the `Content-Type`, with its example or a sample of its schema, on every Stub of the response ([Response headers](#response-headers)). |
 | Parameters, request bodies, `Content-Type`, `Accept` and `security` | No condition, so a request without a documented parameter still gets the documented answer. A path parameter's schema does not narrow its pattern either. |
 | `deprecated: true` | The operation is imported like any other. In YAML, the Stub's comment says `deprecated`. No `Deprecation` header is added, since the document does not declare one. |
 | `callbacks` | Not imported, with one warning per operation. |
 | `webhooks` | Not imported, with one warning: they are requests the API sends, not ones it answers. |
 | `security`, `links`, descriptions, tags and `x-` extensions | Nothing, and no warning. |
-| A `$ref` to a Path Item, a Response, an Example or, as 3.2 allows, a Media Type in the same document | Followed, as if the part it names were written in place (see [References and bundling](#references-and-bundling)). |
+| A `$ref` to a Path Item, a Response, a Header, an Example or, as 3.2 allows, a Media Type in the same document | Followed, as if the part it names were written in place (see [References and bundling](#references-and-bundling)). |
 | Fields beside a Path Item's `$ref` | Ignored, with a warning, since OpenAPI leaves their meaning undefined. |
 
 A Stub matches on its method and its path. The Stub of a response other
@@ -588,6 +589,68 @@ json:
   it is written, in a branch too. The next branch that has the keyword
   then gives it.
 
+### Response headers
+
+Each header that a response documents in `headers` is written in the
+Stub's response, so that clients that read it see it. Every Stub of the
+response sends it, those of its named examples too. A `200` response with
+
+```yaml
+headers:
+  X-Rate-Limit:
+    schema: { type: integer }
+  X-Request-Id:
+    example: req-1
+  Content-Length:
+    schema: { type: integer }
+```
+
+answers
+
+```yaml
+response:
+  status: 200
+  headers:
+    X-Rate-Limit: "0"
+    X-Request-Id: req-1
+```
+
+- **Value.** A header is written with its `example`, else the first of
+  its `examples` that gives a value, else a sample of its `schema`
+  ([Samples from schemas](#samples-from-schemas)). With none of these,
+  the value is empty.
+- **Example Objects.** An Example Object gives a header its
+  `serializedValue` first, since it is the exact text of the header, then
+  its `dataValue`, then its `value`.
+- **`content`.** A header described with `content` takes its value the
+  same way from the media type there, after its own `example` and
+  `examples`.
+- **Text.** A string is written as it is. A number is written as smock
+  writes numbers, a boolean as `true` or `false`, and an array of these
+  joined with `,`, as style `simple` asks: `["a", 1]` is `a,1`.
+- **Order.** In `headers`, the `Content-Type` comes first, then the
+  documented headers, in the order the document writes them.
+
+These are skipped without a warning, since documenting them is common and
+right: `Content-Type`, which OpenAPI says to ignore here, and
+`Content-Length`, `Transfer-Encoding` and `Connection`, which smock sets
+itself.
+
+These are left out, with a warning:
+
+- `Smock-Mock`, which smock adds itself when the Default Mock answers;
+- a name that is not an HTTP token, such as one with a space;
+- a name that repeats an earlier one in another case, such as `x-id`
+  after `X-Id`, since header names are case-insensitive;
+- a value that is an object or null, or an array that holds one or an
+  array;
+- a value with a control character other than tab, such as a line break.
+
+A header with both `example` and `examples` uses `example`, with a
+warning. The examples after the one that gives the value are left out,
+with a warning each. A `schema` beside `content` is ignored, with a
+warning, and so is each media type of `content` after the first.
+
 ### IDs and conditions that repeat
 
 - Two imported operations with the same `operationId` are an error that
@@ -947,8 +1010,8 @@ from a fixed directory keeps the relative paths naming the same files.
 
 Documents describe shared parts once, under `components`, and point at
 them with `$ref`. The command follows a reference within the document
-where it reads a Path Item, a Response, an Example or, as 3.2 allows, a
-Media Type:
+where it reads a Path Item, a Response, a Header, an Example or, as 3.2
+allows, a Media Type:
 
 ```json
 {
@@ -985,8 +1048,8 @@ This imports `listPets` as if both parts were written in place.
 - Operations reached through a Path Item's `$ref` keep the order of the
   path keys.
 - The fields beside a Path Item's `$ref` are ignored, with a warning, but
-  `x-` extensions. The fields beside the `$ref` of a Response or an
-  Example are ignored, as OpenAPI asks.
+  `x-` extensions. The fields beside the `$ref` of a Response, a Header
+  or an Example are ignored, as OpenAPI asks.
 - A `$ref` inside example data, in `example`, `value` or `dataValue`, is
   data, not a reference: it is copied as written.
 - `$id` at the root of the document, and 3.2's `$self`, are ignored: a
@@ -1168,7 +1231,6 @@ command does.
 - These parts are not imported yet. Each is left out with a warning,
   unless this list says otherwise:
   - the paths of `servers`, so no prefix is added to the paths;
-  - response headers;
   - schema references: a `$ref` in a schema is an error;
   - references to other files: such a `$ref` is an error, so bundle the
     document first (see [References and bundling](#references-and-bundling));
