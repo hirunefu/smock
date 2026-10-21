@@ -25,6 +25,37 @@ pub fn compact_json_bytes(json : Json) -> Bytes {
 }
 
 ///|
+/// The bytes of UTF-8 that `write_json` writes for `json`, counted without
+/// writing them.
+fn compact_length(json : Json) -> Int64 {
+  match json {
+    Null | True => 4L
+    False => 5L
+    Number(n, repr~) => number_text(n, repr).length().to_int64()
+    String(s) => json_string_content_length(s).to_int64() + 2L
+    Array(items) => {
+      let mut n = 2L
+      for i, item in items {
+        n += compact_length(item) + (if i > 0 { 1L } else { 0L })
+      }
+      n
+    }
+    Object(members) => {
+      let mut n = 2L
+      let mut first = true
+      for key, value in members {
+        n += json_string_content_length(key).to_int64() +
+          3L +
+          compact_length(value) +
+          (if first { 0L } else { 1L })
+        first = false
+      }
+      n
+    }
+  }
+}
+
+///|
 /// Writes `json` as compact JSON in UTF-8.
 fn write_json(out : @buffer.Buffer, json : Json) -> Unit {
   match json {
@@ -74,6 +105,20 @@ fn number_text(n : Double, repr : String?) -> String {
     Some(text) => text
     None => n.to_string()
   }
+}
+
+///|
+/// The bytes of UTF-8 that `write_json_string_content` writes for `s`.
+fn json_string_content_length(s : StringView) -> Int {
+  let mut n = 0
+  for c in s {
+    n += match c {
+      '"' | '\\' | '\n' | '\r' | '\t' | '\b' | '\u{0c}' => 2
+      _ if c < ' ' => 6
+      _ => char_utf8_length(c)
+    }
+  }
+  n
 }
 
 ///|
