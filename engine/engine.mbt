@@ -17,6 +17,8 @@ pub struct Engine {
   priv ephemeral : EphemeralStubs
   /// The state of each Scenario, by Mock and Session.
   priv scenarios : ScenarioStates
+  /// The Variables, by Mock and Session.
+  priv variables : VariableStore
   /// The Journal: the entries committed, oldest first, within its bound.
   priv journal : Journal
   /// The environment variables templates may read, with the values read
@@ -154,6 +156,7 @@ pub fn Engine::Engine(
     last_reload: None,
     ephemeral: EphemeralStubs::new(),
     scenarios: ScenarioStates::new(),
+    variables: VariableStore::new(),
     journal: Journal::new(journal),
     env,
   }
@@ -432,6 +435,7 @@ pub fn Engine::handle(
   }
   let mut scenario : ScenarioMove? = None
   let mut response_index = None
+  let mut variables_written = none_written
   let mut template_error = None
   let mut near_miss = None
   let plan : ResponsePlan = match matched {
@@ -462,28 +466,66 @@ pub fn Engine::handle(
       //    one of its own, and the helpers from the request's helper
       //    generator, made from it once something is rendered.
       let draw = generator.unwrap_or(rand).uint64()
-      // 3. The Variables: here their values are to be rendered, drawing
-      //    from the helper generator first, and written. No Stub sets any
-      //    yet.
-      // 4. The pick: the response the request gets. A Stub with `response`
-      //    has one, and draws nothing more.
-      response_index = pick_response(stub, draw)
-      let response = stub.responses[response_index.unwrap_or(0)].response
-      // 5. Rendering and planning: the response as written, or rendered
-      //    from its templates.
-      let plan = match response.template {
-        None => stub_response(response)
-        Some(template) => {
-          let (plan, error) = respond(
-            stub.id,
-            response.status,
-            template,
-            incoming,
-            now~,
-            rand=@template.helper_generator(draw),
-          )
-          template_error = error
-          plan
+      // 3. The Variables: each value is rendered, in the order written,
+      //    against the Variables as they were before the request, drawing
+      //    from the helper generator first; then all are written at once.
+      //    The response renders on from there, and sees the new values. A
+      //    value that fails to render writes none, and no response is
+      //    picked: the request gets the template failure.
+      let mut context : @template.Context? = None
+      let mut failed : ResponsePlan? = None
+      if stub.writes_variables() {
+        let first = @template.Context::new(
+          template_input(incoming),
+          now~,
+          rand=@template.helper_generator(draw),
+          vars?=self.variables.of(stub.mock, session),
+        )
+        try self.write_variables(stub, session, first) catch {
+          RenderError(at~, message~) => {
+            let error = { at, message, }
+            template_error = Some(error)
+            failed = Some(template_failed(stub.id, error))
+          }
+        } noraise {
+          next => {
+            context = Some(next)
+            variables_written = stub.variables.names
+          }
+        }
+      }
+      let plan = match failed {
+        Some(plan) => plan
+        None => {
+          // 4. The pick: the response the request gets. A Stub with
+          //    `response` has one, and draws nothing more.
+          response_index = pick_response(stub, draw)
+          let response = stub.responses[response_index.unwrap_or(0)].response
+          // 5. Rendering and planning: the response as written, or rendered
+          //    from its templates.
+          match response.template {
+            None => stub_response(response)
+            Some(template) => {
+              let context = match context {
+                Some(context) => context
+                None =>
+                  @template.Context::new(
+                    template_input(incoming),
+                    now~,
+                    rand=@template.helper_generator(draw),
+                    vars?=self.variables.of(stub.mock, session),
+                  )
+              }
+              let (plan, error) = respond(
+                stub.id,
+                response.status,
+                template,
+                context,
+              )
+              template_error = error
+              plan
+            }
+          }
         }
       }
       // 6. Faults: a plan comes without a delay or a Fault, and gets the
@@ -544,6 +586,7 @@ pub fn Engine::handle(
         matched=source,
         scenario~,
         response_index~,
+        variables_written~,
         near_miss~,
         plan~,
         template_error~,

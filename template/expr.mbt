@@ -5,7 +5,7 @@
 //     ref     = root steps
 //     steps   = { "." name | "[" integer "]" | "[" string "]" }
 //     root    = "method" | "path" | "query" | "header" | "cookie" | "body"
-//             | "bodyText" | "env" | "loop" | loop variable
+//             | "bodyText" | "env" | "vars" | "loop" | loop variable
 //     call    = function "(" [ expr { "," expr } ] ")" steps
 //     cond    = [ "!" ] expr [ ( "==" | "!=" ) literal ]
 //     literal = string | number | "true" | "false" | "null"
@@ -20,8 +20,8 @@
 priv enum Expr {
   /// A literal: a string, a number, true, false or null.
   Literal(Json)
-  /// A reference to a request field, a listed environment variable,
-  /// `loop.index` or a loop variable, with its source text.
+  /// A reference to a request field, a listed environment variable, a
+  /// Variable, `loop.index` or a loop variable, with its source text.
   Ref(Root, Array[Step], String)
   /// A call of a helper, with its arguments and its source text, which
   /// names it when it gives a missing value.
@@ -46,6 +46,9 @@ priv enum Root {
   /// `env.NAME`: the value of a listed variable, read when the template was
   /// parsed, or `None` when it is unset.
   Env(Json?)
+  /// `vars.NAME`: the Variable `NAME` of the request's Mock and Session, by
+  /// its name. The steps of the reference go into its value.
+  Vars(String)
   LoopIndex
   /// A loop variable, by its name.
   Var(String)
@@ -107,10 +110,11 @@ priv suberror Syntax {
 let reserved : Array[String] = ["for", "if", "else", "end", "each", "params"]
 
 ///|
-/// The names of request fields, `env` and `loop`, which a loop variable
-/// cannot take.
+/// The names of request fields, `env`, `vars` and `loop`, which a loop
+/// variable cannot take.
 let root_names : Array[String] = [
-  "method", "path", "query", "header", "cookie", "body", "bodyText", "env", "loop",
+  "method", "path", "query", "header", "cookie", "body", "bodyText", "env", "vars",
+  "loop",
 ]
 
 ///|
@@ -501,6 +505,15 @@ fn Parser::reference(
             "\{text}: env takes exactly one name, such as env.REGION",
           )
       }
+    "vars" =>
+      match steps {
+        [Name(name), .. rest] => Ref(Vars(name), rest.to_owned(), text)
+        _ =>
+          raise Syntax(
+            start,
+            "\{text}: vars takes the name of a Variable first, such as vars.count or vars.cart.items[0]",
+          )
+      }
     "query" => with_name(Query)
     "header" => with_name(Header)
     "cookie" => with_name(Cookie)
@@ -542,6 +555,7 @@ fn root_word(root : Root) -> String {
     Body => "body"
     BodyText => "bodyText"
     Env(_) => "env"
+    Vars(_) => "vars"
     LoopIndex => "loop"
     Var(name) => name
   }

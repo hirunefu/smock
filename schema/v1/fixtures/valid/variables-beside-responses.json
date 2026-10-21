@@ -1,0 +1,22 @@
+{
+  "mocks": [{ "name": "market" }],
+  "stubs": [
+    {
+      "id": "get-prices",
+      "mock": "market",
+      "request": { "method": "GET", "path": "/prices" },
+      "variables": { "requests": "${concat(vars.requests ?? '', 'x')}" },
+      "responses": [
+        { "weight": 9, "status": 200, "template": true, "json": { "seen": "${len(vars.requests)}" } },
+        { "weight": 1, "status": 503 }
+      ]
+    },
+    {
+      "id": "reset-prices",
+      "mock": "market",
+      "request": { "method": "DELETE", "path": "/prices" },
+      "variables": {},
+      "response": { "status": 204 }
+    }
+  ]
+}

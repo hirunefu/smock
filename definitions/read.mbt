@@ -476,6 +476,7 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
     template: None,
   }
   let mut weighted = None
+  let mut variables = no_variable_writes
   let mut fault = None
   let mut scenario = None
   for key, value in stub {
@@ -486,6 +487,7 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
       "request" => request = self.read_conditions(field, value)
       "response" => response = self.read_response(pointer, field, value)
       "responses" => weighted = Some(self.read_responses(pointer, field, value))
+      "variables" => variables = self.read_variables(pointer, field, value)
       "priority" => priority = self.read_priority(field, value)
       "fault" => fault = self.read_fault(field, value)
       "scenario" => scenario = self.read_scenario(field, value)
@@ -516,8 +518,66 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
     scenario,
     responses: ReadOnlyArray::from_array(responses),
     total_weight,
+    variables,
     fault,
   })
+}
+
+///|
+/// What a Stub without `variables` writes: nothing.
+let no_variable_writes : VariableWrites = {
+  names: ReadOnlyArray::from_array([]),
+  values: ReadOnlyArray::from_array([]),
+}
+
+///|
+/// Reads the `variables` of the Stub at `stub_pointer`: the value `json` at
+/// `pointer`, an object that maps the name of each Variable to its value.
+/// Each value is a structured template, parsed whether or not a response
+/// has `template` on, whose root must give a value, as the root of a
+/// `json` must. Returns them in the order written.
+fn File::read_variables(
+  self : File,
+  stub_pointer : String,
+  pointer : String,
+  json : Json,
+) -> VariableWrites {
+  guard json is Object(members) else {
+    self.error(pointer, "must be an object")
+    return no_variable_writes
+  }
+  let names = []
+  let values = []
+  for name, value in members {
+    let field = child_pointer(pointer, name)
+    if !is_variable_name(name) {
+      self.error(
+        field,
+        "is not a Variable name: 1 to \{max_variable_name} ASCII letters, digits, _ and -",
+      )
+      continue
+    }
+    match
+      @template.Structured::parse(
+        value,
+        pointer=field[stub_pointer.length():].to_owned(),
+        env=self.env,
+        variable=true,
+      ) {
+      Ok(template) => {
+        names.push(name)
+        values.push(template)
+      }
+      Err(problems) =>
+        for problem in problems {
+          self.error(stub_pointer + problem.pointer, problem.message)
+        }
+    }
+  }
+  {
+    names: ReadOnlyArray::from_array(names),
+    values: ReadOnlyArray::from_array(values),
+  }
 }
 
 ///|

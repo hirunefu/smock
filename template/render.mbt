@@ -31,9 +31,10 @@ priv enum ParsedBody {
 }
 
 ///|
-/// One rendering for a request, such as its response: the request, the
-/// time, the random source of the helpers, and what the rendering has used
-/// of its bounds so far.
+/// One rendering for a request, such as its response or the value of a
+/// Variable: the request, the time, the random source of the helpers, the
+/// Variables it reads, and what the rendering has used of its bounds so
+/// far.
 pub struct Context {
   priv input : Input
   /// The time of the request, in milliseconds since the Unix epoch.
@@ -50,6 +51,13 @@ pub struct Context {
   priv mut body : ParsedBody
   /// The request's cookies, by name, once a template has read one.
   priv mut cookies : Map[String, Array[String]]?
+  /// The Variables of the request's Mock and Session that `vars.NAME`
+  /// reads, by name, or `None` when there are none. The rendering never
+  /// changes them.
+  priv vars : Map[String, Json]?
+  /// Whether the rendering is of a Variable's value rather than of a
+  /// response, as the messages about its bounds say.
+  priv mut of_value : Bool
 }
 
 ///|
@@ -74,12 +82,14 @@ pub fn helper_generator(draw : UInt64) -> @prng.Generator {
 /// Starts one rendering for the request `input`, received at `now`
 /// (milliseconds since the Unix epoch). The helpers draw from `rand`, the
 /// request's `helper_generator`, in the order the template is rendered.
+/// `vars` are the Variables `vars.NAME` reads, by name: by default, none.
 /// The bounds on loop iterations and on output count for this rendering
 /// alone.
 pub fn Context::new(
   input : Input,
   now~ : Int64,
   rand~ : @prng.Generator,
+  vars? : Map[String, Json],
 ) -> Context {
   {
     input,
@@ -90,7 +100,21 @@ pub fn Context::new(
     output: 0,
     body: NotParsed,
     cookies: None,
+    vars,
+    of_value: false,
   }
+}
+
+///|
+/// Starts the next rendering for the same request, once this one is done,
+/// such as the response after the values of the Stub's Variables. It reads
+/// the Variables `vars`, by default none, and has bounds of its own. It
+/// shares the rest: the request, the time, the helper generator, which goes
+/// on from where this rendering stopped, and what this one parsed of the
+/// request, so that the body and the cookies are parsed at most once per
+/// request.
+pub fn Context::next(self : Context, vars? : Map[String, Json]) -> Context {
+  { ..self, elapsed: 0L, iterations: 0, output: 0, vars, of_value: false, }
 }
 
 ///|
@@ -114,18 +138,24 @@ fn Context::count(
   at : String,
 ) -> Unit raise RenderError {
   self.output += bytes
-  check_output(self.output, at)
+  self.check_output(self.output, at)
 }
 
 ///|
 /// Raises a render error at `at` when `total` bytes of output are more than
 /// the bound.
-fn check_output(total : Int, at : String) -> Unit raise RenderError {
+fn Context::check_output(
+  self : Context,
+  total : Int,
+  at : String,
+) -> Unit raise RenderError {
   if total > max_output {
-    raise RenderError(
-      at~,
-      message="the rendered body or events take more than 1 MiB",
-    )
+    let what = if self.of_value {
+      "the rendered value takes"
+    } else {
+      "the rendered body or events take"
+    }
+    raise RenderError(at~, message="\{what} more than 1 MiB")
   }
 }
 
@@ -256,6 +286,15 @@ fn Context::reference(
     Method => Some(Json::string(request.meth))
     BodyText => Some(Json::string(@utf8.decode_lossy(request.body)))
     Env(value) => value
+    Vars(name) =>
+      match self.vars {
+        Some(vars) =>
+          match vars.get(name) {
+            Some(value) => walk(value, steps)
+            None => None
+          }
+        None => None
+      }
     Path =>
       match steps {
         [Index(n)] => {
@@ -536,7 +575,7 @@ fn Context::write_node(
     Static(json) => write_json(out, json)
     Single(expr, at) => {
       write_json(out, self.value(expr, frames, at).json)
-      check_output(start + out.length(), at)
+      self.check_output(start + out.length(), at)
     }
     Interpolated(parts, at) => {
       let text = StringBuilder()
@@ -550,7 +589,7 @@ fn Context::write_node(
         }
       }
       write_json(out, Json::string(text.to_string()))
-      check_output(start + out.length(), at)
+      self.check_output(start + out.length(), at)
     }
     Members(members) => {
       out.write_byte(b'{')
@@ -590,9 +629,10 @@ fn Context::write_node(
       for index, element in items {
         self.iterations += 1
         if self.iterations > max_iterations {
+          let what = if self.of_value { "value" } else { "response" }
           raise RenderError(
             at~,
-            message="the loops of one response run at most \{max_iterations} iterations",
+            message="the loops of one \{what} run at most \{max_iterations} iterations",
           )
         }
         let inner = [..frames, { name, element, index, }]

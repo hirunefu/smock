@@ -152,9 +152,48 @@ pub struct Stub {
   /// a matched request then takes a pick among them. `None` for a Stub with
   /// `response`, which takes no pick.
   total_weight : Int?
+  /// The Variables the Stub writes when it matches, `variables`: none when
+  /// it has no `variables`.
+  variables : VariableWrites
   /// The Faults the Stub injects when it matches, if it has `fault`.
   fault : Fault?
 } derive(Debug, Eq)
+
+///|
+/// The Variables a Stub writes when it matches, in the order written: the
+/// name of each, and the template of its value, a structured template
+/// whose pointer is `/variables/NAME`. The two arrays have the same
+/// length.
+pub struct VariableWrites {
+  names : ReadOnlyArray[String]
+  values : ReadOnlyArray[@template.Structured]
+} derive(Debug, Eq)
+
+///|
+/// Whether the Stub writes any Variable. A Stub that writes none pays only
+/// this test for Variables when it matches.
+pub fn Stub::writes_variables(self : Stub) -> Bool {
+  self.variables.names.length() > 0
+}
+
+///|
+/// The longest name of a Variable, in characters.
+pub let max_variable_name : Int = 128
+
+///|
+/// Whether `name` can name a Variable: 1 to `max_variable_name` name
+/// characters, which are ASCII letters, digits, `_` and `-`.
+pub fn is_variable_name(name : String) -> Bool {
+  if name.length() < 1 || name.length() > max_variable_name {
+    return false
+  }
+  for c in name {
+    if !(c.is_ascii_alphabetic() || c.is_ascii_digit() || c is ('_' | '-')) {
+      return false
+    }
+  }
+  true
+}
 
 ///|
 /// One of a Stub's responses, with its weight: the chance that a matched
