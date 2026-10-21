@@ -23,11 +23,19 @@ of each GitHub release include its section
   such as `len(body.items)`.
 - A helper's result above 1 MiB is a render error, found before the
   result is built.
+- `--template-env` (`SMOCK_TEMPLATE_ENV`) on `smock serve`, `smock check`
+  and `smock render` lists, separated by commas, the environment variables
+  templates may read. Their values are read once, at startup, and every
+  load, reload and Ephemeral Stub uses them. A name that starts with
+  `SMOCK_` cannot be listed.
+- The template root `env.NAME` gives the value of a listed variable as a
+  string, and is missing when it is unset. A name that is not listed is an
+  error when loading.
 
 ### Changed
 
-- A loop variable named `cookie` now fails to load, since `cookie` is a
-  request field in templates. No valid file changes meaning: rename the
+- A loop variable named `cookie` or `env` now fails to load, since `cookie`
+  and `env` are template roots. No valid file changes meaning: rename the
   loop variable. The Definition file format is still version 1.
 
 ## [0.2.0] - 2026-10-21

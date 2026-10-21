@@ -25,6 +25,7 @@ async test "every serve setting is a flag with a matching SMOCK_ environment var
       #|  --session-member <session-member>            The member of the Session header whose value is the Session key. [env: SMOCK_SESSION_MEMBER] [default: smock-session]
       #|  --log-format <log-format>                    The log format: json. [env: SMOCK_LOG_FORMAT] [default: json]
       #|  --body-file-dir <body-file-dir>              The body-file subdirectory of the definitions directory. [env: SMOCK_BODY_FILE_DIR] [default: files]
+      #|  --template-env <template-env>                The environment variables templates may read as env.NAME, separated by commas, such as REGION,API_BASE. Their values are read once, at startup. A listed value can show in responses, renderings and template error messages, so list only values that may be shown. A name is letters, digits and _, starting with a letter or _, and cannot start with SMOCK_. None by default. [env: SMOCK_TEMPLATE_ENV]
       #|  --header-size-limit <header-size-limit>      The most bytes a request head (request line and header fields) may take. Larger heads get 431. [env: SMOCK_HEADER_SIZE_LIMIT] [default: 16384]
       #|  --header-count-limit <header-count-limit>    The most header fields a request may have. More get 431. [env: SMOCK_HEADER_COUNT_LIMIT] [default: 100]
       #|  --body-limit <body-limit>                    The longest request body, in bytes. Longer bodies get 413. [env: SMOCK_BODY_LIMIT] [default: 10485760]

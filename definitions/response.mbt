@@ -145,7 +145,13 @@ fn File::parse_templates(
     ok = false
   }
   let text = (source : String, pointer : String, kind : @template.TextKind) => {
-    match @template.Text::parse(source, pointer=within(pointer), kind~) {
+    match
+      @template.Text::parse(
+        source,
+        pointer=within(pointer),
+        kind~,
+        env=self.env,
+      ) {
       Ok(text) => Some(text)
       Err(problem) => {
         report(problem)
@@ -154,7 +160,8 @@ fn File::parse_templates(
     }
   }
   let structured = (value : Json, pointer : String) => {
-    match @template.Structured::parse(value, pointer=within(pointer)) {
+    match
+      @template.Structured::parse(value, pointer=within(pointer), env=self.env) {
       Ok(template) => Some(template)
       Err(problems) => {
         problems.each(report)

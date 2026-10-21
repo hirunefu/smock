@@ -273,9 +273,9 @@ test "a structured template that does not parse is reported at the JSON Pointer 
       #|m.yaml: /stubs/0/response/json/e: template: a $if needs "then"
       #|m.yaml: /stubs/0/response/json/f/otherwise: template: an object with "$if" has only "$if", "then", "else"
       #|m.yaml: /stubs/0/response/json/g/$each: template: column 1: write the expression of $each without ${ }, such as $each: body.items
-      #|m.yaml: /stubs/0/response/json/h/as: template: "body" cannot be a loop variable: it is a request field, loop or a reserved word
-      #|m.yaml: /stubs/0/response/json/i/as: template: "loop" cannot be a loop variable: it is a request field, loop or a reserved word
-      #|m.yaml: /stubs/0/response/json/j/as: template: "for" cannot be a loop variable: it is a request field, loop or a reserved word
+      #|m.yaml: /stubs/0/response/json/h/as: template: "body" cannot be a loop variable: it is a request field, env, loop or a reserved word
+      #|m.yaml: /stubs/0/response/json/i/as: template: "loop" cannot be a loop variable: it is a request field, env, loop or a reserved word
+      #|m.yaml: /stubs/0/response/json/j/as: template: "for" cannot be a loop variable: it is a request field, env, loop or a reserved word
       #|m.yaml: /stubs/0/response/json/k/as: template: a loop variable is a name of letters, digits, _ and -, starting with a letter or _
       #|m.yaml: /stubs/0/response/json/l/$each: template: "$each" must be a string
       #|m.yaml: /stubs/0/response/json/m/do: template: column 10: unknown name "j": not a request field, a loop variable or a helper
@@ -327,7 +327,7 @@ test "cookie takes exactly one name, as query does, and a loop variable cannot b
       #|m.yaml: /stubs/0/response/json/b: template: column 3: cookie[0]: cookie takes exactly one name, such as cookie.x or cookie['x y']
       #|m.yaml: /stubs/0/response/json/c: template: column 18: cookie: cookie takes exactly one name, such as cookie.x or cookie['x y']
       #|m.yaml: /stubs/0/response/json/d/$each: template: column 1: cookie: cookie takes exactly one name, such as cookie.x or cookie['x y']
-      #|m.yaml: /stubs/0/response/json/e/as: template: "cookie" cannot be a loop variable: it is a request field, loop or a reserved word
+      #|m.yaml: /stubs/0/response/json/e/as: template: "cookie" cannot be a loop variable: it is a request field, env, loop or a reserved word
     ),
   )
 }

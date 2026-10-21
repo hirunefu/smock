@@ -247,6 +247,7 @@ fn Context::reference(
   match root {
     Method => Some(Json::string(request.meth))
     BodyText => Some(Json::string(@utf8.decode_lossy(request.body)))
+    Env(value) => value
     Path =>
       match steps {
         [Index(n)] => {
@@ -367,7 +368,14 @@ fn Context::parsed_body(self : Context) -> Json? {
 /// nothing around it.
 fn number_of(text : String) -> Json? {
   let chars = text.iter().collect()
-  let parser = { chars, i: 0, vars: [], in_loop: false, text: false, }
+  let parser = {
+    chars,
+    i: 0,
+    vars: [],
+    in_loop: false,
+    text: false,
+    env: no_env,
+  }
   let number = parser.number() catch { _ => return None }
   if parser.i == chars.length() {
     Some(number)

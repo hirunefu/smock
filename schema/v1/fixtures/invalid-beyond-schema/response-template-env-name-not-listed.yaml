@@ -1,0 +1,10 @@
+mocks:
+  - name: geo
+stubs:
+  - id: region
+    mock: geo
+    response:
+      status: 200
+      template: true
+      json:
+        region: ${env.REGION ?? 'local'}

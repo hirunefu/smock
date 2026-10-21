@@ -54,13 +54,15 @@ let max_iterations : Int = 10_000
 
 ///|
 /// Parses `source` as a structured template, for the field at `pointer`,
-/// within the Stub. Returns the template, or every problem found.
+/// within the Stub. `env` holds the environment variables it may read; by
+/// default, none. Returns the template, or every problem found.
 pub fn Structured::parse(
   source : Json,
   pointer~ : String,
+  env? : Env = no_env,
 ) -> Result[Structured, Array[Problem]] {
   let problems = []
-  let root = parse_node(source, pointer, [], false, true, problems)
+  let root = parse_node(source, pointer, [], false, true, env, problems)
   if problems.is_empty() {
     let least = least_iterations(root)
     if least > max_iterations.to_int64() {
@@ -79,14 +81,16 @@ pub fn Structured::parse(
 
 ///|
 /// Parses the value `json` at `pointer`. `vars` are the loop variables in
-/// scope, `in_loop` says whether it is inside a `$each`, and `required`
-/// whether it must give a value: at the root, a `$if` needs `else`.
+/// scope, `in_loop` says whether it is inside a `$each`, `required`
+/// whether it must give a value: at the root, a `$if` needs `else`, and
+/// `env` holds the environment variables it may read.
 fn parse_node(
   json : Json,
   pointer : String,
   vars : Array[String],
   in_loop : Bool,
   required : Bool,
+  env : Env,
   problems : Array[Problem],
 ) -> Node {
   let problem = (at : String, message : String) => {
@@ -96,7 +100,7 @@ fn parse_node(
   match json {
     String(s) => {
       let chars = s.iter().collect()
-      let parts = parse_parts(chars, vars, in_loop, text=false) catch {
+      let parts = parse_parts(chars, vars, in_loop, text=false, env~) catch {
         Syntax(at, message) =>
           return problem(pointer, "\{position(chars, at)}\{message}")
       }
@@ -116,6 +120,7 @@ fn parse_node(
             vars,
             in_loop,
             false,
+            env,
             problems,
           )
         }),
@@ -123,7 +128,7 @@ fn parse_node(
     Object(members) => {
       if members.contains("$each") || members.contains("$if") {
         return parse_directive(
-          members, pointer, vars, in_loop, required, problems,
+          members, pointer, vars, in_loop, required, env, problems,
         )
       }
       let out = []
@@ -146,7 +151,9 @@ fn parse_node(
         } else {
           key
         }
-        out.push((key, parse_node(value, at, vars, in_loop, false, problems)))
+        out.push(
+          (key, parse_node(value, at, vars, in_loop, false, env, problems)),
+        )
       }
       Members(out)
     }
@@ -162,6 +169,7 @@ fn parse_directive(
   vars : Array[String],
   in_loop : Bool,
   required : Bool,
+  env : Env,
   problems : Array[Problem],
 ) -> Node {
   let problem = (at : String, message : String) => {
@@ -190,7 +198,7 @@ fn parse_directive(
       return false
     }
     let chars = text.iter().collect()
-    let parser = { chars, i: 0, vars, in_loop, text: false, }
+    let parser = { chars, i: 0, vars, in_loop, text: false, env, }
     try {
       if text.has_prefix("${") {
         raise Syntax(
@@ -229,7 +237,7 @@ fn parse_directive(
       String(name) if root_names.contains(name) || reserved.contains(name) =>
         return problem(
           as_at,
-          "\{name.escape()} cannot be a loop variable: it is a request field, loop or a reserved word",
+          "\{name.escape()} cannot be a loop variable: it is a request field, env, loop or a reserved word",
         )
       String(name) => name
       _ => return problem(as_at, "\"as\" must be a string")
@@ -240,6 +248,7 @@ fn parse_directive(
       [..vars, name],
       true,
       false,
+      env,
       problems,
     )
     if !ok {
@@ -270,6 +279,7 @@ fn parse_directive(
       vars,
       in_loop,
       required,
+      env,
       problems,
     )
     let otherwise = members
@@ -281,6 +291,7 @@ fn parse_directive(
           vars,
           in_loop,
           required,
+          env,
           problems,
         )
       })
