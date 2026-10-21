@@ -120,10 +120,10 @@ Packages of `smock/smock`:
 
 A package that does I/O or uses FFI declares `supported_targets = "native"`.
 Every other package also builds for `wasm-gc`, and CI tests it there. The
-packages that decide a response, `definitions`, `engine` and `template`,
-and the ones they import, `prng`, `cookies` and `log`, must stay that way: `scripts/check-no-io.sh`
-fails if one of them leaves out `wasm-gc`, reads the environment, binds C
-or imports a package that does I/O.
+packages that decide a response, `definitions`, `engine` and `template`, and
+the ones they import, `prng`, `cookies`, `unicode` and `log`, must stay that
+way: `scripts/check-no-io.sh` fails if one of them leaves out `wasm-gc`,
+reads the environment, binds C or imports a package that does I/O.
 
 `openapi/admin.json` is the OpenAPI 3.1 document of the Admin API, the
 contract for it as the JSON Schema is for Definition files; a client can be
@@ -519,38 +519,38 @@ variables from its own environment.
 
 `smock render --dir defs get-user --request sample.json` shows what a Stub
 returns for a sample request before a test relies on it. The sample is JSON,
-`{method, path, query, headers, body, session, vars}`, every member
-optional (`GET /` without query, headers, body, Session or Variables); the
-path and the query values are given percent-decoded, as Stub conditions
-compare them, and a repeated parameter or header takes an array of values.
-Cookies come from `headers.Cookie`, as a request's come from its `Cookie`
-fields, and form fields from the body, read as a form when
-`headers.Content-Type` says it is one. `vars` maps the name of each
+`{method, path, query, headers, body, session, vars}`, every member optional
+(`GET /` without query, headers, body, Session or Variables); the path and
+the query values are given percent-decoded, as Stub conditions compare them,
+and a repeated parameter or header takes an array of values. Cookies come
+from `headers.Cookie`, as a request's come from its `Cookie` fields, and
+form fields from the body, read as a form when `headers.Content-Type` says
+it is one. `vars` maps the name of each
 [Variable](docs/definition-files.md#variables) templates read to its value;
 a rendering never reads the live Variables. smock reads the directory as
-`smock serve` does, body files included, with `--body-file-dir` and
-`--template-env` as `smock serve` takes them and the listed environment
-variables read from its own environment, and prints
-the rendering as JSON, the same as the Admin render operation's
-result without its `warnings`: the Stub's status, headers and body (`utf-8`
-text, or `base64`) or its Server-Sent Events, and the conditions the sample
-fails, with expected and actual values as in a Near miss (empty when it
-meets them all). The Stub is rendered even when the sample fails them, and a
+`smock serve` does, body files included. It takes `--body-file-dir` and
+`--template-env` as `smock serve` does, and reads the listed environment
+variables from its own environment. It prints the rendering as JSON, the
+same as the Admin render operation's result without its `warnings`: the
+Stub's status, headers and body (`utf-8` text, or `base64`) or its
+Server-Sent Events, and the conditions the sample fails, with expected and
+actual values as in a Near miss (empty when it meets them all). The Stub is
+rendered even when the sample fails them, and a
 [templated](docs/definition-files.md#templates) response is rendered for the
 sample. `--time` (RFC 3339) and `--seed` fix the clock and the random source
 of the rendering; without a seed, it uses the Stub's `fault.seed`, or a
-fresh one. A Stub with [`responses`](docs/definition-files.md#several-responses)
-renders the one the seed picks, and `--response <i>` renders the one at
-index `i`, from 0. The rendering shows the `time`, the `seed` and the
-`responseIndex` it used, so it can be repeated exactly, and a template that
-fails for the sample shows the 500 a request would get and its
-`templateError`. It also shows, as `variables`, the values the Stub's
-`variables` would write, rendered against the sample's `vars`, and the
-response reads them written over the sample's `vars`. It writes nothing.
-An invalid definitions directory prints the messages `smock check`
-prints, and it, an unknown Stub ID, an index the Stub has no
-response at, and a sample that cannot be read or is not valid exit with
-status 1, with the problem on stderr.
+fresh one. A Stub with
+[`responses`](docs/definition-files.md#several-responses) renders the one
+the seed picks, and `--response <i>` renders the one at index `i`, from 0.
+The rendering shows the `time`, the `seed` and the `responseIndex` it used,
+so it can be repeated exactly, and a template that fails for the sample
+shows the 500 a request would get and its `templateError`. It also shows, as
+`variables`, the values the Stub's `variables` would write, rendered against
+the sample's `vars`, and the response reads them written over the sample's
+`vars`. It writes nothing. An invalid definitions directory prints the
+messages `smock check` prints, and it, an unknown Stub ID, an index the Stub
+has no response at, and a sample that cannot be read or is not valid exit
+with status 1, with the problem on stderr.
 
 [docs/definition-files.md](docs/definition-files.md) describes the format:
 how Stubs match requests (method, path, query parameters, headers, cookies
