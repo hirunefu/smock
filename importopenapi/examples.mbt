@@ -18,9 +18,11 @@ fn Report::examples(
 ) -> Answers? {
   let mut first = None
   let named = []
+  let serialized_first = !is_json_media_type(key)
   for name, json in examples {
     let at = @definitions.child_pointer(pointer, name)
-    guard self.example_value(document, at, key, json) is Some(value) else {
+    guard self.example_value(document, at, json, serialized_first~)
+      is Some(value) else {
       continue
     }
     if first is None {
@@ -36,23 +38,24 @@ fn Report::examples(
     }
   }
   match first {
-    Some(first) => Some({ first, named, })
+    Some(first) => Some({ first, named, headers: [], })
     None => None
   }
 }
 
 ///|
 /// The value of the Example Object `json` at `pointer`, after following
-/// its `$ref`, for the media type `key`. For a JSON media type, it is
-/// `dataValue`, else `value`, else `serializedValue`; for another one,
-/// `serializedValue`, else `dataValue`, else `value`. `None` when it has
-/// none of these, with a warning, or after reporting an error.
+/// its `$ref`: `dataValue`, else `value`, else `serializedValue`, as for a
+/// JSON media type; or, when `serialized_first` is true, as for another
+/// media type and for a header, `serializedValue`, else `dataValue`, else
+/// `value`. `None` when it has none of these, with a warning, or after
+/// reporting an error.
 fn Report::example_value(
   self : Report,
   document : Document,
   pointer : String,
-  key : String,
   json : Json,
+  serialized_first~ : Bool,
 ) -> Value? {
   guard self.followed(document, pointer, json) is Some({ pointer, json, }) else {
     return None
@@ -82,8 +85,8 @@ fn Report::example_value(
       Some(Data(@definitions.child_pointer(pointer, "value"), value))
     (None, None) => None
   }
-  let value = match (is_json_media_type(key), data, serialized) {
-    (true, Some(_), _) | (false, Some(_), None) => data
+  let value = match (serialized_first, data, serialized) {
+    (false, Some(_), _) | (true, Some(_), None) => data
     _ => serialized
   }
   if value is None {

@@ -139,7 +139,7 @@ test "a problem in a referenced part is reported where it is written, once howev
         #|    "responses": {
         #|      "Ok": {
         #|        "description": "OK",
-        #|        "headers": { "X-Rate-Limit": {} },
+        #|        "headers": { "X-Rate-Limit": { "example": null } },
         #|        "content": { "application/json": {} }
         #|      },
         #|      "Created": { "$ref": "#/components/responses/Ok" }
@@ -149,7 +149,7 @@ test "a problem in a referenced part is reported where it is written, once howev
       ),
     ),
     content=(
-      #|petstore.json: /components/responses/Ok/headers/X-Rate-Limit: warning: left out: response headers are not imported yet
+      #|petstore.json: /components/responses/Ok/headers/X-Rate-Limit/example: warning: left out: a header cannot hold null
       #|petstore.PUT /b.404: PUT /b -> 404
       #|petstore.PUT /b.200: PUT /b -> 200
       #|petstore.GET /b.200: GET /b -> 200

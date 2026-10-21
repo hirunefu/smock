@@ -24,8 +24,11 @@ priv struct Stub {
   /// Whether a request selects it with the header `Smock-Example:
   /// <example>`, as for every named example but the first.
   named : Bool
-  /// What the response sends besides its status.
+  /// What the response sends besides its status and its headers.
   payload : Payload
+  /// The headers the response documents, as (name, value), which it sends
+  /// after its Content-Type.
+  headers : Array[(String, String)]
 }
 
 ///|
@@ -337,5 +340,6 @@ fn Report::stub(
     example: answer.example,
     named,
     payload: answer.payload,
+    headers: response.answers.headers,
   }
 }

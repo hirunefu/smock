@@ -1,12 +1,4 @@
 ///|
-/// The response headers that are not imported, without a warning: OpenAPI
-/// says to skip `Content-Type`, and smock sets the others itself.
-/// Documenting them is common and right.
-let headers_smock_sets : Array[String] = [
-  "content-type", "content-length", "transfer-encoding", "connection",
-]
-
-///|
 /// What a response sends besides its status: the Content-Type that the
 /// file writes in `headers`, if any, and the body.
 priv struct Payload {
@@ -38,7 +30,8 @@ priv struct Answer {
 }
 
 ///|
-/// What a response answers with, from its one media type.
+/// What a response answers with: the bodies of its one media type, and
+/// its headers.
 priv struct Answers {
   /// The answer of the response's own Stub.
   first : Answer
@@ -46,12 +39,16 @@ priv struct Answers {
   /// Each gets a Stub of its own, which a request selects with
   /// `Smock-Example: <name>`.
   named : Array[Answer]
+  /// The headers the response documents, as (name, value), in the order
+  /// the document writes them. Every answer sends them, after its
+  /// Content-Type.
+  headers : Array[(String, String)]
 }
 
 ///|
-/// No Content-Type and an empty body, and no named example.
+/// No Content-Type, an empty body and no header, and no named example.
 fn no_answers() -> Answers {
-  { first: { example: None, payload: no_payload, }, named: [], }
+  { first: { example: None, payload: no_payload, }, named: [], headers: [], }
 }
 
 ///|
@@ -74,8 +71,7 @@ let max_example_bytes : Int = 1024 * 1024
 ///|
 /// Reads the response `json` at `pointer`, one the operation answers with
 /// `status` to the method `meth`, after following its `$ref`, and returns
-/// what it answers with. Until headers are imported, each header it
-/// documents is left out, with a warning that names it.
+/// what it answers with: the bodies of its content, and its headers.
 fn Report::response_parts(
   self : Report,
   document : Document,
@@ -92,26 +88,20 @@ fn Report::response_parts(
     return no_answers()
   }
   let mut answers = no_answers()
+  let mut headers = []
   for field, value in response {
     let field_pointer = @definitions.child_pointer(pointer, field)
     match (field, value) {
       ("content", Object(content)) =>
         answers = self.content(document, field_pointer, content, status~, meth~)
-      ("headers", Object(headers)) =>
-        for name, _ in headers {
-          if !headers_smock_sets.contains(name.to_lower()) {
-            self.root_warning(
-              @definitions.child_pointer(field_pointer, name),
-              "left out: response headers are not imported yet",
-            )
-          }
-        }
+      ("headers", Object(documented)) =>
+        headers = self.headers(document, field_pointer, documented)
       ("content" | "headers", _) =>
         self.root_error(field_pointer, "must be an object")
       _ => ()
     }
   }
-  answers
+  { ..answers, headers, }
 }
 
 ///|
@@ -252,7 +242,7 @@ fn Report::media_type(
       key,
       Data(example_pointer, value),
     )
-    return { first: { example: None, payload, }, named: [], }
+    return { first: { example: None, payload, }, named: [], headers: [], }
   }
   let schema_pointer = @definitions.child_pointer(pointer, "schema")
   let value = match media_type.get("schema") {
@@ -272,6 +262,7 @@ fn Report::media_type(
   {
     first: { example: None, payload: self.payload(pointer, key, value), },
     named: [],
+    headers: [],
   }
 }
 
@@ -312,14 +303,9 @@ fn Report::payload(
         True => Text("true")
         False => Text("false")
         _ => {
-          let kind = match value {
-            Object(_) => "an object"
-            Array(_) => "an array"
-            _ => "null"
-          }
           self.root_warning(
             at,
-            "left out: the body is empty, since a \{key.escape()} body cannot hold \{kind}",
+            "left out: the body is empty, since a \{key.escape()} body cannot hold \{kind_of(value)}",
           )
           Empty
         }
@@ -348,6 +334,16 @@ fn Report::payload(
     Some(key)
   }
   { content_type, body, }
+}
+
+///|
+/// What `json`, an object, an array or null, is, as messages name it.
+fn kind_of(json : Json) -> String {
+  match json {
+    Object(_) => "an object"
+    Array(_) => "an array"
+    _ => "null"
+  }
 }
 
 ///|
