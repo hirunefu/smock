@@ -2068,7 +2068,7 @@
             "description": "The Variables that templates read as vars.NAME, by name: each a name of 1 to 128 ASCII letters, digits, _ and -, and any JSON value. The values of the Stub's `variables` render against these, and the response reads them with the Stub's values written over them. A rendering never reads the live Variables. Default none.",
             "type": "object",
             "propertyNames": {
-              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              "$ref": "#/components/schemas/VariableName"
             },
             "default": {}
           }
@@ -2122,7 +2122,7 @@
             "description": "The values the Stub's `variables` would write, by name, in the order written, rendered against the sample's `vars`. Empty when the Stub has none, and when a value failed to render. A rendering writes none of them, so the state bound never applies to them.",
             "type": "object",
             "propertyNames": {
-              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              "$ref": "#/components/schemas/VariableName"
             }
           },
           "response": {
