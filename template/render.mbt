@@ -31,15 +31,17 @@ priv enum ParsedBody {
 }
 
 ///|
-/// Rendering one response: the request, the time, the random source of the
-/// helpers, and what the response has used of its bounds so far.
+/// One rendering for a request, such as its response: the request, the
+/// time, the random source of the helpers, and what the rendering has used
+/// of its bounds so far.
 pub struct Context {
   priv input : Input
   /// The time of the request, in milliseconds since the Unix epoch.
   priv now : Int64
   /// The delays of the events rendered so far, in milliseconds.
   priv mut elapsed : Int64
-  /// What the helpers draw from.
+  /// What the helpers draw from: the request's helper generator, which
+  /// every rendering for the request shares.
   priv rand : @prng.Generator
   /// The loop iterations run so far.
   priv mut iterations : Int
@@ -55,21 +57,29 @@ pub struct Context {
 let helper_mask : UInt64 = 0xA0761D6478BD642FUL
 
 ///|
-/// Starts rendering a response to `input`, received at `now` (milliseconds
-/// since the Unix epoch). `draw` is the 64-bit output the matched request
-/// took from its Stub's random source: the helpers draw from a generator
-/// seeded with it XOR a fixed constant, in the order the template is
-/// rendered.
-pub fn Context::new(input : Input, now~ : Int64, draw~ : UInt64) -> Context {
-  {
-    input,
-    now,
-    elapsed: 0L,
-    rand: @prng.Generator(draw ^ helper_mask),
-    iterations: 0,
-    output: 0,
-    body: NotParsed,
-  }
+/// The helper generator of a matched request: what the helpers of every
+/// rendering for the request draw from. `draw` is the 64-bit output the
+/// request took from its Stub's random source; the generator is seeded with
+/// it XOR a fixed constant. It is made once per request, and only when
+/// something is rendered. Each rendering then draws from it in turn, on
+/// from where the one before stopped, so the helpers give what one
+/// rendering of them all, in that order, would give.
+pub fn helper_generator(draw : UInt64) -> @prng.Generator {
+  @prng.Generator(draw ^ helper_mask)
+}
+
+///|
+/// Starts one rendering for the request `input`, received at `now`
+/// (milliseconds since the Unix epoch). The helpers draw from `rand`, the
+/// request's `helper_generator`, in the order the template is rendered.
+/// The bounds on loop iterations and on output count for this rendering
+/// alone.
+pub fn Context::new(
+  input : Input,
+  now~ : Int64,
+  rand~ : @prng.Generator,
+) -> Context {
+  { input, now, elapsed: 0L, rand, iterations: 0, output: 0, body: NotParsed, }
 }
 
 ///|

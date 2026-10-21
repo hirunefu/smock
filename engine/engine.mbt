@@ -420,53 +420,72 @@ pub fn Engine::handle(
       })
     }
   }
-  // The Scenario moves now, at the match decision, before the response is
-  // built: whatever happens to the response, a delay, a connection Fault or
-  // a template error, the state has moved, and the next request sees it.
-  // It is the state of the Mock that answered.
   let mut scenario : ScenarioMove? = None
-  if matched is Some(m) && m.stub.scenario is Some(clause) {
-    if !states_known {
-      states = self.scenarios.of(m.stub.mock, session)
-    }
-    let from = current_state(states, clause.name)
-    let to = match clause.move_to {
-      Some(to) => to
-      None => from
-    }
-    if to != from {
-      self.scenarios.set(m.stub.mock, session, clause.name, to)
-    }
-    scenario = Some({ name: clause.name, from, to, })
-  }
   let mut template_error = None
   let mut near_miss = None
-  let plan : ResponsePlan = match mock {
-    None => no_mock(host, self.snapshot.hosts())
-    Some(mock) =>
-      match matched {
-        Some({ stub, generator, .. }) => {
-          // Every matched request takes exactly one output from its Stub's
-          // source, whatever it then draws: the Fault decisions draw from a
-          // generator seeded with it, and the helpers from another.
-          let draw = generator.unwrap_or(rand).uint64()
-          let response = if stub.response.template is None {
-            stub_response(stub.response)
-          } else {
-            let (response, error) = respond(stub, incoming, now~, draw~)
-            template_error = error
-            response
-          }
-          // A response comes without a delay or a Fault, and gets the
-          // Stub's.
-          if stub.fault is None {
-            response
-          } else {
-            let (delay_ms, fault) = decide_faults(stub, draw)
-            { ..response, delay_ms, fault, }
-          }
+  let plan : ResponsePlan = match matched {
+    // The match decision: one sequence of steps, each taken in turn. A
+    // step that a Stub does not use costs it one test at most.
+    Some({ stub, generator, .. }) => {
+      // 1. The Scenario moves, before the response is built: whatever
+      //    happens to the response, a delay, a connection Fault or a
+      //    template error, the state has moved, and the next request sees
+      //    it. It is the state of the Mock that answered.
+      if stub.scenario is Some(clause) {
+        if !states_known {
+          states = self.scenarios.of(stub.mock, session)
         }
-        None => {
+        let from = current_state(states, clause.name)
+        let to = match clause.move_to {
+          Some(to) => to
+          None => from
+        }
+        if to != from {
+          self.scenarios.set(stub.mock, session, clause.name, to)
+        }
+        scenario = Some({ name: clause.name, from, to, })
+      }
+      // 2. The one draw. Every matched request takes exactly one output
+      //    from its Stub's source, whatever it then draws: the Fault
+      //    decisions draw from a generator seeded with it, and the helpers
+      //    from the request's helper generator, made from it once something
+      //    is rendered.
+      let draw = generator.unwrap_or(rand).uint64()
+      // 3. The Variables: here their values are to be rendered, drawing
+      //    from the helper generator first, and written. No Stub sets any
+      //    yet.
+      // 4. The pick: the response the request gets.
+      let response = stub.responses[pick_response(stub)].response
+      // 5. Rendering and planning: the response as written, or rendered
+      //    from its templates.
+      let plan = match response.template {
+        None => stub_response(response)
+        Some(template) => {
+          let (plan, error) = respond(
+            stub.id,
+            response.status,
+            template,
+            incoming,
+            now~,
+            rand=@template.helper_generator(draw),
+          )
+          template_error = error
+          plan
+        }
+      }
+      // 6. Faults: a plan comes without a delay or a Fault, and gets the
+      //    Stub's.
+      if stub.fault is None {
+        plan
+      } else {
+        let (delay_ms, fault) = decide_faults(stub, draw)
+        { ..plan, delay_ms, fault, }
+      }
+    }
+    None =>
+      match mock {
+        None => no_mock(host, self.snapshot.hosts())
+        Some(mock) => {
           // Only now, when every candidate has failed, are conditions
           // counted. A state that a Stub requires counts too. The states
           // are already known when the Mock's file Stubs have a clause, or
@@ -535,9 +554,9 @@ priv struct Match {
 }
 
 ///|
-/// The plan of a Stub's `response`. Server-Sent Events are always sent with
-/// `Content-Type: text/event-stream`, which replaces a Content-Type the Stub
-/// gives.
+/// The plan of one of a Stub's responses, as written. Server-Sent Events
+/// are always sent with `Content-Type: text/event-stream`, which replaces a
+/// Content-Type the Stub gives.
 fn stub_response(response : @definitions.Response) -> ResponsePlan {
   // Room for the Smock-Mock field the Default Mock adds.
   let headers = Array(capacity=response.headers.length() + 2)

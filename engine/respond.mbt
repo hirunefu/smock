@@ -1,6 +1,7 @@
-// A matched Stub's response: as written, or rendered from its templates
-// for the request. Templates were parsed when the definitions were loaded
-// or the Stub was added; here they are only rendered.
+// A matched Stub's response: the pick of one of its responses, and its
+// plan, as written or rendered from its templates for the request.
+// Templates were parsed when the definitions were loaded or the Stub was
+// added; here they are only rendered.
 
 ///|
 /// A template that could not be rendered for a request: a JSON Pointer to
@@ -18,22 +19,29 @@ pub impl ToJson for TemplateError with fn to_json(self) {
 }
 
 ///|
-/// The plan of `stub`'s response to the request `incoming`, received at
-/// `now`, without Faults: its response as written, or, with `template` on,
-/// rendered for the request. The helpers draw from a generator seeded with
-/// `draw`, the output the request took from the Stub's random source.
+/// The pick, a step of the match decision: the index, among `stub`'s
+/// responses, of the one a matched request gets. Every Stub has one
+/// response so far, so it is the first, and the pick draws nothing.
+fn pick_response(_stub : @definitions.Stub) -> Int {
+  0
+}
+
+///|
+/// The plan of a response with `template` on, of the Stub with the ID
+/// `stub`, rendered for the request `incoming`, received at `now`, without
+/// Faults. `status` is the response's status. The helpers draw from `rand`,
+/// the request's helper generator.
 ///
 /// When a template cannot be rendered, the plan is a 500 that says so, and
 /// the error comes with it.
 fn respond(
-  stub : @definitions.Stub,
+  stub : String,
+  status : Int,
+  template : @definitions.ResponseTemplate,
   incoming : Incoming,
   now~ : Int64,
-  draw~ : UInt64,
+  rand~ : @prng.Generator,
 ) -> (ResponsePlan, TemplateError?) {
-  guard stub.response.template is Some(template) else {
-    return (stub_response(stub.response), None)
-  }
   let input : @template.Input = {
     meth: incoming.request.meth,
     path: incoming.path,
@@ -41,11 +49,11 @@ fn respond(
     headers: incoming.request.headers,
     body: incoming.request.body,
   }
-  let context = @template.Context::new(input, now~, draw~)
-  try render_template(stub.response.status, template, context) catch {
+  let context = @template.Context::new(input, now~, rand~)
+  try render_template(status, template, context) catch {
     RenderError(at~, message~) => {
       let error = { at, message, }
-      (template_failed(stub.id, error), Some(error))
+      (template_failed(stub, error), Some(error))
     }
   } noraise {
     plan => (plan, None)

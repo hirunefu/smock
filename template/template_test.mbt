@@ -21,7 +21,13 @@ test "a text template inserts request values, escaped as its kind says" {
   let render = (source : String, kind : @template.TextKind) => {
     match @template.Text::parse(source, pointer="/response/body", kind~) {
       Ok(text) =>
-        text.render(@template.Context::new(request, now=nine, draw=1)) catch {
+        text.render(
+          @template.Context::new(
+            request,
+            now=nine,
+            rand=@template.helper_generator(1),
+          ),
+        ) catch {
           RenderError(at~, message~) => "error at \{at}: \{message}"
         }
       Err(problem) => "problem at \{problem.pointer}: \{problem.message}"
@@ -68,7 +74,13 @@ test "a structured template keeps the types of single values, loops and branches
   }
   let render = (draw : UInt64) => {
     @utf8.decode(
-      structured.render(@template.Context::new(request, now=nine, draw~)),
+      structured.render(
+        @template.Context::new(
+          request,
+          now=nine,
+          rand=@template.helper_generator(draw),
+        ),
+      ),
     )
   }
   inspect(
@@ -79,6 +91,38 @@ test "a structured template keeps the types of single values, loops and branches
   )
   inspect(render(42) == render(42), content="true")
   inspect(render(42) != render(43), content="true")
+}
+
+///|
+test "the renderings for one request share its helper generator: each draws on from where the one before stopped, as one rendering of both would" {
+  let parse = (source : String) => {
+    @template.Text::parse(source, pointer="/response/body", kind=Body(Plain))
+  }
+  guard parse("${fake.int(1, 1000000)}") is Ok(one) &&
+    parse("${fake.int(1, 1000000)} ${fake.int(1, 1000000)}") is Ok(both) else {
+    fail("the templates do not parse")
+  }
+  let rand = @template.helper_generator(42)
+  let first = one.render(@template.Context::new(request, now=nine, rand~))
+  let second = one.render(@template.Context::new(request, now=nine, rand~))
+  inspect(
+    "\{first} \{second}",
+    content=(
+      #|352342 297692
+    ),
+  )
+  inspect(
+    both.render(
+      @template.Context::new(
+        request,
+        now=nine,
+        rand=@template.helper_generator(42),
+      ),
+    ),
+    content=(
+      #|352342 297692
+    ),
+  )
 }
 
 ///|
