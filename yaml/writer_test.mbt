@@ -715,6 +715,11 @@ test "parse(write(v)) is v for generated trees, with comments anywhere" {
     let text = written(tree, comment~, item_comments~)
     let back = @yaml.parse(text) catch { error => fail("\{error}\n\{text}") }
     assert_eq(back.stringify(), tree.stringify(), msg=text)
+    // The mode for OpenAPI documents reads it as the same tree too.
+    let back = @yaml.parse(text, openapi=true) catch {
+      error => fail("\{error}\n\{text}")
+    }
+    assert_eq(back.stringify(), tree.stringify(), msg=text)
     // The same tree gives the same bytes.
     assert_eq(written(tree, comment~, item_comments~), text)
   }
