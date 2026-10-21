@@ -28,6 +28,7 @@ async fn import_openapi(settings : @settings.ImportOpenapiSettings) -> Int {
       root_label=document,
       mock=settings.mock,
       output~,
+      base_path?=settings.base_path,
     ),
   )
   match conversion {

@@ -188,12 +188,14 @@ fn with_paths(paths : String) -> String {
 
 ///|
 /// The Stub IDs, methods and paths of the file that `import_json` renders,
-/// one per line, after its problems. A pattern is written `pattern <it>`.
-fn stubs_of(document : String) -> String raise {
+/// one per line, after its problems, with the base path `base_path`, if
+/// given. A pattern is written `pattern <it>`.
+fn stubs_of(document : String, base_path? : String) -> String raise {
   let options = @importopenapi.Options(
     root="petstore.json",
     mock="petstore",
     output="defs/petstore.json",
+    base_path?,
   )
   let conversion = @importopenapi.convert(
     [("petstore.json", @utf8.encode(document))],
@@ -814,35 +816,6 @@ test "a field the converter reads that has the wrong JSON type is an error at it
 }
 
 ///|
-test "until the paths of servers are read, no prefix is added, and each list of servers is left out with a warning" {
-  inspect(
-    stubs_of(
-      (
-        #|{
-        #|  "openapi": "3.1.0",
-        #|  "servers": [{ "url": "https://api.example.com/v1" }],
-        #|  "paths": {
-        #|    "/pets": {
-        #|      "servers": [{ "url": "/v2" }],
-        #|      "get": { "servers": [{ "url": "/v3" }], "responses": { "200": {} } },
-        #|      "put": { "servers": [], "responses": { "200": {} } }
-        #|    }
-        #|  }
-        #|}
-      ),
-    ),
-    content=(
-      #|petstore.json: /servers: warning: left out: the paths of servers are not added as a prefix yet
-      #|petstore.json: /paths/~1pets/servers: warning: left out: the paths of servers are not added as a prefix yet
-      #|petstore.json: /paths/~1pets/get/servers: warning: left out: the paths of servers are not added as a prefix yet
-      #|petstore.GET /pets.200: GET /pets -> 200
-      #|petstore.PUT /pets.200: PUT /pets -> 200
-      #|
-    ),
-  )
-}
-
-///|
 test "problems come in order: the document-level ones, then each operation's in the order the document writes them, and within an operation in the order of its responses" {
   inspect(
     stubs_of(
@@ -857,21 +830,22 @@ test "problems come in order: the document-level ones, then each operation's in 
         #|          "500": { "headers": { "X-Error": {} } }
         #|        }
         #|      },
-        #|      "put": { "operationId": 1 }
+        #|      "put": { "operationId": 1, "servers": [{ "url": "/{v}" }] }
         #|    },
         #|    "/a/{id}": { "get": {} }
         #|  },
         #|  "webhooks": { "w": {} },
-        #|  "servers": [{ "url": "/v1" }],
+        #|  "servers": [{ "url": "/v1" }, { "url": "/v2" }],
         #|  "openapi": "3.1.0"
         #|}
       ),
     ),
     content=(
-      #|petstore.json: /servers: warning: left out: the paths of servers are not added as a prefix yet
+      #|petstore.json: /servers: warning: left out: the servers have different paths, so only the first is used: "/v1" puts "/v1" in front of the paths
       #|petstore.json: /webhooks: warning: webhooks are not imported: they are requests the API sends, not ones it answers
       #|petstore.json: /paths/~1b/get/responses/404/content/text~1xml: warning: left out: a response answers with one media type, here "application/json"
       #|petstore.json: /paths/~1b/get/responses/500/headers/X-Error: warning: left out: response headers are not imported yet
+      #|petstore.json: /paths/~1b/put/servers/0/url: the variable {v} has no default: declare it under "variables", with a "default"
       #|petstore.json: /paths/~1b/put/operationId: must be a non-empty string
       #|petstore.json: /paths/~1b/put: warning: has no responses: the operation answers 200 with an empty body
       #|petstore.json: /paths/~1a~1{id}/get: warning: has no responses: the operation answers 200 with an empty body

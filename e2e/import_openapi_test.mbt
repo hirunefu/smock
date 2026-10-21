@@ -352,6 +352,10 @@ async test "smock import-openapi rejects bad arguments as usage errors, on stder
     ["--mock", "m", "--output", "m.json"],
     ["api.json", "--mock", "m", "--output", "m.json", "--overwrite", "yes"],
     ["api.json", "--mock", "m", "--output", "m.json", "--overwrite", ""],
+    ["api.json", "--mock", "m", "--output", "m.json", "--base-path", "v1"],
+    ["api.json", "--mock", "m", "--output", "m.json", "--base-path", ""],
+    ["api.json", "--mock", "m", "--output", "m.json", "--base-path", "/v1?x=1"],
+    ["api.json", "--mock", "m", "--output", "m.json", "--base-path", "/v1#top"],
   ]
   let reports = []
   for args in cases {
@@ -388,6 +392,14 @@ async test "smock import-openapi rejects bad arguments as usage errors, on stder
       #|  status 2: smock import-openapi: invalid value "yes" for --overwrite: must be on or off
       #|api.json --mock m --output m.json --overwrite 
       #|  status 2: smock import-openapi: invalid value "" for --overwrite: must be on or off
+      #|api.json --mock m --output m.json --base-path v1
+      #|  status 2: smock import-openapi: invalid value "v1" for --base-path: must start with /
+      #|api.json --mock m --output m.json --base-path 
+      #|  status 2: smock import-openapi: invalid value "" for --base-path: must start with /
+      #|api.json --mock m --output m.json --base-path /v1?x=1
+      #|  status 2: smock import-openapi: invalid value "/v1?x=1" for --base-path: must not hold ? or #: a query or a fragment is not part of a path
+      #|api.json --mock m --output m.json --base-path /v1#top
+      #|  status 2: smock import-openapi: invalid value "/v1#top" for --base-path: must not hold ? or #: a query or a fragment is not part of a path
     ),
   )
 }
@@ -409,6 +421,7 @@ async test "smock import-openapi --help names its argument and its flags, none o
       #|  -h, --help               Show help information.
       #|  --mock <mock>            The name of the Mock the Definition file declares. Every Stub ID starts with it.
       #|  --output <output>        The Definition file to write. Its name picks the format: .yaml or .yml writes YAML, with comments that map each Stub back to the document, and .json writes JSON. Its directory must exist. The file is written to a temporary file whose name starts with ., then renamed, so a smock that watches the directory never reads half a file.
+      #|  --base-path <base-path>  A path to put in front of every path, such as /mock/petstore, to mount the API where the system under test calls it. It replaces the paths of the document's servers, which are then not read: / means no prefix. It must start with / and hold no ? or #. By default, the path of the first server of the operation, else of its Path Item, else of the document, is put in front.
       #|  --overwrite <overwrite>  Whether an existing --output is replaced: on or off. Off, an existing file is refused before the document is read, and nothing is written. Either way, a directory, a symlink or the document itself is refused. [default: off]
       #|
     ),
@@ -1344,6 +1357,98 @@ async test "smock serves an imported file with Smock-Example: alone it selects t
           "stubSource": "file",
         },
       ])
+    })
+  })
+}
+
+///|
+/// The spec's example of servers: `getPetById` on `GET /pets/{petId}` and
+/// `getMyPet` on `GET /pets/mine`, under the server
+/// `https://api.example.com/v1`.
+let pets_under_v1_document : String =
+  #|{
+  #|  "openapi": "3.1.0",
+  #|  "info": { "title": "Petstore", "version": "1.0.0" },
+  #|  "servers": [{ "url": "https://api.example.com/v1" }],
+  #|  "paths": {
+  #|    "/pets/{petId}": {
+  #|      "get": { "operationId": "getPetById", "responses": { "200": {} } }
+  #|    },
+  #|    "/pets/mine": {
+  #|      "get": { "operationId": "getMyPet", "responses": { "200": {} } }
+  #|    }
+  #|  }
+  #|}
+
+///|
+/// The status line of the answer to `GET <path>` for each of `paths`, one
+/// per line, from `smock`.
+async fn Smock::status_lines(self : Smock, paths : Array[String]) -> String {
+  let lines = []
+  for path in paths {
+    let response = self.request("GET", path, headers=[("Host", "localhost")])
+    lines.push("\{path}: \{response.split("\n").next().unwrap_or("")}")
+  }
+  lines.join("\n")
+}
+
+///|
+async test "smock serves an imported file under its server's path, and with --base-path under that path instead" {
+  with_petstore(pets_under_v1_document, dir => {
+    let document = "\{dir}/api/petstore.json"
+    let output = "\{dir}/defs/petstore.yaml"
+    inspect(
+      import_openapi([document, "--mock", "petstore", "--output", output], dir~),
+      content=(
+        #|status 0
+        #|wrote <dir>/defs/petstore.yaml: 2 Stubs from 2 operations, 0 warnings
+        #|
+      ),
+    )
+    let _ = with_smock(["--dir", "\{dir}/defs", "--port", "0"], smock => {
+      inspect(
+        smock.status_lines(["/v1/pets/mine", "/v1/pets/7", "/pets/7"]),
+        content=(
+          #|/v1/pets/mine: HTTP/1.1 200 OK
+          #|/v1/pets/7: HTTP/1.1 200 OK
+          #|/pets/7: HTTP/1.1 404 Not Found
+        ),
+      )
+    })
+    inspect(
+      import_openapi(
+        [
+          document, "--mock", "petstore", "--output", output, "--base-path", "/mock/petstore",
+          "--overwrite", "on",
+        ],
+        dir~,
+      ),
+      content=(
+        #|status 0
+        #|wrote <dir>/defs/petstore.yaml: 2 Stubs from 2 operations, 0 warnings
+        #|
+      ),
+    )
+    let file = @fs.read_file(output).text()
+    inspect(
+      file.split("\n").take(3).map(line => line.to_owned()).collect().join("\n"),
+      content=(
+        #|# Generated by smock import-openapi from petstore.json
+        #|# (Petstore 1.0.0, OpenAPI 3.1.0), with --mock petstore --base-path /mock/petstore.
+        #|# Do not edit: the next import replaces this file.
+      ),
+    )
+    let _ = with_smock(["--dir", "\{dir}/defs", "--port", "0"], smock => {
+      inspect(
+        smock.status_lines([
+          "/mock/petstore/pets/mine", "/mock/petstore/pets/7", "/v1/pets/7",
+        ]),
+        content=(
+          #|/mock/petstore/pets/mine: HTTP/1.1 200 OK
+          #|/mock/petstore/pets/7: HTTP/1.1 200 OK
+          #|/v1/pets/7: HTTP/1.1 404 Not Found
+        ),
+      )
     })
   })
 }

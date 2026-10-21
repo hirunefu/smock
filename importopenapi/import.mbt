@@ -9,9 +9,10 @@
 //
 // Its parts are kept apart, so that each can grow on its own: the document
 // and its version (document.mbt), the operations under `paths`
-// (operations.mbt), paths (paths.mbt), responses (responses.mbt), bodies
-// and headers (bodies.mbt), examples (examples.mbt), references
-// (references.mbt), and the file it writes (output.mbt).
+// (operations.mbt), paths (paths.mbt), servers and base paths
+// (servers.mbt), responses (responses.mbt), bodies and headers
+// (bodies.mbt), examples (examples.mbt), references (references.mbt), and
+// the file it writes (output.mbt).
 
 ///|
 /// What a conversion needs besides the documents.
@@ -30,19 +31,28 @@ pub struct Options {
   /// ends in `.yaml` or `.yml`, else JSON. Nothing else of it reaches the
   /// file.
   output : String
+  /// The path that `--base-path` gives, as given, such as
+  /// `/mock/petstore`. When there is one, it is put in front of every path
+  /// in place of the paths of servers, which are then not read at all. It
+  /// is percent-decoded as smock decodes request paths, and a trailing `/`
+  /// is dropped, so `/` means no prefix. The caller checks that it starts
+  /// with `/` and holds no `?` or `#`.
+  base_path : String?
 }
 
 ///|
 /// The options of a conversion of the document `root` into a Definition
 /// file `output` that declares the Mock `mock`. Problems name the root
-/// document `root_label`, by default `root`.
+/// document `root_label`, by default `root`. `base_path`, when given,
+/// replaces the paths of servers in front of every path.
 pub fn Options::Options(
   root~ : String,
   mock~ : String,
   output~ : String,
   root_label? : String = root,
+  base_path? : String,
 ) -> Options {
-  { root, root_label, mock, output, }
+  { root, root_label, mock, output, base_path, }
 }
 
 ///|

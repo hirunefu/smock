@@ -124,9 +124,9 @@ pub(all) struct RenderSettings {
 
 ///|
 /// The settings of `smock import-openapi`. The OpenAPI document is its
-/// argument, and the Mock, the output and whether it may be replaced are
-/// flags of its own, without variables: they belong to one import, not to
-/// a process.
+/// argument, and the Mock, the output, the base path and whether the output
+/// may be replaced are flags of its own, without variables: they belong to
+/// one import, not to a process.
 pub(all) struct ImportOpenapiSettings {
   /// The OpenAPI document, a JSON or YAML file, as given.
   document : String
@@ -135,6 +135,10 @@ pub(all) struct ImportOpenapiSettings {
   /// The Definition file to write, a JSON or YAML file, as given. Its name
   /// picks the format.
   output : String
+  /// The path put in front of every path in place of the paths of the
+  /// document's servers, as given: it starts with `/` and holds no `?` or
+  /// `#`. `None` when it is not given, so that the servers' paths are used.
+  base_path : String?
   /// Whether an existing regular file at `output` is replaced.
   overwrite : Bool
 } derive(Debug)
@@ -397,8 +401,8 @@ pub fn render_command() -> @argparse.Command {
 
 ///|
 /// The `import-openapi` subcommand: the OpenAPI document as its argument,
-/// and the Mock, the output and whether to replace it as flags without
-/// variables.
+/// and the Mock, the output, the base path and whether to replace the
+/// output as flags without variables.
 pub fn import_openapi_command() -> @argparse.Command {
   @argparse.Command(
     "import-openapi",
@@ -422,6 +426,11 @@ pub fn import_openapi_command() -> @argparse.Command {
         long="output",
         about="The Definition file to write. Its name picks the format: .yaml or .yml writes YAML, with comments that map each Stub back to the document, and .json writes JSON. Its directory must exist. The file is written to a temporary file whose name starts with ., then renamed, so a smock that watches the directory never reads half a file.",
         required=true,
+      ),
+      @argparse.OptionArg(
+        "base-path",
+        long="base-path",
+        about="A path to put in front of every path, such as /mock/petstore, to mount the API where the system under test calls it. It replaces the paths of the document's servers, which are then not read: / means no prefix. It must start with / and hold no ? or #. By default, the path of the first server of the operation, else of its Path Item, else of the document, is put in front.",
       ),
       @argparse.OptionArg(
         "overwrite",
@@ -778,8 +787,8 @@ pub fn RenderSettings::from_matches(
 /// Reads and checks the settings from the parsed `import-openapi`
 /// subcommand. The document and the output name a JSON or YAML file, in
 /// lower case, as Definition files do, and the output's name does not
-/// start with `.`, since smock skips such files. `--overwrite` is `on` or
-/// `off`.
+/// start with `.`, since smock skips such files. `--base-path` starts with
+/// `/` and holds no `?` or `#`. `--overwrite` is `on` or `off`.
 pub fn ImportOpenapiSettings::from_matches(
   matches : @argparse.Matches,
 ) -> ImportOpenapiSettings raise InvalidSetting {
@@ -810,6 +819,23 @@ pub fn ImportOpenapiSettings::from_matches(
       reason="must not name a file that starts with ., which smock skips",
     )
   }
+  let base_path = value(matches, "base-path")
+  if base_path is Some(path) {
+    if !path.has_prefix("/") {
+      raise InvalidOption(
+        flag="base-path",
+        value=path,
+        reason="must start with /",
+      )
+    }
+    if path.contains_char('?') || path.contains_char('#') {
+      raise InvalidOption(
+        flag="base-path",
+        value=path,
+        reason="must not hold ? or #: a query or a fragment is not part of a path",
+      )
+    }
+  }
   let overwrite = match value(matches, "overwrite") {
     Some("on") => true
     Some("off") => false
@@ -820,7 +846,7 @@ pub fn ImportOpenapiSettings::from_matches(
         reason="must be on or off",
       )
   }
-  { document, mock, output, overwrite, }
+  { document, mock, output, base_path, overwrite, }
 }
 
 ///|

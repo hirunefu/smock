@@ -86,7 +86,13 @@ test "a file the YAML writer cannot write is an error with the file that calls i
   let report = Report::new(
     Options(root="api.json", mock="m", output="defs/m.yaml"),
   )
-  let document = { top: {}, openapi: "3.1.0", title: "", info_version: "", }
+  let document = {
+    top: {},
+    openapi: "3.1.0",
+    title: "",
+    info_version: "",
+    prefix: "",
+  }
   let file : Json = {
     "version": 1,
     "stubs": [{ "id": Json::number(0.0 / 0.0) }],
