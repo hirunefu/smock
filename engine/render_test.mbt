@@ -201,6 +201,10 @@ test "a Stub that answers from a body file renders the bytes of the file, as tex
       #|      {
       #|        "name": "Content-Type",
       #|        "value": "application/json"
+      #|      },
+      #|      {
+      #|        "name": "Accept-Ranges",
+      #|        "value": "bytes"
       #|      }
       #|    ],
       #|    "body": {
@@ -222,7 +226,12 @@ test "a Stub that answers from a body file renders the bytes of the file, as tex
       #|  "responseIndex": null,
       #|  "response": {
       #|    "status": 200,
-      #|    "headers": [],
+      #|    "headers": [
+      #|      {
+      #|        "name": "Accept-Ranges",
+      #|        "value": "bytes"
+      #|      }
+      #|    ],
       #|    "body": {
       #|      "encoding": "base64",
       #|      "data": "iVBORw0KGgoA/w==",

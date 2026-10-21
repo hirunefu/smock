@@ -87,6 +87,16 @@ of each GitHub release include its section
   cleared, in `removed.variables` of its response and its log entry. A
   reload keeps Variables, except those of a Mock the new files no longer
   declare. The `per_replica_state` warning names Variables too.
+- Range requests. An untemplated body file of a 200 answers a GET for a
+  single byte range with 206 Partial Content and `Content-Range`, or with
+  416 and `Content-Range: bytes */<length>` when the range starts past the
+  end. Such a 200, to GET and to HEAD, and every 206 carry
+  `Accept-Ranges: bytes`. Several ranges, more than one `Range` field, a
+  malformed field, another unit, any `If-Range` and an empty file get the
+  whole body with 200. A Stub that gives status 206, `Content-Range` or
+  `Accept-Ranges` itself is left alone. A `partial` Fault cuts the range
+  in half. `smock render` and the Admin render operation apply the rule to
+  the sample's `Range` header.
 
 ### Changed
 
@@ -94,6 +104,10 @@ of each GitHub release include its section
   `cookie`, `env` and `vars` are template roots. No valid file changes
   meaning: rename the loop variable. The Definition file format is still
   version 1.
+- A 200 from an untemplated body file now carries `Accept-Ranges: bytes`,
+  and a GET with a `Range` field gets the range it asks for. To keep
+  sending the whole body, give the response an `Accept-Ranges` header of
+  its own, such as `none`.
 
 ## [0.2.0] - 2026-10-21
 

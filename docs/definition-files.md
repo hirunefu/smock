@@ -943,6 +943,87 @@ with `.`. A path that breaks this rule, or names a file that does not
 exist, is reported with the file and JSON Pointer of the `bodyFile`, by
 `smock check` and when `smock serve` starts.
 
+### Range requests
+
+A body file serves byte ranges, so that clients that resume downloads or
+stream media can be tested against smock. Nothing in the Definition file
+turns this on. A response serves ranges when:
+
+- its status is 200;
+- its body is a body file, and `template` is off;
+- its headers give neither `Content-Range` nor `Accept-Ranges`.
+
+```yaml
+- id: get-video
+  mock: media
+  request: { method: GET, path: /video.mp4 }
+  response:
+    status: 200
+    headers: { Content-Type: video/mp4 }
+    bodyFile: video.mp4
+```
+
+For a `video.mp4` of 1000 bytes:
+
+- `Range: bytes=0-99` gets 206 Partial Content, with
+  `Content-Range: bytes 0-99/1000`, `Accept-Ranges: bytes` and the first
+  100 bytes.
+- `Range: bytes=1000-` gets 416 Range Not Satisfiable, with
+  `Content-Range: bytes */1000` and no body.
+- A request without `Range` gets the whole file with 200 and
+  `Accept-Ranges: bytes`.
+
+smock serves a single byte range, and reads the `Range` field by the
+grammar of RFC 9110:
+
+- `first-last`, `first-` and `-suffix` (the last `suffix` bytes) are
+  taken. The unit `bytes` is compared case-insensitively.
+- A last position at or past the end means the end. A suffix longer than
+  the file selects the whole file, with 206.
+- A first position at or past the end, or a suffix of 0, cannot be
+  satisfied: 416, with `Content-Range: bytes */<length>` and no body.
+- A number too large to hold is past the end. As a first position, the
+  range cannot be satisfied; as a last position, it means the end; as a
+  suffix, it selects the whole file.
+- The Stub's headers stay on the 206 and the 416, and smock adds its
+  fields after them. The 416 carries no `Accept-Ranges`.
+
+These get the whole body with 200 and `Accept-Ranges: bytes`, as RFC 9110
+lets a server ignore `Range`:
+
+- several ranges, such as `bytes=0-99,200-299`;
+- more than one `Range` field;
+- a malformed field, such as `bytes=100-99`, whose last position is below
+  its first;
+- another unit, such as `items=0-9`;
+- any `If-Range`. smock has no validators, such as `ETag`, so RFC 9110
+  says to ignore `Range` then;
+- an empty body file.
+
+Only a GET is served a range, since RFC 9110 defines range handling for
+GET only. A `HEAD` ignores `Range`, and its 200 still carries
+`Accept-Ranges: bytes`. A Stub with `method: GET` still does not answer
+`HEAD`. Other methods get the response as written, without
+`Accept-Ranges`.
+
+Some Stubs are left alone, so that partial responses written by hand keep
+working:
+
+- a Stub that gives status 206, or a `Content-Range` header of its own;
+- a Stub that gives `Accept-Ranges` itself, such as `Accept-Ranges: none`.
+  It serves no ranges, and keeps its own value.
+
+With [`responses`](#several-responses), the response picked decides.
+[Ephemeral Stubs](../README.md#sessions-and-ephemeral-stubs) have no body
+files, so they never serve ranges.
+
+A [delay](#delays) applies to a 206 or a 416 as to any response. A
+`partial` [connection Fault](#connection-faults) sends the head of the
+206, with its `Content-Length`, and the first half of the range. The
+[Journal](../README.md#the-journal) records the status sent: 206 or 416.
+`smock render` and the Admin render operation apply the same rule to the
+sample's `Range` header ([Rendering a template](#rendering-a-template)).
+
 ### Server-Sent Events
 
 Instead of a body, a response can stream `events`, to mock a streaming API:
@@ -1852,7 +1933,9 @@ from 0; a Stub with `response` takes 0 only. Any other index fails: the
 Admin API answers 400 `invalid_request`, and `smock render` exits with
 status 1. With the same time, seed and index, a rendering is the same on
 every run. A template that fails for the sample shows the 500 and the
-error.
+error. A response that serves [byte ranges](#range-requests) answers the
+sample's `Range` header, so the rendering shows the 206 or the 416 a
+request would get.
 
 ## Faults
 
@@ -1904,7 +1987,8 @@ of getting its response:
   without writing anything.
 - `partial`: smock writes the status line, the headers, with the
   `Content-Length` of the whole body, and the first half of the body, then
-  closes the connection. The client sees a response cut short. For
+  closes the connection. The client sees a response cut short. For a 206
+  to a [Range request](#range-requests), the body is the range. For
   Server-Sent Events, the first half is the first half of the events,
   rounded down, each after its delay, and the stream is not ended.
   - A response with no body bytes to halve, such as an empty body or a
