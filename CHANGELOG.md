@@ -33,8 +33,13 @@ of each GitHub release include its section
   schema of one media type, written in the file as `json` or `body`, with
   the media type as the Content-Type. Formats such as `date-time`, `uuid`
   and `email` give valid samples. Nothing is random and nothing is
-  templated. Numbers sample as 0 so far, and `allOf`, `oneOf`, `anyOf`,
-  schema references and the document's examples are not used yet.
+  templated. Numbers sample as 0 so far, and schema references and the
+  document's examples are not used yet.
+- `smock import-openapi` samples schemas composed with `allOf`, `oneOf`
+  and `anyOf`. `allOf` is merged into one schema, and `oneOf` and `anyOf`
+  take their first branch that is not only null, so a nullable field
+  written as a `oneOf` with a null branch gets a sample of the other
+  branch. `not`, `if`, `then`, `else` and `discriminator` are ignored.
 - `smock import-openapi` writes YAML when the name of `--output` ends in
   `.yaml` or `.yml`, and JSON when it ends in `.json`. A YAML file starts
   with a comment that names the document and says not to edit the file,
