@@ -258,7 +258,9 @@ test "a Stub keeps its writes in the order written, each with its op, bucket and
   }
   let out = []
   for stub in snapshot.mocks[0].stubs {
-    let Ordinary(ordinary) = stub.serves
+    guard stub.serves is Ordinary(ordinary) else {
+      fail("\{stub.id} is not an ordinary Stub")
+    }
     out.push("\{stub.id}: writes data \{ordinary.writes_data()}")
     for write in ordinary.data_writes {
       let literal = match write.value.literal() {

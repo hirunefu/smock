@@ -2,7 +2,8 @@
 // and requests, the engine that finds Stubs through the index gives the
 // same outcome as the one that tries every Stub in matching order. Some
 // Stubs have Scenario clauses, and each case sends a sequence of requests
-// with Sessions, so both engines must also make the same moves.
+// with Sessions, so both engines must also make the same moves. Some are
+// CRUD Stubs, whose paths ordinary Stubs share.
 //
 // Each case is generated from its own seed, derived from its number. A
 // failure names the case; `check_index_case(<case>, IndexTally())` in a test
@@ -77,12 +78,13 @@ let index_requests_per_case : Int = 40
 ///|
 /// What the generated requests matched, to show that the property test
 /// reaches every kind of Stub and requests that match nothing, Stubs with
-/// operators, cookie, `form` or `xml` conditions, and Stubs that move a
-/// Scenario or keep its state.
+/// operators, cookie, `form` or `xml` conditions, Stubs that move a
+/// Scenario or keep its state, and CRUD Stubs.
 struct IndexTally {
   /// The number of requests per kind of Stub that answered them: `exact
-  /// path`, `path pattern` or `no path` for a Stub from a Definition file,
-  /// `ephemeral` for an Ephemeral Stub, or `no match`; the numbers answered
+  /// path`, `path pattern`, `no path` or `crud` for a Stub from a
+  /// Definition file, `ephemeral` for an Ephemeral Stub, or `no match`; the
+  /// numbers answered
   /// by a Stub from a Definition file with an operator, with a cookie
   /// condition, with a `form` condition and with an `xml` condition; and
   /// the number answered by a
@@ -98,6 +100,7 @@ fn IndexTally::IndexTally() -> IndexTally {
       ("exact path", 0),
       ("path pattern", 0),
       ("no path", 0),
+      ("crud", 0),
       ("ephemeral", 0),
       ("no match", 0),
       ("with an operator", 0),
@@ -124,17 +127,18 @@ test "the match index picks the same Stub and makes the same Scenario moves as t
   inspect(
     tally.to_string(),
     content=(
-      #|exact path: 851
-      #|path pattern: 1310
-      #|no path: 1579
-      #|ephemeral: 258
-      #|no match: 8002
-      #|with an operator: 600
-      #|with a cookie condition: 256
-      #|with a form condition: 20
-      #|with an xml condition: 26
-      #|Scenario moved: 223
-      #|Scenario kept: 607
+      #|exact path: 656
+      #|path pattern: 1149
+      #|no path: 1375
+      #|crud: 710
+      #|ephemeral: 354
+      #|no match: 7756
+      #|with an operator: 530
+      #|with a cookie condition: 134
+      #|with a form condition: 5
+      #|with an xml condition: 11
+      #|Scenario moved: 174
+      #|Scenario kept: 477
     ),
   )
 }
@@ -296,10 +300,11 @@ fn chance(rand : @random.Rand, percent : Int) -> Bool {
 
 ///|
 /// Generates a definition set of two Mocks, `m`, the Default Mock, and
-/// `o`, whose Stubs are spread over one to four files. The Stubs mix exact,
-/// pattern, operator, `json`, `form` and `xml` conditions, some with a
-/// priority and some without, and many share exact paths and priorities, so that ties are
-/// decided by file-name order and position in the file.
+/// `o`, each with the keyed Data bucket `items`, whose Stubs are spread
+/// over one to four files. The Stubs mix exact, pattern, operator, `json`,
+/// `form` and `xml` conditions, and CRUD Stubs, some with a priority and
+/// some without, and many share exact paths and priorities, so that ties
+/// are decided by file-name order and position in the file.
 fn gen_definition_set(rand : @random.Rand) -> GeneratedSet {
   let names = ["a.json", "B.json", "b.json", "aa.json", "10.json", "9.json"]
   rand.shuffle(names.length(), (i, j) => names.swap(i, j))
@@ -309,7 +314,10 @@ fn gen_definition_set(rand : @random.Rand) -> GeneratedSet {
       (
         #|{ "mocks": [
         #|  { "name": "m", "hosts": ["m.test"], "default": true },
-        #|  { "name": "o", "hosts": ["o.test"] } ] }
+        #|  { "name": "o", "hosts": ["o.test"] } ],
+        #|  "data": [
+        #|  { "mock": "m", "name": "items", "key": "id", "json": [{ "id": "b" }, { "id": 1 }, { "id": "a b" }] },
+        #|  { "mock": "o", "name": "items", "key": "id", "json": [{ "id": "c" }] } ] }
       ),
     ),
   ]
@@ -348,7 +356,9 @@ fn gen_definition_set(rand : @random.Rand) -> GeneratedSet {
 
 ///|
 /// Generates the Stub `id` and the kind of its path condition: `exact
-/// path`, `path pattern` or `no path`.
+/// path`, `path pattern` or `no path`; or a CRUD Stub of the bucket
+/// `items`, at a path that ordinary Stubs and requests use too, and its
+/// kind, `crud`.
 fn gen_stub(rand : @random.Rand, id : String) -> (Json, String) {
   let stub : Map[String, Json] = {
     "id": Json::string(id),
@@ -359,6 +369,14 @@ fn gen_stub(rand : @random.Rand, id : String) -> (Json, String) {
     stub["priority"] = Json::number(
       [-1, 0, 0, 1, 2][rand.int(limit=5)].to_double(),
     )
+  }
+  if chance(rand, 12) {
+    stub.remove("response")
+    stub["crud"] = {
+      "bucket": "items",
+      "path": Json::string(pick(rand, ["/a", "/a", "/a/b", "/A", "/b"])),
+    }
+    return (Json::object(stub), "crud")
   }
   let request : Map[String, Json] = Map([])
   if chance(rand, 70) {

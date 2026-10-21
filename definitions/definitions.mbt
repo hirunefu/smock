@@ -164,6 +164,8 @@ pub enum Serves {
   /// An ordinary Stub's request conditions, Scenario clause, responses,
   /// `variables` and `dataWrites`.
   Ordinary(Ordinary)
+  /// A CRUD Stub's keyed Data bucket, its path and its headers, `crud`.
+  Crud(Crud)
 } derive(Debug, Eq)
 
 ///|
@@ -1052,6 +1054,7 @@ fn scenarios_of(
         if ordinary.scenario is Some(clause) {
           by_scenario.add_clause(clause)
         }
+      Crud(_) => ()
     }
   }
   let scenarios = []

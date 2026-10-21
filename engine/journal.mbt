@@ -16,10 +16,10 @@ pub struct JournalSettings {
   /// The most bytes its entries take, as each entry counts them: 256 for
   /// its fixed fields, two for each UTF-16 code unit of the text it holds
   /// (the request line, the header fields, the Session, Host, Mock and
-  /// Stub names, the Scenario move, the names of the Variables written and
-  /// the Near miss), 32 for each value
-  /// its Near miss keeps from a form or an XML body, and the bytes of its
-  /// truncated body.
+  /// Stub names, the Scenario move, the names of the Variables and Data
+  /// buckets written, why a data write failed, the CRUD operation and its
+  /// key, and the Near miss), 32 for each value its Near miss keeps from a
+  /// form or an XML body, and the bytes of its truncated body.
   max_bytes : Int
   /// The most bytes of a request body an entry keeps, and of the values its
   /// Near miss keeps from a form or an XML body, in total, each value
@@ -95,6 +95,10 @@ pub struct JournalEntry {
   /// Why a write of the Stub's `dataWrites` could not be applied, when one
   /// could not: the client then got a 500.
   data_error : DataError?
+  /// What the request asked of the CRUD Stub that matched it, the
+  /// operation and its key, whatever the outcome; `None` when no CRUD Stub
+  /// matched.
+  crud : CrudCall?
   /// The Near miss, when no Stub matched and the Mock had candidates.
   near_miss : NearMiss?
   /// The response status, or `None` when a connection Fault ended the
@@ -167,6 +171,7 @@ fn Journal::entry(
   variables_written~ : ReadOnlyArray[String],
   data_written~ : ReadOnlyArray[String],
   data_error~ : DataError?,
+  crud~ : CrudCall?,
   near_miss~ : NearMiss?,
   plan~ : ResponsePlan,
   template_error~ : TemplateError?,
@@ -226,6 +231,9 @@ fn Journal::entry(
   if data_error is Some(error) {
     text += error.at.length() + error.message.length()
   }
+  if crud is Some(call) {
+    text += call.op.name().length() + text_length(call.key)
+  }
   let mut values = 0
   if near_miss is Some(near_miss) {
     text += near_miss.stub.length()
@@ -266,6 +274,7 @@ fn Journal::entry(
     variables_written,
     data_written,
     data_error,
+    crud,
     near_miss,
     status,
     fault: plan.fault,
@@ -452,6 +461,7 @@ let vacated : JournalEntry = {
   variables_written: none_written,
   data_written: no_buckets_written,
   data_error: None,
+  crud: None,
   near_miss: None,
   status: None,
   fault: None,
@@ -926,6 +936,7 @@ pub impl ToJson for JournalEntry with fn to_json(self) {
     "responseIndex": self.response_index.map_or(Json::null(), index => {
       Json::number(index.to_double())
     }),
+    "crud": self.crud.map_or(Json::null(), call => ToJson::to_json(call)),
     "variablesWritten": Json::array(
       self.variables_written.iter().map(Json::string).collect(),
     ),

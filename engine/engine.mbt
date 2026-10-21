@@ -424,6 +424,15 @@ pub fn Engine::handle(
               break
             }
           }
+        Crud(crud) =>
+          if crud.operation(request.meth, incoming.path) is Some(_) {
+            matched = Some({
+              stub: e.stub,
+              generator: e.generator,
+              source: Ephemeral(e.id),
+            })
+            break
+          }
       }
     }
   }
@@ -474,6 +483,7 @@ pub fn Engine::handle(
   let mut variables_written = none_written
   let mut data_written = no_buckets_written
   let mut data_error = None
+  let mut crud_called = None
   let mut template_error = None
   let mut near_miss = None
   let plan : ResponsePlan = match matched {
@@ -604,6 +614,20 @@ pub fn Engine::handle(
           //    Stub's.
           with_faults(plan, stub, draw)
         }
+        // A CRUD Stub has no Scenario clause, and its list and read write
+        // nothing: it takes its one draw, answers from the Session's copy
+        // of its bucket, or else from the initial value, and gets its
+        // Faults, whatever its answer.
+        Crud(crud) => {
+          let draw = generator.unwrap_or(rand).uint64()
+          let call = crud_call(crud, incoming)
+          crud_called = Some(call)
+          with_faults(
+            self.crud_answer(mock, stub.id, crud, call, session),
+            stub,
+            draw,
+          )
+        }
       }
     None =>
       match mock {
@@ -618,6 +642,7 @@ pub fn Engine::handle(
             for i in 0..<list.length() {
               let has_clause = match list[i].stub.serves {
                 Ordinary(ordinary) => ordinary.scenario is Some(_)
+                Crud(_) => false
               }
               if has_clause {
                 states = self.scenarios.of(mock.name, session)
@@ -660,6 +685,7 @@ pub fn Engine::handle(
         variables_written~,
         data_written~,
         data_error~,
+        crud=crud_called,
         near_miss~,
         plan~,
         template_error~,
@@ -697,7 +723,8 @@ priv struct Match {
 ///|
 /// Whether the request matches `stub` in the current states, `states`: it
 /// meets the Stub's request conditions, and the Stub's Scenario clause, if
-/// any, allows those states.
+/// any, allows those states. A CRUD Stub matches the requests it serves, by
+/// their method and path (`@definitions.Crud::operation`).
 fn Incoming::matches(
   self : Incoming,
   stub : @definitions.Stub,
@@ -706,6 +733,7 @@ fn Incoming::matches(
   match stub.serves {
     Ordinary(ordinary) =>
       self.meets(ordinary.request) && scenario_allows(ordinary.scenario, states)
+    Crud(crud) => crud.operation(self.request.meth, self.path) is Some(_)
   }
 }
 
@@ -716,6 +744,7 @@ fn Incoming::matches(
 fn Incoming::matches_ungated(self : Incoming, stub : @definitions.Stub) -> Bool {
   match stub.serves {
     Ordinary(ordinary) => self.meets(ordinary.request)
+    Crud(crud) => crud.operation(self.request.meth, self.path) is Some(_)
   }
 }
 
