@@ -447,8 +447,8 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   and `response` the index of one of a Stub's `responses` to render; the
   rendering shows those it used.
 - `/v1/mocks/{mock}/stubs` adds, lists and deletes Ephemeral Stubs, and
-  `POST /v1/reset` clears them, Journal entries and Scenario state
-  ([below](#sessions-and-ephemeral-stubs)).
+  `POST /v1/reset` clears them, Journal entries, Scenario state and
+  Variables ([below](#sessions-and-ephemeral-stubs)).
 - `GET /v1/mocks/{mock}/scenarios` lists the calling Session's Scenarios of
   a Mock, with their states, and `PUT /v1/mocks/{mock}/scenarios/{scenario}`
   sets the state of one ([below](#sessions-and-ephemeral-stubs)).
@@ -640,13 +640,15 @@ curl localhost:8080/users/1                                           # 200, fro
 - `GET` lists and `DELETE /v1/mocks/{mock}/stubs/{id}` deletes the calling
   Session's Ephemeral Stubs of the Mock. `POST /v1/reset` with
   `{"scope":"session"}` clears the calling Session's Ephemeral Stubs,
-  [Journal](#the-journal) entries and Scenario state of every Mock, and its
+  [Journal](#the-journal) entries, Scenario state and
+  [Variables](docs/definition-files.md#variables) of every Mock, and its
   eviction count; `{"scope":"mock","mock":"users"}` every Session's of one
   Mock, even one that a reload removed while the Journal holds its entries;
   and `{"scope":"all"}` all of them, and every eviction count. Without a
   Session, `{"scope":"session"}` clears the no-Session space. A Scenario
-  whose state is cleared is back in `Started`. It answers how many
-  Ephemeral Stubs, Journal entries and Scenario states it removed.
+  whose state is cleared is back in `Started`, and a cleared Variable is
+  unset. It answers how many of each it removed, in `removed`:
+  `ephemeralStubs`, `journalEntries`, `scenarioStates` and `variables`.
 - Ephemeral Stubs live in the process that received them, until a reset or
   a restart. They survive a [reload](docs/definition-files.md#reloading) of
   the Definition files, except those of a Mock the new files no longer

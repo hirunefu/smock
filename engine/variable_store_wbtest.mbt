@@ -1,7 +1,8 @@
 // How the engine stores Variables: by Mock, Session and name, with no map
 // left empty. Nothing outside the engine can see an empty map, since a
-// Mock or Session without one has no Variables either way, so this test
-// looks at the store itself after requests through `Engine::handle`.
+// Mock or Session without one has no Variables either way, so these tests
+// look at the store itself after requests through `Engine::handle`, resets
+// and reloads.
 
 ///|
 test "a request that writes nothing, because its Stub writes none, a value fails or no Stub matches, leaves no empty map behind" {
@@ -64,6 +65,79 @@ test "a request that writes nothing, because its Stub writes none, a value fails
       #|    None: { "count": String("2") },
       #|  },
       #|}
+    ),
+  )
+}
+
+///|
+test "clearing Variables with a reset and dropping them with a reload leave no empty map behind" {
+  let mocks =
+    #|{ "mocks": [{ "name": "shop", "default": true }, { "name": "bank", "hosts": ["bank.svc"] }],
+  let stubs =
+    #|  "stubs": [
+    #|    { "id": "shop", "mock": "shop", "request": { "path": "/count" },
+    #|      "variables": { "count": "${query.n}" }, "response": { "status": 200 } },
+    #|    { "id": "bank", "mock": "bank", "request": { "path": "/deposit" },
+    #|      "variables": { "balance": "${query.n}" }, "response": { "status": 200 } } ] }
+  let set = (files : String) => @definitions.DefinitionSet::{
+    files: [("shop.json", @utf8.encode(files))],
+    body_files: [],
+  }
+  guard @definitions.load(set(mocks + stubs)) is Ok(snapshot) else {
+    fail("not loaded")
+  }
+  let engine = Engine(snapshot)
+  let rand = @prng.Generator(1)
+  let write = (target : String, session : String?) => {
+    let request : Request = {
+      meth: "POST",
+      target,
+      version: "HTTP/1.1",
+      headers: [],
+      body: b"",
+    }
+    ignore(engine.handle(request, session~, now=0, rand~))
+  }
+  let out = []
+  let show = (label : String) => {
+    out.push("\{label}: \{@debug.to_string(engine.variables.by_mock)}")
+  }
+  write("/count?n=1", Some("test-a"))
+  write("http://bank.svc/deposit?n=2", Some("test-a"))
+  write("/count?n=3", None)
+  show("written")
+  ignore(engine.reset(Session(Some("test-a"))))
+  show("reset Session test-a")
+  ignore(engine.reset(Mock("shop")))
+  show("reset Mock shop")
+  write("http://bank.svc/deposit?n=4", Some("test-b"))
+  write("/count?n=5", Some("test-b"))
+  show("test-b writes")
+  let without_bank =
+    #|{ "mocks": [{ "name": "shop", "default": true }],
+    #|  "stubs": [] }
+  ignore(engine.reload(set(without_bank), at=0))
+  show("reload, bank removed")
+  ignore(engine.reset(All))
+  show("reset all")
+  inspect(
+    out.join("\n"),
+    content=(
+      #|written: {
+      #|  "shop": {
+      #|    Some("test-a"): { "count": String("1") },
+      #|    None: { "count": String("3") },
+      #|  },
+      #|  "bank": { Some("test-a"): { "balance": String("2") } },
+      #|}
+      #|reset Session test-a: { "shop": { None: { "count": String("3") } } }
+      #|reset Mock shop: {}
+      #|test-b writes: {
+      #|  "bank": { Some("test-b"): { "balance": String("4") } },
+      #|  "shop": { Some("test-b"): { "count": String("5") } },
+      #|}
+      #|reload, bank removed: { "shop": { Some("test-b"): { "count": String("5") } } }
+      #|reset all: {}
     ),
   )
 }

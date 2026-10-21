@@ -83,6 +83,10 @@ of each GitHub release include its section
   of them. Ephemeral Stubs take `variables` too.
 - Journal entries record `variablesWritten`, the names of the Variables a
   request wrote.
+- `POST /v1/reset` clears the Variables in its scope and says how many it
+  cleared, in `removed.variables` of its response and its log entry. A
+  reload keeps Variables, except those of a Mock the new files no longer
+  declare. The `per_replica_state` warning names Variables too.
 - Range requests. An untemplated body file of a 200 answers a GET for a
   single byte range with 206 Partial Content and `Content-Range`, or with
   416 and `Content-Range: bytes */<length>` when the range starts past the

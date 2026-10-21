@@ -681,9 +681,9 @@ flow, as long as each sends its own Session. Requests without a Session
 share one state of their own, which is the simplest for a developer
 running smock locally.
 
-Each replica keeps its own state, as it keeps its own Ephemeral Stubs and
-Journal. Tests that rely on Scenarios need one replica, or session
-affinity. State is lost on restart.
+Each replica keeps its own state, as it keeps its own Ephemeral Stubs,
+Variables and Journal. Tests that rely on Scenarios need one replica, or
+session affinity. State is lost on restart.
 
 Ephemeral Stubs take the same clause, including Scenarios and states that
 no file names, so a test on a shared instance can build its own Scenario
@@ -1816,7 +1816,8 @@ In one Session, `POST /login` with `{"user":"ann"}` gets
 - Writing `null` stores null. It does not delete the Variable.
 - Variables are kept per Mock and per Session, like Scenario state.
   Requests without a Session share one space per Mock. Each replica keeps
-  its own, and they are lost on restart.
+  its own, and they are lost on restart. A reset clears them, and a reload
+  keeps them ([Resets and reloads](#resets-and-reloads)).
 - An [Ephemeral Stub](../README.md#sessions-and-ephemeral-stubs) takes
   `variables` too, and writes the Variables of its Session.
 
@@ -1872,6 +1873,27 @@ Each [Journal](../README.md#the-journal) entry records the names of the
 Variables the request wrote, in the order written, as `variablesWritten`.
 It is empty for a Stub without `variables`, for a request that no Stub
 matched, and when a value failed to render.
+
+#### Resets and reloads
+
+A [reset](../README.md#sessions-and-ephemeral-stubs) clears the Variables
+in its scope, so that a test starts clean:
+
+- `{"scope":"session"}` clears the calling Session's Variables in every
+  Mock, or those of requests without a Session when the call carries none;
+- `{"scope":"mock","mock":"shop"}` clears every Session's Variables of
+  `shop`, those of requests without a Session included;
+- `{"scope":"all"}` clears every Variable.
+
+The reset answers how many Variables it cleared, in `removed.variables`,
+and its log entry says the same. A cleared Variable is unset, so
+`vars.NAME` is missing again.
+
+A [reload](#reloading) that swaps in new files keeps every Variable, even
+one that no Stub writes any more, except those of a Mock the new files no
+longer declare, which are dropped. A reload that fails, or finds the files
+unchanged, keeps them all. So editing the files does not wipe the state of
+a test in progress.
 
 ### Errors when loading
 
@@ -2072,6 +2094,8 @@ restart:
 - Ephemeral Stubs survive the swap. A Mock the new set no longer declares
   is gone: its Ephemeral Stubs are dropped, and its Hosts resolve like any
   unknown Host.
+- [Variables](#variables) survive the swap. Those of a Mock that is gone
+  are dropped with it.
 - [Scenario](#scenarios) state survives the swap while its name still
   exists. A Scenario's state, for a Session or for requests without one,
   stays when a Stub of the same Mock still names it for that Scenario, in
@@ -2086,10 +2110,10 @@ restart:
   on it.
 - When the new set is invalid, smock keeps serving the current one and
   reports every problem, as `smock check` would, in the Admin API status, in
-  a log entry and in the reload metric. Scenario state stays as it is. Fix
-  the files, and the next reload swaps the fixed set in.
+  a log entry and in the reload metric. Scenario state and Variables stay
+  as they are. Fix the files, and the next reload swaps the fixed set in.
 - When the new set has the digest of the one served, nothing is swapped,
-  and Scenario state stays as it is.
+  and Scenario state and Variables stay as they are.
 - Without `--dir`, there is nothing to watch and nothing is reloaded.
 
 Each definition set has a *definition set digest*: a short content hash of
