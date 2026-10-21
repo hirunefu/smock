@@ -48,6 +48,14 @@ of each GitHub release include its section
   places, `round` and `toFixed` round half away from zero, and numbers
   have at most 18 digits before the point and 18 after. A numeric argument
   may be a string that is a JSON number, such as `query.page`.
+- Template helper `find(array, member, value)` gives the first element of
+  an array that is an object whose member meets a value. The value is
+  taken as text, `null` included. A member meets it when it is a string
+  equal to that text, a number of equal value as `json` conditions compare
+  numbers (`12.50` meets `12.5`), or `true`, `false` or `null` by those
+  words. So `find(body.orders, 'id', path[1])` finds the order `1004`
+  whether its `id` is a number or a string. When no element meets the
+  value, the call is missing, so `??` applies.
 - A helper call can be followed by steps, as a reference can:
   `${range(1, 3)[1]}` gives `2`.
 - The bounds of `range(a, b)` can be any expression that gives an integer,
