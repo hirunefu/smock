@@ -4,7 +4,9 @@
 // create, replace, update or delete is one keyed write, the same that
 // `dataWrites` makes, applied to a working copy, checked against the bound
 // on per-Session state, and stored, or not at all. The answers are not
-// templates: smock writes them, with fixed statuses.
+// templates: smock writes them, with fixed statuses. A rendering gives the
+// same answers and makes the same write on a sample's data, with no bound
+// and nothing stored (`render_crud`).
 
 ///|
 /// What a request asked of the CRUD Stub that matched it: the operation,
@@ -129,19 +131,42 @@ fn Engine::crud_answer(
     Some(value) => value
     None => bucket.initial
   }
+  {
+    plan: crud_read(crud, stub, key, call, value, incoming),
+    call,
+    written: no_buckets_written,
+  }
+}
+
+///|
+/// The answer of the CRUD Stub `stub`, which serves `crud` over a bucket
+/// keyed by the member `key_member`, to the request `incoming`, which
+/// asked `call` of it, a list or a read, when the bucket holds `value`:
+///
+/// - a list answers 200 with the items its query keeps, a plain array, or
+///   400 when smock cannot read its query (see `crud_list`);
+/// - a read answers 200 with the item whose key has the text of the item
+///   path, or 404 when there is none.
+fn crud_read(
+  crud : @definitions.Crud,
+  stub : String,
+  key_member : String,
+  call : CrudCall,
+  value : Json,
+  incoming : Incoming,
+) -> ResponsePlan {
   // Every write keeps the rules of a keyed bucket, so it holds an array.
   guard value is Array(items) else { abort("a keyed bucket holds an array") }
-  let plan = if call.op is List {
+  if call.op is List {
     crud_list(crud, stub, value, items, incoming.query_parameters())
   } else {
     let text = call.key.unwrap_or("")
-    match item_index(items, key, text) {
+    match item_index(items, key_member, text) {
       Some(i) =>
         crud_plan(crud, 200, @template.compact_json_bytes(items[i]), [])
       None => no_item(crud, stub, text)
     }
   }
-  { plan, call, written: no_buckets_written, }
 }
 
 ///|
@@ -149,24 +174,20 @@ fn Engine::crud_answer(
 /// `crud`, over its keyed bucket `bucket`, keyed by the member
 /// `key_member`, for the request `incoming` of `session`, which took the
 /// draw `draw` and asked `call` of the Stub: a create, replace, update or
-/// delete. It is the keyed write that `dataWrites` makes with the same op:
-/// `append`, `set` or `merge` with a key, or `remove`.
+/// delete.
 ///
-/// - A create, replace or update needs a request body that parses as a
-///   JSON object, whatever its Content-Type; else it answers 400 `body is
-///   not a JSON object`. A delete ignores the body.
 /// - The write is applied to a working copy of the Session's copy of the
-///   bucket, or of its initial value. A new `uuid` key draws from the
-///   helper generator seeded with `draw`.
+///   bucket, or of its initial value, as `crud_apply` says.
 /// - The bound on per-Session state is checked: a Session's first write to
 ///   the bucket counts the whole copy it leaves. A write that does not fit
 ///   answers 507, and counts as refused.
 /// - The copy is stored, and the answer is the item stored, or the item
 ///   removed: 201 with `Location` for a create, else 200.
 ///
-/// A write that cannot be applied answers 404 `no item with this key`, 400
-/// `invalid key` or `key does not match the path`, 409 `key already
-/// exists`, or 500 `no new key`. A failed write writes nothing.
+/// A write that cannot be applied answers 400 `body is not a JSON object`,
+/// `invalid key` or `key does not match the path`, 404 `no item with this
+/// key`, 409 `key already exists`, or 500 `no new key`. A failed write
+/// writes nothing.
 fn Engine::crud_write(
   self : Engine,
   mock : String,
@@ -179,42 +200,9 @@ fn Engine::crud_write(
   session : String?,
   draw : UInt64,
 ) -> CrudAnswer {
-  let key = call.key.unwrap_or("")
-  let body = if call.op is Delete {
-    Json::null()
-  } else {
-    match incoming.body_json() {
-      Some(Object(_) as body) => body
-      _ =>
-        return {
-          plan: bad_crud_request(crud, stub, "body is not a JSON object"),
-          call,
-          written: no_buckets_written,
-        }
-    }
-  }
   let working = WorkingCopies::new(self.store.copies_of(mock, session))
-  let i = working.reach(bucket.name, bucket.initial)
-  let item = try {
-    match call.op {
-      Create =>
-        working.append_item(
-          i,
-          bucket,
-          key_member,
-          body,
-          @template.helper_generator(draw),
-        )
-      Replace => working.set_item(i, bucket, key_member, key, body)
-      Update => working.merge_item(i, bucket, key_member, key, body)
-      Delete => working.remove_item(i, bucket, key_member, key)
-      List | Read => abort("a list or a read writes nothing")
-    }
-  } catch {
-    failure => {
-      working.undo()
-      return crud_refused(crud, stub, call, failure)
-    }
+  let item = crud_apply(working, bucket, key_member, call, incoming, draw) catch {
+    failure => return crud_refused(crud, stub, call, failure)
   }
   let space_growth = self.store.space_growth(mock, session)
   let growth = space_growth + working.growth()
@@ -228,8 +216,75 @@ fn Engine::crud_write(
     }
   }
   working.store(self.store, mock, session, space_growth~)
+  crud_stored(crud, bucket.name, key_member, call, item)
+}
+
+///|
+/// Applies the write of a CRUD Stub over the keyed bucket `bucket`, keyed
+/// by the member `key_member`, to the working copies `working`, for the
+/// request `incoming`, which took the draw `draw` and asked `call` of the
+/// Stub: a create, replace, update or delete. It is the keyed write that
+/// `dataWrites` makes with the same op: `append`, `set` or `merge` with a
+/// key, or `remove`. Returns the item stored, or the item removed.
+///
+/// - A create, replace or update writes the request body, parsed as JSON
+///   whatever its Content-Type, which must be an object. A delete ignores
+///   the body.
+/// - The write applies to the copy of the bucket that `working` holds, or
+///   else to its initial value. A new `uuid` key draws from the helper
+///   generator seeded with `draw`.
+///
+/// Raises the `KeyedFailure` that says why, `NotAnObject` for a body that
+/// is not a JSON object, when the write cannot be applied, and then leaves
+/// `working` as it was. Checks no bound and stores nothing.
+fn crud_apply(
+  working : WorkingCopies,
+  bucket : @definitions.DataBucket,
+  key_member : String,
+  call : CrudCall,
+  incoming : Incoming,
+  draw : UInt64,
+) -> Json raise KeyedFailure {
+  let key = call.key.unwrap_or("")
+  let body = if call.op is Delete {
+    Json::null()
+  } else {
+    // A body that is not JSON is not an object either.
+    incoming.body_json().unwrap_or(Json::null())
+  }
+  let i = working.reach(bucket.name, bucket.initial)
+  errdefer working.undo()
+  match call.op {
+    Create =>
+      working.append_item(
+        i,
+        bucket,
+        key_member,
+        body,
+        @template.helper_generator(draw),
+      )
+    Replace => working.set_item(i, bucket, key_member, key, body)
+    Update => working.merge_item(i, bucket, key_member, key, body)
+    Delete => working.remove_item(i, bucket, key_member, key)
+    List | Read => abort("a list or a read writes nothing")
+  }
+}
+
+///|
+/// The answer of the CRUD Stub that serves `crud` to a request that asked
+/// `call` of it, once its write stored `item` in the bucket named `bucket`,
+/// keyed by the member `key_member`, or removed it: 201 with the item and
+/// its `Location` for a create, which then knows its key, else 200 with
+/// the item.
+fn crud_stored(
+  crud : @definitions.Crud,
+  bucket : String,
+  key_member : String,
+  call : CrudCall,
+  item : Json,
+) -> CrudAnswer {
   let body = @template.compact_json_bytes(item)
-  let written = ReadOnlyArray::from_array([bucket.name])
+  let written = ReadOnlyArray::from_array([bucket])
   guard call.op is Create else {
     { plan: crud_plan(crud, 200, body, []), call, written, }
   }
