@@ -33,7 +33,13 @@ fn render_text(source : String, env? : @template.Env = env) -> String {
       env~,
     ) {
     Ok(text) =>
-      text.render(@template.Context::new(plain_request, now=0, draw=1)) catch {
+      text.render(
+        @template.Context::new(
+          plain_request,
+          now=0,
+          rand=@template.helper_generator(1),
+        ),
+      ) catch {
         RenderError(at~, message~) => "error at \{at}: \{message}"
       }
     Err(problem) => "problem at \{problem.pointer}: \{problem.message}"
@@ -124,7 +130,13 @@ test "a structured template keeps env values as strings, in $if conditions and f
   }
   inspect(
     @utf8.decode(
-      structured.render(@template.Context::new(plain_request, now=0, draw=1)),
+      structured.render(
+        @template.Context::new(
+          plain_request,
+          now=0,
+          rand=@template.helper_generator(1),
+        ),
+      ),
     ),
     content=(
       #|{"region":"eu-west-1","zone":null,"eu":true,"empty":""}
