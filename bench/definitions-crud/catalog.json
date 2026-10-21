@@ -1,0 +1,11 @@
+{
+  "data": [
+    {"mock": "catalog", "name": "items", "key": "sku", "jsonFile": "items.json"}
+  ],
+  "stubs": [
+    {"id": "catalog-items", "mock": "catalog", "crud": {"bucket": "items", "path": "/catalog/items", "headers": {"Cache-Control": "no-store"}}},
+    {"id": "catalog-search", "mock": "catalog", "request": {"method": "GET", "path": "/catalog/search", "query": {"q": {"pattern": "[a-z ]+"}, "page": {"pattern": "[0-9]+"}}}, "response": {"status": 200, "headers": {"Content-Type": "application/json", "Cache-Control": "no-store"}, "bodyFile": "search-results.json"}},
+    {"id": "catalog-item-reviews", "mock": "catalog", "request": {"method": "GET", "path": {"pattern": "/catalog/items/SKU-[0-9]{5}/reviews"}}, "response": {"status": 200, "headers": {"Content-Type": "application/json", "Cache-Control": "no-store"}, "body": "{\"reviews\":[]}"}},
+    {"id": "catalog-category", "mock": "catalog", "request": {"method": "GET", "path": {"pattern": "/catalog/categories/[a-z-]+"}}, "response": {"status": 200, "headers": {"Content-Type": "application/json", "Cache-Control": "no-store"}, "body": "{\"items\":[]}"}}
+  ]
+}

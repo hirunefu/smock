@@ -21,8 +21,8 @@ usage:
 A run measures one smock, or compares 2 to 4 variants of it, each in a Pod
 of its own on one node, which one load generator measures in turn, round
 after round: manifests then takes
---variant LABEL=IMAGE[,no-init][,no-first-second][,scenarios] for each,
-the first the baseline, and --rounds N; plan and estimate take
+--variant LABEL=IMAGE[,no-init][,no-first-second][,scenarios][,crud] for
+each, the first the baseline, and --rounds N; plan and estimate take
 --variants N and --rounds N. Its results split into samples, one
 variant's pass over the steps in one round each, which summarize
 summarizes as runs of smock alone, and same-node compares them.
@@ -84,15 +84,22 @@ DEFAULT_ROUNDS = 4
 # What a variant may do otherwise than the others: run without the init
 # container that prints its node's CPU, without the load generator's
 # scrape of its /metrics a second into each step, and serve the Scenario
-# variant of the benchmark's definitions (bench/definitions-scenarios/).
-VARIANT_OPTIONS = ("no-init", "no-first-second", "scenarios")
+# variant of the benchmark's definitions (bench/definitions-scenarios/),
+# or their CRUD variant (bench/definitions-crud/), which the load
+# generator sends its own request mix (bench/requests-crud.json).
+VARIANT_OPTIONS = ("no-init", "no-first-second", "scenarios", "crud")
 
 # Where smock's image holds the benchmark's definitions
-# (bench/gke/smock-definitions.dockerfile), and their Scenario variant;
-# and the variant as the repository names it, which summarize records.
+# (bench/gke/smock-definitions.dockerfile), their Scenario variant and
+# their CRUD variant; and the variants as the repository names them, which
+# summarize records; and the CRUD variant's mix, as the load generator's
+# image names it beside bench.py.
 DEFINITIONS_DIR = "/definitions"
 SCENARIO_DEFINITIONS_DIR = "/definitions-scenarios"
 SCENARIO_DEFINITIONS = "bench/definitions-scenarios"
+CRUD_DEFINITIONS_DIR = "/definitions-crud"
+CRUD_DEFINITIONS = "bench/definitions-crud"
+CRUD_MIX = "requests-crud.json"
 
 # How many variants a run can compare on one node: the namespace's quota
 # and the load generator's time grow with each.
@@ -101,12 +108,12 @@ MIN_VARIANTS, MAX_VARIANTS = 2, 4
 
 def parse_variant(text):
     """A variant as --variant gives it,
-    LABEL=IMAGE[,no-init][,no-first-second][,scenarios]: {label, image,
-    init, first_second, scenarios}."""
+    LABEL=IMAGE[,no-init][,no-first-second][,scenarios][,crud]: {label,
+    image, init, first_second, scenarios, crud}."""
     label, equals, rest = text.partition("=")
     image, *options = rest.split(",")
     if not equals or not image:
-        raise GkeError(f"--variant {text}: give it as LABEL=IMAGE[,no-init][,no-first-second][,scenarios]")
+        raise GkeError(f"--variant {text}: give it as LABEL=IMAGE[,no-init][,no-first-second][,scenarios][,crud]")
     if not VARIANT_LABEL.fullmatch(label):
         raise GkeError(f"variant label {label}: use 1 to 16 lowercase letters, digits and hyphens, starting with a "
                        "letter and ending with a letter or digit")
@@ -114,8 +121,21 @@ def parse_variant(text):
         if option not in VARIANT_OPTIONS:
             raise GkeError(f"variant {label}: no option {option}; there are {', '.join(VARIANT_OPTIONS[:-1])} "
                            f"and {VARIANT_OPTIONS[-1]}")
+    if "scenarios" in options and "crud" in options:
+        raise GkeError(f"variant {label}: scenarios and crud serve other definitions: give one of them")
     return {"label": label, "image": image, "init": "no-init" not in options,
-            "first_second": "no-first-second" not in options, "scenarios": "scenarios" in options}
+            "first_second": "no-first-second" not in options, "scenarios": "scenarios" in options,
+            "crud": "crud" in options}
+
+
+def served_definitions(variant):
+    """Where smock's image holds the definitions that `variant` (None for a
+    run of one smock) serves."""
+    if variant and variant["scenarios"]:
+        return SCENARIO_DEFINITIONS_DIR
+    if variant and variant["crud"]:
+        return CRUD_DEFINITIONS_DIR
+    return DEFINITIONS_DIR
 
 
 def parse_variants(texts):
@@ -367,8 +387,9 @@ SMOCK_SECURITY = {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": T
 
 def smock_objects(profile, arch, zone, generator_image, smock_deadline_s, image, variant=None):
     """smock's Service and Pod under `profile`, from `image`; a variant's,
-    {label, init, scenarios, ...}, when it is given: a scenarios variant
-    serves the Scenario variant of the definitions."""
+    {label, init, scenarios, crud, ...}, when it is given: a scenarios
+    variant serves the Scenario variant of the definitions, and a crud
+    variant their CRUD variant."""
     name = smock_name(profile["name"], variant and variant["label"])
     labels = {"app": SMOCK}
     pod_labels = {**labels, "profile": profile["name"], **({"variant": variant["label"]} if variant else {})}
@@ -415,8 +436,7 @@ def smock_objects(profile, arch, zone, generator_image, smock_deadline_s, image,
             }]}),
             "containers": [{
                 "name": "smock", "image": image, "args": ["serve"],
-                "env": [{"name": "SMOCK_DIR",
-                         "value": SCENARIO_DEFINITIONS_DIR if variant and variant["scenarios"] else DEFINITIONS_DIR},
+                "env": [{"name": "SMOCK_DIR", "value": served_definitions(variant)},
                         {"name": "SMOCK_ADMIN_AUTH", "value": "off"}],
                 "ports": [{"name": "plain", "containerPort": 8080}, {"name": "tls", "containerPort": 8443},
                           {"name": "admin", "containerPort": 9090}],
@@ -438,9 +458,9 @@ def service_host(profile, variant=None):
 
 def generator_env(profile, cases, variants, rounds):
     """The load generator's environment (generator.py's): smock's Service
-    as TARGET; or, with `variants`, VARIANTS, each one's label, Service and
-    whether to scrape smock a second into each step, in order, and the
-    number of ROUNDS."""
+    as TARGET; or, with `variants`, VARIANTS, each one's label, Service,
+    whether to scrape smock a second into each step, and for a crud
+    variant the CRUD variant's mix, in order, and the number of ROUNDS."""
     common = [{"name": "PROFILE", "value": profile["name"]},
               {"name": "CASES", "value": ",".join(case["name"] for case in cases)}]
     if not variants:
@@ -448,7 +468,8 @@ def generator_env(profile, cases, variants, rounds):
     return [*common,
             {"name": "VARIANTS", "value": json.dumps([{"label": variant["label"],
                                                        "target": service_host(profile, variant["label"]),
-                                                       "first_second": variant["first_second"]}
+                                                       "first_second": variant["first_second"],
+                                                       **({"mix": CRUD_MIX} if variant["crud"] else {})}
                                                       for variant in variants])},
             {"name": "ROUNDS", "value": str(rounds)}]
 
@@ -473,7 +494,8 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
     smock-<label>.json in place of smock.json: its own Service and Pod,
     from its image, on the node of the profile's other variants (a no-init
     variant without the init container, a scenarios variant serving the
-    Scenario variant of the definitions); the quota counts each one's Pod,
+    Scenario variant of the definitions, a crud variant their CRUD
+    variant); the quota counts each one's Pod,
     and the load generator measures each in turn over `rounds` rounds (its
     VARIANTS and ROUNDS), with time for them all. `smock_image` is not used
     then."""
@@ -1103,7 +1125,8 @@ def command_summarize(args):
     status = start.get("status") or {}
     smock_nodes, generator_nodes = nodes_of(results, "smock"), nodes_of(results, "generator")
     node = smock_nodes[0] if smock_nodes else None
-    mix = BENCH / "requests.json"
+    # The mix the load generator sent: the CRUD variant's own to it.
+    mix = harness.mix_path(harness.ROOT / args.definitions)
     compute_class = COMPUTE_CLASSES[args.arch]
     # Where the Pods ran, as their nodes say; the zone the run pinned them
     # to when the nodes are unknown.
@@ -1889,14 +1912,15 @@ def conditions_record(samples, labels):
     compare.py compares two runs by) as the first that has them, the
     baseline's first when it does, and where they did not, which samples
     differ and how. A sample of a variant that served other definitions
-    than the first (a scenarios variant's) has another definition set, as
-    its option says: that is no condition besides smock."""
+    than the first (a scenarios or a crud variant's) has another definition
+    set, as its option says, and a crud variant's was sent the CRUD
+    variant's own mix: that is no condition besides smock."""
     compare = compare_module()
     named = summarized(samples, labels)
     (reference, first), differences = named[0], {}
     for name, conditions in named[1:]:
         for condition, shown in compare.CONDITIONS:
-            if condition == "definition set" and \
+            if condition in ("definition set", "request mix") and \
                     conditions["definitions"].get("directory") != first["definitions"].get("directory"):
                 continue
             before, after = shown(first), shown(conditions)
@@ -1939,7 +1963,7 @@ def variant_records(labels, baseline, samples, raws, sha256, no_init):
     for label in labels:
         own = [sample[1] for (_, other), sample in samples.items() if other == label and sample and sample[1]]
         smocks = [conditions["smock"] for conditions in own]
-        scenarios = any(conditions["definitions"].get("directory") == SCENARIO_DEFINITIONS for conditions in own)
+        served = {conditions["definitions"].get("directory") for conditions in own}
         values = list(dict.fromkeys([*(smock["sha256"] for smock in smocks if smock.get("sha256")),
                                      *sha256.get(label, [])]))
         if len(values) > 1:
@@ -1952,7 +1976,8 @@ def variant_records(labels, baseline, samples, raws, sha256, no_init):
                         "version": smock.get("version"), "sha256": values[0] if len(values) == 1 else None,
                         "options": [*(["no-init"] if label in no_init else []),
                                     *(["no-first-second"] if skipped else []),
-                                    *(["scenarios"] if scenarios else [])]})
+                                    *(["scenarios"] if SCENARIO_DEFINITIONS in served else []),
+                                    *(["crud"] if CRUD_DEFINITIONS in served else [])]})
     return records, problems
 
 
@@ -2221,8 +2246,8 @@ def main(argv):
                                           "chooses smock's, and the load generator follows it)")
     rendering.add_argument("--smock-image", help="smock's image, by digest")
     rendering.add_argument("--variant", action="append",
-                           help="LABEL=IMAGE[,no-init][,no-first-second][,scenarios]: a variant of smock to measure "
-                                "on the node "
+                           help="LABEL=IMAGE[,no-init][,no-first-second][,scenarios][,crud]: a variant of smock to "
+                                "measure on the node "
                                 f"of the others, from its image, by digest; {MIN_VARIANTS} to {MAX_VARIANTS} of them, "
                                 "in place of --smock-image, the first the baseline")
     rendering.add_argument("--generator-image", required=True, help="the load generator's image, by digest")
@@ -2270,7 +2295,9 @@ def main(argv):
     summarizing.add_argument("--smock-sha256", help="the SHA-256 of the smock binary in the image")
     summarizing.add_argument("--definitions", default="bench/definitions",
                              help="the definitions smock served, as the repository names them (default: "
-                                  "bench/definitions; bench/definitions-scenarios for a scenarios variant)")
+                                  "bench/definitions; bench/definitions-scenarios for a scenarios variant, "
+                                  "bench/definitions-crud for a crud variant, which was sent its own mix, "
+                                  "bench/requests-crud.json)")
     summarizing.add_argument("--generator-image", help="the load generator's image digest")
     summarizing.add_argument("--stopped", help="why the run stopped before its end, when it did")
     summarizing.add_argument("--stopped-under", help="the profile the run was running when it stopped")

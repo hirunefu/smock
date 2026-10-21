@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Writes the release benchmark's definition set, bench/definitions/, and
-its Scenario variant, bench/definitions-scenarios/.
+"""Writes the release benchmark's definition set, bench/definitions/, its
+Scenario variant, bench/definitions-scenarios/, and its CRUD variant,
+bench/definitions-crud/, with the CRUD variant's request mix,
+bench/requests-crud.json.
 
 The set stands in for four services of a shop, each a Mock with its own
 Host, with about 1,200 Stubs in all (e2e/bench_test.mbt pins the exact
@@ -33,22 +35,44 @@ them and moves its Scenario, in every Mock. bench/bench.py serves it with
 `--definitions bench/definitions-scenarios`; e2e/bench_test.mbt checks that
 each request moves its Scenario.
 
+The CRUD variant is the same set, but the catalog's items and the orders
+are Data buckets, each served by a CRUD Stub in place of the Stubs that
+answered them one by one: `items` (keyed by `sku`, the 600 items that the
+item Stubs answered, in their order), through `catalog-items` at
+`/catalog/items`, where those Stubs were; and `orders` (keyed by `id`, an
+order for each of the 48 ways to create one, the mix's order among them),
+through `orders` at `/orders`, right after the Stubs that create an order
+and in place of `get-order`. A POST to `/orders` still matches a create
+Stub first, so the CRUD Stub never creates. Its request mix,
+bench/requests-crud.json, is bench/requests.json, but the catalog search
+becomes `catalog-list`, a list query, and the status update becomes
+`update-order`, a PATCH of the order: the CRUD Stubs list, read and update
+items, and no request creates one. bench/bench.py sends that mix when it
+serves the variant, with `--definitions bench/definitions-crud`;
+e2e/bench_test.mbt checks that each of its requests gets the CRUD operation
+its `expect.crud` names.
+
 The files are checked in. Run this script again after changing it, and
 commit what it writes.
 
 usage: python3 bench/gen_definitions.py [--check]
-  --check  writes nothing; exits 1 if the files of either set differ from
-           what it would write
+  --check  writes nothing; exits 1 if a file of the sets or the CRUD mix
+           differs from what it would write
 """
 
 import json
 import sys
+import uuid
+from itertools import product
 from pathlib import Path
 
 BENCH = Path(__file__).resolve().parent
 
 # Each set's directory, by its name under bench/.
-SETS = ("definitions", "definitions-scenarios")
+SETS = ("definitions", "definitions-scenarios", "definitions-crud")
+
+# The request mix of the CRUD variant, by its name under bench/.
+CRUD_MIX = "requests-crud.json"
 
 JSON_HEADERS = {"Content-Type": "application/json", "Cache-Control": "no-store"}
 UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
@@ -56,6 +80,14 @@ CATEGORIES = ["lighting", "furniture", "kitchen", "garden", "office", "storage"]
 CHANNELS = ["web", "app", "partner", "pos", "call-center", "kiosk"]
 TIERS = ["bronze", "silver", "gold", "platinum", "staff", "trial", "b2b", "vip"]
 CURRENCIES = ["USD", "GBP", "JPY", "EUR", "CHF", "SEK"]
+ORDER_STATUSES = ["created", "paid", "shipped", "delivered", "cancelled"]
+
+# The order that the requests of the mix read and update.
+ORDER = "7f9c2ba4-e88f-4c1a-9c5b-2d3a1e8f6b10"
+
+# Each CRUD Stub's headers besides those smock sets, as the Stubs it takes
+# the place of answer.
+CRUD_HEADERS = {"Cache-Control": "no-store"}
 
 
 def body(value):
@@ -74,28 +106,29 @@ def mocks():
     }
 
 
+def catalog_items():
+    """The catalog's 600 items, in order."""
+    return [
+        {
+            "sku": f"SKU-{i:05d}",
+            "name": f"Item {i}",
+            "category": CATEGORIES[i % len(CATEGORIES)],
+            "price": {"amount": 499 + (i * 37) % 9500, "currency": "EUR"},
+            "stock": (i * 13) % 50,
+        }
+        for i in range(1, 601)
+    ]
+
+
 def catalog():
     stubs = []
-    for i in range(1, 601):
-        sku = f"SKU-{i:05d}"
+    for i, item in enumerate(catalog_items(), start=1):
         stubs.append(
             {
                 "id": f"catalog-item-{i:05d}",
                 "mock": "catalog",
-                "request": {"method": "GET", "path": f"/catalog/items/{sku}"},
-                "response": {
-                    "status": 200,
-                    "headers": JSON_HEADERS,
-                    "body": body(
-                        {
-                            "sku": sku,
-                            "name": f"Item {i}",
-                            "category": CATEGORIES[i % len(CATEGORIES)],
-                            "price": {"amount": 499 + (i * 37) % 9500, "currency": "EUR"},
-                            "stock": (i * 13) % 50,
-                        }
-                    ),
-                },
+                "request": {"method": "GET", "path": f"/catalog/items/{item['sku']}"},
+                "response": {"status": 200, "headers": JSON_HEADERS, "body": body(item)},
             }
         )
     stubs += [
@@ -256,6 +289,21 @@ def orders():
     return {"stubs": stubs}
 
 
+def orders_data():
+    """An order for each way to create one, the mix's order (partner, gold)
+    as get-order answers it."""
+    data = []
+    for i, (channel, tier) in enumerate(product(CHANNELS, TIERS)):
+        if (channel, tier) == ("partner", "gold"):
+            order_id, status, amount = ORDER, "paid", 10597
+        else:
+            order_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"https://orders.bench.internal/orders/{channel}-{tier}"))
+            status, amount = ORDER_STATUSES[i % len(ORDER_STATUSES)], 1999 + (i * 731) % 15000
+        data.append({"id": order_id, "status": status, "channel": channel, "tier": tier,
+                     "total": {"amount": amount, "currency": "EUR"}})
+    return data
+
+
 def payments():
     stubs = [
         {
@@ -298,11 +346,19 @@ def payments():
 
 
 def definition_file(content):
-    """A Definition file with one Mock or Stub per line, so that a change
-    shows as a change to that line."""
-    (key, items), = content.items()
+    """A Definition file with one Mock, Stub or Data bucket per line, so
+    that a change shows as a change to that line."""
+    lists = []
+    for key, items in content.items():
+        lines = [json.dumps(item, separators=(", ", ": ")) for item in items]
+        lists.append('  "%s": [\n    %s\n  ]' % (key, ",\n    ".join(lines)))
+    return "{\n%s\n}\n" % ",\n".join(lists)
+
+
+def bucket_file(items):
+    """A Data bucket's file: a JSON array with one item per line."""
     lines = [json.dumps(item, separators=(", ", ": ")) for item in items]
-    return '{\n  "%s": [\n    %s\n  ]\n}\n' % (key, ",\n    ".join(lines))
+    return "[\n  %s\n]\n" % ",\n  ".join(lines)
 
 
 def with_scenarios(content, mix):
@@ -326,8 +382,93 @@ def with_scenarios(content, mix):
     return {key: stubs}
 
 
+def with_crud(name, content):
+    """The CRUD variant of the Definition file `name`'s content: in the
+    catalog, the bucket `items` and the CRUD Stub `catalog-items` in place
+    of the 600 item Stubs; in the orders, the bucket `orders` and the CRUD
+    Stub `orders` in place of get-order, after the Stubs that create an
+    order, so that a POST to /orders still creates nothing."""
+    if name == "catalog.json":
+        stubs = [stub for stub in content["stubs"] if not stub["id"].startswith("catalog-item-0")]
+        return {"data": [{"mock": "catalog", "name": "items", "key": "sku", "jsonFile": "items.json"}],
+                "stubs": [{"id": "catalog-items", "mock": "catalog",
+                           "crud": {"bucket": "items", "path": "/catalog/items", "headers": CRUD_HEADERS}},
+                          *stubs]}
+    if name == "orders.json":
+        crud = {"id": "orders", "mock": "orders",
+                "crud": {"bucket": "orders", "path": "/orders", "headers": CRUD_HEADERS}}
+        return {"data": [{"mock": "orders", "name": "orders", "key": "id", "jsonFile": "orders.json"}],
+                "stubs": [crud if stub["id"] == "get-order" else stub for stub in content["stubs"]]}
+    return content
+
+
+def crud_mix(mix):
+    """The CRUD variant's request mix: `mix`, but the catalog search becomes
+    catalog-list, a list query, and the status update becomes update-order,
+    a PATCH of the order, each with the headers and body of the request it
+    replaces and a Session of its own; the requests that a CRUD Stub
+    answers name it, and each request names the CRUD operation it makes
+    (`expect.crud`), or none."""
+    def renamed(request, name, session):
+        """`request` named `name`, with the Session `session` in its
+        baggage."""
+        old = request["expect"]["session"]
+        headers = [[header, value.replace(f"smock-session={old},", f"smock-session={session},")]
+                   for header, value in request["headers"]]
+        return {**request, "name": name, "headers": headers}
+
+    requests = []
+    for request in mix:
+        crud = None
+        if request["name"] == "catalog-search":
+            request = {**renamed(request, "catalog-list", "bench-catalog-list"),
+                       "target": "/catalog/items?category=lighting&$sort=-stock&$limit=10"}
+            crud = {"session": "bench-catalog-list", "stub": "catalog-items", "crud": {"op": "list", "key": None}}
+        elif request["name"] == "catalog-item":
+            crud = {"stub": "catalog-items", "crud": {"op": "read", "key": "SKU-00317"}}
+        elif request["name"] == "get-order":
+            crud = {"stub": "orders", "crud": {"op": "read", "key": ORDER}}
+        elif request["name"] == "update-order-status":
+            request = {**renamed(request, "update-order", "bench-update-order"), "method": "PATCH",
+                       "target": f"/orders/{ORDER}"}
+            crud = {"session": "bench-update-order", "stub": "orders", "crud": {"op": "update", "key": ORDER}}
+        requests.append({**request, "expect": {**request["expect"], **(crud or {"crud": None})}})
+    about = ("The request mix of the CRUD variant of the release benchmark's definitions (bench/definitions-crud/), "
+             "which bench/bench.py sends when it serves that variant. bench/gen_definitions.py writes it from "
+             "bench/requests.json: the same requests, but catalog-search becomes catalog-list, a list query, and "
+             "update-order-status becomes update-order, a PATCH of the order, each with a Session of its own. "
+             "catalog-item and get-order read an item through a CRUD Stub, and no request creates one, so a "
+             "Session's copy of a bucket never grows. `expect.crud` is the CRUD operation and key that the "
+             "Journal records, or null; e2e/bench_test.mbt checks it.")
+    return mix_file(about, requests)
+
+
+def mix_file(about, requests):
+    """A request mix as bench/requests.json lays it out: a request a block,
+    a header a line, and `expect` on one line."""
+    def value(item):
+        return json.dumps(item, ensure_ascii=False)
+
+    def request_text(request):
+        lines = []
+        for key, item in request.items():
+            if key == "headers":
+                headers = ",\n".join(f"        [{value(name)}, {value(text)}]" for name, text in item)
+                lines.append(f'      "headers": [\n{headers}\n      ]')
+            elif key == "expect":
+                members = ", ".join(f"{value(name)}: {value(member)}" for name, member in item.items())
+                lines.append(f'      "expect": {{ {members} }}')
+            else:
+                lines.append(f"      {value(key)}: {value(item)}")
+        return "    {\n" + ",\n".join(lines) + "\n    }"
+
+    return ("{\n" + f'  "about": {value(about)},\n' + '  "requests": [\n'
+            + ",\n".join(request_text(request) for request in requests) + "\n  ]\n}\n")
+
+
 def files():
-    """Every file of both sets, by its path under bench/."""
+    """Every file of the three sets, and the CRUD variant's request mix, by
+    its path under bench/."""
     contents = {
         "00-mocks.json": mocks(),
         "catalog.json": catalog(),
@@ -337,11 +478,15 @@ def files():
     }
     mix = json.loads((BENCH / "requests.json").read_text())["requests"]
     written = {}
-    for directory, transform in (("definitions", lambda content: content),
-                                 ("definitions-scenarios", lambda content: with_scenarios(content, mix))):
+    for directory, transform in (("definitions", lambda name, content: content),
+                                 ("definitions-scenarios", lambda name, content: with_scenarios(content, mix)),
+                                 ("definitions-crud", with_crud)):
         for name, content in contents.items():
-            written[f"{directory}/{name}"] = definition_file(transform(content))
+            written[f"{directory}/{name}"] = definition_file(transform(name, content))
         written[f"{directory}/files/search-results.json"] = search_results()
+    written["definitions-crud/files/items.json"] = bucket_file(catalog_items())
+    written["definitions-crud/files/orders.json"] = bucket_file(orders_data())
+    written[CRUD_MIX] = crud_mix(mix)
     return written
 
 
@@ -356,7 +501,9 @@ def main(argv):
         for path in sorted((BENCH / name).rglob("*"))
         if path.is_file()
     }
-    sets = " and ".join(f"bench/{name}/" for name in SETS)
+    if (BENCH / CRUD_MIX).is_file():
+        present[CRUD_MIX] = (BENCH / CRUD_MIX).read_text()
+    sets = ", ".join(f"bench/{name}/" for name in SETS) + f" and bench/{CRUD_MIX}"
     if argv == ["--check"]:
         stale = sorted(name for name in set(wanted) | set(present) if wanted.get(name) != present.get(name))
         for name in stale:

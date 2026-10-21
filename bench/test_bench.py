@@ -296,8 +296,10 @@ class Conditions(unittest.TestCase):
 
 class Definitions(unittest.TestCase):
     """smock serves bench/definitions/ unless --definitions names another
-    set, such as its Scenario variant, bench/definitions-scenarios/, and the
-    run says which it served."""
+    set, such as its Scenario variant, bench/definitions-scenarios/, or its
+    CRUD variant, bench/definitions-crud/, which is sent its own request
+    mix, bench/requests-crud.json; and the run says which it served and
+    sent."""
 
     def test_a_run_serves_the_scenario_variant_when_told_and_every_request_still_gets_its_status(self):
         out = bench(self, "--definitions", str(BENCH / "definitions-scenarios"),
@@ -312,8 +314,31 @@ class Definitions(unittest.TestCase):
         result = case(out, "http-keep-alive@1")
         self.assertEqual(result["errors"], 0)
         self.assertGreater(result["requests"]["ok"], 0)
-        self.assertIn(f"definition set {conditions['definitions']['digest']} (bench/definitions-scenarios)",
+        self.assertIn(f"definition set {conditions['definitions']['digest']} (bench/definitions-scenarios), on ",
                       (out / "summary.md").read_text())
+        # It is sent the plain mix.
+        self.assertEqual(conditions["request_mix"]["file"], "bench/requests.json")
+
+    def test_a_run_sends_the_crud_variant_its_own_mix_and_every_request_gets_its_status(self):
+        out = bench(self, "--definitions", str(BENCH / "definitions-crud"),
+                    "--cases", "http-keep-alive", "--cpu-limits", "1", "--rate", "200", *SHORT)
+        conditions = read(out, "conditions.json")
+        self.assertEqual(conditions["definitions"]["directory"], "bench/definitions-crud")
+        self.assertEqual(conditions["definitions"]["digest"], definition_set_digest(BENCH / "definitions-crud"))
+        self.assertEqual(conditions["request_mix"], {
+            "file": "bench/requests-crud.json",
+            "sha256": hashlib.sha256((BENCH / "requests-crud.json").read_bytes()).hexdigest(),
+            "weights": {"catalog-item": 30, "catalog-list": 10, "user-profile": 20, "user-preferences": 5,
+                        "create-order": 15, "get-order": 5, "update-order": 5, "create-payment": 7,
+                        "legacy-payment": 3},
+        })
+        # Each request of that mix gets the status it expects, the list and
+        # the update included.
+        result = case(out, "http-keep-alive@1")
+        self.assertEqual(result["errors"], 0)
+        self.assertGreater(result["requests"]["ok"], 0)
+        self.assertIn(f"definition set {conditions['definitions']['digest']} (bench/definitions-crud, request mix "
+                      "bench/requests-crud.json), on ", (out / "summary.md").read_text())
 
     def test_a_definitions_directory_that_is_not_there_is_refused_before_anything_starts(self):
         out = Path(tempfile.mkdtemp(prefix="smock-bench-test-"))
