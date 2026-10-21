@@ -544,22 +544,23 @@ fn preview_writes(
   for i in 0..<writes.length() {
     let write = writes[i]
     let value = write_values[i]
-    // Each value is shown as it rendered, before later writes can change
-    // it in place. Only an `append` is shown after it applies, with the new
-    // key it got; a `set` with a key is shown without the key it gets.
-    let rendered = match write.op {
-      Append | Remove => None
-      Replace | Merge => Some(deep_copy(value))
+    // A value is shown as it rendered, copied before later writes can
+    // change it in place. An `append` is shown once it applies, with the
+    // new key it got; a `set` with a key is shown without the key it gets.
+    let rendered = if write.op is (Replace | Merge) {
+      Some(deep_copy(value))
+    } else {
+      None
     }
     working.apply(i, write, keys[i], value, buckets, rand)
     shown.push({
       op: write.op,
       bucket: write.bucket,
       key: keys[i],
-      value: match write.op {
-        Append => Some(deep_copy(value))
-        Remove => None
-        Replace | Merge => rendered
+      value: if write.op is Append {
+        Some(deep_copy(value))
+      } else {
+        rendered
       },
     })
   }
