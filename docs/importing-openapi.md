@@ -5,7 +5,8 @@ one Definition file, once. The file is committed and reviewed like any
 other, and smock serves it like any other. smock never reads OpenAPI when
 it serves: the Definition files stay the only source of truth
 ([ADR 0002](adr/0002-definition-files-are-the-source-of-truth.md)). When
-the document changes, run the command again and review the diff.
+the document changes, run the command again with `--overwrite on` and
+review the diff ([Regenerating](#regenerating)).
 
 The command is new, and it imports part of a document so far. What it
 does not import yet is left out with a warning, so nothing is dropped
@@ -73,7 +74,7 @@ The comments are there for the reader:
   by its base name, with its `info.title`, its `info.version` and its
   OpenAPI version, and the flags that shape the file. It says not to edit
   the file, since the next import replaces it. Put hand changes in another
-  file.
+  file ([Overrides](#overrides)).
 - The comment above each Stub maps it back to the document: the method,
   the path as the document writes it, the response key, `deprecated`
   when the operation is, and the first line of the operation's `summary`.
@@ -92,10 +93,12 @@ The arguments:
   versions.
 - `--output <file>`: the Definition file to write. Its name picks the
   format: `.yaml` or `.yml` writes YAML, with the comments above, and
-  `.json` writes JSON, which has no comments. Both hold the same Stubs. It
-  must not exist: the command creates the file new, and never replaces
-  one. A name that starts with `.` is refused, since smock skips such
-  files.
+  `.json` writes JSON, which has no comments. Both hold the same Stubs.
+  Its directory must exist. A name that starts with `.` is refused, since
+  smock skips such files.
+- `--overwrite on|off`: whether an existing `--output` is replaced. It is
+  `off` by default: an existing file is refused before the document is
+  read, and nothing is written.
 
 The flags belong to one run, so none has an `SMOCK_` variable.
 
@@ -404,6 +407,81 @@ curl localhost:8080/pets/mine                                           # 200, f
 When the test is done, it deletes the Ephemeral Stub, or resets its
 Session with `POST /v1/reset` and `{"scope":"session"}`.
 
+## Regenerating
+
+The command owns the file it writes. When the document changes, run it
+again with `--overwrite on`:
+
+```sh
+smock import-openapi api/petstore.json --mock petstore --output definitions/petstore.yaml --overwrite on
+```
+
+- A re-import replaces the whole file. It does not merge with hand edits:
+  they are lost, which is why the file's first comment says not to edit
+  it.
+- Without `--overwrite on`, an existing `--output` is refused before the
+  document is read, and nothing is written. So a mistyped path never
+  replaces a hand-written file. A file that appears at `--output` while
+  the command runs is not replaced either.
+- The file is written to a temporary file in the same directory, such as
+  `.petstore.yaml.tmp`, then renamed to `--output`. smock skips names
+  that start with `.`, so a smock that watches the directory loads the old
+  file or the new one, never half a file. The temporary file is removed
+  when anything fails. The command reads, creates and changes no other
+  file in the directory.
+- Some outputs are refused even with `--overwrite on`: a directory, a
+  symlink (even to a regular file), and the document itself, which would
+  be replaced by its own conversion. The directory of `--output` must
+  exist: the command makes no directory. Each refusal is an error about
+  `--output`, with exit status 1.
+
+### Overrides
+
+Put hand changes in another file of the same directory. Generated Stubs
+have no `priority`, so a hand-written Stub with any `priority` is tried
+first, and the next import leaves its file alone:
+
+```yaml
+# definitions/petstore-overrides.yaml
+version: 1
+stubs:
+  - id: petstore.getPet.none
+    mock: petstore
+    priority: 1
+    request:
+      method: GET
+      path: /pets/mine
+    response:
+      status: 404
+      json:
+        message: You have no pet
+```
+
+`smock check` then warns about each generated Stub that the override
+shadows. That is expected:
+
+```
+petstore.yaml: /stubs/0: warning: the Stub "petstore.getPet.404" can never match: the Stub "petstore.getPet.none" at petstore-overrides.yaml: /stubs/0 is tried first and matches every request this one would
+petstore.yaml: /stubs/1: warning: the Stub "petstore.getPet.200" can never match: the Stub "petstore.getPet.none" at petstore-overrides.yaml: /stubs/0 is tried first and matches every request this one would
+```
+
+An override that matches on method and path only also wins over the
+Stubs that `Smock-Status` selects, as the first warning shows.
+
+### Checking that the file is current
+
+In CI, run the command again from a fixed directory, such as the root of
+the repository, then let Git check that the file did not change:
+
+```sh
+smock import-openapi api/petstore.json --mock petstore --output definitions/petstore.yaml --overwrite on
+git diff --exit-code definitions/
+```
+
+The same document and flags give the same bytes, so `git diff` fails
+only when the committed file is out of date with the document. Running
+from a fixed directory keeps the relative paths naming the same files.
+
 ## References and bundling
 
 Documents describe shared parts once, under `components`, and point at
@@ -547,6 +625,4 @@ command does.
   - schema references: a `$ref` in a schema is an error;
   - references to other files: such a `$ref` is an error, so bundle the
     document first (see [References and bundling](#references-and-bundling));
-  - YAML documents: a `.yaml` or `.yml` document is a usage error;
-  - replacing an earlier output: an existing `--output` is refused before
-    the document is read, and nothing is written.
+  - YAML documents: a `.yaml` or `.yml` document is a usage error.
