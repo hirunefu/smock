@@ -1766,8 +1766,8 @@ load.
   [definition set digest](#reloading).
 
 A listed value reaches only what a template that reads it produces: a
-response, a rendering, a [Variable](#variables) it writes, or a template
-error message that quotes it, such as
+response, a rendering, a [Variable](#variables) it writes (which the
+Admin API lists), or a template error message that quotes it, such as
 `number(): "eighty" is not a JSON number`. Such a message goes into the 500
 of the failed template and into the Journal entry's `templateError`.
 smock writes no value in its logs or in the Admin API status, and the
@@ -1821,6 +1821,8 @@ In one Session, `POST /login` with `{"user":"ann"}` gets
   holds all of them ([The state bound](#the-state-bound)).
 - An [Ephemeral Stub](../README.md#sessions-and-ephemeral-stubs) takes
   `variables` too, and writes the Variables of its Session.
+- Through the Admin API, a test lists, sets and deletes the Variables of
+  its own Session ([Through the Admin API](#through-the-admin-api)).
 
 #### When Variables are written
 
@@ -1868,7 +1870,7 @@ them take.
   `${vars[0]}` are errors when loading. A loop variable cannot be named
   `vars`.
 - A name that no Stub in the files writes is not an error, since an
-  Ephemeral Stub can write it.
+  Ephemeral Stub or the Admin API can write it.
 - `smock render` and the Admin render operation read Variables from the
   sample's `vars`, never the live ones, and show the values a Stub would
   write without writing them (see [Rendering a
@@ -1879,6 +1881,43 @@ Variables the request wrote, in the order written, as `variablesWritten`.
 It is empty for a Stub without `variables`, for a request that no Stub
 matched, when a value failed to render, and when the state bound refused
 the writes.
+
+#### Through the Admin API
+
+A test can arrange and inspect the Variables of its own Session through
+the Admin API. Each operation names its Session as other Admin API calls
+do, and one without a Session works on the Mock's no-Session space:
+
+- `GET /v1/mocks/{mock}/variables` lists them by name, in byte-wise order,
+  with their values:
+  `{"variables":{"previous":null,"user":"ann"},"warnings":[]}`.
+- `PUT /v1/mocks/{mock}/variables/{name}` sets one. The body is the value
+  itself, any JSON: `"ann"`, `42` or `{"items":[]}`. It replaces the value
+  the Variable had, and `null` stores null. The reply is
+  `{"name":"user","value":"ann","warnings":[]}`.
+- `DELETE /v1/mocks/{mock}/variables/{name}` deletes one, so `vars.NAME` is
+  missing again. The reply is `{"name":"user","warnings":[]}`.
+
+So, for the [`whoami` Stub above](#variables), a test that sends
+`PUT /v1/mocks/shop/variables/user` with the body `"ann"` before it calls
+`GET /me` gets `{"user":"ann"}`, and can list the Variables afterwards to
+check what its requests wrote.
+
+- A Mock that does not exist gets 404 `unknown_mock`.
+- A name that is not 1 to 128 ASCII letters, digits, `_` and `-` gets 400
+  `invalid_request`, and a set without a body too. A body that is not JSON
+  gets 400 `malformed_json`, as for other operations.
+- A delete of a Variable the Session has not set gets 404
+  `unknown_variable`. Another Session's Variables are never listed, set or
+  deleted.
+- A set counts against [the state bound](#the-state-bound) as a Stub's
+  writes do. A delete gives back the bytes the Variable counted.
+- Each set and delete writes a log entry that names the Mock, the Session
+  and the Variable, but not the value:
+
+  ```json
+  {"time":"2026-10-21T09:00:00.000Z","level":"info","msg":"Variable set","mock":"shop","session":"test-a","variable":"user"}
+  ```
 
 #### Resets and reloads
 
@@ -1972,11 +2011,17 @@ a request whose body would take the count above 1 MiB gets 507, with
 - A write that does not grow the count, such as one that replaces a value
   with a smaller one, always fits.
 
+An Admin API set follows the same rule. One that would take the count
+above the bound writes nothing and gets 507 `state_limit_reached`, in the
+Admin API's error form, with the same message. A delete gives back the
+Variable's bytes, and its space's with the space's last Variable.
+
 Two metrics on the admin port, without labels, show how close the process
 is to the bound: `smock_state_bytes`, the bytes the count holds now, and
-`smock_state_writes_refused_total`, the requests whose writes it refused,
-each once. smock reads them when `/metrics` is scraped. `smock render` and
-the Admin render operation write nothing, so they never meet the bound.
+`smock_state_writes_refused_total`, the writes it refused, each refused
+request and each refused Admin API set once. smock reads them when
+`/metrics` is scraped. `smock render` and the Admin render operation write
+nothing, so they never meet the bound.
 
 ### Errors when loading
 
@@ -2030,7 +2075,8 @@ the same on every run:
 - The rendering shows the values the Stub would write as `variables`, an
   object, empty when the Stub has no `variables`. They are rendered
   against the sample's `vars`, in the order written, and their helpers
-  draw from the seed as a request's do. Nothing is written.
+  draw from the seed as a request's do. Nothing is written, so the state
+  bound never applies to them.
 - The response reads the sample's `vars` with the Stub's values written
   over them, as the response to a request sees its writes.
 - A value that fails to render shows the 500 a request would get, with

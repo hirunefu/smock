@@ -112,8 +112,16 @@ of each GitHub release include its section
   writes would pass the bound writes nothing, picks no response and gets
   507 `state limit reached`.
 - The metrics `smock_state_bytes`, the bytes the state bound counts, and
-  `smock_state_writes_refused_total`, the requests whose writes it
-  refused.
+  `smock_state_writes_refused_total`, the writes it refused, from requests
+  and Admin API sets.
+- Admin API operations on the calling Session's Variables of a Mock:
+  `GET /v1/mocks/{mock}/variables` lists them by name, with their values;
+  `PUT /v1/mocks/{mock}/variables/{name}` sets one to the JSON value in the
+  body; `DELETE /v1/mocks/{mock}/variables/{name}` deletes one. A set
+  counts against the state bound, and one that would pass it writes
+  nothing and gets 507 `state_limit_reached`; a delete gives the bytes
+  back. A delete of an unset Variable gets 404 `unknown_variable`. Each set
+  and delete is logged.
 
 ### Changed
 

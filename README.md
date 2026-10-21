@@ -208,7 +208,7 @@ exits with status 2. `smock serve --help` lists the settings:
 | `--journal-max-entries` | `SMOCK_JOURNAL_MAX_ENTRIES` | 10000: beyond it, the oldest entries are evicted |
 | `--journal-max-bytes` | `SMOCK_JOURNAL_MAX_BYTES` | a quarter of smock's memory limit (cgroup v2 `memory.max`), at least 1048576 bytes (1 MiB) and at most 67108864 (64 MiB); 64 MiB without a limit ([The Journal](#the-journal)): beyond it, the oldest entries are evicted |
 | `--journal-body-limit` | `SMOCK_JOURNAL_BODY_LIMIT` | 4096 bytes (4 KiB): the most of a request body an entry keeps, and of the form and XML values its Near miss keeps, in total |
-| `--state-max-bytes` | `SMOCK_STATE_MAX_BYTES` | an eighth of smock's memory limit (cgroup v2 `memory.max`), at least 1048576 bytes (1 MiB) and at most 67108864 (64 MiB); 64 MiB without a limit ([The state bound](docs/definition-files.md#the-state-bound)): the most bytes the per-Session state of the whole process takes; a request whose writes would pass it gets 507 |
+| `--state-max-bytes` | `SMOCK_STATE_MAX_BYTES` | an eighth of smock's memory limit (cgroup v2 `memory.max`), at least 1048576 bytes (1 MiB) and at most 67108864 (64 MiB); 64 MiB without a limit ([The state bound](docs/definition-files.md#the-state-bound)): the most bytes the per-Session state of the whole process takes; a request or an Admin API set whose writes would pass it gets 507 |
 
 A request over a limit gets its status with `Connection: close`, then the
 connection closes; a timeout closes the connection without a response.
@@ -391,7 +391,8 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   and evictions, without labels; `smock_state_bytes` and
   `smock_state_writes_refused_total` show the bytes of per-Session state
   that [the state bound](docs/definition-files.md#the-state-bound) counts
-  and the requests whose writes it refused, without labels.
+  and the writes it refused, from requests and Admin API sets, without
+  labels.
 - What smock's process and its cgroup use is read when `/metrics` is
   scraped, so serving requests costs nothing for it. The standard process
   metrics of Prometheus's client libraries: `process_cpu_seconds_total`
@@ -457,6 +458,9 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
 - `GET /v1/mocks/{mock}/scenarios` lists the calling Session's Scenarios of
   a Mock, with their states, and `PUT /v1/mocks/{mock}/scenarios/{scenario}`
   sets the state of one ([below](#sessions-and-ephemeral-stubs)).
+- `GET /v1/mocks/{mock}/variables` lists the calling Session's Variables of
+  a Mock, and `PUT` and `DELETE /v1/mocks/{mock}/variables/{name}` set and
+  delete one ([below](#sessions-and-ephemeral-stubs)).
 - `POST /v1/journal/query` lists the calling Session's requests from the
   [Journal](#the-journal), `POST /v1/journal/verify` checks how many of
   them there were, and `GET /v1/journal/unmatched` lists those that no
@@ -648,6 +652,17 @@ curl localhost:8080/users/1                                           # 200, fro
   list does not show gets 404 `unknown_scenario`, and a state outside the
   known states 400 `unknown_state`, so a typo cannot leave a Scenario in a
   state that nothing matches.
+- The Session keeps its own [Variables](docs/definition-files.md#variables)
+  of each Mock too, which a Stub's `variables` write and templates read as
+  `vars.NAME`. `GET /v1/mocks/{mock}/variables` lists the calling Session's
+  Variables of the Mock, by name, with their values.
+  `PUT /v1/mocks/{mock}/variables/{name}` with a JSON value as the body,
+  such as `"ann"`, sets one, so that a test can arrange the state its
+  requests read, and `DELETE` deletes one. A name that is not 1 to 128
+  ASCII letters, digits, `_` and `-` gets 400 `invalid_request`, a Variable
+  the Session has not set 404 `unknown_variable`, and a set that would pass
+  [the state bound](docs/definition-files.md#the-state-bound) 507
+  `state_limit_reached`.
 - `GET` lists and `DELETE /v1/mocks/{mock}/stubs/{id}` deletes the calling
   Session's Ephemeral Stubs of the Mock. `POST /v1/reset` with
   `{"scope":"session"}` clears the calling Session's Ephemeral Stubs,
