@@ -17,11 +17,13 @@ let bench_definitions : String = "bench/definitions"
 let bench_scenario_definitions : String = "bench/definitions-scenarios"
 
 ///|
-/// The directory of the CRUD variant of the benchmark's definitions, and
-/// the request mix bench/bench.py sends it, relative to the module root.
+/// The directory of the CRUD variant of the benchmark's definitions,
+/// relative to the module root.
 let bench_crud_definitions : String = "bench/definitions-crud"
 
 ///|
+/// The request mix bench/bench.py sends the CRUD variant, relative to the
+/// module root.
 let bench_crud_mix : String = "bench/requests-crud.json"
 
 ///|
