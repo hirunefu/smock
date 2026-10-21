@@ -8,9 +8,10 @@ it serves: the Definition files stay the only source of truth
 the document changes, run the command again with `--overwrite on` and
 review the diff ([Regenerating](#regenerating)).
 
-The command is new, and it imports part of a document so far. What it
-does not import yet is left out with a warning, so nothing is dropped
-without a word. [Limits](#limits) lists those parts.
+A part of the document that the command does not import, such as
+`callbacks`, is left out with a warning.
+[What is generated](#what-is-generated) says what becomes of each part,
+and [Limits](#limits) gives the bounds the command keeps to.
 
 ## Quick start
 
@@ -1458,6 +1459,85 @@ The same document and flags always give the same bytes, on every
 platform, so a generated file changes only when the document or the
 command does.
 
+## Notes for Mockoon users
+
+Mockoon imports an OpenAPI document into an environment too, and its CLI
+can serve a document directly. An environment that Mockoon built from a
+document can be replaced by importing the same document into smock. The
+result differs from Mockoon 9.9.0's import in these ways:
+
+- **One fixed sample.** Mockoon turns a schema into faker helpers, which
+  give new data on every request. smock writes one fixed sample of the
+  schema in the file ([Samples from schemas](#samples-from-schemas)), so a
+  reviewer sees what the mock answers, and tests repeat.
+- **The default response.** smock answers the lowest 2xx response, else
+  `2XX`, else `default` ([The main response](#the-main-response)).
+  Mockoon answers each route's first response, the one with the lowest
+  status code, else `default`. So an operation with `default` or `2XX`,
+  and a `404`, answers 404 in Mockoon and 200 in smock. Mockoon's first
+  response also has a body made from the schema, even when the document
+  gives examples, while smock's has the first example.
+- **Ranges and `example`.** Mockoon drops range keys such as `4XX`, and
+  reads a media type's `examples` but not its `example`. smock keeps both:
+  a range answers its first code, and `example` gives the body
+  ([Bodies from examples](#bodies-from-examples)).
+- **Concrete paths first.** Mockoon keeps the document's order of paths,
+  so `/pets/{petId}`, written before `/pets/mine`, answers
+  `GET /pets/mine`. smock puts concrete paths before templated ones
+  ([Paths with parameters](#paths-with-parameters)).
+- **The other responses.** Mockoon's imported responses have no rules, so
+  only the first one answers until the route is edited. In smock, a
+  request selects any other response with `Smock-Status`, and a named
+  example with `Smock-Example` ([Selecting responses](#selecting-responses)).
+- **Serving and re-importing.** `mockoon-cli start --data openapi.yaml`
+  converts the document each time it starts. smock never reads OpenAPI
+  when it serves: import once, commit the file, and import again with
+  `--overwrite on` when the document changes. Mockoon's app adds only
+  missing routes and status codes on a re-import, while smock replaces the
+  whole file, and Git shows what changed ([Regenerating](#regenerating)).
+- **Hosts, not ports.** Mockoon tells environments apart by port, and
+  smock tells Mocks apart by Host. When the definitions directory holds
+  other Mocks, import with `--hosts`
+  ([The Mock and its Hosts](#the-mock-and-its-hosts)).
+
+What was changed in Mockoon after the import, such as rules, goes in an
+override file ([Overrides](#overrides)), translated as
+[Migrating from Mockoon](migrating-from-mockoon.md) shows.
+
+## Notes for Prism users
+
+Prism serves an OpenAPI document as it is, and a request picks a response
+with the `Prefer` header. smock's import answers the same main response
+as Prism: the lowest 2xx, then `default`. Port each `Prefer` header to the
+two selector headers ([Selecting responses](#selecting-responses)):
+
+| Prism | smock |
+|---|---|
+| `Prefer: code=404` | `Smock-Status: 404` |
+| `Prefer: example=dog` | `Smock-Example: dog` |
+| `Prefer: code=404, example=gone` | `Smock-Status: 404` and `Smock-Example: gone` |
+| The query parameters `__code` and `__example` | No counterpart: send the headers. |
+
+Where the two differ, as checked against Prism 5.16.0:
+
+- **Only the key as written selects.** Prism answers `Prefer: code=405`
+  with the `4XX` response, or else `default`, sent with status 405.
+  `Smock-Status: 405` reaches neither: send `Smock-Status: 4XX`, which
+  answers 400.
+- **An unknown value falls through.** Prism answers a code or an example
+  that the document does not have with a 404 error. smock answers the
+  main response, or the selected response's first example, and the
+  Journal names the Stub that answered.
+- **No request validation.** Prism checks parameters, bodies and security,
+  and answers an invalid request with an error such as 422. smock's Stubs
+  match on method and path only, so every request gets the documented
+  answer.
+- **No dynamic mode.** Prism's `--dynamic` generates a body for each
+  request. smock writes one fixed sample.
+- **The file is the source.** Prism serves the document and reloads it
+  when it changes. smock serves the generated file: import again with
+  `--overwrite on`, and review the diff ([Regenerating](#regenerating)).
+
 ## Limits
 
 - At most 1,000 documents are read, the document given included, and at
@@ -1466,6 +1546,14 @@ command does.
   a run takes many times what it reads in memory.
 - The file is at most 64 MiB. A larger output is an error that gives its
   size, and nothing is written.
+- A large output needs room where smock runs. `smock serve` holds the
+  whole file in memory, parsed, as it holds every Definition file, and
+  while it reloads a changed file it holds the old set and the new one, so
+  give the Pod memory for both. A ConfigMap holds at most 1 MiB, so deploy
+  a larger file with the Helm chart's
+  [git-sync sidecar](../charts/smock/README.md#from-a-git-repository-git-sync)
+  or its [OCI image volume](../charts/smock/README.md#from-an-oci-image)
+  instead.
 - A sampled array has at most 100 items. A larger `minItems` gives 100
   items, with a warning.
 - A sample nests at most 32 levels. An object or an array inside 32

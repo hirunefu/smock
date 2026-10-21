@@ -13,8 +13,8 @@ of each GitHub release include its section
 - `smock import-openapi` converts an OpenAPI 3.0, 3.1 or 3.2 document
   into a Definition file, once. Each operation becomes Stubs that match
   its method and path. By default, they answer its main status. Parts
-  that are not imported yet are left out with a warning. smock never reads
-  OpenAPI when it serves. See
+  that it does not import, such as callbacks, are left out with a warning.
+  smock never reads OpenAPI when it serves. See
   [docs/importing-openapi.md](docs/importing-openapi.md).
 - `smock import-openapi` turns a path with parameters, such as
   `/pets/{petId}`, into a pattern in which each parameter matches text
@@ -107,6 +107,12 @@ of each GitHub release include its section
   declare, or that repeats, is a usage error. `--declare-mock off` writes
   only Stubs, for a Mock declared by hand in another file, such as to set
   `default`, `noMatch` or `journal`.
+- The README documents `smock import-openapi` and its flags. The Mockoon
+  migration guide no longer lists OpenAPI import among what smock does not
+  do: an environment that Mockoon imported from an OpenAPI document can be
+  imported into smock from the same document. The import guide has notes
+  for Mockoon users and for Prism users, where `Prefer: code=404` is
+  `Smock-Status: 404`, and says how to deploy a large output.
 - `write` in the `smock/yaml` module turns a JSON tree into a YAML
   document, with comments, that the module's own parser reads back as the
   same tree. A string is quoted only when it would not read back as the
