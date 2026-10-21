@@ -140,6 +140,7 @@ async test "smock render prints the named Stub's status, headers and body for a 
         #|  "seed": <seed>,
         #|  "responseIndex": null,
         #|  "variables": {},
+        #|  "dataWrites": [],
         #|  "response": {
         #|    "status": 201,
         #|    "headers": [
@@ -199,6 +200,7 @@ async test "smock render still renders the Stub when the sample fails its condit
         #|  "seed": <seed>,
         #|  "responseIndex": null,
         #|  "variables": {},
+        #|  "dataWrites": [],
         #|  "response": {
         #|    "status": 201,
         #|    "headers": [
@@ -424,9 +426,9 @@ async test "the Admin render operation answers with the rendering, the failed co
         "\{matched.status}\n\{masked(matched.body)}\n\{failed.status}\n\{masked(failed.body)}",
         content=(
           #|200
-          #|{"stub":"get-user","mock":"users","time":"<time>","seed":<seed>,"responseIndex":null,"variables":{},"response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"},{"name":"Accept-Ranges","value":"bytes"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"templateError":null,"failed":[],"warnings":[]}
+          #|{"stub":"get-user","mock":"users","time":"<time>","seed":<seed>,"responseIndex":null,"variables":{},"dataWrites":[],"response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"},{"name":"Accept-Ranges","value":"bytes"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"templateError":null,"failed":[],"warnings":[]}
           #|200
-          #|{"stub":"create-user","mock":"users","time":"<time>","seed":<seed>,"responseIndex":null,"variables":{},"response":{"status":201,"headers":[{"name":"Location","value":"/users/7"},{"name":"Set-Cookie","value":"a=1"},{"name":"Set-Cookie","value":"b=2"},{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":7}","size":8,"truncated":false},"events":null},"templateError":null,"failed":[{"condition":"query:dry","expected":"yes","actual":["no"]},{"condition":"header:x-api-key","expected":"secret","actual":[]},{"condition":"body","expected":{"json":{"name":"Zoë"}},"actual":[""]}],"warnings":[]}
+          #|{"stub":"create-user","mock":"users","time":"<time>","seed":<seed>,"responseIndex":null,"variables":{},"dataWrites":[],"response":{"status":201,"headers":[{"name":"Location","value":"/users/7"},{"name":"Set-Cookie","value":"a=1"},{"name":"Set-Cookie","value":"b=2"},{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":7}","size":8,"truncated":false},"events":null},"templateError":null,"failed":[{"condition":"query:dry","expected":"yes","actual":["no"]},{"condition":"header:x-api-key","expected":"secret","actual":[]},{"condition":"body","expected":{"json":{"name":"Zoë"}},"actual":[""]}],"warnings":[]}
         ),
       )
     })
@@ -986,4 +988,168 @@ async test "smock render and the Admin render operation read the sample's vars, 
       })
     },
   )
+}
+
+///|
+/// The Mock `shop` with the keyed Data bucket `orders`, from
+/// `files/orders.json`, the pay-order Stub, which pays the order of its
+/// path, and `GET /api/v1/orders`, which lists the orders; with sample
+/// requests that pay an order of the sample's data, an order of the initial
+/// value in the Session test-a, and one that no order has, and two samples
+/// whose data is wrong.
+let pay_order_definitions : Array[(String, String)] = [
+  (
+    "shop.yaml",
+    (
+      #|mocks:
+      #|  - name: shop
+      #|data:
+      #|  - { mock: shop, name: orders, key: id, jsonFile: orders.json }
+      #|stubs:
+      #|  - id: pay-order
+      #|    mock: shop
+      #|    request: { method: POST, path: { pattern: "/api/v1/orders/[^/]+/pay" } }
+      #|    dataWrites:
+      #|      - { op: merge, bucket: orders, key: "${path[3]}", value: { status: paid, paidAt: "${now()}" } }
+      #|    response:
+      #|      status: 200
+      #|      template: true
+      #|      json: "${find(data.orders, 'id', path[3])}"
+      #|  - id: list-orders
+      #|    mock: shop
+      #|    request: { method: GET, path: /api/v1/orders }
+      #|    response: { status: 200, template: true, json: "${data.orders}" }
+    ),
+  ),
+  (
+    "files/orders.json",
+    (
+      #|[{ "id": 1001, "status": "paid" }, { "id": 1002, "status": "pending" },
+      #| { "id": 1003, "status": "pending" }]
+    ),
+  ),
+  (
+    "samples/sample-data.json",
+    (
+      #|{ "method": "POST", "path": "/api/v1/orders/1002/pay",
+      #|  "data": { "orders": [{ "id": 1002, "status": "pending" }] } }
+    ),
+  ),
+  (
+    "samples/initial.json",
+    (
+      #|{ "method": "POST", "path": "/api/v1/orders/1003/pay",
+      #|  "session": "test-a" }
+    ),
+  ),
+  (
+    "samples/missing.json", "{ \"method\": \"POST\", \"path\": \"/api/v1/orders/9999/pay\" }",
+  ),
+  (
+    "samples/unknown.json", "{ \"method\": \"POST\", \"path\": \"/api/v1/orders/1002/pay\", \"data\": { \"order\": [] } }",
+  ),
+  (
+    "samples/broken.json",
+    (
+      #|{ "method": "POST", "path": "/api/v1/orders/1002/pay",
+      #|  "data": { "orders": [{ "id": 1002 }, { "id": "1002" }] } }
+    ),
+  ),
+]
+
+///|
+/// What a rendering says of data: the writes the Stub would make, the
+/// response and the template error, as one line of JSON.
+fn with_data_writes(json : Json) -> String {
+  guard json is Object(members) else { return "not an object" }
+  let out : Map[String, Json] = Map([])
+  for key in ["dataWrites", "response", "templateError"] {
+    out[key] = members.get(key).unwrap_or(Json::string("absent"))
+  }
+  Json::object(out).stringify()
+}
+
+///|
+async test "smock render and the Admin render operation read the sample's data, show the same dataWrites and response, and neither read nor write a Session's data" {
+  with_definitions(pay_order_definitions, dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      // A live copy of test-a, which no rendering reads.
+      let set = smock.admin(
+        "PUT",
+        "/v1/mocks/shop/data/orders",
+        headers=[baggage("test-a")],
+        body="[{\"id\": 1003, \"status\": \"cancelled\", \"note\": \"live\"}]",
+      )
+      let out = ["test-a sets its copy: \{set.status}"]
+      let time = "2026-10-12T14:30:05Z"
+      for sample in ["sample-data", "initial", "missing"] {
+        let file = "\{dir}/samples/\{sample}.json"
+        let (status, stdout, stderr) = render_output([
+          "--dir", dir, "pay-order", "--request", file, "--time", time,
+        ])
+        let response = smock.render(
+          "pay-order",
+          sample=file,
+          query="?time=\{time}",
+        )
+        let from_cli = with_data_writes(@json.parse(stdout))
+        let from_admin = with_data_writes(response.json())
+        out.push(
+          "\{sample}: render \{status}, admin \{response.status}, same: \{from_cli == from_admin}\{stderr}",
+        )
+        out.push("  \{from_cli}")
+      }
+      // The live data are as the requests left them.
+      let list = smock.send("GET", "/api/v1/orders", headers=[baggage("test-a")])
+      out.push("test-a lists: \{list.split("\n").last().unwrap()}")
+      let list = smock.send("GET", "/api/v1/orders")
+      out.push("no Session lists: \{list.split("\n").last().unwrap()}")
+      inspect(
+        out.join("\n"),
+        content=(
+          #|test-a sets its copy: 200
+          #|sample-data: render 0, admin 200, same: true
+          #|  {"dataWrites":[{"op":"merge","bucket":"orders","key":"1002","value":{"status":"paid","paidAt":"2026-10-12T14:30:05.000Z"}}],"response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":1002,\"status\":\"paid\",\"paidAt\":\"2026-10-12T14:30:05.000Z\"}","size":63,"truncated":false},"events":null},"templateError":null}
+          #|initial: render 0, admin 200, same: true
+          #|  {"dataWrites":[{"op":"merge","bucket":"orders","key":"1003","value":{"status":"paid","paidAt":"2026-10-12T14:30:05.000Z"}}],"response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":1003,\"status\":\"paid\",\"paidAt\":\"2026-10-12T14:30:05.000Z\"}","size":63,"truncated":false},"events":null},"templateError":null}
+          #|missing: render 0, admin 200, same: true
+          #|  {"dataWrites":[],"response":{"status":500,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"error\":\"data write failed\",\"stub\":\"pay-order\",\"at\":\"/dataWrites/0\",\"message\":\"the Data bucket \\\"orders\\\" has no item with the key \\\"9999\\\"\"}","size":142,"truncated":false},"events":null},"templateError":null}
+          #|test-a lists: [{"id":1003,"status":"cancelled","note":"live"}]
+          #|no Session lists: [{"id":1001,"status":"paid"},{"id":1002,"status":"pending"},{"id":1003,"status":"pending"}]
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "sample data that names a bucket the Mock does not declare, or breaks a keyed bucket's rules, makes smock render fail, and the Admin render operation answer 400 invalid_data" {
+  with_definitions(pay_order_definitions, dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let out = []
+      for sample in ["unknown", "broken"] {
+        let file = "\{dir}/samples/\{sample}.json"
+        out.push(
+          render(["--dir", dir, "pay-order", "--request", file])
+          .trim_end(chars="\n")
+          .to_owned(),
+        )
+        let response = smock.render("pay-order", sample=file)
+        out.push("admin: \{response.status} \{response.body}")
+      }
+      inspect(
+        out.join("\n"),
+        content=(
+          #|status 1
+          #|stderr:
+          #|smock render: the sample request's data names the Data bucket "order", which the Mock "shop" does not declare
+          #|admin: 400 {"error":"invalid_data","message":"the sample request's data names the Data bucket \"order\", which the Mock \"shop\" does not declare","warnings":[]}
+          #|status 1
+          #|stderr:
+          #|smock render: the sample request's data breaks the rules of the Data bucket "orders", keyed by "id": /data/orders/1/id has the key text "1002", as item 0 does
+          #|admin: 400 {"error":"invalid_data","message":"the sample request's data breaks the rules of the Data bucket \"orders\", keyed by \"id\": /data/orders/1/id has the key text \"1002\", as item 0 does","warnings":[]}
+        ),
+      )
+    })
+  })
 }

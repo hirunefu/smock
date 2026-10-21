@@ -2144,10 +2144,52 @@ For the [`login` Stub above](#variables), a sample with the body
 `"variables": {"user": "ann", "previous": "bob"}` and the response
 `{"user":"ann","previous":"bob"}`.
 
-A rendering reads the initial value of each [Data bucket](#data-buckets)
-of the Stub's Mock. It does not render or write the Stub's
-[`dataWrites`](#writing-buckets-datawrites), so the response reads the data
-as it is.
+A rendering reads and writes no Session's copy of a [Data
+bucket](#data-buckets), so it stays the same on every run too:
+
+- The sample's optional `data` object gives the value of a bucket of the
+  Stub's Mock, by name, in place of its initial value:
+  `"data": {"orders": [{"id": 1002, "status": "pending"}]}`. The buckets
+  it does not name read their initial values. A name that is not a bucket
+  of the Stub's Mock, or a value that breaks the [rules of a keyed
+  bucket](#keys-and-key-texts), fails: the Admin API answers 400
+  `invalid_data`, and `smock render` exits with status 1.
+- The rendering shows the writes the Stub's
+  [`dataWrites`](#writing-buckets-datawrites) would make as `dataWrites`,
+  in order, empty when the Stub has none. Each is `{op, bucket, key,
+  value}`: `key` is the rendered key, or null; `value` is the rendered
+  value, with the [new key](#new-keys) filled in for an `append` to a
+  keyed bucket, or null for `remove`. They render and apply to the
+  sample's data as at the [match decision](#when-data-is-written), and
+  their helpers and new `uuid` keys draw from the seed as a request's do.
+  Nothing is written, so the state bound never applies to them.
+- The response reads the sample's data after the writes, as the response
+  to a request sees its writes.
+- A key or a value that fails to render, or a write that cannot be applied
+  to the sample's data, shows the 500 a request would get, with empty
+  `dataWrites` and `variables`, and `responseIndex: null`. A key or a value
+  that fails to render also fills `templateError`; a write that cannot be
+  applied is named in the 500's body, `data write failed`.
+
+For the [`pay-order` Stub](#writes-by-key), the sample
+
+```json
+{"method": "POST", "path": "/api/v1/orders/1002/pay",
+ "data": {"orders": [{"id": 1002, "status": "pending"}]}}
+```
+
+with `--time 2026-10-12T14:30:05Z` shows the `merge` it would make, and
+the order after it:
+
+```json
+"dataWrites": [{"op": "merge", "bucket": "orders", "key": "1002",
+  "value": {"status": "paid", "paidAt": "2026-10-12T14:30:05.000Z"}}]
+```
+
+and the response `{"id":1002,"status":"paid","paidAt":"2026-10-12T14:30:05.000Z"}`.
+The same sample with the path `/api/v1/orders/9999/pay` shows `dataWrites:
+[]` and the 500 `data write failed`, since the sample's data has no order
+9999.
 
 ## Data buckets
 
@@ -2286,9 +2328,10 @@ through the Admin API](#data-buckets-through-the-admin-api)).
 - A copy lives until a [reset](#copies-in-resets-and-reloads), a
   [reload](#reloading) that drops it, an Admin API drop, or a restart.
   Nothing expires it, so a test's outcome never depends on its timing.
-- `smock render` and the Admin render operation read each bucket's initial
-  value, also when the sample names a Session that holds a copy. A
-  rendering never reads a Session's copy.
+- `smock render` and the Admin render operation read the sample's `data`,
+  or else each bucket's initial value, also when the sample names a
+  Session that holds a copy. A rendering never reads or writes a Session's
+  copy ([Rendering a template](#rendering-a-template)).
 
 ### Writing buckets: `dataWrites`
 
@@ -2516,8 +2559,9 @@ toward the entry's bytes.
 - A response that fails to render after the writes were stored lists
   them, since nothing undoes them.
 
-`smock render` and the Admin render operation neither render nor write a
-Stub's `dataWrites`: the response reads the data as it is.
+`smock render` and the Admin render operation show the writes a Stub
+would make, from sample data, and write nothing ([Rendering a
+template](#rendering-a-template)).
 
 ### CRUD Stubs
 

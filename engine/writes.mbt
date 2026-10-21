@@ -80,37 +80,9 @@ fn Engine::write_state(
   let values = Array(capacity=variables.values.length())
   let write_keys = Array(capacity=writes.length())
   let write_values = Array(capacity=writes.length())
-  let last = try {
-    let mut context = render_values(variables, first, before, values)
-    // Whether `context` has rendered nothing yet: only `first` may not
-    // have, when the Stub writes no Variable.
-    let mut fresh = values.length() == 0
-    for i in 0..<writes.length() {
-      let write = writes[i]
-      match write.key {
-        Some(key) => {
-          if !fresh {
-            context = context.next(vars?=before)
-          }
-          fresh = false
-          write_keys.push(Some(key.render_value(context)))
-        }
-        None => write_keys.push(None)
-      }
-      match write.value {
-        Some(value) => {
-          if !fresh {
-            context = context.next(vars?=before)
-          }
-          fresh = false
-          write_values.push(value.render_value(context))
-        }
-        // A `remove` has no value.
-        None => write_values.push(Json::null())
-      }
-    }
-    context
-  } catch {
+  let last = render_writes(
+    ordinary, first, before, values, write_keys, write_values,
+  ) catch {
     RenderError(at~, message~) => raise ValueFailed({ at, message, })
   }
   // A Stub without data writes makes no working copies.
@@ -175,6 +147,60 @@ fn Engine::write_state(
       }
     }
   }
+}
+
+///|
+/// Renders what `ordinary`, a Stub that writes Variables or Data buckets,
+/// writes, as the second step of the match decision does: the value of
+/// each of its `variables`, in the order written, into `values`, then the
+/// key and the value of each of its `dataWrites`, into `keys` and
+/// `write_values`, all against the state from before the request. `first`
+/// is the first rendering for the request, which reads that state, and
+/// `before` the Variables of that state. Each key and value has a rendering
+/// of its own, with its own bounds, and they draw from the request's helper
+/// generator in turn. A write without a key gets `None`, and a `remove`
+/// the value null.
+///
+/// Returns the last rendering, which the response continues from. Raises
+/// `RenderError` when a value or a key fails to render.
+fn render_writes(
+  ordinary : @definitions.Ordinary,
+  first : @template.Context,
+  before : Map[String, Json]?,
+  values : Array[Json],
+  keys : Array[String?],
+  write_values : Array[Json],
+) -> @template.Context raise @template.RenderError {
+  let writes = ordinary.data_writes
+  let mut context = render_values(ordinary.variables, first, before, values)
+  // Whether `context` has rendered nothing yet: only `first` may not have,
+  // when the Stub writes no Variable.
+  let mut fresh = values.length() == 0
+  for i in 0..<writes.length() {
+    let write = writes[i]
+    match write.key {
+      Some(key) => {
+        if !fresh {
+          context = context.next(vars?=before)
+        }
+        fresh = false
+        keys.push(Some(key.render_value(context)))
+      }
+      None => keys.push(None)
+    }
+    match write.value {
+      Some(value) => {
+        if !fresh {
+          context = context.next(vars?=before)
+        }
+        fresh = false
+        write_values.push(value.render_value(context))
+      }
+      // A `remove` has no value.
+      None => write_values.push(Json::null())
+    }
+  }
+  context
 }
 
 ///|
