@@ -137,7 +137,7 @@ Stub for each response it answers, and for each further named example
 | In the document | In the Definition file |
 |---|---|
 | The document | `version: 1`, then `mocks` with the one Mock, unless `--declare-mock` is `off`, then `stubs`. In YAML, a comment at the top names the document, its `info.title` and `info.version`, its OpenAPI version, `--mock`, then `--hosts` and `--declare-mock off` when given. |
-| An operation | One Stub per response: the main Stub, and one for each other response. One more Stub per further named example. In YAML, a comment above each gives the method, the path as written, the response key and the example's name. |
+| An operation | One Stub per response: the main Stub, and one for each other response. One more Stub per further named example. In YAML, a comment above each gives the method, the path as written, the response key and the example's name, or `sample cut` for a sample cut to its required parts. |
 | `summary` | In YAML, its first line ends the Stub's comment. Control characters become spaces. |
 | `get`, `put`, `post`, `delete`, `options`, `head`, `patch`, `trace`, and 3.2's `query` | The `method`, in upper case. |
 | A key of 3.2's `additionalOperations` | The `method`, as written. |
@@ -151,13 +151,14 @@ Stub for each response it answers, and for each further named example
 | A response's `content` | The body, as `json` or `body`, from one media type, with its `Content-Type` in `headers` ([Bodies](#bodies)). |
 | A media type's `examples` | The first gives the body. Each further one gets a Stub of its own, which also has the request condition `Smock-Example: <name>` ([Bodies from examples](#bodies-from-examples)). |
 | A media type's `example` | The body, when the media type has no `examples`. |
-| A media type's `schema` | One fixed sample of the schema, written in the file, when the media type has no example ([Samples from schemas](#samples-from-schemas)). |
+| A media type's `schema` | One fixed sample of the schema, written in the file, when the media type has no example ([Samples from schemas](#samples-from-schemas)). A sample whose compact JSON would pass 64 KiB is cut to its required parts below its first level ([Sample size](#sample-size)). |
 | Parameters, request bodies, `Content-Type`, `Accept` and `security` | No condition, so a request without a documented parameter still gets the documented answer. A path parameter's schema does not narrow its pattern either. |
 | `deprecated: true` | The operation is imported like any other. In YAML, the Stub's comment says `deprecated`. No `Deprecation` header is added, since the document does not declare one. |
 | `callbacks` | Not imported, with one warning per operation. |
 | `webhooks` | Not imported, with one warning: they are requests the API sends, not ones it answers. |
 | `security`, `links`, descriptions, tags and `x-` extensions | Nothing, and no warning. |
 | A `$ref` to a Path Item, a Response, an Example or, as 3.2 allows, a Media Type in the same document | Followed, as if the part it names were written in place (see [References and bundling](#references-and-bundling)). |
+| A `$ref` in a schema | Followed too. A recursive schema gives a finite sample ([Schema references and recursion](#schema-references-and-recursion)). |
 | Fields beside a Path Item's `$ref` | Ignored, with a warning, since OpenAPI leaves their meaning undefined. |
 
 A Stub matches on its method and its path. The Stub of a response other
@@ -414,7 +415,9 @@ An Example Object gives one of its fields:
 ### Samples from schemas
 
 The sample depends only on the schema. For each schema, nested ones
-included, and after its `allOf`, `oneOf` and `anyOf` are merged
+included, after its `$ref` is followed
+([Schema references and recursion](#schema-references-and-recursion))
+and its `allOf`, `oneOf` and `anyOf` are merged
 ([Composed schemas](#composed-schemas)), the first of these gives it:
 
 1. `const`;
@@ -587,6 +590,78 @@ json:
   a warning. A keyword of the wrong type is ignored, with a warning where
   it is written, in a branch too. The next branch that has the keyword
   then gives it.
+
+#### Schema references and recursion
+
+A `$ref` in a schema is followed, by the rules of other references
+([References and bundling](#references-and-bundling)), and the schema it
+names is sampled in its place. A schema may name itself, directly or
+through others. The schema
+
+```yaml
+components:
+  schemas:
+    Node:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        parent: { $ref: "#/components/schemas/Node" }
+        children:
+          type: array
+          items: { $ref: "#/components/schemas/Node" }
+```
+
+samples as
+
+```yaml
+json:
+  name: string
+  children: []
+```
+
+- **Keywords beside a `$ref`.** In 3.1 and 3.2, they are merged with the
+  schema the `$ref` names, as `allOf` would merge them, and they come
+  first: `{ $ref: "#/components/schemas/Pet", example: { name: Rex } }`
+  samples as its own example. The schema the `$ref` names counts as part
+  of the schema that holds the `$ref`, so its `example` is used on an
+  object too ([Composed schemas](#composed-schemas)). In 3.0, the
+  keywords beside a `$ref` are ignored, as 3.0 asks.
+- **Recursion.** A schema reached again through a `$ref` it is already
+  being sampled from ends the sample there. As an optional property, it is
+  left out. As the items of an array, it gives no item, so the array is
+  `[]`. Otherwise, as a required property, it is null.
+- **Cycles in `allOf`.** A `$ref` met again while a schema is merged with
+  its branches is skipped, so two schemas whose `allOf` name each other
+  are merged once each. A cycle of schemas is allowed, unlike a cycle of
+  other references.
+- **Depth.** A sample nests at most 32 levels: an object or an array
+  inside 32 others is null. Values copied from `const`, `examples`,
+  `example`, `default` and `enum` are not cut.
+- **`writeOnly`.** In 3.1 and 3.2, a property that is `writeOnly` beside
+  a `$ref` is left out without following the `$ref`.
+- **Identifiers.** A `$id` inside the document is an error when a `$ref`
+  lies under it, or beside it, since it would change what the `$ref`
+  names: smock does not resolve `$id`. Without one, it is ignored. So is a
+  `$id` at the root of the document. `$dynamicRef` is an error.
+  `$schema` and `jsonSchemaDialect` are ignored.
+
+#### Sample size
+
+A sample is first made with every property. Wide schemas that nest grow
+fast, so its size is bounded:
+
+- **Cut.** When its compact JSON would pass 64 KiB, it is made again with
+  only the required properties, and only `minItems` items, none when
+  `minItems` is 0, in every object and array nested more than one level
+  below the body. The body and the objects and arrays right inside it keep
+  every property and item. In YAML, the Stub's comment says `sample cut`.
+- **Empty.** When the cut sample would pass 1 MiB, the body is left
+  empty, with a warning.
+- **Bounded work.** The sampler stops as soon as a sample passes its
+  bound, so neither time nor memory grows past it.
+- **Problems.** Only the problems of the sample that is written are
+  reported: a part that only the first sample reached gives none.
 
 ### IDs and conditions that repeat
 
@@ -947,8 +1022,8 @@ from a fixed directory keeps the relative paths naming the same files.
 
 Documents describe shared parts once, under `components`, and point at
 them with `$ref`. The command follows a reference within the document
-where it reads a Path Item, a Response, an Example or, as 3.2 allows, a
-Media Type:
+where it reads a Path Item, a Response, an Example, a Schema or, as 3.2
+allows, a Media Type:
 
 ```json
 {
@@ -991,6 +1066,8 @@ This imports `listPets` as if both parts were written in place.
   data, not a reference: it is copied as written.
 - `$id` at the root of the document, and 3.2's `$self`, are ignored: a
   reference names a part by its fragment.
+- A schema may name itself through `$ref`, directly or through others
+  ([Schema references and recursion](#schema-references-and-recursion)).
 - References in the parts the command does not read are not followed, so
   a broken one there is no error. These parts are request bodies,
   parameters, `security`, `callbacks`, `webhooks`, `links`, 1xx
@@ -1002,10 +1079,13 @@ Each of these is an error at the `$ref`:
 - a reference to a part the document does not have;
 - a fragment that is not a JSON Pointer, such as an `$anchor` name like
   `#Pet`;
-- references that form a cycle;
+- references that form a cycle, unless it passes through a Schema;
 - a URL, of any scheme, `file:` included, or an absolute path. smock
   reads no URLs;
 - a reference to another file.
+
+In a schema, a `$id` inside the document is an error, at the `$id`, when
+a `$ref` lies under it or beside it. `$dynamicRef` is an error too.
 
 A document whose references name URLs or other files must be bundled into
 one file first, with another tool. A bundler copies what the references
@@ -1151,6 +1231,11 @@ command does.
   size, and nothing is written.
 - A sampled array has at most 100 items. A larger `minItems` gives 100
   items, with a warning.
+- A sample nests at most 32 levels. An object or an array inside 32
+  others is null ([Schema references and recursion](#schema-references-and-recursion)).
+- A sample whose compact JSON would pass 64 KiB is made again, cut to its
+  required parts below its first level. When that would pass 1 MiB, the
+  body is left empty, with a warning ([Sample size](#sample-size)).
 - A bound of a sampled number has at most 18 digits before the point and
   18 after. A bound with more is ignored, with a warning
   ([Numbers](#numbers)).
@@ -1169,6 +1254,5 @@ command does.
   unless this list says otherwise:
   - the paths of `servers`, so no prefix is added to the paths;
   - response headers;
-  - schema references: a `$ref` in a schema is an error;
   - references to other files: such a `$ref` is an error, so bundle the
     document first (see [References and bundling](#references-and-bundling));

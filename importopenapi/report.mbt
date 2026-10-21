@@ -66,6 +66,19 @@ fn Report::add(self : Report, problem : Problem) -> Bool {
 }
 
 ///|
+/// Drops the problems reported after the first `mark`, as if they had not
+/// been reported: those of a sample that is made again.
+fn Report::rollback(self : Report, mark : Int) -> Unit {
+  while self.problems.length() > mark {
+    guard self.problems.pop() is Some(problem) else { break }
+    self.reported.remove(problem.to_string())
+    if problem.is_error() {
+      self.errors -= 1
+    }
+  }
+}
+
+///|
 /// Reports an error at `pointer` in the file, before every other problem.
 fn Report::output_error(
   self : Report,

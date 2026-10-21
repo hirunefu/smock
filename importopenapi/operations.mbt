@@ -24,6 +24,8 @@ priv struct Stub {
   /// Whether a request selects it with the header `Smock-Example:
   /// <example>`, as for every named example but the first.
   named : Bool
+  /// Whether its body is a sample of the schema cut to its required parts.
+  cut : Bool
   /// What the response sends besides its status.
   payload : Payload
 }
@@ -334,6 +336,7 @@ fn Report::stub(
     selected: !response.main,
     example: answer.example,
     named,
+    cut: answer.cut,
     payload: answer.payload,
   }
 }

@@ -33,7 +33,7 @@ of each GitHub release include its section
   schema of one media type, written in the file as `json` or `body`, with
   the media type as the Content-Type. Formats such as `date-time`, `uuid`
   and `email` give valid samples. Nothing is random and nothing is
-  templated. Schema references are not used yet.
+  templated.
 - `smock import-openapi` takes bodies from the document's examples first:
   a media type's `examples`, then its `example`, then a sample of its
   schema. The first named example is the response's body. Every further
@@ -50,6 +50,16 @@ of each GitHub release include its section
   the bounds allow it, else the nearest bound, moved inside an exclusive
   one. The arithmetic is exact on the bounds' decimal text, with no float,
   so every platform writes the same digits.
+- `smock import-openapi` follows `$ref` in schemas. In 3.1 and 3.2, the
+  keywords beside a `$ref` are merged with the schema it names; in 3.0,
+  they are ignored. A recursive schema gives a finite sample: the schema
+  reached again is left out as an optional property, gives `[]` as array
+  items, and null otherwise. A sample nests at most 32 levels. A sample
+  whose compact JSON would pass 64 KiB is made again with only its
+  required parts below its first level, and in YAML the Stub's comment
+  says `sample cut`; one that would still pass 1 MiB leaves the body empty,
+  with a warning. A `$id` with a `$ref` under it, and `$dynamicRef`, are
+  errors.
 - `smock import-openapi` writes YAML when the name of `--output` ends in
   `.yaml` or `.yml`, and JSON when it ends in `.json`. A YAML file starts
   with a comment that names the document and says not to edit the file,
