@@ -246,6 +246,12 @@ pub(all) struct ReloadResult {
   /// gone are dropped with it, and are not counted. It is 0 when nothing
   /// was swapped.
   scenario_states_reset : Int
+  /// How many copies of Data buckets the reload dropped, so that their
+  /// buckets read their initial values again: those of a Mock that is
+  /// gone, and those of a bucket that the new set no longer declares, or
+  /// whose initial value or `key` it changed. It is 0 when nothing was
+  /// swapped.
+  data_buckets_reset : Int
 } derive(Debug)
 
 ///|
@@ -291,7 +297,9 @@ pub fn ReloadOutcome::name(self : ReloadOutcome) -> String {
 ///   name is one of the known states of its Mock, Session and Scenario;
 ///   any other goes back to `Started`, and the states of a Mock that is
 ///   gone are dropped. Variables and the copies of Data buckets stay,
-///   except those of a Mock that is gone, which are dropped.
+///   except those of a Mock that is gone, which are dropped. So are the
+///   copies of a bucket that the new set no longer declares, or whose
+///   initial value or `key` it changed (`bucket_changed`).
 /// - When it is valid with the digest served, nothing is swapped.
 /// - When it is invalid, the served snapshot stays.
 ///
@@ -302,8 +310,10 @@ pub fn Engine::reload(
   read_problems? : Array[@definitions.Diagnostic] = [],
   at~ : Int64,
 ) -> ReloadResult {
-  let old_digest = self.snapshot.digest
+  let old_snapshot = self.snapshot
+  let old_digest = old_snapshot.digest
   let mut scenario_states_reset = 0
+  let mut data_buckets_reset = 0
   let (result, errors) : (ReloadOutcome, Array[@definitions.Diagnostic]) = match
     @definitions.load(set, read_problems~, env=self.env) {
     Ok(snapshot) if snapshot.digest == old_digest => (Unchanged, [])
@@ -319,7 +329,15 @@ pub fn Engine::reload(
       // include those of the Ephemeral Stubs that stay.
       scenario_states_reset = self.prune_scenario_states(mocks)
       // Variables and copies stay, except those of the Mocks that are gone.
-      self.store.remove_where((mock, _) => !mocks.contains(mock)) |> ignore
+      let cleared = self.store.remove_where((mock, _) => !mocks.contains(mock))
+      // Then the copies of the buckets the new set changed are dropped.
+      let old_mocks = Map::from_iter(
+        old_snapshot.mocks.iter().map(mock => (mock.name, mock)),
+      )
+      data_buckets_reset = cleared.copies +
+        self.store.drop_copies_where((mock, bucket) => {
+          bucket_changed(old_mocks.get(mock), mocks.get(mock), bucket)
+        })
       (Swapped, [])
     }
     Err(errors) => (Failed, errors)
@@ -331,6 +349,7 @@ pub fn Engine::reload(
     new_digest: self.snapshot.digest,
     errors,
     scenario_states_reset,
+    data_buckets_reset,
   }
   self.last_reload = Some(reload)
   reload

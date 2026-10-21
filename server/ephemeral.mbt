@@ -183,6 +183,7 @@ fn reset(admin : Admin, call : Call) -> Reply {
     "journalEntries": Json::number(removed.journal_entries.to_double()),
     "scenarioStates": Json::number(removed.scenario_states.to_double()),
     "variables": Json::number(removed.variables.to_double()),
+    "dataBuckets": Json::number(removed.data_buckets.to_double()),
   }
   let (scope_name, fields) : (String, Map[String, Json]) = match scope {
     Session(session) => ("session", { "session": session_json(session) })

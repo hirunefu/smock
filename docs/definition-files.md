@@ -2271,6 +2271,9 @@ API](#data-buckets-through-the-admin-api)).
   the process. Requests without a Session share one copy of each bucket,
   as they share Scenario state.
 - Each replica keeps its own copies, and they are lost on restart.
+- A copy lives until a [reset](#copies-in-resets-and-reloads), a
+  [reload](#reloading) that drops it, an Admin API drop, or a restart.
+  Nothing expires it, so a test's outcome never depends on its timing.
 - `smock render` and the Admin render operation read each bucket's initial
   value, also when the sample names a Session that holds a copy. A
   rendering never reads a Session's copy.
@@ -2327,6 +2330,38 @@ brings them back for `checkout-42`.
   ```json
   {"time":"2026-10-22T09:00:00.000Z","level":"info","msg":"Data bucket set","mock":"shop","session":"checkout-42","bucket":"orders"}
   ```
+
+### Copies in resets and reloads
+
+A [reset](../README.md#sessions-and-ephemeral-stubs) drops the copies in
+its scope, so that their buckets read their initial values again:
+
+- `{"scope":"session"}` drops the calling Session's copies in every Mock,
+  or those of requests without a Session when the call carries none;
+- `{"scope":"mock","mock":"shop"}` drops every Session's copies of
+  `shop`'s buckets, those of requests without a Session included;
+- `{"scope":"all"}` drops every copy.
+
+The reset answers how many copies it dropped, in `removed.dataBuckets`,
+and its log entry says the same. Dropped copies give their bytes back to
+[the state bound](#copies-and-the-state-bound). So after a test in the
+Session `checkout-42` sets its copy of `orders`, `POST /v1/reset` with
+`{"scope":"session"}` answers `"dataBuckets":1`, and the Session reads
+`orders.json` again.
+
+A [reload](#reloading) that swaps in new files keeps each copy whose bucket
+it did not change, and drops the others:
+
+- A copy is dropped when its Mock is gone, when the new files no longer
+  declare its bucket, or when the bucket's initial value or `key` changed.
+- The initial values are compared as compact JSON. So moving one between
+  `json` and `jsonFile`, or reformatting its file, is no change.
+- A change of `newKey` keeps the copies: their data stays valid, and only
+  the keys made from then on change.
+- A reload that fails, or finds the files unchanged, keeps every copy.
+
+So editing an unrelated Stub keeps the data of tests in progress, but
+editing a bucket's initial value resets every Session's copy of it.
 
 ### Copies and the state bound
 
@@ -2522,6 +2557,12 @@ restart:
   unknown Host.
 - [Variables](#variables) survive the swap. Those of a Mock that is gone
   are dropped with it.
+- [Copies of Data buckets](#session-copies) survive the swap while their
+  bucket stays as it was. A copy is dropped when its Mock is gone, when the
+  new set no longer declares its bucket, or when the bucket's initial value
+  or `key` changed. Initial values are compared as compact JSON, so moving
+  one between `json` and `jsonFile` is no change. A change of `newKey`
+  keeps the copies, since their data stays valid.
 - [Scenario](#scenarios) state survives the swap while its name still
   exists. A Scenario's state, for a Session or for requests without one,
   stays when a Stub of the same Mock still names it for that Scenario, in
@@ -2534,12 +2575,19 @@ restart:
   Scenario is in the old state goes back to `Started` in the middle of its
   flow, and its next requests may miss. Rename a state when no test relies
   on it.
+- Editing a bucket's initial value, inline or in its `jsonFile`, or its
+  `key`, resets every Session's copy of it, those of tests in progress
+  included. Their requests read the new initial value from then on, and
+  the data they wrote is gone. Edit a bucket when no test relies on its
+  data.
 - When the new set is invalid, smock keeps serving the current one and
   reports every problem, as `smock check` would, in the Admin API status, in
-  a log entry and in the reload metric. Scenario state and Variables stay
-  as they are. Fix the files, and the next reload swaps the fixed set in.
+  a log entry and in the reload metric. Scenario state, Variables and
+  copies of Data buckets stay as they are. Fix the files, and the next
+  reload swaps the fixed set in.
 - When the new set has the digest of the one served, nothing is swapped,
-  and Scenario state and Variables stay as they are.
+  and Scenario state, Variables and copies of Data buckets stay as they
+  are.
 - Without `--dir`, there is nothing to watch and nothing is reloaded.
 
 Each definition set has a *definition set digest*: a short content hash of
@@ -2582,15 +2630,22 @@ of the last reload (`null` until the first one), as
 `result` is `swapped` (the new set is served now), `unchanged` (it had the
 digest served) or `failed` (it was invalid; the previous set is still
 served). Each reload also writes one log entry: `definitions reloaded` with
-`oldDigest`, `newDigest` and `scenarioStatesReset`, or `definitions reload
-failed` with the digest still served and every error.
+`oldDigest`, `newDigest`, `scenarioStatesReset` and `dataBucketsReset`, or
+`definitions reload failed` with the digest still served and every error.
 `scenarioStatesReset` is the number of Scenario states the reload sent
 back to `Started`, 0 when there are none. The states dropped with a
-removed Mock are not counted. Like every log field, these are a diagnostic
-aid, and a release may change them. The Prometheus counter
-`smock_definition_reloads_total` counts reloads by `result`. A failed reload
-does not change readiness: `/readyz` on the admin port still passes, so one
-bad commit does not drain every Pod.
+removed Mock are not counted. `dataBucketsReset` is the number of copies
+of Data buckets the reload dropped, 0 when there are none, those of a
+removed Mock included:
+
+```json
+{"time":"2026-10-22T09:00:00.000Z","level":"info","msg":"definitions reloaded","result":"swapped","oldDigest":"3f1c0a9b2e7d","newDigest":"8a41d0c2f5e3","scenarioStatesReset":0,"dataBucketsReset":1}
+```
+
+Like every log field, these are a diagnostic aid, and a release may change
+them. The Prometheus counter `smock_definition_reloads_total` counts reloads
+by `result`. A failed reload does not change readiness: `/readyz` on the
+admin port still passes, so one bad commit does not drain every Pod.
 
 ## Checking a definitions directory
 

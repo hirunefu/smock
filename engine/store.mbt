@@ -321,13 +321,57 @@ fn SessionStore::drop_copy(
 }
 
 ///|
+/// Drops each copy of a Data bucket, of every Session and of the no-Session
+/// space, for which `drop` holds, given the Mock's name and the bucket's,
+/// as `drop_copy` drops one. `drop` is asked once for each Mock and bucket
+/// that has copies, however many Sessions hold one. Returns how many copies
+/// it dropped.
+fn SessionStore::drop_copies_where(
+  self : SessionStore,
+  drop : (String, String) -> Bool,
+) -> Int {
+  let dropped : Array[(String, String?, String)] = []
+  for mock, by_session in self.copies {
+    let judged : Map[String, Bool] = Map([])
+    for session, copies in by_session {
+      for bucket in copies.values.keys() {
+        let drops = match judged.get(bucket) {
+          Some(drops) => drops
+          None => {
+            let drops = drop(mock, bucket)
+            judged[bucket] = drops
+            drops
+          }
+        }
+        if drops {
+          dropped.push((mock, session, bucket))
+        }
+      }
+    }
+  }
+  for copy in dropped {
+    self.drop_copy(copy.0, copy.1, copy.2) |> ignore
+  }
+  dropped.length()
+}
+
+///|
+/// What `SessionStore::remove_where` cleared.
+priv struct Cleared {
+  /// How many Variables, each of one Mock, Session and name.
+  variables : Int
+  /// How many copies of Data buckets, each of one Mock, Session and bucket.
+  copies : Int
+}
+
+///|
 /// Clears the Variables and the copies of every Mock and Session for which
 /// `remove` holds, gives back the bytes they and their spaces counted, and
-/// returns how many Variables it cleared. It leaves no map empty.
+/// returns how many of each it cleared. It leaves no map empty.
 fn SessionStore::remove_where(
   self : SessionStore,
   remove : (String, String?) -> Bool,
-) -> Int {
+) -> Cleared {
   let mut variable_count = 0
   for mock in self.variables.keys().collect() {
     let by_session = self.variables[mock]
@@ -353,6 +397,7 @@ fn SessionStore::remove_where(
   }
   // The Variables of every space cleared here are gone already, so each
   // space gives its bytes back with its copies.
+  let mut copy_count = 0
   for mock in self.copies.keys().collect() {
     let by_session = self.copies[mock]
     for session in by_session.keys().collect() {
@@ -363,6 +408,7 @@ fn SessionStore::remove_where(
           bytes += counted
         }
         self.state.add(-bytes)
+        copy_count += copies.bytes.length()
         by_session.remove(session)
       }
     }
@@ -370,5 +416,5 @@ fn SessionStore::remove_where(
       self.copies.remove(mock)
     }
   }
-  variable_count
+  { variables: variable_count, copies: copy_count, }
 }

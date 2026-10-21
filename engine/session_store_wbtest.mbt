@@ -230,7 +230,7 @@ fn stored_copies(engine : Engine) -> String {
 }
 
 ///|
-test "setting and dropping copies through the Admin API, resets and reloads leave no empty map behind" {
+test "setting and dropping copies through the Admin API, resets and reloads leave no empty map behind, and give back what they counted" {
   let files =
     #|{ "mocks": [{ "name": "shop", "default": true }, { "name": "bank", "hosts": ["bank.svc"] }],
     #|  "data": [
@@ -290,6 +290,17 @@ test "setting and dropping copies through the Admin API, resets and reloads leav
   engine.set_variable(mock="shop", session=None, name="v", 1)
   ignore(engine.reset(Mock("shop")))
   show("reset Mock shop")
+  engine.set_data(mock="shop", session=None, bucket="visits", 3) |> ignore
+  engine.set_data(mock="shop", session=Some("test-a"), bucket="visits", 4)
+  |> ignore
+  engine.set_variable(mock="shop", session=None, name="v", 1)
+  show("set visits of shop, None and test-a, and v of shop, None")
+  let files = files.replace(
+    old="\"name\": \"visits\", \"json\": 0",
+    new="\"name\": \"visits\", \"json\": 5",
+  )
+  ignore(engine.reload(set(files), at=0))
+  show("reload, visits of shop changed")
   ignore(
     engine.reload(
       set(
@@ -326,7 +337,13 @@ test "setting and dropping copies through the Admin API, resets and reloads leav
       #|  shop, None: visits = 2 (87)
       #|reset Mock shop, 164 bytes:
       #|  bank, Some("test-b"): accounts = {} (90)
-      #|reload, bank removed, 0 bytes: {}
+      #|set visits of shop, None and test-a, and v of shop, None, 562 bytes:
+      #|  bank, Some("test-b"): accounts = {} (90)
+      #|  shop, None: visits = 3 (87)
+      #|  shop, Some("test-a"): visits = 4 (87)
+      #|reload, visits of shop changed, 314 bytes:
+      #|  bank, Some("test-b"): accounts = {} (90)
+      #|reload, bank removed, 150 bytes: {}
     ),
   )
 }

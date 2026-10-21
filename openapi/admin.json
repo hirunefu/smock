@@ -44,7 +44,7 @@
     },
     {
       "name": "Reset",
-      "description": "Clearing Ephemeral Stubs, Journal entries, Scenario state and Variables."
+      "description": "Clearing Ephemeral Stubs, Journal entries, Scenario state, Variables and copies of Data buckets."
     },
     {
       "name": "Journal",
@@ -775,8 +775,8 @@
       "post": {
         "operationId": "reset",
         "tags": ["Reset"],
-        "summary": "Clear Ephemeral Stubs, Journal entries, Scenario state and Variables for a Session, a Mock or everything",
-        "description": "- `session`: the calling Session's Ephemeral Stubs, Journal entries, Scenario state, Variables and eviction count, across all Mocks. Without a Session, the no-Session space.\n- `mock`: every Session's Ephemeral Stubs, Journal entries, Scenario state and Variables of one Mock.\n- `all`: every Ephemeral Stub, the whole Journal, every Scenario state, every Variable and every eviction count.\n\nA Scenario whose state is cleared is back in `Started`, and a Variable that is cleared is unset. What Definition files declare is never changed.",
+        "summary": "Clear Ephemeral Stubs, Journal entries, Scenario state, Variables and copies of Data buckets for a Session, a Mock or everything",
+        "description": "- `session`: the calling Session's Ephemeral Stubs, Journal entries, Scenario state, Variables, copies of Data buckets and eviction count, across all Mocks. Without a Session, the no-Session space.\n- `mock`: every Session's Ephemeral Stubs, Journal entries, Scenario state, Variables and copies of Data buckets of one Mock.\n- `all`: every Ephemeral Stub, the whole Journal, every Scenario state, every Variable, every copy of a Data bucket and every eviction count.\n\nA Scenario whose state is cleared is back in `Started`, a Variable that is cleared is unset, and a bucket whose copy is dropped reads its initial value again. What Definition files declare is never changed.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1861,7 +1861,7 @@
             "type": "object",
             "properties": {
               "scope": {
-                "description": "The calling Session's Ephemeral Stubs, Journal entries, Scenario state, Variables and eviction count, across all Mocks.",
+                "description": "The calling Session's Ephemeral Stubs, Journal entries, Scenario state, Variables, copies of Data buckets and eviction count, across all Mocks.",
                 "const": "session"
               }
             },
@@ -1873,7 +1873,7 @@
             "type": "object",
             "properties": {
               "scope": {
-                "description": "Every Session's Ephemeral Stubs, Journal entries, Scenario state and Variables of one Mock. The eviction counts, which are per Session, stay.",
+                "description": "Every Session's Ephemeral Stubs, Journal entries, Scenario state, Variables and copies of Data buckets of one Mock. The eviction counts, which are per Session, stay.",
                 "const": "mock"
               },
               "mock": {
@@ -1890,7 +1890,7 @@
             "type": "object",
             "properties": {
               "scope": {
-                "description": "Every Ephemeral Stub, the whole Journal, every Scenario state, every Variable and every eviction count.",
+                "description": "Every Ephemeral Stub, the whole Journal, every Scenario state, every Variable, every copy of a Data bucket and every eviction count.",
                 "const": "all"
               }
             },
@@ -1930,9 +1930,14 @@
                 "description": "How many Variables were cleared, each of one Mock, Session and name.",
                 "type": "integer",
                 "minimum": 0
+              },
+              "dataBuckets": {
+                "description": "How many copies of Data buckets were dropped, each of one Mock, Session and bucket. Those buckets read their initial values again.",
+                "type": "integer",
+                "minimum": 0
               }
             },
-            "required": ["ephemeralStubs", "journalEntries", "scenarioStates", "variables"],
+            "required": ["ephemeralStubs", "journalEntries", "scenarioStates", "variables", "dataBuckets"],
             "additionalProperties": false
           },
           "warnings": {
