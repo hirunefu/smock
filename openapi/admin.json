@@ -2118,12 +2118,12 @@
             "items": { "type": "string" }
           },
           "dataWritten": {
-            "description": "The names of the Data buckets the request wrote, in the order first written, each once: those of the `dataWrites` of the Stub that answered. Empty when it has none, when no Stub matched, and when a value failed to render, a data write could not be applied or the state bound refused the writes, which writes none of them. A response that fails to render after the writes were stored does not undo them, so its entry lists them. The names count toward the entry's bytes like its other text.",
+            "description": "The names of the Data buckets the request wrote, in the order first written, each once: those of the `dataWrites` of the Stub that answered, or the bucket of a CRUD Stub that created, replaced, updated or deleted an item. Empty when it has none, when no Stub matched, after a CRUD list or read, and when a value failed to render, a data write could not be applied, a CRUD write failed or the state bound refused the writes, which writes none of them. A response that fails to render after the writes were stored does not undo them, so its entry lists them. The names count toward the entry's bytes like its other text.",
             "type": "array",
             "items": { "type": "string" }
           },
           "dataError": {
-            "description": "Why a write of the Stub's `dataWrites` could not be applied to the request's Data buckets, when one could not: the client then got status 500 with the same `at` and `message`, and nothing was written. Otherwise null. Its text counts toward the entry's bytes.",
+            "description": "Why a write of the Stub's `dataWrites` could not be applied to the request's Data buckets, when one could not: the client then got status 500 with the same `at` and `message`, and nothing was written. Otherwise null, also for the answers of a CRUD Stub, whose failed writes are its own answers. Its text counts toward the entry's bytes.",
             "oneOf": [{ "$ref": "#/components/schemas/DataError" }, { "type": "null" }]
           },
           "nearMiss": {
@@ -2533,11 +2533,11 @@
         "type": "object",
         "properties": {
           "op": {
-            "description": "The operation: `list` for `GET <path>`, `create` for `POST <path>`, `read` for `GET <path>/<key>`, `replace` for `PUT <path>/<key>`, `update` for `PATCH <path>/<key>` and `delete` for `DELETE <path>/<key>`. smock serves `list` and `read` for now.",
+            "description": "The operation: `list` for `GET <path>`, `create` for `POST <path>`, `read` for `GET <path>/<key>`, `replace` for `PUT <path>/<key>`, `update` for `PATCH <path>/<key>` and `delete` for `DELETE <path>/<key>`.",
             "enum": ["list", "create", "read", "replace", "update", "delete"]
           },
           "key": {
-            "description": "The key text of the item path, the segment after the Stub's path, percent-decoded, whatever the outcome. null for a `list`.",
+            "description": "For `read`, `replace`, `update` and `delete`, the key text of the item path, the segment after the Stub's path, percent-decoded, whatever the outcome. For `create`, the key text of the item stored, or of the body's key when an item has it already (409), and else null. null for a `list`.",
             "type": ["string", "null"]
           }
         },

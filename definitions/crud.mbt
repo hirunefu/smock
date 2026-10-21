@@ -1,6 +1,7 @@
 // CRUD Stubs: a Stub with `crud` in place of `request` and `response`
-// serves a keyed Data bucket of its Mock as a REST resource. It lists the
-// bucket at its path, and reads one item at its path plus the item's key.
+// serves a keyed Data bucket of its Mock as a REST resource. It lists and
+// creates items at its path, and reads, replaces, updates and deletes one
+// item at its path plus the item's key.
 
 ///|
 /// What a CRUD Stub serves: a keyed Data bucket of its Mock, at a path,
@@ -25,38 +26,58 @@ pub struct Crud {
 pub enum CrudOp {
   /// `GET <path>`: the bucket's items.
   List
+  /// `POST <path>`: a new item, from the request body.
+  Create
   /// `GET <path>/<key>`: the item with that key.
   Read
+  /// `PUT <path>/<key>`: the item with that key becomes the request body.
+  Replace
+  /// `PATCH <path>/<key>`: the request body is merged into the item with
+  /// that key.
+  Update
+  /// `DELETE <path>/<key>`: the item with that key is removed.
+  Delete
 } derive(Debug, Eq)
 
 ///|
-/// The operation's name, as the Journal writes it: `list` or `read`.
+/// The operation's name, as the Journal writes it: `list`, `create`,
+/// `read`, `replace`, `update` or `delete`.
 pub fn CrudOp::name(self : CrudOp) -> String {
   match self {
     List => "list"
+    Create => "create"
     Read => "read"
+    Replace => "replace"
+    Update => "update"
+    Delete => "delete"
   }
 }
 
 ///|
 /// The operation a request with the method `meth` and the path `path`,
-/// percent-decoded and without the query, asks of the CRUD Stub, if any.
-/// The path is compared byte for byte, as `path` conditions compare it, so
-/// `/api/v1/orders/` and `/API/v1/orders` are neither the list path nor an
-/// item path of `/api/v1/orders`, and the method exactly. Any other method
-/// or path shape, such as HEAD, or a path deeper than an item's, asks
-/// nothing of the Stub, which then does not match.
+/// percent-decoded and without the query, asks of the CRUD Stub, if any:
+/// GET and POST at the list path, and GET, PUT, PATCH and DELETE at an
+/// item path. The path is compared byte for byte, as `path` conditions
+/// compare it, so `/api/v1/orders/` and `/API/v1/orders` are neither the
+/// list path nor an item path of `/api/v1/orders`, and the method exactly.
+/// Any other method or path shape, such as HEAD, PUT on the list, POST on
+/// an item, or a path deeper than an item's, asks nothing of the Stub,
+/// which then does not match.
 ///
 /// Every request of the Stub's Mock may be tested against it, so the test
 /// allocates nothing: it compares the path's prefix in place.
 pub fn Crud::operation(self : Crud, meth : String, path : String) -> CrudOp? {
   let list = self.path
   let n = list.length()
-  if !path.has_prefix(list) || meth != "GET" {
+  if !path.has_prefix(list) {
     return None
   }
   if path.length() == n {
-    return Some(List)
+    return match meth {
+      "GET" => Some(List)
+      "POST" => Some(Create)
+      _ => None
+    }
   }
   if path.length() == n + 1 || path[n] != '/' {
     return None
@@ -66,7 +87,13 @@ pub fn Crud::operation(self : Crud, meth : String, path : String) -> CrudOp? {
       return None
     }
   }
-  Some(Read)
+  match meth {
+    "GET" => Some(Read)
+    "PUT" => Some(Replace)
+    "PATCH" => Some(Update)
+    "DELETE" => Some(Delete)
+    _ => None
+  }
 }
 
 ///|

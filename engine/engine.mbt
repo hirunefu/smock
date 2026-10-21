@@ -614,19 +614,26 @@ pub fn Engine::handle(
           //    Stub's.
           with_faults(plan, stub, draw)
         }
-        // A CRUD Stub has no Scenario clause, and its list and read write
-        // nothing: it takes its one draw, answers from the Session's copy
-        // of its bucket, or else from the initial value, and gets its
-        // Faults, whatever its answer.
+        // A CRUD Stub has no Scenario clause. It takes its one draw, then
+        // answers: a list or a read from the Session's copy of its
+        // bucket, or else from the initial value; a create, replace,
+        // update or delete with its one write, made here, all or nothing,
+        // within the bound on per-Session state, before any delay. It
+        // gets its Faults, whatever its answer, and they do not undo the
+        // write.
         Crud(crud) => {
           let draw = generator.unwrap_or(rand).uint64()
-          let call = crud_call(crud, incoming)
-          crud_called = Some(call)
-          with_faults(
-            self.crud_answer(mock, stub.id, crud, call, session),
-            stub,
+          let answer = self.crud_answer(
+            mock,
+            stub.id,
+            crud,
+            incoming,
+            session,
             draw,
           )
+          crud_called = Some(answer.call)
+          data_written = answer.written
+          with_faults(answer.plan, stub, draw)
         }
       }
     None =>

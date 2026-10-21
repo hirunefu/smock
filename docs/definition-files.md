@@ -2565,8 +2565,10 @@ template](#rendering-a-template)).
 
 ### CRUD Stubs
 
-A *CRUD Stub* serves a keyed bucket as a REST resource. It has `crud` in
-place of `request` and `response`:
+A *CRUD Stub* serves a keyed bucket as a REST resource: it lists and
+creates items at its path, and reads, replaces, updates and deletes one
+item at the path plus its key. It has `crud` in place of `request` and
+`response`:
 
 ```yaml
 data:
@@ -2590,9 +2592,16 @@ header too:
 {"error":"no item with this key","stub":"orders","key":"9999"}
 ```
 
-For now, a CRUD Stub lists and reads. Creating, replacing, updating and
-deleting items, and filtering, sorting and paging lists, come in a later
-version.
+A Session that sends `POST /api/v1/orders` with
+`{"customerId":42,"status":"pending"}` gets 201,
+`Location: /api/v1/orders/1004` and
+`{"customerId":42,"status":"pending","id":1004}`. Its
+`GET /api/v1/orders/1004` then answers that order, and its
+`DELETE /api/v1/orders/1004` answers it once more and removes it. Another
+Session still sees the three orders.
+
+For now, a list does not read the query. Filtering, sorting and paging
+lists come in a later version.
 
 #### The shape of a CRUD Stub
 
@@ -2642,13 +2651,107 @@ version.
 - The 404 is the CRUD Stub's own answer. The request counts as matched,
   under the Stub's ID, and gets no [Near miss](#when-no-stub-matches).
 
+#### Writes
+
+| Request | Answer |
+|---|---|
+| `POST <path>` | create: 201, the item stored, with `Location`. |
+| `PUT <path>/<key>` | replace: 200, the item stored. |
+| `PATCH <path>/<key>` | update: 200, the item stored. |
+| `DELETE <path>/<key>` | delete: 200, the item removed. |
+
+Each is one [write by key](#writes-by-key), the one that `dataWrites`
+makes with the same op: a create is an `append`, a replace a `set` with
+`key`, an update a `merge` with `key`, and a delete a `remove`.
+
+- A create adds the item at the end of the bucket.
+- A replace makes the body the item, in its place.
+- An update merges the body into the item, shallowly: each member replaces
+  the member of the same name, in its place, and new members are added at
+  the end, in body order. `null` is stored as null.
+- A delete removes the item, and answers it.
+- The write goes to the copy of the request's Session. A Session's first
+  write copies the bucket, and later ones change that copy
+  ([Session copies](#session-copies)). Requests without a Session share
+  one copy.
+
+The request body:
+
+- It is parsed as JSON whatever its `Content-Type`, as
+  [`json` conditions](#how-a-stub-matches-a-request) parse it, within
+  `--body-limit`.
+- A create, replace or update needs a JSON object. Anything else, no body,
+  a body that is not JSON, an array or a scalar, gets 400
+  `body is not a JSON object`.
+- A delete ignores any body.
+
+Keys:
+
+- A create whose body has no key member gets a [new key](#new-keys),
+  added as the item's last member. A body whose key member holds a valid
+  key that no item has keeps it. A key member that holds no valid key,
+  `null` included, gets 400 `invalid key`. A key that an item has gets
+  409 `key already exists`.
+- A replace or update keeps the item's key. The body's key member may be
+  absent, or hold the item's key text. Any other key gets 400
+  `key does not match the path`. The item keeps its stored key value, so
+  `42` stays a number when the body sends `"42"`, and a replace whose body
+  has no key member gets the key as its last member.
+- A replace, update or delete of a key that no item has gets 404, as a
+  read does.
+- `Location` is the new item's path: each segment of `path`, then the key
+  text, each after a `/`, and percent-encoded as
+  [`urlEncode`](#helpers) encodes it. So the key `a b` under
+  `/api/v1/orders` gives `/api/v1/orders/a%20b`.
+
+So `PATCH /api/v1/orders/1004` with `{"status":"paid","id":"1004"}`
+answers `{"customerId":42,"status":"paid","id":1004}`.
+
+A write that fails writes nothing, and gets one of these answers. Each
+body is compact JSON, `{"error": "<what>", "stub": "<id>", ...}`:
+
+| Status | `error` | When |
+|---|---|---|
+| 400 | `body is not a JSON object` | A create, replace or update whose body is not a JSON object. |
+| 400 | `invalid key` | A create whose body's key member holds no valid key. |
+| 400 | `key does not match the path` | A replace or update whose body's key member holds another key. |
+| 404 | `no item with this key` | A replace, update or delete of a key that no item has. The body has `key`. |
+| 409 | `key already exists` | A create whose body's key an item has. The body has `key`. |
+| 500 | `no new key` | A create when the next integer key would pass 2^53 - 1. |
+| 507 | `state limit reached` | A write past [the state bound](#copies-and-the-state-bound). The body has `message`, as for other writes. |
+
+These are the CRUD Stub's own answers. The request counts as matched,
+under the Stub's ID, and gets no Near miss.
+
+#### When a CRUD Stub writes
+
+The write is made at the match decision, as
+[`dataWrites`](#when-data-is-written) are: the request takes its one
+random draw, the write is applied to a working copy, the state bound is
+checked, and the copy is stored. Only then is the answer sent, after any
+delay.
+
+- Once stored, the write stands. A delay, a connection Fault, a client
+  that leaves, or a Journal that is off does not undo it.
+- Each request sees the writes of every request that reached smock before
+  it. So two creates whose answers are both delayed still get different
+  keys.
+- A new `uuid` key comes from the request's helpers, seeded with its one
+  draw, as a response's first `fake.uuid()` would. So
+  [`fault.seed` and `--seed`](#seeds) repeat it, and the Fault decisions
+  do not move it.
+- A write that would take the count of per-Session state above
+  [the bound](#copies-and-the-state-bound) gets 507, writes nothing, and
+  counts in `smock_state_writes_refused_total`. A delete can get it too,
+  since a Session's first write copies the whole bucket.
+
 #### Order and overrides
 
 A CRUD Stub matches only the requests it serves. Any other method or path
-shape does not match it: `HEAD`, `OPTIONS`, `POST`, `PUT`, `PATCH` and
-`DELETE` for now, and paths deeper than an item path. Later Stubs are
-tried, then the Mock's [no-match answer](#when-no-stub-matches). Methods
-are compared exactly.
+shape does not match it: `HEAD` and `OPTIONS`, `PUT`, `PATCH` and `DELETE`
+on the list path, `POST` on an item path, and paths deeper than an item
+path. Later Stubs are tried, then the Mock's
+[no-match answer](#when-no-stub-matches). Methods are compared exactly.
 
 A CRUD Stub is tried in [the usual order](#which-stub-answers). It has no
 conditions and no Scenario clause of its own, so an earlier Stub takes
@@ -2676,9 +2779,9 @@ Stub's places a Stub before it wherever it is declared.
 
 #### CRUD headers
 
-smock sets `Content-Type`, and `X-Total-Count` and `X-Filtered-Count` on a
-list. `crud.headers` adds static headers to every answer of the Stub,
-errors included:
+smock sets `Content-Type`, `Location` on a create, and `X-Total-Count`
+and `X-Filtered-Count` on a list. `crud.headers` adds static headers to
+every answer of the Stub, errors, 500 and 507 included:
 
 - It has the shape and rules of [`noMatch.headers`](#when-no-stub-matches):
   by name, a value or a non-empty array of values, each sent as its own
@@ -2704,23 +2807,32 @@ errors included:
 #### Faults on a CRUD Stub
 
 [`fault`](#faults) works as on any Stub. Every matched request takes its
-one draw, its 404 included, so [`fault.seed`](#seeds) replays the same
-decisions. A delay comes before the answer, a connection Fault replaces
-it, and `partial` sends half of its body.
+one draw, its 4xx and 5xx answers included, so [`fault.seed`](#seeds)
+replays the same decisions. A delay comes before the answer, and after
+the write. A connection Fault replaces the answer, but not the write, and
+`partial` sends half of its body.
 
 #### CRUD Stubs in the Journal
 
 Each [Journal](../README.md#the-journal) entry has `crud`: null, or the
-operation and its key. A list records `{"op":"list","key":null}`. A read
-records `read` and the item path's key text, whatever the outcome, such as
-`{"op":"read","key":"9999"}` for the 404 above. `crud` counts toward the
-entry's bytes, and `responseIndex` is null for a CRUD Stub's answers.
+operation and its key. A list records `{"op":"list","key":null}`. A read,
+a replace, an update and a delete record `read`, `replace`, `update` and
+`delete` with the item path's key text, whatever the outcome, such as
+`{"op":"read","key":"9999"}` for the 404 above. A create records `create`
+with the key of the item stored, the body's key on a 409, and else null.
+`crud` counts toward the entry's bytes, and `responseIndex` is null for a
+CRUD Stub's answers.
+
+`dataWritten` names the bucket after a write, and is `[]` after a list, a
+read, or any failure. `dataError` stays null: a CRUD Stub's failures are
+its own answers.
 
 #### Ephemeral CRUD Stubs
 
 An [Ephemeral Stub](../README.md#sessions-and-ephemeral-stubs) can be a
 CRUD Stub, with no `id` or `mock`, as any Ephemeral Stub. It serves the
-requests of its Session, and reads its Session's copy of the bucket.
+requests of its Session, and reads and writes its Session's copy of the
+bucket.
 
 An Ephemeral Stub is not read again at a reload, so a CRUD Stub looks its
 bucket up by name on each request. After a reload removes the bucket, it
@@ -2731,7 +2843,8 @@ answers 500 with its headers:
 ```
 
 After a reload takes the bucket's `key` away, it answers 500 with
-`"error":"data bucket changed"`, and the same `stub` and `bucket`.
+`"error":"data bucket changed"`, and the same `stub` and `bucket`. Either
+way, a create, replace, update or delete writes nothing.
 
 #### CRUD Stubs that do not load
 
