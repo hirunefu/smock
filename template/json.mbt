@@ -77,6 +77,20 @@ fn number_text(n : Double, repr : String?) -> String {
 }
 
 ///|
+/// The bytes of UTF-8 that `write_json_string_content` writes for `s`.
+fn json_string_content_length(s : StringView) -> Int {
+  let mut n = 0
+  for c in s {
+    n += match c {
+      '"' | '\\' | '\n' | '\r' | '\t' | '\b' | '\u{0c}' => 2
+      _ if c < ' ' => 6
+      _ => char_utf8_length(c)
+    }
+  }
+  n
+}
+
+///|
 /// Writes `s` as the content of a JSON string: `"` and `\` escaped, and
 /// control characters as escapes.
 fn write_json_string_content(out : StringBuilder, s : String) -> Unit {

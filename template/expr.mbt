@@ -70,7 +70,8 @@ priv enum Helper {
   Time(TimeHelper)
   /// `number`, `range`, `json` and `raw` (conversions.mbt).
   Conversion(ConversionHelper)
-  /// Text and arrays: `len`, `concat`, `padStart` and `padEnd`
+  /// Text and arrays: `len`, `concat`, `padStart`, `padEnd`, `substr`,
+  /// `indexOf`, `includes`, `replace`, `replaceAll`, `split` and `join`
   /// (strings.mbt).
   Strings(StringHelper)
 }
