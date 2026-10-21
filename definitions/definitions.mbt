@@ -161,15 +161,16 @@ pub struct Stub {
 /// no catch-all, so that a new kind does not compile until every such place
 /// handles it.
 pub enum Serves {
-  /// An ordinary Stub's request conditions, Scenario clause, responses and
-  /// `variables`.
+  /// An ordinary Stub's request conditions, Scenario clause, responses,
+  /// `variables` and `dataWrites`.
   Ordinary(Ordinary)
 } derive(Debug, Eq)
 
 ///|
 /// What an ordinary Stub serves: the requests that meet its request
 /// conditions, in the states its Scenario clause allows, get one of its
-/// responses, and it writes its Variables when it matches.
+/// responses, and it writes its Variables and Data buckets when it
+/// matches.
 pub struct Ordinary {
   request : Conditions
   /// The Stub's Scenario clause, if it has `scenario`.
@@ -185,6 +186,9 @@ pub struct Ordinary {
   /// The Variables the Stub writes when it matches, `variables`: none when
   /// it has no `variables`.
   variables : VariableWrites
+  /// The writes to Data buckets the Stub makes when it matches, in the
+  /// order written, `dataWrites`: none when it has no `dataWrites`.
+  data_writes : ReadOnlyArray[DataWrite]
 } derive(Debug, Eq)
 
 ///|
@@ -202,6 +206,13 @@ pub struct VariableWrites {
 /// this test for Variables when it matches.
 pub fn Ordinary::writes_variables(self : Ordinary) -> Bool {
   self.variables.names.length() > 0
+}
+
+///|
+/// Whether the Stub writes to any Data bucket. A Stub that writes to none
+/// pays only this test for `dataWrites` when it matches.
+pub fn Ordinary::writes_data(self : Ordinary) -> Bool {
+  self.data_writes.length() > 0
 }
 
 ///|

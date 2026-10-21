@@ -332,7 +332,8 @@ pub fn Engine::render(
         try
           render_values(ordinary.variables, first, Some(sample.vars), values)
         catch {
-          RenderError(at~, message~) => failed = Some({ at, message, })
+          RenderError(at~, message~) =>
+            failed = Some(TemplateError::{ at, message, })
         } noraise {
           last => {
             let after = sample.vars.copy()
@@ -370,7 +371,7 @@ pub fn Engine::render(
             )
           catch {
             RenderError(at~, message~) => {
-              let error = { at, message, }
+              let error = TemplateError::{ at, message, }
               (response_index, template_failed(stub.id, error), Some(error))
             }
           } noraise {

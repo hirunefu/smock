@@ -79,12 +79,22 @@ pub struct JournalEntry {
   /// The index of the response the pick chose among the `responses` of the
   /// Stub that matched, counted from 0. `None` for a Stub with `response`,
   /// when no Stub matched, and when no response was picked: a value failed
-  /// to render, or the state bound refused the writes.
+  /// to render, a data write could not be applied, or the state bound
+  /// refused the writes.
   response_index : Int?
   /// The names of the Variables the request wrote, in the order written:
   /// none when the Stub that matched writes none, when no Stub matched,
-  /// when a value failed to render, or when the state bound refused them.
+  /// when a value failed to render, when a data write could not be
+  /// applied, or when the state bound refused the writes.
   variables_written : ReadOnlyArray[String]
+  /// The names of the Data buckets the request wrote, in the order first
+  /// written, each once: none when the Stub that matched writes none, when
+  /// no Stub matched, when a value failed to render, when a data write
+  /// could not be applied, or when the state bound refused the writes.
+  data_written : ReadOnlyArray[String]
+  /// Why a write of the Stub's `dataWrites` could not be applied, when one
+  /// could not: the client then got a 500.
+  data_error : DataError?
   /// The Near miss, when no Stub matched and the Mock had candidates.
   near_miss : NearMiss?
   /// The response status, or `None` when a connection Fault ended the
@@ -155,6 +165,8 @@ fn Journal::entry(
   scenario~ : ScenarioMove?,
   response_index~ : Int?,
   variables_written~ : ReadOnlyArray[String],
+  data_written~ : ReadOnlyArray[String],
+  data_error~ : DataError?,
   near_miss~ : NearMiss?,
   plan~ : ResponsePlan,
   template_error~ : TemplateError?,
@@ -208,6 +220,12 @@ fn Journal::entry(
   for i in 0..<variables_written.length() {
     text += variables_written[i].length()
   }
+  for i in 0..<data_written.length() {
+    text += data_written[i].length()
+  }
+  if data_error is Some(error) {
+    text += error.at.length() + error.message.length()
+  }
   let mut values = 0
   if near_miss is Some(near_miss) {
     text += near_miss.stub.length()
@@ -246,6 +264,8 @@ fn Journal::entry(
     scenario,
     response_index,
     variables_written,
+    data_written,
+    data_error,
     near_miss,
     status,
     fault: plan.fault,
@@ -430,6 +450,8 @@ let vacated : JournalEntry = {
   scenario: None,
   response_index: None,
   variables_written: none_written,
+  data_written: no_buckets_written,
+  data_error: None,
   near_miss: None,
   status: None,
   fault: None,
@@ -907,6 +929,12 @@ pub impl ToJson for JournalEntry with fn to_json(self) {
     "variablesWritten": Json::array(
       self.variables_written.iter().map(Json::string).collect(),
     ),
+    "dataWritten": Json::array(
+      self.data_written.iter().map(Json::string).collect(),
+    ),
+    "dataError": self.data_error.map_or(Json::null(), error => {
+      ToJson::to_json(error)
+    }),
     "nearMiss": self.near_miss.map_or(Json::null(), near_miss => {
       ToJson::to_json(near_miss)
     }),

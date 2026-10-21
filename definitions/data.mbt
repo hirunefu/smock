@@ -141,12 +141,13 @@ pub fn keyed_problems(value : Json, key~ : String) -> Array[KeyedProblem] {
 
 ///|
 /// The names of the Data buckets that the parsed files declare, by the
-/// name of their Mock, in declaration order, so that a template may read a
-/// bucket declared in any file, earlier or later.
+/// name of their Mock, in declaration order, each with whether it is
+/// keyed, so that a Stub may read and write a bucket declared in any file,
+/// earlier or later.
 fn declared_buckets(
   files : Array[(String, Result[Map[String, Json], Diagnostic])],
-) -> Map[String, Array[String]] {
-  let names : Map[String, Array[String]] = Map([])
+) -> Map[String, Map[String, Bool]] {
+  let names : Map[String, Map[String, Bool]] = Map([])
   for file in files {
     guard file.1 is Ok(top) && top.get("data") is Some(Array(entries)) else {
       continue
@@ -157,9 +158,10 @@ fn declared_buckets(
         entry.get("name") is Some(String(name)) else {
         continue
       }
+      let keyed = entry.contains("key")
       match names.get(mock) {
-        Some(declared) => declared.push(name)
-        None => names[mock] = [name]
+        Some(declared) => declared[name] = keyed
+        None => names[mock] = Map([(name, keyed)])
       }
     }
   }

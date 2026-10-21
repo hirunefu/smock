@@ -160,6 +160,20 @@ of each GitHub release include its section
   writes nothing and gets 507 `state_limit_reached`. Each set and each
   drop of a copy is logged. The `per_replica_state` warning names the
   copies of Data buckets.
+- A Stub's `dataWrites` writes to the Data buckets of its Mock when it
+  matches: 1 to 100 writes, applied in order, each `set` (the bucket
+  becomes the value), `merge` (a shallow merge of an object into the
+  bucket) or `append` (to the array in the bucket), with a value that is
+  always a structured template. The values render against the state from
+  before the request, after the values of `variables`, and the writes are
+  stored with the Variables all at once, or not at all: a value that fails
+  to render gives the template failure, a write that cannot be applied
+  gives 500 `data write failed`, and writes past the state bound give 507.
+  The response sees the data after the writes, and the writes stand
+  whatever follows. Only a Session's first write to a bucket copies it.
+  Writes to keyed buckets come later. An Ephemeral Stub takes `dataWrites`
+  too. Each Journal entry gains `dataWritten`, the buckets written, and
+  `dataError`, why a write failed to apply.
 - docs/migrating-from-mockoon.md maps Mockoon's helpers, `RANDOM` routes,
   global variables, Range requests, dates, cookies and environment
   variables onto smock, with each difference called out.

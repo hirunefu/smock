@@ -3,8 +3,9 @@
 /// Definition files use, without `id` and `mock`, as the Admin API receives
 /// it. The Stub gets the ID `id` and belongs to the Mock `mock`, which the
 /// caller has checked exists. Its body must be inline. Its templates may
-/// read the environment variables in `env`, as a load's may, and the Data
-/// buckets `buckets`, those the Mock declares: by default, none.
+/// read the environment variables in `env`, as a load's may, and it may
+/// read and write the Data buckets `buckets`, those the Mock declares: by
+/// default, none.
 ///
 /// Returns the Stub, or every problem found, with the messages a Stub in a
 /// Definition file gets. A problem has no file (`""`), and its JSON Pointer
@@ -14,15 +15,19 @@ pub fn ephemeral_stub(
   id~ : String,
   mock~ : String,
   env? : @template.Env = @template.no_env,
-  buckets? : @template.Buckets = @template.no_buckets,
+  buckets? : ReadOnlyArray[DataBucket] = ReadOnlyArray::from_array([]),
 ) -> Result[Stub, Array[Diagnostic]] {
   let diagnostics = []
+  let keyed = Map([])
+  for bucket in buckets {
+    keyed[bucket.name] = bucket.key is Some(_)
+  }
   let file = File::{
     name: "",
     diagnostics,
     body_files: None,
     env,
-    buckets: Map::from_array([(mock, buckets)]),
+    buckets: Map::from_array([(mock, MockBuckets::new(keyed))]),
   }
   guard json is Object(fields) else {
     file.error("", "must be an object")

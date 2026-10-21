@@ -32,7 +32,10 @@ disagree.
   declares, two buckets of one Mock with the same name, `newKey` without
   `key`, a `jsonFile` that is missing or does not hold JSON in UTF-8, a
   keyed bucket whose value is not an array of objects with valid, unique
-  keys, and a template that reads a bucket its Mock does not declare.
+  keys, and a template that reads a bucket its Mock does not declare. So
+  do writes of `dataWrites`: a write to a bucket its Mock does not
+  declare, `key` on a bucket without `key`, and a literal `merge` value
+  that is not an object.
 
 A field joins the Schema only together with smock's support for it, so no
 fixture is accepted by the Schema and rejected by smock for a field smock
