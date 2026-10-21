@@ -475,6 +475,7 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
     body: Bytes(b""),
     template: None,
   }
+  let mut weighted = None
   let mut fault = None
   let mut scenario = None
   for key, value in stub {
@@ -484,6 +485,7 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
       "mock" => mock = self.name(field, value).unwrap_or("")
       "request" => request = self.read_conditions(field, value)
       "response" => response = self.read_response(pointer, field, value)
+      "responses" => weighted = Some(self.read_responses(pointer, field, value))
       "priority" => priority = self.read_priority(field, value)
       "fault" => fault = self.read_fault(field, value)
       "scenario" => scenario = self.read_scenario(field, value)
@@ -492,10 +494,30 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
   }
   self.require(stub, pointer, "id")
   self.require(stub, pointer, "mock")
-  self.require(stub, pointer, "response")
-  // A Stub with `response` has that one response, of weight 1.
-  let responses = ReadOnlyArray::from_array([{ weight: 1, response, }])
-  Some({ id, mock, priority, request, scenario, responses, fault, })
+  match (stub.contains("response"), stub.contains("responses")) {
+    (true, true) =>
+      self.error(
+        pointer, "has \"response\" and \"responses\"; give exactly one of them",
+      )
+    (false, false) => self.error(pointer, "needs \"response\" or \"responses\"")
+    _ => ()
+  }
+  // A Stub with `response` has that one response, of weight 1, and takes
+  // no pick.
+  let (responses, total_weight) = match weighted {
+    Some((responses, total)) => (responses, Some(total))
+    None => ([{ weight: 1, response, }], None)
+  }
+  Some({
+    id,
+    mock,
+    priority,
+    request,
+    scenario,
+    responses: ReadOnlyArray::from_array(responses),
+    total_weight,
+    fault,
+  })
 }
 
 ///|

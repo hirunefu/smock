@@ -34,6 +34,19 @@ of each GitHub release include its section
 - The template root `env.NAME` gives the value of a listed variable as a
   string, and is missing when it is unset. A name that is not listed is an
   error when loading.
+- `responses`: a Stub can give 1 to 100 responses with integer weights,
+  from 1 to 1,000,000, instead of `response`. Each matched request gets
+  one of them, picked with the probability of its weight over the sum of
+  the weights, so the status can vary. The pick draws from the request's
+  one random draw, so `fault.seed` and `--seed` replay it, and it leaves a
+  seed's Fault decisions and helper output as they are. Ephemeral Stubs
+  take `responses` with inline bodies.
+- Journal entries record `responseIndex`, the index of the response a
+  request got, or null for a Stub with `response` and for a request no
+  Stub matched.
+- `smock render` and the Admin render operation show `responseIndex`, and
+  render a given response with `--response <i>` and the `response` query
+  parameter.
 
 ### Changed
 

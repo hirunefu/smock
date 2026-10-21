@@ -78,7 +78,7 @@ test "every problem is reported, each with its file and JSON Pointer" {
       #|d.json: /stubs/1/response/body: must be a string
       #|d.json: /stubs/1: needs "id"
       #|d.json: /stubs/2/request: must be an object
-      #|d.json: /stubs/2: needs "response"
+      #|d.json: /stubs/2: needs "response" or "responses"
       #|d.json: /stubs/3/response/status: must be an integer from 200 to 599
       #|d.json: /stubs/3/response/headers: must be an object
       #|d.json: /stubs/4/response/headers/a~1b: is not a valid header name

@@ -75,6 +75,10 @@ pub struct JournalEntry {
   stub_source : StubSource?
   /// How the Stub that matched moved its Scenario, when it has a clause.
   scenario : ScenarioMove?
+  /// The index of the response the pick chose among the `responses` of the
+  /// Stub that matched, counted from 0. `None` for a Stub with `response`,
+  /// and when no Stub matched.
+  response_index : Int?
   /// The Near miss, when no Stub matched and the Mock had candidates.
   near_miss : NearMiss?
   /// The response status, or `None` when a connection Fault ended the
@@ -143,6 +147,7 @@ fn Journal::entry(
   resolution~ : Resolution,
   matched~ : MatchedStub?,
   scenario~ : ScenarioMove?,
+  response_index~ : Int?,
   near_miss~ : NearMiss?,
   plan~ : ResponsePlan,
   template_error~ : TemplateError?,
@@ -229,6 +234,7 @@ fn Journal::entry(
     stub,
     stub_source,
     scenario,
+    response_index,
     near_miss,
     status,
     fault: plan.fault,
@@ -411,6 +417,7 @@ let vacated : JournalEntry = {
   stub: None,
   stub_source: None,
   scenario: None,
+  response_index: None,
   near_miss: None,
   status: None,
   fault: None,
@@ -881,6 +888,9 @@ pub impl ToJson for JournalEntry with fn to_json(self) {
     "stubSource": optional(self.stub_source.map(source => source.name())),
     "scenario": self.scenario.map_or(Json::null(), moved => {
       ToJson::to_json(moved)
+    }),
+    "responseIndex": self.response_index.map_or(Json::null(), index => {
+      Json::number(index.to_double())
     }),
     "nearMiss": self.near_miss.map_or(Json::null(), near_miss => {
       ToJson::to_json(near_miss)
