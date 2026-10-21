@@ -126,15 +126,13 @@ fn Report::unreport(self : Report, problem : Problem) -> Unit {
 }
 
 ///|
-/// Reports an error at `pointer` in the file, before every other problem.
-fn Report::output_error(
-  self : Report,
-  pointer : String,
-  message : String,
-) -> Unit {
+/// Reports an error with the file, before every other problem. It names
+/// the file as `--output` gives it, with no pointer, as every problem with
+/// the file does.
+fn Report::output_error(self : Report, message : String) -> Unit {
   self.problems.insert(
     self.output_end,
-    Error({ file: self.options.output, pointer, message, }),
+    Error({ file: self.options.output, pointer: "", message, }),
   )
   self.output_end += 1
   self.document_end += 1
