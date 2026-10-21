@@ -282,7 +282,7 @@ fn Sampler::sample(
   depth : Int,
 ) -> Json? raise Passed {
   let merged = Merged::new()
-  self.merge(merged, pointer, json, false)
+  self.merge(merged, pointer, json, branch=false)
   self.merged_sample(merged, depth)
 }
 
@@ -300,7 +300,7 @@ fn Sampler::merge(
   merged : Merged,
   pointer : String,
   json : Json,
-  branch : Bool,
+  branch~ : Bool,
 ) -> Unit {
   let schema = match json {
     Object(schema) => schema
@@ -314,7 +314,7 @@ fn Sampler::merge(
   // beside it are ignored.
   if self.v30 && schema.contains("$ref") {
     if self.referenced(merged, pointer, schema) is Some(target) {
-      self.merge(merged, target.pointer, target.json, branch)
+      self.merge(merged, target.pointer, target.json, branch~)
     }
     return
   }
@@ -328,7 +328,7 @@ fn Sampler::merge(
   // From 3.1, the schema a `$ref` names is merged with the keywords beside
   // it, which come first, as part of the same schema.
   if self.referenced(merged, pointer, schema) is Some(target) {
-    self.merge(merged, target.pointer, target.json, branch)
+    self.merge(merged, target.pointer, target.json, branch~)
   }
   let all_of = @definitions.child_pointer(pointer, "allOf")
   match schema.get("allOf") {
@@ -337,7 +337,7 @@ fn Sampler::merge(
       for i, json in branches {
         let at = @definitions.child_pointer(all_of, i.to_string())
         if self.is_schema(at, json) {
-          self.merge(merged, at, json, true)
+          self.merge(merged, at, json, branch=true)
         }
       }
     Some(_) => self.report.warning_at(all_of, "ignored: must be an array")
@@ -364,7 +364,7 @@ fn Sampler::merge(
             nulls = true
             continue
           }
-          self.merge(merged, at, json, true)
+          self.merge(merged, at, json, branch=true)
           taken = true
           break
         }
@@ -541,8 +541,8 @@ fn Sampler::merged_sample(
   }
   match self.type_of(merged) {
     Boolean => Some(self.charged(Json::boolean(true)))
-    Number => Some(self.charged(self.number(merged, false).to_json()))
-    Integer => Some(self.charged(self.number(merged, true).to_json()))
+    Number => Some(self.charged(self.number(merged, integer=false).to_json()))
+    Integer => Some(self.charged(self.number(merged, integer=true).to_json()))
     String => Some(self.string(merged))
     Array | Object if depth >= max_sample_depth =>
       Some(self.charged(Json::null()))
@@ -978,7 +978,7 @@ fn Sampler::object(
         own_write_only = true
         break
       }
-      self.merge(property, at, json, property.layers.length() > 0)
+      self.merge(property, at, json, branch=property.layers.length() > 0)
       schemas = true
     }
     if !schemas || own_write_only {

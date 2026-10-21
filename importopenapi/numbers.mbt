@@ -67,9 +67,9 @@ fn fits(lower : Bound?, upper : Bound?, value : Decimal) -> Bool {
 /// For an integer, a bound that is not whole is first rounded inward, a
 /// lower bound up and an upper bound down, and the middle is rounded down.
 /// When nothing fits, the sample is the lower bound, with a warning.
-fn Sampler::number(self : Sampler, merged : Merged, integer : Bool) -> Decimal {
-  let mut lower = self.bound(merged, "minimum", "exclusiveMinimum", true)
-  let mut upper = self.bound(merged, "maximum", "exclusiveMaximum", false)
+fn Sampler::number(self : Sampler, merged : Merged, integer~ : Bool) -> Decimal {
+  let mut lower = self.bound(merged, "minimum", "exclusiveMinimum", lower=true)
+  let mut upper = self.bound(merged, "maximum", "exclusiveMaximum", lower=false)
   if integer {
     lower = lower.map(bound => bound.rounded(bound.value.ceil()))
     upper = upper.map(bound => bound.rounded(bound.value.floor()))
@@ -118,16 +118,22 @@ fn Sampler::bound(
   merged : Merged,
   keyword : String,
   exclusive : String,
-  lower : Bool,
+  lower~ : Bool,
 ) -> Bound? {
   let inclusive = self.number_bound(
-    merged, keyword, false, "ignored: must be a number",
+    merged,
+    keyword,
+    "ignored: must be a number",
+    exclusive=false,
   )
   if self.v30 {
     return self.exclusive_v30(merged, inclusive, exclusive)
   }
   let exclusive = self.number_bound(
-    merged, exclusive, true, "ignored: must be a number in OpenAPI 3.1 and 3.2",
+    merged,
+    exclusive,
+    "ignored: must be a number in OpenAPI 3.1 and 3.2",
+    exclusive=true,
   )
   match (inclusive, exclusive) {
     (Some(inclusive), Some(exclusive)) => {
@@ -181,8 +187,8 @@ fn Sampler::number_bound(
   self : Sampler,
   merged : Merged,
   keyword : String,
-  exclusive : Bool,
   message : String,
+  exclusive~ : Bool,
 ) -> Bound? {
   for layer in merged.layers {
     let at = @definitions.child_pointer(layer.pointer, keyword)

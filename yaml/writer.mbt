@@ -130,8 +130,9 @@ fn Writer::root(
 ) -> Unit raise WriteError {
   match value {
     Object(members) if !members.is_empty() =>
-      self.mapping(members, 0, false, pointer)
-    Array(items) if !items.is_empty() => self.sequence(items, 0, false, pointer)
+      self.mapping(members, 0, inline=false, pointer)
+    Array(items) if !items.is_empty() =>
+      self.sequence(items, 0, inline=false, pointer)
     _ => {
       self.scalar(value, column_zero=true)
       self.out.write_byte(b'\n')
@@ -148,14 +149,14 @@ fn Writer::mapping(
   self : Writer,
   members : Map[String, Json],
   indent : Int,
-  inline : Bool,
+  inline~ : Bool,
   pointer : String?,
 ) -> Unit raise WriteError {
   self.enter()
   let mut first = true
   for key, value in members {
     let pointer = self.member_pointer(pointer, key)
-    self.pair(key, value, indent, first && inline, pointer) catch {
+    self.pair(key, value, indent, inline=first && inline, pointer) catch {
       error => raise within(key, error)
     }
     first = false
@@ -171,7 +172,7 @@ fn Writer::pair(
   key : String,
   value : Json,
   indent : Int,
-  inline : Bool,
+  inline~ : Bool,
   pointer : String?,
 ) -> Unit raise WriteError {
   if !inline {
@@ -182,11 +183,11 @@ fn Writer::pair(
   match value {
     Object(members) if !members.is_empty() => {
       self.out.write_byte(b'\n')
-      self.mapping(members, indent + 2, false, pointer)
+      self.mapping(members, indent + 2, inline=false, pointer)
     }
     Array(items) if !items.is_empty() => {
       self.out.write_byte(b'\n')
-      self.sequence(items, indent + 2, false, pointer)
+      self.sequence(items, indent + 2, inline=false, pointer)
     }
     _ => {
       self.out.write_byte(b' ')
@@ -205,13 +206,13 @@ fn Writer::sequence(
   self : Writer,
   items : Array[Json],
   indent : Int,
-  inline : Bool,
+  inline~ : Bool,
   pointer : String?,
 ) -> Unit raise WriteError {
   self.enter()
   for i, item in items {
     let pointer = self.item_pointer(pointer, i)
-    self.item(item, indent, i == 0 && inline, pointer) catch {
+    self.item(item, indent, inline=i == 0 && inline, pointer) catch {
       error => raise within(i.to_string(), error)
     }
   }
@@ -226,7 +227,7 @@ fn Writer::item(
   self : Writer,
   item : Json,
   indent : Int,
-  inline : Bool,
+  inline~ : Bool,
   pointer : String?,
 ) -> Unit raise WriteError {
   if self.item_comment(pointer) is Some(lines) {
@@ -240,14 +241,14 @@ fn Writer::item(
   match item {
     Object(members) if !members.is_empty() => {
       self.out.write_byte(b' ')
-      self.mapping(members, indent + 2, true, pointer)
+      self.mapping(members, indent + 2, inline=true, pointer)
     }
     Array(items) if !items.is_empty() => {
       // A sequence starts on the line of the `-`, unless its first item
       // has a comment, which needs a line of its own.
       let inline = self.item_comment(self.item_pointer(pointer, 0)) is None
       self.out.write_byte(if inline { b' ' } else { b'\n' })
-      self.sequence(items, indent + 2, inline, pointer)
+      self.sequence(items, indent + 2, inline~, pointer)
     }
     _ => {
       self.out.write_byte(b' ')
