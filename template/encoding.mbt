@@ -74,11 +74,11 @@ fn encoding_value(
       }
       // Each decoded byte gives at least one byte of text, and a byte that
       // is not UTF-8 three, for U+FFFD. So the bytes are bounded before
-      // they are decoded, and the text after.
+      // they are decoded, and the text they give before it is built.
       check_result(name, length.to_int64(), at)
-      let decoded = @utf8.decode_lossy(base64_decoded(text, url, length))
-      check_result(name, utf8_length(decoded).to_int64(), at)
-      Json::string(decoded)
+      let decoded = base64_decoded(text, url, length)
+      check_result(name, lossy_utf8_length(decoded), at)
+      Json::string(@utf8.decode_lossy(decoded))
     }
     UrlEncode => {
       let bytes = @utf8.encode(text_argument(name, 0, values[0], at))
@@ -92,11 +92,69 @@ fn encoding_value(
       }
       // Bounded as for base64Decode.
       check_result(name, length.to_int64(), at)
-      let decoded = @utf8.decode_lossy(percent_decoded(text, length))
-      check_result(name, utf8_length(decoded).to_int64(), at)
-      Json::string(decoded)
+      let decoded = percent_decoded(text, length)
+      check_result(name, lossy_utf8_length(decoded), at)
+      Json::string(@utf8.decode_lossy(decoded))
     }
   }
+}
+
+///|
+/// The bytes of UTF-8 that `@utf8.decode_lossy` writes for `bytes`,
+/// counted without decoding them: each well-formed sequence takes its own
+/// length, and each maximal subpart of an ill-formed one, which it replaces
+/// with U+FFFD, takes 3. A maximal subpart is the longest start of a
+/// well-formed sequence there, or else one byte.
+fn lossy_utf8_length(bytes : BytesView) -> Int64 {
+  let n = bytes.length()
+  let mut length = 0L
+  let mut i = 0
+  while i < n {
+    let lead = bytes[i].to_int()
+    if lead < 0x80 {
+      length += 1L
+      i += 1
+      continue
+    }
+    // The length of a sequence that starts with `lead`, 0 when none does,
+    // and the range of its second byte.
+    let mut size = 0
+    let mut low = 0x80
+    let mut high = 0xBF
+    if lead >= 0xC2 && lead <= 0xDF {
+      size = 2
+    } else if lead >= 0xE0 && lead <= 0xEF {
+      size = 3
+      if lead == 0xE0 {
+        low = 0xA0
+      } else if lead == 0xED {
+        high = 0x9F
+      }
+    } else if lead >= 0xF0 && lead <= 0xF4 {
+      size = 4
+      if lead == 0xF0 {
+        low = 0x90
+      } else if lead == 0xF4 {
+        high = 0x8F
+      }
+    }
+    let mut taken = 1
+    if size > 0 &&
+      i + 1 < n &&
+      bytes[i + 1].to_int() >= low &&
+      bytes[i + 1].to_int() <= high {
+      taken = 2
+      while taken < size &&
+            i + taken < n &&
+            bytes[i + taken].to_int() >= 0x80 &&
+            bytes[i + taken].to_int() <= 0xBF {
+        taken += 1
+      }
+    }
+    length += if taken == size { size.to_int64() } else { 3L }
+    i += taken
+  }
+  length
 }
 
 ///|

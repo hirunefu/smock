@@ -238,6 +238,15 @@ test "an encoding helper whose result takes more than 1 MiB of UTF-8 is a render
       length("${base64url(bodyText)}", repeated("x", 786433)),
       length("${base64Decode(bodyText)}", repeated("AAAA", 349525)),
       length("${base64Decode(bodyText)}", repeated("AAAA", 349526)),
+      // 349525 and 349526 bytes that are not UTF-8, each taking 3.
+      length(
+        "${base64Decode(concat(bodyText, '/w=='))}",
+        repeated("////", 116508),
+      ),
+      length(
+        "${base64Decode(concat(bodyText, '//8='))}",
+        repeated("////", 116508),
+      ),
       length("${base64urlDecode(bodyText)}", repeated("____", 116508)),
       length("${base64urlDecode(bodyText)}", repeated("____", 116509)),
       length("${urlEncode(bodyText)}", repeated("x", 1048576)),
@@ -252,6 +261,8 @@ test "an encoding helper whose result takes more than 1 MiB of UTF-8 is a render
       #|error at /response/body: base64(): the result takes more than 1 MiB
       #|1048576 bytes
       #|error at /response/body: base64url(): the result takes more than 1 MiB
+      #|1048575 bytes
+      #|error at /response/body: base64Decode(): the result takes more than 1 MiB
       #|1048575 bytes
       #|error at /response/body: base64Decode(): the result takes more than 1 MiB
       #|1048572 bytes
