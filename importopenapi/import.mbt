@@ -3,25 +3,45 @@
 // is committed and served like any other (ADR 0002).
 //
 // The converter does no I/O. It takes the documents as (name, bytes) pairs,
-// and returns the file's bytes with the warnings, or the errors. The CLI
-// reads the documents and writes the file, as `defdir` reads what
-// `definitions` loads.
+// and returns the names of the documents it still needs, or the file's
+// bytes with the warnings, or the errors. The CLI reads the documents it
+// asks for and writes the file, as `defdir` reads what `definitions` loads.
 //
 // Its parts are kept apart, so that each can grow on its own: the document
 // and its version (document.mbt), the operations under `paths`
 // (operations.mbt), paths (paths.mbt), responses (responses.mbt), bodies
-// and headers (bodies.mbt), examples (examples.mbt), references
-// (references.mbt), and the file it writes (output.mbt).
+// and headers (bodies.mbt), examples (examples.mbt), references and the
+// documents they name (references.mbt), and the file it writes
+// (output.mbt).
+
+///|
+/// The most documents a conversion reads, the root included.
+pub let max_documents : Int = 1000
+
+///|
+/// The most bytes a conversion reads, in all its documents, the root
+/// included: 64 MiB. Both parsers build a tree, and the YAML parser copies
+/// the text into 4-byte characters, so a run needs many times what it
+/// reads.
+pub let max_read_bytes : Int = 64 * 1024 * 1024
 
 ///|
 /// What a conversion needs besides the documents.
 pub struct Options {
-  /// The root document: its name among the documents. Its extension picks
-  /// the parser: YAML 1.2 for `.yaml` and `.yml`, JSON for `.json`.
+  /// The root document: its name among the documents, its path under the
+  /// directory that references are followed in, such as `openapi.yaml` or
+  /// `v1/openapi.yaml`. Its extension picks the parser: YAML 1.2 for
+  /// `.yaml` and `.yml`, JSON for `.json`. Only its base name reaches the
+  /// file.
   root : String
   /// How problems name the root document, such as its path as given on
   /// the command line.
   root_label : String
+  /// How problems name the directory that the documents' names are under:
+  /// `--ref-dir` as given, or the directory part of the root's path as
+  /// given, such as `api/`, or `""` when it has none. Nothing of it reaches
+  /// the file.
+  ref_dir : String
   /// The name of the one Mock the file declares. Every Stub ID starts with
   /// it.
   mock : String
@@ -44,16 +64,32 @@ pub struct Options {
 /// The options of a conversion of the document `root` into a Definition
 /// file `output` that declares the Mock `mock`, with the Hosts `hosts`, by
 /// default none, or that holds only its Stubs when `declare_mock` is false.
-/// Problems name the root document `root_label`, by default `root`.
+/// Problems name the root document `root_label`, by default `root`, and the
+/// others under `ref_dir`, by default `""`.
 pub fn Options::Options(
   root~ : String,
   mock~ : String,
   output~ : String,
   root_label? : String = root,
+  ref_dir? : String = "",
   hosts? : Array[String] = [],
   declare_mock? : Bool = true,
 ) -> Options {
-  { root, root_label, mock, hosts, declare_mock, output, }
+  { root, root_label, ref_dir, mock, hosts, declare_mock, output, }
+}
+
+///|
+/// The path of the document `name`, as problems name it: `root_label` for
+/// the root, else `ref_dir` joined with `name`. It names the file as the
+/// user can open it, so the CLI reads the document there.
+pub fn Options::path(self : Options, name : String) -> String {
+  if name == self.root {
+    self.root_label
+  } else if self.ref_dir == "" || self.ref_dir.has_suffix("/") {
+    self.ref_dir + name
+  } else {
+    "\{self.ref_dir}/\{name}"
+  }
 }
 
 ///|
@@ -82,6 +118,32 @@ pub fn Problem::is_error(self : Problem) -> Bool {
 }
 
 ///|
+/// Why a document that a conversion asked for cannot be read. The
+/// converter reports it at every `$ref` that names the document.
+pub(all) enum Unreadable {
+  /// There is no file of that name.
+  Missing
+  /// It is a directory, or another file that is not a regular file.
+  NotRegularFile
+  /// A symlink leads it outside the directory that references are followed
+  /// in.
+  SymlinkOutside
+  /// Another reason, as the system gives it, such as `permission denied`.
+  Other(String)
+} derive(Debug, Eq)
+
+///|
+/// The reason, as a problem gives it, such as `no such file`.
+pub fn Unreadable::to_string(self : Unreadable) -> String {
+  match self {
+    Missing => "no such file"
+    NotRegularFile => "not a regular file"
+    SymlinkOutside => "a symlink leads it outside --ref-dir"
+    Other(reason) => reason
+  }
+}
+
+///|
 /// What a conversion gave.
 pub(all) enum Conversion {
   /// The Definition file: its bytes, the warnings, in the order the
@@ -96,32 +158,113 @@ pub(all) enum Conversion {
   /// No file: every problem, errors and warnings, in the order the document
   /// writes what they are about. At least one is an error.
   Failed(Array[Problem])
+  /// The names of the documents that references name and the conversion
+  /// does not have yet, in the order it reached them, none twice. Give
+  /// each, or say why it cannot be read, then convert again.
+  Needs(Array[String])
 }
 
 ///|
-/// The problems of the conversion, in order.
+/// The problems of the conversion, in order: none while it needs
+/// documents.
 pub fn Conversion::problems(self : Conversion) -> Array[Problem] {
   match self {
     Converted(problems~, ..) => problems
     Failed(problems) => problems
+    Needs(_) => []
   }
 }
 
 ///|
+/// A conversion in rounds: it is given the documents it has, and asks for
+/// those it still needs, until it has all it needs. Each document is
+/// parsed once, when it is given, however many rounds the conversion
+/// takes.
+struct Converter {
+  options : Options
+  documents : Documents
+}
+
+///|
+/// A conversion with the options `options`, and no document yet.
+pub fn Converter::new(options : Options) -> Converter {
+  { options, documents: Documents::new(options), }
+}
+
+///|
+/// Gives the conversion the document `name`, its path under the directory
+/// that references are followed in, read as `bytes`. A name given before
+/// keeps what it was first given.
+pub fn Converter::give(self : Converter, name : String, bytes : Bytes) -> Unit {
+  self.documents.give(name, bytes)
+}
+
+///|
+/// Tells the conversion that the document `name`, which it asked for,
+/// cannot be read, and why. A name given before keeps what it was first
+/// given.
+pub fn Converter::give_unreadable(
+  self : Converter,
+  name : String,
+  reason : Unreadable,
+) -> Unit {
+  self.documents.add(name, Unread(reason))
+}
+
+///|
+/// Converts the root document, with the documents given so far, into a
+/// Definition file, or says which documents it still needs.
+///
+/// At most `max_documents` documents and `max_read_bytes` bytes are read,
+/// the root included: passing either is an error.
+pub fn Converter::convert(self : Converter) -> Conversion {
+  let options = self.options
+  let report = Report::new(options, documents=self.documents)
+  if self.documents.passed is Some(name) {
+    let message = if name == options.root {
+      "is larger than 64 MiB, the most smock import-openapi reads"
+    } else {
+      "with it, the documents read pass 64 MiB, the most smock import-openapi reads in all, the root included"
+    }
+    report.error(options.path(name), "", message)
+    return Failed(report.problems())
+  }
+  guard self.documents.root is Some(root) else {
+    report.error(options.root_label, "", "the document was not given")
+    return Failed(report.problems())
+  }
+  guard report.document(root) is Some(document) else {
+    return Failed(report.problems())
+  }
+  let imported = report.operations(document)
+  if self.documents.count() + report.needed.length() > max_documents {
+    return Failed([
+      Error({
+        file: options.root_label,
+        pointer: "",
+        message: "the documents it refers to pass 1,000, the most smock import-openapi reads, the root included: bundle the document into one file first, with another tool",
+      }),
+    ])
+  }
+  if !report.needed.is_empty() {
+    return Needs(report.needed.to_array())
+  }
+  report.file(document, imported)
+}
+
+///|
 /// Converts the root document that `options` names, among `documents`
-/// given as (name, bytes) pairs, into a Definition file.
+/// given as (name, bytes) pairs, into a Definition file, or says which
+/// documents it still needs. A name is a document's path under the
+/// directory that references are followed in, `/`-separated, without `.`
+/// or `..`.
 pub fn convert(
   documents : Array[(String, Bytes)],
   options : Options,
 ) -> Conversion {
-  let report = Report::new(options)
-  guard documents.search_by(document => document.0 == options.root) is Some(i) else {
-    report.error(options.root_label, "", "the document was not given")
-    return Failed(report.problems())
+  let converter = Converter::new(options)
+  for document in documents {
+    converter.give(document.0, document.1)
   }
-  guard report.document(documents[i].1) is Some(document) else {
-    return Failed(report.problems())
-  }
-  let imported = report.operations(document)
-  report.file(document, imported)
+  converter.convert()
 }

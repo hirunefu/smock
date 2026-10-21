@@ -125,11 +125,16 @@ pub(all) struct RenderSettings {
 ///|
 /// The settings of `smock import-openapi`. The OpenAPI document is its
 /// argument, and the Mock, its Hosts, whether the file declares it, the
-/// output and whether it may be replaced are flags of its own, without
-/// variables: they belong to one import, not to a process.
+/// directory references are followed in, the output and whether it may be
+/// replaced are flags of its own, without variables: they belong to one
+/// import, not to a process.
 pub(all) struct ImportOpenapiSettings {
   /// The OpenAPI document, a JSON or YAML file, as given.
   document : String
+  /// The directory that references to other files are followed in, as
+  /// given, or `None` for the document's own directory. The document lies
+  /// under it, which the CLI checks, since it takes the file system.
+  ref_dir : String?
   /// The name of the Mock the Definition file declares.
   mock : String
   /// The Hosts the Mock is declared with, as given, in that order: each
@@ -405,8 +410,9 @@ pub fn render_command() -> @argparse.Command {
 
 ///|
 /// The `import-openapi` subcommand: the OpenAPI document as its argument,
-/// and the Mock, its Hosts, whether to declare it, the output and whether
-/// to replace it as flags without variables.
+/// and the Mock, its Hosts, whether to declare it, the directory that
+/// references are followed in, the output and whether to replace it as
+/// flags without variables.
 pub fn import_openapi_command() -> @argparse.Command {
   @argparse.Command(
     "import-openapi",
@@ -437,6 +443,11 @@ pub fn import_openapi_command() -> @argparse.Command {
         default_values=["on"],
       ),
       @argparse.OptionArg(
+        "ref-dir",
+        long="ref-dir",
+        about="The directory that references to other files are followed in, by default the document's own. The document must lie under it. A reference that leads outside it, by its path or through a symlink, is an error: so a downloaded document cannot copy a file such as ../../.npmrc into the Definition file. smock never reads URLs.",
+      ),
+      @argparse.OptionArg(
         "output",
         long="output",
         about="The Definition file to write. Its name picks the format: .yaml or .yml writes YAML, with comments that map each Stub back to the document, and .json writes JSON. Its directory must exist. The file is written to a temporary file whose name starts with ., then renamed, so a smock that watches the directory never reads half a file.",
@@ -445,7 +456,7 @@ pub fn import_openapi_command() -> @argparse.Command {
       @argparse.OptionArg(
         "overwrite",
         long="overwrite",
-        about="Whether an existing --output is replaced: on or off. Off, an existing file is refused before the document is read, and nothing is written. Either way, a directory, a symlink or the document itself is refused.",
+        about="Whether an existing --output is replaced: on or off. Off, an existing file is refused before the document is read, and nothing is written. Either way, a directory, a symlink, or the document or a file it refers to is refused.",
         default_values=["off"],
       ),
     ],
@@ -799,7 +810,9 @@ pub fn RenderSettings::from_matches(
 /// lower case, as Definition files do, and the output's name does not
 /// start with `.`, since smock skips such files. `--declare-mock` and
 /// `--overwrite` are `on` or `off`. `--hosts` lists Hosts, separated by
-/// commas, only when the file declares the Mock.
+/// commas, only when the file declares the Mock. `--ref-dir` is not empty;
+/// that the document lies under it is checked by the CLI, which reads the
+/// file system.
 pub fn ImportOpenapiSettings::from_matches(
   matches : @argparse.Matches,
 ) -> ImportOpenapiSettings raise InvalidSetting {
@@ -814,6 +827,10 @@ pub fn ImportOpenapiSettings::from_matches(
   let mock = value(matches, "mock").unwrap_or("")
   if mock == "" {
     raise InvalidOption(flag="mock", value=mock, reason="must not be empty")
+  }
+  let ref_dir = value(matches, "ref-dir")
+  if ref_dir is Some("") {
+    raise InvalidOption(flag="ref-dir", value="", reason="must not be empty")
   }
   let output = value(matches, "output").unwrap_or("")
   if !is_json_or_yaml(output) {
@@ -833,7 +850,7 @@ pub fn ImportOpenapiSettings::from_matches(
   let declare_mock = on_or_off(matches, "declare-mock")
   let hosts = hosts_value(matches, declare_mock~)
   let overwrite = on_or_off(matches, "overwrite")
-  { document, mock, hosts, declare_mock, output, overwrite, }
+  { document, ref_dir, mock, hosts, declare_mock, output, overwrite, }
 }
 
 ///|
@@ -911,12 +928,75 @@ fn is_json_or_yaml(path : String) -> Bool {
 }
 
 ///|
-/// The name the converter gives the OpenAPI document: its name within its
-/// directory, under which a document names the files it refers to.
+/// The OpenAPI document's base name: its name under its own directory,
+/// where references are followed by default.
 pub fn ImportOpenapiSettings::document_name(
   self : ImportOpenapiSettings,
 ) -> String {
   base_name(self.document)
+}
+
+///|
+/// The OpenAPI document's name under the directory that references are
+/// followed in, `/`-separated, from the real paths of the directories,
+/// once symlinks, `.` and `..` are resolved: `ref_dir`, that of
+/// `--ref-dir`, or `None` when it names no directory, and `document_dir`,
+/// that of the document's directory, or `None` when it cannot be resolved.
+///
+/// Without `--ref-dir`, which defaults to the document's directory, or
+/// when the document's directory cannot be resolved, so that the document
+/// cannot be read either, it is the document's base name. A usage error
+/// when `--ref-dir` names no directory, or when the document does not lie
+/// under it, as when a symlink leads its directory outside.
+pub fn ImportOpenapiSettings::document_name_under(
+  self : ImportOpenapiSettings,
+  ref_dir~ : String?,
+  document_dir~ : String?,
+) -> String raise InvalidSetting {
+  let name = self.document_name()
+  guard self.ref_dir is Some(given) else { return name }
+  guard ref_dir is Some(ref_dir) else {
+    raise InvalidOption(
+      flag="ref-dir",
+      value=given,
+      reason="must name a directory",
+    )
+  }
+  guard document_dir is Some(document_dir) else { return name }
+  if document_dir == ref_dir {
+    return name
+  }
+  let prefix = if ref_dir.has_suffix("/") { ref_dir } else { "\{ref_dir}/" }
+  guard document_dir.has_prefix(prefix) else {
+    raise InvalidArgument(
+      name="document",
+      value=self.document,
+      reason="must lie under --ref-dir \{given.escape()}",
+    )
+  }
+  "\{document_dir[prefix.length():]}/\{name}"
+}
+
+///|
+/// The directory that references are followed in, as given, by which
+/// problems name the documents under it: `--ref-dir`, or else the
+/// directory part of the document's path (see `document_directory`).
+pub fn ImportOpenapiSettings::ref_dir_path(
+  self : ImportOpenapiSettings,
+) -> String {
+  self.ref_dir.unwrap_or(self.document_directory())
+}
+
+///|
+/// The directory part of the OpenAPI document's path, as given, up to its
+/// last `/`, such as `api/`, or `""` when the path has none.
+pub fn ImportOpenapiSettings::document_directory(
+  self : ImportOpenapiSettings,
+) -> String {
+  match self.document.rev_find("/") {
+    Some(i) => self.document[:i + 1].to_owned()
+    None => ""
+  }
 }
 
 ///|

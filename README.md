@@ -57,14 +57,15 @@ Packages of `smock/smock`:
   64-bit draw, and writes JSON with smock's own number form.
 - `importopenapi`: converts an OpenAPI document into a Definition file,
   for `smock import-openapi`. It takes the documents as (name, bytes)
-  pairs and returns the file's bytes with the warnings, or the errors,
-  each with a JSON Pointer into the document. The output's name picks
-  YAML, written with `smock/yaml` and with comments that map Stubs back
-  to the document, or JSON. `cmd/smock` reads the document and writes the
-  file. Before it returns a file, it loads it with `definitions`, as
-  `smock check` would. Its parts are kept apart:
-  the document and its version, operations, paths, responses, bodies and
-  references.
+  pairs and returns the names of the documents it still needs, or the
+  file's bytes with the warnings, or the errors, each with a JSON Pointer
+  into a document. The output's name picks YAML, written with
+  `smock/yaml` and with comments that map Stubs back to the document, or
+  JSON. `cmd/smock` reads the documents it asks for, under `--ref-dir`,
+  and writes the file. Before it returns a file, it loads it with
+  `definitions`, as `smock check` would. Its parts are kept apart: the
+  document and its version, operations, paths, responses, bodies, and
+  references and the documents they name.
 - `prng`: the seeded pseudo-random generator that Fault decisions and
   template helpers draw from. Its sequence for a seed is fixed, the same on
   every target.

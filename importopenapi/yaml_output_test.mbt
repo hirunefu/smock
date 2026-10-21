@@ -73,6 +73,7 @@ fn file_text(document : String, output : String) -> String raise {
     Converted(file~, ..) => @utf8.decode(file)
     Failed(problems) =>
       fail(problems.map(problem => problem.to_string()).join("\n"))
+    Needs(names) => fail("needs \{names.join(", ")}")
   }
 }
 

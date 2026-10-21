@@ -50,7 +50,7 @@ fn deep_example(media_type : Json) -> String {
         _ => lines.push("written, but not read back")
       }
     }
-    Failed(_) => lines.push("nothing written")
+    Failed(_) | Needs(_) => lines.push("nothing written")
   }
   lines.join("\n")
 }

@@ -99,6 +99,10 @@ The arguments:
 - `--declare-mock on|off`: whether the file declares the Mock. It is `on`
   by default. With `off`, the file holds only Stubs, for a Mock declared
   by hand in another file.
+- `--ref-dir <dir>`: the directory that references to other files are
+  followed in. It is the document's own directory by default, and the
+  document must lie under it
+  ([References to other files](#references-to-other-files)).
 - `--output <file>`: the Definition file to write. Its name picks the
   format: `.yaml` or `.yml` writes YAML, with the comments above, and
   `.json` writes JSON, which has no comments. Both hold the same Stubs.
@@ -157,7 +161,7 @@ Stub for each response it answers, and for each further named example
 | `callbacks` | Not imported, with one warning per operation. |
 | `webhooks` | Not imported, with one warning: they are requests the API sends, not ones it answers. |
 | `security`, `links`, descriptions, tags and `x-` extensions | Nothing, and no warning. |
-| A `$ref` to a Path Item, a Response, an Example or, as 3.2 allows, a Media Type in the same document | Followed, as if the part it names were written in place (see [References and bundling](#references-and-bundling)). |
+| A `$ref` to a Path Item, a Response, an Example or, as 3.2 allows, a Media Type, in the same document or in another file under `--ref-dir` | Followed, as if the part it names were written in place (see [References and bundling](#references-and-bundling)). |
 | Fields beside a Path Item's `$ref` | Ignored, with a warning, since OpenAPI leaves their meaning undefined. |
 
 A Stub matches on its method and its path. The Stub of a response other
@@ -849,8 +853,11 @@ smock import-openapi api/petstore.json --mock petstore --output definitions/pets
   when anything fails. The command reads, creates and changes no other
   file in the directory.
 - Some outputs are refused even with `--overwrite on`: a directory, a
-  symlink (even to a regular file), and the document itself, which would
-  be replaced by its own conversion. The directory of `--output` must
+  symlink (even to a regular file), and the document itself or a file
+  its references name, which would be replaced by its own conversion. A
+  file that references name is known only once it is read, so that
+  refusal comes after the conversion, just before the file would be
+  written. The directory of `--output` must
   exist: the command makes no directory. Each refusal is an error about
   `--output`, with exit status 1.
 
@@ -905,9 +912,10 @@ from a fixed directory keeps the relative paths naming the same files.
 ## References and bundling
 
 Documents describe shared parts once, under `components`, and point at
-them with `$ref`. The command follows a reference within the document
-where it reads a Path Item, a Response, an Example or, as 3.2 allows, a
-Media Type:
+them with `$ref`. The command follows a reference where it reads a Path
+Item, a Response, an Example or, as 3.2 allows, a Media Type, within the
+document or into another file
+([References to other files](#references-to-other-files)):
 
 ```json
 {
@@ -961,13 +969,91 @@ Each of these is an error at the `$ref`:
 - a reference to a part the document does not have;
 - a fragment that is not a JSON Pointer, such as an `$anchor` name like
   `#Pet`;
-- references that form a cycle;
+- references that form a cycle, within a document or across files;
 - a URL, of any scheme, `file:` included, or an absolute path. smock
   reads no URLs;
-- a reference to another file.
+- a reference to a file outside `--ref-dir`, to a file whose name does not
+  end in `.json`, `.yaml` or `.yml`, or to a file that cannot be read.
 
-A document whose references name URLs or other files must be bundled into
-one file first, with another tool. A bundler copies what the references
+### References to other files
+
+A document split into several files can be imported. Here
+`api/openapi.yaml` names a response in another file:
+
+```yaml
+openapi: 3.1.0
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      responses:
+        "200":
+          $ref: "responses/ok.yaml#/Ok"
+```
+
+```sh
+smock import-openapi api/openapi.yaml --mock petstore --output definitions/petstore.yaml
+```
+
+The command reads `api/responses/ok.yaml` and follows the reference to its
+`Ok` member.
+
+- A reference to another file is a relative path, then an optional
+  fragment. The path is percent-decoded, so `my%20responses/ok.yaml` names
+  `my responses/ok.yaml`. It must end in `.json`, `.yaml` or `.yml`.
+- The path is resolved against the directory of the document that names
+  it. So a reference in `api/paths/pets.yaml` to `../responses/ok.yaml`
+  names `api/responses/ok.yaml`.
+- The file is read as the document is, by its extension: YAML 1.2 or
+  JSON. It need not be an OpenAPI document, so a JSON Schema file will
+  do. Its `openapi` field, if any, is not checked. The schema rules follow
+  the version of the document given on the command line.
+- Each file is read once, however many references name it. A reference
+  in it may name another file, or a part of the document itself.
+
+Files are read only under one directory, `--ref-dir`. By default it is
+the document's own directory, and the document must lie under it. A
+reference that leads outside it is an error, so a downloaded document
+cannot copy a secret such as `../../.npmrc` into a committed file:
+
+- a path that climbs above `--ref-dir`, such as `../shared/errors.yaml`
+  from a document at the top of it;
+- a file that a symlink leads outside `--ref-dir`, as for body files:
+  the file itself is the symlink, or a directory on its path is. A
+  symlink that stays inside is followed.
+
+When the parts a document shares sit in a directory beside it, give a
+`--ref-dir` that holds both:
+
+```sh
+smock import-openapi api/openapi.yaml --mock petstore --ref-dir . --output definitions/petstore.yaml
+```
+
+A document outside `--ref-dir`, or a `--ref-dir` that is not a directory,
+is a usage error, with exit status 2.
+
+A problem in another file names it as `--ref-dir`, as given, joined with
+its path under `--ref-dir`, such as `./api/responses/ok.yaml` above.
+Without `--ref-dir`, the directory part of the document's path, as given,
+takes its place: `api/responses/ok.yaml`. A file that cannot be read is
+an error at each `$ref` that names it, with the document-level problems:
+
+```
+api/openapi.yaml: /paths/~1pets/get/responses/200/$ref: api/responses/ok.yaml cannot be read: no such file
+```
+
+The reasons are `no such file`, `not a regular file`, `a symlink leads it
+outside --ref-dir`, or the system's own, such as `permission denied`. A
+file that is not valid YAML or JSON is an error in it, once.
+
+No path reaches the generated file, so the same documents give the same
+bytes whatever `--ref-dir` and the paths given.
+
+### Bundling
+
+A document whose references name URLs, or more files than smock reads
+(see [Limits](#limits)), must be bundled into one file first, with
+another tool. A bundler copies what the references
 name into `components`, and points at it with references within the
 document. For example, with [Redocly CLI](https://redocly.com/docs/cli/):
 
@@ -1064,7 +1150,9 @@ Each problem is one line on stdout, in the form `smock check` uses:
 api/petstore.json: /paths/~1pets/get/responses/200/content/application~1xml: warning: left out: a response answers with one media type, here "application/json"
 ```
 
-- The document is named as given on the command line, and the place is
+- The document is named as given on the command line, and another file
+  that references name as [References to other files](#references-to-other-files)
+  says. The place is
   an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer to
   where the construct is written, after following `$ref`. In a pointer,
   `/` in a key is written `~1`, so `/paths/~1pets` is the path key
@@ -1076,7 +1164,7 @@ api/petstore.json: /paths/~1pets/get/responses/200/content/application~1xml: war
   part of the document that was left out or changed; the file still
   serves the rest.
 - Problems with `--output` come first, named by `--output` as given. Then
-  the document-level ones. Then each operation's, in the order the
+  the document-level ones, among them the files that cannot be read. Then each operation's, in the order the
   document writes the operations, whatever the order of their Stubs, and
   within an operation in the order of its responses.
 - One summary line ends the output: `wrote <file>: <n> Stubs from <m>
@@ -1086,7 +1174,7 @@ api/petstore.json: /paths/~1pets/get/responses/200/content/application~1xml: war
 |---|---|
 | 0 | The file was written, with or without warnings. |
 | 1 | Nothing was written: the document or the output had an error. |
-| 2 | A usage error, such as a missing flag, printed on stderr. |
+| 2 | A usage error, such as a missing flag or a document outside `--ref-dir`, printed on stderr. |
 
 The input must be UTF-8 JSON, or YAML as [How YAML is read](#how-yaml-is-read)
 says. A leading byte order mark is skipped. A key that repeats in an
@@ -1106,6 +1194,10 @@ command does.
 
 ## Limits
 
+- At most 1,000 documents are read, the document given included, and at
+  most 64 MiB in all. Passing either is an error. Both parsers build a
+  tree, and the YAML parser copies the text into 4-byte characters, so
+  a run takes many times what it reads in memory.
 - The file is at most 64 MiB. A larger output is an error that gives its
   size, and nothing is written.
 - A sampled array has at most 100 items. A larger `minItems` gives 100
@@ -1127,6 +1219,4 @@ command does.
   - response headers;
   - `minimum`, `maximum` and their exclusive forms: numbers sample as 0,
     without a warning;
-  - schema references: a `$ref` in a schema is an error;
-  - references to other files: such a `$ref` is an error, so bundle the
-    document first (see [References and bundling](#references-and-bundling));
+  - schema references: a `$ref` in a schema is an error.

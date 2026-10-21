@@ -130,7 +130,7 @@ fn Report::responses(
   let responses_pointer = @definitions.child_pointer(pointer, "responses")
   let responses = match operation.get("responses") {
     None => {
-      self.root_warning(
+      self.warning_at(
         pointer, "has no responses: the operation answers 200 with an empty body",
       )
       return Some([
@@ -139,7 +139,7 @@ fn Report::responses(
     }
     Some(Object(responses)) => responses
     Some(_) => {
-      self.root_error(responses_pointer, "must be an object")
+      self.error_at(responses_pointer, "must be an object")
       return None
     }
   }
@@ -156,7 +156,7 @@ fn Report::responses(
     let status = match kind {
       Extension => continue
       Malformed => {
-        self.root_warning(
+        self.warning_at(
           response_pointer, "left out: a response key is a status code from 100 to 599, a range from 1XX to 5XX, default or an x- extension",
         )
         continue
@@ -167,7 +167,7 @@ fn Report::responses(
       // 1XX, or an explicit code from 100 to 199.
       _ => {
         if main is Some(_) {
-          self.root_warning(
+          self.warning_at(
             response_pointer, "left out: smock answers with a status from 200 to 599",
           )
         }
@@ -196,13 +196,13 @@ fn Report::responses(
       Some(answered)
     }
     None if keys.iter().any(entry => entry.1.is_informational()) => {
-      self.root_warning(
+      self.warning_at(
         responses_pointer, "left out: the operation has only 1xx responses, and smock answers with a status from 200 to 599",
       )
       None
     }
     None => {
-      self.root_warning(
+      self.warning_at(
         responses_pointer, "has no responses: the operation answers 200 with an empty body",
       )
       Some([{ key: "200", status: 200, main: true, answers: no_answers(), }])

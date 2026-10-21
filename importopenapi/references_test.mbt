@@ -225,7 +225,7 @@ test "a fragment is an RFC 6901 JSON Pointer, percent-decoded, with ~0 and ~1, t
 }
 
 ///|
-test "a $ref that cannot be followed is an error at the $ref: one that is not a string, that names nothing, whose fragment is not a JSON Pointer, that is a URL or an absolute path, or that names another file" {
+test "a $ref that cannot be followed is an error at the $ref: one that is not a string, that names nothing, whose fragment is not a JSON Pointer, or that is a URL or an absolute path" {
   inspect(
     stubs_of(
       (
@@ -246,10 +246,8 @@ test "a $ref that cannot be followed is an error at the $ref: one that is not a 
         #|    "/l": { "$ref": "urn:example:pets" },
         #|    "/m": { "$ref": "//example.com/api.json" },
         #|    "/n": { "$ref": "/api/pets.json#/Pets" },
-        #|    "/o": { "$ref": "pets.json#/Pets" },
-        #|    "/p": { "$ref": "./common/pets.yaml" },
-        #|    "/q": { "get": { "responses": { "200": { "$ref": ["#/components/responses/Ok"] } } } },
-        #|    "/r": { "get": { "responses": { "200": { "$ref": "#/components/responses/Missing" } } } }
+        #|    "/o": { "get": { "responses": { "200": { "$ref": ["#/components/responses/Ok"] } } } },
+        #|    "/p": { "get": { "responses": { "200": { "$ref": "#/components/responses/Missing" } } } }
         #|  },
         #|  "x-items": [{ "get": { "responses": { "200": {} } } }]
         #|}
@@ -270,10 +268,8 @@ test "a $ref that cannot be followed is an error at the $ref: one that is not a 
       #|petstore.json: /paths/~1l/$ref: smock reads no URLs and no absolute paths: bundle the document into one file first, with another tool
       #|petstore.json: /paths/~1m/$ref: smock reads no URLs and no absolute paths: bundle the document into one file first, with another tool
       #|petstore.json: /paths/~1n/$ref: smock reads no URLs and no absolute paths: bundle the document into one file first, with another tool
-      #|petstore.json: /paths/~1o/$ref: references to other files are not followed yet: bundle the document into one file first, with another tool
-      #|petstore.json: /paths/~1p/$ref: references to other files are not followed yet: bundle the document into one file first, with another tool
-      #|petstore.json: /paths/~1q/get/responses/200/$ref: must be a string
-      #|petstore.json: /paths/~1r/get/responses/200/$ref: the document has nothing at /components/responses/Missing
+      #|petstore.json: /paths/~1o/get/responses/200/$ref: must be a string
+      #|petstore.json: /paths/~1p/get/responses/200/$ref: the document has nothing at /components/responses/Missing
       #|nothing written
       #|
     ),

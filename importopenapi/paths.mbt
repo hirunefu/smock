@@ -39,11 +39,11 @@ priv enum Segment {
 /// an empty `{}`, or holds `?` or `#`.
 fn Report::path(self : Report, pointer : String, key : String) -> Path? {
   if !key.has_prefix("/") {
-    self.root_error(pointer, "a path must start with /")
+    self.error_at(pointer, "a path must start with /")
     return None
   }
   if key.contains_char('?') || key.contains_char('#') {
-    self.root_error(
+    self.error_at(
       pointer, "a path must not hold ? or #: a query or a fragment is not part of it",
     )
     return None
@@ -53,16 +53,16 @@ fn Report::path(self : Report, pointer : String, key : String) -> Path? {
   for c in key {
     match c {
       '{' if open => {
-        self.root_error(pointer, "a path has an unbalanced { or }")
+        self.error_at(pointer, "a path has an unbalanced { or }")
         return None
       }
       '{' => open = true
       '}' if !open => {
-        self.root_error(pointer, "a path has an unbalanced { or }")
+        self.error_at(pointer, "a path has an unbalanced { or }")
         return None
       }
       '}' if previous == '{' => {
-        self.root_error(
+        self.error_at(
           pointer, "a path has an empty {}: a parameter needs a name",
         )
         return None
@@ -73,7 +73,7 @@ fn Report::path(self : Report, pointer : String, key : String) -> Path? {
     previous = c
   }
   if open {
-    self.root_error(pointer, "a path has an unbalanced { or }")
+    self.error_at(pointer, "a path has an unbalanced { or }")
     return None
   }
   Some(matched_path(key))
@@ -201,7 +201,7 @@ fn Report::servers_left_out(
   object : Map[String, Json],
 ) -> Unit {
   if object.get("servers") is Some(Array(servers)) && !servers.is_empty() {
-    self.root_warning(
+    self.warning_at(
       @definitions.child_pointer(pointer, "servers"),
       "left out: the paths of servers are not added as a prefix yet",
     )
