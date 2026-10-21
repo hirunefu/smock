@@ -58,6 +58,8 @@ priv struct Response {
   /// Whether it is the main response, which a request gets without
   /// `Smock-Status`. A request gets any other one with `Smock-Status: <key>`.
   main : Bool
+  /// What it sends besides its status.
+  payload : Payload
 }
 
 ///|
@@ -86,36 +88,38 @@ fn main_of(keys : Array[(String, ResponseKey)]) -> Response? {
     }
   }
   if lowest_success is Some((key, status)) {
-    return Some({ key, status, main: true, })
+    return Some({ key, status, main: true, payload: no_payload, })
   }
   if ranges[2] is Some(key) {
-    return Some({ key, status: 200, main: true, })
+    return Some({ key, status: 200, main: true, payload: no_payload, })
   }
   if default is Some(key) {
-    return Some({ key, status: 200, main: true, })
+    return Some({ key, status: 200, main: true, payload: no_payload, })
   }
   if lowest_other is Some((key, status)) {
-    return Some({ key, status, main: true, })
+    return Some({ key, status, main: true, payload: no_payload, })
   }
   for digit in 3..<=5 {
     if ranges[digit] is Some(key) {
-      return Some({ key, status: digit * 100, main: true, })
+      return Some({ key, status: digit * 100, main: true, payload: no_payload, })
     }
   }
   None
 }
 
 ///|
-/// Reads the responses of the operation at `pointer`, and returns those it
-/// answers: the other responses, in the order the document writes them,
-/// then the main one. `None` when the operation is left out or its
-/// responses cannot be read. An explicit code answers itself, a range its
-/// first code, and `default`, when it is not the main response, 500.
-/// Problems come in the order of the responses.
+/// Reads the responses of the operation at `pointer`, for the method
+/// `meth`, and returns those it answers, with what each sends: the other
+/// responses, in the order the document writes them, then the main one.
+/// `None` when the operation is left out or its responses cannot be read.
+/// An explicit code answers itself, a range its first code, and
+/// `default`, when it is not the main response, 500. Problems come in the
+/// order of the responses.
 fn Report::responses(
   self : Report,
   document : Document,
   pointer : String,
+  meth : String,
   operation : Map[String, Json],
 ) -> Array[Response]? {
   let responses_pointer = @definitions.child_pointer(pointer, "responses")
@@ -124,7 +128,9 @@ fn Report::responses(
       self.root_warning(
         pointer, "has no responses: the operation answers 200 with an empty body",
       )
-      return Some([{ key: "200", status: 200, main: true, }])
+      return Some([
+        { key: "200", status: 200, main: true, payload: no_payload, },
+      ])
     }
     Some(Object(responses)) => responses
     Some(_) => {
@@ -138,6 +144,7 @@ fn Report::responses(
   }
   let main = main_of(keys)
   let answered = []
+  let mut main_payload = no_payload
   for entry in keys {
     let (key, kind) = entry
     let response_pointer = @definitions.child_pointer(responses_pointer, key)
@@ -164,18 +171,23 @@ fn Report::responses(
     }
     // A response that is not informational makes a main one.
     guard main is Some(main) else { continue }
-    self.response_parts(
+    let is_main = key == main.key
+    let payload = self.response_parts(
       document,
       response_pointer,
       responses.get(key).unwrap_or(Json::null()),
+      status=if is_main { main.status } else { status },
+      meth~,
     )
-    if key != main.key {
-      answered.push({ key, status, main: false, })
+    if is_main {
+      main_payload = payload
+    } else {
+      answered.push({ key, status, main: false, payload, })
     }
   }
   match main {
     Some(main) => {
-      answered.push(main)
+      answered.push({ ..main, payload: main_payload, })
       Some(answered)
     }
     None if keys.iter().any(entry => entry.1.is_informational()) => {
@@ -188,7 +200,7 @@ fn Report::responses(
       self.root_warning(
         responses_pointer, "has no responses: the operation answers 200 with an empty body",
       )
-      Some([{ key: "200", status: 200, main: true, }])
+      Some([{ key: "200", status: 200, main: true, payload: no_payload, }])
     }
   }
 }

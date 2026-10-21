@@ -512,7 +512,7 @@ test "the main response is the lowest explicit 2xx code, then 2XX; else default,
 }
 
 ///|
-test "until their tickets, each media type of a response's content and each header it documents is left out with a warning that names it, in the order the document writes them" {
+test "until their ticket, each header a response documents is left out with a warning that names it, in the order the document writes them, among the warnings about its content" {
   inspect(
     main_of(
       (
@@ -534,10 +534,8 @@ test "until their tickets, each media type of a response's content and each head
       ),
     ),
     content=(
-      #|petstore.json: /paths/~1r/get/responses/404/content/application~1json: warning: left out: response bodies are not imported yet
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Rate-Limit: warning: left out: response headers are not imported yet
-      #|petstore.json: /paths/~1r/get/responses/200/content/application~1json: warning: left out: response bodies are not imported yet
-      #|petstore.json: /paths/~1r/get/responses/200/content/application~1xml: warning: left out: response bodies are not imported yet
+      #|petstore.json: /paths/~1r/get/responses/200/content/application~1xml: warning: left out: a response answers with one media type, here "application/json"
       #|petstore.json: /paths/~1r/get/responses/default/headers/Retry-After: warning: left out: response headers are not imported yet
       #|petstore.json: /paths/~1r/get/responses/1XX: warning: left out: smock answers with a status from 200 to 599
       #|petstore.r.404: GET /r -> 404
@@ -877,8 +875,8 @@ test "problems come in order: the document-level ones, then each operation's in 
         #|    "/b": {
         #|      "get": {
         #|        "responses": {
-        #|          "404": { "content": { "application/json": {} } },
-        #|          "200": { "content": { "text/plain": {} } },
+        #|          "404": { "content": { "application/json": {}, "text/xml": {} } },
+        #|          "200": { "content": { "text/plain": { "example": "OK" } } },
         #|          "500": { "headers": { "X-Error": {} } }
         #|        }
         #|      },
@@ -895,8 +893,8 @@ test "problems come in order: the document-level ones, then each operation's in 
     content=(
       #|petstore.json: /servers: warning: left out: the paths of servers are not added as a prefix yet
       #|petstore.json: /webhooks: warning: webhooks are not imported: they are requests the API sends, not ones it answers
-      #|petstore.json: /paths/~1b/get/responses/404/content/application~1json: warning: left out: response bodies are not imported yet
-      #|petstore.json: /paths/~1b/get/responses/200/content/text~1plain: warning: left out: response bodies are not imported yet
+      #|petstore.json: /paths/~1b/get/responses/404/content/text~1xml: warning: left out: a response answers with one media type, here "application/json"
+      #|petstore.json: /paths/~1b/get/responses/200/content/text~1plain/example: warning: left out: examples are not imported yet
       #|petstore.json: /paths/~1b/get/responses/500/headers/X-Error: warning: left out: response headers are not imported yet
       #|petstore.json: /paths/~1b/put/operationId: must be a non-empty string
       #|petstore.json: /paths/~1b/put: warning: has no responses: the operation answers 200 with an empty body

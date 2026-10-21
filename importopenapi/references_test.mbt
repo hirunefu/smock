@@ -82,7 +82,6 @@ test "a $ref in a response other than the main one is followed too, and one that
       ),
     ),
     content=(
-      #|petstore.json: /components/responses/Error/content/application~1problem+json: warning: left out: response bodies are not imported yet
       #|petstore.getPet.404: GET /pets/mine -> 404
       #|petstore.getPet.default: GET /pets/mine -> 500
       #|petstore.getPet.200: GET /pets/mine -> 200
@@ -153,7 +152,6 @@ test "a problem in a referenced part is reported where it is written, once howev
     content=(
       #|petstore.json: /components/pathItems/B/servers: warning: left out: the paths of servers are not added as a prefix yet
       #|petstore.json: /components/responses/Ok/headers/X-Rate-Limit: warning: left out: response headers are not imported yet
-      #|petstore.json: /components/responses/Ok/content/application~1json: warning: left out: response bodies are not imported yet
       #|petstore.PUT /b.404: PUT /b -> 404
       #|petstore.PUT /b.200: PUT /b -> 200
       #|petstore.GET /b.200: GET /b -> 200
