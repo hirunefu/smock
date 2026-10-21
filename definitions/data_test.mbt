@@ -433,7 +433,9 @@ test "a response reads Data buckets when one of its templates reads data: a head
   }
   let out = []
   for stub in snapshot.mocks[0].stubs {
-    let Ordinary(ordinary) = stub.serves
+    guard stub.serves is Ordinary(ordinary) else {
+      fail("\{stub.id} is not an ordinary Stub")
+    }
     for i, weighted in ordinary.responses {
       out.push("\{stub.id} \{i}: \{weighted.response.reads_data}")
     }

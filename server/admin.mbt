@@ -572,7 +572,7 @@ fn render(admin : Admin, call : Call) -> Reply {
     ) catch {
       UnknownStub(_) as err =>
         return admin.error(404, "unknown_stub", err.message())
-      UnknownResponse(..) as err => return invalid(err.message())
+      UnknownResponse(..) | CrudStub(_) as err => return invalid(err.message())
     }
   admin.result(rendering)
 }

@@ -171,6 +171,7 @@ fn Engine::known_states(
           if ordinary.scenario is Some(clause) {
             by_scenario.add_clause(clause)
           }
+        Crud(_) => ()
       }
     }
   }

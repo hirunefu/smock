@@ -236,6 +236,9 @@ pub suberror RenderFailure {
   /// The Stub `stub` has no response at `index`: it has `count`, with the
   /// indexes 0 to `count - 1`.
   UnknownResponse(stub~ : String, index~ : Int, count~ : Int)
+  /// The Stub with this ID is a CRUD Stub, which smock does not render
+  /// yet.
+  CrudStub(String)
 } derive(Debug)
 
 ///|
@@ -253,6 +256,8 @@ pub fn RenderFailure::message(self : RenderFailure) -> String {
       }
       "the Stub \{stub.escape()} has no response \{index}: \{indexes}"
     }
+    CrudStub(id) =>
+      "the Stub \{id.escape()} is a CRUD Stub, and smock cannot render CRUD Stubs yet"
   }
 }
 
@@ -286,6 +291,8 @@ pub fn RenderFailure::message(self : RenderFailure) -> String {
 /// Rendering decides no Fault, and changes nothing in the engine: no
 /// generator advances, and no Variable or copy of a Data bucket is written
 /// or read.
+///
+/// A CRUD Stub cannot be rendered yet: it raises `CrudStub`.
 pub fn Engine::render(
   self : Engine,
   id : String,
@@ -395,6 +402,7 @@ pub fn Engine::render(
         .map(failed => incoming.explain(failed)),
       }
     }
+    Crud(_) => raise CrudStub(stub.id)
   }
 }
 

@@ -116,7 +116,7 @@ async test "with an invalid definition set, smock logs every error with its file
           #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
           #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
           #|{"level":"error","msg":"invalid definitions","file":"broken.json","pointer":"/stubs/0/id","error":"must be a non-empty string"}
-          #|{"level":"error","msg":"invalid definitions","file":"broken.json","pointer":"/stubs/0","error":"needs \"response\" or \"responses\""}
+          #|{"level":"error","msg":"invalid definitions","file":"broken.json","pointer":"/stubs/0","error":"needs \"response\", \"responses\" or \"crud\""}
           #|{"level":"error","msg":"invalid definitions","file":"orders.yaml","pointer":"/stubs/0/request/method","error":"\"on\" may be read as a boolean; quote this value"}
           #|{"level":"error","msg":"invalid definitions","file":"payments.yml","pointer":"/mocks/0/name","error":"unterminated double-quoted value"}
           #|{"level":"error","msg":"invalid definitions","file":"refunds.yaml","pointer":"","error":"multiple documents are not supported"}

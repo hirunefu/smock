@@ -989,7 +989,7 @@
         "operationId": "renderStub",
         "tags": ["Render"],
         "summary": "Render a Stub's response for a sample request",
-        "description": "Renders the named Stub from the definition set this replica serves now, as `smock render` does from a definitions directory. The Stub is rendered even when the sample request fails its conditions; the failed conditions are listed, with their expected and actual values. A Stub with `responses` renders the response the seed picks, or the one `response` names, and the rendering shows its index. A templated response is rendered for the sample, at the time and with the seed the rendering shows; a template that fails gives the 500 a request would get, with the error in `templateError`. The values the Stub's `variables` would write are rendered against the sample's `vars` and shown in `variables`; the response reads them written over the sample's `vars`. Templates read the initial value of each Data bucket of the Stub's Mock; the Stub's `dataWrites` are not rendered, so the response reads the data as it is. Rendering decides no Fault, reads no live Variable and changes nothing.",
+        "description": "Renders the named Stub from the definition set this replica serves now, as `smock render` does from a definitions directory. The Stub is rendered even when the sample request fails its conditions; the failed conditions are listed, with their expected and actual values. A Stub with `responses` renders the response the seed picks, or the one `response` names, and the rendering shows its index. A templated response is rendered for the sample, at the time and with the seed the rendering shows; a template that fails gives the 500 a request would get, with the error in `templateError`. The values the Stub's `variables` would write are rendered against the sample's `vars` and shown in `variables`; the response reads them written over the sample's `vars`. Templates read the initial value of each Data bucket of the Stub's Mock; the Stub's `dataWrites` are not rendered, so the response reads the data as it is. Rendering decides no Fault, reads no live Variable and changes nothing. A CRUD Stub cannot be rendered yet: it is `invalid_request`.",
         "parameters": [
           {
             "name": "time",
@@ -1543,7 +1543,7 @@
         "pattern": "^eph-[1-9][0-9]*$"
       },
       "EphemeralStubInput": {
-        "description": "An Ephemeral Stub to add: the Stub shape from the Definition-file JSON Schema, without `id` and `mock`, and with inline bodies (no `bodyFile`, in `response` or in any of `responses`). Its `scenario` clause, if any, may name Scenarios and states that no Definition file names, and acts on the calling Session's state. Its `variables`, if any, write the calling Session's Variables of the Mock, and its `dataWrites`, if any, the calling Session's copies of the Mock's Data buckets.",
+        "description": "An Ephemeral Stub to add: the Stub shape from the Definition-file JSON Schema, without `id` and `mock`, and with inline bodies (no `bodyFile`, in `response` or in any of `responses`). Its `scenario` clause, if any, may name Scenarios and states that no Definition file names, and acts on the calling Session's state. Its `variables`, if any, write the calling Session's Variables of the Mock, and its `dataWrites`, if any, the calling Session's copies of the Mock's Data buckets. It may be a CRUD Stub (`crud`) of a keyed Data bucket of the Mock, which reads the calling Session's copy of the bucket; it looks the bucket up by name on each request, so after a reload removes the bucket or takes its `key` away, it answers 500.",
         "$ref": "../schema/v1/definitions.json#/$defs/stub",
         "properties": {
           "response": {
@@ -2096,6 +2096,10 @@
             "minimum": 0,
             "maximum": 99
           },
+          "crud": {
+            "description": "What the request asked of the CRUD Stub that answered it: the operation and its key. null when the Stub that answered is not a CRUD Stub, or when no Stub matched. Its text counts toward the entry's bytes.",
+            "oneOf": [{ "$ref": "#/components/schemas/CrudCall" }, { "type": "null" }]
+          },
           "variablesWritten": {
             "description": "The names of the Variables the request wrote, in the order written: those of the `variables` of the Stub that answered. Empty when it has none, when no Stub matched, and when a value failed to render, a data write could not be applied or the state bound refused the writes, which writes none of them. The names count toward the entry's bytes like its other text.",
             "type": "array",
@@ -2136,7 +2140,7 @@
             "oneOf": [{ "$ref": "#/components/schemas/TemplateError" }, { "type": "null" }]
           }
         },
-        "required": ["seq", "receivedAt", "durationMs", "session", "host", "mock", "viaDefault", "digest", "request", "stub", "stubSource", "scenario", "responseIndex", "variablesWritten", "dataWritten", "dataError", "nearMiss", "status", "fault", "templateError"],
+        "required": ["seq", "receivedAt", "durationMs", "session", "host", "mock", "viaDefault", "digest", "request", "stub", "stubSource", "scenario", "responseIndex", "crud", "variablesWritten", "dataWritten", "dataError", "nearMiss", "status", "fault", "templateError"],
         "additionalProperties": false
       },
       "ScenarioMove": {
@@ -2472,6 +2476,22 @@
           }
         },
         "required": ["stub", "mock", "time", "seed", "responseIndex", "variables", "response", "templateError", "failed", "warnings"],
+        "additionalProperties": false
+      },
+      "CrudCall": {
+        "description": "What a request asked of a CRUD Stub: its operation, and the key text of its item path. The answer, whatever it is, is in the entry's `status`.",
+        "type": "object",
+        "properties": {
+          "op": {
+            "description": "The operation: `list` for `GET <path>`, `create` for `POST <path>`, `read` for `GET <path>/<key>`, `replace` for `PUT <path>/<key>`, `update` for `PATCH <path>/<key>` and `delete` for `DELETE <path>/<key>`. smock serves `list` and `read` for now.",
+            "enum": ["list", "create", "read", "replace", "update", "delete"]
+          },
+          "key": {
+            "description": "The key text of the item path, the segment after the Stub's path, percent-decoded, whatever the outcome. null for a `list`.",
+            "type": ["string", "null"]
+          }
+        },
+        "required": ["op", "key"],
         "additionalProperties": false
       },
       "DataError": {
