@@ -230,7 +230,8 @@ The arguments:
   versions.
 - `--hosts <h1,h2>`: the Mock's Hosts, separated by commas, such as
   `petstore.test,pets.internal:8080`. None by default. The document's
-  `servers` never become Hosts ([The Mock and its Hosts](#the-mock-and-its-hosts)).
+  `servers` never become Hosts
+  ([The Mock and its Hosts](#the-mock-and-its-hosts)).
 - `--declare-mock on|off`: whether the file declares the Mock. It is `on`
   by default. With `off`, the file holds only Stubs, for a Mock declared
   by hand in another file.
@@ -1564,22 +1565,22 @@ api/petstore.json: /paths/~1pets/get/responses/200/content/application~1xml: war
 ```
 
 - The document is named as given on the command line, and another file
-  that references name as [References to other files](#references-to-other-files)
-  says. The place is
-  an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer to
+  that references name as
+  [References to other files](#references-to-other-files) says. The place
+  is an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer to
   where the construct is written, after following `$ref`. In a pointer,
   `/` in a key is written `~1`, so `/paths/~1pets` is the path key
   `/pets`.
 - Errors have no `warning:`. An error is what makes a faithful file
   impossible, such as invalid JSON, an unsupported version, a reference
   that cannot be followed, a malformed path, a field of the wrong type or
-  IDs that collide. A warning names a
-  part of the document that was left out or changed; the file still
-  serves the rest.
-- Problems with `--output` come first, named by `--output` as given. Then
-  the document-level ones, among them the files that cannot be read. Then each operation's, in the order the
-  document writes the operations, whatever the order of their Stubs, and
-  within an operation in the order of its responses.
+  IDs that collide. A warning names a part of the document that was left
+  out or changed; the file still serves the rest.
+- Problems with `--output` come first, named by `--output` as given, with
+  no pointer. Then the document-level ones, among them the files that
+  cannot be read. Then each operation's, in the order the document writes
+  the operations, whatever the order of their Stubs, and within an
+  operation in the order of its responses.
 - One summary line ends the output: `wrote <file>: <n> Stubs from <m>
   operations, <w> warnings`, or `nothing written: <e> errors`.
 
@@ -1589,17 +1590,19 @@ api/petstore.json: /paths/~1pets/get/responses/200/content/application~1xml: war
 | 1 | Nothing was written: the document or the output had an error. |
 | 2 | A usage error, such as a missing flag or a document outside `--ref-dir`, printed on stderr. |
 
-The input must be UTF-8 JSON, or YAML as [How YAML is read](#how-yaml-is-read)
-says. A leading byte order mark is skipped. A key that repeats in an
-object is an error at its pointer, as in a Definition file. `openapi` must be a string `3.<minor>.<patch>`, such as `"3.1.0"`,
-for 3.0, 3.1 or 3.2; the patch is ignored. A Swagger 2.0 document is an
-error: convert it to OpenAPI 3.0 first.
+The input must be UTF-8 JSON, or YAML as
+[How YAML is read](#how-yaml-is-read) says. A leading byte order mark is
+skipped. A key that repeats in an object is an error at its pointer, as in
+a Definition file. `openapi` must be a string `3.<minor>.<patch>`, such as
+`"3.1.0"`, for 3.0, 3.1 or 3.2; the patch is ignored. A Swagger 2.0
+document is an error: convert it to OpenAPI 3.0 first.
 
 Before it writes, the command loads its own output with the loader
 `smock check` uses, as a set of its own. With `--declare-mock off`, a
-stand-in file declares the Mock, as the hand-written one would. The output must
-be valid and give no warning. If not, nothing is written, and the message
-calls it a smock bug: please report it.
+stand-in file declares the Mock, as the hand-written one would. The output
+must be valid and give no warning. If not, nothing is written, and the
+message calls it a smock bug, with the file and the pointer of the
+problem: please report it.
 
 The same document and flags always give the same bytes, on every
 platform, so a generated file changes only when the document or the
@@ -1703,7 +1706,8 @@ Where the two differ, as checked against Prism 5.16.0:
 - A sampled array has at most 100 items. A larger `minItems` gives 100
   items, with a warning.
 - A sample nests at most 32 levels. An object or an array inside 32
-  others is null ([Schema references and recursion](#schema-references-and-recursion)).
+  others is null
+  ([Schema references and recursion](#schema-references-and-recursion)).
 - A sample whose compact JSON would pass 64 KiB is made again, cut to its
   required parts below its first level. When that would pass 1 MiB, the
   body is left empty, with a warning ([Sample size](#sample-size)).
