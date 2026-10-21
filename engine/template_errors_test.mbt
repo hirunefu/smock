@@ -127,6 +127,36 @@ test "a string helper with a wrong number of arguments, or a literal argument of
 }
 
 ///|
+test "substr, indexOf, includes, replace, replaceAll, split and join with a wrong number of arguments, or a literal argument of the wrong kind, are reported when loading" {
+  let bodies = [
+    "${substr('abc')}", "${substr('abc', 'x')}", "${indexOf('abc', 'b', 1.5)}", "${includes('abc')}",
+    "${replace('abc', null, 'B')}", "${replaceAll('abc', 'b')}", "${split(query.ids)}",
+    "${split(query.ids, null)}", "${join('a,b', ',')}", "${join(body.tags ?? 'none', ',')}",
+    "${join(body.tags, ',', '|')}", "${json(split(query.ids, ','))}",
+  ]
+  inspect(
+    template_problems(
+      bodies
+      .mapi((i, body) => templated(i, "body: \{Json::string(body).stringify()}"))
+      .join(""),
+    ),
+    content=(
+      #|m.yaml: /stubs/0/response/body: template: column 3: substr() takes 2 or 3 arguments, not 1
+      #|m.yaml: /stubs/1/response/body: template: column 17: substr(): argument 2 must be an integer, or a string that is one, not "x"
+      #|m.yaml: /stubs/2/response/body: template: column 23: indexOf(): argument 3 must be an integer, or a string that is one, not 1.5
+      #|m.yaml: /stubs/3/response/body: template: column 3: includes() takes 2 arguments, not 1
+      #|m.yaml: /stubs/4/response/body: template: column 18: replace(): argument 2 must be a string, a number or a boolean, not null
+      #|m.yaml: /stubs/5/response/body: template: column 3: replaceAll() takes 3 arguments, not 2
+      #|m.yaml: /stubs/6/response/body: template: column 3: split() takes 2 arguments, not 1
+      #|m.yaml: /stubs/7/response/body: template: column 20: split(): argument 2 must be a string, a number or a boolean, not null
+      #|m.yaml: /stubs/8/response/body: template: column 8: join(): argument 1 must be an array, not "a,b"
+      #|m.yaml: /stubs/9/response/body: template: column 8: join(): argument 1 must be an array, not "none"
+      #|m.yaml: /stubs/10/response/body: template: column 3: join() takes 2 arguments, not 3
+    ),
+  )
+}
+
+///|
 test "a template of several lines is reported with the line and the column of the problem, and a body file with the pointer of bodyFile" {
   inspect(
     template_problems(

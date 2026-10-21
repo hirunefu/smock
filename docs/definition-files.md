@@ -1258,6 +1258,12 @@ code points, so an emoji or a Japanese character counts as one.
 | `len(x)` | text, or an array | The length of the text in code points, or the number of elements of the array. |
 | `concat(a, b, …)` | 2 to 100 texts | The texts joined. |
 | `padStart(s, length, pad)`, `padEnd(s, length, pad)` | text; an integer; text, by default one space | `s` padded at its start or end to `length` code points, the pad repeated and cut to fit, as JavaScript does. A text that long already, or an empty pad, is unchanged. |
+| `substr(s, from, length)` | text; an integer; an integer, by default the rest | The code points of `s` from `from`, `length` of them. A negative `from` counts from the end. Positions out of range clamp, so `substr('abc', 5)` and a negative `length` give an empty text. |
+| `indexOf(s, search, from)` | text; text; an integer, by default 0 | The code-point index of the first `search` in `s` at or after `from`, or -1 when there is none. A negative `from` counts as 0, and a `from` past the end gives -1. |
+| `includes(s, search)` | text; text | `true` when `search` occurs in `s`, otherwise `false`. An empty search occurs in every text. |
+| `replace(s, search, replacement)`, `replaceAll(s, search, replacement)` | text | `s` with the first, or every, occurrence of `search` replaced, found from the start without overlap. Both are literal text: `$&` and `$1` are written as they are. An empty search leaves `s` unchanged. |
+| `split(s, separator)` | text; text | An array of the texts between the occurrences of `separator`, found from the start. An empty separator splits into code points. An empty `s` gives `[""]`, whatever the separator. |
+| `join(array, separator)` | an array; text | The elements written as text, with `separator` between them. `null` is written as an empty text. An object or an array as an element is an error. |
 | `uppercase(s)`, `lowercase(s)` | text | `s` with each code point mapped to its upper or lower case, one code point to one. |
 | `trim(s)` | text | `s` without White_Space at either end. |
 
@@ -1273,6 +1279,24 @@ response:
 
 `?n=42` with the body `{"first":"Ann","last":"Lee","items":["a","b"]}` gets
 `{"code":"000042","name":"Ann Lee","lines":[1,2]}`.
+
+The array that `split` gives can be a `$each` source, the whole value of a
+`${…}` in a structured template, or read with a step. In text, write it
+with `json(…)`. `join` turns an array back into text:
+
+```yaml
+response:
+  status: 200
+  template: true
+  json:
+    ids: { $each: "split(query.ids, ',')", as: id, do: "${id}" }
+    first: ${split(query.ids, ',')[0]}
+    tags: ${join(body.tags, '|')}
+    short: ${substr(body.name, 0, 3)}
+```
+
+`?ids=a,b,c` with the body `{"tags":["x",null,1],"name":"東京タワー"}` gets
+`{"ids":["a","b","c"],"first":"a","tags":"x||1","short":"東京タ"}`.
 
 `uppercase`, `lowercase` and `trim` read the data of Unicode 18.0.0, which
 is built into smock. That data does not change within format version 1, so
@@ -1309,7 +1333,9 @@ arguments by one set of rules:
   a number written as in `json`. Null, an object or an array is an error.
 - A numeric argument is a number, or a string that is a JSON number, as
   `number(x)` reads it. An integer argument is a numeric one without a
-  fraction, so `6`, `6.0` and `'6'` are all 6.
+  fraction, so `6`, `6.0` and `'6'` are all 6. An integer too large to
+  hold, such as `1e300`, is out of range, so as a position it clamps as
+  other positions do.
 - A value of the wrong kind from the request is an error when the template
   is rendered. A literal of the wrong kind, such as
   `padStart(query.n, 'six')` or `concat(null, 'a')`, is an error when the
