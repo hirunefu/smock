@@ -97,6 +97,36 @@ test "a text template that does not parse is reported with the file, the JSON Po
 }
 
 ///|
+test "a string helper with a wrong number of arguments, or a literal argument of the wrong kind, is reported when loading; so is a bad step after a call" {
+  let bodies = [
+    "${concat(query.a)}", "${padStart(query.n, 'six')}", "${concat(null, 'a')}",
+    "${len()}", "${len(null)}", "${padEnd(query.n, 1.5)}", "${padStart(query.n, 6, null)}",
+    "${padStart(query.n, query.w ?? true)}", "${len('a', 'b')}", "${range(1, 3)[x]}",
+    "${concat('a', 'b').}", "${len(query.a)}",
+  ]
+  inspect(
+    template_problems(
+      bodies
+      .mapi((i, body) => templated(i, "body: \{Json::string(body).stringify()}"))
+      .join(""),
+    ),
+    content=(
+      #|m.yaml: /stubs/0/response/body: template: column 3: concat() takes 2 to 100 arguments, not 1
+      #|m.yaml: /stubs/1/response/body: template: column 21: padStart(): argument 2 must be an integer, or a string that is one, not "six"
+      #|m.yaml: /stubs/2/response/body: template: column 10: concat(): argument 1 must be a string, a number or a boolean, not null
+      #|m.yaml: /stubs/3/response/body: template: column 3: len() takes 1 argument, not 0
+      #|m.yaml: /stubs/4/response/body: template: column 7: len(): argument 1 must be a string, a number, a boolean or an array, not null
+      #|m.yaml: /stubs/5/response/body: template: column 19: padEnd(): argument 2 must be an integer, or a string that is one, not 1.5
+      #|m.yaml: /stubs/6/response/body: template: column 24: padStart(): argument 3 must be a string, a number or a boolean, not null
+      #|m.yaml: /stubs/7/response/body: template: column 21: padStart(): argument 2 must be an integer, or a string that is one, not true
+      #|m.yaml: /stubs/8/response/body: template: column 3: len() takes 1 argument, not 2
+      #|m.yaml: /stubs/9/response/body: template: column 15: expected an index or a quoted name in [ ], found "x"
+      #|m.yaml: /stubs/10/response/body: template: column 20: expected a name after .
+    ),
+  )
+}
+
+///|
 test "a template of several lines is reported with the line and the column of the problem, and a body file with the pointer of bodyFile" {
   inspect(
     template_problems(
@@ -275,7 +305,8 @@ test "a structured template that does not parse is reported at the JSON Pointer 
 let broken_response : String =
   #|{ "status": 200, "template": true,
   #|  "headers": { "X-A": "${query.}", "Content-Type": "text/${x}" },
-  #|  "json": { "a": "${fake.nope()}", "b": { "$each": "body.items" } } }
+  #|  "json": { "a": "${fake.nope()}", "b": { "$each": "body.items" },
+  #|    "c": "${concat(query.a)}", "d": "${padStart(query.n, 'six')}" } }
 
 ///|
 test "an Ephemeral Stub's templates are parsed when it is added, with the messages a Stub in a Definition file gets" {
@@ -304,11 +335,15 @@ test "an Ephemeral Stub's templates are parsed when it is added, with the messag
       #|m.yaml: /stubs/0/response/headers/Content-Type: template: Content-Type is never templated, so it cannot contain ${
       #|m.yaml: /stubs/0/response/json/a: template: column 3: unknown helper "fake.nope": not one of the helpers smock has
       #|m.yaml: /stubs/0/response/json/b: template: a $each needs "as" and "do"
+      #|m.yaml: /stubs/0/response/json/c: template: column 3: concat() takes 2 to 100 arguments, not 1
+      #|m.yaml: /stubs/0/response/json/d: template: column 21: padStart(): argument 2 must be an integer, or a string that is one, not "six"
       #|Ephemeral Stub:
       #|/response/headers/X-A: template: column 9: expected a name after .
       #|/response/headers/Content-Type: template: Content-Type is never templated, so it cannot contain ${
       #|/response/json/a: template: column 3: unknown helper "fake.nope": not one of the helpers smock has
       #|/response/json/b: template: a $each needs "as" and "do"
+      #|/response/json/c: template: column 3: concat() takes 2 to 100 arguments, not 1
+      #|/response/json/d: template: column 21: padStart(): argument 2 must be an integer, or a string that is one, not "six"
     ),
   )
 }
