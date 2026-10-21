@@ -584,20 +584,3 @@ test "an Ephemeral CRUD Stub that breaks the rules is 400 invalid_stub, with the
     ),
   )
 }
-
-///|
-test "a CRUD Stub cannot be rendered yet" {
-  let h = harness(crud_shop(), body_files=data_body_files)
-  let sample = @engine.SampleRequest::from_json({ "path": "/api/v1/orders" })
-  let message = try
-    h.engine.render("orders", sample, now=h.now, fresh_seed=() => 7)
-  catch {
-    err => err.message()
-  } noraise {
-    _ => "rendered"
-  }
-  inspect(
-    message,
-    content="the Stub \"orders\" is a CRUD Stub, and smock cannot render CRUD Stubs yet",
-  )
-}

@@ -2111,8 +2111,8 @@ has none. A Stub with [`responses`](#several-responses) renders the
 response the seed picks, and the rendering shows its index as
 `responseIndex` (null for a Stub with `response`). `--response <i>` (the
 Admin API's `response=<i>`) renders the response at index `i` instead,
-from 0; a Stub with `response` takes 0 only. An index the Stub does not
-have fails: the Admin API answers 400 `invalid_request`, and `smock render`
+from 0; a Stub with `response` takes 0 only, and a [CRUD
+Stub](#rendering-a-crud-stub) none. An index the Stub does not have fails: the Admin API answers 400 `invalid_request`, and `smock render`
 exits with status 1. A value that is not an integer from 0 to 99 is refused
 before rendering: 400 `invalid_request`, or a usage error with status 2.
 With the same time, seed and index, a rendering is the same on every run. A template that fails for the sample shows the 500 and the
@@ -2190,6 +2190,53 @@ and the response `{"id":1002,"status":"paid","paidAt":"2026-10-12T14:30:05.000Z"
 The same sample with the path `/api/v1/orders/9999/pay` shows `dataWrites:
 []` and the 500 `data write failed`, since the sample's data has no order
 9999.
+
+#### Rendering a CRUD Stub
+
+A [CRUD Stub](#crud-stubs) renders the answer its operation would give to
+the sample, from the sample's data, or else from the bucket's initial
+value. Its failures, such as a 404 or a 409, and its [list
+queries](#list-queries) render too.
+
+- A create, replace, update or delete shows its write as `dataWrites`,
+  with the op that makes the [same write](#writes): `append` for a
+  create, with the new key filled in; `set` for a replace and `merge` for
+  an update, with the item path's key and the body as sent; and `remove`
+  for a delete, with the key. A list or a read, and a write that fails,
+  show `dataWrites: []`.
+- A new `uuid` key draws from the seed, as a request's does.
+- `responseIndex` is null and `variables` is empty. `failed` is empty too,
+  since a CRUD Stub has no conditions of its own. A CRUD Stub has no
+  responses, so `--response` (`response`) fails.
+- A sample whose method and path fit no operation of the Stub, such as
+  `DELETE /api/v1/orders`, has nothing to render: `smock render` exits
+  with status 1, and the Admin API answers 400 `invalid_request`.
+
+For the [`orders` CRUD Stub](#crud-stubs), the sample
+
+```json
+{"method": "POST", "path": "/api/v1/orders",
+ "body": "{\"customerId\":42,\"status\":\"pending\"}"}
+```
+
+shows the `append` it would make to the three orders of `orders.json`:
+
+```json
+"dataWrites": [{"op": "append", "bucket": "orders", "key": null,
+  "value": {"customerId": 42, "status": "pending", "id": 1004}}]
+```
+
+and the 201 with `Location: /api/v1/orders/1004` and the body
+`{"customerId":42,"status":"pending","id":1004}`. The sample
+
+```json
+{"path": "/api/v1/orders", "query": {"status": "pending"},
+ "data": {"orders": [{"id": 1, "status": "pending"},
+                     {"id": 2, "status": "paid"}]}}
+```
+
+shows the list `[{"id":1,"status":"pending"}]`, with `X-Total-Count: 2`
+and `X-Filtered-Count: 1`, and `dataWrites: []`.
 
 ## Data buckets
 
@@ -2601,7 +2648,9 @@ A Session that sends `POST /api/v1/orders` with
 Session still sees the three orders.
 
 A list can be filtered, sorted and paged with a
-[list query](#list-queries).
+[list query](#list-queries). `smock render` shows what a CRUD Stub would
+answer to a sample request ([Rendering a CRUD
+Stub](#rendering-a-crud-stub)).
 
 #### The shape of a CRUD Stub
 
@@ -2952,10 +3001,8 @@ an Ephemeral Stub:
 - a member that the shape does not allow, beside `crud` or in it;
 - a `crud.headers` name that smock sets.
 
-For now, `smock render` and the Admin render operation cannot render a
-CRUD Stub: the command fails, and the Admin API answers 400
-`invalid_request`. A CRUD Stub is not a Near miss candidate, and
-`smock check` gives no [warnings](#warnings) about it.
+A CRUD Stub is not a Near miss candidate, and `smock check` gives no
+[warnings](#warnings) about it.
 
 ### Data buckets through the Admin API
 

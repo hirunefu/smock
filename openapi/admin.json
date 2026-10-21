@@ -989,7 +989,7 @@
         "operationId": "renderStub",
         "tags": ["Render"],
         "summary": "Render a Stub's response for a sample request",
-        "description": "Renders the named Stub from the definition set this replica serves now, as `smock render` does from a definitions directory. The Stub is rendered even when the sample request fails its conditions; the failed conditions are listed, with their expected and actual values. A Stub with `responses` renders the response the seed picks, or the one `response` names, and the rendering shows its index. A templated response is rendered for the sample, at the time and with the seed the rendering shows; a template that fails gives the 500 a request would get, with the error in `templateError`. The values the Stub's `variables` would write are rendered against the sample's `vars` and shown in `variables`; the response reads them written over the sample's `vars`. Templates read the sample's `data`, or else the initial value of each Data bucket of the Stub's Mock. The writes the Stub's `dataWrites` would make are rendered and applied to that data, and shown in `dataWrites`; the response reads the data after them. When a write fails to render or to apply, the rendering shows the 500 a request would get, and no write or Variable. Rendering decides no Fault, reads no live Variable or copy of a Data bucket, applies no state bound and changes nothing. A CRUD Stub cannot be rendered yet: it is `invalid_request`.",
+        "description": "Renders the named Stub from the definition set this replica serves now, as `smock render` does from a definitions directory. The Stub is rendered even when the sample request fails its conditions; the failed conditions are listed, with their expected and actual values. A Stub with `responses` renders the response the seed picks, or the one `response` names, and the rendering shows its index. A templated response is rendered for the sample, at the time and with the seed the rendering shows; a template that fails gives the 500 a request would get, with the error in `templateError`. The values the Stub's `variables` would write are rendered against the sample's `vars` and shown in `variables`; the response reads them written over the sample's `vars`. Templates read the sample's `data`, or else the initial value of each Data bucket of the Stub's Mock. The writes the Stub's `dataWrites` would make are rendered and applied to that data, and shown in `dataWrites`; the response reads the data after them. When a write fails to render or to apply, the rendering shows the 500 a request would get, and no write or Variable. A CRUD Stub renders the answer its operation would give to the sample from that data, failures such as a 404 or a 409 and list queries included, with a new `uuid` key drawn from the seed; its write, when it makes one, is applied to that data and shown in `dataWrites` as the op that makes the same write: `append` for a create, `set` for a replace, `merge` for an update and `remove` for a delete. A sample whose method and path fit none of the CRUD Stub's operations has nothing to render, and is `invalid_request`. Rendering decides no Fault, reads no live Variable or copy of a Data bucket, applies no state bound and changes nothing.",
         "parameters": [
           {
             "name": "time",
@@ -1016,7 +1016,7 @@
             "name": "response",
             "in": "query",
             "required": false,
-            "description": "The index of the response to render among the Stub's `responses`, counted from 0. A Stub with `response` takes 0 only. An index the Stub does not have is `invalid_request`. Default: the response the seed picks.",
+            "description": "The index of the response to render among the Stub's `responses`, counted from 0. A Stub with `response` takes 0 only, and a CRUD Stub none. An index the Stub does not have is `invalid_request`. Default: the response the seed picks.",
             "schema": {
               "type": "integer",
               "minimum": 0,
@@ -1051,7 +1051,7 @@
             }
           },
           "400": {
-            "description": "The body is not valid JSON (`malformed_json`); it, or a parameter, does not have the shape this operation takes, or the Stub has no response at the index `response` gives, or is a CRUD Stub, which cannot be rendered yet (`invalid_request`); or the sample's `data` names a Data bucket that the Stub's Mock does not declare, or gives a keyed bucket a value that breaks its rules (`invalid_data`).",
+            "description": "The body is not valid JSON (`malformed_json`); it, or a parameter, does not have the shape this operation takes, or the Stub has no response at the index `response` gives (a CRUD Stub has none), or is a CRUD Stub and the sample's method and path fit none of its operations (`invalid_request`); or the sample's `data` names a Data bucket that the Stub's Mock does not declare, or gives a keyed bucket a value that breaks its rules (`invalid_data`).",
             "headers": {
               "Smock-Replica": {
                 "$ref": "#/components/headers/Smock-Replica"
@@ -2442,7 +2442,7 @@
         ]
       },
       "Rendering": {
-        "description": "A Stub's response, rendered for a sample request.",
+        "description": "A Stub's response, rendered for a sample request: for a CRUD Stub, the answer of the operation the sample asks of it.",
         "type": "object",
         "properties": {
           "stub": {
@@ -2465,7 +2465,7 @@
             "maximum": 9007199254740991
           },
           "responseIndex": {
-            "description": "The index of the response rendered, among the Stub's `responses`, counted from 0: the `response` given, or else the one the seed picks, as for the first request of a Stub with this `fault.seed`. null for a Stub with `response`, and when no response was picked because the Stub's writes failed, even when `response` was given.",
+            "description": "The index of the response rendered, among the Stub's `responses`, counted from 0: the `response` given, or else the one the seed picks, as for the first request of a Stub with this `fault.seed`. null for a Stub with `response`, for a CRUD Stub, and when no response was picked because the Stub's writes failed, even when `response` was given.",
             "type": ["integer", "null"],
             "minimum": 0,
             "maximum": 99
@@ -2478,7 +2478,7 @@
             }
           },
           "dataWrites": {
-            "description": "The writes the Stub's `dataWrites` would make, in order, rendered against the sample's `vars` and `data` and applied to the sample's data. Empty when the Stub has none, and when its writes failed: a request would then write nothing. A rendering writes none of them, so the state bound never applies to them.",
+            "description": "The writes the Stub's `dataWrites` would make, in order, rendered against the sample's `vars` and `data` and applied to the sample's data. Empty when the Stub has none, and when its writes failed: a request would then write nothing. For a CRUD Stub, the one write of a create, replace, update or delete, as the op that makes the same write, with the item path's key and the request body as `value`; empty for a list or a read, and when the operation failed. A rendering writes none of them, so the state bound never applies to them.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/RenderedWrite"
@@ -2492,7 +2492,7 @@
             "oneOf": [{ "$ref": "#/components/schemas/TemplateError" }, { "type": "null" }]
           },
           "failed": {
-            "description": "The Stub's request conditions the sample request fails, as in a Near miss. Empty when it meets them all. A `scenario` clause is ignored, so no `scenario:<name>` condition appears.",
+            "description": "The Stub's request conditions the sample request fails, as in a Near miss. Empty when it meets them all, and always for a CRUD Stub, which has no conditions of its own and renders only a sample that fits one of its operations. A `scenario` clause is ignored, so no `scenario:<name>` condition appears.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/FailedCondition"
@@ -2506,7 +2506,7 @@
         "additionalProperties": false
       },
       "RenderedWrite": {
-        "description": "A write that a Stub's `dataWrites` would make, as a rendering shows it.",
+        "description": "A write that a Stub's `dataWrites` would make, or the write of a CRUD Stub's create, replace, update or delete, as a rendering shows it.",
         "type": "object",
         "properties": {
           "op": {
@@ -2522,7 +2522,7 @@
             "type": ["string", "null"]
           },
           "value": {
-            "description": "The rendered value: any JSON value. For an `append` to a keyed bucket, the item with the new key filled in, as its last member, when it had none. null for a `remove`, which has no value."
+            "description": "The rendered value, or the request body for a CRUD Stub's write: any JSON value. For an `append` to a keyed bucket, the item with the new key filled in, as its last member, when it had none. null for a `remove`, which has no value."
           }
         },
         "required": ["op", "bucket", "key", "value"],
