@@ -99,7 +99,7 @@ test "vars takes the name of a Variable first, and cannot be a loop variable" {
       #|/variables/v: template: column 3: vars: vars takes the name of a Variable first, such as vars.count or vars.cart.items[0]
       #|/variables/v: template: column 3: vars[0]: vars takes the name of a Variable first, such as vars.count or vars.cart.items[0]
       #|/variables/v: template: column 3: vars: vars takes the name of a Variable first, such as vars.count or vars.cart.items[0]
-      #|/variables/v/as: template: "vars" cannot be a loop variable: it is a request field, env, vars, loop or a reserved word
+      #|/variables/v/as: template: "vars" cannot be a loop variable: it is a request field, env, vars, data, loop or a reserved word
       #|parses
     ),
   )

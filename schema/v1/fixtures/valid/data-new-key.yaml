@@ -1,0 +1,5 @@
+mocks:
+  - name: shop
+data:
+  - { mock: shop, name: orders, key: id, newKey: integer, json: [] }
+  - { mock: shop, name: tokens, key: token, newKey: uuid, json: [{ token: a-1 }] }

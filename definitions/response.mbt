@@ -37,13 +37,15 @@ priv enum EventValue {
 ///|
 /// Reads the `responses` of the Stub at `stub_pointer`: the value `json` at
 /// `pointer`, 1 to `max_responses` responses, each the shape of `response`
-/// plus `weight`, an integer from 1 to `max_weight`, by default 1. Returns
-/// them in the order written, with the sum of their weights.
+/// plus `weight`, an integer from 1 to `max_weight`, by default 1. Their
+/// templates may read the Data buckets `buckets`. Returns them in the order
+/// written, with the sum of their weights.
 fn File::read_responses(
   self : File,
   stub_pointer : String,
   pointer : String,
   json : Json,
+  buckets~ : @template.Buckets,
 ) -> (Array[WeightedResponse], Int) {
   let items = self.array(pointer, json)
   if json is Array(_) && (items.length() < 1 || items.length() > max_responses) {
@@ -71,7 +73,7 @@ fn File::read_responses(
     }
     responses.push({
       weight,
-      response: self.read_response(stub_pointer, at, item),
+      response: self.read_response(stub_pointer, at, item, buckets~),
     })
     total += weight
   }
@@ -80,12 +82,13 @@ fn File::read_responses(
 
 ///|
 /// Reads the response of the Stub at `stub_pointer`: the value `json` at
-/// `pointer`.
+/// `pointer`. Its templates may read the Data buckets `buckets`.
 fn File::read_response(
   self : File,
   stub_pointer : String,
   pointer : String,
   json : Json,
+  buckets~ : @template.Buckets,
 ) -> Response {
   let mut status = 0
   let headers : Array[(String, String, String)] = []
@@ -140,7 +143,7 @@ fn File::read_response(
     headers.iter().map(header => (header.0, header.1)),
   )
   if template {
-    let template = self.parse_templates(stub_pointer, headers, body)
+    let template = self.parse_templates(stub_pointer, headers, body, buckets~)
     return {
       status,
       headers: static_headers,
@@ -194,12 +197,14 @@ fn File::read_response(
 /// Parses the templates of a response with `template` on, from its header
 /// fields as (name, value, JSON Pointer) and its body, and reports every
 /// problem in them. `stub_pointer` is the JSON Pointer of the Stub: a
-/// template's own pointer is within the Stub.
+/// template's own pointer is within the Stub. The templates may read the
+/// Data buckets `buckets`.
 fn File::parse_templates(
   self : File,
   stub_pointer : String,
   headers : Array[(String, String, String)],
   body : BodyField,
+  buckets~ : @template.Buckets,
 ) -> ResponseTemplate? {
   let mut ok = true
   let report = (problem : @template.Problem) => {
@@ -213,6 +218,7 @@ fn File::parse_templates(
         pointer=template_pointer(stub_pointer, pointer),
         kind~,
         env=self.env,
+        buckets~,
       ) {
       Ok(text) => Some(text)
       Err(problem) => {
@@ -227,6 +233,7 @@ fn File::parse_templates(
         value,
         pointer=template_pointer(stub_pointer, pointer),
         env=self.env,
+        buckets~,
       ) {
       Ok(template) => Some(template)
       Err(problems) => {

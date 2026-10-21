@@ -34,6 +34,10 @@ _Avoid_: Flow state, state store, workflow
 A named JSON value kept per Mock and Session, set by a Stub's `variables` or through the Admin API, and read in templates as `vars.NAME`.
 _Avoid_: Global variable, state variable
 
+**Data bucket**:
+A named JSON value that a Mock declares in Definition files, with its initial value; each Session reads and writes its own copy.
+_Avoid_: dataset, collection, data store, table, fixture
+
 **Upstream**:
 The real service a Mock impersonates. Forwarding the requests a Mock does not match to its Upstream, and recording the exchanges as Definition files, are not implemented.
 _Avoid_: Backend, origin, target

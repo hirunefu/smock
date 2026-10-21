@@ -104,6 +104,13 @@ pub struct Mock {
   /// in byte-wise order of their names. A Scenario has no declaration: it
   /// exists because Stubs name it.
   scenarios : ReadOnlyArray[ScenarioFileStates]
+  /// The Data buckets the Mock declares, in declaration order: file-name
+  /// order, then position in the file.
+  buckets : ReadOnlyArray[DataBucket]
+  /// The initial value of each of `buckets`, by its name: what templates
+  /// read as `data.NAME`. It is the snapshot's own, so it must never be
+  /// changed.
+  initial_data : Map[String, Json]
 } derive(Debug, Eq)
 
 ///|
@@ -915,6 +922,7 @@ pub fn load(
   })
   let reader = Reader::new(
     declared=declared_mocks(files),
+    buckets=declared_buckets(files),
     body_files=Map::from_array(set.body_files),
     env~,
   )
@@ -937,6 +945,8 @@ pub fn load(
           stubs: ReadOnlyArray::from_array([]),
           index: MatchIndex::new(ReadOnlyArray::from_array([])),
           scenarios: ReadOnlyArray::from_array([]),
+          buckets: ReadOnlyArray::from_array([]),
+          initial_data: Map([]),
         },
       ]),
       host_index: Map([]),
@@ -951,6 +961,14 @@ pub fn load(
         reader.stubs.iter().filter(stub => stub.mock == mock.name).collect(),
       ),
     )
+    let buckets = []
+    let initial_data = Map([])
+    for declared in reader.buckets {
+      if declared.0 == mock.name {
+        buckets.push(declared.1)
+        initial_data[declared.1.name] = declared.1.initial
+      }
+    }
     Mock::{
       name: mock.name,
       hosts: ReadOnlyArray::from_iter(mock.hosts.iter().map(host => host.0)),
@@ -960,6 +978,8 @@ pub fn load(
       stubs,
       index: MatchIndex::new(stubs),
       scenarios: scenarios_of(stubs),
+      buckets: ReadOnlyArray::from_array(buckets),
+      initial_data,
     }
   })
   let index_of = Map([])

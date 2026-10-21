@@ -132,6 +132,15 @@ of each GitHub release include its section
   nothing and gets 507 `state_limit_reached`; a delete gives the bytes
   back. A delete of an unset Variable gets 404 `unknown_variable`. Each set
   and delete is logged.
+- Data buckets: named JSON values that a Mock declares under the new
+  top-level `data` of Definition files, with an initial value inline
+  (`json`) or in a JSON file of the body-file subdirectory (`jsonFile`).
+  A bucket with `key` holds an array of objects whose keys, strings or
+  integers, are unique by their text, so `42` and `"42"` collide; smock
+  checks this when loading. Templates read a bucket of their Stub's Mock
+  as `data.NAME`, with steps, `$each` and `len`. A name that is not one
+  of the Mock's buckets is an error when loading. For now, every Session
+  reads the initial value.
 - docs/migrating-from-mockoon.md maps Mockoon's helpers, `RANDOM` routes,
   global variables, Range requests, dates, cookies and environment
   variables onto smock, with each difference called out.
@@ -142,6 +151,9 @@ of each GitHub release include its section
   `cookie`, `env` and `vars` are template roots. No valid file changes
   meaning: rename the loop variable. The Definition file format is still
   version 1.
+- A loop variable named `data` now fails to load, since `data` is the
+  template root of Data buckets. Rename the loop variable. No other valid
+  file changes meaning, and the format is still version 1.
 - A 200 from an untemplated body file now carries `Accept-Ranges: bytes`,
   and a GET with a `Range` field gets the range it asks for. To keep
   sending the whole body, give the response an `Accept-Ranges` header of

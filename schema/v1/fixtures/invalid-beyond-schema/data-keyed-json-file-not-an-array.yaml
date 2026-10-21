@@ -1,0 +1,4 @@
+mocks:
+  - name: shop
+data:
+  - { mock: shop, name: users, key: name, jsonFile: users/1.json }
