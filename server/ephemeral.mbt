@@ -61,6 +61,20 @@ fn Admin::refused(
         "unknown_state",
         "\{state.escape()} is not a known state of the Scenario \{scenario.escape()} of the Mock \{mock.escape()} for \{caller(session)}, which are \{known.map(known => known.escape()).join(", ")}",
       )
+    InvalidVariableName(name) =>
+      self.error(
+        400,
+        "invalid_request",
+        "\{name.escape()} is not a Variable name: 1 to \{@definitions.max_variable_name} ASCII letters, digits, _ and -",
+      )
+    UnknownVariable(mock~, name~) =>
+      self.error(
+        404,
+        "unknown_variable",
+        "\{caller(session)} has no Variable \{name.escape()} in the Mock \{mock.escape()}",
+      )
+    StateLimitReached(message) =>
+      self.error(507, "state_limit_reached", message)
     InvalidStub(problems) =>
       self.error(
         400,
