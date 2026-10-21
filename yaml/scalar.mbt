@@ -37,6 +37,131 @@ fn resolve(text : String) -> Plain {
 }
 
 ///|
+/// The largest integer that a 64-bit float, and so a JSON number with no
+/// `repr`, holds exactly, together with every smaller one: 2^53 - 1.
+const MAX_SAFE_INTEGER : Int64 = 9007199254740991L
+
+///|
+/// What a plain scalar means in the mode for OpenAPI documents: its value,
+/// typed by the YAML 1.2 core schema (YAML 1.2.2, section 10.3.2), or, for
+/// a number that JSON cannot hold, what is wrong with it and what to do,
+/// such as "is NaN, which JSON cannot hold; quote this value".
+fn resolve_core(text : String) -> Result[Json, String] {
+  match text {
+    "null" | "Null" | "NULL" | "~" => return Ok(Json::null())
+    "true" | "True" | "TRUE" => return Ok(Json::boolean(true))
+    "false" | "False" | "FALSE" => return Ok(Json::boolean(false))
+    ".inf"
+    | ".Inf"
+    | ".INF"
+    | "+.inf"
+    | "+.Inf"
+    | "+.INF"
+    | "-.inf"
+    | "-.Inf"
+    | "-.INF" =>
+      return Err("is infinity, which JSON cannot hold; quote this value")
+    ".nan" | ".NaN" | ".NAN" =>
+      return Err("is NaN, which JSON cannot hold; quote this value")
+    _ => ()
+  }
+  // Every number starts with a digit, a sign or a point.
+  if !(text.get_char(0) is Some('0'..='9' | '+' | '-' | '.')) {
+    return Ok(Json::string(text))
+  }
+  if core_decimal(text) is Some(json) {
+    // A decimal integer beyond 2^53 keeps its digits as `repr`.
+    return Ok(@json.parse(json)) catch {
+      _ => Err("is not a number JSON can hold; quote this value")
+    }
+  }
+  let radix = if text.has_prefix("0x") {
+    16
+  } else if text.has_prefix("0o") {
+    8
+  } else {
+    return Ok(Json::string(text))
+  }
+  if text.length() == 2 {
+    return Ok(Json::string(text))
+  }
+  // No text of a hexadecimal or octal number is kept, so it must be exact.
+  let mut value = 0L
+  for c in text[2:] {
+    let digit = match c {
+      '0'..='9' => c.to_int() - '0'.to_int()
+      'a'..='f' => c.to_int() - 'a'.to_int() + 10
+      'A'..='F' => c.to_int() - 'A'.to_int() + 10
+      _ => radix
+    }
+    if digit >= radix {
+      return Ok(Json::string(text))
+    }
+    if value <= MAX_SAFE_INTEGER {
+      value = value * radix.to_int64() + digit.to_int64()
+    }
+  }
+  if value > MAX_SAFE_INTEGER {
+    return Err("is above 2^53 - 1; write it in decimal, or quote this value")
+  }
+  Ok(Json::number(value.to_double()))
+}
+
+///|
+/// The JSON text of `text` when the YAML 1.2 core schema reads it as a
+/// decimal integer or float,
+/// `[-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?`: the same number
+/// with no `+` sign and no leading zeros, a digit before any point, and no
+/// point without a digit after it. The exponent is kept as written.
+fn core_decimal(text : String) -> String? {
+  let s = Scan(text)
+  let out = StringBuilder()
+  if s.char('-') {
+    out.write_char('-')
+  } else {
+    let _ = s.char('+')
+  }
+  let zeros = s.run(c => c == '0')
+  let start = s.i
+  if s.run(is_digit) > 0 {
+    for c in s.chars[start:s.i] {
+      out.write_char(c)
+    }
+  } else {
+    out.write_char('0')
+  }
+  let integer = s.i > start || zeros > 0
+  if s.char('.') {
+    let start = s.i
+    if s.run(is_digit) > 0 {
+      out.write_char('.')
+      for c in s.chars[start:s.i] {
+        out.write_char(c)
+      }
+    } else if !integer {
+      return None
+    }
+  } else if !integer {
+    return None
+  }
+  let start = s.i
+  if s.char('e') || s.char('E') {
+    let _ = s.optional_sign()
+    if s.run(is_digit) == 0 {
+      return None
+    }
+    for c in s.chars[start:s.i] {
+      out.write_char(c)
+    }
+  }
+  if s.done() {
+    Some(out.to_string())
+  } else {
+    None
+  }
+}
+
+///|
 /// Whether `text` is a number in JSON syntax:
 /// `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][-+]?[0-9]+)?`.
 fn is_json_number(text : String) -> Bool {

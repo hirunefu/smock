@@ -14,6 +14,9 @@ priv struct Parser {
   mut reached : String
   /// How many collections enclose the parser's position.
   mut depth : Int
+  /// Whether the text is read as OpenAPI reads YAML (see `parse`), rather
+  /// than in the safe subset.
+  openapi : Bool
 }
 
 ///|
@@ -36,7 +39,7 @@ fn Parser::enter(self : Parser) -> Unit raise ParseError {
 const EOF : Char = '\u{0}'
 
 ///|
-fn Parser::Parser(text : StringView) -> Parser {
+fn Parser::Parser(text : StringView, openapi~ : Bool) -> Parser {
   let chars = []
   let mut previous = EOF
   for c in text {
@@ -49,12 +52,26 @@ fn Parser::Parser(text : StringView) -> Parser {
     }
     previous = c
   }
-  { chars, pos: 0, line_start: 0, reached: "", depth: 0, }
+  { chars, pos: 0, line_start: 0, reached: "", depth: 0, openapi, }
 }
 
 ///|
-/// What an empty value, which YAML reads as null, is rejected with.
+/// What an empty value, which YAML reads as null, is rejected with in the
+/// safe subset.
 const EMPTY_VALUE : String = "empty value: write null, or \"\" for an empty string"
+
+///|
+/// The value of an empty node at `pointer`: null in the OpenAPI mode, as
+/// YAML reads it, and an error in the safe subset.
+fn Parser::empty_value(
+  self : Parser,
+  pointer : String,
+) -> Json raise ParseError {
+  if !self.openapi {
+    self.fail(EMPTY_VALUE, pointer~)
+  }
+  Json::null()
+}
 
 ///|
 /// Rejects characters YAML does not allow, and line breaks that only
@@ -275,11 +292,17 @@ fn Parser::check_node_start(
   let c = self.peek()
   let next = self.peek(offset=1)
   let separated = is_blank_or_eof(next) || (flow && is_flow_indicator(next))
+  // In an OpenAPI document, $ref reuses a part, as anchors and aliases do.
+  let reuse = if self.openapi { "reuse parts with $ref, or " } else { "" }
   match c {
     '&' =>
-      self.fail("anchors (&) are not supported; quote the value if it is text")
+      self.fail(
+        "anchors (&) are not supported; \{reuse}quote the value if it is text",
+      )
     '*' =>
-      self.fail("aliases (*) are not supported; quote the value if it is text")
+      self.fail(
+        "aliases (*) are not supported; \{reuse}quote the value if it is text",
+      )
     '!' =>
       self.fail("tags (!) are not supported; quote the value if it is text")
     '?' if separated => self.fail("explicit keys (?) are not supported")
@@ -294,8 +317,8 @@ fn Parser::check_node_start(
 
 ///|
 /// The JSON Pointer to the member `key` of the mapping at `pointer`, which
-/// holds `map` so far. Rejects merge keys, duplicate keys and plain keys
-/// that are not strings in every YAML version.
+/// holds `map` so far. Rejects merge keys, duplicate keys and, in the safe
+/// subset, plain keys that are not strings in every YAML version.
 fn Parser::key_pointer(
   self : Parser,
   map : Map[String, Json],
@@ -309,7 +332,8 @@ fn Parser::key_pointer(
     Some("merge keys (<<) are not supported")
   } else if map.contains(key.text) {
     Some("duplicate key")
-  } else if key.quoted {
+  } else if key.quoted || self.openapi {
+    // OpenAPI reads every key as a string.
     None
   } else {
     let quoted = key.text.escape()
@@ -329,13 +353,20 @@ fn Parser::key_pointer(
 }
 
 ///|
-/// The value of a plain scalar. Rejects one that is not a string in every
-/// YAML version and is not typed here.
+/// The value of a plain scalar. In the safe subset, rejects one that is
+/// not a string in every YAML version and is not typed here.
 fn Parser::plain_value(self : Parser, text : String) -> Json raise ParseError {
-  match resolve(text) {
-    Value(value) => value
-    Ambiguous(kind) =>
-      self.fail("\{text.escape()} may be read as \{kind}; quote this value")
+  if self.openapi {
+    match resolve_core(text) {
+      Ok(value) => value
+      Err(problem) => self.fail("\{text.escape()} \{problem}")
+    }
+  } else {
+    match resolve(text) {
+      Value(value) => value
+      Ambiguous(kind) =>
+        self.fail("\{text.escape()} may be read as \{kind}; quote this value")
+    }
   }
 }
 
@@ -620,12 +651,10 @@ priv enum Chomping {
 }
 
 ///|
-/// Parses a `|` (literal) or `>` (folded) block scalar from its header.
-/// Its lines must be indented more than `parent`.
-fn Parser::block_scalar(self : Parser, parent : Int) -> Json raise ParseError {
-  let folded = self.peek() == '>'
-  self.bump()
-  let chomping : Chomping = match self.peek() {
+/// Reads the chomping indicator of a block scalar header, if one comes
+/// next.
+fn Parser::chomping(self : Parser) -> Chomping {
+  match self.peek() {
     '-' => {
       self.bump()
       Strip
@@ -636,7 +665,26 @@ fn Parser::block_scalar(self : Parser, parent : Int) -> Json raise ParseError {
     }
     _ => Clip
   }
-  if self.peek() is ('0'..='9') {
+}
+
+///|
+/// Parses a `|` (literal) or `>` (folded) block scalar from its header.
+/// Its lines must be indented more than `parent`.
+fn Parser::block_scalar(self : Parser, parent : Int) -> Json raise ParseError {
+  let folded = self.peek() == '>'
+  self.bump()
+  let mut chomping = self.chomping()
+  // The indentation of the content: `parent` plus the indentation
+  // indicator, or else that of its first line, once it is seen.
+  let mut indent = -1
+  if self.openapi && self.peek() is ('1'..='9') {
+    indent = parent + (self.peek().to_int() - '0'.to_int())
+    self.bump()
+    // The chomping indicator may come before or after it.
+    if chomping is Clip {
+      chomping = self.chomping()
+    }
+  } else if !self.openapi && self.peek() is ('0'..='9') {
     self.fail("block scalar indentation indicators are not supported")
   }
   if !is_blank_or_eof(self.peek()) {
@@ -645,8 +693,6 @@ fn Parser::block_scalar(self : Parser, parent : Int) -> Json raise ParseError {
   self.skip_space()
   self.skip_comment()
   let out = StringBuilder()
-  // The indentation of the content, once its first line is seen.
-  let mut indent = -1
   // The most spaces on an empty line before the first line.
   let mut leading_spaces = 0
   let mut empty = 0
@@ -767,12 +813,15 @@ fn Parser::block_sequence(
     self.bump()
     self.skip_space()
     self.skip_comment()
-    if self.peek() is ('\n' | EOF) {
-      if !(self.next_content() && self.column() > column) {
-        self.fail(EMPTY_VALUE, pointer=item_pointer)
-      }
-    }
-    items.push(self.block_node(column, item_pointer))
+    let empty = self.peek() is ('\n' | EOF) &&
+      !(self.next_content() && self.column() > column)
+    items.push(
+      if empty {
+        self.empty_value(item_pointer)
+      } else {
+        self.block_node(column, item_pointer)
+      },
+    )
     if !self.continues_block(column) || !self.at_sequence_item() {
       break
     }
@@ -855,7 +904,7 @@ fn Parser::mapping_value(
         return self.block_sequence(column, pointer)
       }
     }
-    self.fail(EMPTY_VALUE, pointer~)
+    return self.empty_value(pointer)
   }
   self.block_node(column, pointer, inline=true)
 }
@@ -1055,18 +1104,21 @@ fn Parser::flow_mapping(
     let key_pointer = self.key_pointer(map, pointer, key)
     self.reached = key_pointer
     self.skip_flow_space(parent, what)
-    if self.peek() != ':' {
-      if self.peek() is (',' | '}') {
-        self.fail(EMPTY_VALUE)
+    // A key with no ':', or no value after it, has an empty value.
+    let mut empty = self.peek() is (',' | '}')
+    if !empty {
+      if self.peek() != ':' {
+        self.fail("expected ':' after a key")
       }
-      self.fail("expected ':' after a key")
+      self.bump()
+      self.skip_flow_space(parent, what)
+      empty = self.peek() is (',' | '}')
     }
-    self.bump()
-    self.skip_flow_space(parent, what)
-    if self.peek() is (',' | '}') {
-      self.fail(EMPTY_VALUE)
+    map[key.text] = if empty {
+      self.empty_value(key_pointer)
+    } else {
+      self.flow_node(parent, key_pointer)
     }
-    map[key.text] = self.flow_node(parent, key_pointer)
     self.skip_flow_space(parent, what)
     match self.peek() {
       ',' => self.bump()
