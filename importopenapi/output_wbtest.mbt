@@ -10,8 +10,11 @@ fn checked(
   text : String,
   max_bytes? : Int = max_file_bytes,
   output? : String = "defs/m.json",
+  declare_mock? : Bool = true,
 ) -> String {
-  let report = Report::new(Options(root="api.json", mock="m", output~))
+  let report = Report::new(
+    Options(root="api.json", mock="m", output~, declare_mock~),
+  )
   let passed = report.checked(@utf8.encode(text), max_bytes~)
   let lines = report.problems().map(problem => problem.to_string())
   lines.push("passed: \{passed}")
@@ -119,6 +122,26 @@ test "a YAML file is checked as YAML, by its name" {
     ),
     content=(
       #|defs/m.yaml: /stubs/0/response/status: smock bug: the file would not load: must be an integer from 200 to 599
+      #|passed: false
+    ),
+  )
+}
+
+///|
+test "a file that does not declare its Mock is checked with a stand-in that declares it, so its Stubs load, and a file that declares it all the same fails" {
+  let stubs =
+    #|"stubs": [{ "id": "a", "mock": "m", "response": { "status": 200 } }]
+  inspect(
+    checked("{ \"version\": 1, \{stubs} }", declare_mock=false),
+    content="passed: true",
+  )
+  inspect(
+    checked(
+      "{ \"version\": 1, \"mocks\": [{ \"name\": \"m\" }], \{stubs} }",
+      declare_mock=false,
+    ),
+    content=(
+      #|defs/m.json: /mocks/0/name: smock bug: the file would not load: the Mock name "m" is already declared at defs/m.json: /mocks/0/name
       #|passed: false
     ),
   )
