@@ -4,22 +4,6 @@
 // would pass it; and its two metrics.
 
 ///|
-/// The log entry with the message `msg`, without its time.
-fn startup_entry(logs : Array[String], msg : String) -> String {
-  for line in logs {
-    let entry = @json.parse(line) catch { _ => continue }
-    guard entry is Object(fields) &&
-      fields.get("msg") is Some(String(m)) &&
-      m == msg else {
-      continue
-    }
-    fields.remove("time")
-    return Json::object(fields).stringify()
-  }
-  "no \{msg} entry in:\n\{logs.join("\n")}"
-}
-
-///|
 async test "state byte bound: an eighth of the memory limit of smock's cgroup, read once with the Journal's, unless the flag or the variable sets it" {
   if scope_unavailable() is Some(reason) {
     println(

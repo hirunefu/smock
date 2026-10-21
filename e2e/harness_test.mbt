@@ -878,3 +878,19 @@ fn log_entries(logs : Array[String]) -> String {
   })
   .join("\n")
 }
+
+///|
+/// The log entry with the message `msg`, without its time.
+fn startup_entry(logs : Array[String], msg : String) -> String {
+  for line in logs {
+    let entry = @json.parse(line) catch { _ => continue }
+    guard entry is Object(fields) &&
+      fields.get("msg") is Some(String(m)) &&
+      m == msg else {
+      continue
+    }
+    fields.remove("time")
+    return Json::object(fields).stringify()
+  }
+  "no \{msg} entry in:\n\{logs.join("\n")}"
+}
