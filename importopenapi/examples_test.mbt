@@ -173,12 +173,16 @@ test "every further named example gets a Stub selected by Smock-Example, after S
 }
 
 ///|
-/// The Stubs of the file that converting one `GET /r` operation with the
-/// Responses Object `responses`, given as JSON text, gives, one per line
-/// after the problems: the ID, the selector headers the request must send,
-/// if any, the status, and the `json` or `body`, if any.
-fn selectors_of(responses : String) -> String raise {
-  let document = "{ \"openapi\": \"3.2.0\", \"paths\": { \"/r\": { \"get\": { \"operationId\": \"r\", \"responses\": \{responses} } } } }"
+/// The Stubs of the file that converting one `GET /r` operation of the
+/// OpenAPI version `openapi`, with the Responses Object `responses`, given
+/// as JSON text, gives, one per line after the problems: the ID, the
+/// selector headers the request must send, if any, the status, and the
+/// `json` or `body`, if any.
+fn selectors_of(
+  responses : String,
+  openapi? : String = "3.2.0",
+) -> String raise {
+  let document = "{ \"openapi\": \"\{openapi}\", \"paths\": { \"/r\": { \"get\": { \"operationId\": \"r\", \"responses\": \{responses} } } } }"
   let conversion = @importopenapi.convert(
     [("petstore.json", @utf8.encode(document))],
     @importopenapi.Options(
@@ -1006,6 +1010,43 @@ test "an example ID that repeats another Stub's ID is an error that names both p
     content=(
       #|petstore.json: /paths/~1b/get: the Stub ID "petstore.a.200.default" is already generated for the operation at petstore.json: /paths/~1a/get
       #|nothing written
+      #|
+    ),
+  )
+}
+
+///|
+test "dataValue and serializedValue are read in every OpenAPI version, and a 3.2 Media Type Object reached through a $ref gives its examples" {
+  inspect(
+    selectors_of(
+      (
+        #|{
+        #|  "404": { "content": { "text/plain": { "examples": { "a": { "serializedValue": "Not found", "value": "x" } } } } },
+        #|  "200": { "content": { "application/json": { "examples": { "a": { "dataValue": 1, "value": 2 }, "b": { "dataValue": 3 } } } } }
+        #|}
+      ),
+      openapi="3.0.3",
+    ),
+    content=(
+      #|petstore.r.404: [Smock-Status: 404] -> 404 body "Not found"
+      #|petstore.r.200.b: [Smock-Example: b] -> 200 json 3
+      #|petstore.r.200: [] -> 200 json 1
+      #|
+    ),
+  )
+  inspect(
+    selectors_of(
+      (
+        #|{
+        #|  "200": { "content": { "application/json": { "$ref": "#/paths/~1r/get/responses/x-media" } } },
+        #|  "x-media": { "examples": { "a": { "value": 1 }, "b": { "$ref": "#/paths/~1r/get/responses/x-example" } } },
+        #|  "x-example": { "value": 2 }
+        #|}
+      ),
+    ),
+    content=(
+      #|petstore.r.200.b: [Smock-Example: b] -> 200 json 2
+      #|petstore.r.200: [] -> 200 json 1
       #|
     ),
   )
