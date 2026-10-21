@@ -8,7 +8,7 @@
 priv enum FakeHelper {
   Uuid
   Int(Int64, Int64)
-  Decimal(Int64, Int64, Int)
+  FakeDecimal(Int64, Int64, Int)
   Bool
   Pick(Array[Json])
   Hex(Int)
@@ -43,7 +43,7 @@ fn fake_helper(site : CallSite) -> Helper? raise Syntax {
       let max = site.integer(1, -bound, bound)
       let places = site.integer(2, 1L, 6L).to_int()
       site.ordered(min, max)
-      Decimal(min, max, places)
+      FakeDecimal(min, max, places)
     }
     "fake.bool" => {
       site.count(0)
@@ -165,7 +165,7 @@ fn draw(helper : FakeHelper, rand : @prng.Generator) -> Json {
       Json::string("\{h[0:8]}-\{h[8:12]}-\{h[12:16]}-\{l[0:4]}-\{l[4:16]}")
     }
     Int(min, max) => Json::number(between(rand, min, max).to_double())
-    Decimal(min, max, places) => {
+    FakeDecimal(min, max, places) => {
       let mut scale = 1L
       for _ in 0..<places {
         scale *= 10L
