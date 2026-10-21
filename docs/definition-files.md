@@ -14,8 +14,9 @@ in a definitions directory, such as `defs/`, that `smock serve --dir` and
   together, as one definition set: a Stub can belong to a Mock that another
   file declares.
 - Body files live in the body-file subdirectory, `files/` by default
-  (`--body-file-dir`, `SMOCK_BODY_FILE_DIR`). smock reads them when it
-  loads the Definition files, and serves them from memory. Symlinks inside
+  (`--body-file-dir`, `SMOCK_BODY_FILE_DIR`), and so do the JSON files of
+  [Data buckets](#data-buckets). smock reads them when it loads the
+  Definition files, and serves them from memory. Symlinks inside
   it are followed while they stay inside it; one that leads a file or a
   directory outside it is a problem, so that nothing outside is served.
 
@@ -1216,6 +1217,7 @@ The words `for`, `if`, `else`, `end`, `each` and `params` are reserved.
 | `bodyText` | The body as text; bytes that are not UTF-8 become U+FFFD. |
 | `env.NAME` | The value of an environment variable that `--template-env` lists, as a string; see [Environment variables](#environment-variables). |
 | `vars.NAME` | The [Variable](#variables) `NAME` of the request's Mock and Session, with its own type. `vars.cart.items[0]` walks into it. |
+| `data.NAME` | The [Data bucket](#data-buckets) `NAME` of the Stub's Mock, with its own type. `data.orders[0].id` walks into it. |
 | `loop.index` | The position in the innermost `$each`, from 0. |
 | a loop variable | The current element of the `$each` that names it with `as`. |
 
@@ -1261,7 +1263,7 @@ In `json`:
   every value of a query parameter, a header or a cookie (none when it is
   absent), or `range(a, b)`. The name in `as` cannot be a request field
   (`method`, `path`, `query`, `header`, `cookie`, `body` or `bodyText`),
-  `env`, `vars`, `loop` or a reserved word.
+  `env`, `vars`, `data`, `loop` or a reserved word.
 - `{ "$if": cond, "then": template, "else": template }` gives `then` or
   `else`. Without `else`, a false condition leaves the member or the array
   element out; at the root of `json`, `else` is required. A condition is
@@ -2041,6 +2043,7 @@ These are checked when the files are loaded:
 
 - every name, loop variable and helper;
 - an `env` name, which must be listed with `--template-env`;
+- a `data` name, which must be a Data bucket of the Stub's Mock;
 - the names of `variables`;
 - the number of arguments of each call, and the kinds and bounds of its
   literal arguments;
@@ -2097,6 +2100,118 @@ For the [`login` Stub above](#variables), a sample with the body
 `{"user":"ann"}` and `"vars": {"user": "bob"}` shows
 `"variables": {"user": "ann", "previous": "bob"}` and the response
 `{"user":"ann","previous":"bob"}`.
+
+A rendering reads the initial value of each [Data bucket](#data-buckets)
+of the Stub's Mock.
+
+## Data buckets
+
+A *Data bucket* is a named JSON value that a Mock declares in Definition
+files, with its initial value. Templates read it as `data.NAME`:
+
+```yaml
+data:
+  - { mock: shop, name: orders, key: id, jsonFile: orders.json }
+  - { mock: shop, name: visits, json: 0 }
+stubs:
+  - id: list-orders
+    mock: shop
+    request: { method: GET, path: /api/v1/orders }
+    response: { status: 200, template: true, json: "${data.orders}" }
+```
+
+With `files/orders.json` holding orders 1001 to 1003, `GET /api/v1/orders`
+answers the three orders. Every Session reads the initial value.
+
+### Declaring a bucket
+
+The top-level `data` of a Definition file, beside `mocks` and `stubs`, is
+a list of buckets. Each entry has these members, and no others:
+
+| Member | Value |
+|---|---|
+| `mock` | The name of the bucket's Mock. Some file must declare it. Required. |
+| `name` | 1 to 128 ASCII letters, digits, `_` and `-`, unique within the Mock. Required. |
+| `json` | The initial value, inline: any JSON value. `json: null` counts as given. |
+| `jsonFile` | The initial value, from a JSON file in the body-file subdirectory, such as `orders.json`. |
+| `key` | Makes the bucket keyed: the name of the member that holds each item's key. |
+| `newKey` | How a keyed bucket makes new keys: `integer` (the default) or `uuid`. |
+
+- Give exactly one of `json` and `jsonFile`.
+- A bucket may sit in any file, apart from its Mock, so it can sit beside
+  the Stubs that use it. A Stub may read a bucket declared in any file,
+  earlier or later.
+- Two Mocks may use the same name. Each has its own bucket.
+- `newKey` needs `key`. What it does comes with keyed writes.
+
+### Initial values
+
+The initial value is static JSON. It is never templated, so every Session
+starts from the same value, on every replica and in every run. Bulk data
+comes from a script, or from a [configuration
+language](#writing-definition-files-in-another-configuration-language).
+
+A `jsonFile` follows the path rules of `bodyFile`: the path stays inside
+the body-file subdirectory, and none of its names start with `.`. The file
+must be JSON in UTF-8, and must not repeat a key in one object. A missing
+file, or one that breaks these rules, is an error when loading. smock
+reads the file with the body files, so it is part of the digest, and
+editing it triggers a [reload](#reloading).
+
+### Keys and key texts
+
+`key: id` makes a bucket keyed. The member name is taken literally:
+`key: a.b` names the member `a.b`, not a nested one. There is no default
+key.
+
+- A keyed bucket's value is an array of objects.
+- Each object has the key member. It holds a non-empty string without
+  `/`, or an integer: a whole number from -(2^53 - 1) to 2^53 - 1.
+- A key's *text* is the string, or the integer's digits, with `-` when it
+  is negative and no leading zeros. `42`, `42.0` and `4.2e1` all have the
+  text `42`.
+- No two items have the same key text, so `42` and `"42"` collide.
+
+A key cannot hold `/`, since a path segment cannot carry it once
+percent-decoded. These rules are errors when loading, reported with the
+JSON Pointer of the item or its key. For a `jsonFile`, the problem is
+reported at `jsonFile`, with the file's name and the pointer in it:
+
+```text
+shop.yaml: /data/0/json/2/id: has the key text "1001", as item 0 does
+shop.yaml: /data/1/jsonFile: "orders.json" at /3: needs the key member "id"
+```
+
+### Reading buckets in templates
+
+`data.NAME` gives the bucket's value with its own type, in any template
+of a Stub of the bucket's Mock, the values of `variables` included.
+
+```yaml
+- id: summary
+  mock: shop
+  request: { method: GET, path: /api/v1/summary }
+  response:
+    status: 200
+    template: true
+    headers: { X-Visits: "${data.visits}" }
+    json:
+      count: ${len(data.orders)}
+      first: ${data.orders[0].id}
+      ids: { $each: data.orders, as: o, do: "${o.id}" }
+```
+
+- Steps go into the value: `${data.orders[0].id}`. `data['orders']` is the
+  same as `data.orders`.
+- The first step must name a bucket of the Stub's Mock. An unknown name,
+  an index (`${data[0]}`) and `${data}` alone are errors when loading. A
+  loop variable cannot be named `data`.
+- A request that the [Default Mock](#hosts-and-the-default-mock) answers
+  reads the Default Mock's buckets.
+- For now, every Session reads the initial value.
+- An [Ephemeral Stub](../README.md#sessions-and-ephemeral-stubs) reads the
+  buckets of its Mock. After a reload removes a bucket, its reads of that
+  bucket are missing, so `??` gives a fallback.
 
 ## Faults
 

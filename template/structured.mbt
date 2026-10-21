@@ -64,14 +64,15 @@ let max_iterations : Int = 10_000
 
 ///|
 /// Parses `source` as a structured template, for the field at `pointer`,
-/// within the Stub. `env` holds the environment variables it may read; by
-/// default, none. With `variable`, it is the value of a Variable rather
-/// than a `json`, which the messages say. Returns the template, or every
-/// problem found.
+/// within the Stub. `env` holds the environment variables it may read, and
+/// `buckets` the Data buckets; by default, none. With `variable`, it is the
+/// value of a Variable rather than a `json`, which the messages say.
+/// Returns the template, or every problem found.
 pub fn Structured::parse(
   source : Json,
   pointer~ : String,
   env? : Env = no_env,
+  buckets? : Buckets = no_buckets,
   variable? : Bool = false,
 ) -> Result[Structured, Array[Problem]] {
   let problems = []
@@ -85,6 +86,7 @@ pub fn Structured::parse(
     in_loop: false,
     text: false,
     env,
+    buckets,
     reads_vars: Ref(false),
   }
   let root = parse_node(source, pointer, scope, Some(root_name), problems)
@@ -251,7 +253,7 @@ fn parse_directive(
       String(name) if root_names.contains(name) || reserved.contains(name) =>
         return problem(
           as_at,
-          "\{name.escape()} cannot be a loop variable: it is a request field, env, vars, loop or a reserved word",
+          "\{name.escape()} cannot be a loop variable: it is a request field, env, vars, data, loop or a reserved word",
         )
       String(name) => name
       _ => return problem(as_at, "\"as\" must be a string")

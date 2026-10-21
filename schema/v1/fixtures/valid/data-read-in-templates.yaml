@@ -1,0 +1,24 @@
+mocks:
+  - name: shop
+  - name: users
+data:
+  - { mock: shop, name: orders, key: id, jsonFile: orders.json }
+  - { mock: shop, name: visits, json: 0 }
+  - { mock: users, name: visits, json: { total: 42 } }
+stubs:
+  - id: list-orders
+    mock: shop
+    request: { method: GET, path: /api/v1/orders }
+    variables: { seen: "${len(data.orders)}" }
+    response:
+      status: 200
+      template: true
+      headers: { X-Visits: "${data.visits}" }
+      json:
+        all: ${data.orders}
+        first: ${data['orders'][0].id}
+        ids: { $each: data.orders, as: o, do: "${o.id}" }
+  - id: user-visits
+    mock: users
+    request: { method: GET, path: /api/v1/visits }
+    response: { status: 200, template: true, body: "${data.visits.total}" }

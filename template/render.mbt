@@ -55,6 +55,10 @@ pub struct Context {
   /// reads, by name, or `None` when there are none. The rendering never
   /// changes them.
   priv vars : Map[String, Json]?
+  /// The values of the Data buckets of the Stub's Mock that `data.NAME`
+  /// reads, by name, or `None` when there are none. The rendering never
+  /// changes them.
+  priv data : Map[String, Json]?
   /// Whether the rendering is of a Variable's value rather than of a
   /// response, as the messages about its bounds say.
   priv mut of_value : Bool
@@ -82,14 +86,15 @@ pub fn helper_generator(draw : UInt64) -> @prng.Generator {
 /// Starts one rendering for the request `input`, received at `now`
 /// (milliseconds since the Unix epoch). The helpers draw from `rand`, the
 /// request's `helper_generator`, in the order the template is rendered.
-/// `vars` are the Variables `vars.NAME` reads, by name: by default, none.
-/// The bounds on loop iterations and on output count for this rendering
-/// alone.
+/// `vars` are the Variables `vars.NAME` reads, and `data` the values of the
+/// Data buckets `data.NAME` reads, each by name: by default, none. The
+/// bounds on loop iterations and on output count for this rendering alone.
 pub fn Context::new(
   input : Input,
   now~ : Int64,
   rand~ : @prng.Generator,
   vars? : Map[String, Json],
+  data? : Map[String, Json],
 ) -> Context {
   {
     input,
@@ -101,6 +106,7 @@ pub fn Context::new(
     body: NotParsed,
     cookies: None,
     vars,
+    data,
     of_value: false,
   }
 }
@@ -110,9 +116,9 @@ pub fn Context::new(
 /// such as the response after the values of the Stub's Variables. It reads
 /// the Variables `vars`, by default none, and has bounds of its own. It
 /// shares the rest: the request, the time, the helper generator, which goes
-/// on from where this rendering stopped, and what this one parsed of the
-/// request, so that the body and the cookies are parsed at most once per
-/// request.
+/// on from where this rendering stopped, the values of the Data buckets,
+/// and what this one parsed of the request, so that the body and the
+/// cookies are parsed at most once per request.
 pub fn Context::next(self : Context, vars? : Map[String, Json]) -> Context {
   { ..self, elapsed: 0L, iterations: 0, output: 0, vars, of_value: false, }
 }
@@ -299,6 +305,15 @@ fn Context::reference(
           }
         None => None
       }
+    Data(name) =>
+      match self.data {
+        Some(data) =>
+          match data.get(name) {
+            Some(value) => walk(value, steps)
+            None => None
+          }
+        None => None
+      }
     Path =>
       match steps {
         [Index(n)] => {
@@ -427,6 +442,7 @@ fn number_of(text : String) -> Json? {
       in_loop: false,
       text: false,
       env: no_env,
+      buckets: no_buckets,
       reads_vars: Ref(false),
     },
   }

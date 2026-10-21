@@ -123,12 +123,13 @@ pub fn Text::is_literal(self : Text) -> Bool {
 ///|
 /// Parses `source` as a text template of the kind `kind`, for the field at
 /// `pointer`, within the Stub. `env` holds the environment variables it may
-/// read; by default, none.
+/// read, and `buckets` the Data buckets; by default, none.
 pub fn Text::parse(
   source : String,
   pointer~ : String,
   kind~ : TextKind,
   env? : Env = no_env,
+  buckets? : Buckets = no_buckets,
 ) -> Result[Text, Problem] {
   let chars = source.iter().collect()
   let scope = {
@@ -136,6 +137,7 @@ pub fn Text::parse(
     in_loop: false,
     text: true,
     env,
+    buckets,
     reads_vars: Ref(false),
   }
   try parse_parts(chars, scope) catch {

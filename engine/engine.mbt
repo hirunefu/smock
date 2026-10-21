@@ -479,6 +479,12 @@ pub fn Engine::handle(
       //    one of its own, and the helpers from the request's helper
       //    generator, made from it once something is rendered.
       let draw = generator.unwrap_or(rand).uint64()
+      // Templates read the Data buckets of the Mock that answered: for
+      // now, every Session reads their initial values.
+      let data = match mock {
+        Some(mock) => mock.initial_data
+        None => no_data
+      }
       // 3. The Variables: each value is rendered, in the order written,
       //    against the Variables as they were before the request, drawing
       //    from the helper generator first; then all are written at once,
@@ -495,6 +501,7 @@ pub fn Engine::handle(
           now~,
           draw~,
           vars=self.variables.of(stub.mock, session),
+          data~,
         )
         try self.write_variables(stub, session, first) catch {
           ValueFailed(error) => {
@@ -532,6 +539,7 @@ pub fn Engine::handle(
             } else {
               None
             },
+            data~,
           ) catch {
             RenderError(at~, message~) => {
               let error = { at, message, }
@@ -612,6 +620,12 @@ pub fn Engine::handle(
   }
   { resolution, plan, journal, near_miss, matched: source, scenario, }
 }
+
+///|
+/// The values of no Data bucket. A matched Stub always has the Mock that
+/// answered, so this only stands in for its buckets' values. It is never
+/// changed.
+let no_data : Map[String, Json] = Map([])
 
 ///|
 /// The Stub that matched a request, with the generator its Fault decisions

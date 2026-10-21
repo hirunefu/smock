@@ -5,7 +5,7 @@
 //     ref     = root steps
 //     steps   = { "." name | "[" integer "]" | "[" string "]" }
 //     root    = "method" | "path" | "query" | "header" | "cookie" | "body"
-//             | "bodyText" | "env" | "vars" | "loop" | loop variable
+//             | "bodyText" | "env" | "vars" | "data" | "loop" | loop variable
 //     call    = function "(" [ expr { "," expr } ] ")" steps
 //     cond    = [ "!" ] expr [ ( "==" | "!=" ) literal ]
 //     literal = string | number | "true" | "false" | "null"
@@ -21,7 +21,8 @@ priv enum Expr {
   /// A literal: a string, a number, true, false or null.
   Literal(Json)
   /// A reference to a request field, a listed environment variable, a
-  /// Variable, `loop.index` or a loop variable, with its source text.
+  /// Variable, a Data bucket, `loop.index` or a loop variable, with its
+  /// source text.
   Ref(Root, Array[Step], String)
   /// A call of a helper, with its arguments and its source text, which
   /// names it when it gives a missing value.
@@ -49,6 +50,10 @@ priv enum Root {
   /// `vars.NAME`: the Variable `NAME` of the request's Mock and Session, by
   /// its name. The steps of the reference go into its value.
   Variable(String)
+  /// `data.NAME`: the Data bucket `NAME` of the Stub's Mock, by its name,
+  /// which the template was checked to name. The steps of the reference go
+  /// into its value.
+  Data(String)
   LoopIndex
   /// A loop variable, by its name.
   LoopVar(String)
@@ -111,11 +116,11 @@ priv suberror Syntax {
 let reserved : Array[String] = ["for", "if", "else", "end", "each", "params"]
 
 ///|
-/// The names of request fields, `env`, `vars` and `loop`, which a loop
-/// variable cannot take.
+/// The names of request fields, `env`, `vars`, `data` and `loop`, which a
+/// loop variable cannot take.
 let root_names : Array[String] = [
   "method", "path", "query", "header", "cookie", "body", "bodyText", "env", "vars",
-  "loop",
+  "data", "loop",
 ]
 
 ///|
@@ -136,6 +141,8 @@ priv struct Scope {
   text : Bool
   /// The environment variables `env.NAME` may read.
   env : Env
+  /// The Data buckets `data.NAME` may read.
+  buckets : Buckets
   /// Set when an expression reads the `vars` root, in this scope or one
   /// derived from it, which share it: the template reads Variables.
   reads_vars : Ref[Bool]
@@ -530,6 +537,21 @@ fn Parser::reference(
             "\{text}: vars takes the name of a Variable first, such as vars.count or vars.cart.items[0]",
           )
       }
+    "data" =>
+      match steps {
+        [Name(name), .. rest] if self.scope.buckets.names.contains(name) =>
+          Ref(Data(name), rest.to_owned(), text)
+        [Name(name), ..] =>
+          raise Syntax(
+            start,
+            "\{text}: the Mock has no Data bucket \{name.escape()}",
+          )
+        _ =>
+          raise Syntax(
+            start,
+            "\{text}: data takes the name of a Data bucket first, such as data.orders or data.orders[0].id",
+          )
+      }
     "query" => with_name(Query)
     "header" => with_name(Header)
     "cookie" => with_name(Cookie)
@@ -572,6 +594,7 @@ fn root_word(root : Root) -> String {
     BodyText => "bodyText"
     Env(_) => "env"
     Variable(_) => "vars"
+    Data(_) => "data"
     LoopIndex => "loop"
     LoopVar(name) => name
   }

@@ -28,6 +28,11 @@ disagree.
   beside another key: the Schema leaves the `json` value open, because any
   literal JSON is valid there. So does an `xml` condition with a path that
   does not compile: the Schema checks only that a path starts with `/`.
+  Data buckets break such rules too: a bucket that names a Mock no file
+  declares, two buckets of one Mock with the same name, `newKey` without
+  `key`, a `jsonFile` that is missing or does not hold JSON in UTF-8, a
+  keyed bucket whose value is not an array of objects with valid, unique
+  keys, and a template that reads a bucket its Mock does not declare.
 
 A field joins the Schema only together with smock's support for it, so no
 fixture is accepted by the Schema and rejected by smock for a field smock
@@ -35,8 +40,9 @@ lacks.
 
 Each definitions directory also gets the files under `body-files/` as its
 body-file subdirectory (`files/`, the default), so a fixture can refer to
-`users/1.json` with `bodyFile`. A fixture whose `bodyFile` names a file that
-is not there belongs in `invalid-beyond-schema/`.
+`users/1.json` with `bodyFile`, or to `orders.json` with a Data bucket's
+`jsonFile`. A fixture whose `bodyFile` or `jsonFile` names a file that is
+not there belongs in `invalid-beyond-schema/`.
 
 Adding a fixture is adding a file, named after what it shows and ending in
 `.json`, `.yaml` or `.yml`. `valid/users-from-jsonnet.json` is exported from

@@ -91,7 +91,7 @@ test "a name that is empty, too long or has other characters, variables that are
       #|a.yaml: /stubs/2/variables/root-if: template: a $if at the root of a Variable's value needs "else", so that it always gives a value
       #|a.yaml: /stubs/2/variables/vars: template: column 3: vars: vars takes the name of a Variable first, such as vars.count or vars.cart.items[0]
       #|a.yaml: /stubs/2/variables/vars-index: template: column 3: vars[0]: vars takes the name of a Variable first, such as vars.count or vars.cart.items[0]
-      #|a.yaml: /stubs/2/variables/loop/as: template: "vars" cannot be a loop variable: it is a request field, env, vars, loop or a reserved word
+      #|a.yaml: /stubs/2/variables/loop/as: template: "vars" cannot be a loop variable: it is a request field, env, vars, data, loop or a reserved word
       #|a.yaml: /stubs/2/variables/loops: template: its loops run at least 11000 times; one value runs at most 10000 loop iterations
     ),
   )

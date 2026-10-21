@@ -276,7 +276,8 @@ pub fn RenderFailure::message(self : RenderFailure) -> String {
 ///
 /// The values of the Stub's `variables` are rendered against the sample's
 /// `vars`, and the response reads those with the Stub's values written
-/// over them, as the response to a request sees its writes. A value that
+/// over them, as the response to a request sees its writes. Templates read
+/// the initial value of each Data bucket of the Stub's Mock. A value that
 /// fails to render gives the 500 a request would get, and no response is
 /// picked. A response that serves byte ranges answers the sample's `Range`
 /// field, as it answers a request's: with 206, 416 or the whole body.
@@ -292,7 +293,7 @@ pub fn Engine::render(
   response_index? : Int,
   fresh_seed~ : () -> UInt64,
 ) -> Rendering raise RenderFailure {
-  guard self.file_stub(id) is Some(stub) else { raise UnknownStub(id) }
+  guard self.file_stub(id) is Some((stub, mock)) else { raise UnknownStub(id) }
   let count = stub.responses.length()
   if response_index is Some(index) && (index < 0 || index >= count) {
     raise UnknownResponse(stub=stub.id, index~, count~)
@@ -315,7 +316,13 @@ pub fn Engine::render(
   let mut context = None
   let mut failed = None
   if stub.writes_variables() {
-    let first = first_context(incoming, now~, draw~, vars=Some(sample.vars))
+    let first = first_context(
+      incoming,
+      now~,
+      draw~,
+      vars=Some(sample.vars),
+      data=mock.initial_data,
+    )
     let values = Array(capacity=stub.variables.values.length())
     try render_values(stub.variables, first, Some(sample.vars), values) catch {
       RenderError(at~, message~) => failed = Some({ at, message, })
@@ -351,6 +358,7 @@ pub fn Engine::render(
           now~,
           draw~,
           vars=Some(sample.vars),
+          data=mock.initial_data,
         )
       catch {
         RenderError(at~, message~) => {
@@ -380,12 +388,16 @@ pub fn Engine::render(
 }
 
 ///|
-/// The Stub from the Definition files with the ID `id`, if any.
-fn Engine::file_stub(self : Engine, id : String) -> @definitions.Stub? {
+/// The Stub from the Definition files with the ID `id`, if any, with its
+/// Mock.
+fn Engine::file_stub(
+  self : Engine,
+  id : String,
+) -> (@definitions.Stub, @definitions.Mock)? {
   for mock in self.snapshot.mocks {
     for stub in mock.stubs {
       if stub.id == id {
-        return Some(stub)
+        return Some((stub, mock))
       }
     }
   }
