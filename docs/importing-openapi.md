@@ -317,7 +317,8 @@ response:
 ### Samples from schemas
 
 The sample depends only on the schema. For each schema, nested ones
-included, the first of these gives it:
+included, and after its `allOf`, `oneOf` and `anyOf` are merged
+([Composed schemas](#composed-schemas)), the first of these gives it:
 
 1. `const`;
 2. the first of `examples`, in 3.1 and 3.2;
@@ -391,6 +392,63 @@ a boolean, is an error.
 
 The file has no template, so `${` in a value and keys that start with `$`
 are written as they are, with no escaping.
+
+#### Composed schemas
+
+A schema with `allOf`, `oneOf` or `anyOf` is first merged with its
+branches into one schema, which is then sampled as above. Generators write
+such schemas for shared parts, and a nullable field as a `oneOf` with a
+null branch. The schema
+
+```yaml
+allOf:
+  - type: object
+    required: [id]
+    properties:
+      id: { type: string, format: uuid }
+  - type: object
+    properties:
+      email:
+        oneOf:
+          - type: "null"
+          - type: string
+            format: email
+```
+
+samples as
+
+```yaml
+json:
+  id: 00000000-0000-4000-8000-000000000000
+  email: user@example.com
+```
+
+- **`allOf`** is merged in order, a nested `allOf` included. `properties`
+  are joined by name, the schema's own first. A property met again is
+  merged the same way, with the one met first as its own schema.
+  `required` is joined. For any other keyword, such as `type`, `format` or
+  `items`, the schema's own value wins, then the first branch that has
+  one.
+- **Values from branches.** A branch's `const`, `examples`, `example`,
+  `default` and `enum` are used only when the merged schema is not an
+  object, since a branch's example shows only its part of an object. The
+  schema's own are used on an object too. Each keyword is merged on its
+  own, so a branch's `const` still comes before the schema's own
+  `example`, in the order of the list above.
+- **`oneOf` and `anyOf`** take their first branch that is not only null,
+  such as `{ type: "null" }`, `{ const: null }` or `{ enum: [null] }`. The
+  branch is merged with the schema's own keywords, after the branches of
+  `allOf`. When every branch is only null, the sample is null.
+- **`true` and `false`.** The branch `true` adds nothing. The branch
+  `false` allows no value: in `allOf`, the schema then gives no value, and
+  `oneOf` and `anyOf` skip it.
+- **Ignored.** `not`, `if`, `then`, `else` and `discriminator` are ignored,
+  without a warning.
+- **Wrong types.** An `allOf`, `oneOf` or `anyOf` that is not an array,
+  and a branch that is neither an object nor a boolean, are ignored, with
+  a warning. A keyword of the wrong type is ignored, with a warning where
+  it is written, in a branch too. The next branch that has the keyword
+  then gives it.
 
 ### IDs and conditions that repeat
 
@@ -629,8 +687,6 @@ command does.
     the schema;
   - `minimum`, `maximum` and their exclusive forms: numbers sample as 0,
     without a warning;
-  - `allOf`, `oneOf` and `anyOf`, which add nothing to a sample, without
-    a warning;
   - schema references: a `$ref` in a schema is an error;
   - references to other files: such a `$ref` is an error, so bundle the
     document first (see [References and bundling](#references-and-bundling));
