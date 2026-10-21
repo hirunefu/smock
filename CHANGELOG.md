@@ -50,6 +50,14 @@ of each GitHub release include its section
   fragment. A URL, an
   absolute path or another file is an error that suggests bundling the
   document into one file first.
+- `smock import-openapi --overwrite on` replaces an earlier output, so a
+  changed document reaches the mock when the command runs again. Without
+  it, an existing `--output` is refused before the document is read. The
+  file is written to a temporary file whose name starts with `.`, then
+  renamed, so a smock that watches the directory never loads half a file.
+  A directory, a symlink, the document itself and an `--output` whose
+  directory does not exist are refused. The guide shows how to keep hand
+  changes in another file, and how CI can check that the file is current.
 - `write` in the `smock/yaml` module turns a JSON tree into a YAML
   document, with comments, that the module's own parser reads back as the
   same tree. A string is quoted only when it would not read back as the

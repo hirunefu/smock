@@ -124,16 +124,19 @@ pub(all) struct RenderSettings {
 
 ///|
 /// The settings of `smock import-openapi`. The OpenAPI document is its
-/// argument, and the Mock and the output are flags of its own, without
-/// variables: they belong to one import, not to a process.
+/// argument, and the Mock, the output and whether it may be replaced are
+/// flags of its own, without variables: they belong to one import, not to
+/// a process.
 pub(all) struct ImportOpenapiSettings {
   /// The OpenAPI document, a JSON file, as given.
   document : String
   /// The name of the Mock the Definition file declares.
   mock : String
-  /// The Definition file to write, a new JSON or YAML file, as given. Its
-  /// name picks the format.
+  /// The Definition file to write, a JSON or YAML file, as given. Its name
+  /// picks the format.
   output : String
+  /// Whether an existing regular file at `output` is replaced.
+  overwrite : Bool
 } derive(Debug)
 
 ///|
@@ -394,7 +397,8 @@ pub fn render_command() -> @argparse.Command {
 
 ///|
 /// The `import-openapi` subcommand: the OpenAPI document as its argument,
-/// and the Mock and the output as flags without variables.
+/// and the Mock, the output and whether to replace it as flags without
+/// variables.
 pub fn import_openapi_command() -> @argparse.Command {
   @argparse.Command(
     "import-openapi",
@@ -416,8 +420,14 @@ pub fn import_openapi_command() -> @argparse.Command {
       @argparse.OptionArg(
         "output",
         long="output",
-        about="The Definition file to write. Its name picks the format: .yaml or .yml writes YAML, with comments that map each Stub back to the document, and .json writes JSON. It must not exist: the file is created new.",
+        about="The Definition file to write. Its name picks the format: .yaml or .yml writes YAML, with comments that map each Stub back to the document, and .json writes JSON. Its directory must exist. The file is written to a temporary file whose name starts with ., then renamed, so a smock that watches the directory never reads half a file.",
         required=true,
+      ),
+      @argparse.OptionArg(
+        "overwrite",
+        long="overwrite",
+        about="Whether an existing --output is replaced: on or off. Off, an existing file is refused before the document is read, and nothing is written. Either way, a directory, a symlink or the document itself is refused.",
+        default_values=["off"],
       ),
     ],
   )
@@ -768,8 +778,8 @@ pub fn RenderSettings::from_matches(
 /// Reads and checks the settings from the parsed `import-openapi`
 /// subcommand. The document and the output name a JSON or YAML file, in
 /// lower case, as Definition files do, and the output's name does not
-/// start with `.`, since smock skips such files. YAML documents are not
-/// read yet.
+/// start with `.`, since smock skips such files. `--overwrite` is `on` or
+/// `off`. YAML documents are not read yet.
 pub fn ImportOpenapiSettings::from_matches(
   matches : @argparse.Matches,
 ) -> ImportOpenapiSettings raise InvalidSetting {
@@ -809,7 +819,17 @@ pub fn ImportOpenapiSettings::from_matches(
       )
     Some(_) => ()
   }
-  { document, mock, output, }
+  let overwrite = match value(matches, "overwrite") {
+    Some("on") => true
+    Some("off") => false
+    other =>
+      raise InvalidOption(
+        flag="overwrite",
+        value=other.unwrap_or(""),
+        reason="must be on or off",
+      )
+  }
+  { document, mock, output, overwrite, }
 }
 
 ///|
