@@ -188,15 +188,8 @@ fn Engine::write_variables(
   let writes = stub.variables
   let before = self.variables.of(stub.mock, session)
   let values = Array(capacity=writes.values.length())
-  let mut context = first
-  for i in 0..<writes.values.length() {
-    if i > 0 {
-      context = context.next(vars?=before)
-    }
-    let value = writes.values[i].render_value(context) catch {
-      RenderError(at~, message~) => raise ValueFailed({ at, message, })
-    }
-    values.push(value)
+  let last = render_values(writes, first, before, values) catch {
+    RenderError(at~, message~) => raise ValueFailed({ at, message, })
   }
   let growth = VariableStore::growth(
     stub.mock,
@@ -209,7 +202,30 @@ fn Engine::write_variables(
     raise StateLimitReached(self.state.refuse(growth))
   }
   self.variables.write(stub.mock, session, writes.names, values, growth~)
-  context.next(vars?=self.variables.of(stub.mock, session))
+  last.next(vars?=self.variables.of(stub.mock, session))
+}
+
+///|
+/// Renders the value of each of `writes`, in the order written, against
+/// the Variables `before`, and pushes it to `values`. The first value
+/// renders in `first`, which reads `before`; each next one has a rendering
+/// of its own, with its own bounds, and they draw from the request's helper
+/// generator in turn. Returns the last rendering, which the response
+/// continues from. When a value fails to render, it raises the error.
+fn render_values(
+  writes : @definitions.VariableWrites,
+  first : @template.Context,
+  before : Map[String, Json]?,
+  values : Array[Json],
+) -> @template.Context raise @template.RenderError {
+  let mut context = first
+  for i in 0..<writes.values.length() {
+    if i > 0 {
+      context = context.next(vars?=before)
+    }
+    values.push(writes.values[i].render_value(context))
+  }
+  context
 }
 
 ///|

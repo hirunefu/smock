@@ -87,6 +87,11 @@ of each GitHub release include its section
   cleared, in `removed.variables` of its response and its log entry. A
   reload keeps Variables, except those of a Mock the new files no longer
   declare. The `per_replica_state` warning names Variables too.
+- `smock render` and the Admin render operation show `variables`, the
+  values a Stub would write, and take the Variables templates read from
+  the sample's optional `vars` object, never from the live Variables. The
+  response sees the sample's `vars` with the Stub's values written over
+  them. A rendering writes nothing, so it stays repeatable.
 - Range requests. An untemplated body file of a 200 answers a GET for a
   single byte range with 206 Partial Content and `Content-Range`, or with
   416 and `Content-Range: bytes */<length>` when the range starts past the
