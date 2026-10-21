@@ -76,8 +76,9 @@ The comments are there for the reader:
   the file, since the next import replaces it. Put hand changes in another
   file ([Overrides](#overrides)).
 - The comment above each Stub maps it back to the document: the method,
-  the path as the document writes it, the response key, `deprecated`
-  when the operation is, and the first line of the operation's `summary`.
+  the path as the document writes it, the response key, the name of the
+  example its body comes from, if any, `deprecated` when the operation
+  is, and the first line of the operation's `summary`.
 - The comments hold no path and no smock version. So the same import gives
   the same bytes from any directory, and after an upgrade that does not
   change the conversion. No home directory reaches a committed file
@@ -122,35 +123,38 @@ come the Stubs of each operation. Operations at concrete paths come before
 those at templated paths. Otherwise, they keep the order the document
 writes them in: path keys, then methods in the order each Path Item writes
 them ([Paths with parameters](#paths-with-parameters)). An operation has a
-Stub for each response it answers: first those of its other responses, in
-the order the document writes them, then its main Stub.
+Stub for each response it answers, and for each further named example
+([Selecting responses](#selecting-responses)).
 
 | In the document | In the Definition file |
 |---|---|
 | The document | `version: 1`, then `mocks` with the one Mock, then `stubs`. In YAML, a comment at the top names the document, its `info.title` and `info.version`, its OpenAPI version and `--mock`. |
-| An operation | One Stub per response: the main Stub, and one for each other response. In YAML, a comment above each gives the method, the path as written and the response key. |
+| An operation | One Stub per response: the main Stub, and one for each other response. One more Stub per further named example. In YAML, a comment above each gives the method, the path as written, the response key and the example's name. |
 | `summary` | In YAML, its first line ends the Stub's comment. Control characters become spaces. |
 | `get`, `put`, `post`, `delete`, `options`, `head`, `patch`, `trace`, and 3.2's `query` | The `method`, in upper case. |
 | A key of 3.2's `additionalOperations` | The `method`, as written. |
 | `head` | `HEAD` is answered only where the document has `head`. |
 | A path key without parameters | The exact `path`, percent-decoded as smock decodes request paths, so that the match index finds it. |
 | A path key with parameters, such as `/pets/{petId}` | A `path` pattern, in which each parameter matches text within one segment: `pattern: /pets/[^/]+` ([Paths with parameters](#paths-with-parameters)). |
-| `operationId` | The Stub ID `<mock>.<operationId>.<key>`, where `<key>` is the response's key as written, such as `petstore.listPets.200` and `petstore.listPets.default`. |
+| `operationId` | The Stub ID `<mock>.<operationId>.<key>`, where `<key>` is the response's key as written, such as `petstore.listPets.200` and `petstore.listPets.default`. A further named example's Stub adds its name: `<mock>.<operationId>.<key>.<example>`, such as `petstore.getPet.200.dog`. |
 | No `operationId` | The Stub ID `<mock>.<METHOD> <path>.<key>`, with the path as written, such as `petstore.GET /pets.200`. |
 | The main response | The `status` of the main Stub (see below). |
 | Another response | The `status` of its Stub (see below), which also has the request condition `Smock-Status: <key>` ([Selecting responses](#selecting-responses)). |
 | A response's `content` | The body, as `json` or `body`, from one media type, with its `Content-Type` in `headers` ([Bodies](#bodies)). |
-| A media type's `schema` | One fixed sample of the schema, written in the file ([Samples from schemas](#samples-from-schemas)). |
+| A media type's `examples` | The first gives the body. Each further one gets a Stub of its own, which also has the request condition `Smock-Example: <name>` ([Bodies from examples](#bodies-from-examples)). |
+| A media type's `example` | The body, when the media type has no `examples`. |
+| A media type's `schema` | One fixed sample of the schema, written in the file, when the media type has no example ([Samples from schemas](#samples-from-schemas)). |
 | Parameters, request bodies, `Content-Type`, `Accept` and `security` | No condition, so a request without a documented parameter still gets the documented answer. A path parameter's schema does not narrow its pattern either. |
 | `deprecated: true` | The operation is imported like any other. In YAML, the Stub's comment says `deprecated`. No `Deprecation` header is added, since the document does not declare one. |
 | `callbacks` | Not imported, with one warning per operation. |
 | `webhooks` | Not imported, with one warning: they are requests the API sends, not ones it answers. |
 | `security`, `links`, descriptions, tags and `x-` extensions | Nothing, and no warning. |
-| A `$ref` to a Path Item, a Response or, as 3.2 allows, a Media Type in the same document | Followed, as if the part it names were written in place (see [References and bundling](#references-and-bundling)). |
+| A `$ref` to a Path Item, a Response, an Example or, as 3.2 allows, a Media Type in the same document | Followed, as if the part it names were written in place (see [References and bundling](#references-and-bundling)). |
 | Fields beside a Path Item's `$ref` | Ignored, with a warning, since OpenAPI leaves their meaning undefined. |
 
-A Stub matches on its method and its path, and the Stub of a response
-other than the main one on `Smock-Status` too. The file holds only
+A Stub matches on its method and its path. The Stub of a response other
+than the main one matches on `Smock-Status` too, and the Stub of a further
+named example on `Smock-Example`. The file holds only
 `status`, `headers`, and `json` or `body` in its responses: no
 `template`, `responses`, `variables`, `fault`, `scenario` or `priority`.
 
@@ -267,10 +271,13 @@ Every other response gets a Stub of its own, which a request selects with
 
 ### Bodies
 
-A response's body comes from one of its media types, and is one fixed
-sample of that media type's schema, written in the file. Nothing is
-random and nothing is templated, so a reviewer sees what the mock answers,
-and tests repeat. A `200` response whose `application/json` schema is
+A response's body comes from one of its media types. It is the example
+that the document gives there ([Bodies from examples](#bodies-from-examples)),
+else one fixed sample of that media type's schema
+([Samples from schemas](#samples-from-schemas)). Either way, it is written
+in the file. Nothing is random and nothing is templated, so a
+reviewer sees what the mock answers, and tests repeat. A `200` response
+whose `application/json` media type has no example, and whose schema is
 
 ```yaml
 type: object
@@ -308,7 +315,8 @@ response:
   sends it as JSON: some generators write `*/*` for every response. Any
   other media type gives `body`: a string as it is, and a number or a
   boolean as smock writes it. An object, an array or null there gives an
-  empty body, with a warning.
+  empty body, with a warning. These rules hold for examples and samples
+  alike.
 - **No body.** A response without `content`, or with an empty one, has no
   body and no Content-Type. A media type with neither an example nor a
   schema has an empty body and its Content-Type, with no warning. 204, 205
@@ -317,6 +325,83 @@ response:
   warning.
 - **Order.** In `response`, `status` comes first, then `headers`, then
   `json` or `body`.
+
+### Bodies from examples
+
+The body comes from the examples the API's authors wrote, before any
+sample. For the media type a response answers with, the first of these
+gives it:
+
+1. its `examples`: the first is the response's body, and each further one
+   gets a Stub of its own, which a request selects with `Smock-Example`
+   ([Selecting responses](#selecting-responses));
+2. its `example`;
+3. a sample of its `schema` ([Samples from schemas](#samples-from-schemas)),
+   which uses the schemas' own examples at every level.
+
+A media type with both `example` and `examples` uses `examples`, with a
+warning. Take a `200` response whose examples are `cat`, then `dog`:
+
+```json
+"application/json": {
+  "examples": {
+    "cat": { "value": { "name": "Tom" } },
+    "dog": { "value": { "name": "Rex" } }
+  }
+}
+```
+
+The main Stub answers `cat`, and a Stub of its own answers `dog`:
+
+```yaml
+stubs:
+  # GET /pets/mine, 200, example dog
+  - id: petstore.getPet.200.dog
+    mock: petstore
+    request:
+      method: GET
+      path: /pets/mine
+      headers:
+        Smock-Example: dog
+    response:
+      status: 200
+      json:
+        name: Rex
+  # GET /pets/mine, 200, example cat
+  - id: petstore.getPet.200
+    mock: petstore
+    request:
+      method: GET
+      path: /pets/mine
+    response:
+      status: 200
+      json:
+        name: Tom
+```
+
+An Example Object gives one of its fields:
+
+| Media type | Field, the first it has |
+|---|---|
+| A JSON media type, `application/json` or `*/*+json` | 3.2's `dataValue`, then `value`, then 3.2's `serializedValue` |
+| Any other one, ranges such as `*/*` included | `serializedValue`, then `dataValue`, then `value` |
+
+- A `serializedValue` is the exact text of the body. It is written as
+  `body`, with its Content-Type, even for a JSON media type. So
+  `{"price": 9.90}` keeps its spaces and its `9.90`.
+- `dataValue` and `serializedValue` are read in every OpenAPI version.
+- An Example Object with none of these fields, such as one with only an
+  `externalValue`, is left out, with a warning. smock reads no
+  `externalValue`: it names another file or a URL. The other examples keep
+  their order, and when none is left, the next source gives the body.
+- An Example Object that is not an object is an error. So is a
+  `serializedValue` that is not a string, and `examples` that is not an
+  object.
+- Example data is copied as data: a `$ref` member in `example`, `value`
+  or `dataValue` stays as written, and so do `${` and keys that start
+  with `$`. A `$ref` that stands for a whole Example Object is followed.
+- An example body above 1 MiB, its compact JSON or its text, is left
+  empty, with a warning.
 
 ### Samples from schemas
 
@@ -526,12 +611,132 @@ curl -H "Smock-Status: 503" localhost:8080/pets/mine   # 200: no Stub names 503
 - `Smock-Status` is an ordinary header condition. smock gives it no
   meaning of its own, and hand-written Stubs may use it too.
 
+### Selecting examples
+
+A response's first named example is its body. Each further named example
+has a Stub of its own, which a request selects with `Smock-Example: <name>`,
+alone for the main response, and after `Smock-Status` for another one
+([Bodies from examples](#bodies-from-examples)). Take a 200 whose examples
+are `cat`, then `dog`, and a 404 whose examples are `missing`, then
+`gone`:
+
+```json
+"/pets/mine": {
+  "get": {
+    "operationId": "getPet",
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "examples": {
+              "cat": { "value": { "name": "Tom" } },
+              "dog": { "value": { "name": "Rex" } }
+            }
+          }
+        }
+      },
+      "404": {
+        "content": {
+          "application/json": {
+            "examples": {
+              "missing": { "value": { "message": "Pet not found" } },
+              "gone": { "value": { "message": "Pet gone" } }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+The file has four Stubs, in this order:
+
+```yaml
+stubs:
+  # GET /pets/mine, 404, example gone
+  - id: petstore.getPet.404.gone
+    mock: petstore
+    request:
+      method: GET
+      path: /pets/mine
+      headers:
+        Smock-Status: "404"
+        Smock-Example: gone
+    response:
+      status: 404
+      json:
+        message: Pet gone
+  # GET /pets/mine, 404, example missing
+  - id: petstore.getPet.404
+    mock: petstore
+    request:
+      method: GET
+      path: /pets/mine
+      headers:
+        Smock-Status: "404"
+    response:
+      status: 404
+      json:
+        message: Pet not found
+  # GET /pets/mine, 200, example dog
+  - id: petstore.getPet.200.dog
+    mock: petstore
+    request:
+      method: GET
+      path: /pets/mine
+      headers:
+        Smock-Example: dog
+    response:
+      status: 200
+      json:
+        name: Rex
+  # GET /pets/mine, 200, example cat
+  - id: petstore.getPet.200
+    mock: petstore
+    request:
+      method: GET
+      path: /pets/mine
+    response:
+      status: 200
+      json:
+        name: Tom
+```
+
+```sh
+curl localhost:8080/pets/mine                                                  # 200, Tom
+curl -H "Smock-Example: dog" localhost:8080/pets/mine                          # 200, Rex
+curl -H "Smock-Status: 404" localhost:8080/pets/mine                           # 404, Pet not found
+curl -H "Smock-Status: 404" -H "Smock-Example: gone" localhost:8080/pets/mine  # 404, Pet gone
+curl -H "Smock-Status: 404" -H "Smock-Example: lost" localhost:8080/pets/mine  # 404, Pet not found
+curl -H "Smock-Example: gone" localhost:8080/pets/mine                         # 200, Tom
+```
+
+- The value is the example's name as the document writes it.
+- Within an operation, the Stubs come in this order, so that none shadows
+  another: the further named examples of each other response, with both
+  headers; the other responses, with `Smock-Status`; the further named
+  examples of the main response, with `Smock-Example`; then the main
+  Stub.
+- A value that no Stub names falls through. An unknown `Smock-Example`
+  with `Smock-Status: 404` gets the 404's first example, and an unknown
+  one alone gets the main Stub. So does `Smock-Example: gone` alone, since
+  `gone` is the 404's.
+- A name that a request cannot send as a header value gets no Stub of its
+  own, with a warning. Such a name is empty, holds a character other than
+  visible ASCII and space, or starts or ends with a space. As the first
+  example, it still gives the response's body, and the Stub's comment
+  quotes it.
+- `Smock-Example` is an ordinary header condition too, which hand-written
+  Stubs may use.
+
 ### Through the system under test
 
 A test whose requests reach the Mock through the system under test
-cannot set `Smock-Status` on them. Instead, it adds an Ephemeral Stub for
-its Session through the Admin API: the generated Stub's method, path and
-`response`, without `Smock-Status`. The Session's requests then get that
+cannot set `Smock-Status` or `Smock-Example` on them. Instead, it adds an
+Ephemeral Stub for its Session through the Admin API: the generated Stub's
+method, path and `response`, without the two headers. The Session's
+requests then get that
 response, and other Sessions still get the main one. The system under
 test must pass the Session on, in the `baggage` header of its calls
 ([Sessions and Ephemeral Stubs](../README.md#sessions-and-ephemeral-stubs)).
@@ -608,7 +813,8 @@ petstore.yaml: /stubs/1: warning: the Stub "petstore.getPet.200" can never match
 ```
 
 An override that matches on method and path only also wins over the
-Stubs that `Smock-Status` selects, as the first warning shows.
+Stubs that `Smock-Status` and `Smock-Example` select, as the first warning
+shows.
 
 ### Checking that the file is current
 
@@ -628,7 +834,8 @@ from a fixed directory keeps the relative paths naming the same files.
 
 Documents describe shared parts once, under `components`, and point at
 them with `$ref`. The command follows a reference within the document
-where it reads a Path Item, a Response or, as 3.2 allows, a Media Type:
+where it reads a Path Item, a Response, an Example or, as 3.2 allows, a
+Media Type:
 
 ```json
 {
@@ -665,8 +872,10 @@ This imports `listPets` as if both parts were written in place.
 - Operations reached through a Path Item's `$ref` keep the order of the
   path keys.
 - The fields beside a Path Item's `$ref` are ignored, with a warning, but
-  `x-` extensions. The fields beside a Response's `$ref` are ignored, as
-  OpenAPI asks.
+  `x-` extensions. The fields beside the `$ref` of a Response or an
+  Example are ignored, as OpenAPI asks.
+- A `$ref` inside example data, in `example`, `value` or `dataValue`, is
+  data, not a reference: it is copied as written.
 - `$id` at the root of the document, and 3.2's `$self`, are ignored: a
   reference names a part by its fragment.
 - References in the parts the command does not read are not followed, so
@@ -829,10 +1038,13 @@ command does.
 - A sampled array has at most 100 items. A larger `minItems` gives 100
   items, with a warning.
 - The file nests at most 1024 levels, the most the parsers read. A value
-  of `const`, `examples`, `example`, `default` or `enum` that would nest
-  deeper is left out of its body, with a warning.
+  of `const`, `examples`, `example`, `default` or `enum`, or an
+  example's value, that would nest deeper is left out of its body, with a
+  warning.
+- An example body is at most 1 MiB, its compact JSON or its text. A
+  larger one is left empty, with a warning.
 - Each operation at a templated path adds pattern Stubs, one per
-  response. The match index does not find them
+  response and named example. The match index does not find them
   ([Which Stub answers](definition-files.md#which-stub-answers)), so each
   request of that method scans the Mock's pattern Stubs, in order. A
   document with many templated paths makes each request slower.
@@ -840,8 +1052,6 @@ command does.
   unless this list says otherwise:
   - the paths of `servers`, so no prefix is added to the paths;
   - response headers;
-  - the `example` and `examples` of media types: the body is sampled from
-    the schema;
   - `minimum`, `maximum` and their exclusive forms: numbers sample as 0,
     without a warning;
   - schema references: a `$ref` in a schema is an error;

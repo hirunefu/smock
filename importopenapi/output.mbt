@@ -119,11 +119,17 @@ fn Report::header(self : Report, document : Document) -> Array[String] {
 
 ///|
 /// The comment above `stub`, a Stub of this operation, which maps it back
-/// to the document: the method, the path as written, the response key,
-/// `deprecated` when the operation is, and the first line of its summary.
+/// to the document: the method, the path as written, the response key, the
+/// name of the named example its body comes from, if any, `deprecated`
+/// when the operation is, and the first line of its summary. A name that a
+/// request cannot send is quoted.
 fn Imported::comment(self : Imported, stub : Stub) -> String {
   let comment = StringBuilder()
   comment.write_string("\{stub.meth} \{self.key}, \{stub.response}")
+  if stub.example is Some(example) {
+    let example = if is_sendable(example) { example } else { example.escape() }
+    comment.write_string(", example \{example}")
+  }
   if self.deprecated {
     comment.write_string(", deprecated")
   }
@@ -161,16 +167,25 @@ fn base_name(path : String) -> String {
 ///|
 /// A Stub of the Mock `mock` as the file writes it: `id`, `mock`, `request`
 /// (`method`, `path`, an exact path or `{ pattern }`, then `headers` with
-/// `Smock-Status` for a response other than the main one), then `response`
-/// (`status`, `headers` with the Content-Type, then `json` or `body`).
+/// `Smock-Status` for a response other than the main one, then
+/// `Smock-Example` for a named example other than the first), then
+/// `response` (`status`, `headers` with the Content-Type, then `json` or
+/// `body`).
 fn Stub::to_json(self : Stub, mock : String) -> Json {
   let path : Json = match self.path {
     Exact(path) => path.to_json()
     Pattern(pattern) => { "pattern": pattern.to_json() }
   }
   let request : Map[String, Json] = { "method": self.meth, "path": path }
-  if self.selected {
-    request["headers"] = { "Smock-Status": self.response }
+  if self.selected || self.named {
+    let headers : Map[String, Json] = Map([])
+    if self.selected {
+      headers["Smock-Status"] = self.response.to_json()
+    }
+    if self.named && self.example is Some(example) {
+      headers["Smock-Example"] = example.to_json()
+    }
+    request["headers"] = Json::object(headers)
   }
   let response : Map[String, Json] = { "status": self.status.to_json() }
   if self.payload.content_type is Some(content_type) {

@@ -352,36 +352,6 @@ test "204, 205 and 304 responses, and responses to HEAD, get no body and no Cont
 }
 
 ///|
-test "until examples are imported, a media type's example and examples are left out with a warning, and the body is sampled from its schema" {
-  inspect(
-    responses_of(
-      (
-        #|{
-        #|  "200": {
-        #|    "content": {
-        #|      "application/json": {
-        #|        "examples": { "cat": { "value": { "name": "Tom" } } },
-        #|        "schema": { "type": "object", "properties": { "name": { "type": "string" } } },
-        #|        "example": { "name": "Rex" }
-        #|      }
-        #|    }
-        #|  }
-        #|}
-      ),
-    ),
-    content=(
-      #|petstore.json: /paths/~1r/get/responses/200/content/application~1json/examples: warning: left out: examples are not imported yet
-      #|petstore.json: /paths/~1r/get/responses/200/content/application~1json/example: warning: left out: examples are not imported yet
-      #|response:
-      #|  status: 200
-      #|  json:
-      #|    name: string
-      #|
-    ),
-  )
-}
-
-///|
 test "a Media Type Object that is not an object, or a schema that is neither an object nor a boolean, is an error at its pointer; the other media types are not read" {
   inspect(
     responses_of(

@@ -33,8 +33,14 @@ of each GitHub release include its section
   schema of one media type, written in the file as `json` or `body`, with
   the media type as the Content-Type. Formats such as `date-time`, `uuid`
   and `email` give valid samples. Nothing is random and nothing is
-  templated. Numbers sample as 0 so far, and schema references and the
-  document's examples are not used yet.
+  templated. Numbers sample as 0 so far, and schema references are not
+  used yet.
+- `smock import-openapi` takes bodies from the document's examples first:
+  a media type's `examples`, then its `example`, then a sample of its
+  schema. The first named example is the response's body. Every further
+  one gets a Stub of its own, which a request selects with the header
+  `Smock-Example: <name>`, alone or with `Smock-Status`. An example body
+  above 1 MiB is left empty, with a warning.
 - `smock import-openapi` samples schemas composed with `allOf`, `oneOf`
   and `anyOf`. `allOf` is merged into one schema, and `oneOf` and `anyOf`
   take their first branch that is not only null, so a nullable field
@@ -51,10 +57,9 @@ of each GitHub release include its section
   Anchors, aliases and tags stay errors, each at its pointer; the guide
   shows how to convert such a document to JSON first.
 - `smock import-openapi` follows a `$ref` within the document where it
-  reads a Path Item, a Response or a Media Type, by its JSON Pointer
-  fragment. A URL, an
-  absolute path or another file is an error that suggests bundling the
-  document into one file first.
+  reads a Path Item, a Response, an Example or a Media Type, by its JSON
+  Pointer fragment. A URL, an absolute path or another file is an error
+  that suggests bundling the document into one file first.
 - `smock import-openapi --overwrite on` replaces an earlier output, so a
   changed document reaches the mock when the command runs again. Without
   it, an existing `--output` is refused before the document is read. The
