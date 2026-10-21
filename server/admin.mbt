@@ -487,8 +487,9 @@ fn liveness_probe(admin : Admin, _call : Call) -> Reply {
 /// Stub's `fault.seed`, or a fresh one when it has none. The `response`
 /// query parameter names the response to render among the Stub's
 /// `responses`; without it, the seed picks one. The rendering shows the
-/// time, the seed and the response index it used. Rendering changes
-/// nothing.
+/// time, the seed and the response index it used, and the values the
+/// Stub's `variables` would write. Rendering changes nothing: it reads
+/// the Variables of the sample's `vars` and writes none.
 fn render(admin : Admin, call : Call) -> Reply {
   let invalid = (message : String) => {
     admin.error(400, "invalid_request", message)

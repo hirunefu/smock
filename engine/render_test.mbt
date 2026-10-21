@@ -69,6 +69,7 @@ test "a sample request that meets every condition renders the Stub's status, hea
       #|  "time": "2026-10-12T14:30:05.123Z",
       #|  "seed": 7,
       #|  "responseIndex": null,
+      #|  "variables": {},
       #|  "response": {
       #|    "status": 201,
       #|    "headers": [
@@ -113,6 +114,7 @@ test "a sample request that fails several conditions still renders the Stub's re
       #|  "time": "2026-10-12T14:30:05.123Z",
       #|  "seed": 7,
       #|  "responseIndex": null,
+      #|  "variables": {},
       #|  "response": {
       #|    "status": 201,
       #|    "headers": [
@@ -195,6 +197,7 @@ test "a Stub that answers from a body file renders the bytes of the file, as tex
       #|  "time": "2026-10-12T14:30:05.123Z",
       #|  "seed": 7,
       #|  "responseIndex": null,
+      #|  "variables": {},
       #|  "response": {
       #|    "status": 200,
       #|    "headers": [
@@ -224,6 +227,7 @@ test "a Stub that answers from a body file renders the bytes of the file, as tex
       #|  "time": "2026-10-12T14:30:05.123Z",
       #|  "seed": 7,
       #|  "responseIndex": null,
+      #|  "variables": {},
       #|  "response": {
       #|    "status": 200,
       #|    "headers": [
@@ -407,6 +411,7 @@ test "a Stub with Faults renders its plain response: rendering decides no Fault"
       #|  "time": "2026-10-12T14:30:05.123Z",
       #|  "seed": 42,
       #|  "responseIndex": null,
+      #|  "variables": {},
       #|  "response": {
       #|    "status": 200,
       #|    "headers": [],
@@ -514,6 +519,7 @@ test "a Stub that streams Server-Sent Events renders its events, with the Conten
       #|  "time": "2026-10-12T14:30:05.123Z",
       #|  "seed": 7,
       #|  "responseIndex": null,
+      #|  "variables": {},
       #|  "response": {
       #|    "status": 200,
       #|    "headers": [

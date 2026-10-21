@@ -101,8 +101,30 @@ fn Engine::write_variables(
   first : @template.Context,
 ) -> @template.Context raise @template.RenderError {
   let writes = stub.variables
-  let before = self.variables.of(stub.mock, session)
   let values = Array(capacity=writes.values.length())
+  let last = render_values(
+    writes,
+    first,
+    self.variables.of(stub.mock, session),
+    values,
+  )
+  self.variables.write(stub.mock, session, writes.names, values)
+  last.next(vars?=self.variables.of(stub.mock, session))
+}
+
+///|
+/// Renders the value of each of `writes`, in the order written, against
+/// the Variables `before`, and pushes it to `values`. The first value
+/// renders in `first`, which reads `before`; each next one has a rendering
+/// of its own, with its own bounds, and they draw from the request's helper
+/// generator in turn. Returns the last rendering, which the response
+/// continues from. When a value fails to render, it raises the error.
+fn render_values(
+  writes : @definitions.VariableWrites,
+  first : @template.Context,
+  before : Map[String, Json]?,
+  values : Array[Json],
+) -> @template.Context raise @template.RenderError {
   let mut context = first
   for i in 0..<writes.values.length() {
     if i > 0 {
@@ -110,8 +132,7 @@ fn Engine::write_variables(
     }
     values.push(writes.values[i].render_value(context))
   }
-  self.variables.write(stub.mock, session, writes.names, values)
-  context.next(vars?=self.variables.of(stub.mock, session))
+  context
 }
 
 ///|

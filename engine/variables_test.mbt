@@ -618,3 +618,259 @@ test "every Journal entry records the names of the Variables written, in the ord
     ),
   )
 }
+
+///|
+/// Renders the Stub `id` for the sample request `sample`, given as its
+/// JSON, and shows what a rendering says of Variables: the values the Stub
+/// would write, the response index, the status, the body and the template
+/// error, as one line of JSON.
+fn Harness::render_vars(
+  self : Harness,
+  id : String,
+  sample : Json,
+  response? : Int,
+) -> String raise {
+  let rendering = self.engine.render(
+    id,
+    @engine.SampleRequest::from_json(sample),
+    now=self.now,
+    response?,
+    fresh_seed=() => 7,
+  )
+  guard rendering.to_json()
+    is Object(
+      {
+        "variables": variables,
+        "responseIndex": index,
+        "response": { "status": status, "body": { "data": body, .. }, .. },
+        "templateError": error,
+        ..
+      }
+    ) else {
+    fail("not a rendering")
+  }
+  let shown : Json = {
+    "variables": variables,
+    "responseIndex": index,
+    "status": status,
+    "body": body,
+    "templateError": error,
+  }
+  shown.stringify()
+}
+
+///|
+test "rendering shows the values a Stub would write, rendered against the sample's vars, and the response sees them written over the sample's vars" {
+  let h = harness([who_logged_in])
+  inspect(
+    [
+      h.render_vars("login", {
+        "method": "POST",
+        "path": "/login",
+        "body": "{\"user\":\"ann\"}",
+        "vars": { "user": "bob" },
+      }),
+      // Without `vars`, the sample has none.
+      h.render_vars("login", {
+        "method": "POST",
+        "path": "/login",
+        "body": "{\"user\":\"ann\"}",
+      }),
+    ].join("\n"),
+    content=(
+      #|{"variables":{"user":"ann","previous":"bob"},"responseIndex":null,"status":200,"body":"{\"user\":\"ann\",\"previous\":\"bob\"}","templateError":null}
+      #|{"variables":{"user":"ann","previous":null},"responseIndex":null,"status":200,"body":"{\"user\":\"ann\",\"previous\":null}","templateError":null}
+    ),
+  )
+}
+
+///|
+test "rendering reads the sample's vars, never the live Variables, and writes none, so a later request sees them as they were" {
+  let h = harness([who_logged_in])
+  let out = []
+  ignore(
+    h.send("POST", "/login", body="{\"user\":\"carol\"}", session="test-a"),
+  )
+  ignore(h.send("POST", "/login", body="{\"user\":\"dave\"}"))
+  let samples : Array[Json] = [
+    { "method": "POST", "path": "/login", "body": "{\"user\":\"ann\"}" },
+    {
+      "method": "POST",
+      "path": "/login",
+      "body": "{\"user\":\"ann\"}",
+      "session": "test-a",
+    },
+    {
+      "method": "POST",
+      "path": "/login",
+      "body": "{\"user\":\"ann\"}",
+      "session": "test-a",
+      "vars": { "user": "bob" },
+    },
+    { "path": "/me", "session": "test-a" },
+    { "path": "/me", "session": "test-a", "vars": { "user": "bob" } },
+  ]
+  for sample in samples {
+    let id = if sample is { "path": "/me", .. } { "whoami" } else { "login" }
+    out.push(h.render_vars(id, sample))
+  }
+  out.push("test-a GET /me: \{reply(h.send("GET", "/me", session="test-a"))}")
+  out.push("no Session GET /me: \{reply(h.send("GET", "/me"))}")
+  out.push(
+    "test-a logs in as ann: \{reply(h.send("POST", "/login", body="{\"user\":\"ann\"}", session="test-a"))}",
+  )
+  inspect(
+    out.join("\n"),
+    content=(
+      #|{"variables":{"user":"ann","previous":null},"responseIndex":null,"status":200,"body":"{\"user\":\"ann\",\"previous\":null}","templateError":null}
+      #|{"variables":{"user":"ann","previous":null},"responseIndex":null,"status":200,"body":"{\"user\":\"ann\",\"previous\":null}","templateError":null}
+      #|{"variables":{"user":"ann","previous":"bob"},"responseIndex":null,"status":200,"body":"{\"user\":\"ann\",\"previous\":\"bob\"}","templateError":null}
+      #|{"variables":{},"responseIndex":null,"status":200,"body":"{\"user\":null}","templateError":null}
+      #|{"variables":{},"responseIndex":null,"status":200,"body":"{\"user\":\"bob\"}","templateError":null}
+      #|test-a GET /me: 200 {"user":"carol"}
+      #|no Session GET /me: 200 {"user":"dave"}
+      #|test-a logs in as ann: 200 {"user":"ann","previous":"carol"}
+    ),
+  )
+}
+
+///|
+test "a value that fails to render shows the 500 a request would get, with no values and no response index, even when a response is asked for" {
+  let h = harness([failing])
+  let fails : Json = { "method": "POST", "path": "/fail", "body": "{}" }
+  let renders : Json = {
+    "method": "POST",
+    "path": "/fail",
+    "body": "{\"name\":\"x\"}",
+  }
+  inspect(
+    [
+      h.render_vars("fail", fails),
+      h.render_vars("fail", fails, response=1),
+      h.render_vars("fail", renders),
+      h.render_vars("fail", renders, response=0),
+      // Without a Fault, the template failure is the response as it is.
+      h.render_vars("reset", { "method": "POST", "path": "/reset" }),
+    ].join("\n"),
+    content=(
+      #|{"variables":{},"responseIndex":null,"status":500,"body":"{\"error\":\"template failed\",\"stub\":\"fail\",\"at\":\"/variables/b/name\",\"message\":\"body.name is missing\"}","templateError":{"at":"/variables/b/name","message":"body.name is missing"}}
+      #|{"variables":{},"responseIndex":null,"status":500,"body":"{\"error\":\"template failed\",\"stub\":\"fail\",\"at\":\"/variables/b/name\",\"message\":\"body.name is missing\"}","templateError":{"at":"/variables/b/name","message":"body.name is missing"}}
+      #|{"variables":{"a":"written first","b":{"name":"x"}},"responseIndex":1,"status":201,"body":"","templateError":null}
+      #|{"variables":{"a":"written first","b":{"name":"x"}},"responseIndex":0,"status":200,"body":"","templateError":null}
+      #|{"variables":{},"responseIndex":null,"status":500,"body":"{\"error\":\"template failed\",\"stub\":\"reset\",\"at\":\"/variables/b\",\"message\":\"body.name is missing\"}","templateError":{"at":"/variables/b","message":"body.name is missing"}}
+    ),
+  )
+}
+
+///|
+test "a sample's vars must be an object that maps Variable names to any JSON, or the sample is invalid, with the pointer of the value" {
+  let shown = (sample : Json) => {
+    try @engine.SampleRequest::from_json(sample) catch {
+      @engine.InvalidSample(_) as err => "invalid sample: \{err.message()}"
+    } noraise {
+      sample => "vars \{Json::object(sample.vars).stringify()}"
+    }
+  }
+  let samples : Array[Json] = [
+    { "vars": [] },
+    { "vars": "user=bob" },
+    { "vars": Json::null() },
+    { "vars": { "": 1 } },
+    { "vars": { "a b": 1, "ok": 2 } },
+    { "vars": { "a/b~c": 1 } },
+    { "vars": { "null": Json::null(), "Az09_-": { "a": [1, true, "s"] } } },
+  ]
+  let out = samples.map(sample => "\{sample.stringify()} -> \{shown(sample)}")
+  // Names of 128 characters at most.
+  for length in [128, 129] {
+    let vars : Map[String, Json] = Map([])
+    vars["x".repeat(length)] = Json::number(1)
+    let shown = shown({ "vars": Json::object(vars) })
+    out.push(
+      "a name of \{length} x: \{shown.replace_all(old="x".repeat(length), new="x…")}",
+    )
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|{"vars":[]} -> invalid sample: /vars: must be an object
+      #|{"vars":"user=bob"} -> invalid sample: /vars: must be an object
+      #|{"vars":null} -> invalid sample: /vars: must be an object
+      #|{"vars":{"":1}} -> invalid sample: /vars/: is not a Variable name: 1 to 128 ASCII letters, digits, _ and -
+      #|{"vars":{"a b":1,"ok":2}} -> invalid sample: /vars/a b: is not a Variable name: 1 to 128 ASCII letters, digits, _ and -
+      #|{"vars":{"a/b~c":1}} -> invalid sample: /vars/a~1b~0c: is not a Variable name: 1 to 128 ASCII letters, digits, _ and -
+      #|{"vars":{"null":null,"Az09_-":{"a":[1,true,"s"]}}} -> vars {"null":null,"Az09_-":{"a":[1,true,"s"]}}
+      #|a name of 128 x: vars {"x…":1}
+      #|a name of 129 x: invalid sample: /vars/x…: is not a Variable name: 1 to 128 ASCII letters, digits, _ and -
+    ),
+  )
+}
+
+///|
+test "a rendering with seed S shows the values and the response the first request of a Stub with fault.seed S gets, helper output included" {
+  let h = harness([
+    variables_file(
+      (
+        #|  - id: stored
+        #|    mock: m
+        #|    request: { path: /stored }
+        #|    variables:
+        #|      first: ${fake.uuid()}
+        #|      second: ${fake.uuid()}
+        #|    response:
+        #|      status: 200
+        #|      template: true
+        #|      json: ["${vars.first}", "${vars.second}", "${fake.uuid()}"]
+        #|    fault: { seed: 42 }
+      ),
+    ),
+  ])
+  // The rendering uses the Stub's seed, 42. The three uuids are those
+  // the first request of seed 42 gets (see above).
+  inspect(
+    [
+      h.render_vars("stored", { "path": "/stored" }),
+      reply(h.send("GET", "/stored")),
+    ].join("\n"),
+    content=(
+      #|{"variables":{"first":"967d85fe-343d-4cc0-9b49-c024af3b3103","second":"a168a304-0584-4bdd-99da-8adbdc970b94"},"responseIndex":null,"status":200,"body":"[\"967d85fe-343d-4cc0-9b49-c024af3b3103\",\"a168a304-0584-4bdd-99da-8adbdc970b94\",\"60f50a30-f8ef-47b0-bcd9-40ec46d73ae7\"]","templateError":null}
+      #|200 ["967d85fe-343d-4cc0-9b49-c024af3b3103","a168a304-0584-4bdd-99da-8adbdc970b94","60f50a30-f8ef-47b0-bcd9-40ec46d73ae7"]
+    ),
+  )
+}
+
+///|
+test "a rendering of a Stub with variables and a body file shows the values and the 206 or the 416 the sample's Range field gets" {
+  let h = harness(
+    [
+      variables_file(
+        (
+          #|  - id: letters
+          #|    mock: m
+          #|    request: { path: /letters }
+          #|    variables:
+          #|      hits: ${add(vars.hits ?? 0, 1)}
+          #|    response: { status: 200, bodyFile: letters.txt }
+        ),
+      ),
+    ],
+    body_files=[("letters.txt", b"abcdefghijklmnopqrstuvwxyz")],
+  )
+  inspect(
+    [
+      h.render_vars("letters", {
+        "path": "/letters",
+        "headers": { "Range": "bytes=2-4" },
+        "vars": { "hits": 1 },
+      }),
+      h.render_vars("letters", {
+        "path": "/letters",
+        "headers": { "Range": "bytes=40-" },
+      }),
+    ].join("\n"),
+    content=(
+      #|{"variables":{"hits":2},"responseIndex":null,"status":206,"body":"cde","templateError":null}
+      #|{"variables":{"hits":1},"responseIndex":null,"status":416,"body":"","templateError":null}
+    ),
+  )
+}
