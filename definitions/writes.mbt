@@ -119,7 +119,8 @@ fn File::read_data_write(
     self.error(pointer, "must be an object")
     return None
   }
-  let problems = self.diagnostics.length()
+  // Whether the write has a problem: whether any is reported from here on.
+  let reported = self.diagnostics.length()
   // The op's name, as written, when it is one of the four.
   let mut op_name = None
   let mut bucket = None
@@ -205,7 +206,7 @@ fn File::read_data_write(
       "must be an object: \"merge\" merges the members of an object into the bucket",
     )
   }
-  guard self.diagnostics.length() == problems &&
+  guard self.diagnostics.length() == reported &&
     bucket is Some(bucket) &&
     value is Some(value) else {
     return None
