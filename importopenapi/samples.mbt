@@ -128,7 +128,7 @@ fn Merged::new() -> Merged {
 /// `false`. When it is not, it is ignored, with a warning.
 fn Sampler::is_schema(self : Sampler, pointer : String, json : Json) -> Bool {
   guard json is (Object(_) | True | False) else {
-    self.report.root_warning(
+    self.report.warning_at(
       pointer, "ignored: must be a schema, an object or a boolean",
     )
     return false
@@ -187,7 +187,7 @@ fn Sampler::merge(
           self.merge(merged, at, json, true)
         }
       }
-    Some(_) => self.report.root_warning(all_of, "ignored: must be an array")
+    Some(_) => self.report.warning_at(all_of, "ignored: must be an array")
   }
   for keyword in ["oneOf", "anyOf"] {
     let one_of = @definitions.child_pointer(pointer, keyword)
@@ -220,7 +220,7 @@ fn Sampler::merge(
           merged.never = true
         }
       }
-      Some(_) => self.report.root_warning(one_of, "ignored: must be an array")
+      Some(_) => self.report.warning_at(one_of, "ignored: must be an array")
     }
   }
 }
@@ -262,7 +262,7 @@ fn Sampler::merged_sample(self : Sampler, merged : Merged, room : Int) -> Json? 
   let mut referenced = false
   for layer in merged.layers {
     if layer.schema.contains("$ref") {
-      self.report.root_error(
+      self.report.error_at(
         @definitions.child_pointer(layer.pointer, "$ref"),
         "schema references are not followed yet: write the schema it names in its place",
       )
@@ -338,7 +338,7 @@ fn Sampler::first_of(
     None | Some(Array([])) => None
     Some(Array(items)) => Some((@definitions.child_pointer(at, "0"), items[0]))
     Some(_) => {
-      self.report.root_warning(at, "ignored: must be an array")
+      self.report.warning_at(at, "ignored: must be an array")
       None
     }
   }
@@ -356,7 +356,7 @@ fn Sampler::copied(
   room : Int,
 ) -> Json? {
   if nests_deeper(value, room) {
-    self.report.root_warning(
+    self.report.warning_at(
       pointer,
       "left out: the value would nest deeper than \{max_nesting} levels in the file, the most the parsers read",
     )
@@ -418,7 +418,7 @@ fn Sampler::type_of(self : Sampler, merged : Merged) -> String {
         return "null"
       }
       Some(_) =>
-        self.report.root_warning(
+        self.report.warning_at(
           @definitions.child_pointer(layer.pointer, "type"),
           "ignored: must be a type, such as \"string\", or a non-empty array of types",
         )
@@ -463,7 +463,7 @@ fn Sampler::format(self : Sampler, merged : Merged) -> String? {
       None => ()
       Some(String(format)) => return Some(format)
       Some(_) =>
-        self.report.root_warning(
+        self.report.warning_at(
           @definitions.child_pointer(layer.pointer, "format"),
           "ignored: must be a string",
         )
@@ -490,7 +490,7 @@ fn Sampler::count(
           (at, if n >= 2147483647.0 { 2147483647 } else { n.to_int() }),
         )
       Some(_) =>
-        self.report.root_warning(at, "ignored: must be a non-negative integer")
+        self.report.warning_at(at, "ignored: must be a non-negative integer")
     }
   }
   None
@@ -536,7 +536,7 @@ fn Sampler::array(self : Sampler, merged : Merged, room : Int) -> Json {
   if min is Some((at, min)) && min > length {
     length = min
     if length > max_sample_items {
-      self.report.root_warning(
+      self.report.warning_at(
         at,
         "changed: the sample has \{max_sample_items} items, the most a sample has, not \{length}",
       )
@@ -554,7 +554,7 @@ fn Sampler::array(self : Sampler, merged : Merged, room : Int) -> Json {
         prefix = items
         break
       }
-      Some(_) => self.report.root_warning(at, "ignored: must be an array")
+      Some(_) => self.report.warning_at(at, "ignored: must be an array")
     }
   }
   // Every item after `prefixItems` is the same sample of `items`.
@@ -605,7 +605,7 @@ fn Sampler::object(self : Sampler, merged : Merged, room : Int) -> Json {
             None => properties[name] = [property]
           }
         }
-      Some(_) => self.report.root_warning(at, "ignored: must be an object")
+      Some(_) => self.report.warning_at(at, "ignored: must be an object")
     }
   }
   let members : Map[String, Json] = Map([])
@@ -644,7 +644,7 @@ fn Sampler::write_only(self : Sampler, merged : Merged) -> Bool {
       Some(False) => return false
       Some(True) => return true
       Some(_) =>
-        self.report.root_warning(
+        self.report.warning_at(
           @definitions.child_pointer(layer.pointer, "writeOnly"),
           "ignored: must be true or false",
         )

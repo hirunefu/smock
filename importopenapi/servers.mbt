@@ -21,7 +21,7 @@ fn Report::prefix(
     None => return outer
     Some(Array(servers)) => servers
     Some(_) => {
-      self.root_error(servers_pointer, "must be an array")
+      self.error_at(servers_pointer, "must be an array")
       return outer
     }
   }
@@ -41,7 +41,7 @@ fn Report::prefix(
   if paths.iter().any(path => path is Some(other) && other != prefix) &&
     servers[0] is Object({ "url": String(url), .. }) {
     let puts = if prefix == "" { "nothing" } else { prefix.escape() }
-    self.root_warning(
+    self.warning_at(
       servers_pointer,
       "left out: the servers have different paths, so only the first is used: \{url.escape()} puts \{puts} in front of the paths",
     )
@@ -54,24 +54,24 @@ fn Report::prefix(
 /// or `None` after reporting why it gives none.
 fn Report::server(self : Report, pointer : String, json : Json) -> String? {
   guard json is Object(server) else {
-    self.root_error(pointer, "must be an object")
+    self.error_at(pointer, "must be an object")
     return None
   }
   let url_pointer = @definitions.child_pointer(pointer, "url")
   let url = match server.get("url") {
     Some(String(url)) => url
     None => {
-      self.root_error(pointer, "needs \"url\", the server's URL")
+      self.error_at(pointer, "needs \"url\", the server's URL")
       return None
     }
     Some(_) => {
-      self.root_error(url_pointer, "must be a string")
+      self.error_at(url_pointer, "must be a string")
       return None
     }
   }
   guard self.expanded(pointer, server, url) is Some(url) else { return None }
   if url.contains_char('?') || url.contains_char('#') {
-    self.root_error(
+    self.error_at(
       url_pointer, "a server URL must not hold ? or #: a query or a fragment is not part of it",
     )
     return None
@@ -99,7 +99,7 @@ fn Report::expanded(
     None => Map([])
     Some(Object(variables)) => variables
     Some(_) => {
-      self.root_error(variables_pointer, "must be an object")
+      self.error_at(variables_pointer, "must be an object")
       return None
     }
   }
@@ -115,7 +115,7 @@ fn Report::expanded(
           name.reset()
         }
         '}' => {
-          self.root_error(url_pointer, "a server URL has an unbalanced { or }")
+          self.error_at(url_pointer, "a server URL has an unbalanced { or }")
           return None
         }
         _ => expanded.write_char(c)
@@ -124,14 +124,14 @@ fn Report::expanded(
     }
     match c {
       '{' => {
-        self.root_error(url_pointer, "a server URL has an unbalanced { or }")
+        self.error_at(url_pointer, "a server URL has an unbalanced { or }")
         return None
       }
       '}' => {
         in_name = false
         let variable = name.to_string()
         if variable == "" {
-          self.root_error(
+          self.error_at(
             url_pointer, "a server URL has an empty {}: a variable needs a name",
           )
           return None
@@ -148,7 +148,7 @@ fn Report::expanded(
     }
   }
   if in_name {
-    self.root_error(url_pointer, "a server URL has an unbalanced { or }")
+    self.error_at(url_pointer, "a server URL has an unbalanced { or }")
     return None
   }
   if known {
@@ -172,7 +172,7 @@ fn Report::variable_default(
   let pointer = @definitions.child_pointer(variables_pointer, name)
   match variables.get(name) {
     None => {
-      self.root_error(
+      self.error_at(
         url_pointer,
         "the variable {\{name}} has no default: declare it under \"variables\", with a \"default\"",
       )
@@ -182,14 +182,14 @@ fn Report::variable_default(
       match variable.get("default") {
         Some(String(value)) => Some(value)
         None => {
-          self.root_error(
+          self.error_at(
             pointer,
             "needs \"default\", a string that replaces {\{name}} in the URL",
           )
           None
         }
         Some(_) => {
-          self.root_error(
+          self.error_at(
             @definitions.child_pointer(pointer, "default"),
             "must be a string",
           )
@@ -197,7 +197,7 @@ fn Report::variable_default(
         }
       }
     Some(_) => {
-      self.root_error(pointer, "must be an object")
+      self.error_at(pointer, "must be an object")
       None
     }
   }

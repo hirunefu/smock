@@ -84,7 +84,7 @@ fn Report::response_parts(
     return no_answers()
   }
   guard json is Object(response) else {
-    self.root_error(pointer, "must be an object")
+    self.error_at(pointer, "must be an object")
     return no_answers()
   }
   let mut answers = no_answers()
@@ -97,7 +97,7 @@ fn Report::response_parts(
       ("headers", Object(documented)) =>
         headers = self.headers(document, field_pointer, documented)
       ("content" | "headers", _) =>
-        self.root_error(field_pointer, "must be an object")
+        self.error_at(field_pointer, "must be an object")
       _ => ()
     }
   }
@@ -120,11 +120,11 @@ fn Report::content(
 ) -> Answers {
   guard media_type_of(content) is Some(chosen) else { return no_answers() }
   if meth == "HEAD" {
-    self.root_warning(pointer, "left out: a response to HEAD has no body")
+    self.warning_at(pointer, "left out: a response to HEAD has no body")
     return no_answers()
   }
   if status is (204 | 205 | 304) {
-    self.root_warning(pointer, "left out: a \{status} response has no body")
+    self.warning_at(pointer, "left out: a \{status} response has no body")
     return no_answers()
   }
   let mut answers = no_answers()
@@ -133,7 +133,7 @@ fn Report::content(
     if key == chosen {
       answers = self.media_type(document, at, key, json)
     } else {
-      self.root_warning(
+      self.warning_at(
         at,
         "left out: a response answers with one media type, here \{chosen.escape()}",
       )
@@ -216,7 +216,7 @@ fn Report::media_type(
     return no_answers()
   }
   guard json is Object(media_type) else {
-    self.root_error(pointer, "must be an object")
+    self.error_at(pointer, "must be an object")
     return no_answers()
   }
   let example_pointer = @definitions.child_pointer(pointer, "example")
@@ -227,13 +227,13 @@ fn Report::media_type(
       if self.examples(document, pointer, examples_pointer, key, examples)
         is Some(answers) {
         if media_type.contains("example") {
-          self.root_warning(
+          self.warning_at(
             example_pointer, "ignored: the media type has examples, which come first",
           )
         }
         return answers
       }
-    Some(_) => self.root_error(examples_pointer, "must be an object")
+    Some(_) => self.error_at(examples_pointer, "must be an object")
   }
   if media_type.get("example") is Some(value) {
     let payload = self.example_payload(
@@ -253,9 +253,7 @@ fn Report::media_type(
         None => None
       }
     Some(_) => {
-      self.root_error(
-        schema_pointer, "must be a schema, an object or a boolean",
-      )
+      self.error_at(schema_pointer, "must be a schema, an object or a boolean")
       None
     }
   }
@@ -303,7 +301,7 @@ fn Report::payload(
         True => Text("true")
         False => Text("false")
         _ => {
-          self.root_warning(
+          self.warning_at(
             at,
             "left out: the body is empty, since a \{key.escape()} body cannot hold \{kind_of(value)}",
           )
@@ -314,7 +312,7 @@ fn Report::payload(
   let body = match value {
     Some(Data(at, _) | Serialized(at, _)) if body_bytes(body) >
       max_example_bytes => {
-      self.root_warning(
+      self.warning_at(
         at,
         "left out: the body is empty, since the example is more than \{size_text(max_example_bytes)}",
       )
@@ -326,7 +324,7 @@ fn Report::payload(
     (body is JsonValue(_) && key.to_lower() == "application/json") {
     None
   } else if !@http1.is_field_value(key) {
-    self.root_warning(
+    self.warning_at(
       pointer, "left out: the Content-Type, since a header cannot hold a control character",
     )
     None

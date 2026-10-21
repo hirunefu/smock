@@ -75,17 +75,21 @@ of each GitHub release include its section
   such as `200:` is the key `"200"`, and a date in an example is a string.
   Anchors, aliases and tags stay errors, each at its pointer; the guide
   shows how to convert such a document to JSON first.
-- `smock import-openapi` follows a `$ref` within the document where it
-  reads a Path Item, a Response, a Header, an Example or a Media Type, by
-  its JSON Pointer fragment. A URL, an absolute path or another file is an
-  error that suggests bundling the document into one file first.
+- `smock import-openapi` follows a `$ref` where it reads a Path Item, a
+  Response, a Header, an Example or a Media Type: within the document, by
+  its JSON Pointer fragment, and into other files by their relative paths.
+  Other files are read only under `--ref-dir`, by default the document's
+  directory, so a downloaded document cannot copy a secret into a
+  committed file; a path or a symlink that leads outside is an error. At
+  most 1,000 documents and 64 MiB are read. A URL or an absolute path is
+  an error that suggests bundling the document into one file first.
 - `smock import-openapi --overwrite on` replaces an earlier output, so a
   changed document reaches the mock when the command runs again. Without
   it, an existing `--output` is refused before the document is read. The
   file is written to a temporary file whose name starts with `.`, then
   renamed, so a smock that watches the directory never loads half a file.
-  A directory, a symlink, the document itself and an `--output` whose
-  directory does not exist are refused. The guide shows how to keep hand
+  A directory, a symlink, the document itself or a file it refers to,
+  and an `--output` whose directory does not exist are refused. The guide shows how to keep hand
   changes in another file, and how CI can check that the file is current.
 - `smock import-openapi --hosts` gives the imported Mock its Hosts, so it
   can share a definitions directory with other Mocks. The document's

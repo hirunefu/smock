@@ -87,7 +87,7 @@ fn Report::operations(self : Report, document : Document) -> Array[Imported] {
           item,
         )
       }
-    Some(_) => self.root_error("/paths", "must be an object")
+    Some(_) => self.error_at("/paths", "must be an object")
   }
   if imported.is_empty() && self.errors == 0 {
     let pointer = if document.top.contains("paths") { "/paths" } else { "" }
@@ -130,7 +130,7 @@ fn Report::path_item(
     return
   }
   guard json is Object(item) else {
-    self.root_error(pointer, "must be an object")
+    self.error_at(pointer, "must be an object")
     return
   }
   let prefix = self.prefix(pointer, item, outer=document.prefix)
@@ -149,17 +149,17 @@ fn Report::path_item(
       )
     } else if field == "additionalOperations" {
       guard value is Object(operations) else {
-        self.root_error(field_pointer, "must be an object")
+        self.error_at(field_pointer, "must be an object")
         continue
       }
       for meth, operation in operations {
         let operation_pointer = @definitions.child_pointer(field_pointer, meth)
         if !@http1.is_token(meth) {
-          self.root_error(
+          self.error_at(
             operation_pointer, "a method must be an HTTP token, such as COPY",
           )
         } else if fixed_methods.iter().any(field => field.to_upper() == meth) {
-          self.root_error(
+          self.error_at(
             operation_pointer,
             "the method \{meth} has its own field, \{meth.to_lower()}, so it cannot be an additional operation",
           )
@@ -189,7 +189,7 @@ fn Report::operation(
   json : Json,
 ) -> Unit {
   guard json is Object(operation) else {
-    self.root_error(pointer, "must be an object")
+    self.error_at(pointer, "must be an object")
     return
   }
   let prefix = self.prefix(pointer, operation, outer=prefix)
@@ -205,7 +205,7 @@ fn Report::operation(
       )
   }
   if taken.conditions.get(conditions) is Some(earlier) {
-    self.root_warning(
+    self.warning_at(
       pointer,
       "left out: \{described} is already answered by the operation at \{self.place(earlier)}, which comes first",
     )
@@ -216,7 +216,7 @@ fn Report::operation(
     None => None
     Some(String(id)) if id != "" => Some(id)
     Some(_) => {
-      self.root_error(id_pointer, "must be a non-empty string")
+      self.error_at(id_pointer, "must be a non-empty string")
       None
     }
   }
@@ -224,7 +224,7 @@ fn Report::operation(
     None => ""
     Some(String(summary)) => summary
     Some(_) => {
-      self.root_error(
+      self.error_at(
         @definitions.child_pointer(pointer, "summary"),
         "must be a string",
       )
@@ -235,7 +235,7 @@ fn Report::operation(
     None | Some(False) => false
     Some(True) => true
     Some(_) => {
-      self.root_error(
+      self.error_at(
         @definitions.child_pointer(pointer, "deprecated"),
         "must be true or false",
       )
@@ -244,7 +244,7 @@ fn Report::operation(
   }
   if operation.get("callbacks") is Some(Object(callbacks)) &&
     !callbacks.is_empty() {
-    self.root_warning(
+    self.warning_at(
       @definitions.child_pointer(pointer, "callbacks"),
       "callbacks are not imported",
     )
@@ -278,12 +278,12 @@ fn Report::operation(
     taken.operation_ids.get(operation_id) is Some((earlier, earlier_key)) {
     // Two path keys can name one Path Item.
     if earlier == id_pointer {
-      self.root_error(
+      self.error_at(
         id_pointer,
         "the operationId \{operation_id.escape()} is already used under the path key \{earlier_key.escape()}, which names the same Path Item",
       )
     } else {
-      self.root_error(
+      self.error_at(
         id_pointer,
         "the operationId \{operation_id.escape()} is already used at \{self.place(earlier)}",
       )
@@ -291,7 +291,7 @@ fn Report::operation(
   } else {
     for stub in stubs {
       if taken.ids.get(stub.id) is Some(earlier) {
-        self.root_error(
+        self.error_at(
           pointer,
           "the Stub ID \{stub.id.escape()} is already generated for the operation at \{self.place(earlier)}",
         )

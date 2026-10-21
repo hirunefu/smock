@@ -16,7 +16,8 @@ fn import_json(document : String, mock? : String = "petstore") -> String {
 
 ///|
 /// What `conversion` gave: its problems, one per line, then the numbers of
-/// Stubs and operations and the file, or `nothing written`.
+/// Stubs and operations and the file, or `nothing written`, or the names of
+/// the documents it needs, each on a line `needs <name>`.
 fn rendered(conversion : @importopenapi.Conversion) -> String {
   let out = StringBuilder()
   for problem in conversion.problems() {
@@ -29,6 +30,10 @@ fn rendered(conversion : @importopenapi.Conversion) -> String {
       out.write_string(@utf8.decode_lossy(file))
     }
     Failed(_) => out.write_string("nothing written\n")
+    Needs(names) =>
+      for name in names {
+        out.write_string("needs \{name}\n")
+      }
   }
   out.to_string()
 }
@@ -189,7 +194,8 @@ fn with_paths(paths : String) -> String {
 ///|
 /// The Stub IDs, methods and paths of the file that `import_json` renders,
 /// one per line, after its problems, with the base path `base_path`, if
-/// given. A pattern is written `pattern <it>`.
+/// given. A pattern is written `pattern <it>`. Or the names of the
+/// documents the conversion needs, each on a line `needs <name>`.
 fn stubs_of(document : String, base_path? : String) -> String raise {
   let options = @importopenapi.Options(
     root="petstore.json",
@@ -205,6 +211,12 @@ fn stubs_of(document : String, base_path? : String) -> String raise {
   for problem in conversion.problems() {
     out.write_string(problem.to_string())
     out.write_char('\n')
+  }
+  if conversion is Needs(names) {
+    for name in names {
+      out.write_string("needs \{name}\n")
+    }
+    return out.to_string()
   }
   guard conversion is Converted(file~, ..) else {
     out.write_string("nothing written\n")

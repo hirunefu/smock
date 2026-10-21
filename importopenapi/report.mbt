@@ -2,8 +2,20 @@
 /// The problems of one conversion, in order: those with the file, then the
 /// document-level ones, then each operation's, in the order the document
 /// writes them.
+///
+/// A problem is reported at a place: a JSON Pointer into the root
+/// document, such as `/paths/~1pets`, or into another document, written
+/// `<number>#<pointer>`, the document's number among the documents given
+/// (see `Report::place_in`). The converter calls each such place a
+/// pointer, and builds a part's from its parent's with
+/// `@definitions.child_pointer`, as for a JSON Pointer.
 priv struct Report {
   options : Options
+  /// The documents given to the conversion.
+  documents : Documents
+  /// The documents that references name and that were not given, in the
+  /// order they were reached.
+  needed : Set[String]
   problems : Array[Problem]
   /// Each problem reported in a document so far, as it prints. A part
   /// that several references reach is read once per reference, but each
@@ -21,9 +33,16 @@ priv struct Report {
 }
 
 ///|
-fn Report::new(options : Options) -> Report {
+/// The report of a conversion with the options `options`, of the documents
+/// `documents`, by default none but the root, which the caller reads.
+fn Report::new(
+  options : Options,
+  documents? : Documents = Documents::new(options),
+) -> Report {
   {
     options,
+    documents,
+    needed: Set([]),
     problems: [],
     reported: Set([]),
     errors: 0,
@@ -82,23 +101,38 @@ fn Report::output_error(
 }
 
 ///|
-/// Reports an error at `pointer` in the root document.
-fn Report::root_error(
-  self : Report,
-  pointer : String,
-  message : String,
-) -> Unit {
-  self.error(self.options.root_label, pointer, message)
+/// Reports an error at the place `pointer`, in the document it is in.
+fn Report::error_at(self : Report, pointer : String, message : String) -> Unit {
+  let (file, pointer) = self.locate(pointer)
+  self.error(file, pointer, message)
 }
 
 ///|
-/// Reports a warning at `pointer` in the root document.
-fn Report::root_warning(
+/// Reports a warning at the place `pointer`, in the document it is in.
+fn Report::warning_at(
   self : Report,
   pointer : String,
   message : String,
 ) -> Unit {
-  self.warning(self.options.root_label, pointer, message)
+  let (file, pointer) = self.locate(pointer)
+  self.warning(file, pointer, message)
+}
+
+///|
+/// Reports an error at the place `pointer` among the document-level
+/// problems, after those found so far, unless it is reported already. Such
+/// are references to documents that cannot be read.
+fn Report::document_error_at(
+  self : Report,
+  pointer : String,
+  message : String,
+) -> Unit {
+  let (file, pointer) = self.locate(pointer)
+  let problem = Error({ file, pointer, message, })
+  guard self.reported.add_and_check(problem.to_string()) else { return }
+  self.problems.insert(self.document_end, problem)
+  self.document_end += 1
+  self.errors += 1
 }
 
 ///|
@@ -122,10 +156,57 @@ fn Report::late_document_warning(
 }
 
 ///|
-/// Where `pointer` is in the root document, as messages name a place:
-/// `<file>: <pointer>`.
+/// Where the place `pointer` is, as messages name a place:
+/// `<file>: <pointer>`, or `<file>` for the whole of a document.
 fn Report::place(self : Report, pointer : String) -> String {
-  "\{self.options.root_label}: \{pointer}"
+  match self.locate(pointer) {
+    (file, "") => file
+    (file, pointer) => "\{file}: \{pointer}"
+  }
+}
+
+///|
+/// The place of `pointer`, a JSON Pointer into the document numbered
+/// `number`, or into the root document for `None`: the pointer itself in
+/// the root, and `<number>#<pointer>` in another document. A JSON Pointer
+/// is empty or starts with `/`, so the two never mix.
+fn place_in(number : Int?, pointer : String) -> String {
+  match number {
+    None => pointer
+    Some(number) => "\{number}#\{pointer}"
+  }
+}
+
+///|
+/// The number of the document that the place `pointer` is in, or `None`
+/// for the root, and the JSON Pointer into it.
+fn number_of(pointer : String) -> (Int?, String) {
+  guard pointer.find("#") is Some(i) && !pointer.has_prefix("/") else {
+    return (None, pointer)
+  }
+  let mut number = 0
+  for c in pointer[:i] {
+    number = number * 10 + (c.to_int() - '0'.to_int())
+  }
+  (Some(number), pointer[i + 1:].to_owned())
+}
+
+///|
+/// The document that the place `pointer` is in, as problems name it, and
+/// the JSON Pointer into it.
+fn Report::locate(self : Report, pointer : String) -> (String, String) {
+  let (number, pointer) = number_of(pointer)
+  (self.file_name(number), pointer)
+}
+
+///|
+/// How problems name the document numbered `number`, or the root for
+/// `None`.
+fn Report::file_name(self : Report, number : Int?) -> String {
+  match number {
+    None => self.options.root_label
+    Some(number) => self.documents.others[number].path
+  }
 }
 
 ///|

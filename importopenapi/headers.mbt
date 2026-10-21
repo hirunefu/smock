@@ -33,19 +33,19 @@ fn Report::headers(
     }
     let at = @definitions.child_pointer(pointer, name)
     if lower == "smock-mock" {
-      self.root_warning(
+      self.warning_at(
         at, "left out: smock adds Smock-Mock itself, when the Default Mock answers",
       )
       continue
     }
     if !@http1.is_token(name) {
-      self.root_warning(
+      self.warning_at(
         at, "left out: a header name must be an HTTP token, such as X-Rate-Limit",
       )
       continue
     }
     if names.get(lower) is Some(earlier) {
-      self.root_warning(
+      self.warning_at(
         at,
         "left out: the header name \{earlier.escape()} is already given: header names are case-insensitive",
       )
@@ -56,7 +56,7 @@ fn Report::headers(
       continue
     }
     guard json is Object(header) else {
-      self.root_error(at, "must be an object")
+      self.error_at(at, "must be an object")
       continue
     }
     let value = self.header_value(document, at, header)
@@ -86,7 +86,7 @@ fn Report::header_value(
     None => self.header_sample(document, pointer, header)
     Some(Object(content)) => {
       if header.contains("schema") {
-        self.root_warning(
+        self.warning_at(
           @definitions.child_pointer(pointer, "schema"),
           "ignored: the header has content, which comes first",
         )
@@ -98,7 +98,7 @@ fn Report::header_value(
         let at = @definitions.child_pointer(content_pointer, key)
         match chosen {
           Some(chosen) =>
-            self.root_warning(
+            self.warning_at(
               at,
               "left out: a header's content has one media type, here \{chosen.escape()}",
             )
@@ -111,7 +111,7 @@ fn Report::header_value(
       value
     }
     Some(_) => {
-      self.root_error(content_pointer, "must be an object")
+      self.error_at(content_pointer, "must be an object")
       None
     }
   }
@@ -133,7 +133,7 @@ fn Report::header_media_type(
     return None
   }
   guard json is Object(media_type) else {
-    self.root_error(pointer, "must be an object")
+    self.error_at(pointer, "must be an object")
     return None
   }
   match self.header_example(document, pointer, media_type) {
@@ -161,7 +161,7 @@ fn Report::header_example(
   let examples_pointer = @definitions.child_pointer(pointer, "examples")
   if object.get("example") is Some(value) {
     if object.contains("examples") {
-      self.root_warning(
+      self.warning_at(
         examples_pointer, "ignored: a header is written with its example, which comes first",
       )
     }
@@ -174,7 +174,7 @@ fn Report::header_example(
       for name, json in examples {
         let at = @definitions.child_pointer(examples_pointer, name)
         if value is Some(_) {
-          self.root_warning(
+          self.warning_at(
             at, "left out: a header is written with its first example",
           )
         } else {
@@ -184,7 +184,7 @@ fn Report::header_example(
       value
     }
     Some(_) => {
-      self.root_error(examples_pointer, "must be an object")
+      self.error_at(examples_pointer, "must be an object")
       None
     }
   }
@@ -209,9 +209,7 @@ fn Report::header_sample(
         None => None
       }
     Some(_) => {
-      self.root_error(
-        schema_pointer, "must be a schema, an object or a boolean",
-      )
+      self.error_at(schema_pointer, "must be a schema, an object or a boolean")
       None
     }
   }
@@ -235,7 +233,7 @@ fn Report::header_text(self : Report, value : Value?) -> String? {
           let text = StringBuilder()
           for i, item in items {
             guard scalar_text(item) is Some(item) else {
-              self.root_warning(
+              self.warning_at(
                 at,
                 "left out: a header cannot hold an array that holds \{kind_of(item)}",
               )
@@ -252,7 +250,7 @@ fn Report::header_text(self : Report, value : Value?) -> String? {
           match scalar_text(json) {
             Some(text) => (at, text)
             None => {
-              self.root_warning(
+              self.warning_at(
                 at,
                 "left out: a header cannot hold \{kind_of(json)}",
               )
@@ -262,7 +260,7 @@ fn Report::header_text(self : Report, value : Value?) -> String? {
       }
   }
   if !@http1.is_field_value(text) {
-    self.root_warning(at, "left out: a header cannot hold a control character")
+    self.warning_at(at, "left out: a header cannot hold a control character")
     return None
   }
   Some(text)

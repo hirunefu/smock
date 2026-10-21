@@ -39,11 +39,11 @@ priv enum Segment {
 /// or an empty `{}`, or holds `?` or `#`.
 fn Report::path_key(self : Report, pointer : String, key : String) -> Bool {
   if !key.has_prefix("/") {
-    self.root_error(pointer, "a path must start with /")
+    self.error_at(pointer, "a path must start with /")
     return false
   }
   if key.contains_char('?') || key.contains_char('#') {
-    self.root_error(
+    self.error_at(
       pointer, "a path must not hold ? or #: a query or a fragment is not part of it",
     )
     return false
@@ -53,16 +53,16 @@ fn Report::path_key(self : Report, pointer : String, key : String) -> Bool {
   for c in key {
     match c {
       '{' if open => {
-        self.root_error(pointer, "a path has an unbalanced { or }")
+        self.error_at(pointer, "a path has an unbalanced { or }")
         return false
       }
       '{' => open = true
       '}' if !open => {
-        self.root_error(pointer, "a path has an unbalanced { or }")
+        self.error_at(pointer, "a path has an unbalanced { or }")
         return false
       }
       '}' if previous == '{' => {
-        self.root_error(
+        self.error_at(
           pointer, "a path has an empty {}: a parameter needs a name",
         )
         return false
@@ -73,7 +73,7 @@ fn Report::path_key(self : Report, pointer : String, key : String) -> Bool {
     previous = c
   }
   if open {
-    self.root_error(pointer, "a path has an unbalanced { or }")
+    self.error_at(pointer, "a path has an unbalanced { or }")
     return false
   }
   true

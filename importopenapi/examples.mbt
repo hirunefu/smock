@@ -29,7 +29,7 @@ fn Report::examples(
       let payload = self.example_payload(document, media_pointer, key, value)
       first = Some({ example: Some(name), payload, })
     } else if !is_sendable(name) {
-      self.root_warning(
+      self.warning_at(
         at, "left out: no Stub selects this example, since a request cannot send its name in Smock-Example: a name must be non-empty, of visible ASCII characters and spaces, with no space at either end",
       )
     } else {
@@ -61,7 +61,7 @@ fn Report::example_value(
     return None
   }
   guard json is Object(example) else {
-    self.root_error(pointer, "must be an object")
+    self.error_at(pointer, "must be an object")
     return None
   }
   let serialized = match example.get("serializedValue") {
@@ -71,7 +71,7 @@ fn Report::example_value(
         Serialized(@definitions.child_pointer(pointer, "serializedValue"), text),
       )
     Some(_) => {
-      self.root_error(
+      self.error_at(
         @definitions.child_pointer(pointer, "serializedValue"),
         "must be a string",
       )
@@ -91,11 +91,11 @@ fn Report::example_value(
   }
   if value is None {
     if example.contains("externalValue") {
-      self.root_warning(
+      self.warning_at(
         pointer, "left out: smock does not read externalValue, and the example has no dataValue, value or serializedValue",
       )
     } else {
-      self.root_warning(
+      self.warning_at(
         pointer, "left out: the example has no dataValue, value or serializedValue",
       )
     }

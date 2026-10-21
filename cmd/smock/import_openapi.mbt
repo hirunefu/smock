@@ -1,60 +1,212 @@
 ///|
 /// Runs `smock import-openapi`: checks the output, reads the OpenAPI
-/// document, converts it into a Definition file and writes the file. Prints
-/// every problem to stdout, one per line, as `smock check` does, then a
-/// summary line: `wrote <file>: <n> Stubs from <m> operations, <w>
-/// warnings`, or `nothing written: <e> errors`. Returns the exit status: 0
-/// when the file was written, warnings or not, and 1 when nothing was
-/// written.
+/// document and the documents its references name, converts them into a
+/// Definition file and writes the file. Prints every problem to stdout, one
+/// per line, as `smock check` does, then a summary line: `wrote <file>: <n>
+/// Stubs from <m> operations, <w> warnings`, or `nothing written: <e>
+/// errors`. Returns the exit status: 0 when the file was written, warnings
+/// or not, 1 when nothing was written, and 2 for a document outside
+/// `--ref-dir`, a usage error printed on stderr.
 ///
 /// The output is checked before the document is read (see
 /// `refused_output`), so that a mistyped path never costs a hand-written
-/// file, and the refusal comes at once.
+/// file, and the refusal comes at once. The documents that references name
+/// are known only once read, so an output that is one of them is refused
+/// just before writing.
 async fn import_openapi(settings : @settings.ImportOpenapiSettings) -> Int {
+  let (ref_dir, document_dir) = real_directories(settings)
+  let name = settings.document_name_under(ref_dir~, document_dir~) catch {
+    err => {
+      eprintln("smock import-openapi: \{err.message()}")
+      return 2
+    }
+  }
   let output = settings.output
   if refused_output(settings) is Some(reason) {
     return nothing_written(output, reason)
   }
   let document = settings.document
-  let bytes = match read_document(document) {
+  let bytes = match
+    read_document(document, limit=@importopenapi.max_read_bytes + 1) {
     Ok(bytes) => bytes
     Err(reason) => return nothing_written(document, "cannot be read: \{reason}")
   }
-  let name = settings.document_name()
-  let conversion = @importopenapi.convert(
-    [(name, bytes)],
-    @importopenapi.Options(
-      root=name,
-      root_label=document,
-      mock=settings.mock,
-      hosts=settings.hosts,
-      declare_mock=settings.declare_mock,
-      output~,
-      base_path?=settings.base_path,
-    ),
+  let options = @importopenapi.Options(
+    root=name,
+    root_label=document,
+    ref_dir=settings.ref_dir_path(),
+    mock=settings.mock,
+    hosts=settings.hosts,
+    declare_mock=settings.declare_mock,
+    output~,
+    base_path?=settings.base_path,
   )
-  match conversion {
-    Failed(problems) => {
-      print_problems(problems)
-      let errors = problems.iter().filter(problem => problem.is_error()).count()
-      println("nothing written: \{errors} errors")
-      1
-    }
-    Converted(file~, problems~, stubs~, operations~) => {
-      if write_atomically(output, file, replace=settings.overwrite)
-        is Err(reason) {
-        // A problem with the output comes before the document's.
-        print_problem(output, "cannot be written: \{reason}")
-        print_problems(problems)
-        println("nothing written: 1 errors")
-        return 1
+  let converter = @importopenapi.Converter::new(options)
+  converter.give(name, bytes)
+  let (conversion, read) = converted(
+    converter,
+    options,
+    room=@importopenapi.max_read_bytes - bytes.length(),
+  )
+  guard conversion is Converted(file~, problems~, stubs~, operations~) else {
+    let problems = conversion.problems()
+    print_problems(problems)
+    let errors = problems.iter().filter(problem => problem.is_error()).count()
+    println("nothing written: \{errors} errors")
+    return 1
+  }
+  let refused = if is_read(output, read) {
+    Err(
+      "is one of the documents being imported, and smock import-openapi does not replace it with its own conversion",
+    )
+  } else {
+    write_atomically(output, file, replace=settings.overwrite).map_err(reason => {
+      "cannot be written: \{reason}"
+    })
+  }
+  if refused is Err(reason) {
+    // A problem with the output comes before the document's.
+    print_problem(output, reason)
+    print_problems(problems)
+    println("nothing written: 1 errors")
+    return 1
+  }
+  print_problems(problems)
+  println(
+    "wrote \{output}: \{stubs} Stubs from \{operations} operations, \{problems.length()} warnings",
+  )
+  0
+}
+
+///|
+/// Where `--ref-dir`, when it is given and names a directory, and the
+/// document's directory really are, once symlinks, `.` and `..` are
+/// resolved, or `None` for each that cannot be resolved. The document's
+/// name under `--ref-dir` is found from them.
+async fn real_directories(
+  settings : @settings.ImportOpenapiSettings,
+) -> (String?, String?) {
+  guard settings.ref_dir is Some(ref_dir) else { return (None, None) }
+  let is_directory = try @fs.kind(ref_dir) catch {
+    _ => false
+  } noraise {
+    kind => kind is Directory
+  }
+  let ref_dir = if is_directory { real_path(ref_dir) } else { None }
+  let document_dir = real_path(
+    match settings.document_directory() {
+      "" => "."
+      directory => directory
+    },
+  )
+  (ref_dir, document_dir)
+}
+
+///|
+/// The real path of `path`, once symlinks, `.` and `..` are resolved, or
+/// `None` when it cannot be resolved.
+async fn real_path(path : String) -> String? {
+  try @fs.realpath(path) catch {
+    _ => None
+  } noraise {
+    real => Some(real)
+  }
+}
+
+///|
+/// Whether the real path `real` is within the directory whose real path is
+/// `inside`, below it.
+fn within(real : String, inside : String) -> Bool {
+  real.has_prefix(under(inside))
+}
+
+///|
+/// What the real paths within the directory whose real path is `inside`
+/// start with: it, then `/`.
+fn under(inside : String) -> String {
+  if inside.has_suffix("/") {
+    inside
+  } else {
+    "\{inside}/"
+  }
+}
+
+///|
+/// Converts with `converter`, whose options are `options`, until it needs
+/// no more documents. Each round reads the documents it asks for, at most
+/// `room` bytes in all, or tells it why one cannot be read. Returns what it
+/// gave, and the real path of each document read for it.
+async fn converted(
+  converter : @importopenapi.Converter,
+  options : @importopenapi.Options,
+  room~ : Int,
+) -> (@importopenapi.Conversion, Array[String]) {
+  let read = []
+  let mut conversion = converter.convert()
+  guard conversion is Needs(_) else { return (conversion, read) }
+  // Where the directory that references are followed in really is, or why
+  // it cannot be found.
+  let directory = if options.ref_dir == "" { "." } else { options.ref_dir }
+  let inside = try @fs.realpath(directory) catch {
+    err => Err(@server.read_failure(err))
+  } noraise {
+    real => Ok(real)
+  }
+  let mut room = room
+  while conversion is Needs(names) {
+    for name in names {
+      // One byte more than the room, so that the converter sees the bound
+      // passed.
+      let limit = room.max(0) + 1
+      match read_referenced(options.path(name), inside, limit~) {
+        Ok((bytes, real)) => {
+          converter.give(name, bytes)
+          room -= bytes.length()
+          read.push(real)
+        }
+        Err(reason) => converter.give_unreadable(name, reason)
       }
-      print_problems(problems)
-      println(
-        "wrote \{output}: \{stubs} Stubs from \{operations} operations, \{problems.length()} warnings",
-      )
-      0
     }
+    conversion = converter.convert()
+  }
+  (conversion, read)
+}
+
+///|
+/// The bytes of the document at `path`, which a reference names, at most
+/// `limit` of them, and its real path; or why it cannot be read. It must be
+/// a regular file within `inside`, the real path of the directory that
+/// references are followed in, once symlinks are resolved.
+async fn read_referenced(
+  path : String,
+  inside : Result[String, String],
+  limit~ : Int,
+) -> Result[(Bytes, String), @importopenapi.Unreadable] {
+  let inside = match inside {
+    Ok(inside) => inside
+    Err(reason) => return Err(Other(reason))
+  }
+  let kind = @fs.kind(path) catch {
+    @os_error.OSError(_) as err if err.is_ENOENT() || err.is_ENOTDIR() =>
+      return Err(Missing)
+    err => return Err(Other(@server.read_failure(err)))
+  }
+  guard kind is Regular else { return Err(NotRegularFile) }
+  let real = @fs.realpath(path) catch {
+    err => return Err(Other(@server.read_failure(err)))
+  }
+  guard within(real, inside) else { return Err(SymlinkOutside) }
+  let bytes = read_at_most(path, limit) catch {
+    err => return Err(Other(@server.read_failure(err)))
+  }
+  Ok((bytes, real))
+}
+
+///|
+/// Whether `output` is one of the documents whose real paths are `read`.
+async fn is_read(output : String, read : Array[String]) -> Bool {
+  read.contains(@fs.realpath(output)) catch {
+    _ => false
   }
 }
 
@@ -82,9 +234,9 @@ fn nothing_written(file : String, message : String) -> Int {
 }
 
 ///|
-/// The bytes of the document at `path`, or why it cannot be read, such as
-/// `no such file`.
-async fn read_document(path : String) -> Result[Bytes, String] {
+/// The bytes of the document at `path`, at most `limit` of them, or why it
+/// cannot be read, such as `no such file`.
+async fn read_document(path : String, limit~ : Int) -> Result[Bytes, String] {
   let is_dir = try @fs.kind(path) catch {
     _ => false
   } noraise {
@@ -93,11 +245,27 @@ async fn read_document(path : String) -> Result[Bytes, String] {
   if is_dir {
     return Err("is a directory")
   }
-  try @fs.read_file(path).binary() catch {
+  try read_at_most(path, limit) catch {
     err => Err(@server.read_failure(err))
   } noraise {
     bytes => Ok(bytes)
   }
+}
+
+///|
+/// The first `limit` bytes of the file at `path`, or all of it when it is
+/// shorter, so that a document larger than the converter reads is never
+/// read whole.
+async fn read_at_most(path : String, limit : Int) -> Bytes {
+  let file = @fs.open(path, mode=ReadOnly)
+  defer file.close()
+  let buffer = @buffer.Buffer()
+  while buffer.length() < limit {
+    let max_len = (limit - buffer.length()).min(1024 * 1024)
+    guard file.read_some(max_len~) is Some(chunk) else { break }
+    buffer.write_bytes(chunk)
+  }
+  buffer.to_bytes()
 }
 
 ///|

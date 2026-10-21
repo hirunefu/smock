@@ -14,16 +14,24 @@ priv struct Document {
 }
 
 ///|
-/// Parses the root document and checks its version, or reports why it
-/// cannot be read. Then it reports the document-level parts that are left
-/// out.
-fn Report::document(self : Report, bytes : Bytes) -> Document? {
+/// The root document, once parsed, with its version checked, or `None`
+/// after reporting why it cannot be read. Then it reports the
+/// document-level parts that are left out.
+fn Report::document(self : Report, root : Content) -> Document? {
   let label = self.options.root_label
-  guard self.parsed(label, self.options.root, bytes) is Some(json) else {
-    return None
+  let json = match root {
+    Parsed(json) => json
+    Invalid(pointer~, message~) => {
+      self.error(label, pointer, message)
+      return None
+    }
+    Unread(reason) => {
+      self.error(label, "", "cannot be read: \{reason.to_string()}")
+      return None
+    }
   }
   guard json is Object(top) else {
-    self.root_error("", "must be an object")
+    self.error_at("", "must be an object")
     return None
   }
   guard self.version(top) is Some(openapi) else { return None }
@@ -39,51 +47,35 @@ fn Report::document(self : Report, bytes : Bytes) -> Document? {
 }
 
 ///|
-/// The tree of the document `name`, read by the parser its extension
-/// picks: `.yaml` and `.yml` as YAML 1.2, as OpenAPI recommends, with
+/// The document `name`, parsed by the parser its extension picks:
+/// `.yaml` and `.yml` as YAML 1.2, as OpenAPI recommends, with
 /// smock/yaml's mode for OpenAPI documents, and `.json` as JSON, where a
-/// repeated key is an error. Or `None`, after reporting why it cannot be
-/// read, in the document named `label`. The input must be UTF-8, and a
-/// leading byte order mark is skipped.
-fn Report::parsed(
-  self : Report,
-  label : String,
-  name : String,
-  bytes : Bytes,
-) -> Json? {
+/// repeated key is an error. Or why it cannot be parsed. The input must be
+/// UTF-8, and a leading byte order mark is skipped.
+fn parse(name : String, bytes : Bytes) -> Content {
   let yaml = name.has_suffix(".yaml") || name.has_suffix(".yml")
   if !yaml && !name.has_suffix(".json") {
-    self.error(
-      label, "", "an OpenAPI document's name ends in .json, .yaml or .yml",
+    return Invalid(
+      pointer="",
+      message="an OpenAPI document's name ends in .json, .yaml or .yml",
     )
-    return None
   }
   let text = @utf8.decode(bytes, ignore_bom=true) catch {
-    _ => {
-      self.error(label, "", "not valid UTF-8")
-      return None
-    }
+    _ => return Invalid(pointer="", message="not valid UTF-8")
   }
   if yaml {
     let json = @yaml.parse(text, openapi=true) catch {
-      ParseError(pointer~, message~) => {
-        self.error(label, pointer, message)
-        return None
-      }
+      ParseError(pointer~, message~) => return Invalid(pointer~, message~)
     }
-    return Some(json)
+    return Parsed(json)
   }
   let json = @json.parse(text) catch {
-    err => {
-      self.error(label, "", "not valid JSON: \{err}")
-      return None
-    }
+    err => return Invalid(pointer="", message="not valid JSON: \{err}")
   }
   if @definitions.first_duplicate_key(text) is Some(pointer) {
-    self.error(label, pointer, "duplicate key")
-    return None
+    return Invalid(pointer~, message="duplicate key")
   }
-  Some(json)
+  Parsed(json)
 }
 
 ///|
@@ -94,31 +86,31 @@ fn Report::parsed(
 fn Report::version(self : Report, top : Map[String, Json]) -> String? {
   match (top.get("openapi"), top.get("swagger")) {
     (Some(_), Some(_)) => {
-      self.root_error(
+      self.error_at(
         "/swagger", "a document has \"openapi\" or \"swagger\", not both",
       )
       None
     }
     (None, Some(String("2.0"))) => {
-      self.root_error(
+      self.error_at(
         "/swagger", "Swagger 2.0 is not supported: convert the document to OpenAPI 3.0 first",
       )
       None
     }
     (None, Some(_)) => {
-      self.root_error(
+      self.error_at(
         "/swagger", "not a version smock imports: it imports OpenAPI 3.0, 3.1 and 3.2",
       )
       None
     }
     (None, None) => {
-      self.root_error(
+      self.error_at(
         "", "needs \"openapi\", the OpenAPI version, such as \"3.1.0\"",
       )
       None
     }
     (Some(Number(_)), None) => {
-      self.root_error(
+      self.error_at(
         "/openapi", "must be a string such as \"3.1.0\": quote the version, and give its patch",
       )
       None
@@ -129,21 +121,21 @@ fn Report::version(self : Report, top : Map[String, Json]) -> String? {
           match (major, minor) {
             ("3", "0" | "1" | "2") => Some(text)
             _ => {
-              self.root_error(
+              self.error_at(
                 "/openapi", "not a version smock imports: it imports OpenAPI 3.0, 3.1 and 3.2",
               )
               None
             }
           }
         _ => {
-          self.root_error(
+          self.error_at(
             "/openapi", "must be a version 3.<minor>.<patch> of digits, such as \"3.1.0\"",
           )
           None
         }
       }
     (Some(_), None) => {
-      self.root_error("/openapi", "must be a string such as \"3.1.0\"")
+      self.error_at("/openapi", "must be a string such as \"3.1.0\"")
       None
     }
   }
@@ -159,7 +151,7 @@ fn Report::info(self : Report, top : Map[String, Json]) -> (String, String) {
     None => return ("", "")
     Some(Object(info)) => info
     Some(_) => {
-      self.root_error("/info", "must be an object")
+      self.error_at("/info", "must be an object")
       return ("", "")
     }
   }
@@ -167,7 +159,7 @@ fn Report::info(self : Report, top : Map[String, Json]) -> (String, String) {
     None => ""
     Some(String(title)) => title
     Some(_) => {
-      self.root_error("/info/title", "must be a string")
+      self.error_at("/info/title", "must be a string")
       ""
     }
   }
@@ -175,11 +167,11 @@ fn Report::info(self : Report, top : Map[String, Json]) -> (String, String) {
     None => ""
     Some(String(version)) => version
     Some(Number(_)) => {
-      self.root_error("/info/version", "must be a string: quote the version")
+      self.error_at("/info/version", "must be a string: quote the version")
       ""
     }
     Some(_) => {
-      self.root_error("/info/version", "must be a string")
+      self.error_at("/info/version", "must be a string")
       ""
     }
   }
@@ -198,7 +190,7 @@ fn is_digits(s : StringView) -> Bool {
 fn Report::left_out_parts(self : Report, document : Document) -> Unit {
   if document.top.get("webhooks") is Some(Object(webhooks)) &&
     !webhooks.is_empty() {
-    self.root_warning(
+    self.warning_at(
       "/webhooks", "webhooks are not imported: they are requests the API sends, not ones it answers",
     )
   }
