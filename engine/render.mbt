@@ -235,12 +235,23 @@ pub fn Engine::render(
     (None, _) => fresh_seed()
   }
   let incoming = Incoming::new(sample.to_request())
-  let (plan, template_error) = respond(
-    stub,
-    incoming,
-    now~,
-    draw=@prng.Generator(seed).uint64(),
-  )
+  // The steps of the match decision that build the response, as for a
+  // request: the one draw, the Variables (none yet), the pick, then
+  // rendering and planning. No Scenario moves and no Fault is decided.
+  let draw = @prng.Generator(seed).uint64()
+  let response = stub.responses[pick_response(stub)].response
+  let (plan, template_error) = match response.template {
+    None => (stub_response(response), None)
+    Some(template) =>
+      respond(
+        stub.id,
+        response.status,
+        template,
+        incoming,
+        now~,
+        rand=@template.helper_generator(draw),
+      )
+  }
   {
     stub: stub.id,
     mock: stub.mock,
