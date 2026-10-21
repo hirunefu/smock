@@ -42,3 +42,20 @@ test "split advances the generator once and seeds a new one from that output" {
     ),
   )
 }
+
+///|
+test "below draws uniformly below a count, drawing again for the outputs that would favour low values" {
+  // Seed 42 outputs 1546998764402558742, 6990951692964543102,
+  // 12544586762248559009, then 17057574109182124193 (the test above).
+  let g = @prng.Generator(42)
+  inspect(g.below(10UL), content="2")
+  // For 2^63 + 1, the outputs below 2^64 mod (2^63 + 1) = 2^63 - 1 are
+  // drawn again: the next two are, and the third gives
+  // 12544586762248559009 - (2^63 + 1).
+  let g = @prng.Generator(42)
+  inspect(
+    "\{g.below(9223372036854775809UL)} then \{g.uint64()}",
+    content="3321214725393783200 then 17057574109182124193",
+  )
+  inspect(@prng.Generator(42).below(1UL), content="0")
+}

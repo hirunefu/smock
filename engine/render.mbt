@@ -177,6 +177,10 @@ pub(all) struct Rendering {
   /// `fault.seed`, or else a fresh one. Given again, it repeats the
   /// rendering.
   seed : UInt64
+  /// The index of the response rendered among the Stub's `responses`,
+  /// counted from 0: the one asked for, or else the one the seed picks.
+  /// `None` for a Stub with `response`.
+  response_index : Int?
   status : Int
   /// The header fields smock sends, in order, without those that depend on
   /// the connection, such as Content-Length.
@@ -192,15 +196,29 @@ pub(all) struct Rendering {
 } derive(Debug)
 
 ///|
-/// No Stub from the Definition files has this ID.
-pub suberror UnknownStub {
+/// Why a Stub cannot be rendered.
+pub suberror RenderFailure {
+  /// No Stub from the Definition files has this ID.
   UnknownStub(String)
+  /// The Stub `stub` has no response at `index`: it has `count`, with the
+  /// indexes 0 to `count - 1`.
+  UnknownResponse(stub~ : String, index~ : Int, count~ : Int)
 } derive(Debug)
 
 ///|
-pub fn UnknownStub::message(self : UnknownStub) -> String {
-  let UnknownStub(id) = self
-  "no Stub from the Definition files has the ID \{id.escape()}"
+pub fn RenderFailure::message(self : RenderFailure) -> String {
+  match self {
+    UnknownStub(id) =>
+      "no Stub from the Definition files has the ID \{id.escape()}"
+    UnknownResponse(stub~, index~, count~) => {
+      let indexes = if count == 1 {
+        "it has one response, whose index is 0"
+      } else {
+        "its responses run from 0 to \{count - 1}"
+      }
+      "the Stub \{stub.escape()} has no response \{index}: \{indexes}"
+    }
+  }
 }
 
 ///|
@@ -217,6 +235,9 @@ pub fn UnknownStub::message(self : UnknownStub) -> String {
 ///   matched request of a Stub with `fault.seed` set to `seed` gets.
 ///   Without it, the rendering uses the Stub's `fault.seed`, or, when it
 ///   has none, `fresh_seed()`.
+/// - `response` is the index of the response to render, counted from 0.
+///   Without it, the rendering shows the one the seed picks. A Stub with
+///   `response` takes 0 only.
 ///
 /// Rendering decides no Fault, and changes nothing in the engine: no
 /// generator advances.
@@ -226,9 +247,14 @@ pub fn Engine::render(
   sample : SampleRequest,
   now~ : Int64,
   seed? : UInt64,
+  response? : Int,
   fresh_seed~ : () -> UInt64,
-) -> Rendering raise UnknownStub {
+) -> Rendering raise RenderFailure {
   guard self.file_stub(id) is Some(stub) else { raise UnknownStub(id) }
+  let count = stub.responses.length()
+  if response is Some(index) && (index < 0 || index >= count) {
+    raise UnknownResponse(stub=stub.id, index~, count~)
+  }
   let seed = match (seed, stub.fault) {
     (Some(seed), _) => seed
     (None, Some({ seed: Some(seed), .. })) => seed
@@ -239,7 +265,13 @@ pub fn Engine::render(
   // request: the one draw, the Variables (none yet), the pick, then
   // rendering and planning. No Scenario moves and no Fault is decided.
   let draw = @prng.Generator(seed).uint64()
-  let response = stub.responses[pick_response(stub)].response
+  let response_index = match (response, stub.total_weight) {
+    // A Stub with `response` shows no index, whichever it was asked for.
+    (_, None) => None
+    (Some(index), Some(_)) => Some(index)
+    (None, Some(_)) => pick_response(stub, draw)
+  }
+  let response = stub.responses[response_index.unwrap_or(0)].response
   let (plan, template_error) = match response.template {
     None => (stub_response(response), None)
     Some(template) =>
@@ -257,6 +289,7 @@ pub fn Engine::render(
     mock: stub.mock,
     time: now,
     seed,
+    response_index,
     status: plan.status,
     headers: plan.headers,
     body: plan.body,
@@ -293,6 +326,9 @@ pub impl ToJson for Rendering with fn to_json(self) {
     "mock": Json::string(self.mock),
     "time": Json::string(@log.format_time(self.time)),
     "seed": Json::number(self.seed.to_double()),
+    "responseIndex": self.response_index.map_or(Json::null(), index => {
+      Json::number(index.to_double())
+    }),
     "response": {
       "status": Json::number(self.status.to_double()),
       "headers": Json::array(

@@ -138,6 +138,7 @@ async test "smock render prints the named Stub's status, headers and body for a 
         #|  "mock": "users",
         #|  "time": "<time>",
         #|  "seed": <seed>,
+        #|  "responseIndex": null,
         #|  "response": {
         #|    "status": 201,
         #|    "headers": [
@@ -195,6 +196,7 @@ async test "smock render still renders the Stub when the sample fails its condit
         #|  "mock": "users",
         #|  "time": "<time>",
         #|  "seed": <seed>,
+        #|  "responseIndex": null,
         #|  "response": {
         #|    "status": 201,
         #|    "headers": [
@@ -420,9 +422,9 @@ async test "the Admin render operation answers with the rendering, the failed co
         "\{matched.status}\n\{masked(matched.body)}\n\{failed.status}\n\{masked(failed.body)}",
         content=(
           #|200
-          #|{"stub":"get-user","mock":"users","time":"<time>","seed":<seed>,"response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"templateError":null,"failed":[],"warnings":[]}
+          #|{"stub":"get-user","mock":"users","time":"<time>","seed":<seed>,"responseIndex":null,"response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"templateError":null,"failed":[],"warnings":[]}
           #|200
-          #|{"stub":"create-user","mock":"users","time":"<time>","seed":<seed>,"response":{"status":201,"headers":[{"name":"Location","value":"/users/7"},{"name":"Set-Cookie","value":"a=1"},{"name":"Set-Cookie","value":"b=2"},{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":7}","size":8,"truncated":false},"events":null},"templateError":null,"failed":[{"condition":"query:dry","expected":"yes","actual":["no"]},{"condition":"header:x-api-key","expected":"secret","actual":[]},{"condition":"body","expected":{"json":{"name":"Zoë"}},"actual":[""]}],"warnings":[]}
+          #|{"stub":"create-user","mock":"users","time":"<time>","seed":<seed>,"responseIndex":null,"response":{"status":201,"headers":[{"name":"Location","value":"/users/7"},{"name":"Set-Cookie","value":"a=1"},{"name":"Set-Cookie","value":"b=2"},{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":7}","size":8,"truncated":false},"events":null},"templateError":null,"failed":[{"condition":"query:dry","expected":"yes","actual":["no"]},{"condition":"header:x-api-key","expected":"secret","actual":[]},{"condition":"body","expected":{"json":{"name":"Zoë"}},"actual":[""]}],"warnings":[]}
         ),
       )
     })
@@ -743,7 +745,7 @@ async test "smock render --help names its argument, its inputs and the settings 
       #|status 0
       #|Usage: smock render --dir <dir> --request <request> [options] <stub-id>
       #|
-      #|Render a Stub's response for a sample request, as the Admin API render operation does, and print it as JSON: the time and the seed it used, the status, the headers and the body or events, rendered from the Stub's templates when it has them, and the Stub's conditions the sample fails, with expected and actual values. Exits with status 1 if the definitions directory is invalid, no Stub has the ID, or the sample request is not valid.
+      #|Render a Stub's response for a sample request, as the Admin API render operation does, and print it as JSON: the time and the seed it used, the status, the headers and the body or events, rendered from the Stub's templates when it has them, and the Stub's conditions the sample fails, with expected and actual values. A Stub with responses renders the response the seed picks, or the one --response names, and the output shows its index. Exits with status 1 if the definitions directory is invalid, no Stub has the ID, the Stub has no response at the index given, or the sample request is not valid.
       #|
       #|Arguments:
       #|  stub-id  The ID of a Stub from the Definition files.
@@ -756,7 +758,129 @@ async test "smock render --help names its argument, its inputs and the settings 
       #|  --request <request>              A file that holds the sample request as JSON: {method, path, query, headers, body, session}, each optional.
       #|  --time <time>                    The time the sample request is received at, as an RFC 3339 date-time such as 2026-10-12T14:30:05Z. Default: now.
       #|  --seed <seed>                    The seed of the random source the rendering draws from, from 0 to 9007199254740991. Default: the Stub's fault.seed, or a fresh seed when it has none.
+      #|  --response <response>            The index of the response to render among the Stub's responses, from 0. A Stub with response takes 0 only. Default: the response the seed picks.
       #|
     ),
   )
+}
+
+///|
+/// A Mock `market` with a Stub of two weighted responses and a Stub with
+/// `response`, each with its own seed, so that every rendering of them is
+/// the same.
+let weighted_definitions : Array[(String, String)] = [
+  (
+    "prices.json",
+    (
+      #|{ "mocks": [{ "name": "market" }],
+      #|  "stubs": [
+      #|    { "id": "get-prices", "mock": "market", "request": { "path": "/prices" },
+      #|      "responses": [
+      #|        { "weight": 9, "status": 200, "json": { "price": 101 } },
+      #|        { "weight": 1, "status": 503, "headers": { "Retry-After": "5" },
+      #|          "template": true, "json": { "error": "unavailable", "id": "${fake.uuid()}" } } ],
+      #|      "fault": { "seed": 7 } },
+      #|    { "id": "plain", "mock": "market", "request": { "path": "/plain" },
+      #|      "response": { "status": 204 }, "fault": { "seed": 3 } } ] }
+    ),
+  ),
+  ("samples/get.json", "{ \"path\": \"/prices\" }"),
+]
+
+///|
+/// The seed, the response index and the response of a rendering, as one
+/// line of JSON.
+fn picked(json : Json) -> String {
+  guard json is Object(members) else { return "not an object" }
+  let out : Map[String, Json] = Map([])
+  for key in ["seed", "responseIndex", "response"] {
+    out[key] = members.get(key).unwrap_or(Json::string("absent"))
+  }
+  Json::object(out).stringify()
+}
+
+///|
+async test "smock render --response and the Admin render operation's response parameter render the same given response, and refuse an index the Stub does not have" {
+  with_definitions(weighted_definitions, dir => {
+    let sample = "\{dir}/samples/get.json"
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let out = []
+      for
+        case in [
+          ("get-prices", None),
+          ("get-prices", Some("0")),
+          ("get-prices", Some("1")),
+          ("plain", None),
+          ("plain", Some("0")),
+        ] {
+        let (id, index) = case
+        let (args, query) = match index {
+          Some(index) => (["--response=\{index}"], "?response=\{index}")
+          None => ([], "")
+        }
+        let (status, stdout, stderr) = render_output(
+          ["--dir", dir, id, "--request", sample, ..args],
+        )
+        let response = smock.render(id, sample~, query~)
+        let from_cli = picked(@json.parse(stdout))
+        let from_admin = picked(response.json())
+        out.push(
+          "\{[id, ..args].join(" ")}: render \{status}, admin \{response.status}, same: \{from_cli == from_admin}\{stderr}",
+        )
+        out.push("  \{from_cli}")
+      }
+      for
+        case in [
+          ("get-prices", "2"),
+          ("plain", "1"),
+          ("get-prices", "100"),
+          ("get-prices", "-1"),
+          ("get-prices", "x"),
+        ] {
+        let (id, index) = case
+        out.push(
+          render(["--dir", dir, id, "--request", sample, "--response=\{index}"])
+          .trim_end(chars="\n")
+          .to_owned(),
+        )
+        let response = smock.render(id, sample~, query="?response=\{index}")
+        out.push("admin: \{response.status} \{response.body}")
+      }
+      inspect(
+        out.join("\n"),
+        content=(
+          #|get-prices: render 0, admin 200, same: true
+          #|  {"seed":7,"responseIndex":1,"response":{"status":503,"headers":[{"name":"Retry-After","value":"5"},{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"error\":\"unavailable\",\"id\":\"491faadb-213a-4ae9-b52a-e618828349a6\"}","size":67,"truncated":false},"events":null}}
+          #|get-prices --response=0: render 0, admin 200, same: true
+          #|  {"seed":7,"responseIndex":0,"response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"price\":101}","size":13,"truncated":false},"events":null}}
+          #|get-prices --response=1: render 0, admin 200, same: true
+          #|  {"seed":7,"responseIndex":1,"response":{"status":503,"headers":[{"name":"Retry-After","value":"5"},{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"error\":\"unavailable\",\"id\":\"491faadb-213a-4ae9-b52a-e618828349a6\"}","size":67,"truncated":false},"events":null}}
+          #|plain: render 0, admin 200, same: true
+          #|  {"seed":3,"responseIndex":null,"response":{"status":204,"headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false},"events":null}}
+          #|plain --response=0: render 0, admin 200, same: true
+          #|  {"seed":3,"responseIndex":null,"response":{"status":204,"headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false},"events":null}}
+          #|status 1
+          #|stderr:
+          #|smock render: the Stub "get-prices" has no response 2: its responses run from 0 to 1
+          #|admin: 400 {"error":"invalid_request","message":"the Stub \"get-prices\" has no response 2: its responses run from 0 to 1","warnings":[]}
+          #|status 1
+          #|stderr:
+          #|smock render: the Stub "plain" has no response 1: it has one response, whose index is 0
+          #|admin: 400 {"error":"invalid_request","message":"the Stub \"plain\" has no response 1: it has one response, whose index is 0","warnings":[]}
+          #|status 2
+          #|stderr:
+          #|smock render: invalid value "100" for --response: must be an integer from 0 to 99
+          #|admin: 400 {"error":"invalid_request","message":"the response query parameter must be an integer from 0 to 99","warnings":[]}
+          #|status 2
+          #|stderr:
+          #|smock render: invalid value "-1" for --response: must be an integer from 0 to 99
+          #|admin: 400 {"error":"invalid_request","message":"the response query parameter must be an integer from 0 to 99","warnings":[]}
+          #|status 2
+          #|stderr:
+          #|smock render: invalid value "x" for --response: must be an integer from 0 to 99
+          #|admin: 400 {"error":"invalid_request","message":"the response query parameter must be an integer from 0 to 99","warnings":[]}
+        ),
+      )
+    })
+  })
 }

@@ -435,8 +435,9 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
 - `POST /v1/stubs/{id}/render` renders a Stub's response for the sample
   request in the body, against the definitions the replica serves now, as
   `smock render` does (below). The optional `time` and `seed` query
-  parameters give the time (RFC 3339) and the seed of the random source;
-  the rendering shows those it used.
+  parameters give the time (RFC 3339) and the seed of the random source,
+  and `response` the index of one of a Stub's `responses` to render; the
+  rendering shows those it used.
 - `/v1/mocks/{mock}/stubs` adds, lists and deletes Ephemeral Stubs, and
   `POST /v1/reset` clears them, Journal entries and Scenario state
   ([below](#sessions-and-ephemeral-stubs)).
@@ -517,12 +518,15 @@ meets them all). The Stub is rendered even when the sample fails them, and a
 [templated](docs/definition-files.md#templates) response is rendered for the
 sample. `--time` (RFC 3339) and `--seed` fix the clock and the random source
 of the rendering; without a seed, it uses the Stub's `fault.seed`, or a
-fresh one. The rendering shows the `time` and the `seed` it used, so it can
-be repeated exactly, and a template that fails for the sample shows the 500
-a request would get and its `templateError`. An invalid definitions
-directory prints the messages `smock check` prints, and it, an unknown Stub
-ID and a sample that cannot be read or is not valid exit with status 1, with
-the problem on stderr.
+fresh one. A Stub with [`responses`](docs/definition-files.md#several-responses)
+renders the one the seed picks, and `--response <i>` renders the one at
+index `i`, from 0. The rendering shows the `time`, the `seed` and the
+`responseIndex` it used, so it can be repeated exactly, and a template that
+fails for the sample shows the 500 a request would get and its
+`templateError`. An invalid definitions directory prints the messages
+`smock check` prints, and it, an unknown Stub ID, an index the Stub has no
+response at, and a sample that cannot be read or is not valid exit with
+status 1, with the problem on stderr.
 
 [docs/definition-files.md](docs/definition-files.md) describes the format:
 how Stubs match requests (method, path, query parameters, headers, cookies
@@ -662,7 +666,9 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   Stub, so that equal IDs cannot be confused; the
   [Scenario](docs/definition-files.md#seeing-what-moved) move the Stub
   made, as `scenario`, with its name and the states it moved from and to;
-  the status, or the connection Fault; when the request was received and
+  the index of the response the Stub gave among its
+  [`responses`](docs/definition-files.md#several-responses), as
+  `responseIndex`; the status, or the connection Fault; when the request was received and
   how long the response took; and the digest of the definition set that
   answered. A request for a Host that no Mock answers is recorded too,
   with no Mock; one the HTTP/1.1 codec rejects (400, 413, 431, 501 or 505)

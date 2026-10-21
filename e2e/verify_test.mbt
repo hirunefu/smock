@@ -280,6 +280,7 @@ async test "the unmatched requests list the calling Session's requests that no S
             "stub": Json::null(),
             "stubSource": Json::null(),
             "scenario": Json::null(),
+            "responseIndex": Json::null(),
             "nearMiss": {
               "stub": "get-user",
               "stubSource": "file",
@@ -322,6 +323,7 @@ async test "the unmatched requests list the calling Session's requests that no S
             "stub": Json::null(),
             "stubSource": Json::null(),
             "scenario": Json::null(),
+            "responseIndex": Json::null(),
             "nearMiss": Json::null(),
             "status": 404,
             "fault": Json::null(),

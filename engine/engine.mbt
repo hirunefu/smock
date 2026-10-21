@@ -431,6 +431,7 @@ pub fn Engine::handle(
     }
   }
   let mut scenario : ScenarioMove? = None
+  let mut response_index = None
   let mut template_error = None
   let mut near_miss = None
   let plan : ResponsePlan = match matched {
@@ -457,15 +458,17 @@ pub fn Engine::handle(
       }
       // 2. The one draw. Every matched request takes exactly one output
       //    from its Stub's source, whatever it then draws: the Fault
-      //    decisions draw from a generator seeded with it, and the helpers
-      //    from the request's helper generator, made from it once something
-      //    is rendered.
+      //    decisions draw from a generator seeded with it, the pick from
+      //    one of its own, and the helpers from the request's helper
+      //    generator, made from it once something is rendered.
       let draw = generator.unwrap_or(rand).uint64()
       // 3. The Variables: here their values are to be rendered, drawing
       //    from the helper generator first, and written. No Stub sets any
       //    yet.
-      // 4. The pick: the response the request gets.
-      let response = stub.responses[pick_response(stub)].response
+      // 4. The pick: the response the request gets. A Stub with `response`
+      //    has one, and draws nothing more.
+      response_index = pick_response(stub, draw)
+      let response = stub.responses[response_index.unwrap_or(0)].response
       // 5. Rendering and planning: the response as written, or rendered
       //    from its templates.
       let plan = match response.template {
@@ -540,6 +543,7 @@ pub fn Engine::handle(
         resolution~,
         matched=source,
         scenario~,
+        response_index~,
         near_miss~,
         plan~,
         template_error~,
