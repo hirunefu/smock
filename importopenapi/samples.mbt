@@ -55,10 +55,32 @@ let format_samples : Map[String, String] = {
 }
 
 ///|
-/// The names of the JSON Schema types.
-let type_names : Array[String] = [
-  "null", "boolean", "object", "array", "number", "integer", "string",
-]
+/// A JSON Schema type.
+priv enum SchemaType {
+  Null
+  Boolean
+  Object
+  Array
+  Number
+  Integer
+  String
+}
+
+///|
+/// The JSON Schema type that `name` names, such as `"string"`, or `None`
+/// when it names none.
+fn schema_type(name : String) -> SchemaType? {
+  match name {
+    "null" => Some(Null)
+    "boolean" => Some(Boolean)
+    "object" => Some(Object)
+    "array" => Some(Array)
+    "number" => Some(Number)
+    "integer" => Some(Integer)
+    "string" => Some(String)
+    _ => None
+  }
+}
 
 ///|
 /// The keywords that give a schema's sample as written, in the order they
@@ -260,7 +282,7 @@ fn Sampler::sample(
   depth : Int,
 ) -> Json? raise Passed {
   let merged = Merged::new()
-  self.merge(merged, pointer, json, false)
+  self.merge(merged, pointer, json, branch=false)
   self.merged_sample(merged, depth)
 }
 
@@ -269,16 +291,16 @@ fn Sampler::sample(
 /// schema itself, then its branches: each of `allOf`, in order, then the
 /// branch that `oneOf` takes, then the one that `anyOf` takes. `oneOf` and
 /// `anyOf` take their first branch that is neither only null nor `false`,
-/// which allows no value; when each branch is only null or `false`, the
-/// sample is null if one is only null, and else there is no value. `true`
-/// adds nothing, and `false`, as the schema or in `allOf`, leaves no
-/// value.
+/// which allows no value, as written or at the end of its `$ref`s; when
+/// each branch is only null or `false`, the sample is null if one is only
+/// null, and else there is no value. `true` adds nothing, and `false`, as
+/// the schema or in `allOf`, leaves no value.
 fn Sampler::merge(
   self : Sampler,
   merged : Merged,
   pointer : String,
   json : Json,
-  branch : Bool,
+  branch~ : Bool,
 ) -> Unit {
   let schema = match json {
     Object(schema) => schema
@@ -292,7 +314,7 @@ fn Sampler::merge(
   // beside it are ignored.
   if self.v30 && schema.contains("$ref") {
     if self.referenced(merged, pointer, schema) is Some(target) {
-      self.merge(merged, target.pointer, target.json, branch)
+      self.merge(merged, target.pointer, target.json, branch~)
     }
     return
   }
@@ -306,7 +328,7 @@ fn Sampler::merge(
   // From 3.1, the schema a `$ref` names is merged with the keywords beside
   // it, which come first, as part of the same schema.
   if self.referenced(merged, pointer, schema) is Some(target) {
-    self.merge(merged, target.pointer, target.json, branch)
+    self.merge(merged, target.pointer, target.json, branch~)
   }
   let all_of = @definitions.child_pointer(pointer, "allOf")
   match schema.get("allOf") {
@@ -315,13 +337,13 @@ fn Sampler::merge(
       for i, json in branches {
         let at = @definitions.child_pointer(all_of, i.to_string())
         if self.is_schema(at, json) {
-          self.merge(merged, at, json, true)
+          self.merge(merged, at, json, branch=true)
         }
       }
     Some(_) => self.report.warning_at(all_of, "ignored: must be an array")
   }
   for keyword in ["oneOf", "anyOf"] {
-    let one_of = @definitions.child_pointer(pointer, keyword)
+    let branches_pointer = @definitions.child_pointer(pointer, keyword)
     match schema.get(keyword) {
       None => ()
       Some(Array(branches)) => {
@@ -329,19 +351,20 @@ fn Sampler::merge(
         let mut nevers = false
         let mut taken = false
         for i, json in branches {
-          let at = @definitions.child_pointer(one_of, i.to_string())
+          let at = @definitions.child_pointer(branches_pointer, i.to_string())
           if !self.is_schema(at, json) {
             continue
           }
-          if json is False {
+          let target = self.branch_target(at, json)
+          if target is False {
             nevers = true
             continue
           }
-          if is_only_null(json) {
+          if is_only_null(json) || is_only_null(target) {
             nulls = true
             continue
           }
-          self.merge(merged, at, json, true)
+          self.merge(merged, at, json, branch=true)
           taken = true
           break
         }
@@ -351,9 +374,46 @@ fn Sampler::merge(
           merged.never = true
         }
       }
-      Some(_) => self.report.warning_at(one_of, "ignored: must be an array")
+      Some(_) =>
+        self.report.warning_at(branches_pointer, "ignored: must be an array")
     }
   }
+}
+
+///|
+/// The schema that the `oneOf` or `anyOf` branch `json` at `pointer`
+/// stands for, to tell whether it is only null or `false`: the schema at
+/// the end of its chain of `$ref`s, or `json` itself when it has no `$ref`,
+/// or when a `$ref` in the chain cannot be followed, lies under a `$id`,
+/// or leads back into the chain. Nothing is reported here, and nothing is
+/// marked as being generated: a branch that is merged reports its own
+/// problems then.
+fn Sampler::branch_target(
+  self : Sampler,
+  pointer : String,
+  json : Json,
+) -> Json {
+  let mark = self.report.mark()
+  let chain = []
+  let mut pointer = pointer
+  let mut target = json
+  while target is Object(schema) &&
+        schema.get("$ref") is Some(String(reference)) {
+    if chain.contains(pointer) || self.under_id(pointer) {
+      target = json
+      break
+    }
+    chain.push(pointer)
+    let at = @definitions.child_pointer(pointer, "$ref")
+    guard self.report.target(self.document, at, reference) is Some(part) else {
+      target = json
+      break
+    }
+    pointer = part.pointer
+    target = part.json
+  }
+  self.report.rollback(mark)
+  target
 }
 
 ///|
@@ -412,16 +472,7 @@ fn Sampler::under_id(self : Sampler, pointer : String) -> Bool {
   let mut at = place_in(number, "")
   let mut found = false
   for key in keys {
-    let value = match json {
-      Object(object) => object.get(key)
-      Array(items) =>
-        match array_index(key) {
-          Some(i) if i < items.length() => Some(items[i])
-          _ => None
-        }
-      _ => None
-    }
-    guard value is Some(value) else { break }
+    guard step(json, key) is Some(value) else { break }
     at = @definitions.child_pointer(at, key)
     json = value
     if value is Object(schema) &&
@@ -489,13 +540,13 @@ fn Sampler::merged_sample(
     return Some(value)
   }
   match self.type_of(merged) {
-    "boolean" => Some(self.charged(Json::boolean(true)))
-    "number" => Some(self.charged(self.number(merged, false).to_json()))
-    "integer" => Some(self.charged(self.number(merged, true).to_json()))
-    "string" => Some(self.string(merged))
-    "array" | "object" if depth >= max_sample_depth =>
+    Boolean => Some(self.charged(Json::boolean(true)))
+    Number => Some(self.charged(self.number(merged, integer=false).to_json()))
+    Integer => Some(self.charged(self.number(merged, integer=true).to_json()))
+    String => Some(self.string(merged))
+    Array | Object if depth >= max_sample_depth =>
       Some(self.charged(Json::null()))
-    "array" | "object" as kind => {
+    Array | Object as kind => {
       // The schemas merged into it are being generated until its members
       // are.
       let held = self.generating.length()
@@ -503,7 +554,7 @@ fn Sampler::merged_sample(
         self.generating.push(layer.pointer)
       }
       self.generating.append(merged.refs)
-      let sample = if kind == "array" {
+      let sample = if kind is Array {
         self.array(merged, depth)
       } else {
         self.object(merged, depth)
@@ -511,7 +562,7 @@ fn Sampler::merged_sample(
       self.generating.truncate(held)
       Some(sample)
     }
-    _ => Some(self.charged(Json::null()))
+    Null => Some(self.charged(Json::null()))
   }
 }
 
@@ -530,7 +581,7 @@ fn Sampler::value(self : Sampler, merged : Merged) -> (String, Json)? {
       guard layer.schema.get(keyword) is Some(value) else { continue }
       if layer.branch {
         if object is None {
-          object = Some(self.type_of(merged) == "object")
+          object = Some(self.type_of(merged) is Object)
         }
         // The layers after a branch are branches too.
         if object is Some(true) {
@@ -630,43 +681,54 @@ fn nests_deeper(json : Json, levels : Int) -> Bool {
 /// array, and `null` when it is the only one. Without a type, the one the
 /// keywords of any layer imply, tried in this order: object, array,
 /// integer, number, then string; else `null`.
-fn Sampler::type_of(self : Sampler, merged : Merged) -> String {
+fn Sampler::type_of(self : Sampler, merged : Merged) -> SchemaType {
   for layer in merged.layers {
-    match layer.schema.get("type") {
-      None => ()
-      Some(String(name)) if type_names.contains(name) => return name
-      Some(Array(names)) if names.length() > 0 &&
-        names
-        .iter()
-        .all(name => name is String(name) && type_names.contains(name)) => {
-        for name in names {
-          if name is String(name) && name != "null" {
-            return name
-          }
-        }
-        return "null"
-      }
-      Some(_) =>
-        self.report.warning_at(
-          @definitions.child_pointer(layer.pointer, "type"),
-          "ignored: must be a type, such as \"string\", or a non-empty array of types",
-        )
+    guard layer.schema.get("type") is Some(written) else { continue }
+    if type_named(written) is Some(kind) {
+      return kind
     }
+    self.report.warning_at(
+      @definitions.child_pointer(layer.pointer, "type"),
+      "ignored: must be a type, such as \"string\", or a non-empty array of types",
+    )
   }
   let format = self.format(merged)
   if merged.has_any(object_keywords) {
-    "object"
+    Object
   } else if merged.has_any(array_keywords) {
-    "array"
+    Array
   } else if format is Some("int32" | "int64") {
-    "integer"
+    Integer
   } else if format is Some("float" | "double") ||
     merged.has_any(number_keywords) {
-    "number"
+    Number
   } else if format is Some(_) || merged.has_any(string_keywords) {
-    "string"
+    String
   } else {
-    "null"
+    Null
+  }
+}
+
+///|
+/// The type that `json`, a schema's `type`, gives: the type it names, or,
+/// for a non-empty array of names, the first other than `null`, and `null`
+/// when it is the only one. `None` when it is neither.
+fn type_named(json : Json) -> SchemaType? {
+  match json {
+    String(name) => schema_type(name)
+    Array(names) if names.length() > 0 => {
+      let mut found : SchemaType = Null
+      for name in names {
+        guard name is String(name) && schema_type(name) is Some(kind) else {
+          return None
+        }
+        if found is Null {
+          found = kind
+        }
+      }
+      Some(found)
+    }
+    _ => None
   }
 }
 
@@ -916,7 +978,7 @@ fn Sampler::object(
         own_write_only = true
         break
       }
-      self.merge(property, at, json, property.layers.length() > 0)
+      self.merge(property, at, json, branch=property.layers.length() > 0)
       schemas = true
     }
     if !schemas || own_write_only {
@@ -980,20 +1042,7 @@ fn compact_size(json : Json, limit : Int) -> Int {
     Null | True => 4
     False => 5
     Number(n, repr~) => @template.number_text(n, repr).length()
-    String(s) => {
-      let mut size = 2
-      for c in s {
-        if size > limit {
-          break
-        }
-        size += match c {
-          '"' | '\\' | '\n' | '\r' | '\t' | '\b' | '\u{0c}' => 2
-          _ if c < ' ' => 6
-          _ => char_bytes(c)
-        }
-      }
-      size
-    }
+    String(s) => @template.json_string_bytes(s, limit~)
     Array(items) => {
       let mut size = if items.is_empty() { 2 } else { 1 + items.length() }
       for item in items {
@@ -1010,7 +1059,7 @@ fn compact_size(json : Json, limit : Int) -> Int {
         if size > limit {
           break
         }
-        size += compact_size(Json::string(name), limit - size) + 1
+        size += @template.json_string_bytes(name, limit=limit - size) + 1
         size += compact_size(value, limit - size)
       }
       size

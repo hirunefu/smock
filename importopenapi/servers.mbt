@@ -103,39 +103,25 @@ fn Report::expanded(
       return None
     }
   }
-  let expanded = StringBuilder()
-  let name = StringBuilder()
-  let mut in_name = false
-  let mut known = true
-  for c in url {
-    if !in_name {
-      match c {
-        '{' => {
-          in_name = true
-          name.reset()
-        }
-        '}' => {
-          self.error_at(url_pointer, "a server URL has an unbalanced { or }")
-          return None
-        }
-        _ => expanded.write_char(c)
-      }
-      continue
+  let pieces = match template_pieces(url) {
+    Ok(pieces) => pieces
+    Err(Unbalanced) => {
+      self.error_at(url_pointer, "a server URL has an unbalanced { or }")
+      return None
     }
-    match c {
-      '{' => {
-        self.error_at(url_pointer, "a server URL has an unbalanced { or }")
-        return None
-      }
-      '}' => {
-        in_name = false
-        let variable = name.to_string()
-        if variable == "" {
-          self.error_at(
-            url_pointer, "a server URL has an empty {}: a variable needs a name",
-          )
-          return None
-        }
+    Err(EmptyName) => {
+      self.error_at(
+        url_pointer, "a server URL has an empty {}: a variable needs a name",
+      )
+      return None
+    }
+  }
+  let expanded = StringBuilder()
+  let mut known = true
+  for piece in pieces {
+    match piece {
+      Literal(text) => expanded.write_string(text)
+      Name(variable) =>
         match
           self.variable_default(
             url_pointer, variables_pointer, variables, variable,
@@ -143,13 +129,7 @@ fn Report::expanded(
           Some(value) => expanded.write_string(value)
           None => known = false
         }
-      }
-      _ => name.write_char(c)
     }
-  }
-  if in_name {
-    self.error_at(url_pointer, "a server URL has an unbalanced { or }")
-    return None
   }
   if known {
     Some(expanded.to_string())

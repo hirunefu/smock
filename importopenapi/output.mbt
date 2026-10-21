@@ -30,7 +30,7 @@ fn Report::file(
   }
   file["stubs"] = Json::array(stubs)
   let file = Json::object(file)
-  let bytes = if is_yaml(self.options.output) {
+  let bytes = if @definitions.is_yaml_name(self.options.output) {
     guard self.yaml_file(file, document, imported) is Some(bytes) else {
       return Failed(self.problems)
     }
@@ -61,13 +61,6 @@ fn Report::mock(self : Report) -> Json {
 }
 
 ///|
-/// Whether the file `name` is written as YAML: its name ends in `.yaml` or
-/// `.yml`, as for Definition files.
-fn is_yaml(name : String) -> Bool {
-  name.has_suffix(".yaml") || name.has_suffix(".yml")
-}
-
-///|
 /// `file` as YAML, with the comment at the top and one above each Stub of
 /// `imported`, or `None` after reporting why the writer could not write it,
 /// which is a smock bug.
@@ -90,8 +83,7 @@ fn Report::yaml_file(
   catch {
     WriteError(pointer~, message~) => {
       self.output_error(
-        pointer,
-        "smock bug: the file cannot be written as YAML: \{message}",
+        "smock bug: the file cannot be written as YAML at \{pointer}: \{message}",
       )
       None
     }
@@ -254,12 +246,13 @@ fn Stub::to_json(self : Stub, mock : String) -> Json {
 /// declare its Mock, the set also holds a stand-in file that declares a
 /// Mock of that name and nothing else, as the file that declares it by
 /// hand would. Each problem it gives is reported as an error with the file,
-/// which is a smock bug. Problems with the file come before the others.
+/// with no pointer, which is a smock bug; the message names the file and
+/// the pointer of the problem, the stand-in's own when it is in the
+/// stand-in. Problems with the file come before the others.
 fn Report::checked(self : Report, bytes : Bytes, max_bytes~ : Int) -> Bool {
   let output = self.options.output
   if bytes.length() > max_bytes {
     self.output_error(
-      "",
       "the file would be \{bytes.length()} bytes, more than \{size_text(max_bytes)}",
     )
     return false
@@ -272,15 +265,13 @@ fn Report::checked(self : Report, bytes : Bytes, max_bytes~ : Int) -> Bool {
     Ok(snapshot) =>
       for warning in snapshot.warnings() {
         self.output_error(
-          warning.pointer,
-          "smock bug: the file would give the warning: \{warning.message}",
+          "smock bug: the file would give the warning: \{warning.to_string()}",
         )
       }
     Err(diagnostics) =>
       for diagnostic in diagnostics {
         self.output_error(
-          diagnostic.pointer,
-          "smock bug: the file would not load: \{diagnostic.message}",
+          "smock bug: the file would not load: \{diagnostic.to_string()}",
         )
       }
   }

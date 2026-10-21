@@ -86,11 +86,8 @@ fn Report::response_parts(
   status~ : Int,
   meth~ : String,
 ) -> Answers {
-  guard self.followed(document, pointer, json) is Some({ pointer, json, }) else {
-    return no_answers()
-  }
-  guard json is Object(response) else {
-    self.error_at(pointer, "must be an object")
+  guard self.followed_object(document, pointer, json)
+    is Some((pointer, response)) else {
     return no_answers()
   }
   let mut answers = no_answers()
@@ -205,11 +202,39 @@ fn is_json_media_type(key : String) -> Bool {
 }
 
 ///|
+/// The Media Type Object `json`, written at `pointer` in a `content` map:
+/// where it is, after following its `$ref` in OpenAPI 3.2, and its fields.
+/// Only 3.2 allows a Reference Object there. In 3.0 and 3.1 the object is
+/// read as written, and a `$ref` member in it is ignored, with a warning.
+/// `None` after reporting an error.
+fn Report::media_type_object(
+  self : Report,
+  document : Document,
+  pointer : String,
+  json : Json,
+) -> (String, Map[String, Json])? {
+  if document.openapi.has_prefix("3.2.") {
+    return self.followed_object(document, pointer, json)
+  }
+  guard json is Object(media_type) else {
+    self.error_at(pointer, "must be an object")
+    return None
+  }
+  if media_type.contains("$ref") {
+    self.warning_at(
+      @definitions.child_pointer(pointer, "$ref"),
+      "ignored: a Media Type is a reference only from OpenAPI 3.2",
+    )
+  }
+  Some((pointer, media_type))
+}
+
+///|
 /// What the Media Type Object `json` at `pointer`, of the media type `key`,
-/// answers with, after following its `$ref`. The first source that gives
-/// a value gives the body: its `examples`, whose first is the body and
-/// whose others get Stubs of their own; its `example`; then a sample of its
-/// `schema`. With none, the body is empty. A media type with both
+/// answers with, after following its `$ref` in 3.2. The first source that
+/// gives a value gives the body: its `examples`, whose first is the body
+/// and whose others get Stubs of their own; its `example`; then a sample
+/// of its `schema`. With none, the body is empty. A media type with both
 /// `example` and `examples` uses `examples`, with a warning.
 fn Report::media_type(
   self : Report,
@@ -218,11 +243,8 @@ fn Report::media_type(
   key : String,
   json : Json,
 ) -> Answers {
-  guard self.followed(document, pointer, json) is Some({ pointer, json, }) else {
-    return no_answers()
-  }
-  guard json is Object(media_type) else {
-    self.error_at(pointer, "must be an object")
+  guard self.media_type_object(document, pointer, json)
+    is Some((pointer, media_type)) else {
     return no_answers()
   }
   let example_pointer = @definitions.child_pointer(pointer, "example")
@@ -310,16 +332,17 @@ fn Report::payload(
         _ if is_json_media_type(key) => JsonValue(value)
         String(text) => Text(text)
         _ if range => JsonValue(value)
-        Number(n, repr~) => Text(@template.number_text(n, repr))
-        True => Text("true")
-        False => Text("false")
-        _ => {
-          self.warning_at(
-            at,
-            "left out: the body is empty, since a \{key.escape()} body cannot hold \{kind_of(value)}",
-          )
-          Empty
-        }
+        _ =>
+          match scalar_text(value) {
+            Some(text) => Text(text)
+            None => {
+              self.warning_at(
+                at,
+                "left out: the body is empty, since a \{key.escape()} body cannot hold \{kind_of(value)}",
+              )
+              Empty
+            }
+          }
       }
   }
   let body = match value {
@@ -345,6 +368,20 @@ fn Report::payload(
     Some(key)
   }
   { content_type, body, }
+}
+
+///|
+/// The text of `json`, when it is a string, a number or a boolean: a
+/// string as it is, a number as smock writes numbers, and a boolean as
+/// `true` or `false`. A body and a header write such a value as text.
+fn scalar_text(json : Json) -> String? {
+  match json {
+    String(text) => Some(text)
+    Number(n, repr~) => Some(@template.number_text(n, repr))
+    True => Some("true")
+    False => Some("false")
+    _ => None
+  }
 }
 
 ///|

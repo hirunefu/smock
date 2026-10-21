@@ -14,11 +14,12 @@
 // (headers.mbt), examples (examples.mbt), samples of schemas (samples.mbt),
 // with numbers within their bounds (numbers.mbt) and the exact decimals
 // they need (decimal.mbt), references and the documents they name
-// (references.mbt), and the file it writes (output.mbt).
+// (references.mbt), the file it writes (output.mbt), and the problems and
+// their order (report.mbt).
 
 ///|
 /// The most documents a conversion reads, the root included.
-pub let max_documents : Int = 1000
+let max_documents : Int = 1000
 
 ///|
 /// The most bytes a conversion reads, in all its documents, the root
@@ -232,10 +233,11 @@ pub fn Converter::convert(self : Converter) -> Conversion {
   let options = self.options
   let report = Report::new(options, documents=self.documents)
   if self.documents.passed is Some(name) {
+    let most = size_text(max_read_bytes)
     let message = if name == options.root {
-      "is larger than 64 MiB, the most smock import-openapi reads"
+      "is larger than \{most}, the most smock import-openapi reads"
     } else {
-      "with it, the documents read pass 64 MiB, the most smock import-openapi reads in all, the root included"
+      "with it, the documents read pass \{most}, the most smock import-openapi reads in all, the root included"
     }
     report.error(options.path(name), "", message)
     return Failed(report.problems())
@@ -249,11 +251,14 @@ pub fn Converter::convert(self : Converter) -> Conversion {
   }
   let imported = report.operations(document)
   if self.documents.count() + report.needed.length() > max_documents {
+    // This one error replaces every other problem: the documents past the
+    // bound are never asked for, so the problems found so far are not
+    // final, as in a round that needs documents.
     return Failed([
       Error({
         file: options.root_label,
         pointer: "",
-        message: "the documents it refers to pass 1,000, the most smock import-openapi reads, the root included: bundle the document into one file first, with another tool",
+        message: "the documents it refers to pass \{count_text(max_documents)}, the most smock import-openapi reads, the root included: bundle the document into one file first, with another tool",
       }),
     ])
   }
@@ -278,4 +283,19 @@ pub fn convert(
     converter.give(document.0, document.1)
   }
   converter.convert()
+}
+
+///|
+/// `n`, a count that is not negative, as messages write it: its digits in
+/// groups of three, separated by commas, such as `1,000`.
+fn count_text(n : Int) -> String {
+  let digits = n.to_string()
+  let out = StringBuilder()
+  for i, c in digits {
+    if i > 0 && (digits.length() - i) % 3 == 0 {
+      out.write_char(',')
+    }
+    out.write_char(c)
+  }
+  out.to_string()
 }

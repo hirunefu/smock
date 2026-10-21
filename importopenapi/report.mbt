@@ -1,7 +1,8 @@
 ///|
-/// The problems of one conversion, in order: those with the file, then the
-/// document-level ones, then each operation's, in the order the document
-/// writes them.
+/// The state of one conversion: its options, the documents given and those
+/// still needed, and the problems found so far, in order: those with the
+/// file, then the document-level ones, then each operation's, in the order
+/// the document writes them. The converter's steps are its methods.
 ///
 /// A problem is reported at a place: a JSON Pointer into the root
 /// document, such as `/paths/~1pets`, or into another document, written
@@ -126,15 +127,13 @@ fn Report::unreport(self : Report, problem : Problem) -> Unit {
 }
 
 ///|
-/// Reports an error at `pointer` in the file, before every other problem.
-fn Report::output_error(
-  self : Report,
-  pointer : String,
-  message : String,
-) -> Unit {
+/// Reports an error with the file, before every other problem. It names
+/// the file as `--output` gives it, with no pointer, as every problem with
+/// the file does.
+fn Report::output_error(self : Report, message : String) -> Unit {
   self.problems.insert(
     self.output_end,
-    Error({ file: self.options.output, pointer, message, }),
+    Error({ file: self.options.output, pointer: "", message, }),
   )
   self.output_end += 1
   self.document_end += 1

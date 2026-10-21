@@ -141,7 +141,7 @@ async test "smock import-openapi prints each warning as smock check does, naming
 }
 
 ///|
-async test "smock import-openapi writes nothing and exits 1 when the document has an error" {
+async test "smock import-openapi writes nothing and exits 1 when the document has an error or cannot be read, and says that it reads no URLs when the document names one" {
   with_petstore(
     (
       #|{ "swagger": "2.0", "paths": {} }
@@ -180,6 +180,24 @@ async test "smock import-openapi writes nothing and exits 1 when the document ha
         content=(
           #|status 1
           #|<dir>/api/missing.json: cannot be read: no such file
+          #|nothing written: 1 errors
+          #|
+        ),
+      )
+      inspect(
+        import_openapi(
+          [
+            "https://example.com/api.json",
+            "--mock",
+            "petstore",
+            "--output",
+            "\{dir}/defs/petstore.json",
+          ],
+          dir~,
+        ),
+        content=(
+          #|status 1
+          #|https://example.com/api.json: cannot be read: no such file; smock reads no URLs: download the document first
           #|nothing written: 1 errors
           #|
         ),
@@ -373,6 +391,10 @@ async test "smock import-openapi rejects bad arguments as usage errors, on stder
       "api.json", "--mock", "m", "--output", "m.json", "--hosts", "a.test", "--declare-mock",
       "off",
     ],
+    [
+      "api.json", "--mock", "m", "--output", "m.json", "--hosts", "", "--declare-mock",
+      "off",
+    ],
     ["api.json", "--mock", "m", "--output", "m.json", "--declare-mock", "yes"],
     ["api.json", "--mock", "m", "--output", "m.json", "--base-path", "v1"],
     ["api.json", "--mock", "m", "--output", "m.json", "--base-path", ""],
@@ -430,6 +452,8 @@ async test "smock import-openapi rejects bad arguments as usage errors, on stder
       #|  status 2: smock import-openapi: invalid value "[::1],::1" for --hosts: "::1" is the same Host as "[::1]": Hosts are compared in lower case, without the port and a trailing dot
       #|api.json --mock m --output m.json --hosts a.test --declare-mock off
       #|  status 2: smock import-openapi: invalid value "a.test" for --hosts: must not be given with --declare-mock off: give the Hosts where the Mock is declared
+      #|api.json --mock m --output m.json --hosts  --declare-mock off
+      #|  status 2: smock import-openapi: invalid value "" for --hosts: must not be given with --declare-mock off: give the Hosts where the Mock is declared
       #|api.json --mock m --output m.json --declare-mock yes
       #|  status 2: smock import-openapi: invalid value "yes" for --declare-mock: must be on or off
       #|api.json --mock m --output m.json --base-path v1
@@ -488,10 +512,7 @@ async test "smock serves an imported file like any other: its main status answer
         ("Host", "localhost"),
         baggage("imported"),
       ])
-      inspect(
-        response.split("\n").next().unwrap_or(""),
-        content="HTTP/1.1 200 OK",
-      )
+      inspect(status_line(response), content="HTTP/1.1 200 OK")
       match smock.journal(session="imported") {
         (200, Object({ "entries": Array([Object(entry)]), .. })) =>
           json_inspect(
@@ -670,10 +691,7 @@ async test "smock import-openapi writes a .yaml --output as YAML, with comments 
         ("Host", "localhost"),
         baggage("imported"),
       ])
-      inspect(
-        response.split("\n").next().unwrap_or(""),
-        content="HTTP/1.1 200 OK",
-      )
+      inspect(status_line(response), content="HTTP/1.1 200 OK")
       match smock.journal(session="imported") {
         (200, Object({ "entries": Array([Object(entry)]), .. })) =>
           json_inspect(
@@ -886,46 +904,60 @@ async fn serving_my_pet(dir : String, f : async (Smock) -> Unit) -> Unit {
 /// its `Smock-Status` if it sent one, its `Smock-Example` when it sent one,
 /// the status, the Stub that answered and where that Stub came from.
 async fn Smock::answered(self : Smock, session : String) -> Json {
-  match self.journal(session~) {
-    (200, Object({ "entries": Array(entries), .. })) => {
-      let answered : Array[Json] = []
-      for entry in entries {
-        guard entry
-          is Object(
-            {
-              "request": Object({ "headers": Array(headers), .. }),
-              "status": status,
-              "stub": stub,
-              "stubSource": source,
-              ..
-            }
-          ) else {
-          fail("unexpected entry: \{entry.stringify()}")
-        }
-        let mut selector = Json::null()
-        let mut example = None
-        for header in headers {
-          if header is Object({ "name": String(name), "value": value, .. }) {
-            match name.to_lower() {
-              "smock-status" => selector = value
-              "smock-example" => example = Some(value)
-              _ => ()
-            }
-          }
-        }
-        let request : Map[String, Json] = { "Smock-Status": selector }
-        if example is Some(example) {
-          request["Smock-Example"] = example
-        }
-        request["status"] = status
-        request["stub"] = stub
-        request["stubSource"] = source
-        answered.push(Json::object(request))
-      }
-      Json::array(answered)
+  let answered : Array[Json] = []
+  for entry in self.journal_entries(session) {
+    guard entry
+      is {
+        "request": Object({ "headers": Array(headers), .. }),
+        "status": status,
+        "stub": stub,
+        "stubSource": source,
+        ..
+      } else {
+      fail("unexpected entry: \{Json::object(entry).stringify()}")
     }
+    let mut selector = Json::null()
+    let mut example = None
+    for header in headers {
+      if header is Object({ "name": String(name), "value": value, .. }) {
+        match name.to_lower() {
+          "smock-status" => selector = value
+          "smock-example" => example = Some(value)
+          _ => ()
+        }
+      }
+    }
+    let request : Map[String, Json] = { "Smock-Status": selector }
+    if example is Some(example) {
+      request["Smock-Example"] = example
+    }
+    request["status"] = status
+    request["stub"] = stub
+    request["stubSource"] = source
+    answered.push(Json::object(request))
+  }
+  Json::array(answered)
+}
+
+///|
+/// The entries of the Journal of `session`, in order, each an object.
+/// Fails when the Journal or an entry is not as smock writes it.
+async fn Smock::journal_entries(
+  self : Smock,
+  session : String,
+) -> Array[Map[String, Json]] {
+  let entries = match self.journal(session~) {
+    (200, Object({ "entries": Array(entries), .. })) => entries
     (status, body) => fail("unexpected Journal: \{status} \{body.stringify()}")
   }
+  let objects = []
+  for entry in entries {
+    guard entry is Object(entry) else {
+      fail("unexpected entry: \{entry.stringify()}")
+    }
+    objects.push(entry)
+  }
+  objects
 }
 
 ///|
@@ -939,7 +971,7 @@ async test "smock serves an imported file with Smock-Status: a request gets the 
           headers.push(("Smock-Status", key))
         }
         let response = smock.request("GET", "/pets/mine", headers~)
-        lines.push(response.split("\n").next().unwrap_or("").to_owned())
+        lines.push(status_line(response))
       }
       inspect(
         lines.join("\n"),
@@ -975,15 +1007,19 @@ async test "smock serves an imported file with Smock-Status: a request gets the 
 
 ///|
 async test "a test whose requests cannot set Smock-Status selects the imported 404 for its Session only, with the guide's Ephemeral Stub that copies the generated response" {
+  let ephemeral_stub =
+    #|{"request":{"method":"GET","path":"/pets/mine"},"response":{"status":404}}
+  let guide = @fs.read_file("docs/importing-openapi.md").text()
+  if !guide.contains("-d '\{ephemeral_stub}'") {
+    fail("docs/importing-openapi.md does not show the Ephemeral Stub as it is")
+  }
   with_petstore(my_pet_document, dir => {
     serving_my_pet(dir, smock => {
       let added = smock.admin(
         "POST",
         "/v1/mocks/petstore/stubs",
         headers=[baggage("pet-missing")],
-        body=(
-          #|{"request":{"method":"GET","path":"/pets/mine"},"response":{"status":404}}
-        ),
+        body=ephemeral_stub,
       )
       inspect(added.status, content="201")
       let lines = []
@@ -994,7 +1030,7 @@ async test "a test whose requests cannot set Smock-Status selects the imported 4
           headers=[("Host", "localhost"), ..session_headers(session)],
         )
         lines.push(
-          "\{session.unwrap_or("no Session")}: \{response.split("\n").next().unwrap_or("")}",
+          "\{session.unwrap_or("no Session")}: \{status_line(response)}",
         )
       }
       inspect(
@@ -1027,6 +1063,26 @@ async test "a test whose requests cannot set Smock-Status selects the imported 4
 
 ///|
 async test "the guide's override in another file survives a re-import with --overwrite on, and smock check warns about each generated Stub it shadows, the Smock-Status one included" {
+  let override_yaml =
+    #|version: 1
+    #|stubs:
+    #|  - id: petstore.getPet.none
+    #|    mock: petstore
+    #|    priority: 1
+    #|    request:
+    #|      method: GET
+    #|      path: /pets/mine
+    #|    response:
+    #|      status: 404
+    #|      json:
+    #|        message: You have no pet
+    #|
+  let guide = @fs.read_file("docs/importing-openapi.md").text()
+  if !guide.contains(
+      "```yaml\n# defs/petstore-overrides.yaml\n\{override_yaml}```\n",
+    ) {
+    fail("docs/importing-openapi.md does not show the override as it is")
+  }
   with_petstore(my_pet_document, dir => {
     let args = [
       "api/petstore.json", "--mock", "petstore", "--output", "defs/petstore.yaml",
@@ -1039,23 +1095,7 @@ async test "the guide's override in another file survives a re-import with --ove
         #|
       ),
     )
-    @fs.write_file(
-      "\{dir}/defs/petstore-overrides.yaml",
-      (
-        #|version: 1
-        #|stubs:
-        #|  - id: petstore.getPet.none
-        #|    mock: petstore
-        #|    priority: 1
-        #|    request:
-        #|      method: GET
-        #|      path: /pets/mine
-        #|    response:
-        #|      status: 404
-        #|      json:
-        #|        message: You have no pet
-      ),
-    )
+    @fs.write_file("\{dir}/defs/petstore-overrides.yaml", override_yaml)
     inspect(
       import_openapi([..args, "--overwrite", "on"], cwd=dir),
       content=(
@@ -1064,8 +1104,9 @@ async test "the guide's override in another file survives a re-import with --ove
         #|
       ),
     )
+    let checked = exit_report(smock_output(["check", "defs"], cwd=dir))
     inspect(
-      exit_report(smock_output(["check", "defs"], cwd=dir)),
+      checked,
       content=(
         #|status 0
         #|petstore.yaml: /stubs/0: warning: the Stub "petstore.getPet.404" can never match: the Stub "petstore.getPet.none" at petstore-overrides.yaml: /stubs/0 is tried first and matches every request this one would
@@ -1073,6 +1114,11 @@ async test "the guide's override in another file survives a re-import with --ove
         #|
       ),
     )
+    // The guide shows the warnings as smock check prints them.
+    let warnings = checked["status 0\n".length():].to_owned()
+    if !guide.contains("```\n\{warnings}```\n") {
+      fail("docs/importing-openapi.md does not show the warnings as they are")
+    }
   })
 }
 
@@ -1224,7 +1270,7 @@ async test "smock serves an imported file with a pattern: /pets/mine gets its ow
           ("Host", "localhost"),
           baggage("patterns"),
         ])
-        lines.push("\{path}: \{response.split("\n").next().unwrap_or("")}")
+        lines.push("\{path}: \{status_line(response)}")
       }
       inspect(
         lines.join("\n"),
@@ -1408,23 +1454,15 @@ async test "smock serves an imported file with Smock-Example: alone it selects t
 /// What the Journal holds for `session`, in order: for each request, the
 /// Mock and the Stub that answered, and the status.
 async fn Smock::answered_by(self : Smock, session : String) -> Json {
-  match self.journal(session~) {
-    (200, Object({ "entries": Array(entries), .. })) => {
-      let answered : Array[Json] = []
-      for entry in entries {
-        guard entry is Object(entry) else {
-          fail("unexpected entry: \{entry.stringify()}")
-        }
-        answered.push({
-          "mock": entry.get("mock").unwrap_or(Json::null()),
-          "stub": entry.get("stub").unwrap_or(Json::null()),
-          "status": entry.get("status").unwrap_or(Json::null()),
-        })
-      }
-      Json::array(answered)
-    }
-    (status, body) => fail("unexpected Journal: \{status} \{body.stringify()}")
+  let answered : Array[Json] = []
+  for entry in self.journal_entries(session) {
+    answered.push({
+      "mock": entry.get("mock").unwrap_or(Json::null()),
+      "stub": entry.get("stub").unwrap_or(Json::null()),
+      "status": entry.get("status").unwrap_or(Json::null()),
+    })
   }
+  Json::array(answered)
 }
 
 ///|
@@ -1575,7 +1613,7 @@ async test "a file imported with --declare-mock off holds only Stubs, for the Mo
           ("Host", "localhost"),
           baggage("declared"),
         ])
-        lines.push(response.split("\n").next().unwrap_or("").to_owned())
+        lines.push(status_line(response))
       }
       inspect(
         lines.join("\n"),
@@ -1618,7 +1656,7 @@ async fn Smock::status_lines(self : Smock, paths : Array[String]) -> String {
   let lines = []
   for path in paths {
     let response = self.request("GET", path, headers=[("Host", "localhost")])
-    lines.push("\{path}: \{response.split("\n").next().unwrap_or("")}")
+    lines.push("\{path}: \{status_line(response)}")
   }
   lines.join("\n")
 }

@@ -17,7 +17,7 @@ and [Limits](#limits) gives the bounds the command keeps to.
 
 The example is in [`examples/from-openapi/`](examples/from-openapi/): the
 OpenAPI document `api/petstore.yaml`, and the definitions directory
-`definitions/`, which holds the file that the command writes from it. The
+`defs/`, which holds the file that the command writes from it. The
 commands below run in `docs/examples/from-openapi/`. `smock check` passes
 on the directory, and smock gives the answers this section shows.
 
@@ -98,14 +98,14 @@ components:
 Import it into the definitions directory, then check the directory:
 
 ```sh
-smock import-openapi api/petstore.yaml --mock petstore --output definitions/petstore.yaml
-smock check definitions
+smock import-openapi api/petstore.yaml --mock petstore --output defs/petstore.yaml
+smock check defs
 ```
 
 The command prints one line:
 
 ```
-wrote definitions/petstore.yaml: 4 Stubs from 2 operations, 0 warnings
+wrote defs/petstore.yaml: 4 Stubs from 2 operations, 0 warnings
 ```
 
 It writes this file:
@@ -173,7 +173,7 @@ stubs:
         species: cat
 ```
 
-`smock serve --dir definitions` then answers:
+`smock serve --dir defs` then answers:
 
 ```sh
 curl localhost:8080/v1/pets                            # 200, a sample of the schema
@@ -221,14 +221,17 @@ The arguments:
 
 - `<document>`: the OpenAPI document, a file whose name ends in `.json`,
   `.yaml` or `.yml`. A YAML document is read as YAML 1.2 (see
-  [How YAML is read](#how-yaml-is-read)). It is not a URL, and not stdin.
+  [How YAML is read](#how-yaml-is-read)). It is not stdin, and not a URL:
+  download the document first. A URL that cannot be read as a file gets
+  that advice too.
 - `--mock <name>`: the name of the one Mock the file declares. Every Stub
   ID starts with it, and it names the Mock in metric labels and Admin API
   paths. It is not taken from the document's title, which changes between
   versions.
 - `--hosts <h1,h2>`: the Mock's Hosts, separated by commas, such as
   `petstore.test,pets.internal:8080`. None by default. The document's
-  `servers` never become Hosts ([The Mock and its Hosts](#the-mock-and-its-hosts)).
+  `servers` never become Hosts
+  ([The Mock and its Hosts](#the-mock-and-its-hosts)).
 - `--declare-mock on|off`: whether the file declares the Mock. It is `on`
   by default. With `off`, the file holds only Stubs, for a Mock declared
   by hand in another file.
@@ -300,7 +303,7 @@ Stub for each response it answers, and for each further named example
 | `callbacks` | Not imported, with one warning per operation. |
 | `webhooks` | Not imported, with one warning: they are requests the API sends, not ones it answers. |
 | `security`, `links`, descriptions, tags and `x-` extensions | Nothing, and no warning. |
-| A `$ref` to a Path Item, a Response, a Header, an Example or, as 3.2 allows, a Media Type, in the same document or in another file under `--ref-dir` | Followed, as if the part it names were written in place (see [References and bundling](#references-and-bundling)). |
+| A `$ref` to a Path Item, a Response, a Header, an Example or, as 3.2 allows, a Media Type, in the same document or in another file under `--ref-dir` | Followed, as if the part it names were written in place (see [References and bundling](#references-and-bundling)). In 3.0 and 3.1, which allow no reference in place of a Media Type, a `$ref` in a media type is ignored, with a warning, and the rest of it is read as written. |
 | A `$ref` in a schema | Followed too, into other files as well. A recursive schema gives a finite sample ([Schema references and recursion](#schema-references-and-recursion)). |
 | Fields beside a Path Item's `$ref` | Ignored, with a warning, since OpenAPI leaves their meaning undefined. |
 
@@ -443,7 +446,7 @@ So `GET /v1/pets/7` gets the Stub, and `GET /pets/7` does not.
 instead:
 
 ```sh
-smock import-openapi api/petstore.json --mock petstore --output definitions/petstore.yaml --base-path /mock/petstore
+smock import-openapi api/petstore.json --mock petstore --output defs/petstore.yaml --base-path /mock/petstore
 ```
 
 ```yaml
@@ -791,12 +794,14 @@ json:
   own, so a branch's `const` still comes before the schema's own
   `example`, in the order of the list above.
 - **`oneOf` and `anyOf`** take their first branch that is not only null,
-  such as `{ type: "null" }`, `{ const: null }` or `{ enum: [null] }`. The
-  branch is merged with the schema's own keywords, after the branches of
-  `allOf`. When every branch is only null, the sample is null.
+  such as `{ type: "null" }`, `{ const: null }` or `{ enum: [null] }`. A
+  branch that is a `$ref` to such a schema, such as a `Null` schema under
+  `components`, counts as only null too. The branch is merged with the
+  schema's own keywords, after the branches of `allOf`. When every branch
+  is only null, the sample is null.
 - **`true` and `false`.** The branch `true` adds nothing. The branch
   `false` allows no value: in `allOf`, the schema then gives no value, and
-  `oneOf` and `anyOf` skip it.
+  `oneOf` and `anyOf` skip it, as written or named by a `$ref`.
 - **Ignored.** `not`, `if`, `then`, `else` and `discriminator` are ignored,
   without a warning.
 - **Wrong types.** An `allOf`, `oneOf` or `anyOf` that is not an array,
@@ -969,7 +974,7 @@ other Mocks depends on what else the directory holds:
   So give the imported Mock its Hosts with `--hosts`:
 
   ```sh
-  smock import-openapi api/petstore.json --mock petstore --hosts petstore.test,pets.internal:8080 --output definitions/petstore.yaml
+  smock import-openapi api/petstore.json --mock petstore --hosts petstore.test,pets.internal:8080 --output defs/petstore.yaml
   ```
 
   The file then declares:
@@ -990,7 +995,7 @@ other Mocks depends on what else the directory holds:
   them:
 
   ```yaml
-  # definitions/petstore-mock.yaml
+  # defs/petstore-mock.yaml
   version: 1
   mocks:
     - name: petstore
@@ -1005,7 +1010,7 @@ other Mocks depends on what else the directory holds:
   declared.
 
   ```sh
-  smock import-openapi api/petstore.json --mock petstore --declare-mock off --output definitions/petstore.yaml
+  smock import-openapi api/petstore.json --mock petstore --declare-mock off --output defs/petstore.yaml
   ```
 
 Each Host must be one a Definition file can declare, as `smock check`
@@ -1227,7 +1232,7 @@ The command owns the file it writes. When the document changes, run it
 again with `--overwrite on`:
 
 ```sh
-smock import-openapi api/petstore.yaml --mock petstore --output definitions/petstore.yaml --overwrite on
+smock import-openapi api/petstore.yaml --mock petstore --output defs/petstore.yaml --overwrite on
 ```
 
 - A re-import replaces the whole file. It does not merge with hand edits:
@@ -1256,10 +1261,12 @@ smock import-openapi api/petstore.yaml --mock petstore --output definitions/pets
 
 Put hand changes in another file of the same directory. Generated Stubs
 have no `priority`, so a hand-written Stub with any `priority` is tried
-first, and the next import leaves its file alone:
+first, and the next import leaves its file alone. This override is for
+the `/pets/mine` operation of [Selecting responses](#selecting-responses),
+imported into `defs/petstore.yaml`:
 
 ```yaml
-# definitions/petstore-overrides.yaml
+# defs/petstore-overrides.yaml
 version: 1
 stubs:
   - id: petstore.getPet.none
@@ -1274,8 +1281,8 @@ stubs:
         message: You have no pet
 ```
 
-`smock check` then warns about each generated Stub that the override
-shadows. That is expected:
+`smock check defs` then warns about each generated Stub that the
+override shadows. That is expected:
 
 ```
 petstore.yaml: /stubs/0: warning: the Stub "petstore.getPet.404" can never match: the Stub "petstore.getPet.none" at petstore-overrides.yaml: /stubs/0 is tried first and matches every request this one would
@@ -1286,14 +1293,20 @@ An override that matches on method and path only also wins over the
 Stubs that `Smock-Status` and `Smock-Example` select, as the first warning
 shows.
 
+The warning comes only for a generated Stub whose path is exact, as
+`/pets/mine` is. `smock check` does not compare two patterns. So an
+override of a templated path, written with the generated Stubs' pattern,
+such as `path: { pattern: /v1/pets/[^/]+ }` for the quick start's
+`/pets/{petId}`, gives no warning, though it shadows them just the same.
+
 ### Checking that the file is current
 
 In CI, run the command again from a fixed directory, such as the root of
 the repository, then let Git check that the file did not change:
 
 ```sh
-smock import-openapi api/petstore.yaml --mock petstore --output definitions/petstore.yaml --overwrite on
-git diff --exit-code definitions/
+smock import-openapi api/petstore.yaml --mock petstore --output defs/petstore.yaml --overwrite on
+git diff --exit-code defs/
 ```
 
 The same document and flags give the same bytes, so `git diff` fails
@@ -1345,6 +1358,10 @@ This imports `listPets` as if both parts were written in place.
 - The fields beside a Path Item's `$ref` are ignored, with a warning, but
   `x-` extensions. The fields beside the `$ref` of a Response, a Header
   or an Example are ignored, as OpenAPI asks.
+- A media type is a reference only from OpenAPI 3.2. In 3.0 and 3.1 a
+  `$ref` in a media type is ignored, with a warning, and the rest of the
+  media type is read as written. A common slip is a `$ref` to a schema
+  written in place of the media type's `schema`.
 - A `$ref` inside example data, in `example`, `value` or `dataValue`, is
   data, not a reference: it is copied as written.
 - `$id` at the root of the document, and 3.2's `$self`, are ignored: a
@@ -1389,7 +1406,7 @@ paths:
 ```
 
 ```sh
-smock import-openapi api/openapi.yaml --mock petstore --output definitions/petstore.yaml
+smock import-openapi api/openapi.yaml --mock petstore --output defs/petstore.yaml
 ```
 
 The command reads `api/responses/ok.yaml` and follows the reference to its
@@ -1423,7 +1440,7 @@ When the parts a document shares sit in a directory beside it, give a
 `--ref-dir` that holds both:
 
 ```sh
-smock import-openapi api/openapi.yaml --mock petstore --ref-dir . --output definitions/petstore.yaml
+smock import-openapi api/openapi.yaml --mock petstore --ref-dir . --output defs/petstore.yaml
 ```
 
 A document outside `--ref-dir`, or a `--ref-dir` that is not a directory,
@@ -1456,7 +1473,7 @@ document. For example, with [Redocly CLI](https://redocly.com/docs/cli/):
 
 ```sh
 npx @redocly/cli@2.55.0 bundle api/petstore.json --output api/petstore.bundled.json
-smock import-openapi api/petstore.bundled.json --mock petstore --output definitions/petstore.json
+smock import-openapi api/petstore.bundled.json --mock petstore --output defs/petstore.json
 ```
 
 A bundler fetches what the URLs name. smock never does.
@@ -1536,7 +1553,7 @@ reads the aliases and writes each part in full:
 
 ```sh
 npx @redocly/cli@2.55.0 bundle api/petstore.yaml --output api/petstore.bundled.json
-smock import-openapi api/petstore.bundled.json --mock petstore --output definitions/petstore.yaml
+smock import-openapi api/petstore.bundled.json --mock petstore --output defs/petstore.yaml
 ```
 
 ## Problems and exit codes
@@ -1548,22 +1565,22 @@ api/petstore.json: /paths/~1pets/get/responses/200/content/application~1xml: war
 ```
 
 - The document is named as given on the command line, and another file
-  that references name as [References to other files](#references-to-other-files)
-  says. The place is
-  an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer to
+  that references name as
+  [References to other files](#references-to-other-files) says. The place
+  is an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer to
   where the construct is written, after following `$ref`. In a pointer,
   `/` in a key is written `~1`, so `/paths/~1pets` is the path key
   `/pets`.
 - Errors have no `warning:`. An error is what makes a faithful file
   impossible, such as invalid JSON, an unsupported version, a reference
   that cannot be followed, a malformed path, a field of the wrong type or
-  IDs that collide. A warning names a
-  part of the document that was left out or changed; the file still
-  serves the rest.
-- Problems with `--output` come first, named by `--output` as given. Then
-  the document-level ones, among them the files that cannot be read. Then each operation's, in the order the
-  document writes the operations, whatever the order of their Stubs, and
-  within an operation in the order of its responses.
+  IDs that collide. A warning names a part of the document that was left
+  out or changed; the file still serves the rest.
+- Problems with `--output` come first, named by `--output` as given, with
+  no pointer. Then the document-level ones, among them the files that
+  cannot be read. Then each operation's, in the order the document writes
+  the operations, whatever the order of their Stubs, and within an
+  operation in the order of its responses.
 - One summary line ends the output: `wrote <file>: <n> Stubs from <m>
   operations, <w> warnings`, or `nothing written: <e> errors`.
 
@@ -1573,17 +1590,19 @@ api/petstore.json: /paths/~1pets/get/responses/200/content/application~1xml: war
 | 1 | Nothing was written: the document or the output had an error. |
 | 2 | A usage error, such as a missing flag or a document outside `--ref-dir`, printed on stderr. |
 
-The input must be UTF-8 JSON, or YAML as [How YAML is read](#how-yaml-is-read)
-says. A leading byte order mark is skipped. A key that repeats in an
-object is an error at its pointer, as in a Definition file. `openapi` must be a string `3.<minor>.<patch>`, such as `"3.1.0"`,
-for 3.0, 3.1 or 3.2; the patch is ignored. A Swagger 2.0 document is an
-error: convert it to OpenAPI 3.0 first.
+The input must be UTF-8 JSON, or YAML as
+[How YAML is read](#how-yaml-is-read) says. A leading byte order mark is
+skipped. A key that repeats in an object is an error at its pointer, as in
+a Definition file. `openapi` must be a string `3.<minor>.<patch>`, such as
+`"3.1.0"`, for 3.0, 3.1 or 3.2; the patch is ignored. A Swagger 2.0
+document is an error: convert it to OpenAPI 3.0 first.
 
 Before it writes, the command loads its own output with the loader
 `smock check` uses, as a set of its own. With `--declare-mock off`, a
-stand-in file declares the Mock, as the hand-written one would. The output must
-be valid and give no warning. If not, nothing is written, and the message
-calls it a smock bug: please report it.
+stand-in file declares the Mock, as the hand-written one would. The output
+must be valid and give no warning. If not, nothing is written, and the
+message calls it a smock bug, with the file and the pointer of the
+problem: please report it.
 
 The same document and flags always give the same bytes, on every
 platform, so a generated file changes only when the document or the
@@ -1687,7 +1706,8 @@ Where the two differ, as checked against Prism 5.16.0:
 - A sampled array has at most 100 items. A larger `minItems` gives 100
   items, with a warning.
 - A sample nests at most 32 levels. An object or an array inside 32
-  others is null ([Schema references and recursion](#schema-references-and-recursion)).
+  others is null
+  ([Schema references and recursion](#schema-references-and-recursion)).
 - A sample whose compact JSON would pass 64 KiB is made again, cut to its
   required parts below its first level. When that would pass 1 MiB, the
   body is left empty, with a warning ([Sample size](#sample-size)).

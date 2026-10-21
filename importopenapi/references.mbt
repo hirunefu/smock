@@ -62,6 +62,30 @@ fn Report::followed(
 }
 
 ///|
+/// The object `json`, written at `pointer` where the converter reads an
+/// object that may be a Reference Object, after following each `$ref`, as
+/// `Report::followed` does: where it is, and its fields. `None` after
+/// reporting why a `$ref` cannot be followed, or that the part it leads to
+/// is not an object, at that part.
+fn Report::followed_object(
+  self : Report,
+  document : Document,
+  pointer : String,
+  json : Json,
+  path_item? : Bool = false,
+) -> (String, Map[String, Json])? {
+  guard self.followed(document, pointer, json, path_item~)
+    is Some({ pointer, json, }) else {
+    return None
+  }
+  guard json is Object(object) else {
+    self.error_at(pointer, "must be an object")
+    return None
+  }
+  Some((pointer, object))
+}
+
+///|
 /// The part that `reference`, the `$ref` at `pointer`, names, or `None`
 /// after reporting why it cannot be followed, or while the document it
 /// names is not given yet.
@@ -87,7 +111,7 @@ fn Report::target(
   let (number, json) = if path == "" {
     (source, self.tree(document, source))
   } else {
-    guard self.referenced(document, pointer, source, path.to_owned())
+    guard self.referenced_document(document, pointer, source, path.to_owned())
       is Some(found) else {
       return None
     }
@@ -109,16 +133,7 @@ fn Report::target(
   let mut target_pointer = ""
   let mut json = json
   for key in keys {
-    let value = match json {
-      Object(object) => object.get(key)
-      Array(items) =>
-        match array_index(key) {
-          Some(i) if i < items.length() => Some(items[i])
-          _ => None
-        }
-      _ => None
-    }
-    guard value is Some(value) else {
+    guard step(json, key) is Some(value) else {
       if path == "" {
         self.error_at(pointer, "the document has nothing at \{target}")
       } else {
@@ -166,7 +181,7 @@ fn Report::tree(self : Report, document : Document, number : Int?) -> Json {
 /// it, and must lie under the directory that references are followed in.
 /// A document that cannot be read or parsed is reported among the
 /// document-level problems.
-fn Report::referenced(
+fn Report::referenced_document(
   self : Report,
   document : Document,
   pointer : String,
@@ -184,9 +199,7 @@ fn Report::referenced(
     )
     return None
   }
-  if !(path.has_suffix(".json") ||
-    path.has_suffix(".yaml") ||
-    path.has_suffix(".yml")) {
+  if !@definitions.is_json_or_yaml_name(path) {
     self.error_at(
       pointer, "a referenced file's name must end in .json, .yaml or .yml",
     )
@@ -337,7 +350,9 @@ fn Documents::add(self : Documents, name : String, content : Content) -> Unit {
 ///|
 /// Whether `reference` starts with a URI scheme, such as `https:`, `file:`
 /// or `urn:`: a letter, then letters, digits, `+`, `-` or `.`, then `:`.
-fn has_scheme(reference : String) -> Bool {
+/// smock reads no URLs: the CLI uses it to say so when the root document
+/// it cannot read names one.
+pub fn has_scheme(reference : String) -> Bool {
   for i, c in reference {
     match c {
       ':' => return i > 0
@@ -384,6 +399,22 @@ fn pointer_keys(pointer : String) -> Array[String]? {
     keys.push(key.to_string())
   }
   Some(keys)
+}
+
+///|
+/// The member `key` of `json`, an object, or its item at the index that
+/// `key` gives, an array: one step of a JSON Pointer. `None` when there is
+/// none.
+fn step(json : Json, key : String) -> Json? {
+  match json {
+    Object(object) => object.get(key)
+    Array(items) =>
+      match array_index(key) {
+        Some(i) if i < items.length() => Some(items[i])
+        _ => None
+      }
+    _ => None
+  }
 }
 
 ///|

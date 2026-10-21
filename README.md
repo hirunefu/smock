@@ -34,8 +34,9 @@ Packages of `smock/smock`:
   `moonbitlang/async` exposes one; smock itself binds no C for it.
 - `settings`: the settings of `smock serve`, each a flag with a matching
   `SMOCK_<NAME>` environment variable, and the arguments of `smock check`,
-  `smock render` and `smock import-openapi`; also the rule that derives the Journal's byte bound
-  from a memory limit, which `server` reads from the cgroup at startup.
+  `smock render` and `smock import-openapi`; also the rule that derives the
+  Journal's byte bound from a memory limit, which `server` reads from the
+  cgroup at startup.
 - `definitions`: reads a definition set, given as (name, bytes) pairs of
   JSON and YAML files, into an immutable snapshot, or into diagnostics
   (file, JSON Pointer, message). Its validation is written by hand and
@@ -56,7 +57,8 @@ Packages of `smock/smock`:
   (`json` with `$each` and `$if`), the expression grammar, the fake-data
   helpers and their word and name lists, and escaping by media type. It
   parses a template once and renders it for a request, the time and one
-  64-bit draw, and writes JSON with smock's own number form.
+  64-bit draw, and writes JSON with smock's own number form, compact for
+  responses and indented for the files `smock import-openapi` writes.
 - `importopenapi`: converts an OpenAPI document into a Definition file,
   for `smock import-openapi`. It takes the documents as (name, bytes)
   pairs and returns the names of the documents it still needs, or the
@@ -65,9 +67,8 @@ Packages of `smock/smock`:
   `smock/yaml` and with comments that map Stubs back to the document, or
   JSON. `cmd/smock` reads the documents it asks for, under `--ref-dir`,
   and writes the file. Before it returns a file, it loads it with
-  `definitions`, as `smock check` would. Its parts are kept apart: the
-  document and its version, operations, paths, responses, bodies, and
-  references and the documents they name.
+  `definitions`, as `smock check` would. Its parts, one file each, are
+  listed in `importopenapi/import.mbt`.
 - `prng`: the seeded pseudo-random generator that Fault decisions and
   template helpers draw from. Its sequence for a seed is fixed, the same on
   every target.
@@ -997,9 +998,9 @@ Definition files, a fixed clock and a seeded random source
 one first runs `moon build --target native cmd/smock`, then starts smock with
 its own temporary definitions directory and port 0 for each port, so they
 run in parallel (`e2e/harness_test.mbt`). They need `moon`, `moonc`, `git`,
-`kill` and `openssl` on `PATH`. The HTTPS tests use clients that trust only
-the root CA of `testcerts`, and the HTTP/1.1 tests run on both the plain and
-the TLS port. The tests of the generated certificate (`e2e/self_signed_test.mbt`)
+`kill`, `mkfifo` and `openssl` on `PATH`. The HTTPS tests use clients that
+trust only the root CA of `testcerts`, and the HTTP/1.1 tests run on both
+the plain and the TLS port. The tests of the generated certificate (`e2e/self_signed_test.mbt`)
 read it from the handshake with `openssl s_client` and then trust only it.
 The test of the Journal's byte bound under a memory limit
 (`e2e/journal_bound_test.mbt`) starts smock in a systemd user scope with

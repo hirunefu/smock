@@ -53,13 +53,13 @@ fn Report::document(self : Report, root : Content) -> Document? {
 /// repeated key is an error. Or why it cannot be parsed. The input must be
 /// UTF-8, and a leading byte order mark is skipped.
 fn parse(name : String, bytes : Bytes) -> Content {
-  let yaml = name.has_suffix(".yaml") || name.has_suffix(".yml")
-  if !yaml && !name.has_suffix(".json") {
+  if !@definitions.is_json_or_yaml_name(name) {
     return Invalid(
       pointer="",
       message="an OpenAPI document's name ends in .json, .yaml or .yml",
     )
   }
+  let yaml = @definitions.is_yaml_name(name)
   let text = @utf8.decode(bytes, ignore_bom=true) catch {
     _ => return Invalid(pointer="", message="not valid UTF-8")
   }
@@ -91,7 +91,8 @@ fn Report::version(self : Report, top : Map[String, Json]) -> String? {
       )
       None
     }
-    (None, Some(String("2.0"))) => {
+    // YAML reads an unquoted `swagger: 2.0` as a number.
+    (None, Some(String("2.0"))) | (None, Some(Number(2.0, ..))) => {
       self.error_at(
         "/swagger", "Swagger 2.0 is not supported: convert the document to OpenAPI 3.0 first",
       )

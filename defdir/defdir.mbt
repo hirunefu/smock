@@ -96,9 +96,7 @@ async fn DirReader::read(
     return set
   }
   for name in self.visible_entries("") {
-    if !(name.has_suffix(".json") ||
-      name.has_suffix(".yaml") ||
-      name.has_suffix(".yml")) {
+    if !@definitions.is_json_or_yaml_name(name) {
       continue
     }
     if self.kind(name) is Some(Regular) && self.read_file(name) is Some(bytes) {

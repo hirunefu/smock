@@ -14,8 +14,11 @@
 /// are known only once read, so an output that is one of them is refused
 /// just before writing.
 async fn import_openapi(settings : @settings.ImportOpenapiSettings) -> Int {
-  let (ref_dir, document_dir) = real_directories(settings)
-  let name = settings.document_name_under(ref_dir~, document_dir~) catch {
+  let (inside, document_dir) = real_directories(settings)
+  let name = settings.document_name_under(
+    ref_dir=inside.to_option(),
+    document_dir~,
+  ) catch {
     err => {
       eprintln("smock import-openapi: \{err.message()}")
       return 2
@@ -29,6 +32,11 @@ async fn import_openapi(settings : @settings.ImportOpenapiSettings) -> Int {
   let bytes = match
     read_document(document, limit=@importopenapi.max_read_bytes + 1) {
     Ok(bytes) => bytes
+    Err(reason) if @importopenapi.has_scheme(document) =>
+      return nothing_written(
+        document,
+        "cannot be read: \{reason}; smock reads no URLs: download the document first",
+      )
     Err(reason) => return nothing_written(document, "cannot be read: \{reason}")
   }
   let options = @importopenapi.Options(
@@ -43,19 +51,21 @@ async fn import_openapi(settings : @settings.ImportOpenapiSettings) -> Int {
   )
   let converter = @importopenapi.Converter::new(options)
   converter.give(name, bytes)
-  let (conversion, read) = converted(
+  let (conversion, read_paths) = converted(
     converter,
     options,
+    inside~,
     room=@importopenapi.max_read_bytes - bytes.length(),
   )
   guard conversion is Converted(file~, problems~, stubs~, operations~) else {
     let problems = conversion.problems()
     print_problems(problems)
-    let errors = problems.iter().filter(problem => problem.is_error()).count()
-    println("nothing written: \{errors} errors")
+    print_nothing_written(
+      problems.iter().filter(problem => problem.is_error()).count(),
+    )
     return 1
   }
-  let refused = if is_read(output, read) {
+  let written = if is_read(output, read_paths) {
     Err(
       "is one of the documents being imported, and smock import-openapi does not replace it with its own conversion",
     )
@@ -64,11 +74,11 @@ async fn import_openapi(settings : @settings.ImportOpenapiSettings) -> Int {
       "cannot be written: \{reason}"
     })
   }
-  if refused is Err(reason) {
+  if written is Err(reason) {
     // A problem with the output comes before the document's.
     print_problem(output, reason)
     print_problems(problems)
-    println("nothing written: 1 errors")
+    print_nothing_written(1)
     return 1
   }
   print_problems(problems)
@@ -79,79 +89,68 @@ async fn import_openapi(settings : @settings.ImportOpenapiSettings) -> Int {
 }
 
 ///|
-/// Where `--ref-dir`, when it is given and names a directory, and the
-/// document's directory really are, once symlinks, `.` and `..` are
-/// resolved, or `None` for each that cannot be resolved. The document's
-/// name under `--ref-dir` is found from them.
+/// Where the directory that references are followed in and the document's
+/// directory really are, once symlinks, `.` and `..` are resolved. The
+/// first is `--ref-dir`'s, or else the document directory's, or why it
+/// cannot be resolved, such as that `--ref-dir` is not a directory; the
+/// second is `None` when it cannot be resolved. The document's name under
+/// `--ref-dir` is found from them, and the documents that references name
+/// are read only under the first, so the two never disagree.
 async fn real_directories(
   settings : @settings.ImportOpenapiSettings,
-) -> (String?, String?) {
-  guard settings.ref_dir is Some(ref_dir) else { return (None, None) }
-  let is_directory = try @fs.kind(ref_dir) catch {
-    _ => false
-  } noraise {
-    kind => kind is Directory
-  }
-  let ref_dir = if is_directory { real_path(ref_dir) } else { None }
+) -> (Result[String, String], String?) {
   let document_dir = real_path(
     match settings.document_directory() {
       "" => "."
       directory => directory
     },
   )
-  (ref_dir, document_dir)
+  let inside = match settings.ref_dir {
+    None => document_dir
+    Some(ref_dir) if !is_directory(ref_dir) => Err("not a directory")
+    Some(ref_dir) => real_path(ref_dir)
+  }
+  (inside, document_dir.to_option())
 }
 
 ///|
 /// The real path of `path`, once symlinks, `.` and `..` are resolved, or
-/// `None` when it cannot be resolved.
-async fn real_path(path : String) -> String? {
+/// why it cannot be resolved.
+async fn real_path(path : String) -> Result[String, String] {
   try @fs.realpath(path) catch {
-    _ => None
+    err => Err(@server.read_failure(err))
   } noraise {
-    real => Some(real)
+    real => Ok(real)
   }
 }
 
 ///|
-/// Whether the real path `real` is within the directory whose real path is
-/// `inside`, below it.
-fn within(real : String, inside : String) -> Bool {
-  real.has_prefix(under(inside))
-}
-
-///|
-/// What the real paths within the directory whose real path is `inside`
-/// start with: it, then `/`.
-fn under(inside : String) -> String {
-  if inside.has_suffix("/") {
-    inside
-  } else {
-    "\{inside}/"
+/// Whether `path` is a directory, after following symlinks. False when it
+/// cannot be looked at.
+async fn is_directory(path : String) -> Bool {
+  try @fs.kind(path) catch {
+    _ => false
+  } noraise {
+    kind => kind is Directory
   }
 }
 
 ///|
 /// Converts with `converter`, whose options are `options`, until it needs
 /// no more documents. Each round reads the documents it asks for, at most
-/// `room` bytes in all, or tells it why one cannot be read. Returns what it
-/// gave, and the real path of each document read for it.
+/// `room` bytes in all, or tells it why one cannot be read. A document must
+/// lie under `inside`, the real path of the directory that references are
+/// followed in, or why it cannot be resolved. Returns what it gave, and the
+/// real path of each document read for it.
 async fn converted(
   converter : @importopenapi.Converter,
   options : @importopenapi.Options,
+  inside~ : Result[String, String],
   room~ : Int,
 ) -> (@importopenapi.Conversion, Array[String]) {
-  let read = []
+  let read_paths = []
   let mut conversion = converter.convert()
-  guard conversion is Needs(_) else { return (conversion, read) }
-  // Where the directory that references are followed in really is, or why
-  // it cannot be found.
-  let directory = if options.ref_dir == "" { "." } else { options.ref_dir }
-  let inside = try @fs.realpath(directory) catch {
-    err => Err(@server.read_failure(err))
-  } noraise {
-    real => Ok(real)
-  }
+  guard conversion is Needs(_) else { return (conversion, read_paths) }
   let mut room = room
   while conversion is Needs(names) {
     for name in names {
@@ -162,14 +161,14 @@ async fn converted(
         Ok((bytes, real)) => {
           converter.give(name, bytes)
           room -= bytes.length()
-          read.push(real)
+          read_paths.push(real)
         }
         Err(reason) => converter.give_unreadable(name, reason)
       }
     }
     conversion = converter.convert()
   }
-  (conversion, read)
+  (conversion, read_paths)
 }
 
 ///|
@@ -195,7 +194,7 @@ async fn read_referenced(
   let real = @fs.realpath(path) catch {
     err => return Err(Other(@server.read_failure(err)))
   }
-  guard within(real, inside) else { return Err(SymlinkOutside) }
+  guard @settings.is_under(real, inside) else { return Err(SymlinkOutside) }
   let bytes = read_at_most(path, limit) catch {
     err => return Err(Other(@server.read_failure(err)))
   }
@@ -203,9 +202,10 @@ async fn read_referenced(
 }
 
 ///|
-/// Whether `output` is one of the documents whose real paths are `read`.
-async fn is_read(output : String, read : Array[String]) -> Bool {
-  read.contains(@fs.realpath(output)) catch {
+/// Whether `output` is one of the documents whose real paths are
+/// `read_paths`.
+async fn is_read(output : String, read_paths : Array[String]) -> Bool {
+  read_paths.contains(@fs.realpath(output)) catch {
     _ => false
   }
 }
@@ -228,21 +228,24 @@ fn print_problem(file : String, message : String) -> Unit {
 /// Prints the one problem that stopped the import, about `file`, and the
 /// summary line, and returns the exit status 1.
 fn nothing_written(file : String, message : String) -> Int {
-  println(@definitions.Diagnostic::{ file, pointer: "", message, }.to_string())
-  println("nothing written: 1 errors")
+  print_problem(file, message)
+  print_nothing_written(1)
   1
 }
 
 ///|
+/// Prints the summary line of an import that wrote nothing, for `errors`
+/// errors.
+fn print_nothing_written(errors : Int) -> Unit {
+  println("nothing written: \{errors} errors")
+}
+
+///|
 /// The bytes of the document at `path`, at most `limit` of them, or why it
-/// cannot be read, such as `no such file`.
+/// cannot be read, such as `no such file`. It mirrors `server`'s
+/// `read_file`, with a limit.
 async fn read_document(path : String, limit~ : Int) -> Result[Bytes, String] {
-  let is_dir = try @fs.kind(path) catch {
-    _ => false
-  } noraise {
-    kind => kind is Directory
-  }
-  if is_dir {
+  if is_directory(path) {
     return Err("is a directory")
   }
   try read_at_most(path, limit) catch {
@@ -421,6 +424,8 @@ fn write_failure(err : Error) -> String {
       "it exists now, and is not replaced"
     @os_error.OSError(_) as err if err.is_ENOENT() =>
       "its directory does not exist"
+    // `read_failure`'s words for other errors, such as `permission denied`
+    // or the system's message, fit a write as well as a read.
     err => @server.read_failure(err)
   }
 }

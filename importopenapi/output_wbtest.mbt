@@ -35,7 +35,17 @@ test "a file above the bound is an error with the file that gives its size" {
 }
 
 ///|
-test "a file that would not load, or would give a warning, is an error with the file that calls it a smock bug" {
+test "messages write counts in groups of three digits" {
+  inspect(
+    [0, 7, 999, max_documents, 12345, 1234567].map(count_text).join(" "),
+    content=(
+      #|0 7 999 1,000 12,345 1,234,567
+    ),
+  )
+}
+
+///|
+test "a file that would not load, or would give a warning, is an error with the file, with no pointer, that calls it a smock bug and names where the problem is" {
   inspect(
     checked(
       (
@@ -43,8 +53,8 @@ test "a file that would not load, or would give a warning, is an error with the 
       ),
     ),
     content=(
-      #|defs/m.json: /stubs/0/response/status: smock bug: the file would not load: must be an integer from 200 to 599
-      #|defs/m.json: /stubs/0/mock: smock bug: the file would not load: no file declares the Mock "m"
+      #|defs/m.json: smock bug: the file would not load: defs/m.json: /stubs/0/response/status: must be an integer from 200 to 599
+      #|defs/m.json: smock bug: the file would not load: defs/m.json: /stubs/0/mock: no file declares the Mock "m"
       #|passed: false
     ),
   )
@@ -57,7 +67,7 @@ test "a file that would not load, or would give a warning, is an error with the 
       ),
     ),
     content=(
-      #|defs/m.json: /stubs/1: smock bug: the file would give the warning: the Stub "b" can never match: the Stub "a" at defs/m.json: /stubs/0 is tried first and matches every request this one would
+      #|defs/m.json: smock bug: the file would give the warning: defs/m.json: /stubs/1: warning: the Stub "b" can never match: the Stub "a" at defs/m.json: /stubs/0 is tried first and matches every request this one would
       #|passed: false
     ),
   )
@@ -85,7 +95,7 @@ test "problems with the file come before the document's" {
 }
 
 ///|
-test "a file the YAML writer cannot write is an error with the file that calls it a smock bug" {
+test "a file the YAML writer cannot write is an error with the file, with no pointer, that calls it a smock bug" {
   let report = Report::new(
     Options(root="api.json", mock="m", output="defs/m.yaml"),
   )
@@ -104,7 +114,7 @@ test "a file the YAML writer cannot write is an error with the file that calls i
   inspect(
     report.problems().map(problem => problem.to_string()).join("\n"),
     content=(
-      #|defs/m.yaml: /stubs/0/id: smock bug: the file cannot be written as YAML: a number must be finite, or keep the text it was read from
+      #|defs/m.yaml: smock bug: the file cannot be written as YAML at /stubs/0/id: a number must be finite, or keep the text it was read from
     ),
   )
 }
@@ -127,14 +137,14 @@ test "a YAML file is checked as YAML, by its name" {
       output="defs/m.yaml",
     ),
     content=(
-      #|defs/m.yaml: /stubs/0/response/status: smock bug: the file would not load: must be an integer from 200 to 599
+      #|defs/m.yaml: smock bug: the file would not load: defs/m.yaml: /stubs/0/response/status: must be an integer from 200 to 599
       #|passed: false
     ),
   )
 }
 
 ///|
-test "a file that does not declare its Mock is checked with a stand-in that declares it, so its Stubs load, and a file that declares it all the same fails" {
+test "a file that does not declare its Mock is checked with a stand-in that declares it, so its Stubs load, and a file that declares it all the same fails; a problem in the stand-in names the stand-in" {
   let stubs =
     #|"stubs": [{ "id": "a", "mock": "m", "response": { "status": 200 } }]
   inspect(
@@ -147,7 +157,7 @@ test "a file that does not declare its Mock is checked with a stand-in that decl
       declare_mock=false,
     ),
     content=(
-      #|defs/m.json: /mocks/0/name: smock bug: the file would not load: the Mock name "m" is already declared at defs/m.json: /mocks/0/name
+      #|defs/m.json: smock bug: the file would not load: defs/m.json.mock.json: /mocks/0/name: the Mock name "m" is already declared at defs/m.json: /mocks/0/name
       #|passed: false
     ),
   )

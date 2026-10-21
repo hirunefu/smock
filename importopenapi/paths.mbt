@@ -48,35 +48,78 @@ fn Report::path_key(self : Report, pointer : String, key : String) -> Bool {
     )
     return false
   }
-  let mut open = false
-  let mut previous = ' '
-  for c in key {
-    match c {
-      '{' if open => {
-        self.error_at(pointer, "a path has an unbalanced { or }")
-        return false
-      }
-      '{' => open = true
-      '}' if !open => {
-        self.error_at(pointer, "a path has an unbalanced { or }")
-        return false
-      }
-      '}' if previous == '{' => {
-        self.error_at(
-          pointer, "a path has an empty {}: a parameter needs a name",
-        )
-        return false
-      }
-      '}' => open = false
-      _ => ()
+  match template_pieces(key) {
+    Ok(_) => true
+    Err(Unbalanced) => {
+      self.error_at(pointer, "a path has an unbalanced { or }")
+      false
     }
-    previous = c
+    Err(EmptyName) => {
+      self.error_at(pointer, "a path has an empty {}: a parameter needs a name")
+      false
+    }
   }
-  if open {
-    self.error_at(pointer, "a path has an unbalanced { or }")
-    return false
+}
+
+///|
+/// A piece of a template, such as a path key `/pets/{petId}` or a server
+/// URL `https://{host}/v1`.
+priv enum Piece {
+  /// Literal text, not empty.
+  Literal(String)
+  /// The name between a `{` and its `}`, such as `petId`.
+  Name(String)
+}
+
+///|
+/// Why a text is not a template.
+priv enum TemplateError {
+  /// A `{` or a `}` does not pair: a `}` with no `{` before it, a `{`
+  /// inside braces, or a `{` that is not closed.
+  Unbalanced
+  /// An empty `{}`, which names nothing.
+  EmptyName
+}
+
+///|
+/// The pieces of the template `text`, in order: its literal texts and the
+/// names in its braces. Or why it is not a template. Path keys and server
+/// URLs are both such templates; each caller words its own message.
+fn template_pieces(text : String) -> Result[Array[Piece], TemplateError] {
+  let pieces : Array[Piece] = []
+  let current = StringBuilder()
+  let mut in_name = false
+  for c in text {
+    match (in_name, c) {
+      (false, '{') => {
+        let literal = current.to_string()
+        if literal != "" {
+          pieces.push(Literal(literal))
+        }
+        current.reset()
+        in_name = true
+      }
+      (false, '}') | (true, '{') => return Err(Unbalanced)
+      (true, '}') => {
+        let name = current.to_string()
+        if name == "" {
+          return Err(EmptyName)
+        }
+        pieces.push(Name(name))
+        current.reset()
+        in_name = false
+      }
+      _ => current.write_char(c)
+    }
   }
-  true
+  if in_name {
+    return Err(Unbalanced)
+  }
+  let literal = current.to_string()
+  if literal != "" {
+    pieces.push(Literal(literal))
+  }
+  Ok(pieces)
 }
 
 ///|
@@ -90,26 +133,26 @@ fn Report::path_key(self : Report, pointer : String, key : String) -> Bool {
 /// at the `/` of the decoded text, as smock splits a request's decoded
 /// path.
 fn matched_path(key : String, prefix~ : String) -> Path {
-  // Literal texts, decoded, and None for each parameter. The prefix starts
-  // the first literal text, without being decoded again.
-  let pieces : Array[String?] = []
-  let text = StringBuilder()
-  let mut start = prefix
-  let mut in_name = false
-  for c in key {
-    if in_name {
-      in_name = c != '}'
-    } else if c == '{' {
-      pieces.push(Some(start + decoded_path(text.to_string())))
-      pieces.push(None)
-      text.reset()
-      start = ""
-      in_name = true
-    } else {
-      text.write_char(c)
+  // Literal texts, decoded, and None for each parameter. The prefix comes
+  // first, without being decoded again.
+  let pieces : Array[String?] = [Some(prefix)]
+  let exact = StringBuilder()
+  exact.write_string(prefix)
+  let mut names = 0
+  // `path_key` checked the braces, so the key is a template.
+  for piece in template_pieces(key).unwrap_or([Literal(key)]) {
+    match piece {
+      Literal(text) => {
+        let text = decoded_path(text)
+        pieces.push(Some(text))
+        exact.write_string(text)
+      }
+      Name(_) => {
+        pieces.push(None)
+        names += 1
+      }
     }
   }
-  pieces.push(Some(start + decoded_path(text.to_string())))
   let pattern = StringBuilder()
   let segments = []
   let mut literal = false
@@ -137,8 +180,8 @@ fn matched_path(key : String, prefix~ : String) -> Path {
     }
   }
   segments.push(segment(literal, parameters))
-  let condition = if pieces is [Some(path)] {
-    PathCondition::Exact(path)
+  let condition = if names == 0 {
+    PathCondition::Exact(exact.to_string())
   } else {
     Pattern(pattern.to_string())
   }

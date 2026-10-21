@@ -1,10 +1,10 @@
 ///|
-/// What the `examples` of the media type `key`, written at `pointer`, with
-/// the Media Type Object at `media_pointer`, answer with: the first example
-/// that gives a value is the response's body, and each further one gets a
-/// Stub of its own, which a request selects with `Smock-Example: <name>`.
-/// `None` when no example gives a value, so that the next source gives the
-/// body.
+/// What the `examples` of the media type `key`, written at
+/// `examples_pointer`, with the Media Type Object at `media_pointer`,
+/// answer with: the first example that gives a value is the response's
+/// body, and each further one gets a Stub of its own, which a request
+/// selects with `Smock-Example: <name>`. `None` when no example gives a
+/// value, so that the next source gives the body.
 ///
 /// A further example whose name a request cannot send in a header gets no
 /// Stub, with a warning. As the first example, it still gives the body.
@@ -12,7 +12,7 @@ fn Report::examples(
   self : Report,
   document : Document,
   media_pointer : String,
-  pointer : String,
+  examples_pointer : String,
   key : String,
   examples : Map[String, Json],
 ) -> Answers? {
@@ -20,7 +20,7 @@ fn Report::examples(
   let named = []
   let serialized_first = !is_json_media_type(key)
   for name, json in examples {
-    let at = @definitions.child_pointer(pointer, name)
+    let at = @definitions.child_pointer(examples_pointer, name)
     guard self.example_value(document, at, json, serialized_first~)
       is Some(value) else {
       continue
@@ -57,11 +57,8 @@ fn Report::example_value(
   json : Json,
   serialized_first~ : Bool,
 ) -> Value? {
-  guard self.followed(document, pointer, json) is Some({ pointer, json, }) else {
-    return None
-  }
-  guard json is Object(example) else {
-    self.error_at(pointer, "must be an object")
+  guard self.followed_object(document, pointer, json)
+    is Some((pointer, example)) else {
     return None
   }
   let serialized = match example.get("serializedValue") {
