@@ -144,7 +144,7 @@ of each GitHub release include its section
   until it first writes to the bucket, which gives it its own copy; reads
   never copy. Requests without a Session share one copy of each bucket.
   Templates read the request's Session's copy, and `smock render` and the
-  Admin render operation always read the initial value. Copies count
+  Admin render operation never read a copy. Copies count
   toward `--state-max-bytes` with Variables: each counts its bucket's
   name, its value's compact JSON and fixed bytes, and its space counts
   once. Initial values do not count.
@@ -197,6 +197,17 @@ of each GitHub release include its section
   that would break the bucket's rules, and running out of integer keys
   (`no new key`) fail the write, and nothing is written. A Stub's response
   cannot read a key that its own `append` made.
+- `smock render` and the Admin render operation take sample data and show
+  the writes a Stub would make. The sample's `data` gives the value of a
+  Data bucket of the Stub's Mock in place of its initial value; a name the
+  Mock does not declare, or a value that breaks a keyed bucket's rules,
+  makes `smock render` exit with status 1 and the Admin render answer 400
+  `invalid_data`. The rendering's `dataWrites` lists the writes of the
+  Stub's `dataWrites` in order, each with its op, bucket, rendered key and
+  rendered value, the new key filled in for an `append` to a keyed bucket,
+  and the response reads the data after them. A write that fails to render
+  or to apply shows the 500 a request would get, and no write. A rendering
+  never reads or writes a Session's copy, and no state bound applies.
 - docs/migrating-from-mockoon.md maps Mockoon's helpers, `RANDOM` routes,
   global variables, Range requests, dates, cookies and environment
   variables onto smock, with each difference called out.
