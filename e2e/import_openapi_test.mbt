@@ -512,10 +512,7 @@ async test "smock serves an imported file like any other: its main status answer
         ("Host", "localhost"),
         baggage("imported"),
       ])
-      inspect(
-        response.split("\n").next().unwrap_or(""),
-        content="HTTP/1.1 200 OK",
-      )
+      inspect(status_line(response), content="HTTP/1.1 200 OK")
       match smock.journal(session="imported") {
         (200, Object({ "entries": Array([Object(entry)]), .. })) =>
           json_inspect(
@@ -694,10 +691,7 @@ async test "smock import-openapi writes a .yaml --output as YAML, with comments 
         ("Host", "localhost"),
         baggage("imported"),
       ])
-      inspect(
-        response.split("\n").next().unwrap_or(""),
-        content="HTTP/1.1 200 OK",
-      )
+      inspect(status_line(response), content="HTTP/1.1 200 OK")
       match smock.journal(session="imported") {
         (200, Object({ "entries": Array([Object(entry)]), .. })) =>
           json_inspect(
@@ -910,46 +904,60 @@ async fn serving_my_pet(dir : String, f : async (Smock) -> Unit) -> Unit {
 /// its `Smock-Status` if it sent one, its `Smock-Example` when it sent one,
 /// the status, the Stub that answered and where that Stub came from.
 async fn Smock::answered(self : Smock, session : String) -> Json {
-  match self.journal(session~) {
-    (200, Object({ "entries": Array(entries), .. })) => {
-      let answered : Array[Json] = []
-      for entry in entries {
-        guard entry
-          is Object(
-            {
-              "request": Object({ "headers": Array(headers), .. }),
-              "status": status,
-              "stub": stub,
-              "stubSource": source,
-              ..
-            }
-          ) else {
-          fail("unexpected entry: \{entry.stringify()}")
-        }
-        let mut selector = Json::null()
-        let mut example = None
-        for header in headers {
-          if header is Object({ "name": String(name), "value": value, .. }) {
-            match name.to_lower() {
-              "smock-status" => selector = value
-              "smock-example" => example = Some(value)
-              _ => ()
-            }
-          }
-        }
-        let request : Map[String, Json] = { "Smock-Status": selector }
-        if example is Some(example) {
-          request["Smock-Example"] = example
-        }
-        request["status"] = status
-        request["stub"] = stub
-        request["stubSource"] = source
-        answered.push(Json::object(request))
-      }
-      Json::array(answered)
+  let answered : Array[Json] = []
+  for entry in self.journal_entries(session) {
+    guard entry
+      is {
+        "request": Object({ "headers": Array(headers), .. }),
+        "status": status,
+        "stub": stub,
+        "stubSource": source,
+        ..
+      } else {
+      fail("unexpected entry: \{Json::object(entry).stringify()}")
     }
+    let mut selector = Json::null()
+    let mut example = None
+    for header in headers {
+      if header is Object({ "name": String(name), "value": value, .. }) {
+        match name.to_lower() {
+          "smock-status" => selector = value
+          "smock-example" => example = Some(value)
+          _ => ()
+        }
+      }
+    }
+    let request : Map[String, Json] = { "Smock-Status": selector }
+    if example is Some(example) {
+      request["Smock-Example"] = example
+    }
+    request["status"] = status
+    request["stub"] = stub
+    request["stubSource"] = source
+    answered.push(Json::object(request))
+  }
+  Json::array(answered)
+}
+
+///|
+/// The entries of the Journal of `session`, in order, each an object.
+/// Fails when the Journal or an entry is not as smock writes it.
+async fn Smock::journal_entries(
+  self : Smock,
+  session : String,
+) -> Array[Map[String, Json]] {
+  let entries = match self.journal(session~) {
+    (200, Object({ "entries": Array(entries), .. })) => entries
     (status, body) => fail("unexpected Journal: \{status} \{body.stringify()}")
   }
+  let objects = []
+  for entry in entries {
+    guard entry is Object(entry) else {
+      fail("unexpected entry: \{entry.stringify()}")
+    }
+    objects.push(entry)
+  }
+  objects
 }
 
 ///|
@@ -963,7 +971,7 @@ async test "smock serves an imported file with Smock-Status: a request gets the 
           headers.push(("Smock-Status", key))
         }
         let response = smock.request("GET", "/pets/mine", headers~)
-        lines.push(response.split("\n").next().unwrap_or("").to_owned())
+        lines.push(status_line(response))
       }
       inspect(
         lines.join("\n"),
@@ -1022,7 +1030,7 @@ async test "a test whose requests cannot set Smock-Status selects the imported 4
           headers=[("Host", "localhost"), ..session_headers(session)],
         )
         lines.push(
-          "\{session.unwrap_or("no Session")}: \{response.split("\n").next().unwrap_or("")}",
+          "\{session.unwrap_or("no Session")}: \{status_line(response)}",
         )
       }
       inspect(
@@ -1262,7 +1270,7 @@ async test "smock serves an imported file with a pattern: /pets/mine gets its ow
           ("Host", "localhost"),
           baggage("patterns"),
         ])
-        lines.push("\{path}: \{response.split("\n").next().unwrap_or("")}")
+        lines.push("\{path}: \{status_line(response)}")
       }
       inspect(
         lines.join("\n"),
@@ -1446,23 +1454,15 @@ async test "smock serves an imported file with Smock-Example: alone it selects t
 /// What the Journal holds for `session`, in order: for each request, the
 /// Mock and the Stub that answered, and the status.
 async fn Smock::answered_by(self : Smock, session : String) -> Json {
-  match self.journal(session~) {
-    (200, Object({ "entries": Array(entries), .. })) => {
-      let answered : Array[Json] = []
-      for entry in entries {
-        guard entry is Object(entry) else {
-          fail("unexpected entry: \{entry.stringify()}")
-        }
-        answered.push({
-          "mock": entry.get("mock").unwrap_or(Json::null()),
-          "stub": entry.get("stub").unwrap_or(Json::null()),
-          "status": entry.get("status").unwrap_or(Json::null()),
-        })
-      }
-      Json::array(answered)
-    }
-    (status, body) => fail("unexpected Journal: \{status} \{body.stringify()}")
+  let answered : Array[Json] = []
+  for entry in self.journal_entries(session) {
+    answered.push({
+      "mock": entry.get("mock").unwrap_or(Json::null()),
+      "stub": entry.get("stub").unwrap_or(Json::null()),
+      "status": entry.get("status").unwrap_or(Json::null()),
+    })
   }
+  Json::array(answered)
 }
 
 ///|
@@ -1613,7 +1613,7 @@ async test "a file imported with --declare-mock off holds only Stubs, for the Mo
           ("Host", "localhost"),
           baggage("declared"),
         ])
-        lines.push(response.split("\n").next().unwrap_or("").to_owned())
+        lines.push(status_line(response))
       }
       inspect(
         lines.join("\n"),
@@ -1656,7 +1656,7 @@ async fn Smock::status_lines(self : Smock, paths : Array[String]) -> String {
   let lines = []
   for path in paths {
     let response = self.request("GET", path, headers=[("Host", "localhost")])
-    lines.push("\{path}: \{response.split("\n").next().unwrap_or("")}")
+    lines.push("\{path}: \{status_line(response)}")
   }
   lines.join("\n")
 }
