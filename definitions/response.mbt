@@ -35,6 +35,50 @@ priv enum EventValue {
 }
 
 ///|
+/// Reads the `responses` of the Stub at `stub_pointer`: the value `json` at
+/// `pointer`, 1 to `max_responses` responses, each the shape of `response`
+/// plus `weight`, an integer from 1 to `max_weight`, by default 1. Returns
+/// them in the order written, with the sum of their weights.
+fn File::read_responses(
+  self : File,
+  stub_pointer : String,
+  pointer : String,
+  json : Json,
+) -> (Array[WeightedResponse], Int) {
+  let items = self.array(pointer, json)
+  if json is Array(_) && (items.length() < 1 || items.length() > max_responses) {
+    self.error(pointer, "must hold 1 to \{max_responses} responses")
+  }
+  let responses = []
+  let mut total = 0
+  for i, item in items {
+    let at = child_pointer(pointer, i.to_string())
+    let mut weight = 1
+    let mut item = item
+    if item is Object(fields) && fields.get("weight") is Some(value) {
+      weight = self
+        .read_integer(
+          child_pointer(at, "weight"),
+          value,
+          min=1L,
+          max=max_weight.to_int64(),
+        )
+        .map_or(1, n => n.to_int())
+      // The rest is a response like any other.
+      let fields = fields.copy()
+      fields.remove("weight")
+      item = Json::object(fields)
+    }
+    responses.push({
+      weight,
+      response: self.read_response(stub_pointer, at, item),
+    })
+    total += weight
+  }
+  (responses, total)
+}
+
+///|
 /// Reads the response of the Stub at `stub_pointer`: the value `json` at
 /// `pointer`.
 fn File::read_response(

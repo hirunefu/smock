@@ -148,6 +148,10 @@ pub struct Stub {
   /// matched request gets one of them. A Stub with `response` has that one,
   /// of weight 1.
   responses : ReadOnlyArray[WeightedResponse]
+  /// The sum of the weights of `responses` when the Stub gives `responses`:
+  /// a matched request then takes a pick among them. `None` for a Stub with
+  /// `response`, which takes no pick.
+  total_weight : Int?
   /// The Faults the Stub injects when it matches, if it has `fault`.
   fault : Fault?
 } derive(Debug, Eq)
@@ -157,10 +161,19 @@ pub struct Stub {
 /// request gets it is its weight over the sum of the weights of the Stub's
 /// responses.
 pub struct WeightedResponse {
-  /// A positive integer.
+  /// An integer from 1 to `max_weight`.
   weight : Int
   response : Response
 } derive(Debug, Eq)
+
+///|
+/// The most responses a Stub's `responses` holds.
+pub let max_responses : Int = 100
+
+///|
+/// The largest weight of a response in `responses`. With at most
+/// `max_responses` of them, the sum of the weights fits an `Int`.
+pub let max_weight : Int = 1_000_000
 
 ///|
 /// A Stub's Scenario clause: the state a Scenario of the Stub's Mock must
