@@ -667,10 +667,18 @@ pub fn parse_seed(text : String) -> UInt64? {
 /// prefix or separator. `None` when it is not one. Whether the Stub has a
 /// response at that index is the rendering's to say.
 pub fn parse_response_index(text : String) -> Int? {
+  // Two digits hold every index below max_responses (100).
   match decimal(text, max_digits=2) {
     Some(n) if n < @definitions.max_responses.to_uint64() => Some(n.to_int())
     _ => None
   }
+}
+
+///|
+/// Why a value is not the index of a response, as `--response` and the
+/// render operation's `response` query parameter say it.
+pub fn response_index_reason() -> String {
+  "must be an integer from 0 to \{@definitions.max_responses - 1}"
 }
 
 ///|
@@ -782,7 +790,7 @@ pub fn RenderSettings::from_matches(
           raise InvalidOption(
             flag="response",
             value=text,
-            reason="must be an integer from 0 to \{@definitions.max_responses - 1}",
+            reason=response_index_reason(),
           )
       }
   }

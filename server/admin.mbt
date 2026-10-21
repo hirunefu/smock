@@ -546,7 +546,7 @@ fn render(admin : Admin, call : Call) -> Reply {
         Some(index) => Some(index)
         None =>
           return invalid(
-            "the response query parameter must be an integer from 0 to \{@definitions.max_responses - 1}",
+            "the response query parameter \{@settings.response_index_reason()}",
           )
       }
   }
