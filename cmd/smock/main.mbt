@@ -72,16 +72,22 @@ async fn main {
 
 ///|
 /// Runs `smock render`: loads the definitions directory as `smock serve`
-/// does, reads the sample request, renders the named Stub's response for it
-/// and prints the rendering to stdout as JSON, in the form of the Admin
-/// render operation's result without its warnings. Returns the exit status:
-/// 0 when it rendered, 1 when the definition set is invalid, with the
-/// messages `smock check` prints, when the sample request cannot be read or
-/// is not valid, when no Stub has the ID, or when the Stub has no response
-/// at the index `--response` gives. Every problem goes to stderr.
+/// does, with the environment variables it lists read from its own
+/// environment, reads the sample request, renders the named Stub's
+/// response for it and prints the rendering to stdout as JSON, in the form
+/// of the Admin render operation's result without its warnings. Returns
+/// the exit status: 0 when it rendered, 1 when the definition set is
+/// invalid, with the messages `smock check` prints, when the sample request
+/// cannot be read or is not valid, when no Stub has the ID, or when the
+/// Stub has no response at the index `--response` gives. Every problem goes
+/// to stderr.
 async fn render(settings : @settings.RenderSettings) -> Int {
   let snapshot = match
-    @defdir.load(Some(settings.dir), body_file_dir=settings.body_file_dir) {
+    @defdir.load(
+      Some(settings.dir),
+      body_file_dir=settings.body_file_dir,
+      env=@server.template_env(settings.template_env),
+    ) {
     Ok(snapshot) => snapshot
     Err(diagnostics) => {
       for diagnostic in diagnostics {
@@ -134,10 +140,11 @@ async fn render(settings : @settings.RenderSettings) -> Int {
 
 ///|
 /// Runs `smock check`: loads the definitions directory as `smock serve`
-/// does and prints every problem to stdout, one per line, or, when the set
-/// is valid, every warning, such as a Stub that can never match. Returns the
-/// exit status: 0 when the definition set is valid, with or without
-/// warnings, 1 when it is not.
+/// does, with the environment variables it lists read from its own
+/// environment, and prints every problem to stdout, one per line, or, when
+/// the set is valid, every warning, such as a Stub that can never match.
+/// Returns the exit status: 0 when the definition set is valid, with or
+/// without warnings, 1 when it is not.
 ///
 /// A missing directory is an empty definition set, which is valid, as for
 /// `smock serve`. Since a mistyped path then passes too, `check` says on
@@ -150,7 +157,12 @@ async fn check(settings : @settings.CheckSettings) -> Int {
       "smock check: the definitions directory \{dir} does not exist, so it is read as an empty definition set",
     )
   }
-  match @defdir.load(Some(dir), body_file_dir=settings.body_file_dir) {
+  match
+    @defdir.load(
+      Some(dir),
+      body_file_dir=settings.body_file_dir,
+      env=@server.template_env(settings.template_env),
+    ) {
     Ok(snapshot) => {
       for warning in snapshot.warnings() {
         println(warning.to_string())

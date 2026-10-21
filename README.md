@@ -53,9 +53,10 @@ Packages of `smock/smock`:
   a body file, a header value or an event field) and structured templates
   (`json` with `$each` and `$if`), the expression grammar, the helpers by
   family (fake data with its word and name lists, time, conversions and
-  strings), and escaping by media type. It
-  parses a template once and renders it for a request, the time and one
-  64-bit draw, and writes JSON with smock's own number form.
+  strings), and escaping by media type. It parses a template once, with
+  the values of the environment variables `--template-env` lists, which its
+  caller reads, and renders it for a request, the time and one 64-bit draw,
+  and writes JSON with smock's own number form.
 - `prng`: the seeded pseudo-random generator that Fault decisions and
   template helpers draw from. Its sequence for a seed is fixed, the same on
   every target.
@@ -187,6 +188,7 @@ exits with status 2. `smock serve --help` lists the settings:
 | `--session-member` | `SMOCK_SESSION_MEMBER` | `smock-session`: the member of that header whose value is the Session key |
 | `--log-format` | `SMOCK_LOG_FORMAT` | `json`, the only format |
 | `--body-file-dir` | `SMOCK_BODY_FILE_DIR` | `files` |
+| `--template-env` | `SMOCK_TEMPLATE_ENV` | none: templates read no environment variable; a comma-separated list of names lets them read those as `env.NAME`, with values read once at startup ([Environment variables](docs/definition-files.md#environment-variables)) |
 | `--header-size-limit` | `SMOCK_HEADER_SIZE_LIMIT` | 16384 bytes (16 KiB): larger request heads get 431 |
 | `--header-count-limit` | `SMOCK_HEADER_COUNT_LIMIT` | 100 header fields: more get 431 |
 | `--body-limit` | `SMOCK_BODY_LIMIT` | 10485760 bytes (10 MiB): longer bodies get 413 |
@@ -493,7 +495,9 @@ Pointer, and exits with status 1 if there is any. It also warns about Stubs
 that can never match, because an earlier Stub always matches first, and
 about a [state that a Stub requires but no Stub moves its Scenario
 to](docs/definition-files.md#a-state-that-no-stub-moves-to); warnings do
-not change the exit status.
+not change the exit status. It takes `--body-file-dir` and
+`--template-env` as `smock serve` does, and reads the listed environment
+variables from its own environment.
 
 `smock render --dir defs get-user --request sample.json` shows what a Stub
 returns for a sample request before a test relies on it. The sample is JSON,
@@ -504,7 +508,9 @@ repeated parameter or header takes an array of values. Cookies come from
 `headers.Cookie`, as a request's come from its `Cookie` fields, and form
 fields from the body, read as a form when `headers.Content-Type` says it is
 one. smock reads the directory as `smock serve` does, body files included,
-and prints the rendering as JSON, the same as the Admin render operation's
+with `--body-file-dir` and `--template-env` as `smock serve` takes them and
+the listed environment variables read from its own environment, and prints
+the rendering as JSON, the same as the Admin render operation's
 result without its `warnings`: the Stub's status, headers and body (`utf-8`
 text, or `base64`) or its Server-Sent Events, and the conditions the sample
 fails, with expected and actual values as in a Near miss (empty when it

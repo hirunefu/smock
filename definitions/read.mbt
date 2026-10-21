@@ -106,17 +106,21 @@ priv struct Reader {
   stub_locations : Map[String, Location]
   /// The body files, by their name relative to the body-file subdirectory.
   body_files : Map[String, Bytes]
+  /// The environment variables templates may read.
+  env : @template.Env
 }
 
 ///|
 fn Reader::new(
   declared~ : Set[String],
   body_files~ : Map[String, Bytes],
+  env~ : @template.Env,
 ) -> Reader {
   {
     diagnostics: [],
     declared,
     body_files,
+    env,
     mocks: [],
     mock_names: Map([]),
     hosts: Map([]),
@@ -238,6 +242,7 @@ fn Reader::read_file(
     name,
     diagnostics: self.diagnostics,
     body_files: Some(self.body_files),
+    env: self.env,
   }
   let top = match parsed {
     Ok(top) => top
@@ -290,6 +295,8 @@ priv struct File {
   /// The body files of the set, which Stubs refer to, or `None` for an
   /// Ephemeral Stub, whose body must be inline.
   body_files : Map[String, Bytes]?
+  /// The environment variables templates may read.
+  env : @template.Env
 }
 
 ///|

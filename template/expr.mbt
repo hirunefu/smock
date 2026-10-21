@@ -5,7 +5,7 @@
 //     ref     = root steps
 //     steps   = { "." name | "[" integer "]" | "[" string "]" }
 //     root    = "method" | "path" | "query" | "header" | "cookie" | "body"
-//             | "bodyText" | "loop" | loop variable
+//             | "bodyText" | "env" | "loop" | loop variable
 //     call    = function "(" [ expr { "," expr } ] ")" steps
 //     cond    = [ "!" ] expr [ ( "==" | "!=" ) literal ]
 //     literal = string | number | "true" | "false" | "null"
@@ -20,8 +20,8 @@
 priv enum Expr {
   /// A literal: a string, a number, true, false or null.
   Literal(Json)
-  /// A reference to a request field, `loop.index` or a loop variable, with
-  /// its source text.
+  /// A reference to a request field, a listed environment variable,
+  /// `loop.index` or a loop variable, with its source text.
   Ref(Root, Array[Step], String)
   /// A call of a helper, with its arguments.
   Call(Helper, Array[Expr])
@@ -42,6 +42,9 @@ priv enum Root {
   Cookie
   Body
   BodyText
+  /// `env.NAME`: the value of a listed variable, read when the template was
+  /// parsed, or `None` when it is unset.
+  Env(Json?)
   LoopIndex
   /// A loop variable, by its name.
   Var(String)
@@ -94,10 +97,10 @@ priv suberror Syntax {
 let reserved : Array[String] = ["for", "if", "else", "end", "each", "params"]
 
 ///|
-/// The names of request fields and `loop`, which a loop variable cannot
-/// take.
+/// The names of request fields, `env` and `loop`, which a loop variable
+/// cannot take.
 let root_names : Array[String] = [
-  "method", "path", "query", "header", "cookie", "body", "bodyText", "loop",
+  "method", "path", "query", "header", "cookie", "body", "bodyText", "env", "loop",
 ]
 
 ///|
@@ -116,6 +119,8 @@ priv struct Parser {
   in_loop : Bool
   /// Whether `json()` and `raw()` are allowed: in text templates only.
   text : Bool
+  /// The environment variables `env.NAME` may read.
+  env : Env
 }
 
 ///|
@@ -469,6 +474,23 @@ fn Parser::reference(
     "method" => alone(Method)
     "bodyText" => alone(BodyText)
     "body" => Ref(Body, steps, text)
+    "env" =>
+      match steps {
+        [Name(name)] =>
+          match self.env.values.get(name) {
+            Some(value) => Ref(Env(value.map(Json::string)), steps, text)
+            None =>
+              raise Syntax(
+                start,
+                "\{text}: the environment variable \{name.escape()} is not listed in --template-env",
+              )
+          }
+        _ =>
+          raise Syntax(
+            start,
+            "\{text}: env takes exactly one name, such as env.REGION",
+          )
+      }
     "query" => with_name(Query)
     "header" => with_name(Header)
     "cookie" => with_name(Cookie)
@@ -509,6 +531,7 @@ fn root_word(root : Root) -> String {
     Cookie => "cookie"
     Body => "body"
     BodyText => "bodyText"
+    Env(_) => "env"
     LoopIndex => "loop"
     Var(name) => name
   }

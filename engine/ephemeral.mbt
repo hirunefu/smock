@@ -101,8 +101,9 @@ fn EphemeralStubs::of(
 /// Adds an Ephemeral Stub to the Mock `mock`, for `session`, or for the
 /// no-Session space when it is `None`. `stub` is a Stub in the shape
 /// Definition files use, without `id` and `mock`, with an inline body. It
-/// is validated and compiled like a Stub from a Definition file, and gets
-/// the next ID, `eph-<n>`. A Stub with a seed gets its own generator, from
+/// is validated and compiled like a Stub from a Definition file, with the
+/// environment variables the engine was created with, and gets the next
+/// ID, `eph-<n>`. A Stub with a seed gets its own generator, from
 /// its seed.
 ///
 /// Raises `UnknownMock` when no Mock has the name `mock`, and
@@ -117,7 +118,8 @@ pub fn Engine::add_ephemeral_stub(
   let ephemeral = self.ephemeral
   let n = ephemeral.last_n + 1
   let id = "eph-\{n}"
-  let compiled = match @definitions.ephemeral_stub(stub, id~, mock~) {
+  let compiled = match
+    @definitions.ephemeral_stub(stub, id~, mock~, env=self.env) {
     Ok(compiled) => compiled
     Err(problems) => raise InvalidStub(problems)
   }

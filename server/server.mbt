@@ -30,6 +30,9 @@ pub async fn serve(
   } else {
     None
   }
+  // The environment variables templates may read are read once, here: every
+  // load, reload and Ephemeral Stub uses these values.
+  let template_env = template_env(settings.template_env)
   // Watching starts before the first load, so that no change made while it
   // reads the files goes unnoticed. Without a definitions directory, there
   // is nothing to watch and nothing to reload. A poll first compares a stamp
@@ -138,6 +141,7 @@ pub async fn serve(
             rand~,
             reloads~,
             traffic~,
+            template_env~,
           )
         })
       })
@@ -158,7 +162,8 @@ async fn sleep_forever() -> Unit {
 /// Serves the Admin API on `admin_listener`, from now until it returns;
 /// loads the definitions and the TLS certificates; listens on the plain and
 /// the TLS port; serves the Mocks there, recording them in a Journal with
-/// the settings `journal`, until the drain starts; and drains.
+/// the settings `journal`, until the drain starts; and drains. Templates
+/// read the environment variables `template_env`.
 /// Returns the exit status: 0 after the drain, or 1 when the definition set
 /// is invalid, a TLS certificate cannot be loaded or generated, or a port
 /// cannot be listened on.
@@ -182,6 +187,7 @@ async fn run(
   rand~ : @prng.Generator,
   reloads~ : @metrics.Counter,
   traffic~ : Traffic,
+  template_env~ : @template.Env,
 ) -> Int {
   let connections = Connections::new()
   @async.with_task_group(group => {
@@ -206,7 +212,11 @@ async fn run(
       })
     })
     let snapshot = match
-      @defdir.load(settings.dir, body_file_dir=settings.body_file_dir) {
+      @defdir.load(
+        settings.dir,
+        body_file_dir=settings.body_file_dir,
+        env=template_env,
+      ) {
       Ok(snapshot) => snapshot
       Err(diagnostics) => {
         for diagnostic in diagnostics {
@@ -219,7 +229,7 @@ async fn run(
         return 1
       }
     }
-    let engine = @engine.Engine(snapshot, journal~)
+    let engine = @engine.Engine(snapshot, journal~, env=template_env)
     lifecycle.started(engine)
     let ports : MockPorts = {
       engine,
