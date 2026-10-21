@@ -1414,6 +1414,40 @@ The body `{"code":"straße-ç"}` with `?name=%E3%80%80Ann%20` (an ideographic
 space before the name, a space after it) gets
 `{"code":"STRAßE-Ç","name":"Ann"}`.
 
+**Arrays.** Each argument may be any expression.
+
+| Helper | Arguments | Output |
+|---|---|---|
+| `find(array, member, value)` | an array; a string; a string, a number, a boolean or null | The first element of `array` that is an object whose member `member` meets `value`. |
+
+`value` is taken as text: a string as it is, a number as smock writes it
+in `json`, and `true`, `false` and `null` as those words. Unlike the
+string helpers, `find` takes `null`. A member meets the value when:
+
+- it is a string equal to that text;
+- it is a number, and the text is a JSON number of equal value, compared
+  as [`json` conditions](#how-a-stub-matches-a-request) compare numbers:
+  `12.50` meets `12.5`, and integers beyond 2^53 are compared exactly;
+- it is `true`, `false` or `null`, and the text is that word.
+
+Objects, arrays and absent members never meet the value. So
+`find(body.orders, 'id', 1004)`, `find(body.orders, 'id', '1004')` and,
+for `/orders/1004`, `find(body.orders, 'id', path[1])` all find the order
+whose `id` is `1004` or `"1004"`. When no element meets the value, the
+call is missing, so `??` gives a fallback. `find` gives an element and
+builds nothing, so the 1 MiB bound on a helper's result does not apply;
+the bound on the rendered body still does.
+
+```yaml
+response:
+  status: 200
+  template: true
+  json: "${find(body.items, 'sku', query.sku) ?? 'no such item'}"
+```
+
+`?sku=42` with the body `{"items":[{"sku":7,"qty":3},{"sku":42,"qty":1}]}`
+gets `{"sku":42,"qty":1}`, and `?sku=5` gets `"no such item"`.
+
 **Encodings.** Each argument may be any expression.
 
 | Helper | Arguments | Output |
@@ -1708,8 +1742,8 @@ an error unless `??` gives a fallback (`${query.lang ?? 'en'}`,
 `${body.note ?? null}`); a loop over an absent query parameter or header
 runs zero times, and in `$if` a missing value is never an error: it is
 false, and it equals no literal (so `query.x != 'a'` holds when `x` is
-absent). A call with a missing argument is missing too, and so is a JWT
-helper's call on what is not a token.
+absent). A call with a missing argument is missing too, and so are a JWT
+helper's call on what is not a token and a `find` that finds no element.
 
 Type errors are errors as well: a loop over what is not an array,
 `number(x)` of text that is not a JSON number, a `range` bound that is not
