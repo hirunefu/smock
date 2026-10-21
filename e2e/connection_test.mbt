@@ -28,6 +28,7 @@ let startup_only : String =
   #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
   #|{"level":"info","msg":"random seed","seed":"*"}
   #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+  #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
   #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
   #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
   #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","certFile":"*/rsa-chain.pem","keyFile":"*/rsa-key.pem"}
