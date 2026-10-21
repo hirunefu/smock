@@ -25,7 +25,9 @@ pub struct Options {
   /// it.
   mock : String
   /// The Definition file to write, as `--output` gives it. Problems with
-  /// the file itself name it so.
+  /// the file itself name it so. Its name picks the format: YAML when it
+  /// ends in `.yaml` or `.yml`, else JSON. Nothing else of it reaches the
+  /// file.
   output : String
 }
 
@@ -109,5 +111,5 @@ pub fn convert(
     return Failed(report.problems())
   }
   let imported = report.operations(document)
-  report.file(imported)
+  report.file(document, imported)
 }

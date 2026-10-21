@@ -131,7 +131,8 @@ pub(all) struct ImportOpenapiSettings {
   document : String
   /// The name of the Mock the Definition file declares.
   mock : String
-  /// The Definition file to write, a new JSON file, as given.
+  /// The Definition file to write, a new JSON or YAML file, as given. Its
+  /// name picks the format.
   output : String
 } derive(Debug)
 
@@ -415,7 +416,7 @@ pub fn import_openapi_command() -> @argparse.Command {
       @argparse.OptionArg(
         "output",
         long="output",
-        about="The Definition file to write, whose name ends in .json. It must not exist: the file is created new.",
+        about="The Definition file to write. Its name picks the format: .yaml or .yml writes YAML, with comments that map each Stub back to the document, and .json writes JSON. It must not exist: the file is created new.",
         required=true,
       ),
     ],
@@ -767,8 +768,8 @@ pub fn RenderSettings::from_matches(
 /// Reads and checks the settings from the parsed `import-openapi`
 /// subcommand. The document and the output name a JSON or YAML file, in
 /// lower case, as Definition files do, and the output's name does not
-/// start with `.`, since smock skips such files. YAML is not read or
-/// written yet.
+/// start with `.`, since smock skips such files. YAML documents are not
+/// read yet.
 pub fn ImportOpenapiSettings::from_matches(
   matches : @argparse.Matches,
 ) -> ImportOpenapiSettings raise InvalidSetting {
@@ -806,13 +807,7 @@ pub fn ImportOpenapiSettings::from_matches(
         value=output,
         reason="must not name a file that starts with ., which smock skips",
       )
-    Some(YamlFile) =>
-      raise InvalidOption(
-        flag="output",
-        value=output,
-        reason="YAML output is not supported yet: give a .json file",
-      )
-    Some(JsonFile) => ()
+    Some(_) => ()
   }
   { document, mock, output, }
 }

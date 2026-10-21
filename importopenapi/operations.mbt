@@ -12,12 +12,20 @@ priv struct Stub {
   meth : String
   /// The exact path it matches.
   path : String
+  /// The key of the response it answers, as the document writes it.
+  response : String
   status : Int
 }
 
 ///|
 /// An operation that is imported, with its Stubs.
 priv struct Imported {
+  /// Its path key, as the document writes it.
+  key : String
+  /// Its `summary`, or `""`.
+  summary : String
+  /// Whether it is `deprecated`.
+  deprecated : Bool
   stubs : Array[Stub]
 }
 
@@ -164,6 +172,28 @@ fn Report::operation(
       None
     }
   }
+  let summary = match operation.get("summary") {
+    None => ""
+    Some(String(summary)) => summary
+    Some(_) => {
+      self.root_error(
+        @definitions.child_pointer(pointer, "summary"),
+        "must be a string",
+      )
+      ""
+    }
+  }
+  let deprecated = match operation.get("deprecated") {
+    None | Some(False) => false
+    Some(True) => true
+    Some(_) => {
+      self.root_error(
+        @definitions.child_pointer(pointer, "deprecated"),
+        "must be true or false",
+      )
+      false
+    }
+  }
   if operation.get("callbacks") is Some(Object(callbacks)) &&
     !callbacks.is_empty() {
     self.root_warning(
@@ -196,5 +226,10 @@ fn Report::operation(
   if !taken.ids.contains(id) {
     taken.ids[id] = pointer
   }
-  imported.push({ stubs: [{ id, meth, path, status: main.status, }], })
+  imported.push({
+    key,
+    summary,
+    deprecated,
+    stubs: [{ id, meth, path, response: main.key, status: main.status, }],
+  })
 }

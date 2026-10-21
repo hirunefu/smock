@@ -58,9 +58,11 @@ Packages of `smock/smock`:
 - `importopenapi`: converts an OpenAPI document into a Definition file,
   for `smock import-openapi`. It takes the documents as (name, bytes)
   pairs and returns the file's bytes with the warnings, or the errors,
-  each with a JSON Pointer into the document; `cmd/smock` reads the
-  document and writes the file. Before it returns a file, it loads it
-  with `definitions`, as `smock check` would. Its parts are kept apart:
+  each with a JSON Pointer into the document. The output's name picks
+  YAML, written with `smock/yaml` and with comments that map Stubs back
+  to the document, or JSON. `cmd/smock` reads the document and writes the
+  file. Before it returns a file, it loads it with `definitions`, as
+  `smock check` would. Its parts are kept apart:
   the document and its version, operations, paths, responses, bodies and
   references.
 - `prng`: the seeded pseudo-random generator that Fault decisions and

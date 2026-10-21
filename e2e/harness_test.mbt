@@ -508,16 +508,18 @@ async fn smock_stdout(args : Array[String]) -> (Int, String) {
 }
 
 ///|
-/// Runs `smock <args>` with only `env` as its environment until it exits by
-/// itself, and returns its exit status and what it wrote to stdout and to
-/// stderr.
+/// Runs `smock <args>` with only `env` as its environment, in the working
+/// directory `cwd` (by default the test's own), until it exits by itself,
+/// and returns its exit status and what it wrote to stdout and to stderr.
 async fn smock_output(
   args : Array[String],
   env? : Map[String, String] = Map([]),
+  cwd? : String = ".",
 ) -> (Int, String, String) {
   build.wait()
+  let smock = @fs.realpath(binary)
   let result = @async.with_timeout_opt(patience_ms, () => {
-    collect_output(binary, args, extra_env=env, inherit_env=false)
+    collect_output(smock, args, extra_env=env, inherit_env=false, cwd~)
   })
   guard result is Some((status, stdout, stderr)) else {
     fail("smock \{args.join(" ")} did not exit in time")
@@ -526,15 +528,17 @@ async fn smock_output(
 }
 
 ///|
-/// Runs `command <args>` until it exits, and returns its exit status and
-/// what it wrote to stdout and to stderr, as `@process.collect_output` does,
-/// but reads them past a spurious EAGAIN (see `past_spurious_eagain`).
+/// Runs `command <args>` in the working directory `cwd` until it exits, and
+/// returns its exit status and what it wrote to stdout and to stderr, as
+/// `@process.collect_output` does, but reads them past a spurious EAGAIN
+/// (see `past_spurious_eagain`).
 async fn collect_output(
   command : String,
   args : Array[String],
   extra_env? : Map[String, String] = Map([]),
   inherit_env? : Bool = true,
   stdin? : &@process.ProcessInput,
+  cwd? : String = ".",
 ) -> (Int, &@io.Data, &@io.Data) {
   let (stdout, stdout_end) = @process.read_from_process()
   let (stderr, stderr_end) = @process.read_from_process()
@@ -548,6 +552,7 @@ async fn collect_output(
         stdin?,
         stdout=stdout_end,
         stderr=stderr_end,
+        cwd~,
       )
     })
     let stdout = group.spawn(() => read_output(stdout))

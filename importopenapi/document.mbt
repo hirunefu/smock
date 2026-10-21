@@ -2,6 +2,11 @@
 /// The root document, parsed.
 priv struct Document {
   top : Map[String, Json]
+  /// The `openapi` field as written, such as `3.1.0`.
+  openapi : String
+  /// The `title` and `version` of its `info`, or `""` where it has none.
+  title : String
+  info_version : String
 }
 
 ///|
@@ -39,73 +44,112 @@ fn Report::document(self : Report, bytes : Bytes) -> Document? {
     self.root_error("", "must be an object")
     return None
   }
-  guard self.version(top) else { return None }
-  let document = { top, }
+  guard self.version(top) is Some(openapi) else { return None }
+  let (title, info_version) = self.info(top)
+  let document = { top, openapi, title, info_version, }
   self.left_out_parts(document)
   self.end_document()
   Some(document)
 }
 
 ///|
-/// Whether the document's version, from its `openapi` field, is OpenAPI
-/// 3.0, 3.1 or 3.2, after reporting why it is not. Only the minor version
-/// counts: the patch is ignored, as the specification asks.
-fn Report::version(self : Report, top : Map[String, Json]) -> Bool {
+/// The document's version, its `openapi` field as written, when it is
+/// OpenAPI 3.0, 3.1 or 3.2; else `None`, after reporting why it is not.
+/// Only the minor version counts: the patch is ignored, as the
+/// specification asks.
+fn Report::version(self : Report, top : Map[String, Json]) -> String? {
   match (top.get("openapi"), top.get("swagger")) {
     (Some(_), Some(_)) => {
       self.root_error(
         "/swagger", "a document has \"openapi\" or \"swagger\", not both",
       )
-      false
+      None
     }
     (None, Some(String("2.0"))) => {
       self.root_error(
         "/swagger", "Swagger 2.0 is not supported: convert the document to OpenAPI 3.0 first",
       )
-      false
+      None
     }
     (None, Some(_)) => {
       self.root_error(
         "/swagger", "not a version smock imports: it imports OpenAPI 3.0, 3.1 and 3.2",
       )
-      false
+      None
     }
     (None, None) => {
       self.root_error(
         "", "needs \"openapi\", the OpenAPI version, such as \"3.1.0\"",
       )
-      false
+      None
     }
     (Some(Number(_)), None) => {
       self.root_error(
         "/openapi", "must be a string such as \"3.1.0\": quote the version, and give its patch",
       )
-      false
+      None
     }
     (Some(String(text)), None) =>
       match text.split(".").collect() {
         [major, minor, patch] if [major, minor, patch].all(is_digits) =>
           match (major, minor) {
-            ("3", "0" | "1" | "2") => true
+            ("3", "0" | "1" | "2") => Some(text)
             _ => {
               self.root_error(
                 "/openapi", "not a version smock imports: it imports OpenAPI 3.0, 3.1 and 3.2",
               )
-              false
+              None
             }
           }
         _ => {
           self.root_error(
             "/openapi", "must be a version 3.<minor>.<patch> of digits, such as \"3.1.0\"",
           )
-          false
+          None
         }
       }
     (Some(_), None) => {
       self.root_error("/openapi", "must be a string such as \"3.1.0\"")
-      false
+      None
     }
   }
+}
+
+///|
+/// The `title` and `version` of the document's `info`, which the comment
+/// at the top of a YAML file names, or `""` for each it does not have.
+/// Either of the wrong type is an error. A version that is a number, as an
+/// unquoted `1.0` reads in YAML, says to quote it.
+fn Report::info(self : Report, top : Map[String, Json]) -> (String, String) {
+  let info = match top.get("info") {
+    None => return ("", "")
+    Some(Object(info)) => info
+    Some(_) => {
+      self.root_error("/info", "must be an object")
+      return ("", "")
+    }
+  }
+  let title = match info.get("title") {
+    None => ""
+    Some(String(title)) => title
+    Some(_) => {
+      self.root_error("/info/title", "must be a string")
+      ""
+    }
+  }
+  let version = match info.get("version") {
+    None => ""
+    Some(String(version)) => version
+    Some(Number(_)) => {
+      self.root_error("/info/version", "must be a string: quote the version")
+      ""
+    }
+    Some(_) => {
+      self.root_error("/info/version", "must be a string")
+      ""
+    }
+  }
+  (title, version)
 }
 
 ///|
