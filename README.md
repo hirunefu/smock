@@ -8,6 +8,8 @@ The domain terms are defined in [GLOSSARY.md](GLOSSARY.md).
 first-time reader to smock answering requests on GKE Autopilot.
 [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) maps
 Mockoon environments, routes and rules onto Mocks and Stubs.
+[docs/importing-openapi.md](docs/importing-openapi.md) turns an OpenAPI
+document into a Definition file.
 
 ## Layout
 
@@ -525,6 +527,43 @@ a request would get and its `templateError`. An invalid definitions
 directory prints the messages `smock check` prints, and it, an unknown Stub
 ID and a sample that cannot be read or is not valid exit with status 1, with
 the problem on stderr.
+
+`smock import-openapi api/petstore.yaml --mock petstore --output defs/petstore.yaml`
+converts an OpenAPI 3.0, 3.1 or 3.2 document into one Definition file,
+once. The file is committed and reviewed like any other, and smock never
+reads OpenAPI when it serves. The file declares one Mock, with a Stub for
+each documented response of each operation, which matches the operation's
+method and path. Each body comes from the document's examples, else from
+one fixed sample of the schema. The main response, the lowest 2xx when
+there is one, answers by default. A request selects another response with
+`Smock-Status: <key>`, such as `Smock-Status: 404`, and a further named
+example with `Smock-Example: <name>`. The document is JSON (`.json`) or
+YAML 1.2 (`.yaml`, `.yml`), and its references are followed only into
+local files. The flags belong to one run, so none has an `SMOCK_`
+variable:
+
+| Flag | What it sets |
+|---|---|
+| `--mock <name>` | Required: the name of the Mock the file declares. Every Stub ID starts with it. |
+| `--output <file>` | Required: the Definition file to write. `.yaml` or `.yml` writes YAML, with comments that map each Stub back to the document, and `.json` writes JSON. Its directory must exist. |
+| `--hosts <h1,h2>` | The Mock's Hosts, separated by commas. None by default: the only Mock of a definitions directory is the Default Mock and needs none. The document's `servers` never become Hosts. |
+| `--declare-mock on\|off` | `on` by default. `off` writes only the Stubs, for a Mock declared by hand in another file. |
+| `--base-path <path>` | A path to put in front of every path, such as `/mock/petstore`, in place of the path of the document's server. |
+| `--ref-dir <dir>` | The directory that references to other files are followed in, by default the document's own. A reference that leads outside it is an error. |
+| `--overwrite on\|off` | `off` by default: an existing `--output` is refused before the document is read. `on` replaces it, to import a changed document again. |
+
+It prints every problem as `smock check` does, one per line with the file
+and a JSON Pointer into the document, then a summary line,
+`wrote <file>: <n> Stubs from <m> operations, <w> warnings` or
+`nothing written: <e> errors`. It exits with status 0 when it wrote the
+file, warnings or not, 1 when it wrote nothing, and 2 for a usage error.
+It writes the file to a temporary file whose name starts with `.`, then
+renames it, so a smock that watches the directory never loads half a file.
+Run `smock check` on the directory afterwards: the command does not read
+the other files there.
+[docs/importing-openapi.md](docs/importing-openapi.md) describes what is
+generated, selecting responses, regenerating and the limits, with notes
+for Mockoon and Prism users.
 
 [docs/definition-files.md](docs/definition-files.md) describes the format:
 how Stubs match requests (method, path, query parameters, headers, cookies
