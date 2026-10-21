@@ -154,7 +154,7 @@ pub fn Engine::Engine(
   snapshot : @definitions.Snapshot,
   match_index? : Bool = true,
   journal? : JournalSettings = JournalSettings(),
-  env? : @template.Env = @template.Env([]),
+  env? : @template.Env = @template.no_env,
   state_max_bytes? : Int = default_state_max_bytes,
 ) -> Engine {
   let state = StateBound::new(state_max_bytes)

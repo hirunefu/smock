@@ -19,4 +19,4 @@ pub fn Env::Env(listed : Array[(String, String?)]) -> Env {
 
 ///|
 /// No variables listed: what templates read without `--template-env`.
-let no_env : Env = Env([])
+pub let no_env : Env = Env([])

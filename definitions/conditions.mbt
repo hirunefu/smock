@@ -13,7 +13,7 @@ pub fn request_conditions(json : Json) -> Result[Conditions, Array[Diagnostic]] 
     name: "",
     diagnostics,
     body_files: None,
-    env: @template.Env([]),
+    env: @template.no_env,
   }
   let conditions = file.read_conditions("", json)
   if diagnostics.is_empty() {

@@ -974,7 +974,7 @@ pub fn normalize_host(host : String) -> String {
 pub fn load(
   set : DefinitionSet,
   read_problems? : Array[Diagnostic] = [],
-  env? : @template.Env = @template.Env([]),
+  env? : @template.Env = @template.no_env,
 ) -> Result[Snapshot, Array[Diagnostic]] {
   let files = sorted_by_name(set.files).map(file => {
     (file.0, parse_file(file.0, file.1))
