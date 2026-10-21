@@ -562,7 +562,7 @@ fn File::read_variables(
     match
       @template.Structured::parse(
         value,
-        pointer=field[stub_pointer.length():].to_owned(),
+        pointer=template_pointer(stub_pointer, field),
         env=self.env,
         variable=true,
       ) {
@@ -572,7 +572,7 @@ fn File::read_variables(
       }
       Err(problems) =>
         for problem in problems {
-          self.error(stub_pointer + problem.pointer, problem.message)
+          self.report_template_problem(stub_pointer, problem)
         }
     }
   }
