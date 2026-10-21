@@ -16,6 +16,10 @@ of each GitHub release include its section
   answers its main status. Parts that are not imported yet are left out
   with a warning. smock never reads OpenAPI when it serves. See
   [docs/importing-openapi.md](docs/importing-openapi.md).
+- `smock import-openapi` follows a `$ref` within the document where it
+  reads a Path Item or a Response, by its JSON Pointer fragment. A URL, an
+  absolute path or another file is an error that suggests bundling the
+  document into one file first.
 - `write` in the `smock/yaml` module turns a JSON tree into a YAML
   document, with comments, that the module's own parser reads back as the
   same tree. A string is quoted only when it would not read back as the

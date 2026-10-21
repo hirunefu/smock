@@ -122,6 +122,8 @@ them.
 | `callbacks` | Not imported, with one warning per operation. |
 | `webhooks` | Not imported, with one warning: they are requests the API sends, not ones it answers. |
 | `security`, `links`, descriptions, tags and `x-` extensions | Nothing, and no warning. |
+| A `$ref` to a Path Item or a Response in the same document | Followed, as if the part it names were written in place (see [References and bundling](#references-and-bundling)). |
+| Fields beside a Path Item's `$ref` | Ignored, with a warning, since OpenAPI leaves their meaning undefined. |
 
 A Stub matches on its method and its path only. The file holds only
 `status`, `headers`, and `json` or `body` in its responses: no
@@ -150,12 +152,87 @@ An explicit code answers itself, and a range answers its first code: 200,
 ### IDs and conditions that repeat
 
 - Two imported operations with the same `operationId` are an error that
-  names both places. So is any generated Stub ID that repeats.
+  names both places. So is any generated Stub ID that repeats. A Path
+  Item that two path keys name through `$ref` gives two operations, so an
+  `operationId` in it is an error.
 - When two operations' method and path come out the same, the first in
   document order is kept, and the later one is left out with a warning.
   Two paths that decode alike, such as `/a%2Fb` and `/a/b`, are the same
   path.
 - Operations that are left out take part in neither check.
+
+## References and bundling
+
+Documents describe shared parts once, under `components`, and point at
+them with `$ref`. The command follows a reference within the document
+where it reads a Path Item or a Response:
+
+```json
+{
+  "openapi": "3.1.0",
+  "paths": {
+    "/pets": { "$ref": "#/components/pathItems/Pets" }
+  },
+  "components": {
+    "pathItems": {
+      "Pets": {
+        "get": {
+          "operationId": "listPets",
+          "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+        }
+      }
+    },
+    "responses": {
+      "Ok": { "description": "OK" }
+    }
+  }
+}
+```
+
+This imports `listPets` as if both parts were written in place.
+
+- A reference names a part of the same document by its fragment, an
+  [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer such as
+  `#/components/responses/Ok`. The fragment is percent-decoded, `~1` in it
+  is `/` and `~0` is `~`, and it may step into arrays, as `#/x-list/0`.
+- A reference to a part that is itself a reference is followed on.
+- A problem in a part a reference names is reported where that part is
+  written, such as `/components/responses/Ok/content`, and only once,
+  however many references name it.
+- Operations reached through a Path Item's `$ref` keep the order of the
+  path keys.
+- The fields beside a Path Item's `$ref` are ignored, with a warning, but
+  `x-` extensions. The fields beside a Response's `$ref` are ignored, as
+  OpenAPI asks.
+- `$id` at the root of the document, and 3.2's `$self`, are ignored: a
+  reference names a part by its fragment.
+- References in the parts the command does not read are not followed, so
+  a broken one there is no error. These parts are request bodies,
+  parameters, `security`, `callbacks`, `webhooks`, `links`, and
+  components that no imported operation reaches.
+
+Each of these is an error at the `$ref`:
+
+- a `$ref` that is not a string;
+- a reference to a part the document does not have;
+- a fragment that is not a JSON Pointer, such as an `$anchor` name like
+  `#Pet`;
+- references that form a cycle;
+- a URL, of any scheme, `file:` included, or an absolute path. smock
+  reads no URLs;
+- a reference to another file.
+
+A document whose references name URLs or other files must be bundled into
+one file first, with another tool. A bundler copies what the references
+name into `components`, and points at it with references within the
+document. For example, with [Redocly CLI](https://redocly.com/docs/cli/):
+
+```sh
+npx @redocly/cli@2.55.0 bundle api/petstore.json --output api/petstore.bundled.json
+smock import-openapi api/petstore.bundled.json --mock petstore --output definitions/petstore.json
+```
+
+A bundler fetches what the URLs name. smock never does.
 
 ## Problems and exit codes
 
@@ -167,11 +244,13 @@ api/petstore.json: /paths/~1pets/get/responses/404: warning: left out: only the 
 
 - The document is named as given on the command line, and the place is
   an [RFC 6901](https://www.rfc-editor.org/rfc/rfc6901) JSON Pointer to
-  where the construct is written. In a pointer, `/` in a key is written
-  `~1`, so `/paths/~1pets` is the path key `/pets`.
+  where the construct is written, after following `$ref`. In a pointer,
+  `/` in a key is written `~1`, so `/paths/~1pets` is the path key
+  `/pets`.
 - Errors have no `warning:`. An error is what makes a faithful file
-  impossible, such as invalid JSON, an unsupported version, a malformed
-  path, a field of the wrong type or IDs that collide. A warning names a
+  impossible, such as invalid JSON, an unsupported version, a reference
+  that cannot be followed, a malformed path, a field of the wrong type or
+  IDs that collide. A warning names a
   part of the document that was left out; the file still serves the rest.
 - Problems with `--output` come first, named by `--output` as given. Then
   the document-level ones. Then each operation's, in the order the
@@ -211,8 +290,8 @@ command does.
   - the paths of `servers`, so no prefix is added to the paths;
   - responses other than the main one;
   - response bodies and response headers;
-  - references: a `$ref` where the command reads a Path Item or a
-    Response is an error, so write the part it names in its place;
+  - references to other files: such a `$ref` is an error, so bundle the
+    document first (see [References and bundling](#references-and-bundling));
   - YAML: a `.yaml` or `.yml` document or output is a usage error;
   - replacing an earlier output: an existing `--output` is refused before
     the document is read, and nothing is written.
