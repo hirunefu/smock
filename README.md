@@ -7,7 +7,8 @@ The domain terms are defined in [GLOSSARY.md](GLOSSARY.md).
 [docs/getting-started-on-gke.md](docs/getting-started-on-gke.md) takes a
 first-time reader to smock answering requests on GKE Autopilot.
 [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) maps
-Mockoon environments, routes and rules onto Mocks and Stubs.
+Mockoon environments, routes, rules and helpers onto Mocks, Stubs and
+templates.
 
 ## Layout
 
@@ -557,9 +558,12 @@ and body, exactly, by RE2 pattern, as JSON, by form field or by paths into
 XML, negated or by presence with `$not` and `$exists`, and by array element
 with `$includes`), the order they are tried in (priority, then file-name
 order), what a Mock answers when nothing matches, responses with inline
-bodies, body files, JSON or Server-Sent Events, response templates, Faults,
-the JSON Schema, editor support and writing Definition files in another
-configuration language.
+bodies, body files that serve byte ranges, JSON or Server-Sent Events,
+several responses picked at random by weight (`responses`), response
+templates and their helpers (fake data, time and dates, conversions,
+strings, encodings, JWTs and arithmetic), Variables that keep a value from
+one request for the next, Faults, the JSON Schema, editor support and
+writing Definition files in another configuration language.
 [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) turns a
 Mockoon environment into Definition files.
 

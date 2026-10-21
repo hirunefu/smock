@@ -1139,10 +1139,10 @@ The [Journal](../README.md#the-journal) records which response each
 request got, as `responseIndex`, its index from 0. It is null for a Stub
 with `response`, for a request that no Stub matched, and when no response
 was picked because a value of the Stub's [`variables`](#variables) failed
-to render. `smock render` and
-the Admin render operation show the index the seed picks, and
-`--response <i>` (the Admin API's `response=<i>`) renders the response at
-index `i` ([Rendering a template](#rendering-a-template)).
+to render or [the state bound](#the-state-bound) refused its writes.
+`smock render` and the Admin render operation show the index the seed
+picks, and `--response <i>` (the Admin API's `response=<i>`) renders the
+response at index `i` ([Rendering a template](#rendering-a-template)).
 
 ## Templates
 
