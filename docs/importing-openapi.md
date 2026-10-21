@@ -355,7 +355,9 @@ body.
   table below. Any other format, or none, gives `"string"`, repeated or
   cut to fit `minLength` and `maxLength`. Length bounds do not change a
   format's sample.
-- **Booleans** sample as `true`, and numbers as 0.
+- **Booleans** sample as `true`.
+- **Numbers** sample within their bounds: 0 when the bounds allow it,
+  else the nearest bound ([Numbers](#numbers)).
 - **Arrays** have `minItems` items, at least 1 and at most 100, with a
   warning past 100. `maxItems: 0` gives `[]`. Items come from
   `prefixItems`, then `items`, and the array ends where neither gives one.
@@ -396,6 +398,45 @@ a boolean, is an error.
 
 The file has no template, so `${` in a value and keys that start with `$`
 are written as they are, with no escaping.
+
+#### Numbers
+
+A number or an integer samples within `minimum`, `maximum`,
+`exclusiveMinimum` and `exclusiveMaximum`, so that a client that checks
+ranges accepts it. In a 3.1 document:
+
+```yaml
+count: { type: integer, minimum: 10, maximum: 20 }                   # samples as 10
+offset: { type: integer, minimum: -5 }                               # 0
+ratio: { type: number, exclusiveMinimum: 0 }                         # 1
+weight: { type: number, exclusiveMinimum: 0, exclusiveMaximum: 1 }   # 0.5
+```
+
+- **The value.** 0 when the bounds allow it. Else the nearest bound,
+  moved by 1 inside an exclusive bound, or to the middle of the two bounds
+  when that leaves the range.
+- **Versions.** In 3.0, `exclusiveMinimum` and `exclusiveMaximum` are
+  `true` or `false`, and `true` makes `minimum` or `maximum` exclusive. In
+  3.1 and 3.2, they are numbers, and the tighter of a bound and its
+  exclusive form counts, the exclusive one when they are equal. One of the
+  wrong type for the version is ignored, with a warning.
+- **Integers.** A bound that is not whole is rounded inward: a lower bound
+  up, an upper bound down. So `exclusiveMinimum: 2.5` gives 3. The middle
+  is rounded down.
+- **Nothing fits.** When no integer fits the bounds, as for
+  `minimum: 0.25` with `maximum: 0.75`, the sample is the lower bound,
+  rounded up, with a warning. So is a number's when no number fits, as
+  for a `minimum` above the `maximum`.
+- **Exact digits.** The arithmetic is exact on the decimal text smock
+  writes for each bound: the shortest form that reads back as the same
+  number, or every digit of a large integer. No float is involved, so
+  every platform writes the same digits. The sample is a plain decimal,
+  without an exponent: `exclusiveMinimum: 0` with
+  `exclusiveMaximum: 1e-18` gives `0.0000000000000000005`.
+- **Large bounds.** A bound with more than 18 digits before or after the
+  point, such as `1e20` or `1e-19`, is ignored, with a warning.
+- **`allOf`.** Each bound comes from the schema's own keyword, else from
+  the first branch that has it, not from the tightest branch.
 
 #### Composed schemas
 
@@ -828,6 +869,9 @@ command does.
   size, and nothing is written.
 - A sampled array has at most 100 items. A larger `minItems` gives 100
   items, with a warning.
+- A bound of a sampled number has at most 18 digits before the point and
+  18 after. A bound with more is ignored, with a warning
+  ([Numbers](#numbers)).
 - The file nests at most 1024 levels, the most the parsers read. A value
   of `const`, `examples`, `example`, `default` or `enum` that would nest
   deeper is left out of its body, with a warning.
@@ -842,8 +886,6 @@ command does.
   - response headers;
   - the `example` and `examples` of media types: the body is sampled from
     the schema;
-  - `minimum`, `maximum` and their exclusive forms: numbers sample as 0,
-    without a warning;
   - schema references: a `$ref` in a schema is an error;
   - references to other files: such a `$ref` is an error, so bundle the
     document first (see [References and bundling](#references-and-bundling));
