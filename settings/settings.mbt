@@ -73,10 +73,15 @@ pub(all) struct ServeSettings {
   /// The most bytes the Journal's entries take, as they count them, when
   /// `--journal-max-bytes` or `SMOCK_JOURNAL_MAX_BYTES` sets it. `None`
   /// leaves it to the memory limit, which `smock serve` reads at startup
-  /// (`JournalByteBound::from_memory_limit`).
-  journal_max_bytes : JournalByteBound?
+  /// (`ByteBound::journal`).
+  journal_max_bytes : ByteBound?
   /// The most bytes of a request body a Journal entry keeps.
   journal_body_limit : Int
+  /// The most bytes the per-Session state of the whole process takes, as
+  /// it counts them, when `--state-max-bytes` or `SMOCK_STATE_MAX_BYTES`
+  /// sets it. `None` leaves it to the memory limit, which `smock serve`
+  /// reads at startup (`ByteBound::state`).
+  state_max_bytes : ByteBound?
 } derive(Debug)
 
 ///|
@@ -300,13 +305,18 @@ let serve_settings : Array[Setting] = [
   },
   {
     name: "journal-max-bytes",
-    about: "The most bytes the Journal's entries take: each counts 256, two per character of its request line, header fields, names and Near miss values, 32 per value its Near miss keeps from a form or an XML body, and the body bytes it keeps. Beyond it, the oldest entries are evicted. Default: a quarter of the memory limit of smock's cgroup (cgroup v2 memory.max), at least \{min_journal_byte_bound} (1 MiB) and at most \{journal_defaults.max_bytes} (64 MiB); \{journal_defaults.max_bytes} when there is no limit or it cannot be read.",
+    about: "The most bytes the Journal's entries take: each counts 256, two per character of its request line, header fields, names and Near miss values, 32 per value its Near miss keeps from a form or an XML body, and the body bytes it keeps. Beyond it, the oldest entries are evicted. Default: a quarter of the memory limit of smock's cgroup (cgroup v2 memory.max), at least \{min_byte_bound} (1 MiB) and at most \{journal_defaults.max_bytes} (64 MiB); \{journal_defaults.max_bytes} when there is no limit or it cannot be read.",
     default: None,
   },
   {
     name: "journal-body-limit",
     about: "The most bytes of a request body a Journal entry keeps; the rest is cut. Its Near miss keeps the values of form fields and XML paths up to the same total, each counting 32 bytes more.",
     default: Some(journal_defaults.body_limit.to_string()),
+  },
+  {
+    name: "state-max-bytes",
+    about: "The most bytes the per-Session state of the whole process takes, across every Mock and Session: each Mock and Session that holds Variables counts its Mock name, its Session key and 64; each Variable counts its name, 64, and its value as compact JSON with 16 more per JSON value in it. A request whose writes would pass it writes nothing and gets 507. Scenario state does not count. Default: an eighth of the memory limit of smock's cgroup (cgroup v2 memory.max), at least \{min_byte_bound} (1 MiB) and at most \{@engine.default_state_max_bytes} (64 MiB); \{@engine.default_state_max_bytes} when there is no limit or it cannot be read.",
+    default: None,
   },
 ]
 
@@ -545,26 +555,27 @@ pub fn ServeSettings::from_matches(
       min=1,
       max=max_size,
     ),
-    journal_max_bytes: journal_max_bytes_value(matches, "journal-max-bytes"),
+    journal_max_bytes: byte_bound_value(matches, "journal-max-bytes"),
     journal_body_limit: int_value(
       matches,
       "journal-body-limit",
       min=0,
       max=max_size,
     ),
+    state_max_bytes: byte_bound_value(matches, "state-max-bytes"),
   }
 }
 
 ///|
-/// The Journal's byte bound when the flag or the variable sets it, with
-/// which of them did.
-fn journal_max_bytes_value(
+/// A byte bound, the Journal's or the per-Session state's, when its flag
+/// or its variable sets it, with which of them did.
+fn byte_bound_value(
   matches : @argparse.Matches,
   name : String,
-) -> JournalByteBound? raise InvalidSetting {
+) -> ByteBound? raise InvalidSetting {
   guard value(matches, name) is Some(_) else { return None }
   let max_bytes = int_value(matches, name, min=1, max=max_size)
-  let source : JournalByteBoundSource = match matches.sources.get(name) {
+  let source : ByteBoundSource = match matches.sources.get(name) {
     Some(Env) => Variable
     _ => Flag
   }

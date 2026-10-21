@@ -11,6 +11,9 @@ priv struct Admin {
   metrics : @metrics.Registry
   /// The metrics of the Journal, brought up to date on each scrape.
   journal_metrics : JournalMetrics
+  /// The metrics of the bound on per-Session state, brought up to date on
+  /// each scrape.
+  state_metrics : StateMetrics
   /// The process and cgroup metrics, brought up to date on each scrape.
   process_metrics : ProcessMetrics
   /// Where changes made through the Admin API are logged.
@@ -116,7 +119,7 @@ fn route(
 /// Creates the Admin API of a process whose life `lifecycle` follows.
 ///
 /// - `metrics` holds the metrics `/metrics` serves, among them
-///   `journal_metrics` and `process_metrics`.
+///   `journal_metrics`, `state_metrics` and `process_metrics`.
 /// - `logger` logs each change made through the Admin API.
 /// - `token` is the bearer token every operation needs, or `None` to turn
 ///   authentication off.
@@ -128,6 +131,7 @@ fn Admin::new(
   build : @buildinfo.BuildInfo,
   metrics~ : @metrics.Registry,
   journal_metrics~ : JournalMetrics,
+  state_metrics~ : StateMetrics,
   process_metrics~ : ProcessMetrics,
   logger~ : @log.Logger,
   token~ : String?,
@@ -141,6 +145,7 @@ fn Admin::new(
     build,
     metrics,
     journal_metrics,
+    state_metrics,
     process_metrics,
     logger,
     token: token.map(token => @utf8.encode(token)),
@@ -592,11 +597,12 @@ fn query_parameter(target : String, name : String) -> Result[String?, String] {
 
 ///|
 /// Brings the metrics that are read, not counted, up to date before a
-/// scrape: the Journal's, once the definitions have loaded, and the process
-/// and cgroup metrics, from their files.
+/// scrape: the Journal's and the per-Session state's, once the definitions
+/// have loaded, and the process and cgroup metrics, from their files.
 async fn refresh_metrics(admin : Admin) -> Unit {
   if admin.lifecycle.engine is Some(engine) {
     admin.journal_metrics.update(engine.journal_stats())
+    admin.state_metrics.update(engine.state_stats())
   }
   admin.process_metrics.update()
 }

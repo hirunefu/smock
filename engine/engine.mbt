@@ -19,6 +19,9 @@ pub struct Engine {
   priv scenarios : ScenarioStates
   /// The Variables, by Mock and Session.
   priv variables : VariableStore
+  /// The bound on per-Session state: the count of what the Variables take,
+  /// which `variables` keeps up to date, and the writes it refused.
+  priv state : StateBound
   /// The Journal: the entries committed, oldest first, within its bound.
   priv journal : Journal
   /// The environment variables templates may read, with the values read
@@ -144,12 +147,17 @@ pub(all) enum Body {
 /// `env` holds the environment variables templates may read, with the
 /// values `snapshot` was loaded with: by default, none. Each reload and
 /// each Ephemeral Stub is read with them, so they are read only once.
+///
+/// `state_max_bytes` bounds the per-Session state of the whole process, as
+/// it counts it: by default, `default_state_max_bytes` (64 MiB).
 pub fn Engine::Engine(
   snapshot : @definitions.Snapshot,
   match_index? : Bool = true,
   journal? : JournalSettings = JournalSettings(),
   env? : @template.Env = @template.Env([]),
+  state_max_bytes? : Int = default_state_max_bytes,
 ) -> Engine {
+  let state = StateBound::new(state_max_bytes)
   {
     snapshot,
     generators: seeded_generators(snapshot),
@@ -157,7 +165,8 @@ pub fn Engine::Engine(
     last_reload: None,
     ephemeral: EphemeralStubs::new(),
     scenarios: ScenarioStates::new(),
-    variables: VariableStore::new(),
+    variables: VariableStore::new(state),
+    state,
     journal: Journal::new(journal),
     env,
   }
@@ -472,10 +481,12 @@ pub fn Engine::handle(
       let draw = generator.unwrap_or(rand).uint64()
       // 3. The Variables: each value is rendered, in the order written,
       //    against the Variables as they were before the request, drawing
-      //    from the helper generator first; then all are written at once.
-      //    The response renders on from there, and sees the new values. A
-      //    value that fails to render writes none, and no response is
-      //    picked: the request gets the template failure.
+      //    from the helper generator first; then all are written at once,
+      //    if they fit within the bound on per-Session state. The response
+      //    renders on from there, and sees the new values. A value that
+      //    fails to render, or writes that do not fit, write none, and no
+      //    response is picked: the request gets the template failure, or
+      //    507.
       let mut context : @template.Context? = None
       let mut failed : ResponsePlan? = None
       if stub.writes_variables() {
@@ -486,11 +497,12 @@ pub fn Engine::handle(
           vars?=self.variables.of(stub.mock, session),
         )
         try self.write_variables(stub, session, first) catch {
-          RenderError(at~, message~) => {
-            let error = { at, message, }
+          ValueFailed(error) => {
             template_error = Some(error)
             failed = Some(template_failed(stub.id, error))
           }
+          StateLimitReached(message) =>
+            failed = Some(state_limit_reached(stub.id, message))
         } noraise {
           next => {
             context = Some(next)

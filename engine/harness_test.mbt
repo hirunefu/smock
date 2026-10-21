@@ -19,7 +19,9 @@ let fixed_now : Int64 = 1_791_815_405_123L
 /// with `process_seed`, and the Journal settings `journal`. With
 /// `match_index=false`, the engine tries every Stub in matching order, as
 /// the oracle of the match index does. Templates may read the environment
-/// variables `env`, by default none. Fails the test if the set is invalid.
+/// variables `env`, by default none. Per-Session state is bounded by
+/// `state_max_bytes`, by default the engine's 64 MiB. Fails the test if the
+/// set is invalid.
 fn harness(
   files : Array[(String, String)],
   body_files? : Array[(String, Bytes)] = [],
@@ -27,6 +29,7 @@ fn harness(
   journal? : @engine.JournalSettings = @engine.JournalSettings(),
   match_index? : Bool = true,
   env? : @template.Env = @template.Env([]),
+  state_max_bytes? : Int = @engine.default_state_max_bytes,
 ) -> Harness {
   let set : @definitions.DefinitionSet = {
     files: files.map(file => (file.0, @utf8.encode(file.1))),
@@ -35,7 +38,13 @@ fn harness(
   match @definitions.load(set, env~) {
     Ok(snapshot) =>
       {
-        engine: @engine.Engine(snapshot, journal~, match_index~, env~),
+        engine: @engine.Engine(
+          snapshot,
+          journal~,
+          match_index~,
+          env~,
+          state_max_bytes~,
+        ),
         rand: @prng.Generator(process_seed),
         now: fixed_now,
       }

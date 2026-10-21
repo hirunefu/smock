@@ -25,10 +25,13 @@ pub fn compact_json_bytes(json : Json) -> Bytes {
 }
 
 ///|
-/// The bytes of UTF-8 that `write_json` writes for `json`, counted without
-/// writing them.
-fn compact_length(json : Json) -> Int64 {
-  match json {
+/// The bytes of UTF-8 that compact JSON of `json` takes, as smock writes
+/// it, counted without writing them, plus `per_value` for each JSON value
+/// in it: each object, array, string, number, boolean and null. The bound
+/// on per-Session state counts a value this way.
+pub fn compact_length(json : Json, per_value? : Int64 = 0L) -> Int64 {
+  per_value +
+  (match json {
     Null | True => 4L
     False => 5L
     Number(n, repr~) => number_text(n, repr).length().to_int64()
@@ -36,7 +39,7 @@ fn compact_length(json : Json) -> Int64 {
     Array(items) => {
       let mut n = 2L
       for i, item in items {
-        n += compact_length(item) + (if i > 0 { 1L } else { 0L })
+        n += compact_length(item, per_value~) + (if i > 0 { 1L } else { 0L })
       }
       n
     }
@@ -46,13 +49,13 @@ fn compact_length(json : Json) -> Int64 {
       for key, value in members {
         n += json_string_content_length(key).to_int64() +
           3L +
-          compact_length(value) +
+          compact_length(value, per_value~) +
           (if first { 0L } else { 1L })
         first = false
       }
       n
     }
-  }
+  })
 }
 
 ///|
