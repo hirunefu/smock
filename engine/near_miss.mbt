@@ -92,6 +92,13 @@ pub(all) enum Expected {
   Form
   /// An `xml` condition with no path: the body parses as XML.
   Xml
+  /// A CRUD Stub's path: the request path is this list path, or an item
+  /// path under it.
+  CrudPath(String)
+  /// The methods a CRUD Stub serves at the request path's shape, or at
+  /// either shape when the path is neither its list path nor an item path,
+  /// in the order GET, POST, PUT, PATCH, DELETE.
+  CrudMethods(ReadOnlyArray[String])
 } derive(Debug)
 
 ///|
@@ -118,7 +125,8 @@ pub impl ToJson for FailedCondition with fn to_json(self) {
 /// An exact value is a string, a pattern `{"pattern": ...}`, a `json`
 /// condition `{"json": ...}`, an operator `{"$not": ...}` or
 /// `{"$exists": ...}`, and an empty `form` or `xml` condition
-/// `{"form": {}}` or `{"xml": {}}`, as in Definition files.
+/// `{"form": {}}` or `{"xml": {}}`, as in Definition files. What a CRUD
+/// Stub expects is `{"crud": "<path>"}` or `{"crud": [<methods>]}`.
 pub impl ToJson for Expected with fn to_json(self) {
   match self {
     Exact(text) => Json::string(text)
@@ -128,6 +136,9 @@ pub impl ToJson for Expected with fn to_json(self) {
     Exists(present) => { "$exists": Json::boolean(present) }
     Form => { "form": {} }
     Xml => { "xml": {} }
+    CrudPath(path) => { "crud": Json::string(path) }
+    CrudMethods(methods) =>
+      { "crud": Json::array(methods.iter().map(Json::string).collect()) }
   }
 }
 
@@ -173,14 +184,19 @@ priv enum Failed {
   /// The Scenario `name`, the state the Stub requires of it, and the state
   /// it is in.
   Scenario(name~ : String, required~ : String, current~ : String)
+  /// The method of a request to a CRUD Stub, which serves only these
+  /// methods at the request path's shape.
+  CrudMethod(ReadOnlyArray[String])
+  /// The path of a request to a CRUD Stub with this path, which is neither
+  /// its list path nor an item path.
+  CrudPath(String)
 }
 
 ///|
 /// The Near miss among `candidates`, each with where it comes from, in
 /// matching order, none of which the request meets in the current states,
 /// `states`: the one with the fewest failed conditions, the earlier one on
-/// a tie. CRUD Stubs are left out, for now. There is none without other
-/// candidates.
+/// a tie. There is none without candidates.
 fn Incoming::near_miss(
   self : Incoming,
   candidates : Iter[(@definitions.Stub, StubSource)],
@@ -201,8 +217,7 @@ fn Incoming::near_miss(
         }
         failed
       }
-      // A CRUD Stub is no candidate, for now.
-      Crud(_) => continue
+      Crud(crud) => self.crud_failed(crud)
     }
     match best {
       Some((_, _, fewest)) if fewest.length() <= failed.length() => ()
@@ -266,6 +281,28 @@ fn Incoming::failed(
       }
     Some(body) if !self.body_meets(body) => out.push(Failed::Body(body))
     _ => ()
+  }
+  out
+}
+
+///|
+/// The conditions of the CRUD Stub `crud` that the request fails, in the
+/// order method, path. A CRUD Stub counts two: the path, which fails when
+/// it is neither the list path nor an item path, and the method, which
+/// fails when the Stub does not serve it at the path's shape, or at either
+/// shape when the path fails.
+fn Incoming::crud_failed(
+  self : Incoming,
+  crud : @definitions.Crud,
+) -> Array[Failed] {
+  let out = []
+  let shape = crud.shape(self.path)
+  let methods = @definitions.crud_methods(shape)
+  if !methods.iter().contains(self.request.meth) {
+    out.push(Failed::CrudMethod(methods))
+  }
+  if shape is None {
+    out.push(Failed::CrudPath(crud.path))
   }
   out
 }
@@ -341,6 +378,14 @@ fn Incoming::explain(self : Incoming, failed : Failed) -> FailedCondition {
         expected: Exact(required),
         actual: [current],
       }
+    CrudMethod(methods) =>
+      {
+        condition: Method,
+        expected: CrudMethods(methods),
+        actual: [self.request.meth],
+      }
+    CrudPath(path) =>
+      { condition: Path, expected: CrudPath(path), actual: [self.path], }
   }
 }
 

@@ -218,7 +218,7 @@ of each GitHub release include its section
   take over one of its requests. `crud.headers`, such as CORS headers, go
   on every answer, and `fault` works as on any Stub. An Ephemeral Stub can
   be a CRUD Stub. Each Journal entry gains `crud`, the operation and its
-  key. Its Near miss, warnings and rendering come later.
+  key.
 - CRUD Stubs write: `POST <path>` creates an item and answers 201 with it
   and its `Location`, `PUT <path>/<key>` replaces the item, `PATCH
   <path>/<key>` merges the body into it shallowly, and `DELETE
@@ -245,6 +245,27 @@ of each GitHub release include its section
   `invalid query parameter`, as are malformed or repeated `$sort`,
   `$offset` and `$limit`. A client's own parameters, such as `page`, are
   filters too, so its list comes back `[]`.
+- A CRUD Stub can be the Near miss of a request that no Stub matches. It
+  counts two conditions: `path` fails when the request path is neither its
+  list path nor an item path, and `method` when the Stub does not serve
+  the method at the path's shape, or at either shape when `path` fails.
+  The Near miss expects `{"crud": "<path>"}` or `{"crud": [<methods>]}`,
+  and the header keeps its form, such as `Smock-Near-Miss: orders;
+  failed=method`.
+- `smock check` warns about CRUD Stubs in the cases it can prove: an
+  earlier CRUD Stub hides a later Stub whose method and exact path it
+  serves, whatever that Stub's other conditions or `requires`, or a later
+  CRUD Stub with the same path; a Stub with no request conditions and no
+  `requires` hides a later CRUD Stub. A partial overlap gets no warning.
+- `smock render` and the Admin render operation render a CRUD Stub: the
+  answer its operation would give to the sample, from the sample's data or
+  else the initial value, failures and list queries included, with a new
+  `uuid` key drawn from the seed. Its write shows in `dataWrites` as the op
+  that makes the same write, `append` for a create, `set` for a replace,
+  `merge` for an update and `remove` for a delete, and not at all when it
+  fails. A sample whose method and path fit no operation of the Stub, and
+  a `--response` index, make `smock render` exit with status 1 and the
+  Admin render answer 400 `invalid_request`.
 - docs/migrating-from-mockoon.md maps Mockoon's helpers, `RANDOM` routes,
   global variables, Range requests, dates, cookies and environment
   variables onto smock, with each difference called out.

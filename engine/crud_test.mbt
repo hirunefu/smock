@@ -275,7 +275,7 @@ test "the Journal records the CRUD operation and its key: a list with a null key
       #|{"stub":"orders","stubSource":"file","status":200,"responseIndex":null,"crud":{"op":"read","key":"1002"},"variablesWritten":[],"dataWritten":[],"dataError":null,"nearMiss":null}
       #|{"stub":"orders","stubSource":"file","status":404,"responseIndex":null,"crud":{"op":"read","key":"a b"},"variablesWritten":[],"dataWritten":[],"dataError":null,"nearMiss":null}
       #|{"stub":"other","stubSource":"file","status":200,"responseIndex":null,"crud":null,"variablesWritten":[],"dataWritten":[],"dataError":null,"nearMiss":null}
-      #|{"stub":null,"stubSource":null,"status":404,"responseIndex":null,"crud":null,"variablesWritten":[],"dataWritten":[],"dataError":null,"nearMiss":{"stub":"other","stubSource":"file","failed":[{"condition":"method","expected":"GET","actual":["HEAD"]},{"condition":"path","expected":"/other","actual":["/api/v1/orders"]}]}}
+      #|{"stub":null,"stubSource":null,"status":404,"responseIndex":null,"crud":null,"variablesWritten":[],"dataWritten":[],"dataError":null,"nearMiss":{"stub":"orders","stubSource":"file","failed":[{"condition":"method","expected":{"crud":["GET","POST"]},"actual":["HEAD"]}]}}
     ),
   )
 }
@@ -537,6 +537,7 @@ test "an Ephemeral Stub can be a CRUD Stub of its Session, which looks its bucke
       #|{"id":1001,"customerId":42,"status":"paid","total":12.5}
       #|test-b: None 404
       #|Content-Type: application/json
+      #|Smock-Near-Miss: orders; failed=path
       #|{"error":"no Stub matched"}
       #|reload: Swapped
       #|keyed by customerId: Some(Ephemeral("eph-1")) 200
@@ -582,22 +583,5 @@ test "an Ephemeral CRUD Stub that breaks the rules is 400 invalid_stub, with the
       #|/crud/bucket: the Mock has no Data bucket "nope"
       #|/crud/extra: is not a known field
     ),
-  )
-}
-
-///|
-test "a CRUD Stub cannot be rendered yet" {
-  let h = harness(crud_shop(), body_files=data_body_files)
-  let sample = @engine.SampleRequest::from_json({ "path": "/api/v1/orders" })
-  let message = try
-    h.engine.render("orders", sample, now=h.now, fresh_seed=() => 7)
-  catch {
-    err => err.message()
-  } noraise {
-    _ => "rendered"
-  }
-  inspect(
-    message,
-    content="the Stub \"orders\" is a CRUD Stub, and smock cannot render CRUD Stubs yet",
   )
 }
