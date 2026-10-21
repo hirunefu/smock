@@ -445,7 +445,8 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   `smock render` does (below). The optional `time` and `seed` query
   parameters give the time (RFC 3339) and the seed of the random source,
   and `response` the index of one of a Stub's `responses` to render; the
-  rendering shows those it used.
+  rendering shows those it used, and the values the Stub's `variables`
+  would write. It writes nothing.
 - `/v1/mocks/{mock}/stubs` adds, lists and deletes Ephemeral Stubs, and
   `POST /v1/reset` clears them, Journal entries, Scenario state and
   Variables ([below](#sessions-and-ephemeral-stubs)).
@@ -509,15 +510,18 @@ variables from its own environment.
 
 `smock render --dir defs get-user --request sample.json` shows what a Stub
 returns for a sample request before a test relies on it. The sample is JSON,
-`{method, path, query, headers, body, session}`, every member optional
-(`GET /` without query, headers, body or Session); the path and the query
-values are given percent-decoded, as Stub conditions compare them, and a
-repeated parameter or header takes an array of values. Cookies come from
-`headers.Cookie`, as a request's come from its `Cookie` fields, and form
-fields from the body, read as a form when `headers.Content-Type` says it is
-one. smock reads the directory as `smock serve` does, body files included,
-with `--body-file-dir` and `--template-env` as `smock serve` takes them and
-the listed environment variables read from its own environment, and prints
+`{method, path, query, headers, body, session, vars}`, every member
+optional (`GET /` without query, headers, body, Session or Variables); the
+path and the query values are given percent-decoded, as Stub conditions
+compare them, and a repeated parameter or header takes an array of values.
+Cookies come from `headers.Cookie`, as a request's come from its `Cookie`
+fields, and form fields from the body, read as a form when
+`headers.Content-Type` says it is one. `vars` maps the name of each
+[Variable](docs/definition-files.md#variables) templates read to its value;
+a rendering never reads the live Variables. smock reads the directory as
+`smock serve` does, body files included, with `--body-file-dir` and
+`--template-env` as `smock serve` takes them and the listed environment
+variables read from its own environment, and prints
 the rendering as JSON, the same as the Admin render operation's
 result without its `warnings`: the Stub's status, headers and body (`utf-8`
 text, or `base64`) or its Server-Sent Events, and the conditions the sample
@@ -531,8 +535,11 @@ renders the one the seed picks, and `--response <i>` renders the one at
 index `i`, from 0. The rendering shows the `time`, the `seed` and the
 `responseIndex` it used, so it can be repeated exactly, and a template that
 fails for the sample shows the 500 a request would get and its
-`templateError`. An invalid definitions directory prints the messages
-`smock check` prints, and it, an unknown Stub ID, an index the Stub has no
+`templateError`. It also shows, as `variables`, the values the Stub's
+`variables` would write, rendered against the sample's `vars`, and the
+response reads them written over the sample's `vars`. It writes nothing.
+An invalid definitions directory prints the messages `smock check`
+prints, and it, an unknown Stub ID, an index the Stub has no
 response at, and a sample that cannot be read or is not valid exit with
 status 1, with the problem on stderr.
 

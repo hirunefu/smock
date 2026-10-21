@@ -1865,9 +1865,10 @@ it. Nothing expires a Variable.
   `vars`.
 - A name that no Stub in the files writes is not an error, since an
   Ephemeral Stub can write it.
-- `smock render` and the Admin render operation render no values of
-  `variables`, write no Variables and read none, so `vars.NAME` is missing
-  there.
+- `smock render` and the Admin render operation read Variables from the
+  sample's `vars`, never the live ones, and show the values a Stub would
+  write without writing them (see [Rendering a
+  template](#rendering-a-template)).
 
 Each [Journal](../README.md#the-journal) entry records the names of the
 Variables the request wrote, in the order written, as `variablesWritten`.
@@ -1936,6 +1937,29 @@ every run. A template that fails for the sample shows the 500 and the
 error. A response that serves [byte ranges](#range-requests) answers the
 sample's `Range` header, so the rendering shows the 206 or the 416 a
 request would get.
+
+A rendering reads and writes no live [Variables](#variables), so it stays
+the same on every run:
+
+- The sample's optional `vars` object gives the Variables that templates
+  read, by name: `"vars": {"user": "bob"}`. By default there are none.
+  A `vars` that is not an object, or a name that is not a Variable name,
+  makes the sample invalid.
+- The rendering shows the values the Stub would write as `variables`, an
+  object, empty when the Stub has no `variables`. They are rendered
+  against the sample's `vars`, in the order written, and their helpers
+  draw from the seed as a request's do. Nothing is written.
+- The response reads the sample's `vars` with the Stub's values written
+  over them, as the response to a request sees its writes.
+- A value that fails to render shows the 500 a request would get, with
+  its `templateError` (an `at` under `/variables/NAME`), empty
+  `variables` and `responseIndex: null`, even when `--response` names a
+  response.
+
+For the [`login` Stub above](#variables), a sample with the body
+`{"user":"ann"}` and `"vars": {"user": "bob"}` shows
+`"variables": {"user": "ann", "previous": "bob"}` and the response
+`{"user":"ann","previous":"bob"}`.
 
 ## Faults
 
