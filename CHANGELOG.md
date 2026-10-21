@@ -16,10 +16,15 @@ of each GitHub release include its section
   answers its main status. Parts that are not imported yet are left out
   with a warning. smock never reads OpenAPI when it serves. See
   [docs/importing-openapi.md](docs/importing-openapi.md).
+- `smock import-openapi` writes YAML when the name of `--output` ends in
+  `.yaml` or `.yml`, and JSON when it ends in `.json`. A YAML file starts
+  with a comment that names the document and says not to edit the file,
+  and each Stub has a comment that maps it back to the document's
+  operation.
 - `write` in the `smock/yaml` module turns a JSON tree into a YAML
   document, with comments, that the module's own parser reads back as the
   same tree. A string is quoted only when it would not read back as the
-  same string. The OpenAPI import will write YAML Definition files with it.
+  same string. The OpenAPI import writes YAML Definition files with it.
 
 ## [0.2.0] - 2026-10-21
 
