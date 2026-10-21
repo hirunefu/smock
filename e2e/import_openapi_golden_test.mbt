@@ -95,7 +95,7 @@ async test "smock import-openapi imports the OAI's Petstore into its golden file
 ///|
 /// The guide's example, beside the Mockoon one in docs/examples/: a small
 /// OpenAPI document written for smock, api/petstore.yaml, and the
-/// definitions directory that its import writes, definitions/.
+/// definitions directory that its import writes, defs/.
 let example_dir : String = "docs/examples/from-openapi"
 
 ///|
@@ -103,7 +103,7 @@ async test "smock import-openapi imports the guide's example into its committed 
   inspect(
     regenerated(
       ["\{example_dir}/api/petstore.yaml", "--mock", "petstore"],
-      golden="\{example_dir}/definitions/petstore.yaml",
+      golden="\{example_dir}/defs/petstore.yaml",
     ),
     content=(
       #|status 0
@@ -113,7 +113,7 @@ async test "smock import-openapi imports the guide's example into its committed 
     ),
   )
   let guide = @fs.read_file("docs/importing-openapi.md").text()
-  for file in ["api/petstore.yaml", "definitions/petstore.yaml"] {
+  for file in ["api/petstore.yaml", "defs/petstore.yaml"] {
     let text = @fs.read_file("\{example_dir}/\{file}").text()
     if !guide.contains("```yaml\n\{text}```\n") {
       fail("docs/importing-openapi.md does not show \{file} as it is")
@@ -123,7 +123,7 @@ async test "smock import-openapi imports the guide's example into its committed 
 
 ///|
 async test "smock serves the guide's example as its quick start says: the sample, the first example, the example that Smock-Example names, the response that Smock-Status names, and nothing outside the server's path" {
-  let _ = with_smock(["--dir", "\{example_dir}/definitions", "--port", "0"], smock => {
+  let _ = with_smock(["--dir", "\{example_dir}/defs", "--port", "0"], smock => {
     let lines = []
     for
       request in [

@@ -17,7 +17,7 @@ and [Limits](#limits) gives the bounds the command keeps to.
 
 The example is in [`examples/from-openapi/`](examples/from-openapi/): the
 OpenAPI document `api/petstore.yaml`, and the definitions directory
-`definitions/`, which holds the file that the command writes from it. The
+`defs/`, which holds the file that the command writes from it. The
 commands below run in `docs/examples/from-openapi/`. `smock check` passes
 on the directory, and smock gives the answers this section shows.
 
@@ -98,14 +98,14 @@ components:
 Import it into the definitions directory, then check the directory:
 
 ```sh
-smock import-openapi api/petstore.yaml --mock petstore --output definitions/petstore.yaml
-smock check definitions
+smock import-openapi api/petstore.yaml --mock petstore --output defs/petstore.yaml
+smock check defs
 ```
 
 The command prints one line:
 
 ```
-wrote definitions/petstore.yaml: 4 Stubs from 2 operations, 0 warnings
+wrote defs/petstore.yaml: 4 Stubs from 2 operations, 0 warnings
 ```
 
 It writes this file:
@@ -173,7 +173,7 @@ stubs:
         species: cat
 ```
 
-`smock serve --dir definitions` then answers:
+`smock serve --dir defs` then answers:
 
 ```sh
 curl localhost:8080/v1/pets                            # 200, a sample of the schema
@@ -445,7 +445,7 @@ So `GET /v1/pets/7` gets the Stub, and `GET /pets/7` does not.
 instead:
 
 ```sh
-smock import-openapi api/petstore.json --mock petstore --output definitions/petstore.yaml --base-path /mock/petstore
+smock import-openapi api/petstore.json --mock petstore --output defs/petstore.yaml --base-path /mock/petstore
 ```
 
 ```yaml
@@ -973,7 +973,7 @@ other Mocks depends on what else the directory holds:
   So give the imported Mock its Hosts with `--hosts`:
 
   ```sh
-  smock import-openapi api/petstore.json --mock petstore --hosts petstore.test,pets.internal:8080 --output definitions/petstore.yaml
+  smock import-openapi api/petstore.json --mock petstore --hosts petstore.test,pets.internal:8080 --output defs/petstore.yaml
   ```
 
   The file then declares:
@@ -994,7 +994,7 @@ other Mocks depends on what else the directory holds:
   them:
 
   ```yaml
-  # definitions/petstore-mock.yaml
+  # defs/petstore-mock.yaml
   version: 1
   mocks:
     - name: petstore
@@ -1009,7 +1009,7 @@ other Mocks depends on what else the directory holds:
   declared.
 
   ```sh
-  smock import-openapi api/petstore.json --mock petstore --declare-mock off --output definitions/petstore.yaml
+  smock import-openapi api/petstore.json --mock petstore --declare-mock off --output defs/petstore.yaml
   ```
 
 Each Host must be one a Definition file can declare, as `smock check`
@@ -1231,7 +1231,7 @@ The command owns the file it writes. When the document changes, run it
 again with `--overwrite on`:
 
 ```sh
-smock import-openapi api/petstore.yaml --mock petstore --output definitions/petstore.yaml --overwrite on
+smock import-openapi api/petstore.yaml --mock petstore --output defs/petstore.yaml --overwrite on
 ```
 
 - A re-import replaces the whole file. It does not merge with hand edits:
@@ -1263,7 +1263,7 @@ have no `priority`, so a hand-written Stub with any `priority` is tried
 first, and the next import leaves its file alone:
 
 ```yaml
-# definitions/petstore-overrides.yaml
+# defs/petstore-overrides.yaml
 version: 1
 stubs:
   - id: petstore.getPet.none
@@ -1296,8 +1296,8 @@ In CI, run the command again from a fixed directory, such as the root of
 the repository, then let Git check that the file did not change:
 
 ```sh
-smock import-openapi api/petstore.yaml --mock petstore --output definitions/petstore.yaml --overwrite on
-git diff --exit-code definitions/
+smock import-openapi api/petstore.yaml --mock petstore --output defs/petstore.yaml --overwrite on
+git diff --exit-code defs/
 ```
 
 The same document and flags give the same bytes, so `git diff` fails
@@ -1397,7 +1397,7 @@ paths:
 ```
 
 ```sh
-smock import-openapi api/openapi.yaml --mock petstore --output definitions/petstore.yaml
+smock import-openapi api/openapi.yaml --mock petstore --output defs/petstore.yaml
 ```
 
 The command reads `api/responses/ok.yaml` and follows the reference to its
@@ -1431,7 +1431,7 @@ When the parts a document shares sit in a directory beside it, give a
 `--ref-dir` that holds both:
 
 ```sh
-smock import-openapi api/openapi.yaml --mock petstore --ref-dir . --output definitions/petstore.yaml
+smock import-openapi api/openapi.yaml --mock petstore --ref-dir . --output defs/petstore.yaml
 ```
 
 A document outside `--ref-dir`, or a `--ref-dir` that is not a directory,
@@ -1464,7 +1464,7 @@ document. For example, with [Redocly CLI](https://redocly.com/docs/cli/):
 
 ```sh
 npx @redocly/cli@2.55.0 bundle api/petstore.json --output api/petstore.bundled.json
-smock import-openapi api/petstore.bundled.json --mock petstore --output definitions/petstore.json
+smock import-openapi api/petstore.bundled.json --mock petstore --output defs/petstore.json
 ```
 
 A bundler fetches what the URLs name. smock never does.
@@ -1544,7 +1544,7 @@ reads the aliases and writes each part in full:
 
 ```sh
 npx @redocly/cli@2.55.0 bundle api/petstore.yaml --output api/petstore.bundled.json
-smock import-openapi api/petstore.bundled.json --mock petstore --output definitions/petstore.yaml
+smock import-openapi api/petstore.bundled.json --mock petstore --output defs/petstore.yaml
 ```
 
 ## Problems and exit codes
