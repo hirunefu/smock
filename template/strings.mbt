@@ -96,7 +96,7 @@ fn string_value(
 /// `text` padded with `pad` to `length` code points, at its start or at its
 /// end, as the helper `name` inserted at `at` gives it: the pad is repeated
 /// and cut to fit. A text that long already, or an empty pad, is
-/// unchanged.
+/// unchanged. Either way, the result is bounded before it is built.
 fn padded(
   text : String,
   length : Int,
@@ -106,7 +106,9 @@ fn padded(
   at : String,
 ) -> String raise RenderError {
   let have = text.char_length()
+  let text_bytes = utf8_length(text).to_int64()
   if length <= have || pad == "" {
+    check_result(name, text_bytes, at)
     return text
   }
   // The pad is written `whole` times, then its first `rest` code points.
@@ -125,7 +127,7 @@ fn padded(
   }
   check_result(
     name,
-    utf8_length(text).to_int64() +
+    text_bytes +
     whole.to_int64() * utf8_length(pad).to_int64() +
     rest_bytes.to_int64(),
     at,

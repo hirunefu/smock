@@ -156,6 +156,8 @@ test "a helper whose result takes more than 1 MiB of UTF-8 is a render error" {
       length("${padStart('', 1048576, 'ab')}", request),
       length("${padEnd('x', 349526, '日')}", request),
       length("${padStart('x', 349527, '日')}", request),
+      length("${padEnd(bodyText, 1)}", of_size(1024 * 1024)),
+      length("${padEnd(bodyText, 1)}", of_size(1024 * 1024 + 1)),
     ].join("\n"),
     content=(
       #|1048576 characters
@@ -166,6 +168,8 @@ test "a helper whose result takes more than 1 MiB of UTF-8 is a render error" {
       #|1048576 characters
       #|349526 characters
       #|error at /response/body: padStart(): the result takes more than 1 MiB
+      #|1048576 characters
+      #|error at /response/body: padEnd(): the result takes more than 1 MiB
     ),
   )
 }
