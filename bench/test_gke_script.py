@@ -110,6 +110,9 @@ if tool == "docker" and words[:1] == ["build"]:
     # What each COPY of the Dockerfile copies from the context (the last
     # word), as [sources, destination], and the sources the context lacks.
     record["copies"], record["missing"] = [], []
+    # And every file the context holds, by its path in it.
+    record["context"] = sorted(str(path.relative_to(words[-1])) for path in Path(words[-1]).rglob("*")
+                               if path.is_file())
     for line in Path(options["file"]).read_text().splitlines():
         if line.strip().upper().startswith("COPY "):
             *sources, destination = [word for word in line.split()[1:] if not word.startswith("--")]
@@ -1420,12 +1423,13 @@ def copy_repository(destination):
     """The files of the repository that a GKE run reads, copied, so that a
     test can change them."""
     for name in ("scripts/gke-bench.sh", "scripts/install-oha.sh", "scripts/build-release.sh", "Dockerfile",
-                 "bench/bench.py", "bench/requests.json", "bench/targets.json", "bench/plan-autopilot.json"):
+                 "bench/bench.py", "bench/requests.json", "bench/requests-crud.json", "bench/targets.json",
+                 "bench/plan-autopilot.json"):
         (destination / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / name, destination / name)
     shutil.copytree(ROOT / "bench" / "gke", destination / "bench" / "gke",
                     ignore=shutil.ignore_patterns("__pycache__"))
-    for name in ("definitions", "definitions-scenarios"):
+    for name in ("definitions", "definitions-scenarios", "definitions-crud"):
         shutil.copytree(ROOT / "bench" / name, destination / "bench" / name)
     return destination / "scripts" / "gke-bench.sh"
 
@@ -1755,9 +1759,11 @@ class Variants(Script):
                  "variant a is given twice: give each its own label"),
                 (["--variant", f"A={self.smock}", "--variant", f"b={other}"], "variant label A: use 1 to 16"),
                 (["--variant", f"a={self.smock},no-tls", "--variant", f"b={other}"],
-                 "variant a: no option no-tls; there are no-init, no-first-second and scenarios"),
+                 "variant a: no option no-tls; there are no-init, no-first-second, scenarios and crud"),
+                (["--variant", f"a={self.smock},scenarios,crud", "--variant", f"b={other}"],
+                 "variant a: scenarios and crud serve other definitions: give one of them"),
                 (["--variant", f"a={self.smock}", "--variant", "b"],
-                 "--variant b: give it as LABEL=FILE[,no-init][,no-first-second][,scenarios]"),
+                 "--variant b: give it as LABEL=FILE[,no-init][,no-first-second][,scenarios][,crud]"),
                 (["--variant", f"a={self.smock}", "--variant", f"b={self.tmp}/missing"],
                  f"no file {self.tmp}/missing")):
             # Without --smock: a run of variants is given its binaries.
@@ -1880,13 +1886,14 @@ class Variants(Script):
     def test_a_scenarios_variant_serves_the_scenario_variant_of_the_definitions_which_each_image_holds(self):
         status, output = self.run_variants(variants={"r2": [self.smock], "r2s": [self.smock, "scenarios"]})
         self.assertEqual(status, 0, output)
-        # One image of smock, which both variants share, holds both sets
+        # One image of smock, which both variants share, holds every set
         # (the fake docker, as docker, fails a COPY of what its context
         # lacks); the scenarios variant's Pod serves the Scenario variant.
         [smock_build, _] = self.made(["build"])
         self.assertEqual(smock_build["missing"], [])
-        self.assertEqual(smock_build["copies"][-2:], [[["definitions"], "/definitions"],
-                                                      [["definitions-scenarios"], "/definitions-scenarios"]])
+        self.assertEqual(smock_build["copies"][-3:], [[["definitions"], "/definitions"],
+                                                      [["definitions-scenarios"], "/definitions-scenarios"],
+                                                      [["definitions-crud"], "/definitions-crud"]])
         pods = {item["metadata"]["name"]: item for call in self.made(["apply"])
                 for item in call["document"].get("items", []) if item["kind"] == "Pod"}
         self.assertEqual({name: {variable["name"]: variable["value"]
@@ -1902,6 +1909,40 @@ class Variants(Script):
         report = json.loads((self.out / "same-node.json").read_text())
         self.assertEqual([(variant["label"], variant["options"]) for variant in report["variants"]],
                          [("r2", []), ("r2s", ["scenarios"])])
+
+    def test_a_crud_variant_serves_the_crud_variant_of_the_definitions_and_the_load_generator_sends_it_its_mix(self):
+        status, output = self.run_variants(variants={"r2": [self.smock], "r2c": [self.smock, "crud"]})
+        self.assertEqual(status, 0, output)
+        # One image of smock holds every set; the load generator's holds
+        # the CRUD variant's mix beside the benchmark's.
+        [smock_build, generator_build] = self.made(["build"])
+        self.assertEqual(smock_build["missing"], [])
+        self.assertEqual(smock_build["copies"][-3:], [[["definitions"], "/definitions"],
+                                                      [["definitions-scenarios"], "/definitions-scenarios"],
+                                                      [["definitions-crud"], "/definitions-crud"]])
+        self.assertIn("definitions-crud/files/items.json", smock_build["context"])
+        self.assertLessEqual({"bench/requests.json", "bench/requests-crud.json"}, set(generator_build["context"]))
+        pods = {item["metadata"]["name"]: item for call in self.made(["apply"])
+                for item in call["document"].get("items", []) if item["kind"] == "Pod"}
+        self.assertEqual({name: {variable["name"]: variable["value"]
+                                 for variable in pod["spec"]["containers"][0]["env"]}["SMOCK_DIR"]
+                          for name, pod in pods.items()},
+                         {"smock-small-r2": "/definitions", "smock-small-r2c": "/definitions-crud"})
+        [job] = [call["document"] for call in self.made(["apply"]) if call["document"]["kind"] == "Job"]
+        env = {item["name"]: item["value"] for item in job["spec"]["template"]["spec"]["containers"][0]["env"]}
+        self.assertEqual({variant["label"]: variant.get("mix") for variant in json.loads(env["VARIANTS"])},
+                         {"r2": None, "r2c": "requests-crud.json"})
+        # Each of its samples says what it served and was sent, and the
+        # comparison names the option.
+        for round_ in range(1, 5):
+            for label, directory, mix in (("r2", "bench/definitions", "bench/requests.json"),
+                                          ("r2c", "bench/definitions-crud", "bench/requests-crud.json")):
+                conditions = json.loads((self.out / "samples" / f"{round_}-{label}" / "conditions.json").read_text())
+                self.assertEqual((conditions["definitions"]["directory"], conditions["request_mix"]["file"]),
+                                 (directory, mix), (round_, label))
+        report = json.loads((self.out / "same-node.json").read_text())
+        self.assertEqual([(variant["label"], variant["options"]) for variant in report["variants"]],
+                         [("r2", []), ("r2c", ["crud"])])
 
     def test_a_dry_run_of_variants_prints_each_image_and_each_variant_it_would_make(self):
         old = self.smock_for(HOST_ARCH, "0d984c8a1b2c")
