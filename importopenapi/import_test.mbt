@@ -489,7 +489,7 @@ test "the main response is the lowest explicit 2xx code, then 2XX; else default,
 }
 
 ///|
-test "until their ticket, each header a response documents is left out with a warning that names it, in the order the document writes them, among the warnings about its content" {
+test "a response's headers are read where the document writes them, so their warnings come in that order among the warnings about its content" {
   inspect(
     main_of(
       (
@@ -498,22 +498,22 @@ test "until their ticket, each header a response documents is left out with a wa
         #|  "200": {
         #|    "description": "OK",
         #|    "headers": {
-        #|      "X-Rate-Limit": { "schema": { "type": "integer" } },
+        #|      "X-Rate-Limit": { "example": {} },
         #|      "content-type": {}, "Content-Length": {}, "Transfer-Encoding": {}, "Connection": {}
         #|    },
         #|    "content": { "application/json": {}, "application/xml": {} },
         #|    "links": { "next": {} }
         #|  },
-        #|  "default": { "description": "Error", "headers": { "Retry-After": {} } },
+        #|  "default": { "description": "Error", "headers": { "Retry-After": { "example": null } } },
         #|  "1XX": {},
         #|  "x-codes": { "anything": true }
         #|}
       ),
     ),
     content=(
-      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Rate-Limit: warning: left out: response headers are not imported yet
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Rate-Limit/example: warning: left out: a header cannot hold an object
       #|petstore.json: /paths/~1r/get/responses/200/content/application~1xml: warning: left out: a response answers with one media type, here "application/json"
-      #|petstore.json: /paths/~1r/get/responses/default/headers/Retry-After: warning: left out: response headers are not imported yet
+      #|petstore.json: /paths/~1r/get/responses/default/headers/Retry-After/example: warning: left out: a header cannot hold null
       #|petstore.json: /paths/~1r/get/responses/1XX: warning: left out: smock answers with a status from 200 to 599
       #|petstore.r.404: GET /r -> 404
       #|petstore.r.default: GET /r -> 500
@@ -854,7 +854,7 @@ test "problems come in order: the document-level ones, then each operation's in 
         #|        "responses": {
         #|          "404": { "content": { "application/json": {}, "text/xml": {} } },
         #|          "200": { "content": { "text/plain": { "example": "OK" } } },
-        #|          "500": { "headers": { "X-Error": {} } }
+        #|          "500": { "headers": { "X-Error": { "example": null } } }
         #|        }
         #|      },
         #|      "put": { "operationId": 1 }
@@ -871,7 +871,7 @@ test "problems come in order: the document-level ones, then each operation's in 
       #|petstore.json: /servers: warning: left out: the paths of servers are not added as a prefix yet
       #|petstore.json: /webhooks: warning: webhooks are not imported: they are requests the API sends, not ones it answers
       #|petstore.json: /paths/~1b/get/responses/404/content/text~1xml: warning: left out: a response answers with one media type, here "application/json"
-      #|petstore.json: /paths/~1b/get/responses/500/headers/X-Error: warning: left out: response headers are not imported yet
+      #|petstore.json: /paths/~1b/get/responses/500/headers/X-Error/example: warning: left out: a header cannot hold null
       #|petstore.json: /paths/~1b/put/operationId: must be a non-empty string
       #|petstore.json: /paths/~1b/put: warning: has no responses: the operation answers 200 with an empty body
       #|petstore.json: /paths/~1a~1{id}/get: warning: has no responses: the operation answers 200 with an empty body

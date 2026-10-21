@@ -1577,3 +1577,86 @@ async test "a file imported with --declare-mock off holds only Stubs, for the Mo
     })
   })
 }
+
+///|
+async test "smock serves an imported response's documented headers, with their examples or samples, and skips those smock sets itself" {
+  with_definitions(
+    [
+      (
+        "api/petstore.yaml",
+        (
+          #|openapi: 3.1.0
+          #|paths:
+          #|  /pets:
+          #|    get:
+          #|      operationId: listPets
+          #|      responses:
+          #|        200:
+          #|          headers:
+          #|            X-Rate-Limit:
+          #|              schema: { type: integer }
+          #|            X-Request-Id:
+          #|              example: req-1
+          #|            Content-Length:
+          #|              schema: { type: integer }
+          #|          content:
+          #|            application/json:
+          #|              example: [Tom]
+          #|        429:
+          #|          headers:
+          #|            Retry-After:
+          #|              example: 60
+        ),
+      ),
+    ],
+    dir => {
+      @fs.mkdir("\{dir}/defs")
+      inspect(
+        import_openapi(
+          [
+            "\{dir}/api/petstore.yaml",
+            "--mock",
+            "petstore",
+            "--output",
+            "\{dir}/defs/petstore.yaml",
+          ],
+          dir~,
+        ),
+        content=(
+          #|status 0
+          #|wrote <dir>/defs/petstore.yaml: 2 Stubs from 1 operations, 0 warnings
+          #|
+        ),
+      )
+      let _ = with_smock(["--dir", "\{dir}/defs", "--port", "0"], smock => {
+        let answers = []
+        for status in [None, Some("429")] {
+          let headers = [("Host", "localhost")]
+          if status is Some(key) {
+            headers.push(("Smock-Status", key))
+          }
+          answers.push(smock.request("GET", "/pets", headers~))
+        }
+        inspect(
+          answers.join("\n"),
+          content=(
+            #|HTTP/1.1 200 OK
+            #|X-Rate-Limit: 0
+            #|X-Request-Id: req-1
+            #|Content-Type: application/json
+            #|Smock-Mock: petstore; via=default
+            #|Content-Length: 7
+            #|
+            #|["Tom"]
+            #|HTTP/1.1 429 Too Many Requests
+            #|Retry-After: 60
+            #|Smock-Mock: petstore; via=default
+            #|Content-Length: 0
+            #|
+            #|
+          ),
+        )
+      })
+    },
+  )
+}

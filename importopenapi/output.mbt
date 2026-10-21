@@ -197,8 +197,9 @@ fn base_name(path : String) -> String {
 /// (`method`, `path`, an exact path or `{ pattern }`, then `headers` with
 /// `Smock-Status` for a response other than the main one, then
 /// `Smock-Example` for a named example other than the first), then
-/// `response` (`status`, `headers` with the Content-Type, then `json` or
-/// `body`).
+/// `response` (`status`, `headers` with the Content-Type, then the
+/// documented headers in the order the document writes them, then `json`
+/// or `body`).
 fn Stub::to_json(self : Stub, mock : String) -> Json {
   let path : Json = match self.path {
     Exact(path) => path.to_json()
@@ -216,8 +217,15 @@ fn Stub::to_json(self : Stub, mock : String) -> Json {
     request["headers"] = Json::object(headers)
   }
   let response : Map[String, Json] = { "status": self.status.to_json() }
-  if self.payload.content_type is Some(content_type) {
-    response["headers"] = { "Content-Type": content_type }
+  if self.payload.content_type is Some(_) || !self.headers.is_empty() {
+    let headers : Map[String, Json] = Map([])
+    if self.payload.content_type is Some(content_type) {
+      headers["Content-Type"] = content_type.to_json()
+    }
+    for header in self.headers {
+      headers[header.0] = header.1.to_json()
+    }
+    response["headers"] = Json::object(headers)
   }
   match self.payload.body {
     Empty => ()
