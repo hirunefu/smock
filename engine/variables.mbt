@@ -71,6 +71,29 @@ fn VariableStore::write(
 }
 
 ///|
+/// Clears the Variables of every Mock and Session for which `remove`
+/// holds, and returns how many it cleared. It leaves no map empty.
+fn VariableStore::remove_where(
+  self : VariableStore,
+  remove : (String, String?) -> Bool,
+) -> Int {
+  let mut count = 0
+  for mock in self.by_mock.keys().collect() {
+    let by_session = self.by_mock[mock]
+    for session in by_session.keys().collect() {
+      if remove(mock, session) {
+        count += by_session[session].length()
+        by_session.remove(session)
+      }
+    }
+    if by_session.is_empty() {
+      self.by_mock.remove(mock)
+    }
+  }
+  count
+}
+
+///|
 /// The request as templates see it.
 fn template_input(incoming : Incoming) -> @template.Input {
   {

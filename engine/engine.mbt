@@ -278,7 +278,8 @@ pub fn ReloadOutcome::name(self : ReloadOutcome) -> String {
 ///   declare, which are dropped. Then each Scenario state stays while its
 ///   name is one of the known states of its Mock, Session and Scenario;
 ///   any other goes back to `Started`, and the states of a Mock that is
-///   gone are dropped.
+///   gone are dropped. Variables stay, except those of a Mock that is
+///   gone, which are dropped.
 /// - When it is valid with the digest served, nothing is swapped.
 /// - When it is invalid, the served snapshot stays.
 ///
@@ -305,6 +306,8 @@ pub fn Engine::reload(
       // Only then are Scenario states checked, since the known states
       // include those of the Ephemeral Stubs that stay.
       scenario_states_reset = self.prune_scenario_states(mocks)
+      // Variables stay, except those of the Mocks that are gone.
+      self.variables.remove_where((mock, _) => !mocks.contains(mock)) |> ignore
       (Swapped, [])
     }
     Err(errors) => (Failed, errors)

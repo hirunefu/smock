@@ -42,8 +42,8 @@ pub(all) struct AdminWarning {
 /// The warnings every Admin API response of the replica named `replica`
 /// carries, in a deployment of `replicas` replicas (`--replicas`). Replicas
 /// share no state, so with more than one, a `per_replica_state` warning
-/// says that each keeps its own Ephemeral Stubs, Scenario state and Journal
-/// and that the response comes from `replica` alone.
+/// says that each keeps its own Ephemeral Stubs, Scenario state, Variables
+/// and Journal and that the response comes from `replica` alone.
 pub fn admin_warnings(
   replicas~ : Int,
   replica~ : String,
@@ -54,7 +54,7 @@ pub fn admin_warnings(
   [
     {
       code: "per_replica_state",
-      message: "This deployment runs \{replicas} replicas (--replicas), and each one keeps its own Ephemeral Stubs, Scenario state and Journal. This response comes from \{replica} alone.",
+      message: "This deployment runs \{replicas} replicas (--replicas), and each one keeps its own Ephemeral Stubs, Scenario state, Variables and Journal. This response comes from \{replica} alone.",
     },
   ]
 }
