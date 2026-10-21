@@ -2627,8 +2627,8 @@ over one of its requests:
 
 A request without `Authorization` gets 401, and a request of a Session
 whose Scenario `orders` is in `Down` gets 503. Every other request to the
-orders gets the CRUD Stub's answer. A `priority` places a Stub before the
-CRUD Stub wherever it is declared.
+orders gets the CRUD Stub's answer. A lower `priority` than the CRUD
+Stub's places a Stub before it wherever it is declared.
 
 #### CRUD headers
 
