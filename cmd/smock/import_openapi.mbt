@@ -29,6 +29,11 @@ async fn import_openapi(settings : @settings.ImportOpenapiSettings) -> Int {
   let bytes = match
     read_document(document, limit=@importopenapi.max_read_bytes + 1) {
     Ok(bytes) => bytes
+    Err(reason) if @importopenapi.has_scheme(document) =>
+      return nothing_written(
+        document,
+        "cannot be read: \{reason}; smock reads no URLs: download the document first",
+      )
     Err(reason) => return nothing_written(document, "cannot be read: \{reason}")
   }
   let options = @importopenapi.Options(

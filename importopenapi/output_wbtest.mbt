@@ -149,7 +149,6 @@ test "a file that does not declare its Mock is checked with a stand-in that decl
     content=(
       #|defs/m.json: smock bug: the file would not load: defs/m.json.mock.json: /mocks/0/name: the Mock name "m" is already declared at defs/m.json: /mocks/0/name
       #|passed: false
-
     ),
   )
 }

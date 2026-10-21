@@ -221,7 +221,9 @@ The arguments:
 
 - `<document>`: the OpenAPI document, a file whose name ends in `.json`,
   `.yaml` or `.yml`. A YAML document is read as YAML 1.2 (see
-  [How YAML is read](#how-yaml-is-read)). It is not a URL, and not stdin.
+  [How YAML is read](#how-yaml-is-read)). It is not stdin, and not a URL:
+  download the document first. A URL that cannot be read as a file gets
+  that advice too.
 - `--mock <name>`: the name of the one Mock the file declares. Every Stub
   ID starts with it, and it names the Mock in metric labels and Admin API
   paths. It is not taken from the document's title, which changes between

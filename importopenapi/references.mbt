@@ -337,7 +337,9 @@ fn Documents::add(self : Documents, name : String, content : Content) -> Unit {
 ///|
 /// Whether `reference` starts with a URI scheme, such as `https:`, `file:`
 /// or `urn:`: a letter, then letters, digits, `+`, `-` or `.`, then `:`.
-fn has_scheme(reference : String) -> Bool {
+/// smock reads no URLs: the CLI uses it to say so when the root document
+/// it cannot read names one.
+pub fn has_scheme(reference : String) -> Bool {
   for i, c in reference {
     match c {
       ':' => return i > 0

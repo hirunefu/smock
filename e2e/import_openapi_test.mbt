@@ -141,7 +141,7 @@ async test "smock import-openapi prints each warning as smock check does, naming
 }
 
 ///|
-async test "smock import-openapi writes nothing and exits 1 when the document has an error" {
+async test "smock import-openapi writes nothing and exits 1 when the document has an error or cannot be read, and says that it reads no URLs when the document names one" {
   with_petstore(
     (
       #|{ "swagger": "2.0", "paths": {} }
@@ -180,6 +180,24 @@ async test "smock import-openapi writes nothing and exits 1 when the document ha
         content=(
           #|status 1
           #|<dir>/api/missing.json: cannot be read: no such file
+          #|nothing written: 1 errors
+          #|
+        ),
+      )
+      inspect(
+        import_openapi(
+          [
+            "https://example.com/api.json",
+            "--mock",
+            "petstore",
+            "--output",
+            "\{dir}/defs/petstore.json",
+          ],
+          dir~,
+        ),
+        content=(
+          #|status 1
+          #|https://example.com/api.json: cannot be read: no such file; smock reads no URLs: download the document first
           #|nothing written: 1 errors
           #|
         ),
