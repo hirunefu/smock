@@ -188,7 +188,7 @@ fn with_paths(paths : String) -> String {
 
 ///|
 /// The Stub IDs, methods and paths of the file that `import_json` renders,
-/// one per line, after its problems.
+/// one per line, after its problems. A pattern is written `pattern <it>`.
 fn stubs_of(document : String) -> String raise {
   let options = @importopenapi.Options(
     root="petstore.json",
@@ -219,14 +219,17 @@ fn stubs_of(document : String) -> String raise {
       is Object(
         {
           "id": String(id),
-          "request": Object(
-            { "method": String(meth), "path": String(path), .. }
-          ),
+          "request": Object({ "method": String(meth), "path": path, .. }),
           "response": Object({ "status": Number(status, ..), .. }),
           ..
         }
       ) else {
       fail("unexpected Stub: \{stub.stringify()}")
+    }
+    let path = match path {
+      String(path) => path
+      Object({ "pattern": String(pattern), .. }) => "pattern \{pattern}"
+      _ => fail("unexpected path: \{path.stringify()}")
     }
     out.write_string("\{id}: \{meth} \{path} -> \{status}\n")
   }
@@ -369,10 +372,11 @@ test "a path without parameters becomes an exact path, percent-decoded as smock 
         ),
       ),
     ),
+    // A shorter path comes first.
     content=(
+      #|petstore.GET /.200: GET / -> 200
       #|petstore.GET /caf%C3%A9/a%20b.200: GET /café/a b -> 200
       #|petstore.GET /100%/%zz/%E2%82.200: GET /100%/%zz/� -> 200
-      #|petstore.GET /.200: GET / -> 200
       #|
     ),
   )
@@ -412,33 +416,6 @@ test "a path key that does not start with /, has unbalanced braces or an empty {
 }
 
 ///|
-test "until paths with parameters are imported, each operation at one is left out with a warning" {
-  inspect(
-    stubs_of(
-      with_paths(
-        (
-          #|{
-          #|  "/pets/{petId}": {
-          #|    "get": { "operationId": "getPet", "responses": { "200": {} } },
-          #|    "delete": { "operationId": "getPet", "responses": { "204": {} } }
-          #|  },
-          #|  "/files/{name}.json": { "get": { "responses": { "200": {} } } },
-          #|  "/pets": { "get": { "operationId": "getPet", "responses": { "200": {} } } }
-          #|}
-        ),
-      ),
-    ),
-    content=(
-      #|petstore.json: /paths/~1pets~1{petId}/get: warning: left out: paths with parameters are not imported yet
-      #|petstore.json: /paths/~1pets~1{petId}/delete: warning: left out: paths with parameters are not imported yet
-      #|petstore.json: /paths/~1files~1{name}.json/get: warning: left out: paths with parameters are not imported yet
-      #|petstore.getPet.200: GET /pets -> 200
-      #|
-    ),
-  )
-}
-
-///|
 test "when two operations' method and path conditions come out the same, as for exact paths that decode alike, the first in document order is kept and the later one is left out with a warning" {
   inspect(
     stubs_of(
@@ -459,9 +436,9 @@ test "when two operations' method and path conditions come out the same, as for 
     content=(
       #|petstore.json: /paths/~1a~1b/get: warning: left out: GET "/a/b" is already answered by the operation at petstore.json: /paths/~1a%2Fb/get, which comes first
       #|petstore.json: /paths/~1café/get: warning: left out: GET "/café" is already answered by the operation at petstore.json: /paths/~1caf%c3%a9/get, which comes first
+      #|petstore.fourth.200: GET /café -> 200
       #|petstore.first.200: GET /a/b -> 200
       #|petstore.third.200: PUT /a/b -> 200
-      #|petstore.fourth.200: GET /café -> 200
       #|
     ),
   )
@@ -683,7 +660,7 @@ test "operations that are not imported take no part in the check of IDs" {
       with_paths(
         (
           #|{
-          #|  "/a/{id}": { "get": { "operationId": "getA", "responses": { "200": {} } } },
+          #|  "/a/b": { "get": { "operationId": "getA", "responses": { "101": {} } } },
           #|  "/a": {
           #|    "get": {
           #|      "operationId": "getA",
@@ -696,7 +673,7 @@ test "operations that are not imported take no part in the check of IDs" {
       ),
     ),
     content=(
-      #|petstore.json: /paths/~1a~1{id}/get: warning: left out: paths with parameters are not imported yet
+      #|petstore.json: /paths/~1a~1b/get/responses: warning: left out: the operation has only 1xx responses, and smock answers with a status from 200 to 599
       #|petstore.json: /paths/~1a/get/callbacks: warning: callbacks are not imported
       #|petstore.getA.200: GET /a -> 200
       #|
@@ -776,14 +753,14 @@ test "a document with no operation to import gives a file without Stubs, with a 
         #|{
         #|  "openapi": "3.1.0",
         #|  "webhooks": { "w": {} },
-        #|  "paths": { "/a/{id}": { "get": { "responses": { "200": {} } } }, "/b": {} }
+        #|  "paths": { "/a/{id}": { "get": { "responses": { "101": {} } } }, "/b": {} }
         #|}
       ),
     ),
     content=(
       #|petstore.json: /webhooks: warning: webhooks are not imported: they are requests the API sends, not ones it answers
       #|petstore.json: /paths: warning: there is no operation to import: the file has no Stubs
-      #|petstore.json: /paths/~1a~1{id}/get: warning: left out: paths with parameters are not imported yet
+      #|petstore.json: /paths/~1a~1{id}/get/responses: warning: left out: the operation has only 1xx responses, and smock answers with a status from 200 to 599
       #|
     ),
   )
@@ -898,7 +875,7 @@ test "problems come in order: the document-level ones, then each operation's in 
       #|petstore.json: /paths/~1b/get/responses/500/headers/X-Error: warning: left out: response headers are not imported yet
       #|petstore.json: /paths/~1b/put/operationId: must be a non-empty string
       #|petstore.json: /paths/~1b/put: warning: has no responses: the operation answers 200 with an empty body
-      #|petstore.json: /paths/~1a~1{id}/get: warning: left out: paths with parameters are not imported yet
+      #|petstore.json: /paths/~1a~1{id}/get: warning: has no responses: the operation answers 200 with an empty body
       #|nothing written
       #|
     ),

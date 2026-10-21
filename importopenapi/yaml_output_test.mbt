@@ -315,7 +315,9 @@ test "the fields the comments use are read for every format: info, its title and
       #|petstore.json: /paths/~1a/get/deprecated: must be true or false
       #|petstore.json: /paths/~1a/put/summary: must be a string
       #|petstore.json: /paths/~1a/put/deprecated: must be true or false
-      #|petstore.json: /paths/~1b~1{id}/get: warning: left out: paths with parameters are not imported yet
+      #|petstore.json: /paths/~1b~1{id}/get/summary: must be a string
+      #|petstore.json: /paths/~1b~1{id}/get/deprecated: must be true or false
+      #|petstore.json: /paths/~1b~1{id}/get: warning: has no responses: the operation answers 200 with an empty body
       #|nothing written
       #|
     ),
