@@ -61,7 +61,7 @@ The authenticated interface, on its own port, for inspecting and changing a runn
 _Avoid_: Management API, control plane
 
 **Session**:
-A key carried on requests that scopes Ephemeral Stubs, Scenario state, Variables and the Journal, so concurrent tests sharing a Mock do not see each other's changes.
+A key carried on requests that scopes Ephemeral Stubs, Scenario state, Variables, the contents of Data buckets and the Journal, so concurrent tests sharing a Mock do not see each other's changes.
 _Avoid_: Tenant, namespace, test ID
 
 **Journal**:

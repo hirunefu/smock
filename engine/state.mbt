@@ -2,13 +2,14 @@
 // bytes the state kept per Mock and Session takes, against one bound that
 // the engine is created with. Each write is checked against it before it is
 // taken, and the count is kept up to date as state is written and removed,
-// so nothing is ever summed again. Variables are the first kind of
-// per-Session state it counts; Scenario state stays outside it.
+// so nothing is ever summed again. It counts the Variables and the copies
+// of Data buckets; Scenario state stays outside it, and so do the initial
+// values of Data buckets, which are part of the definition set.
 //
 // What counts follows ADR 0004's follow-up: beside the bytes of names and
-// compact JSON, fixed overheads for each space, Variable and JSON value, so
-// that long Session keys or many tiny values cannot take far more memory
-// than the bound counts.
+// compact JSON, fixed overheads for each space, Variable, copy and JSON
+// value, so that long Session keys or many tiny values cannot take far more
+// memory than the bound counts.
 
 ///|
 /// The bound on per-Session state an engine has by default: 64 MiB.
@@ -86,6 +87,11 @@ let space_overhead : Int64 = 64L
 let variable_overhead : Int64 = 64L
 
 ///|
+/// What each copy of a Data bucket counts beside the bucket's name and its
+/// value.
+let copy_overhead : Int64 = 64L
+
+///|
 /// What each JSON value in a value counts beside its compact JSON: each
 /// object, array, string, number, boolean and null.
 let json_value_overhead : Int64 = 16L
@@ -107,6 +113,13 @@ fn space_bytes(mock : String, session : String?) -> Int64 {
 /// UTF-8 and `variable_overhead`.
 fn variable_name_bytes(name : String) -> Int64 {
   utf8_length(name).to_int64() + variable_overhead
+}
+
+///|
+/// The bytes a copy of the Data bucket `bucket` whose value is `value`
+/// counts: the bucket's name in UTF-8, `copy_overhead`, and the value.
+fn copy_bytes(bucket : String, value : Json) -> Int64 {
+  utf8_length(bucket).to_int64() + copy_overhead + value_bytes(value)
 }
 
 ///|

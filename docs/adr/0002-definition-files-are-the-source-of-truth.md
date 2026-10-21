@@ -17,3 +17,7 @@ What smock serves is declared in Definition files that live in version control a
 - Tests that rely on Ephemeral Stubs, Scenarios or the Journal need one replica or session affinity.
 - With no Definition files, smock starts with one empty Default Mock, so it can still be used through the Admin API alone.
 - Edge builds start read-only (no Admin API) because the platforms there give no reliable process memory. A pluggable state store can be added later.
+
+## Follow-up, 2026-10-22
+
+Variables (spec #73) and the contents of Data buckets (spec #75) are per-replica state too, kept per Mock and Session in the replica that received the writes, beside its Ephemeral Stubs, Scenario state and Journal, and lost on restart. A Data bucket and its initial value come only from the Definition files; the Admin API reads, sets and drops one Session's copy of it, as it adds Ephemeral Stubs. This note does not change the decision.

@@ -1,8 +1,9 @@
-// How the engine stores Variables: by Mock, Session and name, with no map
-// left empty. Nothing outside the engine can see an empty map, since a
-// Mock or Session without one has no Variables either way, so these tests
-// look at the store itself after requests through `Engine::handle`, resets
-// and reloads.
+// How the engine stores Variables and the copies of Data buckets: by Mock,
+// Session and name, with no map left empty. Nothing outside the engine can
+// see an empty map, since a Mock or Session without one has no Variables
+// or copies either way, so these tests look at the store itself after
+// requests through `Engine::handle`, Admin API operations, resets and
+// reloads.
 
 ///|
 test "a request that writes nothing, because its Stub writes none, a value fails or no Stub matches, leaves no empty map behind" {
@@ -34,7 +35,7 @@ test "a request that writes nothing, because its Stub writes none, a value fails
       body: b"{}",
     }
     ignore(engine.handle(request, session~, now=0, rand~))
-    out.push("\{label}: \{@debug.to_string(engine.variables.by_mock)}")
+    out.push("\{label}: \{@debug.to_string(engine.store.variables)}")
   }
   step("test-a, a Stub with variables: {}", "/none", Some("test-a"))
   step("test-a, a value that fails", "/fails", Some("test-a"))
@@ -100,7 +101,7 @@ test "clearing Variables with a reset and dropping them with a reload leave no e
   }
   let out = []
   let show = (label : String) => {
-    out.push("\{label}: \{@debug.to_string(engine.variables.by_mock)}")
+    out.push("\{label}: \{@debug.to_string(engine.store.variables)}")
   }
   write("/count?n=1", Some("test-a"))
   write("http://bank.svc/deposit?n=2", Some("test-a"))
@@ -155,7 +156,7 @@ test "setting and deleting Variables through the Admin API leaves no empty map b
   let engine = Engine(snapshot)
   let out = []
   let show = (label : String) => {
-    out.push("\{label}: \{@debug.to_string(engine.variables.by_mock)}")
+    out.push("\{label}: \{@debug.to_string(engine.store.variables)}")
   }
   engine.set_variable(mock="shop", session=Some("test-a"), name="a", 1)
   engine.set_variable(mock="shop", session=Some("test-a"), name="b", 2)
@@ -201,6 +202,131 @@ test "setting and deleting Variables through the Admin API leaves no empty map b
       #|}
       #|delete a of shop, no Session: { "bank": { Some("test-a"): { "a": Number(4) } } }
       #|delete a of bank, test-a: {}
+    ),
+  )
+}
+
+///|
+/// The copies the engine stores, one space per line, by Mock and Session:
+/// each copy's value and what it counts, or ` {}` when there are none.
+fn stored_copies(engine : Engine) -> String {
+  let lines = []
+  for mock, by_session in engine.store.copies {
+    for session, copies in by_session {
+      let each = []
+      for name, value in copies.values {
+        each.push("\{name} = \{value.stringify()} (\{copies.bytes[name]})")
+      }
+      lines.push(
+        "\n  \{mock}, \{@debug.to_string(session)}: \{each.join(", ")}",
+      )
+    }
+  }
+  if lines.is_empty() {
+    " {}"
+  } else {
+    lines.join("")
+  }
+}
+
+///|
+test "setting and dropping copies through the Admin API, resets and reloads leave no empty map behind" {
+  let files =
+    #|{ "mocks": [{ "name": "shop", "default": true }, { "name": "bank", "hosts": ["bank.svc"] }],
+    #|  "data": [
+    #|    { "mock": "shop", "name": "visits", "json": 0 },
+    #|    { "mock": "shop", "name": "cart", "json": [] },
+    #|    { "mock": "bank", "name": "accounts", "json": {} } ],
+    #|  "stubs": [
+    #|    { "id": "read", "mock": "shop", "request": { "path": "/read" },
+    #|      "response": { "status": 200, "template": true, "body": "${data.visits}" } } ] }
+  let set = (files : String) => @definitions.DefinitionSet::{
+    files: [("shop.json", @utf8.encode(files))],
+    body_files: [],
+  }
+  guard @definitions.load(set(files)) is Ok(snapshot) else {
+    fail("not loaded")
+  }
+  let engine = Engine(snapshot)
+  let out = []
+  let show = (label : String) => {
+    out.push("\{label}, \{engine.state.bytes} bytes:\{stored_copies(engine)}")
+  }
+  let request : Request = {
+    meth: "GET",
+    target: "/read",
+    version: "HTTP/1.1",
+    headers: [],
+    body: b"",
+  }
+  ignore(
+    engine.handle(
+      request,
+      session=Some("test-a"),
+      now=0,
+      rand=@prng.Generator(1),
+    ),
+  )
+  show("test-a reads")
+  engine.set_data(mock="shop", session=Some("test-a"), bucket="visits", 1)
+  |> ignore
+  engine.set_data(mock="shop", session=Some("test-a"), bucket="cart", [1])
+  |> ignore
+  engine.set_data(mock="shop", session=None, bucket="visits", 2) |> ignore
+  engine.set_data(mock="bank", session=Some("test-a"), bucket="accounts", {})
+  |> ignore
+  show("set")
+  engine.drop_data(mock="shop", session=Some("test-a"), bucket="visits")
+  |> ignore
+  show("drop visits of shop, test-a")
+  engine.drop_data(mock="shop", session=Some("test-a"), bucket="cart") |> ignore
+  show("drop cart of shop, test-a")
+  engine.drop_data(mock="shop", session=Some("test-b"), bucket="cart") |> ignore
+  show("drop cart of shop, test-b, which holds none")
+  ignore(engine.reset(Session(Some("test-a"))))
+  show("reset Session test-a")
+  engine.set_data(mock="bank", session=Some("test-b"), bucket="accounts", {})
+  |> ignore
+  engine.set_variable(mock="shop", session=None, name="v", 1)
+  ignore(engine.reset(Mock("shop")))
+  show("reset Mock shop")
+  ignore(
+    engine.reload(
+      set(
+        files
+        .replace(
+          old="{ \"name\": \"bank\", \"hosts\": [\"bank.svc\"] }",
+          new="{ \"name\": \"other\" }",
+        )
+        .replace(old="\"mock\": \"bank\"", new="\"mock\": \"other\""),
+      ),
+      at=0,
+    ),
+  )
+  show("reload, bank removed")
+  inspect(
+    out.join("\n"),
+    content=(
+      #|test-a reads, 0 bytes: {}
+      #|set, 583 bytes:
+      #|  shop, Some("test-a"): visits = 1 (87), cart = [1] (103)
+      #|  shop, None: visits = 2 (87)
+      #|  bank, Some("test-a"): accounts = {} (90)
+      #|drop visits of shop, test-a, 496 bytes:
+      #|  shop, Some("test-a"): cart = [1] (103)
+      #|  shop, None: visits = 2 (87)
+      #|  bank, Some("test-a"): accounts = {} (90)
+      #|drop cart of shop, test-a, 319 bytes:
+      #|  shop, None: visits = 2 (87)
+      #|  bank, Some("test-a"): accounts = {} (90)
+      #|drop cart of shop, test-b, which holds none, 319 bytes:
+      #|  shop, None: visits = 2 (87)
+      #|  bank, Some("test-a"): accounts = {} (90)
+      #|reset Session test-a, 155 bytes:
+      #|  shop, None: visits = 2 (87)
+      #|reset Mock shop, 164 bytes:
+      #|  bank, Some("test-b"): accounts = {} (90)
+      #|reload, bank removed, 0 bytes: {}
     ),
   )
 }

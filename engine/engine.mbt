@@ -17,10 +17,12 @@ pub struct Engine {
   priv ephemeral : EphemeralStubs
   /// The state of each Scenario, by Mock and Session.
   priv scenarios : ScenarioStates
-  /// The Variables, by Mock and Session.
-  priv variables : VariableStore
-  /// The bound on per-Session state: the count of what the Variables take,
-  /// which `variables` keeps up to date, and the writes it refused.
+  /// The per-Session store: the Variables and the copies of Data buckets,
+  /// by Mock and Session.
+  priv store : SessionStore
+  /// The bound on per-Session state: the count of what the Variables and
+  /// the copies take, which `store` keeps up to date, and the writes it
+  /// refused.
   priv state : StateBound
   /// The Journal: the entries committed, oldest first, within its bound.
   priv journal : Journal
@@ -165,7 +167,7 @@ pub fn Engine::Engine(
     last_reload: None,
     ephemeral: EphemeralStubs::new(),
     scenarios: ScenarioStates::new(),
-    variables: VariableStore::new(state),
+    store: SessionStore::new(state),
     state,
     journal: Journal::new(journal),
     env,
@@ -288,8 +290,8 @@ pub fn ReloadOutcome::name(self : ReloadOutcome) -> String {
 ///   declare, which are dropped. Then each Scenario state stays while its
 ///   name is one of the known states of its Mock, Session and Scenario;
 ///   any other goes back to `Started`, and the states of a Mock that is
-///   gone are dropped. Variables stay, except those of a Mock that is
-///   gone, which are dropped.
+///   gone are dropped. Variables and the copies of Data buckets stay,
+///   except those of a Mock that is gone, which are dropped.
 /// - When it is valid with the digest served, nothing is swapped.
 /// - When it is invalid, the served snapshot stays.
 ///
@@ -316,8 +318,8 @@ pub fn Engine::reload(
       // Only then are Scenario states checked, since the known states
       // include those of the Ephemeral Stubs that stay.
       scenario_states_reset = self.prune_scenario_states(mocks)
-      // Variables stay, except those of the Mocks that are gone.
-      self.variables.remove_where((mock, _) => !mocks.contains(mock)) |> ignore
+      // Variables and copies stay, except those of the Mocks that are gone.
+      self.store.remove_where((mock, _) => !mocks.contains(mock)) |> ignore
       (Swapped, [])
     }
     Err(errors) => (Failed, errors)
@@ -484,8 +486,10 @@ pub fn Engine::handle(
           //    one of its own, and the helpers from the request's helper
           //    generator, made from it once something is rendered.
           let draw = generator.unwrap_or(rand).uint64()
-          // Templates read the Data buckets of the Mock that answered: for
-          // now, every Session reads their initial values.
+          // Templates read the Data buckets of the Mock that answered: the
+          // copy of each that the Session holds, or else its initial value.
+          // The values of `variables` look the copies up, and a response
+          // only when one of its templates reads `data`.
           let data = match mock {
             Some(mock) => mock.initial_data
             None => no_data
@@ -505,8 +509,9 @@ pub fn Engine::handle(
               incoming,
               now~,
               draw~,
-              vars=self.variables.of(stub.mock, session),
+              vars=self.store.variables_of(stub.mock, session),
               data~,
+              copies=self.store.copy_values(stub.mock, session),
             )
             try
               self.write_variables(
@@ -548,11 +553,16 @@ pub fn Engine::handle(
                 now~,
                 draw~,
                 vars=if context is None && response.reads_variables {
-                  self.variables.of(stub.mock, session)
+                  self.store.variables_of(stub.mock, session)
                 } else {
                   None
                 },
                 data~,
+                copies=if context is None && response.reads_data {
+                  self.store.copy_values(stub.mock, session)
+                } else {
+                  None
+                },
               ) catch {
                 RenderError(at~, message~) => {
                   let error = { at, message, }

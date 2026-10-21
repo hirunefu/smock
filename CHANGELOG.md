@@ -139,8 +139,27 @@ of each GitHub release include its section
   integers, are unique by their text, so `42` and `"42"` collide; smock
   checks this when loading. Templates read a bucket of their Stub's Mock
   as `data.NAME`, with steps, `$each` and `len`. A name that is not one
-  of the Mock's buckets is an error when loading. For now, every Session
-  reads the initial value.
+  of the Mock's buckets is an error when loading.
+- Session copies of Data buckets. A Session reads a bucket's initial value
+  until it first writes to the bucket, which gives it its own copy; reads
+  never copy. Requests without a Session share one copy of each bucket.
+  Templates read the request's Session's copy, and `smock render` and the
+  Admin render operation always read the initial value. Copies count
+  toward `--state-max-bytes` with Variables: each counts its bucket's
+  name, its value's compact JSON and fixed bytes, and its space counts
+  once. Initial values do not count.
+- Admin API operations on Data buckets, for the calling Session:
+  `GET /v1/mocks/{mock}/data` lists a Mock's buckets, with their keys and
+  whether the Session holds a copy; `GET /v1/mocks/{mock}/data/{bucket}`
+  reads one with the value the Session reads;
+  `PUT /v1/mocks/{mock}/data/{bucket}` sets the Session's copy to the JSON
+  value in the body; `DELETE /v1/mocks/{mock}/data/{bucket}` drops it, so
+  the bucket reads its initial value again. A bucket the Mock does not
+  declare gets 404 `unknown_bucket`, and a value that breaks a keyed
+  bucket's rules 400 `invalid_data`. A set that would pass the state bound
+  writes nothing and gets 507 `state_limit_reached`. Each set and each
+  drop of a copy is logged. The `per_replica_state` warning names the
+  copies of Data buckets.
 - docs/migrating-from-mockoon.md maps Mockoon's helpers, `RANDOM` routes,
   global variables, Range requests, dates, cookies and environment
   variables onto smock, with each difference called out.

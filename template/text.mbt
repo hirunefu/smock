@@ -89,6 +89,8 @@ pub struct Text {
   priv parts : Array[Part]
   /// Whether an expression of the template reads the `vars` root.
   priv vars_read : Bool
+  /// Whether an expression of the template reads the `data` root.
+  priv data_read : Bool
 }
 
 ///|
@@ -112,6 +114,14 @@ pub impl Debug for Text with fn to_repr(self) {
 /// same whatever Variables it is given.
 pub fn Text::reads_vars(self : Text) -> Bool {
   self.vars_read
+}
+
+///|
+/// Whether the template reads Data buckets: whether one of its expressions
+/// reads the `data` root, wherever it is. One that does not renders the
+/// same whatever the buckets hold.
+pub fn Text::reads_data(self : Text) -> Bool {
+  self.data_read
 }
 
 ///|
@@ -139,13 +149,21 @@ pub fn Text::parse(
     env,
     buckets,
     reads_vars: Ref(false),
+    reads_data: Ref(false),
   }
   try parse_parts(chars, scope) catch {
     Syntax(at, message) =>
       Err({ pointer, message: "template: \{position(chars, at)}\{message}", })
   } noraise {
     parts =>
-      Ok({ source, pointer, kind, parts, vars_read: scope.reads_vars.val, })
+      Ok({
+        source,
+        pointer,
+        kind,
+        parts,
+        vars_read: scope.reads_vars.val,
+        data_read: scope.reads_data.val,
+      })
   }
 }
 

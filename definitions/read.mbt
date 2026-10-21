@@ -503,6 +503,7 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
     template: None,
     serves_ranges: false,
     reads_variables: false,
+    reads_data: false,
   }
   let mut weighted = None
   let mut variables = no_variable_writes

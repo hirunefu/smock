@@ -44,8 +44,8 @@ Packages of `smock/smock`:
 - `engine`: decides the response to each request from the snapshot,
   including its Faults, and renders a named Stub's response for a sample
   request, for `smock render` and the Admin render operation. It also holds
-  the Ephemeral Stubs, the Scenario state and the Variables per Mock and
-  Session, and the Journal, with its bound,
+  the Ephemeral Stubs, the Scenario state, the Variables and the copies of
+  Data buckets per Mock and Session, and the Journal, with its bound,
   eviction counts and query filter, applies the Admin API operations on
   them (verification and the unmatched requests included), and reads the Session a request carries in its W3C Baggage header. `Engine(snapshot, match_index=false)` tries every Stub in
   matching order instead of using the index; tests check the index against
@@ -58,9 +58,9 @@ Packages of `smock/smock`:
   with integers only), and escaping by media type. It parses a template
   once, with the values of the environment variables `--template-env`
   lists, which its caller reads, and renders it for a request, the time,
-  one 64-bit draw and the Variables it reads, and writes JSON with smock's
-  own number form. It renders the values of a Stub's `variables` as JSON
-  too.
+  one 64-bit draw and the Variables and Data buckets it reads, and writes
+  JSON with smock's own number form. It renders the values of a Stub's
+  `variables` as JSON too.
 - `prng`: the seeded pseudo-random generator that Fault decisions and
   template helpers draw from. Its sequence for a seed is fixed, the same on
   every target.
@@ -462,6 +462,9 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
 - `GET /v1/mocks/{mock}/variables` lists the calling Session's Variables of
   a Mock, and `PUT` and `DELETE /v1/mocks/{mock}/variables/{name}` set and
   delete one ([below](#sessions-and-ephemeral-stubs)).
+- `GET /v1/mocks/{mock}/data` lists a Mock's Data buckets, and `GET`,
+  `PUT` and `DELETE /v1/mocks/{mock}/data/{bucket}` read, set and drop the
+  calling Session's copy of one ([below](#sessions-and-ephemeral-stubs)).
 - `POST /v1/journal/query` lists the calling Session's requests from the
   [Journal](#the-journal), `POST /v1/journal/verify` checks how many of
   them there were, and `GET /v1/journal/unmatched` lists those that no
@@ -667,6 +670,18 @@ curl localhost:8080/users/1                                           # 200, fro
   the Session has not set 404 `unknown_variable`, and a set that would pass
   [the state bound](docs/definition-files.md#the-state-bound) 507
   `state_limit_reached`.
+- The Session keeps its own copy of each
+  [Data bucket](docs/definition-files.md#data-buckets) it writes to, and
+  reads the bucket's initial value until then.
+  `GET /v1/mocks/{mock}/data` lists the Mock's buckets, with whether the
+  Session holds a copy of each; `GET /v1/mocks/{mock}/data/{bucket}` reads
+  one with the value the Session reads; `PUT` with a JSON value as the body
+  sets the Session's copy, so that a test can arrange its data; and
+  `DELETE` drops the copy, so the bucket reads its initial value again. A
+  bucket the Mock does not declare gets 404 `unknown_bucket`, a value that
+  breaks a keyed bucket's rules 400 `invalid_data`, and a set that would
+  pass the state bound 507 `state_limit_reached`
+  ([Session copies](docs/definition-files.md#session-copies)).
 - `GET` lists and `DELETE /v1/mocks/{mock}/stubs/{id}` deletes the calling
   Session's Ephemeral Stubs of the Mock. `POST /v1/reset` with
   `{"scope":"session"}` clears the calling Session's Ephemeral Stubs,

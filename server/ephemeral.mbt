@@ -73,6 +73,26 @@ fn Admin::refused(
         "unknown_variable",
         "\{caller(session)} has no Variable \{name.escape()} in the Mock \{mock.escape()}",
       )
+    UnknownBucket(mock~, bucket~) =>
+      self.error(
+        404,
+        "unknown_bucket",
+        "the Mock \{mock.escape()} declares no Data bucket \{bucket.escape()}: Data buckets come only from Definition files",
+      )
+    InvalidData(bucket~, key~, problems~) => {
+      let each = problems.map(problem => {
+        if problem.pointer == "" {
+          problem.message
+        } else {
+          "\{problem.pointer} \{problem.message}"
+        }
+      })
+      self.error(
+        400,
+        "invalid_data",
+        "the value breaks the rules of the Data bucket \{bucket.escape()}, keyed by \{key.escape()}: \{each.join("; ")}",
+      )
+    }
     StateLimitReached(message) =>
       self.error(507, "state_limit_reached", message)
     InvalidStub(problems) =>

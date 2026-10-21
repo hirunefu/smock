@@ -277,13 +277,15 @@ pub fn RenderFailure::message(self : RenderFailure) -> String {
 /// The values of the Stub's `variables` are rendered against the sample's
 /// `vars`, and the response reads those with the Stub's values written
 /// over them, as the response to a request sees its writes. Templates read
-/// the initial value of each Data bucket of the Stub's Mock. A value that
+/// the initial value of each Data bucket of the Stub's Mock, never a
+/// Session's copy, also when the sample names a Session. A value that
 /// fails to render gives the 500 a request would get, and no response is
 /// picked. A response that serves byte ranges answers the sample's `Range`
 /// field, as it answers a request's: with 206, 416 or the whole body.
 ///
 /// Rendering decides no Fault, and changes nothing in the engine: no
-/// generator advances, and no Variable is written or read.
+/// generator advances, and no Variable or copy of a Data bucket is written
+/// or read.
 pub fn Engine::render(
   self : Engine,
   id : String,
@@ -324,6 +326,7 @@ pub fn Engine::render(
           draw~,
           vars=Some(sample.vars),
           data=mock.initial_data,
+          copies=None,
         )
         let values = Array(capacity=ordinary.variables.values.length())
         try
@@ -363,6 +366,7 @@ pub fn Engine::render(
               draw~,
               vars=Some(sample.vars),
               data=mock.initial_data,
+              copies=None,
             )
           catch {
             RenderError(at~, message~) => {

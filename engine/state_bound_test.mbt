@@ -1,7 +1,8 @@
 // Seam 1 tests of the bound on per-Session state: one count, for the whole
-// process, of the bytes Variables take, by one rule, against the bound the
-// engine was created with; and the 507 of a request whose writes would
-// take the count above it.
+// process, of the bytes Variables and the copies of Data buckets take, by
+// one rule, against the bound the engine was created with; and the 507 of
+// a request or an Admin API set whose writes would take the count above
+// it.
 
 ///|
 /// The Mock `shop`, where `POST /count` writes `count: 1`, the example of
@@ -262,6 +263,139 @@ test "the bytes go back when Variables are reset or dropped by a reload, and a w
       #|deposit, test-b: 204 ; 657 bytes
       #|reload without bank: Swapped; 494 bytes
       #|reset all: removed 4 Variables; 0 Ephemeral Stubs, 0 entries, 0 Scenario states; 0 bytes
+    ),
+  )
+}
+
+///|
+/// `done` for the reply of an Admin API operation on a Data bucket that
+/// succeeded, or else the error it gives.
+fn done(reply : String) -> String {
+  if reply.has_prefix("{") {
+    "done"
+  } else {
+    reply
+  }
+}
+
+///|
+test "the count of copies: a space counts once, with Variables or copies; each copy counts its bucket's name, 64, and its value's compact JSON with 16 per JSON value" {
+  let h = data_harness()
+  let out = ["nothing written: \{h.state_bytes()}"]
+  let step = (label : String, result : String) => {
+    out.push("\{label}: \{result}, \{h.state_bytes()} bytes")
+  }
+  let long = "k".repeat(1000)
+  // The space of shop and run-42: 4 + 6 + 64. The copy of visits: 6 + 64,
+  // and 1 + 16 for 7.
+  step("visits: 7 in run-42", done(h.set_data(Some("run-42"), "visits", "7")))
+  step("the same value again", done(h.set_data(Some("run-42"), "visits", "7")))
+  // [[],[],[]]: 10 bytes and four JSON values, in place of 7's 1 + 16.
+  step(
+    "visits: [[],[],[]] in run-42",
+    done(h.set_data(Some("run-42"), "visits", "[[],[],[]]")),
+  )
+  // orders: 6 + 64, and [{"id":1}], 10 bytes and three JSON values.
+  step(
+    "orders in run-42",
+    done(h.set_data(Some("run-42"), "orders", "[{\"id\": 1}]")),
+  )
+  // A Variable in the same space counts its name, 64 and its value, but no
+  // space again: 1 + 64 + 1 + 16.
+  h.engine.set_variable(mock="shop", session=Some("run-42"), name="a", 1)
+  step("a Variable in run-42", "done")
+  // A Session key of 1,000 bytes: 4 + 1000 + 64, then 87 for visits: 7.
+  step(
+    "visits: 7 for a long Session key",
+    done(h.set_data(Some(long), "visits", "7")),
+  )
+  // テスト takes 9 bytes of UTF-8: 4 + 9 + 64, then 87.
+  step(
+    "visits: 7 in テスト",
+    done(h.set_data(Some("テスト"), "visits", "7")),
+  )
+  // The no-Session space has no key: 4 + 64, then 87.
+  step("visits: 7 without a Session", done(h.set_data(None, "visits", "7")))
+  // The space stays while it holds the Variable.
+  step("drop visits in run-42", done(h.drop_data(Some("run-42"), "visits")))
+  step("drop orders in run-42", done(h.drop_data(Some("run-42"), "orders")))
+  h.engine.delete_variable(mock="shop", session=Some("run-42"), name="a")
+  step("delete the Variable in run-42", "done")
+  step(
+    "drop visits for the long Session key",
+    done(h.drop_data(Some(long), "visits")),
+  )
+  step(
+    "drop visits in テスト",
+    done(h.drop_data(Some("テスト"), "visits")),
+  )
+  step("drop visits without a Session", done(h.drop_data(None, "visits")))
+  inspect(
+    out.join("\n"),
+    content=(
+      #|nothing written: 0
+      #|visits: 7 in run-42: done, 161 bytes
+      #|the same value again: done, 161 bytes
+      #|visits: [[],[],[]] in run-42: done, 218 bytes
+      #|orders in run-42: done, 346 bytes
+      #|a Variable in run-42: done, 428 bytes
+      #|visits: 7 for a long Session key: done, 1583 bytes
+      #|visits: 7 in テスト: done, 1747 bytes
+      #|visits: 7 without a Session: done, 1902 bytes
+      #|drop visits in run-42: done, 1758 bytes
+      #|drop orders in run-42: done, 1630 bytes
+      #|delete the Variable in run-42: done, 1474 bytes
+      #|drop visits for the long Session key: done, 319 bytes
+      #|drop visits in テスト: done, 155 bytes
+      #|drop visits without a Session: done, 0 bytes
+    ),
+  )
+}
+
+///|
+test "at the bound: a set that would take the count above it writes nothing and is refused, reads still answer, and a drop gives the bytes back for a later set" {
+  let h = data_harness(state_max_bytes=250)
+  let out = []
+  let step = (label : String, result : String) => {
+    out.push(
+      "\{label}: \{result}; \{h.state_bytes()} bytes, \{h.engine.state_stats().writes_refused} refused",
+    )
+  }
+  // 74 for the space of shop and run-42, and 87 for visits: 7.
+  step("visits: 7", done(h.set_data(Some("run-42"), "visits", "7")))
+  // orders: [{"id":1}] would count 128 more.
+  step(
+    "orders: [{\"id\":1}]",
+    done(h.set_data(Some("run-42"), "orders", "[{\"id\": 1}]")),
+  )
+  step("read orders", h.read_data(Some("run-42"), "orders"))
+  step(
+    "GET /api/v1/orders",
+    reply(h.send("GET", "/api/v1/orders", session="run-42")),
+  )
+  // A string of 100 x would count 102 + 16 in place of 7's 1 + 16.
+  let xs = "\"\{"x".repeat(100)}\""
+  step("visits: 100 x", done(h.set_data(Some("run-42"), "visits", xs)))
+  step("read visits", h.read_data(Some("run-42"), "visits"))
+  // A smaller value always fits.
+  step("visits: 1", done(h.set_data(Some("run-42"), "visits", "1")))
+  step("drop visits", done(h.drop_data(Some("run-42"), "visits")))
+  step(
+    "orders: [{\"id\":1}]",
+    done(h.set_data(Some("run-42"), "orders", "[{\"id\": 1}]")),
+  )
+  inspect(
+    out.join("\n"),
+    content=(
+      #|visits: 7: done; 161 bytes, 0 refused
+      #|orders: [{"id":1}]: StateLimitReached("the writes would take per-Session state from 161 to 289 bytes, above its bound of 250 (--state-max-bytes)"); 161 bytes, 1 refused
+      #|read orders: {"name":"orders","key":"id","newKey":"integer","written":false,"value":[{"id":1,"status":"paid"},{"id":2,"status":"pending"},{"id":3,"status":"paid"}]}; 161 bytes, 1 refused
+      #|GET /api/v1/orders: 200 [{"id":1,"status":"paid"},{"id":2,"status":"pending"},{"id":3,"status":"paid"}]; 161 bytes, 1 refused
+      #|visits: 100 x: StateLimitReached("the writes would take per-Session state from 161 to 262 bytes, above its bound of 250 (--state-max-bytes)"); 161 bytes, 2 refused
+      #|read visits: {"name":"visits","key":null,"newKey":null,"written":true,"value":7}; 161 bytes, 2 refused
+      #|visits: 1: done; 161 bytes, 2 refused
+      #|drop visits: done; 0 bytes, 2 refused
+      #|orders: [{"id":1}]: done; 202 bytes, 2 refused
     ),
   )
 }

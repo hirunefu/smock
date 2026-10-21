@@ -33,12 +33,14 @@ let orders_request : @template.Input = {
 
 ///|
 /// Parses `source`, JSON text, as the `json` of a response at `/response/json`
-/// for a Mock with `buckets`, and renders it reading `data`, or gives its
-/// problems, one per line, or the render error.
+/// for a Mock with `buckets`, and renders it reading `data`, with the
+/// Session's `copies` in place of those values, or gives its problems, one
+/// per line, or the render error.
 fn with_data(
   source : String,
   buckets? : @template.Buckets = shop_buckets,
   data? : Map[String, Json],
+  copies? : Map[String, Json],
 ) -> String {
   let json = @json.parse(source) catch { _ => panic() }
   match @template.Structured::parse(json, pointer="/response/json", buckets~) {
@@ -48,6 +50,7 @@ fn with_data(
         now=0,
         rand=@template.helper_generator(1),
         data?,
+        copies?,
       )
       @utf8.decode_lossy(template.render(context)) catch {
         RenderError(at~, message~) => "error at \{at}: \{message}"
@@ -155,6 +158,91 @@ test "a text template reads data too" {
       #|visits: 3, first: paid
       #|{"id":1002,"status":"pending","total":9.9}
       #|/response/body: template: column 3: data.nope: the Mock has no Data bucket "nope"
+    ),
+  )
+}
+
+///|
+test "a Session's copy takes the place of its bucket's initial value, and a copy of a bucket the data does not hold is never read" {
+  let template =
+    #|{ "visits": "${data.visits}", "count": "${len(data.orders)}",
+    #|  "cart": "${data.cart ?? 'none'}" }
+  inspect(
+    [
+      with_data(template, data=shop_data, copies={ "visits": 4 }),
+      with_data(template, data=shop_data, copies={
+        "visits": null,
+        "orders": [],
+        "cart": [1],
+      }),
+      with_data(template, data={ "visits": 3, "orders": [] }, copies={
+        "cart": "a copy of a bucket that is gone",
+      }),
+      with_data(template, data=shop_data, copies={}),
+    ].join("\n"),
+    content=(
+      #|{"visits":4,"count":2,"cart":null}
+      #|{"visits":null,"count":0,"cart":[1]}
+      #|{"visits":3,"count":0,"cart":"none"}
+      #|{"visits":3,"count":2,"cart":null}
+    ),
+  )
+}
+
+///|
+test "a template knows whether it reads data, wherever it does" {
+  let structured = (source : String) => {
+    let json = @json.parse(source) catch { _ => panic() }
+    match
+      @template.Structured::parse(
+        json,
+        pointer="/response/json",
+        buckets=shop_buckets,
+      ) {
+      Ok(template) => "\{template.reads_data()} \{source}"
+      Err(problems) => problems.map(p => p.message).join("\n")
+    }
+  }
+  let text = (source : String) => {
+    match
+      @template.Text::parse(
+        source,
+        pointer="/h",
+        kind=HeaderValue,
+        buckets=shop_buckets,
+      ) {
+      Ok(template) => "\{template.reads_data()} \{source}"
+      Err(problem) => problem.message
+    }
+  }
+  inspect(
+    [
+      text("plain"),
+      text("${query.a ?? 'none'} $${data.visits} ${vars.x ?? 1}"),
+      text("${data.visits}"),
+      text("${query.a ?? data.visits ?? 0}"),
+      text("${find(data.orders, 'id', path[1]).status ?? 'none'}"),
+      structured("{ \"a\": \"${body.x}\", \"b\": [1, \"${len('x')}\"] }"),
+      structured("{ \"a\": [1, { \"b\": \"${data.cart ?? 0}\" }] }"),
+      structured(
+        "{ \"$each\": \"data.orders\", \"as\": \"o\", \"do\": \"${o}\" }",
+      ),
+      structured(
+        "{ \"$each\": \"range(1, 2)\", \"as\": \"i\", \"do\": \"${data.visits}\" }",
+      ),
+      structured("{ \"$if\": \"data.visits == 1\", \"then\": 1, \"else\": 2 }"),
+    ].join("\n"),
+    content=(
+      #|false plain
+      #|false ${query.a ?? 'none'} $${data.visits} ${vars.x ?? 1}
+      #|true ${data.visits}
+      #|true ${query.a ?? data.visits ?? 0}
+      #|true ${find(data.orders, 'id', path[1]).status ?? 'none'}
+      #|false { "a": "${body.x}", "b": [1, "${len('x')}"] }
+      #|true { "a": [1, { "b": "${data.cart ?? 0}" }] }
+      #|true { "$each": "data.orders", "as": "o", "do": "${o}" }
+      #|true { "$each": "range(1, 2)", "as": "i", "do": "${data.visits}" }
+      #|true { "$if": "data.visits == 1", "then": 1, "else": 2 }
     ),
   )
 }

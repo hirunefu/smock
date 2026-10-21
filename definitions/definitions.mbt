@@ -737,6 +737,10 @@ pub struct Response {
   /// Whether one of the response's templates reads Variables, as
   /// `vars.NAME`: only then does its rendering look them up.
   reads_variables : Bool
+  /// Whether one of the response's templates reads Data buckets, as
+  /// `data.NAME`: only then does its rendering look up the Session's copies
+  /// of them.
+  reads_data : Bool
 } derive(Debug, Eq)
 
 ///|
@@ -753,25 +757,43 @@ pub struct ResponseTemplate {
 /// Whether one of the templates reads Variables: a header value, the body,
 /// or a field of an event.
 fn ResponseTemplate::reads_variables(self : ResponseTemplate) -> Bool {
+  self.reads(@template.Text::reads_vars, @template.Structured::reads_vars)
+}
+
+///|
+/// Whether one of the templates reads Data buckets: a header value, the
+/// body, or a field of an event.
+fn ResponseTemplate::reads_data(self : ResponseTemplate) -> Bool {
+  self.reads(@template.Text::reads_data, @template.Structured::reads_data)
+}
+
+///|
+/// Whether one of the templates reads something: a header value, the body,
+/// or a field of an event, for which `text` or `json` holds, by its kind.
+fn ResponseTemplate::reads(
+  self : ResponseTemplate,
+  text : (@template.Text) -> Bool,
+  json : (@template.Structured) -> Bool,
+) -> Bool {
   for header in self.headers {
-    if header.1.reads_vars() {
+    if text(header.1) {
       return true
     }
   }
   match self.body {
-    Text(text) => text.reads_vars()
-    Json(json) => json.reads_vars()
+    Text(body) => text(body)
+    Json(body) => json(body)
     Events(events) => {
       for event in events {
-        if event.event is Some(text) && text.reads_vars() {
+        if event.event is Some(field) && text(field) {
           return true
         }
-        if event.id is Some(text) && text.reads_vars() {
+        if event.id is Some(field) && text(field) {
           return true
         }
         let data = match event.data {
-          Text(text) => text.reads_vars()
-          Json(json) => json.reads_vars()
+          Text(data) => text(data)
+          Json(data) => json(data)
         }
         if data {
           return true
