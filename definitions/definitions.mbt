@@ -133,7 +133,8 @@ pub struct ScenarioFileStates {
 pub let initial_state : String = "Started"
 
 ///|
-/// A Stub from a Definition file.
+/// A Stub from a Definition file: what every Stub has, its ID, its Mock,
+/// its priority and its Faults, and what it serves.
 pub struct Stub {
   id : String
   /// The name of the Mock the Stub belongs to.
@@ -141,6 +142,28 @@ pub struct Stub {
   /// The priority: a lower number is tried first, and a Stub without one
   /// after every Stub with one.
   priority : Int?
+  /// What the Stub serves: which requests it matches, and how it answers
+  /// them.
+  serves : Serves
+  /// The Faults the Stub injects when it matches, if it has `fault`.
+  fault : Fault?
+} derive(Debug, Eq)
+
+///|
+/// What a Stub serves, by kind. Code that needs it matches on the kind with
+/// no catch-all, so that a new kind does not compile until every such place
+/// handles it.
+pub enum Serves {
+  /// An ordinary Stub's request conditions, Scenario clause, responses and
+  /// `variables`.
+  Ordinary(Ordinary)
+} derive(Debug, Eq)
+
+///|
+/// What an ordinary Stub serves: the requests that meet its request
+/// conditions, in the states its Scenario clause allows, get one of its
+/// responses, and it writes its Variables when it matches.
+pub struct Ordinary {
   request : Conditions
   /// The Stub's Scenario clause, if it has `scenario`.
   scenario : ScenarioClause?
@@ -155,8 +178,6 @@ pub struct Stub {
   /// The Variables the Stub writes when it matches, `variables`: none when
   /// it has no `variables`.
   variables : VariableWrites
-  /// The Faults the Stub injects when it matches, if it has `fault`.
-  fault : Fault?
 } derive(Debug, Eq)
 
 ///|
@@ -172,7 +193,7 @@ pub struct VariableWrites {
 ///|
 /// Whether the Stub writes any Variable. A Stub that writes none pays only
 /// this test for Variables when it matches.
-pub fn Stub::writes_variables(self : Stub) -> Bool {
+pub fn Ordinary::writes_variables(self : Ordinary) -> Bool {
   self.variables.names.length() > 0
 }
 
@@ -973,8 +994,11 @@ fn scenarios_of(
 ) -> ReadOnlyArray[ScenarioFileStates] {
   let by_scenario = StatesByScenario::new()
   for stub in stubs {
-    if stub.scenario is Some(clause) {
-      by_scenario.add_clause(clause)
+    match stub.serves {
+      Ordinary(ordinary) =>
+        if ordinary.scenario is Some(clause) {
+          by_scenario.add_clause(clause)
+        }
     }
   }
   let scenarios = []

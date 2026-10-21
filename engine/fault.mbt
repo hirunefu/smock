@@ -20,6 +20,24 @@ fn seeded_generators(
 }
 
 ///|
+/// The last step of the match decision, Faults: `plan`, which comes without
+/// a delay or a Fault, with those that `stub` decides for the request whose
+/// one draw is `draw`, as `decide_faults` says. A Stub without `fault` keeps
+/// the plan as it is.
+fn with_faults(
+  plan : ResponsePlan,
+  stub : @definitions.Stub,
+  draw : UInt64,
+) -> ResponsePlan {
+  if stub.fault is None {
+    plan
+  } else {
+    let (delay_ms, fault) = decide_faults(stub, draw)
+    { ..plan, delay_ms, fault, }
+  }
+}
+
+///|
 /// The Fault decisions for one request that `stub` matched: the delay, in
 /// milliseconds, and the kind of connection Fault, if any. They draw from a
 /// generator seeded with `draw`, the one output the request took from its

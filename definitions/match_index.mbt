@@ -41,23 +41,26 @@ fn MatchIndex::new(stubs : ReadOnlyArray[Stub]) -> MatchIndex {
     scanned: [],
   }
   for position, stub in stubs {
-    match (stub.request.path, stub.request.meth) {
-      (Some(Has(Exact(path))), meth) => {
-        let stubs = match index.by_path.get(path) {
-          Some(stubs) => stubs
-          None => {
-            let stubs = { by_method: Map([]), any_method: [], }
-            index.by_path[path] = stubs
-            stubs
+    match stub.serves {
+      Ordinary(ordinary) =>
+        match (ordinary.request.path, ordinary.request.meth) {
+          (Some(Has(Exact(path))), meth) => {
+            let stubs = match index.by_path.get(path) {
+              Some(stubs) => stubs
+              None => {
+                let stubs = { by_method: Map([]), any_method: [], }
+                index.by_path[path] = stubs
+                stubs
+              }
+            }
+            match meth {
+              Some(meth) => add_position(stubs.by_method, meth, position)
+              None => stubs.any_method.push(position)
+            }
           }
+          (_, Some(meth)) => add_position(index.by_method, meth, position)
+          (_, None) => index.scanned.push(position)
         }
-        match meth {
-          Some(meth) => add_position(stubs.by_method, meth, position)
-          None => stubs.any_method.push(position)
-        }
-      }
-      (_, Some(meth)) => add_position(index.by_method, meth, position)
-      (_, None) => index.scanned.push(position)
     }
   }
   index

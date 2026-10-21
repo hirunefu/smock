@@ -274,10 +274,10 @@ priv suberror WriteFailure {
 }
 
 ///|
-/// Step 3 of the match decision, for a Stub that writes Variables: renders
-/// the value of each of `stub`'s Variables, in the order written, against
-/// the Variables of its Mock and `session` as they were before the request,
-/// then writes them all at once, if they fit within the bound on
+/// Step 3 of the match decision, for a Stub of the Mock `mock` that writes
+/// Variables, `writes`: renders the value of each, in the order written,
+/// against the Variables of `mock` and `session` as they were before the
+/// request, then writes them all at once, if they fit within the bound on
 /// per-Session state. `first` is the first rendering for the request, which
 /// reads those Variables; each value has a rendering of its own, with its
 /// own bounds, and they draw from the request's helper generator in turn.
@@ -288,18 +288,18 @@ priv suberror WriteFailure {
 /// bound counts a refusal.
 fn Engine::write_variables(
   self : Engine,
-  stub : @definitions.Stub,
+  mock : String,
+  writes : @definitions.VariableWrites,
   session : String?,
   first : @template.Context,
 ) -> @template.Context raise WriteFailure {
-  let writes = stub.variables
-  let before = self.variables.of(stub.mock, session)
+  let before = self.variables.of(mock, session)
   let values = Array(capacity=writes.values.length())
   let last = render_values(writes, first, before, values) catch {
     RenderError(at~, message~) => raise ValueFailed({ at, message, })
   }
   let growth = VariableStore::growth(
-    stub.mock,
+    mock,
     session,
     before,
     writes.names,
@@ -308,8 +308,8 @@ fn Engine::write_variables(
   if !self.state.fits(growth) {
     raise StateLimitReached(self.state.refuse(growth))
   }
-  self.variables.write(stub.mock, session, writes.names, values, growth~)
-  last.next(vars?=self.variables.of(stub.mock, session))
+  self.variables.write(mock, session, writes.names, values, growth~)
+  last.next(vars?=self.variables.of(mock, session))
 }
 
 ///|

@@ -387,19 +387,22 @@ pub fn Engine::handle(
   if ephemeral is Some(list) {
     for i in 0..<list.length() {
       let e = list[i]
-      if incoming.meets(e.stub.request) {
-        if e.stub.scenario is Some(_) && !states_known {
-          states = self.scenarios.of(e.mock, session)
-          states_known = true
-        }
-        if scenario_allows(e.stub, states) {
-          matched = Some({
-            stub: e.stub,
-            generator: e.generator,
-            source: Ephemeral(e.id),
-          })
-          break
-        }
+      match e.stub.serves {
+        Ordinary(ordinary) =>
+          if incoming.meets(ordinary.request) {
+            if ordinary.scenario is Some(_) && !states_known {
+              states = self.scenarios.of(e.mock, session)
+              states_known = true
+            }
+            if scenario_allows(ordinary.scenario, states) {
+              matched = Some({
+                stub: e.stub,
+                generator: e.generator,
+                source: Ephemeral(e.id),
+              })
+              break
+            }
+          }
       }
     }
   }
@@ -414,19 +417,18 @@ pub fn Engine::handle(
     let found = if self.match_index {
       if gated {
         mock.first_candidate(request.meth, incoming.path, stub => {
-          incoming.meets(stub.request) && scenario_allows(stub, current)
+          incoming.matches(stub, current)
         })
       } else {
         mock.first_candidate(request.meth, incoming.path, stub => {
-          incoming.meets(stub.request)
+          incoming.matches_ungated(stub)
         })
       }
     } else {
       let stubs = mock.stubs
       let mut found = None
       for i in 0..<stubs.length() {
-        if incoming.meets(stubs[i].request) &&
-          scenario_allows(stubs[i], current) {
+        if incoming.matches(stubs[i], current) {
           found = Some(stubs[i])
           break
         }
@@ -452,104 +454,111 @@ pub fn Engine::handle(
   let mut template_error = None
   let mut near_miss = None
   let plan : ResponsePlan = match matched {
-    // The match decision: one sequence of steps, each taken in turn. A
-    // step that a Stub does not use costs it one test at most.
-    Some({ stub, generator, .. }) => {
-      // 1. The Scenario moves, before the response is built: whatever
-      //    happens to the response, a delay, a connection Fault or a
-      //    template error, the state has moved, and the next request sees
-      //    it. It is the state of the Mock that answered.
-      if stub.scenario is Some(clause) {
-        if !states_known {
-          states = self.scenarios.of(stub.mock, session)
-        }
-        let from = current_state(states, clause.name)
-        let to = match clause.move_to {
-          Some(to) => to
-          None => from
-        }
-        if to != from {
-          self.scenarios.set(stub.mock, session, clause.name, to)
-        }
-        scenario = Some({ name: clause.name, from, to, })
-      }
-      // 2. The one draw. Every matched request takes exactly one output
-      //    from its Stub's source, whatever it then draws: the Fault
-      //    decisions draw from a generator seeded with it, the pick from
-      //    one of its own, and the helpers from the request's helper
-      //    generator, made from it once something is rendered.
-      let draw = generator.unwrap_or(rand).uint64()
-      // 3. The Variables: each value is rendered, in the order written,
-      //    against the Variables as they were before the request, drawing
-      //    from the helper generator first; then all are written at once,
-      //    if they fit within the bound on per-Session state. The response
-      //    renders on from there, and sees the new values. A value that
-      //    fails to render, or writes that do not fit, write none, and no
-      //    response is picked: the request gets the template failure, or
-      //    507.
-      let mut context : @template.Context? = None
-      let mut failed : ResponsePlan? = None
-      if stub.writes_variables() {
-        let first = first_context(
-          incoming,
-          now~,
-          draw~,
-          vars=self.variables.of(stub.mock, session),
-        )
-        try self.write_variables(stub, session, first) catch {
-          ValueFailed(error) => {
-            template_error = Some(error)
-            failed = Some(template_failed(stub.id, error))
+    // The match decision: one sequence of steps, each taken in turn, which
+    // depend on what the Stub serves. A step that a Stub does not use costs
+    // it one test at most.
+    Some({ stub, generator, .. }) =>
+      match stub.serves {
+        Ordinary(ordinary) => {
+          // 1. The Scenario moves, before the response is built: whatever
+          //    happens to the response, a delay, a connection Fault or a
+          //    template error, the state has moved, and the next request
+          //    sees it. It is the state of the Mock that answered.
+          if ordinary.scenario is Some(clause) {
+            if !states_known {
+              states = self.scenarios.of(stub.mock, session)
+            }
+            let from = current_state(states, clause.name)
+            let to = match clause.move_to {
+              Some(to) => to
+              None => from
+            }
+            if to != from {
+              self.scenarios.set(stub.mock, session, clause.name, to)
+            }
+            scenario = Some({ name: clause.name, from, to, })
           }
-          StateLimitReached(message) =>
-            failed = Some(state_limit_reached(stub.id, message))
-        } noraise {
-          next => {
-            context = Some(next)
-            variables_written = stub.variables.names
-          }
-        }
-      }
-      let plan = match failed {
-        Some(plan) => plan
-        None => {
-          // 4. The pick: the response the request gets. A Stub with
-          //    `response` has one, and draws nothing more.
-          response_index = pick_response(stub, draw)
-          let response = stub.responses[response_index.unwrap_or(0)].response
-          // 5. Rendering and planning: the response as written, or rendered
-          //    from its templates. One that serves byte ranges answers the
-          //    request's Range field. Only a response that reads Variables,
-          //    and does not continue from their values, looks them up.
-          plan_response(
-            response,
-            incoming,
-            context,
-            now~,
-            draw~,
-            vars=if context is None && response.reads_variables {
-              self.variables.of(stub.mock, session)
-            } else {
-              None
-            },
-          ) catch {
-            RenderError(at~, message~) => {
-              let error = { at, message, }
-              template_error = Some(error)
-              template_failed(stub.id, error)
+          // 2. The one draw. Every matched request takes exactly one output
+          //    from its Stub's source, whatever it then draws: the Fault
+          //    decisions draw from a generator seeded with it, the pick from
+          //    one of its own, and the helpers from the request's helper
+          //    generator, made from it once something is rendered.
+          let draw = generator.unwrap_or(rand).uint64()
+          // 3. The Variables: each value is rendered, in the order written,
+          //    against the Variables as they were before the request,
+          //    drawing from the helper generator first; then all are written
+          //    at once, if they fit within the bound on per-Session state.
+          //    The response renders on from there, and sees the new values.
+          //    A value that fails to render, or writes that do not fit,
+          //    write none, and no response is picked: the request gets the
+          //    template failure, or 507.
+          let mut context : @template.Context? = None
+          let mut failed : ResponsePlan? = None
+          if ordinary.writes_variables() {
+            let first = first_context(
+              incoming,
+              now~,
+              draw~,
+              vars=self.variables.of(stub.mock, session),
+            )
+            try
+              self.write_variables(
+                stub.mock,
+                ordinary.variables,
+                session,
+                first,
+              )
+            catch {
+              ValueFailed(error) => {
+                template_error = Some(error)
+                failed = Some(template_failed(stub.id, error))
+              }
+              StateLimitReached(message) =>
+                failed = Some(state_limit_reached(stub.id, message))
+            } noraise {
+              next => {
+                context = Some(next)
+                variables_written = ordinary.variables.names
+              }
             }
           }
+          let plan = match failed {
+            Some(plan) => plan
+            None => {
+              // 4. The pick: the response the request gets. A Stub with
+              //    `response` has one, and draws nothing more.
+              response_index = pick_response(ordinary, draw)
+              let response = ordinary.responses[response_index.unwrap_or(0)].response
+              // 5. Rendering and planning: the response as written, or
+              //    rendered from its templates. One that serves byte ranges
+              //    answers the request's Range field. Only a response that
+              //    reads Variables, and does not continue from their values,
+              //    looks them up.
+              plan_response(
+                response,
+                incoming,
+                context,
+                now~,
+                draw~,
+                vars=if context is None && response.reads_variables {
+                  self.variables.of(stub.mock, session)
+                } else {
+                  None
+                },
+              ) catch {
+                RenderError(at~, message~) => {
+                  let error = { at, message, }
+                  template_error = Some(error)
+                  template_failed(stub.id, error)
+                }
+              }
+            }
+          }
+          // 6. Faults: a plan comes without a delay or a Fault, and gets the
+          //    Stub's.
+          with_faults(plan, stub, draw)
         }
       }
-      // 6. Faults: a plan comes without a delay or a Fault, and gets the
-      //    Stub's.
-      if stub.fault is None {
-        plan
-      } else {
-        let (delay_ms, fault) = decide_faults(stub, draw)
-        { ..plan, delay_ms, fault, }
-      }
-    }
     None =>
       match mock {
         None => no_mock(host, self.snapshot.hosts())
@@ -561,7 +570,10 @@ pub fn Engine::handle(
           // are looked up only if an Ephemeral Stub has a clause.
           if !states_known && ephemeral is Some(list) {
             for i in 0..<list.length() {
-              if list[i].stub.scenario is Some(_) {
+              let has_clause = match list[i].stub.serves {
+                Ordinary(ordinary) => ordinary.scenario is Some(_)
+              }
+              if has_clause {
                 states = self.scenarios.of(mock.name, session)
                 break
               }
@@ -621,6 +633,31 @@ priv struct Match {
   /// Its own generator, when it has a seed.
   generator : @prng.Generator?
   source : MatchedStub
+}
+
+///|
+/// Whether the request matches `stub` in the current states, `states`: it
+/// meets the Stub's request conditions, and the Stub's Scenario clause, if
+/// any, allows those states.
+fn Incoming::matches(
+  self : Incoming,
+  stub : @definitions.Stub,
+  states : Map[String, String]?,
+) -> Bool {
+  match stub.serves {
+    Ordinary(ordinary) =>
+      self.meets(ordinary.request) && scenario_allows(ordinary.scenario, states)
+  }
+}
+
+///|
+/// Whether the request matches `stub`, a file Stub of a Mock whose file
+/// Stubs have no Scenario clause: as `matches` says, without the test of
+/// a clause.
+fn Incoming::matches_ungated(self : Incoming, stub : @definitions.Stub) -> Bool {
+  match stub.serves {
+    Ordinary(ordinary) => self.meets(ordinary.request)
+  }
 }
 
 ///|

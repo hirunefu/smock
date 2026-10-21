@@ -188,12 +188,17 @@ fn Incoming::near_miss(
   let mut best : (@definitions.Stub, StubSource, Array[Failed])? = None
   for candidate in candidates {
     let (stub, source) = candidate
-    let failed = self.failed(stub.request)
-    // The state a Stub requires counts after its request conditions.
-    if stub.scenario is Some({ name, requires: Some(required), .. }) {
-      let current = current_state(states, name)
-      if current != required {
-        failed.push(Failed::Scenario(name~, required~, current~))
+    let failed = match stub.serves {
+      Ordinary(ordinary) => {
+        let failed = self.failed(ordinary.request)
+        // The state a Stub requires counts after its request conditions.
+        if ordinary.scenario is Some({ name, requires: Some(required), .. }) {
+          let current = current_state(states, name)
+          if current != required {
+            failed.push(Failed::Scenario(name~, required~, current~))
+          }
+        }
+        failed
       }
     }
     match best {

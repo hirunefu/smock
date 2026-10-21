@@ -141,7 +141,8 @@ test "a response reads Variables when one of its templates reads vars: a header,
   }
   let out = []
   for stub in snapshot.mocks[0].stubs {
-    for i, weighted in stub.responses {
+    let Ordinary(ordinary) = stub.serves
+    for i, weighted in ordinary.responses {
       out.push("\{stub.id} \{i}: \{weighted.response.reads_variables}")
     }
   }

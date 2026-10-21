@@ -57,7 +57,10 @@ pub fn Snapshot::warnings(self : Snapshot) -> Array[Warning] {
           message: "the Stub \{stub.id.escape()} can never match: the Stub \{earlier.id.escape()} at \{earlier_at} is tried first and matches every request this one would",
         })
       }
-      guard stub.scenario is Some({ name, requires: Some(state), .. }) &&
+      let scenario = match stub.serves {
+        Ordinary(ordinary) => ordinary.scenario
+      }
+      guard scenario is Some({ name, requires: Some(state), .. }) &&
         state != initial_state &&
         !(moves.get(name) is Some(states) && states.contains(state)) else {
         continue
@@ -78,9 +81,10 @@ pub fn Snapshot::warnings(self : Snapshot) -> Array[Warning] {
 fn moves_of(stubs : ReadOnlyArray[Stub]) -> Map[String, Set[String]] {
   let moves : Map[String, Set[String]] = Map([])
   for stub in stubs {
-    guard stub.scenario is Some({ name, move_to: Some(state), .. }) else {
-      continue
+    let scenario = match stub.serves {
+      Ordinary(ordinary) => ordinary.scenario
     }
+    guard scenario is Some({ name, move_to: Some(state), .. }) else { continue }
     match moves.get(name) {
       Some(states) => states.add(state)
       None => moves[name] = Set([state])
@@ -96,14 +100,18 @@ fn moves_of(stubs : ReadOnlyArray[Stub]) -> Map[String, Set[String]] {
 /// the same Scenario with the same `requires`. `moveTo` plays no part: it
 /// does not change whether a Stub matches.
 fn shadows(t : Stub, s : Stub) -> Bool {
-  let in_states_of_s = match t.scenario {
-    None | Some({ requires: None, .. }) => true
-    Some({ name, requires, .. }) =>
-      s.scenario is Some(clause) &&
-      clause.name == name &&
-      clause.requires == requires
+  match (t.serves, s.serves) {
+    (Ordinary(t), Ordinary(s)) => {
+      let in_states_of_s = match t.scenario {
+        None | Some({ requires: None, .. }) => true
+        Some({ name, requires, .. }) =>
+          s.scenario is Some(clause) &&
+          clause.name == name &&
+          clause.requires == requires
+      }
+      in_states_of_s && request_shadows(t.request, s.request)
+    }
   }
-  in_states_of_s && request_shadows(t.request, s.request)
 }
 
 ///|

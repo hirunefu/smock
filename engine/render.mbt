@@ -293,89 +293,95 @@ pub fn Engine::render(
   fresh_seed~ : () -> UInt64,
 ) -> Rendering raise RenderFailure {
   guard self.file_stub(id) is Some(stub) else { raise UnknownStub(id) }
-  let count = stub.responses.length()
-  if response_index is Some(index) && (index < 0 || index >= count) {
-    raise UnknownResponse(stub=stub.id, index~, count~)
-  }
-  let seed = match (seed, stub.fault) {
-    (Some(seed), _) => seed
-    (None, Some({ seed: Some(seed), .. })) => seed
-    (None, _) => fresh_seed()
-  }
-  let incoming = Incoming::new(sample.to_request())
-  // The steps of the match decision that build the response, as for a
-  // request: the one draw, the Variables' values, the pick, then rendering
-  // and planning, which answers the sample's Range field. No Scenario
-  // moves, no Variable is written, and no Fault is decided.
-  let draw = @prng.Generator(seed).uint64()
-  // The values render against the sample's `vars`, drawing from the helper
-  // generator first; the response renders on from there, and reads the
-  // sample's `vars` with the values written over them.
-  let variables = Map([])
-  let mut context = None
-  let mut failed = None
-  if stub.writes_variables() {
-    let first = first_context(incoming, now~, draw~, vars=Some(sample.vars))
-    let values = Array(capacity=stub.variables.values.length())
-    try render_values(stub.variables, first, Some(sample.vars), values) catch {
-      RenderError(at~, message~) => failed = Some({ at, message, })
-    } noraise {
-      last => {
-        let after = sample.vars.copy()
-        for i, name in stub.variables.names {
-          variables[name] = values[i]
-          after[name] = values[i]
+  match stub.serves {
+    Ordinary(ordinary) => {
+      let count = ordinary.responses.length()
+      if response_index is Some(index) && (index < 0 || index >= count) {
+        raise UnknownResponse(stub=stub.id, index~, count~)
+      }
+      let seed = match (seed, stub.fault) {
+        (Some(seed), _) => seed
+        (None, Some({ seed: Some(seed), .. })) => seed
+        (None, _) => fresh_seed()
+      }
+      let incoming = Incoming::new(sample.to_request())
+      // The steps of the match decision that build the response, as for a
+      // request: the one draw, the Variables' values, the pick, then rendering
+      // and planning, which answers the sample's Range field. No Scenario
+      // moves, no Variable is written, and no Fault is decided.
+      let draw = @prng.Generator(seed).uint64()
+      // The values render against the sample's `vars`, drawing from the helper
+      // generator first; the response renders on from there, and reads the
+      // sample's `vars` with the values written over them.
+      let variables = Map([])
+      let mut context = None
+      let mut failed = None
+      if ordinary.writes_variables() {
+        let first = first_context(incoming, now~, draw~, vars=Some(sample.vars))
+        let values = Array(capacity=ordinary.variables.values.length())
+        try
+          render_values(ordinary.variables, first, Some(sample.vars), values)
+        catch {
+          RenderError(at~, message~) => failed = Some({ at, message, })
+        } noraise {
+          last => {
+            let after = sample.vars.copy()
+            for i, name in ordinary.variables.names {
+              variables[name] = values[i]
+              after[name] = values[i]
+            }
+            context = Some(last.next(vars=after))
+          }
         }
-        context = Some(last.next(vars=after))
+      }
+      let (response_index, plan, template_error) = match failed {
+        // A value that failed to render picks no response, whichever was
+        // asked for.
+        Some(error) => (None, template_failed(stub.id, error), Some(error))
+        None => {
+          let response_index = match (response_index, ordinary.total_weight) {
+            // A Stub with `response` shows no index, whichever it was asked
+            // for.
+            (_, None) => None
+            (Some(index), Some(_)) => Some(index)
+            (None, Some(_)) => pick_response(ordinary, draw)
+          }
+          let response = ordinary.responses[response_index.unwrap_or(0)].response
+          try
+            plan_response(
+              response,
+              incoming,
+              context,
+              now~,
+              draw~,
+              vars=Some(sample.vars),
+            )
+          catch {
+            RenderError(at~, message~) => {
+              let error = { at, message, }
+              (response_index, template_failed(stub.id, error), Some(error))
+            }
+          } noraise {
+            plan => (response_index, plan, None)
+          }
+        }
+      }
+      {
+        stub: stub.id,
+        mock: stub.mock,
+        time: now,
+        seed,
+        response_index,
+        variables,
+        status: plan.status,
+        headers: plan.headers,
+        body: plan.body,
+        template_error,
+        failed: incoming
+        .failed(ordinary.request)
+        .map(failed => incoming.explain(failed)),
       }
     }
-  }
-  let (response_index, plan, template_error) = match failed {
-    // A value that failed to render picks no response, whichever was
-    // asked for.
-    Some(error) => (None, template_failed(stub.id, error), Some(error))
-    None => {
-      let response_index = match (response_index, stub.total_weight) {
-        // A Stub with `response` shows no index, whichever it was asked
-        // for.
-        (_, None) => None
-        (Some(index), Some(_)) => Some(index)
-        (None, Some(_)) => pick_response(stub, draw)
-      }
-      let response = stub.responses[response_index.unwrap_or(0)].response
-      try
-        plan_response(
-          response,
-          incoming,
-          context,
-          now~,
-          draw~,
-          vars=Some(sample.vars),
-        )
-      catch {
-        RenderError(at~, message~) => {
-          let error = { at, message, }
-          (response_index, template_failed(stub.id, error), Some(error))
-        }
-      } noraise {
-        plan => (response_index, plan, None)
-      }
-    }
-  }
-  {
-    stub: stub.id,
-    mock: stub.mock,
-    time: now,
-    seed,
-    response_index,
-    variables,
-    status: plan.status,
-    headers: plan.headers,
-    body: plan.body,
-    template_error,
-    failed: incoming
-    .failed(stub.request)
-    .map(failed => incoming.explain(failed)),
   }
 }
 
