@@ -55,10 +55,32 @@ let format_samples : Map[String, String] = {
 }
 
 ///|
-/// The names of the JSON Schema types.
-let type_names : Array[String] = [
-  "null", "boolean", "object", "array", "number", "integer", "string",
-]
+/// A JSON Schema type.
+priv enum SchemaType {
+  Null
+  Boolean
+  Object
+  Array
+  Number
+  Integer
+  String
+}
+
+///|
+/// The JSON Schema type that `name` names, such as `"string"`, or `None`
+/// when it names none.
+fn schema_type(name : String) -> SchemaType? {
+  match name {
+    "null" => Some(Null)
+    "boolean" => Some(Boolean)
+    "object" => Some(Object)
+    "array" => Some(Array)
+    "number" => Some(Number)
+    "integer" => Some(Integer)
+    "string" => Some(String)
+    _ => None
+  }
+}
 
 ///|
 /// The keywords that give a schema's sample as written, in the order they
@@ -517,13 +539,13 @@ fn Sampler::merged_sample(
     return Some(value)
   }
   match self.type_of(merged) {
-    "boolean" => Some(self.charged(Json::boolean(true)))
-    "number" => Some(self.charged(self.number(merged, false).to_json()))
-    "integer" => Some(self.charged(self.number(merged, true).to_json()))
-    "string" => Some(self.string(merged))
-    "array" | "object" if depth >= max_sample_depth =>
+    Boolean => Some(self.charged(Json::boolean(true)))
+    Number => Some(self.charged(self.number(merged, false).to_json()))
+    Integer => Some(self.charged(self.number(merged, true).to_json()))
+    String => Some(self.string(merged))
+    Array | Object if depth >= max_sample_depth =>
       Some(self.charged(Json::null()))
-    "array" | "object" as kind => {
+    Array | Object as kind => {
       // The schemas merged into it are being generated until its members
       // are.
       let held = self.generating.length()
@@ -531,7 +553,7 @@ fn Sampler::merged_sample(
         self.generating.push(layer.pointer)
       }
       self.generating.append(merged.refs)
-      let sample = if kind == "array" {
+      let sample = if kind is Array {
         self.array(merged, depth)
       } else {
         self.object(merged, depth)
@@ -539,7 +561,7 @@ fn Sampler::merged_sample(
       self.generating.truncate(held)
       Some(sample)
     }
-    _ => Some(self.charged(Json::null()))
+    Null => Some(self.charged(Json::null()))
   }
 }
 
@@ -558,7 +580,7 @@ fn Sampler::value(self : Sampler, merged : Merged) -> (String, Json)? {
       guard layer.schema.get(keyword) is Some(value) else { continue }
       if layer.branch {
         if object is None {
-          object = Some(self.type_of(merged) == "object")
+          object = Some(self.type_of(merged) is Object)
         }
         // The layers after a branch are branches too.
         if object is Some(true) {
@@ -658,43 +680,54 @@ fn nests_deeper(json : Json, levels : Int) -> Bool {
 /// array, and `null` when it is the only one. Without a type, the one the
 /// keywords of any layer imply, tried in this order: object, array,
 /// integer, number, then string; else `null`.
-fn Sampler::type_of(self : Sampler, merged : Merged) -> String {
+fn Sampler::type_of(self : Sampler, merged : Merged) -> SchemaType {
   for layer in merged.layers {
-    match layer.schema.get("type") {
-      None => ()
-      Some(String(name)) if type_names.contains(name) => return name
-      Some(Array(names)) if names.length() > 0 &&
-        names
-        .iter()
-        .all(name => name is String(name) && type_names.contains(name)) => {
-        for name in names {
-          if name is String(name) && name != "null" {
-            return name
-          }
-        }
-        return "null"
-      }
-      Some(_) =>
-        self.report.warning_at(
-          @definitions.child_pointer(layer.pointer, "type"),
-          "ignored: must be a type, such as \"string\", or a non-empty array of types",
-        )
+    guard layer.schema.get("type") is Some(written) else { continue }
+    if type_named(written) is Some(kind) {
+      return kind
     }
+    self.report.warning_at(
+      @definitions.child_pointer(layer.pointer, "type"),
+      "ignored: must be a type, such as \"string\", or a non-empty array of types",
+    )
   }
   let format = self.format(merged)
   if merged.has_any(object_keywords) {
-    "object"
+    Object
   } else if merged.has_any(array_keywords) {
-    "array"
+    Array
   } else if format is Some("int32" | "int64") {
-    "integer"
+    Integer
   } else if format is Some("float" | "double") ||
     merged.has_any(number_keywords) {
-    "number"
+    Number
   } else if format is Some(_) || merged.has_any(string_keywords) {
-    "string"
+    String
   } else {
-    "null"
+    Null
+  }
+}
+
+///|
+/// The type that `json`, a schema's `type`, gives: the type it names, or,
+/// for a non-empty array of names, the first other than `null`, and `null`
+/// when it is the only one. `None` when it is neither.
+fn type_named(json : Json) -> SchemaType? {
+  match json {
+    String(name) => schema_type(name)
+    Array(names) if names.length() > 0 => {
+      let mut found : SchemaType = Null
+      for name in names {
+        guard name is String(name) && schema_type(name) is Some(kind) else {
+          return None
+        }
+        if found is Null {
+          found = kind
+        }
+      }
+      Some(found)
+    }
+    _ => None
   }
 }
 
