@@ -53,11 +53,12 @@ Packages of `smock/smock`:
   a body file, a header value or an event field) and structured templates
   (`json` with `$each` and `$if`), the expression grammar, the helpers by
   family (fake data with its word and name lists, time, conversions,
-  strings, encodings and JWTs), and escaping by media type. It parses a template once, with
-  the values of the environment variables `--template-env` lists, which its
-  caller reads, and renders it for a request, the time, one 64-bit draw and
-  the Variables it reads, and writes JSON with smock's own number form. It
-  renders the values of a Stub's `variables` as JSON too.
+  strings, encodings and JWTs), and escaping by media type. It parses a
+  template once, with the values of the environment variables
+  `--template-env` lists, which its caller reads, and renders it for a
+  request, the time, one 64-bit draw and the Variables it reads, and writes
+  JSON with smock's own number form. It renders the values of a Stub's
+  `variables` as JSON too.
 - `prng`: the seeded pseudo-random generator that Fault decisions and
   template helpers draw from. Its sequence for a seed is fixed, the same on
   every target.
