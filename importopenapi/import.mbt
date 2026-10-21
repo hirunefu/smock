@@ -16,7 +16,8 @@
 ///|
 /// What a conversion needs besides the documents.
 pub struct Options {
-  /// The root document: its name among the documents.
+  /// The root document: its name among the documents. Its extension picks
+  /// the parser: YAML 1.2 for `.yaml` and `.yml`, JSON for `.json`.
   root : String
   /// How problems name the root document, such as its path as given on
   /// the command line.

@@ -10,7 +10,7 @@ of each GitHub release include its section
 
 ### Added
 
-- `smock import-openapi` converts a JSON OpenAPI 3.0, 3.1 or 3.2 document
+- `smock import-openapi` converts an OpenAPI 3.0, 3.1 or 3.2 document
   into a Definition file, once. Each operation becomes Stubs that match
   its method and path. By default, they answer its main status. Parts
   that are not imported yet are left out with a warning. smock never reads
@@ -40,6 +40,11 @@ of each GitHub release include its section
   with a comment that names the document and says not to edit the file,
   and each Stub has a comment that maps it back to the document's
   operation.
+- `smock import-openapi` reads YAML documents, whose names end in `.yaml`
+  or `.yml`, as YAML 1.2, as OpenAPI recommends. An unquoted status key
+  such as `200:` is the key `"200"`, and a date in an example is a string.
+  Anchors, aliases and tags stay errors, each at its pointer; the guide
+  shows how to convert such a document to JSON first.
 - `smock import-openapi` follows a `$ref` within the document where it
   reads a Path Item, a Response or a Media Type, by its JSON Pointer
   fragment. A URL, an
@@ -62,8 +67,7 @@ of each GitHub release include its section
   OpenAPI asks: `200:` is the key `"200"`, `2020-01-01` and `yes` are
   strings, `007` is the number 7, and `~` is null. It also accepts block
   scalar indentation indicators such as `|2`. Definition files keep the
-  safe subset, unchanged. The OpenAPI import will read YAML documents with
-  it.
+  safe subset, unchanged. The OpenAPI import reads YAML documents with it.
 
 ## [0.2.0] - 2026-10-21
 

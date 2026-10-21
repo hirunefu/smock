@@ -14,30 +14,8 @@ priv struct Document {
 /// cannot be read. Then it reports the document-level parts that are left
 /// out.
 fn Report::document(self : Report, bytes : Bytes) -> Document? {
-  let name = self.options.root
-  if name.has_suffix(".yaml") || name.has_suffix(".yml") {
-    self.root_error("", "YAML documents are not read yet: give a JSON document")
-    return None
-  }
-  if !name.has_suffix(".json") {
-    self.root_error("", "an OpenAPI document's name ends in .json")
-    return None
-  }
-  // A leading byte order mark is skipped, as the YAML parser skips it.
-  let text = @utf8.decode(bytes, ignore_bom=true) catch {
-    _ => {
-      self.root_error("", "not valid UTF-8")
-      return None
-    }
-  }
-  let json = @json.parse(text) catch {
-    err => {
-      self.root_error("", "not valid JSON: \{err}")
-      return None
-    }
-  }
-  if @definitions.first_duplicate_key(text) is Some(pointer) {
-    self.root_error(pointer, "duplicate key")
+  let label = self.options.root_label
+  guard self.parsed(label, self.options.root, bytes) is Some(json) else {
     return None
   }
   guard json is Object(top) else {
@@ -50,6 +28,54 @@ fn Report::document(self : Report, bytes : Bytes) -> Document? {
   self.left_out_parts(document)
   self.end_document()
   Some(document)
+}
+
+///|
+/// The tree of the document `name`, read by the parser its extension
+/// picks: `.yaml` and `.yml` as YAML 1.2, as OpenAPI recommends, with
+/// smock/yaml's mode for OpenAPI documents, and `.json` as JSON, where a
+/// repeated key is an error. Or `None`, after reporting why it cannot be
+/// read, in the document named `label`. The input must be UTF-8, and a
+/// leading byte order mark is skipped.
+fn Report::parsed(
+  self : Report,
+  label : String,
+  name : String,
+  bytes : Bytes,
+) -> Json? {
+  let yaml = name.has_suffix(".yaml") || name.has_suffix(".yml")
+  if !yaml && !name.has_suffix(".json") {
+    self.error(
+      label, "", "an OpenAPI document's name ends in .json, .yaml or .yml",
+    )
+    return None
+  }
+  let text = @utf8.decode(bytes, ignore_bom=true) catch {
+    _ => {
+      self.error(label, "", "not valid UTF-8")
+      return None
+    }
+  }
+  if yaml {
+    let json = @yaml.parse(text, openapi=true) catch {
+      ParseError(pointer~, message~) => {
+        self.error(label, pointer, message)
+        return None
+      }
+    }
+    return Some(json)
+  }
+  let json = @json.parse(text) catch {
+    err => {
+      self.error(label, "", "not valid JSON: \{err}")
+      return None
+    }
+  }
+  if @definitions.first_duplicate_key(text) is Some(pointer) {
+    self.error(label, pointer, "duplicate key")
+    return None
+  }
+  Some(json)
 }
 
 ///|
