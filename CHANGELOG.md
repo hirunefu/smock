@@ -25,6 +25,13 @@ of each GitHub release include its section
   document, with comments, that the module's own parser reads back as the
   same tree. A string is quoted only when it would not read back as the
   same string. The OpenAPI import writes YAML Definition files with it.
+- `parse` in the `smock/yaml` module has a mode for OpenAPI documents,
+  `openapi=true`. It types plain values by the YAML 1.2 core schema, as
+  OpenAPI asks: `200:` is the key `"200"`, `2020-01-01` and `yes` are
+  strings, `007` is the number 7, and `~` is null. It also accepts block
+  scalar indentation indicators such as `|2`. Definition files keep the
+  safe subset, unchanged. The OpenAPI import will read YAML documents with
+  it.
 
 ## [0.2.0] - 2026-10-21
 

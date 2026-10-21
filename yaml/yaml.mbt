@@ -1,8 +1,9 @@
 ///|
-/// Why a text is not a YAML document in the safe subset: a JSON Pointer
-/// (RFC 6901) to the value the problem is about, and a message.
+/// Why `parse` does not read a text as a YAML document, in the safe subset
+/// or in the mode for OpenAPI documents: a JSON Pointer (RFC 6901) to the
+/// value the problem is about, and a message.
 ///
-/// For a value outside the subset, such as a tag or an ambiguous plain
+/// For a value that is not read, such as a tag or an ambiguous plain
 /// scalar, the pointer names that value; for a key, it names the member.
 /// For a syntax error, it names the deepest node the parser reached. It is
 /// `""` for the whole document.
@@ -53,6 +54,30 @@ pub impl Show for ParseError with fn output(self, logger) {
 /// characters, and nesting deeper than 1024 collections, the limit of
 /// `@json.parse`.
 ///
+/// With `openapi=true`, `parse` reads the text as OpenAPI asks YAML to be
+/// read: by the YAML 1.2 core schema, with every key a string. This mode is
+/// for OpenAPI documents only; Definition files never use it. It differs
+/// from the safe subset in these ways, and in no other:
+/// - Plain scalars are typed by the YAML 1.2 core schema:
+///   - null: `null`, `Null`, `NULL`, `~`, and an empty value;
+///   - booleans: `true`, `True`, `TRUE`, `false`, `False` and `FALSE`;
+///   - numbers: decimal integers and floats, such as `007`, `+1`, `-.5`,
+///     `1.` and `1e3`, read as the same number in JSON syntax, so that a
+///     decimal integer beyond 2^53 keeps its digits; and hexadecimal
+///     (`0x1F`) and octal (`0o17`) integers up to 2^53 - 1;
+///   - errors, since JSON cannot hold them: hexadecimal and octal integers
+///     above 2^53 - 1, and `.inf`, `-.inf`, `.nan` in each spelling;
+///   - strings: every other plain scalar, such as `yes`, `on`, `2020-01-01`,
+///     `1_000` and `0b1010`.
+/// - Every key is a string, plain or quoted, so `200:` is the key `"200"`
+///   and `true:` the key `"true"`.
+/// - A block scalar header may have an indentation indicator, before or
+///   after its chomping indicator, as in `|2` or `>-1`. The content is then
+///   indented by that many spaces more than the collection the scalar is
+///   in, and the spaces beyond that are part of the text.
+/// - The messages for anchors and aliases suggest `$ref`, which OpenAPI
+///   has for reusing a part.
+///
 /// Parsing is linear in the length of `text`, does no I/O, and ends with a
 /// value or an error for every input.
 ///
@@ -82,10 +107,26 @@ pub impl Show for ParseError with fn output(self, logger) {
 ///       #|/enabled: "yes" may be read as a boolean; quote this value
 ///     ),
 ///   )
+///   let document =
+///     #|responses:
+///     #|  200:
+///     #|    description: |2
+///     #|        indented code
+///     #|      text
+///     #|    example: {born: 2020-01-01, code: 007, tag: ~, legacy: yes}
+///   inspect(
+///     @yaml.parse(document, openapi=true).stringify(),
+///     content=(
+///       #|{"responses":{"200":{"description":"  indented code\ntext\n","example":{"born":"2020-01-01","code":7,"tag":null,"legacy":"yes"}}}}
+///     ),
+///   )
 /// }
 /// ```
-pub fn parse(text : StringView) -> Json raise ParseError {
-  Parser(text).document()
+pub fn parse(
+  text : StringView,
+  openapi? : Bool = false,
+) -> Json raise ParseError {
+  Parser(text, openapi~).document()
 }
 
 ///|
