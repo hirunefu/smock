@@ -85,8 +85,9 @@ The comments are there for the reader:
 
 The arguments:
 
-- `<document>`: the OpenAPI document, a file whose name ends in `.json`.
-  It is not a URL, and not stdin.
+- `<document>`: the OpenAPI document, a file whose name ends in `.json`,
+  `.yaml` or `.yml`. A YAML document is read as YAML 1.2 (see
+  [How YAML is read](#how-yaml-is-read)). It is not a URL, and not stdin.
 - `--mock <name>`: the name of the one Mock the file declares. Every Stub
   ID starts with it, and it names the Mock in metric labels and Admin API
   paths. It is not taken from the document's title, which changes between
@@ -638,6 +639,84 @@ smock import-openapi api/petstore.bundled.json --mock petstore --output definiti
 
 A bundler fetches what the URLs name. smock never does.
 
+## How YAML is read
+
+A document whose name ends in `.yaml` or `.yml` is read as YAML 1.2, the
+YAML version OpenAPI recommends. One whose name ends in `.json` is read as
+JSON. Definition files are not read this way: they keep the safe subset
+of YAML that the [README](../README.md) describes, and the command writes
+its YAML output in that subset.
+
+Values without quotes are typed by the YAML 1.2 core schema:
+
+| Plain value | Read as |
+|---|---|
+| `null`, `Null`, `NULL`, `~`, or no value at all | null |
+| `true`, `True`, `TRUE`, `false`, `False`, `FALSE` | a boolean |
+| `007`, `+1`, `.5`, `0x1F`, `0o17` | a number: 7, 1, 0.5, 31 and 15 |
+| `yes`, `no`, `on`, `off`, `2020-01-01`, `1_000` | a string |
+
+Every key is a string, as OpenAPI asks, so an unquoted `200:` is the
+response key `"200"`. This document imports as if it were written in JSON
+with the key `"200"`:
+
+```yaml
+openapi: 3.1.0
+paths:
+  /pets:
+    get:
+      responses:
+        200:
+          description:
+          content:
+            application/json:
+              schema:
+                properties:
+                  born: { example: 2020-01-01 }
+                  code: { example: 007 }
+                  tag: { example: ~ }
+```
+
+Its body is `{"born": "2020-01-01", "code": 7, "tag": null}`.
+
+- A decimal integer keeps all its digits, as in JSON, even past 2^53.
+- Block scalars may have an indentation indicator, as in `|2` or `>-1`.
+  YAML writers emit one for text that starts with spaces, such as an
+  indented code sample in a `description`.
+- `openapi: 3.1` without quotes is the number 3.1, which is an error:
+  quote the version and give its patch, as in `openapi: "3.1.0"`. An
+  unquoted `3.1.0` is already a string. An unquoted `version: 1.0` under
+  `info` is a number too, and an error that says to quote it.
+
+Each of these is an error at its pointer, with a message that names it,
+and nothing is written:
+
+- anchors (`&`), aliases (`*`) and merge keys (`<<`);
+- tags, such as `!!str`;
+- a key that repeats in a mapping, such as `200:` and `"200":`;
+- more than one document, directives such as `%YAML 1.2`, and explicit
+  keys (`?`);
+- a hexadecimal or octal integer above 2^53 - 1: write it in decimal;
+- infinity and NaN, such as `.inf`, `-.Inf` and `.NaN`, which JSON
+  cannot hold;
+- tabs in indentation, and text that is not UTF-8.
+
+For example:
+
+```
+api/petstore.yaml: /paths/~1pets/get/responses/200: anchors (&) are not supported; reuse parts with $ref, or quote the value if it is text
+```
+
+A document that reuses parts with anchors and aliases can use `$ref`
+instead, which OpenAPI has for that. Or convert it to JSON with another
+tool first. A bundler such as [Redocly CLI](https://redocly.com/docs/cli/)
+reads the aliases and writes each part in full:
+
+```sh
+npx @redocly/cli@2.55.0 bundle api/petstore.yaml --output api/petstore.bundled.json
+smock import-openapi api/petstore.bundled.json --mock petstore --output definitions/petstore.yaml
+```
+
 ## Problems and exit codes
 
 Each problem is one line on stdout, in the form `smock check` uses:
@@ -670,9 +749,9 @@ api/petstore.json: /paths/~1pets/get/responses/200/content/application~1xml: war
 | 1 | Nothing was written: the document or the output had an error. |
 | 2 | A usage error, such as a missing flag, printed on stderr. |
 
-The input must be UTF-8 JSON. A leading byte order mark is skipped. A key
-that repeats in an object is an error at its pointer, as in a Definition
-file. `openapi` must be a string `3.<minor>.<patch>`, such as `"3.1.0"`,
+The input must be UTF-8 JSON, or YAML as [How YAML is read](#how-yaml-is-read)
+says. A leading byte order mark is skipped. A key that repeats in an
+object is an error at its pointer, as in a Definition file. `openapi` must be a string `3.<minor>.<patch>`, such as `"3.1.0"`,
 for 3.0, 3.1 or 3.2; the patch is ignored. A Swagger 2.0 document is an
 error: convert it to OpenAPI 3.0 first.
 
@@ -712,4 +791,3 @@ command does.
   - schema references: a `$ref` in a schema is an error;
   - references to other files: such a `$ref` is an error, so bundle the
     document first (see [References and bundling](#references-and-bundling));
-  - YAML documents: a `.yaml` or `.yml` document is a usage error.
