@@ -466,7 +466,6 @@ async test "smock import-openapi --help names its argument and its flags, none o
       #|  --base-path <base-path>        A path to put in front of every path, such as /mock/petstore, to mount the API where the system under test calls it. It replaces the paths of the document's servers, which are then not read: / means no prefix. It must start with / and hold no ? or #. By default, the path of the first server of the operation, else of its Path Item, else of the document, is put in front.
       #|  --overwrite <overwrite>        Whether an existing --output is replaced: on or off. Off, an existing file is refused before the document is read, and nothing is written. Either way, a directory, a symlink or the document itself is refused. [default: off]
       #|
-
     ),
   )
 }
