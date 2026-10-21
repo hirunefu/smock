@@ -989,7 +989,7 @@
         "operationId": "renderStub",
         "tags": ["Render"],
         "summary": "Render a Stub's response for a sample request",
-        "description": "Renders the named Stub from the definition set this replica serves now, as `smock render` does from a definitions directory. The Stub is rendered even when the sample request fails its conditions; the failed conditions are listed, with their expected and actual values. A Stub with `responses` renders the response the seed picks, or the one `response` names, and the rendering shows its index. A templated response is rendered for the sample, at the time and with the seed the rendering shows; a template that fails gives the 500 a request would get, with the error in `templateError`. The values the Stub's `variables` would write are rendered against the sample's `vars` and shown in `variables`; the response reads them written over the sample's `vars`. Templates read the initial value of each Data bucket of the Stub's Mock; the Stub's `dataWrites` are not rendered, so the response reads the data as it is. Rendering decides no Fault, reads no live Variable and changes nothing. A CRUD Stub cannot be rendered yet: it is `invalid_request`.",
+        "description": "Renders the named Stub from the definition set this replica serves now, as `smock render` does from a definitions directory. The Stub is rendered even when the sample request fails its conditions; the failed conditions are listed, with their expected and actual values. A Stub with `responses` renders the response the seed picks, or the one `response` names, and the rendering shows its index. A templated response is rendered for the sample, at the time and with the seed the rendering shows; a template that fails gives the 500 a request would get, with the error in `templateError`. The values the Stub's `variables` would write are rendered against the sample's `vars` and shown in `variables`; the response reads them written over the sample's `vars`. Templates read the sample's `data`, or else the initial value of each Data bucket of the Stub's Mock. The writes the Stub's `dataWrites` would make are rendered and applied to that data, and shown in `dataWrites`; the response reads the data after them. When a write fails to render or to apply, the rendering shows the 500 a request would get, and no write or Variable. Rendering decides no Fault, reads no live Variable or copy of a Data bucket, applies no state bound and changes nothing. A CRUD Stub cannot be rendered yet: it is `invalid_request`.",
         "parameters": [
           {
             "name": "time",
@@ -1051,7 +1051,19 @@
             }
           },
           "400": {
-            "$ref": "#/components/responses/BadRequest"
+            "description": "The body is not valid JSON (`malformed_json`); it, or a parameter, does not have the shape this operation takes, or the Stub has no response at the index `response` gives, or is a CRUD Stub, which cannot be rendered yet (`invalid_request`); or the sample's `data` names a Data bucket that the Stub's Mock does not declare, or gives a keyed bucket a value that breaks its rules (`invalid_data`).",
+            "headers": {
+              "Smock-Replica": {
+                "$ref": "#/components/headers/Smock-Replica"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -1398,7 +1410,7 @@
         "additionalProperties": false
       },
       "ErrorCode": {
-        "description": "What kind of error it is:\n\n- `unauthorized` (401): no bearer token, or the wrong one.\n- `not_found` (404): no operation at this path.\n- `method_not_allowed` (405): the path does not take this method.\n- `malformed_json` (400): the body is not valid JSON.\n- `invalid_request` (400): the body or a parameter does not have the shape the operation takes.\n- `invalid_stub` (400): an Ephemeral Stub is not valid; the message is the one `smock check` gives.\n- `unknown_mock` (404): no Mock has this name.\n- `unknown_stub` (404): no Stub has this ID, or the calling Session has no Ephemeral Stub with it.\n- `unknown_scenario` (404): no Stub of the Mock names this Scenario, in the Definition files or among the calling Session's Ephemeral Stubs, and the calling Session holds no state for it.\n- `unknown_state` (400): the state is not one of the known states of the Scenario for the calling Session.\n- `unknown_variable` (404): the calling Session has no Variable with this name in the Mock.\n- `unknown_bucket` (404): the Mock declares no Data bucket with this name.\n- `invalid_data` (400): the value breaks the rules of a keyed Data bucket; nothing was written.\n- `state_limit_reached` (507): setting a Variable or a copy of a Data bucket would take the count of per-Session state above its bound (`--state-max-bytes`); nothing was written.\n- `journal_off` (409): the Journal is off globally, or for the Mock that the request's filter names.\n- `not_started` (503): the first definition set has not loaded yet.\n- `not_ready` (503): smock is not ready to serve, such as while it drains after SIGTERM.\n- `bad_request` (400): the HTTP request itself is malformed.\n- `content_too_large` (413): the body is over `--body-limit`.\n- `header_fields_too_large` (431): the request head is over `--header-size-limit` or `--header-count-limit`.\n- `not_implemented` (501): this build does not implement the operation, or the request uses a transfer coding other than chunked.\n- `http_version_not_supported` (505): the request is not HTTP/1.x.",
+        "description": "What kind of error it is:\n\n- `unauthorized` (401): no bearer token, or the wrong one.\n- `not_found` (404): no operation at this path.\n- `method_not_allowed` (405): the path does not take this method.\n- `malformed_json` (400): the body is not valid JSON.\n- `invalid_request` (400): the body or a parameter does not have the shape the operation takes.\n- `invalid_stub` (400): an Ephemeral Stub is not valid; the message is the one `smock check` gives.\n- `unknown_mock` (404): no Mock has this name.\n- `unknown_stub` (404): no Stub has this ID, or the calling Session has no Ephemeral Stub with it.\n- `unknown_scenario` (404): no Stub of the Mock names this Scenario, in the Definition files or among the calling Session's Ephemeral Stubs, and the calling Session holds no state for it.\n- `unknown_state` (400): the state is not one of the known states of the Scenario for the calling Session.\n- `unknown_variable` (404): the calling Session has no Variable with this name in the Mock.\n- `unknown_bucket` (404): the Mock declares no Data bucket with this name.\n- `invalid_data` (400): the value breaks the rules of a keyed Data bucket, and nothing was written; or, for a render, the sample's `data` names a Data bucket that the Stub's Mock does not declare, or breaks a keyed bucket's rules.\n- `state_limit_reached` (507): setting a Variable or a copy of a Data bucket would take the count of per-Session state above its bound (`--state-max-bytes`); nothing was written.\n- `journal_off` (409): the Journal is off globally, or for the Mock that the request's filter names.\n- `not_started` (503): the first definition set has not loaded yet.\n- `not_ready` (503): smock is not ready to serve, such as while it drains after SIGTERM.\n- `bad_request` (400): the HTTP request itself is malformed.\n- `content_too_large` (413): the body is over `--body-limit`.\n- `header_fields_too_large` (431): the request head is over `--header-size-limit` or `--header-count-limit`.\n- `not_implemented` (501): this build does not implement the operation, or the request uses a transfer coding other than chunked.\n- `http_version_not_supported` (505): the request is not HTTP/1.x.",
         "enum": [
           "unauthorized",
           "not_found",
@@ -2403,6 +2415,14 @@
               "$ref": "#/components/schemas/VariableName"
             },
             "default": {}
+          },
+          "data": {
+            "description": "The values of Data buckets that templates read as data.NAME, by the bucket's name, in place of their initial values: the data the request finds. Each name must be a Data bucket of the Stub's Mock, and a keyed bucket's value must keep its rules; otherwise the render answers 400 `invalid_data`. The buckets it does not name read their initial values. The Stub's `dataWrites` render against this data and apply to it, and the response reads the data after them. A rendering never reads or writes a Session's copies. Default none.",
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DataValue"
+            },
+            "default": {}
           }
         },
         "additionalProperties": false
@@ -2445,23 +2465,30 @@
             "maximum": 9007199254740991
           },
           "responseIndex": {
-            "description": "The index of the response rendered, among the Stub's `responses`, counted from 0: the `response` given, or else the one the seed picks, as for the first request of a Stub with this `fault.seed`. null for a Stub with `response`, and when no response was picked because a value of the Stub's `variables` failed to render, even when `response` was given.",
+            "description": "The index of the response rendered, among the Stub's `responses`, counted from 0: the `response` given, or else the one the seed picks, as for the first request of a Stub with this `fault.seed`. null for a Stub with `response`, and when no response was picked because the Stub's writes failed, even when `response` was given.",
             "type": ["integer", "null"],
             "minimum": 0,
             "maximum": 99
           },
           "variables": {
-            "description": "The values the Stub's `variables` would write, by name, in the order written, rendered against the sample's `vars`. Empty when the Stub has none, and when a value failed to render. A rendering writes none of them, so the state bound never applies to them.",
+            "description": "The values the Stub's `variables` would write, by name, in the order written, rendered against the sample's `vars` and `data`. Empty when the Stub has none, and when its writes failed. A rendering writes none of them, so the state bound never applies to them.",
             "type": "object",
             "propertyNames": {
               "$ref": "#/components/schemas/VariableName"
+            }
+          },
+          "dataWrites": {
+            "description": "The writes the Stub's `dataWrites` would make, in order, rendered against the sample's `vars` and `data` and applied to the sample's data. Empty when the Stub has none, and when its writes failed: a request would then write nothing. A rendering writes none of them, so the state bound never applies to them.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RenderedWrite"
             }
           },
           "response": {
             "$ref": "#/components/schemas/RenderedResponse"
           },
           "templateError": {
-            "description": "Why the Stub's template, or a value of its `variables`, could not be rendered for the sample, when it could not: `response` is then the 500 a request would get. Otherwise null.",
+            "description": "Why the Stub's template, or a value of its `variables`, or a key or value of its `dataWrites`, could not be rendered for the sample, when it could not: `response` is then the 500 a request would get. Otherwise null. A write that renders but cannot be applied to the sample's data also gives the 500 a request would get, `data write failed`, which names the write; `templateError` is then null.",
             "oneOf": [{ "$ref": "#/components/schemas/TemplateError" }, { "type": "null" }]
           },
           "failed": {
@@ -2475,7 +2502,30 @@
             "$ref": "#/components/schemas/Warnings"
           }
         },
-        "required": ["stub", "mock", "time", "seed", "responseIndex", "variables", "response", "templateError", "failed", "warnings"],
+        "required": ["stub", "mock", "time", "seed", "responseIndex", "variables", "dataWrites", "response", "templateError", "failed", "warnings"],
+        "additionalProperties": false
+      },
+      "RenderedWrite": {
+        "description": "A write that a Stub's `dataWrites` would make, as a rendering shows it.",
+        "type": "object",
+        "properties": {
+          "op": {
+            "description": "What the write does.",
+            "type": "string",
+            "enum": ["set", "merge", "append", "remove"]
+          },
+          "bucket": {
+            "$ref": "#/components/schemas/DataBucketName"
+          },
+          "key": {
+            "description": "The rendered key, as a key text, when the write has `key`. Otherwise null.",
+            "type": ["string", "null"]
+          },
+          "value": {
+            "description": "The rendered value: any JSON value. For an `append` to a keyed bucket, the item with the new key filled in, as its last member, when it had none. null for a `remove`, which has no value."
+          }
+        },
+        "required": ["op", "bucket", "key", "value"],
         "additionalProperties": false
       },
       "CrudCall": {

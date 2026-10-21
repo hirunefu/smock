@@ -926,7 +926,7 @@ test "every Journal entry records the Data buckets written, in the order first w
 }
 
 ///|
-test "rendering a Stub with dataWrites writes nothing, and renders the response against the data as it is" {
+test "rendering a Stub with dataWrites writes nothing: its response sees its writes on the initial value, never on a copy a request made" {
   let h = harness([
     shop_file(
       (
@@ -960,10 +960,10 @@ test "rendering a Stub with dataWrites writes nothing, and renders the response 
   inspect(
     out.join("\n"),
     content=(
-      #|200 {"visits":0}
-      #|200 {"visits":0}
       #|200 {"visits":1}
-      #|200 {"visits":0}
+      #|200 {"visits":1}
+      #|200 {"visits":1}
+      #|200 {"visits":1}
     ),
   )
 }

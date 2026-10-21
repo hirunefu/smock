@@ -232,6 +232,7 @@ async test "smock render and the Admin render operation show templated events; g
           #|  "seed": 7,
           #|  "responseIndex": null,
           #|  "variables": {},
+          #|  "dataWrites": [],
           #|  "response": {
           #|    "status": 200,
           #|    "headers": [
