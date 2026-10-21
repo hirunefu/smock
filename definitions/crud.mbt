@@ -54,6 +54,21 @@ pub fn CrudOp::name(self : CrudOp) -> String {
 }
 
 ///|
+/// The op of `dataWrites` that makes the same write to a keyed bucket as
+/// the operation: `append` for a create, `set` with a key for a replace,
+/// `merge` with a key for an update and `remove` for a delete. `None` for
+/// a list or a read, which write nothing.
+pub fn CrudOp::write_op(self : CrudOp) -> DataOp? {
+  match self {
+    List | Read => None
+    Create => Some(Append)
+    Replace => Some(DataOp::Replace)
+    Update => Some(Merge)
+    Delete => Some(Remove)
+  }
+}
+
+///|
 /// The shape of a request path that a CRUD Stub serves.
 pub enum CrudShape {
   /// The Stub's path, where it lists and creates.
