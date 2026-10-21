@@ -9,11 +9,12 @@
 //
 // Its parts are kept apart, so that each can grow on its own: the document
 // and its version (document.mbt), the operations under `paths`
-// (operations.mbt), paths (paths.mbt), responses (responses.mbt), bodies
-// and headers (bodies.mbt), examples (examples.mbt), samples of schemas
-// (samples.mbt), with numbers within their bounds (numbers.mbt) and the
-// exact decimals they need (decimal.mbt), references and the documents
-// they name (references.mbt), and the file it writes (output.mbt).
+// (operations.mbt), paths (paths.mbt), servers and base paths
+// (servers.mbt), responses (responses.mbt), bodies and headers
+// (bodies.mbt), examples (examples.mbt), samples of schemas (samples.mbt),
+// with numbers within their bounds (numbers.mbt) and the exact decimals
+// they need (decimal.mbt), references and the documents they name
+// (references.mbt), and the file it writes (output.mbt).
 
 ///|
 /// The most documents a conversion reads, the root included.
@@ -59,6 +60,13 @@ pub struct Options {
   /// ends in `.yaml` or `.yml`, else JSON. Nothing else of it reaches the
   /// file.
   output : String
+  /// The path that `--base-path` gives, as given, such as
+  /// `/mock/petstore`. When there is one, it is put in front of every path
+  /// in place of the paths of servers, which are then not read at all. It
+  /// is percent-decoded as smock decodes request paths, and a trailing `/`
+  /// is dropped, so `/` means no prefix. The caller checks that it starts
+  /// with `/` and holds no `?` or `#`.
+  base_path : String?
 }
 
 ///|
@@ -66,7 +74,8 @@ pub struct Options {
 /// file `output` that declares the Mock `mock`, with the Hosts `hosts`, by
 /// default none, or that holds only its Stubs when `declare_mock` is false.
 /// Problems name the root document `root_label`, by default `root`, and the
-/// others under `ref_dir`, by default `""`.
+/// others under `ref_dir`, by default `""`. `base_path`, when given,
+/// replaces the paths of servers in front of every path.
 pub fn Options::Options(
   root~ : String,
   mock~ : String,
@@ -75,8 +84,9 @@ pub fn Options::Options(
   ref_dir? : String = "",
   hosts? : Array[String] = [],
   declare_mock? : Bool = true,
+  base_path? : String,
 ) -> Options {
-  { root, root_label, ref_dir, mock, hosts, declare_mock, output, }
+  { root, root_label, ref_dir, mock, hosts, declare_mock, output, base_path, }
 }
 
 ///|

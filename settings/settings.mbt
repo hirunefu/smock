@@ -125,9 +125,9 @@ pub(all) struct RenderSettings {
 ///|
 /// The settings of `smock import-openapi`. The OpenAPI document is its
 /// argument, and the Mock, its Hosts, whether the file declares it, the
-/// directory references are followed in, the output and whether it may be
-/// replaced are flags of its own, without variables: they belong to one
-/// import, not to a process.
+/// directory references are followed in, the output, the base path and
+/// whether the output may be replaced are flags of its own, without
+/// variables: they belong to one import, not to a process.
 pub(all) struct ImportOpenapiSettings {
   /// The OpenAPI document, a JSON or YAML file, as given.
   document : String
@@ -148,6 +148,10 @@ pub(all) struct ImportOpenapiSettings {
   /// The Definition file to write, a JSON or YAML file, as given. Its name
   /// picks the format.
   output : String
+  /// The path put in front of every path in place of the paths of the
+  /// document's servers, as given: it starts with `/` and holds no `?` or
+  /// `#`. `None` when it is not given, so that the servers' paths are used.
+  base_path : String?
   /// Whether an existing regular file at `output` is replaced.
   overwrite : Bool
 } derive(Debug)
@@ -411,8 +415,8 @@ pub fn render_command() -> @argparse.Command {
 ///|
 /// The `import-openapi` subcommand: the OpenAPI document as its argument,
 /// and the Mock, its Hosts, whether to declare it, the directory that
-/// references are followed in, the output and whether to replace it as
-/// flags without variables.
+/// references are followed in, the output, the base path and whether to
+/// replace the output as flags without variables.
 pub fn import_openapi_command() -> @argparse.Command {
   @argparse.Command(
     "import-openapi",
@@ -452,6 +456,11 @@ pub fn import_openapi_command() -> @argparse.Command {
         long="output",
         about="The Definition file to write. Its name picks the format: .yaml or .yml writes YAML, with comments that map each Stub back to the document, and .json writes JSON. Its directory must exist. The file is written to a temporary file whose name starts with ., then renamed, so a smock that watches the directory never reads half a file.",
         required=true,
+      ),
+      @argparse.OptionArg(
+        "base-path",
+        long="base-path",
+        about="A path to put in front of every path, such as /mock/petstore, to mount the API where the system under test calls it. It replaces the paths of the document's servers, which are then not read: / means no prefix. It must start with / and hold no ? or #. By default, the path of the first server of the operation, else of its Path Item, else of the document, is put in front.",
       ),
       @argparse.OptionArg(
         "overwrite",
@@ -810,9 +819,10 @@ pub fn RenderSettings::from_matches(
 /// lower case, as Definition files do, and the output's name does not
 /// start with `.`, since smock skips such files. `--declare-mock` and
 /// `--overwrite` are `on` or `off`. `--hosts` lists Hosts, separated by
-/// commas, only when the file declares the Mock. `--ref-dir` is not empty;
-/// that the document lies under it is checked by the CLI, which reads the
-/// file system.
+/// commas, only when the file declares the Mock. `--base-path` starts with
+/// `/` and holds no `?` or `#`. `--ref-dir` is not empty; that the
+/// document lies under it is checked by the CLI, which reads the file
+/// system.
 pub fn ImportOpenapiSettings::from_matches(
   matches : @argparse.Matches,
 ) -> ImportOpenapiSettings raise InvalidSetting {
@@ -849,8 +859,18 @@ pub fn ImportOpenapiSettings::from_matches(
   }
   let declare_mock = on_or_off(matches, "declare-mock")
   let hosts = hosts_value(matches, declare_mock~)
+  let base_path = base_path_value(matches)
   let overwrite = on_or_off(matches, "overwrite")
-  { document, ref_dir, mock, hosts, declare_mock, output, overwrite, }
+  {
+    document,
+    ref_dir,
+    mock,
+    hosts,
+    declare_mock,
+    output,
+    base_path,
+    overwrite,
+  }
 }
 
 ///|
@@ -915,6 +935,29 @@ fn hosts_value(
     hosts.push(host)
   }
   hosts
+}
+
+///|
+/// The path `--base-path` gives, as given, or `None` when it is not given.
+/// It starts with `/`, as a request's path does, and holds no `?` or `#`,
+/// which would start a query or a fragment.
+fn base_path_value(matches : @argparse.Matches) -> String? raise InvalidSetting {
+  guard value(matches, "base-path") is Some(path) else { return None }
+  if !path.has_prefix("/") {
+    raise InvalidOption(
+      flag="base-path",
+      value=path,
+      reason="must start with /",
+    )
+  }
+  if path.contains_char('?') || path.contains_char('#') {
+    raise InvalidOption(
+      flag="base-path",
+      value=path,
+      reason="must not hold ? or #: a query or a fragment is not part of a path",
+    )
+  }
+  Some(path)
 }
 
 ///|

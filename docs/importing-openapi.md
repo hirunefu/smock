@@ -108,6 +108,10 @@ The arguments:
   `.json` writes JSON, which has no comments. Both hold the same Stubs.
   Its directory must exist. A name that starts with `.` is refused, since
   smock skips such files.
+- `--base-path <path>`: a path to put in front of every path, in place of
+  the paths of the document's servers, such as `/mock/petstore`. `/`
+  means no prefix. It must start with `/` and hold no `?` or `#`. See
+  [Servers and base paths](#servers-and-base-paths).
 - `--overwrite on|off`: whether an existing `--output` is replaced. It is
   `off` by default: an existing file is refused before the document is
   read, and nothing is written.
@@ -140,12 +144,13 @@ Stub for each response it answers, and for each further named example
 
 | In the document | In the Definition file |
 |---|---|
-| The document | `version: 1`, then `mocks` with the one Mock, unless `--declare-mock` is `off`, then `stubs`. In YAML, a comment at the top names the document, its `info.title` and `info.version`, its OpenAPI version, `--mock`, then `--hosts` and `--declare-mock off` when given. |
+| The document | `version: 1`, then `mocks` with the one Mock, unless `--declare-mock` is `off`, then `stubs`. In YAML, a comment at the top names the document, its `info.title` and `info.version`, its OpenAPI version, `--mock`, then `--hosts`, `--declare-mock off` and `--base-path` when given. |
 | An operation | One Stub per response: the main Stub, and one for each other response. One more Stub per further named example. In YAML, a comment above each gives the method, the path as written, the response key and the example's name. |
 | `summary` | In YAML, its first line ends the Stub's comment. Control characters become spaces. |
 | `get`, `put`, `post`, `delete`, `options`, `head`, `patch`, `trace`, and 3.2's `query` | The `method`, in upper case. |
 | A key of 3.2's `additionalOperations` | The `method`, as written. |
 | `head` | `HEAD` is answered only where the document has `head`. |
+| `servers`, of an operation, a Path Item or the document | The path of the first server, in front of the paths of the operations it applies to, unless `--base-path` replaces it ([Servers and base paths](#servers-and-base-paths)). The URL's host is not used. |
 | A path key without parameters | The exact `path`, percent-decoded as smock decodes request paths, so that the match index finds it. |
 | A path key with parameters, such as `/pets/{petId}` | A `path` pattern, in which each parameter matches text within one segment: `pattern: /pets/[^/]+` ([Paths with parameters](#paths-with-parameters)). |
 | `operationId` | The Stub ID `<mock>.<operationId>.<key>`, where `<key>` is the response's key as written, such as `petstore.listPets.200` and `petstore.listPets.default`. A further named example's Stub adds its name: `<mock>.<operationId>.<key>.<example>`, such as `petstore.getPet.200.dog`. |
@@ -220,6 +225,10 @@ So `GET /pets/mine` gets its own Stub, and `GET /pets/7` the pattern's.
   its ASCII punctuation other than `/` is escaped with `\`, so that it
   stands for itself. So `/files/{name}.{ext}` becomes
   `/files/[^/]+\.[^/]+`.
+- The path of the server, or `--base-path`, comes first. It is literal
+  text, escaped like the rest: under the server `https://api.example.com/v1.0`,
+  `/pets/{petId}` becomes `/v1\.0/pets/[^/]+`
+  ([Servers and base paths](#servers-and-base-paths)).
 - A parameter's schema does not narrow its pattern: an integer does not
   become `[0-9]+`, and an `enum` does not become a list of values. A
   request with a mistyped value still gets the documented answer, not the
@@ -231,10 +240,11 @@ So `GET /pets/mine` gets its own Stub, and `GET /pets/7` the pattern's.
 The operations are sorted, so that a concrete path comes before a
 templated one, as OpenAPI asks:
 
-- Each path is split on `/`, and the paths are compared segment by
-  segment from the left. A literal segment comes first, then a segment
-  that mixes literal text and parameters, such as `{name}.json`, then a
-  segment that is one parameter.
+- Each path, with the server's path or `--base-path` in front, is split
+  on `/`, and the paths are compared segment by segment from the left. A
+  literal segment comes first, then a segment that mixes literal text and
+  parameters, such as `{name}.json`, then a segment that is one
+  parameter.
 - When one path runs out first, and its segments are of the same kinds as
   the other's so far, the shorter path comes first. So `/pets` comes
   before `/pets/mine`.
@@ -249,6 +259,72 @@ Two patterns that can match the same request, such as
 The first one answers `/files/a.json`, and there is no warning, since
 `smock check` does not compare two patterns. So list the specific one
 first in the document.
+
+### Servers and base paths
+
+The mock answers where the real service does: the path of a server URL
+is put in front of every path. Take a document whose server is
+`https://api.example.com/v1`, with the path `/pets/{petId}`:
+
+```json
+"servers": [{ "url": "https://api.example.com/v1" }],
+"paths": {
+  "/pets/{petId}": { "get": { "operationId": "getPetById", "responses": { "200": {} } } }
+}
+```
+
+The Stub's path is:
+
+```yaml
+path:
+  pattern: /v1/pets/[^/]+
+```
+
+So `GET /v1/pets/7` gets the Stub, and `GET /pets/7` does not.
+
+- The server is the first of the operation's `servers`, else of its Path
+  Item's, else of the document's. An empty list counts as none. Without
+  any, there is no prefix, since OpenAPI's default server is `/`.
+- Variables, such as `{version}` in `https://api.example.com/{version}`,
+  are replaced by their `default`. A variable that the URL uses but that
+  has no string `default` is an error.
+- The path of an absolute URL is taken: its scheme and its host never
+  matter, and get no warning. A relative URL is resolved against `/`, so
+  `/v1`, `v1` and `./v1` all give `/v1`, and `//cdn.example.com/v1` gives
+  `/v1` too. Dot segments are resolved, as in `/a/../v1`.
+- A URL with a query or a fragment, such as `/v1?lang=en`, is an error.
+- The prefix is percent-decoded as smock decodes request paths, and one
+  trailing `/` is dropped, so `/v1/` gives `/v1`, and `/` gives no prefix.
+- The path key is then appended as it is. So the key `/` under the prefix
+  `/v1` gives `/v1/`, and `/` alone with no prefix.
+- When the servers in one list have different paths, such as
+  `https://api.example.com/v1` and `http://localhost:8080`, only the first
+  is used, and a warning names it. Servers that differ only in their
+  host give no warning.
+- Every `servers` list is read and checked, even one that an inner list
+  overrides for every operation.
+
+`--base-path` mounts the API where the system under test calls it
+instead:
+
+```sh
+smock import-openapi api/petstore.json --mock petstore --output definitions/petstore.yaml --base-path /mock/petstore
+```
+
+```yaml
+path:
+  pattern: /mock/petstore/pets/[^/]+
+```
+
+- It replaces every prefix, and `servers` are then not read at all, so a
+  mistake in them gives no problem.
+- `--base-path /` means no prefix: each path comes from its path key
+  alone.
+- Its value must start with `/` and hold no `?` or `#`, or the command
+  stops with a usage error, exit status 2. It is decoded, and one
+  trailing `/` is dropped, as for a server's path.
+- In YAML, the comment at the top of the file lists `--base-path` after
+  the other flags.
 
 ### The main response
 
@@ -1259,6 +1335,5 @@ command does.
   document with many templated paths makes each request slower.
 - These parts are not imported yet. Each is left out with a warning,
   unless this list says otherwise:
-  - the paths of `servers`, so no prefix is added to the paths;
   - response headers;
   - schema references: a `$ref` in a schema is an error.

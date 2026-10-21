@@ -39,6 +39,7 @@ async fn import_openapi(settings : @settings.ImportOpenapiSettings) -> Int {
     hosts=settings.hosts,
     declare_mock=settings.declare_mock,
     output~,
+    base_path?=settings.base_path,
   )
   let converter = @importopenapi.Converter::new(options)
   converter.give(name, bytes)

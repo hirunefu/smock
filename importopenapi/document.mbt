@@ -7,6 +7,10 @@ priv struct Document {
   /// The `title` and `version` of its `info`, or `""` where it has none.
   title : String
   info_version : String
+  /// The prefix of every path whose Path Item and operation have no
+  /// `servers`: the path of the document's first server, or `""` for none.
+  /// With a base path, it is the prefix of every path.
+  prefix : String
 }
 
 ///|
@@ -32,7 +36,11 @@ fn Report::document(self : Report, root : Content) -> Document? {
   }
   guard self.version(top) is Some(openapi) else { return None }
   let (title, info_version) = self.info(top)
-  let document = { top, openapi, title, info_version, }
+  let prefix = match self.options.base_path {
+    Some(path) => trimmed_prefix(path)
+    None => self.prefix("", top, outer="")
+  }
+  let document = { top, openapi, title, info_version, prefix, }
   self.left_out_parts(document)
   self.end_document()
   Some(document)
@@ -178,10 +186,8 @@ fn is_digits(s : StringView) -> Bool {
 
 ///|
 /// Reports the document-level parts that are not imported: webhooks,
-/// which are requests the API sends, not ones it answers, and, until the
-/// paths of servers are read, the document's servers.
+/// which are requests the API sends, not ones it answers.
 fn Report::left_out_parts(self : Report, document : Document) -> Unit {
-  self.servers_left_out("", document.top)
   if document.top.get("webhooks") is Some(Object(webhooks)) &&
     !webhooks.is_empty() {
     self.warning_at(

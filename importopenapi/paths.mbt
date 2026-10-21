@@ -34,19 +34,19 @@ priv enum Segment {
 } derive(Eq, Compare)
 
 ///|
-/// Reads the path key `key`, written at `pointer`, or reports why it is
-/// not a path: one that does not start with `/`, has unbalanced braces or
-/// an empty `{}`, or holds `?` or `#`.
-fn Report::path(self : Report, pointer : String, key : String) -> Path? {
+/// Whether the path key `key`, written at `pointer`, is a path, or reports
+/// why it is not: one that does not start with `/`, has unbalanced braces
+/// or an empty `{}`, or holds `?` or `#`.
+fn Report::path_key(self : Report, pointer : String, key : String) -> Bool {
   if !key.has_prefix("/") {
     self.error_at(pointer, "a path must start with /")
-    return None
+    return false
   }
   if key.contains_char('?') || key.contains_char('#') {
     self.error_at(
       pointer, "a path must not hold ? or #: a query or a fragment is not part of it",
     )
-    return None
+    return false
   }
   let mut open = false
   let mut previous = ' '
@@ -54,18 +54,18 @@ fn Report::path(self : Report, pointer : String, key : String) -> Path? {
     match c {
       '{' if open => {
         self.error_at(pointer, "a path has an unbalanced { or }")
-        return None
+        return false
       }
       '{' => open = true
       '}' if !open => {
         self.error_at(pointer, "a path has an unbalanced { or }")
-        return None
+        return false
       }
       '}' if previous == '{' => {
         self.error_at(
           pointer, "a path has an empty {}: a parameter needs a name",
         )
-        return None
+        return false
       }
       '}' => open = false
       _ => ()
@@ -74,38 +74,42 @@ fn Report::path(self : Report, pointer : String, key : String) -> Path? {
   }
   if open {
     self.error_at(pointer, "a path has an unbalanced { or }")
-    return None
+    return false
   }
-  Some(matched_path(key))
+  true
 }
 
 ///|
 /// The path that Stubs match for the path key `key`, whose braces are
-/// balanced. Without parameters, it is the exact path. With them, it is a
-/// pattern in which each `{name}` becomes `[^/]+`. Literal text is
+/// balanced, put after `prefix`, which is decoded already. Without
+/// parameters, it is the exact path. With them, it is a pattern in which
+/// each `{name}` becomes `[^/]+`. Literal text, the prefix included, is
 /// percent-decoded as smock decodes request paths, and in a pattern its
 /// ASCII punctuation other than `/` is then escaped with `\`, so that
 /// `/files/{name}.json` becomes `/files/[^/]+\.json`. Segments are split
 /// at the `/` of the decoded text, as smock splits a request's decoded
 /// path.
-fn matched_path(key : String) -> Path {
-  // Literal texts, decoded, and None for each parameter.
+fn matched_path(key : String, prefix~ : String) -> Path {
+  // Literal texts, decoded, and None for each parameter. The prefix starts
+  // the first literal text, without being decoded again.
   let pieces : Array[String?] = []
   let text = StringBuilder()
+  let mut start = prefix
   let mut in_name = false
   for c in key {
     if in_name {
       in_name = c != '}'
     } else if c == '{' {
-      pieces.push(Some(decoded_path(text.to_string())))
+      pieces.push(Some(start + decoded_path(text.to_string())))
       pieces.push(None)
       text.reset()
+      start = ""
       in_name = true
     } else {
       text.write_char(c)
     }
   }
-  pieces.push(Some(decoded_path(text.to_string())))
+  pieces.push(Some(start + decoded_path(text.to_string())))
   let pattern = StringBuilder()
   let segments = []
   let mut literal = false
@@ -188,22 +192,5 @@ fn decoded_path(path : String) -> String {
     @percent.decode_lossy(path)
   } else {
     path
-  }
-}
-
-///|
-/// Reports the `servers` of `object`, at `pointer`, a document, a Path Item
-/// or an operation. Until the paths of servers are read, none is added as a
-/// prefix, so a non-empty list is left out with a warning.
-fn Report::servers_left_out(
-  self : Report,
-  pointer : String,
-  object : Map[String, Json],
-) -> Unit {
-  if object.get("servers") is Some(Array(servers)) && !servers.is_empty() {
-    self.warning_at(
-      @definitions.child_pointer(pointer, "servers"),
-      "left out: the paths of servers are not added as a prefix yet",
-    )
   }
 }

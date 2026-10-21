@@ -132,7 +132,6 @@ test "a problem in a referenced part is reported where it is written, once howev
         #|    "pathItems": {
         #|      "C": { "get": { "responses": { "201": { "$ref": "#/components/responses/Created" } } } },
         #|      "B": {
-        #|        "servers": [{ "url": "/v1" }],
         #|        "put": { "responses": { "200": {}, "404": {} } },
         #|        "get": { "responses": { "200": {} } }
         #|      }
@@ -150,7 +149,6 @@ test "a problem in a referenced part is reported where it is written, once howev
       ),
     ),
     content=(
-      #|petstore.json: /components/pathItems/B/servers: warning: left out: the paths of servers are not added as a prefix yet
       #|petstore.json: /components/responses/Ok/headers/X-Rate-Limit: warning: left out: response headers are not imported yet
       #|petstore.PUT /b.404: PUT /b -> 404
       #|petstore.PUT /b.200: PUT /b -> 200
