@@ -117,12 +117,12 @@ test "OpenAPI 3.0, 3.1 and 3.2 are read, whatever the patch" {
 }
 
 ///|
-test "any other version is an error: a number says to quote it and give the patch, and Swagger 2.0 says to convert the document to 3.0 first" {
+test "any other version is an error: a number says to quote it and give the patch, and Swagger 2.0, quoted or not, says to convert the document to 3.0 first" {
   let versions = [
     "\"openapi\": 3.1", "\"openapi\": \"3.1\"", "\"openapi\": \"3.3.0\"", "\"openapi\": \"2.0.0\"",
     "\"openapi\": \"3.1.0-rc1\"", "\"openapi\": \"v3.1.0\"", "\"openapi\": true",
-    "\"swagger\": \"2.0\"", "\"swagger\": \"1.2\"", "\"openapi\": \"3.1.0\", \"swagger\": \"2.0\"",
-    "\"info\": {}",
+    "\"swagger\": \"2.0\"", "\"swagger\": 2.0", "\"swagger\": \"1.2\"", "\"swagger\": 1.2",
+    "\"openapi\": \"3.1.0\", \"swagger\": \"2.0\"", "\"info\": {}",
   ].map(version => import_json(with_version(version)))
   inspect(
     versions.join(""),
@@ -142,6 +142,10 @@ test "any other version is an error: a number says to quote it and give the patc
       #|petstore.json: /openapi: must be a string such as "3.1.0"
       #|nothing written
       #|petstore.json: /swagger: Swagger 2.0 is not supported: convert the document to OpenAPI 3.0 first
+      #|nothing written
+      #|petstore.json: /swagger: Swagger 2.0 is not supported: convert the document to OpenAPI 3.0 first
+      #|nothing written
+      #|petstore.json: /swagger: not a version smock imports: it imports OpenAPI 3.0, 3.1 and 3.2
       #|nothing written
       #|petstore.json: /swagger: not a version smock imports: it imports OpenAPI 3.0, 3.1 and 3.2
       #|nothing written

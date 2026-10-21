@@ -91,7 +91,8 @@ fn Report::version(self : Report, top : Map[String, Json]) -> String? {
       )
       None
     }
-    (None, Some(String("2.0"))) => {
+    // YAML reads an unquoted `swagger: 2.0` as a number.
+    (None, Some(String("2.0"))) | (None, Some(Number(2.0, ..))) => {
       self.error_at(
         "/swagger", "Swagger 2.0 is not supported: convert the document to OpenAPI 3.0 first",
       )
