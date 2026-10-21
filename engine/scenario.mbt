@@ -116,14 +116,14 @@ fn current_state(states : Map[String, String]?, name : String) -> String {
 }
 
 ///|
-/// Whether `stub` can match in the current states, `states`: it has no
-/// clause, its clause has no `requires`, or the Scenario is in the state it
-/// requires.
+/// Whether a Stub with the Scenario clause `clause` can match in the current
+/// states, `states`: it has no clause, its clause has no `requires`, or the
+/// Scenario is in the state it requires.
 fn scenario_allows(
-  stub : @definitions.Stub,
+  clause : @definitions.ScenarioClause?,
   states : Map[String, String]?,
 ) -> Bool {
-  match stub.scenario {
+  match clause {
     Some({ requires: Some(required), name, .. }) =>
       current_state(states, name) == required
     _ => true
@@ -166,8 +166,11 @@ fn Engine::known_states(
   }
   if self.ephemeral.of(mock.name, session) is Some(list) {
     for e in list {
-      if e.stub.scenario is Some(clause) {
-        by_scenario.add_clause(clause)
+      match e.stub.serves {
+        Ordinary(ordinary) =>
+          if ordinary.scenario is Some(clause) {
+            by_scenario.add_clause(clause)
+          }
       }
     }
   }

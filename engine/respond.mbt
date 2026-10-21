@@ -25,8 +25,9 @@ pub impl ToJson for TemplateError with fn to_json(self) {
 let pick_mask : UInt64 = 0xE7037ED1A0B428DB
 
 ///|
-/// The pick, a step of the match decision: the index, among `stub`'s
-/// `responses`, of the one a matched request whose one draw is `draw` gets.
+/// The pick, a step of the match decision: the index, among the `responses`
+/// of `ordinary`, of the one a matched request whose one draw is `draw`
+/// gets. `ordinary` is what the matched Stub serves.
 ///
 /// The pick draws from a generator of its own, seeded with `draw` XOR
 /// `pick_mask`: a number below the sum of the weights, by rejection
@@ -34,12 +35,12 @@ let pick_mask : UInt64 = 0xE7037ED1A0B428DB
 /// running total holds that number, in the order written. A Stub with
 /// `response` takes no pick and draws nothing: `None`, for its one
 /// response.
-fn pick_response(stub : @definitions.Stub, draw : UInt64) -> Int? {
-  guard stub.total_weight is Some(total) else { return None }
+fn pick_response(ordinary : @definitions.Ordinary, draw : UInt64) -> Int? {
+  guard ordinary.total_weight is Some(total) else { return None }
   let mut n = @prng.Generator(draw ^ pick_mask)
     .below(total.to_uint64())
     .to_int()
-  let responses = stub.responses
+  let responses = ordinary.responses
   for i in 0..<responses.length() {
     let weight = responses[i].weight
     if n < weight {

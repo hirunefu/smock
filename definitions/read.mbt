@@ -516,11 +516,13 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
     id,
     mock,
     priority,
-    request,
-    scenario,
-    responses: ReadOnlyArray::from_array(responses),
-    total_weight,
-    variables,
+    serves: Ordinary({
+      request,
+      scenario,
+      responses: ReadOnlyArray::from_array(responses),
+      total_weight,
+      variables,
+    }),
     fault,
   })
 }

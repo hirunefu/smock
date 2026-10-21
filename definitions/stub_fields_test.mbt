@@ -258,7 +258,7 @@ test "the snapshot holds each pattern compiled when the set is loaded, ready to 
     body_files: [],
   }
   guard @definitions.load(set) is Ok(snapshot) else { fail("not loaded") }
-  let request = snapshot.mocks[0].stubs[0].request
+  let Ordinary({ request, .. }) = snapshot.mocks[0].stubs[0].serves
   debug_inspect(
     request,
     content=(
@@ -408,7 +408,8 @@ test "the snapshot holds each Stub's Scenario clause, and each Mock's Scenarios 
       )
     }
     for stub in mock.stubs {
-      let clause = match stub.scenario {
+      let Ordinary(ordinary) = stub.serves
+      let clause = match ordinary.scenario {
         Some(c) =>
           "\{c.name}, requires \{state(c.requires)}, moveTo \{state(c.move_to)}"
         None => "no clause"
@@ -594,7 +595,8 @@ test "the snapshot holds a Stub's response as its only response, of weight 1, wh
   guard @definitions.load(set) is Ok(snapshot) else { fail("not loaded") }
   let out = []
   for stub in snapshot.mocks[0].stubs {
-    for i, weighted in stub.responses {
+    let Ordinary(ordinary) = stub.serves
+    for i, weighted in ordinary.responses {
       let response = weighted.response
       out.push(
         "\{stub.id} \{i}: weight \{weighted.weight}, status \{response.status}, template \{response.template is Some(_)}",
@@ -629,7 +631,8 @@ test "the snapshot holds a Stub's responses in the order written, each with its 
   guard @definitions.load(set) is Ok(snapshot) else { fail("not loaded") }
   let out = []
   for stub in snapshot.mocks[0].stubs {
-    for i, weighted in stub.responses {
+    let Ordinary(ordinary) = stub.serves
+    for i, weighted in ordinary.responses {
       let response = weighted.response
       out.push(
         "\{stub.id} \{i}: weight \{weighted.weight}, status \{response.status}, headers \{response.headers.length()}, template \{response.template is Some(_)}",
