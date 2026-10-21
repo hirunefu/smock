@@ -796,10 +796,11 @@ of an [`xml` condition](#xml-bodies), and the state a
 order. A parameter, a header, a cookie, a form field or an XML path counts
 once whatever its condition, operators included. A `form` or `xml`
 condition with no field or path counts as `body`, as `{ "json": {} }`
-does. The header is ASCII only
-and never carries what a condition expects or what the request sent: the
-Stub ID, query, header, cookie, form field and Scenario names, and XML
-paths are percent-encoded where they hold anything other than the
+does. A [CRUD Stub](#crud-stubs) counts two, `method` and `path`
+([A CRUD Stub's Near miss](#a-crud-stubs-near-miss)). The header is
+ASCII only and never carries what a condition expects or what the request
+sent: the Stub ID, query, header, cookie, form field and Scenario names,
+and XML paths are percent-encoded where they hold anything other than the
 characters of an HTTP token, so `/order/@status` is sent as
 `xml:%2Forder%2F%40status`. A Mock without Stubs, and a request for a Host
 that no Mock answers, get no `Smock-Near-Miss` header.
@@ -2617,7 +2618,8 @@ A list can be filtered, sorted and paged with a
   [`fault`](#faults). `request`, `response`, `responses`, `scenario`,
   `variables` and `dataWrites` are not allowed. A Stub has exactly one of
   `response`, `responses` and `crud`.
-- Two CRUD Stubs may have the same `path`. The first in the order answers.
+- Two CRUD Stubs may have the same `path`. The first in the order answers,
+  and `smock check` [warns](#a-stub-that-can-never-match) about the other.
 
 #### CRUD paths
 
@@ -2871,6 +2873,49 @@ whose Scenario `orders` is in `Down` gets 503. Every other request to the
 orders gets the CRUD Stub's answer. A lower `priority` than the CRUD
 Stub's places a Stub before it wherever it is declared.
 
+An override placed after the CRUD Stub never answers. `smock check`
+[warns](#a-stub-that-can-never-match) about a Stub with a `method` and an
+exact `path` that an earlier CRUD Stub serves, such as one for
+`GET /api/v1/orders/1001` after the `orders` CRUD Stub.
+
+#### A CRUD Stub's Near miss
+
+A CRUD Stub can be the [Near miss](#when-no-stub-matches) of a request
+that no Stub matches. It counts two conditions:
+
+- `path` fails when the request path is neither the list path nor an item
+  path. It expects `{"crud": "<path>"}`.
+- `method` fails when the Stub does not serve the method at the request
+  path's shape: `GET` and `POST` at the list path, and `GET`, `PUT`,
+  `PATCH` and `DELETE` at an item path. When `path` fails too, the method
+  is judged at either shape. It expects `{"crud": [<methods>]}`: those
+  methods, each once, in the order `GET`, `POST`, `PUT`, `PATCH`,
+  `DELETE`.
+
+What the request sent is its method, or its percent-decoded path, as for
+any Stub. A CRUD Stub competes with the Mock's other Stubs by the same
+rules: the fewest failed conditions, and the one tried first on a tie.
+With only the `orders` CRUD Stub, `HEAD /api/v1/orders` gets the no-match
+answer with
+
+```http
+Smock-Near-Miss: orders; failed=method
+```
+
+and the Journal shows the failed condition in full:
+
+```json
+{
+  "condition": "method",
+  "expected": { "crud": ["GET", "POST"] },
+  "actual": ["HEAD"]
+}
+```
+
+`GET /api/v1/orders/1001/items` fails only `path`, since the Stub serves
+`GET` at both shapes. `HEAD /api/v1/orders/1001/items` fails both, and its
+`method` expects all five methods.
+
 #### CRUD headers
 
 smock sets `Content-Type`, `Location` on a create, and `X-Total-Count`
@@ -2952,10 +2997,12 @@ an Ephemeral Stub:
 - a member that the shape does not allow, beside `crud` or in it;
 - a `crud.headers` name that smock sets.
 
+`smock check` also [warns](#a-stub-that-can-never-match) when a CRUD Stub
+hides a later Stub, or a Stub hides a later CRUD Stub.
+
 For now, `smock render` and the Admin render operation cannot render a
 CRUD Stub: the command fails, and the Admin API answers 400
-`invalid_request`. A CRUD Stub is not a Near miss candidate, and
-`smock check` gives no [warnings](#warnings) about it.
+`invalid_request`.
 
 ### Data buckets through the Admin API
 
@@ -3407,6 +3454,22 @@ So the pending and paid Stubs of the [Scenario example](#an-example) do not
 shadow each other: they have the same request, but require different
 states. Two Stubs with the same request that require the same state are
 still reported.
+
+A [CRUD Stub](#crud-stubs) matches by its method and path alone, in every
+state. smock warns in three cases:
+
+- an earlier CRUD Stub shadows a Stub whose `method` and exact `path` it
+  serves, whatever that Stub's other conditions or `requires`. This
+  catches an [override](#order-and-overrides) placed after the CRUD Stub
+  instead of before it;
+- an earlier CRUD Stub shadows a CRUD Stub with the same `path`;
+- an earlier Stub shadows a CRUD Stub only when it has no request
+  conditions and no `requires`.
+
+A partial overlap gets no warning. A Stub with no `method` after a CRUD
+Stub still matches the methods the CRUD Stub does not serve, such as
+`HEAD`. A Stub with a `path` pattern is not compared with a CRUD Stub's
+paths.
 
 smock does not compare two patterns, or a pattern or `json` condition with
 another condition, and does not reason about operators: a value and its
