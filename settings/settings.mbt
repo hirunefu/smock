@@ -127,7 +127,7 @@ pub(all) struct RenderSettings {
 /// argument, and the Mock and the output are flags of its own, without
 /// variables: they belong to one import, not to a process.
 pub(all) struct ImportOpenapiSettings {
-  /// The OpenAPI document, a JSON file, as given.
+  /// The OpenAPI document, a JSON or YAML file, as given.
   document : String
   /// The name of the Mock the Definition file declares.
   mock : String
@@ -402,7 +402,7 @@ pub fn import_openapi_command() -> @argparse.Command {
     positionals=[
       @argparse.PositionArg(
         "document",
-        about="The OpenAPI document: a JSON file, whose name ends in .json.",
+        about="The OpenAPI document: a JSON file, whose name ends in .json, or a YAML file, read as YAML 1.2, whose name ends in .yaml or .yml.",
         num_args=@argparse.ValueRange::single(),
       ),
     ],
@@ -768,69 +768,48 @@ pub fn RenderSettings::from_matches(
 /// Reads and checks the settings from the parsed `import-openapi`
 /// subcommand. The document and the output name a JSON or YAML file, in
 /// lower case, as Definition files do, and the output's name does not
-/// start with `.`, since smock skips such files. YAML documents are not
-/// read yet.
+/// start with `.`, since smock skips such files.
 pub fn ImportOpenapiSettings::from_matches(
   matches : @argparse.Matches,
 ) -> ImportOpenapiSettings raise InvalidSetting {
   let document = value(matches, "document").unwrap_or("")
-  match file_format(document) {
-    Some(JsonFile) => ()
-    Some(YamlFile) =>
-      raise InvalidArgument(
-        name="document",
-        value=document,
-        reason="YAML documents are not supported yet: give a .json document",
-      )
-    None =>
-      raise InvalidArgument(
-        name="document",
-        value=document,
-        reason="must name a .json, .yaml or .yml file",
-      )
+  if !is_json_or_yaml(document) {
+    raise InvalidArgument(
+      name="document",
+      value=document,
+      reason="must name a .json, .yaml or .yml file",
+    )
   }
   let mock = value(matches, "mock").unwrap_or("")
   if mock == "" {
     raise InvalidOption(flag="mock", value=mock, reason="must not be empty")
   }
   let output = value(matches, "output").unwrap_or("")
-  match file_format(output) {
-    None =>
-      raise InvalidOption(
-        flag="output",
-        value=output,
-        reason="must name a .json, .yaml or .yml file",
-      )
-    _ if base_name(output).has_prefix(".") =>
-      raise InvalidOption(
-        flag="output",
-        value=output,
-        reason="must not name a file that starts with ., which smock skips",
-      )
-    Some(_) => ()
+  if !is_json_or_yaml(output) {
+    raise InvalidOption(
+      flag="output",
+      value=output,
+      reason="must name a .json, .yaml or .yml file",
+    )
+  }
+  if base_name(output).has_prefix(".") {
+    raise InvalidOption(
+      flag="output",
+      value=output,
+      reason="must not name a file that starts with ., which smock skips",
+    )
   }
   { document, mock, output, }
 }
 
 ///|
-/// The formats of the files `import-openapi` reads and writes.
-priv enum FileFormat {
-  JsonFile
-  YamlFile
-}
-
-///|
-/// The format a file's name gives, by its extension in lower case, as for
-/// Definition files: `.json`, or `.yaml` and `.yml`. `None` for any other
-/// name.
-fn file_format(path : String) -> FileFormat? {
-  if path.has_suffix(".json") {
-    Some(JsonFile)
-  } else if path.has_suffix(".yaml") || path.has_suffix(".yml") {
-    Some(YamlFile)
-  } else {
-    None
-  }
+/// Whether a file's name ends in an extension of the files
+/// `import-openapi` reads and writes, in lower case, as for Definition
+/// files: `.json` for JSON, or `.yaml` and `.yml` for YAML.
+fn is_json_or_yaml(path : String) -> Bool {
+  path.has_suffix(".json") ||
+  path.has_suffix(".yaml") ||
+  path.has_suffix(".yml")
 }
 
 ///|
