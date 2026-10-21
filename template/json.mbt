@@ -69,7 +69,9 @@ fn write_json(out : @buffer.Buffer, json : Json) -> Unit {
 ///|
 /// A number as smock writes it: `repr`, the text it kept, when it has one,
 /// otherwise the shortest form that reads back as the same 64-bit float.
-fn number_text(n : Double, repr : String?) -> String {
+/// Compact JSON and text templates write numbers with it. It is public so
+/// that the OpenAPI import writes them the same way.
+pub fn number_text(n : Double, repr : String?) -> String {
   match repr {
     Some(text) => text
     None => n.to_string()

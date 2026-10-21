@@ -116,3 +116,23 @@ test "compact JSON keeps member order and writes each number in its shortest for
     ),
   )
 }
+
+///|
+test "a number is written in its shortest form, or as the text it kept" {
+  let text = (json : Json) => {
+    match json {
+      Number(n, repr~) => @template.number_text(n, repr)
+      _ => "not a number"
+    }
+  }
+  guard @json.parse("[1.50, 1e3, -0, 0.1, 12345678901234567890, 1e400]")
+    is Array(numbers) else {
+    fail("not an array")
+  }
+  inspect(
+    numbers.map(text).join(" "),
+    content="1.5 1000 0 0.1 12345678901234567890 1e400",
+  )
+  // A helper's output, such as `fake.decimal`, keeps its decimals.
+  inspect(text(Json::number(1.5, repr="1.50")), content="1.50")
+}
