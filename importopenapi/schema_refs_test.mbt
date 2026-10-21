@@ -505,3 +505,47 @@ test "$dynamicRef is an error; $id at the root of the document, $schema and json
     ),
   )
 }
+
+///|
+test "oneOf and anyOf skip a branch whose $ref names a schema that is only null or false, through a chain of $refs too; a branch whose $ref cannot be followed is merged, and reported once" {
+  let schemas =
+    #|{
+    #|  "Null": { "type": "null" },
+    #|  "Nothing": { "$ref": "#/components/schemas/Null" },
+    #|  "Never": false,
+    #|  "Pet": { "type": "object", "properties": { "name": { "type": "string" } } }
+    #|}
+  inspect(
+    referenced_samples(
+      [
+        "{ \"oneOf\": [{ \"$ref\": \"#/components/schemas/Null\" }, { \"$ref\": \"#/components/schemas/Pet\" }] }",
+        "{ \"anyOf\": [{ \"$ref\": \"#/components/schemas/Nothing\" }, { \"$ref\": \"#/components/schemas/Pet\" }] }",
+        "{ \"oneOf\": [{ \"$ref\": \"#/components/schemas/Never\" }, { \"$ref\": \"#/components/schemas/Pet\" }] }",
+        "{ \"oneOf\": [{ \"$ref\": \"#/components/schemas/Null\" }] }", "{ \"oneOf\": [{ \"$ref\": \"#/components/schemas/Missing\" }, { \"$ref\": \"#/components/schemas/Pet\" }] }",
+      ],
+      schemas,
+    ),
+    content=(
+      #|{ "oneOf": [{ "$ref": "#/components/schemas/Null" }, { "$ref": "#/components/schemas/Pet" }] } => {"name":"string"}
+      #|{ "anyOf": [{ "$ref": "#/components/schemas/Nothing" }, { "$ref": "#/components/schemas/Pet" }] } => {"name":"string"}
+      #|{ "oneOf": [{ "$ref": "#/components/schemas/Never" }, { "$ref": "#/components/schemas/Pet" }] } => {"name":"string"}
+      #|{ "oneOf": [{ "$ref": "#/components/schemas/Null" }] } => null
+      #|{ "oneOf": [{ "$ref": "#/components/schemas/Missing" }, { "$ref": "#/components/schemas/Pet" }] } => petstore.json: /schema/oneOf/0/$ref: the document has nothing at /components/schemas/Missing
+      #|nothing written
+      #|
+    ),
+  )
+  inspect(
+    referenced_samples(
+      [
+        "{ \"oneOf\": [{ \"$ref\": \"#/components/schemas/Null\" }, { \"$ref\": \"#/components/schemas/Pet\" }] }",
+      ],
+      schemas,
+      openapi="3.0.3",
+    ),
+    content=(
+      #|{ "oneOf": [{ "$ref": "#/components/schemas/Null" }, { "$ref": "#/components/schemas/Pet" }] } => {"name":"string"}
+      #|
+    ),
+  )
+}

@@ -269,10 +269,10 @@ fn Sampler::sample(
 /// schema itself, then its branches: each of `allOf`, in order, then the
 /// branch that `oneOf` takes, then the one that `anyOf` takes. `oneOf` and
 /// `anyOf` take their first branch that is neither only null nor `false`,
-/// which allows no value; when each branch is only null or `false`, the
-/// sample is null if one is only null, and else there is no value. `true`
-/// adds nothing, and `false`, as the schema or in `allOf`, leaves no
-/// value.
+/// which allows no value, as written or at the end of its `$ref`s; when
+/// each branch is only null or `false`, the sample is null if one is only
+/// null, and else there is no value. `true` adds nothing, and `false`, as
+/// the schema or in `allOf`, leaves no value.
 fn Sampler::merge(
   self : Sampler,
   merged : Merged,
@@ -333,11 +333,12 @@ fn Sampler::merge(
           if !self.is_schema(at, json) {
             continue
           }
-          if json is False {
+          let target = self.branch_target(at, json)
+          if target is False {
             nevers = true
             continue
           }
-          if is_only_null(json) {
+          if is_only_null(json) || is_only_null(target) {
             nulls = true
             continue
           }
@@ -354,6 +355,42 @@ fn Sampler::merge(
       Some(_) => self.report.warning_at(one_of, "ignored: must be an array")
     }
   }
+}
+
+///|
+/// The schema that the `oneOf` or `anyOf` branch `json` at `pointer`
+/// stands for, to tell whether it is only null or `false`: the schema at
+/// the end of its chain of `$ref`s, or `json` itself when it has no `$ref`,
+/// or when a `$ref` in the chain cannot be followed, lies under a `$id`,
+/// or leads back into the chain. Nothing is reported here, and nothing is
+/// marked as being generated: a branch that is merged reports its own
+/// problems then.
+fn Sampler::branch_target(
+  self : Sampler,
+  pointer : String,
+  json : Json,
+) -> Json {
+  let mark = self.report.mark()
+  let chain = []
+  let mut pointer = pointer
+  let mut target = json
+  while target is Object(schema) &&
+        schema.get("$ref") is Some(String(reference)) {
+    if chain.contains(pointer) || self.under_id(pointer) {
+      target = json
+      break
+    }
+    chain.push(pointer)
+    let at = @definitions.child_pointer(pointer, "$ref")
+    guard self.report.target(self.document, at, reference) is Some(part) else {
+      target = json
+      break
+    }
+    pointer = part.pointer
+    target = part.json
+  }
+  self.report.rollback(mark)
+  target
 }
 
 ///|

@@ -791,12 +791,14 @@ json:
   own, so a branch's `const` still comes before the schema's own
   `example`, in the order of the list above.
 - **`oneOf` and `anyOf`** take their first branch that is not only null,
-  such as `{ type: "null" }`, `{ const: null }` or `{ enum: [null] }`. The
-  branch is merged with the schema's own keywords, after the branches of
-  `allOf`. When every branch is only null, the sample is null.
+  such as `{ type: "null" }`, `{ const: null }` or `{ enum: [null] }`. A
+  branch that is a `$ref` to such a schema, such as a `Null` schema under
+  `components`, counts as only null too. The branch is merged with the
+  schema's own keywords, after the branches of `allOf`. When every branch
+  is only null, the sample is null.
 - **`true` and `false`.** The branch `true` adds nothing. The branch
   `false` allows no value: in `allOf`, the schema then gives no value, and
-  `oneOf` and `anyOf` skip it.
+  `oneOf` and `anyOf` skip it, as written or named by a `$ref`.
 - **Ignored.** `not`, `if`, `then`, `else` and `discriminator` are ignored,
   without a warning.
 - **Wrong types.** An `allOf`, `oneOf` or `anyOf` that is not an array,
