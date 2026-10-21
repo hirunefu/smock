@@ -1260,7 +1260,9 @@ smock import-openapi api/petstore.yaml --mock petstore --output defs/petstore.ya
 
 Put hand changes in another file of the same directory. Generated Stubs
 have no `priority`, so a hand-written Stub with any `priority` is tried
-first, and the next import leaves its file alone:
+first, and the next import leaves its file alone. This override is for
+the `/pets/mine` operation of [Selecting responses](#selecting-responses),
+imported into `defs/petstore.yaml`:
 
 ```yaml
 # defs/petstore-overrides.yaml
@@ -1278,8 +1280,8 @@ stubs:
         message: You have no pet
 ```
 
-`smock check` then warns about each generated Stub that the override
-shadows. That is expected:
+`smock check defs` then warns about each generated Stub that the
+override shadows. That is expected:
 
 ```
 petstore.yaml: /stubs/0: warning: the Stub "petstore.getPet.404" can never match: the Stub "petstore.getPet.none" at petstore-overrides.yaml: /stubs/0 is tried first and matches every request this one would
@@ -1289,6 +1291,12 @@ petstore.yaml: /stubs/1: warning: the Stub "petstore.getPet.200" can never match
 An override that matches on method and path only also wins over the
 Stubs that `Smock-Status` and `Smock-Example` select, as the first warning
 shows.
+
+The warning comes only for a generated Stub whose path is exact, as
+`/pets/mine` is. `smock check` does not compare two patterns. So an
+override of a templated path, written with the generated Stubs' pattern,
+such as `path: { pattern: /v1/pets/[^/]+ }` for the quick start's
+`/pets/{petId}`, gives no warning, though it shadows them just the same.
 
 ### Checking that the file is current
 

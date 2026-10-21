@@ -999,15 +999,19 @@ async test "smock serves an imported file with Smock-Status: a request gets the 
 
 ///|
 async test "a test whose requests cannot set Smock-Status selects the imported 404 for its Session only, with the guide's Ephemeral Stub that copies the generated response" {
+  let ephemeral_stub =
+    #|{"request":{"method":"GET","path":"/pets/mine"},"response":{"status":404}}
+  let guide = @fs.read_file("docs/importing-openapi.md").text()
+  if !guide.contains("-d '\{ephemeral_stub}'") {
+    fail("docs/importing-openapi.md does not show the Ephemeral Stub as it is")
+  }
   with_petstore(my_pet_document, dir => {
     serving_my_pet(dir, smock => {
       let added = smock.admin(
         "POST",
         "/v1/mocks/petstore/stubs",
         headers=[baggage("pet-missing")],
-        body=(
-          #|{"request":{"method":"GET","path":"/pets/mine"},"response":{"status":404}}
-        ),
+        body=ephemeral_stub,
       )
       inspect(added.status, content="201")
       let lines = []
@@ -1051,6 +1055,26 @@ async test "a test whose requests cannot set Smock-Status selects the imported 4
 
 ///|
 async test "the guide's override in another file survives a re-import with --overwrite on, and smock check warns about each generated Stub it shadows, the Smock-Status one included" {
+  let override_yaml =
+    #|version: 1
+    #|stubs:
+    #|  - id: petstore.getPet.none
+    #|    mock: petstore
+    #|    priority: 1
+    #|    request:
+    #|      method: GET
+    #|      path: /pets/mine
+    #|    response:
+    #|      status: 404
+    #|      json:
+    #|        message: You have no pet
+    #|
+  let guide = @fs.read_file("docs/importing-openapi.md").text()
+  if !guide.contains(
+      "```yaml\n# defs/petstore-overrides.yaml\n\{override_yaml}```\n",
+    ) {
+    fail("docs/importing-openapi.md does not show the override as it is")
+  }
   with_petstore(my_pet_document, dir => {
     let args = [
       "api/petstore.json", "--mock", "petstore", "--output", "defs/petstore.yaml",
@@ -1063,23 +1087,7 @@ async test "the guide's override in another file survives a re-import with --ove
         #|
       ),
     )
-    @fs.write_file(
-      "\{dir}/defs/petstore-overrides.yaml",
-      (
-        #|version: 1
-        #|stubs:
-        #|  - id: petstore.getPet.none
-        #|    mock: petstore
-        #|    priority: 1
-        #|    request:
-        #|      method: GET
-        #|      path: /pets/mine
-        #|    response:
-        #|      status: 404
-        #|      json:
-        #|        message: You have no pet
-      ),
-    )
+    @fs.write_file("\{dir}/defs/petstore-overrides.yaml", override_yaml)
     inspect(
       import_openapi([..args, "--overwrite", "on"], cwd=dir),
       content=(
@@ -1088,8 +1096,9 @@ async test "the guide's override in another file survives a re-import with --ove
         #|
       ),
     )
+    let checked = exit_report(smock_output(["check", "defs"], cwd=dir))
     inspect(
-      exit_report(smock_output(["check", "defs"], cwd=dir)),
+      checked,
       content=(
         #|status 0
         #|petstore.yaml: /stubs/0: warning: the Stub "petstore.getPet.404" can never match: the Stub "petstore.getPet.none" at petstore-overrides.yaml: /stubs/0 is tried first and matches every request this one would
@@ -1097,6 +1106,11 @@ async test "the guide's override in another file survives a re-import with --ove
         #|
       ),
     )
+    // The guide shows the warnings as smock check prints them.
+    let warnings = checked["status 0\n".length():].to_owned()
+    if !guide.contains("```\n\{warnings}```\n") {
+      fail("docs/importing-openapi.md does not show the warnings as they are")
+    }
   })
 }
 
