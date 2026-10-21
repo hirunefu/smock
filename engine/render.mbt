@@ -239,6 +239,9 @@ pub fn RenderFailure::message(self : RenderFailure) -> String {
 ///   Without it, the rendering shows the one the seed picks. A Stub with
 ///   `response` takes 0 only.
 ///
+/// A response that serves byte ranges answers the sample's `Range` field,
+/// as it answers a request's: with 206, 416 or the whole body.
+///
 /// Rendering decides no Fault, and changes nothing in the engine: no
 /// generator advances.
 pub fn Engine::render(
@@ -262,9 +265,9 @@ pub fn Engine::render(
   }
   let incoming = Incoming::new(sample.to_request())
   // The steps of the match decision that build the response, as for a
-  // request: the one draw, the pick, then rendering and planning. No
-  // Scenario moves, no Fault is decided, and no Variable is rendered,
-  // written or read.
+  // request: the one draw, the pick, then rendering and planning, which
+  // answers the sample's Range field. No Scenario moves, no Fault is
+  // decided, and no Variable is rendered, written or read.
   let draw = @prng.Generator(seed).uint64()
   let response_index = match (response, stub.total_weight) {
     // A Stub with `response` shows no index, whichever it was asked for.
@@ -274,6 +277,8 @@ pub fn Engine::render(
   }
   let response = stub.responses[response_index.unwrap_or(0)].response
   let (plan, template_error) = match response.template {
+    None if response.serves_ranges =>
+      (range_response(response, incoming.request), None)
     None => (stub_response(response), None)
     Some(template) =>
       respond(
@@ -354,7 +359,7 @@ pub impl ToJson for Rendering with fn to_json(self) {
 /// The `Body` schema of the Admin API document: the bytes as text when they
 /// are UTF-8, otherwise in base64. `bytes` are the first bytes of a body of
 /// `size` bytes, by default all of them.
-fn body_json(bytes : Bytes, size? : Int = bytes.length()) -> Json {
+fn body_json(bytes : BytesView, size? : Int = bytes.length()) -> Json {
   let (encoding, data) = try @utf8.decode(bytes) catch {
     _ => ("base64", @base64.encode(bytes))
   } noraise {

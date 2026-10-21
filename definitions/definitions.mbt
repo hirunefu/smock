@@ -788,6 +788,11 @@ pub struct Response {
   /// values and the body or events of each response, rendered for its
   /// request, instead of `headers` and `body`.
   template : ResponseTemplate?
+  /// Whether the response serves single byte ranges of its body to Range
+  /// requests: it is not a template, its status is 200, its body comes from
+  /// a body file, and its headers give neither `Content-Range` nor
+  /// `Accept-Ranges`.
+  serves_ranges : Bool
 } derive(Debug, Eq)
 
 ///|

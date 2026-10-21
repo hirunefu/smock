@@ -66,8 +66,7 @@ covers part of the need, the item says what.
   request's Host.
   [Environments told apart by port](#environments-told-apart-by-port)
   gives the two ways round it.
-- **Response limits.** A response's status is from 200 to 599, and body
-  files are always sent whole, without Range requests.
+- **Response limits.** A response's status is from 200 to 599.
 - **OpenAPI import and export, and a GUI.** The translation is done by
   hand, and Definition files are edited as text. Editors can check them
   against the JSON Schema
@@ -556,8 +555,12 @@ every kind:
   `Content-Disposition: attachment` with the file's name: add that
   header if clients need it (the example's files have `sendFileAsBody`
   set to true). A body file is a template only with `template: true`,
-  and must then be UTF-8. Range requests have no counterpart
+  and must then be UTF-8. As in Mockoon, an untemplated body file answers
+  Range requests
   ([file serving](https://mockoon.com/docs/latest/response-configuration/file-serving/)).
+  smock serves a single byte range of a 200 to a GET, and a malformed
+  `Range` gets the whole body with 200, where Mockoon answers 400
+  ([Range requests](definition-files.md#range-requests)).
 - **A templated file path and `fallbackTo404`.** A Stub names one fixed
   body file, and a missing body file makes the definition set invalid,
   which `smock check` reports. For a `filePath` such as

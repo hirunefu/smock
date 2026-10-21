@@ -305,9 +305,9 @@ async test "smock render reads the directory as smock serve does: body files fro
     inspect(
       out.join("\n"),
       content=(
-        #|status 0: {"stub":"get-user","mock":"users","response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"failed":[]}
-        #|status 0: {"stub":"get-user","mock":"users","response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"from bodies\n","size":12,"truncated":false},"events":null},"failed":[]}
-        #|status 0: {"stub":"get-user","mock":"users","response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"from bodies\n","size":12,"truncated":false},"events":null},"failed":[]}
+        #|status 0: {"stub":"get-user","mock":"users","response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"},{"name":"Accept-Ranges","value":"bytes"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"failed":[]}
+        #|status 0: {"stub":"get-user","mock":"users","response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"},{"name":"Accept-Ranges","value":"bytes"}],"body":{"encoding":"utf-8","data":"from bodies\n","size":12,"truncated":false},"events":null},"failed":[]}
+        #|status 0: {"stub":"get-user","mock":"users","response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"},{"name":"Accept-Ranges","value":"bytes"}],"body":{"encoding":"utf-8","data":"from bodies\n","size":12,"truncated":false},"events":null},"failed":[]}
       ),
     )
   })
@@ -422,7 +422,7 @@ async test "the Admin render operation answers with the rendering, the failed co
         "\{matched.status}\n\{masked(matched.body)}\n\{failed.status}\n\{masked(failed.body)}",
         content=(
           #|200
-          #|{"stub":"get-user","mock":"users","time":"<time>","seed":<seed>,"responseIndex":null,"response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"templateError":null,"failed":[],"warnings":[]}
+          #|{"stub":"get-user","mock":"users","time":"<time>","seed":<seed>,"responseIndex":null,"response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"},{"name":"Accept-Ranges","value":"bytes"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"templateError":null,"failed":[],"warnings":[]}
           #|200
           #|{"stub":"create-user","mock":"users","time":"<time>","seed":<seed>,"responseIndex":null,"response":{"status":201,"headers":[{"name":"Location","value":"/users/7"},{"name":"Set-Cookie","value":"a=1"},{"name":"Set-Cookie","value":"b=2"},{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":7}","size":8,"truncated":false},"events":null},"templateError":null,"failed":[{"condition":"query:dry","expected":"yes","actual":["no"]},{"condition":"header:x-api-key","expected":"secret","actual":[]},{"condition":"body","expected":{"json":{"name":"Zoë"}},"actual":[""]}],"warnings":[]}
         ),
@@ -691,9 +691,9 @@ async test "the time and the seed can be given to smock render and to the Admin 
         #|status 2
         #|stderr:
         #|smock render: invalid value "" for --request: must not be empty
-        #|?time=2026-10-12T14:30:05Z&seed=42: 200 {"stub":"get-user","mock":"users","response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"failed":[]}, time 2026-10-12T14:30:05.000Z, seed 42
-        #|?time=2026-10-12T16%3A30%3A05%2B02%3A00: 200 {"stub":"get-user","mock":"users","response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"failed":[]}, time 2026-10-12T14:30:05.000Z, seed <seed>
-        #|?seed=7&other=ignored: 200 {"stub":"get-user","mock":"users","response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"failed":[]}, time <time>, seed 7
+        #|?time=2026-10-12T14:30:05Z&seed=42: 200 {"stub":"get-user","mock":"users","response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"},{"name":"Accept-Ranges","value":"bytes"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"failed":[]}, time 2026-10-12T14:30:05.000Z, seed 42
+        #|?time=2026-10-12T16%3A30%3A05%2B02%3A00: 200 {"stub":"get-user","mock":"users","response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"},{"name":"Accept-Ranges","value":"bytes"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"failed":[]}, time 2026-10-12T14:30:05.000Z, seed <seed>
+        #|?seed=7&other=ignored: 200 {"stub":"get-user","mock":"users","response":{"status":200,"headers":[{"name":"Content-Type","value":"application/json"},{"name":"Accept-Ranges","value":"bytes"}],"body":{"encoding":"utf-8","data":"{\"id\":1,\"name\":\"Alice\"}\n","size":24,"truncated":false},"events":null},"failed":[]}, time <time>, seed 7
         #|?time=yesterday: 400 {"error":"invalid_request","message":"the time query parameter must be an RFC 3339 date-time, such as 2026-10-12T14:30:05Z","warnings":[]}
         #|?time=2026-10-12T14:30:05: 400 {"error":"invalid_request","message":"the time query parameter must be an RFC 3339 date-time, such as 2026-10-12T14:30:05Z","warnings":[]}
         #|?seed=1.5: 400 {"error":"invalid_request","message":"the seed query parameter must be an integer from 0 to 9007199254740991","warnings":[]}
