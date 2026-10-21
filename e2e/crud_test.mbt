@@ -100,3 +100,66 @@ async test "smock render and the Admin render operation refuse a CRUD Stub for n
     })
   })
 }
+
+///|
+async test "smock check warns about an override placed after a CRUD Stub and still exits 0; over HTTP, a request the CRUD Stub does not serve gets its Near miss, which the Journal shows" {
+  let defs =
+    #|mocks:
+    #|  - name: shop
+    #|data:
+    #|  - { mock: shop, name: orders, key: id, jsonFile: orders.json }
+    #|stubs:
+    #|  - id: orders
+    #|    mock: shop
+    #|    crud: { bucket: orders, path: /api/v1/orders }
+    #|  - id: order-1001
+    #|    mock: shop
+    #|    request: { method: GET, path: /api/v1/orders/1001 }
+    #|    response: { status: 200, json: { id: 1001, overridden: true } }
+  let orders =
+    #|[{ "id": 1001, "status": "paid" }]
+  with_definitions([("shop.yaml", defs), ("files/orders.json", orders)], dir => {
+    inspect(
+      check([dir]),
+      content=(
+        #|status 0
+        #|shop.yaml: /stubs/1: warning: the Stub "order-1001" can never match: the Stub "orders" at shop.yaml: /stubs/0 is tried first and matches every request this one would
+        #|
+      ),
+    )
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let session = baggage("crud-near-miss")
+      inspect(
+        smock.send("PATCH", "/api/v1/orders", headers=[session]),
+        content=(
+          #|HTTP/1.1 404 Not Found
+          #|Content-Type: application/json
+          #|Smock-Near-Miss: orders; failed=method
+          #|Smock-Mock: shop; via=default
+          #|Content-Length: 27
+          #|
+          #|{"error":"no Stub matched"}
+        ),
+      )
+      let unmatched = smock.admin("GET", "/v1/journal/unmatched", headers=[
+        session,
+      ])
+      inspect(unmatched.status, content="200")
+      guard unmatched.json()
+        is Object({ "entries": [Object({ "nearMiss": near_miss, .. })], .. }) else {
+        fail("not one entry with a Near miss: \{unmatched.body}")
+      }
+      json_inspect(near_miss, content={
+        "stub": "orders",
+        "stubSource": "file",
+        "failed": [
+          {
+            "condition": "method",
+            "expected": { "crud": ["GET", "POST"] },
+            "actual": ["PATCH"],
+          },
+        ],
+      })
+    })
+  })
+}

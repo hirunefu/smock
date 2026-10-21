@@ -2250,7 +2250,7 @@
         "additionalProperties": false
       },
       "NearMiss": {
-        "description": "The Stub that came closest to matching a request that matched nothing: the candidate with the fewest failed conditions, the earlier one in matching order on a tie. Each of method, path, each listed query parameter, each listed header, each listed cookie, body, each field of a form body condition, each path of an xml body condition, and the state a `scenario` clause requires counts as one condition.",
+        "description": "The Stub that came closest to matching a request that matched nothing: the candidate with the fewest failed conditions, the earlier one in matching order on a tie. Each of method, path, each listed query parameter, each listed header, each listed cookie, body, each field of a form body condition, each path of an xml body condition, and the state a `scenario` clause requires counts as one condition. A CRUD Stub counts two: method and path.",
         "type": "object",
         "properties": {
           "stub": {
@@ -2282,13 +2282,16 @@
             "pattern": "^(method|path|body|query:[\\s\\S]*|header:.+|cookie:[\\s\\S]*|form:[\\s\\S]*|xml:/.+|scenario:[\\s\\S]+)$"
           },
           "expected": {
-            "description": "The condition as the Stub gives it, operators included: an exact string, a pattern, an operator such as `{\"$not\": ...}` or `{\"$exists\": false}`, a json condition, or a form or xml condition with no field or path, `{\"form\": {}}` or `{\"xml\": {}}`, which fails as `body`. For `scenario:<name>`, the state the Stub requires, as an exact string.",
+            "description": "The condition as the Stub gives it, operators included: an exact string, a pattern, an operator such as `{\"$not\": ...}` or `{\"$exists\": false}`, a json condition, or a form or xml condition with no field or path, `{\"form\": {}}` or `{\"xml\": {}}`, which fails as `body`. For `scenario:<name>`, the state the Stub requires, as an exact string. For a CRUD Stub, `{\"crud\": ...}`.",
             "anyOf": [
               {
                 "$ref": "../schema/v1/definitions.json#/$defs/valueCondition"
               },
               {
                 "$ref": "../schema/v1/definitions.json#/$defs/request/properties/body"
+              },
+              {
+                "$ref": "#/components/schemas/CrudExpected"
               }
             ]
           },
@@ -2301,6 +2304,37 @@
           }
         },
         "required": ["condition", "expected", "actual"],
+        "additionalProperties": false
+      },
+      "CrudExpected": {
+        "description": "What a CRUD Stub expects in a condition it failed. For `path`, its path, the list path: the request path was neither it nor an item path under it. For `method`, the methods it serves at the request path's shape, or at either shape when `path` failed too, each once, in the order GET, POST, PUT, PATCH, DELETE: GET and POST at the list path, and GET, PUT, PATCH and DELETE at an item path.",
+        "type": "object",
+        "properties": {
+          "crud": {
+            "anyOf": [
+              {
+                "$ref": "../schema/v1/definitions.json#/$defs/crud/properties/path"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "GET",
+                    "POST",
+                    "PUT",
+                    "PATCH",
+                    "DELETE"
+                  ]
+                },
+                "minItems": 1,
+                "maxItems": 5
+              }
+            ]
+          }
+        },
+        "required": [
+          "crud"
+        ],
         "additionalProperties": false
       },
       "VerifyRequest": {
