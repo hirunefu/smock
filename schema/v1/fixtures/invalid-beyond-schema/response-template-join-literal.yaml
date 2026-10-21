@@ -1,0 +1,10 @@
+mocks:
+  - name: ids
+stubs:
+  - id: ids
+    mock: ids
+    response:
+      status: 200
+      template: true
+      json:
+        ids: ${join('a,b', ',')}

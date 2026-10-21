@@ -11,6 +11,8 @@ priv enum Kind {
   Text
   /// A text, or an array.
   TextOrArray
+  /// An array.
+  Array
   /// A number without a fraction, or a string that is one.
   Integer
 }
@@ -21,6 +23,7 @@ fn Kind::wanted(self : Kind) -> String {
   match self {
     Text => "a string, a number or a boolean"
     TextOrArray => "a string, a number, a boolean or an array"
+    Array => "an array"
     Integer => "an integer, or a string that is one"
   }
 }
@@ -31,6 +34,7 @@ fn Kind::accepts(self : Kind, json : Json) -> Bool {
   match self {
     Text => text_value(json) is Some(_)
     TextOrArray => json is Array(_) || text_value(json) is Some(_)
+    Array => json is Array(_)
     Integer => integer_value(json) is Some(_)
   }
 }

@@ -14,9 +14,12 @@ of each GitHub release include its section
   from every `Cookie` field, with quotes kept and nothing percent-decoded.
   It is the first value of the cookie, and `$each` over it walks every
   value.
-- Template helpers for text: `len`, `concat`, `padStart` and `padEnd`.
-  Lengths count Unicode code points. A text argument may be a number or a
-  boolean, taken as its text.
+- Template helpers for text: `len`, `concat`, `padStart`, `padEnd`,
+  `substr`, `indexOf`, `includes`, `replace`, `replaceAll`, `split` and
+  `join`. Lengths and positions count Unicode code points. A text argument
+  may be a number or a boolean, taken as its text. `replace` and
+  `replaceAll` take the replacement literally. `split` gives an array that
+  `$each` can walk, and `join` turns an array back into text.
 - Template helpers `uppercase`, `lowercase` and `trim`, from the data of
   Unicode 18.0.0, built in: simple case mapping, one code point to one and
   with no locale (`ß` stays `ß`), and White_Space removed at both ends.

@@ -342,7 +342,7 @@ fn markup_escaped(s : String) -> String {
 
 ///|
 /// The length of `s` in UTF-8, in bytes.
-fn utf8_length(s : String) -> Int {
+fn utf8_length(s : StringView) -> Int {
   let mut n = 0
   for c in s {
     n += char_utf8_length(c)
