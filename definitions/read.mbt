@@ -486,7 +486,9 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
   self.require(stub, pointer, "id")
   self.require(stub, pointer, "mock")
   self.require(stub, pointer, "response")
-  Some({ id, mock, priority, request, scenario, response, fault, })
+  // A Stub with `response` has that one response, of weight 1.
+  let responses = ReadOnlyArray::from_array([{ weight: 1, response, }])
+  Some({ id, mock, priority, request, scenario, responses, fault, })
 }
 
 ///|
