@@ -113,28 +113,28 @@ priv struct Reader {
   body_files : Map[String, Bytes]
   /// The environment variables templates may read.
   env : @template.Env
-  /// The Data buckets templates may read, by the name of their Mock: those
-  /// any file of the set declares.
-  template_buckets : Map[String, @template.Buckets]
+  /// The Data buckets Stubs may read and write, by the name of their Mock:
+  /// those any file of the set declares.
+  mock_buckets : Map[String, MockBuckets]
 }
 
 ///|
 fn Reader::new(
   declared~ : Set[String],
-  buckets~ : Map[String, Array[String]],
+  buckets~ : Map[String, Map[String, Bool]],
   body_files~ : Map[String, Bytes],
   env~ : @template.Env,
 ) -> Reader {
-  let template_buckets = Map([])
-  for mock, names in buckets {
-    template_buckets[mock] = @template.Buckets(names)
+  let mock_buckets = Map([])
+  for mock, keyed in buckets {
+    mock_buckets[mock] = MockBuckets::new(keyed)
   }
   {
     diagnostics: [],
     declared,
     body_files,
     env,
-    template_buckets,
+    mock_buckets,
     mocks: [],
     mock_names: Map([]),
     hosts: Map([]),
@@ -259,7 +259,7 @@ fn Reader::read_file(
     diagnostics: self.diagnostics,
     body_files: Some(self.body_files),
     env: self.env,
-    buckets: self.template_buckets,
+    buckets: self.mock_buckets,
   }
   let top = match parsed {
     Ok(top) => top
@@ -321,9 +321,9 @@ priv struct File {
   body_files : Map[String, Bytes]?
   /// The environment variables templates may read.
   env : @template.Env
-  /// The Data buckets a Stub's templates may read, by the name of the Mock
+  /// The Data buckets a Stub may read and write, by the name of the Mock
   /// that declares them. A Mock that declares none is not listed.
-  buckets : Map[String, @template.Buckets]
+  buckets : Map[String, MockBuckets]
 }
 
 ///|
@@ -507,14 +507,16 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
   }
   let mut weighted = None
   let mut variables = no_variable_writes
+  let mut data_writes = no_data_writes
   let mut fault = None
   let mut scenario = None
-  // The Data buckets its templates may read: those of its Mock, wherever
+  // The Data buckets it may read and write: those of its Mock, wherever
   // `mock` is among its members.
-  let buckets = match stub.get("mock") {
-    Some(String(mock)) => self.buckets.get(mock).unwrap_or(@template.no_buckets)
-    _ => @template.no_buckets
+  let mock_buckets = match stub.get("mock") {
+    Some(String(mock)) => self.buckets.get(mock).unwrap_or(no_mock_buckets)
+    _ => no_mock_buckets
   }
+  let buckets = mock_buckets.templates
   for key, value in stub {
     let field = child_pointer(pointer, key)
     match key {
@@ -527,6 +529,13 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
         weighted = Some(self.read_responses(pointer, field, value, buckets~))
       "variables" =>
         variables = self.read_variables(pointer, field, value, buckets~)
+      "dataWrites" =>
+        data_writes = self.read_data_writes(
+          pointer,
+          field,
+          value,
+          buckets=mock_buckets,
+        )
       "priority" => priority = self.read_priority(field, value)
       "fault" => fault = self.read_fault(field, value)
       "scenario" => scenario = self.read_scenario(field, value)
@@ -559,6 +568,7 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
       responses: ReadOnlyArray::from_array(responses),
       total_weight,
       variables,
+      data_writes,
     }),
     fault,
   })
@@ -606,7 +616,7 @@ fn File::read_variables(
         pointer=template_pointer(stub_pointer, field),
         env=self.env,
         buckets~,
-        variable=true,
+        value="a Variable's value",
       ) {
       Ok(template) => {
         names.push(name)

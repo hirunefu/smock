@@ -1,0 +1,12 @@
+{
+  "mocks": [{ "name": "shop" }],
+  "data": [{ "mock": "shop", "name": "visits", "json": 0 }],
+  "stubs": [
+    {
+      "id": "visit",
+      "mock": "shop",
+      "dataWrites": [{ "op": "set", "bucket": "visits" }],
+      "response": { "status": 200 }
+    }
+  ]
+}

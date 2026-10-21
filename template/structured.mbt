@@ -69,27 +69,62 @@ pub fn Structured::reads_data(self : Structured) -> Bool {
 }
 
 ///|
+/// The value the template always renders when it is literal: when no
+/// expression, `$each` or `$if` is in it, wherever. `None` for any other
+/// template, whose value depends on the request. A `$${` in a literal
+/// gives `${`, and a `$$` key `$`, as they render.
+pub fn Structured::literal(self : Structured) -> Json? {
+  literal_value(self.root)
+}
+
+///|
+/// The value `node` always renders, when nothing in it is rendered.
+fn literal_value(node : Node) -> Json? {
+  match node {
+    Static(json) => Some(json)
+    Members(members) => {
+      let object = Map([])
+      for entry in members {
+        guard literal_value(entry.1) is Some(value) else { return None }
+        object[entry.0] = value
+      }
+      Some(Json::object(object))
+    }
+    Elements(elements) => {
+      let array = []
+      for element in elements {
+        guard literal_value(element) is Some(value) else { return None }
+        array.push(value)
+      }
+      Some(Json::array(array))
+    }
+    Interpolated(_, _) | Single(_, _) | Each(_, _, _, _) | If(_, _, _, _) =>
+      None
+  }
+}
+
+///|
 /// The most loop iterations one response runs, in all.
 let max_iterations : Int = 10_000
 
 ///|
 /// Parses `source` as a structured template, for the field at `pointer`,
 /// within the Stub. `env` holds the environment variables it may read, and
-/// `buckets` the Data buckets; by default, none. With `variable`, it is the
-/// value of a Variable rather than a `json`, which the messages say.
-/// Returns the template, or every problem found.
+/// `buckets` the Data buckets; by default, none. With `value`, it is a
+/// value rather than a `json`, such as the value of a Variable, which
+/// `value` names as the messages say: `a Variable's value`. Returns the
+/// template, or every problem found.
 pub fn Structured::parse(
   source : Json,
   pointer~ : String,
   env? : Env = no_env,
   buckets? : Buckets = no_buckets,
-  variable? : Bool = false,
+  value? : String,
 ) -> Result[Structured, Array[Problem]] {
   let problems = []
-  let (root_name, one) = if variable {
-    ("a Variable's value", "one value")
-  } else {
-    ("json", "one response")
+  let (root_name, one) = match value {
+    Some(value) => (value, "one value")
+    None => ("json", "one response")
   }
   let scope = {
     vars: [],

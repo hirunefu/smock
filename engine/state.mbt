@@ -130,6 +130,14 @@ fn value_bytes(value : Json) -> Int64 {
 }
 
 ///|
+/// The bytes a member named `name` whose value is `value` adds to an
+/// object's count: the name as a JSON string, the colon and the value,
+/// without the comma before it.
+fn member_bytes(name : String, value : Json) -> Int64 {
+  @template.compact_length(Json::string(name)) + 1L + value_bytes(value)
+}
+
+///|
 /// The response to a request whose writes the bound on per-Session state
 /// refused: 507, with what the bound counts.
 fn state_limit_reached(stub : String, message : String) -> ResponsePlan {

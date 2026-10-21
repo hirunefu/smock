@@ -472,6 +472,8 @@ pub fn Engine::handle(
   let mut scenario : ScenarioMove? = None
   let mut response_index = None
   let mut variables_written = none_written
+  let mut data_written = no_buckets_written
+  let mut data_error = None
   let mut template_error = None
   let mut near_miss = None
   let plan : ResponsePlan = match matched {
@@ -507,23 +509,26 @@ pub fn Engine::handle(
           let draw = generator.unwrap_or(rand).uint64()
           // Templates read the Data buckets of the Mock that answered: the
           // copy of each that the Session holds, or else its initial value.
-          // The values of `variables` look the copies up, and a response
-          // only when one of its templates reads `data`.
+          // The values of `variables` and `dataWrites` look the copies up,
+          // and a response only when one of its templates reads `data`.
           let data = match mock {
             Some(mock) => mock.initial_data
             None => no_data
           }
-          // 3. The Variables: each value is rendered, in the order written,
-          //    against the Variables as they were before the request,
-          //    drawing from the helper generator first; then all are written
-          //    at once, if they fit within the bound on per-Session state.
-          //    The response renders on from there, and sees the new values.
-          //    A value that fails to render, or writes that do not fit,
-          //    write none, and no response is picked: the request gets the
-          //    template failure, or 507.
+          // 3. The writes: the value of each Variable is rendered, in the
+          //    order written, then the value of each data write, all
+          //    against the state from before the request, drawing from the
+          //    helper generator first; the data writes are applied in
+          //    order to working copies; and all is stored at once, if it
+          //    fits within the bound on per-Session state. The response
+          //    renders on from there, and sees the state after the writes.
+          //    A value that fails to render, a data write that cannot be
+          //    applied, or writes that do not fit, write nothing, and no
+          //    response is picked: the request gets the template failure,
+          //    the data write failure, or 507.
           let mut context : @template.Context? = None
           let mut failed : ResponsePlan? = None
-          if ordinary.writes_variables() {
+          if ordinary.writes_variables() || ordinary.writes_data() {
             let first = first_context(
               incoming,
               now~,
@@ -532,24 +537,28 @@ pub fn Engine::handle(
               data~,
               copies=self.store.copy_values(stub.mock, session),
             )
+            let buckets = match mock {
+              Some(mock) => mock.buckets
+              None => no_buckets
+            }
             try
-              self.write_variables(
-                stub.mock,
-                ordinary.variables,
-                session,
-                first,
-              )
+              self.write_state(stub.mock, buckets, ordinary, session, first)
             catch {
               ValueFailed(error) => {
                 template_error = Some(error)
                 failed = Some(template_failed(stub.id, error))
               }
+              ApplyFailed(error) => {
+                data_error = Some(error)
+                failed = Some(data_write_failed(stub.id, error))
+              }
               StateLimitReached(message) =>
                 failed = Some(state_limit_reached(stub.id, message))
             } noraise {
-              next => {
-                context = Some(next)
+              written => {
+                context = Some(written.context)
                 variables_written = ordinary.variables.names
+                data_written = written.buckets
               }
             }
           }
@@ -584,7 +593,7 @@ pub fn Engine::handle(
                 },
               ) catch {
                 RenderError(at~, message~) => {
-                  let error = { at, message, }
+                  let error = TemplateError::{ at, message, }
                   template_error = Some(error)
                   template_failed(stub.id, error)
                 }
@@ -649,6 +658,8 @@ pub fn Engine::handle(
         scenario~,
         response_index~,
         variables_written~,
+        data_written~,
+        data_error~,
         near_miss~,
         plan~,
         template_error~,
@@ -667,6 +678,11 @@ pub fn Engine::handle(
 /// answered, so this only stands in for its buckets' values. It is never
 /// changed.
 let no_data : Map[String, Json] = Map([])
+
+///|
+/// The Data buckets of no Mock. A matched Stub always has the Mock that
+/// answered, so this only stands in for its buckets.
+let no_buckets : ReadOnlyArray[@definitions.DataBucket] = []
 
 ///|
 /// The Stub that matched a request, with the generator its Fault decisions

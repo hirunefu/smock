@@ -1881,6 +1881,12 @@ order:
    [`responses`](#several-responses), then rendered. It sees the new
    values.
 
+A Stub with [`dataWrites`](#writing-buckets-datawrites) renders the value
+of each write after the values of its Variables, against the same state
+from before the request, and stores the writes with the Variables, all at
+once or not at all ([When data is
+written](#when-data-is-written)).
+
 A value that fails to render writes none of the Stub's Variables. The
 request gets the [template failure](#missing-values-and-render-errors),
 500 with an `at` under `/variables/NAME`, such as
@@ -2138,7 +2144,9 @@ For the [`login` Stub above](#variables), a sample with the body
 `{"user":"ann","previous":"bob"}`.
 
 A rendering reads the initial value of each [Data bucket](#data-buckets)
-of the Stub's Mock.
+of the Stub's Mock. It does not render or write the Stub's
+[`dataWrites`](#writing-buckets-datawrites), so the response reads the data
+as it is.
 
 ## Data buckets
 
@@ -2261,9 +2269,9 @@ of a Stub of the bucket's Mock, the values of `variables` included.
 A Session reads a bucket's initial value until it first writes to the
 bucket. That write gives the Session its own copy, which its requests read
 from then on. Other Sessions still read the initial value, or their own
-copies. For now, a test writes its Session's copy through the Admin API
-([Data buckets through the Admin
-API](#data-buckets-through-the-admin-api)).
+copies. A Stub writes with [`dataWrites`](#writing-buckets-datawrites),
+and a test can set its Session's copy through the Admin API ([Data buckets
+through the Admin API](#data-buckets-through-the-admin-api)).
 
 - Reads never copy, so a Session that only reads costs no memory.
 - Copies are kept per Mock, per
@@ -2277,6 +2285,147 @@ API](#data-buckets-through-the-admin-api)).
 - `smock render` and the Admin render operation read each bucket's initial
   value, also when the sample names a Session that holds a copy. A
   rendering never reads a Session's copy.
+
+### Writing buckets: `dataWrites`
+
+A Stub's `dataWrites` writes to the buckets of its Mock when the Stub
+matches. The writes go to the copies of the request's Session:
+
+```yaml
+data:
+  - { mock: shop, name: visits, json: 0 }
+stubs:
+  - id: visit
+    mock: shop
+    request: { method: GET, path: /visit }
+    dataWrites:
+      - { op: set, bucket: visits, value: "${add(data.visits, 1)}" }
+    response: { status: 200, template: true, json: { visits: "${data.visits}" } }
+```
+
+Three calls in one Session answer `{"visits":1}`, `{"visits":2}` and
+`{"visits":3}`. Another Session starts again from 1.
+
+- `dataWrites` is a list of 1 to 100 writes, applied in order. It sits
+  beside `response` or `responses`, so a Stub writes once, whichever
+  response is picked.
+- Each write has `op`, `bucket`, and the members its op takes, and no
+  others:
+
+  | `op` | Members | Effect |
+  |---|---|---|
+  | `set` | `value` | The bucket becomes the value. |
+  | `merge` | `value` | A shallow merge of the value, an object, into the bucket, which must hold an object. Each member replaces the member of the same name in its place, or is added at the end. `null` is stored as null. |
+  | `append` | `value` | The value is appended to the bucket, which must hold an array. |
+
+- `bucket` names a bucket of the Stub's Mock, as written. It is never a
+  template.
+- `value` is any JSON. It is always a [structured
+  template](#structured-templates), whether or not a response has
+  `template: true`: `${…}` inserts a value, and `$${` writes `${`. As at
+  the root of `json`, a `$if` at its root needs `else`.
+- Each value is bounded as a rendered body is: at most 1 MiB of compact
+  JSON, and at most 10,000 loop iterations. Past either is a render error.
+- A counter is a `set` with a helper, as above. `merge` and `append` keep
+  the rest of the bucket: `{ op: append, bucket: cart, value: "${body}" }`
+  adds the request's body to a cart.
+- Writes to keyed buckets, with `key`, and the op `remove` come in a later
+  version. For now they are errors when loading.
+- An [Ephemeral Stub](../README.md#sessions-and-ephemeral-stubs) takes
+  `dataWrites` too, over the buckets of its Mock, and writes the copies of
+  its Session.
+
+#### When data is written
+
+The writes are made at the match decision, together with the Stub's
+[Variables](#when-variables-are-written), in this order:
+
+1. The Scenario moves, and the request takes its one random draw.
+2. The value of each Variable is rendered, then the value of each write,
+   in the order written, all against the state from before this request,
+   Variables included. So `${add(data.visits, 1)}` counts, and a write
+   that reads `vars.NAME` sees the Variable as it was before the request.
+3. The writes are applied in order, as if to working copies of the
+   buckets: a write sees what the writes before it did.
+4. The [state bound](#copies-and-the-state-bound) is checked.
+5. The Variables and the copies are stored at once.
+6. The response is picked, rendered and planned. It sees the data after
+   the writes.
+
+The helpers draw for the values of the Variables first, then for each
+write's value, then for the response, so [`fault.seed` and
+`--seed`](#seeds) replay them.
+
+Only a Session's first write to a bucket copies the bucket. Later writes
+change the copy in place, and the state bound counts what each adds or
+replaces, without measuring the copy again.
+
+Once stored, the writes stand: a delay, a connection Fault, a response
+that fails to render, a client that leaves, or a Journal that is off does
+not undo them. Each request sees the writes of every request that reached
+smock before it, also while that request's delay still runs.
+
+#### When a write fails
+
+The writes are all or nothing. When any of steps 2 to 4 fails, nothing is
+written, Variables included:
+
+- A value that fails to render gives the [template
+  failure](#missing-values-and-render-errors): 500, with an `at` under
+  `/dataWrites/<i>/value`.
+- A write that cannot be applied gives 500, with
+  `Content-Type: application/json`, the write's pointer and what went
+  wrong:
+
+  ```json
+  {"error":"data write failed","stub":"visit","at":"/dataWrites/0","message":"the Data bucket \"visits\" holds a number, and \"merge\" needs an object"}
+  ```
+
+  A `merge` whose value is not an object, a `merge` into a bucket that
+  holds no object, and an `append` to a bucket that holds no array cannot
+  be applied.
+- Writes that would pass the state bound get 507, as Variables do, and
+  count in `smock_state_writes_refused_total`.
+
+After any of these, no response is picked. The Scenario move stands, the
+Stub's delay still applies, and a connection Fault still replaces the
+answer, as for a template failure.
+
+An Ephemeral Stub is not read again at a reload. When a reload removes
+its bucket, or gives the bucket `key`, its write fails to apply in the
+same way, and nothing is written. Its template reads of a removed bucket
+are missing, so `${add(data.visits ?? 0, 1)}` still renders.
+
+These are errors when loading, reported by `smock check`, at startup, by
+a reload, which then keeps the files it serves, and as 400 `invalid_stub`
+for an Ephemeral Stub:
+
+- a bucket that is not one of the buckets of the Stub's Mock;
+- an op given a member it does not take, or without one it needs, such as
+  `append` with `key` or `set` without `value`;
+- `dataWrites` with no write, or with more than 100;
+- `key` on a bucket without `key`;
+- a literal value, one with no `${`, `$each` or `$if`, that already breaks
+  its op, such as a `merge` value that is not an object;
+- for now, a write to a keyed bucket.
+
+#### Writes in the Journal
+
+Each [Journal](../README.md#the-journal) entry names the buckets its
+request wrote, in the order first written, each once, as `dataWritten`.
+`dataError` is the `at` and the `message` of a write that failed to
+apply, as the 500 gives them, or null. Both are always present, and count
+toward the entry's bytes.
+
+- A request whose writes fail to render or to apply, or meet the state
+  bound, records `dataWritten: []`, `variablesWritten: []` and
+  `responseIndex: null`. A value that fails to render also records
+  `templateError`.
+- A response that fails to render after the writes were stored lists
+  them, since nothing undoes them.
+
+`smock render` and the Admin render operation neither render nor write a
+Stub's `dataWrites`: the response reads the data as it is.
 
 ### Data buckets through the Admin API
 

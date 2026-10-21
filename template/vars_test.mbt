@@ -30,7 +30,12 @@ fn parsed(
   variable? : Bool = true,
 ) -> Result[@template.Structured, String] {
   let json = @json.parse(source) catch { _ => panic() }
-  match @template.Structured::parse(json, pointer="/variables/v", variable~) {
+  match
+    @template.Structured::parse(
+      json,
+      pointer="/variables/v",
+      value?=if variable { Some("a Variable's value") } else { None },
+    ) {
     Ok(template) => Ok(template)
     Err(problems) =>
       Err(problems.map(p => "\{p.pointer}: \{p.message}").join("\n"))

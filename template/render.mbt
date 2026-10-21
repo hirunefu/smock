@@ -125,12 +125,30 @@ pub fn Context::new(
 /// Starts the next rendering for the same request, once this one is done,
 /// such as the response after the values of the Stub's Variables. It reads
 /// the Variables `vars`, by default none, and has bounds of its own. It
-/// shares the rest: the request, the time, the helper generator, which goes
-/// on from where this rendering stopped, the Data buckets and the copies of
-/// them it reads, and what this one parsed of the request, so that the body and the
-/// cookies are parsed at most once per request.
-pub fn Context::next(self : Context, vars? : Map[String, Json]) -> Context {
-  { ..self, elapsed: 0L, iterations: 0, output: 0, vars, of_value: false, }
+/// reads the copies of Data buckets `copies` when they are given, such as
+/// those the request's writes left, and else the copies this rendering
+/// reads. It shares the rest: the request, the time, the helper generator,
+/// which goes on from where this rendering stopped, the initial values of
+/// the Data buckets, and what this one parsed of the request, so that the
+/// body and the cookies are parsed at most once per request.
+pub fn Context::next(
+  self : Context,
+  vars? : Map[String, Json],
+  copies? : Map[String, Json],
+) -> Context {
+  {
+    ..self,
+    elapsed: 0L,
+    iterations: 0,
+    output: 0,
+    vars,
+    copies: if copies is Some(_) {
+      copies
+    } else {
+      self.copies
+    },
+    of_value: false,
+  }
 }
 
 ///|

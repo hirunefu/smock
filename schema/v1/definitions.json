@@ -135,7 +135,7 @@
       "unevaluatedProperties": false
     },
     "stub": {
-      "description": "The shape of a Stub, without its ID and its Mock: the conditions a request must meet, the Scenario state it needs or moves to, the Variables it writes, the response to return (response) or the weighted responses to pick from (responses), and the Faults to inject. A Stub in a Definition file adds id and mock to it (see fileStub). The Admin API adds Ephemeral Stubs in this shape, and gives the Mock and the Session itself. This definition does not close itself to other properties so that those two can extend it; each of them closes it with unevaluatedProperties: false.",
+      "description": "The shape of a Stub, without its ID and its Mock: the conditions a request must meet, the Scenario state it needs or moves to, the Variables and Data buckets it writes, the response to return (response) or the weighted responses to pick from (responses), and the Faults to inject. A Stub in a Definition file adds id and mock to it (see fileStub). The Admin API adds Ephemeral Stubs in this shape, and gives the Mock and the Session itself. This definition does not close itself to other properties so that those two can extend it; each of them closes it with unevaluatedProperties: false.",
       "type": "object",
       "properties": {
         "priority": {
@@ -159,12 +159,82 @@
           "type": "object",
           "propertyNames": { "pattern": "^[A-Za-z0-9_-]{1,128}$" }
         },
+        "dataWrites": {
+          "description": "Writes to the Data buckets of the Stub's Mock, made when the Stub matches: 1 to 100 writes, applied in order. At the match decision, after the Scenario moves, the values of variables are rendered, then the value of each write, all against the state from before the request, Variables included. The writes are then applied in order, and stored together with the Variables, all at once. When a value fails to render, a write cannot be applied (such as a merge into a bucket that holds no object) or the writes would pass the state bound, nothing is written. The response sees the data after the writes, and a Stub with responses writes once, whichever response is picked.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/dataWrite" }
+        },
         "fault": { "$ref": "#/$defs/fault" }
       },
       "oneOf": [
         { "description": "One response.", "required": ["response"] },
         { "description": "Several weighted responses.", "required": ["responses"] }
       ]
+    },
+    "dataWrite": {
+      "description": "A write to a Data bucket of the Stub's Mock: its op, the bucket, and the members the op takes. set and merge take value and, for a keyed bucket, key; append takes value; remove takes key. smock does not write to keyed buckets yet, so it rejects key and remove for now.",
+      "oneOf": [
+        {
+          "description": "set: the bucket becomes the value. With key, the item with that key becomes the value, in its place.",
+          "type": "object",
+          "properties": {
+            "op": { "description": "The op: set.", "const": "set" },
+            "bucket": { "$ref": "#/$defs/dataWriteBucket" },
+            "key": { "$ref": "#/$defs/dataWriteKey" },
+            "value": { "$ref": "#/$defs/dataWriteValue" }
+          },
+          "required": ["op", "bucket", "value"],
+          "additionalProperties": false
+        },
+        {
+          "description": "merge: a shallow merge of the value, which must be an object, into the bucket, which must hold an object. Each member of the value replaces the member of the same name in its place, or is added at the end; null is stored as null. With key, the merge is into the item with that key.",
+          "type": "object",
+          "properties": {
+            "op": { "description": "The op: merge.", "const": "merge" },
+            "bucket": { "$ref": "#/$defs/dataWriteBucket" },
+            "key": { "$ref": "#/$defs/dataWriteKey" },
+            "value": { "$ref": "#/$defs/dataWriteValue" }
+          },
+          "required": ["op", "bucket", "value"],
+          "additionalProperties": false
+        },
+        {
+          "description": "append: the value is appended to the bucket, which must hold an array.",
+          "type": "object",
+          "properties": {
+            "op": { "description": "The op: append.", "const": "append" },
+            "bucket": { "$ref": "#/$defs/dataWriteBucket" },
+            "value": { "$ref": "#/$defs/dataWriteValue" }
+          },
+          "required": ["op", "bucket", "value"],
+          "additionalProperties": false
+        },
+        {
+          "description": "remove: the item with the key is removed from the keyed bucket.",
+          "type": "object",
+          "properties": {
+            "op": { "description": "The op: remove.", "const": "remove" },
+            "bucket": { "$ref": "#/$defs/dataWriteBucket" },
+            "key": { "$ref": "#/$defs/dataWriteKey" }
+          },
+          "required": ["op", "bucket", "key"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "dataWriteBucket": {
+      "description": "The name of the Data bucket written to, taken literally: one of the buckets of the Stub's Mock, which any file of the set may declare.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,128}$"
+    },
+    "dataWriteKey": {
+      "description": "The key of the item written to, in a keyed bucket: a text template, always parsed, compared as a key text. Only a keyed bucket takes it.",
+      "type": "string"
+    },
+    "dataWriteValue": {
+      "description": "The value of the write: any JSON, and always a structured template, whether or not a response has template: true. ${…} inserts a value, $${ writes ${, and a $if at its root needs else. It is rendered against the state from before the request, and bounded as a rendered body is: at most 1 MiB of compact JSON and 10,000 loop iterations. A value with no ${, $each or $if that breaks its op, such as a merge value that is not an object, is an error when loading."
     },
     "scenario": {
       "description": "The Stub's Scenario clause. A Scenario is a named state machine within the Stub's Mock: it has no declaration, exists because Stubs name it, and starts in the state `Started`. Its state is kept per Mock and per Session: requests without a Session share their own. With requires, the Stub matches only while the Scenario is in that state; without it, in every state. With moveTo, the Scenario moves to that state the moment the Stub is chosen, whatever then happens to the response, even a delay, a connection Fault or a template error. Give requires, moveTo or both. Names are compared byte for byte.",
