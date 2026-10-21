@@ -20,6 +20,16 @@ of each GitHub release include its section
 - Template helpers `uppercase`, `lowercase` and `trim`, from the data of
   Unicode 18.0.0, built in: simple case mapping, one code point to one and
   with no locale (`ß` stays `ß`), and White_Space removed at both ends.
+- Template helpers for encodings: `base64`, `base64url`, `base64Decode`,
+  `base64urlDecode`, `urlEncode` and `urlDecode`. The decoders refuse
+  characters outside their alphabet, wrong padding and malformed escapes,
+  and turn bytes that are not UTF-8 into U+FFFD. `urlEncode` follows
+  RFC 3986, so a space is `%20`.
+- Template helpers `jwtPayload` and `jwtHeader` give the payload or the
+  header of a JWT as an object, read with steps, such as
+  `${jwtPayload(header.authorization).sub ?? 'anonymous'}`. A leading
+  `Bearer` is removed. They only decode: no signature is ever checked. A
+  malformed token is missing, so `??` applies.
 - A helper call can be followed by steps, as a reference can:
   `${range(1, 3)[1]}` gives `2`.
 - The bounds of `range(a, b)` can be any expression that gives an integer,
