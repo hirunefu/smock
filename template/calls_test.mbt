@@ -141,11 +141,21 @@ test "a helper whose result takes more than 1 MiB of UTF-8 is a render error" {
       length("${concat(bodyText, bodyText)}", of_size(half)),
       length("${concat(bodyText, bodyText, 'x')}", of_size(half)),
       length("${len(concat(bodyText, bodyText, 'x'))}", of_size(half)),
+      length("${padStart('x', 1048576)}", request),
+      length("${padEnd('x', 1048577)}", request),
+      length("${padStart('', 1048576, 'ab')}", request),
+      length("${padEnd('x', 349526, '日')}", request),
+      length("${padStart('x', 349527, '日')}", request),
     ].join("\n"),
     content=(
       #|1048576 characters
       #|error at /response/body: concat(): the result takes more than 1 MiB
       #|error at /response/body: concat(): the result takes more than 1 MiB
+      #|1048576 characters
+      #|error at /response/body: padEnd(): the result takes more than 1 MiB
+      #|1048576 characters
+      #|349526 characters
+      #|error at /response/body: padStart(): the result takes more than 1 MiB
     ),
   )
 }

@@ -92,3 +92,88 @@ test "concat joins 2 to 100 values as text" {
     ),
   )
 }
+
+///|
+test "padStart and padEnd pad a text to a length in code points, the pad repeated and cut to fit" {
+  inspect(
+    [
+      rendered(
+        "${padStart(query.n, 6, '0')} ${padEnd(query.n, 6, '0')} [${padStart('abc', 6)}] [${padEnd('abc', 6)}]",
+        input=texts,
+      ),
+      rendered(
+        "${padStart('abc', 10, 'foo')} ${padEnd('abc', 10, 'foo')}",
+        input=texts,
+      ),
+      rendered(
+        "${padStart('abc', 2)} ${padStart('abc', 3, '0')} ${padEnd('abc', -1, '0')} ${padStart('abc', 6, '')} ${padEnd('abc', 6, '')}",
+        input=texts,
+      ),
+      rendered(
+        "${padStart(body.cjk, 5, body.emoji)} ${padStart(body.cjk, 4, body.emoji)} ${padEnd(body.emoji, 5, '日本')}",
+        input=texts,
+      ),
+      rendered(
+        "${padStart(query.n, '6', 0)} ${padStart(query.n, 6.0, 0)} ${padStart(true, 6, 1.5)} ${padEnd(body.big, number('22'), body.flag)}",
+        input=texts,
+      ),
+      rendered("${padStart(query.missing, 6) ?? 'none'}", input=texts),
+      rendered_json(
+        "{ \"code\": \"${padStart(query.n, 6, '0')}\" }",
+        input=texts,
+      ),
+      rendered("${padStart(query.n, query.half)}", input=texts),
+      rendered("${padStart(query.n, query.six)}", input=texts),
+      rendered("${padEnd(query.n, body.flag)}", input=texts),
+      rendered("${padEnd(query.n, body.list)}", input=texts),
+      rendered("${padStart(body.none, 6)}", input=texts),
+      rendered("${padStart(query.n, 6, body.object)}", input=texts),
+      rendered("${padStart(query.n, query.big)}", input=texts),
+      rendered("${padStart(query.n, 'six')}", input=texts),
+      rendered("${padStart(query.n, 1.5)}", input=texts),
+      rendered("${padEnd(query.n, 6, null)}", input=texts),
+      rendered("${padStart(query.n)}", input=texts),
+      rendered("${padEnd(query.n, 6, '0', '1')}", input=texts),
+    ].join("\n"),
+    content=(
+      #|000042 420000 [   abc] [abc   ]
+      #|foofoofabc abcfoofoof
+      #|abc abc abc abc abc
+      #|👍🏽日本語 👍日本語 👍🏽日本日
+      #|000042 000042 1.true 12345678901234567890fa
+      #|none
+      #|{"code":"000042"}
+      #|error at /response/body: padStart(): argument 2 must be an integer, or a string that is one, not "1.5"
+      #|error at /response/body: padStart(): argument 2 must be an integer, or a string that is one, not "six"
+      #|error at /response/body: padEnd(): argument 2 must be an integer, or a string that is one, not false
+      #|error at /response/body: padEnd(): argument 2 must be an integer, or a string that is one, not an array
+      #|error at /response/body: padStart(): argument 1 must be a string, a number or a boolean, not null
+      #|error at /response/body: padStart(): argument 3 must be a string, a number or a boolean, not an object
+      #|error at /response/body: padStart(): the result takes more than 1 MiB
+      #|problem at /response/body: template: column 21: padStart(): argument 2 must be an integer, or a string that is one, not "six"
+      #|problem at /response/body: template: column 21: padStart(): argument 2 must be an integer, or a string that is one, not 1.5
+      #|problem at /response/body: template: column 22: padEnd(): argument 3 must be a string, a number or a boolean, not null
+      #|problem at /response/body: template: column 3: padStart() takes 2 or 3 arguments, not 1
+      #|problem at /response/body: template: column 3: padEnd() takes 2 or 3 arguments, not 4
+    ),
+  )
+}
+
+///|
+test "the string helpers draw nothing, so the fake data around them is the same as without them" {
+  let with_strings = rendered_json(
+    "{ \"a\": \"${fake.uuid()}\", \"b\": \"${concat(len(body.cjk), padEnd(body.first, 5, '.'))}\", \"c\": \"${fake.word()}\" }",
+    input=texts,
+  )
+  let without = rendered_json(
+    "{ \"a\": \"${fake.uuid()}\", \"c\": \"${fake.word()}\" }",
+    input=texts,
+  )
+  inspect(
+    "\{with_strings}\n\{without}",
+    content=(
+      #|{"a":"55c4f5c9-13b3-4f99-8767-9344f82c6c97","b":"3Ann..","c":"signal"}
+      #|{"a":"55c4f5c9-13b3-4f99-8767-9344f82c6c97","c":"signal"}
+    ),
+  )
+}

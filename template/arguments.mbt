@@ -11,6 +11,8 @@ priv enum Kind {
   Text
   /// A text, or an array.
   TextOrArray
+  /// A number without a fraction, or a string that is one.
+  Integer
 }
 
 ///|
@@ -19,6 +21,7 @@ fn Kind::wanted(self : Kind) -> String {
   match self {
     Text => "a string, a number or a boolean"
     TextOrArray => "a string, a number, a boolean or an array"
+    Integer => "an integer, or a string that is one"
   }
 }
 
@@ -28,6 +31,7 @@ fn Kind::accepts(self : Kind, json : Json) -> Bool {
   match self {
     Text => text_value(json) is Some(_)
     TextOrArray => json is Array(_) || text_value(json) is Some(_)
+    Integer => integer_value(json) is Some(_)
   }
 }
 
@@ -95,6 +99,50 @@ fn text_argument(
     Some(text) => text
     None =>
       raise RenderError(at~, message=argument_problem(name, k, Text, json))
+  }
+}
+
+///|
+/// `json` as a numeric argument, if it is one: a number, or a string that
+/// is a JSON number, read as `number(x)` reads it.
+fn numeric_value(json : Json) -> Json? {
+  match json {
+    Number(_) => Some(json)
+    String(text) => number_of(text)
+    _ => None
+  }
+}
+
+///|
+/// `json` as an integer argument, if it is one: a numeric value without a
+/// fraction. It is clamped to the range of an `Int`, which is beyond the
+/// length of any text.
+fn integer_value(json : Json) -> Int? {
+  guard numeric_value(json) is Some(Number(n, ..)) && n == n.floor() else {
+    return None
+  }
+  if n >= 2147483647.0 {
+    Some(2147483647)
+  } else if n <= -2147483648.0 {
+    Some(-2147483648)
+  } else {
+    Some(n.to_int())
+  }
+}
+
+///|
+/// Argument `k` (from 0) of the helper `name`, whose value is `json`, as
+/// an integer. Raises a render error at `at` when it is not one.
+fn integer_argument(
+  name : String,
+  k : Int,
+  json : Json,
+  at : String,
+) -> Int raise RenderError {
+  match integer_value(json) {
+    Some(n) => n
+    None =>
+      raise RenderError(at~, message=argument_problem(name, k, Integer, json))
   }
 }
 
