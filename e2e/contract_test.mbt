@@ -1481,7 +1481,7 @@ async test "the contract checker rejects responses that break the document" {
       #|a reload with an undocumented field: /lastReload: {"at":"2026-10-13T01:02:03.004Z","result":"unchanged","er... matches 0 of oneOf, not 1
       #|an added Ephemeral Stub: conforms
       #|an added Ephemeral Stub with weighted responses: conforms
-      #|an added Ephemeral Stub with both response and responses: /stub: {"id":"eph-12","mock":"users","session":null,"response":{"status":200},"res... matches 2 of oneOf, not 1
+      #|an added Ephemeral Stub with both response and responses: /stub: {"id":"eph-12","mock":"users","session":null,"response":{... matches 2 of oneOf, not 1
       #|an added Ephemeral Stub with a weight out of range: /stub/responses/0/weight: 0 is below 1
       #|an Ephemeral Stub ID that is not eph-<n>: /stub/id: "eph-0" does not match ^eph-[1-9][0-9]*$
       #|an added Ephemeral Stub without its Session: /stub: session is missing

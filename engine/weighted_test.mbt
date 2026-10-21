@@ -383,3 +383,33 @@ test "the Near miss of a request that a Stub with responses nearly matched names
     ),
   )
 }
+
+///|
+test "a template that fails in one of responses gives the 500 that points at it within the Stub, and the Journal records its index" {
+  let h = harness([
+    (
+      "m.json",
+      (
+        #|{ "mocks": [{ "name": "m" }],
+        #|  "stubs": [
+        #|    { "id": "get-user", "mock": "m", "request": { "path": "/users" },
+        #|      "responses": [
+        #|        { "weight": 1, "status": 200 },
+        #|        { "weight": 1000000, "status": 200, "template": true,
+        #|          "json": { "id": "${query.id}" } } ] } ] }
+      ),
+    ),
+  ])
+  let outcome = h.send("GET", "/users")
+  guard outcome.journal is Some(entry) else { fail("no entry") }
+  inspect(
+    "\{response(outcome)}\nindex \{@debug.to_string(entry.response_index)}, \{@debug.to_string(entry.template_error)}",
+    content=(
+      #|500
+      #|Content-Type: application/json
+      #|Smock-Mock: m; via=default
+      #|{"error":"template failed","stub":"get-user","at":"/responses/1/json/id","message":"query.id is missing"}
+      #|index Some(1), Some({ at: "/responses/1/json/id", message: "query.id is missing" })
+    ),
+  )
+}

@@ -1034,9 +1034,10 @@ Stub answers about one request in ten with a 503:
   9 and 1 give the 200 to nine requests in ten.
 - The request conditions, the `fault` and the `scenario` clause stay one
   per Stub, whichever response is picked.
-- A problem in a response is reported at its JSON Pointer, counted from 0,
-  such as `/stubs/0/responses/1/json`. So is a template error, in
-  `smock check` and in the 500 of a request.
+- A problem in a response is reported at its JSON Pointer, with the
+  response's index counted from 0, such as `/stubs/0/responses/1/json`. A
+  template that fails for a request points at the field within the Stub
+  the same way, such as `"at":"/responses/1/json/id"`.
 - An [Ephemeral Stub](../README.md#sessions-and-ephemeral-stubs) can give
   `responses` too, with inline bodies only: `bodyFile` is refused in any
   of them.
