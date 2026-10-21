@@ -108,6 +108,7 @@ fn main_of(keys : Array[(String, ResponseKey)]) -> Main? {
 /// cannot be read. Problems come in the order of the responses.
 fn Report::main_response(
   self : Report,
+  document : Document,
   pointer : String,
   operation : Map[String, Json],
 ) -> Main? {
@@ -149,6 +150,7 @@ fn Report::main_response(
         match main {
           Some(main) if main.key == key =>
             self.main_response_parts(
+              document,
               response_pointer,
               responses.get(key).unwrap_or(Json::null()),
             )

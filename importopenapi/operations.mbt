@@ -28,8 +28,9 @@ priv struct Taken {
   /// The method and path conditions of each imported operation, as
   /// `<METHOD> <path>`, and the operation's pointer.
   conditions : Map[String, String]
-  /// Each `operationId` of an imported operation, and its pointer.
-  operation_ids : Map[String, String]
+  /// Each `operationId` of an imported operation, its pointer, and the
+  /// path key of the operation.
+  operation_ids : Map[String, (String, String)]
   /// Each generated Stub ID, and the pointer of its operation.
   ids : Map[String, String]
 }
@@ -49,6 +50,7 @@ fn Report::operations(self : Report, document : Document) -> Array[Imported] {
           continue
         }
         self.path_item(
+          document,
           imported,
           taken,
           key,
@@ -68,9 +70,11 @@ fn Report::operations(self : Report, document : Document) -> Array[Imported] {
 }
 
 ///|
-/// Reads the operations of the Path Item `json` at the path key `key`.
+/// Reads the operations of the Path Item `json` at the path key `key`,
+/// after following its `$ref`.
 fn Report::path_item(
   self : Report,
+  document : Document,
   imported : Array[Imported],
   taken : Taken,
   key : String,
@@ -78,11 +82,12 @@ fn Report::path_item(
   json : Json,
 ) -> Unit {
   guard self.path(pointer, key) is Some(path) else { return }
-  guard json is Object(item) else {
-    self.root_error(pointer, "must be an object")
+  guard self.followed(document, pointer, json, path_item=true)
+    is Some({ pointer, json, }) else {
     return
   }
-  if self.reference(pointer, item) {
+  guard json is Object(item) else {
+    self.root_error(pointer, "must be an object")
     return
   }
   self.servers_left_out(pointer, item)
@@ -90,6 +95,7 @@ fn Report::path_item(
     let field_pointer = @definitions.child_pointer(pointer, field)
     if fixed_methods.contains(field) {
       self.operation(
+        document,
         imported,
         taken,
         key,
@@ -116,7 +122,7 @@ fn Report::path_item(
           )
         } else {
           self.operation(
-            imported, taken, key, path, meth, operation_pointer, operation,
+            document, imported, taken, key, path, meth, operation_pointer, operation,
           )
         }
       }
@@ -129,6 +135,7 @@ fn Report::path_item(
 /// `key`, and imports it, unless a rule leaves it out with a warning.
 fn Report::operation(
   self : Report,
+  document : Document,
   imported : Array[Imported],
   taken : Taken,
   key : String,
@@ -172,15 +179,25 @@ fn Report::operation(
     )
   }
   self.servers_left_out(pointer, operation)
-  guard self.main_response(pointer, operation) is Some(main) else { return }
+  guard self.main_response(document, pointer, operation) is Some(main) else {
+    return
+  }
   let name = operation_id.unwrap_or("\{meth} \{key}")
   let id = "\{self.options.mock}.\{name}.\{main.key}"
   if operation_id is Some(operation_id) &&
-    taken.operation_ids.get(operation_id) is Some(earlier) {
-    self.root_error(
-      id_pointer,
-      "the operationId \{operation_id.escape()} is already used at \{self.place(earlier)}",
-    )
+    taken.operation_ids.get(operation_id) is Some((earlier, earlier_key)) {
+    // Two path keys can name one Path Item.
+    if earlier == id_pointer {
+      self.root_error(
+        id_pointer,
+        "the operationId \{operation_id.escape()} is already used under the path key \{earlier_key.escape()}, which names the same Path Item",
+      )
+    } else {
+      self.root_error(
+        id_pointer,
+        "the operationId \{operation_id.escape()} is already used at \{self.place(earlier)}",
+      )
+    }
   } else if taken.ids.get(id) is Some(earlier) {
     self.root_error(
       pointer,
@@ -191,7 +208,7 @@ fn Report::operation(
   taken.conditions[conditions] = pointer
   if operation_id is Some(operation_id) &&
     !taken.operation_ids.contains(operation_id) {
-    taken.operation_ids[operation_id] = id_pointer
+    taken.operation_ids[operation_id] = (id_pointer, key)
   }
   if !taken.ids.contains(id) {
     taken.ids[id] = pointer
