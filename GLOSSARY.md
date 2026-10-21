@@ -38,6 +38,10 @@ _Avoid_: Global variable, state variable
 A named JSON value that a Mock declares in Definition files, with its initial value; each Session reads and writes its own copy.
 _Avoid_: dataset, collection, data store, table, fixture
 
+**CRUD Stub**:
+A Stub that serves a keyed Data bucket as a REST resource: it lists and creates items at its path, and reads, replaces, updates and deletes one item at the path plus its key.
+_Avoid_: CRUD route, resource route
+
 **Upstream**:
 The real service a Mock impersonates. Forwarding the requests a Mock does not match to its Upstream, and recording the exchanges as Definition files, are not implemented.
 _Avoid_: Backend, origin, target

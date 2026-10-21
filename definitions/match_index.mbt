@@ -5,8 +5,8 @@
 // The index never changes which Stub answers. A lookup gives every Stub
 // the request could match, in matching order; it leaves out only Stubs
 // whose exact method or exact path differs from the request's. Stubs that
-// cannot be indexed, with neither an exact path nor a method, are given
-// for every request, in their place in the order.
+// cannot be indexed, with neither an exact path nor a method, and CRUD
+// Stubs, are given for every request, in their place in the order.
 
 ///|
 /// The Stubs of a Mock, by their position in matching order, grouped by
@@ -18,8 +18,8 @@ priv struct MatchIndex {
   /// The Stubs with a method condition and no exact path condition, such
   /// as a path pattern, by method.
   by_method : Map[String, Array[Int]]
-  /// The Stubs with neither a method nor an exact path condition: they are
-  /// tried for every request.
+  /// The Stubs with neither a method nor an exact path condition, and the
+  /// CRUD Stubs: they are tried for every request.
   scanned : Array[Int]
 } derive(Debug, Eq)
 
@@ -61,6 +61,10 @@ fn MatchIndex::new(stubs : ReadOnlyArray[Stub]) -> MatchIndex {
           (_, Some(meth)) => add_position(index.by_method, meth, position)
           (_, None) => index.scanned.push(position)
         }
+      // A CRUD Stub has no single method and no exact path: it is tried
+      // for every request of its Mock, behind the cheap prefix test of its
+      // path (`Crud::operation`).
+      Crud(_) => index.scanned.push(position)
     }
   }
   index

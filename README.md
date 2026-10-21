@@ -738,7 +738,8 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   `variablesWritten`; the names of the [Data
   buckets](docs/definition-files.md#writing-buckets-datawrites) it wrote,
   as `dataWritten`, and why a data write failed, as `dataError`; the
-  status, or the connection Fault; when the request was received and
+  operation a [CRUD Stub](docs/definition-files.md#crud-stubs) served and
+  its key, as `crud`; the status, or the connection Fault; when the request was received and
   how long the response took; and the digest of the definition set that
   answered. A request for a Host that no Mock answers is recorded too,
   with no Mock; one the HTTP/1.1 codec rejects (400, 413, 431, 501 or 505)

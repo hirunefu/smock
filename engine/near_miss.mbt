@@ -179,7 +179,8 @@ priv enum Failed {
 /// The Near miss among `candidates`, each with where it comes from, in
 /// matching order, none of which the request meets in the current states,
 /// `states`: the one with the fewest failed conditions, the earlier one on
-/// a tie. There is none without candidates.
+/// a tie. CRUD Stubs are left out, for now. There is none without other
+/// candidates.
 fn Incoming::near_miss(
   self : Incoming,
   candidates : Iter[(@definitions.Stub, StubSource)],
@@ -200,6 +201,8 @@ fn Incoming::near_miss(
         }
         failed
       }
+      // A CRUD Stub is no candidate, for now.
+      Crud(_) => continue
     }
     match best {
       Some((_, _, fewest)) if fewest.length() <= failed.length() => ()

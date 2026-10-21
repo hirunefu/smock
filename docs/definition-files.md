@@ -552,8 +552,9 @@ files are loaded, finds the Stubs whose `method` and exact `path` fit the
 request. The index never changes which Stub answers. A Stub with a
 `method` and no exact `path` is tried for every request with that method,
 and a Stub with neither, such as one with only a path pattern, for every
-request of its Mock, each in its place in the order. Large definition sets
-stay fast when most Stubs have an exact path.
+request of its Mock, each in its place in the order. So is a [CRUD
+Stub](#crud-stubs), behind a quick test of its path's prefix. Large
+definition sets stay fast when most Stubs have an exact path.
 
 ### Scenarios
 
@@ -2231,6 +2232,7 @@ a list of buckets. Each entry has these members, and no others:
   earlier or later.
 - Two Mocks may use the same name. Each has its own bucket.
 - `newKey` needs `key`. [New keys](#new-keys) says what it does.
+- A keyed bucket can be served by a [CRUD Stub](#crud-stubs).
 
 ### Initial values
 
@@ -2428,7 +2430,7 @@ order has that key, and writes nothing.
 A Stub's response cannot read a key that its own `append` made, since a
 template has no index from the end of an array. A Stub that must answer
 the new item takes the key from the request, and puts it in the value.
-A CRUD Stub answers what it creates.
+A [CRUD Stub](#crud-stubs) answers what it creates.
 
 As for other writes, only a Session's first write to a bucket copies it,
 and the [state bound](#copies-and-the-state-bound) counts what each item
@@ -2560,6 +2562,193 @@ toward the entry's bytes.
 `smock render` and the Admin render operation show the writes a Stub
 would make, from sample data, and write nothing ([Rendering a
 template](#rendering-a-template)).
+
+### CRUD Stubs
+
+A *CRUD Stub* serves a keyed bucket as a REST resource. It has `crud` in
+place of `request` and `response`:
+
+```yaml
+data:
+  - { mock: shop, name: orders, key: id, jsonFile: orders.json }
+stubs:
+  - id: orders
+    mock: shop
+    crud:
+      bucket: orders
+      path: /api/v1/orders
+      headers: { Access-Control-Allow-Origin: "*" }
+```
+
+With `files/orders.json` holding orders 1001 to 1003,
+`GET /api/v1/orders` answers 200 with the three orders, `X-Total-Count: 3`,
+`X-Filtered-Count: 3` and the CORS header. `GET /api/v1/orders/1002`
+answers order 1002. `GET /api/v1/orders/9999` answers 404, with the CORS
+header too:
+
+```json
+{"error":"no item with this key","stub":"orders","key":"9999"}
+```
+
+For now, a CRUD Stub lists and reads. Creating, replacing, updating and
+deleting items, and filtering, sorting and paging lists, come in a later
+version.
+
+#### The shape of a CRUD Stub
+
+`crud` has these members, and no others:
+
+| Member | Value |
+|---|---|
+| `bucket` | A keyed bucket of the Stub's Mock ([Keys and key texts](#keys-and-key-texts)). Required. |
+| `path` | The list path, such as `/api/v1/orders`. Required. |
+| `headers` | Headers for every answer of the Stub ([CRUD headers](#crud-headers)). |
+
+- Beside `crud`, the Stub may have `id`, `mock`, `priority` and
+  [`fault`](#faults). `request`, `response`, `responses`, `scenario`,
+  `variables` and `dataWrites` are not allowed. A Stub has exactly one of
+  `response`, `responses` and `crud`.
+- Two CRUD Stubs may have the same `path`. The first in the order answers.
+
+#### CRUD paths
+
+- `path` starts with `/`, does not end with `/`, and has no empty segment.
+  So `/` alone is not a path.
+- The list path is `path`. An item path is `path`, then `/`, then one
+  non-empty segment: the key text.
+- Both are compared with the percent-decoded path, byte for byte, as
+  [`path` conditions](#how-a-stub-matches-a-request) compare it. So
+  `/api/v1/orders/` and `/API/v1/orders` are not served. A key sent with
+  `%2F` is never reached, since it decodes to a deeper path.
+
+#### Reads
+
+| Request | Answer |
+|---|---|
+| `GET <path>` | 200, the bucket's items as a plain JSON array, with `X-Total-Count` and `X-Filtered-Count`, both the number of items. The query is not read yet. |
+| `GET <path>/<key>` | 200, the item whose key has the text `<key>`, or 404 with the body above. |
+
+- A read sees the copy of the request's Session when it holds one, and
+  else the initial value ([Session copies](#session-copies)). A read never
+  copies.
+- Keys compare by their text ([Keys and key texts](#keys-and-key-texts)).
+  So `/api/v1/orders/1002` finds the order whose `id` is `1002` or
+  `"1002"`, but `/api/v1/orders/01002` finds none.
+- A request body is ignored.
+- Every answer is compact JSON with `Content-Type: application/json`, its
+  numbers written as smock writes them, so a stored `9.90` comes back as
+  `9.9`. The answers are not templates, so the 1 MiB bound on a rendered
+  body does not apply: a list is as large as its bucket.
+- The 404 is the CRUD Stub's own answer. The request counts as matched,
+  under the Stub's ID, and gets no [Near miss](#when-no-stub-matches).
+
+#### Order and overrides
+
+A CRUD Stub matches only the requests it serves. Any other method or path
+shape does not match it: `HEAD`, `OPTIONS`, `POST`, `PUT`, `PATCH` and
+`DELETE` for now, and paths deeper than an item path. Later Stubs are
+tried, then the Mock's [no-match answer](#when-no-stub-matches). Methods
+are compared exactly.
+
+A CRUD Stub is tried in [the usual order](#which-stub-answers). It has no
+conditions and no Scenario clause of its own, so an earlier Stub takes
+over one of its requests:
+
+```yaml
+- id: no-token
+  mock: shop
+  request: { headers: { authorization: { $exists: false } } }
+  response: { status: 401, json: { error: unauthorized } }
+- id: orders-down
+  mock: shop
+  scenario: { name: orders, requires: Down }
+  request: { path: { pattern: "/api/v1/orders(/[^/]+)?" } }
+  response: { status: 503 }
+- id: orders
+  mock: shop
+  crud: { bucket: orders, path: /api/v1/orders }
+```
+
+A request without `Authorization` gets 401, and a request of a Session
+whose Scenario `orders` is in `Down` gets 503. Every other request to the
+orders gets the CRUD Stub's answer. A lower `priority` than the CRUD
+Stub's places a Stub before it wherever it is declared.
+
+#### CRUD headers
+
+smock sets `Content-Type`, and `X-Total-Count` and `X-Filtered-Count` on a
+list. `crud.headers` adds static headers to every answer of the Stub,
+errors included:
+
+- It has the shape and rules of [`noMatch.headers`](#when-no-stub-matches):
+  by name, a value or a non-empty array of values, each sent as its own
+  field line, in order. Two names that differ only in case are an error.
+  It is never templated.
+- A header that smock sets cannot be given: `Content-Type`, `Location`,
+  `X-Total-Count`, `X-Filtered-Count`, `Content-Length`,
+  `Transfer-Encoding`, `Connection` and `Smock-Mock`. Names are compared
+  case-insensitively.
+- A browser reads `X-Total-Count` and `X-Filtered-Count` of a
+  cross-origin answer only when `Access-Control-Expose-Headers` names
+  them, which `crud.headers` can give:
+
+  ```yaml
+  headers:
+    Access-Control-Allow-Origin: "*"
+    Access-Control-Expose-Headers: X-Total-Count, X-Filtered-Count
+  ```
+
+- A CRUD Stub does not answer `OPTIONS`, so a browser's preflight needs a
+  Stub of its own, as in [When no Stub matches](#when-no-stub-matches).
+
+#### Faults on a CRUD Stub
+
+[`fault`](#faults) works as on any Stub. Every matched request takes its
+one draw, its 404 included, so [`fault.seed`](#seeds) replays the same
+decisions. A delay comes before the answer, a connection Fault replaces
+it, and `partial` sends half of its body.
+
+#### CRUD Stubs in the Journal
+
+Each [Journal](../README.md#the-journal) entry has `crud`: null, or the
+operation and its key. A list records `{"op":"list","key":null}`. A read
+records `read` and the item path's key text, whatever the outcome, such as
+`{"op":"read","key":"9999"}` for the 404 above. `crud` counts toward the
+entry's bytes, and `responseIndex` is null for a CRUD Stub's answers.
+
+#### Ephemeral CRUD Stubs
+
+An [Ephemeral Stub](../README.md#sessions-and-ephemeral-stubs) can be a
+CRUD Stub, with no `id` or `mock`, as any Ephemeral Stub. It serves the
+requests of its Session, and reads its Session's copy of the bucket.
+
+An Ephemeral Stub is not read again at a reload, so a CRUD Stub looks its
+bucket up by name on each request. After a reload removes the bucket, it
+answers 500 with its headers:
+
+```json
+{"error":"unknown data bucket","stub":"eph-1","bucket":"orders"}
+```
+
+After a reload takes the bucket's `key` away, it answers 500 with
+`"error":"data bucket changed"`, and the same `stub` and `bucket`.
+
+#### CRUD Stubs that do not load
+
+These are errors when loading, reported by `smock check`, at startup, by a
+reload, which then keeps the files it serves, and as 400 `invalid_stub` for
+an Ephemeral Stub:
+
+- a `bucket` that is not one of the buckets of the Stub's Mock, or that
+  has no `key`;
+- a `path` that breaks the rules above;
+- a member that the shape does not allow, beside `crud` or in it;
+- a `crud.headers` name that smock sets.
+
+For now, `smock render` and the Admin render operation cannot render a
+CRUD Stub: the command fails, and the Admin API answers 400
+`invalid_request`. A CRUD Stub is not a Near miss candidate, and
+`smock check` gives no [warnings](#warnings) about it.
 
 ### Data buckets through the Admin API
 

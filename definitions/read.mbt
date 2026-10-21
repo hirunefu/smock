@@ -510,6 +510,7 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
   let mut data_writes = no_data_writes
   let mut fault = None
   let mut scenario = None
+  let mut crud = None
   // The Data buckets it may read and write: those of its Mock, wherever
   // `mock` is among its members.
   let mock_buckets = match stub.get("mock") {
@@ -539,17 +540,39 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
       "priority" => priority = self.read_priority(field, value)
       "fault" => fault = self.read_fault(field, value)
       "scenario" => scenario = self.read_scenario(field, value)
+      "crud" => crud = self.read_crud(field, value, buckets=mock_buckets)
       _ => self.unknown_field(field)
     }
   }
   self.require(stub, pointer, "id")
   self.require(stub, pointer, "mock")
+  if stub.contains("crud") {
+    // A CRUD Stub has `crud` in place of conditions, responses, a Scenario
+    // clause and writes of its own.
+    for name in not_beside_crud {
+      if stub.contains(name) {
+        self.error(
+          child_pointer(pointer, name),
+          "is not allowed beside \"crud\": a CRUD Stub serves its bucket with no conditions, responses, Scenario clause or writes of its own",
+        )
+      }
+    }
+    // A `crud` with a problem serves nothing; the Stub is still declared,
+    // so that the problems of its ID and Mock are reported too.
+    let crud = crud.unwrap_or({
+      bucket: "",
+      path: "/",
+      headers: ReadOnlyArray::from_array([]),
+    })
+    return Some({ id, mock, priority, serves: Crud(crud), fault, })
+  }
   match (stub.contains("response"), stub.contains("responses")) {
     (true, true) =>
       self.error(
         pointer, "has \"response\" and \"responses\"; give exactly one of them",
       )
-    (false, false) => self.error(pointer, "needs \"response\" or \"responses\"")
+    (false, false) =>
+      self.error(pointer, "needs \"response\", \"responses\" or \"crud\"")
     _ => ()
   }
   // A Stub with `response` has that one response, of weight 1, and takes

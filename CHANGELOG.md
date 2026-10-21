@@ -208,6 +208,18 @@ of each GitHub release include its section
   and the response reads the data after them. A write that fails to render
   or to apply shows the 500 a request would get, and no write. A rendering
   never reads or writes a Session's copy, and no state bound applies.
+- CRUD Stubs: a Stub with `crud` (`bucket`, `path` and optional `headers`)
+  in place of `request` and `response` serves a keyed Data bucket as a REST
+  resource. `GET <path>` lists the bucket's items, with `X-Total-Count`
+  and `X-Filtered-Count`, and `GET <path>/<key>` reads one item, or answers
+  404 `no item with this key`. Reads see the Session's copy, or else the
+  initial value. Any other method or path shape falls through to later
+  Stubs. A CRUD Stub is tried in the usual order, so an earlier Stub can
+  take over one of its requests. `crud.headers`, such as CORS headers, go
+  on every answer, and `fault` works as on any Stub. An Ephemeral Stub can
+  be a CRUD Stub. Each Journal entry gains `crud`, the operation and its
+  key. Writes through a CRUD Stub, list queries, its Near miss, warnings
+  and rendering come later.
 - docs/migrating-from-mockoon.md maps Mockoon's helpers, `RANDOM` routes,
   global variables, Range requests, dates, cookies and environment
   variables onto smock, with each difference called out.

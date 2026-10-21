@@ -59,6 +59,7 @@ pub fn Snapshot::warnings(self : Snapshot) -> Array[Warning] {
       }
       let scenario = match stub.serves {
         Ordinary(ordinary) => ordinary.scenario
+        Crud(_) => None
       }
       guard scenario is Some({ name, requires: Some(state), .. }) &&
         state != initial_state &&
@@ -83,6 +84,7 @@ fn moves_of(stubs : ReadOnlyArray[Stub]) -> Map[String, Set[String]] {
   for stub in stubs {
     let scenario = match stub.serves {
       Ordinary(ordinary) => ordinary.scenario
+      Crud(_) => None
     }
     guard scenario is Some({ name, move_to: Some(state), .. }) else { continue }
     match moves.get(name) {
@@ -99,6 +101,8 @@ fn moves_of(stubs : ReadOnlyArray[Stub]) -> Map[String, Set[String]] {
 /// conditions shadow `s`'s, and either `t` has no `requires`, or `s` names
 /// the same Scenario with the same `requires`. `moveTo` plays no part: it
 /// does not change whether a Stub matches.
+///
+/// No CRUD Stub shadows a Stub, or is shadowed, for now.
 fn shadows(t : Stub, s : Stub) -> Bool {
   match (t.serves, s.serves) {
     (Ordinary(t), Ordinary(s)) => {
@@ -111,6 +115,7 @@ fn shadows(t : Stub, s : Stub) -> Bool {
       }
       in_states_of_s && request_shadows(t.request, s.request)
     }
+    (Crud(_), _) | (_, Crud(_)) => false
   }
 }
 

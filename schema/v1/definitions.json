@@ -101,7 +101,7 @@
           "pattern": "^(?!\\.)[^/]+(/(?!\\.)[^/]+)*$"
         },
         "key": {
-          "description": "Makes the bucket keyed: the name of the member that holds each item's key, taken literally (a.b is the member a.b). A keyed bucket's value is an array of objects. Each has the key member, holding a non-empty string without /, or an integer from -(2^53 - 1) to 2^53 - 1, and no two items have keys with the same text, so 42 and \"42\" collide.",
+          "description": "Makes the bucket keyed: the name of the member that holds each item's key, taken literally (a.b is the member a.b). A keyed bucket's value is an array of objects. Each has the key member, holding a non-empty string without /, or an integer from -(2^53 - 1) to 2^53 - 1, and no two items have keys with the same text, so 42 and \"42\" collide. Only a keyed bucket can be served by a CRUD Stub (crud).",
           "type": "string",
           "minLength": 1
         },
@@ -135,7 +135,7 @@
       "unevaluatedProperties": false
     },
     "stub": {
-      "description": "The shape of a Stub, without its ID and its Mock: the conditions a request must meet, the Scenario state it needs or moves to, the Variables and Data buckets it writes, the response to return (response) or the weighted responses to pick from (responses), and the Faults to inject. A Stub in a Definition file adds id and mock to it (see fileStub). The Admin API adds Ephemeral Stubs in this shape, and gives the Mock and the Session itself. This definition does not close itself to other properties so that those two can extend it; each of them closes it with unevaluatedProperties: false.",
+      "description": "The shape of a Stub, without its ID and its Mock: the conditions a request must meet, the Scenario state it needs or moves to, the Variables and Data buckets it writes, the response to return (response) or the weighted responses to pick from (responses), and the Faults to inject. A CRUD Stub has crud instead of conditions, a Scenario clause, writes and responses: it serves a keyed Data bucket as a REST resource. A Stub in a Definition file adds id and mock to it (see fileStub). The Admin API adds Ephemeral Stubs in this shape, and gives the Mock and the Session itself. This definition does not close itself to other properties so that those two can extend it; each of them closes it with unevaluatedProperties: false.",
       "type": "object",
       "properties": {
         "priority": {
@@ -148,7 +148,7 @@
         "scenario": { "$ref": "#/$defs/scenario" },
         "response": { "$ref": "#/$defs/response" },
         "responses": {
-          "description": "Several responses instead of one: a matched request gets one of them, picked at random, each with the probability of its weight over the sum of the weights. 1 to 100 responses, in the order written. The pick draws from the request's one random draw, so fault.seed and --seed replay it, and it leaves the Faults and the template helpers as they would be with response. Give exactly one of response and responses.",
+          "description": "Several responses instead of one: a matched request gets one of them, picked at random, each with the probability of its weight over the sum of the weights. 1 to 100 responses, in the order written. The pick draws from the request's one random draw, so fault.seed and --seed replay it, and it leaves the Faults and the template helpers as they would be with response. Give exactly one of response, responses and crud.",
           "type": "array",
           "minItems": 1,
           "maxItems": 100,
@@ -166,12 +166,55 @@
           "maxItems": 100,
           "items": { "$ref": "#/$defs/dataWrite" }
         },
-        "fault": { "$ref": "#/$defs/fault" }
+        "fault": { "$ref": "#/$defs/fault" },
+        "crud": { "$ref": "#/$defs/crud" }
       },
       "oneOf": [
         { "description": "One response.", "required": ["response"] },
-        { "description": "Several weighted responses.", "required": ["responses"] }
+        { "description": "Several weighted responses.", "required": ["responses"] },
+        {
+          "description": "A CRUD Stub: crud in place of request, response, responses, scenario, variables and dataWrites.",
+          "required": ["crud"],
+          "not": {
+            "anyOf": [
+              { "required": ["request"] },
+              { "required": ["scenario"] },
+              { "required": ["variables"] },
+              { "required": ["dataWrites"] }
+            ]
+          }
+        }
       ]
+    },
+    "crud": {
+      "description": "What a CRUD Stub serves: a keyed Data bucket of the Stub's Mock, as a REST resource at path. GET path lists the bucket's items, a plain JSON array, with X-Total-Count and X-Filtered-Count; GET path/KEY reads the item whose key has the text KEY, or answers 404. Reads see the request's Session's copy of the bucket, or else its initial value. Any other method or path shape does not match the Stub, so later Stubs are tried. A CRUD Stub is tried in the usual order, so an earlier Stub can take over one of its requests. Its answers are compact JSON with Content-Type: application/json, never templated, and fault works on it as on any Stub.",
+      "type": "object",
+      "properties": {
+        "bucket": {
+          "description": "The name of the Data bucket served: a bucket of the Stub's Mock that has key.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        },
+        "path": {
+          "description": "The list path, such as /api/v1/orders. An item path is the list path, then /, then one non-empty segment, the key text. Both are compared with the request's percent-decoded path, byte for byte, as path conditions compare it. It starts with /, does not end with /, and has no empty segment, so / alone is not one.",
+          "type": "string",
+          "pattern": "^(/[^/]+)+$"
+        },
+        "headers": {
+          "description": "Header fields to send on every answer of the Stub, errors included, such as CORS headers, by name: a value, or a non-empty array of values, each sent as its own field line, in order. They are sent as written, never templated. Names are compared case-insensitively, so two names that differ only in case are rejected. smock sets Content-Type, Location, X-Total-Count, X-Filtered-Count, Content-Length, Transfer-Encoding and Connection itself, and Smock-Mock when the Default Mock answers, so they cannot be given. A browser reads X-Total-Count and X-Filtered-Count only when Access-Control-Expose-Headers names them.",
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/responseHeaderName",
+            "not": {
+              "description": "A header field smock sets itself on the answers of a CRUD Stub.",
+              "pattern": "^([Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Tt][Yy][Pp][Ee]|[Ll][Oo][Cc][Aa][Tt][Ii][Oo][Nn]|[Xx]-[Tt][Oo][Tt][Aa][Ll]-[Cc][Oo][Uu][Nn][Tt]|[Xx]-[Ff][Ii][Ll][Tt][Ee][Rr][Ee][Dd]-[Cc][Oo][Uu][Nn][Tt])$"
+            }
+          },
+          "additionalProperties": { "$ref": "#/$defs/headerValues" }
+        }
+      },
+      "required": ["bucket", "path"],
+      "additionalProperties": false
     },
     "dataWrite": {
       "description": "A write to a Data bucket of the Stub's Mock: its op, the bucket, and the members the op takes. set and merge take value and, for a keyed bucket, key; append takes value; remove takes key. On a keyed bucket, merge needs key, and every write keeps the rules of keyed buckets: a write by key to a key that no item has, or one that would break the rules, writes nothing.",

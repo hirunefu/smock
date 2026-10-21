@@ -1,0 +1,10 @@
+mocks:
+  - name: shop
+data:
+  - { mock: shop, name: orders, key: id, jsonFile: orders.json }
+  - { mock: shop, name: visits, json: 0 }
+stubs:
+  - id: orders
+    mock: shop
+    crud: { bucket: orders, path: /api/v1/orders }
+    scenario: { name: orders, requires: Down }

@@ -575,7 +575,7 @@ fn render(admin : Admin, call : Call) -> Reply {
     ) catch {
       UnknownStub(_) as err =>
         return admin.error(404, "unknown_stub", err.message())
-      UnknownResponse(..) as err => return invalid(err.message())
+      UnknownResponse(..) | CrudStub(_) as err => return invalid(err.message())
       UnknownSampleBucket(..) | InvalidSampleData(..) as err =>
         return admin.error(400, "invalid_data", err.message())
     }
