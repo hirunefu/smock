@@ -207,6 +207,7 @@ fn Context::eval(
         Fake(fake) => present(draw(fake, self.rand))
         Time(time) => present(self.time(time, at))
         Conversion(conversion) => Present(convert(conversion, values, at))
+        Strings(string) => present(string_value(string, values, at))
       }
     }
   }

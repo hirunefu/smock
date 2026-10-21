@@ -118,3 +118,34 @@ test "a bound of range may be any expression giving an integer, checked when ren
     ),
   )
 }
+
+///|
+/// A request whose body is `n` bytes of `x`.
+fn of_size(n : Int) -> @template.Input {
+  { ..request, body: @utf8.encode("x".repeat(n)), }
+}
+
+///|
+test "a helper whose result takes more than 1 MiB of UTF-8 is a render error" {
+  let half = 512 * 1024
+  let length = (source : String, input : @template.Input) => {
+    let out = rendered(source, input~)
+    if out.has_prefix("error") {
+      out
+    } else {
+      "\{out.length()} characters"
+    }
+  }
+  inspect(
+    [
+      length("${concat(bodyText, bodyText)}", of_size(half)),
+      length("${concat(bodyText, bodyText, 'x')}", of_size(half)),
+      length("${len(concat(bodyText, bodyText, 'x'))}", of_size(half)),
+    ].join("\n"),
+    content=(
+      #|1048576 characters
+      #|error at /response/body: concat(): the result takes more than 1 MiB
+      #|error at /response/body: concat(): the result takes more than 1 MiB
+    ),
+  )
+}

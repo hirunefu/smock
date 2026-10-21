@@ -66,6 +66,9 @@ priv enum Helper {
   Time(TimeHelper)
   /// `number`, `range`, `json` and `raw` (conversions.mbt).
   Conversion(ConversionHelper)
+  /// Text and arrays: `len`, `concat`, `padStart` and `padEnd`
+  /// (strings.mbt).
+  Strings(StringHelper)
 }
 
 ///|
@@ -524,7 +527,7 @@ priv struct CallSite {
 /// and gives `None` for a name that is not one of them, so a family is
 /// added without changing the others.
 let families : Array[(CallSite) -> Helper? raise Syntax] = [
-  fake_helper, time_helper, conversion_helper,
+  fake_helper, time_helper, conversion_helper, string_helper,
 ]
 
 ///|
