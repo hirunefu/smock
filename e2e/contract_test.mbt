@@ -1109,7 +1109,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":null,"session":"s","host":"users.example.com","mock":"users","viaDefault":false,"digest":"0123456789ab","request":{"method":"POST","target":"/users/1","version":"HTTP/1.1","headers":[{"name":"Host","value":"users.example.com"}],"body":{"encoding":"utf-8","data":"hi","size":2,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"responseIndex":null,"nearMiss":{"stub":"get-user","stubSource":"file","failed":[{"condition":"method","expected":"GET","actual":["POST"]}]},"status":404,"fault":null,"templateError":null}],"more":false,"evicted":3,"warnings":[]}
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":null,"session":"s","host":"users.example.com","mock":"users","viaDefault":false,"digest":"0123456789ab","request":{"method":"POST","target":"/users/1","version":"HTTP/1.1","headers":[{"name":"Host","value":"users.example.com"}],"body":{"encoding":"utf-8","data":"hi","size":2,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"responseIndex":null,"variablesWritten":[],"nearMiss":{"stub":"get-user","stubSource":"file","failed":[{"condition":"method","expected":"GET","actual":["POST"]}]},"status":404,"fault":null,"templateError":null}],"more":false,"evicted":3,"warnings":[]}
         ),
       },
     ),
@@ -1121,7 +1121,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":"s","host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"eph-1","stubSource":"ephemeral","scenario":null,"responseIndex":null,"nearMiss":null,"status":503,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":"s","host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"eph-1","stubSource":"ephemeral","scenario":null,"responseIndex":null,"variablesWritten":[],"nearMiss":null,"status":503,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
         ),
       },
     ),
@@ -1133,7 +1133,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":"s","host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"eph-1","stubSource":"ephemeral","scenario":null,"responseIndex":1,"nearMiss":null,"status":503,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":"s","host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"eph-1","stubSource":"ephemeral","scenario":null,"responseIndex":1,"variablesWritten":[],"nearMiss":null,"status":503,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
         ),
       },
     ),
@@ -1145,7 +1145,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":"s","host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"eph-1","stubSource":"ephemeral","scenario":null,"nearMiss":null,"status":503,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":"s","host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"eph-1","stubSource":"ephemeral","scenario":null,"variablesWritten":[],"nearMiss":null,"status":503,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
         ),
       },
     ),
@@ -1157,7 +1157,31 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":"s","host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"eph-1","stubSource":"ephemeral","scenario":null,"responseIndex":100,"nearMiss":null,"status":503,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":"s","host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"eph-1","stubSource":"ephemeral","scenario":null,"responseIndex":100,"variablesWritten":[],"nearMiss":null,"status":503,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a Journal entry with the Variables written",
+      "POST",
+      "/v1/journal/query",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":"s","host":null,"mock":"shop","viaDefault":true,"digest":"0123456789ab","request":{"method":"POST","target":"/login","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"login","stubSource":"file","scenario":null,"responseIndex":null,"variablesWritten":["user","previous"],"nearMiss":null,"status":200,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a Journal entry without its Variables written",
+      "POST",
+      "/v1/journal/query",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":"s","host":null,"mock":"shop","viaDefault":true,"digest":"0123456789ab","request":{"method":"POST","target":"/login","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"login","stubSource":"file","scenario":null,"responseIndex":null,"nearMiss":null,"status":200,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
         ),
       },
     ),
@@ -1169,7 +1193,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":null,"host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"get-user","scenario":null,"responseIndex":null,"nearMiss":null,"status":200,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":null,"host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"get-user","scenario":null,"responseIndex":null,"variablesWritten":[],"nearMiss":null,"status":200,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
         ),
       },
     ),
@@ -1181,7 +1205,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":null,"host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"get-user","stubSource":"admin","scenario":null,"responseIndex":null,"nearMiss":null,"status":200,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":null,"host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"get-user","stubSource":"admin","scenario":null,"responseIndex":null,"variablesWritten":[],"nearMiss":null,"status":200,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
         ),
       },
     ),
@@ -1193,7 +1217,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":"s","host":null,"mock":"payments","viaDefault":true,"digest":"0123456789ab","request":{"method":"POST","target":"/orders/42/pay","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"pay","stubSource":"file","scenario":{"name":"checkout","from":"Started","to":"Paid"},"responseIndex":null,"nearMiss":null,"status":200,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":"s","host":null,"mock":"payments","viaDefault":true,"digest":"0123456789ab","request":{"method":"POST","target":"/orders/42/pay","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"pay","stubSource":"file","scenario":{"name":"checkout","from":"Started","to":"Paid"},"responseIndex":null,"variablesWritten":[],"nearMiss":null,"status":200,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
         ),
       },
     ),
@@ -1205,7 +1229,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":null,"host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"get-user","stubSource":"file","responseIndex":null,"nearMiss":null,"status":200,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":null,"host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"get-user","stubSource":"file","responseIndex":null,"variablesWritten":[],"nearMiss":null,"status":200,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
         ),
       },
     ),
@@ -1217,7 +1241,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":"s","host":null,"mock":"payments","viaDefault":true,"digest":"0123456789ab","request":{"method":"POST","target":"/orders/42/pay","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"pay","stubSource":"file","scenario":{"name":"checkout","to":"Paid"},"responseIndex":null,"nearMiss":null,"status":200,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":"s","host":null,"mock":"payments","viaDefault":true,"digest":"0123456789ab","request":{"method":"POST","target":"/orders/42/pay","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"pay","stubSource":"file","scenario":{"name":"checkout","to":"Paid"},"responseIndex":null,"variablesWritten":[],"nearMiss":null,"status":200,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
         ),
       },
     ),
@@ -1229,7 +1253,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":1,"session":"s","host":null,"mock":"payments","viaDefault":true,"digest":"0123456789ab","request":{"method":"POST","target":"/orders/42/pay","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"responseIndex":null,"nearMiss":{"stub":"pay","stubSource":"file","failed":[{"condition":"scenario:check out\nnow","expected":"Started","actual":["Paid"]}]},"status":404,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":1,"session":"s","host":null,"mock":"payments","viaDefault":true,"digest":"0123456789ab","request":{"method":"POST","target":"/orders/42/pay","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"responseIndex":null,"variablesWritten":[],"nearMiss":{"stub":"pay","stubSource":"file","failed":[{"condition":"scenario:check out\nnow","expected":"Started","actual":["Paid"]}]},"status":404,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
         ),
       },
     ),
@@ -1241,7 +1265,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":1,"session":"s","host":null,"mock":"payments","viaDefault":true,"digest":"0123456789ab","request":{"method":"POST","target":"/orders/42/pay","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"responseIndex":null,"nearMiss":{"stub":"pay","stubSource":"file","failed":[{"condition":"scenario:","expected":"Started","actual":["Paid"]}]},"status":404,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":1,"session":"s","host":null,"mock":"payments","viaDefault":true,"digest":"0123456789ab","request":{"method":"POST","target":"/orders/42/pay","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"responseIndex":null,"variablesWritten":[],"nearMiss":{"stub":"pay","stubSource":"file","failed":[{"condition":"scenario:","expected":"Started","actual":["Paid"]}]},"status":404,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
         ),
       },
     ),
@@ -1253,7 +1277,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":1,"session":null,"host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"responseIndex":null,"nearMiss":{"stub":"get-user","failed":[]},"status":404,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":1,"session":null,"host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"responseIndex":null,"variablesWritten":[],"nearMiss":{"stub":"get-user","failed":[]},"status":404,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
         ),
       },
     ),
@@ -1265,7 +1289,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":null,"host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"get-user","stubSource":"file","scenario":null,"responseIndex":null,"nearMiss":null,"status":200,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+          #|{"entries":[{"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":null,"host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"get-user","stubSource":"file","scenario":null,"responseIndex":null,"variablesWritten":[],"nearMiss":null,"status":200,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
         ),
       },
     ),
@@ -1277,7 +1301,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"seq":0,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":null,"host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"get-user","stubSource":"file","scenario":null,"responseIndex":null,"nearMiss":null,"status":200,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+          #|{"entries":[{"seq":0,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":null,"host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":"get-user","stubSource":"file","scenario":null,"responseIndex":null,"variablesWritten":[],"nearMiss":null,"status":200,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
         ),
       },
     ),
@@ -1289,7 +1313,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","session":null,"host":null,"mock":null,"viaDefault":false,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.0","headers":[],"body":{"encoding":"base64","data":"","size":0,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"responseIndex":null,"nearMiss":null,"status":null,"fault":"close","templateError":null}],"more":false,"evicted":0,"warnings":[]}
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","session":null,"host":null,"mock":null,"viaDefault":false,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.0","headers":[],"body":{"encoding":"base64","data":"","size":0,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"responseIndex":null,"variablesWritten":[],"nearMiss":null,"status":null,"fault":"close","templateError":null}],"more":false,"evicted":0,"warnings":[]}
         ),
       },
     ),
@@ -1301,7 +1325,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":null,"host":null,"mock":null,"viaDefault":false,"digest":null,"request":{"method":"GET","target":"/","version":"HTTP/1.0","headers":[],"body":{"encoding":"base64","data":"","size":0,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"responseIndex":null,"nearMiss":null,"status":null,"fault":"close","templateError":null}],"more":false,"evicted":0,"warnings":[]}
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":0,"session":null,"host":null,"mock":null,"viaDefault":false,"digest":null,"request":{"method":"GET","target":"/","version":"HTTP/1.0","headers":[],"body":{"encoding":"base64","data":"","size":0,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"responseIndex":null,"variablesWritten":[],"nearMiss":null,"status":null,"fault":"close","templateError":null}],"more":false,"evicted":0,"warnings":[]}
         ),
       },
     ),
@@ -1409,7 +1433,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":1,"session":"s","host":"users.example.com","mock":"users","viaDefault":false,"digest":"0123456789ab","request":{"method":"GET","target":"/users/x?a=b","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"responseIndex":null,"nearMiss":{"stub":"eph-1","stubSource":"ephemeral","failed":[{"condition":"path","expected":{"pattern":"/users/[0-9]+"},"actual":["/users/x"]},{"condition":"query:a","expected":"c","actual":["b"]}]},"status":404,"fault":null,"templateError":null},{"seq":8,"receivedAt":"2026-10-13T01:02:03.005Z","durationMs":0,"session":"s","host":"nowhere.example.com","mock":null,"viaDefault":false,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"responseIndex":null,"nearMiss":null,"status":404,"fault":null,"templateError":null}],"more":true,"evicted":0,"warnings":[]}
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":1,"session":"s","host":"users.example.com","mock":"users","viaDefault":false,"digest":"0123456789ab","request":{"method":"GET","target":"/users/x?a=b","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"responseIndex":null,"variablesWritten":[],"nearMiss":{"stub":"eph-1","stubSource":"ephemeral","failed":[{"condition":"path","expected":{"pattern":"/users/[0-9]+"},"actual":["/users/x"]},{"condition":"query:a","expected":"c","actual":["b"]}]},"status":404,"fault":null,"templateError":null},{"seq":8,"receivedAt":"2026-10-13T01:02:03.005Z","durationMs":0,"session":"s","host":"nowhere.example.com","mock":null,"viaDefault":false,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"responseIndex":null,"variablesWritten":[],"nearMiss":null,"status":404,"fault":null,"templateError":null}],"more":true,"evicted":0,"warnings":[]}
         ),
       },
     ),
@@ -1433,7 +1457,7 @@ async test "the contract checker rejects responses that break the document" {
         status: 200,
         headers: replica,
         body: (
-          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":1,"session":null,"host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"responseIndex":null,"nearMiss":{"stub":"get-user","stubSource":"file","failed":[{"condition":"trailer:x-id","expected":"1","actual":[]}]},"status":404,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
+          #|{"entries":[{"seq":7,"receivedAt":"2026-10-13T01:02:03.004Z","durationMs":1,"session":null,"host":null,"mock":"users","viaDefault":true,"digest":"0123456789ab","request":{"method":"GET","target":"/","version":"HTTP/1.1","headers":[],"body":{"encoding":"utf-8","data":"","size":0,"truncated":false}},"stub":null,"stubSource":null,"scenario":null,"responseIndex":null,"variablesWritten":[],"nearMiss":{"stub":"get-user","stubSource":"file","failed":[{"condition":"trailer:x-id","expected":"1","actual":[]}]},"status":404,"fault":null,"templateError":null}],"more":false,"evicted":0,"warnings":[]}
         ),
       },
     ),
@@ -1500,6 +1524,8 @@ async test "the contract checker rejects responses that break the document" {
       #|a Journal entry with the index of the response picked: conforms
       #|a Journal entry without its response index: /entries/0: responseIndex is missing
       #|a Journal entry with a response index out of range: /entries/0/responseIndex: 100 is above 99
+      #|a Journal entry with the Variables written: conforms
+      #|a Journal entry without its Variables written: /entries/0: variablesWritten is missing
       #|a Journal entry without its Stub source: /entries/0: stubSource is missing
       #|a Journal entry with a Stub source the document does not list: /entries/0/stubSource: "admin" is not one of ["file","ephemeral",null]
       #|a Journal entry with a Scenario move: conforms

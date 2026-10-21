@@ -20,12 +20,16 @@ fn VariableStore::new() -> VariableStore {
 
 ///|
 /// The Variables of `mock` for `session`, by name. There are none when the
-/// map is absent.
+/// map is absent. While no Variable is stored, as when no Stub writes any,
+/// it looks nothing up.
 fn VariableStore::of(
   self : VariableStore,
   mock : String,
   session : String?,
 ) -> Map[String, Json]? {
+  if self.by_mock.is_empty() {
+    return None
+  }
   match self.by_mock.get(mock) {
     Some(by_session) => by_session.get(session)
     None => None

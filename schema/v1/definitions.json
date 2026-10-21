@@ -91,7 +91,7 @@
       "unevaluatedProperties": false
     },
     "stub": {
-      "description": "The shape of a Stub, without its ID and its Mock: the conditions a request must meet, the Scenario state it needs or moves to, the response to return (response) or the weighted responses to pick from (responses), and the Faults to inject. A Stub in a Definition file adds id and mock to it (see fileStub). The Admin API adds Ephemeral Stubs in this shape, and gives the Mock and the Session itself. This definition does not close itself to other properties so that those two can extend it; each of them closes it with unevaluatedProperties: false.",
+      "description": "The shape of a Stub, without its ID and its Mock: the conditions a request must meet, the Scenario state it needs or moves to, the Variables it writes, the response to return (response) or the weighted responses to pick from (responses), and the Faults to inject. A Stub in a Definition file adds id and mock to it (see fileStub). The Admin API adds Ephemeral Stubs in this shape, and gives the Mock and the Session itself. This definition does not close itself to other properties so that those two can extend it; each of them closes it with unevaluatedProperties: false.",
       "type": "object",
       "properties": {
         "priority": {
@@ -109,6 +109,11 @@
           "minItems": 1,
           "maxItems": 100,
           "items": { "$ref": "#/$defs/weightedResponse" }
+        },
+        "variables": {
+          "description": "Variables to write when the Stub matches, by name: each a named JSON value kept per Mock and Session, which templates read as vars.NAME. A name is 1 to 128 ASCII letters, digits, _ and -. A value is any JSON, and is always a structured template, whether or not a response has template: true: ${…} inserts a value, $${ writes ${, and a $if at its root needs else. At the match decision, after the Scenario moves, the values are rendered in the order written against the Variables as they were before the request, then all are written, and the response sees the new values. A value that fails to render writes none of them. Writing null stores null.",
+          "type": "object",
+          "propertyNames": { "pattern": "^[A-Za-z0-9_-]{1,128}$" }
         },
         "fault": { "$ref": "#/$defs/fault" }
       },

@@ -1,0 +1,22 @@
+mocks:
+  - name: shop
+stubs:
+  - id: login
+    mock: shop
+    request: { method: POST, path: /login }
+    variables:
+      text: plain text
+      number: 1.5
+      integer: 42
+      boolean: true
+      nothing: null
+      object: { a: [1, 2], b: { c: d } }
+      array: [x, 1, false, null]
+      escaped: $${not a template}
+      user: ${body.user}
+      previous: ${vars.user ?? null}
+      count-1: { items: { $each: "range(1, 3)", as: i, do: "${i}" } }
+    response:
+      status: 200
+      template: true
+      json: { user: "${vars.user}", previous: "${vars.previous}" }

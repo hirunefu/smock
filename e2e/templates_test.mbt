@@ -70,7 +70,7 @@ async test "smock check reports a template syntax error with the file and the JS
           #|status 1
           #|users.yaml: /stubs/0/response/headers/X-Id: template: column 9: expected ], found "}"
           #|users.yaml: /stubs/0/response/json/id: template: column 3: unknown helper "fake.nope": not one of the helpers smock has
-          #|users.yaml: /stubs/0/response/json/lines/as: template: "loop" cannot be a loop variable: it is a request field, env, loop or a reserved word
+          #|users.yaml: /stubs/0/response/json/lines/as: template: "loop" cannot be a loop variable: it is a request field, env, vars, loop or a reserved word
           #|users.yaml: /stubs/1/response/bodyFile: template: line 3, column 1: expected } to end the ${, found "<"
           #|
         ),

@@ -47,12 +47,21 @@ of each GitHub release include its section
 - `smock render` and the Admin render operation show `responseIndex`, and
   render a given response with `--response <i>` and the `response` query
   parameter.
+- Variables: named JSON values kept per Mock and Session. A Stub's
+  `variables` write them when it matches, before its response is built,
+  and templates read them as `vars.NAME`, so a POST can store what a later
+  GET returns. Each value is a template, rendered against the Variables as
+  they were before the request; a value that fails to render writes none
+  of them. Ephemeral Stubs take `variables` too.
+- Journal entries record `variablesWritten`, the names of the Variables a
+  request wrote.
 
 ### Changed
 
-- A loop variable named `cookie` or `env` now fails to load, since `cookie`
-  and `env` are template roots. No valid file changes meaning: rename the
-  loop variable. The Definition file format is still version 1.
+- A loop variable named `cookie`, `env` or `vars` now fails to load, since
+  `cookie`, `env` and `vars` are template roots. No valid file changes
+  meaning: rename the loop variable. The Definition file format is still
+  version 1.
 
 ## [0.2.0] - 2026-10-21
 

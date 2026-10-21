@@ -262,8 +262,9 @@ pub fn Engine::render(
   }
   let incoming = Incoming::new(sample.to_request())
   // The steps of the match decision that build the response, as for a
-  // request: the one draw, the Variables (none yet), the pick, then
-  // rendering and planning. No Scenario moves and no Fault is decided.
+  // request: the one draw, the pick, then rendering and planning. No
+  // Scenario moves, no Fault is decided, and no Variable is rendered,
+  // written or read.
   let draw = @prng.Generator(seed).uint64()
   let response_index = match (response, stub.total_weight) {
     // A Stub with `response` shows no index, whichever it was asked for.

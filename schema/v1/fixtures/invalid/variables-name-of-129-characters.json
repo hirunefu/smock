@@ -1,0 +1,11 @@
+{
+  "mocks": [{ "name": "shop" }],
+  "stubs": [
+    {
+      "id": "login",
+      "mock": "shop",
+      "variables": { "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv": 1 },
+      "response": { "status": 200 }
+    }
+  ]
+}

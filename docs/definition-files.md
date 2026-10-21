@@ -1056,7 +1056,9 @@ pick.
 
 The [Journal](../README.md#the-journal) records which response each
 request got, as `responseIndex`, its index from 0. It is null for a Stub
-with `response`, and for a request that no Stub matched. `smock render` and
+with `response`, for a request that no Stub matched, and when no response
+was picked because a value of the Stub's [`variables`](#variables) failed
+to render. `smock render` and
 the Admin render operation show the index the seed picks, and
 `--response <i>` (the Admin API's `response=<i>`) renders the response at
 index `i` ([Rendering a template](#rendering-a-template)).
@@ -1131,6 +1133,7 @@ The words `for`, `if`, `else`, `end`, `each` and `params` are reserved.
 | `body` | The body parsed as JSON. `body.a.b`, `body.items[0]` and `body['odd.key']` walk into it. |
 | `bodyText` | The body as text; bytes that are not UTF-8 become U+FFFD. |
 | `env.NAME` | The value of an environment variable that `--template-env` lists, as a string; see [Environment variables](#environment-variables). |
+| `vars.NAME` | The [Variable](#variables) `NAME` of the request's Mock and Session, with its own type. `vars.cart.items[0]` walks into it. |
 | `loop.index` | The position in the innermost `$each`, from 0. |
 | a loop variable | The current element of the `$each` that names it with `as`. |
 
@@ -1176,7 +1179,7 @@ In `json`:
   every value of a query parameter, a header or a cookie (none when it is
   absent), or `range(a, b)`. The name in `as` cannot be a request field
   (`method`, `path`, `query`, `header`, `cookie`, `body` or `bodyText`),
-  `loop` or a reserved word.
+  `env`, `vars`, `loop` or a reserved word.
 - `{ "$if": cond, "then": template, "else": template }` gives `then` or
   `else`. Without `else`, a false condition leaves the member or the array
   element out; at the root of `json`, `else` is required. A condition is
@@ -1441,12 +1444,112 @@ load.
   [definition set digest](#reloading).
 
 A listed value reaches only what a template that reads it produces: a
-response, a rendering, or a template error message that quotes it, such as
+response, a rendering, a [Variable](#variables) it writes, or a template
+error message that quotes it, such as
 `number(): "eighty" is not a JSON number`. Such a message goes into the 500
 of the failed template and into the Journal entry's `templateError`.
 smock writes no value in its logs or in the Admin API status, and the
 Journal holds one only inside such a message. So list only values that may
 be shown to whoever can send requests to smock or read its Journal.
+
+### Variables
+
+A *Variable* is a named JSON value that smock keeps per Mock and per
+Session. A Stub's `variables` write Variables when the Stub matches, and
+templates read them as `vars.NAME`. So a POST can store what a later GET
+returns:
+
+```yaml
+- id: login
+  mock: shop
+  request: { method: POST, path: /login }
+  variables:
+    user: ${body.user}
+    previous: ${vars.user ?? null}
+  response:
+    status: 200
+    template: true
+    json: { user: "${vars.user}", previous: "${vars.previous}" }
+- id: whoami
+  mock: shop
+  request: { method: GET, path: /me }
+  response:
+    status: 200
+    template: true
+    json: { user: "${vars.user ?? null}" }
+```
+
+In one Session, `POST /login` with `{"user":"ann"}` gets
+`{"user":"ann","previous":null}`, and `GET /me` then gets
+`{"user":"ann"}`. Another Session still gets `{"user":null}`.
+
+- `variables` maps the name of each Variable to its value. It sits beside
+  `response` or `responses`, so a Stub has one set of writes, whichever
+  response is picked.
+- A name is 1 to 128 ASCII letters, digits, `_` and `-`.
+- A value is any JSON. It is always a [structured
+  template](#structured-templates), whether or not a response has
+  `template: true`: `${…}` inserts a value, and `$${` writes `${`. As at
+  the root of `json`, a `$if` at its root needs `else`.
+- Writing `null` stores null. It does not delete the Variable.
+- Variables are kept per Mock and per Session, like Scenario state.
+  Requests without a Session share one space per Mock. Each replica keeps
+  its own, and they are lost on restart.
+- An [Ephemeral Stub](../README.md#sessions-and-ephemeral-stubs) takes
+  `variables` too, and writes the Variables of its Session.
+
+#### When Variables are written
+
+The values are written at the match decision, as a Scenario moves, in this
+order:
+
+1. The Scenario moves.
+2. The request takes its one random draw (see [Helpers](#helpers)).
+3. Every value is rendered, in the order written, against the Variables as
+   they were before this request. So
+   `count: ${concat(vars.count ?? '', 'x')}` adds an `x` with each
+   request, and two values that read each other see the old values. The
+   values draw their helper output first, and the response's helpers draw
+   on from there, so [`fault.seed` and `--seed`](#seeds) replay them.
+4. All the values are written at once.
+5. The response is picked, as for any Stub with
+   [`responses`](#several-responses), then rendered. It sees the new
+   values.
+
+A value that fails to render writes none of the Stub's Variables. The
+request gets the [template failure](#missing-values-and-render-errors),
+500 with an `at` under `/variables/NAME`, such as
+`"at":"/variables/user","message":"body.user is missing"`. No response is
+picked. The Scenario move stands, and the delay and the connection Fault
+apply as for any template failure.
+
+Each value is bounded as a rendered body is: at most 1 MiB of compact JSON,
+and at most 10,000 loop iterations. Past either is a render error.
+
+Once written, a value stays: a delay, a connection Fault or a response
+that fails to render does not undo the write, and the next request sees
+it. Nothing expires a Variable.
+
+#### Reading Variables
+
+- `vars.NAME` gives the value with its own type, and steps go into it:
+  `${vars.cart.items[0].sku}`. It works in every template, the values of
+  `variables` included.
+- An unset Variable is missing, so `??` gives a fallback:
+  `${vars.count ?? 0}`. A Variable set to `null` is present.
+- `vars` takes the name of a Variable first: `${vars}` alone and
+  `${vars[0]}` are errors when loading. A loop variable cannot be named
+  `vars`.
+- A name that no Stub in the files writes is not an error, since an
+  Ephemeral Stub can write it.
+- `smock render` and the Admin render operation render no values of
+  `variables`, write no Variables and read none, so `vars.NAME` is missing
+  there.
+
+Each [Journal](../README.md#the-journal) entry records the names of the
+Variables the request wrote, in the order written, as `variablesWritten`.
+It is empty for a Stub without `variables`, for a request that no Stub
+matched, and when a value failed to render.
 
 ### Errors when loading
 
@@ -1461,7 +1564,8 @@ users.yaml: /stubs/1/response/bodyFile: template: line 3, column 5: unknown help
 ```
 
 Every name (an `env` name must be listed), loop variable and helper, the
-number of arguments of each call and the kinds of its literal arguments,
+names of `variables`, the number of arguments of each call and the kinds
+of its literal arguments,
 the keys of `$each` and `$if` objects, reserved keys, `${` in a key or in
 `Content-Type`, `json()` and `raw()` in `json`, and a templated body file
 that is not UTF-8 are checked then.

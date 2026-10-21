@@ -16,7 +16,8 @@ pub struct JournalSettings {
   /// The most bytes its entries take, as each entry counts them: 256 for
   /// its fixed fields, two for each UTF-16 code unit of the text it holds
   /// (the request line, the header fields, the Session, Host, Mock and
-  /// Stub names, the Scenario move and the Near miss), 32 for each value
+  /// Stub names, the Scenario move, the names of the Variables written and
+  /// the Near miss), 32 for each value
   /// its Near miss keeps from a form or an XML body, and the bytes of its
   /// truncated body.
   max_bytes : Int

@@ -1,0 +1,11 @@
+{
+  "mocks": [{ "name": "shop" }],
+  "stubs": [
+    {
+      "id": "login",
+      "mock": "shop",
+      "variables": { "user": { "$if": "body.user", "then": "${body.user}" } },
+      "response": { "status": 200 }
+    }
+  ]
+}

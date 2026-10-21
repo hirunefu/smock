@@ -1,0 +1,16 @@
+{
+  "mocks": [{ "name": "shop" }],
+  "stubs": [
+    {
+      "id": "list-items",
+      "mock": "shop",
+      "response": {
+        "status": 200,
+        "template": true,
+        "json": {
+          "items": { "$each": "body.items", "as": "vars", "do": "${vars.sku}" }
+        }
+      }
+    }
+  ]
+}

@@ -673,7 +673,9 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   made, as `scenario`, with its name and the states it moved from and to;
   the index of the response the Stub gave among its
   [`responses`](docs/definition-files.md#several-responses), as
-  `responseIndex`; the status, or the connection Fault; when the request was received and
+  `responseIndex`; the names of the
+  [Variables](docs/definition-files.md#variables) the request wrote, as
+  `variablesWritten`; the status, or the connection Fault; when the request was received and
   how long the response took; and the digest of the definition set that
   answered. A request for a Host that no Mock answers is recorded too,
   with no Mock; one the HTTP/1.1 codec rejects (400, 413, 431, 501 or 505)
