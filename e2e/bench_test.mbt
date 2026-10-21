@@ -1,10 +1,11 @@
 // Seam 2 tests of the release benchmark's request mix (bench/requests.json)
-// and definition set (bench/definitions/), and of the set's Scenario
-// variant (bench/definitions-scenarios/). bench/bench.py sends these
-// requests to smock under load; here each one is sent once, over the plain
-// and the TLS port, so that a request that no longer reaches the Stub the
-// mix names for it fails a test instead of quietly measuring something
-// else.
+// and definition set (bench/definitions/), of the set's Scenario variant
+// (bench/definitions-scenarios/), and of its CRUD variant
+// (bench/definitions-crud/) with the CRUD variant's own mix
+// (bench/requests-crud.json). bench/bench.py sends these requests to smock
+// under load; here each one is sent once, over the plain and the TLS port,
+// so that a request that no longer reaches the Stub the mix names for it
+// fails a test instead of quietly measuring something else.
 
 ///|
 /// The benchmark's definitions directory, relative to the module root.
@@ -14,6 +15,14 @@ let bench_definitions : String = "bench/definitions"
 /// The directory of the Scenario variant of the benchmark's definitions,
 /// relative to the module root.
 let bench_scenario_definitions : String = "bench/definitions-scenarios"
+
+///|
+/// The directory of the CRUD variant of the benchmark's definitions, and
+/// the request mix bench/bench.py sends it, relative to the module root.
+let bench_crud_definitions : String = "bench/definitions-crud"
+
+///|
+let bench_crud_mix : String = "bench/requests-crud.json"
 
 ///|
 /// One request of the mix and what smock should do with it, as
@@ -30,14 +39,17 @@ priv struct MixRequest {
   mock : String
   stub : String
   via_default : Bool
+  /// The CRUD operation and key the Journal records for it, as the CRUD
+  /// variant's mix gives them; `None` in a mix that names none.
+  crud : Json?
 }
 
 ///|
-/// Reads the request mix.
-async fn read_mix() -> Array[MixRequest] {
-  guard @fs.read_file("bench/requests.json").json()
+/// Reads the request mix `file`, by default the benchmark's.
+async fn read_mix(file? : String = "bench/requests.json") -> Array[MixRequest] {
+  guard @fs.read_file(file).json()
     is Object({ "requests": Array(requests), .. }) else {
-    fail("bench/requests.json has no requests array")
+    fail("\{file} has no requests array")
   }
   requests.map(request => {
     guard request
@@ -57,7 +69,7 @@ async fn read_mix() -> Array[MixRequest] {
               "stub": String(stub),
               "viaDefault": via_default,
               ..
-            }
+            } as expect
           ),
           ..
         }
@@ -87,6 +99,7 @@ async fn read_mix() -> Array[MixRequest] {
       mock,
       stub,
       via_default: via_default is True,
+      crud: expect.get("crud"),
     }
   })
 }
@@ -396,4 +409,147 @@ async test "bench/in the Scenario variant, each request of the mix gets its stat
 ///|
 async test "bench/smock check finds nothing to warn about in the Scenario variant" {
   inspect(check([bench_scenario_definitions]), content="status 0\n")
+}
+
+///|
+async test "bench/in the CRUD variant, each request of its mix gets its status from the Stub the mix names, over both ports, with the CRUD operation it names; only the update writes, to its own Session's copy, which does not grow" {
+  let mix = read_mix(file=bench_crud_mix)
+  with_certificates(certs => {
+    let _ = with_smock(
+      ["--dir", bench_crud_definitions, "--port", "0", ..certs.args()],
+      smock => {
+        let problems = []
+        for over in [Plain, Tls(certs)] {
+          for request in mix {
+            let conn = smock.connect(over~)
+            defer conn.close()
+            conn.write(request.raw())
+            let response = read_response(conn)
+            let expected = "HTTP/1.1 \{request.status} "
+            if !response.has_prefix(expected) {
+              problems.push(
+                "\{request.name}: expected \{expected}, got \{response}",
+              )
+            }
+          }
+        }
+        // Each request's two Journal entries: the Stub that answered it,
+        // its CRUD operation and the buckets it wrote.
+        let journal : Map[String, Json] = Map([])
+        for request in mix {
+          guard smock.journal(session=request.session)
+            is (200, Object({ "entries": Array(entries), .. })) else {
+            fail("\{request.name}: the Journal query failed")
+          }
+          let expected : Json = {
+            "mock": request.mock,
+            "stub": request.stub,
+            "status": request.status,
+            "viaDefault": request.via_default,
+            "crud": request.crud.unwrap_or(Json::null()),
+          }
+          let found = entries.map(entry => {
+            guard entry
+              is Object(
+                {
+                  "mock": mock,
+                  "stub": stub,
+                  "status": status,
+                  "viaDefault": via_default,
+                  "crud": crud,
+                  "dataWritten": Array(written),
+                  ..
+                }
+              ) else {
+              return Json::string(
+                "an entry without a member: \{entry.stringify()}",
+              )
+            }
+            let shown : Json = {
+              "mock": mock,
+              "stub": stub,
+              "status": status,
+              "viaDefault": via_default,
+              "crud": crud,
+            }
+            if shown != expected {
+              problems.push(
+                "\{request.name}: expected \{expected.stringify()}, got \{shown.stringify()}",
+              )
+            }
+            Json::array(written)
+          })
+          journal[request.name] = Json::array(found)
+        }
+        debug_inspect(problems, content="[]")
+        // What each request wrote, and which Session holds a copy.
+        let copies = []
+        for request in mix {
+          for mock in ["catalog", "orders"] {
+            let listed = smock.admin("GET", "/v1/mocks/\{mock}/data", headers=[
+              baggage(request.session),
+            ])
+            guard listed.json() is Object({ "data": Array(buckets), .. }) else {
+              fail("\{mock}: no buckets in \{listed.body}")
+            }
+            for bucket in buckets {
+              if bucket is Object({ "name": String(name), "written": True, .. }) {
+                copies.push("\{request.session}: \{mock}/\{name}")
+              }
+            }
+          }
+        }
+        let read = smock.admin("GET", "/v1/mocks/orders/data/orders", headers=[
+          baggage("bench-update-order"),
+        ])
+        guard read.json()
+          is Object({ "bucket": Object({ "value": Array(orders), .. }), .. }) else {
+          fail("no orders in \{read.body}")
+        }
+        let updated = orders.filter(order => {
+          order is Object({ "id": "7f9c2ba4-e88f-4c1a-9c5b-2d3a1e8f6b10", .. })
+        })
+        json_inspect(
+          {
+            "dataWritten": Json::object(journal),
+            "copies": copies.to_json(),
+            "ordersInTheCopy": orders.length().to_json(),
+            "updated": Json::array(updated),
+          },
+          content={
+            "dataWritten": {
+              "catalog-item": [[], []],
+              "catalog-list": [[], []],
+              "user-profile": [[], []],
+              "user-preferences": [[], []],
+              "create-order": [[], []],
+              "get-order": [[], []],
+              "update-order": [["orders"], ["orders"]],
+              "create-payment": [[], []],
+              "legacy-payment": [[], []],
+            },
+            "copies": ["bench-update-order: orders/orders"],
+            "ordersInTheCopy": 48,
+            "updated": [
+              {
+                "id": "7f9c2ba4-e88f-4c1a-9c5b-2d3a1e8f6b10",
+                "status": "shipped",
+                "channel": "partner",
+                "tier": "gold",
+                "total": { "amount": 10597, "currency": "EUR" },
+                "carrier": "dhl",
+                "trackingNumber": "JD014600003828382930",
+                "shippedAt": "2026-10-12T09:30:00Z",
+              },
+            ],
+          },
+        )
+      },
+    )
+  })
+}
+
+///|
+async test "bench/smock check finds nothing to warn about in the CRUD variant" {
+  inspect(check([bench_crud_definitions]), content="status 0\n")
 }
