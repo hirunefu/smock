@@ -1060,8 +1060,8 @@ An expression is a value, a request field, a literal (`'text'` or `"text"`
 with the escapes `\'`, `\"` and `\\`, a JSON number, `true`, `false` or
 `null`) or a helper call, optionally followed by fallbacks: `a ?? b` is `a`
 when `a` is present, otherwise `b`. There is no arithmetic, no string
-operator and no user-defined function. The words `for`, `if`, `else`,
-`end`, `each` and `params` are reserved.
+operator and no user-defined function: [helpers](#helpers) do that work.
+The words `for`, `if`, `else`, `end`, `each` and `params` are reserved.
 
 | Name | Value |
 |---|---|
@@ -1077,6 +1077,11 @@ operator and no user-defined function. The words `for`, `if`, `else`,
 
 A name in a reference is ASCII letters, digits, `_` and `-`; write any other
 name as `['…']`, such as `query['page size']`.
+
+A helper call can be followed by steps into what it gives, as `body` can:
+`.name`, `[n]` and `['name']`. `${range(1, 3)[1]}` gives `2`. A step into
+what is not an object or an array, or past its end, gives a missing value,
+so `??` applies: `${range(1, 3)[5] ?? 'none'}` gives `none`.
 
 ### Structured templates
 
@@ -1122,6 +1127,11 @@ Text templates have no loops and no conditionals.
 
 ### Helpers
 
+Helpers come in families. Each family says how many arguments its helpers
+take, and which of them must be literals.
+
+**Fake data.** Every argument is a literal.
+
 | Helper | Arguments | Output |
 |---|---|---|
 | `fake.uuid()` | none | A version 4 UUID in lower case. |
@@ -1133,12 +1143,70 @@ Text templates have no loops and no conditionals.
 | `fake.word()`, `fake.words(n)` | `n` from 1 to 100 | One word, or `n` words separated by spaces, from a built-in list of 256 lower-case English words. |
 | `fake.firstName()`, `fake.lastName()`, `fake.name()` | none | A first name, a last name, or both, from built-in lists of 128 ASCII names each. |
 | `fake.email()` | none | `<first>.<last><nn>@example.com` in lower case. |
+
+**Time.** The argument, if any, is a literal.
+
+| Helper | Arguments | Output |
+|---|---|---|
 | `now()`, `now(s)` | `s`: an integer literal, seconds, may be negative | The time of the request plus `s` seconds, RFC 3339 in UTC with milliseconds. |
 | `nowMillis()`, `nowMillis(s)` | as for `now` | The same instant in milliseconds since the Unix epoch. |
+
+**Conversions.** Each argument may be any expression.
+
+| Helper | Arguments | Output |
+|---|---|---|
 | `number(x)` | a string or a number | `x` as a number. |
-| `range(a, b)` | integer literals or `number(…)` | The integers from `a` to `b`, for `$each`; none when `a > b`. |
+| `range(a, b)` | integers from -(2^53 - 1) to 2^53 - 1 | The integers from `a` to `b`, for `$each`; none when `a > b`. |
 | `json(x)` | any value | Text templates only: `x` written as JSON. |
 | `raw(x)` | a string, number, boolean or null | Text templates only: `x` without escaping. |
+
+A bound of `range` can be any expression that gives an integer, such as
+`len(body.items)`; a string is not one, so write `number(query.n)` for a
+bound from the query. A bound that is not an integer in range is an error
+when the template is rendered. Literal bounds, and the limit of 1000
+values when both bounds are literals, are checked when the files are
+loaded.
+
+**Strings.** Each argument may be any expression. Lengths count Unicode
+code points, so an emoji or a Japanese character counts as one.
+
+| Helper | Arguments | Output |
+|---|---|---|
+| `len(x)` | text, or an array | The length of the text in code points, or the number of elements of the array. |
+| `concat(a, b, …)` | 2 to 100 texts | The texts joined. |
+| `padStart(s, length, pad)`, `padEnd(s, length, pad)` | text; an integer; text, by default one space | `s` padded at its start or end to `length` code points, the pad repeated and cut to fit, as JavaScript does. A text that long already, or an empty pad, is unchanged. |
+
+```yaml
+response:
+  status: 200
+  template: true
+  json:
+    code: ${padStart(query.n, 6, '0')}
+    name: ${concat(body.first, ' ', body.last)}
+    lines: { $each: "range(1, len(body.items))", as: i, do: "${i}" }
+```
+
+`?n=42` with the body `{"first":"Ann","last":"Lee","items":["a","b"]}` gets
+`{"code":"000042","name":"Ann Lee","lines":[1,2]}`.
+
+The string helpers, and the families added after them, read their
+arguments by one set of rules:
+
+- A text argument is a string. A number or a boolean is taken as its text,
+  a number written as in `json`. Null, an object or an array is an error.
+- A numeric argument is a number, or a string that is a JSON number, as
+  `number(x)` reads it. An integer argument is a numeric one without a
+  fraction, so `6`, `6.0` and `'6'` are all 6.
+- A value of the wrong kind from the request is an error when the template
+  is rendered. A literal of the wrong kind, such as
+  `padStart(query.n, 'six')` or `concat(null, 'a')`, is an error when the
+  files are loaded, and so is a literal alternative of a fallback, such as
+  the `true` of `padStart(query.n, query.width ?? true)`.
+- A helper's result may take at most 1 MiB of UTF-8, an array or an object
+  counted as its compact JSON. A larger one is an error, found before it is
+  built. This is on top of the 1 MiB bound on a rendered body.
+
+None of these helpers draws from the random source.
 
 The word and name lists are part of format version 1. A matched request
 takes exactly one 64-bit output from its Stub's random source (its own
@@ -1201,11 +1269,13 @@ false, and it equals no literal (so `query.x != 'a'` holds when `x` is
 absent). A call with a missing argument is missing too.
 
 Type errors are errors as well: a loop over what is not an array,
-`number(x)` of text that is not a JSON number, an object or an array in
+`number(x)` of text that is not a JSON number, a `range` bound that is not
+an integer, a helper argument of the wrong kind, an object or an array in
 text, and a bound exceeded. `range` gives at most 1000 values, one response
-runs at most 10,000 loop iterations in all, and a rendered body, or all the
-events of a response together, takes at most 1 MiB. Bounds that literals
-give are checked when the files are loaded.
+runs at most 10,000 loop iterations in all, a helper's result takes at most
+1 MiB, and a rendered body, or all the events of a response together,
+takes at most 1 MiB. Bounds that literals give are checked when the files
+are loaded.
 
 When a template cannot be rendered for a request, the client gets status
 500, `Content-Type: application/json` and
@@ -1228,10 +1298,11 @@ users.yaml: /stubs/0/response/json/id: template: column 3: unknown helper "fake.
 users.yaml: /stubs/1/response/bodyFile: template: line 3, column 5: unknown helper "fake.nickname": not one of the helpers smock has
 ```
 
-Every name, loop variable and helper, the number and the literal arguments
-of each call, the keys of `$each` and `$if` objects, reserved keys, `${` in
-a key or in `Content-Type`, `json()` and `raw()` in `json`, and a templated
-body file that is not UTF-8 are checked then.
+Every name, loop variable and helper, the number of arguments of each call
+and the kinds of its literal arguments, the keys of `$each` and `$if`
+objects, reserved keys, `${` in a key or in `Content-Type`, `json()` and
+`raw()` in `json`, and a templated body file that is not UTF-8 are checked
+then.
 
 ### Rendering a template
 
