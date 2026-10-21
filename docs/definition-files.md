@@ -1116,8 +1116,9 @@ may use single quotes (`"${query.lang ?? 'en'}"`).
 An expression is a value, a request field, a literal (`'text'` or `"text"`
 with the escapes `\'`, `\"` and `\\`, a JSON number, `true`, `false` or
 `null`) or a helper call, optionally followed by fallbacks: `a ?? b` is `a`
-when `a` is present, otherwise `b`. There is no arithmetic, no string
-operator and no user-defined function: [helpers](#helpers) do that work.
+when `a` is present, otherwise `b`. There are no arithmetic operators, no
+string operators and no user-defined functions: [helpers](#helpers) do that
+work, such as `add(a, b)`.
 The words `for`, `if`, `else`, `end`, `each` and `params` are reserved.
 
 | Name | Value |
@@ -1319,6 +1320,62 @@ arguments by one set of rules:
   counted as its compact JSON. A larger one is an error, found before it is
   built. This is on top of the 1 MiB bound on a rendered body.
 
+**Arithmetic.** Each argument may be any expression, except the `places`
+of `toFixed`. Each helper takes a fixed number of arguments, so nest calls
+for more operands, as in `add(add(a, b), c)`. The arithmetic is exact in
+decimal and uses integers only, so `add(0.1, 0.2)` is `0.3`, and every
+result is the same on native and on wasm-gc.
+
+| Helper | Arguments | Output |
+|---|---|---|
+| `add(a, b)`, `subtract(a, b)`, `multiply(a, b)` | numbers | `a + b`, `a - b` or `a × b`, exact. |
+| `divide(a, b)` | numbers; `b` not 0 | `a ÷ b`, rounded half to even at 10 decimal places: `divide(10, 3)` is `3.3333333333`, and `divide(1, 2048)`, which is 0.00048828125, is `0.0004882812`. |
+| `modulo(a, b)` | numbers; `b` not 0 | The remainder of `a ÷ b` truncated toward zero, so it has the sign of `a`, as JavaScript's `%` does: `modulo(-7, 3)` is `-1`. |
+| `ceil(x)`, `floor(x)` | a number | The nearest integer toward +∞, or toward −∞. |
+| `round(x)` | a number | The nearest integer, half away from zero: `round(2.5)` is `3` and `round(-2.5)` is `-3`. |
+| `toFixed(x, places)` | a number; an integer literal from 0 to 18 | `x` rounded half away from zero to `places` decimals, and written with exactly that many, as `fake.decimal` writes its numbers: `toFixed(1.005, 2)` is `1.01`, and `toFixed(19.99, 3)` is `19.990`. |
+| `parseInt(x)` | a number | The integer part of `x`, truncated toward zero: `parseInt(-12.7)` is `-12`. |
+
+```yaml
+response:
+  status: 200
+  template: true
+  json:
+    total: ${multiply(body.price, body.qty)}
+    next: ${add(query.page ?? 1, 1)}
+    third: ${divide(10, 3)}
+    price: ${toFixed(body.price, 3)}
+```
+
+`?page=4` with the body `{"price":19.99,"qty":3}` gets
+`{"total":59.97,"next":5,"third":3.3333333333,"price":19.990}`.
+
+- A numeric argument is read as a decimal. A number is taken as smock
+  writes it in `json`: the text it kept, such as the digits of an integer
+  beyond 2^53 or the output of `fake.decimal`, otherwise the shortest form
+  that reads back as the same 64-bit float. So `19.99` is 19.99, not the
+  float nearest to it. A string that is a JSON number is taken as its own
+  text, so `add('0.10', 1)` is `1.1`.
+- A number literal is a 64-bit float, as anywhere else, so one with more
+  digits than a float holds (about 17) loses the rest. Write such a
+  literal as a string, such as `'123456789.123456789'`.
+- Numbers have at most 18 digits before the point and 18 after. Zeros
+  before the first digit that is not 0, and after the last one, do not
+  count, so `'1.000000000000000000000'` is 1. An argument beyond the bounds
+  is an error, found when the files are loaded for a literal. A result
+  beyond them is an error too: `multiply` never rounds, so
+  `multiply('0.000000001', '0.0000000001')` is an error, not 0. Within the
+  bounds, integers keep every digit: there is no rounding at 2^53.
+- A result is a number, written as a plain decimal with no exponent and no
+  trailing zeros: `add(1.50, 1)` is `2.5`, `divide(1, 10000000)` is
+  `0.0000001`, and zero is `0`, never `-0`. `toFixed` keeps exactly
+  `places` decimals instead, and writes `toFixed(-0.001, 2)` as `0.00`.
+- Other helpers and conditions take a result as a number, so
+  `padStart(s, add(n, 1))`, `range(1, add(n, 1))` and
+  `$if: add(a, b) == 3` all work.
+- A zero divisor of `divide` or `modulo`, even a literal 0, is an error
+  when the template is rendered.
+
 None of these helpers draws from the random source.
 
 The word and name lists are part of format version 1. A matched request
@@ -1386,11 +1443,12 @@ absent). A call with a missing argument is missing too.
 Type errors are errors as well: a loop over what is not an array,
 `number(x)` of text that is not a JSON number, a `range` bound that is not
 an integer, a helper argument of the wrong kind, an object or an array in
-text, and a bound exceeded. `range` gives at most 1000 values, one response
-runs at most 10,000 loop iterations in all, a helper's result takes at most
-1 MiB, and a rendered body, or all the events of a response together,
-takes at most 1 MiB. Bounds that literals give are checked when the files
-are loaded.
+text, a zero divisor, and a bound exceeded. `range` gives at most 1000
+values, one response runs at most 10,000 loop iterations in all, a
+helper's result takes at most 1 MiB, an arithmetic helper's numbers have
+at most 18 digits before the point and 18 after, and a rendered body, or
+all the events of a response together, takes at most 1 MiB. Bounds that
+literals give are checked when the files are loaded.
 
 When a template cannot be rendered for a request, the client gets status
 500, `Content-Type: application/json` and
@@ -1461,10 +1519,10 @@ users.yaml: /stubs/1/response/bodyFile: template: line 3, column 5: unknown help
 ```
 
 Every name (an `env` name must be listed), loop variable and helper, the
-number of arguments of each call and the kinds of its literal arguments,
-the keys of `$each` and `$if` objects, reserved keys, `${` in a key or in
-`Content-Type`, `json()` and `raw()` in `json`, and a templated body file
-that is not UTF-8 are checked then.
+number of arguments of each call and the kinds and bounds of its literal
+arguments, the keys of `$each` and `$if` objects, reserved keys, `${` in a
+key or in `Content-Type`, `json()` and `raw()` in `json`, and a templated
+body file that is not UTF-8 are checked then.
 
 ### Rendering a template
 

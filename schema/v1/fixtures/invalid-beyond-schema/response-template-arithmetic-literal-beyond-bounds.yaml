@@ -1,0 +1,10 @@
+mocks:
+  - name: cart
+stubs:
+  - id: total
+    mock: cart
+    response:
+      status: 200
+      template: true
+      json:
+        total: ${add(body.total, '0.0000000000000000001')}
