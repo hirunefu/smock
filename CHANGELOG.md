@@ -47,7 +47,9 @@ of each GitHub release include its section
   `0.3` on every target. `divide` rounds half to even at 10 decimal
   places, `round` and `toFixed` round half away from zero, and numbers
   have at most 18 digits before the point and 18 after. A numeric argument
-  may be a string that is a JSON number, such as `query.page`.
+  may be a string that is a JSON number, such as `query.page`. A number
+  literal is taken as written, with every digit, even those a 64-bit
+  float would lose.
 - A helper call can be followed by steps, as a reference can:
   `${range(1, 3)[1]}` gives `2`.
 - The bounds of `range(a, b)` can be any expression that gives an integer,

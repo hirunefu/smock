@@ -1622,9 +1622,13 @@ response:
   that reads back as the same 64-bit float. So `19.99` is 19.99, not the
   float nearest to it. A string that is a JSON number is taken as its own
   text, so `add('0.10', 1)` is `1.1`.
-- A number literal is a 64-bit float, as anywhere else, so one with more
-  digits than a float holds (about 17) loses the rest. Write such a
-  literal as a string, such as `'123456789.123456789'`.
+- A number literal in an argument is taken as written, with every digit,
+  even those a 64-bit float would lose: `add(0.123456789012345678, 0)` is
+  `0.123456789012345678`, and `add(0.12345678901234567891, 0)`, with 20
+  digits after the point, is an error when the files are loaded. How a
+  literal is written anywhere else does not change:
+  `${0.123456789012345678}` alone still writes `0.12345678901234568`, as
+  `json` would.
 - Numbers have at most 18 digits before the point and 18 after. Zeros
   before the first digit that is not 0, and after the last one, do not
   count, so `'1.000000000000000000000'` is 1. An argument beyond the bounds

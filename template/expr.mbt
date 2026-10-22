@@ -230,16 +230,17 @@ fn Parser::name(self : Parser) -> String {
 }
 
 ///|
-/// Parses `expr`.
-fn Parser::expr(self : Parser) -> Expr raise Syntax {
-  let first = self.value()
+/// Parses `expr`. With `exact`, its number literals keep the digits their
+/// floats would lose, as `value` says.
+fn Parser::expr(self : Parser, exact? : Bool = false) -> Expr raise Syntax {
+  let first = self.value(exact~)
   let alternatives = [first]
   for ;; {
     self.skip_space()
     if !self.eat("??") {
       break
     }
-    alternatives.push(self.value())
+    alternatives.push(self.value(exact~))
   }
   if alternatives.length() == 1 {
     first
@@ -284,14 +285,25 @@ fn Parser::literal_only(self : Parser, operator : String) -> Json raise Syntax {
 }
 
 ///|
-/// Parses `value`.
-fn Parser::value(self : Parser) -> Expr raise Syntax {
+/// Parses `value`. With `exact`, as for the arguments of an arithmetic
+/// helper, a number literal keeps its text when its float would lose
+/// digits (`exact_literal`).
+fn Parser::value(self : Parser, exact? : Bool = false) -> Expr raise Syntax {
   self.skip_space()
   let start = self.i
   match self.peek() {
     None => raise Syntax(start, "expected a value, found the end")
     Some('\'' | '"') => Literal(Json::string(self.string()))
-    Some(c) if c == '-' || c.is_ascii_digit() => Literal(self.number())
+    Some(c) if c == '-' || c.is_ascii_digit() => {
+      let number = self.number()
+      if exact {
+        Literal(
+          exact_literal(number, String::from_array(self.chars[start:self.i])),
+        )
+      } else {
+        Literal(number)
+      }
+    }
     Some(c) if is_name_start(c) => self.named(start)
     Some('!') | Some('=') =>
       raise Syntax(
@@ -607,7 +619,7 @@ fn Parser::call(self : Parser, name : String, start : Int) -> Expr raise Syntax 
     for ;; {
       self.skip_space()
       let at = self.i
-      args.push((at, self.expr()))
+      args.push((at, self.expr(exact=is_arithmetic(name))))
       self.skip_space()
       if self.eat(")") {
         break
@@ -669,7 +681,8 @@ fn CallSite::count(self : CallSite, expected : Int) -> Unit raise Syntax {
 
 ///|
 /// Argument `k`, counted from 0, which must be an integer literal from `min`
-/// to `max`.
+/// to `max`. A literal that keeps its text is the decimal its text writes,
+/// whose fraction its float can lose.
 fn CallSite::integer(
   self : CallSite,
   k : Int,
@@ -678,9 +691,11 @@ fn CallSite::integer(
 ) -> Int64 raise Syntax {
   let (at, arg) = self.args[k]
   match arg {
-    Literal(Number(n, ..)) if n == n.floor() &&
+    Literal(Number(n, repr~)) if n == n.floor() &&
       n >= min.to_double() &&
-      n <= max.to_double() => n.to_int64()
+      n <= max.to_double() &&
+      (repr is None || (repr is Some(text) && writes_integer(text))) =>
+      n.to_int64()
     _ =>
       raise Syntax(
         at,
