@@ -140,6 +140,39 @@ pub fn keyed_problems(value : Json, key~ : String) -> Array[KeyedProblem] {
 }
 
 ///|
+/// `problems`, ways a value breaks the rules of keyed buckets, as messages
+/// list them, joined with `; `: each as `at` and its pointer, then its
+/// message, or only its message when both are empty. With `limit`, only
+/// the first `limit` are written, then how many more there are, as ` (and
+/// 2 more)`.
+pub fn keyed_problems_text(
+  problems : Array[KeyedProblem],
+  at? : String = "",
+  limit? : Int,
+) -> String {
+  let shown = match limit {
+    Some(limit) => limit.min(problems.length())
+    None => problems.length()
+  }
+  let out = StringBuilder()
+  for i in 0..<shown {
+    if i > 0 {
+      out.write_string("; ")
+    }
+    let pointer = at + problems[i].pointer
+    if pointer != "" {
+      out.write_string(pointer)
+      out.write_char(' ')
+    }
+    out.write_string(problems[i].message)
+  }
+  if shown < problems.length() {
+    out.write_string(" (and \{problems.length() - shown} more)")
+  }
+  out.to_string()
+}
+
+///|
 /// The names of the Data buckets that the parsed files declare, by the
 /// name of their Mock, in declaration order, each with its key, so that a
 /// Stub may read and write a bucket declared in any file, earlier or

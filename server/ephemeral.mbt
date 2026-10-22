@@ -79,20 +79,12 @@ fn Admin::refused(
         "unknown_bucket",
         "the Mock \{mock.escape()} declares no Data bucket \{bucket.escape()}: Data buckets come only from Definition files",
       )
-    InvalidData(bucket~, key~, problems~) => {
-      let each = problems.map(problem => {
-        if problem.pointer == "" {
-          problem.message
-        } else {
-          "\{problem.pointer} \{problem.message}"
-        }
-      })
+    InvalidData(bucket~, key~, problems~) =>
       self.error(
         400,
         "invalid_data",
-        "the value breaks the rules of the Data bucket \{bucket.escape()}, keyed by \{key.escape()}: \{each.join("; ")}",
+        "the value breaks the rules of the Data bucket \{bucket.escape()}, keyed by \{key.escape()}: \{@definitions.keyed_problems_text(problems)}",
       )
-    }
     StateLimitReached(message) =>
       self.error(507, "state_limit_reached", message)
     InvalidStub(problems) =>

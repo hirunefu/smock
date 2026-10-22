@@ -327,11 +327,11 @@ pub fn RenderFailure::message(self : RenderFailure) -> String {
     UnknownSampleBucket(mock~, bucket~) =>
       "the sample request's data names the Data bucket \{bucket.escape()}, which the Mock \{mock.escape()} does not declare"
     InvalidSampleData(bucket~, key~, problems~) => {
-      let at = @definitions.child_pointer("/data", bucket)
-      let each = problems.map(problem => {
-        "\{at}\{problem.pointer} \{problem.message}"
-      })
-      "the sample request's data breaks the rules of the Data bucket \{bucket.escape()}, keyed by \{key.escape()}: \{each.join("; ")}"
+      let each = @definitions.keyed_problems_text(
+        problems,
+        at=@definitions.child_pointer("/data", bucket),
+      )
+      "the sample request's data breaks the rules of the Data bucket \{bucket.escape()}, keyed by \{key.escape()}: \{each}"
     }
     NoOperation(stub~, crud_path~, meth~, path~) => {
       let item = "\{crud_path}/<key>"

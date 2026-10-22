@@ -76,14 +76,8 @@ fn broken_rules(
   key_member : String,
   problems : Array[@definitions.KeyedProblem],
 ) -> String {
-  let first = problems[0]
-  let at = if first.pointer == "" { "" } else { "\{first.pointer} " }
-  let more = if problems.length() > 1 {
-    " (and \{problems.length() - 1} more)"
-  } else {
-    ""
-  }
-  "the value breaks the rules of the Data bucket \{bucket.escape()}, keyed by \{key_member.escape()}: \{at}\{first.message}\{more}"
+  let first = @definitions.keyed_problems_text(problems, limit=1)
+  "the value breaks the rules of the Data bucket \{bucket.escape()}, keyed by \{key_member.escape()}: \{first}"
 }
 
 ///|
