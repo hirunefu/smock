@@ -923,7 +923,8 @@ response:
 - **Value.** A header is written with its `example`, else the first of
   its `examples` that gives a value, else a sample of its `schema`
   ([Samples from schemas](#samples-from-schemas), bounded as in
-  [Sample size](#sample-size)). With none of these, the value is empty.
+  [Sample size](#sample-size)). With none of these, it is left out, with
+  a warning (see below).
 - **Example Objects.** An Example Object gives a header its
   `serializedValue` first, since it is the exact text of the header, then
   its `dataValue`, then its `value`.
@@ -947,6 +948,9 @@ These are left out, with a warning:
 - a name that is not an HTTP token, such as one with a space;
 - a name that repeats an earlier one in another case, such as `x-id`
   after `X-Id`, since header names are case-insensitive;
+- a header that nothing gives a value: one with no `example`, and no
+  `examples`, `schema` or `content` that gives one, or one whose schema
+  allows no value, such as `schema: false`;
 - a value that is an object or null, or an array that holds one or an
   array;
 - a value with a control character other than tab, such as a line break.

@@ -16,7 +16,8 @@ let headers_smock_sets : Array[String] = [
 /// are skipped without a warning. A header is left out with a warning when
 /// its name is `Smock-Mock`, is not an HTTP token, or repeats an earlier
 /// one in another case; these are not read. It is left out with a warning
-/// too when its value is one that a header cannot hold.
+/// too when nothing gives it a value, or when its value is one that a
+/// header cannot hold.
 fn Report::headers(
   self : Report,
   document : Document,
@@ -55,7 +56,9 @@ fn Report::headers(
     guard self.followed_object(document, at, json) is Some((at, header)) else {
       continue
     }
-    let value = self.header_value(document, at, header)
+    guard self.header_value(document, at, header) is Some(value) else {
+      continue
+    }
     guard self.header_text(value) is Some(text) else { continue }
     written.push((name, text))
   }
@@ -66,8 +69,9 @@ fn Report::headers(
 /// The value of the Header Object `header`, written at `pointer`: its
 /// `example`, else the first of its `examples` that gives one; else, when
 /// it is described with `content`, the value of its media type; else a
-/// sample of its `schema`. `None` when it has none of these. A `schema`
-/// beside `content` is ignored, with a warning.
+/// sample of its `schema`. `None` when none of these gives a value, with a
+/// warning, or after reporting an error. A `schema` beside `content` is
+/// ignored, with a warning.
 fn Report::header_value(
   self : Report,
   document : Document,
@@ -79,7 +83,7 @@ fn Report::header_value(
   }
   let content_pointer = @definitions.child_pointer(pointer, "content")
   match header.get("content") {
-    None => self.header_sample(document, pointer, header)
+    None => self.header_sample(document, pointer, header, header=pointer)
     Some(Object(content)) => {
       if header.contains("schema") {
         self.warning_at(
@@ -100,9 +104,12 @@ fn Report::header_value(
             )
           None => {
             chosen = Some(key)
-            value = self.header_media_type(document, at, json)
+            value = self.header_media_type(document, at, json, header=pointer)
           }
         }
+      }
+      if chosen is None {
+        self.no_header_value(pointer)
       }
       value
     }
@@ -117,13 +124,15 @@ fn Report::header_value(
 /// The value of the Media Type Object `json` of a header's `content`,
 /// written at `pointer`, after following its `$ref` in 3.2: its `example`,
 /// else the first of its `examples` that gives one, else a sample of its
-/// `schema`. `None` when it has none of these, or after reporting an
+/// `schema`. `None` when none of these gives a value, with a warning at
+/// `header`, the Header Object, or at the schema, or after reporting an
 /// error.
 fn Report::header_media_type(
   self : Report,
   document : Document,
   pointer : String,
   json : Json,
+  header~ : String,
 ) -> Value? {
   guard self.media_type_object(document, pointer, json)
     is Some((pointer, media_type)) else {
@@ -131,7 +140,7 @@ fn Report::header_media_type(
   }
   match self.header_example(document, pointer, media_type) {
     Some(value) => Some(value)
-    None => self.header_sample(document, pointer, media_type)
+    None => self.header_sample(document, pointer, media_type, header~)
   }
 }
 
@@ -186,22 +195,36 @@ fn Report::header_example(
 ///|
 /// The sample of the `schema` of `object`, a Header Object or the Media
 /// Type Object of its `content`, written at `pointer`, within the bounds of
-/// a body's sample. `None` when it has none, when the schema gives no
-/// value, or when the sample would pass them.
+/// a body's sample. When the sample would pass them, the value is empty,
+/// with a warning. `None` when there is no schema, with a warning at
+/// `header`, the Header Object, since nothing gives the header a value;
+/// when the schema allows no value, such as `false`, with a warning at the
+/// schema; or after reporting an error.
 fn Report::header_sample(
   self : Report,
   document : Document,
   pointer : String,
   object : Map[String, Json],
+  header~ : String,
 ) -> Value? {
   let schema_pointer = @definitions.child_pointer(pointer, "schema")
   match object.get("schema") {
-    None => None
+    None => {
+      self.no_header_value(header)
+      None
+    }
     Some(Object(_) | True | False as json) => {
       let part = "the header's value"
-      match self.body_sample(document, schema_pointer, json, part~).value {
+      let sample = self.body_sample(document, schema_pointer, json, part~)
+      match sample.value {
         Some(sample) => Some(Sampled(schema_pointer, sample))
-        None => None
+        None if sample.too_large => Some(Sampled(schema_pointer, ""))
+        None => {
+          self.warning_at(
+            schema_pointer, "left out: the header's schema allows no value",
+          )
+          None
+        }
       }
     }
     Some(_) => {
@@ -212,18 +235,26 @@ fn Report::header_sample(
 }
 
 ///|
+/// Reports that nothing gives the header written at `pointer` a value, so
+/// that it is left out.
+fn Report::no_header_value(self : Report, pointer : String) -> Unit {
+  self.warning_at(
+    pointer, "left out: no example, examples, schema or content gives the header a value",
+  )
+}
+
+///|
 /// The text of the header value `value`, or `None` when the header is
-/// left out. With no value, the text is empty. A string is the text as it
-/// is, a number is written as smock writes numbers, a boolean as `true`
-/// or `false`, and an array of these joined with `,`, as style `simple`
-/// asks. An object, null, an array that holds either or an array, and a
-/// control character other than tab, which a header cannot hold, leave
-/// the header out, with a warning where the value comes from.
-fn Report::header_text(self : Report, value : Value?) -> String? {
+/// left out. A string is the text as it is, a number is written as smock
+/// writes numbers, a boolean as `true` or `false`, and an array of these
+/// joined with `,`, as style `simple` asks. An object, null, an array that
+/// holds either or an array, and a control character other than tab,
+/// which a header cannot hold, leave the header out, with a warning where
+/// the value comes from.
+fn Report::header_text(self : Report, value : Value) -> String? {
   let (at, text) = match value {
-    None => return Some("")
-    Some(Serialized(at, text)) => (at, text)
-    Some(Data(at, json) | Sampled(at, json)) =>
+    Serialized(at, text) => (at, text)
+    Data(at, json) | Sampled(at, json) =>
       match json {
         Array(items) => {
           let text = StringBuilder()

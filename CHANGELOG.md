@@ -39,7 +39,8 @@ of each GitHub release include its section
   so every platform writes the same digits. A sample nests at most 32 levels, one above 64 KiB is cut to
   its required parts, and a body above 1 MiB is left empty, with a warning.
   The headers a response documents are written too, with their example or a
-  sample of their schema.
+  sample of their schema; a header with neither is left out, with a
+  warning.
 - `smock import-openapi` reads YAML documents as YAML 1.2, as OpenAPI
   recommends, so `200:` is the key `"200"` and a date is a string; anchors
   and aliases stay errors. It follows a `$ref` where OpenAPI allows one,
