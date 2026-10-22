@@ -987,9 +987,14 @@ cosign verify ghcr.io/hirunefu/smock:<version> \
 The image of each architecture has an SPDX SBOM, attached as a signed
 attestation. It lists the packages of the distroless base and smock itself:
 the binary with the release's version, the commit and MoonBit toolchain it
-was built from, the MoonBit modules compiled into it, and its dynamic link
-to the base's OpenSSL. To verify the SBOM of the linux/arm64 image and save
-it as `smock.spdx.json` (use `amd64` for linux/amd64):
+was built from, the MoonBit modules compiled into it, the MoonBit native
+runtime, mimalloc and simdutf, which come with the toolchain and are linked
+into it, and its dynamic link to the base's OpenSSL. The runtime, mimalloc
+and simdutf have the licences that [NOTICE](NOTICE) gives them. The runtime
+has the toolchain's version and mimalloc the one NOTICE gives; simdutf's is
+`NOASSERTION`, since the toolchain does not record it. To verify the SBOM
+of the linux/arm64 image and save it as `smock.spdx.json` (use `amd64` for
+linux/amd64):
 
 ```sh
 digest=$(docker buildx imagetools inspect --raw ghcr.io/hirunefu/smock:<version> |
@@ -1004,7 +1009,25 @@ The same `cosign verify` flags verify that architecture's signature with
 `"ghcr.io/hirunefu/smock@$digest"`. The GitHub release also has the SBOMs as
 files, `smock-<version>-linux-<arch>.spdx.json`.
 `scripts/verify-image.sh ghcr.io/hirunefu/smock:<version>` runs all of these
-checks.
+checks. The SBOMs of 0.3.0 and earlier releases do not list the runtime,
+mimalloc and simdutf, so check an image of 0.3.0 or earlier with the script
+from its own tag, such as `git show v0.3.0:scripts/verify-image.sh`.
+
+### Verify the Helm chart
+
+The Helm chart is signed the same way, with cosign and without a key: the
+signature's certificate names the release workflow at the release's tag.
+Verify it with cosign 3 or later, naming the chart without `oci://`:
+
+```sh
+cosign verify ghcr.io/hirunefu/charts/smock:<version> \
+  --certificate-identity https://github.com/hirunefu/smock/.github/workflows/release.yml@refs/tags/v<version> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+The release workflow runs the same check with
+`scripts/verify-chart.sh ghcr.io/hirunefu/charts/smock:<version>`. The
+charts of 0.3.0 and earlier releases are not signed.
 
 ### Release binaries
 
@@ -1048,6 +1071,8 @@ scripts/check-openapi.sh       # the Admin API document is valid OpenAPI 3.1
 docker build --tag smock:dev .
 scripts/smoke-test-image.sh smock:dev 0.0.0-dev <commit> "moonc <version>"   # the container image
 scripts/check-release-workflow.sh    # the release workflow publishes only for tags (needs yq and jq)
+scripts/test-release-notes.sh        # the release notes, with CHANGELOG.md's links at the release's tag
+scripts/test-sbom.sh                 # the SBOM scripts, and the check that the SBOM and NOTICE agree (needs jq)
 scripts/check-benchmark-workflow.sh  # the benchmark workflow runs only by hand (needs yq and jq)
 scripts/check-ci-artifacts.sh        # CI keeps the release binary of each architecture (needs yq and jq)
 scripts/test-helm-chart.sh           # rendering tests of the Helm chart (needs helm, yq and jq)

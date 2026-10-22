@@ -15,8 +15,10 @@
 #    all of that as the README does (scripts/verify-image.sh).
 # 3. chart and publish-chart: packages the Helm chart with the version as its
 #    version and app version, so it runs the image published in step 2
-#    (scripts/package-helm-chart.sh), and pushes it as an OCI artifact to
-#    oci://ghcr.io/hirunefu/charts/smock.
+#    (scripts/package-helm-chart.sh), pushes it as an OCI artifact to
+#    oci://ghcr.io/hirunefu/charts/smock, signs it with cosign (keyless, as
+#    the image) and verifies the signature as the README does
+#    (scripts/verify-chart.sh).
 # 4. release: creates the GitHub release with the linux/amd64 and
 #    linux/arm64 binaries (the same binaries as in the image), the SBOMs,
 #    LICENSE and NOTICE (which names the third-party software the binaries
@@ -225,7 +227,8 @@ jobs:
           cosign sign --yes --recursive "$IMAGE@$digest"
 
       # syft finds the packages of the distroless base but not the MoonBit
-      # binary, so smock and its modules are added to what it finds.
+      # binary, so smock and its modules are added to what it finds. The
+      # SBOM must agree with NOTICE before it is attested.
       - name: Make and attest the SBOM of each architecture
         env:
           SYFT: ${{ steps.syft.outputs.cmd }}
@@ -237,6 +240,7 @@ jobs:
             sbom="sbom/smock-$VERSION-linux-$arch.spdx.json"
             "$SYFT" scan "registry:$IMAGE@$digest" --output "spdx-json=$sbom"
             scripts/add-smock-to-sbom.sh "$sbom" "$VERSION" "$GITHUB_SHA"
+            scripts/check-sbom-notice.sh "$sbom"
             cosign attest --yes --type spdxjson --predicate "$sbom" "$IMAGE@$digest"
           done
 
@@ -281,13 +285,14 @@ jobs:
 
   # After publish-image, so that the image the chart runs exists.
   publish-chart:
-    name: Publish the Helm chart
+    name: Publish and sign the Helm chart
     needs: [plan, chart, publish-image]
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write # push to ghcr.io
+      id-token: write # keyless cosign signature
     env:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
@@ -296,18 +301,44 @@ jobs:
       - name: Install helm
         run: scripts/install-kubernetes-tools.sh "$RUNNER_TEMP/bin" helm
 
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+
       - uses: actions/download-artifact@v8
         with:
           name: chart
           path: chart
 
+      # helm keeps credentials of its own, and cosign uses docker's.
       - name: Log in to ghcr.io
         env:
           TOKEN: ${{ github.token }}
-        run: echo "$TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+        run: |
+          echo "$TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          echo "$TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
-      - name: Push the chart
-        run: helm push "chart/smock-$VERSION.tgz" "$CHARTS"
+      # helm push prints the digest of the chart it pushed; the next step
+      # signs that digest.
+      - id: push
+        name: Push the chart
+        run: |
+          pushed=$(helm push "chart/smock-$VERSION.tgz" "$CHARTS")
+          echo "$pushed"
+          digest=$(echo "$pushed" | sed -n 's/^Digest: //p')
+          if ! echo "$digest" | grep -Eqx 'sha256:[0-9a-f]{64}'; then
+            echo "::error::helm push did not print the digest of the chart"
+            exit 1
+          fi
+          echo "digest=$digest" >>"$GITHUB_OUTPUT"
+
+      - name: Sign the chart
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: cosign sign --yes "${CHARTS#oci://}/smock@$DIGEST"
+
+      - name: Verify the published chart as the README does
+        run: scripts/verify-chart.sh "${CHARTS#oci://}/smock:$VERSION"
 
       - name: Check the published chart
         run: |

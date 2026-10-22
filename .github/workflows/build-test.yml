@@ -95,8 +95,9 @@ jobs:
           syft-version: v1.54.1
 
       # The release workflow makes the published image's SBOM the same way,
-      # but only for a tag: this checks on every push that smock and its
-      # MoonBit modules get into it.
+      # but only for a tag: this checks on every push that smock, its
+      # MoonBit modules, and the runtime, mimalloc and simdutf of the
+      # toolchain get into it, the last three as NOTICE names them.
       - name: Make the image's SBOM as the release workflow does
         env:
           SYFT: ${{ steps.syft.outputs.cmd }}
@@ -105,6 +106,7 @@ jobs:
           scripts/add-smock-to-sbom.sh sbom.spdx.json "$SMOCK_VERSION" "$GITHUB_SHA"
           jq -e --arg version "$SMOCK_VERSION" \
             'any(.packages[]; .name == "smock" and .versionInfo == $version)' sbom.spdx.json
+          scripts/check-sbom-notice.sh sbom.spdx.json
 
       - name: Install helm, kubectl and kind
         run: scripts/install-kubernetes-tools.sh "$RUNNER_TEMP/bin"
