@@ -14,7 +14,7 @@ fn Report::file(
   self : Report,
   document : Document,
   imported : Array[Imported],
-) -> Conversion {
+) -> Outcome {
   if self.errors > 0 {
     return Failed(self.problems)
   }

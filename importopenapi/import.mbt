@@ -157,7 +157,7 @@ pub fn Unreadable::to_string(self : Unreadable) -> String {
 
 ///|
 /// What a conversion gave.
-pub(all) enum Conversion {
+pub(all) enum Outcome {
   /// The Definition file: its bytes, the warnings, in the order the
   /// document writes what they are about, the number of Stubs in it and
   /// the number of operations they came from.
@@ -179,7 +179,7 @@ pub(all) enum Conversion {
 ///|
 /// The problems of the conversion, in order: none while it needs
 /// documents.
-pub fn Conversion::problems(self : Conversion) -> Array[Problem] {
+pub fn Outcome::problems(self : Outcome) -> Array[Problem] {
   match self {
     Converted(problems~, ..) => problems
     Failed(problems) => problems
@@ -229,7 +229,7 @@ pub fn Converter::give_unreadable(
 ///
 /// At most `max_documents` documents and `max_read_bytes` bytes are read,
 /// the root included: passing either is an error.
-pub fn Converter::convert(self : Converter) -> Conversion {
+pub fn Converter::convert(self : Converter) -> Outcome {
   let options = self.options
   let report = Report::new(options, documents=self.documents)
   if self.documents.passed is Some(name) {
@@ -277,7 +277,7 @@ pub fn Converter::convert(self : Converter) -> Conversion {
 pub fn convert(
   documents : Array[(String, Bytes)],
   options : Options,
-) -> Conversion {
+) -> Outcome {
   let converter = Converter::new(options)
   for document in documents {
     converter.give(document.0, document.1)

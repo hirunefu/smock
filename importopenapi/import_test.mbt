@@ -18,7 +18,7 @@ fn import_json(document : String, mock? : String = "petstore") -> String {
 /// What `conversion` gave: its problems, one per line, then the numbers of
 /// Stubs and operations and the file, or `nothing written`, or the names of
 /// the documents it needs, each on a line `needs <name>`.
-fn rendered(conversion : @importopenapi.Conversion) -> String {
+fn rendered(conversion : @importopenapi.Outcome) -> String {
   let out = StringBuilder()
   for problem in conversion.problems() {
     out.write_string(problem.to_string())

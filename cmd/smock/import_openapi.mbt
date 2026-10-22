@@ -147,7 +147,7 @@ async fn converted(
   options : @importopenapi.Options,
   inside~ : Result[String, String],
   room~ : Int,
-) -> (@importopenapi.Conversion, Array[String]) {
+) -> (@importopenapi.Outcome, Array[String]) {
   let read_paths = []
   let mut conversion = converter.convert()
   guard conversion is Needs(_) else { return (conversion, read_paths) }
