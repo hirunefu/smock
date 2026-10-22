@@ -1204,18 +1204,21 @@ async test "smock serves an imported response's sampled body with its Content-Ty
             #|HTTP/1.1 200 OK
             #|Content-Type: application/json
             #|Smock-Mock: petstore; via=default
+            #|Date: <now>
             #|Content-Length: 63
             #|
             #|{"id":"00000000-0000-4000-8000-000000000000","tags":["string"]}
             #|HTTP/1.1 404 Not Found
             #|Content-Type: application/problem+json
             #|Smock-Mock: petstore; via=default
+            #|Date: <now>
             #|Content-Length: 21
             #|
             #|{"title":"Not Found"}
             #|HTTP/1.1 200 OK
             #|Content-Type: text/plain; charset=utf-8
             #|Smock-Mock: petstore; via=default
+            #|Date: <now>
             #|Content-Length: 5
             #|
             #|1.2.3
@@ -1789,12 +1792,14 @@ async test "smock serves an imported response's documented headers, with their e
             #|X-Request-Id: req-1
             #|Content-Type: application/json
             #|Smock-Mock: petstore; via=default
+            #|Date: <now>
             #|Content-Length: 7
             #|
             #|["Tom"]
             #|HTTP/1.1 429 Too Many Requests
             #|Retry-After: 60
             #|Smock-Mock: petstore; via=default
+            #|Date: <now>
             #|Content-Length: 0
             #|
             #|

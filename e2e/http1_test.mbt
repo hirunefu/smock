@@ -24,6 +24,7 @@ async test "several requests in turn, with and without bodies, are answered on o
         #|Content-Type: application/json
         #|X-Source: smock
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Content-Length: 23
         #|
         #|{"id":1,"name":"Alice"}
@@ -32,6 +33,7 @@ async test "several requests in turn, with and without bodies, are answered on o
         #|Content-Type: application/json
         #|Smock-Near-Miss: get-user; failed=method
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Content-Length: 27
         #|
         #|{"error":"no Stub matched"}
@@ -40,6 +42,7 @@ async test "several requests in turn, with and without bodies, are answered on o
         #|Content-Type: application/json
         #|X-Source: smock
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Connection: close
         #|Content-Length: 23
         #|
@@ -66,11 +69,13 @@ async test "a request that cannot be parsed gets 400 and the connection closes" 
         #|Content-Type: application/json
         #|X-Source: smock
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Content-Length: 23
         #|
         #|{"id":1,"name":"Alice"}
         #|---
         #|HTTP/1.1 400 Bad Request
+        #|Date: <now>
         #|Connection: close
         #|Content-Length: 0
         #|

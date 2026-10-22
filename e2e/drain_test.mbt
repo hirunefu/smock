@@ -140,6 +140,7 @@ async test "on SIGTERM, smock refuses new connections, closes idle ones at once,
               #|new TLS connection: refused
               #|HTTP/1.1 200 OK
               #|Smock-Mock: m; via=default
+              #|Date: <now>
               #|Connection: close
               #|Content-Length: 4
               #|
@@ -212,6 +213,7 @@ async test "a request still arriving when SIGTERM comes is answered once the res
               #|plain:
               #|HTTP/1.1 200 OK
               #|Smock-Mock: m; via=default
+              #|Date: <now>
               #|Connection: close
               #|Content-Length: 4
               #|
@@ -220,6 +222,7 @@ async test "a request still arriving when SIGTERM comes is answered once the res
               #|TLS:
               #|HTTP/1.1 200 OK
               #|Smock-Mock: m; via=default
+              #|Date: <now>
               #|Connection: close
               #|Content-Length: 4
               #|

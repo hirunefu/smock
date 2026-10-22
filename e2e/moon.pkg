@@ -15,6 +15,7 @@ import {
   "moonbitlang/core/env",
   "moonbitlang/core/json",
   "moonbitlang/core/string",
+  "smock/http1",
   "smock/re2",
   "smock/yaml",
 } for "test"

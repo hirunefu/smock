@@ -51,6 +51,7 @@ async test "with a certificate chain and its key, smock serves HTTPS on the TLS 
           #|Content-Type: application/json
           #|X-Source: smock
           #|Smock-Mock: users; via=default
+          #|Date: <now>
           #|Connection: close
           #|Content-Length: 23
           #|
@@ -61,6 +62,7 @@ async test "with a certificate chain and its key, smock serves HTTPS on the TLS 
           #|Content-Type: application/json
           #|X-Source: smock
           #|Smock-Mock: users; via=default
+          #|Date: <now>
           #|Connection: close
           #|Content-Length: 23
           #|

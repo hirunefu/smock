@@ -33,6 +33,7 @@ async test "over HTTP, cookies from two Cookie lines decide which Stub answers, 
         ].join("\n---\n"),
         content=(
           #|HTTP/1.1 200 OK
+          #|Date: <now>
           #|Content-Length: 4
           #|
           #|cart
@@ -40,6 +41,7 @@ async test "over HTTP, cookies from two Cookie lines decide which Stub answers, 
           #|HTTP/1.1 404 Not Found
           #|Content-Type: application/json
           #|Smock-Near-Miss: cart; failed=cookie:debug
+          #|Date: <now>
           #|Content-Length: 27
           #|
           #|{"error":"no Stub matched"}

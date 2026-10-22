@@ -68,6 +68,7 @@ async test "smock serve answers from a body file, matches exact and json conditi
           #|Content-Type: application/json
           #|Accept-Ranges: bytes
           #|Smock-Mock: teapot; via=default
+          #|Date: <now>
           #|Content-Length: 33
           #|
           #|{
@@ -78,12 +79,14 @@ async test "smock serve answers from a body file, matches exact and json conditi
           #|---
           #|HTTP/1.1 200 OK
           #|Smock-Mock: teapot; via=default
+          #|Date: <now>
           #|Content-Length: 5
           #|
           #|first
           #|---
           #|HTTP/1.1 201 Created
           #|Smock-Mock: teapot; via=default
+          #|Date: <now>
           #|Content-Length: 7
           #|
           #|created
@@ -92,6 +95,7 @@ async test "smock serve answers from a body file, matches exact and json conditi
           #|Content-Type: application/json
           #|Smock-Near-Miss: first; failed=path
           #|Smock-Mock: teapot; via=default
+          #|Date: <now>
           #|Content-Length: 27
           #|
           #|{"error":"no Stub matched"}
@@ -100,6 +104,7 @@ async test "smock serve answers from a body file, matches exact and json conditi
           #|Content-Type: application/json
           #|Smock-Near-Miss: first; failed=path
           #|Smock-Mock: teapot; via=default
+          #|Date: <now>
           #|Content-Length: 27
           #|
           #|{"error":"no Stub matched"}
@@ -138,6 +143,7 @@ async test "smock serve sends a header given an array as one field line per valu
           #|Set-Cookie: theme=dark; Path=/; Expires=Wed, 21 Oct 2026 07:28:00 GMT
           #|X-B: only
           #|Smock-Mock: users; via=default
+          #|Date: <now>
           #|Content-Length: 2
           #|
           #|ok
@@ -170,6 +176,7 @@ async test "smock serve reads body files from the body-file subdirectory its set
               #|HTTP/1.1 200 OK
               #|Accept-Ranges: bytes
               #|Smock-Mock: users; via=default
+              #|Date: <now>
               #|Content-Length: 12
               #|
               #|from bodies/
@@ -347,6 +354,7 @@ async test "a cross-origin request that no Stub matches gets the Mock's noMatch 
           #|Access-Control-Allow-Methods: GET, POST, PUT, DELETE
           #|Access-Control-Allow-Headers: Content-Type, Authorization
           #|Smock-Mock: users; via=default
+          #|Date: <now>
           #|
           #|
           #|---
@@ -356,6 +364,7 @@ async test "a cross-origin request that no Stub matches gets the Mock's noMatch 
           #|Access-Control-Expose-Headers: Smock-Near-Miss, Smock-Mock
           #|Smock-Near-Miss: get-user; failed=path
           #|Smock-Mock: users; via=default
+          #|Date: <now>
           #|Content-Length: 27
           #|
           #|{"error":"no Stub matched"}
@@ -363,6 +372,7 @@ async test "a cross-origin request that no Stub matches gets the Mock's noMatch 
           #|HTTP/1.1 200 OK
           #|Content-Type: application/json
           #|Smock-Mock: users; via=default
+          #|Date: <now>
           #|Content-Length: 8
           #|
           #|{"id":1}

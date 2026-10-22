@@ -71,12 +71,15 @@ priv enum BodyEnd {
 /// Starts a streamed response with `status` and `headers`, in the order
 /// given, as the answer to `request`, the request it answers when one was
 /// parsed. With `close`, the connection closes after the response whatever
-/// the request says.
+/// the request says. With `date`, the head has a Date field with that
+/// value after `headers`, unless they give a Date field of their own, as
+/// for `encode_response`.
 pub fn ResponseStream::ResponseStream(
   status : Int,
   headers : ArrayView[(String, String)],
   request? : Request,
   close? : Bool = false,
+  date? : String,
 ) -> ResponseStream {
   // The head says how the body is delimited, even in a response to HEAD.
   let framing : BodyEnd = if !has_content(status) {
@@ -89,6 +92,11 @@ pub fn ResponseStream::ResponseStream(
   let keep_open = keeps_open(request?, close=close || framing is UntilClose)
   let out = @buffer.Buffer(size_hint=128)
   write_status_and_headers(out, status, headers)
+  if date is Some(date) && !gives_date(headers) {
+    out.write_bytes(b"Date: ")
+    out.write_string_utf8(date)
+    out.write_bytes(b"\r\n")
+  }
   write_connection(out, keep_open, request)
   if framing is Chunked {
     out.write_bytes(b"Transfer-Encoding: chunked\r\n")

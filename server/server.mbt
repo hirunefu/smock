@@ -106,6 +106,7 @@ pub async fn serve(
       header: settings.session_header,
       member_name: settings.session_member,
     },
+    dates=@http1.DateCache(),
   )
   guard listen(logger, "admin", settings.admin_port) is Some(admin_listener) else {
     return 1
@@ -246,6 +247,7 @@ async fn run(
       rand,
       settings,
       sessions: admin.sessions,
+      dates: admin.dates,
       traffic,
       lifecycle,
       logger,
@@ -399,6 +401,9 @@ priv struct MockPorts {
   settings : @settings.ServeSettings
   /// Where requests carry their Session, as Admin API calls carry it.
   sessions : SessionCarrier
+  /// The value of the Date field of every response, the same as the Admin
+  /// API's.
+  dates : @http1.DateCache
   /// Where each request is counted.
   traffic : Traffic
   /// Whether smock drains.
@@ -476,6 +481,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
           body,
           request~,
           close~,
+          date=self.dates.at(now),
         )
         if outcome.journal is Some(entry) {
           self.engine.commit(entry)
@@ -513,12 +519,14 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
       if plan.delay_ms > 0 {
         @async.sleep(plan.delay_ms)
       }
+      // The Date is the time the head is written, after the delay.
       let keep_open = match plan.fault {
         None =>
           write_response(
             stream,
             plan,
             request,
+            date=self.dates.at(@async.now()),
             close=self.lifecycle.is_draining(),
             before_last=commit,
           )
@@ -530,7 +538,14 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
         }
         // Closing the connection sends a FIN.
         Some(Close) => false
-        Some(Partial) => write_response(stream, plan, request, partial=true)
+        Some(Partial) =>
+          write_response(
+            stream,
+            plan,
+            request,
+            date=self.dates.at(@async.now()),
+            partial=true,
+          )
       }
       // A response that began before the drain, such as a stream, and ends
       // during it closes its connection too.
@@ -540,7 +555,13 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
       defer self.traffic.record_rejected(stopwatch.seconds())
       @io.Writer::write(
         stream,
-        @http1.encode_response(status, [], b"", close=true),
+        @http1.encode_response(
+          status,
+          [],
+          b"",
+          close=true,
+          date=self.dates.at(@async.now()),
+        ),
       )
     },
   )
@@ -615,6 +636,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
           state.read_since = state.now
         }
         Continue => {
+          // A 1xx response may leave out Date (RFC 9110, section 6.6.1).
           @io.Writer::write(stream, @http1.encode_response(100, [], b""))
           state.now = @async.now()
         }
@@ -859,8 +881,9 @@ fn SessionCarrier::session_of(
 }
 
 ///|
-/// Writes the response `plan` describes, as the answer to `request`, and
-/// returns whether the connection stays open after it. With `close`, the
+/// Writes the response `plan` describes, as the answer to `request`, with
+/// `date` as its Date unless the plan's headers give one, and returns
+/// whether the connection stays open after it. With `close`, the
 /// response says `Connection: close`, and the connection closes after it.
 /// With `partial`, as a partial Fault, it writes the status line, the header
 /// fields and the first half of the body, and the connection closes; a
@@ -887,6 +910,7 @@ async fn[S : @io.Writer] write_response(
   stream : S,
   plan : @engine.ResponsePlan,
   request : @http1.Request,
+  date~ : String,
   close? : Bool = false,
   partial? : Bool = false,
   before_last? : () -> Unit = () => (),
@@ -899,6 +923,7 @@ async fn[S : @io.Writer] write_response(
         body,
         request~,
         close~,
+        date~,
       )
       if partial {
         @io.Writer::write(stream, cut_short(response))
@@ -914,6 +939,7 @@ async fn[S : @io.Writer] write_response(
         plan.headers,
         request~,
         close~,
+        date~,
       )
       if !response.has_body() {
         if partial {

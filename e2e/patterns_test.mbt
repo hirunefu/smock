@@ -118,6 +118,7 @@ async test "smock serve matches a pattern on a member of a JSON body, and a body
         content=(
           #|HTTP/1.1 201 Created
           #|Smock-Mock: users; via=default
+          #|Date: <now>
           #|Content-Length: 0
           #|
           #|
@@ -126,6 +127,7 @@ async test "smock serve matches a pattern on a member of a JSON body, and a body
           #|Content-Type: application/json
           #|Smock-Near-Miss: create-user; failed=body
           #|Smock-Mock: users; via=default
+          #|Date: <now>
           #|Content-Length: 27
           #|
           #|{"error":"no Stub matched"}

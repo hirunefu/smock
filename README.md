@@ -525,6 +525,10 @@ A request that no Stub matches gets the Mock's no-match response, with a
 `Smock-Near-Miss` header naming the closest Stub and the conditions it
 failed, such as `Smock-Near-Miss: get-user; failed=method`.
 
+Every response smock sends, on every port, carries a `Date` header with
+the current time, such as `Date: Thu, 22 Oct 2026 14:37:10 GMT`. A Stub
+that gives its own `Date` gets that one instead.
+
 `smock check defs` validates a definitions directory the way `smock serve`
 loads it: it prints every problem, one per line with the file and a JSON
 Pointer, and exits with status 1 if there is any. It also warns about Stubs

@@ -82,6 +82,7 @@ async test "--state-max-bytes: a request whose writes would pass the bound gets 
           content=(
             #|HTTP/1.1 201 Created
             #|Smock-Mock: shop; via=default
+            #|Date: <now>
             #|Content-Length: 0
             #|
             #|
@@ -89,6 +90,7 @@ async test "--state-max-bytes: a request whose writes would pass the bound gets 
             #|HTTP/1.1 507 
             #|Content-Type: application/json
             #|Smock-Mock: shop; via=default
+            #|Date: <now>
             #|Content-Length: 172
             #|
             #|{"error":"state limit reached","stub":"add-cart-item","message":"the writes would take per-Session state from 186 to 210 bytes, above its bound of 200 (--state-max-bytes)"}

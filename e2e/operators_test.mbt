@@ -29,6 +29,7 @@ async test "over HTTP, $not and $exists decide which requests a Stub answers; th
         ].join("\n---\n"),
         content=(
           #|HTTP/1.1 401 Unauthorized
+          #|Date: <now>
           #|Content-Length: 8
           #|
           #|no token
@@ -36,6 +37,7 @@ async test "over HTTP, $not and $exists decide which requests a Stub answers; th
           #|HTTP/1.1 404 Not Found
           #|Content-Type: application/json
           #|Smock-Near-Miss: no-bearer; failed=header:authorization
+          #|Date: <now>
           #|Content-Length: 27
           #|
           #|{"error":"no Stub matched"}
@@ -43,6 +45,7 @@ async test "over HTTP, $not and $exists decide which requests a Stub answers; th
           #|HTTP/1.1 404 Not Found
           #|Content-Type: application/json
           #|Smock-Near-Miss: no-bearer; failed=query:debug
+          #|Date: <now>
           #|Content-Length: 27
           #|
           #|{"error":"no Stub matched"}

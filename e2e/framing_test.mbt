@@ -20,6 +20,7 @@ let pipelined_responses : String =
   #|Content-Type: application/json
   #|X-Source: smock
   #|Smock-Mock: users; via=default
+  #|Date: <now>
   #|Content-Length: 23
   #|
   #|{"id":1,"name":"Alice"}
@@ -28,6 +29,7 @@ let pipelined_responses : String =
   #|Content-Type: application/json
   #|Smock-Near-Miss: get-user; failed=path
   #|Smock-Mock: users; via=default
+  #|Date: <now>
   #|Content-Length: 27
   #|
   #|{"error":"no Stub matched"}
@@ -36,6 +38,7 @@ let pipelined_responses : String =
   #|Content-Type: application/json
   #|Smock-Near-Miss: get-user; failed=method
   #|Smock-Mock: users; via=default
+  #|Date: <now>
   #|Content-Length: 27
   #|
   #|{"error":"no Stub matched"}
@@ -44,6 +47,7 @@ let pipelined_responses : String =
   #|Content-Type: application/json
   #|Smock-Near-Miss: get-user; failed=method
   #|Smock-Mock: users; via=default
+  #|Date: <now>
   #|Content-Length: 27
   #|
   #|{"error":"no Stub matched"}
@@ -52,6 +56,7 @@ let pipelined_responses : String =
   #|Content-Type: application/json
   #|X-Source: smock
   #|Smock-Mock: users; via=default
+  #|Date: <now>
   #|Content-Length: 23
   #|
   #|{"id":1,"name":"Alice"}
@@ -138,26 +143,26 @@ async test "after malformed or ambiguous framing, smock answers what came before
     inspect(
       outcomes.join("\n"),
       content=(
-        #|Content-Length and Transfer-Encoding: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
-        #|Content-Length values that disagree: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
-        #|repeated Content-Length fields that disagree: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
-        #|a Content-Length that is not a number: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
-        #|a bad chunk size: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
-        #|broken chunk framing: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
-        #|a transfer coding other than chunked: HTTP/1.1 200 OK, then HTTP/1.1 501 Not Implemented | Connection: close | Content-Length: 0, then closed
-        #|HTTP/2.0: HTTP/1.1 200 OK, then HTTP/1.1 505 HTTP Version Not Supported | Connection: close | Content-Length: 0, then closed
-        #|whitespace before a colon: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
-        #|obsolete line folding: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
-        #|an invalid character in a field name: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
-        #|bare LF line ends: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
-        #|a request target without a leading /: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
-        #|a fragment in the request target: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
-        #|an asterisk-form target with a method other than OPTIONS: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
-        #|an authority-form target with a method other than CONNECT: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
-        #|CONNECT with a target that is not authority-form: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
-        #|a Host with a space in it: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
-        #|a Host with a / and an @ in it: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
-        #|a TLS handshake: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Connection: close | Content-Length: 0, then closed
+        #|Content-Length and Transfer-Encoding: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Date: <now> | Connection: close | Content-Length: 0, then closed
+        #|Content-Length values that disagree: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Date: <now> | Connection: close | Content-Length: 0, then closed
+        #|repeated Content-Length fields that disagree: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Date: <now> | Connection: close | Content-Length: 0, then closed
+        #|a Content-Length that is not a number: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Date: <now> | Connection: close | Content-Length: 0, then closed
+        #|a bad chunk size: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Date: <now> | Connection: close | Content-Length: 0, then closed
+        #|broken chunk framing: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Date: <now> | Connection: close | Content-Length: 0, then closed
+        #|a transfer coding other than chunked: HTTP/1.1 200 OK, then HTTP/1.1 501 Not Implemented | Date: <now> | Connection: close | Content-Length: 0, then closed
+        #|HTTP/2.0: HTTP/1.1 200 OK, then HTTP/1.1 505 HTTP Version Not Supported | Date: <now> | Connection: close | Content-Length: 0, then closed
+        #|whitespace before a colon: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Date: <now> | Connection: close | Content-Length: 0, then closed
+        #|obsolete line folding: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Date: <now> | Connection: close | Content-Length: 0, then closed
+        #|an invalid character in a field name: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Date: <now> | Connection: close | Content-Length: 0, then closed
+        #|bare LF line ends: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Date: <now> | Connection: close | Content-Length: 0, then closed
+        #|a request target without a leading /: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Date: <now> | Connection: close | Content-Length: 0, then closed
+        #|a fragment in the request target: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Date: <now> | Connection: close | Content-Length: 0, then closed
+        #|an asterisk-form target with a method other than OPTIONS: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Date: <now> | Connection: close | Content-Length: 0, then closed
+        #|an authority-form target with a method other than CONNECT: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Date: <now> | Connection: close | Content-Length: 0, then closed
+        #|CONNECT with a target that is not authority-form: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Date: <now> | Connection: close | Content-Length: 0, then closed
+        #|a Host with a space in it: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Date: <now> | Connection: close | Content-Length: 0, then closed
+        #|a Host with a / and an @ in it: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Date: <now> | Connection: close | Content-Length: 0, then closed
+        #|a TLS handshake: HTTP/1.1 200 OK, then HTTP/1.1 400 Bad Request | Date: <now> | Connection: close | Content-Length: 0, then closed
       ),
     )
   })
@@ -204,6 +209,7 @@ async test "pipelining: requests sent in one write are all answered, in order, o
         #|Content-Type: application/json
         #|X-Source: smock
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Content-Length: 23
         #|
         #|{"id":1,"name":"Alice"}
@@ -245,6 +251,7 @@ async test "split reads: requests sent in pieces, with pauses between writes, ge
         #|Content-Type: application/json
         #|Smock-Near-Miss: get-user; failed=method
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Content-Length: 27
         #|
         #|{"error":"no Stub matched"}
@@ -253,6 +260,7 @@ async test "split reads: requests sent in pieces, with pauses between writes, ge
         #|Content-Type: application/json
         #|X-Source: smock
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Content-Length: 23
         #|
         #|{"id":1,"name":"Alice"}
