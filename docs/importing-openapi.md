@@ -953,7 +953,8 @@ These are left out, with a warning:
   allows no value, such as `schema: false`;
 - a value that is an object or null, or an array that holds one or an
   array;
-- a value with a control character other than tab, such as a line break.
+- a value with a character HTTP forbids in a field value: an ASCII
+  control character other than tab, such as a line break.
 
 A header with both `example` and `examples` uses `example`, with a
 warning. The examples after the one that gives the value are left out,

@@ -248,9 +248,9 @@ fn Report::no_header_value(self : Report, pointer : String) -> Unit {
 /// left out. A string is the text as it is, a number is written as smock
 /// writes numbers, a boolean as `true` or `false`, and an array of these
 /// joined with `,`, as style `simple` asks. An object, null, an array that
-/// holds either or an array, and a control character other than tab,
-/// which a header cannot hold, leave the header out, with a warning where
-/// the value comes from.
+/// holds either or an array, and a character HTTP forbids in a field
+/// value, an ASCII control character other than tab, leave the header
+/// out, with a warning where the value comes from.
 fn Report::header_text(self : Report, value : Value) -> String? {
   let (at, text) = match value {
     Serialized(at, text) => (at, text)
