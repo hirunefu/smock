@@ -421,6 +421,16 @@ class CpuPerRequest(unittest.TestCase):
             # How long smock waited for a CPU, from its /metrics.
             self.assertGreaterEqual(cpu["scheduling_delay_s"], 0)
             self.assertGreaterEqual(first["involuntary_context_switches"], 0)
+            # The measured window (4 s), in the same layout, from its
+            # /metrics scraped at the window's start and end: part of the
+            # requests and of the wait.
+            window = cpu["window"]
+            self.assertEqual(window["source"], "cgroup")
+            self.assertAlmostEqual(window["wall_s"], 4, delta=0.5)
+            self.assertGreater(window["requests"], 0)
+            self.assertLess(window["requests"], cpu["requests"])
+            self.assertGreaterEqual(window["scheduling_delay_s"], 0)
+            self.assertLessEqual(window["scheduling_delay_s"], cpu["scheduling_delay_s"])
             # What other tasks used of smock's CPUs in the measured window
             # (4 s), from /proc/schedstat and smock's cgroup.
             others = result["other_tasks"]
@@ -558,13 +568,16 @@ def cpu_stat(usage_usec):
             "nr_periods": 200, "nr_throttled": 0, "throttled_usec": 0}
 
 
-def reading(at, run_ns, usage_usec, interrupts_s=None):
-    """A reading for other_tasks, as read_cpu_times takes it at `at`: the
-    time tasks have run on each CPU (schedstat's `run_ns`), the time each
-    has spent in interrupts (proc_stat's `interrupts_s`, none unless
-    given), and smock's cgroup's CPU time in microseconds."""
+def reading(at, run_ns, usage_usec, interrupts_s=None, metrics=None, scraped_at=None):
+    """A reading of a step's measured window, as read_cpu_times takes it at
+    `at`: the time tasks have run on each CPU (schedstat's `run_ns`), the
+    time each has spent in interrupts (proc_stat's `interrupts_s`, none
+    unless given), smock's cgroup's CPU time in microseconds, and smock's
+    /metrics (`metrics`, as scrape gives them, None for no answer) as the
+    scrape that came back at `scraped_at` (`at` unless given) had them."""
     return {"at": at, "schedstat": schedstat(run_ns), "stat": proc_stat(interrupts_s or {}),
-            "cpu_stat": cpu_stat(usage_usec)}
+            "cpu_stat": cpu_stat(usage_usec), "metrics": metrics,
+            "scraped_at": at if scraped_at is None else scraped_at}
 
 
 class OtherTasks(unittest.TestCase):
@@ -636,33 +649,79 @@ class OtherTasks(unittest.TestCase):
             self.assertIsNone(harness.other_tasks({**broken, "at": 100.0}, after, [4, 5]))
 
 
+class WindowUse(unittest.TestCase):
+    """What smock used in a step's measured window, how long it waited for a
+    CPU above all, comes from its /metrics, the source of the whole step's
+    figures, scraped at the window's start and at its end, where what other
+    tasks used is read too. The step's ramp and tail are left out, as they
+    are of what other tasks used."""
+
+    def test_it_is_what_smock_counted_between_the_scrapes_at_the_windows_start_and_end(self):
+        # The scrapes came back 20 s apart, a little after the readings of
+        # /proc. smock's main thread waited 45.3 ms for a CPU in between,
+        # 12 ms of it throttled, whatever it waited in the ramp before.
+        before = reading(100.0, {4: 50_000_000_000}, 8_000_000, metrics=scrape(), scraped_at=100.5)
+        after = reading(120.0, {4: 51_000_000_000}, 9_000_000, scraped_at=120.5, metrics=scrape(
+            cpu=0.81, requests=(5001, 2500), usage=0.823131, periods=203, throttled_periods=4, throttled=0.069118,
+            delay=0.057645678, switches=52, steal=12.5))
+        self.assertEqual(harness.window_use(before, after, "250m"),
+                         {"usage_s": 0.78, "periods": 200, "throttled_periods": 3, "throttled_s": 0.012,
+                          "scheduling_delay_s": 0.0453, "involuntary_context_switches": 12, "node_steal_s": 0.16,
+                          "source": "cgroup", "process_s": 0.78, "wall_s": 20.0, "requests": 7500,
+                          "us_per_request": 104.0, "utilization": 0.156})
+
+    def test_a_smock_that_did_not_answer_a_scrape_tells_nothing_of_it(self):
+        answered = reading(100.0, {4: 50_000_000_000}, 8_000_000, metrics=scrape())
+        unanswered = reading(120.0, {4: 51_000_000_000}, 9_000_000)
+        self.assertIsNone(harness.window_use(answered, unanswered, "250m"))
+        self.assertIsNone(harness.window_use(unanswered, answered, "250m"))
+
+
 class OtherTasksInTheSummary(unittest.TestCase):
     """summary.md shows, for each step, what other tasks used of smock's
     CPUs in its measured window, as a share of those CPUs' time, and how
-    long smock waited for a CPU during the load, and marks the steps other
-    tasks disturbed."""
+    long smock waited for a CPU in the same window, and marks the steps
+    other tasks disturbed."""
 
-    def test_each_step_shows_other_tasks_and_smocks_wait_and_disturbed_steps_are_marked(self):
+    def test_each_step_shows_other_tasks_and_smocks_wait_in_its_window_and_disturbed_steps_are_marked(self):
         quiet = {"cpus": [4, 5], "window_s": 20.0, "cpu_s": 0.04, "share": 0.001, "disturbed": False}
         noisy = {"cpus": [4, 5], "window_s": 20.0, "cpu_s": 1.2, "share": 0.03, "disturbed": True}
 
-        def shown_step(rate, others, delay, lag=(2.0, 2.1)):
+        def shown_step(rate, others, window, lag=(2.0, 2.1)):
             step = step_measured(rate=rate, lag=lag)
+            # The whole step's wait, ramp and tail included, is more than
+            # its window's.
             step.update(latency_from_release_ms={"p50": 0.3, "p90": 0.5, "p99": 1.0, "p99_9": 1.5, "max": 3.0},
                         rss_kib={"first": 16000, "last": 17000, "max": 17000}, other_tasks=others,
-                        smock_cpu={"usage_s": 0.8, "throttled_s": 0.012, "scheduling_delay_s": delay,
-                                   "us_per_request": 32.0, "utilization": 0.128})
+                        smock_cpu={"usage_s": 0.8, "throttled_s": 0.012, "scheduling_delay_s": 0.9,
+                                   "us_per_request": 32.0, "utilization": 0.128, "window": window})
             return step
 
-        # The last, as a GKE run's steps, has no record of other tasks.
-        steps = [shown_step(500, quiet, 0.0123), shown_step(1000, noisy, 0.4567),
-                 shown_step(2000, noisy, 0.5, lag=(25.0, 26.0)), shown_step(4000, None, 0.02)]
+        steps = [shown_step(500, quiet, {"wall_s": 20.0, "scheduling_delay_s": 0.0123}),
+                 shown_step(1000, noisy, {"wall_s": 20.0, "scheduling_delay_s": 0.4567}),
+                 shown_step(2000, noisy, {"wall_s": 20.0, "scheduling_delay_s": 0.5}, lag=(25.0, 26.0)),
+                 # smock did not answer a scrape at the window's start or end.
+                 shown_step(3000, quiet, None)]
         text = harness.summary_markdown(summary_of(steps=steps), summary_conditions())
         rows = markdown_table(markdown_sections(text)["small: CPU limit 250m, memory limit 512Mi"])
         self.assertEqual([(row["Case"], row["Other tasks %"], row["CPU wait s"]) for row in rows],
                          [("http-keep-alive", "0.10", "0.0123"), ("http-keep-alive (disturbed)", "3.00", "0.4567"),
-                          ("http-keep-alive (late, disturbed)", "3.00", "0.5"), ("http-keep-alive", "-", "0.02")])
+                          ("http-keep-alive (late, disturbed)", "3.00", "0.5"), ("http-keep-alive", "0.10", "-")])
         self.assertIn("A step where they used at least 1% is marked *disturbed*", text)
+        self.assertIn("*CPU wait* how long smock's main thread waited for a CPU in the measured window", text)
+
+    def test_a_run_that_did_not_read_the_windows_wait_shows_the_wait_of_the_whole_load(self):
+        # As a GKE run, which reads neither figure in the window, and a run
+        # from before the window's wait was read.
+        step = step_measured(rate=500)
+        step.update(latency_from_release_ms={"p50": 0.3, "p90": 0.5, "p99": 1.0, "p99_9": 1.5, "max": 3.0},
+                    rss_kib={"first": 16000, "last": 17000, "max": 17000}, other_tasks=None,
+                    smock_cpu={"usage_s": 0.8, "throttled_s": 0.012, "scheduling_delay_s": 0.02,
+                               "us_per_request": 32.0, "utilization": 0.128})
+        text = harness.summary_markdown(summary_of(steps=[step]), summary_conditions())
+        [row] = markdown_table(markdown_sections(text)["small: CPU limit 250m, memory limit 512Mi"])
+        self.assertEqual((row["Other tasks %"], row["CPU wait s"]), ("-", "0.02"))
+        self.assertIn("A run that did not read it for the window, as on GKE, shows it for the whole load", text)
 
 
 def summary_conditions():

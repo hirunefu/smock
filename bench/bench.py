@@ -741,10 +741,14 @@ class RssSampler:
 
 
 def read_cpu_times(smock):
-    """A reading for other_tasks: the time (`at`, time.monotonic()), the
-    texts of /proc/schedstat (`schedstat`) and /proc/stat (`stat`), each
-    None where it cannot be read, and smock's cgroup cpu.stat (`cpu_stat`),
-    None once smock has gone."""
+    """A reading of a step's measured window, for other_tasks and
+    window_use: the time (`at`, time.monotonic()), the texts of
+    /proc/schedstat (`schedstat`) and /proc/stat (`stat`), each None where
+    it cannot be read, and smock's cgroup cpu.stat (`cpu_stat`), None once
+    smock has gone; then smock's /metrics (`metrics`, as metric_values
+    reads them, None when smock does not answer) and when that scrape came
+    back (`scraped_at`). The scrape comes last, since it may wait behind
+    the load, and the files must be read together."""
     reading = {"at": time.monotonic()}
     for name in ("schedstat", "stat"):
         try:
@@ -752,14 +756,16 @@ def read_cpu_times(smock):
         except OSError:
             reading[name] = None
     reading["cpu_stat"] = smock.cpu_stat()
+    reading["metrics"] = smock.metrics()
+    reading["scraped_at"] = time.monotonic()
     return reading
 
 
 class WindowReadings:
-    """Takes, in the background, the readings other_tasks needs at the
-    start and at the end of a step's measured window, at the times
-    (time.monotonic()) of `window`, from when it is started until it is
-    stopped. A reading whose time has come when it is stopped is still
+    """Takes, in the background, the readings other_tasks and window_use
+    need at the start and at the end of a step's measured window, at the
+    times (time.monotonic()) of `window`, from when it is started until it
+    is stopped. A reading whose time has come when it is stopped is still
     taken; one whose time has not is not."""
 
     def __init__(self, smock, window):
@@ -780,6 +786,11 @@ class WindowReadings:
         """What other tasks used of smock's CPUs `cpus` in the window, as
         other_tasks has it, or None without both readings."""
         return other_tasks(*self.readings, cpus) if len(self.readings) == 2 else None
+
+    def smock_use(self, cpu_limit):
+        """What smock used in the window, as window_use has it, or None
+        without both readings."""
+        return window_use(*self.readings, cpu_limit) if len(self.readings) == 2 else None
 
     def __enter__(self):
         self.thread.start()
@@ -1331,6 +1342,16 @@ def other_tasks(before, after, cpus):
             "disturbed": share >= DISTURBED_SHARE, "interrupts_s": round(interrupts_ns / 1e9, 4)}
 
 
+def window_use(before, after, cpu_limit):
+    """What smock used in a step's measured window, between two readings as
+    read_cpu_times takes them, from the scrapes of its /metrics in them:
+    scraped_use's smock_cpu, with how long smock waited for a CPU
+    (`scheduling_delay_s`) over the window alone, the time the CFS quota
+    held it back included. None when smock did not answer one of the
+    scrapes, or restarted between them."""
+    return scraped_use(before["metrics"], after["metrics"], cpu_limit, after["scraped_at"] - before["scraped_at"])[0]
+
+
 def other_tasks_text(others):
     """What other tasks used of smock's CPUs in a step (as other_tasks has
     it), for people: their share, and whether it disturbed smock."""
@@ -1468,6 +1489,7 @@ def run_case(run, spec):
     smock_cpu = cpu_use(cpu_before, cpu_after, spec["cpu_limit"], wall_s, (metrics_before, metrics_after))
     if smock_cpu:
         smock_cpu["first_second"] = first_second
+        smock_cpu["window"] = window.smock_use(spec["cpu_limit"])
     write_json(raw / "latency.json", {
         "about": "Latencies of the requests scheduled in the measured window that got a response, "
                  "from the times the fixed-rate schedule had them due, all request kinds together: "
@@ -1842,6 +1864,13 @@ CASE_COLUMNS = ("Case", "Rate", "Achieved", "p50 ms", "p99 ms", "p99.9 ms", "Max
                 "CPU wait s", "Other tasks %", "Max RSS MiB", "Peak memory MiB", "OOM kills")
 
 
+def cpu_wait(cpu):
+    """How long smock waited for a CPU in a step's measured window, from the
+    step's smock_cpu, or during its whole load in a run that did not read
+    it for the window: a GKE run, or one from before it was."""
+    return (cpu["window"] or {}).get("scheduling_delay_s") if "window" in cpu else cpu.get("scheduling_delay_s")
+
+
 def case_row(case):
     """A case's row of its profile's table in summary.md."""
     latency, release, lag = case["latency_ms"], case["latency_from_release_ms"], case["generator_lag_ms"]
@@ -1862,7 +1891,7 @@ def case_row(case):
     cells = [name, case["rate"], case["achieved_rate"], latency["p50"], latency["p99"], latency["p99_9"],
              latency["max"], release["p99_9"], lag["p99_9"], lag["max"], case["errors"], cpu.get("us_per_request"),
              None if utilization is None else f"{utilization * 100:.1f}", cpu.get("throttled_s"),
-             cpu.get("scheduling_delay_s"), None if others is None else f"{others['share'] * 100:.2f}",
+             cpu_wait(cpu), None if others is None else f"{others['share'] * 100:.2f}",
              mib(case["rss_kib"]["max"], 1024), peak, memory["oom_kills"]]
     return "| " + " | ".join(shown(cell) for cell in cells) + " |"
 
@@ -1939,8 +1968,10 @@ def summary_markdown(summary, conditions, stopped=None):
               "answered then (smock_requests_total), and *CPU % of limit* that time against the CPU limit "
               "over the same wall time. *Throttled* is how long "
               "the CPU quota held smock back during the load (cpu.stat), and *CPU wait* how long smock's main "
-              "thread waited for a CPU then, that time included (smock's /metrics). *Other tasks* is the CPU "
-              "time tasks other than smock used on smock's CPUs in the measured window, in percent of those "
+              "thread waited for a CPU in the measured window, the time the quota held it back then included "
+              "(smock's /metrics, scraped at the window's start and end). A run that did not read it for the "
+              "window, as on GKE, shows it for the whole load. *Other tasks* is the CPU "
+              "time tasks other than smock used on smock's CPUs in the same window, in percent of those "
               "CPUs' time (/proc/schedstat, less smock's cpu.stat and the CPUs' interrupts in /proc/stat), or `-` "
               "where it is not recorded. A step where "
               f"they used at least {DISTURBED_SHARE * 100:g}% is marked *disturbed*: its latencies may be the "

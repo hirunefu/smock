@@ -305,7 +305,9 @@ architecture the targets file has no set for.
   less the interrupts, is what other tasks used. The kernel counts the
   interrupts that come while smock runs, such as the loopback's delivery
   of its responses, in the CPU's run time but not in smock's, hence the
-  second reading. A step is **disturbed** when other tasks used at least
+  second reading. Right after these readings, the run scrapes smock's
+  `/metrics`, so that how long smock waited for a CPU, *CPU wait*, covers
+  the same window. A step is **disturbed** when other tasks used at least
   1% of smock's CPUs' time in its window (`DISTURBED_SHARE` in
   `bench/bench.py`). In
   [#57](https://github.com/hirunefu/smock/issues/57), desktop programs at
@@ -405,7 +407,12 @@ architecture the targets file has no set for.
   handshakes come at once, all from its `/metrics` and its cgroup's
   metrics there, scraped a second into the load: under a small CPU limit
   the scrape waits behind the load, so that second ends when smock
-  answers it, which can be a second or more later), what other tasks
+  answers it, which can be a second or more later; and the same for the
+  measured window, `window`, from its `/metrics` scraped at the window's
+  start and end, where `other_tasks` is read: its `scheduling_delay_s` is
+  how long smock waited for a CPU in the window alone, while the one above
+  covers the whole load, ramp and tail included; null where smock did not
+  answer one of those scrapes, and absent on GKE), what other tasks
   used of smock's CPUs in the measured window (`other_tasks`: the CPUs,
   the window's length, `window_s`, the CPU time other tasks used, `cpu_s`,
   its share of the CPUs' time, `share`, whether that disturbed the step,
@@ -421,9 +428,11 @@ architecture the targets file has no set for.
   measured and why when that is not plain. `format` numbers the layout.
 - `summary.md`: the same for people, a section for each profile. Its
   *Targets* section says which architecture's targets it checked. Each
-  step shows how long smock waited for a CPU (*CPU wait*) and what other
-  tasks used of smock's CPUs (*Other tasks*, in percent of their time), and
-  says *disturbed* after the case's name when they disturbed it.
+  step shows how long smock waited for a CPU in its measured window
+  (*CPU wait*; for the whole load in a GKE run) and what other tasks used
+  of smock's CPUs in the same window (*Other tasks*, in percent of their
+  time), and says *disturbed* after the case's name when they disturbed
+  it.
 - `raw/<profile>/<case>/` (`<case>@<rate>` for a ladder's steps):
   `latency.json`, a histogram of the latencies from the scheduled send
   times in microseconds to three significant digits; `rss.json`, smock's
@@ -476,8 +485,11 @@ The line above the table says which steps count.
 - Steps only one run has are listed, not compared.
 - A step other tasks disturbed in either run (see
   [What a run does](#what-a-run-does)) is named in its verdict, with what
-  they used of smock's CPUs, such as `regression (disturbed: other tasks
-  used 3.00% of smock's CPUs in the newer run)`. A regression there still
+  they used of smock's CPUs and, where both runs recorded it, how long
+  smock waited for a CPU in the step's window in each, such as
+  `regression (disturbed: other tasks used 7.33% of smock's CPUs in the
+  newer run; CPU wait 0.046 s → 0.313 s)`. The wait includes the time the
+  CPU limit held smock back. A regression there still
   fails the comparison, and the result line counts those at disturbed
   steps: rerun the profile on a quieter machine before looking for the
   cause in smock. The line above the table says when a step is disturbed.
