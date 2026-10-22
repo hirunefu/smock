@@ -642,17 +642,10 @@ fn WorkingCopies::store(
 /// The response to a request whose data write could not be applied: 500,
 /// with the write and what went wrong.
 fn data_write_failed(stub : String, error : DataError) -> ResponsePlan {
-  let body : Json = {
+  json_failure(500, {
     "error": "data write failed",
     "stub": Json::string(stub),
     "at": Json::string(error.at),
     "message": Json::string(error.message),
-  }
-  {
-    status: 500,
-    headers: [("Content-Type", "application/json")],
-    body: Bytes(@template.compact_json_bytes(body)),
-    delay_ms: 0,
-    fault: None,
-  }
+  })
 }
