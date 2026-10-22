@@ -112,6 +112,7 @@
         }
       },
       "required": ["mock", "name"],
+      "dependentRequired": { "newKey": ["key"] },
       "oneOf": [
         { "description": "An inline initial value.", "required": ["json"] },
         { "description": "An initial value from a JSON file.", "required": ["jsonFile"] }
