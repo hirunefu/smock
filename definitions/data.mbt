@@ -141,15 +141,14 @@ pub fn keyed_problems(value : Json, key~ : String) -> Array[KeyedProblem] {
 
 ///|
 /// The names of the Data buckets that the parsed files declare, by the
-/// name of their Mock, in declaration order, each with its key member when
-/// it is keyed, so that a Stub may read and write a bucket declared in any
-/// file, earlier or later. A `key` that is not a string, a problem reported
-/// where the bucket is read, gives the key member `""`, which no bucket
-/// can have.
+/// name of their Mock, in declaration order, each with its key, so that a
+/// Stub may read and write a bucket declared in any file, earlier or
+/// later. A `key` that is not a string, or is empty, a problem reported
+/// where the bucket is read, is `Malformed`.
 fn declared_buckets(
   files : Array[(String, Result[Map[String, Json], Diagnostic])],
-) -> Map[String, Map[String, String?]] {
-  let names : Map[String, Map[String, String?]] = Map([])
+) -> Map[String, Map[String, BucketKey]] {
+  let names : Map[String, Map[String, BucketKey]] = Map([])
   for file in files {
     guard file.1 is Ok(top) && top.get("data") is Some(Array(entries)) else {
       continue
@@ -161,9 +160,9 @@ fn declared_buckets(
         continue
       }
       let key = match entry.get("key") {
-        Some(String(key)) => Some(key)
-        Some(_) => Some("")
-        None => None
+        Some(String(key)) if key != "" => KeyedBy(key)
+        Some(_) => Malformed
+        None => Unkeyed
       }
       match names.get(mock) {
         Some(declared) => declared[name] = key

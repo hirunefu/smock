@@ -121,7 +121,7 @@ priv struct Reader {
 ///|
 fn Reader::new(
   declared~ : Set[String],
-  buckets~ : Map[String, Map[String, String?]],
+  buckets~ : Map[String, Map[String, BucketKey]],
   body_files~ : Map[String, Bytes],
   env~ : @template.Env,
 ) -> Reader {

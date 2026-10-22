@@ -221,15 +221,14 @@ fn File::read_crud(
     match name {
       "bucket" =>
         if self.name(field, value) is Some(name) {
-          match buckets.keys.get(name) {
-            Some(Some(_)) => bucket = Some(name)
-            Some(None) =>
+          match buckets.lookup(self, field, name) {
+            Some(KeyedBy(_) | Malformed) => bucket = Some(name)
+            Some(Unkeyed) =>
               self.error(
                 field,
                 "the Data bucket \{name.escape()} has no \"key\": a CRUD Stub serves only a keyed bucket",
               )
-            None =>
-              self.error(field, "the Mock has no Data bucket \{name.escape()}")
+            None => ()
           }
         }
       "path" =>

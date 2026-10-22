@@ -20,7 +20,10 @@ pub fn ephemeral_stub(
   let diagnostics = []
   let keys = Map([])
   for bucket in buckets {
-    keys[bucket.name] = bucket.key
+    keys[bucket.name] = match bucket.key {
+      Some(key_member) => KeyedBy(key_member)
+      None => Unkeyed
+    }
   }
   let file = File::{
     name: "",

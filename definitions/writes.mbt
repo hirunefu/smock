@@ -62,21 +62,49 @@ pub let max_data_writes : Int = 100
 let no_data_writes : ReadOnlyArray[DataWrite] = ReadOnlyArray::from_array([])
 
 ///|
-/// The Data buckets of one Mock, as the Stubs of the Mock see them when
-/// they are read: the names their templates may read, and the key member
-/// of each keyed bucket.
-priv struct MockBuckets {
-  /// The buckets templates may read as `data.NAME`.
-  templates : @template.Buckets
-  /// The key member of each bucket, by its name: `None` for a bucket
-  /// without `key`, and `""` for one whose `key` is reported as wrong.
-  keys : Map[String, String?]
+/// What a Stub that names a Data bucket knows of the bucket's `key` when it
+/// is read.
+priv enum BucketKey {
+  /// The bucket has no `key`.
+  Unkeyed
+  /// The bucket is keyed by this member.
+  KeyedBy(String)
+  /// The bucket's `key` is not a member name, a problem reported where the
+  /// bucket is read, so a Stub checks nothing that depends on it.
+  Malformed
 }
 
 ///|
-/// The buckets `keys` names, each with its key member, if it is keyed.
-fn MockBuckets::new(keys : Map[String, String?]) -> MockBuckets {
+/// The Data buckets of one Mock, as the Stubs of the Mock see them when
+/// they are read: the names their templates may read, and the key of each.
+priv struct MockBuckets {
+  /// The buckets templates may read as `data.NAME`.
+  templates : @template.Buckets
+  /// The key of each bucket, by its name.
+  keys : Map[String, BucketKey]
+}
+
+///|
+/// The buckets `keys` names, each with its key.
+fn MockBuckets::new(keys : Map[String, BucketKey]) -> MockBuckets {
   { templates: @template.Buckets(keys.keys().collect()), keys, }
+}
+
+///|
+/// The key of the bucket named `name`, which a Stub names at `pointer` in
+/// `file`. When the Mock declares no such bucket, it is reported there,
+/// and there is none.
+fn MockBuckets::lookup(
+  self : MockBuckets,
+  file : File,
+  pointer : String,
+  name : String,
+) -> BucketKey? {
+  let key = self.keys.get(name)
+  if key is None {
+    file.error(pointer, "the Mock has no Data bucket \{name.escape()}")
+  }
+  key
 }
 
 ///|
@@ -212,39 +240,34 @@ fn File::read_data_write(
     Some(template) => template.literal()
     None => None
   }
-  // The key member of the bucket, when it is keyed.
-  let mut keyed_by = None
+  // The key of the bucket, when the Mock declares it.
+  let mut bucket_key = None
   if bucket is Some(name) {
-    match buckets.keys.get(name) {
-      None =>
-        self.error(
-          child_pointer(pointer, "bucket"),
-          "the Mock has no Data bucket \{name.escape()}",
-        )
-      Some(None) =>
+    bucket_key = buckets.lookup(self, child_pointer(pointer, "bucket"), name)
+    match bucket_key {
+      None => ()
+      Some(Unkeyed) =>
         if has_key && !(op is Some(Append)) {
           self.error(
             key_pointer,
             "is allowed only on a keyed bucket, and the Data bucket \{name.escape()} has no \"key\"",
           )
         }
-      Some(Some(key_member)) => {
-        keyed_by = Some(key_member)
+      Some(KeyedBy(_) | Malformed) =>
         if op is Some(Merge) && !has_key {
           self.error(
             pointer,
             "\"merge\" into the keyed Data bucket \{name.escape()} needs \"key\": the bucket holds an array, and \"merge\" with \"key\" merges into one of its items",
           )
         }
-      }
     }
   }
-  match (keyed_by, literal) {
+  match (bucket_key, literal) {
     // A `key` that is reported as wrong checks nothing more.
-    (Some(""), _) | (_, None) => ()
-    (Some(key_member), Some(literal)) =>
+    (Some(Malformed), _) | (_, None) => ()
+    (Some(KeyedBy(key_member)), Some(literal)) =>
       self.check_keyed_literal(value_pointer, op, has_key, key_member, literal)
-    (None, Some(literal)) =>
+    (Some(Unkeyed) | None, Some(literal)) =>
       if op is Some(Merge) && !(literal is Object(_)) {
         self.error(
           value_pointer, "must be an object: \"merge\" merges the members of an object into the bucket",
