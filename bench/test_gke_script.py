@@ -102,6 +102,9 @@ record = {"tool": tool, "argv": argv, "words": words, "time": time.time(),
 if tool == "kubectl" and "kubeconfig" in options:
     path = Path(options["kubeconfig"])
     record["kubeconfig_mode"] = oct(stat.S_IMODE(path.stat().st_mode)) if path.exists() else None
+    # The access token kubectl sends.
+    record["token"] = next((line.split(":", 1)[1].strip() for line in path.read_text().splitlines()
+                            if line.strip().startswith("token:")), None) if path.exists() else None
 if tool == "docker" and "login" in words:
     record["stdin"] = sys.stdin.read()
 if tool == "kubectl" and words[:1] in (["apply"], ["delete"]):
@@ -226,7 +229,22 @@ if tool == "gcloud":
         state(lambda value: value["repositories"].remove(words[3]) if words[3] in value["repositories"] else None)
         answer()
     if words[:2] == ["auth", "print-access-token"]:
-        answer("fake-access-token\n")
+        # As the real gcloud: the token it has cached, which may expire
+        # within minutes.
+        answer("fake-cached-token\n")
+    if words[:2] == ["config", "config-helper"]:
+        # As the real gcloud: the cached token, or with --force-auth-refresh
+        # a new one, numbered here from 1 in the order they are made.
+        if options.get("format") != "value(credential.access_token)":
+            sys.stderr.write("fake gcloud: config-helper answers --format=value(credential.access_token) only\n")
+            answer("", 1)
+        if "--force-auth-refresh" not in argv:
+            answer("fake-cached-token\n")
+        with (state_dir / "calls.jsonl").open() as calls:
+            fcntl.flock(calls, fcntl.LOCK_SH)
+            made = sum(call["words"][:2] == ["config", "config-helper"] and "--force-auth-refresh" in call["argv"]
+                       for call in map(json.loads, calls) if call["tool"] == "gcloud")
+        answer(f"fake-access-token-{made}\n")
     if words[0] == "compute" and words[-1] == "list":
         answer("".join(f"{name}\tus-central1-a\n" for name in config.get(words[1], [])))
     answer()
@@ -578,7 +596,9 @@ NODE_CPU = {"model_name": "AMD EPYC 7B13", "vendor_id": "AuthenticAMD", "cpu_fam
 SMOCK_LOG = ('{"time":"2026-10-14T09:00:01.000Z","level":"info","msg":"listening","listener":"plain",'
              '"address":"0.0.0.0:8080"}\n')
 
-# What only reads: the gcloud commands that list, describe or print.
+# What only reads: the gcloud commands that list, describe or print. Not
+# config-helper, which the script calls with --force-auth-refresh to make a
+# new access token: a dry run only prints it.
 READ_ONLY = {"list", "describe", "version", "print-access-token", "get-value"}
 
 # The account gcloud is logged in as, in the fakes.
@@ -913,6 +933,13 @@ class DryRun(Script):
         # The project shows as the variable that holds it.
         self.assertNotIn(PROJECT, output)
         self.assertIn('--project="$GKE_BENCH_PROJECT"', output)
+        # It takes no access token, and says how the run takes a new one for
+        # the registry's login and for the kubeconfig.
+        self.assertEqual(self.made(["config", "config-helper"]), [])
+        token = "gcloud config config-helper --force-auth-refresh '--format=value(credential.access_token)'"
+        self.assertIn(f"would run: {token} | env DOCKER_CONFIG=", output)
+        self.assertIn(f"would write a kubeconfig (mode 600) with the cluster's endpoint and a new access token from "
+                      f"{token}: ", output)
 
     def test_it_names_each_regional_quota_the_nodes_draw_on_with_what_is_free_and_what_the_run_needs(self):
         # Four nodes by default, each with 8 vCPUs, a boot disk of 100 GB
@@ -1015,11 +1042,39 @@ class Run(Script):
         # ~/.kube/config.
         [create] = self.made(["container", "clusters", "create-auto"])
         self.assertEqual(Path(create["kubeconfig_env"]).parent, Path(kubeconfig.split("=", 1)[1]).parent)
-        # The token never shows on a command line.
+        # No token ever shows on a command line.
         for call in self.calls():
-            self.assertNotIn("fake-access-token", " ".join(call["argv"]))
+            for token in ("fake-access-token", "fake-cached-token"):
+                self.assertNotIn(token, " ".join(call["argv"]))
+
+    def test_the_registry_login_and_the_kubeconfig_each_take_a_new_access_token(self):
+        # Not the token gcloud has cached, which may expire within minutes:
+        # each takes a new one, which lasts the hour the script counts.
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(self.made(["auth", "print-access-token"]), [])
+        self.assertEqual([call["argv"] for call in self.made(["config", "config-helper"])],
+                         [["config", "config-helper", "--force-auth-refresh",
+                           "--format=value(credential.access_token)"]] * 2)
         [login] = self.made(["login"])
-        self.assertEqual(login["stdin"].strip(), "fake-access-token")
+        self.assertEqual(login["stdin"].strip(), "fake-access-token-1")
+        kubectl = [call for call in self.calls("kubectl") if call["words"][:1] != ["version"]]
+        self.assertEqual({call["token"] for call in kubectl}, {"fake-access-token-2"})
+
+    def test_the_kubeconfig_takes_a_new_access_token_once_the_one_in_it_has_been_used_for_45_minutes(self):
+        # 2,800 s pass while smock becomes ready, past TOKEN_REFRESH_S
+        # (2,700 s) from when the kubeconfig's token was taken: the calls
+        # after it have a new one.
+        self.fake_time(1)
+        self.configure(smock_ready={"advance_s": 2800})
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(len(self.made(["config", "config-helper"])), 3)
+        kubectl = [call for call in self.calls("kubectl") if call["words"][:1] != ["version"]]
+        [ready] = [index for index, call in enumerate(kubectl) if call["words"][:1] == ["wait"]]
+        self.assertEqual({call["token"] for call in kubectl[:ready + 1]}, {"fake-access-token-2"})
+        self.assertEqual({call["token"] for call in kubectl[ready + 1:]}, {"fake-access-token-3"})
+        self.assertEqual({call["kubeconfig_mode"] for call in kubectl}, {"0o600"})
 
     def test_a_run_that_fails_midway_deletes_what_it_made(self):
         self.configure(apply_fails_on="generator.json")

@@ -48,9 +48,10 @@
 #    left.
 #
 # It never makes a LoadBalancer, a static IP or a volume claim: the
-# namespace's quota forbids them. kubectl authenticates with an access token
-# from gcloud in a kubeconfig of its own (mode 600, deleted at the end), so
-# gke-gcloud-auth-plugin is not needed, and ~/.kube/config is not touched.
+# namespace's quota forbids them. kubectl authenticates with a new access
+# token from gcloud, taken again before its hour ends, in a kubeconfig of
+# its own (mode 600, deleted at the end), so gke-gcloud-auth-plugin is not
+# needed, and ~/.kube/config is not touched.
 #
 # usage: scripts/gke-bench.sh [--dry-run | --yes] [options]
 #
@@ -198,10 +199,15 @@ declare -A BOOT_DISK_QUOTAS=([amd64]=SSD_TOTAL_GB [arm64]=HDB_TOTAL_GB)
 # repository's root.
 DOCKERFILES=(Dockerfile bench/gke/smock-definitions.dockerfile bench/gke/generator.Dockerfile)
 # How long the load generator's Pod may wait for a node, smock to become
-# ready, and an access token may be used before a new one is fetched.
+# ready, and an access token may be used before a new one is fetched (a
+# token lasts an hour from when access_token takes it).
 PENDING_LIMIT_S=900
 READY_LIMIT_S=900
 TOKEN_REFRESH_S=2700
+# What gcloud is asked for an access token: a new one. gcloud auth
+# print-access-token gives the token gcloud has cached, which may expire
+# within minutes, long before TOKEN_REFRESH_S.
+ACCESS_TOKEN_ARGS=(config config-helper --force-auth-refresh --format='value(credential.access_token)')
 # How long deleting the cluster may take before the script gives up on it.
 DELETE_LIMIT_S=1800
 # The file the watchdog leaves in the results directory, beside its stop
@@ -286,6 +292,12 @@ learn_account() {
   local account
   account=$("$GCLOUD" config get-value account 2>/dev/null) || account=""
   account_pattern=$(printf '%s' "$account" | sed 's/[][\.*^$/]/\\&/g')
+}
+
+# Prints a new access token from gcloud (ACCESS_TOKEN_ARGS), which lasts an
+# hour from now; gcloud's messages are masked.
+access_token() {
+  "$GCLOUD" "${ACCESS_TOKEN_ARGS[@]}" 2> >(masked >&2)
 }
 
 # Whether process $1 is still a run of this script (its watchdog when $2 is
@@ -1139,12 +1151,12 @@ push_images() {
     --project="$PROJECT" --member="serviceAccount:$service_account" --role=roles/artifactregistry.reader ||
     die "letting the nodes read the repository failed"
   if [ "$dry_run" = 1 ]; then
-    say "would run: $(shown "$GCLOUD" auth print-access-token) | $(shown env DOCKER_CONFIG="$work/docker" \
+    say "would run: $(shown "$GCLOUD" "${ACCESS_TOKEN_ARGS[@]}") | $(shown env DOCKER_CONFIG="$work/docker" \
       "$DOCKER" login --username=oauth2accesstoken --password-stdin "https://$registry")"
   else
-    say "+ $(shown "$GCLOUD" auth print-access-token) | $(shown env DOCKER_CONFIG="$work/docker" "$DOCKER" login \
+    say "+ $(shown "$GCLOUD" "${ACCESS_TOKEN_ARGS[@]}") | $(shown env DOCKER_CONFIG="$work/docker" "$DOCKER" login \
       --username=oauth2accesstoken --password-stdin "https://$registry")"
-    { "$GCLOUD" auth print-access-token 2> >(masked >&2) | env DOCKER_CONFIG="$work/docker" "$DOCKER" login \
+    { access_token | env DOCKER_CONFIG="$work/docker" "$DOCKER" login \
       --username=oauth2accesstoken --password-stdin "https://$registry" >/dev/null; } &
     wait $! || die "logging in to $registry failed"
   fi
@@ -1167,11 +1179,13 @@ push_images() {
   generator_ref=$(push_image "$generator_image" generator) || exit 1
 }
 
-# Writes the kubeconfig: the cluster's endpoint and CA, and an access token
-# from gcloud, readable by this user only.
+# Writes the kubeconfig: the cluster's endpoint and CA, and a new access
+# token from gcloud, readable by this user only. The token's hour starts
+# when it is taken, which token_at records.
 write_kubeconfig() {
   local token
-  token=$("$GCLOUD" auth print-access-token 2> >(masked >&2)) || die "gcloud auth print-access-token failed"
+  token_at=$(now)
+  token=$(access_token) || die "gcloud did not give a new access token"
   (
     umask 077
     cat >"$kubeconfig" <<EOF
@@ -1196,7 +1210,6 @@ current-context: smock-bench
 EOF
   )
   chmod 600 "$kubeconfig"
-  token_at=$(now)
 }
 
 # Writes a new access token into the kubeconfig before the one in it
@@ -1228,7 +1241,8 @@ make_cluster() {
   changes "$GCLOUD" container clusters create-auto "$cluster" --region="$REGION" --project="$PROJECT" \
     --release-channel=regular --labels="$labels" "${service_account[@]}" --quiet || die "making the cluster failed"
   if [ "$dry_run" = 1 ]; then
-    say "would write a kubeconfig (mode 600) with the cluster's endpoint and an access token: $kubeconfig"
+    say "would write a kubeconfig (mode 600) with the cluster's endpoint and a new access token from" \
+      "$(shown "$GCLOUD" "${ACCESS_TOKEN_ARGS[@]}"): $kubeconfig"
     cluster_version="<version>"
     return
   fi

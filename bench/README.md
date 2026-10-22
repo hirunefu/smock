@@ -588,10 +588,10 @@ that run's linux/amd64 build and tests passed.
   repository only.
 - **Cluster.** A new Autopilot cluster on the Regular channel. The cluster
   and the repository are named `smock-bench-<date>-<time>` and labelled
-  `purpose=smock-bench`. kubectl authenticates with an access token from
-  gcloud, in a kubeconfig of the run's own (mode 600, deleted at the end),
-  so gke-gcloud-auth-plugin is not needed and `~/.kube/config` is not
-  touched.
+  `purpose=smock-bench`. kubectl authenticates with a new access token
+  from gcloud, taken again before its hour ends, in a kubeconfig of the
+  run's own (mode 600, deleted at the end), so gke-gcloud-auth-plugin is
+  not needed and `~/.kube/config` is not touched.
 - **Profiles.** For each profile: smock in a Pod, with the profile's CPU
   and memory limits as its requests, behind a ClusterIP Service, both
   named for the profile (`smock-<profile>`), so that a lookup of the name
