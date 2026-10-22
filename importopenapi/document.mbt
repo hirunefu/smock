@@ -14,36 +14,49 @@ priv struct Document {
 }
 
 ///|
-/// The root document, once parsed, with its version checked, or `None`
-/// after reporting why it cannot be read. Then it reports the
-/// document-level parts that are left out.
-fn Report::document(self : Report, root : Content) -> Document? {
-  let label = self.options.root_label
+/// The conversion of the root document, whose content is `root`, with its
+/// problems in `report`: once the document is parsed, with its version
+/// checked, or `None` after reporting why it cannot be read. Then it
+/// reports the document-level parts that are left out.
+fn Conversion::new(report : Report, root : Content) -> Conversion? {
+  let label = report.options.root_label
   let json = match root {
     Parsed(json) => json
     Invalid(pointer~, message~) => {
-      self.error(label, pointer, message)
+      report.error(label, pointer, message)
       return None
     }
     Unread(reason) => {
-      self.error(label, "", "cannot be read: \{reason.to_string()}")
+      report.error(label, "", "cannot be read: \{reason.to_string()}")
       return None
     }
   }
   guard json is Object(top) else {
-    self.error_at(Place::root(""), "must be an object")
+    report.error(label, "", "must be an object")
     return None
   }
-  guard self.version(top) is Some(openapi) else { return None }
-  let (title, info_version) = self.info(top)
-  let prefix = match self.options.base_path {
-    Some(path) => trimmed_prefix(path)
-    None => self.prefix(Place::root(""), top, outer="")
+  // The version, `info` and the servers are read from the top level,
+  // before the conversion has the document they make.
+  let reading = {
+    options: report.options,
+    documents: report.documents,
+    needed: report.needed,
+    document: { top, openapi: "", title: "", info_version: "", prefix: "", },
+    report,
   }
-  let document = { top, openapi, title, info_version, prefix, }
-  self.left_out_parts(document)
-  self.end_document()
-  Some(document)
+  guard reading.version(top) is Some(openapi) else { return None }
+  let (title, info_version) = reading.info(top)
+  let prefix = match reading.options.base_path {
+    Some(path) => trimmed_prefix(path)
+    None => report.prefix(Place::root(""), top, outer="")
+  }
+  let conversion = {
+    ..reading,
+    document: { top, openapi, title, info_version, prefix, },
+  }
+  conversion.left_out_parts()
+  report.end_document()
+  Some(conversion)
 }
 
 ///|
@@ -83,7 +96,7 @@ fn parse(name : String, bytes : Bytes) -> Content {
 /// OpenAPI 3.0, 3.1 or 3.2; else `None`, after reporting why it is not.
 /// Only the minor version counts: the patch is ignored, as the
 /// specification asks.
-fn Report::version(self : Report, top : Map[String, Json]) -> String? {
+fn Conversion::version(self : Conversion, top : Map[String, Json]) -> String? {
   match (top.get("openapi"), top.get("swagger")) {
     (Some(_), Some(_)) => {
       self.error_at(
@@ -159,7 +172,10 @@ fn Report::version(self : Report, top : Map[String, Json]) -> String? {
 /// ignored, with a warning, and the comment leaves it out: only the
 /// comment reads them, so the file can still be faithful. A version that
 /// is a number, as an unquoted `1.0` reads in YAML, says to quote it.
-fn Report::info(self : Report, top : Map[String, Json]) -> (String, String) {
+fn Conversion::info(
+  self : Conversion,
+  top : Map[String, Json],
+) -> (String, String) {
   let info = match top.get("info") {
     None => return ("", "")
     Some(Object(info)) => info
@@ -203,8 +219,8 @@ fn is_digits(s : StringView) -> Bool {
 ///|
 /// Reports the document-level parts that are not imported: webhooks,
 /// which are requests the API sends, not ones it answers.
-fn Report::left_out_parts(self : Report, document : Document) -> Unit {
-  if document.top.get("webhooks") is Some(Object(webhooks)) &&
+fn Conversion::left_out_parts(self : Conversion) -> Unit {
+  if self.document.top.get("webhooks") is Some(Object(webhooks)) &&
     !webhooks.is_empty() {
     self.warning_at(
       Place::root("/webhooks"),

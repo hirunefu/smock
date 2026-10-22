@@ -246,10 +246,9 @@ pub fn Converter::convert(self : Converter) -> Outcome {
     report.error(options.root_label, "", "the document was not given")
     return Failed(report.problems())
   }
-  guard report.document(root) is Some(document) else {
+  guard Conversion::new(report, root) is Some(conversion) else {
     return Failed(report.problems())
   }
-  let conversion = Conversion::new(report, document)
   let imported = conversion.operations()
   if conversion.documents.count() + conversion.needed.length() > max_documents {
     // This one error replaces every other problem: the documents past the
