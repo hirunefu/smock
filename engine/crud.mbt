@@ -88,26 +88,10 @@ fn Engine::crud_answer(
 ) -> CrudAnswer {
   let call = crud_call(crud, incoming)
   guard bucket_named(mock.buckets, crud.bucket) is Some(bucket) else {
-    return {
-      plan: crud_failed(crud, 500, {
-        "error": "unknown data bucket",
-        "stub": Json::string(stub),
-        "bucket": Json::string(crud.bucket),
-      }),
-      call,
-      written: no_buckets_written,
-    }
+    return bucket_failure(crud, stub, call, "unknown data bucket")
   }
   guard bucket.key is Some(key) else {
-    return {
-      plan: crud_failed(crud, 500, {
-        "error": "data bucket changed",
-        "stub": Json::string(stub),
-        "bucket": Json::string(crud.bucket),
-      }),
-      call,
-      written: no_buckets_written,
-    }
+    return bucket_failure(crud, stub, call, "data bucket changed")
   }
   if call.op is (Create | Replace | Update | Delete) {
     return self.crud_write(
@@ -132,6 +116,28 @@ fn Engine::crud_answer(
   }
   {
     plan: crud_read(crud, stub, key, call, value, incoming),
+    call,
+    written: no_buckets_written,
+  }
+}
+
+///|
+/// The answer of the CRUD Stub `stub`, which serves `crud`, to a request
+/// that asked `call` of it, when the Stub's bucket is gone or no longer
+/// keyed, for the reason `error`: 500, with the bucket's name, and nothing
+/// written.
+fn bucket_failure(
+  crud : @definitions.Crud,
+  stub : String,
+  call : CrudCall,
+  error : String,
+) -> CrudAnswer {
+  {
+    plan: crud_failed(crud, 500, {
+      "error": Json::string(error),
+      "stub": Json::string(stub),
+      "bucket": Json::string(crud.bucket),
+    }),
     call,
     written: no_buckets_written,
   }
