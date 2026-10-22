@@ -335,9 +335,25 @@ pub fn RenderFailure::message(self : RenderFailure) -> String {
     }
     NoOperation(stub~, crud_path~, meth~, path~) => {
       let item = "\{crud_path}/<key>"
-      "the CRUD Stub \{stub.escape()} serves no operation for \{meth.escape()} at \{path.escape()}: it serves GET and POST at \{crud_path.escape()}, and GET, PUT, PATCH and DELETE at \{item.escape()}"
+      let at_list = spelled_out(@definitions.crud_methods(Some(ListPath)))
+      let at_item = spelled_out(@definitions.crud_methods(Some(ItemPath)))
+      "the CRUD Stub \{stub.escape()} serves no operation for \{meth.escape()} at \{path.escape()}: it serves \{at_list} at \{crud_path.escape()}, and \{at_item} at \{item.escape()}"
     }
   }
+}
+
+///|
+/// `words` as a sentence lists them: joined with `, `, and the last with
+/// ` and `, such as `GET, PUT and DELETE`.
+fn spelled_out(words : ReadOnlyArray[String]) -> String {
+  let out = StringBuilder()
+  for i in 0..<words.length() {
+    if i > 0 {
+      out.write_string(if i == words.length() - 1 { " and " } else { ", " })
+    }
+    out.write_string(words[i])
+  }
+  out.to_string()
 }
 
 ///|

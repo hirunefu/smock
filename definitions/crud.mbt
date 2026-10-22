@@ -69,8 +69,9 @@ pub fn CrudOp::write_op(self : CrudOp) -> DataOp? {
 }
 
 ///|
-/// The shape of a request path that a CRUD Stub serves.
-pub enum CrudShape {
+/// The shape of a request path that a CRUD Stub serves. Other packages
+/// may name a shape, to ask `crud_methods` for its methods.
+pub(all) enum CrudShape {
   /// The Stub's path, where it lists and creates.
   ListPath
   /// The Stub's path, then `/`, then one non-empty segment, the key text:
@@ -142,7 +143,7 @@ pub fn Crud::operation(self : Crud, meth : String, path : String) -> CrudOp? {
 /// The methods a CRUD Stub serves at a path of the shape `shape`, or at
 /// either shape when it is `None`, each once, in the order of its
 /// operations: GET, POST, PUT, PATCH, DELETE. They are those that
-/// `Crud::operation` serves.
+/// `Crud::operation` serves, as a test checks.
 pub fn crud_methods(shape : CrudShape?) -> ReadOnlyArray[String] {
   match shape {
     Some(ListPath) => list_methods
