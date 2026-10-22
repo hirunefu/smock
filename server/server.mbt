@@ -203,7 +203,7 @@ async fn run(
       accept_loop(admin_listener, conn => {
         group.spawn_bg(no_wait=true, allow_failure=true, () => {
           defer conn.close()
-          serve_connection(
+          let _ = serve_connection(
             conn,
             settings,
             respond=(stream, request, _, _) => {
@@ -322,10 +322,11 @@ async fn run(
                 TlsStream::accept(conn, name => certificates.select(name))
               })
               guard stream is Some(Some(stream)) else { return }
-              let was_reset = ports.serve(stream, conn, connection)
+              let writable = ports.serve(stream, conn, connection)
               // A reset sends no close_notify: the RST alone ends the
-              // connection.
-              if !was_reset {
+              // connection. Nor does a connection whose client takes nothing
+              // more, as after a write timed out: the write would wait.
+              if writable {
                 stream.shutdown()
               }
             })
@@ -414,9 +415,10 @@ priv struct MockPorts {
 ///|
 /// Serves the requests for the Mocks that arrive on one connection of the
 /// plain or the TLS port: `stream`, which reads and writes through `tcp`,
-/// the connection's socket. Returns whether a reset Fault ended it: closing
-/// `tcp` then resets the connection with an RST, and the caller must write
-/// nothing more to it.
+/// the connection's socket. Returns whether `stream` can still be written
+/// to: not after a reset Fault, since closing `tcp` then resets the
+/// connection with an RST, nor after a write timed out, since the client
+/// takes nothing more.
 ///
 /// The engine's plan for a request may hold back the response by a delay:
 /// the status line is written once the delay is over, and meanwhile other
@@ -455,7 +457,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
 ) -> Bool {
   let was_reset = Ref(false)
   let headers = DecodedHeaders::new()
-  serve_connection(
+  let writable = serve_connection(
     stream,
     self.settings,
     connection~,
@@ -490,14 +492,24 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
         defer (if outcome.journal is Some(entry) {
           entry.finish(at=@async.now())
         })
+        // Each write that returns has made progress, and gives the next
+        // the whole write timeout from then.
+        let watchdog = stream.watchdog
+        let mut since = now
         let mut written = 0
-        while written < response.length() {
+        for ;; {
+          watchdog.write(since)
           written += @io.Writer::write_once(
-            stream,
+            stream.stream,
             response,
             offset=written,
             len=response.length() - written,
           )
+          watchdog.stop()
+          if written == response.length() {
+            break
+          }
+          since = @async.now()
         }
         return @http1.keeps_open(request~, close~) &&
           !self.lifecycle.is_draining()
@@ -565,7 +577,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
       )
     },
   )
-  was_reset.val
+  writable && !was_reset.val
 }
 
 ///|
@@ -578,34 +590,49 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
 /// - the read timeout, while a request arrives: from its first byte until
 ///   all of it, body included, has arrived. A request whose first bytes
 ///   came before a response was written, as pipelined requests do, has it
-///   from when that response is written, since nothing is read meanwhile.
+///   from when that response is written, since nothing is read meanwhile;
+/// - the write timeout, while a write waits on the client to take its
+///   bytes: from when it starts, then from each progress, so that only a
+///   client that takes nothing for that long is cut. smock's own waits, as
+///   a delay before a response, do not count.
 ///
 /// It reads and writes only through `stream`, so the same loop serves any
 /// byte stream: a TCP connection, or a TLS session on top of one. Nothing is
-/// logged per request.
+/// logged per request. Returns whether `stream` can still be written to:
+/// not after a write timed out.
 ///
-/// - `respond` writes the response to each request to `stream`, or part of
-///   it, and returns whether the connection stays open after it. It also
-///   gets a stopwatch started when the request had been read in full: at
-///   the read that brought its last byte, which may be well before the
-///   response to a request pipelined after others; and the time it is
-///   called, as `@async.now()` gives it. While it waits, the connection
-///   reads nothing, and other connections are served as usual.
+/// - `respond` writes the response to each request, or part of it, and
+///   returns whether the connection stays open after it. It writes to
+///   `stream` through the `WatchedStream` it gets, which gives each write
+///   the write timeout. It also gets a stopwatch started when the request
+///   had been read in full: at the read that brought its last byte, which
+///   may be well before the response to a request pipelined after others;
+///   and the time it is called, as `@async.now()` gives it. While it waits,
+///   the connection reads nothing, and other connections are served as
+///   usual.
 /// - `reject` writes the response, with `Connection: close`, to bytes that
 ///   are not a valid request or are over a limit, with the status the codec
-///   chose. It gets a stopwatch started at the read that brought them, or
-///   that brought the last byte of the requests before them.
+///   chose, through the `WatchedStream` it gets too. It gets a stopwatch
+///   started at the read that brought them, or that brought the last byte
+///   of the requests before them.
 /// - `connection`, when given, is kept told whether the connection is idle,
 ///   so that a drain can close it.
 async fn[S : @io.Reader + @io.Writer] serve_connection(
   stream : S,
   settings : @settings.ServeSettings,
-  respond~ : async (S, @http1.Request, Stopwatch, Int64) -> Bool,
-  reject~ : async (S, Int, Stopwatch) -> Unit,
+  respond~ : async (WatchedStream[S], @http1.Request, Stopwatch, Int64) -> Bool,
+  reject~ : async (WatchedStream[S], Int, Stopwatch) -> Unit,
   connection? : Connection,
-) -> Unit {
+) -> Bool {
+  let mut writable = true
   @async.with_task_group(group => {
     let now = @async.now()
+    let watchdog = Watchdog::new(group, write_timeout=settings.write_timeout_ms)
+    // A write that timed out ends the group.
+    defer {
+      writable = !watchdog.write_timed_out
+    }
+    let out : WatchedStream[S] = { stream, watchdog, }
     // Every wait below keeps this one object, rather than each of its parts.
     let state : ConnectionLoop = {
       parser: @http1.Parser(
@@ -614,7 +641,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
         body_limit=settings.body_limit,
       ),
       buf: FixedArray::make(16 * 1024, b'\x00'),
-      watch: ReadWatch::new(group),
+      watch: watchdog,
       connection,
       idle_timeout: settings.idle_timeout_ms.to_int64(),
       read_timeout: settings.read_timeout_ms.to_int64(),
@@ -627,7 +654,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
     for ;; {
       match state.parser.next() {
         Complete(request) => {
-          if !respond(stream, request, state.last_read, state.now) {
+          if !respond(out, request, state.last_read, state.now) {
             return
           }
           state.now = @async.now()
@@ -637,7 +664,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
         }
         Continue => {
           // A 1xx response may leave out Date (RFC 9110, section 6.6.1).
-          @io.Writer::write(stream, @http1.encode_response(100, [], b""))
+          @io.Writer::write(out, @http1.encode_response(100, [], b""))
           state.now = @async.now()
         }
         NeedMore => {
@@ -660,9 +687,9 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
           if state.connection is Some(connection) {
             connection.idle = !parser.in_request()
           }
-          // Past the deadline, the watch ends the task group, and with it
-          // this read and the connection.
-          state.watch.start(deadline)
+          // Past the deadline, the watchdog ends the task group, and with
+          // it this read and the connection.
+          state.watch.read(deadline, state.now)
           let n = @io.Reader::read(stream, state.buf)
           state.watch.stop()
           if state.connection is Some(connection) {
@@ -675,7 +702,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
           state.parser.feed(state.buf.unsafe_reinterpret_as_bytes()[:n])
         }
         Invalid(status~) => {
-          reject(stream, status, state.last_read)
+          reject(out, status, state.last_read)
           return
         }
       }
@@ -685,6 +712,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
   if connection is Some(connection) {
     connection.idle = false
   }
+  writable
 }
 
 ///|
@@ -693,13 +721,14 @@ priv struct ConnectionLoop {
   parser : @http1.Parser
   /// What each read reads into.
   buf : FixedArray[Byte]
-  watch : ReadWatch
+  watch : Watchdog
   connection : Connection?
   idle_timeout : Int64
   read_timeout : Int64
   /// The time, as `@async.now()` gives it, read again after each wait: for
   /// reading, for writing a response or a 100 Continue. Between waits only
-  /// the parser runs, so it stays the time until the next wait.
+  /// the parser runs, so it stays the time until the next wait, and the
+  /// response to a request gets it as the time its write starts.
   mut now : Int64
   mut idle_deadline : Int64
   mut read_deadline : Int64?
@@ -710,85 +739,6 @@ priv struct ConnectionLoop {
   /// Started at the last read, which brought the last byte of every request
   /// the parser holds complete.
   mut last_read : Stopwatch
-}
-
-///|
-/// The timeout of the reads of one connection. Rather than each read setting
-/// up a timer of its own, which costs a task group, a task and a timer per
-/// read, one watchdog task per connection sleeps until the deadline of the
-/// read in progress and, when that read is still waiting at its deadline,
-/// ends the connection's task group, which cancels the read. A read whose
-/// deadline is later than the watchdog's wake-up only moves the deadline,
-/// and the watchdog goes back to sleep until it when it wakes; only a read
-/// whose deadline is earlier starts a new watchdog. While no read waits, as
-/// while a response is written, the watchdog never ends the group.
-priv struct ReadWatch {
-  /// The task group the connection is served in.
-  group : @async.TaskGroup[Unit]
-  /// Whether a read waits.
-  mut reading : Bool
-  /// When the read that waits times out, in `@async.now()` milliseconds.
-  mut deadline : Int64
-  /// When the current watchdog wakes next: `forever` while it waits for a
-  /// read to start a new one, or when there is none.
-  mut wakes_at : Int64
-  /// The current watchdog, by its number: a watchdog that a newer one
-  /// replaced does nothing more.
-  mut watchdog : (Int, @async.Task[Unit])?
-}
-
-///|
-/// A wake-up time that never comes.
-let forever : Int64 = 0x7fffffffffffffffL
-
-///|
-fn ReadWatch::new(group : @async.TaskGroup[Unit]) -> ReadWatch {
-  { group, reading: false, deadline: 0L, wakes_at: forever, watchdog: None, }
-}
-
-///|
-/// A read starts waiting, until `deadline` at the latest.
-fn ReadWatch::start(self : ReadWatch, deadline : Int64) -> Unit {
-  self.deadline = deadline
-  self.reading = true
-  if deadline < self.wakes_at {
-    // The current watchdog would wake too late.
-    let number = match self.watchdog {
-      Some((number, task)) => {
-        task.cancel()
-        number + 1
-      }
-      None => 0
-    }
-    self.wakes_at = deadline
-    let task = self.group.spawn(no_wait=true, () => self.watch(number))
-    self.watchdog = Some((number, task))
-  }
-}
-
-///|
-/// The read has stopped waiting.
-fn ReadWatch::stop(self : ReadWatch) -> Unit {
-  self.reading = false
-}
-
-///|
-/// The watchdog numbered `number`.
-async fn ReadWatch::watch(self : ReadWatch, number : Int) -> Unit {
-  while self.watchdog is Some((current, _)) && current == number {
-    let now = @async.now()
-    if self.reading && now >= self.deadline {
-      self.group.return_immediately(())
-      return
-    }
-    if self.reading {
-      self.wakes_at = self.deadline
-      @async.sleep((self.deadline - now).to_int())
-    } else {
-      self.wakes_at = forever
-      @async.sleep(0x7fffffff)
-    }
-  }
 }
 
 ///|

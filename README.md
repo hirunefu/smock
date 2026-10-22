@@ -218,6 +218,7 @@ exits with status 2. `smock serve --help` lists the settings:
 | `--body-limit` | `SMOCK_BODY_LIMIT` | 10485760 bytes (10 MiB): longer bodies get 413 |
 | `--read-timeout-ms` | `SMOCK_READ_TIMEOUT_MS` | 30000: a request must arrive whole within 30 s of its first byte, or, when it was pipelined behind a response, of that response |
 | `--idle-timeout-ms` | `SMOCK_IDLE_TIMEOUT_MS` | 60000: a connection that waits 60 s for a request closes |
+| `--write-timeout-ms` | `SMOCK_WRITE_TIMEOUT_MS` | 30000: a connection closes when a write to it makes no progress for 30 s, as when the client stops reading |
 | `--drain-timeout-ms` | `SMOCK_DRAIN_TIMEOUT_MS` | 20000: how long smock drains after SIGTERM before it cuts what is still running |
 | `--seed` | `SMOCK_SEED` | none: smock picks the seed of its random generator, from 0 to 9007199254740991, and logs it ([Faults](docs/definition-files.md#seeds)) |
 | `--journal` | `SMOCK_JOURNAL` | `on`: requests are recorded in the [Journal](#the-journal); `off` records none |
@@ -227,8 +228,19 @@ exits with status 2. `smock serve --help` lists the settings:
 | `--state-max-bytes` | `SMOCK_STATE_MAX_BYTES` | an eighth of smock's memory limit (cgroup v2 `memory.max`), at least 1048576 bytes (1 MiB) and at most 67108864 (64 MiB); 64 MiB without a limit ([The state bound](docs/definition-files.md#the-state-bound)): the most bytes the per-Session state of the whole process takes; a request or an Admin API set whose writes would pass it gets 507 |
 
 A request over a limit gets its status with `Connection: close`, then the
-connection closes; a timeout closes the connection without a response.
-Neither is logged.
+connection closes; a timeout, read, idle or write, closes the connection
+without a response. None is logged.
+
+The write timeout runs only while a write waits on the client to take its
+bytes, on every port and for every write: a response, whole or in part,
+each event of a stream, a `100 Continue`, a rejection and an Admin API
+reply. It starts again each time the write goes on, so a client that reads
+slowly but steadily gets the whole response, however long it takes in all.
+A write goes on once the client has read enough to free room in the
+socket's send buffer: about a third of it, on Linux. On the TLS port, it
+goes on a whole TLS record, up to 16 KiB, at a time. smock's own waits,
+such as a delay or the time between the events of a stream, do not count.
+smock sends no `close_notify` on a TLS connection the write timeout closes.
 
 Known limitation: after answering a request with 400, 413, 431, 501 or 505,
 smock closes the connection without reading the rest of the request. A

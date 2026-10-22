@@ -59,6 +59,9 @@ pub(all) struct ServeSettings {
   read_timeout_ms : Int
   /// How long, in milliseconds, a connection may wait for its next request.
   idle_timeout_ms : Int
+  /// How long, in milliseconds, a write to a client may make no progress:
+  /// a write that waits on the client that long ends the connection.
+  write_timeout_ms : Int
   /// How long, in milliseconds, smock may drain after SIGTERM before it
   /// cuts the responses, Server-Sent Event streams and delays still in
   /// progress and exits.
@@ -321,6 +324,11 @@ let serve_settings : Array[Setting] = [
     name: "idle-timeout-ms",
     about: "How long a connection may wait for a request, in milliseconds. Then it closes.",
     default: Some("60000"),
+  },
+  {
+    name: "write-timeout-ms",
+    about: "How long a write to a client may make no progress, in milliseconds, as when the client stops reading. Then the connection closes.",
+    default: Some("30000"),
   },
   {
     name: "drain-timeout-ms",
@@ -638,6 +646,12 @@ pub fn ServeSettings::from_matches(
     idle_timeout_ms: int_value(
       matches,
       "idle-timeout-ms",
+      min=1,
+      max=max_duration_ms,
+    ),
+    write_timeout_ms: int_value(
+      matches,
+      "write-timeout-ms",
       min=1,
       max=max_duration_ms,
     ),
