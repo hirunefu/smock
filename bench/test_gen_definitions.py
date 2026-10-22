@@ -10,6 +10,7 @@ the sets against smock itself.
 usage: python3 -m unittest discover -s bench -v
 """
 
+import importlib.util
 import json
 import shutil
 import subprocess
@@ -20,6 +21,10 @@ from pathlib import Path
 
 BENCH = Path(__file__).resolve().parent
 SCRIPT = BENCH / "gen_definitions.py"
+
+_spec = importlib.util.spec_from_file_location("gen_definitions", SCRIPT)
+gen_definitions = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(gen_definitions)
 
 
 def definition_files(directory):
@@ -137,7 +142,7 @@ class CrudVariant(unittest.TestCase):
         others = {name: [stub for stub in content.get("stubs", []) if "crud" not in stub]
                   for name, content in self.variant.items()}
         plain = {name: [stub for stub in content.get("stubs", [])
-                        if not stub["id"].startswith("catalog-item-0") and stub["id"] != "get-order"]
+                        if not gen_definitions.is_item_stub(stub) and stub["id"] != "get-order"]
                  for name, content in self.plain.items()}
         self.assertEqual(others, plain)
         self.assertEqual(self.variant["00-mocks.json"], self.plain["00-mocks.json"])
@@ -147,7 +152,7 @@ class CrudVariant(unittest.TestCase):
     def test_the_items_bucket_holds_what_the_600_item_stubs_answered_in_their_order(self):
         items = json.loads((BENCH / "definitions-crud" / "files" / "items.json").read_text())
         answered = [json.loads(stub["response"]["body"]) for stub in self.plain["catalog.json"]["stubs"]
-                    if stub["id"].startswith("catalog-item-0")]
+                    if gen_definitions.is_item_stub(stub)]
         self.assertEqual(len(answered), 600)
         self.assertEqual(items, answered)
         self.assertEqual(items[316], {"sku": "SKU-00317", "name": "Item 317", "category": "storage",
