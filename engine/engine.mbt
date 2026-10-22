@@ -525,8 +525,10 @@ pub fn Engine::handle(
           // The values of `variables` and `dataWrites` look the copies up,
           // and a response only when one of its templates reads `data`.
           let data = mock.initial_data
-          // 3. The writes: the value of each Variable is rendered, in the
-          //    order written, then the value of each data write, all
+          // 3. The writes: each data write's bucket is checked first, as a
+          //    reload may have removed or changed an Ephemeral Stub's, and
+          //    this draws nothing; the value of each Variable is rendered,
+          //    in the order written, then the value of each data write, all
           //    against the state from before the request, drawing from the
           //    helper generator first; the data writes are applied in
           //    order to working copies; and all is stored at once, if it

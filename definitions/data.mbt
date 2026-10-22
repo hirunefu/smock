@@ -61,7 +61,9 @@ pub let max_integer_key : Int64 = 9_007_199_254_740_991L
 /// `-max_integer_key` to `max_integer_key`, whose text is its decimal
 /// digits, with `-` when it is negative and no leading zeros. So `42`,
 /// `42.0` and `4.2e1` all have the text `42`, which the string `"42"` has
-/// too.
+/// too. A number is judged by its 64-bit floating-point value, not by the
+/// digits written, so `1.0000000000000001`, which reads as 1, is the key
+/// 1.
 ///
 /// `/` is refused because a path segment cannot carry it once
 /// percent-decoded, so an item with such a key could never be reached.

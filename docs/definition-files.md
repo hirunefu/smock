@@ -2292,10 +2292,12 @@ language](#writing-definition-files-in-another-configuration-language).
 
 A `jsonFile` follows the path rules of `bodyFile`: the path stays inside
 the body-file subdirectory, and none of its names start with `.`. The file
-must be JSON in UTF-8, and must not repeat a key in one object. A missing
-file, or one that breaks these rules, is an error when loading. smock
-reads the file with the body files, so it is part of the digest, and
-editing it triggers a [reload](#reloading).
+must be JSON in UTF-8. It follows the rule of a JSON Definition file: a
+key repeated in one object is an error (`duplicate key`, at the later
+key), since JSON parsers disagree on which value counts. A missing file,
+or one that breaks these rules, is an error when loading. smock reads the
+file with the body files, so it is part of the digest, and editing it
+triggers a [reload](#reloading).
 
 ### Keys and key texts
 
@@ -2309,6 +2311,9 @@ key.
 - A key's *text* is the string, or the integer's digits, with `-` when it
   is negative and no leading zeros. `42`, `42.0` and `4.2e1` all have the
   text `42`.
+- A number is judged by its 64-bit floating-point value, as JSON parsers
+  commonly read it, not by its digits. So `1.0000000000000001`, which reads
+  as 1, is the key `1`.
 - No two items have the same key text, so `42` and `"42"` collide.
 
 A key cannot hold `/`, since a path segment cannot carry it once
@@ -2507,11 +2512,13 @@ The writes are made at the match decision, together with the Stub's
 [Variables](#when-variables-are-written), in this order:
 
 1. The Scenario moves, and the request takes its one random draw.
-2. The value of each Variable is rendered, then each write, in the order
-   written, its `key` before its `value`, all against the state from
-   before this request, Variables included. So `${add(data.visits, 1)}`
-   counts, and a write that reads `vars.NAME` sees the Variable as it was
-   before the request.
+2. Each write's bucket is checked first. This matters only for an
+   Ephemeral Stub after a reload ([When a write fails](#when-a-write-fails)),
+   and it draws nothing. Then the value of each Variable is rendered, then
+   each write, in the order written, its `key` before its `value`, all
+   against the state from before this request, Variables included. So
+   `${add(data.visits, 1)}` counts, and a write that reads `vars.NAME` sees
+   the Variable as it was before the request.
 3. The writes are applied in order, as if to working copies of the
    buckets: a write sees what the writes before it did. New keys are made
    here.
@@ -2570,11 +2577,20 @@ answer, as for a template failure.
 An Ephemeral Stub is not read again at a reload. Its write fails to apply
 in the same way, and nothing is written, when a reload removes its
 bucket, takes `key` from the bucket of a write with `key`, or gives `key`
-to the bucket of a `merge` without `key`. A `set` or `append` without
-`key` still applies when a reload gives its bucket `key`, and fails only
-when what it writes breaks the bucket's rules. Its template reads of a
-removed bucket are missing, so `${add(data.visits ?? 0, 1)}` still
-renders.
+to the bucket of a `merge` without `key`. smock checks each write's
+bucket this way before any value or key renders, Variables included, and
+the check draws nothing. So a value that reads the removed bucket without
+`??`, such as `${add(data.visits, 1)}`, does not turn this into a
+template failure:
+
+```json
+{"error":"data write failed","stub":"eph-1","at":"/dataWrites/0","message":"the Mock has no Data bucket \"visits\" since a reload"}
+```
+
+A `set` or `append` without `key` still applies when a reload gives its
+bucket `key`, and fails only when what it writes breaks the bucket's
+rules. When every write's bucket is still there, the Stub's template
+reads of a removed bucket are missing, so `??` gives a fallback.
 
 These are errors when loading, reported by `smock check`, at startup, by
 a reload, which then keeps the files it serves, and as 400 `invalid_stub`
@@ -2759,12 +2775,14 @@ at most that many, with no limit by default.
   end gives `[]`, and such a limit keeps every item.
 
 **Order and counts.** The list applies the filters, then `$sort`, then
-`$offset` and `$limit`, wherever they stand in the query. `X-Total-Count`
-is the number of items in the bucket, and `X-Filtered-Count` the number
-that pass the filters, before paging. The body stays the plain array.
+`$offset` and `$limit`, wherever they stand in the query. Every 200 list
+answer carries `X-Total-Count`, the number of items in the bucket, and
+`X-Filtered-Count`, the number that pass the filters, before paging. The
+body stays the plain array.
 
 **Errors.** A query that smock cannot read answers 400 with the Stub's
-`crud.headers`, and names the first such parameter in the query:
+`crud.headers` and without the two counts, since it lists nothing. It
+names the first such parameter in the query:
 
 ```json
 {"error":"invalid query parameter","stub":"orders","parameter":"$top"}
@@ -2970,8 +2988,8 @@ and the Journal shows the failed condition in full:
 #### CRUD headers
 
 smock sets `Content-Type`, `Location` on a create, and `X-Total-Count`
-and `X-Filtered-Count` on a list. `crud.headers` adds static headers to
-every answer of the Stub, errors, 500 and 507 included:
+and `X-Filtered-Count` on a list's 200. `crud.headers` adds static
+headers to every answer of the Stub, errors, 500 and 507 included:
 
 - It has the shape and rules of [`noMatch.headers`](#when-no-stub-matches):
   by name, a value or a non-empty array of values, each sent as its own

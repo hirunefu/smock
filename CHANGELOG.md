@@ -135,11 +135,14 @@ of each GitHub release include its section
 - Data buckets: named JSON values that a Mock declares under the new
   top-level `data` of Definition files, with an initial value inline
   (`json`) or in a JSON file of the body-file subdirectory (`jsonFile`).
-  A bucket with `key` holds an array of objects whose keys, strings or
-  integers, are unique by their text, so `42` and `"42"` collide; smock
-  checks this when loading. Templates read a bucket of their Stub's Mock
-  as `data.NAME`, with steps, `$each` and `len`. A name that is not one
-  of the Mock's buckets is an error when loading.
+  Like a JSON Definition file, a `jsonFile` must not repeat a key in one
+  object. A bucket with `key` holds an array of objects whose keys,
+  strings or integers, are unique by their text, so `42` and `"42"`
+  collide; smock checks this when loading. An integer key is judged by
+  its 64-bit floating-point value, so `1.0000000000000001` is the key
+  `1`. Templates read a bucket of their Stub's Mock as `data.NAME`, with
+  steps, `$each` and `len`. A name that is not one of the Mock's buckets
+  is an error when loading.
 - Session copies of Data buckets. A Session reads a bucket's initial value
   until it first writes to the bucket, which gives it its own copy; reads
   never copy. Requests without a Session share one copy of each bucket.
@@ -182,9 +185,11 @@ of each GitHub release include its section
   gives 500 `data write failed`, and writes past the state bound give 507.
   The response sees the data after the writes, and the writes stand
   whatever follows. Only a Session's first write to a bucket copies it.
-  An Ephemeral Stub takes `dataWrites` too. Each Journal entry gains
-  `dataWritten`, the buckets written, and `dataError`, why a write failed
-  to apply.
+  An Ephemeral Stub takes `dataWrites` too. When a reload removes a
+  write's bucket, or changes it so that the write would no longer load,
+  the write gets 500 `data write failed`, checked before any value
+  renders. Each Journal entry gains `dataWritten`, the buckets written,
+  and `dataError`, why a write failed to apply.
 - `dataWrites` writes keyed Data buckets item by item. `set`, `merge` and
   `remove` take the `key` of one item, a text template compared as a key
   text, so `${path[3]}` finds the order whose `id` is `1002` or `"1002"`.
@@ -244,9 +249,9 @@ of each GitHub release include its section
   counts the items that pass the filters, before paging, and the body
   stays a plain array. `$$name` filters on the member `$name`, and any
   other name that starts with `$`, such as OData's `$top`, is 400
-  `invalid query parameter`, as are malformed or repeated `$sort`,
-  `$offset` and `$limit`. A client's own parameters, such as `page`, are
-  filters too, so its list comes back `[]`.
+  `invalid query parameter`, without the two counts, as are malformed or
+  repeated `$sort`, `$offset` and `$limit`. A client's own parameters,
+  such as `page`, are filters too, so its list comes back `[]`.
 - A CRUD Stub can be the Near miss of a request that no Stub matches. It
   counts two conditions: `path` fails when the request path is neither its
   list path nor an item path, and `method` when the Stub does not serve
