@@ -10,6 +10,11 @@ of each GitHub release include its section
 
 ### Added
 
+- Dependabot proposes, once a week, the updates of the GitHub Actions and
+  of the image's distroless base, so that the base's glibc and OpenSSL
+  fixes reach the next release's image.
+  [docs/releasing.md](docs/releasing.md#dependency-updates) says what it
+  does not cover, such as the MoonBit toolchain and modules.
 - The Helm chart `oci://ghcr.io/hirunefu/charts/smock` is signed with
   cosign, without a key, as the image is: the signature's certificate names
   the release workflow at the release's tag. The release workflow verifies
