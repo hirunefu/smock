@@ -101,7 +101,9 @@ version.
 In [CHANGELOG.md](../CHANGELOG.md), move the entries under
 `## [Unreleased]` to a new section `## [<version>] - <date>` below it,
 leave `## [Unreleased]` empty, and update the links at the end. The
-release notes include that section under "Changes".
+release notes include that section under "Changes", with each relative
+link to a file of the repository turned into a link to the file at the
+release's tag. Keep such links relative in CHANGELOG.md.
 `scripts/release-notes.sh` fails the release workflow, before anything is
 built, when a tag that is not a pre-release has no section of its own. A
 pre-release tag, such as `v<version>-rc.1`, takes its own section if there

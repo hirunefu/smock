@@ -1064,6 +1064,7 @@ scripts/check-openapi.sh       # the Admin API document is valid OpenAPI 3.1
 docker build --tag smock:dev .
 scripts/smoke-test-image.sh smock:dev 0.0.0-dev <commit> "moonc <version>"   # the container image
 scripts/check-release-workflow.sh    # the release workflow publishes only for tags (needs yq and jq)
+scripts/test-release-notes.sh        # the release notes, with CHANGELOG.md's links at the release's tag
 scripts/check-benchmark-workflow.sh  # the benchmark workflow runs only by hand (needs yq and jq)
 scripts/check-ci-artifacts.sh        # CI keeps the release binary of each architecture (needs yq and jq)
 scripts/test-helm-chart.sh           # rendering tests of the Helm chart (needs helm, yq and jq)
