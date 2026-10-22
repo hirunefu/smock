@@ -95,12 +95,12 @@
           "description": "The initial value, inline: any JSON value, null included."
         },
         "jsonFile": {
-          "description": "The initial value, read from a JSON file in UTF-8: a path relative to the body-file subdirectory of the definitions directory (files by default), such as orders.json, with the path rules of bodyFile. It is read when the definitions are loaded, and a file that is not JSON is an error.",
+          "description": "The initial value, read from a JSON file in UTF-8: a path relative to the body-file subdirectory of the definitions directory (files by default), such as orders.json, with the path rules of bodyFile. It is read when the definitions are loaded, and a file that is not JSON, or that repeats a key in one object, is an error, as for a JSON Definition file.",
           "type": "string",
           "pattern": "^(?!\\.)[^/]+(/(?!\\.)[^/]+)*$"
         },
         "key": {
-          "description": "Makes the bucket keyed: the name of the member that holds each item's key, taken literally (a.b is the member a.b). A keyed bucket's value is an array of objects. Each has the key member, holding a non-empty string without /, or an integer from -(2^53 - 1) to 2^53 - 1, and no two items have keys with the same text, so 42 and \"42\" collide. Only a keyed bucket can be served by a CRUD Stub (crud).",
+          "description": "Makes the bucket keyed: the name of the member that holds each item's key, taken literally (a.b is the member a.b). A keyed bucket's value is an array of objects. Each has the key member, holding a non-empty string without /, or an integer from -(2^53 - 1) to 2^53 - 1, judged by its 64-bit floating-point value (1.0000000000000001 is the key 1), and no two items have keys with the same text, so 42 and \"42\" collide. Only a keyed bucket can be served by a CRUD Stub (crud).",
           "type": "string",
           "minLength": 1
         },

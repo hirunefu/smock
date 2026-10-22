@@ -305,6 +305,33 @@ test "a keyed bucket holds an array of objects, each with a key that no other it
 }
 
 ///|
+test "an integer key is judged by its 64-bit floating-point value, not by the digits written" {
+  inspect(
+    data_problems([
+      (
+        "a.yaml",
+        (
+          $|mocks:
+          $|  - name: shop
+          $|data:
+          $|  - mock: shop
+          $|    name: keys
+          $|    key: id
+          $|    json:
+          $|      - { id: 1 }
+          $|      - { id: 1.0000000000000001 }
+          $|      - { id: 9007199254740993 }
+        ),
+      ),
+    ]),
+    content=(
+      #|a.yaml: /data/0/json/1/id: has the key text "1", as item 0 does
+      #|a.yaml: /data/0/json/2/id: must be a key: a non-empty string without /, or an integer from -9007199254740991 to 9007199254740991
+    ),
+  )
+}
+
+///|
 test "templates read data.NAME over their Mock's buckets, declared in any file, earlier or later" {
   inspect(
     data_problems([

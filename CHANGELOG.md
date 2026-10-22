@@ -135,11 +135,14 @@ of each GitHub release include its section
 - Data buckets: named JSON values that a Mock declares under the new
   top-level `data` of Definition files, with an initial value inline
   (`json`) or in a JSON file of the body-file subdirectory (`jsonFile`).
-  A bucket with `key` holds an array of objects whose keys, strings or
-  integers, are unique by their text, so `42` and `"42"` collide; smock
-  checks this when loading. Templates read a bucket of their Stub's Mock
-  as `data.NAME`, with steps, `$each` and `len`. A name that is not one
-  of the Mock's buckets is an error when loading.
+  Like a JSON Definition file, a `jsonFile` must not repeat a key in one
+  object. A bucket with `key` holds an array of objects whose keys,
+  strings or integers, are unique by their text, so `42` and `"42"`
+  collide; smock checks this when loading. An integer key is judged by
+  its 64-bit floating-point value, so `1.0000000000000001` is the key
+  `1`. Templates read a bucket of their Stub's Mock as `data.NAME`, with
+  steps, `$each` and `len`. A name that is not one of the Mock's buckets
+  is an error when loading.
 - Session copies of Data buckets. A Session reads a bucket's initial value
   until it first writes to the bucket, which gives it its own copy; reads
   never copy. Requests without a Session share one copy of each bucket.

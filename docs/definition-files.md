@@ -2292,10 +2292,12 @@ language](#writing-definition-files-in-another-configuration-language).
 
 A `jsonFile` follows the path rules of `bodyFile`: the path stays inside
 the body-file subdirectory, and none of its names start with `.`. The file
-must be JSON in UTF-8, and must not repeat a key in one object. A missing
-file, or one that breaks these rules, is an error when loading. smock
-reads the file with the body files, so it is part of the digest, and
-editing it triggers a [reload](#reloading).
+must be JSON in UTF-8. It follows the rule of a JSON Definition file: a
+key repeated in one object is an error (`duplicate key`, at the later
+key), since JSON parsers disagree on which value counts. A missing file,
+or one that breaks these rules, is an error when loading. smock reads the
+file with the body files, so it is part of the digest, and editing it
+triggers a [reload](#reloading).
 
 ### Keys and key texts
 
@@ -2309,6 +2311,9 @@ key.
 - A key's *text* is the string, or the integer's digits, with `-` when it
   is negative and no leading zeros. `42`, `42.0` and `4.2e1` all have the
   text `42`.
+- A number is judged by its 64-bit floating-point value, as JSON parsers
+  commonly read it, not by its digits. So `1.0000000000000001`, which reads
+  as 1, is the key `1`.
 - No two items have the same key text, so `42` and `"42"` collide.
 
 A key cannot hold `/`, since a path segment cannot carry it once
