@@ -265,8 +265,16 @@ fn File::read_data_write(
   match (bucket_key, literal) {
     // A `key` that is reported as wrong checks nothing more.
     (Some(Malformed), _) | (_, None) => ()
-    (Some(KeyedBy(key_member)), Some(literal)) =>
-      self.check_keyed_literal(value_pointer, op, has_key, key_member, literal)
+    (Some(KeyedBy(key_member)), Some(literal)) => {
+      // The key written to, when it is literal text.
+      let literal_key = match key {
+        Some(template) => template.literal()
+        None => None
+      }
+      self.check_keyed_literal(
+        value_pointer, op, has_key, literal_key, key_member, literal,
+      )
+    }
     (Some(Unkeyed) | None, Some(literal)) =>
       if op is Some(Merge) && !(literal is Object(_)) {
         self.error(
@@ -284,31 +292,37 @@ fn File::read_data_write(
 
 ///|
 /// Reports how `literal`, the literal value at `pointer` of a write whose
-/// op is `op`, with `key` or not as `has_key` says, breaks its op on
-/// a bucket keyed by the member `key_member`, if it does: an item that
-/// `set` or `merge` with `key` writes, or that `append` adds, must be an
-/// object, an added item's key member must hold a key, and the value of
-/// `set` without `key` must keep the rules of keyed buckets.
+/// op is `op`, with `key` or not as `has_key` says, breaks its op on a
+/// bucket keyed by the member `key_member`, if it does: an item that `set`
+/// or `merge` with `key` writes, or that `append` adds, must be an object,
+/// and its key member must hold a key; that of `set` or `merge` with `key`
+/// must also hold the key written to, `key`, when that is literal text; and
+/// the value of `set` without `key` must keep the rules of keyed buckets.
 fn File::check_keyed_literal(
   self : File,
   pointer : String,
   op : DataOp?,
   has_key : Bool,
+  key : String?,
   key_member : String,
   literal : Json,
 ) -> Unit {
   match (op, has_key) {
     (Some(Replace), true) =>
-      if !(literal is Object(_)) {
-        self.error(
-          pointer, "must be an object: \"set\" with \"key\" makes one item of the keyed bucket this value",
-        )
+      match literal {
+        Object(item) => self.check_kept_key(pointer, item, key, key_member)
+        _ =>
+          self.error(
+            pointer, "must be an object: \"set\" with \"key\" makes one item of the keyed bucket this value",
+          )
       }
     (Some(Merge), true) =>
-      if !(literal is Object(_)) {
-        self.error(
-          pointer, "must be an object: \"merge\" with \"key\" merges the members of an object into one item",
-        )
+      match literal {
+        Object(item) => self.check_kept_key(pointer, item, key, key_member)
+        _ =>
+          self.error(
+            pointer, "must be an object: \"merge\" with \"key\" merges the members of an object into one item",
+          )
       }
     (Some(Append), _) =>
       match literal {
@@ -328,5 +342,32 @@ fn File::check_keyed_literal(
     // A `merge` without `key` is reported where the write is read, and a
     // `remove` has no value.
     (Some(Merge), false) | (Some(Remove), _) | (None, _) => ()
+  }
+}
+
+///|
+/// Reports how the key member `key_member` of `item`, the literal value at
+/// `pointer` of a `set` or `merge` with a key, fails to keep the item
+/// written to the item it is, if it does, as a request would find it: the
+/// member may be absent, and else must hold a key, and the key written to,
+/// `key`, when that is literal text.
+fn File::check_kept_key(
+  self : File,
+  pointer : String,
+  item : Map[String, Json],
+  key : String?,
+  key_member : String,
+) -> Unit {
+  guard item.get(key_member) is Some(held) else { return }
+  let at = child_pointer(pointer, key_member)
+  match key_text(held) {
+    None => self.error(at, not_a_key)
+    Some(text) =>
+      if key is Some(key) && text != key {
+        self.error(
+          at,
+          "must be absent or hold the item's key \{key.escape()}, and it holds the key \{text.escape()}",
+        )
+      }
   }
 }

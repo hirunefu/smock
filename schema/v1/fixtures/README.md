@@ -37,7 +37,9 @@ disagree.
   declare, `key` on a bucket without `key`, `merge` without `key` on a
   keyed bucket, a literal `merge` value that is not an object, and a
   literal value that breaks a keyed bucket's rules, such as an item that
-  is not an object. So do CRUD Stubs: a `crud.bucket` that its Mock does
+  is not an object, an item of `set` or `merge` with `key` whose key
+  member holds no key, or one whose key member holds a key other than the
+  literal `key`. So do CRUD Stubs: a `crud.bucket` that its Mock does
   not declare, or that has no `key`, and `crud.headers` that give two
   names that differ only in case.
 
