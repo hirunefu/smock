@@ -2512,11 +2512,13 @@ The writes are made at the match decision, together with the Stub's
 [Variables](#when-variables-are-written), in this order:
 
 1. The Scenario moves, and the request takes its one random draw.
-2. The value of each Variable is rendered, then each write, in the order
-   written, its `key` before its `value`, all against the state from
-   before this request, Variables included. So `${add(data.visits, 1)}`
-   counts, and a write that reads `vars.NAME` sees the Variable as it was
-   before the request.
+2. Each write's bucket is checked first. This matters only for an
+   Ephemeral Stub after a reload ([When a write fails](#when-a-write-fails)),
+   and it draws nothing. Then the value of each Variable is rendered, then
+   each write, in the order written, its `key` before its `value`, all
+   against the state from before this request, Variables included. So
+   `${add(data.visits, 1)}` counts, and a write that reads `vars.NAME` sees
+   the Variable as it was before the request.
 3. The writes are applied in order, as if to working copies of the
    buckets: a write sees what the writes before it did. New keys are made
    here.
