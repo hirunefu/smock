@@ -100,7 +100,9 @@ helm install smock oci://${image%/*}/charts/smock --version $version \\
 \`\`\`
 
 [Its README](https://github.com/hirunefu/smock/blob/v$version/charts/smock/README.md)
-lists its values.
+lists its values. The chart is signed with cosign;
+[smock's README]($readme#verify-the-helm-chart) explains how to verify
+the signature.
 
 ## Binaries
 
