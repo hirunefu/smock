@@ -135,8 +135,8 @@ fn File::read_data_write(
   }
   // Whether the write has a problem: whether any is reported from here on.
   let reported = self.diagnostics.length()
-  // The op's name, as written, when it is one of the four.
-  let mut op_name = None
+  // The op, when it is one of the four.
+  let mut op : DataOp? = None
   let mut bucket = None
   let mut key = None
   let mut value = None
@@ -145,8 +145,10 @@ fn File::read_data_write(
     match name {
       "op" =>
         match field_value {
-          String("set" | "merge" | "append" | "remove" as op) =>
-            op_name = Some(op)
+          String("set") => op = Some(Replace)
+          String("merge") => op = Some(Merge)
+          String("append") => op = Some(Append)
+          String("remove") => op = Some(Remove)
           _ =>
             self.error(
               field, "must be \"set\", \"merge\", \"append\" or \"remove\"",
@@ -192,15 +194,15 @@ fn File::read_data_write(
   let has_key = members.contains("key")
   // The members each op takes: `remove` takes `key` alone, `append`
   // `value` alone, and `set` and `merge` `value` and, optionally, `key`.
-  if op_name is Some(op) {
-    if op == "remove" {
+  if op is Some(op) {
+    if op is Remove {
       self.require(members, pointer, "key")
       if members.contains("value") {
         self.error(value_pointer, "\"remove\" takes no value")
       }
     } else {
       self.require(members, pointer, "value")
-      if op == "append" && has_key {
+      if op is Append && has_key {
         self.error(key_pointer, "\"append\" takes no key")
       }
     }
@@ -220,7 +222,7 @@ fn File::read_data_write(
           "the Mock has no Data bucket \{name.escape()}",
         )
       Some(None) =>
-        if has_key && op_name != Some("append") {
+        if has_key && !(op is Some(Append)) {
           self.error(
             key_pointer,
             "is allowed only on a keyed bucket, and the Data bucket \{name.escape()} has no \"key\"",
@@ -228,7 +230,7 @@ fn File::read_data_write(
         }
       Some(Some(key_member)) => {
         keyed_by = Some(key_member)
-        if op_name == Some("merge") && !has_key {
+        if op is Some(Merge) && !has_key {
           self.error(
             pointer,
             "\"merge\" into the keyed Data bucket \{name.escape()} needs \"key\": the bucket holds an array, and \"merge\" with \"key\" merges into one of its items",
@@ -241,31 +243,25 @@ fn File::read_data_write(
     // A `key` that is reported as wrong checks nothing more.
     (Some(""), _) | (_, None) => ()
     (Some(key_member), Some(literal)) =>
-      self.check_keyed_literal(
-        value_pointer, op_name, has_key, key_member, literal,
-      )
+      self.check_keyed_literal(value_pointer, op, has_key, key_member, literal)
     (None, Some(literal)) =>
-      if op_name == Some("merge") && !(literal is Object(_)) {
+      if op is Some(Merge) && !(literal is Object(_)) {
         self.error(
           value_pointer, "must be an object: \"merge\" merges the members of an object into the bucket",
         )
       }
   }
-  guard self.diagnostics.length() == reported && bucket is Some(bucket) else {
+  guard self.diagnostics.length() == reported &&
+    bucket is Some(bucket) &&
+    op is Some(op) else {
     return None
-  }
-  let op : DataOp = match op_name {
-    Some("merge") => Merge
-    Some("append") => Append
-    Some("remove") => Remove
-    _ => Replace
   }
   Some({ op, bucket, key, value, })
 }
 
 ///|
 /// Reports how `literal`, the literal value at `pointer` of a write whose
-/// op is named `op`, with `key` or not as `has_key` says, breaks its op on
+/// op is `op`, with `key` or not as `has_key` says, breaks its op on
 /// a bucket keyed by the member `key_member`, if it does: an item that
 /// `set` or `merge` with `key` writes, or that `append` adds, must be an
 /// object, an added item's key member must hold a key, and the value of
@@ -273,25 +269,25 @@ fn File::read_data_write(
 fn File::check_keyed_literal(
   self : File,
   pointer : String,
-  op : String?,
+  op : DataOp?,
   has_key : Bool,
   key_member : String,
   literal : Json,
 ) -> Unit {
   match (op, has_key) {
-    (Some("set"), true) =>
+    (Some(Replace), true) =>
       if !(literal is Object(_)) {
         self.error(
           pointer, "must be an object: \"set\" with \"key\" makes one item of the keyed bucket this value",
         )
       }
-    (Some("merge"), true) =>
+    (Some(Merge), true) =>
       if !(literal is Object(_)) {
         self.error(
           pointer, "must be an object: \"merge\" with \"key\" merges the members of an object into one item",
         )
       }
-    (Some("append"), _) =>
+    (Some(Append), _) =>
       match literal {
         Object(item) =>
           if item.get(key_member) is Some(key) && key_text(key) is None {
@@ -302,10 +298,12 @@ fn File::check_keyed_literal(
             pointer, "must be an object: \"append\" adds an item to the keyed bucket",
           )
       }
-    (Some("set"), false) =>
+    (Some(Replace), false) =>
       for problem in keyed_problems(literal, key=key_member) {
         self.error(pointer + problem.pointer, problem.message)
       }
-    _ => ()
+    // A `merge` without `key` is reported where the write is read, and a
+    // `remove` has no value.
+    (Some(Merge), false) | (Some(Remove), _) | (None, _) => ()
   }
 }
