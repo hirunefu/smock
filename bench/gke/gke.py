@@ -92,14 +92,12 @@ VARIANT_OPTIONS = ("no-init", "no-first-second", "scenarios", "crud")
 # Where smock's image holds the benchmark's definitions
 # (bench/gke/smock-definitions.dockerfile), their Scenario variant and
 # their CRUD variant; and the variants as the repository names them, which
-# summarize records; and the CRUD variant's mix, as the load generator's
-# image names it beside bench.py.
+# summarize records.
 DEFINITIONS_DIR = "/definitions"
 SCENARIO_DEFINITIONS_DIR = "/definitions-scenarios"
 SCENARIO_DEFINITIONS = "bench/definitions-scenarios"
 CRUD_DEFINITIONS_DIR = "/definitions-crud"
 CRUD_DEFINITIONS = "bench/definitions-crud"
-CRUD_MIX = "requests-crud.json"
 
 # How many variants a run can compare on one node: the namespace's quota
 # and the load generator's time grow with each.
@@ -136,6 +134,25 @@ def served_definitions(variant):
     if variant and variant["crud"]:
         return CRUD_DEFINITIONS_DIR
     return DEFINITIONS_DIR
+
+
+def repository_definitions(variant):
+    """The definitions that `variant` serves, as the repository names
+    them."""
+    if variant["scenarios"]:
+        return SCENARIO_DEFINITIONS
+    if variant["crud"]:
+        return CRUD_DEFINITIONS
+    return "bench/definitions"
+
+
+def variant_mix(variant):
+    """The request mix that the load generator sends `variant`, by its name
+    beside bench.py in the load generator's image, when it is not the
+    default bench/requests.json: the mix bench.py sends to the definitions
+    the variant serves (bench.py's mix_path)."""
+    mix = harness.mix_path(harness.ROOT / repository_definitions(variant))
+    return None if mix == harness.BENCH / "requests.json" else mix.name
 
 
 def parse_variants(texts):
@@ -459,18 +476,22 @@ def service_host(profile, variant=None):
 def generator_env(profile, cases, variants, rounds):
     """The load generator's environment (generator.py's): smock's Service
     as TARGET; or, with `variants`, VARIANTS, each one's label, Service,
-    whether to scrape smock a second into each step, and for a crud
-    variant the CRUD variant's mix, in order, and the number of ROUNDS."""
+    whether to scrape smock a second into each step, and the mix of a
+    variant whose definitions have their own (variant_mix), in order, and
+    the number of ROUNDS."""
     common = [{"name": "PROFILE", "value": profile["name"]},
               {"name": "CASES", "value": ",".join(case["name"] for case in cases)}]
     if not variants:
         return [{"name": "TARGET", "value": service_host(profile)}, *common]
-    return [*common,
-            {"name": "VARIANTS", "value": json.dumps([{"label": variant["label"],
-                                                       "target": service_host(profile, variant["label"]),
-                                                       "first_second": variant["first_second"],
-                                                       **({"mix": CRUD_MIX} if variant["crud"] else {})}
-                                                      for variant in variants])},
+    described = []
+    for variant in variants:
+        entry = {"label": variant["label"], "target": service_host(profile, variant["label"]),
+                 "first_second": variant["first_second"]}
+        mix = variant_mix(variant)
+        if mix:
+            entry["mix"] = mix
+        described.append(entry)
+    return [*common, {"name": "VARIANTS", "value": json.dumps(described)},
             {"name": "ROUNDS", "value": str(rounds)}]
 
 
