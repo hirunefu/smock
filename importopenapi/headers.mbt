@@ -198,7 +198,7 @@ fn Report::header_example(
 /// a body's sample. When the sample would pass them, the value is empty,
 /// with a warning. `None` when there is no schema, with a warning at
 /// `header`, the Header Object, since nothing gives the header a value;
-/// when the schema allows no value, such as `false`, with a warning at the
+/// when the schema gives no value, such as `false`, with a warning at the
 /// schema; or after reporting an error.
 fn Report::header_sample(
   self : Report,
@@ -221,7 +221,7 @@ fn Report::header_sample(
         None if sample.too_large => Some(Sampled(schema_pointer, ""))
         None => {
           self.warning_at(
-            schema_pointer, "left out: the header's schema allows no value",
+            schema_pointer, "left out: the header's schema gives no value",
           )
           None
         }

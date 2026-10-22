@@ -96,13 +96,13 @@ test "a header whose schema allows no value, such as false, is left out, with a 
       ),
     ),
     content=(
-      #|petstore.json: /paths/~1r/get/responses/200/headers/X-False/schema: warning: left out: the header's schema allows no value
-      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Never/schema: warning: left out: the header's schema allows no value
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-False/schema: warning: left out: the header's schema gives no value
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Never/schema: warning: left out: the header's schema gives no value
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Unread/examples/far: warning: left out: smock does not read externalValue, and the example has no dataValue, value or serializedValue
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Unread: warning: left out: no example, examples, schema or content gives the header a value
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-No-Media-Type: warning: left out: no example, examples, schema or content gives the header a value
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Empty-Media-Type: warning: left out: no example, examples, schema or content gives the header a value
-      #|petstore.json: /paths/~1r/get/responses/200/headers/X-False-Media-Type/content/text~1plain/schema: warning: left out: the header's schema allows no value
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-False-Media-Type/content/text~1plain/schema: warning: left out: the header's schema gives no value
       #|response:
       #|  status: 200
       #|  headers:
