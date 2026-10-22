@@ -498,7 +498,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
         let mut since = now
         let mut written = 0
         for ;; {
-          watchdog.write(since)
+          watchdog.writing(since)
           written += @io.Writer::write_once(
             stream.stream,
             response,
@@ -641,7 +641,7 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
         body_limit=settings.body_limit,
       ),
       buf: FixedArray::make(16 * 1024, b'\x00'),
-      watch: watchdog,
+      watchdog,
       connection,
       idle_timeout: settings.idle_timeout_ms.to_int64(),
       read_timeout: settings.read_timeout_ms.to_int64(),
@@ -689,9 +689,9 @@ async fn[S : @io.Reader + @io.Writer] serve_connection(
           }
           // Past the deadline, the watchdog ends the task group, and with
           // it this read and the connection.
-          state.watch.read(deadline, state.now)
+          state.watchdog.reading(deadline, state.now)
           let n = @io.Reader::read(stream, state.buf)
-          state.watch.stop()
+          state.watchdog.stop()
           if state.connection is Some(connection) {
             connection.idle = false
           }
@@ -721,7 +721,8 @@ priv struct ConnectionLoop {
   parser : @http1.Parser
   /// What each read reads into.
   buf : FixedArray[Byte]
-  watch : Watchdog
+  /// The timeouts of the connection's waits on its client.
+  watchdog : Watchdog
   connection : Connection?
   idle_timeout : Int64
   read_timeout : Int64
