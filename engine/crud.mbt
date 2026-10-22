@@ -160,17 +160,15 @@ fn crud_read(
   value : Json,
   incoming : Incoming,
 ) -> ResponsePlan {
+  if call.op is List {
+    return crud_list(crud, stub, value, incoming.query_parameters())
+  }
   // Every write keeps the rules of a keyed bucket, so it holds an array.
   guard value is Array(items) else { abort("a keyed bucket holds an array") }
-  if call.op is List {
-    crud_list(crud, stub, value, items, incoming.query_parameters())
-  } else {
-    let text = call.key.unwrap_or("")
-    match item_index(items, key_member, text) {
-      Some(i) =>
-        crud_plan(crud, 200, @template.compact_json_bytes(items[i]), [])
-      None => no_item(crud, stub, text)
-    }
+  let text = call.key.unwrap_or("")
+  match item_index(items, key_member, text) {
+    Some(i) => crud_plan(crud, 200, @template.compact_json_bytes(items[i]), [])
+    None => no_item(crud, stub, text)
   }
 }
 
