@@ -28,7 +28,7 @@ modules="http1 re2 xml yaml"
 
 # The packages of smock/smock that decide a response, and the packages of
 # smock/smock they import.
-packages="definitions engine template prng log"
+packages="definitions engine template prng cookies log unicode"
 
 # Prints every quoted string inside the import blocks of a moon.mod or moon.pkg.
 imports() {

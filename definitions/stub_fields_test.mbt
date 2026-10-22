@@ -580,6 +580,147 @@ test "a response gives at most one of body, bodyFile, json and events" {
 }
 
 ///|
+test "the snapshot holds a Stub's response as its only response, of weight 1, whether static or templated" {
+  let file =
+    #|{ "mocks": [{ "name": "m" }],
+    #|  "stubs": [
+    #|    { "id": "static", "mock": "m", "response": { "status": 204 } },
+    #|    { "id": "templated", "mock": "m",
+    #|      "response": { "status": 201, "template": true, "body": "${method}" } } ] }
+  let set : @definitions.DefinitionSet = {
+    files: [("a.json", @utf8.encode(file))],
+    body_files: [],
+  }
+  guard @definitions.load(set) is Ok(snapshot) else { fail("not loaded") }
+  let out = []
+  for stub in snapshot.mocks[0].stubs {
+    for i, weighted in stub.responses {
+      let response = weighted.response
+      out.push(
+        "\{stub.id} \{i}: weight \{weighted.weight}, status \{response.status}, template \{response.template is Some(_)}",
+      )
+    }
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|static 0: weight 1, status 204, template false
+      #|templated 0: weight 1, status 201, template true
+    ),
+  )
+}
+
+///|
+test "the snapshot holds a Stub's responses in the order written, each with its weight, 1 by default" {
+  let file =
+    #|{ "mocks": [{ "name": "m" }],
+    #|  "stubs": [
+    #|    { "id": "weighted", "mock": "m",
+    #|      "responses": [
+    #|        { "weight": 9, "status": 200, "json": { "price": 101 } },
+    #|        { "status": 503, "headers": { "Retry-After": "5" } },
+    #|        { "weight": 1000000, "status": 201, "template": true,
+    #|          "bodyFile": "t.txt" } ] },
+    #|    { "id": "one", "mock": "m", "responses": [{ "status": 204 }] } ] }
+  let set : @definitions.DefinitionSet = {
+    files: [("a.json", @utf8.encode(file))],
+    body_files: [("t.txt", b"${method}")],
+  }
+  guard @definitions.load(set) is Ok(snapshot) else { fail("not loaded") }
+  let out = []
+  for stub in snapshot.mocks[0].stubs {
+    for i, weighted in stub.responses {
+      let response = weighted.response
+      out.push(
+        "\{stub.id} \{i}: weight \{weighted.weight}, status \{response.status}, headers \{response.headers.length()}, template \{response.template is Some(_)}",
+      )
+    }
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|weighted 0: weight 9, status 200, headers 1, template false
+      #|weighted 1: weight 1, status 503, headers 1, template false
+      #|weighted 2: weight 1000000, status 201, headers 0, template true
+      #|one 0: weight 1, status 204, headers 0, template false
+    ),
+  )
+}
+
+///|
+test "a Stub gives exactly one of response and responses, 1 to 100 responses, each weight an integer from 1 to 1,000,000" {
+  let stub = (i : Int, fields : String) => {
+    "{ \"id\": \"s\{i}\", \"mock\": \"m\", \{fields} }"
+  }
+  let many = (n : Int) => {
+    "\"responses\": [\{Array::make(n, "{ \"status\": 200 }").join(", ")}]"
+  }
+  inspect(
+    stub_problems(
+      [
+        "\"response\": { \"status\": 200 }, \"responses\": [{ \"status\": 200 }]",
+        "\"request\": { \"path\": \"/a\" }",
+        "\"responses\": []",
+        many(101),
+        many(100),
+        (
+          #|"responses": [{ "weight": 0, "status": 200 }, { "weight": 1000001, "status": 200 },
+          #|  { "weight": 1.5, "status": 200 }, { "weight": "2", "status": 200 },
+          #|  { "weight": null, "status": 200 }, { "weight": 1000000.0, "status": 200 }]
+        ),
+        "\"responses\": { \"status\": 200 }",
+        (
+          #|"responses": [200, { "weight": 2 }, { "status": 200, "wieght": 2 },
+          #|  { "status": 200, "body": "x", "json": {} }]
+        ),
+      ].mapi(stub),
+    ),
+    content=(
+      #|a.json: /stubs/0: has "response" and "responses"; give exactly one of them
+      #|a.json: /stubs/1: needs "response" or "responses"
+      #|a.json: /stubs/2/responses: must hold 1 to 100 responses
+      #|a.json: /stubs/3/responses: must hold 1 to 100 responses
+      #|a.json: /stubs/5/responses/0/weight: must be an integer from 1 to 1000000
+      #|a.json: /stubs/5/responses/1/weight: must be an integer from 1 to 1000000
+      #|a.json: /stubs/5/responses/2/weight: must be an integer from 1 to 1000000
+      #|a.json: /stubs/5/responses/3/weight: must be an integer from 1 to 1000000
+      #|a.json: /stubs/5/responses/4/weight: must be an integer from 1 to 1000000
+      #|a.json: /stubs/6/responses: must be an array
+      #|a.json: /stubs/7/responses/0: must be an object
+      #|a.json: /stubs/7/responses/1: needs "status"
+      #|a.json: /stubs/7/responses/2/wieght: is not a known field
+      #|a.json: /stubs/7/responses/3: has "body" and "json"; give at most one of "body", "bodyFile", "json" and "events"
+    ),
+  )
+}
+
+///|
+test "a template error inside one of responses points at it, counted from 0, and a body file in it is read as in response" {
+  inspect(
+    stub_problems(
+      [
+        (
+          #|{ "id": "t", "mock": "m",
+          #|  "responses": [
+          #|    { "status": 200, "template": true, "body": "${method}" },
+          #|    { "status": 200, "template": true, "body": "${nope}",
+          #|      "headers": { "X-A": "${" } },
+          #|    { "status": 200, "template": true, "bodyFile": "t.txt" },
+          #|    { "status": 200, "bodyFile": "missing.txt" } ] }
+        ),
+      ],
+      body_files=[("t.txt", b"${method")],
+    ),
+    content=(
+      #|a.json: /stubs/0/responses/1/headers/X-A: template: column 1: the ${ is not closed
+      #|a.json: /stubs/0/responses/1/body: template: column 3: unknown name "nope": not a request field, a loop variable or a helper
+      #|a.json: /stubs/0/responses/2/bodyFile: template: column 1: the ${ is not closed
+      #|a.json: /stubs/0/responses/3/bodyFile: no body file "missing.txt" in the body-file subdirectory
+    ),
+  )
+}
+
+///|
 /// A Stub of Mock `m` whose response streams `events`, given as JSON.
 fn events_stub(i : Int, events : String) -> String {
   "{ \"id\": \"s\{i}\", \"mock\": \"m\", \"response\": { \"status\": 200, \"events\": \{events} } }"

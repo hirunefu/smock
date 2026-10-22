@@ -17,8 +17,16 @@ pub struct Engine {
   priv ephemeral : EphemeralStubs
   /// The state of each Scenario, by Mock and Session.
   priv scenarios : ScenarioStates
+  /// The Variables, by Mock and Session.
+  priv variables : VariableStore
+  /// The bound on per-Session state: the count of what the Variables take,
+  /// which `variables` keeps up to date, and the writes it refused.
+  priv state : StateBound
   /// The Journal: the entries committed, oldest first, within its bound.
   priv journal : Journal
+  /// The environment variables templates may read, with the values read
+  /// at startup: every reload and Ephemeral Stub is read with them.
+  priv env : @template.Env
 }
 
 ///|
@@ -118,9 +126,10 @@ pub(all) struct ResponsePlan {
 
 ///|
 /// A response body: bytes sent at once, or a stream of Server-Sent Events,
-/// each written after waiting its `delay_ms` milliseconds.
+/// each written after waiting its `delay_ms` milliseconds. The bytes may be
+/// a view of a body file's bytes, such as the byte range a 206 sends.
 pub(all) enum Body {
-  Bytes(Bytes)
+  Bytes(BytesView)
   Events(ReadOnlyArray[@definitions.SseEvent])
 } derive(Debug)
 
@@ -134,11 +143,21 @@ pub(all) enum Body {
 /// the oracle the index is checked against.
 ///
 /// `journal` bounds the Journal and says whether it is on.
+///
+/// `env` holds the environment variables templates may read, with the
+/// values `snapshot` was loaded with: by default, none. Each reload and
+/// each Ephemeral Stub is read with them, so they are read only once.
+///
+/// `state_max_bytes` bounds the per-Session state of the whole process, as
+/// it counts it: by default, `default_state_max_bytes` (64 MiB).
 pub fn Engine::Engine(
   snapshot : @definitions.Snapshot,
   match_index? : Bool = true,
   journal? : JournalSettings = JournalSettings(),
+  env? : @template.Env = @template.no_env,
+  state_max_bytes? : Int = default_state_max_bytes,
 ) -> Engine {
+  let state = StateBound::new(state_max_bytes)
   {
     snapshot,
     generators: seeded_generators(snapshot),
@@ -146,7 +165,10 @@ pub fn Engine::Engine(
     last_reload: None,
     ephemeral: EphemeralStubs::new(),
     scenarios: ScenarioStates::new(),
+    variables: VariableStore::new(state),
+    state,
     journal: Journal::new(journal),
+    env,
   }
 }
 
@@ -255,6 +277,7 @@ pub fn ReloadOutcome::name(self : ReloadOutcome) -> String {
 ///|
 /// Reloads the definitions from `set`, read with the problems
 /// `read_problems`, at the time `at` (milliseconds since the Unix epoch).
+/// Templates read the environment variables the engine was created with.
 /// Every file is validated and a whole new snapshot is built:
 ///
 /// - When it is valid and its digest differs from the served one, it
@@ -265,7 +288,8 @@ pub fn ReloadOutcome::name(self : ReloadOutcome) -> String {
 ///   declare, which are dropped. Then each Scenario state stays while its
 ///   name is one of the known states of its Mock, Session and Scenario;
 ///   any other goes back to `Started`, and the states of a Mock that is
-///   gone are dropped.
+///   gone are dropped. Variables stay, except those of a Mock that is
+///   gone, which are dropped.
 /// - When it is valid with the digest served, nothing is swapped.
 /// - When it is invalid, the served snapshot stays.
 ///
@@ -279,7 +303,7 @@ pub fn Engine::reload(
   let old_digest = self.snapshot.digest
   let mut scenario_states_reset = 0
   let (result, errors) : (ReloadOutcome, Array[@definitions.Diagnostic]) = match
-    @definitions.load(set, read_problems~) {
+    @definitions.load(set, read_problems~, env=self.env) {
     Ok(snapshot) if snapshot.digest == old_digest => (Unchanged, [])
     Ok(snapshot) => {
       self.snapshot = snapshot
@@ -292,6 +316,8 @@ pub fn Engine::reload(
       // Only then are Scenario states checked, since the known states
       // include those of the Ephemeral Stubs that stay.
       scenario_states_reset = self.prune_scenario_states(mocks)
+      // Variables stay, except those of the Mocks that are gone.
+      self.variables.remove_where((mock, _) => !mocks.contains(mock)) |> ignore
       (Swapped, [])
     }
     Err(errors) => (Failed, errors)
@@ -420,53 +446,114 @@ pub fn Engine::handle(
       })
     }
   }
-  // The Scenario moves now, at the match decision, before the response is
-  // built: whatever happens to the response, a delay, a connection Fault or
-  // a template error, the state has moved, and the next request sees it.
-  // It is the state of the Mock that answered.
   let mut scenario : ScenarioMove? = None
-  if matched is Some(m) && m.stub.scenario is Some(clause) {
-    if !states_known {
-      states = self.scenarios.of(m.stub.mock, session)
-    }
-    let from = current_state(states, clause.name)
-    let to = match clause.move_to {
-      Some(to) => to
-      None => from
-    }
-    if to != from {
-      self.scenarios.set(m.stub.mock, session, clause.name, to)
-    }
-    scenario = Some({ name: clause.name, from, to, })
-  }
+  let mut response_index = None
+  let mut variables_written = none_written
   let mut template_error = None
   let mut near_miss = None
-  let plan : ResponsePlan = match mock {
-    None => no_mock(host, self.snapshot.hosts())
-    Some(mock) =>
-      match matched {
-        Some({ stub, generator, .. }) => {
-          // Every matched request takes exactly one output from its Stub's
-          // source, whatever it then draws: the Fault decisions draw from a
-          // generator seeded with it, and the helpers from another.
-          let draw = generator.unwrap_or(rand).uint64()
-          let response = if stub.response.template is None {
-            stub_response(stub.response)
-          } else {
-            let (response, error) = respond(stub, incoming, now~, draw~)
-            template_error = error
-            response
+  let plan : ResponsePlan = match matched {
+    // The match decision: one sequence of steps, each taken in turn. A
+    // step that a Stub does not use costs it one test at most.
+    Some({ stub, generator, .. }) => {
+      // 1. The Scenario moves, before the response is built: whatever
+      //    happens to the response, a delay, a connection Fault or a
+      //    template error, the state has moved, and the next request sees
+      //    it. It is the state of the Mock that answered.
+      if stub.scenario is Some(clause) {
+        if !states_known {
+          states = self.scenarios.of(stub.mock, session)
+        }
+        let from = current_state(states, clause.name)
+        let to = match clause.move_to {
+          Some(to) => to
+          None => from
+        }
+        if to != from {
+          self.scenarios.set(stub.mock, session, clause.name, to)
+        }
+        scenario = Some({ name: clause.name, from, to, })
+      }
+      // 2. The one draw. Every matched request takes exactly one output
+      //    from its Stub's source, whatever it then draws: the Fault
+      //    decisions draw from a generator seeded with it, the pick from
+      //    one of its own, and the helpers from the request's helper
+      //    generator, made from it once something is rendered.
+      let draw = generator.unwrap_or(rand).uint64()
+      // 3. The Variables: each value is rendered, in the order written,
+      //    against the Variables as they were before the request, drawing
+      //    from the helper generator first; then all are written at once,
+      //    if they fit within the bound on per-Session state. The response
+      //    renders on from there, and sees the new values. A value that
+      //    fails to render, or writes that do not fit, write none, and no
+      //    response is picked: the request gets the template failure, or
+      //    507.
+      let mut context : @template.Context? = None
+      let mut failed : ResponsePlan? = None
+      if stub.writes_variables() {
+        let first = first_context(
+          incoming,
+          now~,
+          draw~,
+          vars=self.variables.of(stub.mock, session),
+        )
+        try self.write_variables(stub, session, first) catch {
+          ValueFailed(error) => {
+            template_error = Some(error)
+            failed = Some(template_failed(stub.id, error))
           }
-          // A response comes without a delay or a Fault, and gets the
-          // Stub's.
-          if stub.fault is None {
-            response
-          } else {
-            let (delay_ms, fault) = decide_faults(stub, draw)
-            { ..response, delay_ms, fault, }
+          StateLimitReached(message) =>
+            failed = Some(state_limit_reached(stub.id, message))
+        } noraise {
+          next => {
+            context = Some(next)
+            variables_written = stub.variables.names
           }
         }
+      }
+      let plan = match failed {
+        Some(plan) => plan
         None => {
+          // 4. The pick: the response the request gets. A Stub with
+          //    `response` has one, and draws nothing more.
+          response_index = pick_response(stub, draw)
+          let response = stub.responses[response_index.unwrap_or(0)].response
+          // 5. Rendering and planning: the response as written, or rendered
+          //    from its templates. One that serves byte ranges answers the
+          //    request's Range field. Only a response that reads Variables,
+          //    and does not continue from their values, looks them up.
+          plan_response(
+            response,
+            incoming,
+            context,
+            now~,
+            draw~,
+            vars=if context is None && response.reads_variables {
+              self.variables.of(stub.mock, session)
+            } else {
+              None
+            },
+          ) catch {
+            RenderError(at~, message~) => {
+              let error = { at, message, }
+              template_error = Some(error)
+              template_failed(stub.id, error)
+            }
+          }
+        }
+      }
+      // 6. Faults: a plan comes without a delay or a Fault, and gets the
+      //    Stub's.
+      if stub.fault is None {
+        plan
+      } else {
+        let (delay_ms, fault) = decide_faults(stub, draw)
+        { ..plan, delay_ms, fault, }
+      }
+    }
+    None =>
+      match mock {
+        None => no_mock(host, self.snapshot.hosts())
+        Some(mock) => {
           // Only now, when every candidate has failed, are conditions
           // counted. A state that a Stub requires counts too. The states
           // are already known when the Mock's file Stubs have a clause, or
@@ -511,6 +598,8 @@ pub fn Engine::handle(
         resolution~,
         matched=source,
         scenario~,
+        response_index~,
+        variables_written~,
         near_miss~,
         plan~,
         template_error~,
@@ -535,9 +624,9 @@ priv struct Match {
 }
 
 ///|
-/// The plan of a Stub's `response`. Server-Sent Events are always sent with
-/// `Content-Type: text/event-stream`, which replaces a Content-Type the Stub
-/// gives.
+/// The plan of one of a Stub's responses, as written. Server-Sent Events
+/// are always sent with `Content-Type: text/event-stream`, which replaces a
+/// Content-Type the Stub gives.
 fn stub_response(response : @definitions.Response) -> ResponsePlan {
   // Room for the Smock-Mock field the Default Mock adds.
   let headers = Array(capacity=response.headers.length() + 2)

@@ -1,9 +1,12 @@
 import {
+  "smock/smock/cookies",
   "smock/smock/log",
   "smock/smock/prng",
+  "smock/smock/unicode",
   "moonbitlang/core/buffer",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
+  "moonbitlang/core/string",
 }
 
 import {

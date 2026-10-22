@@ -1,0 +1,17 @@
+mocks:
+  - name: billing
+stubs:
+  - id: invoice
+    mock: billing
+    request: { method: GET, path: /invoice }
+    response:
+      status: 200
+      template: true
+      headers:
+        Last-Modified: "${now('EEE, dd MMM yyyy HH:mm:ss')} GMT"
+      json:
+        today: ${now('yyyy-MM-dd')}
+        issued: ${dateFormat(query.issued ?? '2026-01-31', 'd MMMM yyyy, h:mm a XXX', '+09:00')}
+        due: ${dateFormat(dateTimeShift(now(), 'P1M'), 'yyyy-MM-dd', '+09:00')}
+        expires: ${dateTimeShift(number(query.ts ?? 0), 'PT90M')}
+        stamp: ${dateFormat(nowMillis(), "'week of' yyyy-MM-dd'T'HH:mm:ss.SSSxxx")}

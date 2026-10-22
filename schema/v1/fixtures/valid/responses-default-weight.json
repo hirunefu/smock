@@ -1,0 +1,15 @@
+{
+  "mocks": [{ "name": "market" }],
+  "stubs": [
+    {
+      "id": "get-prices",
+      "mock": "market",
+      "request": { "path": "/prices" },
+      "responses": [
+        { "status": 200, "body": "up" },
+        { "status": 503 }
+      ]
+    },
+    { "id": "one", "mock": "market", "responses": [{ "status": 204 }] }
+  ]
+}

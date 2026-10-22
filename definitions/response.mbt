@@ -35,6 +35,50 @@ priv enum EventValue {
 }
 
 ///|
+/// Reads the `responses` of the Stub at `stub_pointer`: the value `json` at
+/// `pointer`, 1 to `max_responses` responses, each the shape of `response`
+/// plus `weight`, an integer from 1 to `max_weight`, by default 1. Returns
+/// them in the order written, with the sum of their weights.
+fn File::read_responses(
+  self : File,
+  stub_pointer : String,
+  pointer : String,
+  json : Json,
+) -> (Array[WeightedResponse], Int) {
+  let items = self.array(pointer, json)
+  if json is Array(_) && (items.length() < 1 || items.length() > max_responses) {
+    self.error(pointer, "must hold 1 to \{max_responses} responses")
+  }
+  let responses = []
+  let mut total = 0
+  for i, item in items {
+    let at = child_pointer(pointer, i.to_string())
+    let mut weight = 1
+    let mut item = item
+    if item is Object(fields) && fields.get("weight") is Some(value) {
+      weight = self
+        .read_integer(
+          child_pointer(at, "weight"),
+          value,
+          min=1L,
+          max=max_weight.to_int64(),
+        )
+        .map_or(1, n => n.to_int())
+      // The rest is a response like any other.
+      let fields = fields.copy()
+      fields.remove("weight")
+      item = Json::object(fields)
+    }
+    responses.push({
+      weight,
+      response: self.read_response(stub_pointer, at, item),
+    })
+    total += weight
+  }
+  (responses, total)
+}
+
+///|
 /// Reads the response of the Stub at `stub_pointer`: the value `json` at
 /// `pointer`.
 fn File::read_response(
@@ -54,6 +98,8 @@ fn File::read_response(
       headers: ReadOnlyArray::from_array([]),
       body: Bytes(b""),
       template: None,
+      serves_ranges: false,
+      reads_variables: false,
     }
   }
   for key, value in response {
@@ -94,13 +140,23 @@ fn File::read_response(
     headers.iter().map(header => (header.0, header.1)),
   )
   if template {
+    let template = self.parse_templates(stub_pointer, headers, body)
     return {
       status,
       headers: static_headers,
       body: Bytes(b""),
-      template: self.parse_templates(stub_pointer, headers, body),
+      template,
+      serves_ranges: false,
+      reads_variables: template is Some(template) && template.reads_variables(),
     }
   }
+  // A 200 from a body file, without templates, serves byte ranges, unless
+  // its headers give Content-Range or Accept-Ranges themselves.
+  let serves_ranges = status == 200 &&
+    body is File(_, _) &&
+    !headers
+    .iter()
+    .any(header => header.0.to_lower() is ("content-range" | "accept-ranges"))
   let body : ResponseBody = match body {
     NoBody => Bytes(b"")
     Inline(_, text) => Bytes(@utf8.encode(text))
@@ -124,7 +180,14 @@ fn File::read_response(
         ),
       )
   }
-  { status, headers: static_headers, body, template: None, }
+  {
+    status,
+    headers: static_headers,
+    body,
+    template: None,
+    serves_ranges,
+    reads_variables: false,
+  }
 }
 
 ///|
@@ -139,13 +202,18 @@ fn File::parse_templates(
   body : BodyField,
 ) -> ResponseTemplate? {
   let mut ok = true
-  let within = (pointer : String) => pointer[stub_pointer.length():].to_owned()
   let report = (problem : @template.Problem) => {
-    self.error(stub_pointer + problem.pointer, problem.message)
+    self.report_template_problem(stub_pointer, problem)
     ok = false
   }
   let text = (source : String, pointer : String, kind : @template.TextKind) => {
-    match @template.Text::parse(source, pointer=within(pointer), kind~) {
+    match
+      @template.Text::parse(
+        source,
+        pointer=template_pointer(stub_pointer, pointer),
+        kind~,
+        env=self.env,
+      ) {
       Ok(text) => Some(text)
       Err(problem) => {
         report(problem)
@@ -154,7 +222,12 @@ fn File::parse_templates(
     }
   }
   let structured = (value : Json, pointer : String) => {
-    match @template.Structured::parse(value, pointer=within(pointer)) {
+    match
+      @template.Structured::parse(
+        value,
+        pointer=template_pointer(stub_pointer, pointer),
+        env=self.env,
+      ) {
       Ok(template) => Some(template)
       Err(problems) => {
         problems.each(report)
@@ -240,6 +313,24 @@ fn File::parse_templates(
   }
   guard ok && body is Some(body) else { return None }
   Some({ headers: ReadOnlyArray::from_array(header_templates), body, })
+}
+
+///|
+/// The JSON Pointer `pointer`, of a field of the Stub at `stub_pointer`,
+/// made relative to the Stub, as a template's pointer is.
+fn template_pointer(stub_pointer : String, pointer : String) -> String {
+  pointer[stub_pointer.length():].to_owned()
+}
+
+///|
+/// Reports `problem`, a problem in a template of the Stub at
+/// `stub_pointer`, at its pointer within the file.
+fn File::report_template_problem(
+  self : File,
+  stub_pointer : String,
+  problem : @template.Problem,
+) -> Unit {
+  self.error(stub_pointer + problem.pointer, problem.message)
 }
 
 ///|

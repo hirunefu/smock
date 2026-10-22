@@ -54,6 +54,22 @@ pub fn Generator::double(self : Generator) -> Double {
 }
 
 ///|
+/// A number drawn uniformly from 0 to `count - 1`, for a `count` above 0:
+/// rejection sampling, so that every value is equally likely. It may take
+/// more than one output.
+pub fn Generator::below(self : Generator, count : UInt64) -> UInt64 {
+  // 2^64 mod count: the outputs below it would make the low values more
+  // likely, so they are drawn again.
+  let threshold = (0UL - count) % count
+  for ;; {
+    let u = self.uint64()
+    if u >= threshold {
+      return u % count
+    }
+  }
+}
+
+///|
 /// A new generator seeded with the next output of this one, which advances
 /// it exactly once, however many numbers the new one is asked for.
 pub fn Generator::split(self : Generator) -> Generator {

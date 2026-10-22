@@ -204,6 +204,7 @@ test "a reload swaps in a valid new set: later requests get its responses, and s
     response(h.send("GET", "/users/1", headers=[("Host", "users.example.com")])),
     content=(
       #|200
+      #|Accept-Ranges: bytes
       #|{"id":1,"name":"Bob"}
     ),
   )
@@ -274,6 +275,7 @@ test "an invalid set leaves the current snapshot serving with its digest, and th
     response(h.send("GET", "/users/1", headers=[("Host", "users.example.com")])),
     content=(
       #|200
+      #|Accept-Ranges: bytes
       #|{"id":1,"name":"Alice"}
     ),
   )
@@ -323,6 +325,7 @@ test "a response planned before a swap stays as it was after it, body-file bytes
     response(h.send("GET", "/users/1", headers=[("Host", "users.example.com")])),
     content=(
       #|200
+      #|Accept-Ranges: bytes
       #|{"id":1,"name":"Alice"}
       #|---
       #|203

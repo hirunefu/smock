@@ -7,7 +7,8 @@ The domain terms are defined in [GLOSSARY.md](GLOSSARY.md).
 [docs/getting-started-on-gke.md](docs/getting-started-on-gke.md) takes a
 first-time reader to smock answering requests on GKE Autopilot.
 [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) maps
-Mockoon environments, routes and rules onto Mocks and Stubs.
+Mockoon environments, routes, rules and helpers onto Mocks, Stubs and
+templates.
 
 ## Layout
 
@@ -43,21 +44,34 @@ Packages of `smock/smock`:
 - `engine`: decides the response to each request from the snapshot,
   including its Faults, and renders a named Stub's response for a sample
   request, for `smock render` and the Admin render operation. It also holds
-  the Ephemeral Stubs and the Scenario state per Mock and Session, and the
-  Journal, with its bound,
+  the Ephemeral Stubs, the Scenario state and the Variables per Mock and
+  Session, and the Journal, with its bound,
   eviction counts and query filter, applies the Admin API operations on
   them (verification and the unmatched requests included), and reads the Session a request carries in its W3C Baggage header. `Engine(snapshot, match_index=false)` tries every Stub in
   matching order instead of using the index; tests check the index against
   it.
 - `template`: response templates: text templates (`${ expr }` in a body,
   a body file, a header value or an event field) and structured templates
-  (`json` with `$each` and `$if`), the expression grammar, the fake-data
-  helpers and their word and name lists, and escaping by media type. It
-  parses a template once and renders it for a request, the time and one
-  64-bit draw, and writes JSON with smock's own number form.
+  (`json` with `$each` and `$if`), the expression grammar, the helpers by
+  family (fake data with its word and name lists, time and dates,
+  conversions, strings, encodings, JWTs, and arithmetic in exact decimal
+  with integers only), and escaping by media type. It parses a template
+  once, with the values of the environment variables `--template-env`
+  lists, which its caller reads, and renders it for a request, the time,
+  one 64-bit draw and the Variables it reads, and writes JSON with smock's
+  own number form. It renders the values of a Stub's `variables` as JSON
+  too.
 - `prng`: the seeded pseudo-random generator that Fault decisions and
   template helpers draw from. Its sequence for a seed is fixed, the same on
   every target.
+- `cookies`: reads the cookies of a request from its `Cookie` fields, for
+  cookie conditions, the Near miss and the `cookie` root of templates, so
+  that all of them read cookies by the same rules.
+- `unicode`: simple case mapping and the White_Space property, for the
+  template helpers `uppercase`, `lowercase` and `trim`, from the data of
+  one pinned Unicode version (18.0.0). `scripts/gen-unicode-data.py`
+  generated the data from the Unicode Character Database; it changes only
+  with a new format version.
 - `defdir`: reads the definitions directory and loads it, for
   `smock serve`, `smock check` and `smock render`, and takes the stamp of
   it that a poll compares (native).
@@ -106,10 +120,10 @@ Packages of `smock/smock`:
 
 A package that does I/O or uses FFI declares `supported_targets = "native"`.
 Every other package also builds for `wasm-gc`, and CI tests it there. The
-packages that decide a response, `definitions`, `engine` and `template`,
-and the ones they import, `prng` and `log`, must stay that way: `scripts/check-no-io.sh`
-fails if one of them leaves out `wasm-gc`, reads the environment, binds C
-or imports a package that does I/O.
+packages that decide a response, `definitions`, `engine` and `template`, and
+the ones they import, `prng`, `cookies`, `unicode` and `log`, must stay that
+way: `scripts/check-no-io.sh` fails if one of them leaves out `wasm-gc`,
+reads the environment, binds C or imports a package that does I/O.
 
 `openapi/admin.json` is the OpenAPI 3.1 document of the Admin API, the
 contract for it as the JSON Schema is for Definition files; a client can be
@@ -183,6 +197,7 @@ exits with status 2. `smock serve --help` lists the settings:
 | `--session-member` | `SMOCK_SESSION_MEMBER` | `smock-session`: the member of that header whose value is the Session key |
 | `--log-format` | `SMOCK_LOG_FORMAT` | `json`, the only format |
 | `--body-file-dir` | `SMOCK_BODY_FILE_DIR` | `files` |
+| `--template-env` | `SMOCK_TEMPLATE_ENV` | none: templates read no environment variable; a comma-separated list of names lets them read those as `env.NAME`, with values read once at startup ([Environment variables](docs/definition-files.md#environment-variables)) |
 | `--header-size-limit` | `SMOCK_HEADER_SIZE_LIMIT` | 16384 bytes (16 KiB): larger request heads get 431 |
 | `--header-count-limit` | `SMOCK_HEADER_COUNT_LIMIT` | 100 header fields: more get 431 |
 | `--body-limit` | `SMOCK_BODY_LIMIT` | 10485760 bytes (10 MiB): longer bodies get 413 |
@@ -194,6 +209,7 @@ exits with status 2. `smock serve --help` lists the settings:
 | `--journal-max-entries` | `SMOCK_JOURNAL_MAX_ENTRIES` | 10000: beyond it, the oldest entries are evicted |
 | `--journal-max-bytes` | `SMOCK_JOURNAL_MAX_BYTES` | a quarter of smock's memory limit (cgroup v2 `memory.max`), at least 1048576 bytes (1 MiB) and at most 67108864 (64 MiB); 64 MiB without a limit ([The Journal](#the-journal)): beyond it, the oldest entries are evicted |
 | `--journal-body-limit` | `SMOCK_JOURNAL_BODY_LIMIT` | 4096 bytes (4 KiB): the most of a request body an entry keeps, and of the form and XML values its Near miss keeps, in total |
+| `--state-max-bytes` | `SMOCK_STATE_MAX_BYTES` | an eighth of smock's memory limit (cgroup v2 `memory.max`), at least 1048576 bytes (1 MiB) and at most 67108864 (64 MiB); 64 MiB without a limit ([The state bound](docs/definition-files.md#the-state-bound)): the most bytes the per-Session state of the whole process takes; a request or an Admin API set whose writes would pass it gets 507 |
 
 A request over a limit gets its status with `Connection: close`, then the
 connection closes; a timeout closes the connection without a response.
@@ -373,7 +389,11 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   `smock_tls_certificate_expiry_timestamp_seconds` gives when each
   certificate expires; `smock_journal_entries`, `smock_journal_bytes` and
   `smock_journal_evictions_total` show the [Journal](#the-journal)'s size
-  and evictions, without labels.
+  and evictions, without labels; `smock_state_bytes` and
+  `smock_state_writes_refused_total` show the bytes of per-Session state
+  that [the state bound](docs/definition-files.md#the-state-bound) counts
+  and the writes it refused, from requests and Admin API sets, without
+  labels.
 - What smock's process and its cgroup use is read when `/metrics` is
   scraped, so serving requests costs nothing for it. The standard process
   metrics of Prometheus's client libraries: `process_cpu_seconds_total`
@@ -429,14 +449,19 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
 - `POST /v1/stubs/{id}/render` renders a Stub's response for the sample
   request in the body, against the definitions the replica serves now, as
   `smock render` does (below). The optional `time` and `seed` query
-  parameters give the time (RFC 3339) and the seed of the random source;
-  the rendering shows those it used.
+  parameters give the time (RFC 3339) and the seed of the random source,
+  and `response` the index of one of a Stub's `responses` to render; the
+  rendering shows those it used, and the values the Stub's `variables`
+  would write. It writes nothing.
 - `/v1/mocks/{mock}/stubs` adds, lists and deletes Ephemeral Stubs, and
-  `POST /v1/reset` clears them, Journal entries and Scenario state
-  ([below](#sessions-and-ephemeral-stubs)).
+  `POST /v1/reset` clears them, Journal entries, Scenario state and
+  Variables ([below](#sessions-and-ephemeral-stubs)).
 - `GET /v1/mocks/{mock}/scenarios` lists the calling Session's Scenarios of
   a Mock, with their states, and `PUT /v1/mocks/{mock}/scenarios/{scenario}`
   sets the state of one ([below](#sessions-and-ephemeral-stubs)).
+- `GET /v1/mocks/{mock}/variables` lists the calling Session's Variables of
+  a Mock, and `PUT` and `DELETE /v1/mocks/{mock}/variables/{name}` set and
+  delete one ([below](#sessions-and-ephemeral-stubs)).
 - `POST /v1/journal/query` lists the calling Session's requests from the
   [Journal](#the-journal), `POST /v1/journal/verify` checks how many of
   them there were, and `GET /v1/journal/unmatched` lists those that no
@@ -488,31 +513,44 @@ Pointer, and exits with status 1 if there is any. It also warns about Stubs
 that can never match, because an earlier Stub always matches first, and
 about a [state that a Stub requires but no Stub moves its Scenario
 to](docs/definition-files.md#a-state-that-no-stub-moves-to); warnings do
-not change the exit status.
+not change the exit status. It takes `--body-file-dir` and
+`--template-env` as `smock serve` does, and reads the listed environment
+variables from its own environment.
 
 `smock render --dir defs get-user --request sample.json` shows what a Stub
 returns for a sample request before a test relies on it. The sample is JSON,
-`{method, path, query, headers, body, session}`, every member optional
-(`GET /` without query, headers, body or Session); the path and the query
-values are given percent-decoded, as Stub conditions compare them, and a
-repeated parameter or header takes an array of values. Cookies come from
-`headers.Cookie`, as a request's come from its `Cookie` fields, and form
-fields from the body, read as a form when `headers.Content-Type` says it is
-one. smock reads the directory as `smock serve` does, body files included,
-and prints the rendering as JSON, the same as the Admin render operation's
-result without its `warnings`: the Stub's status, headers and body (`utf-8`
-text, or `base64`) or its Server-Sent Events, and the conditions the sample
-fails, with expected and actual values as in a Near miss (empty when it
-meets them all). The Stub is rendered even when the sample fails them, and a
+`{method, path, query, headers, body, session, vars}`, every member optional
+(`GET /` without query, headers, body, Session or Variables); the path and
+the query values are given percent-decoded, as Stub conditions compare them,
+and a repeated parameter or header takes an array of values. Cookies come
+from `headers.Cookie`, as a request's come from its `Cookie` fields, and
+form fields from the body, read as a form when `headers.Content-Type` says
+it is one. `vars` maps the name of each
+[Variable](docs/definition-files.md#variables) templates read to its value;
+a rendering never reads the live Variables. smock reads the directory as
+`smock serve` does, body files included. It takes `--body-file-dir` and
+`--template-env` as `smock serve` does, and reads the listed environment
+variables from its own environment. It prints the rendering as JSON, the
+same as the Admin render operation's result without its `warnings`: the
+Stub's status, headers and body (`utf-8` text, or `base64`) or its
+Server-Sent Events, and the conditions the sample fails, with expected and
+actual values as in a Near miss (empty when it meets them all). The Stub is
+rendered even when the sample fails them, and a
 [templated](docs/definition-files.md#templates) response is rendered for the
 sample. `--time` (RFC 3339) and `--seed` fix the clock and the random source
 of the rendering; without a seed, it uses the Stub's `fault.seed`, or a
-fresh one. The rendering shows the `time` and the `seed` it used, so it can
-be repeated exactly, and a template that fails for the sample shows the 500
-a request would get and its `templateError`. An invalid definitions
-directory prints the messages `smock check` prints, and it, an unknown Stub
-ID and a sample that cannot be read or is not valid exit with status 1, with
-the problem on stderr.
+fresh one. A Stub with
+[`responses`](docs/definition-files.md#several-responses) renders the one
+the seed picks, and `--response <i>` renders the one at index `i`, from 0.
+The rendering shows the `time`, the `seed` and the `responseIndex` it used,
+so it can be repeated exactly, and a template that fails for the sample
+shows the 500 a request would get and its `templateError`. It also shows, as
+`variables`, the values the Stub's `variables` would write, rendered against
+the sample's `vars`, and the response reads them written over the sample's
+`vars`. It writes nothing. An invalid definitions directory prints the
+messages `smock check` prints, and it, an unknown Stub ID, an index the Stub
+has no response at, and a sample that cannot be read or is not valid exit
+with status 1, with the problem on stderr.
 
 [docs/definition-files.md](docs/definition-files.md) describes the format:
 how Stubs match requests (method, path, query parameters, headers, cookies
@@ -520,9 +558,12 @@ and body, exactly, by RE2 pattern, as JSON, by form field or by paths into
 XML, negated or by presence with `$not` and `$exists`, and by array element
 with `$includes`), the order they are tried in (priority, then file-name
 order), what a Mock answers when nothing matches, responses with inline
-bodies, body files, JSON or Server-Sent Events, response templates, Faults,
-the JSON Schema, editor support and writing Definition files in another
-configuration language.
+bodies, body files that serve byte ranges, JSON or Server-Sent Events,
+several responses picked at random by weight (`responses`), response
+templates and their helpers (fake data, time and dates, conversions,
+strings, encodings, JWTs and arithmetic), Variables that keep a value from
+one request for the next, Faults, the JSON Schema, editor support and
+writing Definition files in another configuration language.
 [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) turns a
 Mockoon environment into Definition files.
 
@@ -615,16 +656,30 @@ curl localhost:8080/users/1                                           # 200, fro
   list does not show gets 404 `unknown_scenario`, and a state outside the
   known states 400 `unknown_state`, so a typo cannot leave a Scenario in a
   state that nothing matches.
+- The Session keeps its own [Variables](docs/definition-files.md#variables)
+  of each Mock too, which a Stub's `variables` write and templates read as
+  `vars.NAME`. `GET /v1/mocks/{mock}/variables` lists the calling Session's
+  Variables of the Mock, by name, with their values.
+  `PUT /v1/mocks/{mock}/variables/{name}` with a JSON value as the body,
+  such as `"ann"`, sets one, so that a test can arrange the state its
+  requests read, and `DELETE` deletes one. A name that is not 1 to 128
+  ASCII letters, digits, `_` and `-` gets 400 `invalid_request`, and so
+  does a value above 1 MiB of compact JSON; a Variable the Session has not
+  set gets 404 `unknown_variable`, and a set that would pass
+  [the state bound](docs/definition-files.md#the-state-bound) 507
+  `state_limit_reached`.
 - `GET` lists and `DELETE /v1/mocks/{mock}/stubs/{id}` deletes the calling
   Session's Ephemeral Stubs of the Mock. `POST /v1/reset` with
   `{"scope":"session"}` clears the calling Session's Ephemeral Stubs,
-  [Journal](#the-journal) entries and Scenario state of every Mock, and its
+  [Journal](#the-journal) entries, Scenario state and
+  [Variables](docs/definition-files.md#variables) of every Mock, and its
   eviction count; `{"scope":"mock","mock":"users"}` every Session's of one
   Mock, even one that a reload removed while the Journal holds its entries;
   and `{"scope":"all"}` all of them, and every eviction count. Without a
   Session, `{"scope":"session"}` clears the no-Session space. A Scenario
-  whose state is cleared is back in `Started`. It answers how many
-  Ephemeral Stubs, Journal entries and Scenario states it removed.
+  whose state is cleared is back in `Started`, and a cleared Variable is
+  unset. It answers how many of each it removed, in `removed`:
+  `ephemeralStubs`, `journalEntries`, `scenarioStates` and `variables`.
 - Ephemeral Stubs live in the process that received them, until a reset or
   a restart. They survive a [reload](docs/definition-files.md#reloading) of
   the Definition files, except those of a Mock the new files no longer
@@ -652,7 +707,11 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   Stub, so that equal IDs cannot be confused; the
   [Scenario](docs/definition-files.md#seeing-what-moved) move the Stub
   made, as `scenario`, with its name and the states it moved from and to;
-  the status, or the connection Fault; when the request was received and
+  the index of the response the Stub gave among its
+  [`responses`](docs/definition-files.md#several-responses), as
+  `responseIndex`; the names of the
+  [Variables](docs/definition-files.md#variables) the request wrote, as
+  `variablesWritten`; the status, or the connection Fault; when the request was received and
   how long the response took; and the digest of the definition set that
   answered. A request for a Host that no Mock answers is recorded too,
   with no Mock; one the HTTP/1.1 codec rejects (400, 413, 431, 501 or 505)

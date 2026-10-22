@@ -90,6 +90,8 @@ test "a committed entry records the request, its Session, Host and Mock, the Stu
         "stub": "get-user",
         "stubSource": "file",
         "scenario": Json::null(),
+        "responseIndex": Json::null(),
+        "variablesWritten": [],
         "nearMiss": Json::null(),
         "status": 200,
         "fault": Json::null(),

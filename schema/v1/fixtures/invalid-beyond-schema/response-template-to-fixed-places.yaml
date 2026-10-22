@@ -1,0 +1,10 @@
+mocks:
+  - name: cart
+stubs:
+  - id: price
+    mock: cart
+    response:
+      status: 200
+      template: true
+      json:
+        price: ${toFixed(body.price, 19)}

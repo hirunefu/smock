@@ -30,6 +30,10 @@ _Avoid_: Runtime stub, overlay stub, dynamic stub
 A named state machine within a Mock; its current state decides which Stubs can match, and a Stub's response can move it to another state.
 _Avoid_: Flow state, state store, workflow
 
+**Variable**:
+A named JSON value kept per Mock and Session, set by a Stub's `variables` or through the Admin API, and read in templates as `vars.NAME`.
+_Avoid_: Global variable, state variable
+
 **Upstream**:
 The real service a Mock impersonates. Forwarding the requests a Mock does not match to its Upstream, and recording the exchanges as Definition files, are not implemented.
 _Avoid_: Backend, origin, target
@@ -53,7 +57,7 @@ The authenticated interface, on its own port, for inspecting and changing a runn
 _Avoid_: Management API, control plane
 
 **Session**:
-A key carried on requests that scopes Ephemeral Stubs, Scenario state and the Journal, so concurrent tests sharing a Mock do not see each other's changes.
+A key carried on requests that scopes Ephemeral Stubs, Scenario state, Variables and the Journal, so concurrent tests sharing a Mock do not see each other's changes.
 _Avoid_: Tenant, namespace, test ID
 
 **Journal**:

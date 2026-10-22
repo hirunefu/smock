@@ -70,7 +70,7 @@ async test "smock check reports a template syntax error with the file and the JS
           #|status 1
           #|users.yaml: /stubs/0/response/headers/X-Id: template: column 9: expected ], found "}"
           #|users.yaml: /stubs/0/response/json/id: template: column 3: unknown helper "fake.nope": not one of the helpers smock has
-          #|users.yaml: /stubs/0/response/json/lines/as: template: "loop" cannot be a loop variable: it is a request field, loop or a reserved word
+          #|users.yaml: /stubs/0/response/json/lines/as: template: "loop" cannot be a loop variable: it is a request field, env, vars, loop or a reserved word
           #|users.yaml: /stubs/1/response/bodyFile: template: line 3, column 1: expected } to end the ${, found "<"
           #|
         ),
@@ -101,6 +101,7 @@ async test "smock serve logs a template syntax error with its file and JSON Poin
           #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
           #|{"level":"info","msg":"random seed","seed":"*"}
           #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+          #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
           #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
           #|{"level":"error","msg":"invalid definitions","file":"users.json","pointer":"/stubs/0/response/body","error":"template: column 3: for is reserved"}
         ),
@@ -229,6 +230,8 @@ async test "smock render and the Admin render operation show templated events; g
           #|  "mock": "market",
           #|  "time": "2026-10-13T09:00:00.000Z",
           #|  "seed": 7,
+          #|  "responseIndex": null,
+          #|  "variables": {},
           #|  "response": {
           #|    "status": 200,
           #|    "headers": [

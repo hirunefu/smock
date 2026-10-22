@@ -296,7 +296,7 @@ fn Incoming::explain(self : Incoming, failed : Failed) -> FailedCondition {
       {
         condition: Cookie(name),
         expected: expected(value),
-        actual: cookie_values(self.request.headers, name),
+        actual: @cookies.parse(self.request.headers).get(name).unwrap_or([]),
       }
     Body(body) =>
       {

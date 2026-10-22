@@ -1,0 +1,19 @@
+mocks:
+  - name: ids
+stubs:
+  - id: ids
+    mock: ids
+    request: { method: POST, path: /ids }
+    response:
+      status: 200
+      template: true
+      headers:
+        X-Ids: ${replaceAll(query.ids ?? '', ',', ' ')}
+      json:
+        ids: { $each: "split(query.ids, ',')", as: id, do: "${id}" }
+        first: ${split(query.ids, ',')[0]}
+        tags: ${join(body.tags, '|')}
+        short: ${substr(body.name, 0, 3)}
+        tower: ${includes(body.name, 'タワー')}
+        at: ${indexOf(body.name, 'タ', 1)}
+        once: ${replace(body.name, '東京', 'Tokyo ')}

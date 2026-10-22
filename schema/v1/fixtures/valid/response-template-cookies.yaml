@@ -1,0 +1,15 @@
+mocks:
+  - name: shop
+stubs:
+  - id: preferences
+    mock: shop
+    request: { method: GET, path: /preferences }
+    response:
+      status: 200
+      template: true
+      headers:
+        X-Session: ${cookie.session ?? 'none'}
+      json:
+        session: ${cookie.session ?? null}
+        themes: { $each: cookie.theme, as: t, do: "${t}" }
+        odd: ${cookie['a b'] ?? null}

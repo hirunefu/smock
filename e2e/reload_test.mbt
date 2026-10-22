@@ -393,6 +393,7 @@ async test "a large body written to a slow reader during a reload completes with
         ),
         content=(
           #|HTTP/1.1 200 OK
+          #|Accept-Ranges: bytes
           #|Content-Length: 16777216
           #|reload: "swapped"
           #|bytes of the first response that are not "a": 0

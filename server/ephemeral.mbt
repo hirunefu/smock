@@ -61,6 +61,26 @@ fn Admin::refused(
         "unknown_state",
         "\{state.escape()} is not a known state of the Scenario \{scenario.escape()} of the Mock \{mock.escape()} for \{caller(session)}, which are \{known.map(known => known.escape()).join(", ")}",
       )
+    InvalidVariableName(name) =>
+      self.error(
+        400,
+        "invalid_request",
+        "\{name.escape()} is not a Variable name: 1 to \{@definitions.max_variable_name} ASCII letters, digits, _ and -",
+      )
+    UnknownVariable(mock~, name~) =>
+      self.error(
+        404,
+        "unknown_variable",
+        "\{caller(session)} has no Variable \{name.escape()} in the Mock \{mock.escape()}",
+      )
+    VariableTooLarge(name~, bytes~) =>
+      self.error(
+        400,
+        "invalid_request",
+        "the value of the Variable \{name.escape()} takes \{bytes} bytes of compact JSON, more than the 1 MiB (\{@engine.max_variable_value} bytes) a Variable's value may take",
+      )
+    StateLimitReached(message) =>
+      self.error(507, "state_limit_reached", message)
     InvalidStub(problems) =>
       self.error(
         400,
@@ -148,6 +168,7 @@ fn reset(admin : Admin, call : Call) -> Reply {
     "ephemeralStubs": Json::number(removed.ephemeral_stubs.to_double()),
     "journalEntries": Json::number(removed.journal_entries.to_double()),
     "scenarioStates": Json::number(removed.scenario_states.to_double()),
+    "variables": Json::number(removed.variables.to_double()),
   }
   let (scope_name, fields) : (String, Map[String, Json]) = match scope {
     Session(session) => ("session", { "session": session_json(session) })

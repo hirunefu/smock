@@ -793,3 +793,30 @@ test "a shadowed Stub that also requires a state no Stub moves to gets both warn
     ),
   )
 }
+
+///|
+test "a Stub with responses shadows and is shadowed as one with response: the warning does not look at responses" {
+  inspect(
+    warnings([
+      (
+        "prices.json",
+        (
+          #|{ "mocks": [{ "name": "market" }],
+          #|  "stubs": [
+          #|    { "id": "flaky", "mock": "market", "request": { "path": "/prices" },
+          #|      "responses": [{ "weight": 9, "status": 200 }, { "status": 503 }] },
+          #|    { "id": "steady", "mock": "market",
+          #|      "request": { "method": "GET", "path": "/prices" },
+          #|      "response": { "status": 200 } },
+          #|    { "id": "also-flaky", "mock": "market",
+          #|      "request": { "method": "GET", "path": "/prices" },
+          #|      "responses": [{ "status": 503 }] } ] }
+        ),
+      ),
+    ]),
+    content=(
+      #|prices.json: /stubs/1: warning: the Stub "steady" can never match: the Stub "flaky" at prices.json: /stubs/0 is tried first and matches every request this one would
+      #|prices.json: /stubs/2: warning: the Stub "also-flaky" can never match: the Stub "flaky" at prices.json: /stubs/0 is tried first and matches every request this one would
+    ),
+  )
+}

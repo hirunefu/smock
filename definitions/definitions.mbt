@@ -144,10 +144,75 @@ pub struct Stub {
   request : Conditions
   /// The Stub's Scenario clause, if it has `scenario`.
   scenario : ScenarioClause?
-  response : Response
+  /// The Stub's responses, in the order written, each with its weight. A
+  /// matched request gets one of them. A Stub with `response` has that one,
+  /// of weight 1.
+  responses : ReadOnlyArray[WeightedResponse]
+  /// The sum of the weights of `responses` when the Stub gives `responses`:
+  /// a matched request then takes a pick among them. `None` for a Stub with
+  /// `response`, which takes no pick.
+  total_weight : Int?
+  /// The Variables the Stub writes when it matches, `variables`: none when
+  /// it has no `variables`.
+  variables : VariableWrites
   /// The Faults the Stub injects when it matches, if it has `fault`.
   fault : Fault?
 } derive(Debug, Eq)
+
+///|
+/// The Variables a Stub writes when it matches, in the order written: the
+/// name of each, and the template of its value, a structured template
+/// whose pointer is `/variables/NAME`. The two arrays have the same
+/// length.
+pub struct VariableWrites {
+  names : ReadOnlyArray[String]
+  values : ReadOnlyArray[@template.Structured]
+} derive(Debug, Eq)
+
+///|
+/// Whether the Stub writes any Variable. A Stub that writes none pays only
+/// this test for Variables when it matches.
+pub fn Stub::writes_variables(self : Stub) -> Bool {
+  self.variables.names.length() > 0
+}
+
+///|
+/// The longest name of a Variable, in characters.
+pub let max_variable_name : Int = 128
+
+///|
+/// Whether `name` can name a Variable: 1 to `max_variable_name` name
+/// characters, which are ASCII letters, digits, `_` and `-`.
+pub fn is_variable_name(name : String) -> Bool {
+  if name.length() < 1 || name.length() > max_variable_name {
+    return false
+  }
+  for c in name {
+    if !(c.is_ascii_alphabetic() || c.is_ascii_digit() || c is ('_' | '-')) {
+      return false
+    }
+  }
+  true
+}
+
+///|
+/// One of a Stub's responses, with its weight: the chance that a matched
+/// request gets it is its weight over the sum of the weights of the Stub's
+/// responses.
+pub struct WeightedResponse {
+  /// An integer from 1 to `max_weight`.
+  weight : Int
+  response : Response
+} derive(Debug, Eq)
+
+///|
+/// The most responses a Stub's `responses` holds.
+pub let max_responses : Int = 100
+
+///|
+/// The largest weight of a response in `responses`. With at most
+/// `max_responses` of them, the sum of the weights fits an `Int`.
+pub let max_weight : Int = 1_000_000
 
 ///|
 /// A Stub's Scenario clause: the state a Scenario of the Stub's Mock must
@@ -723,6 +788,14 @@ pub struct Response {
   /// values and the body or events of each response, rendered for its
   /// request, instead of `headers` and `body`.
   template : ResponseTemplate?
+  /// Whether the response serves single byte ranges of its body to Range
+  /// requests: it is not a template, its status is 200, its body comes from
+  /// a body file, and its headers give neither `Content-Range` nor
+  /// `Accept-Ranges`.
+  serves_ranges : Bool
+  /// Whether one of the response's templates reads Variables, as
+  /// `vars.NAME`: only then does its rendering look them up.
+  reads_variables : Bool
 } derive(Debug, Eq)
 
 ///|
@@ -734,6 +807,39 @@ pub struct ResponseTemplate {
   headers : ReadOnlyArray[(String, @template.Text)]
   body : BodyTemplate
 } derive(Debug, Eq)
+
+///|
+/// Whether one of the templates reads Variables: a header value, the body,
+/// or a field of an event.
+fn ResponseTemplate::reads_variables(self : ResponseTemplate) -> Bool {
+  for header in self.headers {
+    if header.1.reads_vars() {
+      return true
+    }
+  }
+  match self.body {
+    Text(text) => text.reads_vars()
+    Json(json) => json.reads_vars()
+    Events(events) => {
+      for event in events {
+        if event.event is Some(text) && text.reads_vars() {
+          return true
+        }
+        if event.id is Some(text) && text.reads_vars() {
+          return true
+        }
+        let data = match event.data {
+          Text(text) => text.reads_vars()
+          Json(json) => json.reads_vars()
+        }
+        if data {
+          return true
+        }
+      }
+      false
+    }
+  }
+}
 
 ///|
 /// The body of a response with `template` on.
@@ -860,9 +966,15 @@ pub fn normalize_host(host : String) -> String {
 /// `read_problems` are the problems the caller had reading the set, such
 /// as a file that cannot be read. A set read with problems is invalid
 /// whatever its files hold; they come first among its problems.
+///
+/// `env` holds the environment variables that templates may read, as
+/// `--template-env` lists them, with the values the caller read: by
+/// default, none. A template that reads another name is a problem. The
+/// values are not part of the digest.
 pub fn load(
   set : DefinitionSet,
   read_problems? : Array[Diagnostic] = [],
+  env? : @template.Env = @template.no_env,
 ) -> Result[Snapshot, Array[Diagnostic]] {
   let files = sorted_by_name(set.files).map(file => {
     (file.0, parse_file(file.0, file.1))
@@ -870,6 +982,7 @@ pub fn load(
   let reader = Reader::new(
     declared=declared_mocks(files),
     body_files=Map::from_array(set.body_files),
+    env~,
   )
   for file in files {
     reader.read_file(file.0, file.1)

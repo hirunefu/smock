@@ -31,21 +31,33 @@ priv enum ParsedBody {
 }
 
 ///|
-/// Rendering one response: the request, the time, the random source of the
-/// helpers, and what the response has used of its bounds so far.
+/// One rendering for a request, such as its response or the value of a
+/// Variable: the request, the time, the random source of the helpers, the
+/// Variables it reads, and what the rendering has used of its bounds so
+/// far.
 pub struct Context {
   priv input : Input
   /// The time of the request, in milliseconds since the Unix epoch.
   priv now : Int64
   /// The delays of the events rendered so far, in milliseconds.
   priv mut elapsed : Int64
-  /// What the helpers draw from.
+  /// What the helpers draw from: the request's helper generator, which
+  /// every rendering for the request shares.
   priv rand : @prng.Generator
   /// The loop iterations run so far.
   priv mut iterations : Int
   /// The bytes of body or events rendered so far.
   priv mut output : Int
   priv mut body : ParsedBody
+  /// The request's cookies, by name, once a template has read one.
+  priv mut cookies : Map[String, Array[String]]?
+  /// The Variables of the request's Mock and Session that `vars.NAME`
+  /// reads, by name, or `None` when there are none. The rendering never
+  /// changes them.
+  priv vars : Map[String, Json]?
+  /// Whether the rendering is of a Variable's value rather than of a
+  /// response, as the messages about its bounds say.
+  priv mut of_value : Bool
 }
 
 ///|
@@ -55,21 +67,54 @@ pub struct Context {
 let helper_mask : UInt64 = 0xA0761D6478BD642FUL
 
 ///|
-/// Starts rendering a response to `input`, received at `now` (milliseconds
-/// since the Unix epoch). `draw` is the 64-bit output the matched request
-/// took from its Stub's random source: the helpers draw from a generator
-/// seeded with it XOR a fixed constant, in the order the template is
-/// rendered.
-pub fn Context::new(input : Input, now~ : Int64, draw~ : UInt64) -> Context {
+/// The helper generator of a matched request: what the helpers of every
+/// rendering for the request draw from. `draw` is the 64-bit output the
+/// request took from its Stub's random source; the generator is seeded with
+/// it XOR a fixed constant. It is made once per request, and only when
+/// something is rendered. Each rendering then draws from it in turn, on
+/// from where the one before stopped, so the helpers give what one
+/// rendering of them all, in that order, would give.
+pub fn helper_generator(draw : UInt64) -> @prng.Generator {
+  @prng.Generator(draw ^ helper_mask)
+}
+
+///|
+/// Starts one rendering for the request `input`, received at `now`
+/// (milliseconds since the Unix epoch). The helpers draw from `rand`, the
+/// request's `helper_generator`, in the order the template is rendered.
+/// `vars` are the Variables `vars.NAME` reads, by name: by default, none.
+/// The bounds on loop iterations and on output count for this rendering
+/// alone.
+pub fn Context::new(
+  input : Input,
+  now~ : Int64,
+  rand~ : @prng.Generator,
+  vars? : Map[String, Json],
+) -> Context {
   {
     input,
     now,
     elapsed: 0L,
-    rand: @prng.Generator(draw ^ helper_mask),
+    rand,
     iterations: 0,
     output: 0,
     body: NotParsed,
+    cookies: None,
+    vars,
+    of_value: false,
   }
+}
+
+///|
+/// Starts the next rendering for the same request, once this one is done,
+/// such as the response after the values of the Stub's Variables. It reads
+/// the Variables `vars`, by default none, and has bounds of its own. It
+/// shares the rest: the request, the time, the helper generator, which goes
+/// on from where this rendering stopped, and what this one parsed of the
+/// request, so that the body and the cookies are parsed at most once per
+/// request.
+pub fn Context::next(self : Context, vars? : Map[String, Json]) -> Context {
+  { ..self, elapsed: 0L, iterations: 0, output: 0, vars, of_value: false, }
 }
 
 ///|
@@ -81,9 +126,11 @@ pub fn Context::advance(self : Context, ms : Int) -> Unit {
 }
 
 ///|
-/// The most bytes a rendered body, or all the events of a response
-/// together, take: 1 MiB.
-let max_output : Int = 1024 * 1024
+/// The most bytes a rendered body, all the events of a response together,
+/// or a rendered value of a Stub's `variables` take: 1 MiB. The engine
+/// bounds a Variable set through the Admin API by it too, so that a value
+/// has the same bound whichever way it is written.
+pub let max_output : Int = 1024 * 1024
 
 ///|
 /// Counts `bytes` more of output, from the field at `at`.
@@ -93,18 +140,24 @@ fn Context::count(
   at : String,
 ) -> Unit raise RenderError {
   self.output += bytes
-  check_output(self.output, at)
+  self.check_output(self.output, at)
 }
 
 ///|
 /// Raises a render error at `at` when `total` bytes of output are more than
 /// the bound.
-fn check_output(total : Int, at : String) -> Unit raise RenderError {
+fn Context::check_output(
+  self : Context,
+  total : Int,
+  at : String,
+) -> Unit raise RenderError {
   if total > max_output {
-    raise RenderError(
-      at~,
-      message="the rendered body or events take more than 1 MiB",
-    )
+    let what = if self.of_value {
+      "the rendered value takes"
+    } else {
+      "the rendered body or events take"
+    }
+    raise RenderError(at~, message="\{what} more than 1 MiB")
   }
 }
 
@@ -184,7 +237,16 @@ fn Context::eval(
         Some(json) => present(json)
         None => Missing(text)
       }
-    Call(helper, args) => {
+    Walk(call, steps, text) =>
+      match self.eval(call, frames, at) {
+        Present(value) =>
+          match walk(value.json, steps) {
+            Some(json) => present(json)
+            None => Missing(text)
+          }
+        missing => missing
+      }
+    Call(helper, args, text) => {
       // The arguments, evaluated in order; a missing one makes the call's
       // value missing too.
       let values = []
@@ -195,85 +257,22 @@ fn Context::eval(
         }
       }
       match helper {
-        Number =>
-          match values[0] {
-            Number(_) as n => present(n)
-            String(text) =>
-              match number_of(text) {
-                Some(n) => present(n)
-                None =>
-                  raise RenderError(
-                    at~,
-                    message="number(): \{text.escape()} is not a JSON number",
-                  )
-              }
-            other =>
-              raise RenderError(
-                at~,
-                message="number() takes a string or a number, not \{kind_of(other)}",
-              )
+        Fake(fake) => present(draw(fake, self.rand))
+        Time(time) =>
+          match self.time(time, values, at) {
+            Some(json) => present(json)
+            None => Missing(text)
           }
-        Range => {
-          let bound = (json : Json) => {
-            match json {
-              Number(n, ..) if n == n.floor() &&
-                n.abs() <= max_integer.to_double() => n.to_int64()
-              _ =>
-                raise RenderError(
-                  at~,
-                  message="range() takes integers from -\{max_integer} to \{max_integer}, not \{compact_json(json)}",
-                )
-            }
+        Conversion(conversion) => Present(convert(conversion, values, at))
+        Strings(string) => present(string_value(string, values, at))
+        Encoding(encoding) => present(encoding_value(encoding, values, at))
+        Jwt(jwt) =>
+          match jwt_value(jwt, values, at) {
+            Some(json) => present(json)
+            None => Missing(text)
           }
-          let a = bound(values[0])
-          let b = bound(values[1])
-          let count = b - a + 1L
-          if count > max_range.to_int64() {
-            raise RenderError(
-              at~,
-              message="range(\{a}, \{b}) gives \{count} values; range gives at most \{max_range}",
-            )
-          }
-          let items = []
-          let mut n = a
-          while n <= b {
-            items.push(Json::number(n.to_double()))
-            n += 1L
-          }
-          present(Json::array(items))
-        }
-        JsonText =>
-          Present({
-            json: Json::string(compact_json(values[0])),
-            form: JsonOutput,
-          })
-        Raw =>
-          match values[0] {
-            Object(_) | Array(_) =>
-              raise RenderError(
-                at~,
-                message="raw() takes a string, a number, true, false or null, not an object or an array",
-              )
-            json => Present({ json, form: RawText, })
-          }
-        Now(seconds) => {
-          let ms = self.now + self.elapsed + seconds * 1000L
-          // From 0000-01-01 to 9999-12-31, which RFC 3339 can write.
-          if ms < -62_167_219_200_000L || ms > 253_402_300_799_999L {
-            raise RenderError(
-              at~,
-              message="now(): the time is outside the years 0 to 9999",
-            )
-          }
-          present(Json::string(@log.format_time(ms)))
-        }
-        NowMillis(seconds) =>
-          present(
-            Json::number(
-              (self.now + self.elapsed + seconds * 1000L).to_double(),
-            ),
-          )
-        fake => present(draw(fake, self.rand))
+        Arithmetic(arithmetic) =>
+          present(arithmetic_value(arithmetic, values, at))
       }
     }
   }
@@ -292,6 +291,16 @@ fn Context::reference(
   match root {
     Method => Some(Json::string(request.meth))
     BodyText => Some(Json::string(@utf8.decode_lossy(request.body)))
+    Env(value) => value
+    Variable(name) =>
+      match self.vars {
+        Some(vars) =>
+          match vars.get(name) {
+            Some(value) => walk(value, steps)
+            None => None
+          }
+        None => None
+      }
     Path =>
       match steps {
         [Index(n)] => {
@@ -319,6 +328,15 @@ fn Context::reference(
           header_values(request.headers, name).iter().head().map(Json::string)
         _ => None
       }
+    Cookie =>
+      match steps {
+        [Name(name)] =>
+          match self.cookie_values(name) {
+            Some(values) => Some(Json::string(values[0]))
+            None => None
+          }
+        _ => None
+      }
     Body =>
       match self.parsed_body() {
         Some(json) => walk(json, steps)
@@ -326,7 +344,7 @@ fn Context::reference(
       }
     LoopIndex =>
       frames.last().map(frame => Json::number(frame.index.to_double()))
-    Var(name) => {
+    LoopVar(name) => {
       for i = frames.length() - 1; i >= 0; i = i - 1 {
         if frames[i].name == name {
           return walk(frames[i].element, steps)
@@ -346,6 +364,21 @@ fn header_values(
 ) -> Array[String] {
   let lower = name.to_lower()
   headers.filter(h => h.0.to_lower() == lower).map(h => h.1)
+}
+
+///|
+/// The values of the cookie named `name`, in order, or `None` when the
+/// request has none. The cookies are read from the request at most once,
+/// when a template first reads one.
+fn Context::cookie_values(self : Context, name : String) -> Array[String]? {
+  match self.cookies {
+    Some(cookies) => cookies.get(name)
+    None => {
+      let cookies = @cookies.parse(self.input.headers)
+      self.cookies = Some(cookies)
+      cookies.get(name)
+    }
+  }
 }
 
 ///|
@@ -388,12 +421,32 @@ fn Context::parsed_body(self : Context) -> Json? {
 /// nothing around it.
 fn number_of(text : String) -> Json? {
   let chars = text.iter().collect()
-  let parser = { chars, i: 0, vars: [], in_loop: false, text: false, }
+  let parser = {
+    chars,
+    i: 0,
+    scope: {
+      vars: [],
+      in_loop: false,
+      text: false,
+      env: no_env,
+      reads_vars: Ref(false),
+    },
+  }
   let number = parser.number() catch { _ => return None }
   if parser.i == chars.length() {
     Some(number)
   } else {
     None
+  }
+}
+
+///|
+/// `json` for a message: a string, a number, `true`, `false` or `null` as
+/// JSON, and an object or an array by its kind.
+fn described(json : Json) -> String {
+  match json {
+    Object(_) | Array(_) => kind_of(json)
+    _ => compact_json(json)
   }
 }
 
@@ -412,8 +465,8 @@ fn kind_of(json : Json) -> String {
 
 ///|
 /// The elements a `$each` over `expr` walks: an array, or every value of a
-/// query parameter or a header, none when it is absent. `Err` gives the
-/// source text of the reference that names nothing.
+/// query parameter, a header or a cookie, none when it is absent. `Err`
+/// gives the source text of the reference that names nothing.
 fn Context::elements(
   self : Context,
   expr : Expr,
@@ -429,6 +482,11 @@ fn Context::elements(
       )
     Ref(Header, [Name(name)], _) =>
       Ok(header_values(self.input.headers, name).map(Json::string))
+    Ref(Cookie, [Name(name)], _) =>
+      match self.cookie_values(name) {
+        Some(values) => Ok(values.map(Json::string))
+        None => Ok([])
+      }
     Fallback(alternatives) => {
       let mut last = ""
       for alternative in alternatives {
@@ -526,7 +584,7 @@ fn Context::write_node(
     Static(json) => write_json(out, json)
     Single(expr, at) => {
       write_json(out, self.value(expr, frames, at).json)
-      check_output(start + out.length(), at)
+      self.check_output(start + out.length(), at)
     }
     Interpolated(parts, at) => {
       let text = StringBuilder()
@@ -540,7 +598,7 @@ fn Context::write_node(
         }
       }
       write_json(out, Json::string(text.to_string()))
-      check_output(start + out.length(), at)
+      self.check_output(start + out.length(), at)
     }
     Members(members) => {
       out.write_byte(b'{')
@@ -580,9 +638,10 @@ fn Context::write_node(
       for index, element in items {
         self.iterations += 1
         if self.iterations > max_iterations {
+          let what = if self.of_value { "value" } else { "response" }
           raise RenderError(
             at~,
-            message="the loops of one response run at most \{max_iterations} iterations",
+            message="the loops of one \{what} run at most \{max_iterations} iterations",
           )
         }
         let inner = [..frames, { name, element, index, }]

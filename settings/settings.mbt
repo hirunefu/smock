@@ -44,6 +44,9 @@ pub(all) struct ServeSettings {
   log_format : LogFormat
   /// The body-file subdirectory of the definitions directory.
   body_file_dir : String
+  /// The environment variables templates may read, as `--template-env`
+  /// lists them: each name once, in the order given.
+  template_env : Array[String]
   /// The most bytes a request head may take: its request line and header
   /// fields.
   header_size_limit : Int
@@ -70,10 +73,15 @@ pub(all) struct ServeSettings {
   /// The most bytes the Journal's entries take, as they count them, when
   /// `--journal-max-bytes` or `SMOCK_JOURNAL_MAX_BYTES` sets it. `None`
   /// leaves it to the memory limit, which `smock serve` reads at startup
-  /// (`JournalByteBound::from_memory_limit`).
-  journal_max_bytes : JournalByteBound?
+  /// (`ByteBound::journal`).
+  journal_max_bytes : ByteBound?
   /// The most bytes of a request body a Journal entry keeps.
   journal_body_limit : Int
+  /// The most bytes the per-Session state of the whole process takes, as
+  /// it counts them, when `--state-max-bytes` or `SMOCK_STATE_MAX_BYTES`
+  /// sets it. `None` leaves it to the memory limit, which `smock serve`
+  /// reads at startup (`ByteBound::state`).
+  state_max_bytes : ByteBound?
 } derive(Debug)
 
 ///|
@@ -88,28 +96,35 @@ pub(all) struct TlsFiles {
 
 ///|
 /// The settings of `smock check`. The definitions directory is its
-/// argument. The body-file subdirectory is the `smock serve` setting of the
-/// same name, flag and variable, so that both read a directory the same
-/// way.
+/// argument. The body-file subdirectory and the environment variables
+/// templates may read are the `smock serve` settings of the same names,
+/// flags and variables, so that both load a directory the same way.
 pub(all) struct CheckSettings {
   /// The definitions directory.
   dir : String
   /// The body-file subdirectory of the definitions directory.
   body_file_dir : String
+  /// The environment variables templates may read, as `--template-env`
+  /// lists them: each name once, in the order given.
+  template_env : Array[String]
 } derive(Debug)
 
 ///|
-/// The settings of `smock render`. The definitions directory and the
-/// body-file subdirectory are the `smock serve` settings of the same names,
-/// flags and variables, so that both read a directory the same way. The
-/// Stub ID is its argument, and the sample request, the time and the seed
-/// are flags of its own, without variables: they belong to one rendering,
-/// not to a process.
+/// The settings of `smock render`. The definitions directory, the
+/// body-file subdirectory and the environment variables templates may read
+/// are the `smock serve` settings of the same names, flags and variables,
+/// so that both load a directory the same way. The Stub ID is its argument,
+/// and the sample request, the time, the seed and the response are flags of
+/// its own, without variables: they belong to one rendering, not to a
+/// process.
 pub(all) struct RenderSettings {
   /// The definitions directory.
   dir : String
   /// The body-file subdirectory of the definitions directory.
   body_file_dir : String
+  /// The environment variables templates may read, as `--template-env`
+  /// lists them: each name once, in the order given.
+  template_env : Array[String]
   /// The ID of the Stub to render.
   stub : String
   /// The file that holds the sample request, as JSON.
@@ -120,6 +135,9 @@ pub(all) struct RenderSettings {
   /// The seed of the random source the rendering draws from, from 0 to
   /// 2^53 - 1, or `None` for a fresh one.
   seed : UInt64?
+  /// The index of the response to render among the Stub's `responses`,
+  /// or `None` for the one the seed picks.
+  response_index : Int?
 } derive(Debug)
 
 ///|
@@ -162,10 +180,22 @@ priv struct Setting {
 }
 
 ///|
+/// The body-file subdirectory: a setting of smock serve that smock check
+/// and smock render share, as they share `template_env_setting`.
 let body_file_dir_setting : Setting = {
   name: "body-file-dir",
   about: "The body-file subdirectory of the definitions directory.",
   default: Some("files"),
+}
+
+///|
+/// The environment variables templates may read: a setting of smock serve
+/// that smock check and smock render share, so that all three load a
+/// directory the same way.
+let template_env_setting : Setting = {
+  name: "template-env",
+  about: "The environment variables templates may read as env.NAME, separated by commas, such as REGION,API_BASE. Their values are read once, at startup. A listed value can show in responses, renderings and template error messages, so list only values that may be shown. A name is letters, digits and _, starting with a letter or _, and cannot start with SMOCK_. None by default.",
+  default: None,
 }
 
 ///|
@@ -232,6 +262,7 @@ let serve_settings : Array[Setting] = [
   },
   { name: "log-format", about: "The log format: json.", default: Some("json"), },
   body_file_dir_setting,
+  template_env_setting,
   {
     name: "header-size-limit",
     about: "The most bytes a request head (request line and header fields) may take. Larger heads get 431.",
@@ -279,13 +310,18 @@ let serve_settings : Array[Setting] = [
   },
   {
     name: "journal-max-bytes",
-    about: "The most bytes the Journal's entries take: each counts 256, two per character of its request line, header fields, names and Near miss values, 32 per value its Near miss keeps from a form or an XML body, and the body bytes it keeps. Beyond it, the oldest entries are evicted. Default: a quarter of the memory limit of smock's cgroup (cgroup v2 memory.max), at least \{min_journal_byte_bound} (1 MiB) and at most \{journal_defaults.max_bytes} (64 MiB); \{journal_defaults.max_bytes} when there is no limit or it cannot be read.",
+    about: "The most bytes the Journal's entries take: each counts 256, two per character of its request line, header fields, names and Near miss values, 32 per value its Near miss keeps from a form or an XML body, and the body bytes it keeps. Beyond it, the oldest entries are evicted. Default: a quarter of the memory limit of smock's cgroup (cgroup v2 memory.max), at least \{min_byte_bound} (1 MiB) and at most \{journal_defaults.max_bytes} (64 MiB); \{journal_defaults.max_bytes} when there is no limit or it cannot be read.",
     default: None,
   },
   {
     name: "journal-body-limit",
     about: "The most bytes of a request body a Journal entry keeps; the rest is cut. Its Near miss keeps the values of form fields and XML paths up to the same total, each counting 32 bytes more.",
     default: Some(journal_defaults.body_limit.to_string()),
+  },
+  {
+    name: "state-max-bytes",
+    about: "The most bytes the per-Session state of the whole process takes, across every Mock and Session: each Mock and Session that holds Variables counts its Mock name, its Session key and 64; each Variable counts its name, 64, and its value as compact JSON with 16 more per JSON value in it. A request or an Admin API set whose writes would pass it writes nothing and gets 507. Scenario state does not count. Default: an eighth of the memory limit of smock's cgroup (cgroup v2 memory.max), at least \{min_byte_bound} (1 MiB) and at most \{@engine.default_state_max_bytes} (64 MiB); \{@engine.default_state_max_bytes} when there is no limit or it cannot be read.",
+    default: None,
   },
 ]
 
@@ -296,8 +332,10 @@ let journal_defaults : @engine.JournalSettings = @engine.JournalSettings()
 
 ///|
 /// The settings of `smock check`: those of `smock serve` that decide how
-/// the definitions directory is read.
-let check_settings : Array[Setting] = [body_file_dir_setting]
+/// the definitions directory is loaded.
+let check_settings : Array[Setting] = [
+  body_file_dir_setting, template_env_setting,
+]
 
 ///|
 /// The environment variable of a setting: `SMOCK_` and its name in upper
@@ -336,12 +374,13 @@ pub fn check_command() -> @argparse.Command {
 
 ///|
 /// The `render` subcommand: the Stub ID as its argument, the definitions
-/// directory and the body-file subdirectory as `smock serve` takes them,
-/// and the sample request, the time and the seed.
+/// directory, the body-file subdirectory and the environment variables
+/// templates may read as `smock serve` takes them, and the sample request,
+/// the time, the seed and the response.
 pub fn render_command() -> @argparse.Command {
   @argparse.Command(
     "render",
-    about="Render a Stub's response for a sample request, as the Admin API render operation does, and print it as JSON: the time and the seed it used, the status, the headers and the body or events, rendered from the Stub's templates when it has them, and the Stub's conditions the sample fails, with expected and actual values. Exits with status 1 if the definitions directory is invalid, no Stub has the ID, or the sample request is not valid.",
+    about="Render a Stub's response for a sample request, as the Admin API render operation does, and print it as JSON: the time and the seed it used, the status, the headers and the body or events, rendered from the Stub's templates when it has them, and the Stub's conditions the sample fails, with expected and actual values. A Stub with responses renders the response the seed picks, or the one --response names, and the output shows its index. The output shows the values the Stub's variables would write, rendered against the sample's vars, and writes nothing. Exits with status 1 if the definitions directory is invalid, no Stub has the ID, the Stub has no response at the index given, or the sample request is not valid.",
     positionals=[
       @argparse.PositionArg(
         "stub-id",
@@ -358,10 +397,11 @@ pub fn render_command() -> @argparse.Command {
         required=true,
       ),
       option(body_file_dir_setting),
+      option(template_env_setting),
       @argparse.OptionArg(
         "request",
         long="request",
-        about="A file that holds the sample request as JSON: {method, path, query, headers, body, session}, each optional.",
+        about="A file that holds the sample request as JSON: {method, path, query, headers, body, session, vars}, each optional.",
         required=true,
       ),
       @argparse.OptionArg(
@@ -373,6 +413,11 @@ pub fn render_command() -> @argparse.Command {
         "seed",
         long="seed",
         about="The seed of the random source the rendering draws from, from 0 to \{max_seed}. Default: the Stub's fault.seed, or a fresh seed when it has none.",
+      ),
+      @argparse.OptionArg(
+        "response",
+        long="response",
+        about="The index of the response to render among the Stub's responses, from 0. A Stub with response takes 0 only. Default: the response the seed picks.",
       ),
     ],
   )
@@ -476,6 +521,7 @@ pub fn ServeSettings::from_matches(
     session_member,
     log_format,
     body_file_dir,
+    template_env: template_env_value(matches),
     header_size_limit: int_value(
       matches,
       "header-size-limit",
@@ -515,26 +561,27 @@ pub fn ServeSettings::from_matches(
       min=1,
       max=max_size,
     ),
-    journal_max_bytes: journal_max_bytes_value(matches, "journal-max-bytes"),
+    journal_max_bytes: byte_bound_value(matches, "journal-max-bytes"),
     journal_body_limit: int_value(
       matches,
       "journal-body-limit",
       min=0,
       max=max_size,
     ),
+    state_max_bytes: byte_bound_value(matches, "state-max-bytes"),
   }
 }
 
 ///|
-/// The Journal's byte bound when the flag or the variable sets it, with
-/// which of them did.
-fn journal_max_bytes_value(
+/// A byte bound, the Journal's or the per-Session state's, when its flag
+/// or its variable sets it, with which of them did.
+fn byte_bound_value(
   matches : @argparse.Matches,
   name : String,
-) -> JournalByteBound? raise InvalidSetting {
+) -> ByteBound? raise InvalidSetting {
   guard value(matches, name) is Some(_) else { return None }
   let max_bytes = int_value(matches, name, min=1, max=max_size)
-  let source : JournalByteBoundSource = match matches.sources.get(name) {
+  let source : ByteBoundSource = match matches.sources.get(name) {
     Some(Env) => Variable
     _ => Flag
   }
@@ -614,6 +661,27 @@ pub fn parse_seed(text : String) -> UInt64? {
 }
 
 ///|
+/// The index of a response that `text` gives, as `--response` and the
+/// render operation's `response` query parameter take it: a decimal integer
+/// from 0 to one less than the most responses a Stub has, without a sign,
+/// prefix or separator. `None` when it is not one. Whether the Stub has a
+/// response at that index is the rendering's to say.
+pub fn parse_response_index(text : String) -> Int? {
+  // Two digits hold every index below max_responses (100).
+  match decimal(text, max_digits=2) {
+    Some(n) if n < @definitions.max_responses.to_uint64() => Some(n.to_int())
+    _ => None
+  }
+}
+
+///|
+/// Why a value is not the index of a response, as `--response` and the
+/// render operation's `response` query parameter say it.
+pub fn response_index_reason() -> String {
+  "must be an integer from 0 to \{@definitions.max_responses - 1}"
+}
+
+///|
 /// A fresh seed from the platform's entropy, from 0 to 2^53 - 1, like the
 /// seeds `--seed` takes: what `smock serve`, `smock render` and the Admin
 /// render operation use when no seed is given.
@@ -667,7 +735,11 @@ pub fn CheckSettings::from_matches(
   if dir == "" {
     raise InvalidArgument(name="dir", value=dir, reason="must not be empty")
   }
-  { dir, body_file_dir: body_file_dir(matches), }
+  {
+    dir,
+    body_file_dir: body_file_dir(matches),
+    template_env: template_env_value(matches),
+  }
 }
 
 ///|
@@ -709,13 +781,28 @@ pub fn RenderSettings::from_matches(
           raise InvalidOption(flag="seed", value=text, reason=seed_reason())
       }
   }
+  let response_index = match value(matches, "response") {
+    None => None
+    Some(text) =>
+      match parse_response_index(text) {
+        Some(index) => Some(index)
+        None =>
+          raise InvalidOption(
+            flag="response",
+            value=text,
+            reason=response_index_reason(),
+          )
+      }
+  }
   {
     dir,
     body_file_dir: body_file_dir(matches),
+    template_env: template_env_value(matches),
     stub: value(matches, "stub-id").unwrap_or(""),
     request_file,
     time,
     seed,
+    response_index,
   }
 }
 
@@ -728,6 +815,54 @@ fn body_file_dir(matches : @argparse.Matches) -> String raise InvalidSetting {
     )
   }
   dir
+}
+
+///|
+/// The names `--template-env` lists, separated by commas: each once, in
+/// the order given, and none when it is not given or empty. A name is
+/// letters, digits and `_`, starting with a letter or `_`, and does not
+/// start with `SMOCK_`, so that smock's own variables, such as the Admin
+/// API token, never reach a template.
+fn template_env_value(
+  matches : @argparse.Matches,
+) -> Array[String] raise InvalidSetting {
+  let setting = template_env_setting.name
+  let names = []
+  guard value(matches, setting) is Some(text) && text != "" else {
+    return names
+  }
+  for part in text.split(",") {
+    let name = part.to_owned()
+    if !is_environment_variable_name(name) {
+      raise invalid(
+        setting,
+        text,
+        "\{name.escape()} is not an environment variable name: letters, digits and _, starting with a letter or _",
+      )
+    }
+    if name.has_prefix("SMOCK_") {
+      raise invalid(
+        setting,
+        text,
+        "\{name.escape()} starts with SMOCK_: smock's own variables cannot be listed",
+      )
+    }
+    if !names.contains(name) {
+      names.push(name)
+    }
+  }
+  names
+}
+
+///|
+/// Whether `name` is an environment variable name templates may read:
+/// ASCII letters, digits and `_`, starting with a letter or `_`.
+fn is_environment_variable_name(name : String) -> Bool {
+  name != "" &&
+  !name[0].unsafe_to_char().is_ascii_digit() &&
+  name
+  .iter()
+  .all(c => c.is_ascii_alphabetic() || c.is_ascii_digit() || c == '_')
 }
 
 ///|

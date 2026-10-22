@@ -188,6 +188,8 @@ async test "a query returns the calling Session's entries, oldest first, as the 
             "stub": "get-user",
             "stubSource": "file",
             "scenario": Json::null(),
+            "responseIndex": Json::null(),
+            "variablesWritten": [],
             "nearMiss": Json::null(),
             "status": 200,
             "fault": Json::null(),
@@ -224,6 +226,8 @@ async test "a query returns the calling Session's entries, oldest first, as the 
             "stub": Json::null(),
             "stubSource": Json::null(),
             "scenario": Json::null(),
+            "responseIndex": Json::null(),
+            "variablesWritten": [],
             "nearMiss": {
               "stub": "get-user",
               "stubSource": "file",
@@ -266,6 +270,8 @@ async test "a query returns the calling Session's entries, oldest first, as the 
             "stub": Json::null(),
             "stubSource": Json::null(),
             "scenario": Json::null(),
+            "responseIndex": Json::null(),
+            "variablesWritten": [],
             "nearMiss": Json::null(),
             "status": 404,
             "fault": Json::null(),
@@ -401,6 +407,8 @@ async test "a request ended by a reset Fault is in the Journal, body included, a
             "stub": "reset",
             "stubSource": "file",
             "scenario": Json::null(),
+            "responseIndex": Json::null(),
+            "variablesWritten": [],
             "nearMiss": null,
             "status": null,
             "fault": "reset",
@@ -551,10 +559,10 @@ async test "reset clears the calling Session's Journal entries and says how many
       inspect(
         out.join("\n"),
         content=(
-          #|200 {"scope":"session","removed":{"ephemeralStubs":0,"journalEntries":2,"scenarioStates":0},"warnings":[]}
+          #|200 {"scope":"session","removed":{"ephemeralStubs":0,"journalEntries":2,"scenarioStates":0,"variables":0},"warnings":[]}
           #|test-a: 0 entries
           #|test-b: 1 entries
-          #|200 {"scope":"mock","removed":{"ephemeralStubs":0,"journalEntries":1,"scenarioStates":0},"warnings":[]}
+          #|200 {"scope":"mock","removed":{"ephemeralStubs":0,"journalEntries":1,"scenarioStates":0,"variables":0},"warnings":[]}
           #|test-b: 0 entries
         ),
       )

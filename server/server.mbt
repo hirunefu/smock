@@ -30,6 +30,9 @@ pub async fn serve(
   } else {
     None
   }
+  // The environment variables templates may read are read once, here: every
+  // load, reload and Ephemeral Stub uses these values.
+  let template_env = template_env(settings.template_env)
   // Watching starts before the first load, so that no change made while it
   // reads the files goes unnoticed. Without a definitions directory, there
   // is nothing to watch and nothing to reload. A poll first compares a stamp
@@ -69,12 +72,13 @@ pub async fn serve(
   logger.info("random seed", fields={
     "seed": Json::number(seed.to_double(), repr=seed.to_string()),
   })
-  let journal_bound = journal_byte_bound(settings)
-  logger.info("journal byte bound", fields=journal_bound.log_fields())
+  let bounds = byte_bounds(settings)
+  logger.info("journal byte bound", fields=bounds.journal.log_fields())
+  logger.info("state byte bound", fields=bounds.state.log_fields())
   let journal = @engine.JournalSettings(
     enabled=settings.journal,
     max_entries=settings.journal_max_entries,
-    max_bytes=journal_bound.max_bytes,
+    max_bytes=bounds.journal.max_bytes,
     body_limit=settings.journal_body_limit,
   )
   let metrics = @metrics.Registry()
@@ -88,6 +92,7 @@ pub async fn serve(
     build,
     metrics~,
     journal_metrics=JournalMetrics::register(metrics),
+    state_metrics=StateMetrics::register(metrics),
     process_metrics=ProcessMetrics::register(
       metrics,
       started_at~,
@@ -132,12 +137,14 @@ pub async fn serve(
             admin,
             admin_listener,
             journal~,
+            state_max_bytes=bounds.state.max_bytes,
             metrics~,
             watch~,
             tls_watches~,
             rand~,
             reloads~,
             traffic~,
+            template_env~,
           )
         })
       })
@@ -158,7 +165,9 @@ async fn sleep_forever() -> Unit {
 /// Serves the Admin API on `admin_listener`, from now until it returns;
 /// loads the definitions and the TLS certificates; listens on the plain and
 /// the TLS port; serves the Mocks there, recording them in a Journal with
-/// the settings `journal`, until the drain starts; and drains.
+/// the settings `journal`, until the drain starts; and drains. Templates
+/// read the environment variables `template_env`, and the per-Session state
+/// of the whole process is bounded by `state_max_bytes`.
 /// Returns the exit status: 0 after the drain, or 1 when the definition set
 /// is invalid, a TLS certificate cannot be loaded or generated, or a port
 /// cannot be listened on.
@@ -176,12 +185,14 @@ async fn run(
   admin : Admin,
   admin_listener : @socket.TcpServer,
   journal~ : @engine.JournalSettings,
+  state_max_bytes~ : Int,
   metrics~ : @metrics.Registry,
   watch~ : @watch.Watch?,
   tls_watches~ : Array[@watch.Watch],
   rand~ : @prng.Generator,
   reloads~ : @metrics.Counter,
   traffic~ : Traffic,
+  template_env~ : @template.Env,
 ) -> Int {
   let connections = Connections::new()
   @async.with_task_group(group => {
@@ -206,7 +217,11 @@ async fn run(
       })
     })
     let snapshot = match
-      @defdir.load(settings.dir, body_file_dir=settings.body_file_dir) {
+      @defdir.load(
+        settings.dir,
+        body_file_dir=settings.body_file_dir,
+        env=template_env,
+      ) {
       Ok(snapshot) => snapshot
       Err(diagnostics) => {
         for diagnostic in diagnostics {
@@ -219,7 +234,12 @@ async fn run(
         return 1
       }
     }
-    let engine = @engine.Engine(snapshot, journal~)
+    let engine = @engine.Engine(
+      snapshot,
+      journal~,
+      env=template_env,
+      state_max_bytes~,
+    )
     lifecycle.started(engine)
     let ports : MockPorts = {
       engine,

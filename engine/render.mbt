@@ -21,6 +21,10 @@ pub(all) struct SampleRequest {
   body : String
   /// The request's Session, or `None` for none.
   session : String?
+  /// The Variables that templates read as `vars.NAME`, by name: those the
+  /// request finds before the Stub writes its own. A rendering reads
+  /// these, never the live Variables.
+  vars : Map[String, Json]
 } derive(Debug)
 
 ///|
@@ -46,9 +50,10 @@ pub fn InvalidSample::message(self : InvalidSample) -> String {
 ///|
 /// Reads a sample request from its JSON form, the `SampleRequest` schema:
 /// an object whose members are all optional. The method defaults to GET,
-/// the path to `/`, the body to empty, and there is no Session by default.
-/// Query parameters and header fields map a name to a value, or to the
-/// values of a repeated one, in order.
+/// the path to `/`, the body to empty, and there is no Session and no
+/// Variable by default. Query parameters and header fields map a name to a
+/// value, or to the values of a repeated one, in order, and `vars` the name
+/// of each Variable to its value.
 pub fn SampleRequest::from_json(
   json : Json,
 ) -> SampleRequest raise InvalidSample {
@@ -61,6 +66,7 @@ pub fn SampleRequest::from_json(
   let mut headers = []
   let mut body = ""
   let mut session = None
+  let mut vars = Map([])
   for name, value in members {
     let at = @definitions.child_pointer("", name)
     match name {
@@ -96,10 +102,32 @@ pub fn SampleRequest::from_json(
           _ =>
             raise InvalidSample(pointer=at, message="must be a string or null")
         }
+      "vars" => vars = sample_vars(value, at)
       _ => raise InvalidSample(pointer=at, message="is not a known field")
     }
   }
-  { meth, path, query, headers, body, session, }
+  { meth, path, query, headers, body, session, vars, }
+}
+
+///|
+/// The Variables of a `vars` member at `at`: an object that maps the name
+/// of each Variable to its value, any JSON.
+fn sample_vars(
+  json : Json,
+  at : String,
+) -> Map[String, Json] raise InvalidSample {
+  guard json is Object(members) else {
+    raise InvalidSample(pointer=at, message="must be an object")
+  }
+  for name, _ in members {
+    if !@definitions.is_variable_name(name) {
+      raise InvalidSample(
+        pointer=@definitions.child_pointer(at, name),
+        message="is not a Variable name: 1 to \{@definitions.max_variable_name} ASCII letters, digits, _ and -",
+      )
+    }
+  }
+  members
 }
 
 ///|
@@ -177,6 +205,15 @@ pub(all) struct Rendering {
   /// `fault.seed`, or else a fresh one. Given again, it repeats the
   /// rendering.
   seed : UInt64
+  /// The index of the response rendered among the Stub's `responses`,
+  /// counted from 0: the one asked for, or else the one the seed picks.
+  /// `None` for a Stub with `response`, and when no response was picked
+  /// because a value of the Stub's `variables` failed to render.
+  response_index : Int?
+  /// The values the Stub's `variables` would write, by name, in the order
+  /// written: none when it has none, or when a value failed to render.
+  /// Rendering writes none of them.
+  variables : Map[String, Json]
   status : Int
   /// The header fields smock sends, in order, without those that depend on
   /// the connection, such as Content-Length.
@@ -192,15 +229,31 @@ pub(all) struct Rendering {
 } derive(Debug)
 
 ///|
-/// No Stub from the Definition files has this ID.
-pub suberror UnknownStub {
+/// Why a Stub cannot be rendered.
+pub suberror RenderFailure {
+  /// No Stub from the Definition files has this ID.
   UnknownStub(String)
+  /// The Stub `stub` has no response at `index`: it has `count`, with the
+  /// indexes 0 to `count - 1`.
+  UnknownResponse(stub~ : String, index~ : Int, count~ : Int)
 } derive(Debug)
 
 ///|
-pub fn UnknownStub::message(self : UnknownStub) -> String {
-  let UnknownStub(id) = self
-  "no Stub from the Definition files has the ID \{id.escape()}"
+/// Why the Stub cannot be rendered, as smock render and the Admin render
+/// operation say it.
+pub fn RenderFailure::message(self : RenderFailure) -> String {
+  match self {
+    UnknownStub(id) =>
+      "no Stub from the Definition files has the ID \{id.escape()}"
+    UnknownResponse(stub~, index~, count~) => {
+      let indexes = if count == 1 {
+        "it has one response, whose index is 0"
+      } else {
+        "its responses run from 0 to \{count - 1}"
+      }
+      "the Stub \{stub.escape()} has no response \{index}: \{indexes}"
+    }
+  }
 }
 
 ///|
@@ -217,35 +270,105 @@ pub fn UnknownStub::message(self : UnknownStub) -> String {
 ///   matched request of a Stub with `fault.seed` set to `seed` gets.
 ///   Without it, the rendering uses the Stub's `fault.seed`, or, when it
 ///   has none, `fresh_seed()`.
+/// - `response_index` is the index of the response to render, counted from
+///   0. Without it, the rendering shows the one the seed picks. A Stub with
+///   `response` takes 0 only.
+///
+/// The values of the Stub's `variables` are rendered against the sample's
+/// `vars`, and the response reads those with the Stub's values written
+/// over them, as the response to a request sees its writes. A value that
+/// fails to render gives the 500 a request would get, and no response is
+/// picked. A response that serves byte ranges answers the sample's `Range`
+/// field, as it answers a request's: with 206, 416 or the whole body.
 ///
 /// Rendering decides no Fault, and changes nothing in the engine: no
-/// generator advances.
+/// generator advances, and no Variable is written or read.
 pub fn Engine::render(
   self : Engine,
   id : String,
   sample : SampleRequest,
   now~ : Int64,
   seed? : UInt64,
+  response_index? : Int,
   fresh_seed~ : () -> UInt64,
-) -> Rendering raise UnknownStub {
+) -> Rendering raise RenderFailure {
   guard self.file_stub(id) is Some(stub) else { raise UnknownStub(id) }
+  let count = stub.responses.length()
+  if response_index is Some(index) && (index < 0 || index >= count) {
+    raise UnknownResponse(stub=stub.id, index~, count~)
+  }
   let seed = match (seed, stub.fault) {
     (Some(seed), _) => seed
     (None, Some({ seed: Some(seed), .. })) => seed
     (None, _) => fresh_seed()
   }
   let incoming = Incoming::new(sample.to_request())
-  let (plan, template_error) = respond(
-    stub,
-    incoming,
-    now~,
-    draw=@prng.Generator(seed).uint64(),
-  )
+  // The steps of the match decision that build the response, as for a
+  // request: the one draw, the Variables' values, the pick, then rendering
+  // and planning, which answers the sample's Range field. No Scenario
+  // moves, no Variable is written, and no Fault is decided.
+  let draw = @prng.Generator(seed).uint64()
+  // The values render against the sample's `vars`, drawing from the helper
+  // generator first; the response renders on from there, and reads the
+  // sample's `vars` with the values written over them.
+  let variables = Map([])
+  let mut context = None
+  let mut failed = None
+  if stub.writes_variables() {
+    let first = first_context(incoming, now~, draw~, vars=Some(sample.vars))
+    let values = Array(capacity=stub.variables.values.length())
+    try render_values(stub.variables, first, Some(sample.vars), values) catch {
+      RenderError(at~, message~) => failed = Some({ at, message, })
+    } noraise {
+      last => {
+        let after = sample.vars.copy()
+        for i, name in stub.variables.names {
+          variables[name] = values[i]
+          after[name] = values[i]
+        }
+        context = Some(last.next(vars=after))
+      }
+    }
+  }
+  let (response_index, plan, template_error) = match failed {
+    // A value that failed to render picks no response, whichever was
+    // asked for.
+    Some(error) => (None, template_failed(stub.id, error), Some(error))
+    None => {
+      let response_index = match (response_index, stub.total_weight) {
+        // A Stub with `response` shows no index, whichever it was asked
+        // for.
+        (_, None) => None
+        (Some(index), Some(_)) => Some(index)
+        (None, Some(_)) => pick_response(stub, draw)
+      }
+      let response = stub.responses[response_index.unwrap_or(0)].response
+      try
+        plan_response(
+          response,
+          incoming,
+          context,
+          now~,
+          draw~,
+          vars=Some(sample.vars),
+        )
+      catch {
+        RenderError(at~, message~) => {
+          let error = { at, message, }
+          (response_index, template_failed(stub.id, error), Some(error))
+        }
+      } noraise {
+        plan => (response_index, plan, None)
+      }
+    }
+  }
   {
     stub: stub.id,
     mock: stub.mock,
     time: now,
     seed,
+    response_index,
+    variables,
     status: plan.status,
     headers: plan.headers,
     body: plan.body,
@@ -282,6 +405,10 @@ pub impl ToJson for Rendering with fn to_json(self) {
     "mock": Json::string(self.mock),
     "time": Json::string(@log.format_time(self.time)),
     "seed": Json::number(self.seed.to_double()),
+    "responseIndex": self.response_index.map_or(Json::null(), index => {
+      Json::number(index.to_double())
+    }),
+    "variables": Json::object(self.variables),
     "response": {
       "status": Json::number(self.status.to_double()),
       "headers": Json::array(
@@ -304,7 +431,7 @@ pub impl ToJson for Rendering with fn to_json(self) {
 /// The `Body` schema of the Admin API document: the bytes as text when they
 /// are UTF-8, otherwise in base64. `bytes` are the first bytes of a body of
 /// `size` bytes, by default all of them.
-fn body_json(bytes : Bytes, size? : Int = bytes.length()) -> Json {
+fn body_json(bytes : BytesView, size? : Int = bytes.length()) -> Json {
   let (encoding, data) = try @utf8.decode(bytes) catch {
     _ => ("base64", @base64.encode(bytes))
   } noraise {

@@ -292,6 +292,8 @@ test "rendering a templated Stub shows its rendered events, with the time and th
       #|  "mock": "market",
       #|  "time": "2026-10-13T09:00:00.000Z",
       #|  "seed": 7,
+      #|  "responseIndex": null,
+      #|  "variables": {},
       #|  "response": {
       #|    "status": 200,
       #|    "headers": [
@@ -391,6 +393,8 @@ test "rendering with seed S shows what the first matched request of a Stub with 
       #|  "mock": "orders",
       #|  "time": "2026-10-13T09:00:00.000Z",
       #|  "seed": 99,
+      #|  "responseIndex": null,
+      #|  "variables": {},
       #|  "response": {
       #|    "status": 201,
       #|    "headers": [
@@ -431,6 +435,8 @@ test "rendering a template that fails for the sample shows the 500 the request w
       #|  "mock": "orders",
       #|  "time": "2026-10-13T09:00:00.000Z",
       #|  "seed": 3,
+      #|  "responseIndex": null,
+      #|  "variables": {},
       #|  "response": {
       #|    "status": 500,
       #|    "headers": [
