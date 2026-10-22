@@ -134,15 +134,15 @@ fn WorkingCopies::set_item(
   value : Json,
 ) -> Json raise KeyedFailure {
   guard value is Object(members) else { raise NotAnObject(value) }
-  guard self.values[i] is Array(items) &&
+  guard self.reached[i].value is Array(items) &&
     item_index(items, key_member, key) is Some(j) else {
     raise NoItem(key)
   }
   members[key_member] = kept_key(items, j, key_member, key, members)
   guard self.own(i, bucket.name) is Array(items) else { return value }
   let old = items[j]
-  self.bytes[i] += value_bytes(value) - value_bytes(old)
-  if self.sources[i] is Stored {
+  self.reached[i].bytes += value_bytes(value) - value_bytes(old)
+  if self.reached[i].source is Stored {
     self.changes.push(Replaced(items, j, old))
   }
   items[j] = value
@@ -165,7 +165,7 @@ fn WorkingCopies::merge_item(
   value : Json,
 ) -> Json raise KeyedFailure {
   guard value is Object(members) else { raise NotAnObject(value) }
-  guard self.values[i] is Array(items) &&
+  guard self.reached[i].value is Array(items) &&
     item_index(items, key_member, key) is Some(j) else {
     raise NoItem(key)
   }
@@ -187,16 +187,16 @@ fn WorkingCopies::remove_item(
   key_member : String,
   key : String,
 ) -> Json raise KeyedFailure {
-  guard self.values[i] is Array(items) &&
+  guard self.reached[i].value is Array(items) &&
     item_index(items, key_member, key) is Some(j) else {
     raise NoItem(key)
   }
   guard self.own(i, bucket.name) is Array(items) else { return Json::null() }
   let removed = items.remove(j)
   // The comma before it, or after it when it was first, goes too.
-  self.bytes[i] -= value_bytes(removed) +
+  self.reached[i].bytes -= value_bytes(removed) +
     (if items.is_empty() { 0L } else { 1L })
-  if self.sources[i] is Stored {
+  if self.reached[i].source is Stored {
     self.changes.push(Removed(items, j, removed))
   }
   removed
@@ -217,7 +217,7 @@ fn WorkingCopies::append_item(
   rand : @prng.Generator,
 ) -> Json raise KeyedFailure {
   guard value is Object(members) else { raise NotAnObject(value) }
-  guard self.values[i] is Array(items) else { return value }
+  guard self.reached[i].value is Array(items) else { return value }
   match members.get(key_member) {
     Some(held) => {
       guard @definitions.key_text(held) is Some(key) else {

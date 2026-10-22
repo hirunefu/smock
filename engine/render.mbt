@@ -718,8 +718,8 @@ fn preview_writes(
       },
     })
   }
-  for i in 0..<working.names.length() {
-    copies[working.names[i]] = working.values[i]
+  for reached in working.reached {
+    copies[reached.name] = reached.value
   }
   let variables = Map([])
   let after = vars.copy()
