@@ -59,21 +59,17 @@ fn drop_bucket(admin : Admin, call : Call) -> Reply {
   let session = admin.session(call.request)
   let mock = call.param("mock")
   let name = call.param("bucket")
-  let engine = admin.engine()
-  let before = engine.read_data(mock~, session~, bucket=name) catch {
-    error => return admin.refused(error, session)
-  }
-  let bucket = engine.drop_data(mock~, session~, bucket=name) catch {
-    error => return admin.refused(error, session)
-  }
-  if before.written {
+  let result = admin.engine().drop_data(mock~, session~, bucket=name) catch {
+      error => return admin.refused(error, session)
+    }
+  if result.dropped {
     admin.logger.info("Data bucket copy dropped", fields={
       "mock": Json::string(mock),
       "session": session_json(session),
       "bucket": Json::string(name),
     })
   }
-  admin.json(200, { "bucket": bucket_json(bucket, value=true) })
+  admin.json(200, { "bucket": bucket_json(result.bucket, value=true) })
 }
 
 ///|

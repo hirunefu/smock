@@ -96,11 +96,21 @@ pub fn Engine::set_data(
 }
 
 ///|
+/// What dropping a Session's copy of a Data bucket left: the bucket as the
+/// Session then sees it, and whether there was a copy to drop.
+pub(all) struct DroppedCopy {
+  bucket : SessionBucket
+  /// Whether the Session held a copy, which is now dropped.
+  dropped : Bool
+} derive(Debug)
+
+///|
 /// Drops the copy of the Data bucket `bucket` of the Mock `mock` that
 /// `session` holds, or the no-Session space when it is `None`, so that the
 /// bucket reads its initial value again, and gives back the bytes the copy
 /// counted against the bound on per-Session state. Without a copy, it
-/// changes nothing. Returns the bucket as `read_data` then gives it.
+/// changes nothing. Returns the bucket as `read_data` then gives it, and
+/// whether there was a copy.
 ///
 /// Raises `UnknownMock` when no Mock has the name `mock`, and
 /// `UnknownBucket` when the Mock has no bucket `bucket`.
@@ -109,10 +119,13 @@ pub fn Engine::drop_data(
   mock~ : String,
   session~ : String?,
   bucket~ : String,
-) -> SessionBucket raise AdminError {
+) -> DroppedCopy raise AdminError {
   let declared = self.declared_bucket(mock, bucket)
-  self.store.drop_copy(mock, session, bucket) |> ignore
-  session_bucket(declared, self.store.copy_values(mock, session))
+  let dropped = self.store.drop_copy(mock, session, bucket)
+  {
+    bucket: session_bucket(declared, self.store.copy_values(mock, session)),
+    dropped,
+  }
 }
 
 ///|
