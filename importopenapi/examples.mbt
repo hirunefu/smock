@@ -8,9 +8,8 @@
 ///
 /// A further example whose name a request cannot send in a header gets no
 /// Stub, with a warning. As the first example, it still gives the body.
-fn Report::examples(
-  self : Report,
-  document : Document,
+fn Conversion::examples(
+  self : Conversion,
   media_pointer : Place,
   examples_pointer : Place,
   key : String,
@@ -21,8 +20,7 @@ fn Report::examples(
   let serialized_first = !is_json_media_type(key)
   for name, json in examples {
     let at = examples_pointer.child(name)
-    guard self.example_value(document, at, json, serialized_first~)
-      is Some(value) else {
+    guard self.example_value(at, json, serialized_first~) is Some(value) else {
       continue
     }
     if first is None {
@@ -50,14 +48,13 @@ fn Report::examples(
 /// media type and for a header, `serializedValue`, else `dataValue`, else
 /// `value`. `None` when it has none of these, with a warning, or after
 /// reporting an error.
-fn Report::example_value(
-  self : Report,
-  document : Document,
+fn Conversion::example_value(
+  self : Conversion,
   pointer : Place,
   json : Json,
   serialized_first~ : Bool,
 ) -> Value? {
-  guard self.followed_object(document, pointer, json)
+  guard self.report.followed_object(self.document, pointer, json)
     is Some((pointer, example)) else {
     return None
   }
@@ -98,15 +95,15 @@ fn Report::example_value(
 /// for the example value `value`. The value is copied as data, so that a
 /// `$ref` member in it stays as written. A value that would nest too deep
 /// for the file is left out of the body, with a warning.
-fn Report::example_payload(
-  self : Report,
+fn Conversion::example_payload(
+  self : Conversion,
   pointer : Place,
   key : String,
   value : Value,
 ) -> Payload {
   let value = match value {
     Data(at, json) =>
-      match self.copied(at, json, body_nesting) {
+      match self.report.copied(at, json, body_nesting) {
         Some(json) => Some(Data(at, json))
         None => None
       }

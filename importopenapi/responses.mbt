@@ -169,8 +169,7 @@ fn Conversion::responses(
     // A response that is not informational makes a main one.
     guard main is Some(main) else { continue }
     let is_main = key == main.key
-    let answers = self.report.response_parts(
-      self.document,
+    let answers = self.response_parts(
       response_pointer,
       responses.get(key).unwrap_or(Json::null()),
       status=if is_main { main.status } else { status },
