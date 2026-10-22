@@ -364,16 +364,9 @@ fn WorkingCopies::apply(
   rand : @prng.Generator,
 ) -> Unit raise WriteFailure {
   let at = "/dataWrites/\{index}"
-  let mut declared = None
-  for i in 0..<buckets.length() {
-    if buckets[i].name == write.bucket {
-      declared = Some(buckets[i])
-      break
-    }
-  }
   // The buckets of a Stub from the Definition files are always there, as
   // it was read; an Ephemeral Stub's may be gone or changed since a reload.
-  guard declared is Some(bucket) else {
+  guard bucket_named(buckets, write.bucket) is Some(bucket) else {
     raise apply_failed(
       at,
       "the Mock has no Data bucket \{write.bucket.escape()} since a reload",

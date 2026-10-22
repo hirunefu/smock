@@ -79,7 +79,7 @@ priv struct CrudAnswer {
 /// JSON, with the Stub's `crud.headers` after smock's own.
 fn Engine::crud_answer(
   self : Engine,
-  mock : @definitions.Mock?,
+  mock : @definitions.Mock,
   stub : String,
   crud : @definitions.Crud,
   incoming : Incoming,
@@ -87,8 +87,7 @@ fn Engine::crud_answer(
   draw : UInt64,
 ) -> CrudAnswer {
   let call = crud_call(crud, incoming)
-  // A matched Stub always has the Mock that answered.
-  guard mock is Some(mock) && bucket_named(mock, crud.bucket) is Some(bucket) else {
+  guard bucket_named(mock.buckets, crud.bucket) is Some(bucket) else {
     return {
       plan: crud_failed(crud, 500, {
         "error": "unknown data bucket",

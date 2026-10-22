@@ -126,21 +126,22 @@ fn Engine::declared_bucket(
   mock : String,
   bucket : String,
 ) -> @definitions.DataBucket raise AdminError {
-  match bucket_named(self.mock_named(mock), bucket) {
+  match bucket_named(self.mock_named(mock).buckets, bucket) {
     Some(declared) => declared
     None => raise UnknownBucket(mock~, bucket~)
   }
 }
 
 ///|
-/// The Data bucket named `bucket` that `mock` declares, if any.
+/// The Data bucket named `bucket` among `buckets`, those a Mock declares,
+/// if any. Requests look buckets up, so it is a plain loop.
 fn bucket_named(
-  mock : @definitions.Mock,
+  buckets : ReadOnlyArray[@definitions.DataBucket],
   bucket : String,
 ) -> @definitions.DataBucket? {
-  for candidate in mock.buckets {
-    if candidate.name == bucket {
-      return Some(candidate)
+  for i in 0..<buckets.length() {
+    if buckets[i].name == bucket {
+      return Some(buckets[i])
     }
   }
   None
@@ -159,9 +160,9 @@ fn bucket_changed(
   bucket : String,
 ) -> Bool {
   guard before is Some(before) &&
-    bucket_named(before, bucket) is Some(before) &&
+    bucket_named(before.buckets, bucket) is Some(before) &&
     after is Some(after) &&
-    bucket_named(after, bucket) is Some(after) else {
+    bucket_named(after.buckets, bucket) is Some(after) else {
     return true
   }
   before.key != after.key ||

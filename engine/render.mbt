@@ -569,7 +569,7 @@ fn render_crud(
   }
   let call = crud_call(crud, incoming)
   // A Stub from the Definition files serves a keyed bucket of its Mock.
-  guard bucket_named(mock, crud.bucket) is Some(bucket) &&
+  guard bucket_named(mock.buckets, crud.bucket) is Some(bucket) &&
     bucket.key is Some(key_member) else {
     abort("a CRUD Stub serves a keyed bucket of its Mock")
   }
@@ -749,7 +749,7 @@ fn check_sample_data(
   mock : @definitions.Mock,
 ) -> Unit raise RenderFailure {
   for name, value in data {
-    guard bucket_named(mock, name) is Some(bucket) else {
+    guard bucket_named(mock.buckets, name) is Some(bucket) else {
       raise UnknownSampleBucket(mock=mock.name, bucket=name)
     }
     if bucket.key is Some(key) {
