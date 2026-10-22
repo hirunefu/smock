@@ -120,9 +120,8 @@ fn main_of(keys : Array[(String, ResponseKey)]) -> Response? {
 /// An explicit code answers itself, a range its first code, and
 /// `default`, when it is not the main response, 500. Problems come in the
 /// order of the responses.
-fn Report::responses(
-  self : Report,
-  document : Document,
+fn Conversion::responses(
+  self : Conversion,
   pointer : Place,
   meth : String,
   operation : Map[String, Json],
@@ -170,8 +169,8 @@ fn Report::responses(
     // A response that is not informational makes a main one.
     guard main is Some(main) else { continue }
     let is_main = key == main.key
-    let answers = self.response_parts(
-      document,
+    let answers = self.report.response_parts(
+      self.document,
       response_pointer,
       responses.get(key).unwrap_or(Json::null()),
       status=if is_main { main.status } else { status },
@@ -201,7 +200,7 @@ fn Report::responses(
 ///|
 /// The responses of an operation that has none, after a warning at `at`:
 /// one main 200 with an empty body.
-fn Report::no_responses(self : Report, at : Place) -> Array[Response]? {
+fn Conversion::no_responses(self : Conversion, at : Place) -> Array[Response]? {
   self.warning_at(
     at, "has no responses: the operation answers 200 with an empty body",
   )

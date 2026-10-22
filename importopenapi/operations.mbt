@@ -248,8 +248,7 @@ fn Conversion::operation(
     !callbacks.is_empty() {
     self.warning_at(pointer.child("callbacks"), "callbacks are not imported")
   }
-  guard self.report.responses(self.document, pointer, meth, operation)
-    is Some(responses) else {
+  guard self.responses(pointer, meth, operation) is Some(responses) else {
     return
   }
   let name = operation_id.unwrap_or("\{meth} \{key}")
