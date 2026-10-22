@@ -463,7 +463,9 @@ fn WorkingCopies::apply_whole(
           "the Data bucket \{bucket.name.escape()} holds \{kind_of(self.reached[i].value)}, and \"merge\" needs an object",
         )
       }
-      guard self.own(i, bucket.name) is Object(object) else { return }
+      guard self.own(i, bucket.name) is Object(object) else {
+        abort("own() keeps the value's kind")
+      }
       self.merge_members(i, object, members, except=None)
     }
     Append => {
@@ -473,7 +475,9 @@ fn WorkingCopies::apply_whole(
           "the Data bucket \{bucket.name.escape()} holds \{kind_of(self.reached[i].value)}, and \"append\" needs an array",
         )
       }
-      guard self.own(i, bucket.name) is Array(array) else { return }
+      guard self.own(i, bucket.name) is Array(array) else {
+        abort("own() keeps the value's kind")
+      }
       self.push_element(i, array, value)
     }
     // A `remove` always has a key, so this is never reached.

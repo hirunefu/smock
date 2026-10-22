@@ -113,8 +113,9 @@ fn kept_key(
     @definitions.key_text(held) != Some(key) {
     raise OtherKey(held, key)
   }
+  // `item_index` found the item by its key member.
   guard items[j] is Object(item) && item.get(key_member) is Some(stored) else {
-    raise NoItem(key)
+    abort("an item found by its key has its key member")
   }
   stored
 }
@@ -134,12 +135,14 @@ fn WorkingCopies::set_item(
   value : Json,
 ) -> Json raise KeyedFailure {
   guard value is Object(members) else { raise NotAnObject(value) }
-  guard self.reached[i].value is Array(items) &&
-    item_index(items, key_member, key) is Some(j) else {
-    raise NoItem(key)
+  guard self.reached[i].value is Array(items) else {
+    abort("a keyed bucket holds an array")
   }
+  guard item_index(items, key_member, key) is Some(j) else { raise NoItem(key) }
   members[key_member] = kept_key(items, j, key_member, key, members)
-  guard self.own(i, bucket.name) is Array(items) else { return value }
+  guard self.own(i, bucket.name) is Array(items) else {
+    abort("own() keeps the value's kind")
+  }
   let old = items[j]
   self.reached[i].bytes += value_bytes(value) - value_bytes(old)
   if self.reached[i].source is Stored {
@@ -165,13 +168,13 @@ fn WorkingCopies::merge_item(
   value : Json,
 ) -> Json raise KeyedFailure {
   guard value is Object(members) else { raise NotAnObject(value) }
-  guard self.reached[i].value is Array(items) &&
-    item_index(items, key_member, key) is Some(j) else {
-    raise NoItem(key)
+  guard self.reached[i].value is Array(items) else {
+    abort("a keyed bucket holds an array")
   }
+  guard item_index(items, key_member, key) is Some(j) else { raise NoItem(key) }
   kept_key(items, j, key_member, key, members) |> ignore
   guard self.own(i, bucket.name) is Array(items) && items[j] is Object(item) else {
-    return value
+    abort("own() keeps the value's kind, and a keyed bucket holds objects")
   }
   self.merge_members(i, item, members, except=Some(key_member))
   items[j]
@@ -187,11 +190,13 @@ fn WorkingCopies::remove_item(
   key_member : String,
   key : String,
 ) -> Json raise KeyedFailure {
-  guard self.reached[i].value is Array(items) &&
-    item_index(items, key_member, key) is Some(j) else {
-    raise NoItem(key)
+  guard self.reached[i].value is Array(items) else {
+    abort("a keyed bucket holds an array")
   }
-  guard self.own(i, bucket.name) is Array(items) else { return Json::null() }
+  guard item_index(items, key_member, key) is Some(j) else { raise NoItem(key) }
+  guard self.own(i, bucket.name) is Array(items) else {
+    abort("own() keeps the value's kind")
+  }
   let removed = items.remove(j)
   // The comma before it, or after it when it was first, goes too.
   self.reached[i].bytes -= value_bytes(removed) +
@@ -217,7 +222,9 @@ fn WorkingCopies::append_item(
   rand : @prng.Generator,
 ) -> Json raise KeyedFailure {
   guard value is Object(members) else { raise NotAnObject(value) }
-  guard self.reached[i].value is Array(items) else { return value }
+  guard self.reached[i].value is Array(items) else {
+    abort("a keyed bucket holds an array")
+  }
   match members.get(key_member) {
     Some(held) => {
       guard @definitions.key_text(held) is Some(key) else {
@@ -230,7 +237,9 @@ fn WorkingCopies::append_item(
     None =>
       members[key_member] = new_key(items, key_member, bucket.new_key, rand)
   }
-  guard self.own(i, bucket.name) is Array(items) else { return value }
+  guard self.own(i, bucket.name) is Array(items) else {
+    abort("own() keeps the value's kind")
+  }
   self.push_element(i, items, value)
   value
 }
