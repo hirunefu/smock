@@ -176,12 +176,13 @@ the same Schemas again.
   them by hand, and checks NOTICE as
   [Every release after](#every-release-after) says.
 - **The cosign and syft versions**, which the workflows pass to the
-  actions that install them, as `cosign-release` (`release.yml`, once
-  for the image and once for the chart: keep them the same) and
-  `syft-version` (`release.yml` and `build-test.yml`). Dependabot moves
-  the actions, not these inputs. The maintainer moves them by hand: when
-  Dependabot moves `sigstore/cosign-installer` or `anchore/sbom-action`,
-  check whether cosign or syft has a newer release too.
+  actions that install them: cosign's once, as `COSIGN_RELEASE` in
+  `release.yml`'s `env`, which the image's and the chart's jobs both
+  pass as `cosign-release`, and syft's as `syft-version` (`release.yml`
+  and `build-test.yml`). Dependabot moves the actions, not these inputs.
+  The maintainer moves them by hand: when Dependabot moves
+  `sigstore/cosign-installer` or `anchore/sbom-action`, check whether
+  cosign or syft has a newer release too.
 - **The load generator's image** of the GKE benchmark,
   `bench/gke/generator.Dockerfile` (`python:3.13-slim`), on purpose. It
   is not shipped, and a new base between two pre-merge runs on GKE would

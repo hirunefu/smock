@@ -15,8 +15,10 @@ time a request at a step, it shows how that changed too, for information
 only, and for two GKE runs, whether smock's node had another CPU under each
 profile. A step where other tasks used at least 1% of smock's CPUs' time in
 its measured window, in either run, is disturbed (a run on a machine
-records it, a GKE run does not): its verdict says so, and a regression
-there still counts. It also lists the targets the newer run missed. It
+records it, a GKE run does not): its verdict says so, with how long smock
+waited for a CPU in that window in each run where both recorded it, and a
+regression there still counts. It also lists the targets the newer run
+missed. It
 exits with 1 when it finds a regression or a missed target, or when the
 newer run did not measure a step that counts and that the older one
 measured (it stopped early, left the step out, or its load generator fell
@@ -199,18 +201,32 @@ def compare_step(older, newer, rule, counted, architectures=None):
     return {**cells, "Verdict": ("regression" if counted else "worse") if regression else "ok"}, regression, False
 
 
+def window_wait(step):
+    """How long smock waited for a CPU in a step's measured window, or None
+    where the run did not record it: a GKE run, or one from before it
+    was."""
+    return ((step.get("smock_cpu") or {}).get("window") or {}).get("scheduling_delay_s")
+
+
 def disturbance(older, newer):
     """How other tasks on smock's CPUs disturbed a step, in either run or
-    both, for people, or None when they disturbed it in neither or neither
-    recorded them (as bench.py's other_tasks has them)."""
+    both, for people, with how long smock waited for a CPU in the step's
+    window in each run where both recorded it; or None when they disturbed
+    it in neither or neither recorded them (as bench.py's other_tasks has
+    them)."""
     shares = [(run, step["other_tasks"]["share"]) for run, step in (("older", older), ("newer", newer))
               if (step.get("other_tasks") or {}).get("disturbed")]
     if not shares:
         return None
     if len(shares) == 2:
-        return (f"disturbed: other tasks used {shares[0][1] * 100:.2f}% of smock's CPUs in the older run and "
+        text = (f"disturbed: other tasks used {shares[0][1] * 100:.2f}% of smock's CPUs in the older run and "
                 f"{shares[1][1] * 100:.2f}% in the newer")
-    return f"disturbed: other tasks used {shares[0][1] * 100:.2f}% of smock's CPUs in the {shares[0][0]} run"
+    else:
+        text = f"disturbed: other tasks used {shares[0][1] * 100:.2f}% of smock's CPUs in the {shares[0][0]} run"
+    waits = window_wait(older), window_wait(newer)
+    if None not in waits:
+        text += f"; CPU wait {waits[0]} s → {waits[1]} s"
+    return text
 
 
 def architecture(conditions):
@@ -434,7 +450,9 @@ def disturbance_line(older, newer):
                 "on GKE): whether they disturbed a step is not known.")
     line = (f"A step is disturbed when other tasks used at least {harness.DISTURBED_SHARE * 100:g}% of smock's CPUs' "
             "time in its measured window, in either run: its latencies may then be the machine's rather than "
-            "smock's. A regression there still counts; rerun its profile before looking for the cause in smock.")
+            "smock's. A regression there still counts; rerun its profile before looking for the cause in smock. "
+            "The verdict of a disturbed step also says how long smock waited for a CPU in its window in each run, "
+            "where both recorded it (*CPU wait*, which includes the time the CPU limit held smock back).")
     for name in unrecorded:
         line += (f" What other tasks used of smock's CPUs was not recorded in the {name} run (a run from before it "
                  "was, or on GKE): whether they disturbed its steps is not known.")
