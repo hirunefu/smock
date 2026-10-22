@@ -1772,8 +1772,7 @@
       },
       "DataBucketName": {
         "description": "The name of a Data bucket: 1 to 128 ASCII letters, digits, `_` and `-`.",
-        "type": "string",
-        "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        "$ref": "../schema/v1/definitions.json#/$defs/bucketName"
       },
       "DataBucketKey": {
         "description": "The member that holds each item's key, taken literally, when the bucket is keyed; `null` for a bucket without `key`.",
