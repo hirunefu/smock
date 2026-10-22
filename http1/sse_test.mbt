@@ -17,8 +17,9 @@ fn streamed(
   parts : Array[String],
   request? : @http1.Request,
   close? : Bool = false,
+  date? : String,
 ) -> String {
-  let stream = @http1.ResponseStream(status, headers, request?, close~)
+  let stream = @http1.ResponseStream(status, headers, request?, close~, date?)
   let out = @buffer.Buffer()
   out.write_bytes(stream.head())
   for part in parts {
@@ -111,6 +112,53 @@ test "a streamed response to HTTP/1.1 that closes the connection after it is sti
       #|\r\n
       #|1\r\n
       #|x\r\n
+      #|0\r\n
+      #|\r\n
+      #|[closed]
+    ),
+  )
+}
+
+///|
+test "a streamed response given a Date value carries it in its head, after its headers and before the fields that frame it, unless its headers give one in any case" {
+  let request = request_of(
+    "GET /events HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n",
+  )
+  let date = "Thu, 22 Oct 2026 14:37:10 GMT"
+  inspect(
+    streamed(
+      200,
+      [("Content-Type", "text/event-stream")],
+      ["x"],
+      request~,
+      date~,
+    ) +
+    "\n---\n" +
+    streamed(
+      200,
+      [("DATE", "Mon, 01 Jan 2001 00:00:00 GMT")],
+      [],
+      request~,
+      date~,
+    ),
+    content=(
+      #|HTTP/1.1 200 OK\r\n
+      #|Content-Type: text/event-stream\r\n
+      #|Date: Thu, 22 Oct 2026 14:37:10 GMT\r\n
+      #|Connection: close\r\n
+      #|Transfer-Encoding: chunked\r\n
+      #|\r\n
+      #|1\r\n
+      #|x\r\n
+      #|0\r\n
+      #|\r\n
+      #|[closed]
+      #|---
+      #|HTTP/1.1 200 OK\r\n
+      #|DATE: Mon, 01 Jan 2001 00:00:00 GMT\r\n
+      #|Connection: close\r\n
+      #|Transfer-Encoding: chunked\r\n
+      #|\r\n
       #|0\r\n
       #|\r\n
       #|[closed]

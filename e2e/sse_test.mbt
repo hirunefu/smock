@@ -95,6 +95,7 @@ async test "an events Stub streams to a real HTTP/1.1 client: the head at once, 
           #|Content-Type: text/event-stream
           #|Cache-Control: no-cache
           #|Smock-Mock: news; via=default
+          #|Date: <now>
           #|Transfer-Encoding: chunked
           #|event at 400 ms: "data: first"
           #|event at 700 ms: "event: update\nid: 2\ndata: line 1\ndata: line 2"
@@ -102,6 +103,7 @@ async test "an events Stub streams to a real HTTP/1.1 client: the head at once, 
           #|end of stream
           #|200 OK
           #|Smock-Mock: news; via=default
+          #|Date: <now>
           #|Content-Length: 5
           #|
           #|hello
@@ -140,6 +142,7 @@ async test "an events Stub streams to an HTTP/1.0 client over a raw connection w
         #|Content-Type: text/event-stream
         #|Cache-Control: no-cache
         #|Smock-Mock: news; via=default
+        #|Date: <now>
         #|Connection: close
         #|
         #|event at 400 ms: "data: first"
@@ -184,6 +187,7 @@ async test "while a stream waits for an event's delay, smock answers requests on
           #|answered while the stream waits:
           #|HTTP/1.1 200 OK
           #|Smock-Mock: news; via=default
+          #|Date: <now>
           #|Content-Length: 5
           #|
           #|hello
@@ -242,6 +246,7 @@ async test "a client that closes the connection mid-stream ends that stream, and
           #|the stream ended
           #|HTTP/1.1 200 OK
           #|Smock-Mock: clock; via=default
+          #|Date: <now>
           #|Content-Length: 5
           #|
           #|hello
@@ -301,12 +306,14 @@ async test "a response to HEAD from an events Stub is its head alone: smock writ
           #|HTTP/1.1 200 OK
           #|Content-Type: text/event-stream
           #|Smock-Mock: news; via=default
+          #|Date: <now>
           #|Transfer-Encoding: chunked
           #|
           #|in the Journal right after: 1
           #|the next request answered before the event was due:
           #|HTTP/1.1 200 OK
           #|Smock-Mock: news; via=default
+          #|Date: <now>
           #|Content-Length: 5
           #|
           #|hello

@@ -38,6 +38,11 @@ of each GitHub release include its section
 - A release's notes link to files of the repository at the release's tag.
   They copy the version's section of CHANGELOG.md, whose relative links to
   files led to a missing page from the release page.
+- Every final response smock writes now carries a `Date` header with the
+  current time, as RFC 9110 requires: Stub responses, the no-match
+  response, Admin API responses and the errors smock sends itself, on
+  every port. A Stub, `noMatch.headers` or `crud.headers` that gives its
+  own `Date` gets that one alone. `100 Continue` carries none.
 
 ## [0.3.0] - 2026-10-22
 

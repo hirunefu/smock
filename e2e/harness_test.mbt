@@ -785,13 +785,50 @@ async fn Smock::connect(self : Smock, over? : Over = Plain) -> Conn {
 
 ///|
 /// Reads one response, framed by its Content-Length, and renders it with
-/// `\r\n` shown as `\n`. Returns `"closed"` when the connection ends first.
+/// `\r\n` shown as `\n` and the current Date masked (`mask_date`). Returns
+/// `"closed"` when the connection ends first.
 async fn read_response(conn : Conn) -> String {
   match read_framed(conn) {
     Some((head, body)) =>
-      head.replace_all(old="\r\n", new="\n") + "\n\n" + @utf8.decode_lossy(body)
+      mask_date(head.replace_all(old="\r\n", new="\n")) +
+      "\n\n" +
+      @utf8.decode_lossy(body)
     None => "closed"
   }
+}
+
+///|
+/// `text`, one or more responses or parts of them, with the value of each
+/// `Date` field that is the current time shown as `<now>`: the time, by the
+/// test's clock, of a second within the last minute, in IMF-fixdate form.
+/// Any other value stays as it is, such as an older one a Stub gives, so a
+/// Date that is missing, repeated, late or malformed shows.
+fn mask_date(text : String) -> String {
+  guard text.contains("Date: ") else { return text }
+  let dates = @http1.DateCache()
+  let now = @async.now() / 1000L
+  let recent = []
+  for second in (now - 60L)..<=(now + 1L) {
+    recent.push(dates.at(second * 1000L))
+  }
+  text
+  .split("\n")
+  .map(line => {
+    guard line.strip_prefix("Date: ") is Some(value) else {
+      return line.to_owned()
+    }
+    let (value, cr) = match value.strip_suffix("\r") {
+      Some(value) => (value, "\r")
+      None => (value, "")
+    }
+    if recent.contains(value.to_owned()) {
+      "Date: <now>\{cr}"
+    } else {
+      line.to_owned()
+    }
+  })
+  .collect()
+  .join("\n")
 }
 
 ///|
@@ -832,8 +869,7 @@ fn render_response(response : @http.Response, body : String) -> String {
     out.write_string("\{name.0}: \{value}\n")
   }
   out.write_string("\n")
-  out.write_string(body)
-  out.to_string()
+  mask_date(out.to_string()) + body
 }
 
 ///|

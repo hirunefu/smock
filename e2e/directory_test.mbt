@@ -38,12 +38,14 @@ async test "Definition files are the regular top-level .json files, symlinks fol
           content=(
             #|200 OK
             #|Smock-Mock: m; via=default
+            #|Date: <now>
             #|Content-Length: 12
             #|
             #|from aa.json
             #|---
             #|200 OK
             #|Smock-Mock: m; via=default
+            #|Date: <now>
             #|Content-Length: 13
             #|
             #|via a symlink
@@ -90,12 +92,14 @@ async test "YAML and JSON Definition files mix in one directory, in byte-wise na
           content=(
             #|200 OK
             #|Smock-Mock: m; via=default
+            #|Date: <now>
             #|Content-Length: 11
             #|
             #|from a.yaml
             #|---
             #|200 OK
             #|Smock-Mock: m; via=default
+            #|Date: <now>
             #|Content-Length: 11
             #|
             #|from c.json
@@ -129,6 +133,7 @@ async test "a missing or empty definitions directory, or none at all, gives an e
         #|404 Not Found
         #|Content-Type: application/json
         #|Smock-Mock: default; via=default
+        #|Date: <now>
         #|Content-Length: 27
         #|
         #|{"error":"no Stub matched"}
@@ -138,6 +143,7 @@ async test "a missing or empty definitions directory, or none at all, gives an e
         #|404 Not Found
         #|Content-Type: application/json
         #|Smock-Mock: default; via=default
+        #|Date: <now>
         #|Content-Length: 27
         #|
         #|{"error":"no Stub matched"}
@@ -147,6 +153,7 @@ async test "a missing or empty definitions directory, or none at all, gives an e
         #|404 Not Found
         #|Content-Type: application/json
         #|Smock-Mock: default; via=default
+        #|Date: <now>
         #|Content-Length: 27
         #|
         #|{"error":"no Stub matched"}

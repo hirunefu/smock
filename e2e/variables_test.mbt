@@ -48,6 +48,7 @@ async test "over HTTP, a POST stores a value that a GET of the same Session read
           #|HTTP/1.1 200 OK
           #|Content-Type: application/json
           #|Smock-Mock: shop; via=default
+          #|Date: <now>
           #|Content-Length: 13
           #|
           #|{"user":null}
@@ -55,6 +56,7 @@ async test "over HTTP, a POST stores a value that a GET of the same Session read
           #|HTTP/1.1 200 OK
           #|Content-Type: application/json
           #|Smock-Mock: shop; via=default
+          #|Date: <now>
           #|Content-Length: 30
           #|
           #|{"user":"ann","previous":null}
@@ -62,6 +64,7 @@ async test "over HTTP, a POST stores a value that a GET of the same Session read
           #|HTTP/1.1 200 OK
           #|Content-Type: application/json
           #|Smock-Mock: shop; via=default
+          #|Date: <now>
           #|Content-Length: 14
           #|
           #|{"user":"ann"}
@@ -69,6 +72,7 @@ async test "over HTTP, a POST stores a value that a GET of the same Session read
           #|HTTP/1.1 200 OK
           #|Content-Type: application/json
           #|Smock-Mock: shop; via=default
+          #|Date: <now>
           #|Content-Length: 13
           #|
           #|{"user":null}

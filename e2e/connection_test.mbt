@@ -37,15 +37,15 @@ let startup_only : String =
 
 ///|
 /// Reads a response head without a body, as sent for HEAD or for a 1xx
-/// status, and renders it with `\r\n` shown as `\n`, without the empty line
-/// that ends it.
+/// status, and renders it with `\r\n` shown as `\n` and the current Date
+/// masked (`mask_date`), without the empty line that ends it.
 async fn read_head(conn : Conn) -> String {
   let result = @async.with_timeout_opt(patience_ms, () => {
     conn.read_until("\r\n\r\n")
   })
   guard result is Some(head) else { fail("no response head in time") }
   match head {
-    Some(head) => head.replace_all(old="\r\n", new="\n") + "\n"
+    Some(head) => mask_date(head.replace_all(old="\r\n", new="\n")) + "\n"
     None => "closed"
   }
 }
@@ -58,11 +58,11 @@ fn status_line(response : String) -> String {
 
 ///|
 /// Waits until smock ends the connection, and returns how many milliseconds
-/// after `since` that was and what smock sent until then. A reset ends the
-/// connection too.
+/// after `since` that was and what smock sent until then, with the current
+/// Date masked (`mask_date`). A reset ends the connection too.
 async fn ended(conn : Conn, since : Int64) -> (Int64, String) {
   let (_, end, received) = received_until_end(conn, since)
-  (end, @utf8.decode_lossy(received))
+  (end, mask_date(@utf8.decode_lossy(received)))
 }
 
 ///|
@@ -97,6 +97,7 @@ async test "keep-alive: HTTP/1.1 keeps the connection open unless the request sa
         #|HTTP/1.1 200 OK
         #|Content-Type: application/json
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Content-Length: 23
         #|
         #|{"id":1,"name":"Alice"}
@@ -104,6 +105,7 @@ async test "keep-alive: HTTP/1.1 keeps the connection open unless the request sa
         #|HTTP/1.1 200 OK
         #|Content-Type: application/json
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Content-Length: 23
         #|
         #|{"id":1,"name":"Alice"}
@@ -111,6 +113,7 @@ async test "keep-alive: HTTP/1.1 keeps the connection open unless the request sa
         #|HTTP/1.1 200 OK
         #|Content-Type: application/json
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Connection: close
         #|Content-Length: 23
         #|
@@ -121,6 +124,7 @@ async test "keep-alive: HTTP/1.1 keeps the connection open unless the request sa
         #|HTTP/1.1 200 OK
         #|Content-Type: application/json
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Connection: keep-alive
         #|Content-Length: 23
         #|
@@ -129,6 +133,7 @@ async test "keep-alive: HTTP/1.1 keeps the connection open unless the request sa
         #|HTTP/1.1 200 OK
         #|Content-Type: application/json
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Connection: keep-alive
         #|Content-Length: 23
         #|
@@ -137,6 +142,7 @@ async test "keep-alive: HTTP/1.1 keeps the connection open unless the request sa
         #|HTTP/1.1 200 OK
         #|Content-Type: application/json
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Connection: close
         #|Content-Length: 23
         #|
@@ -171,6 +177,7 @@ async test "a pipelined request that says Connection: close is answered, then th
         #|Content-Type: application/json
         #|Smock-Near-Miss: user; failed=path
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Connection: close
         #|Content-Length: 27
         #|
@@ -207,11 +214,13 @@ async test "HEAD: the response carries its status and headers, with the Content-
         #|HTTP/1.1 200 OK
         #|Content-Type: application/json
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Content-Length: 23
         #|---
         #|HTTP/1.1 200 OK
         #|Content-Type: application/json
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Content-Length: 23
         #|
         #|{"id":1,"name":"Alice"}---
@@ -219,11 +228,13 @@ async test "HEAD: the response carries its status and headers, with the Content-
         #|Content-Type: application/json
         #|Smock-Near-Miss: user; failed=path
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Content-Length: 27
         #|---
         #|HTTP/1.1 200 OK
         #|Content-Type: application/json
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Connection: close
         #|Content-Length: 23
         #|---
@@ -270,6 +281,7 @@ async test "Expect: 100-continue within the body limit gets 100 Continue before 
           #|HTTP/1.1 200 OK
           #|---
           #|HTTP/1.1 413 Content Too Large
+          #|Date: <now>
           #|Connection: close
           #|Content-Length: 0
           #|
@@ -382,14 +394,14 @@ async test "limits: a head over the header size or header count limit gets 431, 
       inspect(
         out.join("\n"),
         content=(
-          #|head of 128 bytes: HTTP/1.1 200 OK | Content-Type: application/json | Smock-Mock: users; via=default | Content-Length: 23 |  | {"id":1,"name":"Alice"}, open
-          #|head of 129 bytes: HTTP/1.1 431 Request Header Fields Too Large | Connection: close | Content-Length: 0, then "" and closed
-          #|4 header fields: HTTP/1.1 200 OK | Content-Type: application/json | Smock-Mock: users; via=default | Content-Length: 23 |  | {"id":1,"name":"Alice"}, open
-          #|5 header fields: HTTP/1.1 431 Request Header Fields Too Large | Connection: close | Content-Length: 0, then "" and closed
-          #|Content-Length: 16: HTTP/1.1 200 OK | Content-Type: application/json | Smock-Mock: users; via=default | Content-Length: 23 |  | {"id":1,"name":"Alice"}, open
-          #|Content-Length: 17, without the body: HTTP/1.1 413 Content Too Large | Connection: close | Content-Length: 0, then "" and closed
-          #|chunked body of 16 bytes: HTTP/1.1 200 OK | Content-Type: application/json | Smock-Mock: users; via=default | Content-Length: 23 |  | {"id":1,"name":"Alice"}, open
-          #|chunk taking the body to 17 bytes, without its data: HTTP/1.1 413 Content Too Large | Connection: close | Content-Length: 0, then "" and closed
+          #|head of 128 bytes: HTTP/1.1 200 OK | Content-Type: application/json | Smock-Mock: users; via=default | Date: <now> | Content-Length: 23 |  | {"id":1,"name":"Alice"}, open
+          #|head of 129 bytes: HTTP/1.1 431 Request Header Fields Too Large | Date: <now> | Connection: close | Content-Length: 0, then "" and closed
+          #|4 header fields: HTTP/1.1 200 OK | Content-Type: application/json | Smock-Mock: users; via=default | Date: <now> | Content-Length: 23 |  | {"id":1,"name":"Alice"}, open
+          #|5 header fields: HTTP/1.1 431 Request Header Fields Too Large | Date: <now> | Connection: close | Content-Length: 0, then "" and closed
+          #|Content-Length: 16: HTTP/1.1 200 OK | Content-Type: application/json | Smock-Mock: users; via=default | Date: <now> | Content-Length: 23 |  | {"id":1,"name":"Alice"}, open
+          #|Content-Length: 17, without the body: HTTP/1.1 413 Content Too Large | Date: <now> | Connection: close | Content-Length: 0, then "" and closed
+          #|chunked body of 16 bytes: HTTP/1.1 200 OK | Content-Type: application/json | Smock-Mock: users; via=default | Date: <now> | Content-Length: 23 |  | {"id":1,"name":"Alice"}, open
+          #|chunk taking the body to 17 bytes, without its data: HTTP/1.1 413 Content Too Large | Date: <now> | Connection: close | Content-Length: 0, then "" and closed
         ),
       )
     },
@@ -617,8 +629,8 @@ async test "timeouts: neither timeout runs while smock writes a response, howeve
       inspect(
         out.join("\n"),
         content=(
-          #|delayed: "HTTP/1.1 200 OK\nSmock-Mock: users; via=default\nContent-Length: 4\n\nslow", then "", ended about 500 ms after it: true
-          #|streamed: "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nSmock-Mock: users; via=default\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\nd\r\ndata: first\n\n\r\ne\r\ndata: second\n\n\r\nc\r\ndata: last\n\n\r\n0\r\n\r\n"
+          #|delayed: "HTTP/1.1 200 OK\nSmock-Mock: users; via=default\nDate: <now>\nContent-Length: 4\n\nslow", then "", ended about 500 ms after it: true
+          #|streamed: "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nSmock-Mock: users; via=default\r\nDate: <now>\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\nd\r\ndata: first\n\n\r\ne\r\ndata: second\n\n\r\nc\r\ndata: last\n\n\r\n0\r\n\r\n"
         ),
       )
     },

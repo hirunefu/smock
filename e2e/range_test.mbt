@@ -52,6 +52,7 @@ async test "a byte range gets 206 and an unsatisfiable one 416, each framed by t
         #|Content-Range: bytes 0-25/26
         #|Accept-Ranges: bytes
         #|Smock-Mock: media; via=default
+        #|Date: <now>
         #|Content-Length: 26
         #|
         #|abcdefghijklmnopqrstuvwxyz
@@ -61,6 +62,7 @@ async test "a byte range gets 206 and an unsatisfiable one 416, each framed by t
         #|Content-Range: bytes 21-25/26
         #|Accept-Ranges: bytes
         #|Smock-Mock: media; via=default
+        #|Date: <now>
         #|Content-Length: 5
         #|
         #|vwxyz
@@ -69,6 +71,7 @@ async test "a byte range gets 206 and an unsatisfiable one 416, each framed by t
         #|Content-Type: video/mp4
         #|Content-Range: bytes */26
         #|Smock-Mock: media; via=default
+        #|Date: <now>
         #|Content-Length: 0
         #|
         #|
@@ -77,6 +80,7 @@ async test "a byte range gets 206 and an unsatisfiable one 416, each framed by t
         #|Content-Type: video/mp4
         #|Accept-Ranges: bytes
         #|Smock-Mock: media; via=default
+        #|Date: <now>
         #|Content-Length: 26
         #|
         #|abcdefghijklmnopqrstuvwxyz
@@ -103,6 +107,7 @@ async test "a partial Fault on a 206 sends the head, with the 206's Content-Leng
         #|Content-Range: bytes 10-19/26
         #|Accept-Ranges: bytes
         #|Smock-Mock: media; via=default
+        #|Date: <now>
         #|Content-Length: 10
         #|
         #|klmno

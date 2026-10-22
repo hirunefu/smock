@@ -56,7 +56,7 @@
               "default": 404
             },
             "headers": {
-              "description": "Header fields to send on the response when no Stub matches, such as CORS headers, by name: a value, or a non-empty array of values, each sent as its own field line, in order. They are sent as written, never templated. Names are compared case-insensitively, so two names that differ only in case are rejected. smock sets Content-Type for its JSON body, Smock-Near-Miss, Content-Length, Transfer-Encoding and Connection itself, and Smock-Mock when the Default Mock answers, so they cannot be given.",
+              "description": "Header fields to send on the response when no Stub matches, such as CORS headers, by name: a value, or a non-empty array of values, each sent as its own field line, in order. They are sent as written, never templated. Names are compared case-insensitively, so two names that differ only in case are rejected. smock sets Content-Type for its JSON body, Smock-Near-Miss, Content-Length, Transfer-Encoding and Connection itself, and Smock-Mock when the Default Mock answers, so they cannot be given. smock sends Date with the current time, unless Date is given here.",
               "type": "object",
               "propertyNames": {
                 "$ref": "#/$defs/responseHeaderName",
@@ -200,7 +200,7 @@
           "pattern": "^(/[^/]+)+$"
         },
         "headers": {
-          "description": "Header fields to send on every answer of the Stub, errors included, such as CORS headers, by name: a value, or a non-empty array of values, each sent as its own field line, in order. They are sent as written, never templated. Names are compared case-insensitively, so two names that differ only in case are rejected. smock sets Content-Type, Location, X-Total-Count, X-Filtered-Count, Content-Length, Transfer-Encoding and Connection itself, and Smock-Mock when the Default Mock answers, so they cannot be given. A browser reads X-Total-Count and X-Filtered-Count only when Access-Control-Expose-Headers names them.",
+          "description": "Header fields to send on every answer of the Stub, errors included, such as CORS headers, by name: a value, or a non-empty array of values, each sent as its own field line, in order. They are sent as written, never templated. Names are compared case-insensitively, so two names that differ only in case are rejected. smock sets Content-Type, Location, X-Total-Count, X-Filtered-Count, Content-Length, Transfer-Encoding and Connection itself, and Smock-Mock when the Default Mock answers, so they cannot be given. smock sends Date with the current time, unless Date is given here. A browser reads X-Total-Count and X-Filtered-Count only when Access-Control-Expose-Headers names them.",
           "type": "object",
           "propertyNames": {
             "$ref": "#/$defs/responseHeaderName",
@@ -467,7 +467,7 @@
           "$ref": "#/$defs/status"
         },
         "headers": {
-          "description": "Header fields to send, by name: a value, or a non-empty array of values, each sent as its own field line, in order, such as several Set-Cookie fields. Content-Type takes one value. Names are compared case-insensitively, so two names that differ only in case, such as Set-Cookie and set-cookie, are rejected. smock sets Content-Length, Transfer-Encoding and Connection itself, and Smock-Mock when the Default Mock answers, so they cannot be given.",
+          "description": "Header fields to send, by name: a value, or a non-empty array of values, each sent as its own field line, in order, such as several Set-Cookie fields. Content-Type takes one value. Names are compared case-insensitively, so two names that differ only in case, such as Set-Cookie and set-cookie, are rejected. smock sets Content-Length, Transfer-Encoding and Connection itself, and Smock-Mock when the Default Mock answers, so they cannot be given. smock sends Date with the current time, unless Date is given here.",
           "type": "object",
           "propertyNames": { "$ref": "#/$defs/responseHeaderName" },
           "patternProperties": {

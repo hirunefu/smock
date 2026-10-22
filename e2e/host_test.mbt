@@ -56,21 +56,25 @@ async test "requests reach the Mock whose Hosts include their Host, whatever its
       ]),
       content=(
         #|HTTP/1.1 200 OK
+        #|Date: <now>
         #|Content-Length: 10
         #|
         #|from users
         #|---
         #|HTTP/1.1 200 OK
+        #|Date: <now>
         #|Content-Length: 11
         #|
         #|from orders
         #|---
         #|HTTP/1.1 200 OK
+        #|Date: <now>
         #|Content-Length: 10
         #|
         #|from users
         #|---
         #|HTTP/1.1 200 OK
+        #|Date: <now>
         #|Content-Length: 11
         #|
         #|from orders
@@ -90,17 +94,20 @@ async test "the authority of an absolute-form target wins over the Host header" 
       ]),
       content=(
         #|HTTP/1.1 200 OK
+        #|Date: <now>
         #|Content-Length: 11
         #|
         #|from orders
         #|---
         #|HTTP/1.1 200 OK
+        #|Date: <now>
         #|Content-Length: 11
         #|
         #|from orders
         #|---
         #|HTTP/1.1 200 OK
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Content-Length: 10
         #|
         #|from users
@@ -125,6 +132,7 @@ async test "the Default Mock answers an unknown Host or no Host, and says so in 
       content=(
         #|HTTP/1.1 200 OK
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Content-Length: 10
         #|
         #|from users
@@ -133,12 +141,14 @@ async test "the Default Mock answers an unknown Host or no Host, and says so in 
         #|Content-Type: application/json
         #|Smock-Near-Miss: users-x; failed=path
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Content-Length: 27
         #|
         #|{"error":"no Stub matched"}
         #|---
         #|HTTP/1.1 200 OK
         #|Smock-Mock: users; via=default
+        #|Date: <now>
         #|Connection: close
         #|Content-Length: 10
         #|
@@ -147,6 +157,7 @@ async test "the Default Mock answers an unknown Host or no Host, and says so in 
         #|HTTP/1.1 404 Not Found
         #|Content-Type: application/json
         #|Smock-Near-Miss: users-x; failed=path
+        #|Date: <now>
         #|Content-Length: 27
         #|
         #|{"error":"no Stub matched"}
@@ -165,12 +176,14 @@ async test "without a Default Mock, an unknown Host or no Host gets 404 with the
       content=(
         #|HTTP/1.1 404 Not Found
         #|Content-Type: application/json
+        #|Date: <now>
         #|Content-Length: 127
         #|
         #|{"error":"no Mock for this Host","host":"usres.example.com","acceptedHosts":["orders.example.com","users.example.com","[::1]"]}
         #|---
         #|HTTP/1.1 404 Not Found
         #|Content-Type: application/json
+        #|Date: <now>
         #|Connection: close
         #|Content-Length: 112
         #|

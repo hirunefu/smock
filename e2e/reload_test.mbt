@@ -386,7 +386,7 @@ async test "a large body written to a slow reader during a reload completes with
       let fresh_start = fresh.read_exactly(1024)
       inspect(
         (
-          $|\{head.split("\r\n").filter(line => !line.has_prefix("Smock-Mock")).collect().join("\n")}
+          $|\{mask_date(head.split("\r\n").filter(line => !line.has_prefix("Smock-Mock")).collect().join("\n"))}
           $|reload: \{last_reload(after)}
           $|bytes of the first response that are not "a": \{count_other(first, b'a') + count_other(rest, b'a')}
           $|bytes at the start of a later response that are not "b": \{count_other(fresh_start, b'b')}
@@ -394,6 +394,7 @@ async test "a large body written to a slow reader during a reload completes with
         content=(
           #|HTTP/1.1 200 OK
           #|Accept-Ranges: bytes
+          #|Date: <now>
           #|Content-Length: 16777216
           #|reload: "swapped"
           #|bytes of the first response that are not "a": 0
