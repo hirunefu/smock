@@ -21,6 +21,12 @@ of each GitHub release include its section
   the signature before it publishes the release. See
   [Verify the Helm chart](README.md#verify-the-helm-chart).
 
+### Fixed
+
+- A release's notes link to files of the repository at the release's tag.
+  They copy the version's section of CHANGELOG.md, whose relative links to
+  files led to a missing page from the release page.
+
 ## [0.3.0] - 2026-10-22
 
 ### Added
