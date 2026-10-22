@@ -1,0 +1,33 @@
+# Dependabot proposes updates once a week, in one pull request into main for
+# each ecosystem: the GitHub Actions that the workflows and the composite
+# actions use, and the distroless base of the image (Dockerfile).
+# docs/releasing.md says how to merge them, and what Dependabot does not
+# cover, such as the MoonBit toolchain and modules and the GKE load
+# generator's image.
+version: 2
+updates:
+  # "/" covers the workflows in .github/workflows/. An action pinned by
+  # commit SHA stays pinned by SHA, and its "# v<version>" comment moves
+  # with it.
+  - package-ecosystem: github-actions
+    directories:
+      - "/"
+      - "/.github/actions/*"
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # The root Dockerfile only: Dependabot does not look into subdirectories,
+  # so bench/gke/generator.Dockerfile keeps its pin. The base stays pinned
+  # by digest under its tag, nonroot, and only the digest moves.
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      docker:
+        patterns:
+          - "*"

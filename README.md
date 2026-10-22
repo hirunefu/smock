@@ -1020,7 +1020,8 @@ was built with, which `smock --version` also prints.
 ### Making a release
 
 [docs/releasing.md](docs/releasing.md) describes how a release is made and
-published, for the maintainer.
+published, for the maintainer, and which dependencies Dependabot keeps up
+to date.
 
 ## Toolchain
 
