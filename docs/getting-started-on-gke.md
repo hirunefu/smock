@@ -102,9 +102,11 @@ export VERSION=<version>
 export IMAGE=ghcr.io/hirunefu/smock:$VERSION
 ```
 
-The image is signed, and the README's
+The image and the chart are signed. The README's
 [Verify the image](../README.md#verify-the-image) says how to check the
-signature and fetch the image's SBOM. The README's
+image's signature and fetch its SBOM, and
+[Verify the Helm chart](../README.md#verify-the-helm-chart) how to check
+the chart's signature. The README's
 [Container image and release binaries](../README.md#container-image-and-release-binaries)
 and [charts/smock/README.md](../charts/smock/README.md) describe the
 image and the chart.

@@ -16,13 +16,14 @@ Pushing a tag `v<major>.<minor>.<patch>` (or
 building for its own architecture without emulation, it builds smock with
 the toolchain in `.moonbit-version`, builds the image and runs
 `scripts/smoke-test-image.sh` on it. Only then does it push, combine, sign
-and attest the image, verify it with `scripts/verify-image.sh`, push the
-Helm chart packaged by `scripts/package-helm-chart.sh`, and create the
-GitHub release with notes from `scripts/release-notes.sh`. It never runs
-on pull requests. Started by hand from the Actions tab, it builds and
-smoke-tests everything and keeps the binaries, images, chart and notes as
-workflow artifacts, but publishes nothing. `scripts/check-release-workflow.sh`,
-run in CI, checks those rules.
+and attest the image, verify it with `scripts/verify-image.sh`, push and
+sign the Helm chart packaged by `scripts/package-helm-chart.sh`, verify it
+with `scripts/verify-chart.sh`, and create the GitHub release with notes
+from `scripts/release-notes.sh`. It never runs on pull requests. Started
+by hand from the Actions tab, it builds and smoke-tests everything and
+keeps the binaries, images, chart and notes as workflow artifacts, but
+publishes nothing. `scripts/check-release-workflow.sh`, run in CI, checks
+those rules.
 
 The tag names the version. Keep the `version` in `moon.mod` the same.
 
@@ -164,7 +165,8 @@ the same Schemas again.
   them by hand, and checks NOTICE as
   [Every release after](#every-release-after) says.
 - **The cosign and syft versions**, which the workflows pass to the
-  actions that install them, as `cosign-release` (`release.yml`) and
+  actions that install them, as `cosign-release` (`release.yml`, once
+  for the image and once for the chart: keep them the same) and
   `syft-version` (`release.yml` and `build-test.yml`). Dependabot moves
   the actions, not these inputs. The maintainer moves them by hand: when
   Dependabot moves `sigstore/cosign-installer` or `anchore/sbom-action`,

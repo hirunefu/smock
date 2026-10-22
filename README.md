@@ -1006,6 +1006,22 @@ files, `smock-<version>-linux-<arch>.spdx.json`.
 `scripts/verify-image.sh ghcr.io/hirunefu/smock:<version>` runs all of these
 checks.
 
+### Verify the Helm chart
+
+The Helm chart is signed the same way, with cosign and without a key: the
+signature's certificate names the release workflow at the release's tag.
+Verify it with cosign 3 or later, naming the chart without `oci://`:
+
+```sh
+cosign verify ghcr.io/hirunefu/charts/smock:<version> \
+  --certificate-identity https://github.com/hirunefu/smock/.github/workflows/release.yml@refs/tags/v<version> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+The release workflow runs the same check with
+`scripts/verify-chart.sh ghcr.io/hirunefu/charts/smock:<version>`. The
+charts of 0.3.0 and earlier releases are not signed.
+
 ### Release binaries
 
 Each GitHub release has the binaries `smock-<version>-linux-amd64` and
