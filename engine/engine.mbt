@@ -647,11 +647,7 @@ pub fn Engine::handle(
           // are looked up only if an Ephemeral Stub has a clause.
           if !states_known && ephemeral is Some(list) {
             for i in 0..<list.length() {
-              let has_clause = match list[i].stub.serves {
-                Ordinary(ordinary) => ordinary.scenario is Some(_)
-                Crud(_) => false
-              }
-              if has_clause {
+              if list[i].stub.scenario() is Some(_) {
                 states = self.scenarios.of(mock.name, session)
                 break
               }
