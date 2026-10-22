@@ -377,6 +377,9 @@ def run_step(spec, mix, oha, address, ports, scrape_metrics, first_second=True):
         "idle_connections_open_at_end": None,
         "pinning": None,
         "smock_cpu": smock_cpu,
+        # The node's per-CPU scheduler statistics are not the Pod's to read,
+        # and smock is not pinned to CPUs of its own.
+        "other_tasks": None,
         "memory": {"peak_bytes": peak_bytes, "oom_kills": None},
         "rss_kib": rss_kib,
         "smock_ready": True,

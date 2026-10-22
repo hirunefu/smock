@@ -294,6 +294,27 @@ architecture the targets file has no set for.
   `bench/plan.json`). The load generator and the harness run on the other
   CPUs. The run reads the quota back from smock's cgroup and stops if it
   did not take effect.
+- **Other tasks on smock's CPUs.** Pinning keeps the load generator off
+  smock's CPUs, but not other programs, nor the kernel's threads. When they
+  run there, smock waits for its CPU, and the slowest requests show the
+  machine rather than smock. So at the start and at the end of each step's
+  measured window, the run reads how long tasks have run on smock's CPUs
+  (the kernel's per-CPU scheduler statistics, `/proc/schedstat`), how long
+  those CPUs spent in interrupts and softirqs (`/proc/stat`), and smock's
+  CPU time (its cgroup's `cpu.stat`). The time tasks ran, less smock's and
+  less the interrupts, is what other tasks used. The kernel counts the
+  interrupts that come while smock runs, such as the loopback's delivery
+  of its responses, in the CPU's run time but not in smock's, hence the
+  second reading. A step is **disturbed** when other tasks used at least
+  1% of smock's CPUs' time in its window (`DISTURBED_SHARE` in
+  `bench/bench.py`). In
+  [#57](https://github.com/hirunefu/smock/issues/57), desktop programs at
+  0.5% of smock's CPU left the slowest requests as they were, and a
+  program pinned to smock's CPU, busy 3 ms in every 50 ms (6%), made p99.9
+  1.0 to 1.7 ms worse at low rates. Kernel threads that work for smock,
+  such as ksoftirqd, count as other tasks. Close other programs and
+  rerun a disturbed step. A GKE run does not record it: smock is not
+  pinned there, and the node's statistics are not the Pod's to read.
 - **Memory limits and OOM kills.** Under a profile with a memory limit, the
   scope also gets `MemoryMax` and `MemorySwapMax=0`, so smock cannot swap,
   as in a Kubernetes container. The run reads `memory.max` and
@@ -384,8 +405,14 @@ architecture the targets file has no set for.
   handshakes come at once, all from its `/metrics` and its cgroup's
   metrics there, scraped a second into the load: under a small CPU limit
   the scrape waits behind the load, so that second ends when smock
-  answers it, which can be a second or more later), the quota, memory
-  limit and CPUs read while it ran,
+  answers it, which can be a second or more later), what other tasks
+  used of smock's CPUs in the measured window (`other_tasks`: the CPUs,
+  the window's length, `window_s`, the CPU time other tasks used, `cpu_s`,
+  its share of the CPUs' time, `share`, whether that disturbed the step,
+  `disturbed`, and the time in interrupts left out of it, `interrupts_s`;
+  null on GKE, for a step whose smock was not ready, and where the
+  readings could not be taken), the quota,
+  memory limit and CPUs read while it ran,
   smock's peak memory and OOM kills (`memory`), whether smock got ready,
   smock's RSS (first, last, max), the TCP connections the machine accepted
   during the load, and the idle connections still open at its end. Then
@@ -393,7 +420,10 @@ architecture the targets file has no set for.
   each target with its architecture and profile, its verdict, what was
   measured and why when that is not plain. `format` numbers the layout.
 - `summary.md`: the same for people, a section for each profile. Its
-  *Targets* section says which architecture's targets it checked.
+  *Targets* section says which architecture's targets it checked. Each
+  step shows how long smock waited for a CPU (*CPU wait*) and what other
+  tasks used of smock's CPUs (*Other tasks*, in percent of their time), and
+  says *disturbed* after the case's name when they disturbed it.
 - `raw/<profile>/<case>/` (`<case>@<rate>` for a ladder's steps):
   `latency.json`, a histogram of the latencies from the scheduled send
   times in microseconds to three significant digits; `rss.json`, smock's
@@ -444,6 +474,16 @@ The line above the table says which steps count.
   regression, and so is a smock that was not ready. Above the target rate
   they are listed for reference.
 - Steps only one run has are listed, not compared.
+- A step other tasks disturbed in either run (see
+  [What a run does](#what-a-run-does)) is named in its verdict, with what
+  they used of smock's CPUs, such as `regression (disturbed: other tasks
+  used 3.00% of smock's CPUs in the newer run)`. A regression there still
+  fails the comparison, and the result line counts those at disturbed
+  steps: rerun the profile on a quieter machine before looking for the
+  cause in smock. The line above the table says when a step is disturbed.
+  A run from before runs recorded other tasks, or a GKE run, has nothing
+  to tell: the line says it was not recorded there, and the steps are
+  compared as before.
 - Where both runs measured smock's CPU time a request at a step, a *CPU
   per request* section shows it and its share of the CPU limit in each,
   and how it changed. It is there for information: it fails nothing, and

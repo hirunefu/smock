@@ -421,6 +421,12 @@ class CpuPerRequest(unittest.TestCase):
             # How long smock waited for a CPU, from its /metrics.
             self.assertGreaterEqual(cpu["scheduling_delay_s"], 0)
             self.assertGreaterEqual(first["involuntary_context_switches"], 0)
+            # What other tasks used of smock's CPUs in the measured window
+            # (4 s), from /proc/schedstat and smock's cgroup.
+            others = result["other_tasks"]
+            self.assertEqual(others["cpus"], read(out, "conditions.json")["cpus"]["smock"])
+            self.assertAlmostEqual(others["window_s"], 4, delta=0.1)
+            self.assertGreaterEqual(others["cpu_s"], 0)
             # Each second of the load, ramp and tail included (6.5 s).
             self.assertEqual(len(result["per_second"]["requests"]), 7)
             [row] = markdown_table(next(lines for heading, lines in sections.items()
@@ -519,6 +525,157 @@ class ScrapedUse(unittest.TestCase):
         newer = harness.metric_values('smock_requests_total{mock="catalog",stub=""} 900\nsmock_journal_entries 900\n')
         self.assertEqual(harness.scraped_use(old, newer, "250m", 25.0),
                          (None, None, {"first": None, "last": None, "max": None}))
+
+
+def schedstat(run_ns, cpus=8):
+    """/proc/schedstat as the kernel (version 17) writes it, for a machine
+    of `cpus` CPUs, each with a scheduling domain: the time tasks have run
+    on each CPU is `run_ns` ({cpu: nanoseconds}), 10 s for any other."""
+    lines = ["version 17", "timestamp 4643750735"]
+    for cpu in range(cpus):
+        lines += [f"cpu{cpu} 0 0 0 0 0 0 {run_ns.get(cpu, 10_000_000_000)} 1762201005995 70796380",
+                  "domain0 MC ff 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"]
+    return "\n".join(lines) + "\n"
+
+
+def proc_stat(interrupts_s, cpus=8):
+    """/proc/stat as the kernel writes it, for a machine of `cpus` CPUs: the
+    time each CPU has spent in interrupts is `interrupts_s` ({cpu: (hard
+    interrupts, softirqs)}, in seconds), 0 for any other, in its clock
+    ticks (USER_HZ)."""
+    tick = os.sysconf("SC_CLK_TCK")
+    lines = ["cpu  2853768 2766 226228 31823564 7304 22532 23908 0 0 0"]
+    for cpu in range(cpus):
+        irq, softirq = interrupts_s.get(cpu, (0, 0))
+        lines.append(f"cpu{cpu} 356721 345 28278 3977945 913 {round(irq * tick)} {round(softirq * tick)} 0 0 0")
+    lines += ["intr 1213 0 0", "ctxt 1823", "btime 1792800000", "processes 1176699", "procs_running 2"]
+    return "\n".join(lines) + "\n"
+
+
+def cpu_stat(usage_usec):
+    """The cpu.stat of smock's cgroup, as Smock.cpu_stat reads it."""
+    return {"usage_usec": usage_usec, "user_usec": usage_usec // 2, "system_usec": usage_usec - usage_usec // 2,
+            "nr_periods": 200, "nr_throttled": 0, "throttled_usec": 0}
+
+
+def reading(at, run_ns, usage_usec, interrupts_s=None):
+    """A reading for other_tasks, as read_cpu_times takes it at `at`: the
+    time tasks have run on each CPU (schedstat's `run_ns`), the time each
+    has spent in interrupts (proc_stat's `interrupts_s`, none unless
+    given), and smock's cgroup's CPU time in microseconds."""
+    return {"at": at, "schedstat": schedstat(run_ns), "stat": proc_stat(interrupts_s or {}),
+            "cpu_stat": cpu_stat(usage_usec)}
+
+
+class OtherTasks(unittest.TestCase):
+    """How much CPU time tasks other than smock used on smock's CPUs in a
+    step's measured window: the time tasks ran on those CPUs, from the
+    kernel's per-CPU scheduler statistics (/proc/schedstat), less the CPU
+    time of smock's cgroup over the same window, and less the time the
+    CPUs spent in interrupts (/proc/stat), which are no task's. The step is
+    disturbed when it is at least 1% of those CPUs' time in the window."""
+
+    def test_the_time_tasks_ran_on_smocks_cpus_less_smocks_own_is_what_other_tasks_used(self):
+        # Over 20 s, tasks ran 1.2 s on CPU 4 and 0.5 s on CPU 5, and
+        # smock's cgroup used 1.5 s: other tasks used 0.2 s, 0.5% of the
+        # two CPUs' 40 s. CPU 0, not smock's, ran 7 s meanwhile.
+        before = reading(100.0, {4: 31_104_444_508_066, 5: 22_280_553_466_530}, 8_000_000)
+        after = reading(120.0, {0: 17_000_000_000, 4: 31_105_644_508_066, 5: 22_281_053_466_530}, 9_500_000)
+        self.assertEqual(harness.other_tasks(before, after, [4, 5]),
+                         {"cpus": [4, 5], "window_s": 20.0, "cpu_s": 0.2, "share": 0.005, "disturbed": False,
+                          "interrupts_s": 0.0})
+
+    def test_the_time_in_interrupts_on_smocks_cpus_is_left_out(self):
+        # The kernel counts a CPU's run time on the wall clock, so it holds
+        # the interrupts and softirqs that came while a task ran, such as
+        # the loopback's delivery of smock's responses, and smock's cgroup
+        # does not. Over 20 s, tasks ran 2.6 s on CPU 4, smock's cgroup used
+        # 1.5 s, and CPU 4 spent 0.9 s in interrupts and softirqs, CPU 5
+        # none: other tasks used 0.2 s.
+        before = reading(100.0, {4: 50_000_000_000, 5: 60_000_000_000}, 8_000_000, {4: (1.0, 2.0), 5: (1.0, 3.0)})
+        after = reading(120.0, {4: 52_600_000_000, 5: 60_000_000_000}, 9_500_000, {4: (1.1, 2.8), 5: (1.0, 3.0)})
+        self.assertEqual(harness.other_tasks(before, after, [4, 5]),
+                         {"cpus": [4, 5], "window_s": 20.0, "cpu_s": 0.2, "share": 0.005, "disturbed": False,
+                          "interrupts_s": 0.9})
+
+    def test_a_step_is_disturbed_from_one_percent_of_smocks_cpus_time(self):
+        # The disturber of #57, 3 ms busy in every 50 ms on one of smock's
+        # two CPUs: 1.2 s of 20 s, 3% of the two CPUs' time.
+        before = reading(100.0, {4: 50_000_000_000, 5: 60_000_000_000}, 8_000_000)
+        noisy = reading(120.0, {4: 52_700_000_000, 5: 60_000_000_000}, 9_500_000)
+        self.assertEqual(harness.other_tasks(before, noisy, [4, 5]),
+                         {"cpus": [4, 5], "window_s": 20.0, "cpu_s": 1.2, "share": 0.03, "disturbed": True,
+                          "interrupts_s": 0.0})
+        # 0.4 s of 40 s is 1%, and disturbs; 0.38 s does not.
+        at = reading(120.0, {4: 51_900_000_000, 5: 60_000_000_000}, 9_500_000)
+        below = reading(120.0, {4: 51_880_000_000, 5: 60_000_000_000}, 9_500_000)
+        self.assertEqual([(other["share"], other["disturbed"]) for other in
+                          (harness.other_tasks(before, at, [4, 5]), harness.other_tasks(before, below, [4, 5]))],
+                         [(0.01, True), (0.0095, False)])
+        self.assertEqual(harness.DISTURBED_SHARE, 0.01)
+
+    def test_smocks_slice_the_scheduler_has_not_counted_yet_leaves_no_time_to_others(self):
+        # The kernel adds a task's run time to its CPU's when it leaves the
+        # CPU, and to its cgroup's as it runs: smock's cgroup can be ahead.
+        before = reading(100.0, {4: 50_000_000_000}, 8_000_000)
+        after = reading(120.0, {4: 51_000_000_000}, 9_003_000)
+        self.assertEqual(harness.other_tasks(before, after, [4]),
+                         {"cpus": [4], "window_s": 20.0, "cpu_s": 0.0, "share": 0.0, "disturbed": False,
+                          "interrupts_s": 0.0})
+
+    def test_without_every_reading_whole_it_is_not_recorded(self):
+        before = reading(100.0, {}, 8_000_000)
+        after = reading(120.0, {}, 9_000_000)
+        # No /proc/schedstat, as on a kernel without scheduler statistics;
+        # no line for one of smock's CPUs in it or in /proc/stat; smock
+        # gone, with its cgroup.
+        for broken in ({**after, "schedstat": None}, {**after, "schedstat": schedstat({}, cpus=4)},
+                       {**after, "stat": None}, {**after, "stat": proc_stat({}, cpus=4)},
+                       {**after, "cpu_stat": None}):
+            self.assertIsNone(harness.other_tasks(before, broken, [4, 5]))
+            self.assertIsNone(harness.other_tasks({**broken, "at": 100.0}, after, [4, 5]))
+
+
+class OtherTasksInTheSummary(unittest.TestCase):
+    """summary.md shows, for each step, what other tasks used of smock's
+    CPUs in its measured window, as a share of those CPUs' time, and how
+    long smock waited for a CPU during the load, and marks the steps other
+    tasks disturbed."""
+
+    def test_each_step_shows_other_tasks_and_smocks_wait_and_disturbed_steps_are_marked(self):
+        quiet = {"cpus": [4, 5], "window_s": 20.0, "cpu_s": 0.04, "share": 0.001, "disturbed": False}
+        noisy = {"cpus": [4, 5], "window_s": 20.0, "cpu_s": 1.2, "share": 0.03, "disturbed": True}
+
+        def shown_step(rate, others, delay, lag=(2.0, 2.1)):
+            step = step_measured(rate=rate, lag=lag)
+            step.update(latency_from_release_ms={"p50": 0.3, "p90": 0.5, "p99": 1.0, "p99_9": 1.5, "max": 3.0},
+                        rss_kib={"first": 16000, "last": 17000, "max": 17000}, other_tasks=others,
+                        smock_cpu={"usage_s": 0.8, "throttled_s": 0.012, "scheduling_delay_s": delay,
+                                   "us_per_request": 32.0, "utilization": 0.128})
+            return step
+
+        # The last, as a GKE run's steps, has no record of other tasks.
+        steps = [shown_step(500, quiet, 0.0123), shown_step(1000, noisy, 0.4567),
+                 shown_step(2000, noisy, 0.5, lag=(25.0, 26.0)), shown_step(4000, None, 0.02)]
+        text = harness.summary_markdown(summary_of(steps=steps), summary_conditions())
+        rows = markdown_table(markdown_sections(text)["small: CPU limit 250m, memory limit 512Mi"])
+        self.assertEqual([(row["Case"], row["Other tasks %"], row["CPU wait s"]) for row in rows],
+                         [("http-keep-alive", "0.10", "0.0123"), ("http-keep-alive (disturbed)", "3.00", "0.4567"),
+                          ("http-keep-alive (late, disturbed)", "3.00", "0.5"), ("http-keep-alive", "-", "0.02")])
+        self.assertIn("A step where they used at least 1% is marked *disturbed*", text)
+
+
+def summary_conditions():
+    """What conditions.json has, as summary_markdown reads it, of a run on
+    arm64 under one profile, small."""
+    return {"started_at": "2026-10-23T09:00:00+00:00",
+            "smock": {"version": "0.3.0", "commit": "842c571d9a0e", "toolchain": "moonc v0.10.14"},
+            "definitions": {"directory": "bench/definitions", "digest": "48f7ce9715f0"},
+            "request_mix": {"file": "bench/requests.json"}, "plan": {"file": "bench/plan-autopilot.json"},
+            "targets": {"file": "bench/targets.json"},
+            "machine": {"architecture": "aarch64", "cpu_model": "Apple M1", "cpus": 8},
+            "load_generator": {"name": "oha", "version": "oha 1.16.0"}, "note": None, "overrides": {},
+            "profiles": [{"name": "small", "cpu_limit": "250m", "memory_limit": "512Mi"}]}
 
 
 class FirstSecond(unittest.TestCase):
@@ -809,8 +966,11 @@ class SummaryByProfile(unittest.TestCase):
 
         rows = markdown_table(sections[headings["small"]])
         for row, result in zip(rows, [c for c in summary["cases"] if c["profile"] == "small"], strict=True):
-            # A step whose load generator fell behind says so.
-            name = "http-keep-alive" + (" (late)" if result["load_generator_late"] else "")
+            # A step whose load generator fell behind says so, and so does
+            # one other tasks on smock's CPUs disturbed.
+            marks = [mark for mark, marked in (("late", result["load_generator_late"]),
+                                               ("disturbed", result["other_tasks"]["disturbed"])) if marked]
+            name = "http-keep-alive" + (f" ({', '.join(marks)})" if marks else "")
             self.assertEqual((row["Case"], row["Rate"], row["Achieved"]),
                              (name, str(result["rate"]), str(result["achieved_rate"])))
             self.assertEqual([row[f"{name} ms"] for name in ("p50", "p99", "p99.9", "Max")],

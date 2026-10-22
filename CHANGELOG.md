@@ -8,6 +8,15 @@ of each GitHub release include its section
 
 ## [Unreleased]
 
+### Added
+
+- The benchmark records, for each step of a run on a machine, how much CPU
+  time other tasks used on smock's pinned CPUs in the measured window, and
+  calls the step disturbed from 1% of those CPUs' time. `summary.md` shows
+  it beside how long smock waited for a CPU. `bench/compare.py` names the
+  disturbed steps in their verdicts. A regression there still fails the
+  comparison. GKE runs record it as null.
+
 ## [0.3.0] - 2026-10-22
 
 ### Added

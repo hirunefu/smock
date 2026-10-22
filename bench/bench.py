@@ -98,6 +98,13 @@ CFS_PERIOD_US = 100_000
 # window) does not reach p99.9.
 GENERATOR_LAG_LIMITS_MS = {"p99_9": 5, "max": 10}
 
+# The share of smock's CPUs' time in a step's measured window that other
+# tasks may use before the step is disturbed: its latencies may then be the
+# machine's rather than smock's. In #57, other tasks at 0.5% of smock's CPU
+# left the tail as it was, and at 6% (3 ms in every 50 ms) they made p99.9
+# 1.0 to 1.7 ms worse. bench/README.md says how to read it.
+DISTURBED_SHARE = 0.01
+
 
 class BenchError(Exception):
     """A problem that stops the run, with what to do about it."""
@@ -733,6 +740,56 @@ class RssSampler:
         self.thread.join()
 
 
+def read_cpu_times(smock):
+    """A reading for other_tasks: the time (`at`, time.monotonic()), the
+    texts of /proc/schedstat (`schedstat`) and /proc/stat (`stat`), each
+    None where it cannot be read, and smock's cgroup cpu.stat (`cpu_stat`),
+    None once smock has gone."""
+    reading = {"at": time.monotonic()}
+    for name in ("schedstat", "stat"):
+        try:
+            reading[name] = Path(f"/proc/{name}").read_text()
+        except OSError:
+            reading[name] = None
+    reading["cpu_stat"] = smock.cpu_stat()
+    return reading
+
+
+class WindowReadings:
+    """Takes, in the background, the readings other_tasks needs at the
+    start and at the end of a step's measured window, at the times
+    (time.monotonic()) of `window`, from when it is started until it is
+    stopped. A reading whose time has come when it is stopped is still
+    taken; one whose time has not is not."""
+
+    def __init__(self, smock, window):
+        self.smock = smock
+        self.window = window
+        self.readings = []
+        self.stopped = threading.Event()
+        self.thread = threading.Thread(target=self.read, daemon=True)
+
+    def read(self):
+        for at in self.window:
+            self.stopped.wait(max(0.0, at - time.monotonic()))
+            if time.monotonic() < at:
+                return
+            self.readings.append(read_cpu_times(self.smock))
+
+    def other_tasks(self, cpus):
+        """What other tasks used of smock's CPUs `cpus` in the window, as
+        other_tasks has it, or None without both readings."""
+        return other_tasks(*self.readings, cpus) if len(self.readings) == 2 else None
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *_):
+        self.stopped.set()
+        self.thread.join()
+
+
 class Run:
     """The settings of one benchmark run and the processes it has started."""
 
@@ -1207,6 +1264,82 @@ def waited(before, after):
     }
 
 
+def cpus_run_ns(schedstat, cpus):
+    """How long tasks have run on the CPUs `cpus`, all together, in
+    nanoseconds, from the text of /proc/schedstat, where it is the seventh
+    number of each CPU's line; None without the text, or when it has no
+    line for one of them."""
+    if schedstat is None:
+        return None
+    run_ns = {}
+    for line in schedstat.splitlines():
+        fields = line.split()
+        if fields and fields[0].startswith("cpu") and fields[0][3:].isdigit() and len(fields) > 7:
+            run_ns[int(fields[0][3:])] = int(fields[7])
+    if any(cpu not in run_ns for cpu in cpus):
+        return None
+    return sum(run_ns[cpu] for cpu in cpus)
+
+
+def cpus_interrupts_ns(stat, cpus):
+    """How long the CPUs `cpus` have spent in hard interrupts and softirqs,
+    all together, in nanoseconds, from the text of /proc/stat, where they
+    are the sixth and seventh numbers of each CPU's line, in clock ticks;
+    None without the text, or when it has no line for one of them. A
+    softirq that ksoftirqd runs is that thread's time, not counted here."""
+    if stat is None:
+        return None
+    ticks = {}
+    for line in stat.splitlines():
+        fields = line.split()
+        if fields and fields[0].startswith("cpu") and fields[0][3:].isdigit() and len(fields) > 7:
+            ticks[int(fields[0][3:])] = int(fields[6]) + int(fields[7])
+    if any(cpu not in ticks for cpu in cpus):
+        return None
+    return sum(ticks[cpu] for cpu in cpus) * 1_000_000_000 // os.sysconf("SC_CLK_TCK")
+
+
+def other_tasks(before, after, cpus):
+    """What tasks other than smock used of smock's CPUs `cpus` between two
+    readings, as read_cpu_times takes them: the time tasks ran on those
+    CPUs, less smock's cgroup's CPU time and the time the CPUs spent in
+    interrupts, in seconds (cpu_s), its share of the CPUs' time in between,
+    whether that disturbed smock (at least DISTURBED_SHARE), and the time
+    in interrupts left out (interrupts_s). None when a reading lacks
+    anything.
+
+    The kernel counts a CPU's run time on the wall clock, so it holds the
+    interrupts and softirqs that came while a task ran, such as the
+    loopback's delivery of smock's responses, but counts a task's run
+    time, and its cgroup's, without them. It adds a task's run time to its
+    CPU's when the task leaves it, and to its cgroup's as it runs, so
+    smock's cgroup can be ahead by the slice smock is in: other tasks then
+    used none. Interrupts that came while the CPUs idled are left out too,
+    though their run time never held them, so a little time of other tasks
+    may go uncounted. Kernel threads that work for smock, such as
+    ksoftirqd, count as other tasks."""
+    values = [(cpus_run_ns(reading["schedstat"], cpus), cpus_interrupts_ns(reading["stat"], cpus),
+               reading["cpu_stat"]) for reading in (before, after)]
+    if any(value is None for reading in values for value in reading):
+        return None
+    (run_before, interrupts_before, smock_before), (run_after, interrupts_after, smock_after) = values
+    window_s = after["at"] - before["at"]
+    interrupts_ns = interrupts_after - interrupts_before
+    smock_ns = (smock_after["usage_usec"] - smock_before["usage_usec"]) * 1000
+    others_ns = max(0, run_after - run_before - smock_ns - interrupts_ns)
+    share = round(others_ns / 1e9 / (window_s * len(cpus)), 4)
+    return {"cpus": list(cpus), "window_s": round(window_s, 3), "cpu_s": round(others_ns / 1e9, 4), "share": share,
+            "disturbed": share >= DISTURBED_SHARE, "interrupts_s": round(interrupts_ns / 1e9, 4)}
+
+
+def other_tasks_text(others):
+    """What other tasks used of smock's CPUs in a step (as other_tasks has
+    it), for people: their share, and whether it disturbed smock."""
+    if others is None:
+        return "not recorded"
+    return f"{others['share'] * 100:.2f}%" + (" (disturbed)" if others["disturbed"] else "")
+
+
 def cpu_use(before, after, cpu_limit, wall_s=None, scrapes=(None, None)):
     """The CPU smock's cgroup used and was throttled for between two
     readings of its cpu.stat, `wall_s` seconds apart (None when unknown),
@@ -1303,7 +1436,10 @@ def run_case(run, spec):
         metrics_before, scraped_before = smock.metrics(), time.monotonic()
         cpu_before, cpu_before_at = smock.cpu_stat(), time.monotonic()
         opens_before = tcp_passive_opens()
+        load_at = time.monotonic()
         load = start_load(run, smock, spec, raw)
+        window = stack.enter_context(WindowReadings(smock, (
+            load_at + spec["ramp_s"], load_at + spec["ramp_s"] + spec["duration_s"])))
         pids = " ".join(str(item["process"].pid) for item in load)
         log(f"{spec['id']}: load started (smock pid {smock.pid}, load generator pids {pids})")
         generator_cpus = set()
@@ -1329,6 +1465,7 @@ def run_case(run, spec):
         opens = tcp_passive_opens() - opens_before
         idle_open = idle.open_count()
     kinds, latencies, release_latencies, lags, each_second = analyze_load(run, load, spec, raw)
+    others = window.other_tasks(run.smock_cpus)
     smock_cpu = cpu_use(cpu_before, cpu_after, spec["cpu_limit"], wall_s, (metrics_before, metrics_after))
     if smock_cpu:
         smock_cpu["first_second"] = first_second
@@ -1354,6 +1491,7 @@ def run_case(run, spec):
         "idle_connections_open_at_end": idle_open,
         "pinning": pinning,
         "smock_cpu": smock_cpu,
+        "other_tasks": others,
         "memory": {"peak_bytes": smock.peak_bytes, "oom_kills": smock.oom_kills},
         "rss_kib": {
             "first": rss_values[0] if rss_values else None,
@@ -1368,7 +1506,8 @@ def run_case(run, spec):
     log(f"{spec['id']}: p99 {result['latency_ms']['p99']} ms, p99.9 {result['latency_ms']['p99_9']} ms, "
         f"{result['achieved_rate']} requests/s, {result['errors']} errors, "
         f"generator lag p99.9 {lag['p99_9']} ms, max {lag['max']} ms, "
-        f"peak memory {smock.peak_bytes} bytes, {smock.oom_kills} OOM kills")
+        f"peak memory {smock.peak_bytes} bytes, {smock.oom_kills} OOM kills, "
+        f"other tasks on smock's CPUs {other_tasks_text(others)}")
     return result
 
 
@@ -1462,6 +1601,7 @@ def not_ready_result(run, spec, oom_kills):
         "idle_connections_open_at_end": None,
         "pinning": None,
         "smock_cpu": None,
+        "other_tasks": None,
         "memory": {"peak_bytes": None, "oom_kills": oom_kills},
         "rss_kib": {"first": None, "last": None, "max": None},
         "smock_ready": False,
@@ -1700,18 +1840,21 @@ def idle_line(idle):
 
 CASE_COLUMNS = ("Case", "Rate", "Achieved", "p50 ms", "p99 ms", "p99.9 ms", "Max ms", "From release p99.9 ms",
                 "Lag p99.9 ms", "Lag max ms", "Errors", "CPU µs/request", "CPU % of limit", "Throttled s",
-                "Max RSS MiB", "Peak memory MiB", "OOM kills")
+                "CPU wait s", "Other tasks %", "Max RSS MiB", "Peak memory MiB", "OOM kills")
 
 
 def case_row(case):
     """A case's row of its profile's table in summary.md."""
     latency, release, lag = case["latency_ms"], case["latency_from_release_ms"], case["generator_lag_ms"]
-    memory, cpu = case["memory"], case["smock_cpu"] or {}
+    memory, cpu, others = case["memory"], case["smock_cpu"] or {}, case.get("other_tasks")
     name = case["case"]
     if not case["smock_ready"]:
         name += " (smock OOM-killed before it was ready)"
-    elif case["load_generator_late"]:
-        name += " (late)"
+    else:
+        marks = [mark for mark, marked in (("late", case["load_generator_late"]),
+                                           ("disturbed", others and others["disturbed"])) if marked]
+        if marks:
+            name += f" ({', '.join(marks)})"
     # Once smock has gone, the last peak read while it ran is a lower bound.
     peak = mib(memory["peak_bytes"])
     if memory["oom_kills"] and memory["peak_bytes"] is not None:
@@ -1720,6 +1863,7 @@ def case_row(case):
     cells = [name, case["rate"], case["achieved_rate"], latency["p50"], latency["p99"], latency["p99_9"],
              latency["max"], release["p99_9"], lag["p99_9"], lag["max"], case["errors"], cpu.get("us_per_request"),
              None if utilization is None else f"{utilization * 100:.1f}", cpu.get("throttled_s"),
+             cpu.get("scheduling_delay_s"), None if others is None else f"{others['share'] * 100:.2f}",
              mib(case["rss_kib"]["max"], 1024), peak, memory["oom_kills"]]
     return "| " + " | ".join(shown(cell) for cell in cells) + " |"
 
@@ -1795,7 +1939,13 @@ def summary_markdown(summary, conditions, stopped=None):
               "time smock used during the load (cpu.stat), ramp and tail included, divided by the requests it "
               "answered then (smock_requests_total), and *CPU % of limit* that time against the CPU limit "
               "over the same wall time. *Throttled* is how long "
-              "the CPU quota held smock back during the load (cpu.stat). *Peak memory* is the most memory "
+              "the CPU quota held smock back during the load (cpu.stat), and *CPU wait* how long smock's main "
+              "thread waited for a CPU then, that time included (smock's /metrics). *Other tasks* is the CPU "
+              "time tasks other than smock used on smock's CPUs in the measured window, in percent of those "
+              "CPUs' time (/proc/schedstat, less smock's cpu.stat and the CPUs' interrupts in /proc/stat), or `-` "
+              "where it is not recorded. A step where "
+              f"they used at least {DISTURBED_SHARE * 100:g}% is marked *disturbed*: its latencies may be the "
+              "machine's rather than smock's. *Peak memory* is the most memory "
               "smock's cgroup used (memory.peak: what memory.max limits, the Journal, socket buffers and page "
               "cache included), and *OOM kills* how many times the kernel killed smock for memory "
               "(memory.events)."]
