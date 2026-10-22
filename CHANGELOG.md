@@ -20,12 +20,24 @@ of each GitHub release include its section
   the release workflow at the release's tag. The release workflow verifies
   the signature before it publishes the release. See
   [Verify the Helm chart](README.md#verify-the-helm-chart).
+- The image's SBOM lists the MoonBit native runtime, mimalloc and simdutf,
+  which come with the MoonBit toolchain and are linked into smock, with the
+  licences that NOTICE gives them. The runtime has the toolchain's version,
+  mimalloc the one NOTICE gives, and simdutf none (`NOASSERTION`), since the
+  toolchain does not record it. CI fails when the SBOM and NOTICE disagree.
 - The benchmark records, for each step of a run on a machine, how much CPU
   time other tasks used on smock's pinned CPUs in the measured window, and
   calls the step disturbed from 1% of those CPUs' time. `summary.md` shows
   it beside how long smock waited for a CPU. `bench/compare.py` names the
   disturbed steps in their verdicts. A regression there still fails the
   comparison. GKE runs record it as null.
+
+### Changed
+
+- `scripts/verify-image.sh` requires the runtime, mimalloc and simdutf in
+  each SBOM, so it refuses the images of 0.3.0 and earlier. Check one of
+  those with the script from its own tag, such as
+  `git show v0.3.0:scripts/verify-image.sh`.
 
 ### Fixed
 
