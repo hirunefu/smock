@@ -205,7 +205,9 @@ The comments are there for the reader:
   by its base name, with its `info.title`, its `info.version` and its
   OpenAPI version, and the flags that shape the file. It says not to edit
   the file, since the next import replaces it. Put hand changes in another
-  file ([Overrides](#overrides)).
+  file ([Overrides](#overrides)). An `info` that is not an object, or a
+  `title` or `version` that is not a string, is left out of the comment,
+  with a warning, and the import goes on.
 - The comment above each Stub maps it back to the document: the method,
   the path as the document writes it, the response key, the name of the
   example its body comes from, if any, `sample cut` when its body is a
@@ -1532,7 +1534,8 @@ Its body is `{"born": "2020-01-01", "code": 7, "tag": null}`.
 - `openapi: 3.1` without quotes is the number 3.1, which is an error:
   quote the version and give its patch, as in `openapi: "3.1.0"`. An
   unquoted `3.1.0` is already a string. An unquoted `version: 1.0` under
-  `info` is a number too, and an error that says to quote it.
+  `info` is a number too. It is left out of the comment at the top, with
+  a warning that says to quote it.
 
 Each of these is an error at its pointer, with a message that names it,
 and nothing is written:
