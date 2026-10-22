@@ -37,6 +37,9 @@ pub suberror AdminError {
     key~ : String,
     problems~ : Array[@definitions.KeyedProblem]
   )
+  /// The value to set the Variable `name` to takes `bytes` bytes of compact
+  /// JSON, more than `max_variable_value`, so nothing was written.
+  VariableTooLarge(name~ : String, bytes~ : Int64)
   /// The write would take the count of per-Session state above its bound,
   /// for the reason given, so nothing was written.
   StateLimitReached(String)

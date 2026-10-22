@@ -34,7 +34,7 @@ fn rendered_at(source : String, now : Int64) -> String {
 let every_token : String = "yyyy yy M MM MMM MMMM d dd H HH h hh a m mm s ss S SS SSS EEE EEEE X XX XXX x xx xxx t T 'o''clock' '' —"
 
 ///|
-test "each token writes what date-fns writes for it, in English: on single-digit fields, at midnight and noon, before 1970, and at the first and last instants of the years 0 to 9999" {
+test "each token writes what date-fns writes for it, in English, except that yyyy and yy write the year 0 as 0000 and 00: on single-digit fields, at midnight and noon, before 1970, and at the first and last instants of the years 0 to 9999" {
   let instants = [
     1_772_719_628_045L, // 2026-03-05T14:07:08.045Z
      1_798_157_349_999L, // 2026-12-25T00:09:09.999Z
@@ -56,7 +56,7 @@ test "each token writes what date-fns writes for it, in English: on single-digit
       #|2026 26 10 10 Oct October 13 13 12 12 12 12 PM 30 30 0 00 5 50 500 Tue Tuesday Z Z Z +00 +0000 +00:00 1791894600 1791894600500 o'clock ' —
       #|1969 69 12 12 Dec December 31 31 23 23 11 11 PM 59 59 59 59 5 50 500 Wed Wednesday Z Z Z +00 +0000 +00:00 0 -500 o'clock ' —
       #|0005 05 1 01 Jan January 2 02 3 03 3 03 AM 4 04 5 05 0 00 006 Sun Sunday Z Z Z +00 +0000 +00:00 -62009268954 -62009268954994 o'clock ' —
-      #|0001 01 1 01 Jan January 1 01 0 00 12 12 AM 0 00 0 00 0 00 000 Sat Saturday Z Z Z +00 +0000 +00:00 -62167219200 -62167219200000 o'clock ' —
+      #|0000 00 1 01 Jan January 1 01 0 00 12 12 AM 0 00 0 00 0 00 000 Sat Saturday Z Z Z +00 +0000 +00:00 -62167219200 -62167219200000 o'clock ' —
       #|9999 99 12 12 Dec December 31 31 23 23 11 11 PM 59 59 59 59 9 99 999 Fri Friday Z Z Z +00 +0000 +00:00 253402300799 253402300799999 o'clock ' —
     ),
   )
@@ -487,7 +487,7 @@ test "a date, or what a helper writes, outside the years 0 to 9999 is a render e
       rendered_at("${now('yyyy')}", -62_167_219_200_001L),
     ].join("\n"),
     content=(
-      #|0001-01-01 9999-12-31
+      #|0000-01-01 9999-12-31
       #|error at /response/body: dateFormat(): the time is outside the years 0 to 9999
       #|error at /response/body: dateFormat(): the time is outside the years 0 to 9999
       #|error at /response/body: dateFormat(): the time is outside the years 0 to 9999

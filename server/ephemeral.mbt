@@ -85,6 +85,12 @@ fn Admin::refused(
         "invalid_data",
         "the value breaks the rules of the Data bucket \{bucket.escape()}, keyed by \{key.escape()}: \{@definitions.keyed_problems_text(problems)}",
       )
+    VariableTooLarge(name~, bytes~) =>
+      self.error(
+        400,
+        "invalid_request",
+        "the value of the Variable \{name.escape()} takes \{bytes} bytes of compact JSON, more than the 1 MiB (\{@engine.max_variable_value} bytes) a Variable's value may take",
+      )
     StateLimitReached(message) =>
       self.error(507, "state_limit_reached", message)
     InvalidStub(problems) =>

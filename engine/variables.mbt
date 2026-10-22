@@ -29,16 +29,25 @@ pub fn Engine::list_variables(
 }
 
 ///|
+/// The most bytes of compact JSON a value set through the Admin API may
+/// take: 1 MiB, `@template.max_output`, the bound each value of a Stub's
+/// `variables` has when it renders.
+pub let max_variable_value : Int64 = @template.max_output.to_int64()
+
+///|
 /// Sets the Variable `name` of the Mock `mock` to `value` for `session`, or
 /// for the no-Session space when it is `None`, as a Stub's `variables`
 /// would: the value replaces the one it had, and `null` is stored, not
-/// deleted. The write counts against the bound on per-Session state as a
-/// Stub's writes do, and is taken only if it fits.
+/// deleted. The value is bounded as a Stub's is, and the write counts
+/// against the bound on per-Session state as a Stub's writes do, and is
+/// taken only if it fits.
 ///
 /// Raises `UnknownMock` when no Mock has the name `mock`,
-/// `InvalidVariableName` when `name` cannot name a Variable, and
-/// `StateLimitReached` when the write would take the count above the
-/// bound, which counts the refusal; then nothing is written.
+/// `InvalidVariableName` when `name` cannot name a Variable,
+/// `VariableTooLarge` when the value takes more than
+/// `max_variable_value` bytes of compact JSON, and `StateLimitReached`
+/// when the write would take the count above the bound, which counts the
+/// refusal; then nothing is written.
 pub fn Engine::set_variable(
   self : Engine,
   mock~ : String,
@@ -48,6 +57,10 @@ pub fn Engine::set_variable(
 ) -> Unit raise AdminError {
   self.check_mock(mock)
   check_variable_name(name)
+  let bytes = @template.compact_length(value)
+  if bytes > max_variable_value {
+    raise VariableTooLarge(name~, bytes~)
+  }
   let names = ReadOnlyArray::from_array([name])
   let values = [value]
   let growth = self.store.variable_growth(

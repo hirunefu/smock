@@ -222,6 +222,46 @@ test "a numeric argument is a number, taken as smock writes it, or a string that
 }
 
 ///|
+test "a number literal is taken as written, with every digit a float would lose, by each arithmetic helper; elsewhere it is still written as its float" {
+  inspect(
+    [
+      rendered(
+        "${add(0.123456789012345678, 0)} ${subtract(0.123456789012345678, 0)} ${multiply(0.123456789012345678, 1)}",
+      ),
+      rendered(
+        "${divide(123456789012345678.9, 1)} ${modulo(12345678901234567.5, 10)} ${toFixed(0.123456789012345678, 18)}",
+      ),
+      rendered(
+        "${ceil(12345678901234566.5)} ${floor(12345678901234567.5)} ${round(12345678901234567.4)} ${parseInt(12345678901234567.9)}",
+      ),
+      rendered(
+        "${add(query.missing ?? 0.123456789012345678, 0)} ${add(999999999999999999.9, 0)} ${add(1.50, 1e3)}",
+      ),
+      rendered(
+        "${0.123456789012345678} ${concat(0.123456789012345678, '')} ${add(len(concat(0.123456789012345678, '')), 0)}",
+      ),
+      rendered_json(
+        "{ \"sum\": \"${add(0.123456789012345678, 0)}\", \"literal\": \"${0.123456789012345678}\" }",
+      ),
+      rendered("${add(0.12345678901234567891, 0)}"),
+      rendered("${add(1, query.missing ?? 1234567890123456789.5)}"),
+      rendered("${toFixed(1, 2.0000000000000000001)}"),
+    ].join("\n"),
+    content=(
+      #|0.123456789012345678 0.123456789012345678 0.123456789012345678
+      #|123456789012345678.9 7.5 0.123456789012345678
+      #|12345678901234567 12345678901234567 12345678901234567 12345678901234567
+      #|0.123456789012345678 999999999999999999.9 1001.5
+      #|0.12345678901234568 0.12345678901234568 19
+      #|{"sum":0.123456789012345678,"literal":0.12345678901234568}
+      #|problem at /response/body: template: column 7: add(): argument 1 must have at most 18 digits before the point and 18 after, not 0.12345678901234567891
+      #|problem at /response/body: template: column 10: add(): argument 2 must have at most 18 digits before the point and 18 after, not 1234567890123456789.5
+      #|problem at /response/body: template: column 14: toFixed(): argument 2 must be an integer literal from 0 to 18
+    ),
+  )
+}
+
+///|
 test "a wrong argument count, or a literal that is not numeric, is a load error" {
   inspect(
     [
@@ -295,7 +335,7 @@ test "inputs and results have at most 18 digits before the point and 18 after, a
       #|problem at /response/body: template: column 7: add(): argument 1 must have at most 18 digits before the point and 18 after, not "0.0000000000000000001"
       #|problem at /response/body: template: column 7: add(): argument 1 must have at most 18 digits before the point and 18 after, not "1e18"
       #|problem at /response/body: template: column 7: add(): argument 1 must have at most 18 digits before the point and 18 after, not 1000000000000000000
-      #|problem at /response/body: template: column 10: add(): argument 2 must have at most 18 digits before the point and 18 after, not 1e-19
+      #|problem at /response/body: template: column 10: add(): argument 2 must have at most 18 digits before the point and 18 after, not 0.0000000000000000001
       #|problem at /response/body: template: column 9: round(): argument 1 must have at most 18 digits before the point and 18 after, not "1e-19"
       #|problem at /response/body: template: column 7: add(): argument 1 must have at most 18 digits before the point and 18 after, not "1e-99999999999999999999"
     ),

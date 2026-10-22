@@ -1540,7 +1540,7 @@ with the example or with small environments made to test them:
   repeats them from run to run, and so does `--seed` for the same
   requests in the same order, as `--faker-seed` does in Mockoon.
 - **Dates.** Both write dates with date-fns format tokens, so
-  `{{now 'yyyy-MM-dd'}}` becomes `${now('yyyy-MM-dd')}`, but five things
+  `{{now 'yyyy-MM-dd'}}` becomes `${now('yyyy-MM-dd')}`, but six things
   differ:
   - Mockoon writes local time, in its process's time zone, with an
     offset: `{{now}}` gives `2026-10-17T14:01:59.615+00:00` in UTC, and
@@ -1565,6 +1565,11 @@ with the example or with small environments made to test them:
     smock stops at the last day of the month, February 28.
   - Mockoon shifts days first, then months and years; smock shifts years
     and months first, then days.
+  - Mockoon writes the year 0, 1 BC, under `yyyy` and `yy` as date-fns's
+    year of the era, `0001` and `01`, so
+    `{{dateFormat '0000-06-01' 'yyyy-MM-dd'}}` gives `0001-06-01`. smock
+    writes the calendar year, `0000` and `00`, as its RFC 3339 times do,
+    so `${dateFormat('0000-06-01', 'yyyy-MM-dd')}` gives `0000-06-01`.
 - **Logs.** The Mockoon CLI logs every request. smock logs none, and
   records them in the Journal instead.
 

@@ -683,8 +683,9 @@ curl localhost:8080/users/1                                           # 200, fro
   `PUT /v1/mocks/{mock}/variables/{name}` with a JSON value as the body,
   such as `"ann"`, sets one, so that a test can arrange the state its
   requests read, and `DELETE` deletes one. A name that is not 1 to 128
-  ASCII letters, digits, `_` and `-` gets 400 `invalid_request`, a Variable
-  the Session has not set 404 `unknown_variable`, and a set that would pass
+  ASCII letters, digits, `_` and `-` gets 400 `invalid_request`, and so
+  does a value above 1 MiB of compact JSON; a Variable the Session has not
+  set gets 404 `unknown_variable`, and a set that would pass
   [the state bound](docs/definition-files.md#the-state-bound) 507
   `state_limit_reached`.
 - The Session keeps its own copy of each

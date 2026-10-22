@@ -169,9 +169,11 @@ pub fn Context::advance(self : Context, ms : Int) -> Unit {
 }
 
 ///|
-/// The most bytes a rendered body, or all the events of a response
-/// together, take: 1 MiB.
-let max_output : Int = 1024 * 1024
+/// The most bytes a rendered body, all the events of a response together,
+/// or a rendered value of a Stub's `variables` take: 1 MiB. The engine
+/// bounds a Variable set through the Admin API by it too, so that a value
+/// has the same bound whichever way it is written.
+pub let max_output : Int = 1024 * 1024
 
 ///|
 /// Counts `bytes` more of output, from the field at `at`.

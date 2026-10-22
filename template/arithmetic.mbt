@@ -77,6 +77,42 @@ fn arithmetic_helper(site : CallSite) -> Helper? raise Syntax {
 }
 
 ///|
+/// Whether `name` names an arithmetic helper, whose number literals the
+/// parser reads with `exact_literal`.
+fn is_arithmetic(name : String) -> Bool {
+  name
+  is ("add"
+  | "subtract"
+  | "multiply"
+  | "divide"
+  | "modulo"
+  | "ceil"
+  | "floor"
+  | "round"
+  | "parseInt"
+  | "toFixed")
+}
+
+///|
+/// The number literal `json`, written as `text` among the arguments of an
+/// arithmetic helper. It keeps `text` unless its 64-bit float writes the
+/// same decimal, as `1.50` and `1e3` do, so that the helper reads every
+/// digit written and the bounds apply to them: `0.12345678901234567891` is
+/// not 0.12345678901234568. Only the helper reads the literal, so how a
+/// literal is written anywhere else does not change.
+fn exact_literal(json : Json, text : String) -> Json {
+  guard json is Number(n, repr=None) else { return json }
+  let kept = Json::number(n, repr=text)
+  let written = Decimal::parse(text) catch { _ => return kept }
+  let float = Decimal::parse(n.to_string()) catch { _ => return kept }
+  if written.text() == float.text() {
+    json
+  } else {
+    kept
+  }
+}
+
+///|
 /// Checks the literals that argument `k` (from 0) can give: each must be
 /// numeric, and within the bounds.
 fn CallSite::numeric(self : CallSite, k : Int) -> Unit raise Syntax {

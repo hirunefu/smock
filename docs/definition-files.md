@@ -1587,8 +1587,9 @@ carry over:
   wrong date at the turn of a year: write `yyyy` and `dd`. So is any other
   unquoted ASCII letter, a run of a letter of a length the table does not
   list, such as `yyy`, and a quote that is not closed.
-- As in date-fns, `yyyy` and `yy` write the year of the era, so the year
-  0, 1 BC, is written `0001`.
+- `yyyy` and `yy` write the calendar year, so the year 0 is `0000` and
+  `00`, as smock writes it in RFC 3339 times. date-fns writes the year of
+  the era there instead: `0001`, for 1 BC.
 
 ```yaml
 response:
@@ -1660,9 +1661,13 @@ response:
   that reads back as the same 64-bit float. So `19.99` is 19.99, not the
   float nearest to it. A string that is a JSON number is taken as its own
   text, so `add('0.10', 1)` is `1.1`.
-- A number literal is a 64-bit float, as anywhere else, so one with more
-  digits than a float holds (about 17) loses the rest. Write such a
-  literal as a string, such as `'123456789.123456789'`.
+- A number literal in an argument is taken as written, with every digit,
+  even those a 64-bit float would lose: `add(0.123456789012345678, 0)` is
+  `0.123456789012345678`, and `add(0.12345678901234567891, 0)`, with 20
+  digits after the point, is an error when the files are loaded. How a
+  literal is written anywhere else does not change:
+  `${0.123456789012345678}` alone still writes `0.12345678901234568`, as
+  `json` would.
 - Numbers have at most 18 digits before the point and 18 after. Zeros
   before the first digit that is not 0, and after the last one, do not
   count, so `'1.000000000000000000000'` is 1. An argument beyond the bounds
@@ -1953,6 +1958,15 @@ check what its requests wrote.
 - A name that is not 1 to 128 ASCII letters, digits, `_` and `-` gets 400
   `invalid_request`, and a set without a body too. A body that is not JSON
   gets 400 `malformed_json`, as for other operations.
+- A value that takes more than 1 MiB as compact JSON gets 400
+  `invalid_request` and writes nothing, so a set is bounded as each value
+  of a Stub's `variables` is.
+- A set keeps a number's value, not its text: smock writes it as `json`
+  does, so `19.990` is stored as `19.99` and `1e3` as `1000`, and only an
+  integer beyond 2^53 keeps its digits. A Stub's `variables` keep the text
+  a value renders with instead, such as `19.990` from `toFixed(x, 3)`. To
+  keep a number's text through a set, set it as a string, such as
+  `"19.990"`, which the arithmetic helpers take as that number.
 - A delete of a Variable the Session has not set gets 404
   `unknown_variable`. Another Session's Variables are never listed, set or
   deleted.
