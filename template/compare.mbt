@@ -64,62 +64,31 @@ priv struct ExactNumber {
 ///|
 /// The number that `text`, a JSON number, writes.
 fn ExactNumber::parse(text : String) -> ExactNumber {
-  let negative = text.has_prefix("-")
-  let digits = StringBuilder()
-  let mut fraction_digits = 0
-  let mut in_fraction = false
-  let mut exponent = 0L
-  let mut exponent_digits = 0
-  let mut exponent_negative = false
-  let mut in_exponent = false
-  for c in text {
-    match c {
-      '-' if in_exponent => exponent_negative = true
-      '-' | '+' => ()
-      '.' => in_fraction = true
-      'e' | 'E' => in_exponent = true
-      _ if in_exponent =>
-        // Leading zeros do not count.
-        if exponent_digits > 0 || c != '0' {
-          exponent_digits += 1
-          if exponent_digits <= 18 {
-            exponent = exponent * 10L + (c.to_int() - '0'.to_int()).to_int64()
-          }
-        }
-      _ => {
-        digits.write_char(c)
-        if in_fraction {
-          fraction_digits += 1
-        }
-      }
-    }
-  }
-  let digits = digits.to_string()
-  let mut start = 0
-  while start < digits.length() && digits[start] == '0' {
-    start += 1
-  }
-  if start == digits.length() {
+  let parts = scan_number(text)
+  if parts.digits == "" {
     return { sign: 0, digits: "", power: 0L, }
   }
-  let mut end = digits.length()
-  while digits[end - 1] == '0' {
-    end -= 1
-  }
-  if exponent_digits > 18 {
+  let mut exponent = 0L
+  if parts.exponent.length() > 18 {
     exponent = 4_000_000_000_000_000_000L
+  } else {
+    for c in parts.exponent {
+      exponent = exponent * 10L + (c.to_int() - '0'.to_int()).to_int64()
+    }
   }
-  if exponent_negative {
+  if parts.exponent_negative {
     exponent = -exponent
   }
-  // The first significant digit stands `digits.length() - 1 - start`
-  // places before the last digit written, whose power of ten is the
-  // exponent less the number of fraction digits.
-  let shift = digits.length() - 1 - start - fraction_digits
-  let sign = if negative { -1 } else { 1 }
+  // The first significant digit stands `digits.length() - 1` places before
+  // the last, whose power of ten is the exponent plus the shift.
+  let shift = parts.shift + parts.digits.length() - 1
   {
-    sign,
-    digits: digits[start:end].to_owned(),
+    sign: if parts.negative {
+      -1
+    } else {
+      1
+    },
+    digits: parts.digits,
     power: exponent + shift.to_int64(),
   }
 }
@@ -156,11 +125,59 @@ fn ExactNumber::compare(self : ExactNumber, other : ExactNumber) -> Int {
 /// It takes time linear in the length of `text`, however large its
 /// exponent.
 fn canonical_number(text : String) -> String {
+  let parts = scan_number(text)
+  if parts.digits == "" {
+    return "0"
+  }
+  let sign = if parts.negative { "-" } else { "" }
+  let exponent = parts.exponent
+  // An Int64 holds any exponent of at most 18 digits plus the shift, which
+  // the length of `text` bounds. A longer one is kept as written, with the
+  // shift apart: such numbers are equal only when written alike.
+  if exponent.length() <= 18 {
+    let mut power = 0L
+    for c in exponent {
+      power = power * 10L + (c.to_int() - '0'.to_int()).to_int64()
+    }
+    if parts.exponent_negative {
+      power = -power
+    }
+    "\{sign}\{parts.digits}e\{power + parts.shift.to_int64()}"
+  } else {
+    let exponent_sign = if parts.exponent_negative { "-" } else { "" }
+    "\{sign}\{parts.digits}e\{exponent_sign}\{exponent}+\{parts.shift}"
+  }
+}
+
+///|
+/// A JSON number's text, read into its parts, as `canonical_number` and
+/// `ExactNumber::parse` both read it.
+priv struct NumberParts {
+  /// Whether it is written with `-`.
+  negative : Bool
+  /// The significant digits, without leading or trailing zeros: empty for
+  /// zero.
+  digits : String
+  /// The power of ten of the last significant digit, less the exponent:
+  /// the trailing zeros dropped, less the digits after the point.
+  shift : Int
+  /// Whether the exponent is written with `-`.
+  exponent_negative : Bool
+  /// The exponent's digits, without leading zeros: empty when it has none,
+  /// or is 0.
+  exponent : String
+}
+
+///|
+/// The parts of `text`, a JSON number: its sign, significant digits, shift
+/// and exponent, read in one pass.
+fn scan_number(text : String) -> NumberParts {
   let negative = text.has_prefix("-")
   let digits = StringBuilder()
   let mut fraction_digits = 0
   let mut in_fraction = false
   let exponent = StringBuilder()
+  let mut exponent_digits = 0
   let mut exponent_negative = false
   let mut in_exponent = false
   for c in text {
@@ -169,7 +186,12 @@ fn canonical_number(text : String) -> String {
       '-' | '+' => ()
       '.' => in_fraction = true
       'e' | 'E' => in_exponent = true
-      _ if in_exponent => exponent.write_char(c)
+      _ if in_exponent =>
+        // Leading zeros do not count.
+        if exponent_digits > 0 || c != '0' {
+          exponent.write_char(c)
+          exponent_digits += 1
+        }
       _ => {
         digits.write_char(c)
         if in_fraction {
@@ -179,43 +201,24 @@ fn canonical_number(text : String) -> String {
     }
   }
   let digits = digits.to_string()
+  let exponent = exponent.to_string()
   let mut start = 0
   while start < digits.length() && digits[start] == '0' {
     start += 1
   }
   if start == digits.length() {
-    return "0"
+    return { negative, digits: "", shift: 0, exponent_negative, exponent, }
   }
   let mut end = digits.length()
   while digits[end - 1] == '0' {
     end -= 1
   }
-  let significant = digits[start:end].to_owned()
-  // The power of ten of the last significant digit is the exponent plus
-  // `shift`, which the length of `text` bounds.
-  let shift = digits.length() - end - fraction_digits
-  let exponent = exponent.to_string()
-  let mut first = 0
-  while first < exponent.length() && exponent[first] == '0' {
-    first += 1
-  }
-  let exponent = exponent[first:].to_owned()
-  let sign = if negative { "-" } else { "" }
-  // An Int64 holds any exponent of at most 18 digits plus the shift. A
-  // longer one is kept as written, with the shift apart: such numbers are
-  // equal only when written alike.
-  if exponent.length() <= 18 {
-    let mut power = 0L
-    for c in exponent {
-      power = power * 10L + (c.to_int() - '0'.to_int()).to_int64()
-    }
-    if exponent_negative {
-      power = -power
-    }
-    "\{sign}\{significant}e\{power + shift.to_int64()}"
-  } else {
-    let exponent_sign = if exponent_negative { "-" } else { "" }
-    "\{sign}\{significant}e\{exponent_sign}\{exponent}+\{shift}"
+  {
+    negative,
+    digits: digits[start:end].to_owned(),
+    shift: digits.length() - end - fraction_digits,
+    exponent_negative,
+    exponent,
   }
 }
 
