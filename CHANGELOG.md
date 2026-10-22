@@ -8,6 +8,14 @@ of each GitHub release include its section
 
 ## [Unreleased]
 
+### Added
+
+- Dependabot proposes, once a week, the updates of the GitHub Actions and
+  of the image's distroless base, so that the base's glibc and OpenSSL
+  fixes reach the next release's image.
+  [docs/releasing.md](docs/releasing.md#dependency-updates) says what it
+  does not cover, such as the MoonBit toolchain and modules.
+
 ## [0.3.0] - 2026-10-22
 
 ### Added
