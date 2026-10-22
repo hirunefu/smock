@@ -16,13 +16,14 @@ Pushing a tag `v<major>.<minor>.<patch>` (or
 building for its own architecture without emulation, it builds smock with
 the toolchain in `.moonbit-version`, builds the image and runs
 `scripts/smoke-test-image.sh` on it. Only then does it push, combine, sign
-and attest the image, verify it with `scripts/verify-image.sh`, push the
-Helm chart packaged by `scripts/package-helm-chart.sh`, and create the
-GitHub release with notes from `scripts/release-notes.sh`. It never runs
-on pull requests. Started by hand from the Actions tab, it builds and
-smoke-tests everything and keeps the binaries, images, chart and notes as
-workflow artifacts, but publishes nothing. `scripts/check-release-workflow.sh`,
-run in CI, checks those rules.
+and attest the image, verify it with `scripts/verify-image.sh`, push and
+sign the Helm chart packaged by `scripts/package-helm-chart.sh`, verify it
+with `scripts/verify-chart.sh`, and create the GitHub release with notes
+from `scripts/release-notes.sh`. It never runs on pull requests. Started
+by hand from the Actions tab, it builds and smoke-tests everything and
+keeps the binaries, images, chart and notes as workflow artifacts, but
+publishes nothing. `scripts/check-release-workflow.sh`, run in CI, checks
+those rules.
 
 The tag names the version. Keep the `version` in `moon.mod` the same.
 

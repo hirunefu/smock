@@ -8,6 +8,14 @@ of each GitHub release include its section
 
 ## [Unreleased]
 
+### Added
+
+- The Helm chart `oci://ghcr.io/hirunefu/charts/smock` is signed with
+  cosign, without a key, as the image is: the signature's certificate names
+  the release workflow at the release's tag. The release workflow verifies
+  the signature before it publishes the release. See
+  [Verify the Helm chart](README.md#verify-the-helm-chart).
+
 ## [0.3.0] - 2026-10-22
 
 ### Added
