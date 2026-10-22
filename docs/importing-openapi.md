@@ -203,11 +203,12 @@ The comments are there for the reader:
 
 - The comment at the top says where the file came from: the document,
   by its base name, with its `info.title`, its `info.version` and its
-  OpenAPI version, and the flags that shape the file. It says not to edit
-  the file, since the next import replaces it. Put hand changes in another
-  file ([Overrides](#overrides)). An `info` that is not an object, or a
-  `title` or `version` that is not a string, is left out of the comment,
-  with a warning, and the import goes on.
+  OpenAPI version, and the flags that shape the file whose value is not
+  the default, so that typing a default changes no byte. It says not to
+  edit the file, since the next import replaces it. Put hand changes in
+  another file ([Overrides](#overrides)). An `info` that is not an object,
+  or a `title` or `version` that is not a string, is left out of the
+  comment, with a warning, and the import goes on.
 - The comment above each Stub maps it back to the document: the method,
   the path as the document writes it, the response key, the name of the
   example its body comes from, if any, `sample cut` when its body is a
@@ -282,7 +283,7 @@ Stub for each response it answers, and for each further named example
 
 | In the document | In the Definition file |
 |---|---|
-| The document | `version: 1`, then `mocks` with the one Mock, unless `--declare-mock` is `off`, then `stubs`. In YAML, a comment at the top names the document, its `info.title` and `info.version`, its OpenAPI version, `--mock`, then `--hosts`, `--declare-mock off` and `--base-path` when given. |
+| The document | `version: 1`, then `mocks` with the one Mock, unless `--declare-mock` is `off`, then `stubs`. In YAML, a comment at the top names the document, its `info.title` and `info.version`, its OpenAPI version, and the flags whose value is not the default: `--mock`, then `--hosts` when the Mock has Hosts, `--declare-mock off`, and `--base-path` when given. |
 | An operation | One Stub per response: the main Stub, and one for each other response. One more Stub per further named example. In YAML, a comment above each gives the method, the path as written, the response key and the example's name, or `sample cut` for a sample cut to its required parts. |
 | `summary` | In YAML, its first line ends the Stub's comment. Control characters become spaces. |
 | `get`, `put`, `post`, `delete`, `options`, `head`, `patch`, `trace`, and 3.2's `query` | The `method`, in upper case. |

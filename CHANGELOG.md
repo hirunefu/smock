@@ -49,8 +49,9 @@ of each GitHub release include its section
   committed file. At most 1,000 documents and 64 MiB are read. A URL is an
   error that suggests bundling the document into one file first.
 - The import writes YAML or JSON, as the name of `--output` says. A YAML
-  file starts with a comment that names the document and says not to edit
-  the file, and each Stub has one that maps it back to its operation. An
+  file starts with a comment that names the document and the flags whose
+  value is not the default, and says not to edit the file, and each Stub
+  has one that maps it back to its operation. An
   existing file is replaced only with `--overwrite on`, through a temporary
   file and a rename, so a smock that watches the directory never loads half
   a file. The guide shows how to keep hand changes in another file, and how

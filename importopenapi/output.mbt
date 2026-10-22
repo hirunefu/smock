@@ -95,12 +95,12 @@ fn Report::yaml_file(
 ///|
 /// The comment at the top of a YAML file. It says that the file was
 /// generated, from which document, named by its base name, with its title,
-/// version and OpenAPI version, and with which flags that shape the file;
-/// and that it should not be edited. It holds no path and no smock version,
-/// so the same import gives the same bytes from any directory and after an
-/// upgrade that does not change the conversion. The title and the version
-/// are left out where they are empty, and spaces and tabs around them are
-/// dropped.
+/// version and OpenAPI version, and with the flags that shape the file
+/// whose value is not the default; and that it should not be edited. It
+/// holds no path and no smock version, so the same import gives the same
+/// bytes from any directory and after an upgrade that does not change the
+/// conversion. The title and the version are left out where they are
+/// empty, and spaces and tabs around them are dropped.
 fn Report::header(self : Report, document : Document) -> Array[String] {
   let about = []
   for part in [document.title, document.info_version] {
