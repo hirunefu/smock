@@ -133,12 +133,7 @@ fn Conversion::path_item(
   json : Json,
 ) -> Unit {
   guard self.path_key(pointer, key) else { return }
-  guard self.report.followed_object(
-      self.document,
-      pointer,
-      json,
-      path_item=true,
-    )
+  guard self.followed_object(pointer, json, path_item=true)
     is Some((pointer, item)) else {
     return
   }

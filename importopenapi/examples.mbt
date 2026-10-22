@@ -54,8 +54,7 @@ fn Conversion::example_value(
   json : Json,
   serialized_first~ : Bool,
 ) -> Value? {
-  guard self.report.followed_object(self.document, pointer, json)
-    is Some((pointer, example)) else {
+  guard self.followed_object(pointer, json) is Some((pointer, example)) else {
     return None
   }
   let serialized = match example.get("serializedValue") {

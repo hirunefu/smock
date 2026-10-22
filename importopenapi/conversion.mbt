@@ -58,3 +58,14 @@ fn Conversion::late_document_warning(
 fn Conversion::place(self : Conversion, pointer : Place) -> String {
   self.report.place(pointer)
 }
+
+///|
+/// Reports an error at the place `pointer` among the document-level
+/// problems, after those found so far, unless it is reported already.
+fn Conversion::document_error_at(
+  self : Conversion,
+  pointer : Place,
+  message : String,
+) -> Unit {
+  self.report.document_error_at(pointer, message)
+}

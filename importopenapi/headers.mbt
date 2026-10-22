@@ -52,10 +52,7 @@ fn Conversion::headers(
       continue
     }
     names[lower] = name
-    guard self.report.followed_object(self.document, at, json)
-      is Some((at, header)) else {
-      continue
-    }
+    guard self.followed_object(at, json) is Some((at, header)) else { continue }
     guard self.header_value(at, header) is Some(value) else { continue }
     guard self.header_text(value) is Some(text) else { continue }
     written.push((name, text))

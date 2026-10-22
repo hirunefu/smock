@@ -85,8 +85,7 @@ fn Conversion::response_parts(
   status~ : Int,
   meth~ : String,
 ) -> Answers {
-  guard self.report.followed_object(self.document, pointer, json)
-    is Some((pointer, response)) else {
+  guard self.followed_object(pointer, json) is Some((pointer, response)) else {
     return no_answers()
   }
   let mut answers = no_answers()
@@ -211,7 +210,7 @@ fn Conversion::media_type_object(
   json : Json,
 ) -> (Place, Map[String, Json])? {
   if self.document.openapi.has_prefix("3.2.") {
-    return self.report.followed_object(self.document, pointer, json)
+    return self.followed_object(pointer, json)
   }
   guard json is Object(media_type) else {
     self.error_at(pointer, "must be an object")

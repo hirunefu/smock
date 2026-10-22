@@ -405,8 +405,7 @@ fn Sampler::branch_target(self : Sampler, pointer : Place, json : Json) -> Json 
     }
     chain.push(pointer)
     let at = pointer.child("$ref")
-    guard self.conversion.report.target(self.conversion.document, at, reference)
-      is Some(part) else {
+    guard self.conversion.target(at, reference) is Some(part) else {
       target = json
       break
     }
@@ -439,8 +438,7 @@ fn Sampler::referenced(
   if self.under_id(pointer) {
     return None
   }
-  guard self.conversion.report.target(self.conversion.document, at, reference)
-    is Some(target) else {
+  guard self.conversion.target(at, reference) is Some(target) else {
     return None
   }
   guard self.is_schema(target.pointer, target.json) else { return None }
@@ -469,10 +467,7 @@ fn Sampler::referenced(
 /// there.
 fn Sampler::under_id(self : Sampler, pointer : Place) -> Bool {
   guard pointer_keys(pointer.pointer) is Some(keys) else { return false }
-  let mut json = self.conversion.report.tree(
-    self.conversion.document,
-    pointer.document,
-  )
+  let mut json = self.conversion.tree(pointer.document)
   let mut at = Place::{ document: pointer.document, pointer: "", }
   let mut found = false
   for key in keys {
