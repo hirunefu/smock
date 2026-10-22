@@ -924,8 +924,9 @@ in block style or in quotes. smock sets `Content-Length` from the body;
 `Content-Length`, `Transfer-Encoding` and `Connection` cannot be given,
 nor can `Smock-Mock`, which smock adds when the Default Mock answers.
 
-smock sends a `Date` header with the current time on every response, such
-as `Date: Thu, 22 Oct 2026 14:37:10 GMT`. A Stub may give its own `Date`,
+smock sends a `Date` header with the current time on every final
+response, such as `Date: Thu, 22 Oct 2026 14:37:10 GMT`, and none on an
+interim `100 Continue`. A Stub may give its own `Date`,
 in any case, such as a fixed one for testing a client's caching. smock
 then sends that one as written and adds none.
 
