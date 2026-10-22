@@ -57,7 +57,7 @@ pub fn encode_response(
   let mut length = 9 + decimal_length(status) + 1 + reason.length() + 2
   for header in headers {
     length += utf8_length(header.0) + 2 + utf8_length(header.1) + 2
-    if date is Some(_) && is_date(header.0) {
+    if date is Some(_) && is_name(header.0, "date") {
       date = None
     }
   }
@@ -105,21 +105,11 @@ pub fn encode_response(
 /// Whether `headers` give a Date field, by a name in any case.
 fn gives_date(headers : ArrayView[(String, String)]) -> Bool {
   for header in headers {
-    if is_date(header.0) {
+    if is_name(header.0, "date") {
       return true
     }
   }
   false
-}
-
-///|
-/// Whether the field name `name` is Date, in any case.
-fn is_date(name : String) -> Bool {
-  name.length() == 4 &&
-  (name[0] | 0x20) == 'd' &&
-  (name[1] | 0x20) == 'a' &&
-  (name[2] | 0x20) == 't' &&
-  (name[3] | 0x20) == 'e'
 }
 
 ///|
