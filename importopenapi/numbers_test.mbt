@@ -250,7 +250,7 @@ test "a bound of the wrong type for the version is ignored, with a warning at it
 }
 
 ///|
-test "the arithmetic is exact on the decimal text smock writes for a bound, with no float, and the file keeps every digit; a bound with more than 18 digits before or after the point is ignored, with a warning" {
+test "the arithmetic is exact decimal arithmetic on the shortest decimal text of each bound, so a bound with more digits than a float keeps is read as that text, and the file keeps every digit; a bound whose shortest text has more than 18 digits before or after the point is ignored, with a warning" {
   inspect(
     numbers_of([
       "{ \"type\": \"number\", \"minimum\": 123456789012345678 }", "{ \"type\": \"integer\", \"exclusiveMinimum\": 9007199254740993 }",

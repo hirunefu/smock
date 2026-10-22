@@ -740,14 +740,17 @@ weight: { type: number, exclusiveMinimum: 0, exclusiveMaximum: 1 }   # 0.5
   `minimum: 0.25` with `maximum: 0.75`, the sample is the lower bound,
   rounded up, with a warning. So is a number's when no number fits, as
   for a `minimum` above the `maximum`.
-- **Exact digits.** The arithmetic is exact on the decimal text smock
-  writes for each bound: the shortest form that reads back as the same
-  number, or every digit of a large integer. No float is involved, so
-  every platform writes the same digits. The sample is a plain decimal,
-  without an exponent: `exclusiveMinimum: 0` with
-  `exclusiveMaximum: 1e-18` gives `0.0000000000000000005`.
-- **Large bounds.** A bound with more than 18 digits before or after the
-  point, such as `1e20` or `1e-19`, is ignored, with a warning.
+- **Exact digits.** The arithmetic is exact decimal arithmetic on the
+  shortest decimal text of each bound: the shortest text that reads back
+  as the same 64-bit float, or every digit of a large integer. So every
+  platform writes the same digits. A bound written with more digits than
+  a float keeps is read as that shortest text: `minimum: 0.30000000000000001`
+  is `0.3`. The sample is a plain decimal, without an exponent:
+  `exclusiveMinimum: 0` with `exclusiveMaximum: 1e-18` gives
+  `0.0000000000000000005`.
+- **Large bounds.** A bound whose shortest text has more than 18 digits
+  before or after the point, such as `1e20` or `1e-19`, is ignored, with
+  a warning.
 - **`allOf`.** Each bound comes from the schema's own keyword, else from
   the first branch that has it, not from the tightest branch.
 

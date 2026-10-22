@@ -35,8 +35,8 @@ of each GitHub release include its section
   `body`, with the media type as the Content-Type. Samples follow formats,
   number bounds, `allOf`, `oneOf` and `anyOf`, and `$ref`, recursive schemas
   included. Nothing is random and nothing is templated, and number bounds
-  are read exactly from their decimal text, so every platform writes the
-  same digits. A sample nests at most 32 levels, one above 64 KiB is cut to
+  use exact decimal arithmetic on the shortest decimal text of each bound,
+  so every platform writes the same digits. A sample nests at most 32 levels, one above 64 KiB is cut to
   its required parts, and a body above 1 MiB is left empty, with a warning.
   The headers a response documents are written too, with their example or a
   sample of their schema.

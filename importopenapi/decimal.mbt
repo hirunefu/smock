@@ -2,8 +2,8 @@
 // most 18 digits before the point and 18 after. The sampler only adds or
 // subtracts 1, halves a sum of two bounds and rounds to a whole number, so
 // a number is kept as an integer count of 10^-19, one place more than a
-// bound has, and halving a sum is exact. No float is involved, so every
-// target gives the same digits.
+// bound has, and halving a sum is exact. The arithmetic uses no float, so
+// every target gives the same digits.
 
 ///|
 /// The most digits a bound has before its point, and after it.
