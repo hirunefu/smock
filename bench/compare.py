@@ -13,11 +13,14 @@ for reference. p99.9 counts only where both runs measured at least the
 rule's number of requests at the step. Where both runs measured smock's CPU
 time a request at a step, it shows how that changed too, for information
 only, and for two GKE runs, whether smock's node had another CPU under each
-profile. It also lists the targets the newer run missed. It exits with 1 when
-it finds a regression or a missed target, or when the newer run did not
-measure a step that counts and that the older one measured (it stopped
-early, left the step out, or its load generator fell behind), and 2 when it
-cannot compare.
+profile. A step where other tasks used at least 1% of smock's CPUs' time in
+its measured window, in either run, is disturbed (a run on a machine
+records it, a GKE run does not): its verdict says so, and a regression
+there still counts. It also lists the targets the newer run missed. It
+exits with 1 when it finds a regression or a missed target, or when the
+newer run did not measure a step that counts and that the older one
+measured (it stopped early, left the step out, or its load generator fell
+behind), and 2 when it cannot compare.
 
 usage: python3 bench/compare.py <older> <newer> [--targets FILE]
 
@@ -194,6 +197,20 @@ def compare_step(older, newer, rule, counted, architectures=None):
         return {**cells, "Verdict": f"not compared: {why}"}, False, True
     regression = any(worse(older["latency_ms"][metric], newer["latency_ms"][metric], rule) for metric in metrics)
     return {**cells, "Verdict": ("regression" if counted else "worse") if regression else "ok"}, regression, False
+
+
+def disturbance(older, newer):
+    """How other tasks on smock's CPUs disturbed a step, in either run or
+    both, for people, or None when they disturbed it in neither or neither
+    recorded them (as bench.py's other_tasks has them)."""
+    shares = [(run, step["other_tasks"]["share"]) for run, step in (("older", older), ("newer", newer))
+              if (step.get("other_tasks") or {}).get("disturbed")]
+    if not shares:
+        return None
+    if len(shares) == 2:
+        return (f"disturbed: other tasks used {shares[0][1] * 100:.2f}% of smock's CPUs in the older run and "
+                f"{shares[1][1] * 100:.2f}% in the newer")
+    return f"disturbed: other tasks used {shares[0][1] * 100:.2f}% of smock's CPUs in the {shares[0][0]} run"
 
 
 def architecture(conditions):
@@ -406,21 +423,45 @@ def rule_line(rule, rates, steps, architecture_name, no_rates):
             f"{rule['p99_9_min_requests']:,} requests at the step.")
 
 
+def disturbance_line(older, newer):
+    """When a step is disturbed, for people, and which run did not record
+    what other tasks used of smock's CPUs at any step: a run from before
+    runs recorded it, or a GKE run, which records it as null."""
+    unrecorded = [name for name, summary in (("older", older), ("newer", newer))
+                  if not any(step.get("other_tasks") for step in summary["cases"])]
+    if len(unrecorded) == 2:
+        return ("What other tasks used of smock's CPUs was not recorded in either run (runs from before it was, or "
+                "on GKE): whether they disturbed a step is not known.")
+    line = (f"A step is disturbed when other tasks used at least {harness.DISTURBED_SHARE * 100:g}% of smock's CPUs' "
+            "time in its measured window, in either run: its latencies may then be the machine's rather than "
+            "smock's. A regression there still counts; rerun its profile before looking for the cause in smock.")
+    for name in unrecorded:
+        line += (f" What other tasks used of smock's CPUs was not recorded in the {name} run (a run from before it "
+                 "was, or on GKE): whether they disturbed its steps is not known.")
+    return line
+
+
 COLUMNS = ("Profile", "Case", "Rate", "p99 ms", "p99 change", "p99.9 ms", "p99.9 change", "Verdict")
 
 
 def latency_table(older, newer, rule, rates, counted, architectures):
     """The table of the steps that count (or of those that do not), with
-    the steps of them only one run has under it, and how many regressions
-    and steps the newer run left unmeasured it found among them. Runs on
-    different architectures (`architectures`) are not compared."""
+    the steps of them only one run has under it, and how many regressions,
+    regressions at disturbed steps and steps the newer run left unmeasured
+    it found among them. Runs on different architectures (`architectures`)
+    are not compared. The verdict of a step other tasks disturbed in either
+    run says so."""
     older_steps = {step_key(step): step for step in older["cases"] if counts(step, rates) == counted}
     newer_steps = {step_key(step): step for step in newer["cases"] if counts(step, rates) == counted}
-    rows, regressions, unmeasured = [], 0, 0
+    rows, regressions, disturbed, unmeasured = [], 0, 0, 0
     for key, step in newer_steps.items():
         if key not in older_steps:
             continue
         cells, regression, left_unmeasured = compare_step(older_steps[key], step, rule, counted, architectures)
+        why = disturbance(older_steps[key], step)
+        if why:
+            cells["Verdict"] += f" ({why})"
+            disturbed += regression
         regressions += regression
         unmeasured += left_unmeasured
         rows.append({"Profile": step["profile"], "Case": step["case"], "Rate": f"{step['rate']:,}", **cells})
@@ -439,7 +480,7 @@ def latency_table(older, newer, rule, rates, counted, architectures):
         lines.append(f"Only in the older run: {', '.join(only_older)}.")
     if only_newer:
         lines.append(f"Only in the newer run: {', '.join(only_newer)}.")
-    return lines, regressions, unmeasured
+    return lines, regressions, disturbed, unmeasured
 
 
 CPU_COLUMNS = ("Profile", "Case", "Rate", "CPU µs/request", "Change", "CPU % of limit")
@@ -492,19 +533,19 @@ def report(older_run, newer_run, rule, rates_by_architecture):
     lines = ["# Benchmark comparison", "", *runs_section(older_conditions, newer_conditions), "",
              *(line for text in incomplete for line in (text, "")),
              rule_line(rule, rates, [*older["cases"], *newer["cases"]], newer_architecture, no_rates), "",
-             "## Latency", ""]
+             disturbance_line(older, newer), "", "## Latency", ""]
     architectures = different_architectures(older_conditions, newer_conditions)
-    table, regressions, unmeasured = latency_table(older, newer, rule, rates, True, architectures)
+    table, regressions, disturbed, unmeasured = latency_table(older, newer, rule, rates, True, architectures)
     lines += table
     if not all(counts(step, rates) for step in [*older["cases"], *newer["cases"]]):
         # They are listed, and what the newer run did there does not fail it.
-        table, _, _ = latency_table(older, newer, rule, rates, False, architectures)
+        table, _, _, _ = latency_table(older, newer, rule, rates, False, architectures)
         lines += ["", "## For reference: steps above the target rate", "", *table]
     cpu = cpu_table(older, newer)
     if cpu:
         lines += ["", *cpu]
     missed, target_lines = targets_section(older, newer)
-    lines += ["", "## Targets", "", *target_lines, "", result_line(regressions, missed, unmeasured)]
+    lines += ["", "## Targets", "", *target_lines, "", result_line(regressions, missed, unmeasured, disturbed)]
     return "\n".join(lines) + "\n", regressions + missed + unmeasured
 
 
@@ -558,8 +599,13 @@ def plural(count, noun):
     return f"{count} {noun}" + ("" if count == 1 else "s")
 
 
-def result_line(regressions, missed, unmeasured):
+def result_line(regressions, missed, unmeasured, disturbed):
+    """The result of the comparison, for people: the regressions, of them
+    those at disturbed steps, the missed targets and the steps the newer run
+    left unmeasured."""
     found = plural(regressions, "regression") if regressions else "no regression"
+    if disturbed:
+        found += f" ({disturbed} at a disturbed step)" if disturbed == 1 else f" ({disturbed} at disturbed steps)"
     targets = f"{plural(missed, 'target')} missed" if missed else "no target missed"
     steps = f", {plural(unmeasured, 'step')} the older run measured not measured in the newer one" \
         if unmeasured else ""

@@ -715,6 +715,7 @@ def generator_step(rate, p99=2.0, p99_9=2.5, errors=0, peak_mib=20.0, scraped=Tr
     requests = rate * 25 - errors
     usage_s = requests * 30e-6
     smock_cpu = {"usage_s": round(usage_s, 3), "periods": 250, "throttled_periods": 3, "throttled_s": 0.012,
+                 "scheduling_delay_s": 0.0453, "involuntary_context_switches": 12, "node_steal_s": 0.0,
                  "source": "cgroup", "process_s": round(usage_s, 2), "wall_s": 25.004, "requests": requests,
                  "us_per_request": 30.0, "utilization": round(usage_s / (25.004 * 0.25), 4)}
     return {"kind": "step", "result": {
@@ -728,7 +729,7 @@ def generator_step(rate, p99=2.0, p99_9=2.5, errors=0, peak_mib=20.0, scraped=Tr
         "generator_lag_ms": {"p50": 1.0, "p99": 1.9, "p99_9": 2.0, "max": 3.1}, "load_generator_late": False,
         "requests": {"scheduled": scheduled, "ok": scheduled - errors, "unexpected_status": 0, "no_response": errors},
         "tcp_passive_opens": None, "idle_connections_open_at_end": None, "pinning": None,
-        "smock_cpu": smock_cpu if scraped else None,
+        "smock_cpu": smock_cpu if scraped else None, "other_tasks": None,
         "memory": {"peak_bytes": round(peak_mib * (1 << 20)) if scraped else None, "oom_kills": None},
         "rss_kib": {"first": 17000, "last": 18000, "max": 18000} if scraped else {"first": None, "last": None,
                                                                                    "max": None},
@@ -841,8 +842,9 @@ class Summary(Helper):
         markdown = (out / "summary.md").read_text()
         self.assertIn("Idle RSS: 16.0 MiB, 5 s after startup; peak memory 15.0 MiB, 0 OOM kills.", markdown)
         # The CPU time a request and the share of the CPU limit, then how
-        # long smock was throttled.
-        self.assertIn("| 0 | 30.0 | 12.0 | 0.012 | 17.6 | 21.5 | 0 |", markdown)
+        # long smock was throttled and waited for a CPU; what other tasks
+        # used of its CPUs is not recorded on GKE.
+        self.assertIn("| 0 | 30.0 | 12.0 | 0.012 | 0.0453 | - | 17.6 | 21.5 | 0 |", markdown)
         compared = subprocess.run([sys.executable, str(BENCH / "compare.py"), str(out), str(out)],
                                   capture_output=True, text=True)
         self.assertIn("| small | http-keep-alive | 1,000 | 2.5 → 2.5 | 0% |", compared.stdout, compared.stderr)
@@ -859,7 +861,7 @@ class Summary(Helper):
                          ("not measured",
                           "the kernel kept no peak memory in http-keep-alive@small@1000 (no memory.peak)"))
         self.assertEqual(verdicts["small/idle_rss"], ("not measured", "the run did not measure idle RSS under small"))
-        self.assertIn("| 0 | - | - | - | - | - | 0 |", (out / "summary.md").read_text())
+        self.assertIn("| 0 | - | - | - | - | - | - | - | 0 |", (out / "summary.md").read_text())
 
     def test_the_targets_of_the_runs_architecture_are_checked(self):
         # amd64's p99 at 1,000 requests/s is at most 2 ms, which the run's
@@ -1675,6 +1677,9 @@ class Generator(Helper):
         self.assertGreaterEqual(cpu["scheduling_delay_s"], 0)
         self.assertGreaterEqual(cpu["involuntary_context_switches"], 0)
         self.assertGreaterEqual(cpu["node_steal_s"], 0)
+        # What other tasks used of smock's CPUs is not recorded: the node's
+        # scheduler statistics are not the Pod's to read.
+        self.assertIsNone(step["other_tasks"])
         # What smock used in the step's first second, from a scrape a
         # second into the load, in the same layout: some of the requests,
         # and some of the CPU time.
