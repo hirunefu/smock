@@ -124,11 +124,11 @@ of each GitHub release include its section
   `PUT /v1/mocks/{mock}/variables/{name}` sets one to the JSON value in the
   body; `DELETE /v1/mocks/{mock}/variables/{name}` deletes one. A value
   above 1 MiB of compact JSON, the bound each value of a Stub's
-  `variables` has, gets 400 `invalid_request`. A set counts against the
-  state bound, and one that would pass it writes nothing and gets 507
-  `state_limit_reached`; a delete gives the bytes back. A delete of an
-  unset Variable gets 404 `unknown_variable`. Each set and delete is
-  logged.
+  `variables` has, gets 400 `invalid_request`, and a set keeps a number's
+  value, not its text. A set counts against the state bound, and one that
+  would pass it writes nothing and gets 507 `state_limit_reached`; a
+  delete gives the bytes back. A delete of an unset Variable gets 404
+  `unknown_variable`. Each set and delete is logged.
 - docs/migrating-from-mockoon.md maps Mockoon's helpers, `RANDOM` routes,
   global variables, Range requests, dates, cookies and environment
   variables onto smock, with each difference called out.

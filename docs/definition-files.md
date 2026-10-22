@@ -1917,6 +1917,12 @@ check what its requests wrote.
 - A value that takes more than 1 MiB as compact JSON gets 400
   `invalid_request` and writes nothing, so a set is bounded as each value
   of a Stub's `variables` is.
+- A set keeps a number's value, not its text: smock writes it as `json`
+  does, so `19.990` is stored as `19.99` and `1e3` as `1000`, and only an
+  integer beyond 2^53 keeps its digits. A Stub's `variables` keep the text
+  a value renders with instead, such as `19.990` from `toFixed(x, 3)`. To
+  keep a number's text through a set, set it as a string, such as
+  `"19.990"`, which the arithmetic helpers take as that number.
 - A delete of a Variable the Session has not set gets 404
   `unknown_variable`. Another Session's Variables are never listed, set or
   deleted.

@@ -436,7 +436,7 @@
         "operationId": "setVariable",
         "tags": ["Variables"],
         "summary": "Set one of the calling Session's Variables",
-        "description": "Sets the Variable of the Mock to the value in the body, for the calling Session, so that a test can arrange the state its requests read. The value replaces the one the Variable had; `null` is stored, not deleted. It may take at most 1 MiB as compact JSON, as each value of a Stub's `variables` may. Other Sessions keep their own Variables. The write counts against the bound on per-Session state (`--state-max-bytes`) as a Stub's writes do: a write that would take the count above it writes nothing, gets 507 `state_limit_reached`, and counts in `smock_state_writes_refused_total`.",
+        "description": "Sets the Variable of the Mock to the value in the body, for the calling Session, so that a test can arrange the state its requests read. The value replaces the one the Variable had; `null` is stored, not deleted. It may take at most 1 MiB as compact JSON, as each value of a Stub's `variables` may, and a number keeps its value, not its text: `19.990` is stored as `19.99`. Other Sessions keep their own Variables. The write counts against the bound on per-Session state (`--state-max-bytes`) as a Stub's writes do: a write that would take the count above it writes nothing, gets 507 `state_limit_reached`, and counts in `smock_state_writes_refused_total`.",
         "requestBody": {
           "required": true,
           "content": {
