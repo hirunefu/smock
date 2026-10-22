@@ -9,6 +9,8 @@ first-time reader to smock answering requests on GKE Autopilot.
 [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) maps
 Mockoon environments, routes, rules, helpers and data buckets onto Mocks,
 Stubs, templates and Data buckets.
+[docs/importing-openapi.md](docs/importing-openapi.md) turns an OpenAPI
+document into a Definition file.
 
 ## Layout
 
@@ -20,7 +22,7 @@ The repository is a MoonBit workspace (`moon.work`) of five modules:
 | `http1/` | `smock/http1` | The HTTP/1.1 codec. |
 | `re2/` | `smock/re2` | RE2-syntax regular expressions. |
 | `xml/` | `smock/xml` | An XML parser that refuses DTDs, with simple paths that select values (documented in `xml/README.mbt.md`). |
-| `yaml/` | `smock/yaml` | Safe-subset YAML: `parse` turns a document into the tree `@json.parse` gives for the equivalent JSON (documented in `yaml/yaml.mbt`). |
+| `yaml/` | `smock/yaml` | Safe-subset YAML: `parse` turns a document into the tree `@json.parse` gives for the equivalent JSON, and `write` turns a tree into a document, with comments, that `parse` reads back as the same tree. `parse` also has a YAML 1.2 mode for OpenAPI documents, which Definition files never use (documented in `yaml/yaml.mbt`). |
 
 The four protocol modules do no I/O and do not depend on smock, so they can
 be published on mooncakes on their own. `scripts/check-no-io.sh` checks
@@ -32,9 +34,10 @@ Packages of `smock/smock`:
   `moonbitlang/x`'s `@sys.exit`, since neither core nor
   `moonbitlang/async` exposes one; smock itself binds no C for it.
 - `settings`: the settings of `smock serve`, each a flag with a matching
-  `SMOCK_<NAME>` environment variable, and the arguments of `smock check`
-  and `smock render`; also the rule that derives the Journal's byte bound
-  from a memory limit, which `server` reads from the cgroup at startup.
+  `SMOCK_<NAME>` environment variable, and the arguments of `smock check`,
+  `smock render` and `smock import-openapi`; also the rule that derives the
+  Journal's byte bound from a memory limit, which `server` reads from the
+  cgroup at startup.
 - `definitions`: reads a definition set, given as (name, bytes) pairs of
   JSON and YAML files, into an immutable snapshot, or into diagnostics
   (file, JSON Pointer, message). Its validation is written by hand and
@@ -59,8 +62,19 @@ Packages of `smock/smock`:
   once, with the values of the environment variables `--template-env`
   lists, which its caller reads, and renders it for a request, the time,
   one 64-bit draw and the Variables and Data buckets it reads, and writes
-  JSON with smock's own number form. It renders the values of a Stub's
-  `variables` as JSON too.
+  JSON with smock's own number form, compact for responses and indented
+  for the files `smock import-openapi` writes. It renders the values of a
+  Stub's `variables` as JSON too.
+- `importopenapi`: converts an OpenAPI document into a Definition file,
+  for `smock import-openapi`. It takes the documents as (name, bytes)
+  pairs and returns the names of the documents it still needs, or the
+  file's bytes with the warnings, or the errors, each with a JSON Pointer
+  into a document. The output's name picks YAML, written with
+  `smock/yaml` and with comments that map Stubs back to the document, or
+  JSON. `cmd/smock` reads the documents it asks for, under `--ref-dir`,
+  and writes the file. Before it returns a file, it loads it with
+  `definitions`, as `smock check` would. Its parts, one file each, are
+  listed in `importopenapi/import.mbt`.
 - `prng`: the seeded pseudo-random generator that Fault decisions and
   template helpers draw from. Its sequence for a seed is fixed, the same on
   every target.
@@ -120,10 +134,11 @@ Packages of `smock/smock`:
 
 A package that does I/O or uses FFI declares `supported_targets = "native"`.
 Every other package also builds for `wasm-gc`, and CI tests it there. The
-packages that decide a response, `definitions`, `engine` and `template`, and
-the ones they import, `prng`, `cookies`, `unicode` and `log`, must stay that
-way: `scripts/check-no-io.sh` fails if one of them leaves out `wasm-gc`,
-reads the environment, binds C or imports a package that does I/O.
+packages that decide a response, `definitions`, `engine` and `template`,
+the ones they import, `prng`, `cookies`, `unicode` and `log`, and the
+OpenAPI converter, `importopenapi`, must stay that way:
+`scripts/check-no-io.sh` fails if one of them leaves out `wasm-gc`, reads
+the environment, binds C or imports a package that does I/O.
 
 `openapi/admin.json` is the OpenAPI 3.1 document of the Admin API, the
 contract for it as the JSON Schema is for Definition files; a client can be
@@ -569,6 +584,43 @@ with the problem on stderr, for:
   breaks a keyed bucket's rules;
 - a sample whose method and path fit no operation of a CRUD Stub.
 
+`smock import-openapi api/petstore.yaml --mock petstore --output defs/petstore.yaml`
+converts an OpenAPI 3.0, 3.1 or 3.2 document into one Definition file,
+once. The file is committed and reviewed like any other, and smock never
+reads OpenAPI when it serves. The file declares one Mock, with a Stub for
+each documented response of each operation, which matches the operation's
+method and path. Each body comes from the document's examples, else from
+one fixed sample of the schema. The main response, the lowest 2xx when
+there is one, answers by default. A request selects another response with
+`Smock-Status: <key>`, such as `Smock-Status: 404`, and a further named
+example with `Smock-Example: <name>`. The document is JSON (`.json`) or
+YAML 1.2 (`.yaml`, `.yml`), and its references are followed only into
+local files. The flags belong to one run, so none has an `SMOCK_`
+variable:
+
+| Flag | What it sets |
+|---|---|
+| `--mock <name>` | Required: the name of the Mock the file declares. Every Stub ID starts with it. |
+| `--output <file>` | Required: the Definition file to write. `.yaml` or `.yml` writes YAML, with comments that map each Stub back to the document, and `.json` writes JSON. Its directory must exist. |
+| `--hosts <h1,h2>` | The Mock's Hosts, separated by commas. None by default: the only Mock of a definitions directory is the Default Mock and needs none. The document's `servers` never become Hosts. |
+| `--declare-mock on\|off` | `on` by default. `off` writes only the Stubs, for a Mock declared by hand in another file. |
+| `--base-path <path>` | A path to put in front of every path, such as `/mock/petstore`, in place of the path of the document's server. |
+| `--ref-dir <dir>` | The directory that references to other files are followed in, by default the document's own. A reference that leads outside it is an error. |
+| `--overwrite on\|off` | `off` by default: an existing `--output` is refused before the document is read. `on` replaces it, to import a changed document again. |
+
+It prints every problem as `smock check` does, one per line with the file
+and a JSON Pointer into the document, then a summary line,
+`wrote <file>: <n> Stubs from <m> operations, <w> warnings` or
+`nothing written: <e> errors`. It exits with status 0 when it wrote the
+file, warnings or not, 1 when it wrote nothing, and 2 for a usage error.
+It writes the file to a temporary file whose name starts with `.`, then
+renames it, so a smock that watches the directory never loads half a file.
+Run `smock check` on the directory afterwards: the command does not read
+the other files there.
+[docs/importing-openapi.md](docs/importing-openapi.md) describes what is
+generated, selecting responses, regenerating and the limits, with notes
+for Mockoon and Prism users.
+
 [docs/definition-files.md](docs/definition-files.md) describes the format:
 how Stubs match requests (method, path, query parameters, headers, cookies
 and body, exactly, by RE2 pattern, as JSON, by form field or by paths into
@@ -985,7 +1037,7 @@ moon test --target wasm-gc     # every package that does no I/O
 moon check --deny-warn --target all
 moon fmt --check
 moon bench -p smock/smock/engine --release   # match index lookups: 100 vs 10,000 Stubs
-scripts/check-no-io.sh         # no I/O in the protocol modules and the packages that decide a response
+scripts/check-no-io.sh         # no I/O in the protocol modules, the packages that decide a response and the OpenAPI converter
 scripts/check-no-c.sh          # the C boundary of ADR 0001
 scripts/test-openssl-asan.sh   # the OpenSSL bindings under AddressSanitizer and LeakSanitizer
 scripts/build-release.sh       # dist/smock
@@ -1016,9 +1068,15 @@ kind that CI uses.
 `scripts/check-schema.sh` runs the external validator check-jsonschema
 through `uvx` (or `pipx`) and needs `jq`; `scripts/check-openapi.sh` runs
 openapi-spec-validator the same way. The Admin API tests in `e2e/` check
-every response against `openapi/admin.json` (`e2e/contract_test.mbt`). Adding a fixture file under
-`schema/v1/fixtures/` adds it to the cross-check; the README there says
-which directory a fixture belongs in.
+every response against `openapi/admin.json` (`e2e/contract_test.mbt`).
+`e2e/import_openapi_golden_test.mbt` imports `openapi/admin.json`, the
+example of [docs/importing-openapi.md](docs/importing-openapi.md) and the
+OAI's Petstore (`e2e/golden/documents/`) with the binary, and compares each
+result with its committed golden file. A change to what the import writes,
+or to one of these documents, regenerates the golden file in the same
+change, with the command that the failing test prints. Adding a fixture
+file under `schema/v1/fixtures/` adds it to the cross-check; the README
+there says which directory a fixture belongs in.
 
 CI runs all of these on linux/amd64 and linux/arm64
 (`.github/workflows/build-test.yml`).
@@ -1041,9 +1099,9 @@ Definition files, a fixed clock and a seeded random source
 one first runs `moon build --target native cmd/smock`, then starts smock with
 its own temporary definitions directory and port 0 for each port, so they
 run in parallel (`e2e/harness_test.mbt`). They need `moon`, `moonc`, `git`,
-`kill` and `openssl` on `PATH`. The HTTPS tests use clients that trust only
-the root CA of `testcerts`, and the HTTP/1.1 tests run on both the plain and
-the TLS port. The tests of the generated certificate (`e2e/self_signed_test.mbt`)
+`kill`, `mkfifo` and `openssl` on `PATH`. The HTTPS tests use clients that
+trust only the root CA of `testcerts`, and the HTTP/1.1 tests run on both
+the plain and the TLS port. The tests of the generated certificate (`e2e/self_signed_test.mbt`)
 read it from the handshake with `openssl s_client` and then trust only it.
 The test of the Journal's byte bound under a memory limit
 (`e2e/journal_bound_test.mbt`) starts smock in a systemd user scope with

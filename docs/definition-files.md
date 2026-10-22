@@ -3664,3 +3664,7 @@ The exported file is committed as the fixture
 [`schema/v1/fixtures/valid/users-from-jsonnet.json`](../schema/v1/fixtures/valid/users-from-jsonnet.json),
 so CI checks it with the rest. CUE (`cue export --out json`) and Pkl
 (`pkl eval -f json`) work the same way.
+
+An OpenAPI document is turned into a Definition file by smock itself:
+`smock import-openapi` writes a Stub for each documented response of each
+operation, as [Importing OpenAPI](importing-openapi.md) explains.

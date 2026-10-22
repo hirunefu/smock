@@ -3,7 +3,8 @@
 // would load without a word, while the equivalent YAML file is rejected
 // with "duplicate key". JSON leaves what such an object means to each
 // reader (RFC 8259, section 4), so it is ambiguous, and smock rejects it
-// as it rejects the YAML file.
+// as it rejects the YAML file. The check is public so that the OpenAPI
+// import rejects a JSON document that repeats a key in the same way.
 
 ///|
 /// An object or an array that is open where the scan is.
@@ -37,8 +38,9 @@ fn value_pointer(open : Array[Open]) -> String {
 /// The JSON Pointer of the first key, in the order of `text`, that an
 /// earlier member of its object already has, if any. `text` must parse as
 /// JSON. Names are compared as they read, after escapes, so `"x"` and
-/// `"x"` are the same key.
-fn first_duplicate_key(text : String) -> String? {
+/// `"\u0078"` are the same key. The pointer escapes `~` and `/` as RFC 6901
+/// asks.
+pub fn first_duplicate_key(text : String) -> String? {
   let open : Array[Open] = []
   let mut i = 0
   while i < text.length() {

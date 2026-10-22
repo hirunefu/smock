@@ -6,6 +6,22 @@
 // are beyond the Schema.
 
 ///|
+/// Whether a file named `name` is YAML, as a Definition file: its name ends
+/// in `.yaml` or `.yml`, in lower case.
+pub fn is_yaml_name(name : String) -> Bool {
+  name.has_suffix(".yaml") || name.has_suffix(".yml")
+}
+
+///|
+/// Whether a file named `name` is JSON or YAML, as a Definition file: its
+/// name ends in `.json`, `.yaml` or `.yml`, in lower case. Other files are
+/// not Definition files, and the OpenAPI import reads and writes only
+/// such names too.
+pub fn is_json_or_yaml_name(name : String) -> Bool {
+  name.has_suffix(".json") || is_yaml_name(name)
+}
+
+///|
 /// Parses a Definition file, JSON or YAML, into its top-level object, or
 /// the problem that stops it from being read. A YAML file gives the tree of
 /// the equivalent JSON file, so everything after parsing is shared.
@@ -16,10 +32,10 @@ fn parse_file(
   let problem = (pointer : String, message : String) => {
     Err(Diagnostic::{ file: name, pointer, message, })
   }
-  let yaml = name.has_suffix(".yaml") || name.has_suffix(".yml")
-  if !yaml && !name.has_suffix(".json") {
+  if !is_json_or_yaml_name(name) {
     return problem("", "a Definition file name ends in .json, .yaml or .yml")
   }
+  let yaml = is_yaml_name(name)
   let text = @utf8.decode(bytes) catch {
     _ => return problem("", "not valid UTF-8")
   }
@@ -415,18 +431,36 @@ fn File::read_hosts(
   for i, host in self.array(pointer, json) {
     let field = child_pointer(pointer, i.to_string())
     match host {
-      String(host) if is_host(host) && is_reachable_host(host) =>
-        out.push((host, field))
-      String(host) if host.contains("*") =>
-        self.error(field, "must be an exact name: Hosts have no wildcards")
-      _ =>
-        self.error(
-          field, "must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080",
-        )
+      String(host) =>
+        match host_problem(host) {
+          None => out.push((host, field))
+          Some(message) => self.error(field, message)
+        }
+      _ => self.error(field, not_a_host)
     }
   }
   out
 }
+
+///|
+/// Why `host` cannot be a Host in a Definition file, as `smock check` says
+/// it, or `None` when it can: the JSON Schema's `host` pattern, and the
+/// rules the Schema cannot express (see `is_reachable_host`). Hosts that
+/// repeat are not its concern. `smock import-openapi` checks its `--hosts`
+/// with it, so a Host it takes always loads.
+pub fn host_problem(host : String) -> String? {
+  if is_host(host) && is_reachable_host(host) {
+    None
+  } else if host.contains("*") {
+    Some("must be an exact name: Hosts have no wildcards")
+  } else {
+    Some(not_a_host)
+  }
+}
+
+///|
+/// What is wrong with a Host that is not one, such as `a b` or `:8080`.
+let not_a_host : String = "must be a host name or an IP address, optionally with a port, such as users.example.com or [::1]:8080"
 
 ///|
 /// Reads how a Mock answers when no Stub matches, and returns the status

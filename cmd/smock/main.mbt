@@ -17,6 +17,7 @@ async fn main {
       @settings.serve_command(),
       @settings.check_command(),
       @settings.render_command(),
+      @settings.import_openapi_command(),
     ],
   )
   // `--help` and `--version` print and exit 0 inside `parse`.
@@ -65,6 +66,16 @@ async fn main {
         }
       }
       exit(render(settings))
+    }
+    Some(("import-openapi", matches)) => {
+      let settings = @settings.ImportOpenapiSettings::from_matches(matches) catch {
+        err => {
+          eprintln("smock import-openapi: \{err.message()}")
+          exit(2)
+          return
+        }
+      }
+      exit(import_openapi(settings))
     }
     _ => ()
   }

@@ -162,6 +162,81 @@ test "compact JSON keeps member order and writes each number in its shortest for
 }
 
 ///|
+test "a number is written in its shortest form, or as the text it kept" {
+  let text = (json : Json) => {
+    match json {
+      Number(n, repr~) => @template.number_text(n, repr)
+      _ => "not a number"
+    }
+  }
+  guard @json.parse("[1.50, 1e3, -0, 0.1, 12345678901234567890, 1e400]")
+    is Array(numbers) else {
+    fail("not an array")
+  }
+  inspect(
+    numbers.map(text).join(" "),
+    content="1.5 1000 0 0.1 12345678901234567890 1e400",
+  )
+  // A helper's output, such as `fake.decimal`, keeps its decimals.
+  inspect(text(Json::number(1.5, repr="1.50")), content="1.50")
+}
+
+///|
+test "indented JSON keeps member order, indents two spaces per level, and writes numbers and strings as compact JSON does" {
+  let indented = (json : Json) => {
+    @utf8.decode(@template.indented_json_bytes(json))
+  }
+  inspect(
+    indented(
+      @json.parse(
+        "{\"big\": 12345678901234567890, \"float\": 1.50, \"text\": \"a\\\"b\\\\c\\n\\u0001é/\", \"empty\": {}, \"none\": [], \"list\": [1e3, [], {\"x\": null}, true, false, -0.25]}",
+      ),
+    ),
+    content=(
+      #|{
+      #|  "big": 12345678901234567890,
+      #|  "float": 1.5,
+      #|  "text": "a\"b\\c\n\u0001é/",
+      #|  "empty": {},
+      #|  "none": [],
+      #|  "list": [
+      #|    1000,
+      #|    [],
+      #|    {
+      #|      "x": null
+      #|    },
+      #|    true,
+      #|    false,
+      #|    -0.25
+      #|  ]
+      #|}
+    ),
+  )
+  // A value that is not a collection, or an empty one, takes one line.
+  inspect(
+    [Json::number(0.1), Json::string("a\tb"), Json::object({}), Json::array([])]
+    .map(indented)
+    .join(" "),
+    content="0.1 \"a\\tb\" {} []",
+  )
+}
+
+///|
+test "json_string_bytes gives the length of a string as compact JSON writes it, quotes and escapes included, and stops past its limit" {
+  for
+    s in [
+      "", "plain", "\"quoted\" \\ back", "\n\r\t\u{08}\u{0c}", "\u{01}\u{1f}", "é",
+      "日本", "😀", "\u{7f}\u{2028}",
+    ] {
+    let bytes = @template.compact_json_bytes(Json::string(s)).length()
+    assert_eq(@template.json_string_bytes(s, limit=1000), bytes)
+  }
+  let long = "a".repeat(100)
+  assert_true(@template.json_string_bytes(long, limit=10) > 10)
+  assert_true(@template.json_string_bytes(long, limit=10) < 102)
+}
+
+///|
 test "cookie.NAME is the first value of the cookie, read from every Cookie field as sent, and missing when absent" {
   let input : @template.Input = {
     ..request,

@@ -94,12 +94,20 @@ covers part of the need, the item says what.
   `Last-Modified`. Mockoon has neither, but sends the first of several
   ranges where smock sends the whole body
   ([Behaviour that differs](#behaviour-that-differs)).
-- **OpenAPI import and export, and a GUI.** The translation is done by
-  hand, and Definition files are edited as text. Editors can check them
-  against the JSON Schema
-  ([editor support](definition-files.md#editor-support)).
+- **OpenAPI export, and a GUI.** smock writes no OpenAPI document, and
+  Definition files are edited as text. Editors can check them against the
+  JSON Schema ([editor support](definition-files.md#editor-support)).
 - **Windows and macOS.** smock runs on Linux, on amd64 and arm64, or in a
   Linux container.
+
+An environment that Mockoon imported from an OpenAPI document can be
+imported into smock from the same document, with `smock import-openapi`,
+instead of being translated by hand.
+[Importing OpenAPI](importing-openapi.md) explains the command, and its
+[notes for Mockoon users](importing-openapi.md#notes-for-mockoon-users)
+say where the result differs from Mockoon's import. Only what was changed
+in the environment after the import, such as rules, is then translated
+with the steps below.
 
 ## How the models differ
 
@@ -1914,6 +1922,7 @@ write a fixed value. Leaving the member out changes the body's shape.
 | Mockoon | smock |
 |---|---|
 | `mockoon-cli start --data env.json` | `smock serve --dir defs`, with the Admin API token in `SMOCK_ADMIN_TOKEN`. |
+| `mockoon-cli start --data openapi.yaml`, which serves an OpenAPI document | `smock import-openapi` once, then `smock serve`: smock never reads OpenAPI when it serves ([Importing OpenAPI](importing-openapi.md)). |
 | `--watch` | Built in: smock reloads changed files without a restart, and keeps serving the current set when the new one is invalid. |
 | `mockoon-cli validate` | `smock check defs` |
 | `--disable-routes` | Remove the Stubs, or move them out of the definitions directory. |
@@ -1930,4 +1939,5 @@ write a fixed value. Leaving the member out changes the body's shape.
 | `/mockoon-admin/env-vars` | No counterpart: smock reads the variables that `--template-env` lists once, at startup. |
 | `PUT /mockoon-admin/environment` | Edit the files; smock reloads them. |
 | The `mockoon/cli` image | `ghcr.io/hirunefu/smock:<version>`, from a release. |
-| `import`, `export` | No counterpart. |
+| `import` | `smock import-openapi <document> --mock <name> --output <file>`, from the same OpenAPI document ([Importing OpenAPI](importing-openapi.md#notes-for-mockoon-users)). |
+| `export` | No counterpart. |

@@ -1,7 +1,9 @@
 import {
   "moonbitlang/async",
   "moonbitlang/async/fs",
+  "moonbitlang/async/os_error",
   "moonbitlang/core/argparse",
+  "moonbitlang/core/buffer",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
   "moonbitlang/x/sys",
@@ -9,6 +11,7 @@ import {
   "smock/smock/defdir",
   "smock/smock/definitions",
   "smock/smock/engine",
+  "smock/smock/importopenapi",
   "smock/smock/log",
   "smock/smock/server",
   "smock/smock/settings",
