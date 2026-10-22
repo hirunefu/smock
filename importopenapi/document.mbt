@@ -145,14 +145,16 @@ fn Report::version(self : Report, top : Map[String, Json]) -> String? {
 ///|
 /// The `title` and `version` of the document's `info`, which the comment
 /// at the top of a YAML file names, or `""` for each it does not have.
-/// Either of the wrong type is an error. A version that is a number, as an
-/// unquoted `1.0` reads in YAML, says to quote it.
+/// Either of the wrong type, or an `info` that is not an object, is
+/// ignored, with a warning, and the comment leaves it out: only the
+/// comment reads them, so the file can still be faithful. A version that
+/// is a number, as an unquoted `1.0` reads in YAML, says to quote it.
 fn Report::info(self : Report, top : Map[String, Json]) -> (String, String) {
   let info = match top.get("info") {
     None => return ("", "")
     Some(Object(info)) => info
     Some(_) => {
-      self.error_at("/info", "must be an object")
+      self.warning_at("/info", "ignored: must be an object")
       return ("", "")
     }
   }
@@ -160,7 +162,7 @@ fn Report::info(self : Report, top : Map[String, Json]) -> (String, String) {
     None => ""
     Some(String(title)) => title
     Some(_) => {
-      self.error_at("/info/title", "must be a string")
+      self.warning_at("/info/title", "ignored: must be a string")
       ""
     }
   }
@@ -168,11 +170,13 @@ fn Report::info(self : Report, top : Map[String, Json]) -> (String, String) {
     None => ""
     Some(String(version)) => version
     Some(Number(_)) => {
-      self.error_at("/info/version", "must be a string: quote the version")
+      self.warning_at(
+        "/info/version", "ignored: must be a string: quote the version",
+      )
       ""
     }
     Some(_) => {
-      self.error_at("/info/version", "must be a string")
+      self.warning_at("/info/version", "ignored: must be a string")
       ""
     }
   }

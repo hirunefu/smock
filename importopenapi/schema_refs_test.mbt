@@ -96,7 +96,7 @@ test "a schema $ref is followed within the document, as if the schema it names w
 }
 
 ///|
-test "in 3.1 and 3.2, a $ref with keywords beside it is merged with them, as allOf would be, and they come first; in 3.0, the keywords beside a $ref are ignored" {
+test "in 3.1 and 3.2, the keywords beside a $ref come first, and the schema it names counts as part of the schema itself, not as an allOf branch, so its example is used on an object too; in 3.0, the keywords beside a $ref are ignored" {
   let schemas =
     #|{
     #|  "Name": { "type": "string", "maxLength": 3, "example": "Rex" },

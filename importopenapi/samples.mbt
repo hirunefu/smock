@@ -161,6 +161,9 @@ fn Report::sampler(self : Report, document : Document, cut~ : Bool) -> Sampler {
 priv struct BodySample {
   value : Json?
   cut : Bool
+  /// Whether there is no sample because it would pass 1 MiB, even cut, as
+  /// a warning says, rather than because the schema allows no value.
+  too_large : Bool
 }
 
 ///|
@@ -185,14 +188,14 @@ fn Report::body_sample(
     try sampler.sample(pointer, json, 0) catch {
       Passed => self.rollback(mark)
     } noraise {
-      value => return { value, cut, }
+      value => return { value, cut, too_large: false, }
     }
   }
   self.warning_at(
     pointer,
     "left out: \{part} is empty, since its sample would be more than \{size_text(max_cut_sample_bytes)}, even cut to its required parts",
   )
-  { value: None, cut: false, }
+  { value: None, cut: false, too_large: true, }
 }
 
 ///|

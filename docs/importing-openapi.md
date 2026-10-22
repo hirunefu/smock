@@ -203,9 +203,12 @@ The comments are there for the reader:
 
 - The comment at the top says where the file came from: the document,
   by its base name, with its `info.title`, its `info.version` and its
-  OpenAPI version, and the flags that shape the file. It says not to edit
-  the file, since the next import replaces it. Put hand changes in another
-  file ([Overrides](#overrides)).
+  OpenAPI version, and the flags that shape the file whose value is not
+  the default, so that typing a default changes no byte. It says not to
+  edit the file, since the next import replaces it. Put hand changes in
+  another file ([Overrides](#overrides)). An `info` that is not an object,
+  or a `title` or `version` that is not a string, is left out of the
+  comment, with a warning, and the import goes on.
 - The comment above each Stub maps it back to the document: the method,
   the path as the document writes it, the response key, the name of the
   example its body comes from, if any, `sample cut` when its body is a
@@ -280,11 +283,11 @@ Stub for each response it answers, and for each further named example
 
 | In the document | In the Definition file |
 |---|---|
-| The document | `version: 1`, then `mocks` with the one Mock, unless `--declare-mock` is `off`, then `stubs`. In YAML, a comment at the top names the document, its `info.title` and `info.version`, its OpenAPI version, `--mock`, then `--hosts`, `--declare-mock off` and `--base-path` when given. |
+| The document | `version: 1`, then `mocks` with the one Mock, unless `--declare-mock` is `off`, then `stubs`. In YAML, a comment at the top names the document, its `info.title` and `info.version`, its OpenAPI version, and the flags whose value is not the default: `--mock`, then `--hosts` when the Mock has Hosts, `--declare-mock off`, and `--base-path` when given. |
 | An operation | One Stub per response: the main Stub, and one for each other response. One more Stub per further named example. In YAML, a comment above each gives the method, the path as written, the response key and the example's name, or `sample cut` for a sample cut to its required parts. |
 | `summary` | In YAML, its first line ends the Stub's comment. Control characters become spaces. |
-| `get`, `put`, `post`, `delete`, `options`, `head`, `patch`, `trace`, and 3.2's `query` | The `method`, in upper case. |
-| A key of 3.2's `additionalOperations` | The `method`, as written. |
+| `get`, `put`, `post`, `delete`, `options`, `head`, `patch`, `trace`, and 3.2's `query` | The `method`, in upper case. In 3.0 and 3.1, which do not define `query`, it is neither read nor checked. |
+| A key of 3.2's `additionalOperations` | The `method`, as written. In 3.0 and 3.1, which do not define `additionalOperations`, it is neither read nor checked. |
 | `head` | `HEAD` is answered only where the document has `head`. |
 | `servers`, of an operation, a Path Item or the document | The path of the first server, in front of the paths of the operations it applies to, unless `--base-path` replaces it ([Servers and base paths](#servers-and-base-paths)). The URL's host is not used. |
 | A path key without parameters | The exact `path`, percent-decoded as smock decodes request paths, so that the match index finds it. |
@@ -740,14 +743,17 @@ weight: { type: number, exclusiveMinimum: 0, exclusiveMaximum: 1 }   # 0.5
   `minimum: 0.25` with `maximum: 0.75`, the sample is the lower bound,
   rounded up, with a warning. So is a number's when no number fits, as
   for a `minimum` above the `maximum`.
-- **Exact digits.** The arithmetic is exact on the decimal text smock
-  writes for each bound: the shortest form that reads back as the same
-  number, or every digit of a large integer. No float is involved, so
-  every platform writes the same digits. The sample is a plain decimal,
-  without an exponent: `exclusiveMinimum: 0` with
+- **Exact digits.** The arithmetic is exact decimal arithmetic on the
+  shortest decimal text of each bound: the shortest text that reads back
+  as the same 64-bit float, or every digit of a large integer. So every
+  platform writes the same digits. A bound written with more digits than
+  a float keeps is read as that shortest text:
+  `minimum: 0.30000000000000001` is `0.3`. The sample is a plain
+  decimal, without an exponent: `exclusiveMinimum: 0` with
   `exclusiveMaximum: 1e-18` gives `0.0000000000000000005`.
-- **Large bounds.** A bound with more than 18 digits before or after the
-  point, such as `1e20` or `1e-19`, is ignored, with a warning.
+- **Large bounds.** A bound whose shortest text has more than 18 digits
+  before or after the point, such as `1e20` or `1e-19`, is ignored, with
+  a warning.
 - **`allOf`.** Each bound comes from the schema's own keyword, else from
   the first branch that has it, not from the tightest branch.
 
@@ -839,13 +845,18 @@ json:
   children: []
 ```
 
-- **Keywords beside a `$ref`.** In 3.1 and 3.2, they are merged with the
-  schema the `$ref` names, as `allOf` would merge them, and they come
-  first: `{ $ref: "#/components/schemas/Pet", example: { name: Rex } }`
-  samples as its own example. The schema the `$ref` names counts as part
-  of the schema that holds the `$ref`, so its `example` is used on an
-  object too ([Composed schemas](#composed-schemas)). In 3.0, the
-  keywords beside a `$ref` are ignored, as 3.0 asks.
+- **Keywords beside a `$ref`.** In 3.1 and 3.2, the schema the `$ref`
+  names counts as part of the schema that holds the `$ref`, not as an
+  `allOf` branch. The keywords beside the `$ref` come first, then those of
+  the schema it names, merged by the rules of `allOf`: `properties` joined
+  by name and `required` joined, and for any other keyword the first that
+  has one ([Composed schemas](#composed-schemas)). So
+  `{ $ref: "#/components/schemas/Pet", example: { name: Rex } }` samples
+  as its own example, and
+  `{ $ref: "#/components/schemas/Pet", description: A pet }` as Pet's
+  `example`, on an object too, where an `allOf` branch's would not be
+  used. In 3.0, the keywords beside a `$ref` are ignored, as 3.0
+  asks.
 - **Recursion.** A schema reached again through a `$ref` it is already
   being sampled from ends the sample there. As an optional property, it is
   left out. As the items of an array, it gives no item, so the array is
@@ -914,7 +925,8 @@ response:
 - **Value.** A header is written with its `example`, else the first of
   its `examples` that gives a value, else a sample of its `schema`
   ([Samples from schemas](#samples-from-schemas), bounded as in
-  [Sample size](#sample-size)). With none of these, the value is empty.
+  [Sample size](#sample-size)). With none of these, it is left out, with
+  a warning (see below).
 - **Example Objects.** An Example Object gives a header its
   `serializedValue` first, since it is the exact text of the header, then
   its `dataValue`, then its `value`.
@@ -938,9 +950,13 @@ These are left out, with a warning:
 - a name that is not an HTTP token, such as one with a space;
 - a name that repeats an earlier one in another case, such as `x-id`
   after `X-Id`, since header names are case-insensitive;
+- a header that nothing gives a value: one with no `example`, and no
+  `examples`, `schema` or `content` that gives one, or one whose schema
+  allows no value, such as `schema: false`;
 - a value that is an object or null, or an array that holds one or an
   array;
-- a value with a control character other than tab, such as a line break.
+- a value with a character HTTP forbids in a field value: an ASCII
+  control character other than tab, such as a line break.
 
 A header with both `example` and `examples` uses `example`, with a
 warning. The examples after the one that gives the value are left out,
@@ -1525,7 +1541,8 @@ Its body is `{"born": "2020-01-01", "code": 7, "tag": null}`.
 - `openapi: 3.1` without quotes is the number 3.1, which is an error:
   quote the version and give its patch, as in `openapi: "3.1.0"`. An
   unquoted `3.1.0` is already a string. An unquoted `version: 1.0` under
-  `info` is a number too, and an error that says to quote it.
+  `info` is a number too. It is left out of the comment at the top, with
+  a warning that says to quote it.
 
 Each of these is an error at its pointer, with a message that names it,
 and nothing is written:

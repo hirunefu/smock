@@ -20,11 +20,12 @@ of each GitHub release include its section
   The Mockoon migration guide points there too: an environment that
   Mockoon imported from an OpenAPI document can be imported into smock from
   the same document.
-- Each imported operation becomes Stubs that match its method and its path,
-  under the path of its server URL, so the mock answers where the real
-  service does; `--base-path` replaces that prefix. A path with parameters,
-  such as `/pets/{petId}`, becomes a pattern in which each parameter matches
-  one segment, and concrete paths come before templated ones. The main
+- Each imported operation, 3.2's `query` and `additionalOperations`
+  included, becomes Stubs that match its method and its path, under the
+  path of its server URL, so the mock answers where the real service does;
+  `--base-path` replaces that prefix. A path with parameters, such as
+  `/pets/{petId}`, becomes a pattern in which each parameter matches one
+  segment, and concrete paths come before templated ones. The main
   response answers by default. Every other response has a Stub that a
   request selects with `Smock-Status: <key>`, such as `404`, and every
   further named example one that `Smock-Example: <name>` selects. A test
@@ -35,11 +36,13 @@ of each GitHub release include its section
   `body`, with the media type as the Content-Type. Samples follow formats,
   number bounds, `allOf`, `oneOf` and `anyOf`, and `$ref`, recursive schemas
   included. Nothing is random and nothing is templated, and number bounds
-  are read exactly from their decimal text, so every platform writes the
-  same digits. A sample nests at most 32 levels, one above 64 KiB is cut to
-  its required parts, and a body above 1 MiB is left empty, with a warning.
+  use exact decimal arithmetic on the shortest decimal text of each bound,
+  so every platform writes the same digits. A sample nests at most 32
+  levels, one above 64 KiB is cut to its required parts, and a body above
+  1 MiB is left empty, with a warning.
   The headers a response documents are written too, with their example or a
-  sample of their schema.
+  sample of their schema; a header with neither is left out, with a
+  warning.
 - `smock import-openapi` reads YAML documents as YAML 1.2, as OpenAPI
   recommends, so `200:` is the key `"200"` and a date is a string; anchors
   and aliases stay errors. It follows a `$ref` where OpenAPI allows one,
@@ -48,12 +51,13 @@ of each GitHub release include its section
   committed file. At most 1,000 documents and 64 MiB are read. A URL is an
   error that suggests bundling the document into one file first.
 - The import writes YAML or JSON, as the name of `--output` says. A YAML
-  file starts with a comment that names the document and says not to edit
-  the file, and each Stub has one that maps it back to its operation. An
-  existing file is replaced only with `--overwrite on`, through a temporary
-  file and a rename, so a smock that watches the directory never loads half
-  a file. The guide shows how to keep hand changes in another file, and how
-  CI can check that the file is current.
+  file starts with a comment that names the document and the flags whose
+  value is not the default, and says not to edit the file, and each Stub
+  has one that maps it back to its operation. An existing file is replaced
+  only with `--overwrite on`, through a temporary file and a rename, so a
+  smock that watches the directory never loads half a file. The guide
+  shows how to keep hand changes in another file, and how CI can check
+  that the file is current.
 - `write` in the `smock/yaml` module turns a JSON tree into a YAML
   document, with comments, that the module's own parser reads back as the
   same tree. A string is quoted only when it would not read back as the

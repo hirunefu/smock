@@ -203,7 +203,7 @@ test "a block scalar may have an indentation indicator, as YAML writers emit for
 }
 
 ///|
-test "an unquoted openapi: 3.1 is a number, and gets the error that says to quote it and give the patch; an unquoted 3.1.0 is the string \"3.1.0\"; an unquoted swagger: 2.0 says to convert the document to 3.0 first" {
+test "an unquoted openapi: 3.1 is a number, and gets the error that says to quote it and give the patch; an unquoted 3.1.0 is the string \"3.1.0\"; an unquoted info version: 1.0 is a number too, and gets a warning that says to quote it; an unquoted swagger: 2.0 says to convert the document to 3.0 first" {
   let versions = [
     "openapi: 3.1", "openapi: 3.0", "openapi: 3", "openapi: 3.1.0", "openapi: \"3.1.0\"",
     "openapi: 3.1.0\ninfo: { title: Petstore, version: 1.0 }", "swagger: 2.0",
@@ -222,7 +222,7 @@ test "an unquoted openapi: 3.1 is a number, and gets the error that says to quot
       #|petstore.yaml: /openapi: must be a string such as "3.1.0": quote the version, and give its patch
       #|1 Stubs from 1 operations
       #|1 Stubs from 1 operations
-      #|petstore.yaml: /info/version: must be a string: quote the version
+      #|petstore.yaml: /info/version: warning: ignored: must be a string: quote the version
       #|petstore.yaml: /swagger: Swagger 2.0 is not supported: convert the document to OpenAPI 3.0 first
     ),
   )

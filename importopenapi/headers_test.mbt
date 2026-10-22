@@ -28,7 +28,7 @@ test "each header a response documents is written in its headers with its exampl
 }
 
 ///|
-test "a header's value is its example, else the first of its examples that gives one, else a sample of its schema; with none, it is empty" {
+test "a header's value is its example, else the first of its examples that gives one, else a sample of its schema; a header with none of these is left out, with a warning" {
   inspect(
     responses_of(
       (
@@ -61,6 +61,7 @@ test "a header's value is its example, else the first of its examples that gives
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Example/examples: warning: ignored: a header is written with its example, which comes first
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Examples/examples/far: warning: left out: smock does not read externalValue, and the example has no dataValue, value or serializedValue
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Examples/examples/second: warning: left out: a header is written with its first example
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Nothing: warning: left out: no example, examples, schema or content gives the header a value
       #|response:
       #|  status: 200
       #|  headers:
@@ -69,7 +70,43 @@ test "a header's value is its example, else the first of its examples that gives
       #|    X-Rate-Limit: "10"
       #|    X-Expires: "2000-01-01T00:00:00Z"
       #|    X-Schema-Example: abc
-      #|    X-Nothing: ""
+      #|
+    ),
+  )
+}
+
+///|
+test "a header whose schema allows no value, such as false, is left out, with a warning, and so is one whose examples or content give none" {
+  inspect(
+    responses_of(
+      (
+        #|{
+        #|  "200": {
+        #|    "headers": {
+        #|      "X-False": { "schema": false },
+        #|      "X-Never": { "schema": { "allOf": [{ "type": "string" }, false] } },
+        #|      "X-Unread": { "examples": { "far": { "externalValue": "https://example.com/a.txt" } } },
+        #|      "X-No-Media-Type": { "content": {} },
+        #|      "X-Empty-Media-Type": { "content": { "text/plain": {} } },
+        #|      "X-False-Media-Type": { "content": { "text/plain": { "schema": false } } },
+        #|      "X-Kept": { "example": "kept" }
+        #|    }
+        #|  }
+        #|}
+      ),
+    ),
+    content=(
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-False/schema: warning: left out: the header's schema gives no value
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Never/schema: warning: left out: the header's schema gives no value
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Unread/examples/far: warning: left out: smock does not read externalValue, and the example has no dataValue, value or serializedValue
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Unread: warning: left out: no example, examples, schema or content gives the header a value
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-No-Media-Type: warning: left out: no example, examples, schema or content gives the header a value
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Empty-Media-Type: warning: left out: no example, examples, schema or content gives the header a value
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-False-Media-Type/content/text~1plain/schema: warning: left out: the header's schema gives no value
+      #|response:
+      #|  status: 200
+      #|  headers:
+      #|    X-Kept: kept
       #|
     ),
   )
@@ -347,6 +384,7 @@ test "a Header Object that is not an object, or whose $ref cannot be followed, i
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Missing/$ref: the document has nothing at /components/headers/Missing
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Loop/$ref: a cycle of references: this one leads back to petstore.json: /paths/~1r/get/responses/200/headers/X-Loop
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Examples/examples: must be an object
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Examples: warning: left out: no example, examples, schema or content gives the header a value
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Schema/schema: must be a schema, an object or a boolean
       #|nothing written
       #|
@@ -390,6 +428,7 @@ test "a header described with content takes its value the same way from its medi
     content=(
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Two/content/text~1csv: warning: left out: a header's content has one media type, here "text/plain"
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Beside-Schema/schema: warning: ignored: the header has content, which comes first
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Empty: warning: left out: no example, examples, schema or content gives the header a value
       #|response:
       #|  status: 200
       #|  headers:
@@ -400,7 +439,6 @@ test "a header described with content takes its value the same way from its medi
       #|    X-Two: one
       #|    X-Own-Example: own
       #|    X-Beside-Schema: content
-      #|    X-Empty: ""
       #|
     ),
   )
@@ -445,13 +483,13 @@ test "in 3.0 and 3.1 the Media Type Object of a header's content is read as writ
     content=(
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Broken/content/text~1plain/$ref: warning: ignored: a Media Type is a reference only from OpenAPI 3.2
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Url/content/text~1plain/$ref: warning: ignored: a Media Type is a reference only from OpenAPI 3.2
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Url: warning: left out: no example, examples, schema or content gives the header a value
       #|petstore.json: /paths/~1r/get/responses/200/headers/X-Schema/content/text~1plain/$ref: warning: ignored: a Media Type is a reference only from OpenAPI 3.2
+      #|petstore.json: /paths/~1r/get/responses/200/headers/X-Schema: warning: left out: no example, examples, schema or content gives the header a value
       #|response:
       #|  status: 200
       #|  headers:
       #|    X-Broken: abc
-      #|    X-Url: ""
-      #|    X-Schema: ""
       #|
     ),
   )

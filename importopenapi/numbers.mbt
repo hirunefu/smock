@@ -1,7 +1,7 @@
 // Samples of numbers and integers, within their bounds: `minimum`,
-// `maximum` and their exclusive forms. The arithmetic is exact on the
-// bounds' decimal text (decimal.mbt), so every target writes the same
-// digits.
+// `maximum` and their exclusive forms. The arithmetic is exact decimal
+// arithmetic (decimal.mbt) on the shortest decimal text of each bound, so
+// every target writes the same digits.
 
 ///|
 /// A bound of a sampled number: its value, where it is written, and
