@@ -87,20 +87,19 @@ test "problems with the file come before the document's" {
     Options(root="api.json", mock="m", output="defs/m.json"),
     no_document(),
   )
-  let report = conversion.report
-  report.warning_at(Place::root("/webhooks"), "webhooks are not imported")
-  report.end_document()
-  report.error_at(
+  conversion.warning_at(Place::root("/webhooks"), "webhooks are not imported")
+  conversion.report.end_document()
+  conversion.error_at(
     Place::root("/paths/~1a/get/operationId"),
     "must be a non-empty string",
   )
   let _ = conversion.checked(b"{ \"version\": 1 }\n", max_bytes=16)
-  report.late_document_warning(
+  conversion.late_document_warning(
     Place::root("/paths"),
     "there is no operation to import",
   )
   inspect(
-    report.problems().map(problem => problem.to_string()).join("\n"),
+    conversion.report.problems().map(problem => problem.to_string()).join("\n"),
     content=(
       #|defs/m.json: the file would be 17 bytes, more than 16 bytes
       #|api.json: /webhooks: warning: webhooks are not imported

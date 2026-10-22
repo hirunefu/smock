@@ -133,7 +133,7 @@ fn Conversion::target(
       } else {
         self.error_at(
           pointer,
-          "\{self.report.file_name(number)} has nothing at \{target}",
+          "\{self.file_name(number)} has nothing at \{target}",
         )
       }
       return None

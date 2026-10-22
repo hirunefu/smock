@@ -14,12 +14,18 @@ priv struct Document {
 }
 
 ///|
-/// The conversion of the root document, whose content is `root`, with its
-/// problems in `report`: once the document is parsed, with its version
-/// checked, or `None` after reporting why it cannot be read. Then it
-/// reports the document-level parts that are left out.
-fn Conversion::new(report : Report, root : Content) -> Conversion? {
-  let label = report.options.root_label
+/// The conversion of the root document, whose content is `root`, with the
+/// options `options`, the documents given, `documents`, and `report` for
+/// its problems: once the document is parsed, with its version checked, or
+/// `None` after reporting why it cannot be read. Then it reports the
+/// document-level parts that are left out.
+fn Conversion::new(
+  options : Options,
+  documents : Documents,
+  report : Report,
+  root : Content,
+) -> Conversion? {
+  let label = options.root_label
   let json = match root {
     Parsed(json) => json
     Invalid(pointer~, message~) => {
@@ -38,15 +44,15 @@ fn Conversion::new(report : Report, root : Content) -> Conversion? {
   // The version, `info` and the servers are read from the top level,
   // before the conversion has the document they make.
   let reading = {
-    options: report.options,
-    documents: report.documents,
-    needed: report.needed,
+    options,
+    documents,
+    needed: Set([]),
     document: { top, openapi: "", title: "", info_version: "", prefix: "", },
     report,
   }
   guard reading.version(top) is Some(openapi) else { return None }
   let (title, info_version) = reading.info(top)
-  let prefix = match reading.options.base_path {
+  let prefix = match options.base_path {
     Some(path) => trimmed_prefix(path)
     None => reading.prefix(Place::root(""), top, outer="")
   }

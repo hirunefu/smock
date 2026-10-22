@@ -7,13 +7,12 @@
 /// The conversion of `document`, a root document built in memory, with the
 /// options `options` and no other document.
 fn in_memory(options : Options, document : Document) -> Conversion {
-  let report = Report::new(options)
   {
     options,
-    documents: report.documents,
-    needed: report.needed,
+    documents: Documents::new(options),
+    needed: Set([]),
     document,
-    report,
+    report: Report::new(),
   }
 }
 

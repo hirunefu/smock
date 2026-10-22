@@ -14,8 +14,9 @@
 // (headers.mbt), examples (examples.mbt), samples of schemas (samples.mbt),
 // with numbers within their bounds (numbers.mbt) and the exact decimals
 // they need (decimal.mbt), references and the documents they name
-// (references.mbt), the file it writes (output.mbt), and the problems and
-// their order (report.mbt).
+// (references.mbt), the file it writes (output.mbt), the state of a round
+// of the conversion and the places problems are reported at
+// (conversion.mbt), and the problems and their order (report.mbt).
 
 ///|
 /// The most documents a conversion reads, the root included.
@@ -231,7 +232,7 @@ pub fn Converter::give_unreadable(
 /// the root included: passing either is an error.
 pub fn Converter::convert(self : Converter) -> Outcome {
   let options = self.options
-  let report = Report::new(options, documents=self.documents)
+  let report = Report::new()
   if self.documents.passed is Some(name) {
     let most = size_text(max_read_bytes)
     let message = if name == options.root {
@@ -246,11 +247,12 @@ pub fn Converter::convert(self : Converter) -> Outcome {
     report.error(options.root_label, "", "the document was not given")
     return Failed(report.problems())
   }
-  guard Conversion::new(report, root) is Some(conversion) else {
+  guard Conversion::new(options, self.documents, report, root)
+    is Some(conversion) else {
     return Failed(report.problems())
   }
   let imported = conversion.operations()
-  if conversion.documents.count() + conversion.needed.length() > max_documents {
+  if self.documents.count() + conversion.needed.length() > max_documents {
     // This one error replaces every other problem: the documents past the
     // bound are never asked for, so the problems found so far are not
     // final, as in a round that needs documents.
