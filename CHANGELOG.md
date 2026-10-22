@@ -16,6 +16,16 @@ of each GitHub release include its section
   [docs/releasing.md](docs/releasing.md#dependency-updates) says what it
   does not cover, such as the MoonBit toolchain and modules.
 
+### Fixed
+
+- The GKE benchmark (`scripts/gke-bench.sh`) keeps the cluster autoscaler
+  from removing the load generator's node while a profile runs, with a
+  PodDisruptionBudget over the load generator's Pod. When the load
+  generator's Job fails anyway, the run's output and `summary.md` say why,
+  from the events of the Job, its Pod and its node, such as a node
+  scale-down or a preemption, and the run keeps those events in the
+  profile's raw directory.
+
 ## [0.3.0] - 2026-10-22
 
 ### Added

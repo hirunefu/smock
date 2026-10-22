@@ -19,23 +19,27 @@
 #    Pod with the profile's limits as its requests behind a ClusterIP
 #    Service, both named for the profile (smock-<profile>), the load
 #    generator (bench/gke/generator.py) in a Job on another node in smock's
-#    zone, both on nodes of the run's architecture and in GKE_BENCH_ZONE
-#    when it is set, and both with a deadline that ends them within minutes
-#    of the time limit at the latest, so that they stop being billed even if
-#    nothing is left to delete the cluster; the next profile starts once
-#    they are gone, also after a profile that the load generator stopped
-#    early because smock's traffic ports did not answer, before the first
-#    step or after a step that got no response; with --variant, each
-#    variant's smock in a Pod and Service of its own under each profile
+#    zone, under a PodDisruptionBudget that keeps the cluster autoscaler
+#    from removing that node, both on nodes of the run's architecture and
+#    in GKE_BENCH_ZONE when it is set, and both with a deadline that ends
+#    them within minutes of the time limit at the latest, so that they stop
+#    being billed even if nothing is left to delete the cluster; the next
+#    profile starts once they are gone, also after a profile that the load
+#    generator stopped early because smock's traffic ports did not answer,
+#    before the first step or after a step that got no response, or whose
+#    load generator's Job failed; with --variant, each variant's smock in a
+#    Pod and Service of its own under each profile
 #    (smock-<profile>-<label>), each started once the one before is ready,
 #    all on the first one's node, which the run checks before the load
 #    generator starts, with the profile's limits, and one load generator
 #    that measures each variant in turn, round after round (--rounds);
 # 4. writes the load generator's lines, the Pods' state, smock's log and
 #    its Service with the Service's EndpointSlices under the results
-#    directory, and summary.json, summary.md and conditions.json, which
-#    bench/compare.py compares: also when the run stops once a profile has
-#    started, from what it measured, with where and why it stopped; with
+#    directory, with, when the load generator's Job failed, the events of
+#    the namespace and of its node, and why it failed, which it says; and
+#    summary.json, summary.md and conditions.json, which bench/compare.py
+#    compares: also when the run stops once a profile has started, from
+#    what it measured, with where and why it stopped; with
 #    --variant, each variant's log and Service under raw/<profile>/<label>/,
 #    a summary of each sample (one variant's pass over the steps in one
 #    round) under samples/<round>-<label>/, and the comparison of the
@@ -136,6 +140,12 @@ POD_NODE='
 import json, sys
 print(next((pod["node"] or "" for pod in json.load(open(sys.argv[1]))["smock"] if pod["name"] == sys.argv[2]), ""))
 '
+# Prints the node of the load generator's Pod, from what gke.py pod-info
+# kept of the Pods (the argument): nothing when it has none.
+GENERATOR_NODE='
+import json, sys
+print(next((pod["node"] for pod in json.load(open(sys.argv[1]))["generator"] if pod["node"]), ""))
+'
 # Keeps of kubectl's listing of Services and EndpointSlices, on its standard
 # input, those of the Service the argument names.
 OWN_SERVICE='
@@ -153,6 +163,13 @@ warning = json.load(open(sys.argv[1])).get("quotaStatusWarning")
 if not warning:
     sys.exit(1)
 print(warning.get("message") or warning.get("code") or "gcloud says no more")
+'
+# Prints the objects of a manifest gke.py wrote (the argument), for people:
+# each one's kind and name, comma-separated.
+MANIFEST_OBJECTS='
+import json, sys
+document = json.load(open(sys.argv[1]))
+print(", ".join(item["kind"] + " " + item["metadata"]["name"] for item in document.get("items", [document])))
 '
 # Prints the profiles of summary.json, or of a run of variants'
 # same-node.json (the argument), that are not complete, space-separated.
@@ -1226,10 +1243,21 @@ kube() {
 }
 
 # A kubectl command that changes something or waits long: in the
-# background, or printed in a dry run.
+# background, or printed in a dry run, with the objects of the manifest it
+# applies or deletes.
 kube_run() {
+  local arg status
   refresh_token
   changes "$KUBECTL" --kubeconfig="$kubeconfig" --namespace="$NAMESPACE" "$@"
+  status=$?
+  if [ "$dry_run" = 1 ]; then
+    for arg in "$@"; do
+      if [[ $arg == --filename=* ]]; then
+        say "  $(basename "${arg#--filename=}") holds $("$PYTHON" -c "$MANIFEST_OBJECTS" "${arg#--filename=}")"
+      fi
+    done
+  fi
+  return "$status"
 }
 
 make_cluster() {
@@ -1271,6 +1299,9 @@ wait_for_generator() {
   done
 }
 
+# Waits for the load generator's Job (the first argument) to end, for LIMIT_S
+# (the second) at most: returns 0 when it completed, 2 when it failed, and
+# 1 when it did neither in time.
 wait_for_job() {
   local job=$1 limit_s=$2 state since
   since=$(now)
@@ -1281,7 +1312,7 @@ wait_for_job() {
     *Complete=True*) return 0 ;;
     *Failed=True*)
       say "the load generator's Job failed: $state"
-      return 1
+      return 2
       ;;
     esac
     if [ $(($(now) - since)) -ge "$limit_s" ]; then
@@ -1290,6 +1321,28 @@ wait_for_job() {
     fi
     pause
   done
+}
+
+# Keeps, once the load generator's Job (the first argument) has failed, the
+# events of the namespace, where the Job's and its Pod's are, and those of
+# its Pod's node, as the pods.json under RAW (the second) names it, masked,
+# as events.json and node-events.json in RAW; and sets job_failure to why
+# it failed, as gke.py job-failure reads them, which keeps that in
+# job-failure.json for the summary. Called in the script's own shell.
+keep_job_failure() {
+  local job=$1 raw=$2 node
+  refresh_token
+  kube get events --output=json | masked >"$raw/events.json"
+  node=$("$PYTHON" -c "$GENERATOR_NODE" "$raw/pods.json" 2>/dev/null)
+  if [ -n "$node" ]; then
+    # kubectl itself, not the function kube: a node's events are in the
+    # default namespace.
+    "$KUBECTL" --kubeconfig="$kubeconfig" --namespace=default get events --output=json \
+      --field-selector="involvedObject.kind=Node,involvedObject.name=$node" 2> >(masked >&2) |
+      masked >"$raw/node-events.json"
+  fi
+  job_failure=$("$PYTHON" "$GKE_PY" job-failure "$raw" --job "$job") ||
+    job_failure="the load generator's Job failed, and why could not be read from its events"
 }
 
 # Keeps what the run knows of the profile's Pods and of the nodes they run
@@ -1436,7 +1489,7 @@ start_variants() {
 # run beside them (stop_reason then says which).
 run_profile() {
   local name=$1 deadline_s=$2 job=generator-$1 manifests=$work/manifests/$1 raw=$out/raw/$1 status=0 waited ended
-  local left="" label undeleted=() smock_options=(--smock-image "${smock_ref:-}")
+  local left="" label undeleted=() smock_options=(--smock-image "${smock_ref:-}") job_failure=""
   local generator_ref_shown=${generator_ref:-}
   # smock's Pod and Service, as gke.py names them: their own under each
   # profile, so that a lookup of the name cannot get the address of the
@@ -1475,8 +1528,9 @@ run_profile() {
   fi
   kube_run apply --filename="$manifests/generator.json" || die "applying the load generator's Job failed"
   if [ "$dry_run" = 1 ]; then
-    say "would wait for the Job $job, keep its log as $raw/generator.log and its Pods as $raw/pods.json, then" \
-      "delete it and smock"
+    say "would wait for the Job $job, keep its log as $raw/generator.log and its Pods as $raw/pods.json (and, if it" \
+      "failed, the events of the namespace and of its Pod's node as $raw/events.json and $raw/node-events.json)," \
+      "then delete it and smock"
   else
     mkdir -p "$raw"
     wait_for_generator "$job" || die "the load generator's Pod did not start under $name"
@@ -1485,7 +1539,15 @@ run_profile() {
     "$KUBECTL" --kubeconfig="$kubeconfig" --namespace="$NAMESPACE" logs --follow "job/$job" \
       >"$raw/generator-stream.log" 2>>"$work/kubectl.log" &
     log_pid=$!
-    wait_for_job "$job" $((deadline_s + 120)) || status=3
+    wait_for_job "$job" $((deadline_s + 120))
+    case $? in
+    0) ;;
+    2)
+      status=3
+      keep_job_failure "$job" "$raw"
+      ;;
+    *) status=3 ;;
+    esac
     for waited in 1 2 3 4 5 6; do
       kill -0 "$log_pid" 2>/dev/null || break
       [ "$waited" = 6 ] || pause
@@ -1504,6 +1566,9 @@ run_profile() {
     if [ -n "$ended" ]; then
       say "profile $name ended early: $ended"
       status=3
+    elif [ -n "$job_failure" ]; then
+      # The load generator gave no reason: why its Job failed.
+      say "profile $name ended early: $job_failure"
     fi
   fi
   if [ ${#variants[@]} -eq 0 ]; then

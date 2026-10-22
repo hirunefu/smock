@@ -414,6 +414,14 @@ if tool == "kubectl":
             answer("", 1)
         rule("smock_ready")
         answer(f"{words[1]} condition met\n")
+    if words[:2] == ["get", "events"] and "--output=json" in argv:
+        # The configured events of the namespace, of the objects the field
+        # selector names when it names some.
+        items = config.get("event_lists", {}).get(options.get("namespace"), [])
+        named = [term.split("=", 1)[1] for term in options.get("field-selector", "").split(",")
+                 if term.startswith("involvedObject.name=")]
+        items = [item for item in items if not named or item["involvedObject"]["name"] in named]
+        answer(json.dumps({"apiVersion": "v1", "kind": "List", "items": items, "metadata": {"resourceVersion": ""}}))
     if words[:2] == ["get", "events"]:
         answer(config.get("events", ""))
     if words[:1] == ["describe"]:
@@ -738,6 +746,12 @@ class Script(unittest.TestCase):
 
     def made(self, words):
         return [call for call in self.calls() if call["words"][:len(words)] == words]
+
+    def applied(self, kind):
+        """The objects of `kind` the run applied, in order: each applied
+        file holds one object, or a List of them."""
+        return [item for call in self.made(["apply"]) for item in call["document"].get("items", [call["document"]])
+                if item["kind"] == kind]
 
     def state_now(self):
         """The fake cloud's clusters and repositories."""
@@ -1205,6 +1219,136 @@ class Diagnostics(Script):
         self.assertIn("smock.log", output)
         self.assertIn("smock-node-cpu.log", output)
         self.assertIn("service.json", output)
+        self.assertIn("(and, if it failed, the events of the namespace and of its Pod's node as ", output)
+        self.assertIn("/raw/small/node-events.json)", output)
+
+
+class DisruptionBudget(Script):
+    """The PodDisruptionBudget that keeps the load generator's node goes
+    with its Job: applied before it, deleted with it before the next
+    profile starts, and named in a dry run."""
+
+    def test_each_profiles_budget_is_applied_before_its_job_and_deleted_with_it_before_the_next_profile(self):
+        self.plan.write_text(json.dumps(TWO_PROFILES_PLAN))
+        (self.tmp / "generator-large.log").write_text(generator_log("large", "1", "1Gi", (1000, 2000)))
+        self.configure(logs={"generator-small": str(self.tmp / "generator-small.log"),
+                             "generator-large": str(self.tmp / "generator-large.log"),
+                             "smock-small": str(self.tmp / "smock-small.log")})
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 0, output)
+        budgets = []
+        for call in self.calls("kubectl"):
+            if call["words"][:1] in (["apply"], ["delete"]):
+                items = call["document"].get("items", [call["document"]])
+                budgets += [(call["words"][0], item["kind"], item["metadata"]["name"]) for item in items
+                            if item["kind"] in ("PodDisruptionBudget", "Job")]
+        self.assertEqual(budgets, [
+            ("apply", "PodDisruptionBudget", "generator-small"), ("apply", "Job", "generator-small"),
+            ("delete", "PodDisruptionBudget", "generator-small"), ("delete", "Job", "generator-small"),
+            ("apply", "PodDisruptionBudget", "generator-large"), ("apply", "Job", "generator-large"),
+            ("delete", "PodDisruptionBudget", "generator-large"), ("delete", "Job", "generator-large")])
+        # Nothing of the profiles is left, but the namespace and its quota,
+        # which go with the cluster.
+        state = json.loads((self.state / "state.json").read_text())
+        self.assertEqual({item["kind"] for item in state["objects"].values()}, {"Namespace", "ResourceQuota"})
+
+    def test_a_dry_run_names_the_budget_among_what_it_would_apply_and_delete(self):
+        status, output = self.run_script("--dry-run")
+        self.assertEqual(status, 0, output)
+        lines = output.splitlines()
+        for verb in ("apply", "delete"):
+            [index] = [index for index, line in enumerate(lines)
+                       if line.startswith("gke-bench: would run: kubectl") and f" {verb} " in line
+                       and line.split("--filename=", 1)[-1].split()[0].endswith("/generator.json")]
+            self.assertEqual(lines[index + 1],
+                             "gke-bench:   generator.json holds PodDisruptionBudget generator-small, "
+                             "Job generator-small")
+
+
+def k8s_event(kind, name, reason, message, at, component="kubelet"):
+    """An event about the object `kind`/`name` at `at` on 2026-10-19, as
+    kubectl get events -o json lists it."""
+    return {"apiVersion": "v1", "kind": "Event", "metadata": {"name": f"{name}.{reason.lower()}"},
+            "involvedObject": {"kind": kind, "name": name}, "reason": reason, "message": message,
+            "type": "Normal", "count": 1, "firstTimestamp": f"2026-10-19T{at}Z", "lastTimestamp": f"2026-10-19T{at}Z",
+            "source": {"component": component}}
+
+
+# The events of a profile whose load generator's Pod (the fakes'
+# generator-small-x7k2p, on node-b) waited for a node, as in the run of
+# 2026-10-19: what the cluster autoscaler says names the project.
+WAITED = [
+    k8s_event("Pod", "generator-small-x7k2p", "TriggeredScaleUp", "pod triggered scale-up: [{https://www.googleapis"
+              f".com/compute/v1/projects/{PROJECT}/zones/us-central1-a/instanceGroups/gk3-smock-bench-pool-2-grp "
+              "0->1 (max: 1000)}]", "23:42:20", "cluster-autoscaler"),
+    k8s_event("Pod", "generator-small-x7k2p", "Scheduled", "Successfully assigned smock-bench/generator-small-x7k2p to "
+              "node-b", "23:51:40", "default-scheduler"),
+]
+STOPPED = [
+    k8s_event("Pod", "generator-small-x7k2p", "Killing", "Stopping container generator", "23:53:53"),
+    k8s_event("Job", "generator-small", "BackoffLimitExceeded", "Job has reached the specified backoff limit",
+              "23:53:58", "job-controller"),
+]
+SCALED_DOWN = k8s_event("Pod", "generator-small-x7k2p", "ScaleDown", "deleting pod for node scale down", "23:53:53",
+                        "cluster-autoscaler")
+NODE_EVENTS = [k8s_event("Node", "node-b", "ScaleDown", "marked the node as toBeDeleted/unschedulable", "23:53:52",
+                         "cluster-autoscaler"),
+               k8s_event("Node", "node-a", "NodeReady", "Node node-a status is now: NodeReady", "23:40:00")]
+
+
+class FailedJob(Script):
+    """When the load generator's Job fails, the run keeps the events of the
+    namespace and of the load generator's node, masked, and its output and
+    summary.md say why from them, or that it is unknown and where they
+    are; the next profile runs."""
+
+    def configure(self, **config):
+        # The load generator's Pod went during the step at 1000 requests/s.
+        (self.tmp / "generator-cut.log").write_text(generator_log(rates=(500,)).replace(
+            '{"kind": "done", "profile": "small"}\n', ""))
+        config.setdefault("logs", {"generator-small": str(self.tmp / "generator-cut.log"),
+                                   "smock-small": str(self.tmp / "smock-small.log")})
+        super().configure(job_state="FailureTarget=True Failed=True ", job_pod_phase="Failed", **config)
+
+    def test_a_node_the_cluster_autoscaler_scaled_down_is_named_as_why_the_profile_ended_early(self):
+        self.configure(event_lists={"smock-bench": [*WAITED, SCALED_DOWN, *STOPPED], "default": NODE_EVENTS})
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        reason = ("the load generator's Job failed: the cluster autoscaler scaled down its node (event ScaleDown of "
+                  "Pod generator-small-x7k2p at 2026-10-19T23:53:53Z: deleting pod for node scale down)")
+        self.assertIn(f"gke-bench: profile small ended early: {reason}\n", output)
+        self.assertIn(f"small ended early: {reason}. Not measured: http-keep-alive@small@1000.",
+                      (self.out / "summary.md").read_text())
+        # The node's events are those of the load generator's node.
+        [node_events] = [call for call in self.made(["get", "events"]) if "--namespace=default" in call["argv"]]
+        self.assertIn("--field-selector=involvedObject.kind=Node,involvedObject.name=node-b", node_events["argv"])
+        raw = self.out / "raw" / "small"
+        self.assertEqual([item["involvedObject"]["name"]
+                          for item in json.loads((raw / "node-events.json").read_text())["items"]], ["node-b"])
+        # Kept masked, as everything the run writes.
+        events = (raw / "events.json").read_text()
+        self.assertNotIn(PROJECT, events)
+        self.assertIn("projects/$GKE_BENCH_PROJECT/zones", events)
+        self.assertEqual(len(json.loads(events)["items"]), 5)
+        self.assertIn("nothing is left", output)
+
+    def test_without_an_event_of_a_known_reason_it_says_it_is_unknown_and_where_the_events_are(self):
+        self.configure(event_lists={"smock-bench": [*WAITED, *STOPPED], "default": NODE_EVENTS})
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 1, output)
+        reason = ("the load generator's Job failed, and its events name no known reason: they are in "
+                  "raw/small/events.json and raw/small/node-events.json, beside the load generator's log, "
+                  "raw/small/generator.log")
+        self.assertIn(f"gke-bench: profile small ended early: {reason}\n", output)
+        self.assertIn(f"small ended early: {reason}. Not measured: http-keep-alive@small@1000.",
+                      (self.out / "summary.md").read_text())
+
+    def test_a_job_that_completed_keeps_no_events(self):
+        super().configure()
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 0, output)
+        self.assertEqual([call for call in self.made(["get", "events"]) if "--output=json" in call["argv"]], [])
+        self.assertFalse((self.out / "raw" / "small" / "events.json").exists())
 
 
 class Profiles(Script):
@@ -1248,10 +1392,9 @@ class Profiles(Script):
                 self.assertTrue(any(arg.startswith("--timeout=") for arg in call["argv"]), call["argv"])
         # Each load generator targets its profile's Service.
         targets = {}
-        for call in self.made(["apply"]):
-            if call["document"]["kind"] == "Job":
-                env = call["document"]["spec"]["template"]["spec"]["containers"][0]["env"]
-                targets[call["document"]["metadata"]["name"]] = next(v["value"] for v in env if v["name"] == "TARGET")
+        for job in self.applied("Job"):
+            env = job["spec"]["template"]["spec"]["containers"][0]["env"]
+            targets[job["metadata"]["name"]] = next(v["value"] for v in env if v["name"] == "TARGET")
         self.assertEqual(targets, {"generator-small": "smock-small.smock-bench.svc.cluster.local",
                                    "generator-large": "smock-large.smock-bench.svc.cluster.local"})
         self.assertEqual([wait["words"][1] for wait in self.made(["wait"])], ["pod/smock-small", "pod/smock-large"])
@@ -1933,7 +2076,7 @@ class Variants(Script):
         self.assertEqual({name: "initContainers" in pod["spec"] for name, pod in pods.items()},
                          {"smock-small-r1": True, "smock-small-r2": True, "smock-small-r2b": True,
                           "smock-small-r2h": False})
-        [job] = [call["document"] for call in self.made(["apply"]) if call["document"]["kind"] == "Job"]
+        [job] = self.applied("Job")
         env = {item["name"]: item["value"] for item in job["spec"]["template"]["spec"]["containers"][0]["env"]}
         self.assertEqual({variant["label"]: variant["first_second"] for variant in json.loads(env["VARIANTS"])},
                          {"r1": True, "r2": True, "r2b": True, "r2h": False})
@@ -1983,7 +2126,7 @@ class Variants(Script):
                                  for variable in pod["spec"]["containers"][0]["env"]}["SMOCK_DIR"]
                           for name, pod in pods.items()},
                          {"smock-small-r2": "/definitions", "smock-small-r2c": "/definitions-crud"})
-        [job] = [call["document"] for call in self.made(["apply"]) if call["document"]["kind"] == "Job"]
+        [job] = self.applied("Job")
         env = {item["name"]: item["value"] for item in job["spec"]["template"]["spec"]["containers"][0]["env"]}
         self.assertEqual({variant["label"]: variant.get("mix") for variant in json.loads(env["VARIANTS"])},
                          {"r2": None, "r2c": "requests-crud.json"})
@@ -2037,7 +2180,7 @@ class Variants(Script):
                                  ("apply", "smock-r2.json"), ("wait", "pod/smock-small-r2"),
                                  ("apply", "generator.json")])
         # The load generator measures each variant in turn, in 4 rounds.
-        [job] = [call["document"] for call in self.made(["apply"]) if call["document"]["kind"] == "Job"]
+        [job] = self.applied("Job")
         env = {item["name"]: item["value"] for item in job["spec"]["template"]["spec"]["containers"][0]["env"]}
         self.assertEqual(([variant["label"] for variant in json.loads(env["VARIANTS"])], env["ROUNDS"]),
                          (["r1", "r2"], "4"))
@@ -2103,7 +2246,7 @@ class Variants(Script):
         self.assertEqual(status, 1, output)
         self.assertIn("the variants cannot be compared under small, so the load generator was not started: the smock "
                       "Pods of small are on 2 nodes, not one: r1 on node-a, r2 on node-c", output)
-        self.assertEqual([call for call in self.made(["apply"]) if call["document"]["kind"] == "Job"], [])
+        self.assertEqual(self.applied("Job"), [])
         # What the run read of the Pods and kept of each variant says so.
         raw = self.out / "raw" / "small"
         self.assertEqual({pod["name"]: pod["node"] for pod in json.loads((raw / "pods.json").read_text())["smock"]},
@@ -2148,7 +2291,7 @@ class Variants(Script):
         raw = self.out / "raw" / "small"
         self.assertEqual((raw / "r2" / "describe.txt").read_text(), "Name:  smock-small-r2\nStatus:  Pending\n")
         self.assertTrue((raw / "r1" / "smock.log").exists())
-        self.assertEqual([call for call in self.made(["apply"]) if call["document"]["kind"] == "Job"], [])
+        self.assertEqual(self.applied("Job"), [])
         self.assertEqual(self.state_now(), {"clusters": {}, "repositories": []})
         # On the node, but never ready.
         self.configure(never_ready=["pod/smock-small-r2"])

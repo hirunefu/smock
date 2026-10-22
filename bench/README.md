@@ -554,8 +554,16 @@ that run's linux/amd64 build and tests passed.
   the region, that the quotas the run's nodes draw on have enough free,
   and that no cluster or repository of an earlier run is left. The run
   needs four nodes of 8 vCPUs: Autopilot's first node, its system node,
-  smock's and the load generator's (in the probe, a quota of 24 vCPUs held
-  the load generator's node back). Autopilot's two are x86 nodes on either
+  smock's and the load generator's. With a quota at the run's minimum,
+  such as 24 vCPUs (`GKE_BENCH_NEEDED_CPUS=24`), the load generator's node
+  cannot be added at first (`FailedScaleUp ... quota exceeded`), and the
+  load generator waits until Autopilot frees a node. That wait invites the
+  cluster autoscaler to consolidate the nodes: in the run of 2026-10-19 it
+  removed the load generator's node about two minutes after the load
+  generator started, and the profile ended after 5 of its 14 steps. A run
+  now keeps the load generator's node (see **Profiles**), but a quota of
+  32 vCPUs avoids the wait.
+  Autopilot's two are x86 nodes on either
   architecture; smock's and the load generator's are of the run's. So it
   needs 32 vCPUs free in `CPUS_ALL_REGIONS` (`GKE_BENCH_NEEDED_CPUS`, from
   which the number of nodes follows); in the region's `CPUS`, 8 for each
@@ -607,7 +615,17 @@ that run's linux/amd64 build and tests passed.
   `autopilot-arm` compute class on arm64, Autopilot's default
   general-purpose x86 Pods on amd64. Autopilot chooses smock's zone, and a
   required Pod affinity keeps the load generator in it; `GKE_BENCH_ZONE`
-  pins both to one zone instead. Before smock starts, an init container
+  pins both to one zone instead. The cluster autoscaler removes a node
+  only when it may evict every Pod on it. A PodDisruptionBudget
+  (`minAvailable: 1`) over the load generator's Pod, applied before its
+  Job and deleted with it, allows no eviction of that Pod, so its node
+  stays while the profile runs. smock's Pods are not managed by a
+  controller, which keeps their node already. Neither has the
+  `cluster-autoscaler.kubernetes.io/safe-to-evict` annotation: on
+  Autopilot it raises a Pod's requests to at least 0.5 vCPU and 0.5 GiB
+  and forbids inter-Pod affinity, which the small profiles and the
+  placement of the Pods need. Nothing keeps a Pod of a higher priority
+  from preempting them. Before smock starts, an init container
   in its Pod, from the load generator's image and with smock's limits so
   that the Pod asks for no more, prints the CPU of smock's node
   (`bench/gke/gke.py node-cpu`): its model name, vendor, family, model and
@@ -672,7 +690,11 @@ of the CPU of its node, kept once smock has started;
 before its last restart, when it restarted or that is not known, with
 kubectl's errors in their place); and `raw/<profile>/service.json`, its
 Service with the Service's EndpointSlices, both kept before smock's Pod
-is deleted;
+is deleted; when the load generator's Job failed,
+`raw/<profile>/events.json` and `raw/<profile>/node-events.json`, the
+events of the namespace and of the load generator's node, and
+`raw/<profile>/job-failure.json`, why it failed as `gke.py job-failure`
+reads them;
 `summary.json` in the layout of a run on a machine, which
 `bench/compare.py` reads; `summary.md`; `conditions.json`; and
 `watchdog.log`. The summary and the conditions record, for each profile,
@@ -692,6 +714,15 @@ ran, under which profile and after which step it stopped, and why
 (`gke.stopped` in `summary.json`). So it does when the run leaves out
 the profiles after one whose Pods were not deleted in time, or from one
 that no longer fits in the time limit.
+When the load generator's Job fails before the load generator can say
+why, as when its node goes, the run says why from the events: the
+cluster autoscaler scaled down its node, its Pod was preempted or
+evicted, the kernel killed a process on its node for memory, or the
+Job's deadline passed, with the event that shows it. Otherwise it says
+that its events name no known reason, and where they and the load
+generator's log are. The run's output and `summary.md` say it as why the
+profile ended early, with the steps it did not measure, and the next
+profile runs.
 The summary checks the targets of the run's architecture (`--arch`).
 Nothing outside smock's Pod can read its cgroup on Autopilot, so what
 smock used comes from its own
