@@ -44,12 +44,14 @@ async test "over the authenticated Admin API, a test sets a Variable for its Ses
         "test-a deletes previous",
         smock.call("DELETE", "\{variables}/previous", session="test-a"),
       )
+      // A set keeps a number's value, not its text: 19.990 reads back as
+      // 19.99 and 1e3 as 1000. Only an integer beyond 2^53 keeps its digits.
       step(
         "no Session sets cart",
         smock.call(
           "PUT",
           "\{variables}/cart",
-          body="{\"items\": [{\"sku\": \"a1\", \"qty\": 2}], \"total\": 19.99}",
+          body="{\"items\": [{\"sku\": \"a1\", \"qty\": 2}], \"total\": 19.990, \"count\": 1e3, \"id\": 12345678901234567890}",
         ),
       )
       step("test-a lists", smock.call("GET", variables, session="test-a"))
@@ -75,9 +77,9 @@ async test "over the authenticated Admin API, a test sets a Variable for its Ses
           #|test-a lists: 200 {"variables":{"previous":"ann","user":"bob"},"warnings":[]}
           #|test-b lists: 200 {"variables":{},"warnings":[]}
           #|test-a deletes previous: 200 {"name":"previous","warnings":[]}
-          #|no Session sets cart: 200 {"name":"cart","value":{"items":[{"sku":"a1","qty":2}],"total":19.99},"warnings":[]}
+          #|no Session sets cart: 200 {"name":"cart","value":{"items":[{"sku":"a1","qty":2}],"total":19.99,"count":1000,"id":12345678901234567890},"warnings":[]}
           #|test-a lists: 200 {"variables":{"user":"bob"},"warnings":[]}
-          #|no Session lists: 200 {"variables":{"cart":{"items":[{"sku":"a1","qty":2}],"total":19.99}},"warnings":[]}
+          #|no Session lists: 200 {"variables":{"cart":{"items":[{"sku":"a1","qty":2}],"total":19.99,"count":1000,"id":12345678901234567890}},"warnings":[]}
           #|Smock-Replica: 200 true, 200 true, 200 true, 404 true
         ),
       )
