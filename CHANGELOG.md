@@ -8,8 +8,36 @@ of each GitHub release include its section
 
 ## [Unreleased]
 
+### Added
+
+- Dependabot proposes, once a week, the updates of the GitHub Actions and
+  of the image's distroless base, so that the base's glibc and OpenSSL
+  fixes reach the next release's image.
+  [docs/releasing.md](docs/releasing.md#dependency-updates) says what it
+  does not cover, such as the MoonBit toolchain and modules.
+- The Helm chart `oci://ghcr.io/hirunefu/charts/smock` is signed with
+  cosign, without a key, as the image is: the signature's certificate names
+  the release workflow at the release's tag. The release workflow verifies
+  the signature before it publishes the release. See
+  [Verify the Helm chart](README.md#verify-the-helm-chart).
+- The image's SBOM lists the MoonBit native runtime, mimalloc and simdutf,
+  which come with the MoonBit toolchain and are linked into smock, with the
+  licences that NOTICE gives them. The runtime has the toolchain's version,
+  mimalloc the one NOTICE gives, and simdutf none (`NOASSERTION`), since the
+  toolchain does not record it. CI fails when the SBOM and NOTICE disagree.
+
+### Changed
+
+- `scripts/verify-image.sh` requires the runtime, mimalloc and simdutf in
+  each SBOM, so it refuses the images of 0.3.0 and earlier. Check one of
+  those with the script from its own tag, such as
+  `git show v0.3.0:scripts/verify-image.sh`.
+
 ### Fixed
 
+- A release's notes link to files of the repository at the release's tag.
+  They copy the version's section of CHANGELOG.md, whose relative links to
+  files led to a missing page from the release page.
 - Every final response smock writes now carries a `Date` header with the
   current time, as RFC 9110 requires: Stub responses, the no-match
   response, Admin API responses and the errors smock sends itself, on

@@ -10,6 +10,9 @@ Standard in every delivery mode.
 Each release of smock publishes the chart at
 `oci://ghcr.io/hirunefu/charts/smock`, with the release's version as both its
 version and its app version, so it runs `ghcr.io/hirunefu/smock:<version>`.
+The chart is signed with cosign, as the image is;
+[Verify the Helm chart](https://github.com/hirunefu/smock#verify-the-helm-chart)
+in smock's README says how to check it.
 
 The chart needs Kubernetes 1.30 or later, for the `sleep` action of the
 preStop hook that smock's container runs before it stops (see

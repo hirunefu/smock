@@ -14,6 +14,7 @@ usage:
   python3 bench/gke/gke.py samples [options] OUT     split a run of variants into one run of each sample
   python3 bench/gke/gke.py same-node [options] OUT   compare the variants: same-node.json and same-node.md
   python3 bench/gke/gke.py stopped LOG            why the load generator stopped its profile early, if it did
+  python3 bench/gke/gke.py job-failure RAW --job JOB   why the load generator's Job failed, from its events
   python3 bench/gke/gke.py elf-arch FILE          the architecture of an executable, amd64 or arm64
   python3 bench/gke/gke.py names-commit FILE COMMIT   fail if smock's build information does not name COMMIT
   python3 bench/gke/gke.py check-dockerfiles FILE...   fail if a Dockerfile has a RUN instruction
@@ -38,6 +39,7 @@ import shutil
 import statistics
 import struct
 import sys
+from datetime import datetime, timezone
 from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
@@ -499,9 +501,11 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
               rounds=DEFAULT_ROUNDS):
     """The objects of one profile: {file name: object}. namespace.json holds
     the namespace and its quota, smock.json smock's Service and Pod,
-    generator.json the load generator's Job. Both Pods run on nodes of
-    `arch`, in `zone` when it is given; else Autopilot chooses smock's zone,
-    and the load generator runs in the same one, on another node. Before
+    generator.json the load generator's Job, after the PodDisruptionBudget
+    that keeps the cluster autoscaler from removing its Pod's node. Both
+    Pods run on nodes of `arch`, in `zone` when it is given; else Autopilot
+    chooses smock's zone, and the load generator runs in the same one, on
+    another node. Before
     smock starts, an init container from the load generator's image prints
     the CPU of smock's node (gke.py node-cpu), which the run keeps.
 
@@ -543,16 +547,31 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
     else:
         smock = {"smock.json": smock_objects(profile, arch, zone, generator_image, smock_deadline_s, smock_image)}
     specs = steps(plan, profile, cases)
+    generator_labels = {"app": "smock-bench-generator", "profile": profile["name"]}
+    # The cluster autoscaler removes a node only when it can evict every Pod
+    # on it: it removed the load generator's, which nothing kept, during
+    # the run of 2026-10-19. A budget that allows no disruption of the Job's
+    # one Pod keeps its node while the profile runs. smock's Pods are not
+    # managed by a controller, which keeps their node already; the
+    # safe-to-evict annotation would make a Pod an extended-duration Pod on
+    # Autopilot, whose requests are raised to at least 0.5 vCPU and 0.5 GiB
+    # and which may have no inter-Pod affinity. minAvailable, as an integer,
+    # since maxUnavailable needs a controller with a scale subresource,
+    # which a Job has not (Kubernetes' documentation of disruption budgets).
+    budget = {
+        "apiVersion": "policy/v1", "kind": "PodDisruptionBudget",
+        "metadata": {"name": f"generator-{profile['name']}", "namespace": NAMESPACE, "labels": generator_labels},
+        "spec": {"minAvailable": 1, "selector": {"matchLabels": generator_labels}},
+    }
     job = {
         "apiVersion": "batch/v1", "kind": "Job",
-        "metadata": {"name": f"generator-{profile['name']}", "namespace": NAMESPACE,
-                     "labels": {"app": "smock-bench-generator", "profile": profile["name"]}},
+        "metadata": {"name": f"generator-{profile['name']}", "namespace": NAMESPACE, "labels": generator_labels},
         "spec": {
             "backoffLimit": 0,
             "activeDeadlineSeconds": job_deadline_s(plan, profile, specs, len(variants or [None]),
                                                     rounds if variants else 1),
             "template": {
-                "metadata": {"labels": {"app": "smock-bench-generator", "profile": profile["name"]}},
+                "metadata": {"labels": generator_labels},
                 "spec": {
                     "restartPolicy": "Never",
                     "nodeSelector": node_selector(arch, zone),
@@ -584,7 +603,8 @@ def manifests(plan, profile, cases, arch, zone, smock_image, generator_image, sm
     return {
         "namespace.json": {"apiVersion": "v1", "kind": "List", "items": [namespace, quota]},
         **{file: {"apiVersion": "v1", "kind": "List", "items": items} for file, items in smock.items()},
-        "generator.json": job,
+        # The budget first, so that the Job's Pod is never without it.
+        "generator.json": {"apiVersion": "v1", "kind": "List", "items": [budget, job]},
     }
 
 
@@ -979,6 +999,113 @@ def generator_lines(path):
     return lines
 
 
+# What the run keeps in raw/<profile>/ when the load generator's Job fails
+# (scripts/gke-bench.sh): the namespace's events, where the Job's and its
+# Pod's are, those of its Pod's node, and why it failed as job-failure
+# reads them.
+JOB_EVENTS = ("events.json", "node-events.json")
+JOB_FAILURE = "job-failure.json"
+
+# What may stop the load generator's Job, in the order job-failure looks for
+# it: a name, the kind of object whose events show it, those events'
+# reasons, and what it says of it. The cluster autoscaler records
+# ScaleDown on each Pod it evicts from a node it removes; the scheduler
+# records Preempted, and the kubelet Preempting, on a Pod they preempt; the
+# kubelet records Evicted, and the taint manager TaintManagerEviction, on a
+# Pod they evict; node-problem-detector records OOMKilling, and the kubelet
+# SystemOOM, on a node where the kernel killed a process for memory; and
+# the Job controller records DeadlineExceeded on a Job past its deadline.
+JOB_FAILURE_CAUSES = (
+    ("scale-down", "Pod", ("ScaleDown",), "the cluster autoscaler scaled down its node"),
+    ("preemption", "Pod", ("Preempted", "Preempting"), "its Pod was preempted"),
+    ("eviction", "Pod", ("Evicted", "TaintManagerEviction"), "its Pod was evicted from its node"),
+    ("oom", "Node", ("OOMKilling", "SystemOOM"), "the kernel killed a process on its node for want of memory"),
+    ("deadline", "Job", ("DeadlineExceeded",), "it ran past its deadline"),
+)
+
+
+def event_time(event):
+    """When an event first happened: as it says it, and as a time to order
+    events by (None when it cannot be read)."""
+    text = event.get("firstTimestamp") or event.get("eventTime") or event.get("lastTimestamp")
+    try:
+        at = datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+    except ValueError:
+        return text, None
+    return text, at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+
+
+def first_event(events):
+    """The earliest of `events` by event_time, those whose time cannot be
+    read last."""
+    return min(events, key=lambda event: (event_time(event)[1] is None,
+                                          event_time(event)[1] or datetime.min.replace(tzinfo=timezone.utc)))
+
+
+def job_failure(job, events, node_events=()):
+    """What stopped the load generator's Job `job`, from `events`, the
+    namespace's as kubectl lists them, and `node_events`, its Pod's node's:
+    the first cause of JOB_FAILURE_CAUSES that the events of the Job, of its
+    Pods (job-<5 characters>) or of the node since the Pod was scheduled
+    there show, and the earliest such event; else (None, None). A
+    TaintManagerEviction that cancels a deletion evicts nothing."""
+    pod_name = re.compile(re.escape(job) + r"-[a-z0-9]{5}")
+    concerned = {"Job": [], "Pod": [], "Node": []}
+    for event in events:
+        involved = event.get("involvedObject") or {}
+        if involved.get("kind") == "Job" and involved.get("name") == job:
+            concerned["Job"].append(event)
+        elif involved.get("kind") == "Pod" and pod_name.fullmatch(involved.get("name") or ""):
+            concerned["Pod"].append(event)
+    scheduled = [event for event in concerned["Pod"] if event.get("reason") == "Scheduled"]
+    since = event_time(first_event(scheduled))[1] if scheduled else None
+    for event in node_events:
+        at = event_time(event)[1]
+        if (event.get("involvedObject") or {}).get("kind") == "Node" and not (since and at and at < since):
+            concerned["Node"].append(event)
+    for cause, kind, reasons, _ in JOB_FAILURE_CAUSES:
+        found = [event for event in concerned[kind] if event.get("reason") in reasons
+                 and not (event.get("message") or "").startswith("Cancelling deletion")]
+        if found:
+            return cause, first_event(found)
+    return None, None
+
+
+def read_events(path):
+    """The events of a list kubectl wrote, or None when it cannot be read,
+    as when kubectl failed."""
+    try:
+        return json.loads(Path(path).read_text())["items"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def job_failure_record(raw, job):
+    """Why the load generator's Job `job` failed, from the events the run
+    kept in `raw` (raw/<profile>/): {job, cause, reason}, the cause as
+    JOB_FAILURE_CAUSES names it, or None, and the reason for people, with
+    the event that shows it; or saying where the events are, and the load
+    generator's log, which says why when the load generator gave up by
+    itself (as when smock did not become ready)."""
+    raw = Path(raw)
+    kept = {name: read_events(raw / name) for name in JOB_EVENTS}
+    cause, found = job_failure(job, kept["events.json"] or [], kept["node-events.json"] or [])
+    if cause:
+        says = next(says for name, _, _, says in JOB_FAILURE_CAUSES if name == cause)
+        involved = found["involvedObject"]
+        message = " ".join(str(found.get("message") or "").split())
+        reason = (f"the load generator's Job failed: {says} (event {found['reason']} of {involved['kind']} "
+                  f"{involved['name']} at {event_time(found)[0]}: {message})")
+    else:
+        files = [f"raw/{raw.name}/{name}" for name, events in kept.items() if events is not None]
+        log = f"raw/{raw.name}/generator.log"
+        reason = (f"the load generator's Job failed, and its events name no known reason: they are in "
+                  f"{and_list(files)}, beside the load generator's log, {log}" if files else
+                  f"the load generator's Job failed, and the run could not read its events: see the load "
+                  f"generator's log, {log}")
+    return {"job": job, "cause": cause, "reason": reason}
+
+
 def profile_results(out, plan, profile, cases, arch):
     """What one profile's run left: its steps, smock's idle RSS when the
     load generator read it, whether it ran each step of the plan, what the
@@ -1017,12 +1144,20 @@ def profile_results(out, plan, profile, cases, arch):
     # The check before the first step, not one after a step.
     check = next((line for line in lines if line["kind"] == "traffic-check" and "after" not in line), None)
     stopped = next((line for line in lines if line["kind"] == "stopped"), None)
+    ended = stopped and {"reason": stopped["reason"], "after": stopped.get("after"), "not_measured": stopped["steps"]}
+    # A Job that failed before the load generator could say why, as when
+    # its node went: the steps it did not report, and why, from its events
+    # (job-failure).
+    measured = [result["id"] for result in results]
+    left = [step for step in planned if step not in measured]
+    if not ended and left and (raw / JOB_FAILURE).exists():
+        ended = {"reason": read_json(raw / JOB_FAILURE)["reason"], "after": measured[-1] if measured else None,
+                 "not_measured": left}
     cpu_request = next((pod["cpu_request"] for pod in pods["generator"] if pod.get("cpu_request")), None)
-    return {"steps": results, "idle_rss": idle, "complete": done and [result["id"] for result in results] == planned,
+    return {"steps": results, "idle_rss": idle, "complete": done and measured == planned,
             "start": start, "pods": pods,
             "traffic_check": check and {key: value for key, value in check.items() if key not in ("kind", "profile")},
-            "ended_early": stopped and {"reason": stopped["reason"], "after": stopped.get("after"),
-                                        "not_measured": stopped["steps"]},
+            "ended_early": ended,
             "generator_cpu_request": cpu_request or GENERATOR_RESOURCES[arch]["cpu"]}
 
 
@@ -1277,7 +1412,8 @@ def write_samples(out, profiles, rounds=1):
     """Splits each profile's raw/<profile>/ of a run of variants under `out`
     into its samples, samples/<round>-<label>/raw/<profile>/: the sample's
     lines of the load generator's log (sample_lines), its Pods
-    (sample_pods), and the files the run kept of its variant. Every sample
+    (sample_pods), the files the run kept of its variant, and why the load
+    generator's Job failed, when it did (job-failure). Every sample
     of the run has each profile that the run has anything of, so that one
     a profile did not reach is incomplete there; and there is one for each
     round the run planned, as the load generator's lines say or, at least,
@@ -1308,6 +1444,8 @@ def write_samples(out, profiles, rounds=1):
                 (kept / "generator.log").write_text("".join(json.dumps(line) + "\n"
                                                             for line in sample_lines(lines, round_, label)))
                 harness.write_json(kept / "pods.json", sample_pods(info, name, label))
+                if (raw / JOB_FAILURE).is_file():
+                    shutil.copyfile(raw / JOB_FAILURE, kept / JOB_FAILURE)
             samples.append((round_, label, directory))
     return samples
 
@@ -2125,6 +2263,13 @@ def command_stopped(args):
     return 0
 
 
+def command_job_failure(args):
+    record = job_failure_record(args.raw, args.job)
+    harness.write_json(Path(args.raw) / JOB_FAILURE, record)
+    print(record["reason"])
+    return 0
+
+
 def command_plan(args):
     plan = read_json(args.plan)
     profiles = plan_profiles(plan, comma_list(args.profiles))
@@ -2355,6 +2500,13 @@ def main(argv):
                                                     "nothing when it did not")
     stopping.add_argument("log", help="the load generator's log: raw/<profile>/generator.log")
     stopping.set_defaults(handler=command_stopped)
+    failing = commands.add_parser("job-failure", help="print why the load generator's Job failed, from the events "
+                                                      "the run kept, and keep it in job-failure.json for summarize")
+    failing.add_argument("raw", help="raw/<profile>/, with the namespace's events (events.json) and those of the "
+                                     "load generator's node (node-events.json), as kubectl get events -o json lists "
+                                     "them")
+    failing.add_argument("--job", required=True, help="the load generator's Job, generator-<profile>")
+    failing.set_defaults(handler=command_job_failure)
     reading = commands.add_parser("elf-arch", help="print the architecture of an ELF executable: amd64 or arm64")
     reading.add_argument("file", help="the executable, which is not run")
     reading.set_defaults(handler=command_elf_arch)

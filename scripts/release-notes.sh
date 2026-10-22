@@ -12,6 +12,10 @@
 # development version of a run by hand) takes its own section, else that of
 # the version it leads up to, else "## [Unreleased]", else none.
 #
+# CHANGELOG.md links to files of the repository with relative links, which
+# work where GitHub shows the file but not on the release page. The notes
+# turn each into a link to the file at the release's tag.
+#
 # usage: scripts/release-notes.sh <version> <commit> <toolchain> <image>
 # example: scripts/release-notes.sh 0.1.0 0123456789ab "moonc v0.10.14+7d59c7ec9" ghcr.io/hirunefu/smock
 set -eu
@@ -21,7 +25,8 @@ if [ "$#" -ne 4 ]; then
   exit 2
 fi
 version=$1 commit=$2 toolchain=$3 image=$4
-readme=https://github.com/hirunefu/smock/blob/v$version/README.md
+blob=https://github.com/hirunefu/smock/blob/v$version
+readme=$blob/README.md
 changelog=$(dirname "$0")/../CHANGELOG.md
 
 if [ ! -f "$changelog" ]; then
@@ -51,6 +56,26 @@ section() {
   ' "$changelog"
 }
 
+# Prints its input with each relative Markdown link, [text](<target>)
+# whose target has no scheme and starts with neither "#" nor "/", turned
+# into $blob/<target>: the file at the release's tag, with the target's
+# fragment kept. Other links stay as they are.
+tag_links() {
+  awk -v blob="$blob" '
+    {
+      out = ""
+      rest = $0
+      while (match(rest, /[]][(][^ )]+/)) {
+        target = substr(rest, RSTART + 2, RLENGTH - 2)
+        if (target !~ /^([A-Za-z][A-Za-z0-9+.-]*:|#|\/)/) target = blob "/" target
+        out = out substr(rest, 1, RSTART + 1) target
+        rest = substr(rest, RSTART + RLENGTH)
+      }
+      print out rest
+    }
+  '
+}
+
 case $version in
 *-*)
   changes=$(section "$version")
@@ -77,7 +102,7 @@ smock $version (commit $commit, $toolchain)
 NOTES
 
 if [ -n "$changes" ]; then
-  printf '\n## Changes\n\n%s\n' "$changes"
+  printf '\n## Changes\n\n%s\n' "$changes" | tag_links
 fi
 
 cat <<NOTES
@@ -99,8 +124,10 @@ helm install smock oci://${image%/*}/charts/smock --version $version \\
   --set adminAuth.tokenSecret.name=<Secret with the Admin API token>
 \`\`\`
 
-[Its README](https://github.com/hirunefu/smock/blob/v$version/charts/smock/README.md)
-lists its values.
+[Its README]($blob/charts/smock/README.md)
+lists its values. The chart is signed with cosign;
+[smock's README]($readme#verify-the-helm-chart) explains how to verify
+the signature.
 
 ## Binaries
 
