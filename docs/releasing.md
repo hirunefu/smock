@@ -112,9 +112,18 @@ is one, else the section of `<version>`, else `Unreleased`.
 When `.moonbit-version` or the imports in `moon.mod` changed since the
 last release, check that [NOTICE](../NOTICE) still names what the binary
 holds, with the right versions. The release workflow fails when NOTICE
-does not name the toolchain or a module of `moon.mod` with its version;
-the runtime, mimalloc and simdutf come with the toolchain and are checked
-by hand.
+does not name the toolchain or a module of `moon.mod` with its version.
+The runtime, mimalloc and simdutf come with the toolchain. The image's
+SBOM takes their licences and mimalloc's version from NOTICE, and CI fails
+when the SBOM and NOTICE disagree, or when NOTICE names another toolchain
+than `.moonbit-version` (`scripts/check-sbom-notice.sh`). Nothing reads
+mimalloc's version from the toolchain, so check it by hand after a
+toolchain update. mimalloc's `mi_version` returns it as one number, 217
+for 2.1.7, which this shows:
+
+```sh
+objdump -d --disassemble=mi_version ~/.moon/lib/libmoonbitrun.o
+```
 
 Then push the tag `v<version>`. A pre-release tag, such as
 `v<version>-rc.1`, tries the publishing path first. The packages stay

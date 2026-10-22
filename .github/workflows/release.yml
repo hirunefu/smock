@@ -227,7 +227,8 @@ jobs:
           cosign sign --yes --recursive "$IMAGE@$digest"
 
       # syft finds the packages of the distroless base but not the MoonBit
-      # binary, so smock and its modules are added to what it finds.
+      # binary, so smock and its modules are added to what it finds. The
+      # SBOM must agree with NOTICE before it is attested.
       - name: Make and attest the SBOM of each architecture
         env:
           SYFT: ${{ steps.syft.outputs.cmd }}
@@ -239,6 +240,7 @@ jobs:
             sbom="sbom/smock-$VERSION-linux-$arch.spdx.json"
             "$SYFT" scan "registry:$IMAGE@$digest" --output "spdx-json=$sbom"
             scripts/add-smock-to-sbom.sh "$sbom" "$VERSION" "$GITHUB_SHA"
+            scripts/check-sbom-notice.sh "$sbom"
             cosign attest --yes --type spdxjson --predicate "$sbom" "$IMAGE@$digest"
           done
 
