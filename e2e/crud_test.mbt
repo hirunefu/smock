@@ -99,8 +99,8 @@ async test "smock render and the Admin render operation agree on a CRUD Stub's a
             "--dir", dir, "orders", "--request", file,
           ])
           let response = smock.render("orders", sample=file)
-          let from_cli = with_data_writes(@json.parse(stdout))
-          let from_admin = with_data_writes(response.json())
+          let from_cli = writes_response_and_error(@json.parse(stdout))
+          let from_admin = writes_response_and_error(response.json())
           out.push(
             "\{sample}: render \{status}, admin \{response.status}, same: \{from_cli == from_admin}\{stderr}",
           )

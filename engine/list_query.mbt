@@ -5,18 +5,19 @@
 ///|
 /// The answer of the CRUD Stub `stub`, which serves `crud`, to a request
 /// for its list, whose decoded query parameters are `parameters`, when its
-/// bucket holds `value`, the array `items`. It answers 200 with the items
-/// the list query keeps, as a plain array, with the number of items in the
-/// bucket in `X-Total-Count`, and the number that pass the filters, before
+/// bucket holds `value`, an array. It answers 200 with the items the list
+/// query keeps, as a plain array, with the number of items in the bucket
+/// in `X-Total-Count`, and the number that pass the filters, before
 /// paging, in `X-Filtered-Count`. A query that smock cannot read answers
 /// 400 `invalid query parameter`, with the parameter's name.
 fn crud_list(
   crud : @definitions.Crud,
   stub : String,
   value : Json,
-  items : Array[Json],
   parameters : Array[(String, String)],
 ) -> ResponsePlan {
+  // Every write keeps the rules of a keyed bucket, so it holds an array.
+  guard value is Array(items) else { abort("a keyed bucket holds an array") }
   let total = items.length().to_string()
   // Without a query, the bucket's value is the answer as it is.
   if parameters.is_empty() {

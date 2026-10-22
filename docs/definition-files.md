@@ -2589,9 +2589,10 @@ for an Ephemeral Stub:
 - a literal value, one with no `${`, `$each` or `$if`, that already breaks
   its op: a `merge` value that is not an object, an item that `set` or
   `merge` with `key` writes or that `append` adds to a keyed bucket that
-  is not an object, a key member of such an `append` that holds no key,
-  and a `set` value without `key` that breaks the rules of a keyed
-  bucket.
+  is not an object, a key member of such an item that holds no key, a
+  key member of a `set` or `merge` item that holds a key other than a
+  literal `key`, and a `set` value without `key` that breaks the rules of
+  a keyed bucket.
 
 #### Writes in the Journal
 

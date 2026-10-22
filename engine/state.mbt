@@ -141,13 +141,7 @@ fn member_bytes(name : String, value : Json) -> Int64 {
 /// The response to a request whose writes the bound on per-Session state
 /// refused: 507, with what the bound counts.
 fn state_limit_reached(stub : String, message : String) -> ResponsePlan {
-  {
-    status: 507,
-    headers: [("Content-Type", "application/json")],
-    body: Bytes(@template.compact_json_bytes(state_limit_body(stub, message))),
-    delay_ms: 0,
-    fault: None,
-  }
+  json_failure(507, state_limit_body(stub, message))
 }
 
 ///|

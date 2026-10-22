@@ -89,8 +89,7 @@
         },
         "name": {
           "description": "The bucket's name, unique within its Mock, which templates read as data.NAME: 1 to 128 ASCII letters, digits, _ and -. Two Mocks may use the same name; each has its own bucket.",
-          "type": "string",
-          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          "$ref": "#/$defs/bucketName"
         },
         "json": {
           "description": "The initial value, inline: any JSON value, null included."
@@ -112,6 +111,7 @@
         }
       },
       "required": ["mock", "name"],
+      "dependentRequired": { "newKey": ["key"] },
       "oneOf": [
         { "description": "An inline initial value.", "required": ["json"] },
         { "description": "An initial value from a JSON file.", "required": ["jsonFile"] }
@@ -192,8 +192,7 @@
       "properties": {
         "bucket": {
           "description": "The name of the Data bucket served: a bucket of the Stub's Mock that has key.",
-          "type": "string",
-          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          "$ref": "#/$defs/bucketName"
         },
         "path": {
           "description": "The list path, such as /api/v1/orders. An item path is the list path, then /, then one non-empty segment, the key text. Both are compared with the request's percent-decoded path, byte for byte, as path conditions compare it. It starts with /, does not end with /, and has no empty segment, so / alone is not one.",
@@ -269,8 +268,7 @@
     },
     "dataWriteBucket": {
       "description": "The name of the Data bucket written to, taken literally: one of the buckets of the Stub's Mock, which any file of the set may declare.",
-      "type": "string",
-      "pattern": "^[A-Za-z0-9_-]{1,128}$"
+      "$ref": "#/$defs/bucketName"
     },
     "dataWriteKey": {
       "description": "The key of the item written to, in a keyed bucket: a text template, always parsed, whether or not a response has template: true, and compared as a key text, so ${path[3]} finds the item whose key is 1002 or \"1002\". It renders before the write's value, and is bounded as a rendered body is. Only a keyed bucket takes it.",
@@ -650,6 +648,11 @@
       "description": "A non-empty name.",
       "type": "string",
       "minLength": 1
+    },
+    "bucketName": {
+      "description": "The name of a Data bucket: 1 to 128 ASCII letters, digits, _ and -.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,128}$"
     },
     "host": {
       "description": "A host name or an IP address, optionally with a port, as clients send it in the Host header, such as users.example.com or [::1]:8080. Hosts are exact names: there are no wildcards.",

@@ -79,7 +79,7 @@ priv struct CrudAnswer {
 /// JSON, with the Stub's `crud.headers` after smock's own.
 fn Engine::crud_answer(
   self : Engine,
-  mock : @definitions.Mock?,
+  mock : @definitions.Mock,
   stub : String,
   crud : @definitions.Crud,
   incoming : Incoming,
@@ -87,28 +87,11 @@ fn Engine::crud_answer(
   draw : UInt64,
 ) -> CrudAnswer {
   let call = crud_call(crud, incoming)
-  // A matched Stub always has the Mock that answered.
-  guard mock is Some(mock) && bucket_named(mock, crud.bucket) is Some(bucket) else {
-    return {
-      plan: crud_failed(crud, 500, {
-        "error": "unknown data bucket",
-        "stub": Json::string(stub),
-        "bucket": Json::string(crud.bucket),
-      }),
-      call,
-      written: no_buckets_written,
-    }
+  guard bucket_named(mock.buckets, crud.bucket) is Some(bucket) else {
+    return bucket_failure(crud, stub, call, "unknown data bucket")
   }
   guard bucket.key is Some(key) else {
-    return {
-      plan: crud_failed(crud, 500, {
-        "error": "data bucket changed",
-        "stub": Json::string(stub),
-        "bucket": Json::string(crud.bucket),
-      }),
-      call,
-      written: no_buckets_written,
-    }
+    return bucket_failure(crud, stub, call, "data bucket changed")
   }
   if call.op is (Create | Replace | Update | Delete) {
     return self.crud_write(
@@ -139,6 +122,28 @@ fn Engine::crud_answer(
 }
 
 ///|
+/// The answer of the CRUD Stub `stub`, which serves `crud`, to a request
+/// that asked `call` of it, when the Stub's bucket is gone or no longer
+/// keyed, for the reason `error`: 500, with the bucket's name, and nothing
+/// written.
+fn bucket_failure(
+  crud : @definitions.Crud,
+  stub : String,
+  call : CrudCall,
+  error : String,
+) -> CrudAnswer {
+  {
+    plan: crud_failed(crud, 500, {
+      "error": Json::string(error),
+      "stub": Json::string(stub),
+      "bucket": Json::string(crud.bucket),
+    }),
+    call,
+    written: no_buckets_written,
+  }
+}
+
+///|
 /// The answer of the CRUD Stub `stub`, which serves `crud` over a bucket
 /// keyed by the member `key_member`, to the request `incoming`, which
 /// asked `call` of it, a list or a read, when the bucket holds `value`:
@@ -155,17 +160,15 @@ fn crud_read(
   value : Json,
   incoming : Incoming,
 ) -> ResponsePlan {
+  if call.op is List {
+    return crud_list(crud, stub, value, incoming.query_parameters())
+  }
   // Every write keeps the rules of a keyed bucket, so it holds an array.
   guard value is Array(items) else { abort("a keyed bucket holds an array") }
-  if call.op is List {
-    crud_list(crud, stub, value, items, incoming.query_parameters())
-  } else {
-    let text = call.key.unwrap_or("")
-    match item_index(items, key_member, text) {
-      Some(i) =>
-        crud_plan(crud, 200, @template.compact_json_bytes(items[i]), [])
-      None => no_item(crud, stub, text)
-    }
+  let text = call.key.unwrap_or("")
+  match item_index(items, key_member, text) {
+    Some(i) => crud_plan(crud, 200, @template.compact_json_bytes(items[i]), [])
+    None => no_item(crud, stub, text)
   }
 }
 

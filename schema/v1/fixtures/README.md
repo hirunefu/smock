@@ -29,17 +29,18 @@ disagree.
   literal JSON is valid there. So does an `xml` condition with a path that
   does not compile: the Schema checks only that a path starts with `/`.
   Data buckets break such rules too: a bucket that names a Mock no file
-  declares, two buckets of one Mock with the same name, `newKey` without
-  `key`, a `jsonFile` that is missing or does not hold JSON in UTF-8, a
-  keyed bucket whose value is not an array of objects with valid, unique
-  keys, and a template that reads a bucket its Mock does not declare. So
-  do writes of `dataWrites`: a write to a bucket its Mock does not
-  declare, `key` on a bucket without `key`, `merge` without `key` on a
-  keyed bucket, a literal `merge` value that is not an object, and a
-  literal value that breaks a keyed bucket's rules, such as an item that
-  is not an object. So do CRUD Stubs: a `crud.bucket` that its Mock does
-  not declare, or that has no `key`, and `crud.headers` that give two
-  names that differ only in case.
+  declares, two buckets of one Mock with the same name, a `jsonFile` that
+  is missing or does not hold JSON in UTF-8, a keyed bucket whose value is
+  not an array of objects with valid, unique keys, and a template that
+  reads a bucket its Mock does not declare. So do writes of `dataWrites`: a
+  write to a bucket its Mock does not declare, `key` on a bucket without
+  `key`, `merge` without `key` on a keyed bucket, a literal `merge` value
+  that is not an object, and a literal value that breaks a keyed bucket's
+  rules, such as an item that is not an object, an item of `set` or `merge`
+  with `key` whose key member holds no key, or one whose key member holds a
+  key other than the literal `key`. So do CRUD Stubs: a `crud.bucket` that
+  its Mock does not declare, or that has no `key`, and `crud.headers` that
+  give two names that differ only in case.
 
 A field joins the Schema only together with smock's support for it, so no
 fixture is accepted by the Schema and rejected by smock for a field smock

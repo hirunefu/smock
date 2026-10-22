@@ -76,6 +76,32 @@ pub fn key_text(json : Json) -> String? {
 }
 
 ///|
+/// The integer key whose key text, as `key_text` gives it, is `text`, if
+/// any: as the Double that a JSON number holding it has. `None` for any
+/// other text, such as that of a string key, `01`, `-0` or `1.0`, or one
+/// beyond `max_integer_key`. So an integer key and a string key that have
+/// the same text are told apart without writing the number's text out.
+pub fn key_text_integer(text : String) -> Double? {
+  let negative = text.has_prefix("-")
+  let digits = if negative { text.view(start_offset=1) } else { text.view() }
+  // No leading zeros, and no `-0`: the text of 0 is `0`.
+  if digits.is_empty() ||
+    (digits.has_prefix("0") && (negative || digits.length() > 1)) {
+    return None
+  }
+  let mut value = 0L
+  for c in digits {
+    guard c >= '0' && c <= '9' else { return None }
+    value = value * 10L + (c.to_int() - '0'.to_int()).to_int64()
+    if value > max_integer_key {
+      return None
+    }
+  }
+  let signed = if negative { -value } else { value }
+  Some(signed.to_double())
+}
+
+///|
 /// What is wrong with a key member that holds no key, as `key_text` says.
 pub let not_a_key : String = "must be a key: a non-empty string without /, or an integer from \{-max_integer_key} to \{max_integer_key}"
 
@@ -140,16 +166,48 @@ pub fn keyed_problems(value : Json, key~ : String) -> Array[KeyedProblem] {
 }
 
 ///|
+/// `problems`, ways a value breaks the rules of keyed buckets, as messages
+/// list them, joined with `; `: each as `at` and its pointer, then its
+/// message, or only its message when both are empty. With `limit`, only
+/// the first `limit` are written, then how many more there are, as ` (and
+/// 2 more)`.
+pub fn keyed_problems_text(
+  problems : Array[KeyedProblem],
+  at? : String = "",
+  limit? : Int,
+) -> String {
+  let shown = match limit {
+    Some(limit) => limit.min(problems.length())
+    None => problems.length()
+  }
+  let out = StringBuilder()
+  for i in 0..<shown {
+    if i > 0 {
+      out.write_string("; ")
+    }
+    let pointer = at + problems[i].pointer
+    if pointer != "" {
+      out.write_string(pointer)
+      out.write_char(' ')
+    }
+    out.write_string(problems[i].message)
+  }
+  if shown < problems.length() {
+    out.write_string(" (and \{problems.length() - shown} more)")
+  }
+  out.to_string()
+}
+
+///|
 /// The names of the Data buckets that the parsed files declare, by the
-/// name of their Mock, in declaration order, each with its key member when
-/// it is keyed, so that a Stub may read and write a bucket declared in any
-/// file, earlier or later. A `key` that is not a string, a problem reported
-/// where the bucket is read, gives the key member `""`, which no bucket
-/// can have.
+/// name of their Mock, in declaration order, each with its key, so that a
+/// Stub may read and write a bucket declared in any file, earlier or
+/// later. A `key` that is not a string, or is empty, a problem reported
+/// where the bucket is read, is `Malformed`.
 fn declared_buckets(
   files : Array[(String, Result[Map[String, Json], Diagnostic])],
-) -> Map[String, Map[String, String?]] {
-  let names : Map[String, Map[String, String?]] = Map([])
+) -> Map[String, Map[String, BucketKey]] {
+  let names : Map[String, Map[String, BucketKey]] = Map([])
   for file in files {
     guard file.1 is Ok(top) && top.get("data") is Some(Array(entries)) else {
       continue
@@ -161,9 +219,9 @@ fn declared_buckets(
         continue
       }
       let key = match entry.get("key") {
-        Some(String(key)) => Some(key)
-        Some(_) => Some("")
-        None => None
+        Some(String(key)) if key != "" => KeyedBy(key)
+        Some(_) => Malformed
+        None => Unkeyed
       }
       match names.get(mock) {
         Some(declared) => declared[name] = key

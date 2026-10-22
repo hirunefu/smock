@@ -558,12 +558,16 @@ the sample's `vars`, and the response reads them written over the sample's
 make on the sample's data, and the response reads the data after them. A
 [CRUD Stub](docs/definition-files.md#crud-stubs) renders the answer its
 operation would give from the sample's data, and shows its write, if it
-makes one, in `dataWrites`. It writes nothing. An invalid definitions
-directory prints the messages `smock check` prints, and it, an unknown Stub
-ID, an index the Stub has no response at, a sample that cannot be read or
-is not valid, sample data for a bucket the Stub's Mock does not declare or
-that breaks a keyed bucket's rules, and a sample whose method and path fit
-no operation of a CRUD Stub exit with status 1, with the problem on stderr.
+makes one, in `dataWrites`. It writes nothing. It exits with status 1,
+with the problem on stderr, for:
+
+- an invalid definitions directory, with the messages `smock check`
+  prints;
+- an unknown Stub ID, or an index the Stub has no response at;
+- a sample that cannot be read or is not valid;
+- sample data for a bucket the Stub's Mock does not declare, or that
+  breaks a keyed bucket's rules;
+- a sample whose method and path fit no operation of a CRUD Stub.
 
 [docs/definition-files.md](docs/definition-files.md) describes the format:
 how Stubs match requests (method, path, query parameters, headers, cookies

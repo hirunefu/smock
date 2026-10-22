@@ -253,3 +253,57 @@ test "a crud with a problem still declares its Stub, so that the problems of its
     ),
   )
 }
+
+///|
+/// The `crud` of a CRUD Stub on the path `/api/v1/orders`.
+fn orders_crud() -> @definitions.Crud {
+  let file =
+    #|mocks:
+    #|  - name: m
+    #|data:
+    #|  - { mock: m, name: orders, key: id, json: [] }
+    #|stubs:
+    #|  - { id: orders, mock: m, crud: { bucket: orders, path: /api/v1/orders } }
+  let set : @definitions.DefinitionSet = {
+    files: [("a.yaml", @utf8.encode(file))],
+    body_files: [],
+  }
+  guard @definitions.load(set) is Ok(snapshot) &&
+    snapshot.mocks[0].stubs[0].serves is Crud(crud) else {
+    abort("the CRUD Stub loads")
+  }
+  crud
+}
+
+///|
+test "operation serves a method at a shape of path exactly when crud_methods lists it for that shape, and crud_methods(None) is their union in operation order" {
+  let crud = orders_crud()
+  let methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+  let shapes : Array[(@definitions.CrudShape, String)] = [
+    (ListPath, "/api/v1/orders"),
+    (ItemPath, "/api/v1/orders/1"),
+  ]
+  let union = []
+  for meth in methods {
+    let mut served = false
+    for shape in shapes {
+      let (shape, path) = shape
+      assert_eq(crud.shape(path), Some(shape))
+      let listed = @definitions.crud_methods(Some(shape)).iter().contains(meth)
+      assert_eq(crud.operation(meth, path) is Some(_), listed)
+      served = served || listed
+    }
+    if served {
+      union.push(meth)
+    }
+  }
+  assert_eq(@definitions.crud_methods(None).iter().collect(), union)
+  debug_inspect(
+    shapes.map(shape => {
+      @definitions.crud_methods(Some(shape.0)).iter().collect()
+    }),
+    content=(
+      #|[["GET", "POST"], ["GET", "PUT", "PATCH", "DELETE"]]
+    ),
+  )
+}

@@ -57,11 +57,7 @@ pub fn Snapshot::warnings(self : Snapshot) -> Array[Warning] {
           message: "the Stub \{stub.id.escape()} can never match: the Stub \{earlier.id.escape()} at \{earlier_at} is tried first and matches every request this one would",
         })
       }
-      let scenario = match stub.serves {
-        Ordinary(ordinary) => ordinary.scenario
-        Crud(_) => None
-      }
-      guard scenario is Some({ name, requires: Some(state), .. }) &&
+      guard stub.scenario() is Some({ name, requires: Some(state), .. }) &&
         state != initial_state &&
         !(moves.get(name) is Some(states) && states.contains(state)) else {
         continue
@@ -82,11 +78,9 @@ pub fn Snapshot::warnings(self : Snapshot) -> Array[Warning] {
 fn moves_of(stubs : ReadOnlyArray[Stub]) -> Map[String, Set[String]] {
   let moves : Map[String, Set[String]] = Map([])
   for stub in stubs {
-    let scenario = match stub.serves {
-      Ordinary(ordinary) => ordinary.scenario
-      Crud(_) => None
+    guard stub.scenario() is Some({ name, move_to: Some(state), .. }) else {
+      continue
     }
-    guard scenario is Some({ name, move_to: Some(state), .. }) else { continue }
     match moves.get(name) {
       Some(states) => states.add(state)
       None => moves[name] = Set([state])

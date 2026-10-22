@@ -201,6 +201,40 @@ test "on a keyed bucket, merge needs key, and a literal value that already break
 }
 
 ///|
+test "on a keyed bucket, a literal value of set or merge with key whose key member holds no key, or holds a key other than a literal key's, does not load" {
+  inspect(
+    write_problems(
+      (
+        #|  - id: keyed
+        #|    mock: m
+        #|    dataWrites:
+        #|      - { op: set, bucket: orders, key: "1", value: { id: null } }
+        #|      - { op: merge, bucket: orders, key: "1", value: { id: 2 } }
+        #|      - { op: merge, bucket: orders, key: "1", value: { id: "a/b" } }
+        #|      - { op: set, bucket: orders, key: "${path[3]}", value: { id: null } }
+        #|      - { op: set, bucket: orders, key: "01", value: { id: 1 } }
+        #|      - { op: set, bucket: orders, key: "a-$${x}", value: { id: "a-x" } }
+        #|      - { op: set, bucket: orders, key: "1", value: { id: 1.0, status: paid } }
+        #|      - { op: merge, bucket: orders, key: "1", value: { id: "1" } }
+        #|      - { op: merge, bucket: orders, key: "1", value: { status: paid } }
+        #|      - { op: set, bucket: orders, key: "a-$${x}", value: { id: "a-$${x}" } }
+        #|      - { op: set, bucket: orders, key: "${path[3]}", value: { id: 2 } }
+        #|      - { op: merge, bucket: orders, key: "1", value: { id: "${body.id}" } }
+        #|    response: { status: 200 }
+      ),
+    ),
+    content=(
+      #|a.yaml: /stubs/0/dataWrites/0/value/id: must be a key: a non-empty string without /, or an integer from -9007199254740991 to 9007199254740991
+      #|a.yaml: /stubs/0/dataWrites/1/value/id: must be absent or hold the item's key "1", and it holds the key "2"
+      #|a.yaml: /stubs/0/dataWrites/2/value/id: must be a key: a non-empty string without /, or an integer from -9007199254740991 to 9007199254740991
+      #|a.yaml: /stubs/0/dataWrites/3/value/id: must be a key: a non-empty string without /, or an integer from -9007199254740991 to 9007199254740991
+      #|a.yaml: /stubs/0/dataWrites/4/value/id: must be absent or hold the item's key "01", and it holds the key "1"
+      #|a.yaml: /stubs/0/dataWrites/5/value/id: must be absent or hold the item's key "a-${x}", and it holds the key "a-x"
+    ),
+  )
+}
+
+///|
 test "key is a text template, always parsed: its problems are reported at its pointer" {
   inspect(
     write_problems(

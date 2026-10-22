@@ -69,8 +69,9 @@ pub fn CrudOp::write_op(self : CrudOp) -> DataOp? {
 }
 
 ///|
-/// The shape of a request path that a CRUD Stub serves.
-pub enum CrudShape {
+/// The shape of a request path that a CRUD Stub serves. Other packages
+/// may name a shape, to ask `crud_methods` for its methods.
+pub(all) enum CrudShape {
   /// The Stub's path, where it lists and creates.
   ListPath
   /// The Stub's path, then `/`, then one non-empty segment, the key text:
@@ -142,7 +143,7 @@ pub fn Crud::operation(self : Crud, meth : String, path : String) -> CrudOp? {
 /// The methods a CRUD Stub serves at a path of the shape `shape`, or at
 /// either shape when it is `None`, each once, in the order of its
 /// operations: GET, POST, PUT, PATCH, DELETE. They are those that
-/// `Crud::operation` serves.
+/// `Crud::operation` serves, as a test checks.
 pub fn crud_methods(shape : CrudShape?) -> ReadOnlyArray[String] {
   match shape {
     Some(ListPath) => list_methods
@@ -152,12 +153,16 @@ pub fn crud_methods(shape : CrudShape?) -> ReadOnlyArray[String] {
 }
 
 ///|
+/// The methods a CRUD Stub serves at its list path, in operation order.
 let list_methods : ReadOnlyArray[String] = ["GET", "POST"]
 
 ///|
+/// The methods a CRUD Stub serves at an item path, in operation order.
 let item_methods : ReadOnlyArray[String] = ["GET", "PUT", "PATCH", "DELETE"]
 
 ///|
+/// The methods a CRUD Stub serves at either shape of path, each once, in
+/// operation order.
 let any_shape_methods : ReadOnlyArray[String] = [
   "GET", "POST", "PUT", "PATCH", "DELETE",
 ]
@@ -216,15 +221,14 @@ fn File::read_crud(
     match name {
       "bucket" =>
         if self.name(field, value) is Some(name) {
-          match buckets.keys.get(name) {
-            Some(Some(_)) => bucket = Some(name)
-            Some(None) =>
+          match buckets.lookup(self, field, name) {
+            Some(KeyedBy(_) | Malformed) => bucket = Some(name)
+            Some(Unkeyed) =>
               self.error(
                 field,
                 "the Data bucket \{name.escape()} has no \"key\": a CRUD Stub serves only a keyed bucket",
               )
-            None =>
-              self.error(field, "the Mock has no Data bucket \{name.escape()}")
+            None => ()
           }
         }
       "path" =>

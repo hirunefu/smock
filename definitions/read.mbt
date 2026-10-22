@@ -121,7 +121,7 @@ priv struct Reader {
 ///|
 fn Reader::new(
   declared~ : Set[String],
-  buckets~ : Map[String, Map[String, String?]],
+  buckets~ : Map[String, Map[String, BucketKey]],
   body_files~ : Map[String, Bytes],
   env~ : @template.Env,
 ) -> Reader {
@@ -639,7 +639,7 @@ fn File::read_variables(
         pointer=template_pointer(stub_pointer, field),
         env=self.env,
         buckets~,
-        value="a Variable's value",
+        role="a Variable's value",
       ) {
       Ok(template) => {
         names.push(name)

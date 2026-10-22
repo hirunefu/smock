@@ -490,7 +490,10 @@ pub fn Engine::handle(
     // The match decision: one sequence of steps, each taken in turn, which
     // depend on what the Stub serves. A step that a Stub does not use costs
     // it one test at most.
-    Some({ stub, generator, .. }) =>
+    Some({ stub, generator, .. }) => {
+      guard mock is Some(mock) else {
+        abort("a matched Stub has the Mock that answered")
+      }
       match stub.serves {
         Ordinary(ordinary) => {
           // 1. The Scenario moves, before the response is built: whatever
@@ -521,10 +524,7 @@ pub fn Engine::handle(
           // copy of each that the Session holds, or else its initial value.
           // The values of `variables` and `dataWrites` look the copies up,
           // and a response only when one of its templates reads `data`.
-          let data = match mock {
-            Some(mock) => mock.initial_data
-            None => no_data
-          }
+          let data = mock.initial_data
           // 3. The writes: the value of each Variable is rendered, in the
           //    order written, then the value of each data write, all
           //    against the state from before the request, drawing from the
@@ -547,12 +547,14 @@ pub fn Engine::handle(
               data~,
               copies=self.store.copy_values(stub.mock, session),
             )
-            let buckets = match mock {
-              Some(mock) => mock.buckets
-              None => no_buckets
-            }
             try
-              self.write_state(stub.mock, buckets, ordinary, session, first)
+              self.write_state(
+                stub.mock,
+                mock.buckets,
+                ordinary,
+                session,
+                first,
+              )
             catch {
               ValueFailed(error) => {
                 template_error = Some(error)
@@ -636,6 +638,7 @@ pub fn Engine::handle(
           with_faults(answer.plan, stub, draw)
         }
       }
+    }
     None =>
       match mock {
         None => no_mock(host, self.snapshot.hosts())
@@ -647,11 +650,7 @@ pub fn Engine::handle(
           // are looked up only if an Ephemeral Stub has a clause.
           if !states_known && ephemeral is Some(list) {
             for i in 0..<list.length() {
-              let has_clause = match list[i].stub.serves {
-                Ordinary(ordinary) => ordinary.scenario is Some(_)
-                Crud(_) => false
-              }
-              if has_clause {
+              if list[i].stub.scenario() is Some(_) {
                 states = self.scenarios.of(mock.name, session)
                 break
               }
@@ -705,17 +704,6 @@ pub fn Engine::handle(
   }
   { resolution, plan, journal, near_miss, matched: source, scenario, }
 }
-
-///|
-/// The values of no Data bucket. A matched Stub always has the Mock that
-/// answered, so this only stands in for its buckets' values. It is never
-/// changed.
-let no_data : Map[String, Json] = Map([])
-
-///|
-/// The Data buckets of no Mock. A matched Stub always has the Mock that
-/// answered, so this only stands in for its buckets.
-let no_buckets : ReadOnlyArray[@definitions.DataBucket] = []
 
 ///|
 /// The Stub that matched a request, with the generator its Fault decisions

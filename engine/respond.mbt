@@ -183,14 +183,20 @@ fn render_template(
 /// The response to a request whose template could not be rendered: 500,
 /// with what went wrong.
 fn template_failed(stub : String, error : TemplateError) -> ResponsePlan {
-  let body : Json = {
+  json_failure(500, {
     "error": "template failed",
     "stub": Json::string(stub),
     "at": Json::string(error.at),
     "message": Json::string(error.message),
-  }
+  })
+}
+
+///|
+/// A response of smock's own that says what went wrong: `status`, with
+/// `body` in compact JSON, as `application/json`, and no delay or Fault.
+fn json_failure(status : Int, body : Json) -> ResponsePlan {
   {
-    status: 500,
+    status,
     headers: [("Content-Type", "application/json")],
     body: Bytes(@template.compact_json_bytes(body)),
     delay_ms: 0,

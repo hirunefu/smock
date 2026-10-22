@@ -195,8 +195,10 @@ of each GitHub release include its section
   whose text a string key has, or a version 4 UUID from the request's
   helpers, which `fault.seed` repeats. A key that no item has, a value
   that would break the bucket's rules, and running out of integer keys
-  (`no new key`) fail the write, and nothing is written. A Stub's response
-  cannot read a key that its own `append` made.
+  (`no new key`) fail the write, and nothing is written. A literal value
+  that already breaks them, such as an item whose key member holds no key
+  or a key other than a literal `key`, is an error when loading. A Stub's
+  response cannot read a key that its own `append` made.
 - `smock render` and the Admin render operation take sample data and show
   the writes a Stub would make. The sample's `data` gives the value of a
   Data bucket of the Stub's Mock in place of its initial value; a name the

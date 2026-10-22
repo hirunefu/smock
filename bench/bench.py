@@ -6,16 +6,17 @@ another such as its Scenario variant, bench/definitions-scenarios/, or its
 CRUD variant, bench/definitions-crud/) under resource profiles, each a CPU
 limit and an optional memory limit, and sends it the request mix
 (bench/requests.json, or the CRUD variant's own, bench/requests-crud.json)
-at a fixed arrival rate, an open model: requests go out on schedule whether or not earlier ones have been
-answered. Each request's latency counts from the time it was scheduled to be
-sent, so a server that stalls cannot hide the queue that builds up behind
-it, even when the load generator falls behind with it. The latency from the
-time the load generator released each request, and how late it released
-them, are reported beside it, and so are smock's peak memory and any OOM
-kills. A plan (bench/plan.json by default, or bench/plan-autopilot.json for
-the smallest GKE Autopilot Pods and the Helm chart's default) says which
-profiles and cases run, at which rates and for how long. Each run checks the
-targets of bench/targets.json, each under one of those profiles.
+at a fixed arrival rate, an open model: requests go out on schedule whether
+or not earlier ones have been answered. Each request's latency counts from
+the time it was scheduled to be sent, so a server that stalls cannot hide
+the queue that builds up behind it, even when the load generator falls
+behind with it. The latency from the time the load generator released each
+request, and how late it released them, are reported beside it, and so are
+smock's peak memory and any OOM kills. A plan (bench/plan.json by default,
+or bench/plan-autopilot.json for the smallest GKE Autopilot Pods and the
+Helm chart's default) says which profiles and cases run, at which rates and
+for how long. Each run checks the targets of bench/targets.json, each under
+one of those profiles.
 
 usage:
   python3 bench/bench.py run [options]    run the benchmark (--help lists the options)

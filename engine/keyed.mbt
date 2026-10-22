@@ -76,38 +76,8 @@ fn broken_rules(
   key_member : String,
   problems : Array[@definitions.KeyedProblem],
 ) -> String {
-  let first = problems[0]
-  let at = if first.pointer == "" { "" } else { "\{first.pointer} " }
-  let more = if problems.length() > 1 {
-    " (and \{problems.length() - 1} more)"
-  } else {
-    ""
-  }
-  "the value breaks the rules of the Data bucket \{bucket.escape()}, keyed by \{key_member.escape()}: \{at}\{first.message}\{more}"
-}
-
-///|
-/// The value of `key`, a key text, as an integer key: the number whose
-/// text it is, when it is the text of one. `None` for the text of a string
-/// key.
-fn integer_key(key : String) -> Double? {
-  let negative = key.has_prefix("-")
-  let digits = if negative { key.view(start_offset=1) } else { key.view() }
-  // No leading zeros, and no `-0`: the text of 0 is `0`.
-  if digits.is_empty() ||
-    (digits.has_prefix("0") && (negative || digits.length() > 1)) {
-    return None
-  }
-  let mut value = 0L
-  for c in digits {
-    guard c >= '0' && c <= '9' else { return None }
-    value = value * 10L + (c.to_int() - '0'.to_int()).to_int64()
-    if value > @definitions.max_integer_key {
-      return None
-    }
-  }
-  let signed = if negative { -value } else { value }
-  Some(signed.to_double())
+  let first = @definitions.keyed_problems_text(problems, limit=1)
+  "the value breaks the rules of the Data bucket \{bucket.escape()}, keyed by \{key_member.escape()}: \{first}"
 }
 
 ///|
@@ -116,7 +86,7 @@ fn integer_key(key : String) -> Double? {
 /// key has the text it holds, and an integer key the text of its digits,
 /// so no key text is written out to find an item.
 fn item_index(items : Array[Json], key_member : String, key : String) -> Int? {
-  let number = integer_key(key)
+  let number = @definitions.key_text_integer(key)
   for i, item in items {
     guard item is Object(members) else { continue }
     match members.get(key_member) {
@@ -143,8 +113,9 @@ fn kept_key(
     @definitions.key_text(held) != Some(key) {
     raise OtherKey(held, key)
   }
+  // `item_index` found the item by its key member.
   guard items[j] is Object(item) && item.get(key_member) is Some(stored) else {
-    raise NoItem(key)
+    abort("an item found by its key has its key member")
   }
   stored
 }
@@ -164,15 +135,17 @@ fn WorkingCopies::set_item(
   value : Json,
 ) -> Json raise KeyedFailure {
   guard value is Object(members) else { raise NotAnObject(value) }
-  guard self.values[i] is Array(items) &&
-    item_index(items, key_member, key) is Some(j) else {
-    raise NoItem(key)
+  guard self.reached[i].value is Array(items) else {
+    abort("a keyed bucket holds an array")
   }
+  guard item_index(items, key_member, key) is Some(j) else { raise NoItem(key) }
   members[key_member] = kept_key(items, j, key_member, key, members)
-  guard self.own(i, bucket.name) is Array(items) else { return value }
+  guard self.own(i, bucket.name) is Array(items) else {
+    abort("own() keeps the value's kind")
+  }
   let old = items[j]
-  self.bytes[i] += value_bytes(value) - value_bytes(old)
-  if self.sources[i] is Stored {
+  self.reached[i].bytes += value_bytes(value) - value_bytes(old)
+  if self.reached[i].source is Stored {
     self.changes.push(Replaced(items, j, old))
   }
   items[j] = value
@@ -195,13 +168,13 @@ fn WorkingCopies::merge_item(
   value : Json,
 ) -> Json raise KeyedFailure {
   guard value is Object(members) else { raise NotAnObject(value) }
-  guard self.values[i] is Array(items) &&
-    item_index(items, key_member, key) is Some(j) else {
-    raise NoItem(key)
+  guard self.reached[i].value is Array(items) else {
+    abort("a keyed bucket holds an array")
   }
+  guard item_index(items, key_member, key) is Some(j) else { raise NoItem(key) }
   kept_key(items, j, key_member, key, members) |> ignore
   guard self.own(i, bucket.name) is Array(items) && items[j] is Object(item) else {
-    return value
+    abort("own() keeps the value's kind, and a keyed bucket holds objects")
   }
   self.merge_members(i, item, members, except=Some(key_member))
   items[j]
@@ -217,16 +190,18 @@ fn WorkingCopies::remove_item(
   key_member : String,
   key : String,
 ) -> Json raise KeyedFailure {
-  guard self.values[i] is Array(items) &&
-    item_index(items, key_member, key) is Some(j) else {
-    raise NoItem(key)
+  guard self.reached[i].value is Array(items) else {
+    abort("a keyed bucket holds an array")
   }
-  guard self.own(i, bucket.name) is Array(items) else { return Json::null() }
+  guard item_index(items, key_member, key) is Some(j) else { raise NoItem(key) }
+  guard self.own(i, bucket.name) is Array(items) else {
+    abort("own() keeps the value's kind")
+  }
   let removed = items.remove(j)
   // The comma before it, or after it when it was first, goes too.
-  self.bytes[i] -= value_bytes(removed) +
+  self.reached[i].bytes -= value_bytes(removed) +
     (if items.is_empty() { 0L } else { 1L })
-  if self.sources[i] is Stored {
+  if self.reached[i].source is Stored {
     self.changes.push(Removed(items, j, removed))
   }
   removed
@@ -247,7 +222,9 @@ fn WorkingCopies::append_item(
   rand : @prng.Generator,
 ) -> Json raise KeyedFailure {
   guard value is Object(members) else { raise NotAnObject(value) }
-  guard self.values[i] is Array(items) else { return value }
+  guard self.reached[i].value is Array(items) else {
+    abort("a keyed bucket holds an array")
+  }
   match members.get(key_member) {
     Some(held) => {
       guard @definitions.key_text(held) is Some(key) else {
@@ -260,7 +237,9 @@ fn WorkingCopies::append_item(
     None =>
       members[key_member] = new_key(items, key_member, bucket.new_key, rand)
   }
-  guard self.own(i, bucket.name) is Array(items) else { return value }
+  guard self.own(i, bucket.name) is Array(items) else {
+    abort("own() keeps the value's kind")
+  }
   self.push_element(i, items, value)
   value
 }
@@ -297,7 +276,7 @@ fn new_key(
               highest = Some(key)
             }
           }
-          Some(String(text)) if integer_key(text) is Some(_) =>
+          Some(String(text)) if @definitions.key_text_integer(text) is Some(_) =>
             match taken {
               Some(texts) => texts.add(text)
               None => taken = Some(Set::from_array([text]))

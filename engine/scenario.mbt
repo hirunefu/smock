@@ -166,12 +166,8 @@ fn Engine::known_states(
   }
   if self.ephemeral.of(mock.name, session) is Some(list) {
     for e in list {
-      match e.stub.serves {
-        Ordinary(ordinary) =>
-          if ordinary.scenario is Some(clause) {
-            by_scenario.add_clause(clause)
-          }
-        Crud(_) => ()
+      if e.stub.scenario() is Some(clause) {
+        by_scenario.add_clause(clause)
       }
     }
   }

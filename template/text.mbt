@@ -131,6 +131,20 @@ pub fn Text::is_literal(self : Text) -> Bool {
 }
 
 ///|
+/// The text the template always renders, when it is literal text: its
+/// source, with each `$${` read as `${`. `None` when it inserts a value.
+pub fn Text::literal(self : Text) -> String? {
+  let out = StringBuilder()
+  for part in self.parts {
+    match part {
+      Verbatim(text) => out.write_string(text)
+      Insert(_) => return None
+    }
+  }
+  Some(out.to_string())
+}
+
+///|
 /// Parses `source` as a text template of the kind `kind`, for the field at
 /// `pointer`, within the Stub. `env` holds the environment variables it may
 /// read, and `buckets` the Data buckets; by default, none.

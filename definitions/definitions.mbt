@@ -169,6 +169,16 @@ pub enum Serves {
 } derive(Debug, Eq)
 
 ///|
+/// The Stub's Scenario clause, if it has one: an ordinary Stub's
+/// `scenario`, and none for a CRUD Stub, which has no Scenario clause.
+pub fn Stub::scenario(self : Stub) -> ScenarioClause? {
+  match self.serves {
+    Ordinary(ordinary) => ordinary.scenario
+    Crud(_) => None
+  }
+}
+
+///|
 /// What an ordinary Stub serves: the requests that meet its request
 /// conditions, in the states its Scenario clause allows, get one of its
 /// responses, and it writes its Variables and Data buckets when it
@@ -1049,12 +1059,8 @@ fn scenarios_of(
 ) -> ReadOnlyArray[ScenarioFileStates] {
   let by_scenario = StatesByScenario::new()
   for stub in stubs {
-    match stub.serves {
-      Ordinary(ordinary) =>
-        if ordinary.scenario is Some(clause) {
-          by_scenario.add_clause(clause)
-        }
-      Crud(_) => ()
+    if stub.scenario() is Some(clause) {
+      by_scenario.add_clause(clause)
     }
   }
   let scenarios = []

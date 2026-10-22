@@ -327,17 +327,33 @@ pub fn RenderFailure::message(self : RenderFailure) -> String {
     UnknownSampleBucket(mock~, bucket~) =>
       "the sample request's data names the Data bucket \{bucket.escape()}, which the Mock \{mock.escape()} does not declare"
     InvalidSampleData(bucket~, key~, problems~) => {
-      let at = @definitions.child_pointer("/data", bucket)
-      let each = problems.map(problem => {
-        "\{at}\{problem.pointer} \{problem.message}"
-      })
-      "the sample request's data breaks the rules of the Data bucket \{bucket.escape()}, keyed by \{key.escape()}: \{each.join("; ")}"
+      let each = @definitions.keyed_problems_text(
+        problems,
+        at=@definitions.child_pointer("/data", bucket),
+      )
+      "the sample request's data breaks the rules of the Data bucket \{bucket.escape()}, keyed by \{key.escape()}: \{each}"
     }
     NoOperation(stub~, crud_path~, meth~, path~) => {
       let item = "\{crud_path}/<key>"
-      "the CRUD Stub \{stub.escape()} serves no operation for \{meth.escape()} at \{path.escape()}: it serves GET and POST at \{crud_path.escape()}, and GET, PUT, PATCH and DELETE at \{item.escape()}"
+      let at_list = spelled_out(@definitions.crud_methods(Some(ListPath)))
+      let at_item = spelled_out(@definitions.crud_methods(Some(ItemPath)))
+      "the CRUD Stub \{stub.escape()} serves no operation for \{meth.escape()} at \{path.escape()}: it serves \{at_list} at \{crud_path.escape()}, and \{at_item} at \{item.escape()}"
     }
   }
+}
+
+///|
+/// `words` as a sentence lists them: joined with `, `, and the last with
+/// ` and `, such as `GET, PUT and DELETE`.
+fn spelled_out(words : ReadOnlyArray[String]) -> String {
+  let out = StringBuilder()
+  for i in 0..<words.length() {
+    if i > 0 {
+      out.write_string(if i == words.length() - 1 { " and " } else { ", " })
+    }
+    out.write_string(words[i])
+  }
+  out.to_string()
 }
 
 ///|
@@ -553,7 +569,7 @@ fn render_crud(
   }
   let call = crud_call(crud, incoming)
   // A Stub from the Definition files serves a keyed bucket of its Mock.
-  guard bucket_named(mock, crud.bucket) is Some(bucket) &&
+  guard bucket_named(mock.buckets, crud.bucket) is Some(bucket) &&
     bucket.key is Some(key_member) else {
     abort("a CRUD Stub serves a keyed bucket of its Mock")
   }
@@ -702,8 +718,8 @@ fn preview_writes(
       },
     })
   }
-  for i in 0..<working.names.length() {
-    copies[working.names[i]] = working.values[i]
+  for reached in working.reached {
+    copies[reached.name] = reached.value
   }
   let variables = Map([])
   let after = vars.copy()
@@ -733,7 +749,7 @@ fn check_sample_data(
   mock : @definitions.Mock,
 ) -> Unit raise RenderFailure {
   for name, value in data {
-    guard bucket_named(mock, name) is Some(bucket) else {
+    guard bucket_named(mock.buckets, name) is Some(bucket) else {
       raise UnknownSampleBucket(mock=mock.name, bucket=name)
     }
     if bucket.key is Some(key) {

@@ -61,6 +61,7 @@ usage: python3 bench/gen_definitions.py [--check]
 """
 
 import json
+import re
 import sys
 import uuid
 from itertools import product
@@ -84,6 +85,9 @@ ORDER_STATUSES = ["created", "paid", "shipped", "delivered", "cancelled"]
 
 # The order that the requests of the mix read and update.
 ORDER = "7f9c2ba4-e88f-4c1a-9c5b-2d3a1e8f6b10"
+
+# That order, as get-order answers it.
+MIX_ORDER = {"id": ORDER, "status": "paid", "total": {"amount": 10597, "currency": "EUR"}}
 
 # Each CRUD Stub's headers besides those smock sets, as the Stubs it takes
 # the place of answer.
@@ -244,11 +248,11 @@ def orders():
                         "status": 201,
                         "headers": {
                             **JSON_HEADERS,
-                            "Location": "/orders/7f9c2ba4-e88f-4c1a-9c5b-2d3a1e8f6b10",
+                            "Location": f"/orders/{ORDER}",
                         },
                         "body": body(
                             {
-                                "id": "7f9c2ba4-e88f-4c1a-9c5b-2d3a1e8f6b10",
+                                "id": ORDER,
                                 "status": "created",
                                 "channel": channel,
                                 "tier": tier,
@@ -266,13 +270,7 @@ def orders():
             "response": {
                 "status": 200,
                 "headers": JSON_HEADERS,
-                "body": body(
-                    {
-                        "id": "7f9c2ba4-e88f-4c1a-9c5b-2d3a1e8f6b10",
-                        "status": "paid",
-                        "total": {"amount": 10597, "currency": "EUR"},
-                    }
-                ),
+                "body": body(MIX_ORDER),
             },
         },
         {
@@ -290,17 +288,19 @@ def orders():
 
 
 def orders_data():
-    """An order for each way to create one, the mix's order (partner, gold)
-    as get-order answers it."""
+    """An order for each way to create one: the mix's order (partner, gold),
+    with get-order's id, status and total, and one made up for each other
+    way. Each item has its channel and tier after its status."""
     data = []
     for i, (channel, tier) in enumerate(product(CHANNELS, TIERS)):
         if (channel, tier) == ("partner", "gold"):
-            order_id, status, amount = ORDER, "paid", 10597
+            order = MIX_ORDER
         else:
             order_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"https://orders.bench.internal/orders/{channel}-{tier}"))
-            status, amount = ORDER_STATUSES[i % len(ORDER_STATUSES)], 1999 + (i * 731) % 15000
-        data.append({"id": order_id, "status": status, "channel": channel, "tier": tier,
-                     "total": {"amount": amount, "currency": "EUR"}})
+            order = {"id": order_id, "status": ORDER_STATUSES[i % len(ORDER_STATUSES)],
+                     "total": {"amount": 1999 + (i * 731) % 15000, "currency": "EUR"}}
+        data.append({"id": order["id"], "status": order["status"], "channel": channel, "tier": tier,
+                     "total": order["total"]})
     return data
 
 
@@ -382,6 +382,12 @@ def with_scenarios(content, mix):
     return {key: stubs}
 
 
+def is_item_stub(stub):
+    """Whether `stub` is one of the catalog's 600 item Stubs, whose IDs are
+    catalog-item-00001 to catalog-item-00600."""
+    return re.fullmatch(r"catalog-item-\d{5}", stub["id"]) is not None
+
+
 def with_crud(name, content):
     """The CRUD variant of the Definition file `name`'s content: in the
     catalog, the bucket `items` and the CRUD Stub `catalog-items` in place
@@ -389,7 +395,7 @@ def with_crud(name, content):
     Stub `orders` in place of get-order, after the Stubs that create an
     order, so that a POST to /orders still creates nothing."""
     if name == "catalog.json":
-        stubs = [stub for stub in content["stubs"] if not stub["id"].startswith("catalog-item-0")]
+        stubs = [stub for stub in content["stubs"] if not is_item_stub(stub)]
         return {"data": [{"mock": "catalog", "name": "items", "key": "sku", "jsonFile": "items.json"}],
                 "stubs": [{"id": "catalog-items", "mock": "catalog",
                            "crud": {"bucket": "items", "path": "/catalog/items", "headers": CRUD_HEADERS}},

@@ -143,7 +143,7 @@ fn Engine::write_state(
           vars?=self.store.variables_of(mock, session),
           copies?=self.store.copy_values(mock, session),
         ),
-        buckets: ReadOnlyArray::from_array(working.names),
+        buckets: ReadOnlyArray::from_array(working.names()),
       }
     }
   }
@@ -258,41 +258,50 @@ priv enum Undo {
 
 ///|
 /// The working copies of one request's data writes: each bucket the writes
-/// have reached so far, by the index of its name, with the value it holds
-/// after them. "Working copies" describe the result, not the method: only
-/// a space's first write to a bucket copies the bucket. Later writes change
-/// the space's copy in place, and are undone when the request fails.
+/// have reached so far, by its index, with the value it holds after them.
+/// "Working copies" describe the result, not the method: only a space's
+/// first write to a bucket copies the bucket. Later writes change the
+/// space's copy in place, and are undone when the request fails.
 priv struct WorkingCopies {
   /// The copies the space held before the request, if any.
   stored : Copies?
-  /// The names of the buckets reached, in the order first written.
-  names : Array[String]
-  /// The value each holds after the writes so far.
-  values : Array[Json]
-  /// Where each value comes from.
-  sources : Array[Source]
-  /// What each would count as a copy, as `copy_bytes` gives it, kept up to
-  /// date as it changes; unknown while it is the initial value.
-  bytes : Array[Int64]
-  /// What each counted before the request: its stored copy's bytes, or 0
-  /// when the space held no copy of it.
-  before : Array[Int64]
+  /// The buckets reached, in the order first written.
+  reached : Array[Reached]
   /// The changes made in place to the stored copies, in order.
   changes : Array[Undo]
 }
 
 ///|
+/// A bucket that a request's writes have reached.
+priv struct Reached {
+  /// The bucket's name.
+  name : String
+  /// The value it holds after the writes so far.
+  mut value : Json
+  /// Where the value comes from.
+  mut source : Source
+  /// What it would count as a copy, as `copy_bytes` gives it, kept up to
+  /// date as it changes; unknown while it is the initial value.
+  mut bytes : Int64
+  /// What it counted before the request: its stored copy's bytes, or 0
+  /// when the space held no copy of it.
+  before : Int64
+}
+
+///|
 /// No bucket reached yet, in a space that holds the copies `stored`.
 fn WorkingCopies::new(stored : Copies?) -> WorkingCopies {
-  {
-    stored,
-    names: [],
-    values: [],
-    sources: [],
-    bytes: [],
-    before: [],
-    changes: [],
+  { stored, reached: [], changes: [], }
+}
+
+///|
+/// The names of the buckets reached, in the order first written.
+fn WorkingCopies::names(self : WorkingCopies) -> Array[String] {
+  let names = Array(capacity=self.reached.length())
+  for reached in self.reached {
+    names.push(reached.name)
   }
+  names
 }
 
 ///|
@@ -304,8 +313,8 @@ fn WorkingCopies::reach(
   name : String,
   initial : Json,
 ) -> Int {
-  for i in 0..<self.names.length() {
-    if self.names[i] == name {
+  for i in 0..<self.reached.length() {
+    if self.reached[i].name == name {
       return i
     }
   }
@@ -313,26 +322,30 @@ fn WorkingCopies::reach(
     Some(stored) => stored.values.get(name)
     None => None
   }
-  self.names.push(name)
   match copy {
     Some(value) => {
       let counted = match self.stored {
         Some(stored) => stored.bytes.get(name).unwrap_or(0L)
         None => 0L
       }
-      self.values.push(value)
-      self.sources.push(Stored)
-      self.bytes.push(counted)
-      self.before.push(counted)
+      self.reached.push({
+        name,
+        value,
+        source: Stored,
+        bytes: counted,
+        before: counted,
+      })
     }
-    None => {
-      self.values.push(initial)
-      self.sources.push(Initial)
-      self.bytes.push(0L)
-      self.before.push(0L)
-    }
+    None =>
+      self.reached.push({
+        name,
+        value: initial,
+        source: Initial,
+        bytes: 0L,
+        before: 0L,
+      })
   }
-  self.names.length() - 1
+  self.reached.length() - 1
 }
 
 ///|
@@ -351,16 +364,9 @@ fn WorkingCopies::apply(
   rand : @prng.Generator,
 ) -> Unit raise WriteFailure {
   let at = "/dataWrites/\{index}"
-  let mut declared = None
-  for i in 0..<buckets.length() {
-    if buckets[i].name == write.bucket {
-      declared = Some(buckets[i])
-      break
-    }
-  }
   // The buckets of a Stub from the Definition files are always there, as
   // it was read; an Ephemeral Stub's may be gone or changed since a reload.
-  guard declared is Some(bucket) else {
+  guard bucket_named(buckets, write.bucket) is Some(bucket) else {
     raise apply_failed(
       at,
       "the Mock has no Data bucket \{write.bucket.escape()} since a reload",
@@ -433,9 +439,9 @@ fn WorkingCopies::apply_whole(
   let i = self.reach(bucket.name, bucket.initial)
   match op {
     Replace => {
-      self.values[i] = value
-      self.sources[i] = Own
-      self.bytes[i] = copy_bytes(bucket.name, value)
+      self.reached[i].value = value
+      self.reached[i].source = Own
+      self.reached[i].bytes = copy_bytes(bucket.name, value)
     }
     Merge => {
       guard value is Object(members) else {
@@ -444,23 +450,27 @@ fn WorkingCopies::apply_whole(
           "the value of \"merge\" must be an object, and it is \{kind_of(value)}",
         )
       }
-      guard self.values[i] is Object(_) else {
+      guard self.reached[i].value is Object(_) else {
         raise apply_failed(
           at,
-          "the Data bucket \{bucket.name.escape()} holds \{kind_of(self.values[i])}, and \"merge\" needs an object",
+          "the Data bucket \{bucket.name.escape()} holds \{kind_of(self.reached[i].value)}, and \"merge\" needs an object",
         )
       }
-      guard self.own(i, bucket.name) is Object(object) else { return }
+      guard self.own(i, bucket.name) is Object(object) else {
+        abort("own() keeps the value's kind")
+      }
       self.merge_members(i, object, members, except=None)
     }
     Append => {
-      guard self.values[i] is Array(_) else {
+      guard self.reached[i].value is Array(_) else {
         raise apply_failed(
           at,
-          "the Data bucket \{bucket.name.escape()} holds \{kind_of(self.values[i])}, and \"append\" needs an array",
+          "the Data bucket \{bucket.name.escape()} holds \{kind_of(self.reached[i].value)}, and \"append\" needs an array",
         )
       }
-      guard self.own(i, bucket.name) is Array(array) else { return }
+      guard self.own(i, bucket.name) is Array(array) else {
+        abort("own() keeps the value's kind")
+      }
       self.push_element(i, array, value)
     }
     // A `remove` always has a key, so this is never reached.
@@ -480,7 +490,7 @@ fn WorkingCopies::merge_members(
   members : Map[String, Json],
   except~ : String?,
 ) -> Unit {
-  let stored = self.sources[i] is Stored
+  let stored = self.reached[i].source is Stored
   let mut more = 0L
   for name, member_value in members {
     if except is Some(skipped) && name == skipped {
@@ -498,7 +508,7 @@ fn WorkingCopies::merge_members(
     }
     object[name] = member_value
   }
-  self.bytes[i] += more
+  self.reached[i].bytes += more
 }
 
 ///|
@@ -510,9 +520,9 @@ fn WorkingCopies::push_element(
   array : Array[Json],
   element : Json,
 ) -> Unit {
-  self.bytes[i] += value_bytes(element) +
+  self.reached[i].bytes += value_bytes(element) +
     (if array.is_empty() { 0L } else { 1L })
-  if self.sources[i] is Stored {
+  if self.reached[i].source is Stored {
     self.changes.push(Element(array))
   }
   array.push(element)
@@ -531,12 +541,12 @@ fn apply_failed(at : String, message : String) -> WriteFailure {
 /// copy is deep, so that no change to it, at any depth, reaches the initial
 /// value.
 fn WorkingCopies::own(self : WorkingCopies, i : Int, bucket : String) -> Json {
-  if self.sources[i] is Initial {
-    self.values[i] = deep_copy(self.values[i])
-    self.sources[i] = Own
-    self.bytes[i] = copy_bytes(bucket, self.values[i])
+  if self.reached[i].source is Initial {
+    self.reached[i].value = deep_copy(self.reached[i].value)
+    self.reached[i].source = Own
+    self.reached[i].bytes = copy_bytes(bucket, self.reached[i].value)
   }
-  self.values[i]
+  self.reached[i].value
 }
 
 ///|
@@ -596,8 +606,8 @@ fn WorkingCopies::undo(self : WorkingCopies) -> Unit {
 /// copies are stored, beside what the space counts.
 fn WorkingCopies::growth(self : WorkingCopies) -> Int64 {
   let mut growth = 0L
-  for i in 0..<self.names.length() {
-    growth += self.bytes[i] - self.before[i]
+  for reached in self.reached {
+    growth += reached.bytes - reached.before
   }
   growth
 }
@@ -613,16 +623,16 @@ fn WorkingCopies::store(
   session : String?,
   space_growth~ : Int64,
 ) -> Unit {
-  for i in 0..<self.names.length() {
-    let growth = self.bytes[i] -
-      self.before[i] +
+  for i, reached in self.reached {
+    let growth = reached.bytes -
+      reached.before +
       (if i == 0 { space_growth } else { 0L })
     store.write_copy(
       mock,
       session,
-      self.names[i],
-      self.values[i],
-      bytes=self.bytes[i],
+      reached.name,
+      reached.value,
+      bytes=reached.bytes,
       growth~,
     )
   }
@@ -632,17 +642,10 @@ fn WorkingCopies::store(
 /// The response to a request whose data write could not be applied: 500,
 /// with the write and what went wrong.
 fn data_write_failed(stub : String, error : DataError) -> ResponsePlan {
-  let body : Json = {
+  json_failure(500, {
     "error": "data write failed",
     "stub": Json::string(stub),
     "at": Json::string(error.at),
     "message": Json::string(error.message),
-  }
-  {
-    status: 500,
-    headers: [("Content-Type", "application/json")],
-    body: Bytes(@template.compact_json_bytes(body)),
-    delay_ms: 0,
-    fault: None,
-  }
+  })
 }

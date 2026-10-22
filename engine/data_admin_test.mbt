@@ -101,17 +101,19 @@ fn Harness::set_data(
 
 ///|
 /// Drops the calling Session's copy of `bucket` of `shop`: the bucket as
-/// the reply shows it, or the error.
+/// the reply shows it, then `(a copy dropped)` when there was one, or the
+/// error.
 fn Harness::drop_data(
   self : Harness,
   session : String?,
   bucket : String,
   mock? : String = "shop",
 ) -> String {
-  let bucket = self.engine.drop_data(mock~, session~, bucket~) catch {
+  let result = self.engine.drop_data(mock~, session~, bucket~) catch {
     err => return data_error(err)
   }
-  bucket_text(bucket)
+  let dropped = if result.dropped { " (a copy dropped)" } else { "" }
+  "\{bucket_text(result.bucket)}\{dropped}"
 }
 
 ///|
@@ -144,7 +146,7 @@ test "set gives the calling Session its own copy, which its requests read; anoth
       #|checkout-42 lists orders: 200 [{"id":1,"status":"paid"}]
       #|checkout-43 lists orders: 200 [{"id":1,"status":"paid"},{"id":2,"status":"pending"},{"id":3,"status":"paid"}]
       #|no Session lists orders: 200 [{"id":1,"status":"paid"},{"id":2,"status":"pending"},{"id":3,"status":"paid"}]
-      #|checkout-42 drops orders: {"name":"orders","key":"id","newKey":"integer","written":false,"value":[{"id":1,"status":"paid"},{"id":2,"status":"pending"},{"id":3,"status":"paid"}]}
+      #|checkout-42 drops orders: {"name":"orders","key":"id","newKey":"integer","written":false,"value":[{"id":1,"status":"paid"},{"id":2,"status":"pending"},{"id":3,"status":"paid"}]} (a copy dropped)
       #|checkout-42 lists orders: 200 [{"id":1,"status":"paid"},{"id":2,"status":"pending"},{"id":3,"status":"paid"}]
     ),
   )
@@ -257,7 +259,7 @@ test "requests without a Session share one copy, apart from every Session's" {
       #|checkout-42 GET: 200 visits: 0
       #|checkout-42 sets visits: {"name":"visits","key":null,"newKey":null,"written":true,"value":1}
       #|no Session reads: {"name":"visits","key":null,"newKey":null,"written":true,"value":5}
-      #|no Session drops visits: {"name":"visits","key":null,"newKey":null,"written":false,"value":0}
+      #|no Session drops visits: {"name":"visits","key":null,"newKey":null,"written":false,"value":0} (a copy dropped)
       #|no Session GET: 200 visits: 0
       #|checkout-42 GET: 200 visits: 1
     ),
@@ -377,7 +379,7 @@ test "set makes a copy even with the initial value, takes any JSON value in a bu
       #|  {"name":"tokens","key":"token","newKey":"uuid","written":true,"value":[]}
       #|  {"name":"visits","key":null,"newKey":null,"written":true,"value":null}
       #|checkout-42 lists orders: 200 [{"id":42},{"id":43},{"id":"x"}]
-      #|drop tokens: {"name":"tokens","key":"token","newKey":"uuid","written":false,"value":[]}
+      #|drop tokens: {"name":"tokens","key":"token","newKey":"uuid","written":false,"value":[]} (a copy dropped)
       #|drop tokens again: {"name":"tokens","key":"token","newKey":"uuid","written":false,"value":[]}
     ),
   )

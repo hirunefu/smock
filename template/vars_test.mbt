@@ -34,7 +34,7 @@ fn parsed(
     @template.Structured::parse(
       json,
       pointer="/variables/v",
-      value?=if variable { Some("a Variable's value") } else { None },
+      role?=if variable { Some("a Variable's value") } else { None },
     ) {
     Ok(template) => Ok(template)
     Err(problems) =>

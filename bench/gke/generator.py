@@ -5,11 +5,11 @@ It runs in a Job on another node than smock (scripts/gke-bench.sh), and
 sends smock's Service the steps of one profile of the plan the way
 bench/bench.py does on one machine, with the same functions: one oha process
 for each request of the mix (bench/requests.json, or a variant's own) at its
-weight's share of the step's rate and connections, at a fixed arrival rate, latency counted
-from each request's due time. It prints one JSON line for each step to
-stdout, in the layout of a case of bench/bench.py's summary.json, between a
-line about the start, with the CPU of the node it runs on (gke.py
-node-cpu), and one when it is done; progress goes to stderr.
+weight's share of the step's rate and connections, at a fixed arrival rate,
+latency counted from each request's due time. It prints one JSON line for
+each step to stdout, in the layout of a case of bench/bench.py's
+summary.json, between a line about the start, with the CPU of the node it
+runs on (gke.py node-cpu), and one when it is done; progress goes to stderr.
 
 It looks up smock's address once smock answers by name, and sends the load
 there. Once smock has been ready for the plan's idle settle time, it reads
