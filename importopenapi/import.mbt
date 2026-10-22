@@ -249,8 +249,9 @@ pub fn Converter::convert(self : Converter) -> Outcome {
   guard report.document(root) is Some(document) else {
     return Failed(report.problems())
   }
+  let conversion = Conversion::new(report, document)
   let imported = report.operations(document)
-  if self.documents.count() + report.needed.length() > max_documents {
+  if conversion.documents.count() + conversion.needed.length() > max_documents {
     // This one error replaces every other problem: the documents past the
     // bound are never asked for, so the problems found so far are not
     // final, as in a round that needs documents.
@@ -262,10 +263,10 @@ pub fn Converter::convert(self : Converter) -> Outcome {
       }),
     ])
   }
-  if !report.needed.is_empty() {
-    return Needs(report.needed.to_array())
+  if !conversion.needed.is_empty() {
+    return Needs(conversion.needed.to_array())
   }
-  report.file(document, imported)
+  conversion.file(imported)
 }
 
 ///|

@@ -9,7 +9,6 @@
 /// renders the problems, one per line, then each Stub's ID and whether it
 /// has a body.
 fn deep_example(media_type : Json) -> String {
-  let report = Report::new(Options(root="api.json", mock="m", output="m.yaml"))
   let top : Map[String, Json] = {
     "openapi": "3.2.0",
     "paths": {
@@ -23,16 +22,15 @@ fn deep_example(media_type : Json) -> String {
       },
     },
   }
-  let document = {
-    top,
-    openapi: "3.2.0",
-    title: "",
-    info_version: "",
-    prefix: "",
-  }
-  let conversion = report.file(document, report.operations(document))
-  let lines = conversion.problems().map(problem => problem.to_string())
-  match conversion {
+  let conversion = in_memory(
+    Options(root="api.json", mock="m", output="m.yaml"),
+    { top, openapi: "3.2.0", title: "", info_version: "", prefix: "", },
+  )
+  let outcome = conversion.file(
+    conversion.report.operations(conversion.document),
+  )
+  let lines = outcome.problems().map(problem => problem.to_string())
+  match outcome {
     // The converter wrote the file only after loading it.
     Converted(file~, ..) => {
       let json = @yaml.parse(@utf8.decode_lossy(file)) catch {
