@@ -48,7 +48,7 @@ fn Conversion::new(report : Report, root : Content) -> Conversion? {
   let (title, info_version) = reading.info(top)
   let prefix = match reading.options.base_path {
     Some(path) => trimmed_prefix(path)
-    None => report.prefix(Place::root(""), top, outer="")
+    None => reading.prefix(Place::root(""), top, outer="")
   }
   let conversion = {
     ..reading,

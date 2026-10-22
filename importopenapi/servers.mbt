@@ -6,8 +6,8 @@
 /// is when a server has an error, after reporting it. Every server of the
 /// list is read, and when their paths differ, a warning names the first.
 /// With a base path, `servers` are not read, and the prefix is `outer`.
-fn Report::prefix(
-  self : Report,
+fn Conversion::prefix(
+  self : Conversion,
   pointer : Place,
   object : Map[String, Json],
   outer~ : String,
@@ -47,7 +47,11 @@ fn Report::prefix(
 ///|
 /// The prefix that the Server Object `json`, written at `pointer`, gives,
 /// or `None` after reporting why it gives none.
-fn Report::server(self : Report, pointer : Place, json : Json) -> String? {
+fn Conversion::server(
+  self : Conversion,
+  pointer : Place,
+  json : Json,
+) -> String? {
   guard json is Object(server) else {
     self.error_at(pointer, "must be an object")
     return None
@@ -79,8 +83,8 @@ fn Report::server(self : Report, pointer : Place, json : Json) -> String? {
 /// such as `{version}`, replaced by its `default`. Or `None` after
 /// reporting each variable that has no default, or why `url` is not a URL
 /// template: a brace that does not pair, or an empty `{}`.
-fn Report::expanded(
-  self : Report,
+fn Conversion::expanded(
+  self : Conversion,
   pointer : Place,
   server : Map[String, Json],
   url : String,
@@ -137,8 +141,8 @@ fn Report::expanded(
 /// The `default` of the server variable `name`, among `variables`, written
 /// at `variables_pointer`, which the URL at `url_pointer` uses. Or `None`
 /// after reporting why it has no string `default`.
-fn Report::variable_default(
-  self : Report,
+fn Conversion::variable_default(
+  self : Conversion,
   url_pointer : Place,
   variables_pointer : Place,
   variables : Map[String, Json],

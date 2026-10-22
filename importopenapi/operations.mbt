@@ -132,7 +132,7 @@ fn Conversion::path_item(
   pointer : Place,
   json : Json,
 ) -> Unit {
-  guard self.report.path_key(pointer, key) else { return }
+  guard self.path_key(pointer, key) else { return }
   guard self.report.followed_object(
       self.document,
       pointer,
@@ -142,7 +142,7 @@ fn Conversion::path_item(
     is Some((pointer, item)) else {
     return
   }
-  let prefix = self.report.prefix(pointer, item, outer=self.document.prefix)
+  let prefix = self.prefix(pointer, item, outer=self.document.prefix)
   let v32 = self.document.openapi.has_prefix("3.2.")
   for field, value in item {
     let field_pointer = pointer.child(field)
@@ -200,7 +200,7 @@ fn Conversion::operation(
     self.error_at(pointer, "must be an object")
     return
   }
-  let prefix = self.report.prefix(pointer, operation, outer=prefix)
+  let prefix = self.prefix(pointer, operation, outer=prefix)
   let path = matched_path(key, prefix~)
   // An exact path starts with /, so its conditions never read as a
   // pattern's.
