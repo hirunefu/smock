@@ -234,7 +234,7 @@ class Manifests(Helper):
     def test_nothing_billed_outside_the_pods_can_be_made_in_the_namespace(self):
         rendered = self.manifests()
         kinds = {item["kind"] for items in rendered.values() for item in items}
-        self.assertEqual(kinds, {"Namespace", "ResourceQuota", "Service", "Pod", "Job"})
+        self.assertEqual(kinds, {"Namespace", "ResourceQuota", "Service", "Pod", "Job", "PodDisruptionBudget"})
         for item in [*objects(rendered, "Pod"), *objects(rendered, "Job")]:
             for volume in pod_spec(item).get("volumes", []):
                 self.assertEqual(set(volume) - {"name"}, {"emptyDir"}, volume)
@@ -531,6 +531,69 @@ class Variants(Helper):
                          ["TARGET", "PROFILE", "CASES"])
 
 
+def selects(selector, item):
+    """Whether a label selector of matchLabels selects a Pod, or a Job's
+    Pods."""
+    labels = item["metadata"]["labels"] if item["kind"] == "Pod" else item["spec"]["template"]["metadata"]["labels"]
+    return selector["matchLabels"].items() <= labels.items()
+
+
+class DisruptionBudget(Helper):
+    """The cluster autoscaler may remove a node whose Pods it can evict, as
+    it did the load generator's in the run of 2026-10-19. A
+    PodDisruptionBudget that allows no disruption of the load generator's
+    Pod keeps its node while the profile runs; smock's Pods are bare Pods,
+    which already keep theirs, and stay as they are."""
+
+    def test_each_profiles_load_generator_alone_is_under_a_budget_that_allows_no_disruption(self):
+        jobs = {}
+        for plan, variants in ((BENCH / "plan-autopilot.json", ()), (BENCH / "plan-same-node.json", TWO_VARIANTS)):
+            for profile in ("autopilot-burst-min", "autopilot-min", "chart-default"):
+                rendered = self.manifests(profile=profile, plan=plan, variants=variants)
+                # With the Job, applied before it and deleted with it.
+                [budget, job] = rendered["generator.json"]
+                self.assertEqual((budget["apiVersion"], budget["kind"], job["kind"]),
+                                 ("policy/v1", "PodDisruptionBudget", "Job"))
+                self.assertEqual(budget["metadata"]["name"], f"generator-{profile}")
+                self.assertEqual(budget["metadata"]["namespace"], "smock-bench")
+                # The Job's one Pod must stay: minAvailable, as an integer,
+                # since maxUnavailable needs a controller with a scale
+                # subresource, which a Job has not.
+                self.assertEqual(set(budget["spec"]), {"minAvailable", "selector"})
+                self.assertEqual(budget["spec"]["minAvailable"], 1)
+                self.assertEqual(job["spec"].get("parallelism", 1), 1)
+                self.assertTrue(selects(budget["spec"]["selector"], job))
+                for pod in objects(rendered, "Pod"):
+                    self.assertFalse(selects(budget["spec"]["selector"], pod), pod["metadata"]["name"])
+                jobs[plan.name, profile] = (budget, job)
+        # Not another profile's load generator.
+        for key, (budget, _) in jobs.items():
+            for other, (_, job) in jobs.items():
+                if other[1] != key[1]:
+                    self.assertFalse(selects(budget["spec"]["selector"], job), (key, other))
+
+    def test_smocks_pods_keep_their_requests_and_limits_and_may_be_evicted_by_no_annotation(self):
+        # cluster-autoscaler.kubernetes.io/safe-to-evict would make any of
+        # them an extended-duration Pod on Autopilot, whose requests are
+        # raised to at least 0.5 vCPU and 0.5 GiB and which may have no
+        # inter-Pod affinity.
+        limits = {"autopilot-burst-min": ("50m", "52Mi"), "autopilot-min": ("250m", "512Mi"),
+                  "chart-default": ("1", "1Gi")}
+        for plan, variants in ((BENCH / "plan-autopilot.json", ()), (BENCH / "plan-same-node.json", TWO_VARIANTS)):
+            for profile, (cpu, memory) in limits.items():
+                rendered = self.manifests(profile=profile, plan=plan, variants=variants)
+                pods = objects(rendered, "Pod")
+                self.assertEqual(len(pods), len(variants) or 1)
+                for item in [*pods, *objects(rendered, "Job")]:
+                    metadata = item["metadata"] if item["kind"] == "Pod" else item["spec"]["template"]["metadata"]
+                    self.assertNotIn("annotations", metadata, item["metadata"]["name"])
+                for pod in pods:
+                    for container in [*pod_spec(pod)["containers"], *pod_spec(pod).get("initContainers", [])]:
+                        resources = container["resources"]
+                        self.assertEqual(resources["requests"], resources["limits"])
+                        self.assertEqual((resources["limits"]["cpu"], resources["limits"]["memory"]), (cpu, memory))
+
+
 class Plan(Helper):
     """The plan of a GKE run: the profiles it runs, each with its steps, and
     only what a Pod on GKE can run."""
@@ -545,8 +608,8 @@ class Plan(Helper):
         self.assertEqual([line[:2] for line in lines],
                          [["autopilot-burst-min", "14"], ["autopilot-min", "14"], ["chart-default", "14"]])
         deadlines = {line[0]: int(line[2]) for line in lines}
-        self.assertEqual(deadlines["chart-default"],
-                         self.manifests("chart-default")["generator.json"][0]["spec"]["activeDeadlineSeconds"])
+        [job] = objects(self.manifests("chart-default"), "Job")
+        self.assertEqual(deadlines["chart-default"], job["spec"]["activeDeadlineSeconds"])
 
     def test_some_profiles_and_cases_can_be_chosen(self):
         status, stdout, stderr = self.plan("--profiles", "chart-default,autopilot-min", "--cases", "https-keep-alive")
@@ -721,14 +784,16 @@ class Summary(Helper):
 
     def results(self, lines, pod_info, rates=(500, 1000), where=("--region", "us-central1", "--zone", "us-central1-a",
                                                                  "--arch", "arm64"), targets=None, smock_node_cpu=None,
-                stopped=(), plan=None):
+                stopped=(), plan=None, failed_job=None):
         """A results directory as scripts/gke-bench.sh leaves it, with the
         load generator's log, the Pods of profile small, and, when given,
         what smock's init container printed (`smock_node_cpu`, a text),
         summarized against `targets` ({architecture: entries}, by default
         small's targets for both); `stopped` says why and where the run
         stopped early, if it did. The plan is small_plan's at `rates`,
-        unless `plan` names another."""
+        unless `plan` names another. When the load generator's Job failed,
+        `failed_job` gives the events of the namespace and of its node,
+        which the run keeps, with why it failed (gke.py job-failure)."""
         out = self.directory()
         raw = out / "raw" / "small"
         raw.mkdir(parents=True)
@@ -737,6 +802,12 @@ class Summary(Helper):
         (raw / "pods.json").write_text(json.dumps(pod_info))
         if smock_node_cpu is not None:
             (raw / "smock-node-cpu.log").write_text(smock_node_cpu)
+        if failed_job is not None:
+            events, node_events = failed_job
+            (raw / "events.json").write_text(json.dumps(event_list(*events)))
+            (raw / "node-events.json").write_text(json.dumps(event_list(*node_events)))
+            status, _, stderr = helper("job-failure", raw, "--job", FAILED_JOB)
+            self.assertEqual(status, 0, stderr)
         status, _, stderr = helper(
             "summarize", "--plan", plan or small_plan(self.directory(), rates),
             "--targets", small_targets(self.directory(), targets), *where,
@@ -1012,6 +1083,38 @@ class Summary(Helper):
         markdown = (out / "summary.md").read_text()
         self.assertIn(f"small ended early: {reason}. Not measured: http-keep-alive@small@1000.", markdown)
 
+    def test_a_profile_whose_load_generators_job_failed_says_why_and_which_steps_it_did_not_measure(self):
+        # The cluster autoscaler removed the load generator's node during the
+        # step at 1000 requests/s: its log stops there, with no stopped line.
+        lines = [START, IDLE, TRAFFIC_CHECK, generator_step(500), "generator: http-keep-alive@small@1000\n"]
+        out = self.results(lines, pods(), failed_job=([*BEFORE_THE_END, *SCALED_DOWN, BACKOFF_LIMIT],
+                                                      NODE_SCALED_DOWN))
+        reason = ("the load generator's Job failed: the cluster autoscaler scaled down its node (event ScaleDown of "
+                  f"Pod {FAILED_POD} at 2026-10-19T23:53:53Z: deleting pod for node scale down)")
+        ended = {"reason": reason, "after": "http-keep-alive@small@500", "not_measured": ["http-keep-alive@small@1000"]}
+        summary = json.loads((out / "summary.json").read_text())
+        self.assertFalse(summary["complete"])
+        self.assertEqual(summary["gke"]["profiles"]["small"]["ended_early"], ended)
+        conditions = json.loads((out / "conditions.json").read_text())
+        self.assertEqual(conditions["gke"]["profiles"]["small"]["ended_early"], ended)
+        for target in summary["targets"]:
+            if target["metric"] in ("p99", "p99_9", "oom_kills"):
+                self.assertEqual(target["reason"], f"http-keep-alive@small@1000 was not run: {reason}")
+        markdown = (out / "summary.md").read_text()
+        self.assertIn("| 4 | plain HTTP 200, TLS HTTP 200 | 0 | yes |", markdown)
+        self.assertIn(f"small ended early: {reason}. Not measured: http-keep-alive@small@1000.", markdown)
+        # Nothing names a reason it does not know.
+        unknown = ([*BEFORE_THE_END, event("Pod", FAILED_POD, "Killing", "Stopping container generator", "23:53:53"),
+                    BACKOFF_LIMIT], [])
+        markdown = (self.results(lines, pods(), failed_job=unknown) / "summary.md").read_text()
+        self.assertIn("small ended early: the load generator's Job failed, and its events name no known reason: they "
+                      "are in raw/small/events.json and raw/small/node-events.json, beside the load generator's log, "
+                      "raw/small/generator.log. Not measured: http-keep-alive@small@1000.", markdown)
+        # A Job that failed after its last step left nothing unmeasured.
+        lines = [START, IDLE, TRAFFIC_CHECK, generator_step(500), generator_step(1000)]
+        out = self.results(lines, pods(), failed_job=([*BEFORE_THE_END, *SCALED_DOWN, BACKOFF_LIMIT], []))
+        self.assertIsNone(json.loads((out / "summary.json").read_text())["gke"]["profiles"]["small"]["ended_early"])
+
     def test_a_profile_whose_traffic_ports_did_not_answer_measures_nothing_and_says_why(self):
         check = {**TRAFFIC_CHECK, "ok": False, "ports": {
             "plain": TRAFFIC_CHECK["ports"]["plain"],
@@ -1077,6 +1180,163 @@ class Summary(Helper):
         self.assertIn("smock's restarts under small are unknown, since the run did not read them at the profile's "
                       "end: its OOM kills are not measured.", markdown)
         self.assertNotIn("None", markdown)
+
+
+# The load generator's Job and Pod under profile small, and their node.
+FAILED_JOB = "generator-small"
+FAILED_POD = "generator-small-q8z4n"
+GENERATOR_NODE = "gk3-smock-bench-20261019-23400-pool-1-a7dae436-zx2k"
+
+
+def event(kind, name, reason, message, at, type_="Normal", component="kubelet"):
+    """An event about the object `kind`/`name`, as kubectl get events -o
+    json lists it: a Node's are in the default namespace."""
+    namespace = "default" if kind == "Node" else "smock-bench"
+    return {"apiVersion": "v1", "kind": "Event",
+            "metadata": {"name": f"{name}.{hashlib.sha256(f'{reason} {at}'.encode()).hexdigest()[:16]}",
+                         "namespace": namespace},
+            "involvedObject": {"apiVersion": "batch/v1" if kind == "Job" else "v1", "kind": kind, "name": name,
+                               **({} if kind == "Node" else {"namespace": namespace})},
+            "reason": reason, "message": message, "type": type_, "count": 1,
+            "firstTimestamp": f"2026-10-19T{at}Z", "lastTimestamp": f"2026-10-19T{at}Z",
+            "source": {"component": component}}
+
+
+def event_list(*events):
+    return {"apiVersion": "v1", "kind": "List", "items": list(events), "metadata": {"resourceVersion": ""}}
+
+
+# The namespace's events of a profile whose load generator's Pod waited for
+# a node, ran on it, and was stopped: those of smock's Pod, the Job's, and
+# its Pod's, as in the run of 2026-10-19, without what stopped it.
+BEFORE_THE_END = [
+    event("Pod", "smock-small", "Scheduled", "Successfully assigned smock-bench/smock-small to node-a", "23:41:02",
+          component="default-scheduler"),
+    event("Pod", "smock-small", "Started", "Started container smock", "23:41:20"),
+    event("Job", FAILED_JOB, "SuccessfulCreate", f"Created pod: {FAILED_POD}", "23:42:10",
+          component="job-controller"),
+    event("Pod", FAILED_POD, "FailedScheduling", "0/3 nodes are available: 1 node(s) didn't match pod anti-affinity "
+          "rules, 2 Insufficient cpu. preemption: 0/3 nodes are available: 3 No preemption victims found for "
+          "incoming pod.", "23:42:10", "Warning", "default-scheduler"),
+    event("Pod", FAILED_POD, "FailedScaleUp", "Node scale up in zones us-central1-a associated with this pod failed: "
+          "GCE quota exceeded. Pod is at risk of not being scheduled.", "23:42:31", "Warning", "cluster-autoscaler"),
+    event("Pod", FAILED_POD, "Scheduled", f"Successfully assigned smock-bench/{FAILED_POD} to {GENERATOR_NODE}",
+          "23:51:40", component="default-scheduler"),
+    event("Pod", FAILED_POD, "Started", "Started container generator", "23:51:52"),
+]
+
+# Where the reason of a Job that failed for no reason its events name may
+# be found besides them.
+LOG = ", beside the load generator's log, raw/small/generator.log"
+
+# The Job, failed when its one Pod failed.
+BACKOFF_LIMIT = event("Job", FAILED_JOB, "BackoffLimitExceeded", "Job has reached the specified backoff limit",
+                      "23:53:58", "Warning", "job-controller")
+
+# What the cluster autoscaler and the kubelet record when the autoscaler
+# removes the load generator's node, as in the run of 2026-10-19.
+SCALED_DOWN = [
+    event("Pod", FAILED_POD, "ScaleDown", "deleting pod for node scale down", "23:53:53",
+          component="cluster-autoscaler"),
+    event("Pod", FAILED_POD, "Killing", "Stopping container generator", "23:53:53"),
+]
+NODE_SCALED_DOWN = [
+    event("Node", GENERATOR_NODE, "ScaleDown", "marked the node as toBeDeleted/unschedulable", "23:53:52",
+          component="cluster-autoscaler"),
+]
+
+
+class JobFailure(Helper):
+    """When the load generator's Job fails, the run keeps the events of the
+    namespace and of the load generator's node, and gke.py job-failure
+    names the reason from them: its node scaled down by the cluster
+    autoscaler, its Pod preempted or evicted, a process on its node killed
+    for memory, or its Job's deadline passed; or says that the reason is
+    unknown and where the events are."""
+
+    def failure(self, events, node_events=None):
+        """What gke.py job-failure prints of the load generator's Job under
+        small, from the namespace's `events` and the node's
+        (`node_events`, not kept when None), and the record it keeps."""
+        raw = self.directory() / "raw" / "small"
+        raw.mkdir(parents=True)
+        (raw / "events.json").write_text(json.dumps(event_list(*events)))
+        if node_events is not None:
+            (raw / "node-events.json").write_text(json.dumps(event_list(*node_events)))
+        status, stdout, stderr = helper("job-failure", raw, "--job", FAILED_JOB)
+        self.assertEqual(status, 0, stderr)
+        return stdout, json.loads((raw / "job-failure.json").read_text())
+
+    def test_a_node_the_cluster_autoscaler_scaled_down_is_named_with_its_event(self):
+        stdout, record = self.failure([*BEFORE_THE_END, *SCALED_DOWN, BACKOFF_LIMIT], NODE_SCALED_DOWN)
+        reason = ("the load generator's Job failed: the cluster autoscaler scaled down its node (event ScaleDown of "
+                  f"Pod {FAILED_POD} at 2026-10-19T23:53:53Z: deleting pod for node scale down)")
+        self.assertEqual(stdout, reason + "\n")
+        self.assertEqual(record, {"job": FAILED_JOB, "cause": "scale-down", "reason": reason})
+
+    def test_without_an_event_of_a_known_reason_it_says_the_reason_is_unknown_and_where_the_events_are(self):
+        # The load generator's container stopped, and nothing says why.
+        stopped = [*BEFORE_THE_END, event("Pod", FAILED_POD, "Killing", "Stopping container generator", "23:53:53"),
+                   BACKOFF_LIMIT]
+        node = [event("Node", GENERATOR_NODE, "NodeReady", f"Node {GENERATOR_NODE} status is now: NodeReady",
+                      "23:50:12")]
+        unknown = "the load generator's Job failed, and its events name no known reason: they are in "
+        for node_events, where in ((node, "raw/small/events.json and raw/small/node-events.json" + LOG),
+                                   (None, "raw/small/events.json" + LOG)):
+            stdout, record = self.failure(stopped, node_events)
+            self.assertEqual(stdout, unknown + where + "\n")
+            self.assertEqual(record, {"job": FAILED_JOB, "cause": None, "reason": unknown + where})
+
+    def test_events_of_another_profiles_load_generator_or_of_its_node_before_the_pod_came_do_not_count(self):
+        # The Pod of generator-small-2's Job, smock's Pod, and an OOM kill on
+        # the node under an earlier profile, before this Pod was scheduled
+        # there.
+        other = [event("Pod", "generator-small-2-b7k4x", "ScaleDown", "deleting pod for node scale down",
+                       "23:30:00", component="cluster-autoscaler"),
+                 event("Pod", "smock-small", "Preempted", "Preempted by pod 41c3 on node node-a", "23:52:00",
+                       component="default-scheduler")]
+        earlier = [event("Node", GENERATOR_NODE, "OOMKilling", "Memory cgroup out of memory: Killed process 4211 "
+                         "(oha) total-vm:2117436kB, anon-rss:4194304kB", "23:20:00", "Warning", "kernel-monitor")]
+        stdout, record = self.failure([*other, *BEFORE_THE_END, BACKOFF_LIMIT], earlier)
+        self.assertIsNone(record["cause"], stdout)
+
+    def test_each_known_reason_is_named_from_its_event(self):
+        for events, node_events, cause, says in (
+                ([event("Pod", FAILED_POD, "Preempted", f"Preempted by pod 7f0e2c on node {GENERATOR_NODE}",
+                        "23:53:01", component="default-scheduler")], [],
+                 "preemption", "its Pod was preempted (event Preempted of Pod"),
+                ([event("Pod", FAILED_POD, "Evicted", "The node was low on resource: memory. Threshold quantity: "
+                        "100Mi, available: 91424Ki.", "23:53:01", "Warning")], [],
+                 "eviction", "its Pod was evicted from its node (event Evicted of Pod"),
+                ([event("Pod", FAILED_POD, "TaintManagerEviction", f"Marking for deletion Pod smock-bench/{FAILED_POD}",
+                        "23:53:01", component="taint-eviction-controller")], [],
+                 "eviction", "its Pod was evicted from its node (event TaintManagerEviction of Pod"),
+                ([], [event("Node", GENERATOR_NODE, "OOMKilling", "Memory cgroup out of memory: Killed process 4211 "
+                            "(oha) total-vm:2117436kB, anon-rss:4194304kB", "23:53:01", "Warning", "kernel-monitor")],
+                 "oom", "the kernel killed a process on its node for want of memory (event OOMKilling of Node "
+                        f"{GENERATOR_NODE} at 2026-10-19T23:53:01Z: Memory cgroup out of memory: Killed process 4211 "
+                        "(oha)"),
+                ([event("Job", FAILED_JOB, "DeadlineExceeded", "Job was active longer than specified deadline",
+                        "23:53:01", "Warning", "job-controller")], [],
+                 "deadline", f"it ran past its deadline (event DeadlineExceeded of Job {FAILED_JOB} at "
+                             "2026-10-19T23:53:01Z: Job was active longer than specified deadline)")):
+            stdout, record = self.failure([*BEFORE_THE_END, *events, BACKOFF_LIMIT], node_events)
+            self.assertEqual(record["cause"], cause, stdout)
+            self.assertTrue(stdout.startswith(f"the load generator's Job failed: {says}"), stdout)
+        # A deletion the taint manager cancelled evicts nothing.
+        cancelled = event("Pod", FAILED_POD, "TaintManagerEviction", f"Cancelling deletion of Pod smock-bench/"
+                          f"{FAILED_POD}", "23:53:01", component="taint-eviction-controller")
+        self.assertIsNone(self.failure([*BEFORE_THE_END, cancelled, BACKOFF_LIMIT])[1]["cause"])
+
+    def test_events_it_cannot_read_are_said_to_be_so(self):
+        raw = self.directory() / "raw" / "small"
+        raw.mkdir(parents=True)
+        # kubectl failed, and wrote nothing.
+        (raw / "events.json").write_text("")
+        status, stdout, stderr = helper("job-failure", raw, "--job", FAILED_JOB)
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(stdout, "the load generator's Job failed, and the run could not read its events: see the "
+                                 "load generator's log, raw/small/generator.log\n")
 
 
 class Estimate(Helper):
@@ -2549,6 +2809,37 @@ class Samples(VariantRun):
         self.assertEqual([json.loads(line)["kind"] for line in sample_log.splitlines()],
                          ["start", "traffic-check", "metrics-before", "step", "traffic-check", "stopped",
                           "metrics-after", "done"])
+
+    def test_a_profile_whose_load_generators_job_failed_leaves_each_sample_why_and_the_steps_it_did_not_run(self):
+        # The cluster autoscaler removed the load generator's node after b's
+        # run at 500 requests/s in round 2, the first of that round: its log
+        # stops there.
+        us = {"a": {500: [30.0, 31.0], 1000: [32.0, 33.0]}, "b": {500: [40.0, 41.0], 1000: [42.0, 43.0]}}
+        lines = [line for line in variant_lines(us, done=False) if line["kind"] != "metrics-after"]
+        second = [index for index, line in enumerate(lines) if line.get("round") == 2]
+        self.assertEqual((lines[second[0]]["variant"], lines[second[0]]["result"]["rate"]), ("b", 500))
+        lines = lines[:second[1]]
+        out = self.variant_run(lines, variant_pods(["a", "b"]))
+        raw = out / "raw" / "small"
+        (raw / "events.json").write_text(json.dumps(event_list(*BEFORE_THE_END, *SCALED_DOWN, BACKOFF_LIMIT)))
+        (raw / "node-events.json").write_text(json.dumps(event_list(*NODE_SCALED_DOWN)))
+        status, reason, stderr = helper("job-failure", raw, "--job", FAILED_JOB)
+        self.assertEqual(status, 0, stderr)
+        reason = reason.strip()
+        self.assertIn("the cluster autoscaler scaled down its node", reason)
+        summaries = {(round_, label): self.summarize_sample(directory)[0]
+                     for round_, label, directory in self.samples(out)}
+        for sample in ((1, "a"), (1, "b")):
+            self.assertIsNone(summaries[sample]["gke"]["profiles"]["small"]["ended_early"], sample)
+        self.assertEqual(
+            {sample: summaries[sample]["gke"]["profiles"]["small"]["ended_early"] for sample in ((2, "a"), (2, "b"))},
+            {(2, "a"): {"reason": reason, "after": None,
+                        "not_measured": ["http-keep-alive@small@500", "http-keep-alive@small@1000"]},
+             (2, "b"): {"reason": reason, "after": "http-keep-alive@small@500",
+                        "not_measured": ["http-keep-alive@small@1000"]}})
+        # The comparison says so, and how many runs were left out.
+        _, _, markdown, _ = self.same_node(out)
+        self.assertIn(f"**Stopped early:** {reason}. 3 runs were left out.", markdown)
 
 
 # Two variants' CPU a request over four rounds at two rates: b's is higher
