@@ -122,15 +122,15 @@ priv suberror Passed
 /// schema: nothing is random. A keyword that the sampler reads but that has
 /// the wrong type is ignored, with a warning at its pointer.
 priv struct Sampler {
-  report : Report
-  /// The document whose schemas it samples, where a `$ref` is followed.
-  document : Document
+  /// The conversion whose schemas it samples, where a `$ref` is followed
+  /// and problems are reported.
+  conversion : Conversion
   /// Whether the document is OpenAPI 3.0, whose schemas have no
   /// `examples`, and where the keywords beside a `$ref` are ignored.
   v30 : Bool
   /// The pointers of the schemas merged into those whose samples are
   /// being generated: the samples that hold the one being generated now.
-  generating : Array[String]
+  generating : Array[Place]
   /// Whether the sample is cut: below its first level, objects have only
   /// their required properties, and arrays only `minItems` items.
   cut : Bool
@@ -139,12 +139,12 @@ priv struct Sampler {
 }
 
 ///|
-/// A sampler for the schemas of `document`, whose sample is `cut` or not.
-fn Report::sampler(self : Report, document : Document, cut~ : Bool) -> Sampler {
+/// A sampler for the schemas of the document, whose sample is `cut` or
+/// not.
+fn Conversion::sampler(self : Conversion, cut~ : Bool) -> Sampler {
   {
-    report: self,
-    document,
-    v30: document.openapi.has_prefix("3.0."),
+    conversion: self,
+    v30: self.document.openapi.has_prefix("3.0."),
     generating: [],
     cut,
     left: if cut {
@@ -175,18 +175,17 @@ priv struct BodySample {
 /// a warning. Each sample stops as soon as it passes its bound. Only the
 /// problems of the sample that is written are reported. A header's value
 /// is sampled the same way, with `part` naming it in the warning.
-fn Report::body_sample(
-  self : Report,
-  document : Document,
-  pointer : String,
+fn Conversion::body_sample(
+  self : Conversion,
+  pointer : Place,
   json : Json,
   part? : String = "the body",
 ) -> BodySample {
-  let mark = self.mark()
+  let mark = self.report.mark()
   for cut in [false, true] {
-    let sampler = self.sampler(document, cut~)
+    let sampler = self.sampler(cut~)
     try sampler.sample(pointer, json, 0) catch {
-      Passed => self.rollback(mark)
+      Passed => self.report.rollback(mark)
     } noraise {
       value => return { value, cut, too_large: false, }
     }
@@ -227,7 +226,7 @@ fn Sampler::cuts(self : Sampler, depth : Int) -> Bool {
 /// One schema object that a merged schema is made of, and where it is
 /// written.
 priv struct Layer {
-  pointer : String
+  pointer : Place
   schema : Map[String, Json]
   /// Whether it is a branch: one of `allOf`, the branch that `oneOf` or
   /// `anyOf` takes, or a property met again, rather than the schema
@@ -243,7 +242,7 @@ priv struct Merged {
   layers : Array[Layer]
   /// The pointers of the schemas that a `$ref` named, merged into it. In
   /// 3.0, one that has a `$ref` itself is not a layer.
-  refs : Array[String]
+  refs : Array[Place]
   /// Whether one of them is the schema `false`, so that it gives no value.
   mut never : Bool
   /// Whether a `oneOf` or `anyOf` in it has only branches that are only
@@ -263,9 +262,9 @@ fn Merged::new() -> Merged {
 ///|
 /// Whether `json`, at `pointer`, is a schema: an object, or `true` or
 /// `false`. When it is not, it is ignored, with a warning.
-fn Sampler::is_schema(self : Sampler, pointer : String, json : Json) -> Bool {
+fn Sampler::is_schema(self : Sampler, pointer : Place, json : Json) -> Bool {
   guard json is (Object(_) | True | False) else {
-    self.report.warning_at(
+    self.conversion.warning_at(
       pointer, "ignored: must be a schema, an object or a boolean",
     )
     return false
@@ -280,7 +279,7 @@ fn Sampler::is_schema(self : Sampler, pointer : String, json : Json) -> Bool {
 /// schema is first merged with its branches.
 fn Sampler::sample(
   self : Sampler,
-  pointer : String,
+  pointer : Place,
   json : Json,
   depth : Int,
 ) -> Json? raise Passed {
@@ -301,7 +300,7 @@ fn Sampler::sample(
 fn Sampler::merge(
   self : Sampler,
   merged : Merged,
-  pointer : String,
+  pointer : Place,
   json : Json,
   branch~ : Bool,
 ) -> Unit {
@@ -322,8 +321,8 @@ fn Sampler::merge(
     return
   }
   if schema.contains("$dynamicRef") {
-    self.report.error_at(
-      @definitions.child_pointer(pointer, "$dynamicRef"),
+    self.conversion.error_at(
+      pointer.child("$dynamicRef"),
       "smock does not follow $dynamicRef: write a $ref with a JSON Pointer, such as #/components/schemas/Pet",
     )
   }
@@ -333,20 +332,20 @@ fn Sampler::merge(
   if self.referenced(merged, pointer, schema) is Some(target) {
     self.merge(merged, target.pointer, target.json, branch~)
   }
-  let all_of = @definitions.child_pointer(pointer, "allOf")
+  let all_of = pointer.child("allOf")
   match schema.get("allOf") {
     None => ()
     Some(Array(branches)) =>
       for i, json in branches {
-        let at = @definitions.child_pointer(all_of, i.to_string())
+        let at = all_of.child(i.to_string())
         if self.is_schema(at, json) {
           self.merge(merged, at, json, branch=true)
         }
       }
-    Some(_) => self.report.warning_at(all_of, "ignored: must be an array")
+    Some(_) => self.conversion.warning_at(all_of, "ignored: must be an array")
   }
   for keyword in ["oneOf", "anyOf"] {
-    let branches_pointer = @definitions.child_pointer(pointer, keyword)
+    let branches_pointer = pointer.child(keyword)
     match schema.get(keyword) {
       None => ()
       Some(Array(branches)) => {
@@ -354,7 +353,7 @@ fn Sampler::merge(
         let mut nevers = false
         let mut taken = false
         for i, json in branches {
-          let at = @definitions.child_pointer(branches_pointer, i.to_string())
+          let at = branches_pointer.child(i.to_string())
           if !self.is_schema(at, json) {
             continue
           }
@@ -378,7 +377,9 @@ fn Sampler::merge(
         }
       }
       Some(_) =>
-        self.report.warning_at(branches_pointer, "ignored: must be an array")
+        self.conversion.warning_at(
+          branches_pointer, "ignored: must be an array",
+        )
     }
   }
 }
@@ -391,12 +392,8 @@ fn Sampler::merge(
 /// or leads back into the chain. Nothing is reported here, and nothing is
 /// marked as being generated: a branch that is merged reports its own
 /// problems then.
-fn Sampler::branch_target(
-  self : Sampler,
-  pointer : String,
-  json : Json,
-) -> Json {
-  let mark = self.report.mark()
+fn Sampler::branch_target(self : Sampler, pointer : Place, json : Json) -> Json {
+  let mark = self.conversion.report.mark()
   let chain = []
   let mut pointer = pointer
   let mut target = json
@@ -407,15 +404,15 @@ fn Sampler::branch_target(
       break
     }
     chain.push(pointer)
-    let at = @definitions.child_pointer(pointer, "$ref")
-    guard self.report.target(self.document, at, reference) is Some(part) else {
+    let at = pointer.child("$ref")
+    guard self.conversion.target(at, reference) is Some(part) else {
       target = json
       break
     }
     pointer = part.pointer
     target = part.json
   }
-  self.report.rollback(mark)
+  self.conversion.report.rollback(mark)
   target
 }
 
@@ -429,19 +426,19 @@ fn Sampler::branch_target(
 fn Sampler::referenced(
   self : Sampler,
   merged : Merged,
-  pointer : String,
+  pointer : Place,
   schema : Map[String, Json],
 ) -> Part? {
   guard schema.get("$ref") is Some(reference) else { return None }
-  let at = @definitions.child_pointer(pointer, "$ref")
+  let at = pointer.child("$ref")
   guard reference is String(reference) else {
-    self.report.error_at(at, "must be a string")
+    self.conversion.error_at(at, "must be a string")
     return None
   }
   if self.under_id(pointer) {
     return None
   }
-  guard self.report.target(self.document, at, reference) is Some(target) else {
+  guard self.conversion.target(at, reference) is Some(target) else {
     return None
   }
   guard self.is_schema(target.pointer, target.json) else { return None }
@@ -468,21 +465,20 @@ fn Sampler::referenced(
 /// `$id` at the root of a document is not: the document's location is its
 /// base. In 3.0, a `$id` beside a `$ref` is ignored with the other fields
 /// there.
-fn Sampler::under_id(self : Sampler, pointer : String) -> Bool {
-  let (number, pointer) = number_of(pointer)
-  guard pointer_keys(pointer) is Some(keys) else { return false }
-  let mut json = self.report.tree(self.document, number)
-  let mut at = place_in(number, "")
+fn Sampler::under_id(self : Sampler, pointer : Place) -> Bool {
+  guard pointer_keys(pointer.pointer) is Some(keys) else { return false }
+  let mut json = self.conversion.tree(pointer.document)
+  let mut at = Place::{ document: pointer.document, pointer: "", }
   let mut found = false
   for key in keys {
     guard step(json, key) is Some(value) else { break }
-    at = @definitions.child_pointer(at, key)
+    at = at.child(key)
     json = value
     if value is Object(schema) &&
       schema.get("$id") is Some(String(_)) &&
       !(self.v30 && schema.contains("$ref")) {
-      self.report.error_at(
-        @definitions.child_pointer(at, "$id"),
+      self.conversion.error_at(
+        at.child("$id"),
         "a $ref lies under this $id, which would change what the $ref names: smock does not resolve $id",
       )
       found = true
@@ -536,7 +532,7 @@ fn Sampler::merged_sample(
     // stops the sample before it is walked.
     let bytes = compact_size(value, self.left)
     self.charge(bytes)
-    guard self.report.copied(at, value, body_nesting - depth) is Some(value) else {
+    guard self.conversion.copied(at, value, body_nesting - depth) is Some(value) else {
       self.left += bytes
       return None
     }
@@ -574,7 +570,7 @@ fn Sampler::merged_sample(
 /// pointer: per keyword, the schema's own, else the first branch's. A
 /// branch's value is used only when the merged schema is not an object,
 /// since it shows only the branch's part of an object.
-fn Sampler::value(self : Sampler, merged : Merged) -> (String, Json)? {
+fn Sampler::value(self : Sampler, merged : Merged) -> (Place, Json)? {
   let mut object : Bool? = None
   for keyword in value_keywords {
     if keyword == "examples" && self.v30 {
@@ -596,10 +592,7 @@ fn Sampler::value(self : Sampler, merged : Merged) -> (String, Json)? {
           if self.first_of(layer.pointer, layer.schema, keyword) is Some(found) {
             return Some(found)
           }
-        _ =>
-          return Some(
-            (@definitions.child_pointer(layer.pointer, keyword), value),
-          )
+        _ => return Some((layer.pointer.child(keyword), value))
       }
     }
   }
@@ -612,16 +605,16 @@ fn Sampler::value(self : Sampler, merged : Merged) -> (String, Json)? {
 /// is ignored, with a warning.
 fn Sampler::first_of(
   self : Sampler,
-  pointer : String,
+  pointer : Place,
   schema : Map[String, Json],
   keyword : String,
-) -> (String, Json)? {
-  let at = @definitions.child_pointer(pointer, keyword)
+) -> (Place, Json)? {
+  let at = pointer.child(keyword)
   match schema.get(keyword) {
     None | Some(Array([])) => None
-    Some(Array(items)) => Some((@definitions.child_pointer(at, "0"), items[0]))
+    Some(Array(items)) => Some((at.child("0"), items[0]))
     Some(_) => {
-      self.report.warning_at(at, "ignored: must be an array")
+      self.conversion.warning_at(at, "ignored: must be an array")
       None
     }
   }
@@ -632,9 +625,9 @@ fn Sampler::first_of(
 /// in it stays as written; or `None` when it would nest deeper than `room`
 /// levels, which the parsers would not read back. It is then left out,
 /// with a warning.
-fn Report::copied(
-  self : Report,
-  pointer : String,
+fn Conversion::copied(
+  self : Conversion,
+  pointer : Place,
   value : Json,
   room : Int,
 ) -> Json? {
@@ -690,8 +683,8 @@ fn Sampler::type_of(self : Sampler, merged : Merged) -> SchemaType {
     if type_named(written) is Some(kind) {
       return kind
     }
-    self.report.warning_at(
-      @definitions.child_pointer(layer.pointer, "type"),
+    self.conversion.warning_at(
+      layer.pointer.child("type"),
       "ignored: must be a type, such as \"string\", or a non-empty array of types",
     )
   }
@@ -757,8 +750,8 @@ fn Sampler::format(self : Sampler, merged : Merged) -> String? {
       None => ()
       Some(String(format)) => return Some(format)
       Some(_) =>
-        self.report.warning_at(
-          @definitions.child_pointer(layer.pointer, "format"),
+        self.conversion.warning_at(
+          layer.pointer.child("format"),
           "ignored: must be a string",
         )
     }
@@ -774,9 +767,9 @@ fn Sampler::count(
   self : Sampler,
   merged : Merged,
   keyword : String,
-) -> (String, Int)? {
+) -> (Place, Int)? {
   for layer in merged.layers {
-    let at = @definitions.child_pointer(layer.pointer, keyword)
+    let at = layer.pointer.child(keyword)
     match layer.schema.get(keyword) {
       None => ()
       Some(Number(n, ..)) if n >= 0.0 && n == n.floor() =>
@@ -784,7 +777,9 @@ fn Sampler::count(
           (at, if n >= 2147483647.0 { 2147483647 } else { n.to_int() }),
         )
       Some(_) =>
-        self.report.warning_at(at, "ignored: must be a non-negative integer")
+        self.conversion.warning_at(
+          at, "ignored: must be a non-negative integer",
+        )
     }
   }
   None
@@ -840,20 +835,20 @@ fn Sampler::array(
   if min is Some((at, min)) && min > length {
     length = min
     if length > max_sample_items {
-      self.report.warning_at(
+      self.conversion.warning_at(
         at,
         "changed: the sample has \{max_sample_items} items, the most a sample has, not \{length}",
       )
       length = max_sample_items
     }
   }
-  let mut prefix_at = ""
+  let mut prefix_at = Place::root("")
   let mut prefix : Array[Json] = []
   for layer in merged.layers {
     if length == 0 {
       break
     }
-    let at = @definitions.child_pointer(layer.pointer, "prefixItems")
+    let at = layer.pointer.child("prefixItems")
     match layer.schema.get("prefixItems") {
       None => continue
       Some(Array(items)) => {
@@ -861,7 +856,7 @@ fn Sampler::array(
         prefix = items
         break
       }
-      Some(_) => self.report.warning_at(at, "ignored: must be an array")
+      Some(_) => self.conversion.warning_at(at, "ignored: must be an array")
     }
   }
   // Every item after `prefixItems` is the same sample of `items`, which
@@ -871,7 +866,7 @@ fn Sampler::array(
   let mut rest_bytes = 0
   for i in 0..<length {
     let item = if i < prefix.length() {
-      let at = @definitions.child_pointer(prefix_at, i.to_string())
+      let at = prefix_at.child(i.to_string())
       if !self.is_schema(at, prefix[i]) {
         break
       }
@@ -885,7 +880,7 @@ fn Sampler::array(
       rest_drawn = true
       let before = self.left
       for layer in merged.layers {
-        let at = @definitions.child_pointer(layer.pointer, "items")
+        let at = layer.pointer.child("items")
         if layer.schema.get("items") is Some(json) && self.is_schema(at, json) {
           rest = self.sample(at, json, depth + 1)
           break
@@ -911,7 +906,7 @@ fn Sampler::array(
 fn Sampler::required(self : Sampler, merged : Merged) -> Array[String] {
   let names = []
   for layer in merged.layers {
-    let at = @definitions.child_pointer(layer.pointer, "required")
+    let at = layer.pointer.child("required")
     match layer.schema.get("required") {
       None => ()
       Some(Array(items)) =>
@@ -919,13 +914,13 @@ fn Sampler::required(self : Sampler, merged : Merged) -> Array[String] {
           match item {
             String(name) => if !names.contains(name) { names.push(name) }
             _ =>
-              self.report.warning_at(
-                @definitions.child_pointer(at, i.to_string()),
+              self.conversion.warning_at(
+                at.child(i.to_string()),
                 "ignored: must be a string",
               )
           }
         }
-      Some(_) => self.report.warning_at(at, "ignored: must be an array")
+      Some(_) => self.conversion.warning_at(at, "ignored: must be an array")
     }
   }
   names
@@ -946,20 +941,20 @@ fn Sampler::object(
 ) -> Json raise Passed {
   self.charge(2)
   let cut = self.cuts(depth)
-  let properties : Map[String, Array[(String, Json)]] = Map([])
+  let properties : Map[String, Array[(Place, Json)]] = Map([])
   for layer in merged.layers {
-    let at = @definitions.child_pointer(layer.pointer, "properties")
+    let at = layer.pointer.child("properties")
     match layer.schema.get("properties") {
       None => ()
       Some(Object(members)) =>
         for name, json in members {
-          let property = (@definitions.child_pointer(at, name), json)
+          let property = (at.child(name), json)
           match properties.get(name) {
             Some(met) => met.push(property)
             None => properties[name] = [property]
           }
         }
-      Some(_) => self.report.warning_at(at, "ignored: must be an object")
+      Some(_) => self.conversion.warning_at(at, "ignored: must be an object")
     }
   }
   let required = self.required(merged)
@@ -1027,8 +1022,8 @@ fn Sampler::write_only(self : Sampler, merged : Merged) -> Bool {
       Some(False) => return false
       Some(True) => return true
       Some(_) =>
-        self.report.warning_at(
-          @definitions.child_pointer(layer.pointer, "writeOnly"),
+        self.conversion.warning_at(
+          layer.pointer.child("writeOnly"),
           "ignored: must be true or false",
         )
     }

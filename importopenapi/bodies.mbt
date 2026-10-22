@@ -61,13 +61,13 @@ fn no_answers() -> Answers {
 /// A value a body is written from.
 priv enum Value {
   /// A sample of the schema, at its pointer.
-  Sampled(String, Json)
+  Sampled(Place, Json)
   /// Example data, at its pointer: a media type's `example`, or an
   /// Example Object's `dataValue` or `value`.
-  Data(String, Json)
+  Data(Place, Json)
   /// An Example Object's `serializedValue`, at its pointer: the exact text
   /// of the body.
-  Serialized(String, String)
+  Serialized(Place, String)
 }
 
 ///|
@@ -78,27 +78,25 @@ let max_example_bytes : Int = 1024 * 1024
 /// Reads the response `json` at `pointer`, one the operation answers with
 /// `status` to the method `meth`, after following its `$ref`, and returns
 /// what it answers with: the bodies of its content, and its headers.
-fn Report::response_parts(
-  self : Report,
-  document : Document,
-  pointer : String,
+fn Conversion::response_parts(
+  self : Conversion,
+  pointer : Place,
   json : Json,
   status~ : Int,
   meth~ : String,
 ) -> Answers {
-  guard self.followed_object(document, pointer, json)
-    is Some((pointer, response)) else {
+  guard self.followed_object(pointer, json) is Some((pointer, response)) else {
     return no_answers()
   }
   let mut answers = no_answers()
   let mut headers = []
   for field, value in response {
-    let field_pointer = @definitions.child_pointer(pointer, field)
+    let field_pointer = pointer.child(field)
     match (field, value) {
       ("content", Object(content)) =>
-        answers = self.content(document, field_pointer, content, status~, meth~)
+        answers = self.content(field_pointer, content, status~, meth~)
       ("headers", Object(documented)) =>
-        headers = self.headers(document, field_pointer, documented)
+        headers = self.headers(field_pointer, documented)
       ("content" | "headers", _) =>
         self.error_at(field_pointer, "must be an object")
       _ => ()
@@ -113,10 +111,9 @@ fn Report::response_parts(
 /// response's other media types are left out, with a warning. 204, 205 and
 /// 304 responses, and responses to HEAD, send no body and no Content-Type:
 /// content that the document gives them is left out, with a warning.
-fn Report::content(
-  self : Report,
-  document : Document,
-  pointer : String,
+fn Conversion::content(
+  self : Conversion,
+  pointer : Place,
   content : Map[String, Json],
   status~ : Int,
   meth~ : String,
@@ -132,9 +129,9 @@ fn Report::content(
   }
   let mut answers = no_answers()
   for key, json in content {
-    let at = @definitions.child_pointer(pointer, key)
+    let at = pointer.child(key)
     if key == chosen {
-      answers = self.media_type(document, at, key, json)
+      answers = self.media_type(at, key, json)
     } else {
       self.warning_at(
         at,
@@ -207,14 +204,13 @@ fn is_json_media_type(key : String) -> Bool {
 /// Only 3.2 allows a Reference Object there. In 3.0 and 3.1 the object is
 /// read as written, and a `$ref` member in it is ignored, with a warning.
 /// `None` after reporting an error.
-fn Report::media_type_object(
-  self : Report,
-  document : Document,
-  pointer : String,
+fn Conversion::media_type_object(
+  self : Conversion,
+  pointer : Place,
   json : Json,
-) -> (String, Map[String, Json])? {
-  if document.openapi.has_prefix("3.2.") {
-    return self.followed_object(document, pointer, json)
+) -> (Place, Map[String, Json])? {
+  if self.document.openapi.has_prefix("3.2.") {
+    return self.followed_object(pointer, json)
   }
   guard json is Object(media_type) else {
     self.error_at(pointer, "must be an object")
@@ -222,7 +218,7 @@ fn Report::media_type_object(
   }
   if media_type.contains("$ref") {
     self.warning_at(
-      @definitions.child_pointer(pointer, "$ref"),
+      pointer.child("$ref"),
       "ignored: a Media Type is a reference only from OpenAPI 3.2",
     )
   }
@@ -236,23 +232,21 @@ fn Report::media_type_object(
 /// and whose others get Stubs of their own; its `example`; then a sample
 /// of its `schema`. With none, the body is empty. A media type with both
 /// `example` and `examples` uses `examples`, with a warning.
-fn Report::media_type(
-  self : Report,
-  document : Document,
-  pointer : String,
+fn Conversion::media_type(
+  self : Conversion,
+  pointer : Place,
   key : String,
   json : Json,
 ) -> Answers {
-  guard self.media_type_object(document, pointer, json)
-    is Some((pointer, media_type)) else {
+  guard self.media_type_object(pointer, json) is Some((pointer, media_type)) else {
     return no_answers()
   }
-  let example_pointer = @definitions.child_pointer(pointer, "example")
-  let examples_pointer = @definitions.child_pointer(pointer, "examples")
+  let example_pointer = pointer.child("example")
+  let examples_pointer = pointer.child("examples")
   match media_type.get("examples") {
     None => ()
     Some(Object(examples)) =>
-      if self.examples(document, pointer, examples_pointer, key, examples)
+      if self.examples(pointer, examples_pointer, key, examples)
         is Some(answers) {
         if media_type.contains("example") {
           self.warning_at(
@@ -275,12 +269,12 @@ fn Report::media_type(
       headers: [],
     }
   }
-  let schema_pointer = @definitions.child_pointer(pointer, "schema")
+  let schema_pointer = pointer.child("schema")
   let mut cut = false
   let value = match media_type.get("schema") {
     None => None
     Some(Object(_) | True | False as json) => {
-      let sample = self.body_sample(document, schema_pointer, json)
+      let sample = self.body_sample(schema_pointer, json)
       cut = sample.cut
       match sample.value {
         Some(sample) => Some(Sampled(schema_pointer, sample))
@@ -317,9 +311,9 @@ fn Report::media_type(
 /// plain `application/json` with a `json` body, which smock sends with
 /// that Content-Type itself. A key that a header cannot hold is left out,
 /// with a warning.
-fn Report::payload(
-  self : Report,
-  pointer : String,
+fn Conversion::payload(
+  self : Conversion,
+  pointer : Place,
   key : String,
   value : Value?,
 ) -> Payload {

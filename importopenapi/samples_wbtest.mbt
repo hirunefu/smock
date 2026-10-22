@@ -4,6 +4,19 @@
 // give the converter a document built in memory instead.
 
 ///|
+/// The conversion of `document`, a root document built in memory, with the
+/// options `options` and no other document.
+fn in_memory(options : Options, document : Document) -> Conversion {
+  {
+    options,
+    documents: Documents::new(options),
+    needed: Set([]),
+    document,
+    report: Report::new(),
+  }
+}
+
+///|
 /// An array nested `levels` deep, empty ones included.
 fn nested(levels : Int) -> Json {
   let mut json = Json::array([])
@@ -19,7 +32,6 @@ fn nested(levels : Int) -> Json {
 /// `output`, and renders the problems, one per line, then the keys of the
 /// body, or what else the conversion gave.
 fn deep_sample(schema : Json, output : String) -> String {
-  let report = Report::new(Options(root="api.json", mock="m", output~))
   let top : Map[String, Json] = {
     "openapi": "3.1.0",
     "paths": {
@@ -32,16 +44,16 @@ fn deep_sample(schema : Json, output : String) -> String {
       },
     },
   }
-  let document = {
+  let conversion = in_memory(Options(root="api.json", mock="m", output~), {
     top,
     openapi: "3.1.0",
     title: "",
     info_version: "",
     prefix: "",
-  }
-  let conversion = report.file(document, report.operations(document))
-  let lines = conversion.problems().map(problem => problem.to_string())
-  match conversion {
+  })
+  let outcome = conversion.file(conversion.operations())
+  let lines = outcome.problems().map(problem => problem.to_string())
+  match outcome {
     // The converter wrote the file only after loading it.
     Converted(file~, ..) => {
       let text = @utf8.decode_lossy(file)
@@ -185,11 +197,12 @@ test "a sample takes exactly the bytes of its compact JSON" {
     prefix: "",
   }
   for schema in schemas {
-    let report = Report::new(
+    let conversion = in_memory(
       Options(root="api.json", mock="m", output="m.json"),
+      document,
     )
-    let sampler = report.sampler(document, cut=false)
-    let sample = sampler.sample("/s", schema, 0) catch {
+    let sampler = conversion.sampler(cut=false)
+    let sample = sampler.sample(Place::root("/s"), schema, 0) catch {
       Passed => fail("the sample passed its bound")
     }
     guard sample is Some(sample) else { fail("no sample") }

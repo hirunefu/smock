@@ -120,14 +120,13 @@ fn main_of(keys : Array[(String, ResponseKey)]) -> Response? {
 /// An explicit code answers itself, a range its first code, and
 /// `default`, when it is not the main response, 500. Problems come in the
 /// order of the responses.
-fn Report::responses(
-  self : Report,
-  document : Document,
-  pointer : String,
+fn Conversion::responses(
+  self : Conversion,
+  pointer : Place,
   meth : String,
   operation : Map[String, Json],
 ) -> Array[Response]? {
-  let responses_pointer = @definitions.child_pointer(pointer, "responses")
+  let responses_pointer = pointer.child("responses")
   let responses = match operation.get("responses") {
     None => return self.no_responses(pointer)
     Some(Object(responses)) => responses
@@ -145,7 +144,7 @@ fn Report::responses(
   let mut main_answers = no_answers()
   for entry in keys {
     let (key, kind) = entry
-    let response_pointer = @definitions.child_pointer(responses_pointer, key)
+    let response_pointer = responses_pointer.child(key)
     let status = match kind {
       Extension => continue
       Malformed => {
@@ -171,7 +170,6 @@ fn Report::responses(
     guard main is Some(main) else { continue }
     let is_main = key == main.key
     let answers = self.response_parts(
-      document,
       response_pointer,
       responses.get(key).unwrap_or(Json::null()),
       status=if is_main { main.status } else { status },
@@ -201,7 +199,7 @@ fn Report::responses(
 ///|
 /// The responses of an operation that has none, after a warning at `at`:
 /// one main 200 with an empty body.
-fn Report::no_responses(self : Report, at : String) -> Array[Response]? {
+fn Conversion::no_responses(self : Conversion, at : Place) -> Array[Response]? {
   self.warning_at(
     at, "has no responses: the operation answers 200 with an empty body",
   )

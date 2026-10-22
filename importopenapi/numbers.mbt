@@ -7,7 +7,7 @@
 /// A bound of a sampled number: its value, where it is written, and
 /// whether the number may not equal it.
 priv struct Bound {
-  pointer : String
+  pointer : Place
   value : Decimal
   exclusive : Bool
 }
@@ -96,7 +96,7 @@ fn Sampler::number(self : Sampler, merged : Merged, integer~ : Bool) -> Decimal 
   if fits(Some(lower), Some(upper), middle) {
     return middle
   }
-  self.report.warning_at(
+  self.conversion.warning_at(
     lower.pointer,
     if integer {
       "changed: no integer fits the bounds; the sample is the lower bound, rounded up"
@@ -167,8 +167,8 @@ fn Sampler::exclusive_v30(
       Some(True) => return bound.map(bound => { ..bound, exclusive: true, })
       Some(False) => return bound
       Some(_) =>
-        self.report.warning_at(
-          @definitions.child_pointer(layer.pointer, keyword),
+        self.conversion.warning_at(
+          layer.pointer.child(keyword),
           "ignored: must be true or false in OpenAPI 3.0",
         )
     }
@@ -191,19 +191,19 @@ fn Sampler::number_bound(
   exclusive~ : Bool,
 ) -> Bound? {
   for layer in merged.layers {
-    let at = @definitions.child_pointer(layer.pointer, keyword)
+    let at = layer.pointer.child(keyword)
     match layer.schema.get(keyword) {
       None => ()
       Some(Number(n, repr~)) =>
         match Decimal::parse(@template.number_text(n, repr)) {
           Some(value) => return Some({ pointer: at, value, exclusive, })
           None =>
-            self.report.warning_at(
+            self.conversion.warning_at(
               at,
               "ignored: a bound may have at most \{max_places} digits before the point and \{max_places} after",
             )
         }
-      Some(_) => self.report.warning_at(at, message)
+      Some(_) => self.conversion.warning_at(at, message)
     }
   }
   None

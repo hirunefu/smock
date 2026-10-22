@@ -14,8 +14,9 @@
 // (headers.mbt), examples (examples.mbt), samples of schemas (samples.mbt),
 // with numbers within their bounds (numbers.mbt) and the exact decimals
 // they need (decimal.mbt), references and the documents they name
-// (references.mbt), the file it writes (output.mbt), and the problems and
-// their order (report.mbt).
+// (references.mbt), the file it writes (output.mbt), the state of a round
+// of the conversion and the places problems are reported at
+// (conversion.mbt), and the problems and their order (report.mbt).
 
 ///|
 /// The most documents a conversion reads, the root included.
@@ -157,7 +158,7 @@ pub fn Unreadable::to_string(self : Unreadable) -> String {
 
 ///|
 /// What a conversion gave.
-pub(all) enum Conversion {
+pub(all) enum Outcome {
   /// The Definition file: its bytes, the warnings, in the order the
   /// document writes what they are about, the number of Stubs in it and
   /// the number of operations they came from.
@@ -179,7 +180,7 @@ pub(all) enum Conversion {
 ///|
 /// The problems of the conversion, in order: none while it needs
 /// documents.
-pub fn Conversion::problems(self : Conversion) -> Array[Problem] {
+pub fn Outcome::problems(self : Outcome) -> Array[Problem] {
   match self {
     Converted(problems~, ..) => problems
     Failed(problems) => problems
@@ -229,9 +230,9 @@ pub fn Converter::give_unreadable(
 ///
 /// At most `max_documents` documents and `max_read_bytes` bytes are read,
 /// the root included: passing either is an error.
-pub fn Converter::convert(self : Converter) -> Conversion {
+pub fn Converter::convert(self : Converter) -> Outcome {
   let options = self.options
-  let report = Report::new(options, documents=self.documents)
+  let report = Report::new()
   if self.documents.passed is Some(name) {
     let most = size_text(max_read_bytes)
     let message = if name == options.root {
@@ -246,11 +247,12 @@ pub fn Converter::convert(self : Converter) -> Conversion {
     report.error(options.root_label, "", "the document was not given")
     return Failed(report.problems())
   }
-  guard report.document(root) is Some(document) else {
+  guard Conversion::new(options, self.documents, report, root)
+    is Some(conversion) else {
     return Failed(report.problems())
   }
-  let imported = report.operations(document)
-  if self.documents.count() + report.needed.length() > max_documents {
+  let imported = conversion.operations()
+  if self.documents.count() + conversion.needed.length() > max_documents {
     // This one error replaces every other problem: the documents past the
     // bound are never asked for, so the problems found so far are not
     // final, as in a round that needs documents.
@@ -262,10 +264,10 @@ pub fn Converter::convert(self : Converter) -> Conversion {
       }),
     ])
   }
-  if !report.needed.is_empty() {
-    return Needs(report.needed.to_array())
+  if !conversion.needed.is_empty() {
+    return Needs(conversion.needed.to_array())
   }
-  report.file(document, imported)
+  conversion.file(imported)
 }
 
 ///|
@@ -277,7 +279,7 @@ pub fn Converter::convert(self : Converter) -> Conversion {
 pub fn convert(
   documents : Array[(String, Bytes)],
   options : Options,
-) -> Conversion {
+) -> Outcome {
   let converter = Converter::new(options)
   for document in documents {
     converter.give(document.0, document.1)

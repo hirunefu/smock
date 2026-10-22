@@ -4,6 +4,13 @@
 // checks a file of their own.
 
 ///|
+/// An OpenAPI 3.1 document with nothing in it, for the checks of the file,
+/// which do not read it.
+fn no_document() -> Document {
+  { top: {}, openapi: "3.1.0", title: "", info_version: "", prefix: "", }
+}
+
+///|
 /// The problems that checking `text` as the file gives, with the bound
 /// `max_bytes`, one per line, then whether it passed.
 fn checked(
@@ -12,11 +19,12 @@ fn checked(
   output? : String = "defs/m.json",
   declare_mock? : Bool = true,
 ) -> String {
-  let report = Report::new(
+  let conversion = in_memory(
     Options(root="api.json", mock="m", output~, declare_mock~),
+    no_document(),
   )
-  let passed = report.checked(@utf8.encode(text), max_bytes~)
-  let lines = report.problems().map(problem => problem.to_string())
+  let passed = conversion.checked(@utf8.encode(text), max_bytes~)
+  let lines = conversion.report.problems().map(problem => problem.to_string())
   lines.push("passed: \{passed}")
   lines.join("\n")
 }
@@ -75,16 +83,23 @@ test "a file that would not load, or would give a warning, is an error with the 
 
 ///|
 test "problems with the file come before the document's" {
-  let report = Report::new(
+  let conversion = in_memory(
     Options(root="api.json", mock="m", output="defs/m.json"),
+    no_document(),
   )
-  report.warning_at("/webhooks", "webhooks are not imported")
-  report.end_document()
-  report.error_at("/paths/~1a/get/operationId", "must be a non-empty string")
-  let _ = report.checked(b"{ \"version\": 1 }\n", max_bytes=16)
-  report.late_document_warning("/paths", "there is no operation to import")
+  conversion.warning_at(Place::root("/webhooks"), "webhooks are not imported")
+  conversion.report.end_document()
+  conversion.error_at(
+    Place::root("/paths/~1a/get/operationId"),
+    "must be a non-empty string",
+  )
+  let _ = conversion.checked(b"{ \"version\": 1 }\n", max_bytes=16)
+  conversion.late_document_warning(
+    Place::root("/paths"),
+    "there is no operation to import",
+  )
   inspect(
-    report.problems().map(problem => problem.to_string()).join("\n"),
+    conversion.report.problems().map(problem => problem.to_string()).join("\n"),
     content=(
       #|defs/m.json: the file would be 17 bytes, more than 16 bytes
       #|api.json: /webhooks: warning: webhooks are not imported
@@ -96,23 +111,17 @@ test "problems with the file come before the document's" {
 
 ///|
 test "a file the YAML writer cannot write is an error with the file, with no pointer, that calls it a smock bug" {
-  let report = Report::new(
+  let conversion = in_memory(
     Options(root="api.json", mock="m", output="defs/m.yaml"),
+    no_document(),
   )
-  let document = {
-    top: {},
-    openapi: "3.1.0",
-    title: "",
-    info_version: "",
-    prefix: "",
-  }
   let file : Json = {
     "version": 1,
     "stubs": [{ "id": Json::number(0.0 / 0.0) }],
   }
-  assert_true(report.yaml_file(file, document, []) is None)
+  assert_true(conversion.yaml_file(file, []) is None)
   inspect(
-    report.problems().map(problem => problem.to_string()).join("\n"),
+    conversion.report.problems().map(problem => problem.to_string()).join("\n"),
     content=(
       #|defs/m.yaml: smock bug: the file cannot be written as YAML at /stubs/0/id: a number must be finite, or keep the text it was read from
     ),

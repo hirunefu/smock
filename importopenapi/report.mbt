@@ -1,22 +1,9 @@
 ///|
-/// The state of one conversion: its options, the documents given and those
-/// still needed, and the problems found so far, in order: those with the
-/// file, then the document-level ones, then each operation's, in the order
-/// the document writes them. The converter's steps are its methods.
-///
-/// A problem is reported at a place: a JSON Pointer into the root
-/// document, such as `/paths/~1pets`, or into another document, written
-/// `<number>#<pointer>`, the document's number among the documents given
-/// (see `Report::place_in`). The converter calls each such place a
-/// pointer, and builds a part's from its parent's with
-/// `@definitions.child_pointer`, as for a JSON Pointer.
+/// The problems of a conversion, in order: those with the file, then the
+/// document-level ones, then each operation's, in the order the document
+/// writes them. It only collects and orders them: the conversion says in
+/// which file and at which pointer each is.
 priv struct Report {
-  options : Options
-  /// The documents given to the conversion.
-  documents : Documents
-  /// The documents that references name and that were not given, in the
-  /// order they were reached.
-  needed : Set[String]
   problems : Array[Problem]
   /// Each problem reported in a document so far, as it prints. A part
   /// that several references reach is read once per reference, but each
@@ -34,16 +21,9 @@ priv struct Report {
 }
 
 ///|
-/// The report of a conversion with the options `options`, of the documents
-/// `documents`, by default none but the root, which the caller reads.
-fn Report::new(
-  options : Options,
-  documents? : Documents = Documents::new(options),
-) -> Report {
+/// A report with no problem yet.
+fn Report::new() -> Report {
   {
-    options,
-    documents,
-    needed: Set([]),
     problems: [],
     reported: Set([]),
     errors: 0,
@@ -127,47 +107,25 @@ fn Report::unreport(self : Report, problem : Problem) -> Unit {
 }
 
 ///|
-/// Reports an error with the file, before every other problem. It names
-/// the file as `--output` gives it, with no pointer, as every problem with
-/// the file does.
-fn Report::output_error(self : Report, message : String) -> Unit {
-  self.problems.insert(
-    self.output_end,
-    Error({ file: self.options.output, pointer: "", message, }),
-  )
+/// Reports an error with the file, named `file`, before every other
+/// problem. It has no pointer, as no problem with the file has.
+fn Report::output_error(self : Report, file : String, message : String) -> Unit {
+  self.problems.insert(self.output_end, Error({ file, pointer: "", message, }))
   self.output_end += 1
   self.document_end += 1
   self.errors += 1
 }
 
 ///|
-/// Reports an error at the place `pointer`, in the document it is in.
-fn Report::error_at(self : Report, pointer : String, message : String) -> Unit {
-  let (file, pointer) = self.locate(pointer)
-  self.error(file, pointer, message)
-}
-
-///|
-/// Reports a warning at the place `pointer`, in the document it is in.
-fn Report::warning_at(
-  self : Report,
-  pointer : String,
-  message : String,
-) -> Unit {
-  let (file, pointer) = self.locate(pointer)
-  self.warning(file, pointer, message)
-}
-
-///|
-/// Reports an error at the place `pointer` among the document-level
+/// Reports an error at `pointer` in `file` among the document-level
 /// problems, after those found so far, unless it is reported already. Such
 /// are references to documents that cannot be read.
-fn Report::document_error_at(
+fn Report::document_error(
   self : Report,
+  file : String,
   pointer : String,
   message : String,
 ) -> Unit {
-  let (file, pointer) = self.locate(pointer)
   let problem = Error({ file, pointer, message, })
   guard self.reported.add_and_check(problem.to_string()) else { return }
   self.problems.insert(self.document_end, problem)
@@ -182,71 +140,15 @@ fn Report::end_document(self : Report) -> Unit {
 }
 
 ///|
-/// Reports a document-level warning found after the operations, among the
-/// other document-level problems.
+/// Reports a document-level warning at `pointer` in `file`, found after
+/// the operations, among the other document-level problems.
 fn Report::late_document_warning(
   self : Report,
+  file : String,
   pointer : String,
   message : String,
 ) -> Unit {
-  self.problems.insert(
-    self.document_end,
-    Warning({ file: self.options.root_label, pointer, message, }),
-  )
-}
-
-///|
-/// Where the place `pointer` is, as messages name a place:
-/// `<file>: <pointer>`, or `<file>` for the whole of a document.
-fn Report::place(self : Report, pointer : String) -> String {
-  match self.locate(pointer) {
-    (file, "") => file
-    (file, pointer) => "\{file}: \{pointer}"
-  }
-}
-
-///|
-/// The place of `pointer`, a JSON Pointer into the document numbered
-/// `number`, or into the root document for `None`: the pointer itself in
-/// the root, and `<number>#<pointer>` in another document. A JSON Pointer
-/// is empty or starts with `/`, so the two never mix.
-fn place_in(number : Int?, pointer : String) -> String {
-  match number {
-    None => pointer
-    Some(number) => "\{number}#\{pointer}"
-  }
-}
-
-///|
-/// The number of the document that the place `pointer` is in, or `None`
-/// for the root, and the JSON Pointer into it.
-fn number_of(pointer : String) -> (Int?, String) {
-  guard pointer.find("#") is Some(i) && !pointer.has_prefix("/") else {
-    return (None, pointer)
-  }
-  let mut number = 0
-  for c in pointer[:i] {
-    number = number * 10 + (c.to_int() - '0'.to_int())
-  }
-  (Some(number), pointer[i + 1:].to_owned())
-}
-
-///|
-/// The document that the place `pointer` is in, as problems name it, and
-/// the JSON Pointer into it.
-fn Report::locate(self : Report, pointer : String) -> (String, String) {
-  let (number, pointer) = number_of(pointer)
-  (self.file_name(number), pointer)
-}
-
-///|
-/// How problems name the document numbered `number`, or the root for
-/// `None`.
-fn Report::file_name(self : Report, number : Int?) -> String {
-  match number {
-    None => self.options.root_label
-    Some(number) => self.documents.others[number].path
-  }
+  self.problems.insert(self.document_end, Warning({ file, pointer, message, }))
 }
 
 ///|

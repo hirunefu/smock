@@ -3,7 +3,7 @@
 /// Reference Objects: its value, and the pointer where it is written.
 /// Problems in it are reported there.
 priv struct Part {
-  pointer : String
+  pointer : Place
   json : Json
 }
 
@@ -17,10 +17,9 @@ priv struct Part {
 /// where OpenAPI leaves their meaning undefined, each gets a warning,
 /// except `x-` extensions. Beside a Reference Object's, they get none, as
 /// OpenAPI asks: its `summary` and `description` only describe.
-fn Report::followed(
-  self : Report,
-  document : Document,
-  pointer : String,
+fn Conversion::followed(
+  self : Conversion,
+  pointer : Place,
   json : Json,
   path_item? : Bool = false,
 ) -> Part? {
@@ -29,7 +28,7 @@ fn Report::followed(
   // The Reference Objects followed so far, by pointer.
   let followed = []
   while json is Object(object) && object.get("$ref") is Some(reference) {
-    let reference_pointer = @definitions.child_pointer(pointer, "$ref")
+    let reference_pointer = pointer.child("$ref")
     guard reference is String(reference) else {
       self.error_at(reference_pointer, "must be a string")
       return None
@@ -38,13 +37,13 @@ fn Report::followed(
       for field, _ in object {
         if field != "$ref" && !field.has_prefix("x-") {
           self.warning_at(
-            @definitions.child_pointer(pointer, field),
+            pointer.child(field),
             "ignored: a field beside a Path Item's $ref has no defined meaning",
           )
         }
       }
     }
-    guard self.target(document, reference_pointer, reference) is Some(target) else {
+    guard self.target(reference_pointer, reference) is Some(target) else {
       return None
     }
     followed.push(pointer)
@@ -64,18 +63,16 @@ fn Report::followed(
 ///|
 /// The object `json`, written at `pointer` where the converter reads an
 /// object that may be a Reference Object, after following each `$ref`, as
-/// `Report::followed` does: where it is, and its fields. `None` after
+/// `Conversion::followed` does: where it is, and its fields. `None` after
 /// reporting why a `$ref` cannot be followed, or that the part it leads to
 /// is not an object, at that part.
-fn Report::followed_object(
-  self : Report,
-  document : Document,
-  pointer : String,
+fn Conversion::followed_object(
+  self : Conversion,
+  pointer : Place,
   json : Json,
   path_item? : Bool = false,
-) -> (String, Map[String, Json])? {
-  guard self.followed(document, pointer, json, path_item~)
-    is Some({ pointer, json, }) else {
+) -> (Place, Map[String, Json])? {
+  guard self.followed(pointer, json, path_item~) is Some({ pointer, json, }) else {
     return None
   }
   guard json is Object(object) else {
@@ -93,10 +90,9 @@ fn Report::followed_object(
 /// A reference is a relative file path, or none for the document it is
 /// in, then an optional fragment: an RFC 6901 JSON Pointer, percent-decoded,
 /// that may step into arrays. smock reads no URLs and no absolute paths.
-fn Report::target(
-  self : Report,
-  document : Document,
-  pointer : String,
+fn Conversion::target(
+  self : Conversion,
+  pointer : Place,
   reference : String,
 ) -> Part? {
   if has_scheme(reference) || reference.has_prefix("/") {
@@ -107,12 +103,10 @@ fn Report::target(
     Some(i) => (reference[:i], reference[i + 1:])
     None => (reference[:], "")
   }
-  let (source, _) = number_of(pointer)
   let (number, json) = if path == "" {
-    (source, self.tree(document, source))
+    (pointer.document, self.tree(pointer.document))
   } else {
-    guard self.referenced_document(document, pointer, source, path.to_owned())
-      is Some(found) else {
+    guard self.referenced_document(pointer, path.to_owned()) is Some(found) else {
       return None
     }
     found
@@ -130,7 +124,7 @@ fn Report::target(
     }
     return None
   }
-  let mut target_pointer = ""
+  let mut target_pointer = Place::{ document: number, pointer: "", }
   let mut json = json
   for key in keys {
     guard step(json, key) is Some(value) else {
@@ -144,10 +138,10 @@ fn Report::target(
       }
       return None
     }
-    target_pointer = @definitions.child_pointer(target_pointer, key)
+    target_pointer = target_pointer.child(key)
     json = value
   }
-  Some({ pointer: place_in(number, target_pointer), json, })
+  Some({ pointer: target_pointer, json, })
 }
 
 ///|
@@ -155,12 +149,12 @@ fn Report::target(
 let no_urls : String = "smock reads no URLs and no absolute paths: bundle the document into one file first, with another tool"
 
 ///|
-/// The tree of the document numbered `number`, or of the root `document`
+/// The tree of the document numbered `number`, or of the root document
 /// for `None`. A reference is followed only from a document that was
 /// parsed.
-fn Report::tree(self : Report, document : Document, number : Int?) -> Json {
+fn Conversion::tree(self : Conversion, number : Int?) -> Json {
   match number {
-    None => Json::object(document.top)
+    None => Json::object(self.document.top)
     Some(number) =>
       match self.documents.others[number].content {
         Parsed(json) => json
@@ -171,8 +165,7 @@ fn Report::tree(self : Report, document : Document, number : Int?) -> Json {
 
 ///|
 /// The document that the file path `path` names, from the `$ref` at
-/// `pointer` in the document numbered `source`, or in the root `document`
-/// for `None`: its number, or `None` for the root, and its tree. Or `None`
+/// `pointer`: its number, or `None` for the root, and its tree. Or `None`
 /// after reporting why it cannot be read, or while it is not given, after
 /// noting that it is needed.
 ///
@@ -181,11 +174,9 @@ fn Report::tree(self : Report, document : Document, number : Int?) -> Json {
 /// it, and must lie under the directory that references are followed in.
 /// A document that cannot be read or parsed is reported among the
 /// document-level problems.
-fn Report::referenced_document(
-  self : Report,
-  document : Document,
-  pointer : String,
-  source : Int?,
+fn Conversion::referenced_document(
+  self : Conversion,
+  pointer : Place,
   path : String,
 ) -> (Int?, Json)? {
   let path = @percent.decode_lossy(path)
@@ -205,7 +196,7 @@ fn Report::referenced_document(
     )
     return None
   }
-  let base = match source {
+  let base = match pointer.document {
     None => self.options.root
     Some(number) => self.documents.others[number].name
   }
@@ -216,7 +207,7 @@ fn Report::referenced_document(
     return None
   }
   if name == self.options.root {
-    return Some((None, Json::object(document.top)))
+    return Some((None, Json::object(self.document.top)))
   }
   guard self.documents.numbers.get(name) is Some(number) else {
     self.needed.add(name)
@@ -226,7 +217,10 @@ fn Report::referenced_document(
   match given.content {
     Parsed(json) => Some((Some(number), json))
     Invalid(pointer~, message~) => {
-      self.document_error_at(place_in(Some(number), pointer), message)
+      self.document_error_at(
+        Place::{ document: Some(number), pointer, },
+        message,
+      )
       None
     }
     Unread(reason) => {
