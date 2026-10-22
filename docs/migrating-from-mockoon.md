@@ -21,6 +21,15 @@ every part of an environment that has a counterpart:
   `docs/examples/from-mockoon/`, with `mockoon-cli` and `smock` on the
   `PATH`. [Running it where Mockoon ran](#running-it-where-mockoon-ran)
   says where to get smock.
+- The guide and its example need smock 0.3.0 or later. The operators
+  and the cookie, form and XML conditions that [Rules](#rules) maps came
+  in 0.2.0. Data buckets and CRUD Stubs, Variables, `responses`, the
+  template roots `cookie` and `env`, the helpers for text, encodings,
+  JWTs, dates and arithmetic, `find`, byte ranges and
+  `smock import-openapi` came in 0.3.0. An older smock fails to load a
+  Definition file that uses one of those fields, roots or helpers, and
+  `smock check` names each, as in `/data: is not a known field` or
+  `unknown helper "add"`.
 
 ## What smock does not do
 
@@ -1679,7 +1688,7 @@ a test that names its Session sees its own
 
 Each release of smock publishes binaries, an image and a Helm chart,
 all under the release's version: its tag without the `v`. Take the
-latest release, listed under
+latest release, 0.3.0 or later, listed under
 [Releases](https://github.com/hirunefu/smock/releases), and put its
 version in place of `<version>` below.
 

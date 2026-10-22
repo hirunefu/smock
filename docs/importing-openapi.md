@@ -6,7 +6,8 @@ other, and smock serves it like any other. smock never reads OpenAPI when
 it serves: the Definition files stay the only source of truth
 ([ADR 0002](adr/0002-definition-files-are-the-source-of-truth.md)). When
 the document changes, run the command again with `--overwrite on` and
-review the diff ([Regenerating](#regenerating)).
+review the diff ([Regenerating](#regenerating)). The command came in
+smock 0.3.0.
 
 A part of the document that the command does not import, such as
 `callbacks`, is left out with a warning.

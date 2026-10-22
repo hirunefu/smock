@@ -285,7 +285,9 @@ of each GitHub release include its section
   data buckets, CRUD routes and their list parameters, the `data` and
   `dataRaw` helpers, `setData` and the purge of data buckets onto Data
   buckets, CRUD Stubs, list queries and `dataWrites`, and its worked
-  example serves its orders from a Data bucket with a CRUD Stub.
+  example serves its orders from a Data bucket with a CRUD Stub. It says
+  that it needs smock 0.3.0 or later, and which of its counterparts came
+  in 0.2.0 and which in 0.3.0.
 - `smock import-openapi <document> --mock <name> --output <file>` converts
   an OpenAPI 3.0, 3.1 or 3.2 document into one Definition file, once.
   smock never reads OpenAPI when it serves. `--hosts` gives the Mock its
