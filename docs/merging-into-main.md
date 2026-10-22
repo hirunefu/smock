@@ -12,6 +12,10 @@ Autopilot happen only here, before that merge (the decision on #4):
 - No runner or cluster is kept for benchmarks. A GKE run makes its cluster
   and deletes it again.
 
+Dependabot's pull requests are the exception. They move only the GitHub
+Actions and the image's base, and go into `main` on green CI, without
+this checklist ([Dependency updates](releasing.md#dependency-updates)).
+
 Work through the checklist in order. Each run's results go to
 `bench/results/`, which git ignores; keep the directories of each
 pre-merge run somewhere that lasts (outside the worktree), since the next

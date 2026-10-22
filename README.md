@@ -1006,6 +1006,22 @@ files, `smock-<version>-linux-<arch>.spdx.json`.
 `scripts/verify-image.sh ghcr.io/hirunefu/smock:<version>` runs all of these
 checks.
 
+### Verify the Helm chart
+
+The Helm chart is signed the same way, with cosign and without a key: the
+signature's certificate names the release workflow at the release's tag.
+Verify it with cosign 3 or later, naming the chart without `oci://`:
+
+```sh
+cosign verify ghcr.io/hirunefu/charts/smock:<version> \
+  --certificate-identity https://github.com/hirunefu/smock/.github/workflows/release.yml@refs/tags/v<version> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+The release workflow runs the same check with
+`scripts/verify-chart.sh ghcr.io/hirunefu/charts/smock:<version>`. The
+charts of 0.3.0 and earlier releases are not signed.
+
 ### Release binaries
 
 Each GitHub release has the binaries `smock-<version>-linux-amd64` and
@@ -1020,7 +1036,8 @@ was built with, which `smock --version` also prints.
 ### Making a release
 
 [docs/releasing.md](docs/releasing.md) describes how a release is made and
-published, for the maintainer.
+published, for the maintainer, and which dependencies Dependabot keeps up
+to date.
 
 ## Toolchain
 
@@ -1047,6 +1064,7 @@ scripts/check-openapi.sh       # the Admin API document is valid OpenAPI 3.1
 docker build --tag smock:dev .
 scripts/smoke-test-image.sh smock:dev 0.0.0-dev <commit> "moonc <version>"   # the container image
 scripts/check-release-workflow.sh    # the release workflow publishes only for tags (needs yq and jq)
+scripts/test-release-notes.sh        # the release notes, with CHANGELOG.md's links at the release's tag
 scripts/check-benchmark-workflow.sh  # the benchmark workflow runs only by hand (needs yq and jq)
 scripts/check-ci-artifacts.sh        # CI keeps the release binary of each architecture (needs yq and jq)
 scripts/test-helm-chart.sh           # rendering tests of the Helm chart (needs helm, yq and jq)
