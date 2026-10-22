@@ -71,10 +71,10 @@ priv struct Taken {
 /// how specific their paths are, so that a concrete path comes before a
 /// templated one. The sort is stable: operations whose paths have the same
 /// kinds of segments keep the document's order.
-fn Report::operations(self : Report, document : Document) -> Array[Imported] {
+fn Conversion::operations(self : Conversion) -> Array[Imported] {
   let imported = []
   let taken = { conditions: {}, operation_ids: {}, ids: {}, }
-  match document.top.get("paths") {
+  match self.document.top.get("paths") {
     None => ()
     Some(Object(paths)) =>
       for key, item in paths {
@@ -82,7 +82,6 @@ fn Report::operations(self : Report, document : Document) -> Array[Imported] {
           continue
         }
         self.path_item(
-          document,
           imported,
           taken,
           key,
@@ -92,16 +91,15 @@ fn Report::operations(self : Report, document : Document) -> Array[Imported] {
       }
     Some(_) => self.error_at(Place::root("/paths"), "must be an object")
   }
-  if imported.is_empty() && self.errors == 0 {
-    let pointer = Place::root(
-      if document.top.contains("paths") {
-        "/paths"
-      } else {
-        ""
-      },
-    )
+  if imported.is_empty() && self.report.errors == 0 {
+    let pointer = if self.document.top.contains("paths") {
+      "/paths"
+    } else {
+      ""
+    }
     self.late_document_warning(
-      pointer, "there is no operation to import: the file has no Stubs",
+      Place::root(pointer),
+      "there is no operation to import: the file has no Stubs",
     )
   }
   // sort_by is not stable, so ties are ordered by their place in the
@@ -126,27 +124,30 @@ fn Report::operations(self : Report, document : Document) -> Array[Imported] {
 /// after following its `$ref`. `query` and `additionalOperations` are read
 /// only in 3.2: 3.0 and 3.1 do not define them, so there they are neither
 /// read nor checked.
-fn Report::path_item(
-  self : Report,
-  document : Document,
+fn Conversion::path_item(
+  self : Conversion,
   imported : Array[Imported],
   taken : Taken,
   key : String,
   pointer : Place,
   json : Json,
 ) -> Unit {
-  guard self.path_key(pointer, key) else { return }
-  guard self.followed_object(document, pointer, json, path_item=true)
+  guard self.report.path_key(pointer, key) else { return }
+  guard self.report.followed_object(
+      self.document,
+      pointer,
+      json,
+      path_item=true,
+    )
     is Some((pointer, item)) else {
     return
   }
-  let prefix = self.prefix(pointer, item, outer=document.prefix)
-  let v32 = document.openapi.has_prefix("3.2.")
+  let prefix = self.report.prefix(pointer, item, outer=self.document.prefix)
+  let v32 = self.document.openapi.has_prefix("3.2.")
   for field, value in item {
     let field_pointer = pointer.child(field)
     if fixed_methods.contains(field) && (v32 || field != "query") {
       self.operation(
-        document,
         imported,
         taken,
         key,
@@ -173,7 +174,7 @@ fn Report::path_item(
           )
         } else {
           self.operation(
-            document, imported, taken, key, prefix, meth, operation_pointer, operation,
+            imported, taken, key, prefix, meth, operation_pointer, operation,
           )
         }
       }
@@ -185,9 +186,8 @@ fn Report::path_item(
 /// Reads the operation `json`, for the method `meth` at the path key
 /// `key`, whose Path Item puts `prefix` in front of its paths, and imports
 /// it, unless a rule leaves it out with a warning.
-fn Report::operation(
-  self : Report,
-  document : Document,
+fn Conversion::operation(
+  self : Conversion,
   imported : Array[Imported],
   taken : Taken,
   key : String,
@@ -200,7 +200,7 @@ fn Report::operation(
     self.error_at(pointer, "must be an object")
     return
   }
-  let prefix = self.prefix(pointer, operation, outer=prefix)
+  let prefix = self.report.prefix(pointer, operation, outer=prefix)
   let path = matched_path(key, prefix~)
   // An exact path starts with /, so its conditions never read as a
   // pattern's.
@@ -248,7 +248,8 @@ fn Report::operation(
     !callbacks.is_empty() {
     self.warning_at(pointer.child("callbacks"), "callbacks are not imported")
   }
-  guard self.responses(document, pointer, meth, operation) is Some(responses) else {
+  guard self.report.responses(self.document, pointer, meth, operation)
+    is Some(responses) else {
     return
   }
   let name = operation_id.unwrap_or("\{meth} \{key}")
@@ -315,8 +316,8 @@ fn Report::operation(
 /// The Stub of the operation `name`, for the method `meth` at `path`, that
 /// gives `answer`, one of `response`'s. A `named` one is selected by
 /// `Smock-Example` too, and its ID ends in the example's name.
-fn Report::stub(
-  self : Report,
+fn Conversion::stub(
+  self : Conversion,
   name : String,
   meth : String,
   path : Path,

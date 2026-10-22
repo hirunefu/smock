@@ -250,7 +250,7 @@ pub fn Converter::convert(self : Converter) -> Outcome {
     return Failed(report.problems())
   }
   let conversion = Conversion::new(report, document)
-  let imported = report.operations(document)
+  let imported = conversion.operations()
   if conversion.documents.count() + conversion.needed.length() > max_documents {
     // This one error replaces every other problem: the documents past the
     // bound are never asked for, so the problems found so far are not

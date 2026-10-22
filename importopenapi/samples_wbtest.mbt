@@ -45,9 +45,7 @@ fn deep_sample(schema : Json, output : String) -> String {
     info_version: "",
     prefix: "",
   })
-  let outcome = conversion.file(
-    conversion.report.operations(conversion.document),
-  )
+  let outcome = conversion.file(conversion.operations())
   let lines = outcome.problems().map(problem => problem.to_string())
   match outcome {
     // The converter wrote the file only after loading it.

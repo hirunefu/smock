@@ -34,3 +34,41 @@ fn Conversion::new(report : Report, document : Document) -> Conversion {
 fn Conversion::output_error(self : Conversion, message : String) -> Unit {
   self.report.output_error(message)
 }
+
+///|
+/// Reports an error at the place `pointer`, in the document it is in.
+fn Conversion::error_at(
+  self : Conversion,
+  pointer : Place,
+  message : String,
+) -> Unit {
+  self.report.error_at(pointer, message)
+}
+
+///|
+/// Reports a warning at the place `pointer`, in the document it is in.
+fn Conversion::warning_at(
+  self : Conversion,
+  pointer : Place,
+  message : String,
+) -> Unit {
+  self.report.warning_at(pointer, message)
+}
+
+///|
+/// Reports a document-level warning at the place `pointer`, found after
+/// the operations, among the other document-level problems.
+fn Conversion::late_document_warning(
+  self : Conversion,
+  pointer : Place,
+  message : String,
+) -> Unit {
+  self.report.late_document_warning(pointer, message)
+}
+
+///|
+/// Where the place `pointer` is, as messages name a place:
+/// `<file>: <pointer>`, or `<file>` for the whole of a document.
+fn Conversion::place(self : Conversion, pointer : Place) -> String {
+  self.report.place(pointer)
+}

@@ -26,9 +26,7 @@ fn deep_example(media_type : Json) -> String {
     Options(root="api.json", mock="m", output="m.yaml"),
     { top, openapi: "3.2.0", title: "", info_version: "", prefix: "", },
   )
-  let outcome = conversion.file(
-    conversion.report.operations(conversion.document),
-  )
+  let outcome = conversion.file(conversion.operations())
   let lines = outcome.problems().map(problem => problem.to_string())
   match outcome {
     // The converter wrote the file only after loading it.
