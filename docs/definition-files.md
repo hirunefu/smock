@@ -2773,12 +2773,14 @@ at most that many, with no limit by default.
   end gives `[]`, and such a limit keeps every item.
 
 **Order and counts.** The list applies the filters, then `$sort`, then
-`$offset` and `$limit`, wherever they stand in the query. `X-Total-Count`
-is the number of items in the bucket, and `X-Filtered-Count` the number
-that pass the filters, before paging. The body stays the plain array.
+`$offset` and `$limit`, wherever they stand in the query. Every 200 list
+answer carries `X-Total-Count`, the number of items in the bucket, and
+`X-Filtered-Count`, the number that pass the filters, before paging. The
+body stays the plain array.
 
 **Errors.** A query that smock cannot read answers 400 with the Stub's
-`crud.headers`, and names the first such parameter in the query:
+`crud.headers` and without the two counts, since it lists nothing. It
+names the first such parameter in the query:
 
 ```json
 {"error":"invalid query parameter","stub":"orders","parameter":"$top"}
@@ -2984,8 +2986,8 @@ and the Journal shows the failed condition in full:
 #### CRUD headers
 
 smock sets `Content-Type`, `Location` on a create, and `X-Total-Count`
-and `X-Filtered-Count` on a list. `crud.headers` adds static headers to
-every answer of the Stub, errors, 500 and 507 included:
+and `X-Filtered-Count` on a list's 200. `crud.headers` adds static
+headers to every answer of the Stub, errors, 500 and 507 included:
 
 - It has the shape and rules of [`noMatch.headers`](#when-no-stub-matches):
   by name, a value or a non-empty array of values, each sent as its own

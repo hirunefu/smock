@@ -249,9 +249,9 @@ of each GitHub release include its section
   counts the items that pass the filters, before paging, and the body
   stays a plain array. `$$name` filters on the member `$name`, and any
   other name that starts with `$`, such as OData's `$top`, is 400
-  `invalid query parameter`, as are malformed or repeated `$sort`,
-  `$offset` and `$limit`. A client's own parameters, such as `page`, are
-  filters too, so its list comes back `[]`.
+  `invalid query parameter`, without the two counts, as are malformed or
+  repeated `$sort`, `$offset` and `$limit`. A client's own parameters,
+  such as `page`, are filters too, so its list comes back `[]`.
 - A CRUD Stub can be the Near miss of a request that no Stub matches. It
   counts two conditions: `path` fails when the request path is neither its
   list path nor an item path, and `method` when the Stub does not serve
