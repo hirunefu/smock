@@ -204,7 +204,7 @@ fn File::read_data_write(
             pointer=template_pointer(stub_pointer, field),
             env=self.env,
             buckets=buckets.templates,
-            value="a data write's value",
+            role="a data write's value",
           ) {
           Ok(template) => value = Some(template)
           Err(problems) =>

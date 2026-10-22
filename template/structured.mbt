@@ -110,20 +110,19 @@ let max_iterations : Int = 10_000
 ///|
 /// Parses `source` as a structured template, for the field at `pointer`,
 /// within the Stub. `env` holds the environment variables it may read, and
-/// `buckets` the Data buckets; by default, none. With `value`, it is a
-/// value rather than a `json`, such as the value of a Variable, which
-/// `value` names as the messages say: `a Variable's value`. Returns the
-/// template, or every problem found.
+/// `buckets` the Data buckets; by default, none. With `role`, it is a value
+/// rather than a `json`, which messages name as `role` says, such as `a
+/// Variable's value`. Returns the template, or every problem found.
 pub fn Structured::parse(
   source : Json,
   pointer~ : String,
   env? : Env = no_env,
   buckets? : Buckets = no_buckets,
-  value? : String,
+  role? : String,
 ) -> Result[Structured, Array[Problem]] {
   let problems = []
-  let (root_name, one) = match value {
-    Some(value) => (value, "one value")
+  let (root_name, one) = match role {
+    Some(role) => (role, "one value")
     None => ("json", "one response")
   }
   let scope = {

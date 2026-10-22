@@ -639,7 +639,7 @@ fn File::read_variables(
         pointer=template_pointer(stub_pointer, field),
         env=self.env,
         buckets~,
-        value="a Variable's value",
+        role="a Variable's value",
       ) {
       Ok(template) => {
         names.push(name)
