@@ -665,8 +665,9 @@ priv struct Preview {
 /// continues with, which reads `vars` with the values written over them and
 /// the data after the writes. Raises `ValueFailed` when a value or a key
 /// fails to render, and `ApplyFailed` when a write cannot be applied. The
-/// writes' buckets are checked before anything renders, as at the match
-/// decision; a Stub from the Definition files always finds them.
+/// writes' buckets are checked before anything renders, as
+/// `check_write_buckets` does at the match decision; a Stub from the
+/// Definition files always passes.
 fn preview_writes(
   ordinary : @definitions.Ordinary,
   buckets : ReadOnlyArray[@definitions.DataBucket],
@@ -675,7 +676,7 @@ fn preview_writes(
   data : Map[String, Json],
 ) -> Preview raise WriteFailure {
   let writes = ordinary.data_writes
-  let targets = write_targets(writes, buckets)
+  check_write_buckets(writes, buckets)
   let values = Array(capacity=ordinary.variables.values.length())
   let keys = Array(capacity=writes.length())
   let write_values = Array(capacity=writes.length())
@@ -709,7 +710,7 @@ fn preview_writes(
     } else {
       None
     }
-    working.apply(i, write, targets[i], keys[i], value, rand)
+    working.apply(i, write, keys[i], value, buckets, rand)
     shown.push({
       op: write.op,
       bucket: write.bucket,

@@ -51,7 +51,7 @@ let no_buckets_written : ReadOnlyArray[String] = ReadOnlyArray::from_array([])
 /// the buckets `buckets`:
 ///
 /// - Each of its `dataWrites` is checked against the bucket it names, as
-///   `write_targets` does, before anything renders.
+///   `check_write_buckets` does, before anything renders.
 /// - The value of each of its `variables` is rendered, in the order
 ///   written, then the key and the value of each of its `dataWrites`, all
 ///   against the state of `mock` and `session` from before the request.
@@ -79,7 +79,7 @@ fn Engine::write_state(
 ) -> Written raise WriteFailure {
   let variables = ordinary.variables
   let writes = ordinary.data_writes
-  let targets = write_targets(writes, buckets)
+  check_write_buckets(writes, buckets)
   let before = self.store.variables_of(mock, session)
   let values = Array(capacity=variables.values.length())
   let write_keys = Array(capacity=writes.length())
@@ -97,9 +97,9 @@ fn Engine::write_state(
       apply_writes(
         self.store.copies_of(mock, session),
         writes,
-        targets,
         write_keys,
         write_values,
+        buckets,
         last.generator(),
       ),
     )
@@ -154,22 +154,23 @@ fn Engine::write_state(
 }
 
 ///|
-/// The bucket that each write of `writes`, a Stub's `dataWrites`, writes
-/// to, in write order, among `buckets`, those the Stub's Mock declares now.
+/// Checks that each write of `writes`, a Stub's `dataWrites`, finds the
+/// bucket it writes to among `buckets`, those the Stub's Mock declares now,
+/// and that the write would still load against it.
 ///
-/// A Stub from the Definition files always finds them, as it was read. An
+/// A Stub from the Definition files always passes, as it was read. An
 /// Ephemeral Stub's bucket may be gone since a reload, or changed so that
 /// its write would no longer load: a write with `key` whose bucket lost
 /// `key`, or a `merge` without `key` whose bucket gained it. Such a write
 /// fails whatever its key and value would render to, so the writes are
 /// checked before anything renders, and a value that reads the bucket gone
 /// does not hide why. Raises `ApplyFailed` for the first write that fails.
-/// It renders nothing, so it draws nothing.
-fn write_targets(
+/// It renders nothing, so it draws nothing, and it allocates nothing when
+/// every write passes.
+fn check_write_buckets(
   writes : ReadOnlyArray[@definitions.DataWrite],
   buckets : ReadOnlyArray[@definitions.DataBucket],
-) -> Array[@definitions.DataBucket] raise WriteFailure {
-  let targets = Array(capacity=writes.length())
+) -> Unit raise WriteFailure {
   for i in 0..<writes.length() {
     let write = writes[i]
     guard bucket_named(buckets, write.bucket) is Some(bucket) else {
@@ -190,9 +191,7 @@ fn write_targets(
         "the Data bucket \{bucket.name.escape()} has \"key\" since a reload, and \"merge\" without \"key\" cannot write to a keyed bucket",
       )
     }
-    targets.push(bucket)
   }
-  targets
 }
 
 ///|
@@ -250,24 +249,25 @@ fn render_writes(
 }
 
 ///|
-/// Applies `writes`, a Stub's `dataWrites`, to the buckets `targets` that
-/// `write_targets` gives for them, with their rendered keys `keys` and
-/// values `values`, in order, to working copies of the buckets, in a space
-/// that holds the copies `stored`. New `uuid` keys draw from `rand`, the
-/// request's helper generator. Raises `ApplyFailed` when a write cannot be
-/// applied, and then leaves the copies as they were.
+/// Applies `writes`, a Stub's `dataWrites`, which `check_write_buckets`
+/// passed against `buckets`, the buckets the Stub's Mock declares now, with
+/// their rendered keys `keys` and values `values`, in order, to working
+/// copies of the buckets, in a space that holds the copies `stored`. New
+/// `uuid` keys draw from `rand`, the request's helper generator. Raises
+/// `ApplyFailed` when a write cannot be applied, and then leaves the copies
+/// as they were.
 fn apply_writes(
   stored : Copies?,
   writes : ReadOnlyArray[@definitions.DataWrite],
-  targets : Array[@definitions.DataBucket],
   keys : Array[String?],
   values : Array[Json],
+  buckets : ReadOnlyArray[@definitions.DataBucket],
   rand : @prng.Generator,
 ) -> WorkingCopies raise WriteFailure {
   let working = WorkingCopies::new(stored)
   errdefer working.undo()
   for i in 0..<writes.length() {
-    working.apply(i, writes[i], targets[i], keys[i], values[i], rand)
+    working.apply(i, writes[i], keys[i], values[i], buckets, rand)
   }
   working
 }
@@ -396,21 +396,27 @@ fn WorkingCopies::reach(
 
 ///|
 /// Applies `write`, the write at index `index` of a Stub's `dataWrites`,
-/// to `bucket`, the bucket `write_targets` gives for it, with its rendered
-/// key `key`, if it has one, and its rendered value `value`, to the working
-/// copies. New `uuid` keys draw from `rand`. Raises `ApplyFailed`, with
-/// why, when it cannot be applied.
+/// which `check_write_buckets` passed against `buckets`, the buckets the
+/// Stub's Mock declares now, with its rendered key `key`, if it has one,
+/// and its rendered value `value`, to the working copies. New `uuid` keys
+/// draw from `rand`. Raises `ApplyFailed`, with why, when it cannot be
+/// applied.
 fn WorkingCopies::apply(
   self : WorkingCopies,
   index : Int,
   write : @definitions.DataWrite,
-  bucket : @definitions.DataBucket,
   key : String?,
   value : Json,
+  buckets : ReadOnlyArray[@definitions.DataBucket],
   rand : @prng.Generator,
 ) -> Unit raise WriteFailure {
   let at = "/dataWrites/\{index}"
-  // `write_targets` gives a write with a key only a keyed bucket.
+  // The bucket is looked up again rather than carried from the check, so
+  // that the check allocates nothing.
+  guard bucket_named(buckets, write.bucket) is Some(bucket) else {
+    abort("check_write_buckets found every write's bucket")
+  }
+  // `check_write_buckets` passes a write with a key only for a keyed bucket.
   guard bucket.key is Some(key_member) else {
     return self.apply_whole(at, write.op, bucket, value)
   }
@@ -428,7 +434,8 @@ fn WorkingCopies::apply(
         }
         return self.apply_whole(at, write.op, bucket, value)
       }
-      // `write_targets` gives a `merge` without a key no keyed bucket.
+      // `check_write_buckets` passes no `merge` without a key for a keyed
+      // bucket.
       Merge => abort("a merge without a key reached a keyed bucket")
       Remove => return self.apply_whole(at, write.op, bucket, value)
       Append => ()
