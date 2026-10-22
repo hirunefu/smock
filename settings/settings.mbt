@@ -380,7 +380,7 @@ pub fn check_command() -> @argparse.Command {
 pub fn render_command() -> @argparse.Command {
   @argparse.Command(
     "render",
-    about="Render a Stub's response for a sample request, as the Admin API render operation does, and print it as JSON: the time and the seed it used, the status, the headers and the body or events, rendered from the Stub's templates when it has them, and the Stub's conditions the sample fails, with expected and actual values. A Stub with responses renders the response the seed picks, or the one --response names, and the output shows its index. The output shows the values the Stub's variables would write, rendered against the sample's vars, and writes nothing. A CRUD Stub renders the answer its operation would give to the sample. Exits with status 1 if the definitions directory is invalid, no Stub has the ID, the Stub has no response at the index given, the sample request is not valid, or it fits no operation of a CRUD Stub.",
+    about="Render a Stub's response for a sample request, as the Admin API render operation does, and print it as JSON: the time and the seed it used, the status, the headers and the body or events, rendered from the Stub's templates when it has them, and the Stub's conditions the sample fails, with expected and actual values. A Stub with responses renders the response the seed picks, or the one --response names, and the output shows its index. The sample may give data, values of the Data buckets of the Stub's Mock, which are read in place of their initial values. The output shows the values the Stub's variables would write, rendered against the sample's vars, and, as dataWrites, the writes the Stub would make; nothing is written. A CRUD Stub renders the answer its operation would give to the sample. Exits with status 1 if the definitions directory is invalid, no Stub has the ID, the Stub has no response at the index given, the sample request is not valid, the sample's data names a Data bucket the Mock does not declare or breaks a keyed bucket's rules, or the sample fits no operation of a CRUD Stub.",
     positionals=[
       @argparse.PositionArg(
         "stub-id",
@@ -401,7 +401,7 @@ pub fn render_command() -> @argparse.Command {
       @argparse.OptionArg(
         "request",
         long="request",
-        about="A file that holds the sample request as JSON: {method, path, query, headers, body, session, vars}, each optional.",
+        about="A file that holds the sample request as JSON: {method, path, query, headers, body, session, vars, data}, each optional.",
         required=true,
       ),
       @argparse.OptionArg(
