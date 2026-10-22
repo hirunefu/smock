@@ -41,8 +41,9 @@ fn Conversion::new(
     report.error(label, "", "must be an object")
     return None
   }
-  // The version, `info` and the servers are read from the top level,
-  // before the conversion has the document they make.
+  // Until the Conversion is built, its document has only `top` and, once
+  // the version is read, `openapi`: `title`, `info_version` and `prefix`
+  // are "", and the steps that run here (`info`, `prefix`) do not read them.
   let reading = {
     options,
     documents,
@@ -51,6 +52,7 @@ fn Conversion::new(
     report,
   }
   guard reading.version(top) is Some(openapi) else { return None }
+  let reading = { ..reading, document: { ..reading.document, openapi, }, }
   let (title, info_version) = reading.info(top)
   let prefix = match options.base_path {
     Some(path) => trimmed_prefix(path)

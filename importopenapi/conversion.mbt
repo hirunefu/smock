@@ -13,7 +13,8 @@ priv struct Conversion {
   /// The documents that references name and that were not given, in the
   /// order they were reached.
   needed : Set[String]
-  /// The root document, parsed.
+  /// The root document, parsed. While `Conversion::new` reads it, only its
+  /// `top` and, once the version is read, its `openapi` are set.
   document : Document
   report : Report
 }
