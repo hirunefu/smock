@@ -1009,7 +1009,9 @@ The same `cosign verify` flags verify that architecture's signature with
 `"ghcr.io/hirunefu/smock@$digest"`. The GitHub release also has the SBOMs as
 files, `smock-<version>-linux-<arch>.spdx.json`.
 `scripts/verify-image.sh ghcr.io/hirunefu/smock:<version>` runs all of these
-checks.
+checks. The SBOMs of 0.3.0 and earlier releases do not list the runtime,
+mimalloc and simdutf, so check an image of 0.3.0 or earlier with the script
+from its own tag, such as `git show v0.3.0:scripts/verify-image.sh`.
 
 ### Verify the Helm chart
 
