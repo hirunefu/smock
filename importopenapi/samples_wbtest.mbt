@@ -198,10 +198,11 @@ test "a sample takes exactly the bytes of its compact JSON" {
     prefix: "",
   }
   for schema in schemas {
-    let report = Report::new(
+    let conversion = in_memory(
       Options(root="api.json", mock="m", output="m.json"),
+      document,
     )
-    let sampler = report.sampler(document, cut=false)
+    let sampler = conversion.sampler(cut=false)
     let sample = sampler.sample(Place::root("/s"), schema, 0) catch {
       Passed => fail("the sample passed its bound")
     }

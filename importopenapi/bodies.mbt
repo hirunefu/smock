@@ -275,7 +275,7 @@ fn Conversion::media_type(
   let value = match media_type.get("schema") {
     None => None
     Some(Object(_) | True | False as json) => {
-      let sample = self.report.body_sample(self.document, schema_pointer, json)
+      let sample = self.body_sample(schema_pointer, json)
       cut = sample.cut
       match sample.value {
         Some(sample) => Some(Sampled(schema_pointer, sample))

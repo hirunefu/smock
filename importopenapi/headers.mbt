@@ -208,12 +208,7 @@ fn Conversion::header_sample(
     }
     Some(Object(_) | True | False as json) => {
       let part = "the header's value"
-      let sample = self.report.body_sample(
-        self.document,
-        schema_pointer,
-        json,
-        part~,
-      )
+      let sample = self.body_sample(schema_pointer, json, part~)
       match sample.value {
         Some(sample) => Some(Sampled(schema_pointer, sample))
         None if sample.too_large => Some(Sampled(schema_pointer, ""))

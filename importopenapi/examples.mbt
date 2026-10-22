@@ -103,7 +103,7 @@ fn Conversion::example_payload(
 ) -> Payload {
   let value = match value {
     Data(at, json) =>
-      match self.report.copied(at, json, body_nesting) {
+      match self.copied(at, json, body_nesting) {
         Some(json) => Some(Data(at, json))
         None => None
       }
