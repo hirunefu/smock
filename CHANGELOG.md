@@ -25,6 +25,13 @@ of each GitHub release include its section
   licences that NOTICE gives them. The runtime has the toolchain's version,
   mimalloc the one NOTICE gives, and simdutf none (`NOASSERTION`), since the
   toolchain does not record it. CI fails when the SBOM and NOTICE disagree.
+- A write timeout, `--write-timeout-ms` (`SMOCK_WRITE_TIMEOUT_MS`), 30000 by
+  default: smock closes a connection when a write to it makes no progress
+  for that long, as when the client stops reading. Before, such a client
+  kept its connection, and the response smock held for it, open for good.
+  A client that reads slowly but steadily still gets the whole response,
+  and delays do not count. It is not logged, like the read and idle
+  timeouts. See [Run](README.md#run).
 
 ### Changed
 
