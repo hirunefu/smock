@@ -55,8 +55,9 @@ of each GitHub release include its section
   value is not the default, and says not to edit the file, and each Stub
   has one that maps it back to its operation. An existing file is replaced
   only with `--overwrite on`, through a temporary file and a rename, so a
-  smock that watches the directory never loads half a file. The guide shows how to keep hand changes in another file, and how
-  CI can check that the file is current.
+  smock that watches the directory never loads half a file. The guide
+  shows how to keep hand changes in another file, and how CI can check
+  that the file is current.
 - `write` in the `smock/yaml` module turns a JSON tree into a YAML
   document, with comments, that the module's own parser reads back as the
   same tree. A string is quoted only when it would not read back as the

@@ -748,9 +748,9 @@ weight: { type: number, exclusiveMinimum: 0, exclusiveMaximum: 1 }   # 0.5
   as the same 64-bit float, or every digit of a large integer. So every
   platform writes the same digits. A bound written with more digits than
   a float keeps is read as that shortest text:
-  `minimum: 0.30000000000000001` is `0.3`. The sample is a plain decimal, without an exponent:
-  `exclusiveMinimum: 0` with `exclusiveMaximum: 1e-18` gives
-  `0.0000000000000000005`.
+  `minimum: 0.30000000000000001` is `0.3`. The sample is a plain
+  decimal, without an exponent: `exclusiveMinimum: 0` with
+  `exclusiveMaximum: 1e-18` gives `0.0000000000000000005`.
 - **Large bounds.** A bound whose shortest text has more than 18 digits
   before or after the point, such as `1e20` or `1e-19`, is ignored, with
   a warning.
