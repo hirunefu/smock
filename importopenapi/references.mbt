@@ -3,7 +3,7 @@
 /// Reference Objects: its value, and the pointer where it is written.
 /// Problems in it are reported there.
 priv struct Part {
-  pointer : String
+  pointer : Place
   json : Json
 }
 
@@ -20,7 +20,7 @@ priv struct Part {
 fn Report::followed(
   self : Report,
   document : Document,
-  pointer : String,
+  pointer : Place,
   json : Json,
   path_item? : Bool = false,
 ) -> Part? {
@@ -29,7 +29,7 @@ fn Report::followed(
   // The Reference Objects followed so far, by pointer.
   let followed = []
   while json is Object(object) && object.get("$ref") is Some(reference) {
-    let reference_pointer = @definitions.child_pointer(pointer, "$ref")
+    let reference_pointer = pointer.child("$ref")
     guard reference is String(reference) else {
       self.error_at(reference_pointer, "must be a string")
       return None
@@ -38,7 +38,7 @@ fn Report::followed(
       for field, _ in object {
         if field != "$ref" && !field.has_prefix("x-") {
           self.warning_at(
-            @definitions.child_pointer(pointer, field),
+            pointer.child(field),
             "ignored: a field beside a Path Item's $ref has no defined meaning",
           )
         }
@@ -70,10 +70,10 @@ fn Report::followed(
 fn Report::followed_object(
   self : Report,
   document : Document,
-  pointer : String,
+  pointer : Place,
   json : Json,
   path_item? : Bool = false,
-) -> (String, Map[String, Json])? {
+) -> (Place, Map[String, Json])? {
   guard self.followed(document, pointer, json, path_item~)
     is Some({ pointer, json, }) else {
     return None
@@ -96,7 +96,7 @@ fn Report::followed_object(
 fn Report::target(
   self : Report,
   document : Document,
-  pointer : String,
+  pointer : Place,
   reference : String,
 ) -> Part? {
   if has_scheme(reference) || reference.has_prefix("/") {
@@ -107,7 +107,7 @@ fn Report::target(
     Some(i) => (reference[:i], reference[i + 1:])
     None => (reference[:], "")
   }
-  let (source, _) = number_of(pointer)
+  let source = pointer.document
   let (number, json) = if path == "" {
     (source, self.tree(document, source))
   } else {
@@ -130,7 +130,7 @@ fn Report::target(
     }
     return None
   }
-  let mut target_pointer = ""
+  let mut target_pointer = Place::{ document: number, pointer: "", }
   let mut json = json
   for key in keys {
     guard step(json, key) is Some(value) else {
@@ -144,10 +144,10 @@ fn Report::target(
       }
       return None
     }
-    target_pointer = @definitions.child_pointer(target_pointer, key)
+    target_pointer = target_pointer.child(key)
     json = value
   }
-  Some({ pointer: place_in(number, target_pointer), json, })
+  Some({ pointer: target_pointer, json, })
 }
 
 ///|
@@ -184,7 +184,7 @@ fn Report::tree(self : Report, document : Document, number : Int?) -> Json {
 fn Report::referenced_document(
   self : Report,
   document : Document,
-  pointer : String,
+  pointer : Place,
   source : Int?,
   path : String,
 ) -> (Int?, Json)? {
@@ -226,7 +226,10 @@ fn Report::referenced_document(
   match given.content {
     Parsed(json) => Some((Some(number), json))
     Invalid(pointer~, message~) => {
-      self.document_error_at(place_in(Some(number), pointer), message)
+      self.document_error_at(
+        Place::{ document: Some(number), pointer, },
+        message,
+      )
       None
     }
     Unread(reason) => {

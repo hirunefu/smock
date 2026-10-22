@@ -8,7 +8,7 @@
 /// With a base path, `servers` are not read, and the prefix is `outer`.
 fn Report::prefix(
   self : Report,
-  pointer : String,
+  pointer : Place,
   object : Map[String, Json],
   outer~ : String,
 ) -> String {
@@ -16,7 +16,7 @@ fn Report::prefix(
   if self.options.base_path is Some(_) {
     return outer
   }
-  let servers_pointer = @definitions.child_pointer(pointer, "servers")
+  let servers_pointer = pointer.child("servers")
   let servers = match object.get("servers") {
     None => return outer
     Some(Array(servers)) => servers
@@ -30,12 +30,7 @@ fn Report::prefix(
   }
   let paths = []
   for i, server in servers {
-    paths.push(
-      self.server(
-        @definitions.child_pointer(servers_pointer, i.to_string()),
-        server,
-      ),
-    )
+    paths.push(self.server(servers_pointer.child(i.to_string()), server))
   }
   guard paths[0] is Some(prefix) else { return outer }
   if paths.iter().any(path => path is Some(other) && other != prefix) &&
@@ -52,12 +47,12 @@ fn Report::prefix(
 ///|
 /// The prefix that the Server Object `json`, written at `pointer`, gives,
 /// or `None` after reporting why it gives none.
-fn Report::server(self : Report, pointer : String, json : Json) -> String? {
+fn Report::server(self : Report, pointer : Place, json : Json) -> String? {
   guard json is Object(server) else {
     self.error_at(pointer, "must be an object")
     return None
   }
-  let url_pointer = @definitions.child_pointer(pointer, "url")
+  let url_pointer = pointer.child("url")
   let url = match server.get("url") {
     Some(String(url)) => url
     None => {
@@ -86,15 +81,15 @@ fn Report::server(self : Report, pointer : String, json : Json) -> String? {
 /// template: a brace that does not pair, or an empty `{}`.
 fn Report::expanded(
   self : Report,
-  pointer : String,
+  pointer : Place,
   server : Map[String, Json],
   url : String,
 ) -> String? {
   if !url.contains_char('{') && !url.contains_char('}') {
     return Some(url)
   }
-  let url_pointer = @definitions.child_pointer(pointer, "url")
-  let variables_pointer = @definitions.child_pointer(pointer, "variables")
+  let url_pointer = pointer.child("url")
+  let variables_pointer = pointer.child("variables")
   let variables = match server.get("variables") {
     None => Map([])
     Some(Object(variables)) => variables
@@ -144,12 +139,12 @@ fn Report::expanded(
 /// after reporting why it has no string `default`.
 fn Report::variable_default(
   self : Report,
-  url_pointer : String,
-  variables_pointer : String,
+  url_pointer : Place,
+  variables_pointer : Place,
   variables : Map[String, Json],
   name : String,
 ) -> String? {
-  let pointer = @definitions.child_pointer(variables_pointer, name)
+  let pointer = variables_pointer.child(name)
   match variables.get(name) {
     None => {
       self.error_at(
@@ -169,10 +164,7 @@ fn Report::variable_default(
           None
         }
         Some(_) => {
-          self.error_at(
-            @definitions.child_pointer(pointer, "default"),
-            "must be a string",
-          )
+          self.error_at(pointer.child("default"), "must be a string")
           None
         }
       }

@@ -11,8 +11,8 @@
 fn Report::examples(
   self : Report,
   document : Document,
-  media_pointer : String,
-  examples_pointer : String,
+  media_pointer : Place,
+  examples_pointer : Place,
   key : String,
   examples : Map[String, Json],
 ) -> Answers? {
@@ -20,7 +20,7 @@ fn Report::examples(
   let named = []
   let serialized_first = !is_json_media_type(key)
   for name, json in examples {
-    let at = @definitions.child_pointer(examples_pointer, name)
+    let at = examples_pointer.child(name)
     guard self.example_value(document, at, json, serialized_first~)
       is Some(value) else {
       continue
@@ -53,7 +53,7 @@ fn Report::examples(
 fn Report::example_value(
   self : Report,
   document : Document,
-  pointer : String,
+  pointer : Place,
   json : Json,
   serialized_first~ : Bool,
 ) -> Value? {
@@ -64,22 +64,15 @@ fn Report::example_value(
   let serialized = match example.get("serializedValue") {
     None => None
     Some(String(text)) =>
-      Some(
-        Serialized(@definitions.child_pointer(pointer, "serializedValue"), text),
-      )
+      Some(Serialized(pointer.child("serializedValue"), text))
     Some(_) => {
-      self.error_at(
-        @definitions.child_pointer(pointer, "serializedValue"),
-        "must be a string",
-      )
+      self.error_at(pointer.child("serializedValue"), "must be a string")
       return None
     }
   }
   let data = match (example.get("dataValue"), example.get("value")) {
-    (Some(value), _) =>
-      Some(Data(@definitions.child_pointer(pointer, "dataValue"), value))
-    (None, Some(value)) =>
-      Some(Data(@definitions.child_pointer(pointer, "value"), value))
+    (Some(value), _) => Some(Data(pointer.child("dataValue"), value))
+    (None, Some(value)) => Some(Data(pointer.child("value"), value))
     (None, None) => None
   }
   let value = match (serialized_first, data, serialized) {
@@ -107,7 +100,7 @@ fn Report::example_value(
 /// for the file is left out of the body, with a warning.
 fn Report::example_payload(
   self : Report,
-  pointer : String,
+  pointer : Place,
   key : String,
   value : Value,
 ) -> Payload {

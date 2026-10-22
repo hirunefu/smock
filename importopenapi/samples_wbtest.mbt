@@ -189,7 +189,7 @@ test "a sample takes exactly the bytes of its compact JSON" {
       Options(root="api.json", mock="m", output="m.json"),
     )
     let sampler = report.sampler(document, cut=false)
-    let sample = sampler.sample("/s", schema, 0) catch {
+    let sample = sampler.sample(Place::root("/s"), schema, 0) catch {
       Passed => fail("the sample passed its bound")
     }
     guard sample is Some(sample) else { fail("no sample") }

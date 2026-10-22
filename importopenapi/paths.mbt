@@ -37,7 +37,7 @@ priv enum Segment {
 /// Whether the path key `key`, written at `pointer`, is a path, or reports
 /// why it is not: one that does not start with `/`, has unbalanced braces
 /// or an empty `{}`, or holds `?` or `#`.
-fn Report::path_key(self : Report, pointer : String, key : String) -> Bool {
+fn Report::path_key(self : Report, pointer : Place, key : String) -> Bool {
   if !key.has_prefix("/") {
     self.error_at(pointer, "a path must start with /")
     return false

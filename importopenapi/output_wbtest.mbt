@@ -78,11 +78,17 @@ test "problems with the file come before the document's" {
   let report = Report::new(
     Options(root="api.json", mock="m", output="defs/m.json"),
   )
-  report.warning_at("/webhooks", "webhooks are not imported")
+  report.warning_at(Place::root("/webhooks"), "webhooks are not imported")
   report.end_document()
-  report.error_at("/paths/~1a/get/operationId", "must be a non-empty string")
+  report.error_at(
+    Place::root("/paths/~1a/get/operationId"),
+    "must be a non-empty string",
+  )
   let _ = report.checked(b"{ \"version\": 1 }\n", max_bytes=16)
-  report.late_document_warning("/paths", "there is no operation to import")
+  report.late_document_warning(
+    Place::root("/paths"),
+    "there is no operation to import",
+  )
   inspect(
     report.problems().map(problem => problem.to_string()).join("\n"),
     content=(

@@ -61,13 +61,13 @@ fn no_answers() -> Answers {
 /// A value a body is written from.
 priv enum Value {
   /// A sample of the schema, at its pointer.
-  Sampled(String, Json)
+  Sampled(Place, Json)
   /// Example data, at its pointer: a media type's `example`, or an
   /// Example Object's `dataValue` or `value`.
-  Data(String, Json)
+  Data(Place, Json)
   /// An Example Object's `serializedValue`, at its pointer: the exact text
   /// of the body.
-  Serialized(String, String)
+  Serialized(Place, String)
 }
 
 ///|
@@ -81,7 +81,7 @@ let max_example_bytes : Int = 1024 * 1024
 fn Report::response_parts(
   self : Report,
   document : Document,
-  pointer : String,
+  pointer : Place,
   json : Json,
   status~ : Int,
   meth~ : String,
@@ -93,7 +93,7 @@ fn Report::response_parts(
   let mut answers = no_answers()
   let mut headers = []
   for field, value in response {
-    let field_pointer = @definitions.child_pointer(pointer, field)
+    let field_pointer = pointer.child(field)
     match (field, value) {
       ("content", Object(content)) =>
         answers = self.content(document, field_pointer, content, status~, meth~)
@@ -116,7 +116,7 @@ fn Report::response_parts(
 fn Report::content(
   self : Report,
   document : Document,
-  pointer : String,
+  pointer : Place,
   content : Map[String, Json],
   status~ : Int,
   meth~ : String,
@@ -132,7 +132,7 @@ fn Report::content(
   }
   let mut answers = no_answers()
   for key, json in content {
-    let at = @definitions.child_pointer(pointer, key)
+    let at = pointer.child(key)
     if key == chosen {
       answers = self.media_type(document, at, key, json)
     } else {
@@ -210,9 +210,9 @@ fn is_json_media_type(key : String) -> Bool {
 fn Report::media_type_object(
   self : Report,
   document : Document,
-  pointer : String,
+  pointer : Place,
   json : Json,
-) -> (String, Map[String, Json])? {
+) -> (Place, Map[String, Json])? {
   if document.openapi.has_prefix("3.2.") {
     return self.followed_object(document, pointer, json)
   }
@@ -222,7 +222,7 @@ fn Report::media_type_object(
   }
   if media_type.contains("$ref") {
     self.warning_at(
-      @definitions.child_pointer(pointer, "$ref"),
+      pointer.child("$ref"),
       "ignored: a Media Type is a reference only from OpenAPI 3.2",
     )
   }
@@ -239,7 +239,7 @@ fn Report::media_type_object(
 fn Report::media_type(
   self : Report,
   document : Document,
-  pointer : String,
+  pointer : Place,
   key : String,
   json : Json,
 ) -> Answers {
@@ -247,8 +247,8 @@ fn Report::media_type(
     is Some((pointer, media_type)) else {
     return no_answers()
   }
-  let example_pointer = @definitions.child_pointer(pointer, "example")
-  let examples_pointer = @definitions.child_pointer(pointer, "examples")
+  let example_pointer = pointer.child("example")
+  let examples_pointer = pointer.child("examples")
   match media_type.get("examples") {
     None => ()
     Some(Object(examples)) =>
@@ -275,7 +275,7 @@ fn Report::media_type(
       headers: [],
     }
   }
-  let schema_pointer = @definitions.child_pointer(pointer, "schema")
+  let schema_pointer = pointer.child("schema")
   let mut cut = false
   let value = match media_type.get("schema") {
     None => None
@@ -319,7 +319,7 @@ fn Report::media_type(
 /// with a warning.
 fn Report::payload(
   self : Report,
-  pointer : String,
+  pointer : Place,
   key : String,
   value : Value?,
 ) -> Payload {

@@ -7,7 +7,7 @@
 /// A bound of a sampled number: its value, where it is written, and
 /// whether the number may not equal it.
 priv struct Bound {
-  pointer : String
+  pointer : Place
   value : Decimal
   exclusive : Bool
 }
@@ -168,7 +168,7 @@ fn Sampler::exclusive_v30(
       Some(False) => return bound
       Some(_) =>
         self.report.warning_at(
-          @definitions.child_pointer(layer.pointer, keyword),
+          layer.pointer.child(keyword),
           "ignored: must be true or false in OpenAPI 3.0",
         )
     }
@@ -191,7 +191,7 @@ fn Sampler::number_bound(
   exclusive~ : Bool,
 ) -> Bound? {
   for layer in merged.layers {
-    let at = @definitions.child_pointer(layer.pointer, keyword)
+    let at = layer.pointer.child(keyword)
     match layer.schema.get(keyword) {
       None => ()
       Some(Number(n, repr~)) =>

@@ -21,7 +21,7 @@ let headers_smock_sets : Array[String] = [
 fn Report::headers(
   self : Report,
   document : Document,
-  pointer : String,
+  pointer : Place,
   headers : Map[String, Json],
 ) -> Array[(String, String)] {
   let written = []
@@ -32,7 +32,7 @@ fn Report::headers(
     if headers_smock_sets.contains(lower) {
       continue
     }
-    let at = @definitions.child_pointer(pointer, name)
+    let at = pointer.child(name)
     if lower == "smock-mock" {
       self.warning_at(
         at, "left out: smock adds Smock-Mock itself, when the Default Mock answers",
@@ -75,19 +75,19 @@ fn Report::headers(
 fn Report::header_value(
   self : Report,
   document : Document,
-  pointer : String,
+  pointer : Place,
   header : Map[String, Json],
 ) -> Value? {
   if self.header_example(document, pointer, header) is Some(value) {
     return Some(value)
   }
-  let content_pointer = @definitions.child_pointer(pointer, "content")
+  let content_pointer = pointer.child("content")
   match header.get("content") {
     None => self.header_sample(document, pointer, header, header=pointer)
     Some(Object(content)) => {
       if header.contains("schema") {
         self.warning_at(
-          @definitions.child_pointer(pointer, "schema"),
+          pointer.child("schema"),
           "ignored: the header has content, which comes first",
         )
       }
@@ -95,7 +95,7 @@ fn Report::header_value(
       let mut chosen : String? = None
       let mut value = None
       for key, json in content {
-        let at = @definitions.child_pointer(content_pointer, key)
+        let at = content_pointer.child(key)
         match chosen {
           Some(chosen) =>
             self.warning_at(
@@ -130,9 +130,9 @@ fn Report::header_value(
 fn Report::header_media_type(
   self : Report,
   document : Document,
-  pointer : String,
+  pointer : Place,
   json : Json,
-  header~ : String,
+  header~ : Place,
 ) -> Value? {
   guard self.media_type_object(document, pointer, json)
     is Some((pointer, media_type)) else {
@@ -157,24 +157,24 @@ fn Report::header_media_type(
 fn Report::header_example(
   self : Report,
   document : Document,
-  pointer : String,
+  pointer : Place,
   object : Map[String, Json],
 ) -> Value? {
-  let examples_pointer = @definitions.child_pointer(pointer, "examples")
+  let examples_pointer = pointer.child("examples")
   if object.get("example") is Some(value) {
     if object.contains("examples") {
       self.warning_at(
         examples_pointer, "ignored: a header is written with its example, which comes first",
       )
     }
-    return Some(Data(@definitions.child_pointer(pointer, "example"), value))
+    return Some(Data(pointer.child("example"), value))
   }
   match object.get("examples") {
     None => None
     Some(Object(examples)) => {
       let mut value = None
       for name, json in examples {
-        let at = @definitions.child_pointer(examples_pointer, name)
+        let at = examples_pointer.child(name)
         if value is Some(_) {
           self.warning_at(
             at, "left out: a header is written with its first example",
@@ -203,11 +203,11 @@ fn Report::header_example(
 fn Report::header_sample(
   self : Report,
   document : Document,
-  pointer : String,
+  pointer : Place,
   object : Map[String, Json],
-  header~ : String,
+  header~ : Place,
 ) -> Value? {
-  let schema_pointer = @definitions.child_pointer(pointer, "schema")
+  let schema_pointer = pointer.child("schema")
   match object.get("schema") {
     None => {
       self.no_header_value(header)
@@ -237,7 +237,7 @@ fn Report::header_sample(
 ///|
 /// Reports that nothing gives the header written at `pointer` a value, so
 /// that it is left out.
-fn Report::no_header_value(self : Report, pointer : String) -> Unit {
+fn Report::no_header_value(self : Report, pointer : Place) -> Unit {
   self.warning_at(
     pointer, "left out: no example, examples, schema or content gives the header a value",
   )

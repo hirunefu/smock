@@ -31,14 +31,14 @@ fn Report::document(self : Report, root : Content) -> Document? {
     }
   }
   guard json is Object(top) else {
-    self.error_at("", "must be an object")
+    self.error_at(Place::root(""), "must be an object")
     return None
   }
   guard self.version(top) is Some(openapi) else { return None }
   let (title, info_version) = self.info(top)
   let prefix = match self.options.base_path {
     Some(path) => trimmed_prefix(path)
-    None => self.prefix("", top, outer="")
+    None => self.prefix(Place::root(""), top, outer="")
   }
   let document = { top, openapi, title, info_version, prefix, }
   self.left_out_parts(document)
@@ -87,32 +87,37 @@ fn Report::version(self : Report, top : Map[String, Json]) -> String? {
   match (top.get("openapi"), top.get("swagger")) {
     (Some(_), Some(_)) => {
       self.error_at(
-        "/swagger", "a document has \"openapi\" or \"swagger\", not both",
+        Place::root("/swagger"),
+        "a document has \"openapi\" or \"swagger\", not both",
       )
       None
     }
     // YAML reads an unquoted `swagger: 2.0` as a number.
     (None, Some(String("2.0"))) | (None, Some(Number(2.0, ..))) => {
       self.error_at(
-        "/swagger", "Swagger 2.0 is not supported: convert the document to OpenAPI 3.0 first",
+        Place::root("/swagger"),
+        "Swagger 2.0 is not supported: convert the document to OpenAPI 3.0 first",
       )
       None
     }
     (None, Some(_)) => {
       self.error_at(
-        "/swagger", "not a version smock imports: it imports OpenAPI 3.0, 3.1 and 3.2",
+        Place::root("/swagger"),
+        "not a version smock imports: it imports OpenAPI 3.0, 3.1 and 3.2",
       )
       None
     }
     (None, None) => {
       self.error_at(
-        "", "needs \"openapi\", the OpenAPI version, such as \"3.1.0\"",
+        Place::root(""),
+        "needs \"openapi\", the OpenAPI version, such as \"3.1.0\"",
       )
       None
     }
     (Some(Number(_)), None) => {
       self.error_at(
-        "/openapi", "must be a string such as \"3.1.0\": quote the version, and give its patch",
+        Place::root("/openapi"),
+        "must be a string such as \"3.1.0\": quote the version, and give its patch",
       )
       None
     }
@@ -123,20 +128,25 @@ fn Report::version(self : Report, top : Map[String, Json]) -> String? {
             ("3", "0" | "1" | "2") => Some(text)
             _ => {
               self.error_at(
-                "/openapi", "not a version smock imports: it imports OpenAPI 3.0, 3.1 and 3.2",
+                Place::root("/openapi"),
+                "not a version smock imports: it imports OpenAPI 3.0, 3.1 and 3.2",
               )
               None
             }
           }
         _ => {
           self.error_at(
-            "/openapi", "must be a version 3.<minor>.<patch> of digits, such as \"3.1.0\"",
+            Place::root("/openapi"),
+            "must be a version 3.<minor>.<patch> of digits, such as \"3.1.0\"",
           )
           None
         }
       }
     (Some(_), None) => {
-      self.error_at("/openapi", "must be a string such as \"3.1.0\"")
+      self.error_at(
+        Place::root("/openapi"),
+        "must be a string such as \"3.1.0\"",
+      )
       None
     }
   }
@@ -154,7 +164,7 @@ fn Report::info(self : Report, top : Map[String, Json]) -> (String, String) {
     None => return ("", "")
     Some(Object(info)) => info
     Some(_) => {
-      self.warning_at("/info", "ignored: must be an object")
+      self.warning_at(Place::root("/info"), "ignored: must be an object")
       return ("", "")
     }
   }
@@ -162,7 +172,7 @@ fn Report::info(self : Report, top : Map[String, Json]) -> (String, String) {
     None => ""
     Some(String(title)) => title
     Some(_) => {
-      self.warning_at("/info/title", "ignored: must be a string")
+      self.warning_at(Place::root("/info/title"), "ignored: must be a string")
       ""
     }
   }
@@ -171,12 +181,13 @@ fn Report::info(self : Report, top : Map[String, Json]) -> (String, String) {
     Some(String(version)) => version
     Some(Number(_)) => {
       self.warning_at(
-        "/info/version", "ignored: must be a string: quote the version",
+        Place::root("/info/version"),
+        "ignored: must be a string: quote the version",
       )
       ""
     }
     Some(_) => {
-      self.warning_at("/info/version", "ignored: must be a string")
+      self.warning_at(Place::root("/info/version"), "ignored: must be a string")
       ""
     }
   }
@@ -196,7 +207,8 @@ fn Report::left_out_parts(self : Report, document : Document) -> Unit {
   if document.top.get("webhooks") is Some(Object(webhooks)) &&
     !webhooks.is_empty() {
     self.warning_at(
-      "/webhooks", "webhooks are not imported: they are requests the API sends, not ones it answers",
+      Place::root("/webhooks"),
+      "webhooks are not imported: they are requests the API sends, not ones it answers",
     )
   }
 }
