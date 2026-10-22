@@ -747,8 +747,8 @@ weight: { type: number, exclusiveMinimum: 0, exclusiveMaximum: 1 }   # 0.5
   shortest decimal text of each bound: the shortest text that reads back
   as the same 64-bit float, or every digit of a large integer. So every
   platform writes the same digits. A bound written with more digits than
-  a float keeps is read as that shortest text: `minimum: 0.30000000000000001`
-  is `0.3`. The sample is a plain decimal, without an exponent:
+  a float keeps is read as that shortest text:
+  `minimum: 0.30000000000000001` is `0.3`. The sample is a plain decimal, without an exponent:
   `exclusiveMinimum: 0` with `exclusiveMaximum: 1e-18` gives
   `0.0000000000000000005`.
 - **Large bounds.** A bound whose shortest text has more than 18 digits
@@ -852,9 +852,10 @@ json:
   by name and `required` joined, and for any other keyword the first that
   has one ([Composed schemas](#composed-schemas)). So
   `{ $ref: "#/components/schemas/Pet", example: { name: Rex } }` samples
-  as its own example, and `{ $ref: "#/components/schemas/Pet", description: A pet }`
-  as Pet's `example`, on an object too, where an `allOf` branch's would
-  not be used. In 3.0, the keywords beside a `$ref` are ignored, as 3.0
+  as its own example, and
+  `{ $ref: "#/components/schemas/Pet", description: A pet }` as Pet's
+  `example`, on an object too, where an `allOf` branch's would not be
+  used. In 3.0, the keywords beside a `$ref` are ignored, as 3.0
   asks.
 - **Recursion.** A schema reached again through a `$ref` it is already
   being sampled from ends the sample there. As an optional property, it is

@@ -37,8 +37,9 @@ of each GitHub release include its section
   number bounds, `allOf`, `oneOf` and `anyOf`, and `$ref`, recursive schemas
   included. Nothing is random and nothing is templated, and number bounds
   use exact decimal arithmetic on the shortest decimal text of each bound,
-  so every platform writes the same digits. A sample nests at most 32 levels, one above 64 KiB is cut to
-  its required parts, and a body above 1 MiB is left empty, with a warning.
+  so every platform writes the same digits. A sample nests at most 32
+  levels, one above 64 KiB is cut to its required parts, and a body above
+  1 MiB is left empty, with a warning.
   The headers a response documents are written too, with their example or a
   sample of their schema; a header with neither is left out, with a
   warning.
@@ -52,10 +53,9 @@ of each GitHub release include its section
 - The import writes YAML or JSON, as the name of `--output` says. A YAML
   file starts with a comment that names the document and the flags whose
   value is not the default, and says not to edit the file, and each Stub
-  has one that maps it back to its operation. An
-  existing file is replaced only with `--overwrite on`, through a temporary
-  file and a rename, so a smock that watches the directory never loads half
-  a file. The guide shows how to keep hand changes in another file, and how
+  has one that maps it back to its operation. An existing file is replaced
+  only with `--overwrite on`, through a temporary file and a rename, so a
+  smock that watches the directory never loads half a file. The guide shows how to keep hand changes in another file, and how
   CI can check that the file is current.
 - `write` in the `smock/yaml` module turns a JSON tree into a YAML
   document, with comments, that the module's own parser reads back as the
