@@ -1058,10 +1058,10 @@ let pay_order_definitions : Array[(String, String)] = [
 ]
 
 ///|
-/// What a rendering says of data: the writes the Stub would make, the
+/// What `rendering` says of data: the writes the Stub would make, the
 /// response and the template error, as one line of JSON.
-fn with_data_writes(json : Json) -> String {
-  guard json is Object(members) else { return "not an object" }
+fn writes_response_and_error(rendering : Json) -> String {
+  guard rendering is Object(members) else { return "not an object" }
   let out : Map[String, Json] = Map([])
   for key in ["dataWrites", "response", "templateError"] {
     out[key] = members.get(key).unwrap_or(Json::string("absent"))
@@ -1092,8 +1092,8 @@ async test "smock render and the Admin render operation read the sample's data, 
           sample=file,
           query="?time=\{time}",
         )
-        let from_cli = with_data_writes(@json.parse(stdout))
-        let from_admin = with_data_writes(response.json())
+        let from_cli = writes_response_and_error(@json.parse(stdout))
+        let from_admin = writes_response_and_error(response.json())
         out.push(
           "\{sample}: render \{status}, admin \{response.status}, same: \{from_cli == from_admin}\{stderr}",
         )
