@@ -152,12 +152,16 @@ pub fn crud_methods(shape : CrudShape?) -> ReadOnlyArray[String] {
 }
 
 ///|
+/// The methods a CRUD Stub serves at its list path, in operation order.
 let list_methods : ReadOnlyArray[String] = ["GET", "POST"]
 
 ///|
+/// The methods a CRUD Stub serves at an item path, in operation order.
 let item_methods : ReadOnlyArray[String] = ["GET", "PUT", "PATCH", "DELETE"]
 
 ///|
+/// The methods a CRUD Stub serves at either shape of path, each once, in
+/// operation order.
 let any_shape_methods : ReadOnlyArray[String] = [
   "GET", "POST", "PUT", "PATCH", "DELETE",
 ]
