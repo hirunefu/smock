@@ -1,0 +1,257 @@
+// CRUD Stubs: a Stub with `crud` in place of `request` and `response`
+// serves a keyed Data bucket of its Mock as a REST resource. It lists and
+// creates items at its path, and reads, replaces, updates and deletes one
+// item at its path plus the item's key.
+
+///|
+/// What a CRUD Stub serves: a keyed Data bucket of its Mock, at a path,
+/// with static headers on every answer.
+pub struct Crud {
+  /// The name of the bucket it serves, a keyed bucket of the Stub's Mock
+  /// when the Stub was read.
+  bucket : String
+  /// The list path, as written: it starts with `/`, does not end with `/`,
+  /// and has no empty segment. An item path is this path, then `/`, then
+  /// one non-empty segment, the key text.
+  path : String
+  /// The header fields of `crud.headers`, in the order written, sent on
+  /// every answer of the Stub after smock's own. A header given an array
+  /// has one field per value, in array order.
+  headers : ReadOnlyArray[(String, String)]
+} derive(Debug, Eq)
+
+///|
+/// What a request asks of a CRUD Stub, by its method and the shape of its
+/// path.
+pub enum CrudOp {
+  /// `GET <path>`: the bucket's items.
+  List
+  /// `POST <path>`: a new item, from the request body.
+  Create
+  /// `GET <path>/<key>`: the item with that key.
+  Read
+  /// `PUT <path>/<key>`: the item with that key becomes the request body.
+  Replace
+  /// `PATCH <path>/<key>`: the request body is merged into the item with
+  /// that key.
+  Update
+  /// `DELETE <path>/<key>`: the item with that key is removed.
+  Delete
+} derive(Debug, Eq)
+
+///|
+/// The operation's name, as the Journal writes it: `list`, `create`,
+/// `read`, `replace`, `update` or `delete`.
+pub fn CrudOp::name(self : CrudOp) -> String {
+  match self {
+    List => "list"
+    Create => "create"
+    Read => "read"
+    Replace => "replace"
+    Update => "update"
+    Delete => "delete"
+  }
+}
+
+///|
+/// The op of `dataWrites` that makes the same write to a keyed bucket as
+/// the operation: `append` for a create, `set` with a key for a replace,
+/// `merge` with a key for an update and `remove` for a delete. `None` for
+/// a list or a read, which write nothing.
+pub fn CrudOp::write_op(self : CrudOp) -> DataOp? {
+  match self {
+    List | Read => None
+    Create => Some(Append)
+    Replace => Some(DataOp::Replace)
+    Update => Some(Merge)
+    Delete => Some(Remove)
+  }
+}
+
+///|
+/// The shape of a request path that a CRUD Stub serves. Other packages
+/// may name a shape, to ask `crud_methods` for its methods.
+pub(all) enum CrudShape {
+  /// The Stub's path, where it lists and creates.
+  ListPath
+  /// The Stub's path, then `/`, then one non-empty segment, the key text:
+  /// where it reads, replaces, updates and deletes.
+  ItemPath
+} derive(Debug, Eq)
+
+///|
+/// The shape of `path`, a request path percent-decoded and without the
+/// query, for the CRUD Stub: its list path, an item path, or neither. The
+/// path is compared byte for byte, as `path` conditions compare it, so
+/// `/api/v1/orders/` and `/API/v1/orders` are neither the list path nor an
+/// item path of `/api/v1/orders`, and neither is a path deeper than an
+/// item's.
+///
+/// Every request of the Stub's Mock may be tested against it, so the test
+/// allocates nothing: it compares the path's prefix in place.
+pub fn Crud::shape(self : Crud, path : String) -> CrudShape? {
+  let list = self.path
+  let n = list.length()
+  if !path.has_prefix(list) {
+    return None
+  }
+  if path.length() == n {
+    return Some(ListPath)
+  }
+  if path.length() == n + 1 || path[n] != '/' {
+    return None
+  }
+  for i in (n + 1)..<path.length() {
+    if path[i] == '/' {
+      return None
+    }
+  }
+  Some(ItemPath)
+}
+
+///|
+/// The operation a request with the method `meth` and the path `path`,
+/// percent-decoded and without the query, asks of the CRUD Stub, if any:
+/// GET and POST at the list path, and GET, PUT, PATCH and DELETE at an
+/// item path, as `shape` finds them. The method is compared exactly. Any
+/// other method or path shape, such as HEAD, PUT on the list, POST on an
+/// item, or a path deeper than an item's, asks nothing of the Stub, which
+/// then does not match. `crud_methods` lists the same methods.
+///
+/// Like `shape`, it allocates nothing.
+pub fn Crud::operation(self : Crud, meth : String, path : String) -> CrudOp? {
+  match self.shape(path) {
+    Some(ListPath) =>
+      match meth {
+        "GET" => Some(List)
+        "POST" => Some(Create)
+        _ => None
+      }
+    Some(ItemPath) =>
+      match meth {
+        "GET" => Some(Read)
+        "PUT" => Some(Replace)
+        "PATCH" => Some(Update)
+        "DELETE" => Some(Delete)
+        _ => None
+      }
+    None => None
+  }
+}
+
+///|
+/// The methods a CRUD Stub serves at a path of the shape `shape`, or at
+/// either shape when it is `None`, each once, in the order of its
+/// operations: GET, POST, PUT, PATCH, DELETE. They are those that
+/// `Crud::operation` serves, as a test checks.
+pub fn crud_methods(shape : CrudShape?) -> ReadOnlyArray[String] {
+  match shape {
+    Some(ListPath) => list_methods
+    Some(ItemPath) => item_methods
+    None => any_shape_methods
+  }
+}
+
+///|
+/// The methods a CRUD Stub serves at its list path, in operation order.
+let list_methods : ReadOnlyArray[String] = ["GET", "POST"]
+
+///|
+/// The methods a CRUD Stub serves at an item path, in operation order.
+let item_methods : ReadOnlyArray[String] = ["GET", "PUT", "PATCH", "DELETE"]
+
+///|
+/// The methods a CRUD Stub serves at either shape of path, each once, in
+/// operation order.
+let any_shape_methods : ReadOnlyArray[String] = [
+  "GET", "POST", "PUT", "PATCH", "DELETE",
+]
+
+///|
+/// The key text of `path`, an item path of the CRUD Stub, as `operation`
+/// finds one: the segment after the list path.
+pub fn Crud::key_of(self : Crud, path : String) -> String {
+  path[self.path.length() + 1:].to_owned()
+}
+
+///|
+/// Whether `path` can be a CRUD Stub's path: it starts with `/`, does not
+/// end with `/`, and has no empty segment, so `/` alone is not one.
+fn is_crud_path(path : String) -> Bool {
+  path.has_prefix("/") && path.split("/").drop(1).all(segment => segment != "")
+}
+
+///|
+/// The header names, in lower case, that smock sets on the answers of a
+/// CRUD Stub, so that its `crud.headers` cannot give them: those of a
+/// Stub's response, its Content-Type, the `Location` of a create, and the
+/// counts of a list.
+let crud_names_set_by_smock : Array[String] = [
+  ..response_names_set_by_smock, "content-type", "location", "x-total-count", "x-filtered-count",
+]
+
+///|
+/// The members of a Stub that a CRUD Stub does not have: it has `crud` in
+/// their place.
+let not_beside_crud : Array[String] = [
+  "request", "response", "responses", "scenario", "variables", "dataWrites",
+]
+
+///|
+/// Reads `crud`, the value `json` at `pointer`: an object with the
+/// `bucket` it serves, one of the keyed buckets `buckets` of the Stub's
+/// Mock, its `path`, and optional `headers`. It has none when it has a
+/// problem.
+fn File::read_crud(
+  self : File,
+  pointer : String,
+  json : Json,
+  buckets~ : MockBuckets,
+) -> Crud? {
+  guard json is Object(members) else {
+    self.error(pointer, "must be an object")
+    return None
+  }
+  let reported = self.diagnostics.length()
+  let mut bucket = None
+  let mut path = None
+  let mut headers = []
+  for name, value in members {
+    let field = child_pointer(pointer, name)
+    match name {
+      "bucket" =>
+        if self.name(field, value) is Some(name) {
+          match buckets.lookup(self, field, name) {
+            Some(KeyedBy(_) | Malformed) => bucket = Some(name)
+            Some(Unkeyed) =>
+              self.error(
+                field,
+                "the Data bucket \{name.escape()} has no \"key\": a CRUD Stub serves only a keyed bucket",
+              )
+            None => ()
+          }
+        }
+      "path" =>
+        match value {
+          String(text) if is_crud_path(text) => path = Some(text)
+          _ =>
+            self.error(
+              field, "must be a path such as /api/v1/orders: it starts with /, does not end with /, and has no empty segment",
+            )
+        }
+      "headers" =>
+        headers = self
+          .read_headers(field, value, set_by_smock=crud_names_set_by_smock)
+          .map(header => (header.0, header.1))
+      _ => self.unknown_field(field)
+    }
+  }
+  self.require(members, pointer, "bucket")
+  self.require(members, pointer, "path")
+  guard self.diagnostics.length() == reported &&
+    bucket is Some(bucket) &&
+    path is Some(path) else {
+    return None
+  }
+  Some({ bucket, path, headers: ReadOnlyArray::from_array(headers), })
+}

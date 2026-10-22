@@ -76,7 +76,7 @@ test "a name that is not listed, env without exactly one name, and a loop variab
       #|a.json: /stubs/0/response/json/secret: template: column 3: env.SMOCK_ADMIN_TOKEN: the environment variable "SMOCK_ADMIN_TOKEN" is not listed in --template-env
       #|a.json: /stubs/1/response/body: template: column 3: env: env takes exactly one name, such as env.REGION
       #|a.json: /stubs/2/response/body: template: column 3: env.REGION.x: env takes exactly one name, such as env.REGION
-      #|a.json: /stubs/3/response/json/as: template: "env" cannot be a loop variable: it is a request field, env, vars, loop or a reserved word
+      #|a.json: /stubs/3/response/json/as: template: "env" cannot be a loop variable: it is a request field, env, vars, data, loop or a reserved word
     ),
   )
 }

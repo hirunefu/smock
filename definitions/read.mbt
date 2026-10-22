@@ -1,8 +1,9 @@
 // Reading and validating Definition files. The JSON Schema in
 // schema/v1/definitions.json is the contract: what it rejects, smock
 // rejects too. Rules that span the definition set (unique Mock names,
-// Hosts and Stub IDs, at most one Default Mock, Stubs that name a declared
-// Mock) are beyond the Schema.
+// Hosts and Stub IDs, at most one Default Mock, Stubs and Data buckets
+// that name a declared Mock, Data bucket names unique within their Mock)
+// are beyond the Schema.
 
 ///|
 /// Parses a Definition file, JSON or YAML, into its top-level object, or
@@ -104,23 +105,36 @@ priv struct Reader {
   stub_ids : Map[String, Location]
   /// Where each Stub read so far is declared, by its ID: the Stub itself.
   stub_locations : Map[String, Location]
+  /// The Data buckets read so far, each with the name of its Mock.
+  buckets : Array[(String, DataBucket)]
+  /// Where each Data bucket name was first declared, by Mock.
+  bucket_names : Map[String, Map[String, Location]]
   /// The body files, by their name relative to the body-file subdirectory.
   body_files : Map[String, Bytes]
   /// The environment variables templates may read.
   env : @template.Env
+  /// The Data buckets Stubs may read and write, by the name of their Mock:
+  /// those any file of the set declares.
+  mock_buckets : Map[String, MockBuckets]
 }
 
 ///|
 fn Reader::new(
   declared~ : Set[String],
+  buckets~ : Map[String, Map[String, BucketKey]],
   body_files~ : Map[String, Bytes],
   env~ : @template.Env,
 ) -> Reader {
+  let mock_buckets = Map([])
+  for mock, keys in buckets {
+    mock_buckets[mock] = MockBuckets::new(keys)
+  }
   {
     diagnostics: [],
     declared,
     body_files,
     env,
+    mock_buckets,
     mocks: [],
     mock_names: Map([]),
     hosts: Map([]),
@@ -128,6 +142,8 @@ fn Reader::new(
     stubs: [],
     stub_ids: Map([]),
     stub_locations: Map([]),
+    buckets: [],
+    bucket_names: Map([]),
   }
 }
 
@@ -243,6 +259,7 @@ fn Reader::read_file(
     diagnostics: self.diagnostics,
     body_files: Some(self.body_files),
     env: self.env,
+    buckets: self.mock_buckets,
   }
   let top = match parsed {
     Ok(top) => top
@@ -278,6 +295,13 @@ fn Reader::read_file(
             self.declare_stub(file, stub_pointer, stub)
           }
         }
+      "data" =>
+        for i, entry in file.array(pointer, value) {
+          let entry_pointer = child_pointer(pointer, i.to_string())
+          if file.read_bucket(entry_pointer, entry) is Some((mock, bucket)) {
+            self.declare_bucket(file, entry_pointer, mock, bucket)
+          }
+        }
       _ => file.unknown_field(pointer)
     }
   }
@@ -297,6 +321,9 @@ priv struct File {
   body_files : Map[String, Bytes]?
   /// The environment variables templates may read.
   env : @template.Env
+  /// The Data buckets a Stub may read and write, by the name of the Mock
+  /// that declares them. A Mock that declares none is not listed.
+  buckets : Map[String, MockBuckets]
 }
 
 ///|
@@ -476,34 +503,76 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
     template: None,
     serves_ranges: false,
     reads_variables: false,
+    reads_data: false,
   }
   let mut weighted = None
   let mut variables = no_variable_writes
+  let mut data_writes = no_data_writes
   let mut fault = None
   let mut scenario = None
+  let mut crud = None
+  // The Data buckets it may read and write: those of its Mock, wherever
+  // `mock` is among its members.
+  let mock_buckets = match stub.get("mock") {
+    Some(String(mock)) => self.buckets.get(mock).unwrap_or(no_mock_buckets)
+    _ => no_mock_buckets
+  }
+  let buckets = mock_buckets.templates
   for key, value in stub {
     let field = child_pointer(pointer, key)
     match key {
       "id" => id = self.name(field, value).unwrap_or("")
       "mock" => mock = self.name(field, value).unwrap_or("")
       "request" => request = self.read_conditions(field, value)
-      "response" => response = self.read_response(pointer, field, value)
-      "responses" => weighted = Some(self.read_responses(pointer, field, value))
-      "variables" => variables = self.read_variables(pointer, field, value)
+      "response" =>
+        response = self.read_response(pointer, field, value, buckets~)
+      "responses" =>
+        weighted = Some(self.read_responses(pointer, field, value, buckets~))
+      "variables" =>
+        variables = self.read_variables(pointer, field, value, buckets~)
+      "dataWrites" =>
+        data_writes = self.read_data_writes(
+          pointer,
+          field,
+          value,
+          buckets=mock_buckets,
+        )
       "priority" => priority = self.read_priority(field, value)
       "fault" => fault = self.read_fault(field, value)
       "scenario" => scenario = self.read_scenario(field, value)
+      "crud" => crud = self.read_crud(field, value, buckets=mock_buckets)
       _ => self.unknown_field(field)
     }
   }
   self.require(stub, pointer, "id")
   self.require(stub, pointer, "mock")
+  if stub.contains("crud") {
+    // A CRUD Stub has `crud` in place of conditions, responses, a Scenario
+    // clause and writes of its own.
+    for name in not_beside_crud {
+      if stub.contains(name) {
+        self.error(
+          child_pointer(pointer, name),
+          "is not allowed beside \"crud\": a CRUD Stub serves its bucket with no conditions, responses, Scenario clause or writes of its own",
+        )
+      }
+    }
+    // A `crud` with a problem serves nothing; the Stub is still declared,
+    // so that the problems of its ID and Mock are reported too.
+    let crud = crud.unwrap_or({
+      bucket: "",
+      path: "/",
+      headers: ReadOnlyArray::from_array([]),
+    })
+    return Some({ id, mock, priority, serves: Crud(crud), fault, })
+  }
   match (stub.contains("response"), stub.contains("responses")) {
     (true, true) =>
       self.error(
         pointer, "has \"response\" and \"responses\"; give exactly one of them",
       )
-    (false, false) => self.error(pointer, "needs \"response\" or \"responses\"")
+    (false, false) =>
+      self.error(pointer, "needs \"response\", \"responses\" or \"crud\"")
     _ => ()
   }
   // A Stub with `response` has that one response, of weight 1, and takes
@@ -516,11 +585,14 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
     id,
     mock,
     priority,
-    request,
-    scenario,
-    responses: ReadOnlyArray::from_array(responses),
-    total_weight,
-    variables,
+    serves: Ordinary({
+      request,
+      scenario,
+      responses: ReadOnlyArray::from_array(responses),
+      total_weight,
+      variables,
+      data_writes,
+    }),
     fault,
   })
 }
@@ -537,12 +609,14 @@ let no_variable_writes : VariableWrites = {
 /// `pointer`, an object that maps the name of each Variable to its value.
 /// Each value is a structured template, parsed whether or not a response
 /// has `template` on, whose root must give a value, as the root of a
-/// `json` must. Returns them in the order written.
+/// `json` must, and which may read the Data buckets `buckets`. Returns them
+/// in the order written.
 fn File::read_variables(
   self : File,
   stub_pointer : String,
   pointer : String,
   json : Json,
+  buckets~ : @template.Buckets,
 ) -> VariableWrites {
   guard json is Object(members) else {
     self.error(pointer, "must be an object")
@@ -564,7 +638,8 @@ fn File::read_variables(
         value,
         pointer=template_pointer(stub_pointer, field),
         env=self.env,
-        variable=true,
+        buckets~,
+        role="a Variable's value",
       ) {
       Ok(template) => {
         names.push(name)
@@ -1326,18 +1401,25 @@ fn File::string_without(
 }
 
 ///|
-/// Reads a reference to a body file and returns the file's bytes. The path
-/// is relative to the body-file subdirectory and stays inside it: its
-/// names are not empty, and none starts with `.`, as smock skips such
-/// files.
+/// Reads a reference to a body file and returns the file's bytes, as
+/// `body_file` finds them.
 fn File::read_body_file(self : File, pointer : String, json : Json) -> Bytes {
-  guard self.body_files is Some(body_files) else {
+  guard self.body_files is Some(_) else {
     self.error(
       pointer, "is not allowed in an Ephemeral Stub, whose body must be inline: give \"body\" instead",
     )
     return b""
   }
   guard self.string(pointer, json) is Some(path) else { return b"" }
+  self.body_file(pointer, path).unwrap_or(b"")
+}
+
+///|
+/// The bytes of the body file `path`, the value at `pointer`, or `None`,
+/// with the problem reported, when there is none. The path is relative to
+/// the body-file subdirectory and stays inside it: its names are not empty,
+/// and none starts with `.`, as smock skips such files.
+fn File::body_file(self : File, pointer : String, path : String) -> Bytes? {
   let inside = path
     .split("/")
     .all(name => !name.is_empty() && !name.has_prefix("."))
@@ -1345,16 +1427,20 @@ fn File::read_body_file(self : File, pointer : String, json : Json) -> Bytes {
     self.error(
       pointer, "must be a path inside the body-file subdirectory, such as users/1.json, with no name starting with .",
     )
-    return b""
+    return None
   }
-  match body_files.get(path) {
-    Some(bytes) => bytes
+  let found = match self.body_files {
+    Some(body_files) => body_files.get(path)
+    None => None
+  }
+  match found {
+    Some(bytes) => Some(bytes)
     None => {
       self.error(
         pointer,
         "no body file \{path.escape()} in the body-file subdirectory",
       )
-      b""
+      None
     }
   }
 }

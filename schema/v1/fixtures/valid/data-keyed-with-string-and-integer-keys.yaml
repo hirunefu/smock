@@ -1,0 +1,15 @@
+mocks:
+  - name: shop
+data:
+  - mock: shop
+    name: orders
+    key: id
+    json:
+      - { id: 1001, status: paid }
+      - { id: -7, status: pending }
+      - { id: 9007199254740991 }
+      - { id: 4.2e1 }
+      - { id: "a-1", status: paid }
+      - { id: "1001.5" }
+  - { mock: shop, name: dotted, key: a.b, json: [{ a.b: 1 }, { a.b: 2, a: { b: 2 } }] }
+  - { mock: shop, name: empty, key: id, json: [] }

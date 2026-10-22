@@ -1,0 +1,25 @@
+mocks:
+  - name: shop
+data:
+  - { mock: shop, name: orders, key: id, jsonFile: orders.json }
+stubs:
+  - id: no-token
+    mock: shop
+    request: { headers: { authorization: { $exists: false } } }
+    response: { status: 401, json: { error: unauthorized } }
+  - id: orders
+    mock: shop
+    priority: 10
+    crud:
+      bucket: orders
+      path: /api/v1/orders
+      headers:
+        Access-Control-Allow-Origin: "*"
+        Access-Control-Expose-Headers: [X-Total-Count, X-Filtered-Count]
+    fault:
+      seed: 7
+      delay: { uniform: { min: 10, max: 50 } }
+      connection: { kind: reset, probability: 0.01 }
+  - id: orders-again
+    mock: shop
+    crud: { bucket: orders, path: /api/v1/orders }

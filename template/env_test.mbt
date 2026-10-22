@@ -107,7 +107,7 @@ test "env reads only listed names, takes exactly one name step, and cannot be a 
       #|problem at /response/body: template: column 3: env.REGION.x: env takes exactly one name, such as env.REGION
       #|problem at /response/body: template: column 3: env[0]: env takes exactly one name, such as env.REGION
       #|/response/json/a: template: column 3: env.SECRET: the environment variable "SECRET" is not listed in --template-env
-      #|/response/json/b/as: template: "env" cannot be a loop variable: it is a request field, env, vars, loop or a reserved word
+      #|/response/json/b/as: template: "env" cannot be a loop variable: it is a request field, env, vars, data, loop or a reserved word
     ),
   )
 }

@@ -10,7 +10,9 @@ latency for each case, and checks the provisional performance targets.
 | `bench/bench.py` | Runs the benchmark. |
 | `bench/definitions/` | The definition set smock serves: four Mocks, one of them the Default Mock, and about 1,200 Stubs with exact, pattern and `json` conditions (`e2e/bench_test.mbt` pins the exact count). `bench/gen_definitions.py` writes it. |
 | `bench/definitions-scenarios/` | Its Scenario variant, which `--definitions` selects ([Scenarios in the benchmark](#scenarios-in-the-benchmark)). `bench/gen_definitions.py` writes it too. |
+| `bench/definitions-crud/` | Its CRUD variant, which `--definitions` selects too ([CRUD Stubs in the benchmark](#crud-stubs-in-the-benchmark)). `bench/gen_definitions.py` writes it too. |
 | `bench/requests.json` | The request mix: nine kinds of request, with weights, realistic headers, a Session in `baggage`, and bodies. |
+| `bench/requests-crud.json` | The CRUD variant's own request mix, which a run sends it. `bench/gen_definitions.py` writes it from `bench/requests.json`. |
 | `bench/plan.json` | The cases, the CPU limits, and the rates and durations. |
 | `bench/plan-autopilot.json` | Another plan: smock under the CPU and memory limits of the smallest GKE Autopilot Pods and of the Helm chart's default, at ladders of rates. The targets hold under its profiles. |
 | `bench/plan-same-node.json` | The plan of a GKE run that compares smock binaries on one node: HTTP keep-alive at the lowest rates of `bench/plan-autopilot.json`'s ladders, and at half the lowest under 50m and 250m. |
@@ -23,9 +25,11 @@ The commands below run from the repository root.
 
 `e2e/bench_test.mbt` checks on every test run that each request of the mix
 reaches the Mock and the Stub it names, on the plain and on the TLS port,
-and lands in the Journal under its Session, and that in the Scenario
-variant each request moves its Scenario. CI checks that
-`bench/definitions/` and `bench/definitions-scenarios/` are what
+and lands in the Journal under its Session, that in the Scenario variant
+each request moves its Scenario, and that in the CRUD variant each request
+of its mix makes the CRUD operation it names. CI checks that
+`bench/definitions/`, `bench/definitions-scenarios/`,
+`bench/definitions-crud/` and `bench/requests-crud.json` are what
 `bench/gen_definitions.py` writes.
 
 The benchmark runs on a developer's machine. The full run of
@@ -53,6 +57,7 @@ python3 bench/bench.py run --cases http-keep-alive --cpu-limits 1   # one case u
 python3 bench/bench.py run --plan bench/plan-autopilot.json            # the profiles the targets hold under, about 20 minutes
 python3 bench/bench.py run --plan bench/plan-autopilot.json --profiles autopilot-burst-min   # one profile
 python3 bench/bench.py run --plan bench/plan-autopilot.json --definitions bench/definitions-scenarios   # with Scenario Stubs
+python3 bench/bench.py run --plan bench/plan-autopilot.json --definitions bench/definitions-crud   # with CRUD Stubs, sent their own mix
 python3 bench/bench.py run --rate 500 --ramp 1 --duration 3 --tail 1 --settle 1 --cooldown 0   # a check of the setup, about 2 minutes
 python3 bench/bench.py check-targets bench/results/<date>-<time>   # an earlier run against the targets as they are now
 python3 -m unittest discover -s bench -v # the harness's own tests, about 5 minutes
@@ -136,6 +141,52 @@ To see what Scenarios cost, run each set on the same machine with the same
 plan and compare the runs with `bench/compare.py`, which names the
 definition set as a condition that differs. Each run checks the targets.
 On GKE, a variant with the `scenarios` option serves it
+([Comparing smock binaries on one node](#comparing-smock-binaries-on-one-node)).
+
+## CRUD Stubs in the benchmark
+
+`bench/definitions-crud/` is the CRUD variant of the definitions: the
+same Mocks and Stubs, but two resources are
+[Data buckets](../docs/definition-files.md#data-buckets), each served by
+a [CRUD Stub](../docs/definition-files.md#crud-stubs) in place of the
+Stubs that answered its items one by one:
+
+- `items`, keyed by `sku`, holds the catalog's 600 items, which the 600
+  item Stubs answered, in their order. The CRUD Stub `catalog-items`
+  serves it at `/catalog/items`, first in the catalog's file, where those
+  Stubs were.
+- `orders`, keyed by `id`, holds an order for each of the 48 ways to
+  create one, the mix's order among them, paid as `get-order` answered
+  it. The CRUD Stub `orders` serves it at `/orders`, in place of `get-order`,
+  after the 48 Stubs that create an order. A `POST /orders` still matches
+  one of those first, so the CRUD Stub never creates.
+
+The plain mix has no request that lists or updates an item through a CRUD
+Stub, so a run that serves this variant sends it a mix of its own,
+`bench/requests-crud.json`. `bench/gen_definitions.py` writes it from
+`bench/requests.json`: the same requests, with the same weights, but two.
+`catalog-search` becomes `catalog-list`, a
+[list query](../docs/definition-files.md#list-queries),
+`GET /catalog/items?category=lighting&$sort=-stock&$limit=10`, which
+filters the 600 items to 100, sorts them and keeps 10. `update-order-status`
+becomes `update-order`, a `PATCH` of the order with the same body. Each of
+the two has a Session of its own. So, by weight, 35% of the requests read
+an item (`catalog-item` and `get-order`), 10% list items and 5% update
+one, through a CRUD Stub; the rest are answered as in the plain set.
+
+No request creates an item, so no copy of a bucket grows during a run.
+Reads never copy a bucket, so only the update's Session holds a copy,
+made by its first `PATCH`: each later one changes the order in place.
+`conditions.json` names the mix a run sent, and `summary.md` names it
+beside the definition set when it is not `bench/requests.json`. The
+plain set has no Data bucket and no CRUD Stub, so each of its requests
+pays only the test of whether its Mock has one.
+
+To see what CRUD Stubs cost, run each set on the same machine with the
+same plan, and compare the runs with `bench/compare.py`, which names the
+definition set and the request mix as conditions that differ. Each run
+checks the targets. On GKE, a variant with the `crud` option serves it,
+and the load generator sends that variant its mix
 ([Comparing smock binaries on one node](#comparing-smock-binaries-on-one-node)).
 
 ## Targets
@@ -520,10 +571,11 @@ that run's linux/amd64 build and tests passed.
   unless `--yes` says to go on.
 - **Images.** It builds the release binary, unless given one, and two
   images for the run's architecture (`docker build --platform`): the
-  release image with `bench/definitions/` and its Scenario variant
-  (`bench/gke/smock-definitions.dockerfile`), and the load generator's
-  (`bench/gke/generator.Dockerfile`: Python, the pinned oha of that
-  architecture, `bench.py`, the plan and `bench/gke/`). With `--variant`
+  release image with `bench/definitions/` and its Scenario and CRUD
+  variants (`bench/gke/smock-definitions.dockerfile`), and the load
+  generator's (`bench/gke/generator.Dockerfile`: Python, the pinned oha
+  of that architecture, `bench.py`, both request mixes, the plan and
+  `bench/gke/`). With `--variant`
   it builds no binary, and in place of the release image one image of
   smock for each distinct binary the variants give (see
   [Comparing smock binaries on one node](#comparing-smock-binaries-on-one-node)).
@@ -536,10 +588,10 @@ that run's linux/amd64 build and tests passed.
   repository only.
 - **Cluster.** A new Autopilot cluster on the Regular channel. The cluster
   and the repository are named `smock-bench-<date>-<time>` and labelled
-  `purpose=smock-bench`. kubectl authenticates with an access token from
-  gcloud, in a kubeconfig of the run's own (mode 600, deleted at the end),
-  so gke-gcloud-auth-plugin is not needed and `~/.kube/config` is not
-  touched.
+  `purpose=smock-bench`. kubectl authenticates with a new access token
+  from gcloud, taken again before its hour ends, in a kubeconfig of the
+  run's own (mode 600, deleted at the end), so gke-gcloud-auth-plugin is
+  not needed and `~/.kube/config` is not touched.
 - **Profiles.** For each profile: smock in a Pod, with the profile's CPU
   and memory limits as its requests, behind a ClusterIP Service, both
   named for the profile (`smock-<profile>`), so that a lookup of the name
@@ -709,7 +761,12 @@ generator's scrape of smock's `/metrics` a second into each step: the two
 changes the harness got between 0d984c8 and 52ee405. `scenarios` serves
 the Scenario variant of the definitions, `bench/definitions-scenarios/`,
 in place of `bench/definitions/`
-([Scenarios in the benchmark](#scenarios-in-the-benchmark)).
+([Scenarios in the benchmark](#scenarios-in-the-benchmark)). `crud`
+serves their CRUD variant, `bench/definitions-crud/`, and the load
+generator sends that variant the CRUD variant's mix,
+`bench/requests-crud.json`, and the others the benchmark's
+([CRUD Stubs in the benchmark](#crud-stubs-in-the-benchmark)). A variant
+takes one of the two.
 Variants of one binary (one SHA-256) are also compared with the first
 variant that has it: with the same options,
 such as newb against new, an A/A pair, whose paired changes show how far
@@ -773,11 +830,23 @@ scripts/gke-bench.sh --yes --arch amd64 --plan bench/plan-same-node.json \
   --variant plain="$dir/smock" --variant sc="$dir/smock",scenarios --variant scb="$dir/smock",scenarios
 ```
 
+To see what CRUD Stubs cost on one node, do the same with the `crud`
+option. A `crud` variant's samples record the definitions they served and
+the mix they were sent, and the comparison counts neither as a condition
+besides smock:
+
+```sh
+scripts/gke-bench.sh --yes --arch amd64 --plan bench/plan-same-node.json \
+  --profiles autopilot-burst-min,autopilot-min --time-limit 100m \
+  --variant plain="$dir/smock" --variant cr="$dir/smock",crud --variant crb="$dir/smock",crud
+```
+
 To read the variants against another baseline, such as each against
 new, run `gke.py same-node` again on the run's results with
 `--baseline new --report same-node-new` and the `--sha256 LABEL=HEX` and
 `--no-init LABEL` the run gave it (same-node.json names each variant's
-SHA-256 and options; the samples say which served the Scenario variant):
+SHA-256 and options; the samples say which served the Scenario or the
+CRUD variant):
 it writes `same-node-new.json` and
 `same-node-new.md`, and leaves the run's own comparison as it is.
 

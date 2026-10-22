@@ -30,7 +30,12 @@ fn parsed(
   variable? : Bool = true,
 ) -> Result[@template.Structured, String] {
   let json = @json.parse(source) catch { _ => panic() }
-  match @template.Structured::parse(json, pointer="/variables/v", variable~) {
+  match
+    @template.Structured::parse(
+      json,
+      pointer="/variables/v",
+      role?=if variable { Some("a Variable's value") } else { None },
+    ) {
     Ok(template) => Ok(template)
     Err(problems) =>
       Err(problems.map(p => "\{p.pointer}: \{p.message}").join("\n"))
@@ -99,7 +104,7 @@ test "vars takes the name of a Variable first, and cannot be a loop variable" {
       #|/variables/v: template: column 3: vars: vars takes the name of a Variable first, such as vars.count or vars.cart.items[0]
       #|/variables/v: template: column 3: vars[0]: vars takes the name of a Variable first, such as vars.count or vars.cart.items[0]
       #|/variables/v: template: column 3: vars: vars takes the name of a Variable first, such as vars.count or vars.cart.items[0]
-      #|/variables/v/as: template: "vars" cannot be a loop variable: it is a request field, env, vars, loop or a reserved word
+      #|/variables/v/as: template: "vars" cannot be a loop variable: it is a request field, env, vars, data, loop or a reserved word
       #|parses
     ),
   )

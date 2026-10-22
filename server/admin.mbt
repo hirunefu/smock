@@ -100,6 +100,10 @@ let routes : Array[Route] = [
     takes_body=true,
   ),
   route("/v1/mocks/{mock}/variables/{name}", "DELETE", delete_variable),
+  route("/v1/mocks/{mock}/data", "GET", list_buckets),
+  route("/v1/mocks/{mock}/data/{bucket}", "GET", read_bucket),
+  route("/v1/mocks/{mock}/data/{bucket}", "PUT", set_bucket, takes_body=true),
+  route("/v1/mocks/{mock}/data/{bucket}", "DELETE", drop_bucket),
   route("/v1/reset", "POST", reset, takes_body=true),
   route("/v1/journal/query", "POST", query_journal, takes_body=true),
   route("/v1/journal/verify", "POST", verify_journal, takes_body=true),
@@ -501,8 +505,11 @@ fn liveness_probe(admin : Admin, _call : Call) -> Reply {
 /// query parameter names the response to render among the Stub's
 /// `responses`; without it, the seed picks one. The rendering shows the
 /// time, the seed and the response index it used, and the values the
-/// Stub's `variables` would write. Rendering changes nothing: it reads
-/// the Variables of the sample's `vars` and writes none.
+/// Stub's `variables` would write, and the writes its `dataWrites` would
+/// make. Rendering changes nothing: it reads the Variables of the sample's
+/// `vars` and the Data buckets of its `data`, and writes none. Sample data
+/// that names a Data bucket the Stub's Mock does not declare, or breaks a
+/// keyed bucket's rules, is `invalid_data`.
 fn render(admin : Admin, call : Call) -> Reply {
   let invalid = (message : String) => {
     admin.error(400, "invalid_request", message)
@@ -568,7 +575,10 @@ fn render(admin : Admin, call : Call) -> Reply {
     ) catch {
       UnknownStub(_) as err =>
         return admin.error(404, "unknown_stub", err.message())
-      UnknownResponse(..) as err => return invalid(err.message())
+      UnknownResponse(..) | NoOperation(..) as err =>
+        return invalid(err.message())
+      UnknownSampleBucket(..) | InvalidSampleData(..) as err =>
+        return admin.error(400, "invalid_data", err.message())
     }
   admin.result(rendering)
 }

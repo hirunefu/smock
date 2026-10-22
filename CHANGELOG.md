@@ -51,6 +51,14 @@ of each GitHub release include its section
   may be a string that is a JSON number, such as `query.page`. A number
   literal is taken as written, with every digit, even those a 64-bit
   float would lose.
+- Template helper `find(array, member, value)` gives the first element of
+  an array that is an object whose member meets a value. The value is
+  taken as text, `null` included. A member meets it when it is a string
+  equal to that text, a number of equal value as `json` conditions compare
+  numbers (`12.50` meets `12.5`), or `true`, `false` or `null` by those
+  words. So `find(body.orders, 'id', path[1])` finds the order `1004`
+  whether its `id` is a number or a string. When no element meets the
+  value, the call is missing, so `??` applies.
 - A helper call can be followed by steps, as a reference can:
   `${range(1, 3)[1]}` gives `2`.
 - The bounds of `range(a, b)` can be any expression that gives an integer,
@@ -129,9 +137,155 @@ of each GitHub release include its section
   would pass it writes nothing and gets 507 `state_limit_reached`; a
   delete gives the bytes back. A delete of an unset Variable gets 404
   `unknown_variable`. Each set and delete is logged.
+- Data buckets: named JSON values that a Mock declares under the new
+  top-level `data` of Definition files, with an initial value inline
+  (`json`) or in a JSON file of the body-file subdirectory (`jsonFile`).
+  Like a JSON Definition file, a `jsonFile` must not repeat a key in one
+  object. A bucket with `key` holds an array of objects whose keys,
+  strings or integers, are unique by their text, so `42` and `"42"`
+  collide; smock checks this when loading. An integer key is judged by
+  its 64-bit floating-point value, so `1.0000000000000001` is the key
+  `1`. Templates read a bucket of their Stub's Mock as `data.NAME`, with
+  steps, `$each` and `len`. A name that is not one of the Mock's buckets
+  is an error when loading.
+- Session copies of Data buckets. A Session reads a bucket's initial value
+  until it first writes to the bucket, which gives it its own copy; reads
+  never copy. Requests without a Session share one copy of each bucket.
+  Templates read the request's Session's copy, and `smock render` and the
+  Admin render operation never read a copy. Copies count
+  toward `--state-max-bytes` with Variables: each counts its bucket's
+  name, its value's compact JSON and fixed bytes, and its space counts
+  once. Initial values do not count.
+- Admin API operations on Data buckets, for the calling Session:
+  `GET /v1/mocks/{mock}/data` lists a Mock's buckets, with their keys and
+  whether the Session holds a copy; `GET /v1/mocks/{mock}/data/{bucket}`
+  reads one with the value the Session reads;
+  `PUT /v1/mocks/{mock}/data/{bucket}` sets the Session's copy to the JSON
+  value in the body; `DELETE /v1/mocks/{mock}/data/{bucket}` drops it, so
+  the bucket reads its initial value again. A bucket the Mock does not
+  declare gets 404 `unknown_bucket`, and a value that breaks a keyed
+  bucket's rules 400 `invalid_data`. A set keeps a number's value, not its
+  text, as a Variable's does. A set that would pass the state bound
+  writes nothing and gets 507 `state_limit_reached`. Each set and each
+  drop of a copy is logged. The `per_replica_state` warning names the
+  copies of Data buckets.
+- `POST /v1/reset` drops the copies of Data buckets in its scope, which
+  give their bytes back to the state bound, and says how many it dropped,
+  in `removed.dataBuckets` of its response and its log entry. A reload
+  that swaps in new files drops the copies of a Mock that is gone, of a
+  bucket the new files no longer declare, and of a bucket whose initial
+  value or `key` changed; it keeps the others, so editing an unrelated
+  Stub keeps a test's data. Initial values are compared as compact JSON,
+  so moving one between `json` and `jsonFile` is no change, and a change
+  of `newKey` keeps the copies. The `definitions reloaded` log entry says
+  how many copies the reload dropped, in `dataBucketsReset`. Nothing
+  expires a copy.
+- A Stub's `dataWrites` writes to the Data buckets of its Mock when it
+  matches: 1 to 100 writes, applied in order, each `set` (the bucket
+  becomes the value), `merge` (a shallow merge of an object into the
+  bucket) or `append` (to the array in the bucket), with a value that is
+  always a structured template. The values render against the state from
+  before the request, after the values of `variables`, and the writes are
+  stored with the Variables all at once, or not at all: a value that fails
+  to render gives the template failure, a write that cannot be applied
+  gives 500 `data write failed`, and writes past the state bound give 507.
+  The response sees the data after the writes, and the writes stand
+  whatever follows. Only a Session's first write to a bucket copies it.
+  An Ephemeral Stub takes `dataWrites` too. When a reload removes a
+  write's bucket, or changes it so that the write would no longer load,
+  the write gets 500 `data write failed`, checked before any value
+  renders. Each Journal entry gains `dataWritten`, the buckets written,
+  and `dataError`, why a write failed to apply.
+- `dataWrites` writes keyed Data buckets item by item. `set`, `merge` and
+  `remove` take the `key` of one item, a text template compared as a key
+  text, so `${path[3]}` finds the order whose `id` is `1002` or `"1002"`.
+  `append` adds an item at the end. A value's key member may be absent or
+  hold the item's key, and the item keeps its stored key value. An item
+  that `append` adds without a key gets a new one, as the bucket's
+  `newKey` says: one more than the highest integer key, skipping integers
+  whose text a string key has, or a version 4 UUID from the request's
+  helpers, which `fault.seed` repeats. A key that no item has, a value
+  that would break the bucket's rules, and running out of integer keys
+  (`no new key`) fail the write, and nothing is written. A literal value
+  that already breaks them, such as an item whose key member holds no key
+  or a key other than a literal `key`, is an error when loading. A Stub's
+  response cannot read a key that its own `append` made.
+- `smock render` and the Admin render operation take sample data and show
+  the writes a Stub would make. The sample's `data` gives the value of a
+  Data bucket of the Stub's Mock in place of its initial value; a name the
+  Mock does not declare, or a value that breaks a keyed bucket's rules,
+  makes `smock render` exit with status 1 and the Admin render answer 400
+  `invalid_data`. The rendering's `dataWrites` lists the writes of the
+  Stub's `dataWrites` in order, each with its op, bucket, rendered key and
+  rendered value, the new key filled in for an `append` to a keyed bucket,
+  and the response reads the data after them. A write that fails to render
+  or to apply shows the 500 a request would get, and no write. A rendering
+  never reads or writes a Session's copy, and no state bound applies.
+- CRUD Stubs: a Stub with `crud` (`bucket`, `path` and optional `headers`)
+  in place of `request` and `response` serves a keyed Data bucket as a REST
+  resource. `GET <path>` lists the bucket's items, with `X-Total-Count`
+  and `X-Filtered-Count`, and `GET <path>/<key>` reads one item, or answers
+  404 `no item with this key`. Reads see the Session's copy, or else the
+  initial value. Any other method or path shape falls through to later
+  Stubs. A CRUD Stub is tried in the usual order, so an earlier Stub can
+  take over one of its requests. `crud.headers`, such as CORS headers, go
+  on every answer, and `fault` works as on any Stub. An Ephemeral Stub can
+  be a CRUD Stub. Each Journal entry gains `crud`, the operation and its
+  key.
+- CRUD Stubs write: `POST <path>` creates an item and answers 201 with it
+  and its `Location`, `PUT <path>/<key>` replaces the item, `PATCH
+  <path>/<key>` merges the body into it shallowly, and `DELETE
+  <path>/<key>` removes it and answers the removed item. Each is one write
+  by key, as `dataWrites` makes, to the Session's copy, made at the match
+  decision before any delay, all or nothing, within the state bound. The
+  body must be a JSON object, whatever its Content-Type (400 `body is not
+  a JSON object`). A create without the key member gets a new key, added
+  last; a key that is not one is 400 `invalid key`, and a taken one 409
+  `key already exists`. A replace or update keeps the item's key, and a
+  body that holds another is 400 `key does not match the path`. A missing
+  item is 404, no integer key left 500 `no new key`, and the state bound
+  507, a delete's included. A connection Fault replaces the answer, but
+  not the write.
+- List queries: a CRUD Stub's list reads its query in smock's own syntax.
+  A parameter filters on the item member of its name, as `find` compares,
+  and a repeated name holds when any of its values does. `$sort=a,-b`
+  sorts by members, by type first and then by value, with strings by
+  Unicode code point; absent members, objects and arrays go last, and the
+  sort is stable. `$offset` and `$limit` page the list. `X-Filtered-Count`
+  counts the items that pass the filters, before paging, and the body
+  stays a plain array. `$$name` filters on the member `$name`, and any
+  other name that starts with `$`, such as OData's `$top`, is 400
+  `invalid query parameter`, without the two counts, as are malformed or
+  repeated `$sort`, `$offset` and `$limit`. A client's own parameters,
+  such as `page`, are filters too, so its list comes back `[]`.
+- A CRUD Stub can be the Near miss of a request that no Stub matches. It
+  counts two conditions: `path` fails when the request path is neither its
+  list path nor an item path, and `method` when the Stub does not serve
+  the method at the path's shape, or at either shape when `path` fails.
+  The Near miss expects `{"crud": "<path>"}` or `{"crud": [<methods>]}`,
+  and the header keeps its form, such as `Smock-Near-Miss: orders;
+  failed=method`.
+- `smock check` warns about CRUD Stubs in the cases it can prove: an
+  earlier CRUD Stub hides a later Stub whose method and exact path it
+  serves, whatever that Stub's other conditions or `requires`, or a later
+  CRUD Stub with the same path; a Stub with no request conditions and no
+  `requires` hides a later CRUD Stub. A partial overlap gets no warning.
+- `smock render` and the Admin render operation render a CRUD Stub: the
+  answer its operation would give to the sample, from the sample's data or
+  else the initial value, failures and list queries included, with a new
+  `uuid` key drawn from the seed. Its write shows in `dataWrites` as the op
+  that makes the same write, `append` for a create, `set` for a replace,
+  `merge` for an update and `remove` for a delete, and not at all when it
+  fails. A sample whose method and path fit no operation of the Stub, and
+  a `--response` index, make `smock render` exit with status 1 and the
+  Admin render answer 400 `invalid_request`.
 - docs/migrating-from-mockoon.md maps Mockoon's helpers, `RANDOM` routes,
   global variables, Range requests, dates, cookies and environment
-  variables onto smock, with each difference called out.
+  variables onto smock, with each difference called out. It also maps
+  data buckets, CRUD routes and their list parameters, the `data` and
+  `dataRaw` helpers, `setData` and the purge of data buckets onto Data
+  buckets, CRUD Stubs, list queries and `dataWrites`, and its worked
+  example serves its orders from a Data bucket with a CRUD Stub.
 
 ### Changed
 
@@ -139,6 +293,9 @@ of each GitHub release include its section
   `cookie`, `env` and `vars` are template roots. No valid file changes
   meaning: rename the loop variable. The Definition file format is still
   version 1.
+- A loop variable named `data` now fails to load, since `data` is the
+  template root of Data buckets. Rename the loop variable. No other valid
+  file changes meaning, and the format is still version 1.
 - A 200 from an untemplated body file now carries `Accept-Ranges: bytes`,
   and a GET with a `Range` field gets the range it asks for. To keep
   sending the whole body, give the response an `Accept-Ranges` header of

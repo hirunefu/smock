@@ -1,0 +1,8 @@
+mocks:
+  - name: shop
+data:
+  - { mock: shop, name: orders, json: [] }
+stubs:
+  - id: list-orders
+    mock: shop
+    response: { status: 200, template: true, json: "${data.order}" }

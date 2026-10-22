@@ -1,0 +1,40 @@
+mocks:
+  - name: shop
+data:
+  - { mock: shop, name: orders, key: id, jsonFile: orders.json }
+  - { mock: shop, name: tokens, key: token, newKey: uuid, json: [] }
+stubs:
+  - id: pay-order
+    mock: shop
+    request: { method: POST, path: { pattern: "/api/v1/orders/[^/]+/pay" } }
+    dataWrites:
+      - { op: merge, bucket: orders, key: "${path[3]}", value: { status: paid, paidAt: "${now()}" } }
+    response:
+      status: 200
+      template: true
+      json: "${find(data.orders, 'id', path[3])}"
+  - id: replace-order
+    mock: shop
+    request: { method: PUT, path: { pattern: "/api/v1/orders/[^/]+" } }
+    dataWrites:
+      - { op: set, bucket: orders, key: "${path[3]}", value: "${body}" }
+    response: { status: 204 }
+  - id: cancel-order
+    mock: shop
+    request: { method: DELETE, path: { pattern: "/api/v1/orders/[^/]+" } }
+    dataWrites:
+      - { op: remove, bucket: orders, key: "${path[3]}" }
+    response: { status: 204 }
+  - id: add-order
+    mock: shop
+    request: { method: POST, path: /api/v1/orders }
+    dataWrites:
+      - { op: append, bucket: orders, value: { customerId: "${body.customerId}", status: pending } }
+      - { op: append, bucket: tokens, value: { order: "${body.customerId}" } }
+    response: { status: 201 }
+  - id: reset-orders
+    mock: shop
+    request: { method: POST, path: /api/v1/orders/reset }
+    dataWrites:
+      - { op: set, bucket: orders, value: [{ id: 1, status: pending }, { id: a-2, status: paid }] }
+    response: { status: 204 }

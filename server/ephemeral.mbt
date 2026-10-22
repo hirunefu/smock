@@ -73,6 +73,18 @@ fn Admin::refused(
         "unknown_variable",
         "\{caller(session)} has no Variable \{name.escape()} in the Mock \{mock.escape()}",
       )
+    UnknownBucket(mock~, bucket~) =>
+      self.error(
+        404,
+        "unknown_bucket",
+        "the Mock \{mock.escape()} declares no Data bucket \{bucket.escape()}: Data buckets come only from Definition files",
+      )
+    InvalidData(bucket~, key~, problems~) =>
+      self.error(
+        400,
+        "invalid_data",
+        "the value breaks the rules of the Data bucket \{bucket.escape()}, keyed by \{key.escape()}: \{@definitions.keyed_problems_text(problems)}",
+      )
     VariableTooLarge(name~, bytes~) =>
       self.error(
         400,
@@ -169,6 +181,7 @@ fn reset(admin : Admin, call : Call) -> Reply {
     "journalEntries": Json::number(removed.journal_entries.to_double()),
     "scenarioStates": Json::number(removed.scenario_states.to_double()),
     "variables": Json::number(removed.variables.to_double()),
+    "dataBuckets": Json::number(removed.data_buckets.to_double()),
   }
   let (scope_name, fields) : (String, Map[String, Json]) = match scope {
     Session(session) => ("session", { "session": session_json(session) })

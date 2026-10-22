@@ -2,7 +2,10 @@
 // and requests, the engine that finds Stubs through the index gives the
 // same outcome as the one that tries every Stub in matching order. Some
 // Stubs have Scenario clauses, and each case sends a sequence of requests
-// with Sessions, so both engines must also make the same moves.
+// with Sessions, so both engines must also make the same moves. Some are
+// CRUD Stubs, whose paths ordinary Stubs share, and some ordinary Stubs
+// write data with `dataWrites`; the requests list, read, create, replace,
+// update and delete, so both engines must also leave the same data.
 //
 // Each case is generated from its own seed, derived from its number. A
 // failure names the case; `check_index_case(<case>, IndexTally())` in a test
@@ -57,13 +60,38 @@ fn Twins::send(
     rand=@prng.Generator(1),
   )
   let (with_index, in_order) = (
-    "\{describe(indexed)}\nscenario: \{moved(indexed)}",
-    "\{describe(linear)}\nscenario: \{moved(linear)}",
+    "\{describe(indexed)}\nentry: \{entry_json(indexed)}\nscenario: \{moved(indexed)}",
+    "\{describe(linear)}\nentry: \{entry_json(linear)}\nscenario: \{moved(linear)}",
   )
   if with_index != in_order {
     fail("with the index:\n\{with_index}\n\nin matching order:\n\{in_order}")
   }
   indexed
+}
+
+///|
+/// The Journal entry of `outcome` as compact JSON, or `none`.
+fn entry_json(outcome : @engine.Outcome) -> String {
+  match outcome.journal {
+    Some(entry) => entry.to_json().stringify()
+    None => "none"
+  }
+}
+
+///|
+/// The value of the bucket `items` of each generated Mock, as each
+/// generated Session sees it, one per line, in the engine `engine`.
+fn generated_data(engine : @engine.Engine) -> String raise {
+  let out = []
+  for mock in ["m", "o"] {
+    for session in generated_sessions {
+      let bucket = engine.read_data(mock~, session~, bucket="items")
+      out.push(
+        "\{mock} \{@debug.to_string(session)}: \{bucket.value.stringify()}",
+      )
+    }
+  }
+  out.join("\n")
 }
 
 ///|
@@ -77,17 +105,20 @@ let index_requests_per_case : Int = 40
 ///|
 /// What the generated requests matched, to show that the property test
 /// reaches every kind of Stub and requests that match nothing, Stubs with
-/// operators, cookie, `form` or `xml` conditions, and Stubs that move a
-/// Scenario or keep its state.
+/// operators, cookie, `form` or `xml` conditions, Stubs that move a
+/// Scenario or keep its state, CRUD Stubs, and writes.
 struct IndexTally {
   /// The number of requests per kind of Stub that answered them: `exact
-  /// path`, `path pattern` or `no path` for a Stub from a Definition file,
-  /// `ephemeral` for an Ephemeral Stub, or `no match`; the numbers answered
+  /// path`, `path pattern`, `no path` or `crud` for a Stub from a
+  /// Definition file, `ephemeral` for an Ephemeral Stub, or `no match`; the
+  /// numbers answered
   /// by a Stub from a Definition file with an operator, with a cookie
-  /// condition, with a `form` condition and with an `xml` condition; and
-  /// the number answered by a
+  /// condition, with a `form` condition and with an `xml` condition; the
+  /// number answered by a
   /// Stub with a Scenario clause that moved its Scenario to another state,
-  /// or kept it in the same one.
+  /// or kept it in the same one; the number of each CRUD operation, from a
+  /// file or an Ephemeral Stub, whatever its answer; and the numbers of
+  /// requests that wrote a Data bucket by a CRUD Stub and by `dataWrites`.
   counts : Map[String, Int]
 }
 
@@ -98,6 +129,7 @@ fn IndexTally::IndexTally() -> IndexTally {
       ("exact path", 0),
       ("path pattern", 0),
       ("no path", 0),
+      ("crud", 0),
       ("ephemeral", 0),
       ("no match", 0),
       ("with an operator", 0),
@@ -106,6 +138,14 @@ fn IndexTally::IndexTally() -> IndexTally {
       ("with an xml condition", 0),
       ("Scenario moved", 0),
       ("Scenario kept", 0),
+      ("crud list", 0),
+      ("crud create", 0),
+      ("crud read", 0),
+      ("crud replace", 0),
+      ("crud update", 0),
+      ("crud delete", 0),
+      ("written by a CRUD Stub", 0),
+      ("written by dataWrites", 0),
     ]),
   }
 }
@@ -116,7 +156,7 @@ fn IndexTally::to_string(self : IndexTally) -> String {
 }
 
 ///|
-test "the match index picks the same Stub and makes the same Scenario moves as the matching order, for generated definition sets, Ephemeral Stubs and requests with Sessions" {
+test "the match index picks the same Stub, makes the same Scenario moves and leaves the same data as the matching order, for generated definition sets, Ephemeral Stubs and requests with Sessions" {
   let tally = IndexTally()
   for case in 0..<index_cases {
     check_index_case(case, tally)
@@ -124,17 +164,26 @@ test "the match index picks the same Stub and makes the same Scenario moves as t
   inspect(
     tally.to_string(),
     content=(
-      #|exact path: 851
-      #|path pattern: 1310
-      #|no path: 1579
-      #|ephemeral: 258
-      #|no match: 8002
-      #|with an operator: 600
-      #|with a cookie condition: 256
-      #|with a form condition: 20
-      #|with an xml condition: 26
-      #|Scenario moved: 223
-      #|Scenario kept: 607
+      #|exact path: 424
+      #|path pattern: 1147
+      #|no path: 1119
+      #|crud: 927
+      #|ephemeral: 428
+      #|no match: 7955
+      #|with an operator: 596
+      #|with a cookie condition: 204
+      #|with a form condition: 8
+      #|with an xml condition: 3
+      #|Scenario moved: 139
+      #|Scenario kept: 373
+      #|crud list: 193
+      #|crud create: 163
+      #|crud read: 321
+      #|crud replace: 116
+      #|crud update: 127
+      #|crud delete: 128
+      #|written by a CRUD Stub: 147
+      #|written by dataWrites: 225
     ),
   )
 }
@@ -143,7 +192,8 @@ test "the match index picks the same Stub and makes the same Scenario moves as t
 /// Generates definition set number `case` and its requests from the seed
 /// of `case`, adds the same generated Ephemeral Stubs to both engines,
 /// drawn from a seed of their own, and checks every request against both
-/// engines, adding what it matched to `tally`.
+/// engines, adding what it matched to `tally`. After the requests, both
+/// engines must hold the same data.
 fn check_index_case(case : Int, tally : IndexTally) -> Unit raise {
   let rand = @random.Rand::chacha8(seed=index_case_seed(case))
   let generated = gen_definition_set(rand)
@@ -213,6 +263,39 @@ fn check_index_case(case : Int, tally : IndexTally) -> Unit raise {
       let kind = if from == to { "Scenario kept" } else { "Scenario moved" }
       tally.counts[kind] = tally.counts.get(kind).unwrap_or(0) + 1
     }
+    if outcome.journal is Some(entry) {
+      if entry.crud is Some(call) {
+        let kind = "crud \{call.op.name()}"
+        tally.counts[kind] = tally.counts[kind] + 1
+      }
+      if entry.data_written.length() > 0 {
+        let kind = if entry.crud is Some(_) {
+          "written by a CRUD Stub"
+        } else {
+          "written by dataWrites"
+        }
+        tally.counts[kind] = tally.counts[kind] + 1
+      }
+    }
+  }
+  let (with_index, in_order) = (
+    generated_data(twins.indexed),
+    generated_data(twins.linear),
+  )
+  if with_index != in_order {
+    fail(
+      (
+        $|case \{case}: the engines hold different data
+        $|Definition files:
+        $|\{shown_files}
+        $|
+        $|with the index:
+        $|\{with_index}
+        $|
+        $|in matching order:
+        $|\{in_order}
+      ),
+    )
   }
 }
 
@@ -296,10 +379,11 @@ fn chance(rand : @random.Rand, percent : Int) -> Bool {
 
 ///|
 /// Generates a definition set of two Mocks, `m`, the Default Mock, and
-/// `o`, whose Stubs are spread over one to four files. The Stubs mix exact,
-/// pattern, operator, `json`, `form` and `xml` conditions, some with a
-/// priority and some without, and many share exact paths and priorities, so that ties are
-/// decided by file-name order and position in the file.
+/// `o`, each with the keyed Data bucket `items`, whose Stubs are spread
+/// over one to four files. The Stubs mix exact, pattern, operator, `json`,
+/// `form` and `xml` conditions, and CRUD Stubs, some with a priority and
+/// some without, and many share exact paths and priorities, so that ties
+/// are decided by file-name order and position in the file.
 fn gen_definition_set(rand : @random.Rand) -> GeneratedSet {
   let names = ["a.json", "B.json", "b.json", "aa.json", "10.json", "9.json"]
   rand.shuffle(names.length(), (i, j) => names.swap(i, j))
@@ -309,7 +393,10 @@ fn gen_definition_set(rand : @random.Rand) -> GeneratedSet {
       (
         #|{ "mocks": [
         #|  { "name": "m", "hosts": ["m.test"], "default": true },
-        #|  { "name": "o", "hosts": ["o.test"] } ] }
+        #|  { "name": "o", "hosts": ["o.test"] } ],
+        #|  "data": [
+        #|  { "mock": "m", "name": "items", "key": "id", "json": [{ "id": "b" }, { "id": 1 }, { "id": "a b" }] },
+        #|  { "mock": "o", "name": "items", "key": "id", "json": [{ "id": "c" }] } ] }
       ),
     ),
   ]
@@ -348,7 +435,9 @@ fn gen_definition_set(rand : @random.Rand) -> GeneratedSet {
 
 ///|
 /// Generates the Stub `id` and the kind of its path condition: `exact
-/// path`, `path pattern` or `no path`.
+/// path`, `path pattern` or `no path`; or a CRUD Stub of the bucket
+/// `items`, at a path that ordinary Stubs and requests use too, and its
+/// kind, `crud`. Some ordinary Stubs write `items` with `dataWrites`.
 fn gen_stub(rand : @random.Rand, id : String) -> (Json, String) {
   let stub : Map[String, Json] = {
     "id": Json::string(id),
@@ -359,6 +448,14 @@ fn gen_stub(rand : @random.Rand, id : String) -> (Json, String) {
     stub["priority"] = Json::number(
       [-1, 0, 0, 1, 2][rand.int(limit=5)].to_double(),
     )
+  }
+  if chance(rand, 12) {
+    stub.remove("response")
+    stub["crud"] = {
+      "bucket": "items",
+      "path": Json::string(pick(rand, ["/a", "/a", "/a/b", "/A", "/b"])),
+    }
+    return (Json::object(stub), "crud")
   }
   let request : Map[String, Json] = Map([])
   if chance(rand, 70) {
@@ -448,7 +545,37 @@ fn gen_stub(rand : @random.Rand, id : String) -> (Json, String) {
   if chance(rand, 35) {
     stub["scenario"] = gen_scenario_clause(rand)
   }
+  if chance(rand, 15) {
+    stub["dataWrites"] = gen_data_writes(rand)
+  }
   (Json::object(stub), kind)
+}
+
+///|
+/// One or two writes to the keyed bucket `items`, of every op, some by a
+/// key that items have, some by one that none has, and some by a key the
+/// request's path gives.
+fn gen_data_writes(rand : @random.Rand) -> Json {
+  let writes : Array[Json] = [
+    { "op": "append", "bucket": "items", "value": { "n": 1 } },
+    { "op": "append", "bucket": "items", "value": { "id": "b" } },
+    { "op": "merge", "bucket": "items", "key": "1", "value": { "seen": true } },
+    {
+      "op": "merge",
+      "bucket": "items",
+      "key": "${path[1] ?? 'x'}",
+      "value": { "seen": "${path}" },
+    },
+    { "op": "set", "bucket": "items", "key": "b", "value": { "v": 2 } },
+    { "op": "set", "bucket": "items", "value": [{ "id": 1 }] },
+    { "op": "remove", "bucket": "items", "key": "${path[1] ?? 'x'}" },
+    { "op": "remove", "bucket": "items", "key": "a b" },
+  ]
+  Json::array(
+    Array::makei(1 + rand.int(limit=2), _ => {
+      writes[rand.int(limit=writes.length())]
+    }),
+  )
 }
 
 ///|
@@ -507,11 +634,13 @@ fn gen_value_conditions(
 /// Default Mock answers. Paths are written as clients send them, sometimes
 /// percent-encoded, some query parameters and headers are repeated,
 /// cookies come in up to two Cookie fields, and some bodies are forms, with
-/// or without the form Content-Type.
+/// or without the form Content-Type. Some paths are item paths of the
+/// generated CRUD Stubs, with keys that items have, and some bodies are
+/// JSON objects, with or without a key, for creates, replaces and updates.
 fn gen_request(rand : @random.Rand) -> @engine.Request {
   let path = pick(rand, [
     "/", "/a", "/a", "/a/b", "/a/b", "/A", "/a%20b", "/%C3%A9", "/a/", "/a/c", "/b",
-    "/a%2Fb", "", "http://o.test/a",
+    "/a%2Fb", "", "http://o.test/a", "/a/1", "/a/a%20b", "/b/c", "/a/b/1", "/A/2",
   ])
   let query = pick(rand, [
     "", "", "?q=1", "?tag=1&tag=2", "?tag=2&tag=1", "?q=a+b", "?q=a%20b&tag=1", "?q=12",
@@ -550,10 +679,12 @@ fn gen_request(rand : @random.Rand) -> @engine.Request {
   let body = pick(rand, [
     "", "hi", "{\"k\":1}", "{\"k\":[1,2]}", "{\"k\": 1, \"z\": 0}", "[1]", "hello",
     "<k>1</k>", "<k v='2'>1</k>", "<k/>", "<a><k>2</k></a>", "k=1", "k=2&v=a+b",
-    "a+b=1&k=12", "v=1&k", "k=%31",
+    "a+b=1&k=12", "v=1&k", "k=%31", "{\"id\":\"b\"}", "{\"id\":7,\"k\":2}", "{\"id\":null}",
   ])
   {
-    meth: pick(rand, ["GET", "GET", "GET", "POST", "PUT", "get"]),
+    meth: pick(rand, [
+      "GET", "GET", "GET", "POST", "POST", "PUT", "PATCH", "DELETE", "get",
+    ]),
     target: path + query,
     version: "HTTP/1.1",
     headers,

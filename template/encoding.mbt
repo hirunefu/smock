@@ -350,6 +350,14 @@ fn percent_encoded(
   }
   check_result(name, length, at)
   let out = StringBuilder(size_hint=length.to_int())
+  write_percent_encoded(out, bytes)
+  out.to_string()
+}
+
+///|
+/// Writes `bytes` to `out`, each byte but the unreserved characters as `%`
+/// and two upper-case hex digits.
+fn write_percent_encoded(out : StringBuilder, bytes : Bytes) -> Unit {
   for b in bytes {
     if is_unreserved(b) {
       out.write_char(b.to_int().unsafe_to_char())
@@ -359,7 +367,15 @@ fn percent_encoded(
       out.write_char(upper_hex_digits[b.to_int() & 15].unsafe_to_char())
     }
   }
-  out.to_string()
+}
+
+///|
+/// Writes `text` to `out`, in UTF-8, percent-encoded as `urlEncode`
+/// encodes it: each byte but `A-Z a-z 0-9 - . _ ~` as `%` and two
+/// upper-case hex digits. Its length is not bounded. The `Location` of a
+/// CRUD Stub's create encodes each segment of its path so.
+pub fn write_url_encoded(out : StringBuilder, text : StringView) -> Unit {
+  write_percent_encoded(out, @utf8.encode(text))
 }
 
 ///|

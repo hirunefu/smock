@@ -258,7 +258,9 @@ test "the snapshot holds each pattern compiled when the set is loaded, ready to 
     body_files: [],
   }
   guard @definitions.load(set) is Ok(snapshot) else { fail("not loaded") }
-  let request = snapshot.mocks[0].stubs[0].request
+  guard snapshot.mocks[0].stubs[0].serves is Ordinary({ request, .. }) else {
+    fail("not an ordinary Stub")
+  }
   debug_inspect(
     request,
     content=(
@@ -408,7 +410,10 @@ test "the snapshot holds each Stub's Scenario clause, and each Mock's Scenarios 
       )
     }
     for stub in mock.stubs {
-      let clause = match stub.scenario {
+      guard stub.serves is Ordinary(ordinary) else {
+        fail("\{stub.id} is not an ordinary Stub")
+      }
+      let clause = match ordinary.scenario {
         Some(c) =>
           "\{c.name}, requires \{state(c.requires)}, moveTo \{state(c.move_to)}"
         None => "no clause"
@@ -594,7 +599,10 @@ test "the snapshot holds a Stub's response as its only response, of weight 1, wh
   guard @definitions.load(set) is Ok(snapshot) else { fail("not loaded") }
   let out = []
   for stub in snapshot.mocks[0].stubs {
-    for i, weighted in stub.responses {
+    guard stub.serves is Ordinary(ordinary) else {
+      fail("\{stub.id} is not an ordinary Stub")
+    }
+    for i, weighted in ordinary.responses {
       let response = weighted.response
       out.push(
         "\{stub.id} \{i}: weight \{weighted.weight}, status \{response.status}, template \{response.template is Some(_)}",
@@ -629,7 +637,10 @@ test "the snapshot holds a Stub's responses in the order written, each with its 
   guard @definitions.load(set) is Ok(snapshot) else { fail("not loaded") }
   let out = []
   for stub in snapshot.mocks[0].stubs {
-    for i, weighted in stub.responses {
+    guard stub.serves is Ordinary(ordinary) else {
+      fail("\{stub.id} is not an ordinary Stub")
+    }
+    for i, weighted in ordinary.responses {
       let response = weighted.response
       out.push(
         "\{stub.id} \{i}: weight \{weighted.weight}, status \{response.status}, headers \{response.headers.length()}, template \{response.template is Some(_)}",
@@ -677,7 +688,7 @@ test "a Stub gives exactly one of response and responses, 1 to 100 responses, ea
     ),
     content=(
       #|a.json: /stubs/0: has "response" and "responses"; give exactly one of them
-      #|a.json: /stubs/1: needs "response" or "responses"
+      #|a.json: /stubs/1: needs "response", "responses" or "crud"
       #|a.json: /stubs/2/responses: must hold 1 to 100 responses
       #|a.json: /stubs/3/responses: must hold 1 to 100 responses
       #|a.json: /stubs/5/responses/0/weight: must be an integer from 1 to 1000000

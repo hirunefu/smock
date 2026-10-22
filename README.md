@@ -7,8 +7,8 @@ The domain terms are defined in [GLOSSARY.md](GLOSSARY.md).
 [docs/getting-started-on-gke.md](docs/getting-started-on-gke.md) takes a
 first-time reader to smock answering requests on GKE Autopilot.
 [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) maps
-Mockoon environments, routes, rules and helpers onto Mocks, Stubs and
-templates.
+Mockoon environments, routes, rules, helpers and data buckets onto Mocks,
+Stubs, templates and Data buckets.
 
 ## Layout
 
@@ -44,8 +44,8 @@ Packages of `smock/smock`:
 - `engine`: decides the response to each request from the snapshot,
   including its Faults, and renders a named Stub's response for a sample
   request, for `smock render` and the Admin render operation. It also holds
-  the Ephemeral Stubs, the Scenario state and the Variables per Mock and
-  Session, and the Journal, with its bound,
+  the Ephemeral Stubs, the Scenario state, the Variables and the copies of
+  Data buckets per Mock and Session, and the Journal, with its bound,
   eviction counts and query filter, applies the Admin API operations on
   them (verification and the unmatched requests included), and reads the Session a request carries in its W3C Baggage header. `Engine(snapshot, match_index=false)` tries every Stub in
   matching order instead of using the index; tests check the index against
@@ -58,9 +58,9 @@ Packages of `smock/smock`:
   with integers only), and escaping by media type. It parses a template
   once, with the values of the environment variables `--template-env`
   lists, which its caller reads, and renders it for a request, the time,
-  one 64-bit draw and the Variables it reads, and writes JSON with smock's
-  own number form. It renders the values of a Stub's `variables` as JSON
-  too.
+  one 64-bit draw and the Variables and Data buckets it reads, and writes
+  JSON with smock's own number form. It renders the values of a Stub's
+  `variables` as JSON too.
 - `prng`: the seeded pseudo-random generator that Fault decisions and
   template helpers draw from. Its sequence for a seed is fixed, the same on
   every target.
@@ -391,9 +391,9 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   `smock_journal_evictions_total` show the [Journal](#the-journal)'s size
   and evictions, without labels; `smock_state_bytes` and
   `smock_state_writes_refused_total` show the bytes of per-Session state
-  that [the state bound](docs/definition-files.md#the-state-bound) counts
-  and the writes it refused, from requests and Admin API sets, without
-  labels.
+  that [the state bound](docs/definition-files.md#the-state-bound) counts,
+  Variables and copies of Data buckets, and the writes it refused, from
+  requests, CRUD Stubs and Admin API sets, without labels.
 - What smock's process and its cgroup use is read when `/metrics` is
   scraped, so serving requests costs nothing for it. The standard process
   metrics of Prometheus's client libraries: `process_cpu_seconds_total`
@@ -451,17 +451,20 @@ The Admin API is JSON over HTTP/1.1 on the admin port, as
   `smock render` does (below). The optional `time` and `seed` query
   parameters give the time (RFC 3339) and the seed of the random source,
   and `response` the index of one of a Stub's `responses` to render; the
-  rendering shows those it used, and the values the Stub's `variables`
-  would write. It writes nothing.
+  rendering shows those it used, the values the Stub's `variables` would
+  write, and the writes its `dataWrites` would make. It writes nothing.
 - `/v1/mocks/{mock}/stubs` adds, lists and deletes Ephemeral Stubs, and
-  `POST /v1/reset` clears them, Journal entries, Scenario state and
-  Variables ([below](#sessions-and-ephemeral-stubs)).
+  `POST /v1/reset` clears them, Journal entries, Scenario state, Variables
+  and copies of Data buckets ([below](#sessions-and-ephemeral-stubs)).
 - `GET /v1/mocks/{mock}/scenarios` lists the calling Session's Scenarios of
   a Mock, with their states, and `PUT /v1/mocks/{mock}/scenarios/{scenario}`
   sets the state of one ([below](#sessions-and-ephemeral-stubs)).
 - `GET /v1/mocks/{mock}/variables` lists the calling Session's Variables of
   a Mock, and `PUT` and `DELETE /v1/mocks/{mock}/variables/{name}` set and
   delete one ([below](#sessions-and-ephemeral-stubs)).
+- `GET /v1/mocks/{mock}/data` lists a Mock's Data buckets, and `GET`,
+  `PUT` and `DELETE /v1/mocks/{mock}/data/{bucket}` read, set and drop the
+  calling Session's copy of one ([below](#sessions-and-ephemeral-stubs)).
 - `POST /v1/journal/query` lists the calling Session's requests from the
   [Journal](#the-journal), `POST /v1/journal/verify` checks how many of
   them there were, and `GET /v1/journal/unmatched` lists those that no
@@ -519,15 +522,19 @@ variables from its own environment.
 
 `smock render --dir defs get-user --request sample.json` shows what a Stub
 returns for a sample request before a test relies on it. The sample is JSON,
-`{method, path, query, headers, body, session, vars}`, every member optional
-(`GET /` without query, headers, body, Session or Variables); the path and
-the query values are given percent-decoded, as Stub conditions compare them,
-and a repeated parameter or header takes an array of values. Cookies come
+`{method, path, query, headers, body, session, vars, data}`, every member
+optional (`GET /` without query, headers, body, Session, Variables or
+data); the path and the query values are given percent-decoded, as Stub
+conditions compare them, and a repeated parameter or header takes an array
+of values. Cookies come
 from `headers.Cookie`, as a request's come from its `Cookie` fields, and
 form fields from the body, read as a form when `headers.Content-Type` says
 it is one. `vars` maps the name of each
 [Variable](docs/definition-files.md#variables) templates read to its value;
-a rendering never reads the live Variables. smock reads the directory as
+a rendering never reads the live Variables. `data` maps the name of each
+[Data bucket](docs/definition-files.md#data-buckets) of the Stub's Mock
+to the value templates read in place of its initial value; a rendering
+never reads a Session's copy. smock reads the directory as
 `smock serve` does, body files included. It takes `--body-file-dir` and
 `--template-env` as `smock serve` does, and reads the listed environment
 variables from its own environment. It prints the rendering as JSON, the
@@ -547,10 +554,20 @@ so it can be repeated exactly, and a template that fails for the sample
 shows the 500 a request would get and its `templateError`. It also shows, as
 `variables`, the values the Stub's `variables` would write, rendered against
 the sample's `vars`, and the response reads them written over the sample's
-`vars`. It writes nothing. An invalid definitions directory prints the
-messages `smock check` prints, and it, an unknown Stub ID, an index the Stub
-has no response at, and a sample that cannot be read or is not valid exit
-with status 1, with the problem on stderr.
+`vars`. It shows, as `dataWrites`, the writes the Stub's `dataWrites` would
+make on the sample's data, and the response reads the data after them. A
+[CRUD Stub](docs/definition-files.md#crud-stubs) renders the answer its
+operation would give from the sample's data, and shows its write, if it
+makes one, in `dataWrites`. It writes nothing. It exits with status 1,
+with the problem on stderr, for:
+
+- an invalid definitions directory, with the messages `smock check`
+  prints;
+- an unknown Stub ID, or an index the Stub has no response at;
+- a sample that cannot be read or is not valid;
+- sample data for a bucket the Stub's Mock does not declare, or that
+  breaks a keyed bucket's rules;
+- a sample whose method and path fit no operation of a CRUD Stub.
 
 [docs/definition-files.md](docs/definition-files.md) describes the format:
 how Stubs match requests (method, path, query parameters, headers, cookies
@@ -562,8 +579,11 @@ bodies, body files that serve byte ranges, JSON or Server-Sent Events,
 several responses picked at random by weight (`responses`), response
 templates and their helpers (fake data, time and dates, conversions,
 strings, encodings, JWTs and arithmetic), Variables that keep a value from
-one request for the next, Faults, the JSON Schema, editor support and
-writing Definition files in another configuration language.
+one request for the next, Data buckets that a Mock declares with their
+initial values and that each Session reads and writes in a copy of its
+own, CRUD Stubs that serve a bucket as a REST resource with filters,
+sorting and paging, Faults, the JSON Schema, editor support and writing
+Definition files in another configuration language.
 [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) turns a
 Mockoon environment into Definition files.
 
@@ -668,25 +688,43 @@ curl localhost:8080/users/1                                           # 200, fro
   set gets 404 `unknown_variable`, and a set that would pass
   [the state bound](docs/definition-files.md#the-state-bound) 507
   `state_limit_reached`.
+- The Session keeps its own copy of each
+  [Data bucket](docs/definition-files.md#data-buckets) it writes to, and
+  reads the bucket's initial value until then. The copy lives until a
+  reset, a reload that changes its bucket, a `DELETE` or a restart.
+  `GET /v1/mocks/{mock}/data` lists the Mock's buckets, with whether the
+  Session holds a copy of each; `GET /v1/mocks/{mock}/data/{bucket}` reads
+  one with the value the Session reads; `PUT` with a JSON value as the body
+  sets the Session's copy, so that a test can arrange its data; and
+  `DELETE` drops the copy, so the bucket reads its initial value again. A
+  bucket the Mock does not declare gets 404 `unknown_bucket`, a value that
+  breaks a keyed bucket's rules 400 `invalid_data`, and a set that would
+  pass the state bound 507 `state_limit_reached`
+  ([Session copies](docs/definition-files.md#session-copies)).
 - `GET` lists and `DELETE /v1/mocks/{mock}/stubs/{id}` deletes the calling
   Session's Ephemeral Stubs of the Mock. `POST /v1/reset` with
   `{"scope":"session"}` clears the calling Session's Ephemeral Stubs,
-  [Journal](#the-journal) entries, Scenario state and
-  [Variables](docs/definition-files.md#variables) of every Mock, and its
-  eviction count; `{"scope":"mock","mock":"users"}` every Session's of one
-  Mock, even one that a reload removed while the Journal holds its entries;
-  and `{"scope":"all"}` all of them, and every eviction count. Without a
+  [Journal](#the-journal) entries, Scenario state,
+  [Variables](docs/definition-files.md#variables) and copies of Data
+  buckets of every Mock, and its eviction count;
+  `{"scope":"mock","mock":"users"}` every Session's of one Mock, even one
+  that a reload removed while the Journal holds its entries; and
+  `{"scope":"all"}` all of them, and every eviction count. Without a
   Session, `{"scope":"session"}` clears the no-Session space. A Scenario
-  whose state is cleared is back in `Started`, and a cleared Variable is
-  unset. It answers how many of each it removed, in `removed`:
-  `ephemeralStubs`, `journalEntries`, `scenarioStates` and `variables`.
+  whose state is cleared is back in `Started`, a cleared Variable is
+  unset, and a bucket whose copy is dropped reads its initial value again.
+  It answers how many of each it removed, in `removed`: `ephemeralStubs`,
+  `journalEntries`, `scenarioStates`, `variables` and `dataBuckets`.
 - Ephemeral Stubs live in the process that received them, until a reset or
   a restart. They survive a [reload](docs/definition-files.md#reloading) of
   the Definition files, except those of a Mock the new files no longer
   declare.
-- Adding, deleting, setting a Scenario's state and resetting each write a
-  log entry (`Ephemeral Stub added`, `Ephemeral Stub deleted`, `Scenario
-  state set`, `reset`); requests write none.
+- Adding and deleting an Ephemeral Stub, setting a Scenario's state,
+  setting and deleting a Variable, setting a Data bucket, dropping a copy
+  and resetting each write a log entry (`Ephemeral Stub added`,
+  `Ephemeral Stub deleted`, `Scenario state set`, `Variable set`,
+  `Variable deleted`, `Data bucket set`, `Data bucket copy dropped`,
+  `reset`); requests write none.
 
 ## The Journal
 
@@ -711,11 +749,15 @@ curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42
   [`responses`](docs/definition-files.md#several-responses), as
   `responseIndex`; the names of the
   [Variables](docs/definition-files.md#variables) the request wrote, as
-  `variablesWritten`; the status, or the connection Fault; when the request was received and
-  how long the response took; and the digest of the definition set that
-  answered. A request for a Host that no Mock answers is recorded too,
-  with no Mock; one the HTTP/1.1 codec rejects (400, 413, 431, 501 or 505)
-  is not.
+  `variablesWritten`; the names of the [Data
+  buckets](docs/definition-files.md#writing-buckets-datawrites) it wrote,
+  as `dataWritten`, and why a data write failed, as `dataError`; the
+  operation a [CRUD Stub](docs/definition-files.md#crud-stubs) served and
+  its key, as `crud`; the status, or the connection Fault; when the
+  request was received and how long the response took; and the digest of
+  the definition set that answered. A request for a Host that no Mock
+  answers is recorded too, with no Mock; one the HTTP/1.1 codec rejects
+  (400, 413, 431, 501 or 505) is not.
 - A request is in the Journal as soon as its client has the whole
   response: smock records it just before it writes the response's last
   bytes, so a query made right after a call always finds it. A stream of

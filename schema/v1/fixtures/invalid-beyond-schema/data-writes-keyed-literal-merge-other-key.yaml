@@ -1,0 +1,10 @@
+mocks:
+  - name: shop
+data:
+  - { mock: shop, name: orders, key: id, json: [{ id: 1 }, { id: 2 }] }
+stubs:
+  - id: update-order
+    mock: shop
+    dataWrites:
+      - { op: merge, bucket: orders, key: "1", value: { id: 2 } }
+    response: { status: 200 }

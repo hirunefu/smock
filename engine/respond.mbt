@@ -25,8 +25,9 @@ pub impl ToJson for TemplateError with fn to_json(self) {
 let pick_mask : UInt64 = 0xE7037ED1A0B428DB
 
 ///|
-/// The pick, a step of the match decision: the index, among `stub`'s
-/// `responses`, of the one a matched request whose one draw is `draw` gets.
+/// The pick, a step of the match decision: the index, among the `responses`
+/// of `ordinary`, of the one a matched request whose one draw is `draw`
+/// gets. `ordinary` is what the matched Stub serves.
 ///
 /// The pick draws from a generator of its own, seeded with `draw` XOR
 /// `pick_mask`: a number below the sum of the weights, by rejection
@@ -34,12 +35,12 @@ let pick_mask : UInt64 = 0xE7037ED1A0B428DB
 /// running total holds that number, in the order written. A Stub with
 /// `response` takes no pick and draws nothing: `None`, for its one
 /// response.
-fn pick_response(stub : @definitions.Stub, draw : UInt64) -> Int? {
-  guard stub.total_weight is Some(total) else { return None }
+fn pick_response(ordinary : @definitions.Ordinary, draw : UInt64) -> Int? {
+  guard ordinary.total_weight is Some(total) else { return None }
   let mut n = @prng.Generator(draw ^ pick_mask)
     .below(total.to_uint64())
     .to_int()
-  let responses = stub.responses
+  let responses = ordinary.responses
   for i in 0..<responses.length() {
     let weight = responses[i].weight
     if n < weight {
@@ -58,8 +59,8 @@ fn pick_response(stub : @definitions.Stub, draw : UInt64) -> Int? {
 /// when it serves byte ranges, the one that answers the request's Range
 /// field. A response with `template` on is rendered in `context`, the
 /// rendering for the request that the Stub's Variables left, or, without
-/// one, in the request's first rendering, made here from `now`, `draw` and
-/// `vars` as `first_context` makes it.
+/// one, in the request's first rendering, made here from `now`, `draw`,
+/// `vars`, `data` and `copies` as `first_context` makes it.
 ///
 /// Raises `RenderError` when a template cannot be rendered: the request
 /// then gets `template_failed`.
@@ -70,6 +71,8 @@ fn plan_response(
   now~ : Int64,
   draw~ : UInt64,
   vars~ : Map[String, Json]?,
+  data~ : Map[String, Json],
+  copies~ : Map[String, Json]?,
 ) -> ResponsePlan raise @template.RenderError {
   match response.template {
     None if response.serves_ranges => range_response(response, incoming.request)
@@ -77,7 +80,7 @@ fn plan_response(
     Some(template) => {
       let context = match context {
         Some(context) => context
-        None => first_context(incoming, now~, draw~, vars~)
+        None => first_context(incoming, now~, draw~, vars~, data~, copies~)
       }
       render_template(response.status, template, context)
     }
@@ -87,19 +90,25 @@ fn plan_response(
 ///|
 /// The first rendering for the request `incoming`, received at `now`
 /// (milliseconds since the Unix epoch), whose one draw is `draw`: its
-/// helpers draw from the request's helper generator, made from `draw`, and
-/// `vars.NAME` reads `vars`, by name.
+/// helpers draw from the request's helper generator, made from `draw`,
+/// `vars.NAME` reads `vars`, and `data.NAME` reads the copy in `copies`, or
+/// else the initial value in `data`, each by name. Every rendering for the
+/// request that follows from it reads the same data.
 fn first_context(
   incoming : Incoming,
   now~ : Int64,
   draw~ : UInt64,
   vars~ : Map[String, Json]?,
+  data~ : Map[String, Json],
+  copies~ : Map[String, Json]?,
 ) -> @template.Context {
   @template.Context::new(
     template_input(incoming),
     now~,
     rand=@template.helper_generator(draw),
     vars?,
+    data~,
+    copies?,
   )
 }
 
@@ -174,14 +183,20 @@ fn render_template(
 /// The response to a request whose template could not be rendered: 500,
 /// with what went wrong.
 fn template_failed(stub : String, error : TemplateError) -> ResponsePlan {
-  let body : Json = {
+  json_failure(500, {
     "error": "template failed",
     "stub": Json::string(stub),
     "at": Json::string(error.at),
     "message": Json::string(error.message),
-  }
+  })
+}
+
+///|
+/// A response of smock's own that says what went wrong: `status`, with
+/// `body` in compact JSON, as `application/json`, and no delay or Fault.
+fn json_failure(status : Int, body : Json) -> ResponsePlan {
   {
-    status: 500,
+    status,
     headers: [("Content-Type", "application/json")],
     body: Bytes(@template.compact_json_bytes(body)),
     delay_ms: 0,

@@ -55,6 +55,15 @@ pub struct Context {
   /// reads, by name, or `None` when there are none. The rendering never
   /// changes them.
   priv vars : Map[String, Json]?
+  /// The initial values of the Data buckets of the Stub's Mock that
+  /// `data.NAME` reads, by name, or `None` when there are none. The
+  /// rendering never changes them.
+  priv data : Map[String, Json]?
+  /// The copies of those buckets that the request's Session holds, by name,
+  /// which `data.NAME` reads in place of their initial values, or `None`
+  /// when it holds none. A copy of a bucket that `data` does not name is
+  /// never read. The rendering never changes them.
+  priv copies : Map[String, Json]?
   /// Whether the rendering is of a Variable's value rather than of a
   /// response, as the messages about its bounds say.
   priv mut of_value : Bool
@@ -82,14 +91,19 @@ pub fn helper_generator(draw : UInt64) -> @prng.Generator {
 /// Starts one rendering for the request `input`, received at `now`
 /// (milliseconds since the Unix epoch). The helpers draw from `rand`, the
 /// request's `helper_generator`, in the order the template is rendered.
-/// `vars` are the Variables `vars.NAME` reads, by name: by default, none.
-/// The bounds on loop iterations and on output count for this rendering
-/// alone.
+/// `vars` are the Variables `vars.NAME` reads, and `data` the initial
+/// values of the Data buckets `data.NAME` reads, each by name: by default,
+/// none. `copies` are the copies of those buckets that the request's
+/// Session holds, by name, which `data.NAME` reads in place of their
+/// initial values: by default, none. The bounds on loop iterations and on
+/// output count for this rendering alone.
 pub fn Context::new(
   input : Input,
   now~ : Int64,
   rand~ : @prng.Generator,
   vars? : Map[String, Json],
+  data? : Map[String, Json],
+  copies? : Map[String, Json],
 ) -> Context {
   {
     input,
@@ -101,6 +115,8 @@ pub fn Context::new(
     body: NotParsed,
     cookies: None,
     vars,
+    data,
+    copies,
     of_value: false,
   }
 }
@@ -109,12 +125,39 @@ pub fn Context::new(
 /// Starts the next rendering for the same request, once this one is done,
 /// such as the response after the values of the Stub's Variables. It reads
 /// the Variables `vars`, by default none, and has bounds of its own. It
-/// shares the rest: the request, the time, the helper generator, which goes
-/// on from where this rendering stopped, and what this one parsed of the
-/// request, so that the body and the cookies are parsed at most once per
-/// request.
-pub fn Context::next(self : Context, vars? : Map[String, Json]) -> Context {
-  { ..self, elapsed: 0L, iterations: 0, output: 0, vars, of_value: false, }
+/// reads the copies of Data buckets `copies` when they are given, such as
+/// those the request's writes left, and else the copies this rendering
+/// reads. It shares the rest: the request, the time, the helper generator,
+/// which goes on from where this rendering stopped, the initial values of
+/// the Data buckets, and what this one parsed of the request, so that the
+/// body and the cookies are parsed at most once per request.
+pub fn Context::next(
+  self : Context,
+  vars? : Map[String, Json],
+  copies? : Map[String, Json],
+) -> Context {
+  {
+    ..self,
+    elapsed: 0L,
+    iterations: 0,
+    output: 0,
+    vars,
+    copies: if copies is Some(_) {
+      copies
+    } else {
+      self.copies
+    },
+    of_value: false,
+  }
+}
+
+///|
+/// The request's helper generator, which this rendering draws from, as
+/// every rendering for the request does. What the request draws outside
+/// its templates, such as the new `uuid` keys of its data writes, draws
+/// from it too, on from where the renderings before stopped.
+pub fn Context::generator(self : Context) -> @prng.Generator {
+  self.rand
 }
 
 ///|
@@ -273,6 +316,11 @@ fn Context::eval(
           }
         Arithmetic(arithmetic) =>
           present(arithmetic_value(arithmetic, values, at))
+        Find =>
+          match find_value(values, at) {
+            Some(json) => present(json)
+            None => Missing(text)
+          }
       }
     }
   }
@@ -297,6 +345,25 @@ fn Context::reference(
         Some(vars) =>
           match vars.get(name) {
             Some(value) => walk(value, steps)
+            None => None
+          }
+        None => None
+      }
+    Data(name) =>
+      match self.data {
+        Some(data) =>
+          match data.get(name) {
+            Some(initial) => {
+              let value = match self.copies {
+                Some(copies) =>
+                  match copies.get(name) {
+                    Some(copy) => copy
+                    None => initial
+                  }
+                None => initial
+              }
+              walk(value, steps)
+            }
             None => None
           }
         None => None
@@ -429,7 +496,9 @@ fn number_of(text : String) -> Json? {
       in_loop: false,
       text: false,
       env: no_env,
+      buckets: no_buckets,
       reads_vars: Ref(false),
+      reads_data: Ref(false),
     },
   }
   let number = parser.number() catch { _ => return None }

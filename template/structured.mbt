@@ -35,6 +35,8 @@ pub struct Structured {
   priv root : Node
   /// Whether an expression of the template reads the `vars` root.
   priv vars_read : Bool
+  /// Whether an expression of the template reads the `data` root.
+  priv data_read : Bool
 }
 
 ///|
@@ -59,33 +61,78 @@ pub fn Structured::reads_vars(self : Structured) -> Bool {
 }
 
 ///|
+/// Whether the template reads Data buckets: whether one of its expressions
+/// reads the `data` root, wherever it is. One that does not renders the
+/// same whatever the buckets hold.
+pub fn Structured::reads_data(self : Structured) -> Bool {
+  self.data_read
+}
+
+///|
+/// The value the template always renders when it is literal: when no
+/// expression, `$each` or `$if` is in it, wherever. `None` for any other
+/// template, whose value depends on the request. A `$${` in a literal
+/// gives `${`, and a `$$` key `$`, as they render.
+pub fn Structured::literal(self : Structured) -> Json? {
+  literal_value(self.root)
+}
+
+///|
+/// The value `node` always renders, when nothing in it is rendered.
+fn literal_value(node : Node) -> Json? {
+  match node {
+    Static(json) => Some(json)
+    Members(members) => {
+      let object = Map([])
+      for entry in members {
+        guard literal_value(entry.1) is Some(value) else { return None }
+        object[entry.0] = value
+      }
+      Some(Json::object(object))
+    }
+    Elements(elements) => {
+      let array = []
+      for element in elements {
+        guard literal_value(element) is Some(value) else { return None }
+        array.push(value)
+      }
+      Some(Json::array(array))
+    }
+    Interpolated(_, _) | Single(_, _) | Each(_, _, _, _) | If(_, _, _, _) =>
+      None
+  }
+}
+
+///|
 /// The most loop iterations one response runs, in all.
 let max_iterations : Int = 10_000
 
 ///|
 /// Parses `source` as a structured template, for the field at `pointer`,
-/// within the Stub. `env` holds the environment variables it may read; by
-/// default, none. With `variable`, it is the value of a Variable rather
-/// than a `json`, which the messages say. Returns the template, or every
-/// problem found.
+/// within the Stub. `env` holds the environment variables it may read, and
+/// `buckets` the Data buckets; by default, none. With `role`, it is a value
+/// rather than a `json`, which messages name as `role` says, such as `a
+/// Variable's value`. Returns the template, or every problem found.
 pub fn Structured::parse(
   source : Json,
   pointer~ : String,
   env? : Env = no_env,
-  variable? : Bool = false,
+  buckets? : Buckets = no_buckets,
+  role? : String,
 ) -> Result[Structured, Array[Problem]] {
   let problems = []
-  let (root_name, one) = if variable {
-    ("a Variable's value", "one value")
-  } else {
-    ("json", "one response")
+  let (root_name, one) = match role {
+    Some(role) => (role, "one value")
+    None => ("json", "one response")
   }
   let scope = {
     vars: [],
     in_loop: false,
     text: false,
     env,
+    buckets,
     reads_vars: Ref(false),
+    reads_data: Ref(false),
   }
   let root = parse_node(source, pointer, scope, Some(root_name), problems)
   if problems.is_empty() {
@@ -98,7 +145,13 @@ pub fn Structured::parse(
     }
   }
   if problems.is_empty() {
-    Ok({ source, pointer, root, vars_read: scope.reads_vars.val, })
+    Ok({
+      source,
+      pointer,
+      root,
+      vars_read: scope.reads_vars.val,
+      data_read: scope.reads_data.val,
+    })
   } else {
     Err(problems)
   }
@@ -251,7 +304,7 @@ fn parse_directive(
       String(name) if root_names.contains(name) || reserved.contains(name) =>
         return problem(
           as_at,
-          "\{name.escape()} cannot be a loop variable: it is a request field, env, vars, loop or a reserved word",
+          "\{name.escape()} cannot be a loop variable: it is a request field, env, vars, data, loop or a reserved word",
         )
       String(name) => name
       _ => return problem(as_at, "\"as\" must be a string")
