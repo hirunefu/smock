@@ -1914,6 +1914,9 @@ check what its requests wrote.
 - A name that is not 1 to 128 ASCII letters, digits, `_` and `-` gets 400
   `invalid_request`, and a set without a body too. A body that is not JSON
   gets 400 `malformed_json`, as for other operations.
+- A value that takes more than 1 MiB as compact JSON gets 400
+  `invalid_request` and writes nothing, so a set is bounded as each value
+  of a Stub's `variables` is.
 - A delete of a Variable the Session has not set gets 404
   `unknown_variable`. Another Session's Variables are never listed, set or
   deleted.

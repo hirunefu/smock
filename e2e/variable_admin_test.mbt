@@ -98,7 +98,7 @@ async test "over the authenticated Admin API, a test sets a Variable for its Ses
 }
 
 ///|
-async test "Admin API errors on Variables: an unknown Mock, a name that is not a Variable name, a body that is not JSON or is missing, an unset Variable, and a method a path does not take" {
+async test "Admin API errors on Variables: an unknown Mock, a name that is not a Variable name, a body that is not JSON, is missing or takes more than 1 MiB, an unset Variable, and a method a path does not take" {
   with_definitions([("shop.yaml", who_logged_in)], dir => {
     let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
       ignore(
@@ -111,6 +111,8 @@ async test "Admin API errors on Variables: an unknown Mock, a name that is not a
       )
       let user = "/v1/mocks/shop/variables/user"
       let long = "x".repeat(129)
+      // A string 1 byte above 1 MiB of compact JSON.
+      let above = "\"\{"a".repeat(1024 * 1024 - 1)}\""
       let calls : Array[(String, String, String?, String?)] = [
         ("GET", "/v1/mocks/orders/variables", None, None),
         ("PUT", "/v1/mocks/orders/variables/user", None, Some("1")),
@@ -122,6 +124,7 @@ async test "Admin API errors on Variables: an unknown Mock, a name that is not a
         ("PUT", user, None, Some("{\"name\":")),
         ("PUT", user, None, Some("ann")),
         ("PUT", user, None, None),
+        ("PUT", user, None, Some(above)),
         ("DELETE", user, Some("test-a"), None),
         ("DELETE", user, None, None),
         ("POST", user, None, Some("1")),
@@ -166,6 +169,7 @@ async test "Admin API errors on Variables: an unknown Mock, a name that is not a
           #|PUT /v1/mocks/shop/variables/user: 400 {"error":"malformed_json","message":"the body is not valid JSON: Unexpected end of file","warnings":[]}
           #|PUT /v1/mocks/shop/variables/user: 400 {"error":"malformed_json","message":"the body is not valid JSON: Invalid character 'a' at line 1, column 0","warnings":[]}
           #|PUT /v1/mocks/shop/variables/user: 400 {"error":"invalid_request","message":"the body must be the value to set the Variable to: any JSON value","warnings":[]}
+          #|PUT /v1/mocks/shop/variables/user: 400 {"error":"invalid_request","message":"the value of the Variable \"user\" takes 1048577 bytes of compact JSON, more than the 1 MiB (1048576 bytes) a Variable's value may take","warnings":[]}
           #|DELETE /v1/mocks/shop/variables/user as test-a: 404 {"error":"unknown_variable","message":"the calling Session has no Variable \"user\" in the Mock \"shop\"","warnings":[]}
           #|DELETE /v1/mocks/shop/variables/user: 404 {"error":"unknown_variable","message":"the no-Session space has no Variable \"user\" in the Mock \"shop\"","warnings":[]}
           #|POST /v1/mocks/shop/variables/user: 405 (Allow: PUT, DELETE) {"error":"method_not_allowed","message":"/v1/mocks/shop/variables/user takes PUT, DELETE, not POST","warnings":[]}

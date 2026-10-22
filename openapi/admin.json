@@ -436,7 +436,7 @@
         "operationId": "setVariable",
         "tags": ["Variables"],
         "summary": "Set one of the calling Session's Variables",
-        "description": "Sets the Variable of the Mock to the value in the body, for the calling Session, so that a test can arrange the state its requests read. The value replaces the one the Variable had; `null` is stored, not deleted. Other Sessions keep their own Variables. The write counts against the bound on per-Session state (`--state-max-bytes`) as a Stub's writes do: a write that would take the count above it writes nothing, gets 507 `state_limit_reached`, and counts in `smock_state_writes_refused_total`.",
+        "description": "Sets the Variable of the Mock to the value in the body, for the calling Session, so that a test can arrange the state its requests read. The value replaces the one the Variable had; `null` is stored, not deleted. It may take at most 1 MiB as compact JSON, as each value of a Stub's `variables` may. Other Sessions keep their own Variables. The write counts against the bound on per-Session state (`--state-max-bytes`) as a Stub's writes do: a write that would take the count above it writes nothing, gets 507 `state_limit_reached`, and counts in `smock_state_writes_refused_total`.",
         "requestBody": {
           "required": true,
           "content": {
@@ -464,7 +464,7 @@
             }
           },
           "400": {
-            "description": "The body is not valid JSON (`malformed_json`), or it is empty or the name is not a Variable name (`invalid_request`).",
+            "description": "The body is not valid JSON (`malformed_json`), or it is empty, the name is not a Variable name, or the value takes more than 1 MiB as compact JSON (`invalid_request`). Nothing was written.",
             "headers": {
               "Smock-Replica": {
                 "$ref": "#/components/headers/Smock-Replica"
@@ -1485,7 +1485,7 @@
         "pattern": "^[A-Za-z0-9_-]{1,128}$"
       },
       "VariableValue": {
-        "description": "The value of a Variable: any JSON value."
+        "description": "The value of a Variable: any JSON value, of at most 1 MiB as compact JSON."
       },
       "VariableList": {
         "description": "The calling Session's Variables of a Mock.",
