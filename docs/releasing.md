@@ -165,7 +165,8 @@ the same Schemas again.
   them by hand, and checks NOTICE as
   [Every release after](#every-release-after) says.
 - **The cosign and syft versions**, which the workflows pass to the
-  actions that install them, as `cosign-release` (`release.yml`) and
+  actions that install them, as `cosign-release` (`release.yml`, once
+  for the image and once for the chart: keep them the same) and
   `syft-version` (`release.yml` and `build-test.yml`). Dependabot moves
   the actions, not these inputs. The maintainer moves them by hand: when
   Dependabot moves `sigstore/cosign-installer` or `anchore/sbom-action`,
