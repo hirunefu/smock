@@ -839,13 +839,17 @@ json:
   children: []
 ```
 
-- **Keywords beside a `$ref`.** In 3.1 and 3.2, they are merged with the
-  schema the `$ref` names, as `allOf` would merge them, and they come
-  first: `{ $ref: "#/components/schemas/Pet", example: { name: Rex } }`
-  samples as its own example. The schema the `$ref` names counts as part
-  of the schema that holds the `$ref`, so its `example` is used on an
-  object too ([Composed schemas](#composed-schemas)). In 3.0, the
-  keywords beside a `$ref` are ignored, as 3.0 asks.
+- **Keywords beside a `$ref`.** In 3.1 and 3.2, the schema the `$ref`
+  names counts as part of the schema that holds the `$ref`, not as an
+  `allOf` branch. The keywords beside the `$ref` come first, then those of
+  the schema it names, merged by the rules of `allOf`: `properties` joined
+  by name and `required` joined, and for any other keyword the first that
+  has one ([Composed schemas](#composed-schemas)). So
+  `{ $ref: "#/components/schemas/Pet", example: { name: Rex } }` samples
+  as its own example, and `{ $ref: "#/components/schemas/Pet", description: A pet }`
+  as Pet's `example`, on an object too, where an `allOf` branch's would
+  not be used. In 3.0, the keywords beside a `$ref` are ignored, as 3.0
+  asks.
 - **Recursion.** A schema reached again through a `$ref` it is already
   being sampled from ends the sample there. As an optional property, it is
   left out. As the items of an array, it gives no item, so the array is
