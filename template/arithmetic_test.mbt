@@ -338,7 +338,6 @@ test "inputs and results have at most 18 digits before the point and 18 after, a
       #|problem at /response/body: template: column 10: add(): argument 2 must have at most 18 digits before the point and 18 after, not 0.0000000000000000001
       #|problem at /response/body: template: column 9: round(): argument 1 must have at most 18 digits before the point and 18 after, not "1e-19"
       #|problem at /response/body: template: column 7: add(): argument 1 must have at most 18 digits before the point and 18 after, not "1e-99999999999999999999"
-
     ),
   )
 }

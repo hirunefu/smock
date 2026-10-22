@@ -36,11 +36,12 @@ of each GitHub release include its section
 - Template helpers for dates: `now(format)`, `dateFormat(date, format,
   offset)` and `dateTimeShift(date, duration)`. Formats use date-fns
   tokens, with English names only; the week-numbering year (`YYYY`) and
-  the day of the year (`DD`) are load errors. Offsets are `Z` or `±HH:MM`.
-  Shifts take ISO 8601 durations such as `P1M`, and a month shift clamps
-  to the end of the month. A date is an RFC 3339 date-time, a date
-  `YYYY-MM-DD` or epoch milliseconds; anything else is missing, so `??`
-  applies.
+  the day of the year (`DD`) are load errors. `yyyy` writes the calendar
+  year, so the year 0 is `0000`, as in RFC 3339. Offsets are `Z` or
+  `±HH:MM`. Shifts take ISO 8601 durations such as `P1M`, and a month
+  shift clamps to the end of the month. A date is an RFC 3339 date-time, a
+  date `YYYY-MM-DD` or epoch milliseconds; anything else is missing, so
+  `??` applies.
 - Template helpers for arithmetic: `add`, `subtract`, `multiply`,
   `divide`, `modulo`, `ceil`, `floor`, `round`, `toFixed` and `parseInt`.
   They compute in exact decimal with integers only, so `add(0.1, 0.2)` is

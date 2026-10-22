@@ -1549,8 +1549,9 @@ carry over:
   wrong date at the turn of a year: write `yyyy` and `dd`. So is any other
   unquoted ASCII letter, a run of a letter of a length the table does not
   list, such as `yyy`, and a quote that is not closed.
-- As in date-fns, `yyyy` and `yy` write the year of the era, so the year
-  0, 1 BC, is written `0001`.
+- `yyyy` and `yy` write the calendar year, so the year 0 is `0000` and
+  `00`, as smock writes it in RFC 3339 times. date-fns writes the year of
+  the era there instead: `0001`, for 1 BC.
 
 ```yaml
 response:
