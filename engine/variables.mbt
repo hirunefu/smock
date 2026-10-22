@@ -200,9 +200,9 @@ pub fn Engine::list_variables(
 
 ///|
 /// The most bytes of compact JSON a value set through the Admin API may
-/// take: 1 MiB, the bound each value of a Stub's `variables` has when it
-/// renders.
-pub let max_variable_value : Int64 = 1_048_576L
+/// take: 1 MiB, `@template.max_output`, the bound each value of a Stub's
+/// `variables` has when it renders.
+pub let max_variable_value : Int64 = @template.max_output.to_int64()
 
 ///|
 /// Sets the Variable `name` of the Mock `mock` to `value` for `session`, or
