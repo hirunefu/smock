@@ -2,19 +2,21 @@
 """The release benchmark of smock.
 
 It runs smock with the benchmark's definition set (bench/definitions/, or
-another such as its Scenario variant, bench/definitions-scenarios/) under
-resource profiles, each a CPU limit and an optional memory limit, and sends
-it the request mix (bench/requests.json) at a fixed arrival rate, an open
-model: requests go out on schedule whether or not earlier ones have been
-answered. Each request's latency counts from the time it was scheduled to be
-sent, so a server that stalls cannot hide the queue that builds up behind
-it, even when the load generator falls behind with it. The latency from the
-time the load generator released each request, and how late it released
-them, are reported beside it, and so are smock's peak memory and any OOM
-kills. A plan (bench/plan.json by default, or bench/plan-autopilot.json for
-the smallest GKE Autopilot Pods and the Helm chart's default) says which
-profiles and cases run, at which rates and for how long. Each run checks the
-targets of bench/targets.json, each under one of those profiles.
+another such as its Scenario variant, bench/definitions-scenarios/, or its
+CRUD variant, bench/definitions-crud/) under resource profiles, each a CPU
+limit and an optional memory limit, and sends it the request mix
+(bench/requests.json, or the CRUD variant's own, bench/requests-crud.json)
+at a fixed arrival rate, an open model: requests go out on schedule whether
+or not earlier ones have been answered. Each request's latency counts from
+the time it was scheduled to be sent, so a server that stalls cannot hide
+the queue that builds up behind it, even when the load generator falls
+behind with it. The latency from the time the load generator released each
+request, and how late it released them, are reported beside it, and so are
+smock's peak memory and any OOM kills. A plan (bench/plan.json by default,
+or bench/plan-autopilot.json for the smallest GKE Autopilot Pods and the
+Helm chart's default) says which profiles and cases run, at which rates and
+for how long. Each run checks the targets of bench/targets.json, each under
+one of those profiles.
 
 usage:
   python3 bench/bench.py run [options]    run the benchmark (--help lists the options)
@@ -50,6 +52,17 @@ from pathlib import Path
 
 BENCH = Path(__file__).resolve().parent
 ROOT = BENCH.parent
+
+# The request mix a run sends to a definitions directory of bench/ that has
+# its own, by the directory: the CRUD variant's, whose requests list, read
+# and update its items. Any other directory is sent bench/requests.json.
+MIXES = {BENCH / "definitions-crud": BENCH / "requests-crud.json"}
+
+
+def mix_path(definitions):
+    """The request mix a run sends when smock serves the definitions
+    directory `definitions`."""
+    return MIXES.get(Path(definitions).resolve(), BENCH / "requests.json")
 
 # The version of the layout of the files a run writes. A change that a
 # program reading them would notice increments it. 2: latency_ms counts
@@ -727,10 +740,11 @@ class Run:
         self.args = args
         self.plan_path = Path(args.plan).resolve()
         self.plan = read_json(self.plan_path)
-        self.mix = read_json(BENCH / "requests.json")["requests"]
         self.definitions = Path(args.definitions).resolve()
         if not self.definitions.is_dir():
             raise BenchError(f"no definitions directory {args.definitions}")
+        self.mix_path = mix_path(self.definitions)
+        self.mix = read_json(self.mix_path)["requests"]
         self.smock = str(Path(args.smock).resolve())
         self.oha = shutil.which(args.oha) or args.oha
         self.out = Path(args.out).resolve()
@@ -876,8 +890,8 @@ class Run:
                 "mocks": status.get("mocks"),
             },
             "request_mix": {
-                "file": shown_path(BENCH / "requests.json"),
-                "sha256": sha256_file(BENCH / "requests.json"),
+                "file": shown_path(self.mix_path),
+                "sha256": sha256_file(self.mix_path),
                 "weights": {request["name"]: request["weight"] for request in self.mix},
             },
             "plan": plan_record(self.plan_path),
@@ -1748,12 +1762,15 @@ def summary_markdown(summary, conditions, stopped=None):
     its end stopped, right below the line that says what ran, in place of
     the note that the run is incomplete."""
     smock, machine, generator = conditions["smock"], conditions["machine"], conditions["load_generator"]
+    # The request mix, when it is not the benchmark's own.
+    mix = conditions["request_mix"]["file"]
+    sent = "" if mix == shown_path(BENCH / "requests.json") else f", request mix {mix}"
     lines = [
         "# smock benchmark",
         "",
         f"Started {conditions['started_at']}: smock {known(smock['version'], 'of an unknown version')} "
         f"(commit {known(smock['commit'])}, {known(smock['toolchain'], 'toolchain unknown')}), definition set "
-        f"{known(conditions['definitions']['digest'])} ({conditions['definitions']['directory']}), on "
+        f"{known(conditions['definitions']['digest'])} ({conditions['definitions']['directory']}{sent}), on "
         f"{machine_text(machine)}, "
         f"{known(generator['version'], generator['name'] + ' of an unknown version')}, plan "
         f"{conditions['plan']['file']}.",
@@ -1890,6 +1907,8 @@ def main(argv):
                           "GKE Autopilot profiles and the Helm chart's default, which the targets hold under)")
     run.add_argument("--definitions", default=str(BENCH / "definitions"),
                      help="the definitions directory smock serves (default: bench/definitions; "
+                          "bench/definitions-crud is its CRUD variant, which is sent its own mix, "
+                          "bench/requests-crud.json, whose requests list, read and update items through CRUD Stubs; "
                           "bench/definitions-scenarios is its Scenario variant, in which every request of the mix "
                           "matches a Stub that moves a Scenario)")
     run.add_argument("--cases", help="only these cases of the plan, comma-separated")

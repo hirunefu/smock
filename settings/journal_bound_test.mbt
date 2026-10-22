@@ -6,7 +6,7 @@
 /// The bound the rule gives for `limit`, and what chose it, as
 /// `<max bytes> <source>`.
 fn derived(limit : @settings.MemoryLimit) -> String {
-  let bound = @settings.JournalByteBound::from_memory_limit(limit)
+  let bound = @settings.ByteBound::journal(limit)
   "\{bound.max_bytes} \{bound.source.name()}"
 }
 
@@ -93,7 +93,7 @@ test "journal byte bound: 64 MiB without a memory limit, or when it cannot be re
 fn explicit_bound(
   argv : Array[String],
   env : Map[String, String],
-) -> @settings.JournalByteBound? raise {
+) -> @settings.ByteBound? raise {
   let matches = @settings.serve_command().parse(argv~, env~)
   @settings.ServeSettings::from_matches(matches).journal_max_bytes
 }
@@ -183,14 +183,14 @@ test "memory limit: memory.max holds a number of bytes or max" {
 
 ///|
 test "journal byte bound: the startup log names the bound, its source and the memory limit it came from" {
-  let bounds : Array[@settings.JournalByteBound] = [
+  let bounds : Array[@settings.ByteBound] = [
     { max_bytes: 1000, source: Flag, },
     { max_bytes: 2000, source: Variable, },
-    @settings.JournalByteBound::from_memory_limit(Limited(54_525_952L)),
-    @settings.JournalByteBound::from_memory_limit(Limited(2_097_152L)),
-    @settings.JournalByteBound::from_memory_limit(Limited(4_294_967_296L)),
-    @settings.JournalByteBound::from_memory_limit(Unlimited),
-    @settings.JournalByteBound::from_memory_limit(
+    @settings.ByteBound::journal(Limited(54_525_952L)),
+    @settings.ByteBound::journal(Limited(2_097_152L)),
+    @settings.ByteBound::journal(Limited(4_294_967_296L)),
+    @settings.ByteBound::journal(Unlimited),
+    @settings.ByteBound::journal(
       Unknown("/proc/self/cgroup names no cgroup v2"),
     ),
   ]

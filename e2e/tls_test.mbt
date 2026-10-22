@@ -122,6 +122,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/missing.pem","keyFile":"*/rsa-key.pem","error":"cannot read the certificate file: no such file"}
         #|---
@@ -129,6 +130,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/rsa-chain.pem","keyFile":"*/missing.pem","error":"cannot read the key file: no such file"}
         #|---
@@ -136,6 +138,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/secret","keyFile":"*/rsa-key.pem","error":"cannot read the certificate file: is a directory"}
         #|---
@@ -143,6 +146,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/notes.txt","keyFile":"*/rsa-key.pem","error":"certificate file: no PEM certificate found"}
         #|---
@@ -150,6 +154,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/rsa-key.pem","keyFile":"*/rsa-key.pem","error":"certificate file: no PEM certificate found"}
         #|---
@@ -157,6 +162,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/rsa-chain.pem","keyFile":"*/notes.txt","error":"key file: no PEM private key found"}
         #|---
@@ -164,6 +170,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/rsa-chain.pem","keyFile":"*/rsa-chain.pem","error":"key file: no PEM private key found"}
         #|---
@@ -171,6 +178,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/rsa-chain.pem","keyFile":"*/other-key.pem","error":"the private key does not match the leaf certificate"}
         #|---
@@ -178,6 +186,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/rsa-chain.pem","keyFile":"*/ecdsa-key.pem","error":"the private key does not match the leaf certificate"}
         #|---
@@ -185,6 +194,7 @@ async test "smock serve refuses to start when only one TLS file is set, a file c
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"","certFile":"*/ecdsa-chain.pem","keyFile":"*/rsa-key.pem","error":"the private key does not match the leaf certificate"}
       ),
@@ -214,6 +224,7 @@ async test "the TLS settings can come from SMOCK_ environment variables, and the
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
         #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","certFile":"*/ecdsa-chain.pem","keyFile":"*/ecdsa-key.pem"}

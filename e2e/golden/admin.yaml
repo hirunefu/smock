@@ -237,7 +237,7 @@ stubs:
         warnings:
           - code: per_replica_state
             message: string
-  # POST /v1/reset, 400: Clear Ephemeral Stubs, Journal entries and Scenario state for a Session, a Mock or everything
+  # POST /v1/reset, 400: Clear Ephemeral Stubs, Journal entries, Scenario state, Variables and copies of Data buckets for a Session, a Mock or everything
   - id: admin.reset.400
     mock: admin
     request:
@@ -255,7 +255,7 @@ stubs:
         warnings:
           - code: per_replica_state
             message: string
-  # POST /v1/reset, 401: Clear Ephemeral Stubs, Journal entries and Scenario state for a Session, a Mock or everything
+  # POST /v1/reset, 401: Clear Ephemeral Stubs, Journal entries, Scenario state, Variables and copies of Data buckets for a Session, a Mock or everything
   - id: admin.reset.401
     mock: admin
     request:
@@ -274,7 +274,7 @@ stubs:
         warnings:
           - code: per_replica_state
             message: string
-  # POST /v1/reset, 404: Clear Ephemeral Stubs, Journal entries and Scenario state for a Session, a Mock or everything
+  # POST /v1/reset, 404: Clear Ephemeral Stubs, Journal entries, Scenario state, Variables and copies of Data buckets for a Session, a Mock or everything
   - id: admin.reset.404
     mock: admin
     request:
@@ -292,7 +292,7 @@ stubs:
         warnings:
           - code: per_replica_state
             message: string
-  # POST /v1/reset, default: Clear Ephemeral Stubs, Journal entries and Scenario state for a Session, a Mock or everything
+  # POST /v1/reset, default: Clear Ephemeral Stubs, Journal entries, Scenario state, Variables and copies of Data buckets for a Session, a Mock or everything
   - id: admin.reset.default
     mock: admin
     request:
@@ -310,7 +310,7 @@ stubs:
         warnings:
           - code: per_replica_state
             message: string
-  # POST /v1/reset, 200: Clear Ephemeral Stubs, Journal entries and Scenario state for a Session, a Mock or everything
+  # POST /v1/reset, 200: Clear Ephemeral Stubs, Journal entries, Scenario state, Variables and copies of Data buckets for a Session, a Mock or everything
   - id: admin.reset.200
     mock: admin
     request:
@@ -326,6 +326,8 @@ stubs:
           ephemeralStubs: 0
           journalEntries: 0
           scenarioStates: 0
+          variables: 0
+          dataBuckets: 0
         warnings:
           - code: per_replica_state
             message: string
@@ -440,6 +442,17 @@ stubs:
               name: string
               from: string
               to: string
+            responseIndex: 0
+            crud:
+              op: list
+              key: string
+            variablesWritten:
+              - string
+            dataWritten:
+              - string
+            dataError:
+              at: string
+              message: string
             nearMiss:
               stub: string
               stubSource: file
@@ -660,6 +673,17 @@ stubs:
               name: string
               from: string
               to: string
+            responseIndex: 0
+            crud:
+              op: list
+              key: string
+            variablesWritten:
+              - string
+            dataWritten:
+              - string
+            dataError:
+              at: string
+              message: string
             nearMiss:
               stub: string
               stubSource: file
@@ -777,6 +801,26 @@ stubs:
                   id: string
                   data: string
                   json: null
+            responses:
+              - weight: 1
+                status: 200
+                headers: {}
+                body: string
+                bodyFile: string
+                json: null
+                template: false
+                events:
+                  - delay: 0
+                    event: string
+                    id: string
+                    data: string
+                    json: null
+            variables: {}
+            dataWrites:
+              - op: set
+                bucket: string
+                key: string
+                value: null
             fault:
               delay:
                 fixed: 0
@@ -791,6 +835,10 @@ stubs:
                 kind: reset
                 probability: 1
               seed: 0
+            crud:
+              bucket: string
+              path: string
+              headers: {}
         warnings:
           - code: per_replica_state
             message: string
@@ -912,6 +960,26 @@ stubs:
                 id: string
                 data: string
                 json: null
+          responses:
+            - weight: 1
+              status: 200
+              headers: {}
+              body: string
+              bodyFile: string
+              json: null
+              template: false
+              events:
+                - delay: 0
+                  event: string
+                  id: string
+                  data: string
+                  json: null
+          variables: {}
+          dataWrites:
+            - op: set
+              bucket: string
+              key: string
+              value: null
           fault:
             delay:
               fixed: 0
@@ -926,6 +994,10 @@ stubs:
               kind: reset
               probability: 1
             seed: 0
+          crud:
+            bucket: string
+            path: string
+            headers: {}
         warnings:
           - code: per_replica_state
             message: string
@@ -1004,6 +1076,158 @@ stubs:
             state: string
             states:
               - string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # GET /v1/mocks/{mock}/variables, 401: List the calling Session's Variables of a Mock
+  - id: admin.listVariables.401
+    mock: admin
+    request:
+      method: GET
+      path:
+        pattern: /v1/mocks/[^/]+/variables
+      headers:
+        Smock-Status: "401"
+    response:
+      status: 401
+      headers:
+        Smock-Replica: string
+        WWW-Authenticate: Bearer
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # GET /v1/mocks/{mock}/variables, 404: List the calling Session's Variables of a Mock
+  - id: admin.listVariables.404
+    mock: admin
+    request:
+      method: GET
+      path:
+        pattern: /v1/mocks/[^/]+/variables
+      headers:
+        Smock-Status: "404"
+    response:
+      status: 404
+      headers:
+        Smock-Replica: string
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # GET /v1/mocks/{mock}/variables, default: List the calling Session's Variables of a Mock
+  - id: admin.listVariables.default
+    mock: admin
+    request:
+      method: GET
+      path:
+        pattern: /v1/mocks/[^/]+/variables
+      headers:
+        Smock-Status: default
+    response:
+      status: 500
+      headers:
+        Smock-Replica: string
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # GET /v1/mocks/{mock}/variables, 200: List the calling Session's Variables of a Mock
+  - id: admin.listVariables.200
+    mock: admin
+    request:
+      method: GET
+      path:
+        pattern: /v1/mocks/[^/]+/variables
+    response:
+      status: 200
+      headers:
+        Smock-Replica: string
+      json:
+        variables: {}
+        warnings:
+          - code: per_replica_state
+            message: string
+  # GET /v1/mocks/{mock}/data, 401: List the Data buckets of a Mock
+  - id: admin.listDataBuckets.401
+    mock: admin
+    request:
+      method: GET
+      path:
+        pattern: /v1/mocks/[^/]+/data
+      headers:
+        Smock-Status: "401"
+    response:
+      status: 401
+      headers:
+        Smock-Replica: string
+        WWW-Authenticate: Bearer
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # GET /v1/mocks/{mock}/data, 404: List the Data buckets of a Mock
+  - id: admin.listDataBuckets.404
+    mock: admin
+    request:
+      method: GET
+      path:
+        pattern: /v1/mocks/[^/]+/data
+      headers:
+        Smock-Status: "404"
+    response:
+      status: 404
+      headers:
+        Smock-Replica: string
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # GET /v1/mocks/{mock}/data, default: List the Data buckets of a Mock
+  - id: admin.listDataBuckets.default
+    mock: admin
+    request:
+      method: GET
+      path:
+        pattern: /v1/mocks/[^/]+/data
+      headers:
+        Smock-Status: default
+    response:
+      status: 500
+      headers:
+        Smock-Replica: string
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # GET /v1/mocks/{mock}/data, 200: List the Data buckets of a Mock
+  - id: admin.listDataBuckets.200
+    mock: admin
+    request:
+      method: GET
+      path:
+        pattern: /v1/mocks/[^/]+/data
+    response:
+      status: 200
+      headers:
+        Smock-Replica: string
+      json:
+        data:
+          - name: string
+            key: string
+            newKey: integer
+            written: true
         warnings:
           - code: per_replica_state
             message: string
@@ -1100,6 +1324,13 @@ stubs:
         mock: string
         time: "2000-01-01T00:00:00Z"
         seed: 0
+        responseIndex: 0
+        variables: {}
+        dataWrites:
+          - op: set
+            bucket: string
+            key: string
+            value: null
         response:
           status: 200
           headers:
@@ -1295,6 +1526,487 @@ stubs:
           state: string
           states:
             - string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # PUT /v1/mocks/{mock}/variables/{name}, 400: Set one of the calling Session's Variables
+  - id: admin.setVariable.400
+    mock: admin
+    request:
+      method: PUT
+      path:
+        pattern: /v1/mocks/[^/]+/variables/[^/]+
+      headers:
+        Smock-Status: "400"
+    response:
+      status: 400
+      headers:
+        Smock-Replica: string
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # PUT /v1/mocks/{mock}/variables/{name}, 401: Set one of the calling Session's Variables
+  - id: admin.setVariable.401
+    mock: admin
+    request:
+      method: PUT
+      path:
+        pattern: /v1/mocks/[^/]+/variables/[^/]+
+      headers:
+        Smock-Status: "401"
+    response:
+      status: 401
+      headers:
+        Smock-Replica: string
+        WWW-Authenticate: Bearer
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # PUT /v1/mocks/{mock}/variables/{name}, 404: Set one of the calling Session's Variables
+  - id: admin.setVariable.404
+    mock: admin
+    request:
+      method: PUT
+      path:
+        pattern: /v1/mocks/[^/]+/variables/[^/]+
+      headers:
+        Smock-Status: "404"
+    response:
+      status: 404
+      headers:
+        Smock-Replica: string
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # PUT /v1/mocks/{mock}/variables/{name}, 507: Set one of the calling Session's Variables
+  - id: admin.setVariable.507
+    mock: admin
+    request:
+      method: PUT
+      path:
+        pattern: /v1/mocks/[^/]+/variables/[^/]+
+      headers:
+        Smock-Status: "507"
+    response:
+      status: 507
+      headers:
+        Smock-Replica: string
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # PUT /v1/mocks/{mock}/variables/{name}, default: Set one of the calling Session's Variables
+  - id: admin.setVariable.default
+    mock: admin
+    request:
+      method: PUT
+      path:
+        pattern: /v1/mocks/[^/]+/variables/[^/]+
+      headers:
+        Smock-Status: default
+    response:
+      status: 500
+      headers:
+        Smock-Replica: string
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # PUT /v1/mocks/{mock}/variables/{name}, 200: Set one of the calling Session's Variables
+  - id: admin.setVariable.200
+    mock: admin
+    request:
+      method: PUT
+      path:
+        pattern: /v1/mocks/[^/]+/variables/[^/]+
+    response:
+      status: 200
+      headers:
+        Smock-Replica: string
+      json:
+        name: string
+        value: null
+        warnings:
+          - code: per_replica_state
+            message: string
+  # DELETE /v1/mocks/{mock}/variables/{name}, 400: Delete one of the calling Session's Variables
+  - id: admin.deleteVariable.400
+    mock: admin
+    request:
+      method: DELETE
+      path:
+        pattern: /v1/mocks/[^/]+/variables/[^/]+
+      headers:
+        Smock-Status: "400"
+    response:
+      status: 400
+      headers:
+        Smock-Replica: string
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # DELETE /v1/mocks/{mock}/variables/{name}, 401: Delete one of the calling Session's Variables
+  - id: admin.deleteVariable.401
+    mock: admin
+    request:
+      method: DELETE
+      path:
+        pattern: /v1/mocks/[^/]+/variables/[^/]+
+      headers:
+        Smock-Status: "401"
+    response:
+      status: 401
+      headers:
+        Smock-Replica: string
+        WWW-Authenticate: Bearer
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # DELETE /v1/mocks/{mock}/variables/{name}, 404: Delete one of the calling Session's Variables
+  - id: admin.deleteVariable.404
+    mock: admin
+    request:
+      method: DELETE
+      path:
+        pattern: /v1/mocks/[^/]+/variables/[^/]+
+      headers:
+        Smock-Status: "404"
+    response:
+      status: 404
+      headers:
+        Smock-Replica: string
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # DELETE /v1/mocks/{mock}/variables/{name}, default: Delete one of the calling Session's Variables
+  - id: admin.deleteVariable.default
+    mock: admin
+    request:
+      method: DELETE
+      path:
+        pattern: /v1/mocks/[^/]+/variables/[^/]+
+      headers:
+        Smock-Status: default
+    response:
+      status: 500
+      headers:
+        Smock-Replica: string
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # DELETE /v1/mocks/{mock}/variables/{name}, 200: Delete one of the calling Session's Variables
+  - id: admin.deleteVariable.200
+    mock: admin
+    request:
+      method: DELETE
+      path:
+        pattern: /v1/mocks/[^/]+/variables/[^/]+
+    response:
+      status: 200
+      headers:
+        Smock-Replica: string
+      json:
+        name: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # GET /v1/mocks/{mock}/data/{bucket}, 401: Read a Data bucket as the calling Session sees it
+  - id: admin.readDataBucket.401
+    mock: admin
+    request:
+      method: GET
+      path:
+        pattern: /v1/mocks/[^/]+/data/[^/]+
+      headers:
+        Smock-Status: "401"
+    response:
+      status: 401
+      headers:
+        Smock-Replica: string
+        WWW-Authenticate: Bearer
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # GET /v1/mocks/{mock}/data/{bucket}, 404: Read a Data bucket as the calling Session sees it
+  - id: admin.readDataBucket.404
+    mock: admin
+    request:
+      method: GET
+      path:
+        pattern: /v1/mocks/[^/]+/data/[^/]+
+      headers:
+        Smock-Status: "404"
+    response:
+      status: 404
+      headers:
+        Smock-Replica: string
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # GET /v1/mocks/{mock}/data/{bucket}, default: Read a Data bucket as the calling Session sees it
+  - id: admin.readDataBucket.default
+    mock: admin
+    request:
+      method: GET
+      path:
+        pattern: /v1/mocks/[^/]+/data/[^/]+
+      headers:
+        Smock-Status: default
+    response:
+      status: 500
+      headers:
+        Smock-Replica: string
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # GET /v1/mocks/{mock}/data/{bucket}, 200: Read a Data bucket as the calling Session sees it
+  - id: admin.readDataBucket.200
+    mock: admin
+    request:
+      method: GET
+      path:
+        pattern: /v1/mocks/[^/]+/data/[^/]+
+    response:
+      status: 200
+      headers:
+        Smock-Replica: string
+      json:
+        bucket:
+          name: string
+          key: string
+          newKey: integer
+          written: true
+          value: null
+        warnings:
+          - code: per_replica_state
+            message: string
+  # PUT /v1/mocks/{mock}/data/{bucket}, 400: Set the calling Session's copy of a Data bucket
+  - id: admin.setDataBucket.400
+    mock: admin
+    request:
+      method: PUT
+      path:
+        pattern: /v1/mocks/[^/]+/data/[^/]+
+      headers:
+        Smock-Status: "400"
+    response:
+      status: 400
+      headers:
+        Smock-Replica: string
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # PUT /v1/mocks/{mock}/data/{bucket}, 401: Set the calling Session's copy of a Data bucket
+  - id: admin.setDataBucket.401
+    mock: admin
+    request:
+      method: PUT
+      path:
+        pattern: /v1/mocks/[^/]+/data/[^/]+
+      headers:
+        Smock-Status: "401"
+    response:
+      status: 401
+      headers:
+        Smock-Replica: string
+        WWW-Authenticate: Bearer
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # PUT /v1/mocks/{mock}/data/{bucket}, 404: Set the calling Session's copy of a Data bucket
+  - id: admin.setDataBucket.404
+    mock: admin
+    request:
+      method: PUT
+      path:
+        pattern: /v1/mocks/[^/]+/data/[^/]+
+      headers:
+        Smock-Status: "404"
+    response:
+      status: 404
+      headers:
+        Smock-Replica: string
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # PUT /v1/mocks/{mock}/data/{bucket}, 507: Set the calling Session's copy of a Data bucket
+  - id: admin.setDataBucket.507
+    mock: admin
+    request:
+      method: PUT
+      path:
+        pattern: /v1/mocks/[^/]+/data/[^/]+
+      headers:
+        Smock-Status: "507"
+    response:
+      status: 507
+      headers:
+        Smock-Replica: string
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # PUT /v1/mocks/{mock}/data/{bucket}, default: Set the calling Session's copy of a Data bucket
+  - id: admin.setDataBucket.default
+    mock: admin
+    request:
+      method: PUT
+      path:
+        pattern: /v1/mocks/[^/]+/data/[^/]+
+      headers:
+        Smock-Status: default
+    response:
+      status: 500
+      headers:
+        Smock-Replica: string
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # PUT /v1/mocks/{mock}/data/{bucket}, 200: Set the calling Session's copy of a Data bucket
+  - id: admin.setDataBucket.200
+    mock: admin
+    request:
+      method: PUT
+      path:
+        pattern: /v1/mocks/[^/]+/data/[^/]+
+    response:
+      status: 200
+      headers:
+        Smock-Replica: string
+      json:
+        bucket:
+          name: string
+          key: string
+          newKey: integer
+          written: true
+          value: null
+        warnings:
+          - code: per_replica_state
+            message: string
+  # DELETE /v1/mocks/{mock}/data/{bucket}, 401: Drop the calling Session's copy of a Data bucket
+  - id: admin.dropDataBucketCopy.401
+    mock: admin
+    request:
+      method: DELETE
+      path:
+        pattern: /v1/mocks/[^/]+/data/[^/]+
+      headers:
+        Smock-Status: "401"
+    response:
+      status: 401
+      headers:
+        Smock-Replica: string
+        WWW-Authenticate: Bearer
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # DELETE /v1/mocks/{mock}/data/{bucket}, 404: Drop the calling Session's copy of a Data bucket
+  - id: admin.dropDataBucketCopy.404
+    mock: admin
+    request:
+      method: DELETE
+      path:
+        pattern: /v1/mocks/[^/]+/data/[^/]+
+      headers:
+        Smock-Status: "404"
+    response:
+      status: 404
+      headers:
+        Smock-Replica: string
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # DELETE /v1/mocks/{mock}/data/{bucket}, default: Drop the calling Session's copy of a Data bucket
+  - id: admin.dropDataBucketCopy.default
+    mock: admin
+    request:
+      method: DELETE
+      path:
+        pattern: /v1/mocks/[^/]+/data/[^/]+
+      headers:
+        Smock-Status: default
+    response:
+      status: 500
+      headers:
+        Smock-Replica: string
+      json:
+        error: unauthorized
+        message: string
+        warnings:
+          - code: per_replica_state
+            message: string
+  # DELETE /v1/mocks/{mock}/data/{bucket}, 200: Drop the calling Session's copy of a Data bucket
+  - id: admin.dropDataBucketCopy.200
+    mock: admin
+    request:
+      method: DELETE
+      path:
+        pattern: /v1/mocks/[^/]+/data/[^/]+
+    response:
+      status: 200
+      headers:
+        Smock-Replica: string
+      json:
+        bucket:
+          name: string
+          key: string
+          newKey: integer
+          written: true
+          value: null
         warnings:
           - code: per_replica_state
             message: string

@@ -32,42 +32,68 @@ covers part of the need, the item says what.
   Stub, and a request that no Stub matches gets a 404. Before switching,
   find the paths that clients reached through the proxy: the Mockoon CLI
   logs each request with `"requestProxied":true` or `false`.
-- **Data buckets and CRUD routes.** smock keeps no data, so a `POST` does
-  not change what a later `GET` returns. A Stub can serve a bucket's
-  initial value, and a test can change answers for itself with Ephemeral
-  Stubs, as [the CRUD route](#latency-cors-and-the-crud-route) of the
-  example shows.
-- **Random answers and global variables.** The `RANDOM` response mode and
-  global variables have no counterpart. The `fake.*` helpers, such as
-  `fake.pick(…)`, vary a value, a connection Fault's `probability` makes
-  some requests fail, though never with a status other than the Stub's,
-  and a test changes the answer between its calls by adding or deleting
-  Ephemeral Stubs in its Session. `SEQUENTIAL` responses and
-  `request_number` rules do carry over, as Scenarios.
-  [Answers that change between requests](#answers-that-change-between-requests)
-  shows both, and says which answer to keep for the others.
+- **Some features of data buckets and CRUD routes.** A data bucket
+  becomes a [Data bucket](definition-files.md#data-buckets), and a CRUD
+  route a [CRUD Stub](definition-files.md#crud-stubs), as
+  [the CRUD route](#latency-cors-and-the-crud-route) of the example and
+  [Data buckets](#data-buckets) show. These have no counterpart:
+  - templated or generated bucket content: a bucket's initial value is
+    static JSON, so save the value that Mockoon generated
+    ([Behaviour that differs](#behaviour-that-differs));
+  - CRUD routes over a bucket that is not an array of objects with keys,
+    such as an object or an array of texts: ordinary Stubs read and write
+    such a bucket ([Data buckets](#data-buckets));
+  - nested keys, such as a `crudKey` of `data.id`;
+  - list operators other than equality, such as `_gt` and `_like`, and
+    `search`;
+  - `PUT`, `PATCH` and `DELETE` on a whole list: ordinary Stubs with
+    `dataWrites` take them ([Data buckets](#data-buckets));
+  - writes to a path inside a value, as `setData` takes: a write sets or
+    merges a whole bucket, or one item of a bucket with keys.
 - **Callbacks.** smock never sends a request of its own. A test that
   relied on a callback sends that request to the callback's URL itself,
   and can check in the Journal that the request that fired it arrived.
 - **WebSockets.** smock serves HTTP/1.1 and HTTPS. It can stream
   Server-Sent Events, which only a client written for them reads.
-- **Schema validation and multipart bodies.** The `valid_json_schema`
-  operator has no counterpart, and a multipart body can be matched only
-  by a pattern on the whole body. [Rules](#rules) maps the other rules,
-  `invert` and rules on cookies, form fields and XML bodies included.
-- **Most Handlebars helpers.** smock's templates are not Handlebars, and
-  have no arithmetic, array literals, string functions, date formats,
-  JWT decoding, cookie reading, local or environment variables, or
-  faker locales.
+- **Schema validation, multipart bodies and rules on state.** The
+  `valid_json_schema` operator has no counterpart, and a multipart body
+  can be matched only by a pattern on the whole body. The rule targets
+  `global_var`, `data_bucket` and `templating` have none either: a
+  condition reads the request, never a Variable or a Data bucket.
+  [Rules](#rules) maps the other rules, `invert` and rules on cookies,
+  form fields and XML bodies included.
+- **Some Handlebars helpers.** smock's templates are not Handlebars.
   [Template helpers](#template-helpers) maps the helpers that have a
-  counterpart.
+  counterpart, among them arithmetic, strings, dates, JWTs, cookies,
+  environment variables and global variables. These have none:
+  - array literals, local variables (`setVar` and `getVar`), and
+    comparisons other than `==` and `!=`, such as `gt` and `lt`;
+  - helpers that filter, sort or merge arrays and objects, such as
+    `filter`, `sort` and `objectMerge`;
+  - `jsonParse`, `someOf`, `objectId`, random dates (`date` and `time`)
+    and faker locales;
+  - the `status` helper: [`responses`](#random-responses) vary the
+    status instead;
+  - setting a global variable or a data bucket from inside a template:
+    a Stub's `variables` set [Variables](#global-variables), and its
+    `dataWrites` write [Data buckets](#data-buckets), instead;
+  - local time and time-zone names: Mockoon writes dates in its process's
+    time zone, such as `TZ=Asia/Tokyo`, and smock in UTC or at a fixed
+    offset, such as `+09:00`. Neither has date locales: month and day
+    names are in English;
+  - the `MOCKOON_` prefix of environment variables: `--template-env` lists
+    each name in full.
 - **A port or a path prefix per environment.** One smock serves all its
   Mocks on one plain port and one TLS port, and tells them apart by the
   request's Host.
   [Environments told apart by port](#environments-told-apart-by-port)
   gives the two ways round it.
-- **Response limits.** A response's status is from 200 to 599, and body
-  files are always sent whole, without Range requests.
+- **Response limits.** A response's status is from 200 to 599. A body
+  file serves one byte range at a time, never `multipart/byteranges`, and
+  there are no conditional requests, since smock sends no `ETag` or
+  `Last-Modified`. Mockoon has neither, but sends the first of several
+  ranges where smock sends the whole body
+  ([Behaviour that differs](#behaviour-that-differs)).
 - **OpenAPI export, and a GUI.** smock writes no OpenAPI document, and
   Definition files are edited as text. Editors can check them against the
   JSON Schema ([editor support](definition-files.md#editor-support)).
@@ -97,9 +123,11 @@ smock's model is flatter:
   reaches a Mock by its Host, not by its port. A lone Mock is the
   *Default Mock*, which also answers requests for Hosts that no Mock
   lists.
-- A Stub pairs request conditions with one response. Each response of a
-  Mockoon route becomes a Stub of its own, whose conditions are the
-  route's method and path plus the response's rules.
+- A Stub pairs request conditions with one response, or with several
+  `responses` that it picks from at random. Each response of a Mockoon
+  route becomes a Stub of its own, whose conditions are the route's
+  method and path plus the response's rules, except that the responses of
+  a `RANDOM` route share one Stub.
 - The first Stub that matches a request answers it. Stubs are tried in
   the order they are declared, unless `priority` reorders them, so the
   order of the routes, and of the responses within each route, carries
@@ -108,6 +136,14 @@ smock's model is flatter:
   `Started`. A Stub can require one of its states and move it to
   another, so that the same request gets different answers at different
   points of a flow.
+- A *Variable* is a named JSON value that a Stub writes when it matches,
+  and that templates read. Like a Scenario's state, it is kept per Mock
+  and per Session. Variables stand in for global variables.
+- A *Data bucket* is a named JSON value that a Mock declares with its
+  initial value, as an environment declares a data bucket. Templates read
+  it, and Stubs write it when they match. Each Session reads and writes a
+  copy of its own. A *CRUD Stub* serves a bucket of objects with keys as
+  a REST resource, as a CRUD route does.
 - A response is a template only with `template: true`, and templates
   insert values with `${…}` expressions, not Handlebars.
 - A request that no Stub matches gets a 404 whose `Smock-Near-Miss`
@@ -159,8 +195,8 @@ whole [at the end](#the-result). They apply to any environment.
   drops the field and serves them, so leave them out only where they
   were meant to stay off.
 - Check each route against
-  [What smock does not do](#what-smock-does-not-do). Here only the CRUD
-  route is affected, and it keeps its read
+  [What smock does not do](#what-smock-does-not-do). Here every route has
+  a counterpart, the CRUD route included
   ([below](#latency-cors-and-the-crud-route)).
 
 ### Declare the Mock
@@ -271,8 +307,9 @@ The route's response mode changes this:
 - `SEQUENTIAL`: a Stub for each response, in order and without its
   rules, each moving a Scenario on to the next
   ([Answers that change between requests](#answers-that-change-between-requests)).
-- `RANDOM` has no counterpart: the same section says which response to
-  keep.
+- `RANDOM`: one Stub, with the route's method and path, that gives every
+  response in `responses`, without their rules
+  ([Random responses](#random-responses)).
 
 In the example, `GET users` lists its default response first, but the
 Stub of the response with a rule, `list-inactive-users`, comes before the
@@ -489,9 +526,9 @@ every kind:
   as in `"id": {{urlParam 'id'}}`, Mockoon sends a number, `"id": 42`,
   while `id: ${path[3]}` gives the string `"42"`. Write
   `id: ${number(path[3])}` there. A number built from a helper and text,
-  such as `{{faker 'number.int' min=5 max=60}}.99`, has no counterpart,
-  since smock has no arithmetic; take a helper that gives a number of
-  the same kind, such as `${fake.decimal(5, 60, 2)}`.
+  such as `{{faker 'number.int' min=5 max=60}}.99`, is computed with an
+  arithmetic helper: `price: ${add(fake.int(5, 60), 0.99)}` gives a
+  number such as `6.99`.
 - **Structure.** `$if` and `$each` work only in `json`, and each gives one
   value. So an `{{#if}}` around several members becomes one `$if` for
   each member, with the condition repeated, and
@@ -509,10 +546,13 @@ every kind:
     else: EUR
   ```
 
-  smock has no array literals, so an `{{#each (array 'SKU-1' 'SKU-2')}}`
-  is written out, one element after the other, along with what an
-  `{{add @index 1}}` in it computes. `{{setVar}}` has no counterpart:
-  write its expression wherever `{{getVar}}` reads the variable.
+  smock has no array literals, but `split` makes an array of strings
+  from a literal text. So `{{#each (array 'SKU-1' 'SKU-2')}}` becomes
+  `$each: "split('SKU-1,SKU-2', ',')"`, and an `{{add @index 1}}` in it
+  becomes `${add(loop.index, 1)}`. An array of numbers or objects is
+  written out, one element after the other. `{{setVar}}` has no
+  counterpart: write its expression wherever `{{getVar}}` reads the
+  variable.
 - **Quoting.** In block style, as above, `${…}` needs no quotes. In a
   flow mapping, `{ id: ${path[3]} }` fails with
   `expected , or } in a flow mapping`; write `{ id: "${path[3]}" }`. A
@@ -564,8 +604,14 @@ every kind:
   `Content-Disposition: attachment` with the file's name: add that
   header if clients need it (the example's files have `sendFileAsBody`
   set to true). A body file is a template only with `template: true`,
-  and must then be UTF-8. Range requests have no counterpart
+  and must then be UTF-8. As in Mockoon, an untemplated body file answers
+  Range requests
   ([file serving](https://mockoon.com/docs/latest/response-configuration/file-serving/)).
+  smock serves a single byte range of a 200 to a GET, and a malformed
+  `Range` gets the whole body with 200, where Mockoon answers 400
+  ([Range requests](definition-files.md#range-requests);
+  [Behaviour that differs](#behaviour-that-differs) has the other
+  differences).
 - **A templated file path and `fallbackTo404`.** A Stub names one fixed
   body file, and a missing body file makes the definition set invalid,
   which `smock check` reports. For a `filePath` such as
@@ -600,8 +646,9 @@ every kind:
   ```
 
   Each new file then needs a Stub of its own.
-- **Data buckets.** A `DATABUCKET` body becomes the bucket's value,
-  written as `json`.
+- **Data buckets.** A `DATABUCKET` body becomes `json: "${data.NAME}"`,
+  with `template: true`, which answers what the bucket holds for the
+  request's Session ([Data buckets](#data-buckets)).
 
 ### Latency, CORS and the CRUD route
 
@@ -633,59 +680,123 @@ every kind:
   requests that other Stubs nearly match: on a tie in failed conditions,
   the Near miss is the Stub tried first. Since it has only one condition,
   its method, it is still the Near miss of a request that fails two or
-  more conditions of every other Stub, such as
-  `DELETE /api/v1/orders/1`, which gets
-  `Smock-Near-Miss: preflight; failed=method`. The CORS example in
+  more conditions of every other Stub, such as `HEAD /api/v1/status`,
+  which gets `Smock-Near-Miss: preflight; failed=method`. The CRUD Stub
+  `orders` fails only its path for a method that it serves, so
+  `DELETE /api/v1/status` names `orders`. The CORS example in
   [docs/definition-files.md](definition-files.md#when-no-stub-matches)
   gives its preflight Stub a second condition,
   `headers: { Access-Control-Request-Method: { pattern: ".+" } }`, which
-  every preflight meets. The 404 for that `DELETE` then names
-  `list-users`, which fails its method and path, but an `OPTIONS` request
-  without that header, which Mockoon answers, gets 404.
+  every preflight meets. The 404 for that `HEAD` then names `list-users`,
+  which fails its method and path, but an `OPTIONS` request without that
+  header, which Mockoon answers, gets 404.
 
   Mockoon adds CORS headers to other responses, its 404 for a request
   that no route takes included, only when they are among the environment
-  headers. In that case, copy them into the Stubs, and into the Mock's
-  `noMatch.headers` for its no-match response
+  headers. In that case, copy them into the Stubs, into the CRUD Stub's
+  `crud.headers` ([below](#latency-cors-and-the-crud-route)), and into
+  the Mock's `noMatch.headers` for its no-match response
   ([Behaviour that differs](#behaviour-that-differs)).
-- **The CRUD route.** smock keeps no data, so `list-orders` serves the
-  bucket's initial value, with the `X-Total-Count` and
-  `X-Filtered-Count` headers that Mockoon sends. Mockoon's list also
-  filters, sorts and pages, with `search`, `<field>_eq` and its kin,
-  `sort` and `order`, and `page` and `limit`
-  ([CRUD routes](https://mockoon.com/docs/latest/api-endpoints/crud-routes/)):
-  `GET /api/v1/orders?item_eq=book` answers only the book, with
-  `X-Filtered-Count: 1`. A `query` condition ignores the parameters it
-  does not list, so `list-orders` answers every such list with the whole
-  bucket and `X-Filtered-Count: 2`, without a sign. Give each list that
-  clients ask for a Stub of its own, before `list-orders`:
+- **The CRUD route.** The data bucket becomes a
+  [Data bucket](definition-files.md#data-buckets) of the Mock, in the
+  file's top-level `data`, and the CRUD route becomes a
+  [CRUD Stub](definition-files.md#crud-stubs), in the route's place:
 
   ```yaml
-  - id: list-orders-books
-    mock: users-api
-    request: { method: GET, path: /api/v1/orders, query: { item_eq: book } }
-    response:
-      status: 200
-      headers: { X-Total-Count: "2", X-Filtered-Count: "1" }
-      json: [{ id: 1, item: book }]
+  data:
+    - mock: users-api
+      name: orders
+      key: id
+      json: [{ id: 1, item: book }, { id: 2, item: pen }]
+
+  stubs:
+    # …
+    - id: orders
+      mock: users-api
+      crud: { bucket: orders, path: /api/v1/orders }
   ```
 
-  Mockoon also answers `GET /api/v1/orders/1` and `/2` from the bucket;
-  if clients read single orders, add a Stub for each, such as
-  `request: { method: GET, path: /api/v1/orders/1 }` with
-  `json: { id: 1, item: book }`. A test that needs the order it creates
-  adds Ephemeral Stubs for its own Session through the Admin API, and
-  smock tries those before the file's Stubs. The README's
-  [Sessions and Ephemeral Stubs](../README.md#sessions-and-ephemeral-stubs)
-  describes them:
+  The bucket's content goes into `json`, or, for a large one, into a file
+  in `defs/files/` that `jsonFile` names. `key` is the route's `crudKey`,
+  written out when it is Mockoon's default, `id`. `crud.path` is the
+  route's prefix and endpoint, joined, and `crud.bucket` names the bucket
+  that the route's `databucketID` links. As the route does, the CRUD Stub
+  lists and creates orders at `/api/v1/orders`, and reads, replaces,
+  updates and deletes one at `/api/v1/orders/<id>`, with Mockoon's
+  statuses, and with `X-Total-Count` and `X-Filtered-Count` on a list.
+  Some answers differ in their details
+  ([Behaviour that differs](#behaviour-that-differs)).
+
+  Each Session reads and writes its own copy of the bucket, and requests
+  without a Session share one ([Data buckets](#data-buckets)). So a test
+  sees the orders it creates, and other tests do not:
 
   ```sh
-  curl -H "Authorization: Bearer change-me" -H "baggage: smock-session=checkout-42" \
-    -d '{"request":{"method":"POST","path":"/api/v1/orders"},"response":{"status":201,"json":{"id":3,"item":"pencil"}}}' \
-    localhost:9090/v1/mocks/users-api/stubs
   curl -H "baggage: smock-session=checkout-42" -d '{"item":"pencil"}' localhost:8080/api/v1/orders   # 201
-  curl -d '{"item":"pencil"}' localhost:8080/api/v1/orders                                          # 404
+  curl -H "baggage: smock-session=checkout-42" localhost:8080/api/v1/orders/3                       # 200
+  curl localhost:8080/api/v1/orders/3                                                                # 404
   ```
+
+  A Stub before the CRUD Stub takes over the requests it matches. So the
+  route's other responses, which its rules pick in place of the CRUD
+  operation, become ordinary Stubs before the CRUD Stub, and so does a
+  route that Mockoon's docs place above the CRUD route to override one
+  operation. `smock check` warns about such a Stub with a method and an
+  exact path after the CRUD Stub, where it never answers
+  ([Order and overrides](definition-files.md#order-and-overrides)).
+
+  Mockoon adds the environment headers to the route's answers. When they
+  hold CORS headers, give them to the CRUD Stub in `crud.headers`, which
+  go on every answer, errors included. A browser reads `X-Total-Count`
+  and `X-Filtered-Count` of a cross-origin answer only when
+  `Access-Control-Expose-Headers` names them, which Mockoon does not
+  send by itself:
+
+  ```yaml
+  - id: orders
+    mock: users-api
+    crud:
+      bucket: orders
+      path: /api/v1/orders
+      headers:
+        Access-Control-Allow-Origin: http://localhost:5173
+        Access-Control-Allow-Credentials: "true"
+        Access-Control-Expose-Headers: X-Total-Count, X-Filtered-Count
+  ```
+
+  `preflight` stays: a CRUD Stub does not answer `OPTIONS`.
+
+  A list reads smock's own parameters, not Mockoon's
+  ([List queries](definition-files.md#list-queries)), so change the
+  queries that clients send:
+
+  | Mockoon | smock |
+  |---|---|
+  | `item_eq=book` | `item=book`, on a top-level member only. |
+  | `sort=item`, `sort=item&order=asc` | `$sort=item` |
+  | `sort=item&order=desc` | `$sort=-item` |
+  | `page=3&limit=20` | `$offset=40&$limit=20`: `$offset` is `(page - 1) * limit`. |
+  | `page=3` | `$offset=20&$limit=10`, with Mockoon's default `limit` of 10 written out. |
+  | `limit=20` | `$limit=20` |
+  | `search`, and the operators `_ne`, `_gt`, `_gte`, `_lt`, `_lte`, `_like`, `_start` and `_end` | No counterpart. |
+
+  `GET /api/v1/orders?item_eq=book` thus becomes
+  `GET /api/v1/orders?item=book`, which answers only the book, with
+  `X-Total-Count: 2` and `X-Filtered-Count: 1`, as Mockoon does. A
+  parameter that Mockoon does not read, such as jQuery's `_`, is ignored
+  there, but filters in smock: no order has a member of that name, so the
+  list is `[]`, with `X-Filtered-Count: 0`. A query that keeps Mockoon's
+  parameters, such as `item_eq=book`, gets `[]` the same way. Where a
+  client cannot change its query, an ordinary Stub before the CRUD Stub
+  answers its lists ([List queries](definition-files.md#list-queries)
+  shows one).
+
+  Both counts keep Mockoon's meanings on every list: `X-Total-Count` is
+  the number of items in the bucket, and `X-Filtered-Count` the number
+  that pass the filters, before paging. json-server 0.17 gives
+  `X-Total-Count` the second meaning, and sends it only with its paging
+  parameters, so a client written for it reads the number that passes
+  the filters there. Point such a client at `X-Filtered-Count`.
 
 ### Answers that change between requests
 
@@ -788,11 +899,13 @@ A state differs from Mockoon's count in three ways:
   as well, Mockoon counts the 400s towards `request_number`, and smock
   does not.
 - **A reset starts it over.** `POST /v1/reset` with `{"scope":"session"}`
-  clears the calling Session's Ephemeral Stubs, Journal entries and
-  Scenario states, which sends its Scenarios back to `Started`.
-  `{"scope":"all"}` clears every Session's, as
-  `PURGE /mockoon-admin/state` starts Mockoon's counts over. A reset
-  answers how many states it cleared, in `removed.scenarioStates`.
+  clears the calling Session's Ephemeral Stubs, Journal entries,
+  Scenario states, Variables and copies of Data buckets, which sends its
+  Scenarios back to `Started`. `{"scope":"all"}` clears every Session's,
+  as `PURGE /mockoon-admin/state` starts Mockoon's counts over, clears its
+  global variables and resets its data buckets. A reset answers how many
+  states, Variables and copies it cleared, in `removed.scenarioStates`,
+  `removed.variables` and `removed.dataBuckets`.
   `PUT /v1/mocks/users-api/scenarios/export` with `{"state":"Started"}`
   starts one Scenario over, the calling Session's export cycle, and leaves
   its other Scenarios where they are. A test can also start over with a
@@ -809,39 +922,274 @@ A state differs from Mockoon's count in three ways:
   ```
 
 A state is a name that Stubs give, not data: it cannot keep a value from
-a request, and templates cannot read it. So global variables, data
-buckets and CRUD routes still have no counterpart, and neither has
-`RANDOM`, which is not state. A `RANDOM` route picks any of its
-responses, and a global variable keeps a value that one request sets for
-later ones
+a request, and templates cannot read it. Three other kinds of route
+answer differently from one request to the next: a `RANDOM` route, a
+route that reads a global variable, and a route that reads or writes a
+data bucket. smock has `responses`, Variables and Data buckets for them.
+The example environment has none of them but its CRUD route, so the
+Stubs below are not in its file.
+
+#### Random responses
+
+A `RANDOM` route serves any of its responses, each as likely as the
+others, and ignores their rules and which one is the default
+([multiple responses](https://mockoon.com/docs/latest/route-responses/multiple-responses/)).
+Its responses go into one Stub, as
+[`responses`](definition-files.md#several-responses), without their
+rules. Mockoon's `RANDOM` has no weights: Mockoon's
+[issue 1016](https://github.com/mockoon/mockoon/issues/1016) asks for
+them, and duplicated responses are the workaround there. smock takes
+integer weights, so the copies of a response become one response whose
+weight is their number. Say the example had a `RANDOM` route
+`GET profile`, with a 200 and `{ "id": 7, "name": "Ann" }` three times
+and a 503 with `Retry-After: 5` once. It becomes:
+
+```yaml
+- id: get-profile
+  mock: users-api
+  request: { method: GET, path: /api/v1/profile }
+  responses:
+    - { weight: 3, status: 200, json: { id: 7, name: Ann } }
+    - { weight: 1, status: 503, headers: { Retry-After: "5" }, json: { error: unavailable } }
+```
+
+- As from Mockoon, about three requests in four get the 200, and the
+  others the 503 and its `Retry-After`. Without copies, every response
+  keeps the default weight of 1.
+- Mockoon picks with JavaScript's `Math.random`, which `--faker-seed`
+  does not seed, so no run can be repeated. smock picks from the
+  request's one random draw, so
+  [`fault.seed` and `--seed`](definition-files.md#seeds) replay the picks.
+- Each response keeps its own status, headers, body and `template`. The
+  conditions, the `fault` and the `scenario` clause stay one per Stub, so
+  responses with latencies of their own share one delay.
+- The [Journal](../README.md#the-journal) records which response each
+  request got, as `responseIndex`, and `smock render` with `--response 1`
+  renders the 503 ([Checking the migration](#checking-the-migration)).
+  A test that needs the 503 on a given call, rather than by chance, adds
+  an Ephemeral Stub that gives it for its Session
+  ([Sessions and Ephemeral Stubs](../README.md#sessions-and-ephemeral-stubs)).
+
+#### Global variables
+
+A global variable keeps a value that one request sets for later ones
 ([global variables](https://mockoon.com/docs/latest/variables/global-variables/)).
-Keep a Stub in the file for such a route, so that every client still
-gets an answer, and choose the response it sends:
+Templates set it with `setGlobalVar` and read it with `getGlobalVar`. Say
+the example had a route `POST login`, whose body template sets `user`,
+and a route `GET me`, which reads it:
 
-- `RANDOM`: the response that clients get most. Bodies of the same
-  status can still vary with the `fake.*` helpers: a `json` root of
-  `$if: fake.pick(1, 2) == 1`, with the two bodies as `then` and `else`,
-  sends one or the other at random. `status` is never templated, so a
-  503 cannot come at random. A connection Fault with a `probability`
-  fails some requests, but the client sees a reset, a closed connection
-  or the Stub's own response cut short, not a 503 and its `Retry-After`,
-  so it tests other code.
-- A global variable: the value after the request that sets it, such as
-  the user who logs in.
+```text
+{{setGlobalVar 'user' (body 'name')}}{ "message": "logged in" }
+{ "name": "{{getGlobalVar 'user'}}" }
+```
 
-A test that needs another answer, such as the 503 of a `RANDOM` route,
-adds an Ephemeral Stub for its Session, and deletes it when the answer
-should change back. The add call returns the Stub's ID:
+In smock, a Stub's `variables` write
+[Variables](definition-files.md#variables) when the Stub matches, and
+templates read them as `vars.NAME`. `?? ''` gives the empty text that
+Mockoon gives for a value that is not there:
+
+```yaml
+- id: login
+  mock: users-api
+  request: { method: POST, path: /api/v1/login }
+  variables:
+    user: ${body.name ?? ''}
+  response: { status: 200, json: { message: logged in } }
+
+- id: get-me
+  mock: users-api
+  request: { method: GET, path: /api/v1/me }
+  response:
+    status: 200
+    template: true
+    json: { name: "${vars.user ?? ''}" }
+```
 
 ```sh
-ID=$(curl -s -H "Authorization: Bearer change-me" -H "baggage: smock-session=retry-1" \
-  -d '{"request":{"method":"GET","path":"/api/v1/users/7"},"response":{"status":503,"headers":{"Retry-After":"5"}}}' \
-  localhost:9090/v1/mocks/users-api/stubs | jq -r .stub.id)
-curl -H "baggage: smock-session=retry-1" localhost:8080/api/v1/users/7   # 503
-curl -X DELETE -H "Authorization: Bearer change-me" -H "baggage: smock-session=retry-1" \
-  localhost:9090/v1/mocks/users-api/stubs/"$ID"
-curl -H "baggage: smock-session=retry-1" localhost:8080/api/v1/users/7   # 200, from the file
+curl -H "baggage: smock-session=test-a" -d '{"name":"Ann"}' localhost:8080/api/v1/login
+curl -H "baggage: smock-session=test-a" localhost:8080/api/v1/me   # {"name":"Ann"}
+curl localhost:8080/api/v1/me                                      # {"name":""}
 ```
+
+A Variable differs from a global variable in five ways:
+
+- **It is kept per Mock and Session.** Mockoon keeps one set of global
+  variables for each environment, and every client reads and writes it.
+  smock keeps Variables per Mock and per Session, as it keeps Scenario
+  states, so the last request above, which names no Session, does not
+  see `Ann`. Each replica keeps its own.
+- **A Stub field sets it, when the Stub matches.** Mockoon sets a global
+  variable while a template renders. smock writes a Stub's `variables` at
+  the match decision, before the delay and before the response is
+  built, and the response sees the new values. No template sets a
+  Variable, and no condition reads one, as the `global_var` rule target
+  does in Mockoon.
+- **It holds any JSON value, written as a template.** Each value of
+  `variables` is a template, rendered against the Variables as they were
+  before the request, so `count: ${add(vars.count ?? 0, 1)}` counts
+  requests. A path that `getGlobalVar` takes becomes steps:
+  `{{getGlobalVar 'user' 'address.city'}}` becomes
+  `${vars.user.address.city ?? ''}`. One byte bound holds every Variable,
+  and a request whose writes would pass it gets 507
+  ([The state bound](definition-files.md#the-state-bound)).
+- **Resets clear it.** `POST /v1/reset` clears the Variables in its
+  scope, as `PURGE /mockoon-admin/state` and
+  `PURGE /mockoon-admin/global-vars` clear Mockoon's
+  ([Resets and reloads](definition-files.md#resets-and-reloads)). A
+  reload of the files keeps them, except those of a Mock that the files
+  no longer declare, and both tools lose them on restart.
+- **The Admin API lists and sets it.** `GET /v1/mocks/users-api/variables`
+  lists the calling Session's Variables, which Mockoon's Admin API
+  cannot do for global variables, and `PUT` and `DELETE` on
+  `/v1/mocks/users-api/variables/user` set and delete one
+  ([Through the Admin API](definition-files.md#through-the-admin-api)).
+
+#### Data buckets
+
+Beyond CRUD routes, Mockoon's templates read data buckets with the
+`data` and `dataRaw` helpers and write them with `setData`, and a
+response with `bodyType: DATABUCKET` serves a bucket whole
+([using data buckets](https://mockoon.com/docs/latest/data-buckets/using-data-buckets/)).
+In smock, templates read a bucket as `data.NAME`, and a Stub's
+[`dataWrites`](definition-files.md#writing-buckets-datawrites) write it
+when the Stub matches. Say the example had a bucket `visits` holding `0`,
+and a route `POST visit` whose body template counts the calls:
+
+```text
+{{setData 'inc' 'visits'}}{ "visits": {{data 'visits'}} }
+```
+
+It becomes a bucket and a Stub:
+
+```yaml
+data:
+  - { mock: users-api, name: visits, json: 0 }
+
+stubs:
+  - id: visit
+    mock: users-api
+    request: { method: POST, path: /api/v1/visit }
+    dataWrites:
+      - { op: set, bucket: visits, value: "${add(data.visits, 1)}" }
+    response: { status: 200, template: true, json: { visits: "${data.visits}" } }
+```
+
+```sh
+curl -X POST -H "baggage: smock-session=test-a" localhost:8080/api/v1/visit   # {"visits":1}
+curl -X POST -H "baggage: smock-session=test-a" localhost:8080/api/v1/visit   # {"visits":2}
+curl -X POST localhost:8080/api/v1/visit                                       # {"visits":1}
+```
+
+The value of a write is rendered against the data from before the
+request, and the response reads the data after it, so the Stub counts as
+the route does. Each `setData` operation becomes a write:
+
+| Mockoon | smock |
+|---|---|
+| `{{setData 'set' 'cart' '' (bodyRaw)}}` | `{ op: set, bucket: cart, value: "${body}" }` |
+| `{{setData 'merge' 'profile' '' (bodyRaw)}}` | `{ op: merge, bucket: profile, value: "${body}" }`, a shallow merge into the object that the bucket holds. |
+| `{{setData 'push' 'cart' '' (bodyRaw)}}` | `{ op: append, bucket: cart, value: "${body}" }`, onto the array that the bucket holds. |
+| `{{setData 'del' 'cart'}}` | `{ op: set, bucket: cart, value: null }`, or `[]` for a bucket with `key`, which holds an array. |
+| `{{setData 'inc' 'visits' '' 2}}`, `{{setData 'dec' 'visits'}}` | `{ op: set, bucket: visits, value: "${add(data.visits, 2)}" }`, `{ op: set, bucket: visits, value: "${subtract(data.visits, 1)}" }` |
+| `{{setData 'invert' 'enabled'}}` | `{ op: set, bucket: enabled, value: { $if: data.enabled, then: false, else: true } }` |
+| A path into the value, such as `{{setData 'set' 'profile' 'address.city' 'Kyoto'}}` | No counterpart, except one item of a bucket with `key`: `set`, `merge` and `remove` take the item's `key`, where Mockoon takes its index, so `{{setData 'del' 'orders' '0'}}` becomes `{ op: remove, bucket: orders, key: "1" }` for the first order, whose `id` is 1. |
+
+A Data bucket differs from a data bucket of Mockoon in five ways:
+
+- **It is kept per Mock and Session.** Mockoon keeps one value for each
+  bucket, which every client reads and writes. A smock Session reads the
+  initial value until it first writes to the bucket, which gives it a
+  copy of its own. Requests without a Session share one copy, and each
+  replica keeps its own copies. So the last request above, which names no
+  Session, counts from the start.
+- **A Stub field writes it, when the Stub matches.** Mockoon writes while
+  a template renders, and a CRUD route writes after the response's
+  latency. smock writes at the match decision, before the delay and
+  before the response is built, all of a Stub's writes and Variables or
+  none of them. A write that cannot be applied, such as an `append` to a
+  bucket that holds no array, answers 500 `data write failed`, where
+  `setData` does nothing ([When a write fails](definition-files.md#when-a-write-fails)).
+  No condition reads a bucket, as the `data_bucket` rule target does in
+  Mockoon.
+- **It is named exactly.** Mockoon's helpers find a bucket by its `id`,
+  or by any part of its name, in any case, so `{{data 'ord'}}` reads the
+  bucket `orders`. `data.orders` names it in full, and a name that the
+  Mock does not declare is an error when the files load.
+- **Its initial value is static JSON.** Mockoon renders a bucket's
+  content as a template
+  ([Behaviour that differs](#behaviour-that-differs)).
+- **Resets drop it, and the Admin API sets it.** `POST /v1/reset` drops
+  the copies in its scope, as `PURGE /mockoon-admin/data-buckets` resets
+  Mockoon's buckets. A reload keeps a copy unless its bucket's initial
+  value or `key` changed
+  ([Copies in resets and reloads](definition-files.md#copies-in-resets-and-reloads)),
+  and both tools lose them on restart. `GET /v1/mocks/users-api/data`
+  lists the Mock's buckets, and `GET`, `PUT` and `DELETE` on
+  `/v1/mocks/users-api/data/visits` read, set and drop the calling
+  Session's copy
+  ([Data buckets through the Admin API](definition-files.md#data-buckets-through-the-admin-api)).
+  Mockoon's Admin API reads buckets, but cannot set one.
+
+A CRUD Stub serves only a bucket with `key`, at its list path and its
+item paths. Two kinds of CRUD route need ordinary Stubs instead:
+
+- **`PUT`, `PATCH` and `DELETE` on the whole list.** A CRUD Stub does not
+  match them, so they reach later Stubs. A `PUT` replaces the list with
+  `set`, and a `DELETE` empties it with `set` to `[]`, where Mockoon
+  leaves the bucket with no value:
+
+  ```yaml
+  - id: replace-orders
+    mock: users-api
+    request: { method: PUT, path: /api/v1/orders }
+    dataWrites:
+      - { op: set, bucket: orders, value: "${body}" }
+    response: { status: 200, template: true, json: "${data.orders}" }
+
+  - id: delete-orders
+    mock: users-api
+    request: { method: DELETE, path: /api/v1/orders }
+    dataWrites:
+      - { op: set, bucket: orders, value: [] }
+    response: { status: 200, json: {} }
+  ```
+
+  A `PATCH` on the list becomes an `append` of `${body}` when clients
+  send one item. Mockoon adds each item of an array body, which a write
+  cannot do.
+- **A bucket that is not an array of objects with keys.** Mockoon serves
+  an object, a number or a text whole, at the route's path and at any item
+  path, and the elements of an array of other values by index. Stubs
+  that read `data.NAME` and write with `set` and `merge` serve such a
+  bucket at its path:
+
+  ```yaml
+  data:
+    - { mock: users-api, name: settings, json: { theme: light, lang: en } }
+
+  stubs:
+    - id: get-settings
+      mock: users-api
+      request: { method: GET, path: /api/v1/settings }
+      response: { status: 200, template: true, json: "${data.settings}" }
+
+    - id: replace-settings
+      mock: users-api
+      request: { method: PUT, path: /api/v1/settings }
+      dataWrites:
+        - { op: set, bucket: settings, value: "${body}" }
+      response: { status: 200, template: true, json: "${data.settings}" }
+
+    - id: update-settings
+      mock: users-api
+      request: { method: PATCH, path: /api/v1/settings }
+      dataWrites:
+        - { op: merge, bucket: settings, value: "${body}" }
+      response: { status: 200, template: true, json: "${data.settings}" }
+  ```
+
+  Elements read by index have no counterpart, since a template's index
+  is a number written in it.
 
 ### The result
 
@@ -853,6 +1201,14 @@ The whole Definition file:
 mocks:
   - name: users-api
     hosts: [localhost, users-api]
+
+# The data bucket "orders", with its initial value. Its key is the CRUD
+# route's crudKey.
+data:
+  - mock: users-api
+    name: orders
+    key: id
+    json: [{ id: 1, item: book }, { id: 2, item: pen }]
 
 stubs:
   # GET users: lists the users; ?status=inactive lists the inactive ones.
@@ -912,15 +1268,11 @@ stubs:
     request: { method: POST, path: /api/v1/users }
     response: { status: 403, json: { error: forbidden } }
 
-  # orders: a CRUD route on the data bucket "orders". Only the list is
-  # kept, with the bucket's initial value.
-  - id: list-orders
+  # orders: a CRUD route on the data bucket "orders". It lists, creates,
+  # reads, replaces, updates and deletes orders.
+  - id: orders
     mock: users-api
-    request: { method: GET, path: /api/v1/orders }
-    response:
-      status: 200
-      headers: { X-Total-Count: "2", X-Filtered-Count: "2" }
-      json: [{ id: 1, item: book }, { id: 2, item: pen }]
+    crud: { bucket: orders, path: /api/v1/orders }
 
   # GET exports/:id: SEQUENTIAL, so its responses take turns. Each answer
   # moves the Scenario "export" to the next one, and the last back to
@@ -987,8 +1339,8 @@ Started side by side, with
 | The same with `"role":"viewer"` | 403, `{ "error": "forbidden" }` | 403, `{"error":"forbidden"}` |
 | `OPTIONS /api/v1/users` | 200, the three CORS headers, no body | 200, the three CORS headers, no body and no Content-Type |
 | `GET /api/v1/orders` | 200, the two orders, `X-Total-Count: 2`, `X-Filtered-Count: 2` | The same. |
-| `GET /api/v1/orders/1` | 200, `{"id":1,"item":"book"}` | 404, unless a Stub for it is added. |
-| `POST /api/v1/orders`, then `GET /api/v1/orders/3` | 201, then 200 with the new order | 404 and 404, unless the test adds Ephemeral Stubs. |
+| `GET /api/v1/orders/1` | 200, `{"id":1,"item":"book"}` | The same. |
+| `POST /api/v1/orders` with the JSON `{"item":"pencil"}`, then `GET /api/v1/orders/3` | 201, `{"item":"pencil","id":3}`, then 200 with the new order | The same, and the 201 carries `Location: /api/v1/orders/3`. |
 | `GET /api/v1/exports/7`, three times | 200, `{ "status": "running" }`, then `done`, then `running` again | 200, `{"status":"running"}`, then `done`, then `running` again |
 | `POST /api/v1/password/reset`, three times | 202, `{ "message": "sent" }`, twice, then 429, `Retry-After: 60` and `{ "error": "too many requests" }` | 202, `{"message":"sent"}`, twice, then 429, `Retry-After: 60` and `{"error":"too many requests"}` |
 
@@ -1000,7 +1352,7 @@ carry `application/json`, and its `OPTIONS` answer none.
 
 Even a faithful translation answers some requests differently. These
 differences were checked against Mockoon CLI 9.9.0 from 2026-10-17 to
-2026-10-20, most of them by sending the same requests to both servers,
+2026-10-22, most of them by sending the same requests to both servers,
 with the example or with small environments made to test them:
 
 - **Paths.** Mockoon matches paths case-insensitively, accepts a trailing
@@ -1077,6 +1429,91 @@ with the example or with small environments made to test them:
   each Session, in each replica, and moves it only when a Stub with
   `moveTo` answers
   ([Answers that change between requests](#answers-that-change-between-requests)).
+- **Random responses.** No run of a Mockoon `RANDOM` route can be
+  repeated. smock's pick follows `fault.seed` and `--seed`, and its
+  weights stand for copies of a response
+  ([Random responses](#random-responses)).
+- **Global variables.** Mockoon keeps one set for each environment, which
+  every client reads and writes, and its templates set them. smock keeps
+  Variables for each Mock and Session, in each replica, and writes them
+  when a Stub matches ([Global variables](#global-variables)).
+- **Data buckets.** Mockoon keeps one value for each bucket, which every
+  client reads and writes, and writes it while a template renders, or
+  after the latency of a CRUD route's response. smock keeps a copy for
+  each Mock and Session, in each replica, and writes it when a Stub
+  matches, before any delay ([Data buckets](#data-buckets)).
+- **Bucket content.** Mockoon renders a bucket's content as a Handlebars
+  template when it starts, and again on a purge, so `{{faker …}}` in it
+  gives new data each time. smock never templates a bucket: every Session
+  starts from the same JSON. To keep the data that Mockoon generated,
+  start it with `--admin-api-token change-me`, read the bucket by its
+  `id`, and save its value as the bucket's `jsonFile`:
+
+  ```sh
+  curl -s -H "Authorization: Bearer change-me" localhost:3000/mockoon-admin/data-buckets/ordr |
+    jq .value >defs/files/orders.json
+  ```
+
+  A bucket whose content reads the request, such as with `body` or
+  `urlParam`, is generated when a route first uses it, so send that
+  request first. A key written as a template also makes the keys of
+  Mockoon's creates: a key such as `"id": "{{faker 'string.uuid'}}"`
+  becomes `newKey: uuid`, and other key templates have no counterpart.
+- **CRUD routes.** A CRUD Stub answers some requests differently from a
+  CRUD route:
+  - A CRUD Stub compares its paths exactly, as other Stubs do, and takes
+    no pattern: `GET /API/V1/ORDERS` and `GET /api/v1/orders/` reach the
+    CRUD route, and get 404 from smock.
+  - A missing item gets 404 with `{}` from Mockoon, and with
+    `{"error":"no item with this key","stub":"orders","key":"9"}` from
+    smock.
+  - A delete answers `{}` in Mockoon, and the removed item in smock.
+  - A create answers with `Location`, such as `/api/v1/orders/3`, in
+    smock only.
+  - A `PUT` or `PATCH` whose body holds another key changes the item's key
+    in Mockoon. smock keeps the key, and answers 400
+    `key does not match the path`.
+  - A body that is not a JSON object is stored by Mockoon: a JSON text,
+    such as `"pen"`, is added as it is, and a create without a body adds
+    an item that holds only a new key. smock answers 400
+    `body is not a JSON object`, and stores nothing. A create whose key
+    an item has adds a second item with that key in Mockoon, and gets 409
+    `key already exists` from smock.
+  - smock reads the body as JSON whatever its Content-Type. Mockoon reads
+    JSON only with a JSON Content-Type, so `curl -d '{"item":"pencil"}'`,
+    which sends a form's, stores an item with one form field, named
+    `{"item":"pencil"}`.
+  - Mockoon sorts texts in lower case, so `apple` comes before `Book`.
+    smock sorts them by code point, case-sensitively, so `Book` comes
+    before `apple`.
+  - A list parameter that Mockoon does not read is ignored there, and is
+    a filter in smock, which no item meets
+    ([The CRUD route](#latency-cors-and-the-crud-route)).
+  - A create without a key gets one more than the highest numeric key in
+    both. With no numeric key, an empty bucket included, Mockoon gives a
+    UUID, and smock gives 1, or the next integer that no key has, unless
+    the bucket takes `newKey: uuid`. Give that to a bucket whose keys are
+    UUIDs.
+- **Range requests.** Both serve byte ranges only from a body file that
+  is not a template, but they differ in what they serve:
+  - Mockoon serves a range to any method, such as `POST`, and in place
+    of any status, a 404 included. smock serves one only to a `GET` of a
+    200.
+  - For a malformed `Range`, such as `bytes=abc`, Mockoon answers 400.
+    For a range whose last position is below its first, such as
+    `bytes=5-2`, it answers 416. For several ranges it sends the first,
+    and it takes another unit, such as `items=0-5`, as bytes. It ignores
+    `If-Range`. smock sends the whole body with 200 in each of these
+    cases.
+  - Mockoon's 416 carries no `Content-Range`, and its body is the text
+    `Requested range not satisfiable`. smock's carries
+    `Content-Range: bytes */<length>` and no body, along with the Stub's
+    headers.
+  - Mockoon sends `Accept-Ranges: bytes` only with a 206. smock also
+    sends it with the 200 of a body file that serves ranges.
+
+  [Range requests](definition-files.md#range-requests) has smock's
+  rules.
 - **Latency of unmatched requests.** Mockoon's environment latency delays
   its 404s too. A smock delay applies only to the requests its Stub
   matches.
@@ -1090,7 +1527,19 @@ with the example or with small environments made to test them:
 - **Template errors.** Mockoon answers a template that fails with the
   response's own status and a `text/plain` message. smock finds most
   template errors when it loads the files, and answers one that fails
-  for a request with 500 and `{"error":"template failed",…}`.
+  for a request with 500 and `{"error":"template failed",…}`. Most
+  Mockoon helpers never fail: an unknown helper gives an empty text, and
+  a value of the wrong kind gives an empty text, `NaN`, or is skipped, so
+  `{{add '1' '2' 'dolphins' '3'}}` gives `6`. smock reports an unknown
+  helper, and a literal of the wrong kind, when it loads the files, and a
+  value of the wrong kind from the request fails the template, so
+  `${add(query.n, 1)}` with `?n=dolphins` gets the 500. A few Mockoon
+  helpers fail where smock's do not: `{{uppercase 5}}` fails, and
+  `${uppercase(5)}` gives `5`.
+- **Text.** Mockoon counts the length of a text and the positions in it
+  in UTF-16 units, as JavaScript does, so `{{len '😀'}}` gives `2`, and
+  `substr` can cut an emoji in two. smock counts code points, so
+  `len('😀')` gives `1`.
 - **Request size.** Mockoon accepts request bodies up to 100 MB by
   default; smock accepts up to 10 MiB (`--body-limit`), and answers
   longer ones with 413.
@@ -1098,14 +1547,37 @@ with the example or with small environments made to test them:
   names and English words, with no locale. `fault.seed` on a Stub
   repeats them from run to run, and so does `--seed` for the same
   requests in the same order, as `--faker-seed` does in Mockoon.
-- **Dates.** Mockoon's date helpers take a format, and `{{now}}` without
-  one gives `2026-10-17T14:01:59.615+00:00`. smock's `now()` always gives
-  RFC 3339 in UTC with milliseconds, `2026-10-17T14:01:59.615Z`. For a
-  full timestamp that changes only the notation, but a date changes
-  shape: `{{now 'yyyy-MM-dd'}}`, `2026-10-17`, becomes
-  `2026-10-17T14:01:59.615Z`, and a `dateTimeShift` with that format
-  becomes a full timestamp too. A client that parses a date may refuse
-  it; where clients need a date only, write a fixed one.
+- **Dates.** Both write dates with date-fns format tokens, so
+  `{{now 'yyyy-MM-dd'}}` becomes `${now('yyyy-MM-dd')}`, but six things
+  differ:
+  - Mockoon writes local time, in its process's time zone, with an
+    offset: `{{now}}` gives `2026-10-17T14:01:59.615+00:00` in UTC, and
+    `2026-10-17T23:01:59.615+09:00` under `TZ=Asia/Tokyo`. smock writes
+    UTC with `Z`: `now()` gives `2026-10-17T14:01:59.615Z`. Where clients
+    compare the text, write
+    `${now("yyyy-MM-dd'T'HH:mm:ss.SSSxxx")}`, which gives `+00:00`, or
+    `dateFormat` with a fixed offset, such as
+    `${dateFormat(now(), "yyyy-MM-dd'T'HH:mm:ss.SSSxxx", '+09:00')}`.
+  - Mockoon takes the week-numbering year (`YYYY`, `YY`) and the day of
+    the year (`DD`, `D`) where it finds them, so a format of
+    `yyyy-MM-DD`, which Mockoon's own documentation shows, writes
+    `2026-02-36` on February 5. smock refuses those tokens when it loads
+    the files: write `yyyy` and `dd`.
+  - Mockoon reads a date with JavaScript's `new Date(…)`, which takes a
+    date-time without an offset as local time, and other texts by rules
+    of its own. smock takes an RFC 3339 date-time with an offset, a date
+    `YYYY-MM-DD` or epoch milliseconds, and nothing else: any other value
+    is missing, so `??` gives a fallback.
+  - Mockoon's `dateTimeShift` rolls a day past the end of the month over
+    into the next one, so January 31, 2026 plus one month is March 3.
+    smock stops at the last day of the month, February 28.
+  - Mockoon shifts days first, then months and years; smock shifts years
+    and months first, then days.
+  - Mockoon writes the year 0, 1 BC, under `yyyy` and `yy` as date-fns's
+    year of the era, `0001` and `01`, so
+    `{{dateFormat '0000-06-01' 'yyyy-MM-dd'}}` gives `0001-06-01`. smock
+    writes the calendar year, `0000` and `00`, as its RFC 3339 times do,
+    so `${dateFormat('0000-06-01', 'yyyy-MM-dd')}` gives `0000-06-01`.
 - **Logs.** The Mockoon CLI logs every request. smock logs none, and
   records them in the Journal instead.
 
@@ -1146,6 +1618,16 @@ smock render --dir defs --request sample.json --seed 7 get-user |
 # [200,"{\"id\":\"42\",\"name\":\"Sebastian Garcia\",\"lang\":\"ja\"}",[]]
 ```
 
+It renders the CRUD Stub too, with the answer its operation would give
+from the bucket's initial value, or from the sample's `data`, and writes
+nothing. So a list query can be checked before clients send it:
+
+```sh
+echo '{"method":"GET","path":"/api/v1/orders","query":{"item":"book"}}' >sample.json
+smock render --dir defs --request sample.json orders | jq -c '[.response.status, .response.body.data]'
+# [200,"[{\"id\":1,\"item\":\"book\"}]"]
+```
+
 Then run both servers, send each the same requests, and compare the
 status, the Content-Type and the body, its keys sorted by `jq -S`. This
 bash function sends one request to Mockoon on port 3000 and to smock on
@@ -1180,15 +1662,12 @@ every request, and `GET /v1/journal/unmatched` on the Admin API lists
 those that no Stub answered, oldest first, each with its Near miss and
 the conditions it failed. When a smock just started gets the requests
 in the table of [The result](#the-result) and the three `both` calls
-above, it lists the three requests for orders that only Mockoon's CRUD
-route answers, and the trailing slash:
+above, it lists only the trailing slash, since the CRUD Stub answers
+every request for orders:
 
 ```sh
 curl -s -H "Authorization: Bearer change-me" localhost:9090/v1/journal/unmatched |
   jq -c '.entries[] | [.request.method, .request.target, .nearMiss.stub, [.nearMiss.failed[]?.condition]]'
-# ["GET","/api/v1/orders/1","list-users",["path"]]
-# ["POST","/api/v1/orders","create-user-forbidden",["path"]]
-# ["GET","/api/v1/orders/3","list-users",["path"]]
 # ["GET","/api/v1/users/","list-users",["path"]]
 ```
 
@@ -1259,8 +1738,9 @@ version in place of `<version>` below.
   them (`kill %1 %2`) and start them again. `localhost:8080/api/v1/users`
   then reaches `users-api`, whose `hosts` lists `localhost`. On
   2026-10-17 the example ran this way on GKE Autopilot, from an image of
-  CI's binary and the chart in a checkout. It had no Scenario Stubs then;
-  those were checked later, with a local smock only.
+  CI's binary and the chart in a checkout. It had no Scenario Stubs and
+  no Data bucket then; those were checked later, with a local smock
+  only.
   Values hold text only, so binary body files need git-sync or a
   ConfigMap of one's own
   ([charts/smock/README.md](../charts/smock/README.md)).
@@ -1306,7 +1786,11 @@ counterpart, and name those that have none.
 | `cors: false` | No `OPTIONS` Stub. |
 | `tlsOptions` | Nothing to set: smock also serves HTTPS, on port 8443 (`--tls-port`), with a self-signed certificate for `localhost` and every Host unless `--tls-cert-file` and `--tls-key-file` give a PEM certificate and key (convert a PFX file with `openssl pkcs12`). Client certificates are not checked. |
 | `proxyMode` and the other `proxy…` fields | No counterpart; the Mockoon CLI logs the requests it proxied with `"requestProxied":true`. |
-| `data` (data buckets) | No counterpart: a bucket's value goes into a Stub as `json`. |
+| `data` (data buckets) | The top-level `data` of a Definition file: a [Data bucket](definition-files.md#data-buckets) for each, whose `mock` is the environment's Mock ([The CRUD route](#latency-cors-and-the-crud-route)). |
+| A bucket's `name` | `name`: 1 to 128 ASCII letters, digits, `_` and `-`, which templates and Stubs use exactly. Mockoon's helpers also find a bucket by its `id`, or by any part of its name, in any case ([Data buckets](#data-buckets)). |
+| A bucket's `id`, `uuid` | Dropped: smock names a bucket by its `name`. |
+| A bucket's `value` | `json`, or `jsonFile` with a file in `defs/files/`: static JSON, never a template. Save templated content as Mockoon generated it ([Behaviour that differs](#behaviour-that-differs)). |
+| A bucket's `documentation` | A YAML comment. |
 | `callbacks` | No counterpart. |
 | `rootChildren`, `folders` | The order of the Stubs. |
 | Route `method` | `method`, in upper case; left out for `all`. |
@@ -1317,9 +1801,9 @@ counterpart, and name those that have none.
 | `DISABLE_RULES` | Only the default response, with only the route's method and path as conditions. |
 | `FALLBACK` | No Stub for the default response without its rules. |
 | `SEQUENTIAL` | A Stub for each response, in order and without its rules, each requiring a state of the route's Scenario and moving it to the next, the last back to `Started` ([Answers that change between requests](#answers-that-change-between-requests)). |
-| `RANDOM` | No counterpart: a Stub for the response to keep, and Ephemeral Stubs for the others ([Answers that change between requests](#answers-that-change-between-requests)). |
+| `RANDOM` | One Stub with every response in `responses`, without their rules. Mockoon has no weights; copies of a response become one response whose `weight` is their number ([Random responses](#random-responses)). |
 | Route `type: http` | Stubs, as above. |
-| `type: crud` | Stubs for the reads, with one for each filtered, sorted or paged list that clients ask for; Ephemeral Stubs for a test's own changes. |
+| `type: crud` | A [CRUD Stub](definition-files.md#crud-stubs) in the route's place, whose `crud.path` is the prefix and the endpoint, joined ([The CRUD route](#latency-cors-and-the-crud-route)). The responses that the route's rules pick become Stubs before it. Its list takes smock's own parameters. `PUT`, `PATCH` and `DELETE` on the list, and a bucket that is not an array of objects with keys, need ordinary Stubs ([Data buckets](#data-buckets)). |
 | `type: ws` | No counterpart. |
 | `streamingMode`, `streamingInterval` | No counterpart: they belong to WebSocket routes. |
 
@@ -1350,7 +1834,7 @@ counterpart, and name those that have none.
 | Operator `array_includes` | `{ $includes: … }`, which holds only for an array: `body: { json: { tags: { $includes: admin } } }`. Mockoon compares the elements as text, so `1` meets `1` and `"1"`; `{ $includes: { pattern: "1" } }` does too. |
 | Operator `valid_json_schema` | No counterpart. |
 | Target `request_number` | A chain of states of the route's Scenario: a Stub for each of the first requests, each moving the Scenario on, then a Stub for the later ones that requires the last state ([Answers that change between requests](#answers-that-change-between-requests)). Only the Stubs with `moveTo` count. |
-| Targets `global_var`, `data_bucket`, `templating` | No counterpart ([Answers that change between requests](#answers-that-change-between-requests)). |
+| Targets `global_var`, `data_bucket`, `templating` | No counterpart: conditions read the request only, never a Variable or a Data bucket ([Global variables](#global-variables), [Data buckets](#data-buckets)). |
 
 ### Responses
 
@@ -1362,17 +1846,18 @@ counterpart, and name those that have none.
 | `bodyType: INLINE` | `json` or `body`. |
 | `body` | `json` for JSON, or `body` for text sent as written; with `template: true` when it uses helpers. |
 | The default body, `{}` | `json: {}`. A Stub without a body sends an empty one. |
-| `bodyType: FILE`, `filePath` | `bodyFile`, relative to `defs/files/`, with a Content-Type in `headers`. A templated `filePath` becomes one Stub per file. |
+| `bodyType: FILE`, `filePath` | `bodyFile`, relative to `defs/files/`, with a Content-Type in `headers`. A templated `filePath` becomes one Stub per file. Without `template: true`, a 200 serves byte ranges to a `GET` ([Behaviour that differs](#behaviour-that-differs)). |
 | `sendFileAsBody: false` | `Content-Disposition: attachment; filename="<file name>"` in `headers`, if clients need it. |
-| `bodyType: DATABUCKET` | The bucket's value as `json`. |
-| `databucketID`, `crudKey` | No counterpart; see `bodyType: DATABUCKET` and `type: crud`. |
+| `bodyType: DATABUCKET` | `json: "${data.NAME}"`, with `template: true` ([Data buckets](#data-buckets)). |
+| `databucketID` | On a CRUD route, `crud.bucket`, the bucket's `name`. With `bodyType: DATABUCKET`, the `NAME` in `${data.NAME}`. |
+| `crudKey` | The bucket's `key`. Mockoon's default, `id`, is written out. Nested keys, such as `data.id`, have no counterpart. |
 | `disableTemplating` | No `template: true`. |
 | `fallbackTo404` | A Stub with the path pattern after the Stubs of the files, with 404, the response's headers and its inline body ([Bodies, headers and templates](#bodies-headers-and-templates)). |
 | `latency` | `fault: { delay: { fixed: <ms> } }`, with the environment's latency added. |
 | `--enable-random-latency` | `fault: { delay: { uniform: { min: 0, max: <ms> } } }`. |
 | `default` | The Stub with only the route's conditions, last among the route's Stubs. |
 | `callbacks` | No counterpart. |
-| `{{status 404}}` | No counterpart: `status` is never templated. |
+| `{{status 404}}` | No counterpart: `status` is never templated. `responses` vary the status, at random ([Random responses](#random-responses)). |
 
 ### Template helpers
 
@@ -1391,6 +1876,7 @@ write a fixed value. Leaving the member out changes the body's shape.
 | `{{body 'user.name'}}`, `{{body '$.items[0].sku'}}` | `${body.user.name ?? ''}`, `${body.items[0].sku ?? ''}`, from JSON bodies only. |
 | `{{body}}`, without a path | `${bodyText}` |
 | `{{bodyRaw 'items'}}` | `body.items` as the value of `$each` or `$if`, or `${body.items}` alone in a `json` string, which keeps its type. |
+| `{{cookie 'session'}}`, `{{cookie 'session' 'none'}}` | `${cookie.session ?? ''}`, `${cookie.session ?? 'none'}`, the value as the client sent it. Mockoon strips one pair of quotes and percent-decodes it, so for `session="a%20b"` it gives `a b`, and smock `"a%20b"`, as for [cookie rules](#paths-and-request-conditions). |
 | `{{method}}` | `${method}` |
 | `{{faker 'string.uuid'}}`, `{{uuid}}`, `{{guid}}` | `${fake.uuid()}` |
 | `{{int 1 100}}`, `{{faker 'number.int' min=1 max=100}}` | `${fake.int(1, 100)}` |
@@ -1402,14 +1888,34 @@ write a fixed value. Leaving the member out changes the body's shape.
 | `{{faker 'string.alphanumeric' 40}}` | `${fake.hex(40)}`, hex digits only, at most 64. |
 | `{{faker 'lorem.word'}}`, `{{faker 'lorem.words' 3}}` | `${fake.word()}`, `${fake.words(3)}` |
 | `{{oneOf (array 'a' 'b')}}` | `${fake.pick('a', 'b')}` |
-| `{{now}}` | `${now()}`, in RFC 3339 only: a format is lost, and a date becomes a full timestamp ([Behaviour that differs](#behaviour-that-differs)). |
-| `{{dateTimeShift days=1}}` | `${now(86400)}`, an offset in seconds. |
+| `{{add a b}}`, `{{subtract a b}}`, `{{multiply a b}}` | `${add(a, b)}`, `${subtract(a, b)}`, `${multiply(a, b)}`, exact in decimal: `add(0.1, 0.2)` gives `0.3`, where Mockoon gives `0.30000000000000004`. Each takes two numbers, so `{{add a b c}}` becomes `${add(add(a, b), c)}`. A number may be a string that is a JSON number, such as `query.page`. |
+| `{{divide a b}}` | `${divide(a, b)}`, rounded half to even at 10 decimal places: `divide(10, 3)` gives `3.3333333333`, where Mockoon gives `3.3333333333333335`. A divisor of 0 is an error, where Mockoon skips it. |
+| `{{modulo a b}}` | `${modulo(a, b)}`, with the sign of `a`, as in Mockoon. A divisor of 0 is an error, where Mockoon gives an empty text. |
+| `{{ceil x}}`, `{{floor x}}`, `{{round x}}` | `${ceil(x)}`, `${floor(x)}`, `${round(x)}`. `round` takes a half away from zero: `round(-2.5)` gives `-3`, where Mockoon's `Math.round` gives `-2`. |
+| `{{toFixed x 2}}` | `${toFixed(x, 2)}`, the places a literal from 0 to 18, rounded half away from zero in decimal: `toFixed(1.005, 2)` gives `1.01`, where Mockoon gives `1.00`. |
+| `{{parseInt x}}` | `${parseInt(x)}`, of a number or a string that is one: `parseInt('12px')` is an error, where Mockoon gives `12`. |
+| `{{concat a b}}`, `{{uppercase s}}`, `{{lowercase s}}`, `{{padStart s 6 '0'}}`, `{{padEnd s 6}}`, `{{substr s 0 3}}`, `{{indexOf s 'x'}}`, `{{includes s 'x'}}`, `{{len x}}` | `${concat(a, b)}`, `${uppercase(s)}`, `${lowercase(s)}`, `${padStart(s, 6, '0')}`, `${padEnd(s, 6)}`, `${substr(s, 0, 3)}`, `${indexOf(s, 'x')}`, `${includes(s, 'x')}`, `${len(x)}`. They count code points, where Mockoon counts UTF-16 units ([Behaviour that differs](#behaviour-that-differs)). `uppercase` and `lowercase` map one code point to one, so `uppercase('straße')` gives `STRAßE`, where Mockoon gives `STRASSE`. smock also has `trim`. |
+| `{{replace s 'a' 'b'}}`, `{{replaceAll s 'a' 'b'}}` | `${replace(s, 'a', 'b')}`, `${replaceAll(s, 'a', 'b')}`, with the replacement taken as it is, where Mockoon expands `$&` and `$$` in it. |
+| `{{split s ','}}` | `${split(s, ',')}`, an array, for `$each` or a step such as `[0]`. An empty separator splits into code points, where Mockoon splits at spaces, and an empty text gives `[""]`, where Mockoon gives an empty text. |
+| `{{join array ', '}}` | `${join(array, ', ')}`. The separator must be given, where Mockoon takes `, ` by default, and a value that is not an array is an error, where Mockoon gives it back unchanged. |
+| `{{base64 s}}`, `{{base64url s}}`, `{{base64Decode s}}`, `{{base64urlDecode s}}` | `${base64(s)}`, `${base64url(s)}`, `${base64Decode(s)}`, `${base64urlDecode(s)}`. A block, such as `{{#base64}}id-{{body 'id'}}{{/base64}}`, becomes `${base64(concat('id-', body.id))}`. The decoders are strict: each takes its own alphabet only, and a character outside it, or padding that is not whole or not at the end, is an error, where Mockoon skips such characters and stops at the first `=`. smock also has `urlEncode` and `urlDecode`. |
+| `{{jwtPayload token 'sub'}}`, `{{jwtHeader token 'alg'}}` | `${jwtPayload(token).sub ?? ''}`, `${jwtHeader(token).alg ?? ''}`: a step reads a claim, at any depth. Neither tool checks the signature. A value that is not a token is missing, so `?? ''` gives Mockoon's empty text. smock removes `Bearer` in any case, where Mockoon's `jwtHeader` gives an empty text for `bearer …`. |
+| `{{now}}` | `${now()}`, in UTC with `Z`, where Mockoon writes local time with an offset, such as `+00:00` ([Behaviour that differs](#behaviour-that-differs)). |
+| `{{now 'yyyy-MM-dd'}}` | `${now('yyyy-MM-dd')}`, in UTC, with the same date-fns tokens, except that `YYYY`, `YY`, `Y`, `DD` and `D` fail when the files load. |
+| `{{dateFormat d 'yyyy-MM-dd'}}` | `${dateFormat(d, 'yyyy-MM-dd')}`, in UTC, or at a fixed offset with a third argument, such as `'+09:00'`. A date that smock does not read is missing. |
+| `{{dateTimeShift date=d months=1}}`, `{{dateTimeShift days=1 format='yyyy-MM-dd'}}` | `${dateTimeShift(d, 'P1M')}`, `${dateFormat(dateTimeShift(now(), 'P1D'), 'yyyy-MM-dd')}`: an ISO 8601 duration in place of the named amounts, and the result in RFC 3339, for `dateFormat` to format. A month shift stops at the end of the month, where Mockoon's rolls over. |
 | `{{#repeat 3}}` | `{ $each: "range(1, 3)", as: i, do: … }`, in `json` only. |
-| `{{#each}}` | `$each` over an array, or the values of a query parameter or a header, in `json` only. A literal `(array …)` is written out. |
+| `{{#each}}` | `$each` over an array, or the values of a query parameter, a header or a cookie, in `json` only. A literal `(array …)` of strings becomes `split(…)` of one text; other literal arrays are written out ([Bodies, headers and templates](#bodies-headers-and-templates)). |
 | `{{#if}}`, `{{#switch}}` | `$if`, which compares with `==` or `!=` against a literal, in `json` only: one for each member that the block wraps, and `(eq (queryParam 'c') 'a')` becomes `query.c == 'a'`. |
 | `{{setVar}}`, `{{getVar}}` | No counterpart: the expression, written wherever the variable is read. |
+| `{{setGlobalVar 'user' (body 'name')}}` | `variables: { user: "${body.name ?? ''}" }` on the Stub, written when the Stub matches, never from a template ([Global variables](#global-variables)). |
+| `{{getGlobalVar 'user'}}`, `{{getGlobalVar 'user' 'address.city'}}` | `${vars.user ?? ''}`, `${vars.user.address.city ?? ''}`, a path as steps. |
+| `{{getEnvVar 'REGION'}}`, `{{getEnvVar 'REGION' 'local'}}` | `${env.REGION ?? ''}`, `${env.REGION ?? 'local'}`, with `smock serve --template-env REGION`. Mockoon reads `MOCKOON_REGION`, and smock `REGION`, once, at startup, and only when `--template-env` lists it ([Environment variables](definition-files.md#environment-variables)). |
 | `{{{x}}}` | `${raw(x)}`, in text templates. |
 | `{{stringify x}}` | `${json(x)}` in text templates; in `json`, a string that is exactly `${x}`. |
+| `{{data 'orders' '0.item'}}`, `{{data 'orders' '$.[0].item'}}`, `{{data 'orders'}}` | `${data.orders[0].item}`, `${data.orders}`: the bucket named exactly, and a dot path or a JSONPath as steps. An object or an array needs `${json(data.orders)}` in a text template; in `json`, a string that is exactly `${data.orders}` keeps it ([Data buckets](#data-buckets)). |
+| `{{dataRaw 'orders'}}` | `data.orders` as the value of `$each` or `$if`, or `${data.orders}` alone in a `json` string. |
+| `{{setData 'push' 'cart' '' (bodyRaw)}}` and the other operations | A write of the Stub's `dataWrites`, made when the Stub matches: `{ op: append, bucket: cart, value: "${body}" }` ([Data buckets](#data-buckets) maps each operation). |
 
 ### Running and operating
 
@@ -1423,8 +1929,14 @@ write a fixed value. Leaving the member out changes the body's shape.
 | `--faker-seed` | `--seed`, or `fault.seed` on a Stub. |
 | `--max-request-body-size` | `--body-limit`, 10 MiB by default. |
 | `--log-transaction` and the logs | The Journal: `POST /v1/journal/query` and `GET /v1/journal/unmatched`. |
-| The admin API, under `/mockoon-admin` | The Admin API, on its own port, 9090 by default. |
-| `PURGE /mockoon-admin/state` | `POST /v1/reset` with `{"scope":"all"}`, which clears the Ephemeral Stubs, the Journal and every Scenario state, so that sequences and request counts start over. |
+| The admin API, under `/mockoon-admin` | The Admin API, on its own port, 9090 by default. Mockoon 9.9.0's admin API needs a bearer token too: `--admin-api-token` sets it, or Mockoon logs the one it generates at startup. |
+| `PURGE /mockoon-admin/state` | `POST /v1/reset` with `{"scope":"all"}`, which clears the Ephemeral Stubs, the Journal, every Scenario state, every Variable and every copy of a Data bucket, so that sequences, request counts, global variables and data buckets start over. |
+| `PURGE /mockoon-admin/data-buckets` | `POST /v1/reset`, which drops the copies of Data buckets in its scope, with the rest of the scope's state, or a `DELETE` on `/v1/mocks/{mock}/data/{bucket}` for each bucket of the calling Session ([Data buckets](#data-buckets)). |
+| `GET /mockoon-admin/data-buckets`, `GET /mockoon-admin/data-buckets/{id}` | `GET /v1/mocks/{mock}/data` lists the Mock's buckets, and `GET /v1/mocks/{mock}/data/{bucket}` reads the value that the calling Session reads. A `PUT` there sets the Session's copy, which Mockoon cannot do. |
+| `/mockoon-admin/global-vars` | `GET /v1/mocks/{mock}/variables` lists the calling Session's Variables, and `PUT` and `DELETE` on `/v1/mocks/{mock}/variables/{name}` set and delete one ([Global variables](#global-variables)). |
+| `PURGE /mockoon-admin/global-vars` | `POST /v1/reset`, which also clears Ephemeral Stubs, Journal entries, Scenario states and copies of Data buckets, or a `DELETE` for each Variable. |
+| `--env-vars-prefix` | `--template-env`, which lists each name in full; there is no prefix. |
+| `/mockoon-admin/env-vars` | No counterpart: smock reads the variables that `--template-env` lists once, at startup. |
 | `PUT /mockoon-admin/environment` | Edit the files; smock reloads them. |
 | The `mockoon/cli` image | `ghcr.io/hirunefu/smock:<version>`, from a release. |
 | `import` | `smock import-openapi <document> --mock <name> --output <file>`, from the same OpenAPI document ([Importing OpenAPI](importing-openapi.md#notes-for-mockoon-users)). |

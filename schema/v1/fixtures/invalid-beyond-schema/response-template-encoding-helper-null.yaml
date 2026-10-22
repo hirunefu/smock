@@ -1,0 +1,10 @@
+mocks:
+  - name: auth
+stubs:
+  - id: me
+    mock: auth
+    response:
+      status: 200
+      template: true
+      json:
+        user: ${jwtPayload(null).sub ?? 'anonymous'}

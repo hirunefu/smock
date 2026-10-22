@@ -11,6 +11,9 @@ priv struct Admin {
   metrics : @metrics.Registry
   /// The metrics of the Journal, brought up to date on each scrape.
   journal_metrics : JournalMetrics
+  /// The metrics of the bound on per-Session state, brought up to date on
+  /// each scrape.
+  state_metrics : StateMetrics
   /// The process and cgroup metrics, brought up to date on each scrape.
   process_metrics : ProcessMetrics
   /// Where changes made through the Admin API are logged.
@@ -89,6 +92,18 @@ let routes : Array[Route] = [
     set_scenario,
     takes_body=true,
   ),
+  route("/v1/mocks/{mock}/variables", "GET", list_variables),
+  route(
+    "/v1/mocks/{mock}/variables/{name}",
+    "PUT",
+    set_variable,
+    takes_body=true,
+  ),
+  route("/v1/mocks/{mock}/variables/{name}", "DELETE", delete_variable),
+  route("/v1/mocks/{mock}/data", "GET", list_buckets),
+  route("/v1/mocks/{mock}/data/{bucket}", "GET", read_bucket),
+  route("/v1/mocks/{mock}/data/{bucket}", "PUT", set_bucket, takes_body=true),
+  route("/v1/mocks/{mock}/data/{bucket}", "DELETE", drop_bucket),
   route("/v1/reset", "POST", reset, takes_body=true),
   route("/v1/journal/query", "POST", query_journal, takes_body=true),
   route("/v1/journal/verify", "POST", verify_journal, takes_body=true),
@@ -116,7 +131,7 @@ fn route(
 /// Creates the Admin API of a process whose life `lifecycle` follows.
 ///
 /// - `metrics` holds the metrics `/metrics` serves, among them
-///   `journal_metrics` and `process_metrics`.
+///   `journal_metrics`, `state_metrics` and `process_metrics`.
 /// - `logger` logs each change made through the Admin API.
 /// - `token` is the bearer token every operation needs, or `None` to turn
 ///   authentication off.
@@ -128,6 +143,7 @@ fn Admin::new(
   build : @buildinfo.BuildInfo,
   metrics~ : @metrics.Registry,
   journal_metrics~ : JournalMetrics,
+  state_metrics~ : StateMetrics,
   process_metrics~ : ProcessMetrics,
   logger~ : @log.Logger,
   token~ : String?,
@@ -141,6 +157,7 @@ fn Admin::new(
     build,
     metrics,
     journal_metrics,
+    state_metrics,
     process_metrics,
     logger,
     token: token.map(token => @utf8.encode(token)),
@@ -484,8 +501,15 @@ fn liveness_probe(admin : Admin, _call : Call) -> Reply {
 /// `smock render` does. The `time` and `seed` query parameters give the
 /// time the sample is received at and the seed of the random source the
 /// rendering draws from; without them, the time is now and the seed is the
-/// Stub's `fault.seed`, or a fresh one when it has none. The rendering
-/// shows the time and the seed it used. Rendering changes nothing.
+/// Stub's `fault.seed`, or a fresh one when it has none. The `response`
+/// query parameter names the response to render among the Stub's
+/// `responses`; without it, the seed picks one. The rendering shows the
+/// time, the seed and the response index it used, and the values the
+/// Stub's `variables` would write, and the writes its `dataWrites` would
+/// make. Rendering changes nothing: it reads the Variables of the sample's
+/// `vars` and the Data buckets of its `data`, and writes none. Sample data
+/// that names a Data bucket the Stub's Mock does not declare, or breaks a
+/// keyed bucket's rules, is `invalid_data`.
 fn render(admin : Admin, call : Call) -> Reply {
   let invalid = (message : String) => {
     admin.error(400, "invalid_request", message)
@@ -521,6 +545,18 @@ fn render(admin : Admin, call : Call) -> Reply {
           )
       }
   }
+  let response_index = match query_parameter(request.target, "response") {
+    Err(message) => return invalid(message)
+    Ok(None) => None
+    Ok(Some(text)) =>
+      match @settings.parse_response_index(text) {
+        Some(index) => Some(index)
+        None =>
+          return invalid(
+            "the response query parameter \{@settings.response_index_reason()}",
+          )
+      }
+  }
   guard call.body is Some(json) else {
     return invalid("the body must be a sample request: a JSON object")
   }
@@ -529,8 +565,20 @@ fn render(admin : Admin, call : Call) -> Reply {
   }
   let rendering = admin
     .engine()
-    .render(id, sample, now~, seed?, fresh_seed=@settings.random_seed) catch {
-      err => return admin.error(404, "unknown_stub", err.message())
+    .render(
+      id,
+      sample,
+      now~,
+      seed?,
+      response_index?,
+      fresh_seed=@settings.random_seed,
+    ) catch {
+      UnknownStub(_) as err =>
+        return admin.error(404, "unknown_stub", err.message())
+      UnknownResponse(..) | NoOperation(..) as err =>
+        return invalid(err.message())
+      UnknownSampleBucket(..) | InvalidSampleData(..) as err =>
+        return admin.error(400, "invalid_data", err.message())
     }
   admin.result(rendering)
 }
@@ -568,11 +616,12 @@ fn query_parameter(target : String, name : String) -> Result[String?, String] {
 
 ///|
 /// Brings the metrics that are read, not counted, up to date before a
-/// scrape: the Journal's, once the definitions have loaded, and the process
-/// and cgroup metrics, from their files.
+/// scrape: the Journal's and the per-Session state's, once the definitions
+/// have loaded, and the process and cgroup metrics, from their files.
 async fn refresh_metrics(admin : Admin) -> Unit {
   if admin.lifecycle.engine is Some(engine) {
     admin.journal_metrics.update(engine.journal_stats())
+    admin.state_metrics.update(engine.state_stats())
   }
   admin.process_metrics.update()
 }

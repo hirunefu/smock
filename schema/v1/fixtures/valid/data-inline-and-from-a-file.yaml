@@ -1,0 +1,8 @@
+mocks:
+  - name: shop
+data:
+  - { mock: shop, name: orders, key: id, jsonFile: orders.json }
+  - { mock: shop, name: user, jsonFile: users/1.json }
+  - { mock: shop, name: visits, json: 0 }
+  - { mock: shop, name: cart, json: { items: [], total: 12.5 } }
+  - { mock: shop, name: Name_with-9, json: "text" }

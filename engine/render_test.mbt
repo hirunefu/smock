@@ -68,6 +68,9 @@ test "a sample request that meets every condition renders the Stub's status, hea
       #|  "mock": "users",
       #|  "time": "2026-10-12T14:30:05.123Z",
       #|  "seed": 7,
+      #|  "responseIndex": null,
+      #|  "variables": {},
+      #|  "dataWrites": [],
       #|  "response": {
       #|    "status": 201,
       #|    "headers": [
@@ -111,6 +114,9 @@ test "a sample request that fails several conditions still renders the Stub's re
       #|  "mock": "users",
       #|  "time": "2026-10-12T14:30:05.123Z",
       #|  "seed": 7,
+      #|  "responseIndex": null,
+      #|  "variables": {},
+      #|  "dataWrites": [],
       #|  "response": {
       #|    "status": 201,
       #|    "headers": [
@@ -192,12 +198,19 @@ test "a Stub that answers from a body file renders the bytes of the file, as tex
       #|  "mock": "users",
       #|  "time": "2026-10-12T14:30:05.123Z",
       #|  "seed": 7,
+      #|  "responseIndex": null,
+      #|  "variables": {},
+      #|  "dataWrites": [],
       #|  "response": {
       #|    "status": 200,
       #|    "headers": [
       #|      {
       #|        "name": "Content-Type",
       #|        "value": "application/json"
+      #|      },
+      #|      {
+      #|        "name": "Accept-Ranges",
+      #|        "value": "bytes"
       #|      }
       #|    ],
       #|    "body": {
@@ -216,9 +229,17 @@ test "a Stub that answers from a body file renders the bytes of the file, as tex
       #|  "mock": "users",
       #|  "time": "2026-10-12T14:30:05.123Z",
       #|  "seed": 7,
+      #|  "responseIndex": null,
+      #|  "variables": {},
+      #|  "dataWrites": [],
       #|  "response": {
       #|    "status": 200,
-      #|    "headers": [],
+      #|    "headers": [
+      #|      {
+      #|        "name": "Accept-Ranges",
+      #|        "value": "bytes"
+      #|      }
+      #|    ],
       #|    "body": {
       #|      "encoding": "base64",
       #|      "data": "iVBORw0KGgoA/w==",
@@ -238,7 +259,7 @@ test "a Stub that answers from a body file renders the bytes of the file, as tex
 /// The error rendering the Stub `id` for `sample` gives, or `rendered`.
 fn Harness::render_error(self : Harness, id : String, sample : Json) -> String {
   try self.render(id, sample) catch {
-    @engine.UnknownStub::UnknownStub(_) as err =>
+    @engine.RenderFailure::UnknownStub(_) as err =>
       "unknown Stub: \{err.message()}"
     @engine.InvalidSample(_) as err => "invalid sample: \{err.message()}"
     err => "other error: \{err}"
@@ -393,6 +414,9 @@ test "a Stub with Faults renders its plain response: rendering decides no Fault"
       #|  "mock": "m",
       #|  "time": "2026-10-12T14:30:05.123Z",
       #|  "seed": 42,
+      #|  "responseIndex": null,
+      #|  "variables": {},
+      #|  "dataWrites": [],
       #|  "response": {
       #|    "status": 200,
       #|    "headers": [],
@@ -499,6 +523,9 @@ test "a Stub that streams Server-Sent Events renders its events, with the Conten
       #|  "mock": "m",
       #|  "time": "2026-10-12T14:30:05.123Z",
       #|  "seed": 7,
+      #|  "responseIndex": null,
+      #|  "variables": {},
+      #|  "dataWrites": [],
       #|  "response": {
       #|    "status": 200,
       #|    "headers": [

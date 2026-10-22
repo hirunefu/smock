@@ -92,16 +92,7 @@ pub fn format_time(ms : Int64) -> String {
   let ms_per_day = 86_400_000L
   let days = floor_div(ms, ms_per_day)
   let ms_of_day = ms - days * ms_per_day
-  // Civil date from a day count, after Howard Hinnant's `civil_from_days`.
-  let z = days + 719_468L
-  let era = floor_div(z, 146_097L)
-  let doe = z - era * 146_097L
-  let yoe = (doe - doe / 1460L + doe / 36_524L - doe / 146_096L) / 365L
-  let doy = doe - (365L * yoe + yoe / 4L - yoe / 100L)
-  let mp = (5L * doy + 2L) / 153L
-  let day = doy - (153L * mp + 2L) / 5L + 1L
-  let month = if mp < 10L { mp + 3L } else { mp - 9L }
-  let year = yoe + era * 400L + (if month <= 2L { 1L } else { 0L })
+  let (year, month, day) = civil_from_days(days)
   let hour = ms_of_day / 3_600_000L
   let minute = ms_of_day / 60_000L % 60L
   let second = ms_of_day / 1000L % 60L
@@ -110,7 +101,8 @@ pub fn format_time(ms : Int64) -> String {
 }
 
 ///|
-fn floor_div(a : Int64, b : Int64) -> Int64 {
+/// `a` divided by `b`, rounded toward negative infinity.
+pub fn floor_div(a : Int64, b : Int64) -> Int64 {
   let q = a / b
   if a % b != 0L && (a < 0L) != (b < 0L) {
     q - 1L
@@ -212,7 +204,7 @@ pub fn parse_time(text : String) -> Int64? {
     second > 60 {
     return None
   }
-  let days = days_from_civil(year, month, day).to_int64()
+  let days = days_from_civil(year, month, day)
   let seconds = ((days * 24L + hour.to_int64()) * 60L + minute.to_int64()) * 60L +
     second.to_int64() -
     offset_minutes.to_int64() * 60L
@@ -222,7 +214,7 @@ pub fn parse_time(text : String) -> Int64? {
 ///|
 /// The number of days in `month` of `year`, in the proleptic Gregorian
 /// calendar.
-fn days_in_month(year : Int, month : Int) -> Int {
+pub fn days_in_month(year : Int, month : Int) -> Int {
   match month {
     2 =>
       if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 {
@@ -237,17 +229,37 @@ fn days_in_month(year : Int, month : Int) -> Int {
 
 ///|
 /// The number of days from 1970-01-01 to the date `year`-`month`-`day`, in
-/// the proleptic Gregorian calendar, for years from 0 to 9999.
-fn days_from_civil(year : Int, month : Int, day : Int) -> Int {
+/// the proleptic Gregorian calendar, for years from 0 to 9999, after Howard
+/// Hinnant's `days_from_civil`. `civil_from_days` is its inverse.
+pub fn days_from_civil(year : Int, month : Int, day : Int) -> Int64 {
   // Years start in March, so that the leap day ends them.
-  let y = if month <= 2 { year - 1 } else { year }
-  let era = (if y >= 0 { y } else { y - 399 }) / 400
-  let year_of_era = y - era * 400
-  let m = if month > 2 { month - 3 } else { month + 9 }
-  let day_of_year = (153 * m + 2) / 5 + day - 1
-  let day_of_era = year_of_era * 365 +
-    year_of_era / 4 -
-    year_of_era / 100 +
+  let y = (if month <= 2 { year - 1 } else { year }).to_int64()
+  let era = floor_div(y, 400L)
+  let year_of_era = y - era * 400L
+  let m = (if month > 2 { month - 3 } else { month + 9 }).to_int64()
+  let day_of_year = (153L * m + 2L) / 5L + day.to_int64() - 1L
+  let day_of_era = year_of_era * 365L +
+    year_of_era / 4L -
+    year_of_era / 100L +
     day_of_year
-  era * 146097 + day_of_era - 719468
+  era * 146_097L + day_of_era - 719_468L
+}
+
+///|
+/// The date `days` days after 1970-01-01, before it when negative, in the
+/// proleptic Gregorian calendar: its year, its month from 1 and its day of
+/// the month from 1, after Howard Hinnant's `civil_from_days`.
+/// `days_from_civil` is its inverse.
+pub fn civil_from_days(days : Int64) -> (Int64, Int64, Int64) {
+  // Years start in March, so that the leap day ends them.
+  let z = days + 719_468L
+  let era = floor_div(z, 146_097L)
+  let doe = z - era * 146_097L
+  let yoe = (doe - doe / 1460L + doe / 36_524L - doe / 146_096L) / 365L
+  let doy = doe - (365L * yoe + yoe / 4L - yoe / 100L)
+  let mp = (5L * doy + 2L) / 153L
+  let day = doy - (153L * mp + 2L) / 5L + 1L
+  let month = if mp < 10L { mp + 3L } else { mp - 9L }
+  let year = yoe + era * 400L + (if month <= 2L { 1L } else { 0L })
+  (year, month, day)
 }

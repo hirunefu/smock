@@ -1,0 +1,4 @@
+{
+  "mocks": [{ "name": "shop" }],
+  "data": [{ "mock": "shop", "name": "nothing", "json": null }]
+}

@@ -1,0 +1,10 @@
+mocks:
+  - name: billing
+stubs:
+  - id: invoice
+    mock: billing
+    response:
+      status: 200
+      template: true
+      json:
+        today: ${now('YYYY-MM-dd')}

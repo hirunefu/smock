@@ -1,0 +1,4 @@
+{
+  "mocks": [{ "name": "users" }],
+  "stubs": [{ "id": "get-user", "mock": "users", "responses": { "status": 200 } }]
+}

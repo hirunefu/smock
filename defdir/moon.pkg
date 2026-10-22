@@ -1,5 +1,6 @@
 import {
   "smock/smock/definitions",
+  "smock/smock/template",
   "smock/smock/watch",
   "moonbitlang/async/fs",
   "moonbitlang/core/encoding/utf8",

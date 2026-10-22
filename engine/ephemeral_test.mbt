@@ -708,7 +708,7 @@ test "an Ephemeral Stub with an id or a mock, or a body from a body file, is rej
       #|a body file:
       #|/response/bodyFile: is not allowed in an Ephemeral Stub, whose body must be inline: give "body" instead
       #|no response:
-      #|needs "response"
+      #|needs "response", "responses" or "crud"
       #|an array:
       #|must be an object
       #|a seed out of range:

@@ -21,7 +21,13 @@ test "a text template inserts request values, escaped as its kind says" {
   let render = (source : String, kind : @template.TextKind) => {
     match @template.Text::parse(source, pointer="/response/body", kind~) {
       Ok(text) =>
-        text.render(@template.Context::new(request, now=nine, draw=1)) catch {
+        text.render(
+          @template.Context::new(
+            request,
+            now=nine,
+            rand=@template.helper_generator(1),
+          ),
+        ) catch {
           RenderError(at~, message~) => "error at \{at}: \{message}"
         }
       Err(problem) => "problem at \{problem.pointer}: \{problem.message}"
@@ -68,7 +74,13 @@ test "a structured template keeps the types of single values, loops and branches
   }
   let render = (draw : UInt64) => {
     @utf8.decode(
-      structured.render(@template.Context::new(request, now=nine, draw~)),
+      structured.render(
+        @template.Context::new(
+          request,
+          now=nine,
+          rand=@template.helper_generator(draw),
+        ),
+      ),
     )
   }
   inspect(
@@ -79,6 +91,38 @@ test "a structured template keeps the types of single values, loops and branches
   )
   inspect(render(42) == render(42), content="true")
   inspect(render(42) != render(43), content="true")
+}
+
+///|
+test "the renderings for one request share its helper generator: each draws on from where the one before stopped, as one rendering of both would" {
+  let parse = (source : String) => {
+    @template.Text::parse(source, pointer="/response/body", kind=Body(Plain))
+  }
+  guard parse("${fake.int(1, 1000000)}") is Ok(one) &&
+    parse("${fake.int(1, 1000000)} ${fake.int(1, 1000000)}") is Ok(both) else {
+    fail("the templates do not parse")
+  }
+  let rand = @template.helper_generator(42)
+  let first = one.render(@template.Context::new(request, now=nine, rand~))
+  let second = one.render(@template.Context::new(request, now=nine, rand~))
+  inspect(
+    "\{first} \{second}",
+    content=(
+      #|352342 297692
+    ),
+  )
+  inspect(
+    both.render(
+      @template.Context::new(
+        request,
+        now=nine,
+        rand=@template.helper_generator(42),
+      ),
+    ),
+    content=(
+      #|352342 297692
+    ),
+  )
 }
 
 ///|
@@ -190,4 +234,85 @@ test "json_string_bytes gives the length of a string as compact JSON writes it, 
   let long = "a".repeat(100)
   assert_true(@template.json_string_bytes(long, limit=10) > 10)
   assert_true(@template.json_string_bytes(long, limit=10) < 102)
+}
+
+///|
+test "cookie.NAME is the first value of the cookie, read from every Cookie field as sent, and missing when absent" {
+  let input : @template.Input = {
+    ..request,
+    headers: [
+      ("Cookie", "theme=dark; session=\"s1\";flag; a=b=c ;empty="),
+      ("X-Cookie", "other=1"),
+      ("cookie", " \ttheme=light\t; pct=a%20b"),
+    ],
+  }
+  let render = (source : String) => {
+    match
+      @template.Text::parse(source, pointer="/response/body", kind=Body(Plain)) {
+      Ok(text) =>
+        text.render(
+          @template.Context::new(
+            input,
+            now=nine,
+            rand=@template.helper_generator(1),
+          ),
+        ) catch {
+          RenderError(at~, message~) => "error at \{at}: \{message}"
+        }
+      Err(problem) => "problem at \{problem.pointer}: \{problem.message}"
+    }
+  }
+  inspect(
+    [
+      render(
+        "${cookie.theme} ${cookie.session} ${cookie.a} [${cookie.empty}] ${cookie.pct} ${cookie['pct']}",
+      ),
+      render(
+        "${cookie.flag ?? 'no flag'}, ${cookie.Theme ?? 'no Theme'}, ${cookie.other ?? 'no other'}",
+      ),
+      render("${cookie.none}"),
+    ].join("\n"),
+    content=(
+      #|dark "s1" b=c [] a%20b a%20b
+      #|no flag, no Theme, no other
+      #|error at /response/body: cookie.none is missing
+    ),
+  )
+}
+
+///|
+test "$each over cookie.NAME walks every value of the cookie in order, from every Cookie field, and none when it is absent" {
+  let input : @template.Input = {
+    ..request,
+    headers: [
+      ("Cookie", "theme=dark; session=\"s1\"; theme=dim"),
+      ("Cookie", "theme=light"),
+    ],
+  }
+  let template = @json.parse(
+    (
+      #|{ "session": "${cookie.session ?? null}",
+      #|  "themes": { "$each": "cookie.theme", "as": "t", "do": "${loop.index}=${t}" },
+      #|  "none": { "$each": "cookie.none", "as": "t", "do": "${t}" },
+      #|  "fallback": { "$each": "cookie.none ?? cookie.session", "as": "s", "do": "${s}" } }
+    ),
+  )
+  guard @template.Structured::parse(template, pointer="/response/json")
+    is Ok(structured) else {
+    fail("the template does not parse")
+  }
+  inspect(
+    @utf8.decode(
+      structured.render(
+        @template.Context::new(
+          input,
+          now=nine,
+          rand=@template.helper_generator(1),
+        ),
+      ),
+    ),
+    content=(
+      #|{"session":"\"s1\"","themes":["0=dark","1=dim","2=light"],"none":[],"fallback":[]}
+    ),
+  )
 }

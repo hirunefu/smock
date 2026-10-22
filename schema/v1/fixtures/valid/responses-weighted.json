@@ -1,0 +1,25 @@
+{
+  "mocks": [{ "name": "market" }],
+  "stubs": [
+    {
+      "id": "get-prices",
+      "mock": "market",
+      "request": { "method": "GET", "path": "/prices" },
+      "responses": [
+        { "weight": 9, "status": 200, "json": { "price": 101 } },
+        { "weight": 1, "status": 503, "headers": { "Retry-After": "5" }, "json": { "error": "unavailable" } }
+      ],
+      "fault": { "seed": 7 }
+    },
+    {
+      "id": "get-quotes",
+      "mock": "market",
+      "request": { "path": "/quotes" },
+      "responses": [
+        { "weight": 1000000, "status": 200, "body": "ok" },
+        { "weight": 1, "status": 500 },
+        { "weight": 3, "status": 200, "events": [{ "data": "tick" }] }
+      ]
+    }
+  ]
+}

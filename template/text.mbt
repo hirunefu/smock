@@ -87,6 +87,10 @@ pub struct Text {
   pointer : String
   kind : TextKind
   priv parts : Array[Part]
+  /// Whether an expression of the template reads the `vars` root.
+  priv vars_read : Bool
+  /// Whether an expression of the template reads the `data` root.
+  priv data_read : Bool
 }
 
 ///|
@@ -105,25 +109,75 @@ pub impl Debug for Text with fn to_repr(self) {
 }
 
 ///|
+/// Whether the template reads Variables: whether one of its expressions
+/// reads the `vars` root, wherever it is. One that does not renders the
+/// same whatever Variables it is given.
+pub fn Text::reads_vars(self : Text) -> Bool {
+  self.vars_read
+}
+
+///|
+/// Whether the template reads Data buckets: whether one of its expressions
+/// reads the `data` root, wherever it is. One that does not renders the
+/// same whatever the buckets hold.
+pub fn Text::reads_data(self : Text) -> Bool {
+  self.data_read
+}
+
+///|
 /// Whether the text template inserts no value: it is literal text.
 pub fn Text::is_literal(self : Text) -> Bool {
   self.parts.iter().all(part => part is Verbatim(_))
 }
 
 ///|
+/// The text the template always renders, when it is literal text: its
+/// source, with each `$${` read as `${`. `None` when it inserts a value.
+pub fn Text::literal(self : Text) -> String? {
+  let out = StringBuilder()
+  for part in self.parts {
+    match part {
+      Verbatim(text) => out.write_string(text)
+      Insert(_) => return None
+    }
+  }
+  Some(out.to_string())
+}
+
+///|
 /// Parses `source` as a text template of the kind `kind`, for the field at
-/// `pointer`, within the Stub.
+/// `pointer`, within the Stub. `env` holds the environment variables it may
+/// read, and `buckets` the Data buckets; by default, none.
 pub fn Text::parse(
   source : String,
   pointer~ : String,
   kind~ : TextKind,
+  env? : Env = no_env,
+  buckets? : Buckets = no_buckets,
 ) -> Result[Text, Problem] {
   let chars = source.iter().collect()
-  try parse_parts(chars, [], false, text=true) catch {
+  let scope = {
+    vars: [],
+    in_loop: false,
+    text: true,
+    env,
+    buckets,
+    reads_vars: Ref(false),
+    reads_data: Ref(false),
+  }
+  try parse_parts(chars, scope) catch {
     Syntax(at, message) =>
       Err({ pointer, message: "template: \{position(chars, at)}\{message}", })
   } noraise {
-    parts => Ok({ source, pointer, kind, parts, })
+    parts =>
+      Ok({
+        source,
+        pointer,
+        kind,
+        parts,
+        vars_read: scope.reads_vars.val,
+        data_read: scope.reads_data.val,
+      })
   }
 }
 
@@ -153,18 +207,12 @@ fn position(chars : Array[Char], at : Int) -> String {
 }
 
 ///|
-/// Parses the parts of a template, `chars`: literal text and `${ expr }`.
-/// `vars` are the loop variables in scope, and `in_loop` says whether it is
-/// inside a `$each`. With `text`, `json()` and `raw()` are allowed.
-fn parse_parts(
-  chars : Array[Char],
-  vars : Array[String],
-  in_loop : Bool,
-  text~ : Bool,
-) -> Array[Part] raise Syntax {
+/// Parses the parts of a template, `chars`: literal text and `${ expr }`,
+/// whose expressions can name what `scope` holds.
+fn parse_parts(chars : Array[Char], scope : Scope) -> Array[Part] raise Syntax {
   let parts = []
   let literal = StringBuilder()
-  let parser = { chars, i: 0, vars, in_loop, text, }
+  let parser = { chars, i: 0, scope, }
   while parser.i < chars.length() {
     if parser.eat("$${") {
       literal.write_string("${")
@@ -241,6 +289,22 @@ pub fn Text::render(self : Text, context : Context) -> String raise RenderError 
     out.write_string(piece)
   }
   out.to_string()
+}
+
+///|
+/// Renders the template for the request of `context` as a value, such as
+/// the key of a data write, rather than as a body. It is bounded as a
+/// rendered body is, at most 1 MiB, and the messages about its bounds say
+/// it is a value.
+///
+/// Raises `RenderError` when a value it inserts is missing, a value is of
+/// a type it cannot write, or a bound is exceeded.
+pub fn Text::render_value(
+  self : Text,
+  context : Context,
+) -> String raise RenderError {
+  context.of_value = true
+  self.render(context)
 }
 
 ///|
@@ -338,19 +402,25 @@ fn markup_escaped(s : String) -> String {
 
 ///|
 /// The length of `s` in UTF-8, in bytes.
-fn utf8_length(s : String) -> Int {
+fn utf8_length(s : StringView) -> Int {
   let mut n = 0
   for c in s {
-    let code = c.to_int()
-    n += if code < 0x80 {
-      1
-    } else if code < 0x800 {
-      2
-    } else if code < 0x10000 {
-      3
-    } else {
-      4
-    }
+    n += char_utf8_length(c)
   }
   n
+}
+
+///|
+/// The length of `c` in UTF-8, in bytes.
+fn char_utf8_length(c : Char) -> Int {
+  let code = c.to_int()
+  if code < 0x80 {
+    1
+  } else if code < 0x800 {
+    2
+  } else if code < 0x10000 {
+    3
+  } else {
+    4
+  }
 }

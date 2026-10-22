@@ -33,6 +33,10 @@ pub struct Structured {
   /// The JSON Pointer to the field, within the Stub.
   pointer : String
   priv root : Node
+  /// Whether an expression of the template reads the `vars` root.
+  priv vars_read : Bool
+  /// Whether an expression of the template reads the `data` root.
+  priv data_read : Bool
 }
 
 ///|
@@ -49,44 +53,119 @@ pub impl Debug for Structured with fn to_repr(self) {
 }
 
 ///|
+/// Whether the template reads Variables: whether one of its expressions
+/// reads the `vars` root, wherever it is. One that does not renders the
+/// same whatever Variables it is given.
+pub fn Structured::reads_vars(self : Structured) -> Bool {
+  self.vars_read
+}
+
+///|
+/// Whether the template reads Data buckets: whether one of its expressions
+/// reads the `data` root, wherever it is. One that does not renders the
+/// same whatever the buckets hold.
+pub fn Structured::reads_data(self : Structured) -> Bool {
+  self.data_read
+}
+
+///|
+/// The value the template always renders when it is literal: when no
+/// expression, `$each` or `$if` is in it, wherever. `None` for any other
+/// template, whose value depends on the request. A `$${` in a literal
+/// gives `${`, and a `$$` key `$`, as they render.
+pub fn Structured::literal(self : Structured) -> Json? {
+  literal_value(self.root)
+}
+
+///|
+/// The value `node` always renders, when nothing in it is rendered.
+fn literal_value(node : Node) -> Json? {
+  match node {
+    Static(json) => Some(json)
+    Members(members) => {
+      let object = Map([])
+      for entry in members {
+        guard literal_value(entry.1) is Some(value) else { return None }
+        object[entry.0] = value
+      }
+      Some(Json::object(object))
+    }
+    Elements(elements) => {
+      let array = []
+      for element in elements {
+        guard literal_value(element) is Some(value) else { return None }
+        array.push(value)
+      }
+      Some(Json::array(array))
+    }
+    Interpolated(_, _) | Single(_, _) | Each(_, _, _, _) | If(_, _, _, _) =>
+      None
+  }
+}
+
+///|
 /// The most loop iterations one response runs, in all.
 let max_iterations : Int = 10_000
 
 ///|
 /// Parses `source` as a structured template, for the field at `pointer`,
-/// within the Stub. Returns the template, or every problem found.
+/// within the Stub. `env` holds the environment variables it may read, and
+/// `buckets` the Data buckets; by default, none. With `role`, it is a value
+/// rather than a `json`, which messages name as `role` says, such as `a
+/// Variable's value`. Returns the template, or every problem found.
 pub fn Structured::parse(
   source : Json,
   pointer~ : String,
+  env? : Env = no_env,
+  buckets? : Buckets = no_buckets,
+  role? : String,
 ) -> Result[Structured, Array[Problem]] {
   let problems = []
-  let root = parse_node(source, pointer, [], false, true, problems)
+  let (root_name, one) = match role {
+    Some(role) => (role, "one value")
+    None => ("json", "one response")
+  }
+  let scope = {
+    vars: [],
+    in_loop: false,
+    text: false,
+    env,
+    buckets,
+    reads_vars: Ref(false),
+    reads_data: Ref(false),
+  }
+  let root = parse_node(source, pointer, scope, Some(root_name), problems)
   if problems.is_empty() {
     let least = least_iterations(root)
     if least > max_iterations.to_int64() {
       problems.push({
         pointer,
-        message: "template: its loops run at least \{least} times; one response runs at most \{max_iterations} loop iterations",
+        message: "template: its loops run at least \{least} times; \{one} runs at most \{max_iterations} loop iterations",
       })
     }
   }
   if problems.is_empty() {
-    Ok({ source, pointer, root, })
+    Ok({
+      source,
+      pointer,
+      root,
+      vars_read: scope.reads_vars.val,
+      data_read: scope.reads_data.val,
+    })
   } else {
     Err(problems)
   }
 }
 
 ///|
-/// Parses the value `json` at `pointer`. `vars` are the loop variables in
-/// scope, `in_loop` says whether it is inside a `$each`, and `required`
-/// whether it must give a value: at the root, a `$if` needs `else`.
+/// Parses the value `json` at `pointer`, whose expressions can name what
+/// `scope` holds. `required` names the root, such as `json`, when it must
+/// give a value: at the root, a `$if` needs `else`.
 fn parse_node(
   json : Json,
   pointer : String,
-  vars : Array[String],
-  in_loop : Bool,
-  required : Bool,
+  scope : Scope,
+  required : String?,
   problems : Array[Problem],
 ) -> Node {
   let problem = (at : String, message : String) => {
@@ -96,7 +175,7 @@ fn parse_node(
   match json {
     String(s) => {
       let chars = s.iter().collect()
-      let parts = parse_parts(chars, vars, in_loop, text=false) catch {
+      let parts = parse_parts(chars, scope) catch {
         Syntax(at, message) =>
           return problem(pointer, "\{position(chars, at)}\{message}")
       }
@@ -113,18 +192,15 @@ fn parse_node(
           parse_node(
             item,
             child_pointer(pointer, i.to_string()),
-            vars,
-            in_loop,
-            false,
+            scope,
+            None,
             problems,
           )
         }),
       )
     Object(members) => {
       if members.contains("$each") || members.contains("$if") {
-        return parse_directive(
-          members, pointer, vars, in_loop, required, problems,
-        )
+        return parse_directive(members, pointer, scope, required, problems)
       }
       let out = []
       for key, value in members {
@@ -146,7 +222,7 @@ fn parse_node(
         } else {
           key
         }
-        out.push((key, parse_node(value, at, vars, in_loop, false, problems)))
+        out.push((key, parse_node(value, at, scope, None, problems)))
       }
       Members(out)
     }
@@ -159,9 +235,8 @@ fn parse_node(
 fn parse_directive(
   members : Map[String, Json],
   pointer : String,
-  vars : Array[String],
-  in_loop : Bool,
-  required : Bool,
+  scope : Scope,
+  required : String?,
   problems : Array[Problem],
 ) -> Node {
   let problem = (at : String, message : String) => {
@@ -190,7 +265,7 @@ fn parse_directive(
       return false
     }
     let chars = text.iter().collect()
-    let parser = { chars, i: 0, vars, in_loop, text: false, }
+    let parser = { chars, i: 0, scope, }
     try {
       if text.has_prefix("${") {
         raise Syntax(
@@ -229,7 +304,7 @@ fn parse_directive(
       String(name) if root_names.contains(name) || reserved.contains(name) =>
         return problem(
           as_at,
-          "\{name.escape()} cannot be a loop variable: it is a request field, loop or a reserved word",
+          "\{name.escape()} cannot be a loop variable: it is a request field, env, vars, data, loop or a reserved word",
         )
       String(name) => name
       _ => return problem(as_at, "\"as\" must be a string")
@@ -237,9 +312,8 @@ fn parse_directive(
     let body = parse_node(
       members["do"],
       child_pointer(pointer, "do"),
-      [..vars, name],
-      true,
-      false,
+      { ..scope, vars: [..scope.vars, name], in_loop: true, },
+      None,
       problems,
     )
     if !ok {
@@ -259,16 +333,16 @@ fn parse_directive(
     if !members.contains("then") {
       return problem(pointer, "a $if needs \"then\"")
     }
-    if required && !members.contains("else") {
+    if required is Some(root) && !members.contains("else") {
       return problem(
-        pointer, "a $if at the root of json needs \"else\", so that it always gives a value",
+        pointer,
+        "a $if at the root of \{root} needs \"else\", so that it always gives a value",
       )
     }
     let then = parse_node(
       members["then"],
       child_pointer(pointer, "then"),
-      vars,
-      in_loop,
+      scope,
       required,
       problems,
     )
@@ -278,8 +352,7 @@ fn parse_directive(
         parse_node(
           value,
           child_pointer(pointer, "else"),
-          vars,
-          in_loop,
+          scope,
           required,
           problems,
         )
@@ -373,4 +446,21 @@ pub fn Structured::render(
   }
   context.output = start + out.length()
   out.to_bytes()
+}
+
+///|
+/// Renders the template for the request of `context` as a JSON value: the
+/// value of a Variable. It is bounded as a rendered body is: at most 1 MiB
+/// of compact JSON, and at most 10,000 loop iterations. Its numbers keep
+/// the text they are written with, so the value writes back as it
+/// rendered.
+///
+/// Raises `RenderError` when a value it needs is missing, a value is of a
+/// type it cannot use, or a bound is exceeded.
+pub fn Structured::render_value(
+  self : Structured,
+  context : Context,
+) -> Json raise RenderError {
+  context.of_value = true
+  read_compact_json(self.render(context))
 }

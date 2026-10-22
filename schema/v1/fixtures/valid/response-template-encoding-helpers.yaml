@@ -1,0 +1,19 @@
+mocks:
+  - name: auth
+stubs:
+  - id: me
+    mock: auth
+    request: { method: GET, path: /me }
+    response:
+      status: 200
+      template: true
+      headers:
+        X-Next: ${urlEncode(query.q ?? '')}
+      json:
+        user: ${jwtPayload(header.authorization).sub ?? 'anonymous'}
+        alg: ${jwtHeader(header.authorization).alg ?? null}
+        echo: ${base64url(query.token ?? '')}
+        basic: ${base64(concat(query.user ?? 'ann', ':', query.password ?? ''))}
+        decoded: ${base64Decode(query.b64 ?? '') ?? null}
+        urlDecoded: ${base64urlDecode(query.b64url ?? '')}
+        path: ${urlDecode(query.path ?? '%2F')}

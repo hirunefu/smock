@@ -2,10 +2,11 @@
 //
 //     expr    = value { "??" value }
 //     value   = ref | literal | call
-//     ref     = root { "." name | "[" integer "]" | "[" string "]" }
-//     root    = "method" | "path" | "query" | "header" | "body" | "bodyText"
-//             | "loop" | loop variable
-//     call    = function "(" [ expr { "," expr } ] ")"
+//     ref     = root steps
+//     steps   = { "." name | "[" integer "]" | "[" string "]" }
+//     root    = "method" | "path" | "query" | "header" | "cookie" | "body"
+//             | "bodyText" | "env" | "vars" | "data" | "loop" | loop variable
+//     call    = function "(" [ expr { "," expr } ] ")" steps
 //     cond    = [ "!" ] expr [ ( "==" | "!=" ) literal ]
 //     literal = string | number | "true" | "false" | "null"
 //     string  = "'" … "'" | '"' … '"'      (with \' \" \\ escapes)
@@ -19,11 +20,16 @@
 priv enum Expr {
   /// A literal: a string, a number, true, false or null.
   Literal(Json)
-  /// A reference to a request field, `loop.index` or a loop variable, with
-  /// its source text.
+  /// A reference to a request field, a listed environment variable, a
+  /// Variable, a Data bucket, `loop.index` or a loop variable, with its
+  /// source text.
   Ref(Root, Array[Step], String)
-  /// A call of a helper, with its arguments.
-  Call(Helper, Array[Expr])
+  /// A call of a helper, with its arguments and its source text, which
+  /// names it when it gives a missing value.
+  Call(Helper, Array[Expr], String)
+  /// A call followed by steps into what it gives, with the source text of
+  /// the whole.
+  Walk(Expr, Array[Step], String)
   /// `a ?? b ?? …`: the first of them that is present.
   Fallback(Array[Expr])
 }
@@ -35,11 +41,22 @@ priv enum Root {
   Path
   Query
   Header
+  Cookie
   Body
   BodyText
+  /// `env.NAME`: the value of a listed variable, read when the template was
+  /// parsed, or `None` when it is unset.
+  Env(Json?)
+  /// `vars.NAME`: the Variable `NAME` of the request's Mock and Session, by
+  /// its name. The steps of the reference go into its value.
+  Variable(String)
+  /// `data.NAME`: the Data bucket `NAME` of the Stub's Mock, by its name,
+  /// which the template was checked to name. The steps of the reference go
+  /// into its value.
+  Data(String)
   LoopIndex
   /// A loop variable, by its name.
-  Var(String)
+  LoopVar(String)
 }
 
 ///|
@@ -52,32 +69,31 @@ priv enum Step {
 }
 
 ///|
-/// A helper, with the literal arguments it was checked to take.
+/// A helper, by its family, with the literal arguments it was checked to
+/// take. Each family is in a file of its own, with the rules of its
+/// arguments and what its helpers give.
 priv enum Helper {
-  Uuid
-  Int(Int64, Int64)
-  Decimal(Int64, Int64, Int)
-  Bool
-  Pick(Array[Json])
-  Hex(Int)
-  Word
-  Words(Int)
-  FirstName
-  LastName
-  Name
-  Email
-  /// `now(s)`: seconds to add.
-  Now(Int64)
-  /// `nowMillis(s)`: seconds to add.
-  NowMillis(Int64)
-  /// `number(x)`, which takes any expression.
-  Number
-  /// `range(a, b)`, whose arguments are integer literals or `number(…)`.
-  Range
-  /// `json(x)`: text templates only.
-  JsonText
-  /// `raw(x)`: text templates only.
-  Raw
+  /// Fake data, `fake.*` (fake.mbt).
+  Fake(FakeHelper)
+  /// The time of the request and dates: `now`, `nowMillis`, `dateFormat`
+  /// and `dateTimeShift` (time.mbt, dates.mbt).
+  Time(TimeHelper)
+  /// `number`, `range`, `json` and `raw` (conversions.mbt).
+  Conversion(ConversionHelper)
+  /// Text and arrays: `len`, `concat`, `padStart`, `padEnd`, `substr`,
+  /// `indexOf`, `includes`, `replace`, `replaceAll`, `split`, `join`,
+  /// `uppercase`, `lowercase` and `trim` (strings.mbt).
+  Strings(StringHelper)
+  /// base64, base64url and percent-encoding (encoding.mbt).
+  Encoding(EncodingHelper)
+  /// `jwtPayload` and `jwtHeader` (jwt.mbt).
+  Jwt(JwtHelper)
+  /// Exact decimal arithmetic: `add`, `subtract`, `multiply`, `divide`,
+  /// `modulo`, `ceil`, `floor`, `round`, `toFixed` and `parseInt`
+  /// (arithmetic.mbt, decimal.mbt).
+  Arithmetic(ArithmeticHelper)
+  /// `find`: an element of an array, picked by a member (find.mbt).
+  Find
 }
 
 ///|
@@ -102,10 +118,11 @@ priv suberror Syntax {
 let reserved : Array[String] = ["for", "if", "else", "end", "each", "params"]
 
 ///|
-/// The names of request fields and `loop`, which a loop variable cannot
-/// take.
+/// The names of request fields, `env`, `vars`, `data` and `loop`, which a
+/// loop variable cannot take.
 let root_names : Array[String] = [
-  "method", "path", "query", "header", "body", "bodyText", "loop",
+  "method", "path", "query", "header", "cookie", "body", "bodyText", "env", "vars",
+  "data", "loop",
 ]
 
 ///|
@@ -114,16 +131,35 @@ let root_names : Array[String] = [
 let max_integer : Int64 = 9_007_199_254_740_991L
 
 ///|
-/// Parses expressions in `chars`, from `i` on.
-priv struct Parser {
-  chars : Array[Char]
-  mut i : Int
+/// What the expressions of a template can name where they are parsed. An
+/// inner scope, such as the `do` of a `$each`, is derived from the outer
+/// one.
+priv struct Scope {
   /// The loop variables in scope, innermost last.
   vars : Array[String]
   /// Whether the expression is inside a `$each`, where `loop.index` is.
   in_loop : Bool
   /// Whether `json()` and `raw()` are allowed: in text templates only.
   text : Bool
+  /// The environment variables `env.NAME` may read.
+  env : Env
+  /// The Data buckets `data.NAME` may read.
+  buckets : Buckets
+  /// Set when an expression reads the `vars` root, in this scope or one
+  /// derived from it, which share it: the template reads Variables.
+  reads_vars : Ref[Bool]
+  /// Set when an expression reads the `data` root, in this scope or one
+  /// derived from it, which share it: the template reads Data buckets.
+  reads_data : Ref[Bool]
+}
+
+///|
+/// Parses expressions in `chars`, from `i` on.
+priv struct Parser {
+  chars : Array[Char]
+  mut i : Int
+  /// What the expressions can name.
+  scope : Scope
 }
 
 ///|
@@ -206,16 +242,17 @@ fn Parser::name(self : Parser) -> String {
 }
 
 ///|
-/// Parses `expr`.
-fn Parser::expr(self : Parser) -> Expr raise Syntax {
-  let first = self.value()
+/// Parses `expr`. With `exact`, its number literals keep the digits their
+/// floats would lose, as `value` says.
+fn Parser::expr(self : Parser, exact? : Bool = false) -> Expr raise Syntax {
+  let first = self.value(exact~)
   let alternatives = [first]
   for ;; {
     self.skip_space()
     if !self.eat("??") {
       break
     }
-    alternatives.push(self.value())
+    alternatives.push(self.value(exact~))
   }
   if alternatives.length() == 1 {
     first
@@ -260,14 +297,25 @@ fn Parser::literal_only(self : Parser, operator : String) -> Json raise Syntax {
 }
 
 ///|
-/// Parses `value`.
-fn Parser::value(self : Parser) -> Expr raise Syntax {
+/// Parses `value`. With `exact`, as for the arguments of an arithmetic
+/// helper, a number literal keeps its text when its float would lose
+/// digits (`exact_literal`).
+fn Parser::value(self : Parser, exact? : Bool = false) -> Expr raise Syntax {
   self.skip_space()
   let start = self.i
   match self.peek() {
     None => raise Syntax(start, "expected a value, found the end")
     Some('\'' | '"') => Literal(Json::string(self.string()))
-    Some(c) if c == '-' || c.is_ascii_digit() => Literal(self.number())
+    Some(c) if c == '-' || c.is_ascii_digit() => {
+      let number = self.number()
+      if exact {
+        Literal(
+          exact_literal(number, String::from_array(self.chars[start:self.i])),
+        )
+      } else {
+        Literal(number)
+      }
+    }
     Some(c) if is_name_start(c) => self.named(start)
     Some('!') | Some('=') =>
       raise Syntax(
@@ -388,18 +436,19 @@ fn Parser::named(self : Parser, start : Int) -> Expr raise Syntax {
   }
   if after < self.chars.length() && self.chars[after] == '(' {
     self.i = after + 1
-    return self.call(dotted.join("."), start)
+    let call = self.call(dotted.join("."), start)
+    let steps = self.steps()
+    if steps.is_empty() {
+      return call
+    }
+    return Walk(call, steps, String::from_array(self.chars[start:self.i]))
   }
   self.reference(first, start)
 }
 
 ///|
-/// Parses the rest of a reference that starts with `root`.
-fn Parser::reference(
-  self : Parser,
-  root : String,
-  start : Int,
-) -> Expr raise Syntax {
+/// Parses `steps`: `.name`, `[n]` and `['name']`, as many as there are.
+fn Parser::steps(self : Parser) -> Array[Step] raise Syntax {
   let steps = []
   for ;; {
     if self.eat(".") {
@@ -441,6 +490,17 @@ fn Parser::reference(
       break
     }
   }
+  steps
+}
+
+///|
+/// Parses the rest of a reference that starts with `root`.
+fn Parser::reference(
+  self : Parser,
+  root : String,
+  start : Int,
+) -> Expr raise Syntax {
+  let steps = self.steps()
   let text = String::from_array(self.chars[start:self.i])
   let with_name = (root : Root) => {
     match steps {
@@ -458,15 +518,62 @@ fn Parser::reference(
     }
     Ref(root, steps, text)
   }
-  if self.vars.contains(root) {
-    return Ref(Var(root), steps, text)
+  if self.scope.vars.contains(root) {
+    return Ref(LoopVar(root), steps, text)
   }
   match root {
     "method" => alone(Method)
     "bodyText" => alone(BodyText)
     "body" => Ref(Body, steps, text)
+    "env" =>
+      match steps {
+        [Name(name)] =>
+          match self.scope.env.values.get(name) {
+            Some(value) => Ref(Env(value.map(Json::string)), steps, text)
+            None =>
+              raise Syntax(
+                start,
+                "\{text}: the environment variable \{name.escape()} is not listed in --template-env",
+              )
+          }
+        _ =>
+          raise Syntax(
+            start,
+            "\{text}: env takes exactly one name, such as env.REGION",
+          )
+      }
+    "vars" =>
+      match steps {
+        [Name(name), .. rest] => {
+          self.scope.reads_vars.val = true
+          Ref(Variable(name), rest.to_owned(), text)
+        }
+        _ =>
+          raise Syntax(
+            start,
+            "\{text}: vars takes the name of a Variable first, such as vars.count or vars.cart.items[0]",
+          )
+      }
+    "data" =>
+      match steps {
+        [Name(name), .. rest] if self.scope.buckets.names.contains(name) => {
+          self.scope.reads_data.val = true
+          Ref(Data(name), rest.to_owned(), text)
+        }
+        [Name(name), ..] =>
+          raise Syntax(
+            start,
+            "\{text}: the Mock has no Data bucket \{name.escape()}",
+          )
+        _ =>
+          raise Syntax(
+            start,
+            "\{text}: data takes the name of a Data bucket first, such as data.orders or data.orders[0].id",
+          )
+      }
     "query" => with_name(Query)
     "header" => with_name(Header)
+    "cookie" => with_name(Cookie)
     "path" =>
       match steps {
         [] | [Index(_)] => Ref(Path, steps, text)
@@ -477,7 +584,7 @@ fn Parser::reference(
           )
       }
     "loop" => {
-      if !self.in_loop {
+      if !self.scope.in_loop {
         raise Syntax(start, "loop.index is only inside $each")
       }
       match steps {
@@ -501,12 +608,36 @@ fn root_word(root : Root) -> String {
     Path => "path"
     Query => "query"
     Header => "header"
+    Cookie => "cookie"
     Body => "body"
     BodyText => "bodyText"
+    Env(_) => "env"
+    Variable(_) => "vars"
+    Data(_) => "data"
     LoopIndex => "loop"
-    Var(name) => name
+    LoopVar(name) => name
   }
 }
+
+///|
+/// A call of a helper, parsed but not checked yet: the helper's name, where
+/// the call starts, its arguments, each with where it starts, and whether
+/// it is in a text template.
+priv struct CallSite {
+  name : String
+  start : Int
+  args : Array[(Int, Expr)]
+  text : Bool
+}
+
+///|
+/// The families of helpers. Each one checks the calls of its own helpers,
+/// and gives `None` for a name that is not one of them, so a family is
+/// added without changing the others.
+let families : Array[(CallSite) -> Helper? raise Syntax] = [
+  fake_helper, time_helper, conversion_helper, string_helper, encoding_helper, jwt_helper,
+  arithmetic_helper, find_helper,
+]
 
 ///|
 /// Parses the arguments of a call of `name` and checks them: `start` is
@@ -518,7 +649,7 @@ fn Parser::call(self : Parser, name : String, start : Int) -> Expr raise Syntax 
     for ;; {
       self.skip_space()
       let at = self.i
-      args.push((at, self.expr()))
+      args.push((at, self.expr(exact=is_arithmetic(name))))
       self.skip_space()
       if self.eat(")") {
         break
@@ -526,195 +657,79 @@ fn Parser::call(self : Parser, name : String, start : Int) -> Expr raise Syntax 
       self.expect(",", ", or )")
     }
   }
-  let count = (expected : Int) => {
-    if args.length() != expected {
-      let what = match expected {
-        0 => "no arguments"
-        1 => "1 argument"
-        n => "\{n} arguments"
-      }
-      raise Syntax(start, "\{name}() takes \{what}, not \{args.length()}")
-    }
-  }
-  let integer = (k : Int, min : Int64, max : Int64) => {
-    let (at, arg) = args[k]
-    match arg {
-      Literal(Number(n, ..)) if n == n.floor() &&
-        n >= min.to_double() &&
-        n <= max.to_double() => n.to_int64()
-      _ =>
-        raise Syntax(
-          at,
-          "\{name}(): argument \{k + 1} must be an integer literal from \{min} to \{max}",
-        )
-    }
-  }
-  let ordered = (min : Int64, max : Int64) => {
-    if min > max {
-      raise Syntax(
-        start,
-        "\{name}(): the minimum \{min} exceeds the maximum \{max}",
+  let site = { name, start, args, text: self.scope.text, }
+  for family in families {
+    if family(site) is Some(helper) {
+      return Call(
+        helper,
+        args.map(arg => arg.1),
+        String::from_array(self.chars[start:self.i]),
       )
     }
   }
-  let seconds = () => {
-    match args.length() {
-      0 => 0L
-      1 => integer(0, -max_integer, max_integer)
-      n => raise Syntax(start, "\{name}() takes 0 or 1 argument, not \{n}")
+  raise Syntax(
+    start,
+    "unknown helper \{name.escape()}: not one of the helpers smock has",
+  )
+}
+
+///|
+/// The literals that `expr` can give: itself when it is a literal, or each
+/// alternative of a fallback that is one. A helper checks them when the
+/// template is parsed.
+fn literals(expr : Expr) -> Array[Json] {
+  match expr {
+    Literal(json) => [json]
+    Fallback(alternatives) => {
+      let found = []
+      for alternative in alternatives {
+        if alternative is Literal(json) {
+          found.push(json)
+        }
+      }
+      found
     }
+    _ => []
   }
-  let helper : Helper = match name {
-    "fake.uuid" => {
-      count(0)
-      Uuid
+}
+
+///|
+/// Raises a problem unless the call has `expected` arguments.
+fn CallSite::count(self : CallSite, expected : Int) -> Unit raise Syntax {
+  if self.args.length() != expected {
+    let what = match expected {
+      0 => "no arguments"
+      1 => "1 argument"
+      n => "\{n} arguments"
     }
-    "fake.int" => {
-      count(2)
-      let min = integer(0, -max_integer, max_integer)
-      let max = integer(1, -max_integer, max_integer)
-      ordered(min, max)
-      Int(min, max)
-    }
-    "fake.decimal" => {
-      count(3)
-      let bound = 1_000_000_000L
-      let min = integer(0, -bound, bound)
-      let max = integer(1, -bound, bound)
-      let places = integer(2, 1L, 6L).to_int()
-      ordered(min, max)
-      Decimal(min, max, places)
-    }
-    "fake.bool" => {
-      count(0)
-      Bool
-    }
-    "fake.pick" => {
-      if args.length() < 1 || args.length() > 100 {
-        raise Syntax(
-          start,
-          "fake.pick() takes 1 to 100 literals, not \{args.length()}",
-        )
-      }
-      Pick(
-        args.map(arg => {
-          match arg.1 {
-            Literal(json) => json
-            _ =>
-              raise Syntax(
-                arg.0,
-                "fake.pick() takes literals: strings, numbers, true, false or null",
-              )
-          }
-        }),
-      )
-    }
-    "fake.hex" => {
-      count(1)
-      Hex(integer(0, 1L, 64L).to_int())
-    }
-    "fake.word" => {
-      count(0)
-      Word
-    }
-    "fake.words" => {
-      count(1)
-      Words(integer(0, 1L, 100L).to_int())
-    }
-    "fake.firstName" => {
-      count(0)
-      FirstName
-    }
-    "fake.lastName" => {
-      count(0)
-      LastName
-    }
-    "fake.name" => {
-      count(0)
-      Name
-    }
-    "fake.email" => {
-      count(0)
-      Email
-    }
-    "now" => Now(seconds())
-    "nowMillis" => NowMillis(seconds())
-    "number" => {
-      count(1)
-      Number
-    }
-    "range" => {
-      count(2)
-      for arg in args {
-        if !is_range_bound(arg.1) {
-          raise Syntax(
-            arg.0,
-            "range() takes integers: integer literals, or number(…) of a request value",
-          )
-        }
-      }
-      match (args[0].1, args[1].1) {
-        (Literal(_), Literal(_)) => {
-          let a = integer(0, -max_integer, max_integer)
-          let b = integer(1, -max_integer, max_integer)
-          if b - a + 1L > max_range.to_int64() {
-            raise Syntax(
-              start,
-              "range(\{a}, \{b}) gives \{b - a + 1L} values; range gives at most \{max_range}",
-            )
-          }
-        }
-        _ => ()
-      }
-      Range
-    }
-    "json" | "raw" => {
-      if !self.text {
-        raise Syntax(
-          start,
-          "\{name}() is for text templates; in json, smock writes and escapes every value itself",
-        )
-      }
-      count(1)
-      if name == "json" {
-        JsonText
-      } else {
-        Raw
-      }
-    }
+    raise Syntax(
+      self.start,
+      "\{self.name}() takes \{what}, not \{self.args.length()}",
+    )
+  }
+}
+
+///|
+/// Argument `k`, counted from 0, which must be an integer literal from `min`
+/// to `max`. A literal that keeps its text is the decimal its text writes,
+/// whose fraction its float can lose.
+fn CallSite::integer(
+  self : CallSite,
+  k : Int,
+  min : Int64,
+  max : Int64,
+) -> Int64 raise Syntax {
+  let (at, arg) = self.args[k]
+  match arg {
+    Literal(Number(n, repr~)) if n == n.floor() &&
+      n >= min.to_double() &&
+      n <= max.to_double() &&
+      (repr is None || (repr is Some(text) && writes_integer(text))) =>
+      n.to_int64()
     _ =>
       raise Syntax(
-        start,
-        "unknown helper \{name.escape()}: not one of the helpers smock has",
+        at,
+        "\{self.name}(): argument \{k + 1} must be an integer literal from \{min} to \{max}",
       )
-  }
-  Call(helper, args.map(arg => arg.1))
-}
-
-///|
-/// The most values `range` gives.
-let max_range : Int = 1000
-
-///|
-/// Whether `expr` can bound a range: an integer literal, `number(…)`, or a
-/// fallback of those.
-fn is_range_bound(expr : Expr) -> Bool {
-  match expr {
-    Literal(Number(n, ..)) => n == n.floor()
-    Call(Number, _) => true
-    Fallback(alternatives) => alternatives.iter().all(is_range_bound)
-    _ => false
-  }
-}
-
-///|
-/// The values of a literal `range(a, b)`, if `expr` is one.
-fn literal_range(expr : Expr) -> Int? {
-  match expr {
-    Call(Range, [Literal(Number(a, ..)), Literal(Number(b, ..))]) => {
-      let count = b - a + 1.0
-      Some(if count < 0.0 { 0 } else { count.to_int() })
-    }
-    _ => None
   }
 }

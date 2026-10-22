@@ -345,7 +345,9 @@ More Stubs, more connections or larger bodies in the Journal take more
 memory, and the kernel kills a container that goes over its limit. smock
 bounds its Journal by default at the smaller of 64 MiB and a quarter of its
 memory limit (the laptop table's last column), so a small Pod keeps a small
-Journal. `SMOCK_JOURNAL_MAX_BYTES` in `env` sets another bound.
+Journal. `SMOCK_JOURNAL_MAX_BYTES` in `env` sets another bound. Variables
+are bounded the same way, at the smaller of 64 MiB and an eighth of the
+limit, and `SMOCK_STATE_MAX_BYTES` sets another bound.
 
 ## Scaling and shutdown
 

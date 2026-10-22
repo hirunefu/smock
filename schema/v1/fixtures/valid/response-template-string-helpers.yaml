@@ -1,0 +1,17 @@
+mocks:
+  - name: codes
+stubs:
+  - id: code
+    mock: codes
+    request: { method: POST, path: /codes }
+    response:
+      status: 200
+      template: true
+      headers:
+        X-Code: ${padEnd(query.prefix ?? 'C', 4, '-')}
+      json:
+        code: ${padStart(query.n, 6, '0')}
+        name: ${concat(body.first, ' ', body.last)}
+        size: ${len(body.items ?? '')}
+        lines: { $each: "range(1, len(body.items))", as: i, do: "${i}" }
+        second: ${range(1, 3)[1]}

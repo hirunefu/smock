@@ -1,0 +1,7 @@
+mocks:
+  - name: shop
+data:
+  - mock: shop
+    name: orders
+    key: id
+    json: [{ id: 1.5 }, { id: "" }, { id: "a/b" }, { id: null }, { id: 9007199254740992 }]

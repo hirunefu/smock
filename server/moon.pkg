@@ -9,6 +9,7 @@ import {
   "smock/smock/openssl",
   "smock/smock/prng",
   "smock/smock/settings",
+  "smock/smock/template",
   "smock/smock/usage",
   "smock/smock/watch",
   "moonbitlang/async",

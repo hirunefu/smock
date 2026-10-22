@@ -4,12 +4,12 @@
 It runs in a Job on another node than smock (scripts/gke-bench.sh), and
 sends smock's Service the steps of one profile of the plan the way
 bench/bench.py does on one machine, with the same functions: one oha process
-for each request of the mix (bench/requests.json) at its weight's share of
-the step's rate and connections, at a fixed arrival rate, latency counted
-from each request's due time. It prints one JSON line for each step to
-stdout, in the layout of a case of bench/bench.py's summary.json, between a
-line about the start, with the CPU of the node it runs on (gke.py
-node-cpu), and one when it is done; progress goes to stderr.
+for each request of the mix (bench/requests.json, or a variant's own) at its
+weight's share of the step's rate and connections, at a fixed arrival rate,
+latency counted from each request's due time. It prints one JSON line for
+each step to stdout, in the layout of a case of bench/bench.py's
+summary.json, between a line about the start, with the CPU of the node it
+runs on (gke.py node-cpu), and one when it is done; progress goes to stderr.
 
 It looks up smock's address once smock answers by name, and sends the load
 there. Once smock has been ready for the plan's idle settle time, it reads
@@ -59,8 +59,10 @@ Environment:
               {"label": ..., "target": its host name (its Service),
                "first_second": false to skip the scrape a second into
               each run, true by default}; a variant may also name its own
-              "plain_port", "tls_port" and "admin_port", as a test that
-              runs several smocks on one machine does
+              "mix", a file of the directory of bench.py, as a crud
+              variant names the CRUD variant's (requests-crud.json), and
+              its own "plain_port", "tls_port" and "admin_port", as a test
+              that runs several smocks on one machine does
   ROUNDS      with VARIANTS, how many rounds to run (default: 1)
   PROFILE     the profile of the plan to run
   CASES       the cases to run, comma-separated (default: every case of the plan)
@@ -385,21 +387,27 @@ def run_step(spec, mix, oha, address, ports, scrape_metrics, first_second=True):
     }
 
 
+def read_mix(name="requests.json"):
+    """The requests of the mix `name`, a file of the directory of bench.py."""
+    return harness.read_json(harness.BENCH / name)["requests"]
+
+
 def read_variants(environ):
     """The smocks to send each step to, in order. With VARIANTS, its
     variants: each with its label, its host name, whether to scrape smock
-    a second into each run, and its own ports when it names them, else
-    PLAIN_PORT, TLS_PORT and ADMIN_PORT. Without it, smock at TARGET alone,
-    with no label."""
+    a second into each run, the requests of its mix, and its own ports
+    when it names them, else PLAIN_PORT, TLS_PORT and ADMIN_PORT. Without
+    it, smock at TARGET alone, with no label, sent the benchmark's mix."""
     ports = {"plain": int(environ.get("PLAIN_PORT", "80")), "tls": int(environ.get("TLS_PORT", "443"))}
     admin_port = int(environ.get("ADMIN_PORT", "9090"))
     if not environ.get("VARIANTS"):
         return [SimpleNamespace(label=None, target=environ["TARGET"], first_second=True, ports=ports,
-                                admin_port=admin_port)]
+                                admin_port=admin_port, mix=read_mix())]
     return [SimpleNamespace(label=entry["label"], target=entry["target"], first_second=entry.get("first_second", True),
                             ports={"plain": int(entry.get("plain_port", ports["plain"])),
                                    "tls": int(entry.get("tls_port", ports["tls"]))},
-                            admin_port=int(entry.get("admin_port", admin_port)))
+                            admin_port=int(entry.get("admin_port", admin_port)),
+                            mix=read_mix(entry.get("mix", "requests.json")))
             for entry in json.loads(environ["VARIANTS"])]
 
 
@@ -449,7 +457,6 @@ def main():
     specs = gke.steps(plan, profile, gke.plan_cases(plan, gke.comma_list(os.environ.get("CASES"))))
     runs = run_order(specs, variants, rounds)
     oha = shutil.which(os.environ.get("OHA", "oha")) or os.environ.get("OHA", "oha")
-    mix = harness.read_json(harness.BENCH / "requests.json")["requests"]
     # Every connection is a file descriptor.
     _, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
@@ -504,8 +511,8 @@ def main():
     for variant in variants:
         # The traffic check, before the first run and after a run with no
         # response.
-        variant.check_again = functools.partial(traffic_check, variant.target, variant.address, variant.ports, mix[0],
-                                                check_s)
+        variant.check_again = functools.partial(traffic_check, variant.target, variant.address, variant.ports,
+                                                variant.mix[0], check_s)
         check = variant.check_again()
         emit({"kind": "traffic-check", "profile": profile_name, **tag(variant), **check})
         reason = None if check["ok"] else \
@@ -529,10 +536,10 @@ def main():
         idle = [other for other in variants if other is not variant]
         idle_before = scrape_idle(idle)
         if ready:
-            result = run_step(spec, mix, oha, variant.address, variant.ports,
+            result = run_step(spec, variant.mix, oha, variant.address, variant.ports,
                               functools.partial(scrape, variant.target, variant.admin_port), variant.first_second)
         else:
-            result = harness.not_ready_result(SimpleNamespace(mix=mix), spec, None)
+            result = harness.not_ready_result(SimpleNamespace(mix=variant.mix), spec, None)
         idle_after = scrape_idle(idle)
         guard = {}
         if tagged:

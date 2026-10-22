@@ -133,6 +133,7 @@ async test "rewriting the certificate files rotates the certificate without a re
             #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
             #|{"level":"info","msg":"random seed","seed":"*"}
             #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+            #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
             #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
             #|{"level":"info","msg":"listening","listener":"plain","address":"0.0.0.0:*"}
             #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","certFile":"*/tls.crt","keyFile":"*/tls.key"}
@@ -684,6 +685,7 @@ async test "smock serve refuses to start when a Mock's certificate pair cannot b
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"users","certFile":"*/missing.pem","keyFile":"*/rsa-key.pem","error":"cannot read the certificate file: no such file"}
         #|---
@@ -691,6 +693,7 @@ async test "smock serve refuses to start when a Mock's certificate pair cannot b
         #|{"level":"info","msg":"smock starting","version":"*","commit":"*","toolchain":"*","adminAuth":"on"}
         #|{"level":"info","msg":"random seed","seed":"*"}
         #|{"level":"info","msg":"journal byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
+        #|{"level":"info","msg":"state byte bound","maxBytes":"*","source":"*","memoryLimit":"*"}
         #|{"level":"info","msg":"listening","listener":"admin","address":"0.0.0.0:*"}
         #|{"level":"error","msg":"cannot load the TLS certificate","mock":"users","certFile":"*/rsa-chain.pem","keyFile":"*/other-key.pem","error":"the private key does not match the leaf certificate"}
         #|---

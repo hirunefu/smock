@@ -1,0 +1,4 @@
+mocks:
+  - name: shop
+data:
+  - { mock: shop, name: orders, key: id, json: [{ id: 42 }, { id: "42" }] }

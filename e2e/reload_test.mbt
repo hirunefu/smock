@@ -239,7 +239,7 @@ async test "an invalid set keeps the current one serving and is reported in stat
         reload_entries(stopped.logs, digests),
         content=(
           #|{"level":"error","msg":"definitions reload failed","result":"failed","digest":"<served at startup>","errors":[{"file":"users.json","pointer":"/stubs/0/response/status","message":"must be an integer from 200 to 599"},{"file":"users.json","pointer":"/stubs/0/mock","message":"no file declares the Mock \"nobody\""}]}
-          #|{"level":"info","msg":"definitions reloaded","result":"swapped","oldDigest":"<served at startup>","newDigest":"<served after the fix>","scenarioStatesReset":0}
+          #|{"level":"info","msg":"definitions reloaded","result":"swapped","oldDigest":"<served at startup>","newDigest":"<served after the fix>","scenarioStatesReset":0,"dataBucketsReset":0}
         ),
       )
     },
@@ -332,7 +332,7 @@ async test "a reload by editing a file keeps a state whose name still exists, se
     inspect(
       reload_entries(stopped.logs, digests),
       content=(
-        #|{"level":"info","msg":"definitions reloaded","result":"swapped","oldDigest":"<before>","newDigest":"<after>","scenarioStatesReset":1}
+        #|{"level":"info","msg":"definitions reloaded","result":"swapped","oldDigest":"<before>","newDigest":"<after>","scenarioStatesReset":1,"dataBucketsReset":0}
       ),
     )
   })
@@ -393,6 +393,7 @@ async test "a large body written to a slow reader during a reload completes with
         ),
         content=(
           #|HTTP/1.1 200 OK
+          #|Accept-Ranges: bytes
           #|Content-Length: 16777216
           #|reload: "swapped"
           #|bytes of the first response that are not "a": 0

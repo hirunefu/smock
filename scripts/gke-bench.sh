@@ -7,8 +7,8 @@
 #    external IP addresses), and nothing left by an earlier run; then prints
 #    how long the run takes and what it costs;
 # 2. with --yes, builds the images on this machine (smock with the
-#    benchmark's definitions and their Scenario variant, one for each
-#    binary a run of variants compares, and the load generator) for the architecture of the run
+#    benchmark's definitions and their Scenario and CRUD variants, one for
+#    each binary a run of variants compares, and the load generator) for the architecture of the run
 #    (--arch, this machine's by default), with the release binary it builds
 #    or is given: the images only copy files, so this machine builds them
 #    for the other architecture too, with no emulation, from binaries of
@@ -48,9 +48,10 @@
 #    left.
 #
 # It never makes a LoadBalancer, a static IP or a volume claim: the
-# namespace's quota forbids them. kubectl authenticates with an access token
-# from gcloud in a kubeconfig of its own (mode 600, deleted at the end), so
-# gke-gcloud-auth-plugin is not needed, and ~/.kube/config is not touched.
+# namespace's quota forbids them. kubectl authenticates with a new access
+# token from gcloud, taken again before its hour ends, in a kubeconfig of
+# its own (mode 600, deleted at the end), so gke-gcloud-auth-plugin is not
+# needed, and ~/.kube/config is not touched.
 #
 # usage: scripts/gke-bench.sh [--dry-run | --yes] [options]
 #
@@ -69,16 +70,18 @@
 #                    gh run download <run-id> -R hirunefu/smock -n smock-linux-<arch> gets the
 #                    one CI built (CI's run on the push of that commit)
 #   --oha FILE       use this oha (of the run's architecture) instead of the pinned one
-#   --variant LABEL=FILE[,no-init][,no-first-second][,scenarios]
+#   --variant LABEL=FILE[,no-init][,no-first-second][,scenarios][,crud]
 #                    compare release binaries, or one binary with other options, on one node:
 #                    2 to 4 variants, the first the baseline, each in a Pod of its own under
 #                    each profile, which one load generator measures in turn; LABEL (1 to 16
 #                    of a-z, 0-9 and -, from a letter) names its Pod and Service, FILE is its
 #                    binary, built from any commit; no-init leaves out the init container
 #                    that prints its node's CPU, no-first-second the load generator's scrape
-#                    of its /metrics a second into each step, and scenarios serves the
+#                    of its /metrics a second into each step, scenarios serves the
 #                    Scenario variant of the definitions (bench/definitions-scenarios/) in
-#                    place of bench/definitions/; not with --smock
+#                    place of bench/definitions/, and crud their CRUD variant
+#                    (bench/definitions-crud/), which the load generator sends its own
+#                    mix (bench/requests-crud.json); not with --smock
 #   --rounds N       how many times the load generator measures each variant's steps, the
 #                    variants' order turned each round and step (default: 4); only with --variant
 #
@@ -196,10 +199,15 @@ declare -A BOOT_DISK_QUOTAS=([amd64]=SSD_TOTAL_GB [arm64]=HDB_TOTAL_GB)
 # repository's root.
 DOCKERFILES=(Dockerfile bench/gke/smock-definitions.dockerfile bench/gke/generator.Dockerfile)
 # How long the load generator's Pod may wait for a node, smock to become
-# ready, and an access token may be used before a new one is fetched.
+# ready, and an access token may be used before a new one is fetched (a
+# token lasts an hour from when access_token takes it).
 PENDING_LIMIT_S=900
 READY_LIMIT_S=900
 TOKEN_REFRESH_S=2700
+# What gcloud is asked for an access token: a new one. gcloud auth
+# print-access-token gives the token gcloud has cached, which may expire
+# within minutes, long before TOKEN_REFRESH_S.
+ACCESS_TOKEN_ARGS=(config config-helper --force-auth-refresh --format='value(credential.access_token)')
 # How long deleting the cluster may take before the script gives up on it.
 DELETE_LIMIT_S=1800
 # The file the watchdog leaves in the results directory, beside its stop
@@ -216,8 +224,8 @@ profiles="" cases="" out="" time_limit=80m smock_binary="" oha_binary="" arch=""
 # The variants of a run that compares them (--variant), in the order given,
 # the first the baseline, and how many rounds the load generator measures
 # them in (--rounds); none in a run of one smock. Each variant's binary,
-# its options as gke.py takes them (",no-init,no-first-second,scenarios",
-# or fewer), whether its Pod has the init container, the definitions it
+# its options as gke.py takes them (",no-init,no-first-second,scenarios"
+# or ",crud" in its place, or fewer), whether its Pod has the init container, the definitions it
 # serves as the repository names them, its SHA-256, the image of its
 # binary and that image's reference once pushed, by label; and the images
 # of smock, one for each distinct binary, named for the first variant with
@@ -284,6 +292,12 @@ learn_account() {
   local account
   account=$("$GCLOUD" config get-value account 2>/dev/null) || account=""
   account_pattern=$(printf '%s' "$account" | sed 's/[][\.*^$/]/\\&/g')
+}
+
+# Prints a new access token from gcloud (ACCESS_TOKEN_ARGS), which lasts an
+# hour from now; gcloud's messages are masked.
+access_token() {
+  "$GCLOUD" "${ACCESS_TOKEN_ARGS[@]}" 2> >(masked >&2)
 }
 
 # Whether process $1 is still a run of this script (its watchdog when $2 is
@@ -497,7 +511,7 @@ wrong() {
 }
 
 # Reads the variants --variant gives,
-# LABEL=FILE[,no-init][,no-first-second][,scenarios] each, into variants and the maps by label, with the SHA-256 of each one's
+# LABEL=FILE[,no-init][,no-first-second][,scenarios][,crud] each, into variants and the maps by label, with the SHA-256 of each one's
 # binary, which a dry run needs even when the checks stop early, and the
 # rounds (4 unless --rounds says otherwise); exits when they cannot make a
 # run, as gke.py would refuse them once the cluster is made. gke.py plan
@@ -513,7 +527,7 @@ read_variants() {
     wrong "a run compares 2 to 4 variants, not ${#variant_args[@]}"
   fi
   for text in "${variant_args[@]}"; do
-    [[ $text == *=?* ]] || wrong "--variant $text: give it as LABEL=FILE[,no-init][,no-first-second][,scenarios]"
+    [[ $text == *=?* ]] || wrong "--variant $text: give it as LABEL=FILE[,no-init][,no-first-second][,scenarios][,crud]"
     label=${text%%=*}
     IFS=, read -r -a options <<<"${text#*=}"
     file=${options[0]}
@@ -529,10 +543,14 @@ read_variants() {
       no-init) variant_init[$label]=0 ;;
       no-first-second) ;;
       scenarios) variant_definitions[$label]=bench/definitions-scenarios ;;
-      *) wrong "variant $label: no option $option; there are no-init, no-first-second and scenarios" ;;
+      crud) variant_definitions[$label]=bench/definitions-crud ;;
+      *) wrong "variant $label: no option $option; there are no-init, no-first-second, scenarios and crud" ;;
       esac
       [[ ${variant_options[$label]}, == *",$option,"* ]] || variant_options[$label]+=",$option"
     done
+    if [[ ${variant_options[$label]}, == *",scenarios,"* && ${variant_options[$label]}, == *",crud,"* ]]; then
+      wrong "variant $label: scenarios and crud serve other definitions: give one of them"
+    fi
     [ -f "$file" ] || wrong "no file $file"
     variants+=("$label")
     variant_file[$label]=$file
@@ -1017,13 +1035,14 @@ share_images() {
 # Writes the build context of an image of smock into DIRECTORY (the first
 # argument): the binary (the second), LICENSE and NOTICE, which the
 # Dockerfile copies too, the benchmark's definitions and their Scenario
-# variant, which a scenarios variant serves.
+# and CRUD variants, which a scenarios and a crud variant serve.
 smock_context() {
   mkdir -p "$1/dist"
   cp "$2" "$1/dist/smock"
   cp "$ROOT/LICENSE" "$ROOT/NOTICE" "$1/"
   cp -r "$ROOT/bench/definitions" "$1/definitions"
   cp -r "$ROOT/bench/definitions-scenarios" "$1/definitions-scenarios"
+  cp -r "$ROOT/bench/definitions-crud" "$1/definitions-crud"
 }
 
 build_images() {
@@ -1058,7 +1077,8 @@ build_images() {
     fi
     built_images+=("$generator_image")
     cp "$oha_binary" "$work/generator-image/oha"
-    cp "$ROOT/bench/bench.py" "$ROOT/bench/requests.json" "$work/generator-image/bench/"
+    cp "$ROOT/bench/bench.py" "$ROOT/bench/requests.json" "$ROOT/bench/requests-crud.json" \
+      "$work/generator-image/bench/"
     cp "$plan" "$work/generator-image/bench/plan.json"
     cp "$ROOT/bench/gke/gke.py" "$ROOT/bench/gke/generator.py" "$work/generator-image/bench/gke/"
   fi
@@ -1131,12 +1151,12 @@ push_images() {
     --project="$PROJECT" --member="serviceAccount:$service_account" --role=roles/artifactregistry.reader ||
     die "letting the nodes read the repository failed"
   if [ "$dry_run" = 1 ]; then
-    say "would run: $(shown "$GCLOUD" auth print-access-token) | $(shown env DOCKER_CONFIG="$work/docker" \
+    say "would run: $(shown "$GCLOUD" "${ACCESS_TOKEN_ARGS[@]}") | $(shown env DOCKER_CONFIG="$work/docker" \
       "$DOCKER" login --username=oauth2accesstoken --password-stdin "https://$registry")"
   else
-    say "+ $(shown "$GCLOUD" auth print-access-token) | $(shown env DOCKER_CONFIG="$work/docker" "$DOCKER" login \
+    say "+ $(shown "$GCLOUD" "${ACCESS_TOKEN_ARGS[@]}") | $(shown env DOCKER_CONFIG="$work/docker" "$DOCKER" login \
       --username=oauth2accesstoken --password-stdin "https://$registry")"
-    { "$GCLOUD" auth print-access-token 2> >(masked >&2) | env DOCKER_CONFIG="$work/docker" "$DOCKER" login \
+    { access_token | env DOCKER_CONFIG="$work/docker" "$DOCKER" login \
       --username=oauth2accesstoken --password-stdin "https://$registry" >/dev/null; } &
     wait $! || die "logging in to $registry failed"
   fi
@@ -1159,11 +1179,13 @@ push_images() {
   generator_ref=$(push_image "$generator_image" generator) || exit 1
 }
 
-# Writes the kubeconfig: the cluster's endpoint and CA, and an access token
-# from gcloud, readable by this user only.
+# Writes the kubeconfig: the cluster's endpoint and CA, and a new access
+# token from gcloud, readable by this user only. The token's hour starts
+# when it is taken, which token_at records.
 write_kubeconfig() {
   local token
-  token=$("$GCLOUD" auth print-access-token 2> >(masked >&2)) || die "gcloud auth print-access-token failed"
+  token_at=$(now)
+  token=$(access_token) || die "gcloud did not give a new access token"
   (
     umask 077
     cat >"$kubeconfig" <<EOF
@@ -1188,7 +1210,6 @@ current-context: smock-bench
 EOF
   )
   chmod 600 "$kubeconfig"
-  token_at=$(now)
 }
 
 # Writes a new access token into the kubeconfig before the one in it
@@ -1220,7 +1241,8 @@ make_cluster() {
   changes "$GCLOUD" container clusters create-auto "$cluster" --region="$REGION" --project="$PROJECT" \
     --release-channel=regular --labels="$labels" "${service_account[@]}" --quiet || die "making the cluster failed"
   if [ "$dry_run" = 1 ]; then
-    say "would write a kubeconfig (mode 600) with the cluster's endpoint and an access token: $kubeconfig"
+    say "would write a kubeconfig (mode 600) with the cluster's endpoint and a new access token from" \
+      "$(shown "$GCLOUD" "${ACCESS_TOKEN_ARGS[@]}"): $kubeconfig"
     cluster_version="<version>"
     return
   fi

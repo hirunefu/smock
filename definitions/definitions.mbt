@@ -104,6 +104,13 @@ pub struct Mock {
   /// in byte-wise order of their names. A Scenario has no declaration: it
   /// exists because Stubs name it.
   scenarios : ReadOnlyArray[ScenarioFileStates]
+  /// The Data buckets the Mock declares, in declaration order: file-name
+  /// order, then position in the file.
+  buckets : ReadOnlyArray[DataBucket]
+  /// The initial value of each of `buckets`, by its name: what templates
+  /// read as `data.NAME`. It is the snapshot's own, so it must never be
+  /// changed.
+  initial_data : Map[String, Json]
 } derive(Debug, Eq)
 
 ///|
@@ -133,7 +140,8 @@ pub struct ScenarioFileStates {
 pub let initial_state : String = "Started"
 
 ///|
-/// A Stub from a Definition file.
+/// A Stub from a Definition file: what every Stub has, its ID, its Mock,
+/// its priority and its Faults, and what it serves.
 pub struct Stub {
   id : String
   /// The name of the Mock the Stub belongs to.
@@ -141,13 +149,121 @@ pub struct Stub {
   /// The priority: a lower number is tried first, and a Stub without one
   /// after every Stub with one.
   priority : Int?
-  request : Conditions
-  /// The Stub's Scenario clause, if it has `scenario`.
-  scenario : ScenarioClause?
-  response : Response
+  /// What the Stub serves: which requests it matches, and how it answers
+  /// them.
+  serves : Serves
   /// The Faults the Stub injects when it matches, if it has `fault`.
   fault : Fault?
 } derive(Debug, Eq)
+
+///|
+/// What a Stub serves, by kind. Code that needs it matches on the kind with
+/// no catch-all, so that a new kind does not compile until every such place
+/// handles it.
+pub enum Serves {
+  /// An ordinary Stub's request conditions, Scenario clause, responses,
+  /// `variables` and `dataWrites`.
+  Ordinary(Ordinary)
+  /// A CRUD Stub's keyed Data bucket, its path and its headers, `crud`.
+  Crud(Crud)
+} derive(Debug, Eq)
+
+///|
+/// The Stub's Scenario clause, if it has one: an ordinary Stub's
+/// `scenario`, and none for a CRUD Stub, which has no Scenario clause.
+pub fn Stub::scenario(self : Stub) -> ScenarioClause? {
+  match self.serves {
+    Ordinary(ordinary) => ordinary.scenario
+    Crud(_) => None
+  }
+}
+
+///|
+/// What an ordinary Stub serves: the requests that meet its request
+/// conditions, in the states its Scenario clause allows, get one of its
+/// responses, and it writes its Variables and Data buckets when it
+/// matches.
+pub struct Ordinary {
+  request : Conditions
+  /// The Stub's Scenario clause, if it has `scenario`.
+  scenario : ScenarioClause?
+  /// The Stub's responses, in the order written, each with its weight. A
+  /// matched request gets one of them. A Stub with `response` has that one,
+  /// of weight 1.
+  responses : ReadOnlyArray[WeightedResponse]
+  /// The sum of the weights of `responses` when the Stub gives `responses`:
+  /// a matched request then takes a pick among them. `None` for a Stub with
+  /// `response`, which takes no pick.
+  total_weight : Int?
+  /// The Variables the Stub writes when it matches, `variables`: none when
+  /// it has no `variables`.
+  variables : VariableWrites
+  /// The writes to Data buckets the Stub makes when it matches, in the
+  /// order written, `dataWrites`: none when it has no `dataWrites`.
+  data_writes : ReadOnlyArray[DataWrite]
+} derive(Debug, Eq)
+
+///|
+/// The Variables a Stub writes when it matches, in the order written: the
+/// name of each, and the template of its value, a structured template
+/// whose pointer is `/variables/NAME`. The two arrays have the same
+/// length.
+pub struct VariableWrites {
+  names : ReadOnlyArray[String]
+  values : ReadOnlyArray[@template.Structured]
+} derive(Debug, Eq)
+
+///|
+/// Whether the Stub writes any Variable. A Stub that writes none pays only
+/// this test for Variables when it matches.
+pub fn Ordinary::writes_variables(self : Ordinary) -> Bool {
+  self.variables.names.length() > 0
+}
+
+///|
+/// Whether the Stub writes to any Data bucket. A Stub that writes to none
+/// pays only this test for `dataWrites` when it matches.
+pub fn Ordinary::writes_data(self : Ordinary) -> Bool {
+  self.data_writes.length() > 0
+}
+
+///|
+/// The longest name of a Variable, in characters.
+pub let max_variable_name : Int = 128
+
+///|
+/// Whether `name` can name a Variable: 1 to `max_variable_name` name
+/// characters, which are ASCII letters, digits, `_` and `-`.
+pub fn is_variable_name(name : String) -> Bool {
+  if name.length() < 1 || name.length() > max_variable_name {
+    return false
+  }
+  for c in name {
+    if !(c.is_ascii_alphabetic() || c.is_ascii_digit() || c is ('_' | '-')) {
+      return false
+    }
+  }
+  true
+}
+
+///|
+/// One of a Stub's responses, with its weight: the chance that a matched
+/// request gets it is its weight over the sum of the weights of the Stub's
+/// responses.
+pub struct WeightedResponse {
+  /// An integer from 1 to `max_weight`.
+  weight : Int
+  response : Response
+} derive(Debug, Eq)
+
+///|
+/// The most responses a Stub's `responses` holds.
+pub let max_responses : Int = 100
+
+///|
+/// The largest weight of a response in `responses`. With at most
+/// `max_responses` of them, the sum of the weights fits an `Int`.
+pub let max_weight : Int = 1_000_000
 
 ///|
 /// A Stub's Scenario clause: the state a Scenario of the Stub's Mock must
@@ -546,6 +662,11 @@ fn missing_meets(expected : Expected) -> Bool {
 }
 
 ///|
+/// Numbers are compared by their value with the template package's
+/// equality, so that templates compare them as conditions do.
+using @template {same_number}
+
+///|
 /// Whether `a` and `b` are the same JSON value, so that conditions on them
 /// match the same bodies: objects with the same keys and the same value for
 /// each, arrays of the same values in the same order, and scalars as
@@ -575,98 +696,6 @@ fn same_value(a : Json, b : Json) -> Bool {
     (Number(a, repr=a_text), Number(b, repr=b_text)) =>
       (a_text is None) == (b_text is None) && same_number(a, a_text, b, b_text)
     _ => a == b
-  }
-}
-
-///|
-/// Whether two parsed JSON numbers, `a` and `b`, have the same value.
-///
-/// The parser keeps a number's source text, `a_text` or `b_text`, when its
-/// Double cannot hold it: an integer above 2^53, or a number beyond a
-/// Double's range, which becomes an infinity. Two such numbers are compared
-/// by their text, as exact decimals, so that two 64-bit IDs that differ in
-/// their last digit differ. Any other pair is compared by their Doubles.
-fn same_number(
-  a : Double,
-  a_text : String?,
-  b : Double,
-  b_text : String?,
-) -> Bool {
-  match (a_text, b_text) {
-    (Some(a_text), Some(b_text)) =>
-      canonical_number(a_text) == canonical_number(b_text)
-    _ => a == b
-  }
-}
-
-///|
-/// The JSON number `text` written so that two numbers whose exponents have
-/// at most 18 digits have the same canonical text exactly when they have
-/// the same value: `0`, or an optional `-`, the significant digits without
-/// leading or trailing zeros, `e` and the power of ten of the last digit.
-/// It takes time linear in the length of `text`, however large its
-/// exponent.
-fn canonical_number(text : String) -> String {
-  let negative = text.has_prefix("-")
-  let digits = StringBuilder()
-  let mut fraction_digits = 0
-  let mut in_fraction = false
-  let exponent = StringBuilder()
-  let mut exponent_negative = false
-  let mut in_exponent = false
-  for c in text {
-    match c {
-      '-' if in_exponent => exponent_negative = true
-      '-' | '+' => ()
-      '.' => in_fraction = true
-      'e' | 'E' => in_exponent = true
-      _ if in_exponent => exponent.write_char(c)
-      _ => {
-        digits.write_char(c)
-        if in_fraction {
-          fraction_digits += 1
-        }
-      }
-    }
-  }
-  let digits = digits.to_string()
-  let mut start = 0
-  while start < digits.length() && digits[start] == '0' {
-    start += 1
-  }
-  if start == digits.length() {
-    return "0"
-  }
-  let mut end = digits.length()
-  while digits[end - 1] == '0' {
-    end -= 1
-  }
-  let significant = digits[start:end].to_owned()
-  // The power of ten of the last significant digit is the exponent plus
-  // `shift`, which the length of `text` bounds.
-  let shift = digits.length() - end - fraction_digits
-  let exponent = exponent.to_string()
-  let mut first = 0
-  while first < exponent.length() && exponent[first] == '0' {
-    first += 1
-  }
-  let exponent = exponent[first:].to_owned()
-  let sign = if negative { "-" } else { "" }
-  // An Int64 holds any exponent of at most 18 digits plus the shift. A
-  // longer one is kept as written, with the shift apart: such numbers are
-  // equal only when written alike.
-  if exponent.length() <= 18 {
-    let mut power = 0L
-    for c in exponent {
-      power = power * 10L + (c.to_int() - '0'.to_int()).to_int64()
-    }
-    if exponent_negative {
-      power = -power
-    }
-    "\{sign}\{significant}e\{power + shift.to_int64()}"
-  } else {
-    let exponent_sign = if exponent_negative { "-" } else { "" }
-    "\{sign}\{significant}e\{exponent_sign}\{exponent}+\{shift}"
   }
 }
 
@@ -723,6 +752,18 @@ pub struct Response {
   /// values and the body or events of each response, rendered for its
   /// request, instead of `headers` and `body`.
   template : ResponseTemplate?
+  /// Whether the response serves single byte ranges of its body to Range
+  /// requests: it is not a template, its status is 200, its body comes from
+  /// a body file, and its headers give neither `Content-Range` nor
+  /// `Accept-Ranges`.
+  serves_ranges : Bool
+  /// Whether one of the response's templates reads Variables, as
+  /// `vars.NAME`: only then does its rendering look them up.
+  reads_variables : Bool
+  /// Whether one of the response's templates reads Data buckets, as
+  /// `data.NAME`: only then does its rendering look up the Session's copies
+  /// of them.
+  reads_data : Bool
 } derive(Debug, Eq)
 
 ///|
@@ -734,6 +775,57 @@ pub struct ResponseTemplate {
   headers : ReadOnlyArray[(String, @template.Text)]
   body : BodyTemplate
 } derive(Debug, Eq)
+
+///|
+/// Whether one of the templates reads Variables: a header value, the body,
+/// or a field of an event.
+fn ResponseTemplate::reads_variables(self : ResponseTemplate) -> Bool {
+  self.reads(@template.Text::reads_vars, @template.Structured::reads_vars)
+}
+
+///|
+/// Whether one of the templates reads Data buckets: a header value, the
+/// body, or a field of an event.
+fn ResponseTemplate::reads_data(self : ResponseTemplate) -> Bool {
+  self.reads(@template.Text::reads_data, @template.Structured::reads_data)
+}
+
+///|
+/// Whether one of the templates reads something: a header value, the body,
+/// or a field of an event, for which `text` or `json` holds, by its kind.
+fn ResponseTemplate::reads(
+  self : ResponseTemplate,
+  text : (@template.Text) -> Bool,
+  json : (@template.Structured) -> Bool,
+) -> Bool {
+  for header in self.headers {
+    if text(header.1) {
+      return true
+    }
+  }
+  match self.body {
+    Text(body) => text(body)
+    Json(body) => json(body)
+    Events(events) => {
+      for event in events {
+        if event.event is Some(field) && text(field) {
+          return true
+        }
+        if event.id is Some(field) && text(field) {
+          return true
+        }
+        let data = match event.data {
+          Text(data) => text(data)
+          Json(data) => json(data)
+        }
+        if data {
+          return true
+        }
+      }
+      false
+    }
+  }
+}
 
 ///|
 /// The body of a response with `template` on.
@@ -860,16 +952,24 @@ pub fn normalize_host(host : String) -> String {
 /// `read_problems` are the problems the caller had reading the set, such
 /// as a file that cannot be read. A set read with problems is invalid
 /// whatever its files hold; they come first among its problems.
+///
+/// `env` holds the environment variables that templates may read, as
+/// `--template-env` lists them, with the values the caller read: by
+/// default, none. A template that reads another name is a problem. The
+/// values are not part of the digest.
 pub fn load(
   set : DefinitionSet,
   read_problems? : Array[Diagnostic] = [],
+  env? : @template.Env = @template.no_env,
 ) -> Result[Snapshot, Array[Diagnostic]] {
   let files = sorted_by_name(set.files).map(file => {
     (file.0, parse_file(file.0, file.1))
   })
   let reader = Reader::new(
     declared=declared_mocks(files),
+    buckets=declared_buckets(files),
     body_files=Map::from_array(set.body_files),
+    env~,
   )
   for file in files {
     reader.read_file(file.0, file.1)
@@ -890,6 +990,8 @@ pub fn load(
           stubs: ReadOnlyArray::from_array([]),
           index: MatchIndex::new(ReadOnlyArray::from_array([])),
           scenarios: ReadOnlyArray::from_array([]),
+          buckets: ReadOnlyArray::from_array([]),
+          initial_data: Map([]),
         },
       ]),
       host_index: Map([]),
@@ -904,6 +1006,14 @@ pub fn load(
         reader.stubs.iter().filter(stub => stub.mock == mock.name).collect(),
       ),
     )
+    let buckets = []
+    let initial_data = Map([])
+    for declared in reader.buckets {
+      if declared.0 == mock.name {
+        buckets.push(declared.1)
+        initial_data[declared.1.name] = declared.1.initial
+      }
+    }
     Mock::{
       name: mock.name,
       hosts: ReadOnlyArray::from_iter(mock.hosts.iter().map(host => host.0)),
@@ -913,6 +1023,8 @@ pub fn load(
       stubs,
       index: MatchIndex::new(stubs),
       scenarios: scenarios_of(stubs),
+      buckets: ReadOnlyArray::from_array(buckets),
+      initial_data,
     }
   })
   let index_of = Map([])
@@ -947,7 +1059,7 @@ fn scenarios_of(
 ) -> ReadOnlyArray[ScenarioFileStates] {
   let by_scenario = StatesByScenario::new()
   for stub in stubs {
-    if stub.scenario is Some(clause) {
+    if stub.scenario() is Some(clause) {
       by_scenario.add_clause(clause)
     }
   }

@@ -1,0 +1,207 @@
+// Session copies of Data buckets: a Session reads a bucket's initial value
+// until it first writes to the bucket, which makes its own copy, kept in
+// the per-Session store beside its Variables. Reads never copy. The Admin
+// API lists a Mock's buckets, and reads, sets and drops the calling
+// Session's copy of one. Resets drop the copies in their scope, and a
+// reload drops the copies of a bucket it changed.
+
+///|
+/// A Data bucket of a Mock as one Session sees it, as the Admin API shows
+/// it.
+pub(all) struct SessionBucket {
+  /// The bucket's name.
+  name : String
+  /// The member that holds each item's key, when the bucket is keyed.
+  key : String?
+  /// How the bucket makes new keys, when it is keyed.
+  new_key : @definitions.NewKey?
+  /// Whether the Session holds its own copy of the bucket.
+  written : Bool
+  /// What the Session reads: its copy, or else the initial value.
+  value : Json
+} derive(Debug)
+
+///|
+/// The Data buckets of the Mock `mock`, sorted by name in byte order, as
+/// `session` sees them, or the no-Session space when it is `None`: whether
+/// it holds its own copy of each, and what it reads. Another Session's
+/// copies are never among them.
+///
+/// Raises `UnknownMock` when no Mock has the name `mock`.
+pub fn Engine::list_data(
+  self : Engine,
+  mock~ : String,
+  session~ : String?,
+) -> Array[SessionBucket] raise AdminError {
+  let declared = self.mock_named(mock)
+  let copies = self.store.copy_values(mock, session)
+  let buckets = declared.buckets.iter().collect()
+  buckets.sort_by((a, b) => {
+    @utf8.encode(a.name).lexical_compare(@utf8.encode(b.name))
+  })
+  buckets.map(bucket => session_bucket(bucket, copies))
+}
+
+///|
+/// The Data bucket `bucket` of the Mock `mock` as `session` sees it, or the
+/// no-Session space when it is `None`: its copy, or else the initial
+/// value.
+///
+/// Raises `UnknownMock` when no Mock has the name `mock`, and
+/// `UnknownBucket` when the Mock has no bucket `bucket`.
+pub fn Engine::read_data(
+  self : Engine,
+  mock~ : String,
+  session~ : String?,
+  bucket~ : String,
+) -> SessionBucket raise AdminError {
+  let declared = self.declared_bucket(mock, bucket)
+  session_bucket(declared, self.store.copy_values(mock, session))
+}
+
+///|
+/// Makes `value` the copy of the Data bucket `bucket` of the Mock `mock`
+/// that `session` holds, or the no-Session space when it is `None`, in
+/// place of the copy it had, if any; even a value equal to the initial one
+/// makes a copy. The copy counts against the bound on per-Session state as
+/// a Stub's writes do, and is taken only if it fits. Returns the bucket as
+/// `read_data` then gives it.
+///
+/// Raises `UnknownMock` when no Mock has the name `mock`, `UnknownBucket`
+/// when the Mock has no bucket `bucket`, `InvalidData` when the bucket is
+/// keyed and `value` breaks the rules of keyed buckets, and
+/// `StateLimitReached` when the copy would take the count above the bound,
+/// which counts the refusal; then nothing is written.
+pub fn Engine::set_data(
+  self : Engine,
+  mock~ : String,
+  session~ : String?,
+  bucket~ : String,
+  value : Json,
+) -> SessionBucket raise AdminError {
+  let declared = self.declared_bucket(mock, bucket)
+  if declared.key is Some(key) {
+    let problems = @definitions.keyed_problems(value, key~)
+    if !problems.is_empty() {
+      raise InvalidData(bucket~, key~, problems~)
+    }
+  }
+  let bytes = copy_bytes(bucket, value)
+  let growth = self.store.copy_growth(mock, session, bucket, bytes)
+  if !self.state.fits(growth) {
+    raise StateLimitReached(self.state.refuse(growth))
+  }
+  self.store.write_copy(mock, session, bucket, value, bytes~, growth~)
+  session_bucket(declared, self.store.copy_values(mock, session))
+}
+
+///|
+/// What dropping a Session's copy of a Data bucket left: the bucket as the
+/// Session then sees it, and whether there was a copy to drop.
+pub(all) struct DroppedCopy {
+  bucket : SessionBucket
+  /// Whether the Session held a copy, which is now dropped.
+  dropped : Bool
+} derive(Debug)
+
+///|
+/// Drops the copy of the Data bucket `bucket` of the Mock `mock` that
+/// `session` holds, or the no-Session space when it is `None`, so that the
+/// bucket reads its initial value again, and gives back the bytes the copy
+/// counted against the bound on per-Session state. Without a copy, it
+/// changes nothing. Returns the bucket as `read_data` then gives it, and
+/// whether there was a copy.
+///
+/// Raises `UnknownMock` when no Mock has the name `mock`, and
+/// `UnknownBucket` when the Mock has no bucket `bucket`.
+pub fn Engine::drop_data(
+  self : Engine,
+  mock~ : String,
+  session~ : String?,
+  bucket~ : String,
+) -> DroppedCopy raise AdminError {
+  let declared = self.declared_bucket(mock, bucket)
+  let dropped = self.store.drop_copy(mock, session, bucket)
+  {
+    bucket: session_bucket(declared, self.store.copy_values(mock, session)),
+    dropped,
+  }
+}
+
+///|
+/// The Data bucket `bucket` of the Mock named `mock` in the snapshot
+/// served.
+///
+/// Raises `UnknownMock` when no Mock has the name `mock`, and
+/// `UnknownBucket` when the Mock has no bucket `bucket`.
+fn Engine::declared_bucket(
+  self : Engine,
+  mock : String,
+  bucket : String,
+) -> @definitions.DataBucket raise AdminError {
+  match bucket_named(self.mock_named(mock).buckets, bucket) {
+    Some(declared) => declared
+    None => raise UnknownBucket(mock~, bucket~)
+  }
+}
+
+///|
+/// The Data bucket named `bucket` among `buckets`, those a Mock declares,
+/// if any. Requests look buckets up, so it is a plain loop.
+fn bucket_named(
+  buckets : ReadOnlyArray[@definitions.DataBucket],
+  bucket : String,
+) -> @definitions.DataBucket? {
+  for i in 0..<buckets.length() {
+    if buckets[i].name == bucket {
+      return Some(buckets[i])
+    }
+  }
+  None
+}
+
+///|
+/// Whether a reload from the Mock `before` to the Mock `after`, which have
+/// the same name, changed its Data bucket `bucket` so that the copies of it
+/// are dropped: when one of them does not declare it, or when its `key` or
+/// its initial value differs. The initial values are compared as compact
+/// JSON, so moving one between `json` and `jsonFile` is no change. A change
+/// of `newKey` alone keeps the copies, since their data stays valid.
+fn bucket_changed(
+  before : @definitions.Mock?,
+  after : @definitions.Mock?,
+  bucket : String,
+) -> Bool {
+  guard before is Some(before) &&
+    bucket_named(before.buckets, bucket) is Some(before) &&
+    after is Some(after) &&
+    bucket_named(after.buckets, bucket) is Some(after) else {
+    return true
+  }
+  before.key != after.key ||
+  @template.compact_json_bytes(before.initial) !=
+  @template.compact_json_bytes(after.initial)
+}
+
+///|
+/// `bucket` as a space that holds the copies `copies` sees it.
+fn session_bucket(
+  bucket : @definitions.DataBucket,
+  copies : Map[String, Json]?,
+) -> SessionBucket {
+  let copy = match copies {
+    Some(copies) => copies.get(bucket.name)
+    None => None
+  }
+  {
+    name: bucket.name,
+    key: bucket.key,
+    new_key: if bucket.key is Some(_) {
+      Some(bucket.new_key)
+    } else {
+      None
+    },
+    written: copy is Some(_),
+    value: copy.unwrap_or(bucket.initial),
+  }
+}

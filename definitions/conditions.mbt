@@ -9,7 +9,13 @@
 /// Pointer points into `json`.
 pub fn request_conditions(json : Json) -> Result[Conditions, Array[Diagnostic]] {
   let diagnostics = []
-  let file = File::{ name: "", diagnostics, body_files: None, }
+  let file = File::{
+    name: "",
+    diagnostics,
+    body_files: None,
+    env: @template.no_env,
+    buckets: Map([]),
+  }
   let conditions = file.read_conditions("", json)
   if diagnostics.is_empty() {
     Ok(conditions)

@@ -106,6 +106,7 @@ async fn Reloader::check(self : Reloader, check : @watch.Check) -> Bool {
         "scenarioStatesReset": Json::number(
           result.scenario_states_reset.to_double(),
         ),
+        "dataBucketsReset": Json::number(result.data_buckets_reset.to_double()),
       })
       // Nothing between the swap and here waits, so no connection is
       // accepted in between with a certificate for the previous Hosts.

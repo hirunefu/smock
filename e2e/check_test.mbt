@@ -159,7 +159,7 @@ async test "smock check prints every problem, one line each with the file and JS
           #|20-orders.json: /stubs/1/response/status: must be an integer from 200 to 599
           #|20-orders.json: /stubs/1/response/bodyFile: no body file "list.json" in the body-file subdirectory
           #|20-orders.json: /stubs/2/respnose: is not a known field
-          #|20-orders.json: /stubs/2: needs "response"
+          #|20-orders.json: /stubs/2: needs "response", "responses" or "crud"
           #|30-version.json: /version: must be 1, the only format version
           #|40-broken.json: not valid JSON: Unexpected end of file
           #|
@@ -325,6 +325,7 @@ async test "smock check needs the definitions directory as its argument" {
       #|Options:
       #|  -h, --help                       Show help information.
       #|  --body-file-dir <body-file-dir>  The body-file subdirectory of the definitions directory. [env: SMOCK_BODY_FILE_DIR] [default: files]
+      #|  --template-env <template-env>    The environment variables templates may read as env.NAME, separated by commas, such as REGION,API_BASE. Their values are read once, at startup. A listed value can show in responses, renderings and template error messages, so list only values that may be shown. A name is letters, digits and _, starting with a letter or _, and cannot start with SMOCK_. None by default. [env: SMOCK_TEMPLATE_ENV]
       #|
       #|
     ),
@@ -347,6 +348,7 @@ async test "smock check --help names its argument and its settings" {
       #|Options:
       #|  -h, --help                       Show help information.
       #|  --body-file-dir <body-file-dir>  The body-file subdirectory of the definitions directory. [env: SMOCK_BODY_FILE_DIR] [default: files]
+      #|  --template-env <template-env>    The environment variables templates may read as env.NAME, separated by commas, such as REGION,API_BASE. Their values are read once, at startup. A listed value can show in responses, renderings and template error messages, so list only values that may be shown. A name is letters, digits and _, starting with a letter or _, and cannot start with SMOCK_. None by default. [env: SMOCK_TEMPLATE_ENV]
       #|
     ),
   )

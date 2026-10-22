@@ -1,0 +1,31 @@
+mocks:
+  - name: shop
+data:
+  - { mock: shop, name: visits, json: 0 }
+  - { mock: shop, name: cart, json: [] }
+  - { mock: shop, name: profile, json: { name: ann } }
+stubs:
+  - id: visit
+    mock: shop
+    request: { method: GET, path: /visit }
+    dataWrites:
+      - { op: set, bucket: visits, value: "${add(data.visits, 1)}" }
+    response: { status: 200, template: true, json: { visits: "${data.visits}" } }
+  - id: add-to-cart
+    mock: shop
+    request: { method: POST, path: /cart }
+    variables: { last: "${body}" }
+    dataWrites:
+      - { op: append, bucket: cart, value: { sku: "${body.sku}", added: true } }
+      - { op: merge, bucket: profile, value: { lastSku: "${body.sku}" } }
+    responses:
+      - { status: 201 }
+      - { status: 202 }
+  - id: empty-cart
+    mock: shop
+    request: { method: DELETE, path: /cart }
+    dataWrites:
+      - { op: set, bucket: cart, value: [] }
+      - { op: merge, bucket: profile, value: { lastSku: null, note: "$${not a template}" } }
+      - { op: append, bucket: cart, value: { $if: "query.keep", then: "${query.keep}", else: none } }
+    response: { status: 204 }

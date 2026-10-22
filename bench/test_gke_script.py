@@ -102,6 +102,9 @@ record = {"tool": tool, "argv": argv, "words": words, "time": time.time(),
 if tool == "kubectl" and "kubeconfig" in options:
     path = Path(options["kubeconfig"])
     record["kubeconfig_mode"] = oct(stat.S_IMODE(path.stat().st_mode)) if path.exists() else None
+    # The access token kubectl sends.
+    record["token"] = next((line.split(":", 1)[1].strip() for line in path.read_text().splitlines()
+                            if line.strip().startswith("token:")), None) if path.exists() else None
 if tool == "docker" and "login" in words:
     record["stdin"] = sys.stdin.read()
 if tool == "kubectl" and words[:1] in (["apply"], ["delete"]):
@@ -110,6 +113,9 @@ if tool == "docker" and words[:1] == ["build"]:
     # What each COPY of the Dockerfile copies from the context (the last
     # word), as [sources, destination], and the sources the context lacks.
     record["copies"], record["missing"] = [], []
+    # And every file the context holds, by its path in it.
+    record["context"] = sorted(str(path.relative_to(words[-1])) for path in Path(words[-1]).rglob("*")
+                               if path.is_file())
     for line in Path(options["file"]).read_text().splitlines():
         if line.strip().upper().startswith("COPY "):
             *sources, destination = [word for word in line.split()[1:] if not word.startswith("--")]
@@ -223,7 +229,22 @@ if tool == "gcloud":
         state(lambda value: value["repositories"].remove(words[3]) if words[3] in value["repositories"] else None)
         answer()
     if words[:2] == ["auth", "print-access-token"]:
-        answer("fake-access-token\n")
+        # As the real gcloud: the token it has cached, which may expire
+        # within minutes.
+        answer("fake-cached-token\n")
+    if words[:2] == ["config", "config-helper"]:
+        # As the real gcloud: the cached token, or with --force-auth-refresh
+        # a new one, numbered here from 1 in the order they are made.
+        if options.get("format") != "value(credential.access_token)":
+            sys.stderr.write("fake gcloud: config-helper answers --format=value(credential.access_token) only\n")
+            answer("", 1)
+        if "--force-auth-refresh" not in argv:
+            answer("fake-cached-token\n")
+        with (state_dir / "calls.jsonl").open() as calls:
+            fcntl.flock(calls, fcntl.LOCK_SH)
+            made = sum(call["words"][:2] == ["config", "config-helper"] and "--force-auth-refresh" in call["argv"]
+                       for call in map(json.loads, calls) if call["tool"] == "gcloud")
+        answer(f"fake-access-token-{made}\n")
     if words[0] == "compute" and words[-1] == "list":
         answer("".join(f"{name}\tus-central1-a\n" for name in config.get(words[1], [])))
     answer()
@@ -575,7 +596,9 @@ NODE_CPU = {"model_name": "AMD EPYC 7B13", "vendor_id": "AuthenticAMD", "cpu_fam
 SMOCK_LOG = ('{"time":"2026-10-14T09:00:01.000Z","level":"info","msg":"listening","listener":"plain",'
              '"address":"0.0.0.0:8080"}\n')
 
-# What only reads: the gcloud commands that list, describe or print.
+# What only reads: the gcloud commands that list, describe or print. Not
+# config-helper, which the script calls with --force-auth-refresh to make a
+# new access token: a dry run only prints it.
 READ_ONLY = {"list", "describe", "version", "print-access-token", "get-value"}
 
 # The account gcloud is logged in as, in the fakes.
@@ -910,6 +933,13 @@ class DryRun(Script):
         # The project shows as the variable that holds it.
         self.assertNotIn(PROJECT, output)
         self.assertIn('--project="$GKE_BENCH_PROJECT"', output)
+        # It takes no access token, and says how the run takes a new one for
+        # the registry's login and for the kubeconfig.
+        self.assertEqual(self.made(["config", "config-helper"]), [])
+        token = "gcloud config config-helper --force-auth-refresh '--format=value(credential.access_token)'"
+        self.assertIn(f"would run: {token} | env DOCKER_CONFIG=", output)
+        self.assertIn(f"would write a kubeconfig (mode 600) with the cluster's endpoint and a new access token from "
+                      f"{token}: ", output)
 
     def test_it_names_each_regional_quota_the_nodes_draw_on_with_what_is_free_and_what_the_run_needs(self):
         # Four nodes by default, each with 8 vCPUs, a boot disk of 100 GB
@@ -1012,11 +1042,39 @@ class Run(Script):
         # ~/.kube/config.
         [create] = self.made(["container", "clusters", "create-auto"])
         self.assertEqual(Path(create["kubeconfig_env"]).parent, Path(kubeconfig.split("=", 1)[1]).parent)
-        # The token never shows on a command line.
+        # No token ever shows on a command line.
         for call in self.calls():
-            self.assertNotIn("fake-access-token", " ".join(call["argv"]))
+            for token in ("fake-access-token", "fake-cached-token"):
+                self.assertNotIn(token, " ".join(call["argv"]))
+
+    def test_the_registry_login_and_the_kubeconfig_each_take_a_new_access_token(self):
+        # Not the token gcloud has cached, which may expire within minutes:
+        # each takes a new one, which lasts the hour the script counts.
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(self.made(["auth", "print-access-token"]), [])
+        self.assertEqual([call["argv"] for call in self.made(["config", "config-helper"])],
+                         [["config", "config-helper", "--force-auth-refresh",
+                           "--format=value(credential.access_token)"]] * 2)
         [login] = self.made(["login"])
-        self.assertEqual(login["stdin"].strip(), "fake-access-token")
+        self.assertEqual(login["stdin"].strip(), "fake-access-token-1")
+        kubectl = [call for call in self.calls("kubectl") if call["words"][:1] != ["version"]]
+        self.assertEqual({call["token"] for call in kubectl}, {"fake-access-token-2"})
+
+    def test_the_kubeconfig_takes_a_new_access_token_once_the_one_in_it_has_been_used_for_45_minutes(self):
+        # 2,800 s pass while smock becomes ready, past TOKEN_REFRESH_S
+        # (2,700 s) from when the kubeconfig's token was taken: the calls
+        # after it have a new one.
+        self.fake_time(1)
+        self.configure(smock_ready={"advance_s": 2800})
+        status, output = self.run_script("--yes")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(len(self.made(["config", "config-helper"])), 3)
+        kubectl = [call for call in self.calls("kubectl") if call["words"][:1] != ["version"]]
+        [ready] = [index for index, call in enumerate(kubectl) if call["words"][:1] == ["wait"]]
+        self.assertEqual({call["token"] for call in kubectl[:ready + 1]}, {"fake-access-token-2"})
+        self.assertEqual({call["token"] for call in kubectl[ready + 1:]}, {"fake-access-token-3"})
+        self.assertEqual({call["kubeconfig_mode"] for call in kubectl}, {"0o600"})
 
     def test_a_run_that_fails_midway_deletes_what_it_made(self):
         self.configure(apply_fails_on="generator.json")
@@ -1420,12 +1478,13 @@ def copy_repository(destination):
     """The files of the repository that a GKE run reads, copied, so that a
     test can change them."""
     for name in ("scripts/gke-bench.sh", "scripts/install-oha.sh", "scripts/build-release.sh", "Dockerfile",
-                 "bench/bench.py", "bench/requests.json", "bench/targets.json", "bench/plan-autopilot.json"):
+                 "bench/bench.py", "bench/requests.json", "bench/requests-crud.json", "bench/targets.json",
+                 "bench/plan-autopilot.json"):
         (destination / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / name, destination / name)
     shutil.copytree(ROOT / "bench" / "gke", destination / "bench" / "gke",
                     ignore=shutil.ignore_patterns("__pycache__"))
-    for name in ("definitions", "definitions-scenarios"):
+    for name in ("definitions", "definitions-scenarios", "definitions-crud"):
         shutil.copytree(ROOT / "bench" / name, destination / "bench" / name)
     return destination / "scripts" / "gke-bench.sh"
 
@@ -1755,9 +1814,11 @@ class Variants(Script):
                  "variant a is given twice: give each its own label"),
                 (["--variant", f"A={self.smock}", "--variant", f"b={other}"], "variant label A: use 1 to 16"),
                 (["--variant", f"a={self.smock},no-tls", "--variant", f"b={other}"],
-                 "variant a: no option no-tls; there are no-init, no-first-second and scenarios"),
+                 "variant a: no option no-tls; there are no-init, no-first-second, scenarios and crud"),
+                (["--variant", f"a={self.smock},scenarios,crud", "--variant", f"b={other}"],
+                 "variant a: scenarios and crud serve other definitions: give one of them"),
                 (["--variant", f"a={self.smock}", "--variant", "b"],
-                 "--variant b: give it as LABEL=FILE[,no-init][,no-first-second][,scenarios]"),
+                 "--variant b: give it as LABEL=FILE[,no-init][,no-first-second][,scenarios][,crud]"),
                 (["--variant", f"a={self.smock}", "--variant", f"b={self.tmp}/missing"],
                  f"no file {self.tmp}/missing")):
             # Without --smock: a run of variants is given its binaries.
@@ -1880,13 +1941,14 @@ class Variants(Script):
     def test_a_scenarios_variant_serves_the_scenario_variant_of_the_definitions_which_each_image_holds(self):
         status, output = self.run_variants(variants={"r2": [self.smock], "r2s": [self.smock, "scenarios"]})
         self.assertEqual(status, 0, output)
-        # One image of smock, which both variants share, holds both sets
+        # One image of smock, which both variants share, holds every set
         # (the fake docker, as docker, fails a COPY of what its context
         # lacks); the scenarios variant's Pod serves the Scenario variant.
         [smock_build, _] = self.made(["build"])
         self.assertEqual(smock_build["missing"], [])
-        self.assertEqual(smock_build["copies"][-2:], [[["definitions"], "/definitions"],
-                                                      [["definitions-scenarios"], "/definitions-scenarios"]])
+        self.assertEqual(smock_build["copies"][-3:], [[["definitions"], "/definitions"],
+                                                      [["definitions-scenarios"], "/definitions-scenarios"],
+                                                      [["definitions-crud"], "/definitions-crud"]])
         pods = {item["metadata"]["name"]: item for call in self.made(["apply"])
                 for item in call["document"].get("items", []) if item["kind"] == "Pod"}
         self.assertEqual({name: {variable["name"]: variable["value"]
@@ -1902,6 +1964,40 @@ class Variants(Script):
         report = json.loads((self.out / "same-node.json").read_text())
         self.assertEqual([(variant["label"], variant["options"]) for variant in report["variants"]],
                          [("r2", []), ("r2s", ["scenarios"])])
+
+    def test_a_crud_variant_serves_the_crud_variant_of_the_definitions_and_the_load_generator_sends_it_its_mix(self):
+        status, output = self.run_variants(variants={"r2": [self.smock], "r2c": [self.smock, "crud"]})
+        self.assertEqual(status, 0, output)
+        # One image of smock holds every set; the load generator's holds
+        # the CRUD variant's mix beside the benchmark's.
+        [smock_build, generator_build] = self.made(["build"])
+        self.assertEqual(smock_build["missing"], [])
+        self.assertEqual(smock_build["copies"][-3:], [[["definitions"], "/definitions"],
+                                                      [["definitions-scenarios"], "/definitions-scenarios"],
+                                                      [["definitions-crud"], "/definitions-crud"]])
+        self.assertIn("definitions-crud/files/items.json", smock_build["context"])
+        self.assertLessEqual({"bench/requests.json", "bench/requests-crud.json"}, set(generator_build["context"]))
+        pods = {item["metadata"]["name"]: item for call in self.made(["apply"])
+                for item in call["document"].get("items", []) if item["kind"] == "Pod"}
+        self.assertEqual({name: {variable["name"]: variable["value"]
+                                 for variable in pod["spec"]["containers"][0]["env"]}["SMOCK_DIR"]
+                          for name, pod in pods.items()},
+                         {"smock-small-r2": "/definitions", "smock-small-r2c": "/definitions-crud"})
+        [job] = [call["document"] for call in self.made(["apply"]) if call["document"]["kind"] == "Job"]
+        env = {item["name"]: item["value"] for item in job["spec"]["template"]["spec"]["containers"][0]["env"]}
+        self.assertEqual({variant["label"]: variant.get("mix") for variant in json.loads(env["VARIANTS"])},
+                         {"r2": None, "r2c": "requests-crud.json"})
+        # Each of its samples says what it served and was sent, and the
+        # comparison names the option.
+        for round_ in range(1, 5):
+            for label, directory, mix in (("r2", "bench/definitions", "bench/requests.json"),
+                                          ("r2c", "bench/definitions-crud", "bench/requests-crud.json")):
+                conditions = json.loads((self.out / "samples" / f"{round_}-{label}" / "conditions.json").read_text())
+                self.assertEqual((conditions["definitions"]["directory"], conditions["request_mix"]["file"]),
+                                 (directory, mix), (round_, label))
+        report = json.loads((self.out / "same-node.json").read_text())
+        self.assertEqual([(variant["label"], variant["options"]) for variant in report["variants"]],
+                         [("r2", []), ("r2c", ["crud"])])
 
     def test_a_dry_run_of_variants_prints_each_image_and_each_variant_it_would_make(self):
         old = self.smock_for(HOST_ARCH, "0d984c8a1b2c")

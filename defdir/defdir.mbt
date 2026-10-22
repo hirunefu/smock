@@ -3,17 +3,19 @@
 /// snapshot, or returns every problem: those reading the directory, then
 /// those in the definition set. `smock serve` and `smock check` both load
 /// definitions this way, so a set that one accepts, the other accepts too.
+/// Templates may read the environment variables `env`.
 ///
 /// Without a directory, the definition set is empty.
 pub async fn load(
   dir : String?,
   body_file_dir~ : String,
+  env~ : @template.Env,
 ) -> Result[@definitions.Snapshot, Array[@definitions.Diagnostic]] {
   let (set, read_problems) = match dir {
     Some(dir) => read(dir, body_file_dir~)
     None => ({ files: [], body_files: [], }, [])
   }
-  @definitions.load(set, read_problems~)
+  @definitions.load(set, read_problems~, env~)
 }
 
 ///|

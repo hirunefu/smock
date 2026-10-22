@@ -15,6 +15,8 @@ in a scope of its own there, as in a container under a profile's limits.
 usage: python3 -m unittest discover -s bench -v
 """
 
+import hashlib
+import http.client
 import importlib.util
 import json
 import os
@@ -338,6 +340,35 @@ class Variants(Helper):
                          pod_spec(plain)["containers"][0]["resources"])
         self.assertEqual(pod_spec(scenarios)["containers"][0]["image"], OTHER_IMAGE)
 
+    def test_a_crud_variant_serves_the_crud_variant_of_the_definitions_and_the_load_generator_sends_it_its_mix(self):
+        # Its image holds every set; the load generator sends it the CRUD
+        # variant's own mix, and the others the benchmark's.
+        generator = load_generator_module()
+        rendered = self.manifests(profile="autopilot-min", variants=(f"r2={OTHER_IMAGE}",
+                                                                     f"r2c={OTHER_IMAGE},crud"))
+        served = {}
+        for label in ("r2", "r2c"):
+            [_, pod] = rendered[f"smock-{label}.json"]
+            [container] = pod_spec(pod)["containers"]
+            served[label] = {variable["name"]: variable["value"] for variable in container["env"]}["SMOCK_DIR"]
+        self.assertEqual(served, {"r2": "/definitions", "r2c": "/definitions-crud"})
+        [_, plain] = rendered["smock-r2.json"]
+        [_, crud] = rendered["smock-r2c.json"]
+        self.assertEqual(pod_spec(crud)["containers"][0]["resources"], pod_spec(plain)["containers"][0]["resources"])
+        [job] = objects(rendered, "Job")
+        [container] = pod_spec(job)["containers"]
+        env = {variable["name"]: variable["value"] for variable in container["env"]}
+        self.assertEqual(json.loads(env["VARIANTS"]), [
+            {"label": "r2", "target": "smock-autopilot-min-r2.smock-bench.svc.cluster.local", "first_second": True},
+            {"label": "r2c", "target": "smock-autopilot-min-r2c.smock-bench.svc.cluster.local", "first_second": True,
+             "mix": "requests-crud.json"}])
+        variants = generator.read_variants(env)
+        self.assertEqual([[request["name"] for request in variant.mix] for variant in variants], [
+            ["catalog-item", "catalog-search", "user-profile", "user-preferences", "create-order", "get-order",
+             "update-order-status", "create-payment", "legacy-payment"],
+            ["catalog-item", "catalog-list", "user-profile", "user-preferences", "create-order", "get-order",
+             "update-order", "create-payment", "legacy-payment"]])
+
     def test_the_namespace_holds_each_variants_pod_the_load_generators_and_no_more(self):
         # Each smock Pod and the load generator's, with two to spare, as
         # without variants, whose one smock Pod gives 4.
@@ -421,6 +452,8 @@ class Variants(Helper):
                 (variants(TWO_VARIANTS[0], OTHER_IMAGE), f"--variant {OTHER_IMAGE}: give it as LABEL=IMAGE"),
                 (variants(TWO_VARIANTS[0], "r2="), "--variant r2=: give it as LABEL=IMAGE"),
                 (variants(TWO_VARIANTS[0], f"r2={OTHER_IMAGE},no-sleep"), "variant r2: no option no-sleep"),
+                (variants(TWO_VARIANTS[0], f"r2={OTHER_IMAGE},scenarios,crud"),
+                 "variant r2: scenarios and crud serve other definitions: give one of them"),
                 ([*variants(*TWO_VARIANTS), "--rounds", 0], "at least 1 round, not 0"),
                 (["--smock-image", SMOCK_IMAGE, "--rounds", 4], "--rounds needs --variant"),
                 (["--smock-image", SMOCK_IMAGE, *variants(*TWO_VARIANTS)], "--smock-image or --variant, not both"),
@@ -801,6 +834,22 @@ class Summary(Helper):
             self.assertEqual(conditions["definitions"]["directory"], directory)
             self.assertIn(f"definition set 48f7ce9715f0 ({directory})", (out / "summary.md").read_text())
 
+    def test_the_conditions_of_the_crud_variant_name_the_mix_it_was_sent(self):
+        lines = [START, generator_step(500), generator_step(1000), {"kind": "done"}]
+        out = self.results(lines, pods(), stopped=("--definitions", "bench/definitions-crud"))
+        conditions = json.loads((out / "conditions.json").read_text())
+        self.assertEqual(conditions["definitions"]["directory"], "bench/definitions-crud")
+        mix = conditions["request_mix"]
+        self.assertEqual(mix["file"], "bench/requests-crud.json")
+        self.assertEqual(mix["sha256"], hashlib.sha256((BENCH / "requests-crud.json").read_bytes()).hexdigest())
+        self.assertEqual(list(mix["weights"])[:2], ["catalog-item", "catalog-list"])
+        self.assertIn("definition set 48f7ce9715f0 (bench/definitions-crud, request mix bench/requests-crud.json), on ",
+                      (out / "summary.md").read_text())
+        # The plain set's run was sent the benchmark's own.
+        out = self.results(lines, pods())
+        self.assertEqual(json.loads((out / "conditions.json").read_text())["request_mix"]["file"],
+                         "bench/requests.json")
+
     def test_the_note_says_how_smock_was_measured(self):
         out = self.results([START, generator_step(500), generator_step(1000), {"kind": "done"}], pods())
         self.assertEqual(json.loads((out / "conditions.json").read_text())["note"], (
@@ -1159,18 +1208,22 @@ class Estimate(Helper):
 
 
 class LocalSmock:
-    """smock serving the benchmark's definitions on this machine, on free
-    ports, as the GKE run's image does, and as in a container of its own
-    under profile small's limits: in a systemd scope of its own, which
-    only smock is in, with a CPU quota of 250m and a memory limit of
-    512Mi, as bench/bench.py runs it. It becomes smock by exec."""
+    """smock serving the benchmark's definitions on this machine (or
+    `definitions`, such as a variant of them), on free ports, as the GKE
+    run's image does, and as in a container of its own under profile
+    small's limits: in a systemd scope of its own, which only smock is in,
+    with a CPU quota of 250m and a memory limit of 512Mi, as bench/bench.py
+    runs it. It becomes smock by exec."""
 
     SCOPE = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "-p", "CPUQuota=25%",
              "-p", f"MemoryMax={512 << 20}", "--"]
 
+    def __init__(self, definitions=BENCH / "definitions"):
+        self.definitions = definitions
+
     def __enter__(self):
         self.process = subprocess.Popen(
-            [*self.SCOPE, SMOCK, "serve", "--dir", str(BENCH / "definitions"), "--port", "0", "--tls-port", "0",
+            [*self.SCOPE, SMOCK, "serve", "--dir", str(self.definitions), "--port", "0", "--tls-port", "0",
              "--admin-port", "0", "--admin-auth", "off"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE, text=True,
             env={name: value for name, value in os.environ.items() if not name.startswith("SMOCK_")})
@@ -1453,14 +1506,16 @@ class Generator(Helper):
 STEP_IDS = ["http-keep-alive@small", "https-keep-alive@small"]
 
 
-def generate_variants(plan_path, variants, rounds):
+def generate_variants(plan_path, variants, rounds, mixes=None):
     """Runs the load generator for profile small against several smocks on
     this machine as variants, `variants` [(label, smock, first_second,
-    ports instead of smock's own)], for `rounds` rounds; returns its exit
-    status, its JSON lines and its output."""
+    ports instead of smock's own)], for `rounds` rounds, each sent the mix
+    `mixes` names for it ({label: file name under bench/}), else the
+    benchmark's; returns its exit status, its JSON lines and its output."""
     entries = [{"label": label, "target": "localhost", "first_second": first_second,
                 "plain_port": int(ports.get("plain", smock.ports["plain"])),
-                "tls_port": int(ports.get("tls", smock.ports["tls"])), "admin_port": int(smock.ports["admin"])}
+                "tls_port": int(ports.get("tls", smock.ports["tls"])), "admin_port": int(smock.ports["admin"]),
+                **({"mix": mixes[label]} if label in (mixes or {}) else {})}
                for label, smock, first_second, ports in variants]
     environment = {**{name: value for name, value in os.environ.items() if name != "TARGET"},
                    "VARIANTS": json.dumps(entries), "ROUNDS": str(rounds), "PROFILE": "small",
@@ -1605,6 +1660,43 @@ class GeneratorWithVariants(Helper):
                                                                   (step["id"], "b", round_)} & unmeasured])
         self.assertIsNotNone(profile["neighbours"])
         self.assertEqual([variant["options"] for variant in report["variants"]], [[], ["no-first-second"]])
+
+
+def journal_entries(smock, session):
+    """How many requests with the Session `session` the Journal of `smock`
+    on this machine holds, through its Admin API."""
+    connection = http.client.HTTPConnection("127.0.0.1", int(smock.ports["admin"]), timeout=10)
+    try:
+        connection.request("POST", "/v1/journal/query", body="{}",
+                           headers={"Content-Type": "application/json", "baggage": f"smock-session={session}"})
+        response = connection.getresponse()
+        return len(json.loads(response.read())["entries"])
+    finally:
+        connection.close()
+
+
+class GeneratorWithCrudVariant(Helper):
+    """A crud variant is sent the CRUD variant's own mix, whose requests
+    list, read and update the items of its CRUD Stubs, and the others the
+    benchmark's. It runs here against two smocks on this machine for one
+    round: a serving the plain set, and c its CRUD variant."""
+
+    def test_each_variant_is_sent_the_mix_of_the_definitions_it_serves_and_every_request_gets_its_status(self):
+        plan_path = Generator.generator_plan(self)
+        sessions = ("bench-catalog-search", "bench-catalog-list", "bench-update-order-status", "bench-update-order")
+        with LocalSmock() as a, LocalSmock(BENCH / "definitions-crud") as c:
+            status, lines, output = generate_variants(plan_path, [("a", a, True, {}), ("c", c, True, {})], 1,
+                                                      mixes={"c": "requests-crud.json"})
+            sent = {label: [session for session in sessions if journal_entries(smock, session)]
+                    for label, smock in (("a", a), ("c", c))}
+        self.assertEqual(status, 0, output)
+        steps = [line for line in lines if line["kind"] == "step"]
+        self.assertEqual(sorted((line["variant"], line["result"]["id"]) for line in steps),
+                         [("a", STEP_IDS[0]), ("a", STEP_IDS[1]), ("c", STEP_IDS[0]), ("c", STEP_IDS[1])])
+        for step in (line["result"] for line in steps):
+            self.assertEqual((step["errors"], step["smock_ready"]), (0, True))
+        self.assertEqual(sent, {"a": ["bench-catalog-search", "bench-update-order-status"],
+                                "c": ["bench-catalog-list", "bench-update-order"]})
 
 
 class VariantsStopTogether(Helper):
@@ -3042,6 +3134,33 @@ class SameNode(VariantRun):
         self.assertIn("- b against a (no-first-second, scenarios against no option): +5% (+5%), higher in 8 of 8 "
                       "pairs", markdown)
         self.assertEqual(report["conditions"], {"same": True, "reference": "1-a", "differences": []})
+
+    def test_a_variant_serving_the_crud_variant_is_compared_with_its_binary_its_own_mix_no_other_condition(self):
+        # b and c are a's binary serving the CRUD variant of the
+        # definitions, which is sent its own request mix: what CRUD Stubs
+        # cost, against the A/A pair c and b. Their definition set and mix
+        # differ as their option says, not as conditions besides smock.
+        lines = variant_lines(SAME_BINARY)
+        for line in lines:
+            if line["kind"] == "start" and line["variant"] in ("b", "c"):
+                line["status"] = {**line["status"], "digest": "9d41c07be2f5"}
+        out = self.variant_run(lines, variant_pods(["a", "b", "c"]))
+        status, report, markdown, stderr = self.same_node(out, sha256={"b": "a" * 64, "c": "a" * 64},
+                                                          definitions={"b": "bench/definitions-crud",
+                                                                       "c": "bench/definitions-crud"})
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual([(variant["label"], variant["options"]) for variant in report["variants"]],
+                         [("a", []), ("b", ["no-first-second", "crud"]), ("c", ["no-first-second", "crud"])])
+        profile = report["gke"]["profiles"]["small"]
+        self.assertEqual([(within["label"], within["against"], within["kind"]) for within in profile["within"]],
+                         [("b", "a", "other options"), ("c", "b", "same binary")])
+        self.assertIn("- b against a (no-first-second, crud against no option): +5% (+5%), higher in 8 of 8 pairs",
+                      markdown)
+        self.assertEqual(report["conditions"], {"same": True, "reference": "1-a", "differences": []})
+        # Each sample of b records the mix it was sent.
+        for round_ in range(1, 5):
+            conditions = json.loads((out / "samples" / f"{round_}-b" / "conditions.json").read_text())
+            self.assertEqual(conditions["request_mix"]["file"], "bench/requests-crud.json")
 
     def test_an_a_a_pair_is_found_when_the_baseline_is_its_binary_with_other_options(self):
         # a, b and c are one binary, a without the init container: b

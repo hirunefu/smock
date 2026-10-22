@@ -92,6 +92,13 @@ pub(all) enum Expected {
   Form
   /// An `xml` condition with no path: the body parses as XML.
   Xml
+  /// A CRUD Stub's path: the request path is this list path, or an item
+  /// path under it.
+  CrudPath(String)
+  /// The methods a CRUD Stub serves at the request path's shape, or at
+  /// either shape when the path is neither its list path nor an item path,
+  /// in the order GET, POST, PUT, PATCH, DELETE.
+  CrudMethods(ReadOnlyArray[String])
 } derive(Debug)
 
 ///|
@@ -118,7 +125,8 @@ pub impl ToJson for FailedCondition with fn to_json(self) {
 /// An exact value is a string, a pattern `{"pattern": ...}`, a `json`
 /// condition `{"json": ...}`, an operator `{"$not": ...}` or
 /// `{"$exists": ...}`, and an empty `form` or `xml` condition
-/// `{"form": {}}` or `{"xml": {}}`, as in Definition files.
+/// `{"form": {}}` or `{"xml": {}}`, as in Definition files. What a CRUD
+/// Stub expects is `{"crud": "<path>"}` or `{"crud": [<methods>]}`.
 pub impl ToJson for Expected with fn to_json(self) {
   match self {
     Exact(text) => Json::string(text)
@@ -128,6 +136,9 @@ pub impl ToJson for Expected with fn to_json(self) {
     Exists(present) => { "$exists": Json::boolean(present) }
     Form => { "form": {} }
     Xml => { "xml": {} }
+    CrudPath(path) => { "crud": Json::string(path) }
+    CrudMethods(methods) =>
+      { "crud": Json::array(methods.iter().map(Json::string).collect()) }
   }
 }
 
@@ -173,6 +184,12 @@ priv enum Failed {
   /// The Scenario `name`, the state the Stub requires of it, and the state
   /// it is in.
   Scenario(name~ : String, required~ : String, current~ : String)
+  /// The method of a request to a CRUD Stub, which serves only these
+  /// methods at the request path's shape.
+  CrudMethod(ReadOnlyArray[String])
+  /// The path of a request to a CRUD Stub with this path, which is neither
+  /// its list path nor an item path.
+  CrudPath(String)
 }
 
 ///|
@@ -188,13 +205,19 @@ fn Incoming::near_miss(
   let mut best : (@definitions.Stub, StubSource, Array[Failed])? = None
   for candidate in candidates {
     let (stub, source) = candidate
-    let failed = self.failed(stub.request)
-    // The state a Stub requires counts after its request conditions.
-    if stub.scenario is Some({ name, requires: Some(required), .. }) {
-      let current = current_state(states, name)
-      if current != required {
-        failed.push(Failed::Scenario(name~, required~, current~))
+    let failed = match stub.serves {
+      Ordinary(ordinary) => {
+        let failed = self.failed(ordinary.request)
+        // The state a Stub requires counts after its request conditions.
+        if ordinary.scenario is Some({ name, requires: Some(required), .. }) {
+          let current = current_state(states, name)
+          if current != required {
+            failed.push(Failed::Scenario(name~, required~, current~))
+          }
+        }
+        failed
       }
+      Crud(crud) => self.crud_failed(crud)
     }
     match best {
       Some((_, _, fewest)) if fewest.length() <= failed.length() => ()
@@ -263,6 +286,35 @@ fn Incoming::failed(
 }
 
 ///|
+/// The conditions of the CRUD Stub `crud` that the request fails, in the
+/// order method, path. A CRUD Stub counts two: the path, which fails when
+/// it is neither the list path nor an item path, and the method, which
+/// fails when the Stub does not serve it at the path's shape, or at either
+/// shape when the path fails.
+fn Incoming::crud_failed(
+  self : Incoming,
+  crud : @definitions.Crud,
+) -> Array[Failed] {
+  let out = []
+  let shape = crud.shape(self.path)
+  let methods = @definitions.crud_methods(shape)
+  let mut served = false
+  for i in 0..<methods.length() {
+    if methods[i] == self.request.meth {
+      served = true
+      break
+    }
+  }
+  if !served {
+    out.push(Failed::CrudMethod(methods))
+  }
+  if shape is None {
+    out.push(Failed::CrudPath(crud.path))
+  }
+  out
+}
+
+///|
 /// The full explanation of a failed condition: its name, what it expects
 /// and what the request carries.
 fn Incoming::explain(self : Incoming, failed : Failed) -> FailedCondition {
@@ -296,7 +348,7 @@ fn Incoming::explain(self : Incoming, failed : Failed) -> FailedCondition {
       {
         condition: Cookie(name),
         expected: expected(value),
-        actual: cookie_values(self.request.headers, name),
+        actual: @cookies.parse(self.request.headers).get(name).unwrap_or([]),
       }
     Body(body) =>
       {
@@ -333,6 +385,14 @@ fn Incoming::explain(self : Incoming, failed : Failed) -> FailedCondition {
         expected: Exact(required),
         actual: [current],
       }
+    CrudMethod(methods) =>
+      {
+        condition: Method,
+        expected: CrudMethods(methods),
+        actual: [self.request.meth],
+      }
+    CrudPath(path) =>
+      { condition: Path, expected: CrudPath(path), actual: [self.path], }
   }
 }
 

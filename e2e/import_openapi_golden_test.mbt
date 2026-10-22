@@ -57,7 +57,7 @@ async test "smock import-openapi imports the Admin API's own document, with refe
     ),
     content=(
       #|status 0
-      #|wrote <dir>/admin.yaml: 60 Stubs from 15 operations, 0 warnings
+      #|wrote <dir>/admin.yaml: 93 Stubs from 22 operations, 0 warnings
       #|smock check: status 0
       #|
     ),

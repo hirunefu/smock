@@ -1,0 +1,14 @@
+mocks:
+  - name: codes
+stubs:
+  - id: code
+    mock: codes
+    request: { method: POST, path: /codes }
+    response:
+      status: 200
+      template: true
+      headers:
+        X-Lang: ${lowercase(query.lang ?? 'EN')}
+      json:
+        code: ${uppercase(body.code)}
+        name: ${trim(query.name)}

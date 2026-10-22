@@ -314,7 +314,8 @@ A Stub matches on its method and its path. The Stub of a response other
 than the main one matches on `Smock-Status` too, and the Stub of a further
 named example on `Smock-Example`. The file holds only
 `status`, `headers`, and `json` or `body` in its responses: no
-`template`, `responses`, `variables`, `fault`, `scenario` or `priority`.
+`template`, `responses`, `variables`, `dataWrites`, `crud`, `fault`,
+`scenario` or `priority`, and no `data`.
 
 ### Paths with parameters
 
