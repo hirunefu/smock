@@ -182,9 +182,11 @@ of each GitHub release include its section
   gives 500 `data write failed`, and writes past the state bound give 507.
   The response sees the data after the writes, and the writes stand
   whatever follows. Only a Session's first write to a bucket copies it.
-  An Ephemeral Stub takes `dataWrites` too. Each Journal entry gains
-  `dataWritten`, the buckets written, and `dataError`, why a write failed
-  to apply.
+  An Ephemeral Stub takes `dataWrites` too. When a reload removes a
+  write's bucket, or changes it so that the write would no longer load,
+  the write gets 500 `data write failed`, checked before any value
+  renders. Each Journal entry gains `dataWritten`, the buckets written,
+  and `dataError`, why a write failed to apply.
 - `dataWrites` writes keyed Data buckets item by item. `set`, `merge` and
   `remove` take the `key` of one item, a text template compared as a key
   text, so `${path[3]}` finds the order whose `id` is `1002` or `"1002"`.

@@ -2570,11 +2570,20 @@ answer, as for a template failure.
 An Ephemeral Stub is not read again at a reload. Its write fails to apply
 in the same way, and nothing is written, when a reload removes its
 bucket, takes `key` from the bucket of a write with `key`, or gives `key`
-to the bucket of a `merge` without `key`. A `set` or `append` without
-`key` still applies when a reload gives its bucket `key`, and fails only
-when what it writes breaks the bucket's rules. Its template reads of a
-removed bucket are missing, so `${add(data.visits ?? 0, 1)}` still
-renders.
+to the bucket of a `merge` without `key`. smock checks each write's
+bucket this way before any value or key renders, Variables included, and
+the check draws nothing. So a value that reads the removed bucket without
+`??`, such as `${add(data.visits, 1)}`, does not turn this into a
+template failure:
+
+```json
+{"error":"data write failed","stub":"eph-1","at":"/dataWrites/0","message":"the Mock has no Data bucket \"visits\" since a reload"}
+```
+
+A `set` or `append` without `key` still applies when a reload gives its
+bucket `key`, and fails only when what it writes breaks the bucket's
+rules. When every write's bucket is still there, the Stub's template
+reads of a removed bucket are missing, so `??` gives a fallback.
 
 These are errors when loading, reported by `smock check`, at startup, by
 a reload, which then keeps the files it serves, and as 400 `invalid_stub`

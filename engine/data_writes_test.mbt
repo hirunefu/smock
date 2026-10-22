@@ -858,6 +858,101 @@ test "an Ephemeral Stub writes its Session's copies; after a reload removes its 
 }
 
 ///|
+test "after a reload, an Ephemeral Stub's writes are checked against the Mock's buckets before anything renders: a write whose bucket is gone, or changed so that the write would not load, fails to apply even when a value or a key cannot render" {
+  let files = (data : String) => {
+    [
+      shop_file(
+        data,
+        (
+          #|  - id: other
+          #|    mock: shop
+          #|    request: { path: /other }
+          #|    response: { status: 200 }
+        ),
+      ),
+    ]
+  }
+  let h = harness(
+    files(
+      (
+        #|  - { mock: shop, name: log, json: [] }
+        #|  - { mock: shop, name: visits, json: 0 }
+        #|  - { mock: shop, name: orders, key: id, json: [{ id: 1 }] }
+        #|  - { mock: shop, name: profile, json: {} }
+      ),
+    ),
+  )
+  let out = [
+    // The guide's counter, whose value reads the bucket it writes without
+    // `??`, after a write whose value reads the body.
+    h.add_to_shop(
+      (
+        #|{ "request": { "path": "/visit" },
+        #|  "variables": { "last": "${data.visits}" },
+        #|  "dataWrites": [
+        #|    { "op": "append", "bucket": "log", "value": "${body.at}" },
+        #|    { "op": "set", "bucket": "visits", "value": "${add(data.visits, 1)}" } ],
+        #|  "response": { "status": 200, "template": true, "body": "${data.visits}" } }
+      ),
+    ),
+    h.add_to_shop(
+      (
+        #|{ "request": { "path": "/pay" },
+        #|  "dataWrites": [{ "op": "merge", "bucket": "orders", "key": "${body.id}", "value": { "paid": true } }],
+        #|  "response": { "status": 200 } }
+      ),
+    ),
+    h.add_to_shop(
+      (
+        #|{ "request": { "path": "/name" },
+        #|  "dataWrites": [{ "op": "merge", "bucket": "profile", "value": { "name": "${body.name}" } }],
+        #|  "response": { "status": 200 } }
+      ),
+    ),
+  ]
+  let send = (label : String, path : String, body : String) => {
+    let outcome = h.send("POST", path, body~, session="test-a")
+    out.push("\{label}: \{reply(outcome)}; \{data_journaled(outcome)}")
+  }
+  send("visit", "/visit", "{\"at\":1}")
+  send("pay", "/pay", "{\"id\":1}")
+  send("name", "/name", "{\"name\":\"ann\"}")
+  let reload = h.engine.reload(
+    {
+      files: files(
+        (
+          #|  - { mock: shop, name: log, json: [] }
+          #|  - { mock: shop, name: orders, json: [{ id: 1 }] }
+          #|  - { mock: shop, name: profile, key: id, json: [] }
+        ),
+      ).map(f => (f.0, @utf8.encode(f.1))),
+      body_files: [],
+    },
+    at=fixed_now,
+  )
+  out.push("reload: \{@debug.to_string(reload.result)}")
+  // Each body leaves out what the write's value or key reads.
+  send("visit", "/visit", "{}")
+  send("pay", "/pay", "{}")
+  send("name", "/name", "{}")
+  inspect(
+    out.join("\n"),
+    content=(
+      #|eph-1
+      #|eph-2
+      #|eph-3
+      #|visit: 200 1; status 200, responseIndex null, variablesWritten [last], dataWritten [log, visits], dataError none, templateError none
+      #|pay: 200 ; status 200, responseIndex null, variablesWritten [], dataWritten [orders], dataError none, templateError none
+      #|name: 200 ; status 200, responseIndex null, variablesWritten [], dataWritten [profile], dataError none, templateError none
+      #|reload: Swapped
+      #|visit: 500 {"error":"data write failed","stub":"eph-1","at":"/dataWrites/1","message":"the Mock has no Data bucket \"visits\" since a reload"}; status 500, responseIndex null, variablesWritten [], dataWritten [], dataError /dataWrites/1: the Mock has no Data bucket "visits" since a reload, templateError none
+      #|pay: 500 {"error":"data write failed","stub":"eph-2","at":"/dataWrites/0","message":"the Data bucket \"orders\" has no \"key\" since a reload, and a write with \"key\" needs a keyed bucket"}; status 500, responseIndex null, variablesWritten [], dataWritten [], dataError /dataWrites/0: the Data bucket "orders" has no "key" since a reload, and a write with "key" needs a keyed bucket, templateError none
+      #|name: 500 {"error":"data write failed","stub":"eph-3","at":"/dataWrites/0","message":"the Data bucket \"profile\" has \"key\" since a reload, and \"merge\" without \"key\" cannot write to a keyed bucket"}; status 500, responseIndex null, variablesWritten [], dataWritten [], dataError /dataWrites/0: the Data bucket "profile" has "key" since a reload, and "merge" without "key" cannot write to a keyed bucket, templateError none
+    ),
+  )
+}
+
+///|
 test "every Journal entry records the Data buckets written, in the order first written, each once, and why a write failed, and counts them toward its bytes" {
   let file = shop_file(
     (
