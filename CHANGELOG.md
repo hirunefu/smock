@@ -20,6 +20,11 @@ of each GitHub release include its section
   the release workflow at the release's tag. The release workflow verifies
   the signature before it publishes the release. See
   [Verify the Helm chart](README.md#verify-the-helm-chart).
+- The image's SBOM lists the MoonBit native runtime, mimalloc and simdutf,
+  which come with the MoonBit toolchain and are linked into smock, with the
+  licences that NOTICE gives them. The runtime has the toolchain's version,
+  mimalloc the one NOTICE gives, and simdutf none (`NOASSERTION`), since the
+  toolchain does not record it. CI fails when the SBOM and NOTICE disagree.
 
 ### Fixed
 

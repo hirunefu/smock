@@ -10,11 +10,17 @@
 #   and moonbitlang/core, the standard library of the toolchain in
 #   .moonbit-version: all are compiled into the binary, so smock links them
 #   statically;
+# - the native runtime, mimalloc and simdutf, which come with the toolchain
+#   and which it links into smock statically, with the names and licences
+#   NOTICE gives them (scripts/notice.jq reads NOTICE). The runtime has the
+#   toolchain's version, mimalloc the one NOTICE gives, and simdutf, whose
+#   version nothing records, NOASSERTION;
 # - smock's dynamic link to the base's OpenSSL package (libssl3).
 #
 # The release workflow runs it on each architecture's SBOM before attesting
-# it; scripts/verify-image.sh checks that the published SBOMs have smock. It
-# needs jq.
+# it, and CI on the SBOM of the image it builds. scripts/check-sbom-notice.sh
+# checks that the SBOM and NOTICE agree, and scripts/verify-image.sh that the
+# published SBOMs have smock. It needs jq.
 #
 # usage: scripts/add-smock-to-sbom.sh <sbom.spdx.json> <version> <commit>
 #   Rewrites the SBOM in place. <commit> is the full commit hash.
@@ -78,15 +84,18 @@ done
 jq -nc --arg version "$toolchain" '{name: "moonbitlang/core", $version, licence: "", download: "NOASSERTION"}' >>"$lines"
 modules=$(jq -sc . "$lines")
 
-jq --arg version "$version" --arg commit "$commit" --arg toolchain "moonc v$toolchain" \
-  --arg licence "$(licence "$root/moon.mod")" --arg repository "$repository" --argjson modules "$modules" '
+jq -L "$root/scripts" --rawfile notice "$root/NOTICE" --arg version "$version" --arg commit "$commit" \
+  --arg toolchain "moonc v$toolchain" --arg toolchain_version "$toolchain" --arg licence "$(licence "$root/moon.mod")" \
+  --arg repository "$repository" --argjson modules "$modules" '
+  include "notice";
   def package($id; $name; $version; $licence; $download):
     {name: $name, SPDXID: $id, versionInfo: $version, supplier: "NOASSERTION",
      downloadLocation: $download, filesAnalyzed: false, licenseConcluded: "NOASSERTION",
      licenseDeclared: (if $licence == "" then "NOASSERTION" else $licence end),
      copyrightText: "NOASSERTION"};
   def module_id: "SPDXRef-Package-moonbit-" + (.name | gsub("[^A-Za-z0-9.]"; "-"));
-  [.relationships[] | select(.spdxElementId == "SPDXRef-DOCUMENT" and .relationshipType == "DESCRIBES")
+  ($notice | notice_parts) as $parts
+  | [.relationships[] | select(.spdxElementId == "SPDXRef-DOCUMENT" and .relationshipType == "DESCRIBES")
    | .relatedSpdxElement] as $described
   | if ($described | length) != 1 then error("the SBOM does not describe exactly one package") else . end
   | if any(.packages[]; .SPDXID == "SPDXRef-Package-smock") then error("the SBOM has smock already") else . end
@@ -101,12 +110,16 @@ jq --arg version "$version" --arg commit "$commit" --arg toolchain "moonc v$tool
                          referenceLocator: "pkg:github/hirunefu/smock@v\($version)"}]}
     ] + [$modules[] | package(module_id; .name; .version; .licence; .download)
          + {primaryPackagePurpose: "LIBRARY", comment: "A MoonBit module compiled into smock."}]
+    + [$parts[] | package(module_id; .name; sbom_version($toolchain_version); .licence; "NOASSERTION")
+         + {primaryPackagePurpose: "LIBRARY",
+            comment: "Part of the MoonBit toolchain \($toolchain), which links it into smock."}]
   | .relationships += [{spdxElementId: $described[0], relatedSpdxElement: "SPDXRef-Package-smock",
                         relationshipType: "CONTAINS"}]
-      + [$modules[] | {spdxElementId: "SPDXRef-Package-smock", relatedSpdxElement: module_id,
-                       relationshipType: "STATIC_LINK"}]
+      + [$modules[], $parts[] | {spdxElementId: "SPDXRef-Package-smock", relatedSpdxElement: module_id,
+                                  relationshipType: "STATIC_LINK"}]
       + [$openssl[] | {spdxElementId: "SPDXRef-Package-smock", relatedSpdxElement: .,
                        relationshipType: "DYNAMIC_LINK"}]
 ' "$sbom" >"$sbom.tmp"
 mv "$sbom.tmp" "$sbom"
-echo "add-smock-to-sbom: $sbom has smock $version and the $(printf '%s' "$modules" | jq length) MoonBit modules in it"
+echo "add-smock-to-sbom: $sbom has smock $version, the $(printf '%s' "$modules" | jq length) MoonBit modules," \
+  "and the runtime, mimalloc and simdutf of the toolchain in it"
