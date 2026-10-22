@@ -164,7 +164,8 @@ of each GitHub release include its section
   value in the body; `DELETE /v1/mocks/{mock}/data/{bucket}` drops it, so
   the bucket reads its initial value again. A bucket the Mock does not
   declare gets 404 `unknown_bucket`, and a value that breaks a keyed
-  bucket's rules 400 `invalid_data`. A set that would pass the state bound
+  bucket's rules 400 `invalid_data`. A set keeps a number's value, not its
+  text, as a Variable's does. A set that would pass the state bound
   writes nothing and gets 507 `state_limit_reached`. Each set and each
   drop of a copy is logged. The `per_replica_state` warning names the
   copies of Data buckets.

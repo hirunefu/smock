@@ -82,9 +82,14 @@ async test "over the authenticated Admin API, a test sets its Session's copy of 
         "checkout-42 reads orders",
         smock.call("GET", orders, session="checkout-42"),
       )
+      // A set keeps a number's value, not its text, as a Variable's does.
       step(
         "no Session sets visits",
-        smock.call("PUT", "\{data}/visits", body="{\"total\": 2}"),
+        smock.call(
+          "PUT",
+          "\{data}/visits",
+          body="{\"total\": 2, \"spent\": 19.990, \"limit\": 1e3}",
+        ),
       )
       step("no Session reads visits", smock.call("GET", "\{data}/visits"))
       step(
@@ -122,8 +127,8 @@ async test "over the authenticated Admin API, a test sets its Session's copy of 
           #|checkout-42 lists: 200 {"data":[{"name":"orders","key":"id","newKey":"integer","written":true},{"name":"visits","key":null,"newKey":null,"written":false}],"warnings":[]}
           #|checkout-43 lists: 200 {"data":[{"name":"orders","key":"id","newKey":"integer","written":false},{"name":"visits","key":null,"newKey":null,"written":false}],"warnings":[]}
           #|checkout-42 reads orders: 200 {"bucket":{"name":"orders","key":"id","newKey":"integer","written":true,"value":[{"id":1,"status":"paid"}]},"warnings":[]}
-          #|no Session sets visits: 200 {"bucket":{"name":"visits","key":null,"newKey":null,"written":true,"value":{"total":2}},"warnings":[]}
-          #|no Session reads visits: 200 {"bucket":{"name":"visits","key":null,"newKey":null,"written":true,"value":{"total":2}},"warnings":[]}
+          #|no Session sets visits: 200 {"bucket":{"name":"visits","key":null,"newKey":null,"written":true,"value":{"total":2,"spent":19.99,"limit":1000}},"warnings":[]}
+          #|no Session reads visits: 200 {"bucket":{"name":"visits","key":null,"newKey":null,"written":true,"value":{"total":2,"spent":19.99,"limit":1000}},"warnings":[]}
           #|checkout-42 drops orders: 200 {"bucket":{"name":"orders","key":"id","newKey":"integer","written":false,"value":[{"id":1,"status":"paid"},{"id":2,"status":"pending"},{"id":3,"status":"paid"}]},"warnings":[]}
           #|checkout-42 GET /api/v1/orders: 200 [{"id":1,"status":"paid"},{"id":2,"status":"pending"},{"id":3,"status":"paid"}]
           #|checkout-42 drops orders again: 200 {"bucket":{"name":"orders","key":"id","newKey":"integer","written":false,"value":[{"id":1,"status":"paid"},{"id":2,"status":"pending"},{"id":3,"status":"paid"}]},"warnings":[]}

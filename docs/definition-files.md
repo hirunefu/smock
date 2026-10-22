@@ -3123,6 +3123,10 @@ brings them back for `checkout-42`.
 - A value that breaks the rules of a keyed bucket ([Keys and key
   texts](#keys-and-key-texts)) gets 400 `invalid_data`, with each problem
   in the message, and writes nothing.
+- A set keeps a number's value, not its text, as a [set of a
+  Variable](#through-the-admin-api) does: `19.990` is stored as `19.99`
+  and `1e3` as `1000`. Unlike a Variable's value, a bucket's value is not
+  bounded at 1 MiB, since a bucket's writes can grow it past that anyway.
 - A set counts against [the state bound](#copies-and-the-state-bound): one
   that would pass it gets 507 `state_limit_reached` and writes nothing. A
   drop gives back the bytes the copy counted.
