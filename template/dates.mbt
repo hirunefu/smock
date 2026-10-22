@@ -2,7 +2,8 @@
 // the calendar they are written on. A date is an instant, in milliseconds
 // since the Unix epoch, on the proleptic Gregorian calendar, from the year
 // 0 to 9999. Formats use date-fns tokens and write what date-fns writes,
-// with English names only, so no output depends on a locale.
+// with English names only, so no output depends on a locale, except that
+// the year 0 is written 0000, as RFC 3339 writes it.
 
 ///|
 /// A part of a date format: text written as it is, or a token.
@@ -10,8 +11,8 @@ priv enum DatePart {
   /// Text written as it is: characters that are not letters, and quoted
   /// text.
   Written(String)
-  /// `yyyy` or `yy`: the year of the era, in that many digits.
-  YearOfEra(Int)
+  /// `yyyy` or `yy`: the calendar year, in that many digits.
+  CalendarYear(Int)
   /// `M` or `MM`: the month's number, with a leading zero for `MM`;
   /// `MMM` or `MMMM`: its name, short or long.
   MonthOfYear(Int)
@@ -92,7 +93,7 @@ fn date_format(format : String) -> Result[Array[DatePart], String] {
     let count = j - i
     let run = String::from_array(chars[i:j])
     let part : DatePart = match (c, count) {
-      ('y', 2 | 4) => YearOfEra(count)
+      ('y', 2 | 4) => CalendarYear(count)
       ('M', 1 | 2 | 3 | 4) => MonthOfYear(count)
       ('d', 1 | 2) => DayOfMonth(count)
       ('H', 1 | 2) => Hour(count)
@@ -422,11 +423,10 @@ fn written_date(
   for part in parts {
     let piece = match part {
       Written(text) => text
-      YearOfEra(digits) => {
-        // As date-fns writes it: the year 0 is 1 BC, written 0001.
-        let year = if date.year > 0 { date.year } else { 1 - date.year }
-        zero_padded(if digits == 2 { year % 100 } else { year }, digits)
-      }
+      // The year 0 is 0000, as smock's RFC 3339 times write it, where
+      // date-fns writes the year of the era, 0001 (1 BC).
+      CalendarYear(2) => zero_padded(date.year % 100, 2)
+      CalendarYear(digits) => zero_padded(date.year, digits)
       MonthOfYear(1 | 2 as digits) => zero_padded(date.month, digits)
       MonthOfYear(3) =>
         month_names[date.month - 1].view(end_offset=3).to_owned()

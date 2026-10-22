@@ -175,6 +175,45 @@ test "set refuses an unknown Mock and a name that is not 1 to 128 ASCII letters,
 }
 
 ///|
+test "set refuses a value above 1 MiB of compact JSON, the bound a Stub's write has, before the bound on per-Session state counts it, and writes nothing" {
+  // A string of n characters takes n + 2 bytes of compact JSON, and an
+  // array of one such string n + 4.
+  let mib = 1024 * 1024
+  let string = (bytes : Int) => "\"\{"a".repeat(bytes - 2)}\""
+  let array = (bytes : Int) => "[ \"\{"a".repeat(bytes - 4)}\" ]"
+  let h = harness([who_logged_in])
+  let tight = harness([who_logged_in], state_max_bytes=1000)
+  let out = []
+  out.push(
+    "a string of 1 MiB: \{h.set_variable("shop", Some("test-a"), "user", string(mib))}",
+  )
+  out.push(
+    "a string 1 byte above: \{h.set_variable("shop", Some("test-a"), "user", string(mib + 1))}",
+  )
+  out.push(
+    "an array 1 byte above: \{h.set_variable("shop", Some("test-a"), "user", array(mib + 1))}",
+  )
+  out.push("test-a lists \{h.variables("shop", Some("test-a")).length()} bytes")
+  out.push(
+    "above both bounds: \{tight.set_variable("shop", Some("test-a"), "user", string(mib + 1))}",
+  )
+  out.push(
+    "refused by the state bound: \{tight.engine.state_stats().writes_refused}",
+  )
+  inspect(
+    out.join("\n"),
+    content=(
+      #|a string of 1 MiB: set
+      #|a string 1 byte above: VariableTooLarge(name="user", bytes=1048577)
+      #|an array 1 byte above: VariableTooLarge(name="user", bytes=1048577)
+      #|test-a lists 1048585 bytes
+      #|above both bounds: VariableTooLarge(name="user", bytes=1048577)
+      #|refused by the state bound: 0
+    ),
+  )
+}
+
+///|
 test "set counts against the bound on per-Session state as a Stub's write does: one that would take the count above it writes nothing, and the bound counts the refusal" {
   let h = harness([shop_state], state_max_bytes=250)
   let out = []

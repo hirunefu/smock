@@ -36,18 +36,21 @@ of each GitHub release include its section
 - Template helpers for dates: `now(format)`, `dateFormat(date, format,
   offset)` and `dateTimeShift(date, duration)`. Formats use date-fns
   tokens, with English names only; the week-numbering year (`YYYY`) and
-  the day of the year (`DD`) are load errors. Offsets are `Z` or `±HH:MM`.
-  Shifts take ISO 8601 durations such as `P1M`, and a month shift clamps
-  to the end of the month. A date is an RFC 3339 date-time, a date
-  `YYYY-MM-DD` or epoch milliseconds; anything else is missing, so `??`
-  applies.
+  the day of the year (`DD`) are load errors. `yyyy` writes the calendar
+  year, so the year 0 is `0000`, as in RFC 3339. Offsets are `Z` or
+  `±HH:MM`. Shifts take ISO 8601 durations such as `P1M`, and a month
+  shift clamps to the end of the month. A date is an RFC 3339 date-time, a
+  date `YYYY-MM-DD` or epoch milliseconds; anything else is missing, so
+  `??` applies.
 - Template helpers for arithmetic: `add`, `subtract`, `multiply`,
   `divide`, `modulo`, `ceil`, `floor`, `round`, `toFixed` and `parseInt`.
   They compute in exact decimal with integers only, so `add(0.1, 0.2)` is
   `0.3` on every target. `divide` rounds half to even at 10 decimal
   places, `round` and `toFixed` round half away from zero, and numbers
   have at most 18 digits before the point and 18 after. A numeric argument
-  may be a string that is a JSON number, such as `query.page`.
+  may be a string that is a JSON number, such as `query.page`. A number
+  literal is taken as written, with every digit, even those a 64-bit
+  float would lose.
 - A helper call can be followed by steps, as a reference can:
   `${range(1, 3)[1]}` gives `2`.
 - The bounds of `range(a, b)` can be any expression that gives an integer,
@@ -119,11 +122,13 @@ of each GitHub release include its section
 - Admin API operations on the calling Session's Variables of a Mock:
   `GET /v1/mocks/{mock}/variables` lists them by name, with their values;
   `PUT /v1/mocks/{mock}/variables/{name}` sets one to the JSON value in the
-  body; `DELETE /v1/mocks/{mock}/variables/{name}` deletes one. A set
-  counts against the state bound, and one that would pass it writes
-  nothing and gets 507 `state_limit_reached`; a delete gives the bytes
-  back. A delete of an unset Variable gets 404 `unknown_variable`. Each set
-  and delete is logged.
+  body; `DELETE /v1/mocks/{mock}/variables/{name}` deletes one. A value
+  above 1 MiB of compact JSON, the bound each value of a Stub's
+  `variables` has, gets 400 `invalid_request`, and a set keeps a number's
+  value, not its text. A set counts against the state bound, and one that
+  would pass it writes nothing and gets 507 `state_limit_reached`; a
+  delete gives the bytes back. A delete of an unset Variable gets 404
+  `unknown_variable`. Each set and delete is logged.
 - docs/migrating-from-mockoon.md maps Mockoon's helpers, `RANDOM` routes,
   global variables, Range requests, dates, cookies and environment
   variables onto smock, with each difference called out.
