@@ -76,6 +76,32 @@ pub fn key_text(json : Json) -> String? {
 }
 
 ///|
+/// The integer key whose key text, as `key_text` gives it, is `text`, if
+/// any: as the Double that a JSON number holding it has. `None` for any
+/// other text, such as that of a string key, `01`, `-0` or `1.0`, or one
+/// beyond `max_integer_key`. So an integer key and a string key that have
+/// the same text are told apart without writing the number's text out.
+pub fn key_text_integer(text : String) -> Double? {
+  let negative = text.has_prefix("-")
+  let digits = if negative { text.view(start_offset=1) } else { text.view() }
+  // No leading zeros, and no `-0`: the text of 0 is `0`.
+  if digits.is_empty() ||
+    (digits.has_prefix("0") && (negative || digits.length() > 1)) {
+    return None
+  }
+  let mut value = 0L
+  for c in digits {
+    guard c >= '0' && c <= '9' else { return None }
+    value = value * 10L + (c.to_int() - '0'.to_int()).to_int64()
+    if value > max_integer_key {
+      return None
+    }
+  }
+  let signed = if negative { -value } else { value }
+  Some(signed.to_double())
+}
+
+///|
 /// What is wrong with a key member that holds no key, as `key_text` says.
 pub let not_a_key : String = "must be a key: a non-empty string without /, or an integer from \{-max_integer_key} to \{max_integer_key}"
 

@@ -454,3 +454,44 @@ test "a response reads Data buckets when one of its templates reads data: a head
     ),
   )
 }
+
+///|
+test "key_text_integer gives the integer key of a key text, the number whose key_text it is, and nothing for any other text" {
+  let texts = [
+    "0", "42", "-42", "9007199254740991", "-9007199254740991", "9007199254740992",
+    "01", "-0", "1.0", "4.2e1", "", "-", "a1", "1a", "+1",
+  ]
+  let out = []
+  for text in texts {
+    let number = @definitions.key_text_integer(text)
+    // An integer key's key text is the text it came from.
+    if number is Some(n) {
+      assert_eq(@definitions.key_text(Json::number(n)), Some(text))
+    }
+    let shown = match number {
+      Some(n) => n.to_string()
+      None => "none"
+    }
+    out.push("\{text.escape()}: \{shown}")
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|"0": 0
+      #|"42": 42
+      #|"-42": -42
+      #|"9007199254740991": 9007199254740991
+      #|"-9007199254740991": -9007199254740991
+      #|"9007199254740992": none
+      #|"01": none
+      #|"-0": none
+      #|"1.0": none
+      #|"4.2e1": none
+      #|"": none
+      #|"-": none
+      #|"a1": none
+      #|"1a": none
+      #|"+1": none
+    ),
+  )
+}

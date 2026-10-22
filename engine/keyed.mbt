@@ -81,36 +81,12 @@ fn broken_rules(
 }
 
 ///|
-/// The value of `key`, a key text, as an integer key: the number whose
-/// text it is, when it is the text of one. `None` for the text of a string
-/// key.
-fn integer_key(key : String) -> Double? {
-  let negative = key.has_prefix("-")
-  let digits = if negative { key.view(start_offset=1) } else { key.view() }
-  // No leading zeros, and no `-0`: the text of 0 is `0`.
-  if digits.is_empty() ||
-    (digits.has_prefix("0") && (negative || digits.length() > 1)) {
-    return None
-  }
-  let mut value = 0L
-  for c in digits {
-    guard c >= '0' && c <= '9' else { return None }
-    value = value * 10L + (c.to_int() - '0'.to_int()).to_int64()
-    if value > @definitions.max_integer_key {
-      return None
-    }
-  }
-  let signed = if negative { -value } else { value }
-  Some(signed.to_double())
-}
-
-///|
 /// The index of the item of `items`, the value of a bucket keyed by the
 /// member `key_member`, whose key text is `key`, if one has it. A string
 /// key has the text it holds, and an integer key the text of its digits,
 /// so no key text is written out to find an item.
 fn item_index(items : Array[Json], key_member : String, key : String) -> Int? {
-  let number = integer_key(key)
+  let number = @definitions.key_text_integer(key)
   for i, item in items {
     guard item is Object(members) else { continue }
     match members.get(key_member) {
@@ -291,7 +267,7 @@ fn new_key(
               highest = Some(key)
             }
           }
-          Some(String(text)) if integer_key(text) is Some(_) =>
+          Some(String(text)) if @definitions.key_text_integer(text) is Some(_) =>
             match taken {
               Some(texts) => texts.add(text)
               None => taken = Some(Set::from_array([text]))
