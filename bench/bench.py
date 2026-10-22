@@ -1264,39 +1264,38 @@ def waited(before, after):
     }
 
 
+def cpus_sum(text, cpus, value):
+    """The sum over the CPUs `cpus` of `value` of each one's line of `text`,
+    a file of /proc with a line `cpu<N> ...` for each CPU N (`value` gets
+    the line's fields, the name first); None without the text, or when it
+    has no such line, of at least eight fields, for one of them."""
+    if text is None:
+        return None
+    values = {}
+    for line in text.splitlines():
+        fields = line.split()
+        if fields and fields[0].startswith("cpu") and fields[0][3:].isdigit() and len(fields) > 7:
+            values[int(fields[0][3:])] = value(fields)
+    if any(cpu not in values for cpu in cpus):
+        return None
+    return sum(values[cpu] for cpu in cpus)
+
+
 def cpus_run_ns(schedstat, cpus):
     """How long tasks have run on the CPUs `cpus`, all together, in
     nanoseconds, from the text of /proc/schedstat, where it is the seventh
-    number of each CPU's line; None without the text, or when it has no
-    line for one of them."""
-    if schedstat is None:
-        return None
-    run_ns = {}
-    for line in schedstat.splitlines():
-        fields = line.split()
-        if fields and fields[0].startswith("cpu") and fields[0][3:].isdigit() and len(fields) > 7:
-            run_ns[int(fields[0][3:])] = int(fields[7])
-    if any(cpu not in run_ns for cpu in cpus):
-        return None
-    return sum(run_ns[cpu] for cpu in cpus)
+    number of each CPU's line; None as cpus_sum."""
+    return cpus_sum(schedstat, cpus, lambda fields: int(fields[7]))
 
 
 def cpus_interrupts_ns(stat, cpus):
     """How long the CPUs `cpus` have spent in hard interrupts and softirqs,
     all together, in nanoseconds, from the text of /proc/stat, where they
     are the sixth and seventh numbers of each CPU's line, in clock ticks;
-    None without the text, or when it has no line for one of them. A
-    softirq that ksoftirqd runs is that thread's time, not counted here."""
-    if stat is None:
-        return None
-    ticks = {}
-    for line in stat.splitlines():
-        fields = line.split()
-        if fields and fields[0].startswith("cpu") and fields[0][3:].isdigit() and len(fields) > 7:
-            ticks[int(fields[0][3:])] = int(fields[6]) + int(fields[7])
-    if any(cpu not in ticks for cpu in cpus):
-        return None
-    return sum(ticks[cpu] for cpu in cpus) * 1_000_000_000 // os.sysconf("SC_CLK_TCK")
+    None as cpus_sum. A softirq that ksoftirqd runs is that thread's time,
+    not counted here."""
+    ticks = cpus_sum(stat, cpus, lambda fields: int(fields[6]) + int(fields[7]))
+    return None if ticks is None else ticks * 1_000_000_000 // os.sysconf("SC_CLK_TCK")
 
 
 def other_tasks(before, after, cpus):
