@@ -286,8 +286,8 @@ Stub for each response it answers, and for each further named example
 | The document | `version: 1`, then `mocks` with the one Mock, unless `--declare-mock` is `off`, then `stubs`. In YAML, a comment at the top names the document, its `info.title` and `info.version`, its OpenAPI version, and the flags whose value is not the default: `--mock`, then `--hosts` when the Mock has Hosts, `--declare-mock off`, and `--base-path` when given. |
 | An operation | One Stub per response: the main Stub, and one for each other response. One more Stub per further named example. In YAML, a comment above each gives the method, the path as written, the response key and the example's name, or `sample cut` for a sample cut to its required parts. |
 | `summary` | In YAML, its first line ends the Stub's comment. Control characters become spaces. |
-| `get`, `put`, `post`, `delete`, `options`, `head`, `patch`, `trace`, and 3.2's `query` | The `method`, in upper case. |
-| A key of 3.2's `additionalOperations` | The `method`, as written. |
+| `get`, `put`, `post`, `delete`, `options`, `head`, `patch`, `trace`, and 3.2's `query` | The `method`, in upper case. In 3.0 and 3.1, which do not define `query`, it is neither read nor checked. |
+| A key of 3.2's `additionalOperations` | The `method`, as written. In 3.0 and 3.1, which do not define `additionalOperations`, it is neither read nor checked. |
 | `head` | `HEAD` is answered only where the document has `head`. |
 | `servers`, of an operation, a Path Item or the document | The path of the first server, in front of the paths of the operations it applies to, unless `--base-path` replaces it ([Servers and base paths](#servers-and-base-paths)). The URL's host is not used. |
 | A path key without parameters | The exact `path`, percent-decoded as smock decodes request paths, so that the match index finds it. |

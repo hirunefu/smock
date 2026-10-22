@@ -376,6 +376,40 @@ test "an additionalOperations key that is not an HTTP token, or that names a met
 }
 
 ///|
+test "in 3.0 and 3.1, query and additionalOperations are neither read nor checked, since only 3.2 defines them" {
+  let paths =
+    #|{
+    #|  "/a": {
+    #|    "get": { "responses": { "200": {} } },
+    #|    "query": { "responses": { "200": {} } },
+    #|    "additionalOperations": {
+    #|      "COPY": { "responses": { "201": {} } },
+    #|      "MY METHOD": { "responses": { "200": {} } },
+    #|      "POST": []
+    #|    }
+    #|  },
+    #|  "/b": { "query": 1, "additionalOperations": [] }
+    #|}
+  let out = StringBuilder()
+  for openapi in ["3.0.3", "3.1.0"] {
+    out.write_string("\{openapi}:\n")
+    out.write_string(
+      stubs_of("{ \"openapi\": \"\{openapi}\", \"paths\": \{paths} }"),
+    )
+  }
+  inspect(
+    out.to_string(),
+    content=(
+      #|3.0.3:
+      #|petstore.GET /a.200: GET /a -> 200
+      #|3.1.0:
+      #|petstore.GET /a.200: GET /a -> 200
+      #|
+    ),
+  )
+}
+
+///|
 test "a path without parameters becomes an exact path, percent-decoded as smock decodes request paths; x- keys under paths are ignored" {
   inspect(
     stubs_of(

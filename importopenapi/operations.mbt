@@ -1,6 +1,7 @@
 ///|
 /// The methods that have their own field in a Path Item, as the document
-/// writes them. Each becomes the method in upper case. `query` is 3.2's.
+/// writes them. Each becomes the method in upper case. `query` is 3.2's,
+/// and is read only in 3.2.
 let fixed_methods : Array[String] = [
   "get", "put", "post", "delete", "options", "head", "patch", "trace", "query",
 ]
@@ -116,7 +117,9 @@ fn Report::operations(self : Report, document : Document) -> Array[Imported] {
 
 ///|
 /// Reads the operations of the Path Item `json` at the path key `key`,
-/// after following its `$ref`.
+/// after following its `$ref`. `query` and `additionalOperations` are read
+/// only in 3.2: 3.0 and 3.1 do not define them, so there they are neither
+/// read nor checked.
 fn Report::path_item(
   self : Report,
   document : Document,
@@ -132,9 +135,10 @@ fn Report::path_item(
     return
   }
   let prefix = self.prefix(pointer, item, outer=document.prefix)
+  let v32 = document.openapi.has_prefix("3.2.")
   for field, value in item {
     let field_pointer = @definitions.child_pointer(pointer, field)
-    if fixed_methods.contains(field) {
+    if fixed_methods.contains(field) && (v32 || field != "query") {
       self.operation(
         document,
         imported,
@@ -145,7 +149,7 @@ fn Report::path_item(
         field_pointer,
         value,
       )
-    } else if field == "additionalOperations" {
+    } else if v32 && field == "additionalOperations" {
       guard value is Object(operations) else {
         self.error_at(field_pointer, "must be an object")
         continue

@@ -20,11 +20,12 @@ of each GitHub release include its section
   The Mockoon migration guide points there too: an environment that
   Mockoon imported from an OpenAPI document can be imported into smock from
   the same document.
-- Each imported operation becomes Stubs that match its method and its path,
-  under the path of its server URL, so the mock answers where the real
-  service does; `--base-path` replaces that prefix. A path with parameters,
-  such as `/pets/{petId}`, becomes a pattern in which each parameter matches
-  one segment, and concrete paths come before templated ones. The main
+- Each imported operation, 3.2's `query` and `additionalOperations`
+  included, becomes Stubs that match its method and its path, under the
+  path of its server URL, so the mock answers where the real service does;
+  `--base-path` replaces that prefix. A path with parameters, such as
+  `/pets/{petId}`, becomes a pattern in which each parameter matches one
+  segment, and concrete paths come before templated ones. The main
   response answers by default. Every other response has a Stub that a
   request selects with `Smock-Status: <key>`, such as `404`, and every
   further named example one that `Smock-Example: <name>` selects. A test
