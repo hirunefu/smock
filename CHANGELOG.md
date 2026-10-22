@@ -26,6 +26,13 @@ of each GitHub release include its section
   mimalloc the one NOTICE gives, and simdutf none (`NOASSERTION`), since the
   toolchain does not record it. CI fails when the SBOM and NOTICE disagree.
 
+### Changed
+
+- `scripts/verify-image.sh` requires the runtime, mimalloc and simdutf in
+  each SBOM, so it refuses the images of 0.3.0 and earlier. Check one of
+  those with the script from its own tag, such as
+  `git show v0.3.0:scripts/verify-image.sh`.
+
 ### Fixed
 
 - A release's notes link to files of the repository at the release's tag.
