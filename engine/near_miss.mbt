@@ -298,7 +298,14 @@ fn Incoming::crud_failed(
   let out = []
   let shape = crud.shape(self.path)
   let methods = @definitions.crud_methods(shape)
-  if !methods.iter().contains(self.request.meth) {
+  let mut served = false
+  for i in 0..<methods.length() {
+    if methods[i] == self.request.meth {
+      served = true
+      break
+    }
+  }
+  if !served {
     out.push(Failed::CrudMethod(methods))
   }
   if shape is None {
