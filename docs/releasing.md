@@ -158,10 +158,12 @@ security fixes, so they do not wait for a pre-merge run. The next
 pre-merge run on GKE builds smock's image on the new base, and so
 measures it.
 
-CI does not run every action. `sigstore/cosign-installer` and
-`actions/download-artifact` run only in the release workflow's
-publishing jobs, for a pushed tag: after either moved, make the next
-release a pre-release first. `actions/upload-pages-artifact` and
+CI does not run every action. `sigstore/cosign-installer` runs only in
+the release workflow's publishing jobs, for a pushed tag, and so does
+`actions/download-artifact` with the inputs they give it: CI's SDK job
+downloads one artifact by name, where they download several by pattern.
+After either moved, make the next release a pre-release first.
+`actions/upload-pages-artifact` and
 `actions/deploy-pages` run when a Schema changes on `main`: after either
 moved, run `.github/workflows/schema-pages.yml` by hand, which publishes
 the same Schemas again.
@@ -195,3 +197,12 @@ the same Schemas again.
   kind's node image (`scripts/test-helm-chart-on-kind.sh`) and
   check-jsonschema (`scripts/check-schema.sh`). The maintainer moves them
   by hand.
+- **The SDKs of the SDK job** and its Python: openai-python and
+  anthropic-sdk-python in `llm-sdks/requirements.in`, every package they
+  need in `llm-sdks/requirements.txt`, by version and hash, and the Python
+  in `llm-sdks/.python-version`. The maintainer raises them by hand, each
+  raise a change of its own, as
+  [llm-sdks/README.md](../llm-sdks/README.md#raising-a-pin) says. A change
+  that a raise brings to what an existing `llm` Stub sends ships in a
+  minor release with a CHANGELOG line, as does a change made to follow a
+  vendor's documented form.

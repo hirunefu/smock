@@ -1,0 +1,83 @@
+# The Definition file of the SDK job (llm-sdks/README.md). llm-sdks/check.py
+# calls each Stub through an official SDK, as applications call the API, and
+# checks what the SDK reads against what the Stub declares. Each Stub
+# answers one model, so the script picks a Stub by the model it asks for.
+mocks:
+  - name: openai
+stubs:
+  # Chat Completions: text only, with every id generated. In pieces of 4
+  # code points, the text is "Hi! ", "こんにち", "は。 👋", "🏽 Ho" and so
+  # on: one ends inside a Japanese word, and one between the two code
+  # points of the emoji.
+  - id: chat-text
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { model: chat-text } }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: "Hi! こんにちは。 👋🏽 How can I help?"
+        usage: { input: 19, output: 10 }
+
+  # Chat Completions: text and two tool calls, with every id fixed, so
+  # that the reply the stream helper builds can equal the JSON reply,
+  # ids included. The arguments nest an object and hold CJK text and a
+  # number.
+  - id: chat-tools
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { model: chat-tools } }
+    response:
+      status: 200
+      headers: { x-request-id: req_sdk_chat_tools }
+      llm:
+        api: openai-chat
+        id: chatcmpl-sdk-chat-tools
+        model: chat-tools-2026-10-23
+        text: Let me check both.
+        toolCalls:
+          - name: get_weather
+            id: call_sdk_weather
+            arguments: { city: 東京, days: 3, units: { temperature: celsius } }
+          - name: get_time
+            id: call_sdk_time
+            arguments: { timezone: Asia/Tokyo }
+        usage: { input: 52, output: 31 }
+
+  # Chat Completions: one tool call and no text, so that content is null,
+  # with every id generated.
+  - id: chat-call-only
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { model: chat-call-only } }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+        usage: { input: 40, output: 12 }
+
+  # Chat Completions: a reply cut at the token limit, with a written stop
+  # reason.
+  - id: chat-length
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { model: chat-length } }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: The weather in Paris is
+        usage: { input: 31, output: 5 }
+        stopReason: length
