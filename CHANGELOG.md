@@ -40,6 +40,14 @@ of each GitHub release include its section
   operators. No file changes meaning: a lone `$last` key failed to load
   before, and `$$last` still means the key `$last`. See
   [Operators in json conditions](docs/definition-files.md#operators-in-json-conditions).
+- A template helper, `last(array)`, gives the last element of an array,
+  with its own type, and steps can follow it, so
+  `${last(body.messages).content}` quotes the last message of a
+  conversation. An empty array gives a missing value, so `??` applies.
+  Since a response reads the Data buckets after its own Stub's writes,
+  `${last(data.orders)}` answers the item that the Stub's `append` just
+  added, its new key included. See
+  [Helpers](docs/definition-files.md#helpers).
 
 ### Changed
 
