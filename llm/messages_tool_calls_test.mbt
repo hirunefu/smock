@@ -34,7 +34,7 @@ fn messages_calls_reply(
 
 ///|
 /// The request of `messages_calls_reply` with `stream: true`.
-let streamed : Json? = Some({ "model": "claude-test", "stream": true })
+let messages_streamed : Json? = Some({ "model": "claude-test", "stream": true })
 
 ///|
 test "a JSON reply with tool calls and no text has a tool_use block per call and no text block, with a toolu_ id, the input object, and the stop reason tool_use" {
@@ -122,7 +122,7 @@ test "a stream with tool calls and no text has no text block: each call is a too
     shown(
       messages_calls_reply(
         @llm.Strings(tool_calls=[weather()]),
-        request=streamed,
+        request=messages_streamed,
       ),
     ),
     content=(
@@ -177,7 +177,7 @@ test "text and several tool calls: the text block at index 0, then each call's t
           @llm.ToolCall(name="get_time", arguments={ "zone": "CET" }),
           @llm.ToolCall(name="broken", arguments="{\"a\":"),
         ]),
-        request=streamed,
+        request=messages_streamed,
         chunk_size=6,
       ),
     ),
@@ -218,13 +218,13 @@ test "with tool calls, empty text has no text block even when chunks gives empty
       block_events(
         messages_calls_reply(
           @llm.Strings(chunks=["", ""], tool_calls=[silent]),
-          request=streamed,
+          request=messages_streamed,
         ),
       ),
       block_events(
         messages_calls_reply(
           @llm.Strings(tool_calls=[silent, weather()]),
-          request=streamed,
+          request=messages_streamed,
           chunk_size=100,
         ),
       ),
@@ -260,7 +260,7 @@ test "each tool_use block opens with an empty partial_json, its later pieces joi
   for size in [1, 2, 3, 4, 7, 1000] {
     let reply = messages_calls_reply(
       @llm.Strings(text="Hi", tool_calls=mixed_calls),
-      request=streamed,
+      request=messages_streamed,
       chunk_size=size,
     )
     let names = checked(reply)
@@ -321,7 +321,10 @@ fn tool_use_ids(
   draw : UInt64,
 ) -> Array[String] {
   let found = []
-  let requests : Array[Json?] = [Some({ "model": "claude-test" }), streamed]
+  let requests : Array[Json?] = [
+    Some({ "model": "claude-test" }),
+    messages_streamed,
+  ]
   for request in requests {
     let reply = messages_calls_reply(
       @llm.Strings(text="Hi", tool_calls~),
@@ -470,7 +473,7 @@ test "left out, the stop reason of a reply with tool calls is derived as tool_us
     ] {
     let (text, written) = case
     lines.push(
-      "\{written.unwrap_or("left out")}, text \{text.escape()}: JSON \{stop_of(text, written, Some({}))}, stream \{stop_of(text, written, streamed)}",
+      "\{written.unwrap_or("left out")}, text \{text.escape()}: JSON \{stop_of(text, written, Some({}))}, stream \{stop_of(text, written, messages_streamed)}",
     )
   }
   inspect(
@@ -497,7 +500,7 @@ test "in a stream, a string is sent as written in partial_json, whatever it hold
           mixed_calls[6],
           mixed_calls[8],
         ]),
-        request=streamed,
+        request=messages_streamed,
         chunk_size=1000,
       ),
     ),
