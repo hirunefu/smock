@@ -413,3 +413,76 @@ test "the Responses JSON reply with a function call equals the reference's Funct
     ),
   )
 }
+
+///|
+/// The "Output events" of "Streaming" in the function-calling guide,
+/// copied unchanged: the events of one function call item, printed as JSON
+/// without SSE framing, with its arguments in seven pieces.
+let responses_guide_call_example : String =
+  #|{"type":"response.output_item.added","response_id":"resp_1234xyz","output_index":0,"item":{"type":"function_call","id":"fc_1234xyz","call_id":"call_1234xyz","name":"get_weather","arguments":""}}
+  #|{"type":"response.function_call_arguments.delta","response_id":"resp_1234xyz","item_id":"fc_1234xyz","output_index":0,"delta":"{\""}
+  #|{"type":"response.function_call_arguments.delta","response_id":"resp_1234xyz","item_id":"fc_1234xyz","output_index":0,"delta":"location"}
+  #|{"type":"response.function_call_arguments.delta","response_id":"resp_1234xyz","item_id":"fc_1234xyz","output_index":0,"delta":"\":\""}
+  #|{"type":"response.function_call_arguments.delta","response_id":"resp_1234xyz","item_id":"fc_1234xyz","output_index":0,"delta":"Paris"}
+  #|{"type":"response.function_call_arguments.delta","response_id":"resp_1234xyz","item_id":"fc_1234xyz","output_index":0,"delta":","}
+  #|{"type":"response.function_call_arguments.delta","response_id":"resp_1234xyz","item_id":"fc_1234xyz","output_index":0,"delta":" France"}
+  #|{"type":"response.function_call_arguments.delta","response_id":"resp_1234xyz","item_id":"fc_1234xyz","output_index":0,"delta":"\"}"}
+  #|{"type":"response.function_call_arguments.done","response_id":"resp_1234xyz","item_id":"fc_1234xyz","output_index":0,"arguments":"{\"location\":\"Paris, France\"}"}
+  #|{"type":"response.output_item.done","response_id":"resp_1234xyz","output_index":0,"item":{"type":"function_call","id":"fc_1234xyz","call_id":"call_1234xyz","name":"get_weather","arguments":"{\"location\":\"Paris, France\"}"}}
+
+///|
+/// A Mock `openai` whose Stub `guide-call` declares the guide's function
+/// call: no text, the call with its call id, its name and its arguments as
+/// the pieces join, and the reply's id.
+let responses_guide_call_stub : (String, String) = openai_golden_mock(
+  (
+    #|  - id: guide-call
+    #|    mock: openai
+    #|    request: { method: POST, path: /v1/responses }
+    #|    response:
+    #|      status: 200
+    #|      llm:
+    #|        api: openai-responses
+    #|        id: resp_1234xyz
+    #|        model: gpt-6-astra
+    #|        toolCalls:
+    #|          - id: call_1234xyz
+    #|            name: get_weather
+    #|            arguments: '{"location":"Paris, France"}'
+  ),
+)
+
+///|
+/// The guide prints the function call item's events alone, without SSE
+/// framing, so they are compared as a sequence of data, names left out,
+/// with a gap before them for the Response's opening events and one after
+/// them for `response.completed`. The pieces of the arguments are compared
+/// by their join; the function call item's id is generated. The guide's
+/// events carry `response_id` and no `sequence_number`, where smock's
+/// follow the reference's event schemas, which have `sequence_number` and
+/// no `response_id`; and smock's items carry `status`, as the reference's
+/// Functions example does.
+test "the Responses stream with a function call equals the function-calling guide's events, but for response_id, sequence_number and the item's status" {
+  let h = harness([responses_guide_call_stub])
+  let outcome = h.responses(
+    "{\"model\":\"gpt-6-astra\",\"input\":\"What is the weather in Paris?\",\"tools\":[{\"type\":\"function\",\"name\":\"get_weather\",\"description\":\"Get the weather for a city\",\"parameters\":{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"],\"additionalProperties\":false},\"strict\":true}],\"stream\":true}",
+  )
+  inspect(
+    compare_golden(
+      ": the Response's opening events, which the guide leaves out\n" +
+      responses_guide_call_example +
+      "\n: response.completed, which the guide leaves out\n",
+      outcome,
+      differs=["/response_id", "/sequence_number", "/item/status"],
+      unfixed=["fc_1234xyz"],
+      fragments=["/delta"],
+      unframed=true,
+    ),
+    content=(
+      #|same but for the listed differences
+      #|listed: /response_id: only in the example
+      #|listed: /sequence_number: only in smock's
+      #|listed: /item/status: only in smock's
+    ),
+  )
+}
