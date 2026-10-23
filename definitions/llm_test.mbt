@@ -42,8 +42,8 @@ test "llm is a body kind of a response: api is required, and a response gives at
     ]),
     content=(
       #|a.json: /stubs/2/response/llm: needs "api"
-      #|a.json: /stubs/3/responses/1/llm/api: must be "openai-chat"
-      #|a.json: /stubs/4/response/llm/api: must be "openai-chat"
+      #|a.json: /stubs/3/responses/1/llm/api: must be "openai-chat" or "openai-responses"
+      #|a.json: /stubs/4/response/llm/api: must be "openai-chat" or "openai-responses"
       #|a.json: /stubs/5/response/llm/stream: is not a known field
       #|a.json: /stubs/6/response/llm/text: must be a string
       #|a.json: /stubs/7/response/llm: must be an object
@@ -102,7 +102,7 @@ test "usage gives two counts, integers from 0 to 2^53-1, and stopReason a word o
       #|a.json: /stubs/2/responses/0/llm/stopReason: must be a stop reason of openai-chat: "stop", "length", "tool_calls", "content_filter" or "function_call"
       #|a.json: /stubs/2/responses/1/llm/stopReason: must be a stop reason of openai-chat: "stop", "length", "tool_calls", "content_filter" or "function_call"
       #|a.json: /stubs/2/responses/2/llm/stopReason: must be a stop reason of openai-chat: "stop", "length", "tool_calls", "content_filter" or "function_call"
-      #|a.json: /stubs/2/responses/3/llm/api: must be "openai-chat"
+      #|a.json: /stubs/2/responses/3/llm/api: must be "openai-chat" or "openai-responses"
       #|a.json: /stubs/2/responses/4/llm: needs "api"
     ),
   )
