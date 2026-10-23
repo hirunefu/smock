@@ -6,10 +6,13 @@ anthropic-sdk-python as applications call the API. Then it checks what the
 SDK reads: the text, the tool calls and their parsed arguments, usage, stop
 reasons, ids and the request id, and that the reply the SDK's stream helper
 builds from a stream equals the one it parses from the JSON reply, apart
-from differences listed by name.
+from differences listed by name. It also checks what each SDK raises or
+yields on smock's mid-stream errors and on the docs' 429 and 529 replies.
 
 It uses only the SDKs and the standard library. Every client is built with
-max_retries=0, so that each call sends one request.
+max_retries=0, so that each call sends one request, but for the retry
+checks, whose clients keep the default retries and count the requests that
+reach smock in the Journal.
 
 It prints each check, and exits with status 1 when a check fails or an SDK
 raises where no check expects it to.
@@ -20,6 +23,7 @@ scripts/check-llm-sdks.sh installs the pinned SDKs and runs it, as CI does.
 llm-sdks/README.md says more.
 """
 
+import functools
 import json
 import os
 import re
@@ -86,6 +90,36 @@ MESSAGES_STOP_SEQUENCE_TEXT = "Step 1: open the box."
 MESSAGES_REFUSAL_TEXT = "I can't help with that."
 MESSAGES_BROKEN_TEXT = "Let me check."
 MESSAGES_BROKEN_CALL = ("toolu_sdk_broken", "get_weather", "not JSON")
+
+# The mid-stream errors: each API's error Stub is the docs' cut-short Stub
+# (docs/definition-files.md#mid-stream-errors), which cuts the stream after
+# ERROR_AFTER code points of its text. A request that does not stream gets
+# the whole text.
+ERROR_TEXT = "Hello! How can I assist you today?"
+ERROR_AFTER = 5
+ERROR_MESSAGE = "The server had an error while processing your request. Sorry about that!"
+CHAT_ERROR = {"message": ERROR_MESSAGE, "type": "server_error", "param": None, "code": None}
+RESPONSES_ERROR = {"type": "error", "code": "server_error", "message": ERROR_MESSAGE, "param": None}
+MESSAGES_ERROR = {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}
+
+# The docs' 429 and 529 replies (docs/definition-files.md#a-429-with-retry-after
+# and #a-529-when-overloaded), OpenAI's and Anthropic's: their bodies, and the
+# request id each one's header carries.
+RATE_LIMITED_BODY = {
+    "error": {
+        "message": "Rate limit reached for requests.",
+        "type": "rate_limit_error",
+        "param": None,
+        "code": "slow_down",
+    },
+}
+RATE_LIMITED_REQUEST_ID = "req_5K5eWPUAGI1WXJRVsFgWLtIw"
+OVERLOADED_BODY = {
+    "type": "error",
+    "error": {"type": "overloaded_error", "message": "Overloaded"},
+    "request_id": "req_5J4ymbACTcA49ramAi1T8pGa",
+}
+OVERLOADED_REQUEST_ID = "req_5J4ymbACTcA49ramAi1T8pGa"
 
 # The stop sequences an application gives the Messages API, and the stop
 # details of a refusal: its type, category and explanation.
@@ -278,6 +312,17 @@ class Smock:
         options = {"max_retries": 0, "timeout": CALL_TIMEOUT_S, **options}
         return anthropic.Anthropic(base_url=self.url, api_key="test", **options)
 
+    def verify(self, session, exactly):
+        """Verifies through the Admin API, as a test does, that exactly that
+        many requests of the Session reached smock. Returns the verdict,
+        with its ok and its count."""
+        request = urllib.request.Request(
+            f"{self.admin_url}/v1/journal/verify", data=json.dumps({"exactly": exactly}).encode(),
+            headers={"Authorization": f"Bearer {self.admin_token}", "baggage": f"smock-session={session}",
+                     "Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=CALL_TIMEOUT_S) as response:
+            return json.load(response)
+
 
 class Checks:
     """The checks made so far, each printed as it is made."""
@@ -322,21 +367,24 @@ class Checks:
         detail = "".join(traceback.format_exception(error))
         self.check(f"{name}: raised {type(error).__name__} unexpectedly", False, detail)
 
-    def raises(self, name, error_class, call, message=None):
+    def raises(self, name, error_class, call, message=None, exact=False):
         """Checks that a call raises error_class, as the vendor's reply
-        makes it, with the given message if one is given."""
+        makes it, with the given message if one is given, and that class
+        itself, not a subclass of it, if exact. Returns the error when the
+        check passes, and None otherwise."""
         try:
             call()
         except error_class as error:
-            if message is None or str(error) == message:
+            if (message is None or str(error) == message) and (not exact or type(error) is error_class):
                 self.check(name, True)
-            else:
-                self.raised(name, error)
-            return
+                return error
+            self.raised(name, error)
+            return None
         except Exception as error:
             self.raised(name, error)
-            return
+            return None
         self.check(name, False, f"it raised no {error_class.__name__}")
+        return None
 
 
 def differ(left, right, path=()):
@@ -361,6 +409,15 @@ def listed(path, difference):
 
 def shown(value):
     return "nothing" if value is MISSING else repr(value)
+
+
+def collect(stream, seen):
+    """Reads a stream, or a stream helper, as an application does, putting
+    each item it yields in seen as it comes, so that what came before an
+    error can be checked after the error is raised."""
+    with stream as opened:
+        for item in opened:
+            seen.append(item)
 
 
 def check_definitions(checks, binary):
@@ -595,6 +652,40 @@ def chat_length(checks, smock):
 
     checks.raises("chat-length: stream(): raises LengthFinishReasonError",
                   openai.LengthFinishReasonError, lambda: chat_helper(client, "chat-length"))
+
+
+def chat_error(checks, smock):
+    """Chat Completions, a stream cut by a mid-stream error: create() with
+    stream and the stream() helper raise APIError itself on the error
+    frame, after the text before it, and create() without stream gets the
+    whole reply."""
+    client = smock.openai()
+    name = "chat-error: create(stream=True)"
+    chunks = []
+    error = checks.raises(f"{name}: raises APIError on the error frame", openai.APIError,
+                          lambda: collect(chat_create(client, "chat-error", stream=True), chunks), exact=True)
+    checks.equal(f"{name}: the error's message", error and error.message, CHAT_ERROR["message"])
+    checks.equal(f"{name}: the error's type", error and error.type, CHAT_ERROR["type"])
+    checks.equal(f"{name}: the error's body, the error object", error and error.body, CHAT_ERROR)
+    check_chunks(checks, name, chunks, CHAT_ID, "chat-error")
+    checks.equal(f"{name}: the text before it", streamed_content(chunks), ERROR_TEXT[:ERROR_AFTER])
+    checks.equal(f"{name}: no stop reason before it", set(streamed_finish_reasons(chunks)), {None})
+
+    name = "chat-error: stream()"
+    events = []
+    error = checks.raises(f"{name}: raises APIError on the error frame", openai.APIError,
+                          lambda: collect(client.chat.completions.stream(model="chat-error", messages=MESSAGES),
+                                          events), exact=True)
+    checks.equal(f"{name}: the error's message", error and error.message, CHAT_ERROR["message"])
+    checks.equal(f"{name}: the content deltas before it, joined",
+                 "".join(event.delta for event in events if event.type == "content.delta"),
+                 ERROR_TEXT[:ERROR_AFTER])
+    checks.equal(f"{name}: no content.done", [event.type for event in events if event.type == "content.done"], [])
+
+    name = "chat-error: create"
+    reply = chat_create(client, "chat-error")
+    checks.equal(f"{name}: the whole text", reply.choices[0].message.content, ERROR_TEXT)
+    checks.equal(f"{name}: the stop reason", reply.choices[0].finish_reason, "stop")
 
 
 def responses_create(client, model, **options):
@@ -886,6 +977,48 @@ def responses_incomplete(checks, smock):
                      RESPONSES_INCOMPLETE_TEXT)
         checks.raises(f"{name}: get_final_response() raises RuntimeError", RuntimeError, stream.get_final_response,
                       message="Didn't receive a `response.completed` event.")
+
+
+def check_error_event(checks, name, events):
+    """Checks that a Responses stream that an error cuts ends with the
+    error, yielded as a ResponseErrorEvent with the error's members and the
+    next sequence number, after the opening events, the message item's
+    opening events and the deltas of the text before the cut."""
+    last = events[-1] if events else None
+    checks.equal(f"{name}: the last event is a ResponseErrorEvent", type(last),
+                 openai.types.responses.ResponseErrorEvent)
+    checks.equal(f"{name}: the error event", last and last.model_dump(),
+                 {**RESPONSES_ERROR, "sequence_number": len(events) - 1})
+    checks.equal(f"{name}: the sequence numbers", [event.sequence_number for event in events],
+                 list(range(len(events))))
+    checks.equal(f"{name}: the events before it, each kind once",
+                 list(dict.fromkeys(event.type for event in events[:-1])),
+                 ["response.created", "response.in_progress", "response.output_item.added",
+                  "response.content_part.added", "response.output_text.delta"])
+    checks.equal(f"{name}: the text before it", streamed_text(events), ERROR_TEXT[:ERROR_AFTER])
+
+
+def responses_error(checks, smock):
+    """Responses, a stream cut by a mid-stream error: create() with stream
+    and the stream() helper yield the error event and raise nothing, the
+    helper's get_final_response() then raises RuntimeError, and create()
+    without stream gets the whole reply."""
+    client = smock.openai()
+    name = "responses-error: create(stream=True)"
+    _, events = responses_stream(client, "responses-error")
+    check_error_event(checks, name, events)
+
+    name = "responses-error: stream()"
+    with client.responses.stream(model="responses-error", input=MESSAGES) as stream:
+        events = list(stream)
+        check_error_event(checks, name, events)
+        checks.raises(f"{name}: get_final_response() raises RuntimeError", RuntimeError, stream.get_final_response,
+                      message="Didn't receive a `response.completed` event.")
+
+    name = "responses-error: create"
+    reply = responses_create(client, "responses-error")
+    checks.equal(f"{name}: the status", (reply.status, reply.incomplete_details), ("completed", None))
+    checks.equal(f"{name}: the whole text, as output_text joins it", reply.output_text, ERROR_TEXT)
 
 
 def messages_create(client, model, **options):
@@ -1201,13 +1334,114 @@ def messages_broken_arguments(checks, smock):
         checks.check(f"{name}: raises ValueError on the arguments", False, "it raised no ValueError")
 
 
+def check_status_200_error(checks, name, error):
+    """Checks the APIStatusError that anthropic-sdk-python raises on an
+    error event: the stream's status, 200, the event's data as its body,
+    the error's type read from it, and the request id."""
+    checks.equal(f"{name}: the status, the stream's", error and error.status_code, 200)
+    checks.equal(f"{name}: the body, the error event's data", error and error.body, MESSAGES_ERROR)
+    checks.equal(f"{name}: the type, from the body", error and error.type, MESSAGES_ERROR["error"]["type"])
+    checks.id(f"{name}: the request id", error and error.request_id, REQUEST_ID)
+
+
+def messages_error(checks, smock):
+    """Anthropic Messages, a stream cut by a mid-stream error: create()
+    with stream and the stream() helper raise APIStatusError itself, with
+    status 200 and the type in the body, after the text before the cut, and
+    create() without stream gets the whole reply."""
+    client = smock.anthropic()
+    name = "messages-error: create(stream=True)"
+    events = []
+    error = checks.raises(f"{name}: raises APIStatusError on the error event", anthropic.APIStatusError,
+                          lambda: collect(messages_create(client, "messages-error", stream=True), events), exact=True)
+    check_status_200_error(checks, name, error)
+    checks.equal(f"{name}: the events before it, each kind once", list(dict.fromkeys(event.type for event in events)),
+                 ["message_start", "content_block_start", "content_block_delta"])
+    checks.equal(f"{name}: the text before it", "".join(text_deltas(events)), ERROR_TEXT[:ERROR_AFTER])
+
+    name = "messages-error: stream()"
+    events = []
+    error = checks.raises(f"{name}: raises APIStatusError on the error event", anthropic.APIStatusError,
+                          lambda: collect(client.messages.stream(model="messages-error", max_tokens=MAX_TOKENS,
+                                                                 messages=MESSAGES), events), exact=True)
+    check_status_200_error(checks, name, error)
+    checks.equal(f"{name}: the text events before it, joined",
+                 "".join(event.text for event in events if event.type == "text"), ERROR_TEXT[:ERROR_AFTER])
+
+    name = "messages-error: create"
+    reply = messages_create(client, "messages-error")
+    checks.equal(f"{name}: the whole text", blocks(reply), [("text", ERROR_TEXT)])
+    checks.equal(f"{name}: the stop reason", stop(reply), ("end_turn", None, None))
+
+
+def check_status_error(checks, name, error_class, call, status, body):
+    """Checks that a call raises error_class itself, the SDK's status error
+    for the reply's status, with that status and the body as the SDK keeps
+    it. Returns the error."""
+    error = checks.raises(f"{name}: raises {error_class.__name__}", error_class, call, exact=True)
+    checks.equal(f"{name}: the status", error and error.status_code, status)
+    checks.equal(f"{name}: the body", error and error.body, body)
+    return error
+
+
+def error_replies(checks, smock):
+    """The docs' 429 and 529 replies, through each SDK, with max_retries=0:
+    each SDK raises its status error for the status, whichever vendor's
+    body the reply has. openai-python keeps the body's error member, and
+    anthropic-sdk-python the whole body; each reads the request id from
+    its vendor's header."""
+    client = smock.openai()
+    error = check_status_error(checks, "rate-limited: openai-python", openai.RateLimitError,
+                               lambda: chat_create(client, "rate-limited"), 429, RATE_LIMITED_BODY["error"])
+    checks.equal("rate-limited: openai-python: the request id", error and error.request_id, RATE_LIMITED_REQUEST_ID)
+    check_status_error(checks, "overloaded: openai-python", openai.InternalServerError,
+                       lambda: chat_create(client, "overloaded"), 529, OVERLOADED_BODY["error"])
+
+    client = smock.anthropic()
+    check_status_error(checks, "rate-limited: anthropic-sdk-python", anthropic.RateLimitError,
+                       lambda: messages_create(client, "rate-limited"), 429, RATE_LIMITED_BODY)
+    error = check_status_error(checks, "overloaded: anthropic-sdk-python", anthropic.OverloadedError,
+                               lambda: messages_create(client, "overloaded"), 529, OVERLOADED_BODY)
+    checks.equal("overloaded: anthropic-sdk-python: the type, from the body", error and error.type,
+                 OVERLOADED_BODY["error"]["type"])
+    checks.equal("overloaded: anthropic-sdk-python: the request id", error and error.request_id,
+                 OVERLOADED_REQUEST_ID)
+
+
+def retries(checks, smock):
+    """Retries, through clients that keep the default retries, each call in
+    a Session of its own: the docs' 429, whose x-should-retry is "false",
+    is not retried, so one request reaches smock, while the docs' 529,
+    which has no x-should-retry, is retried twice, as the SDKs retry every
+    5xx by default, so three requests reach smock."""
+    for sdk, client_of, default_retries, create, rate_limited, overloaded in (
+        ("openai-python", smock.openai, openai.DEFAULT_MAX_RETRIES, chat_create,
+         openai.RateLimitError, openai.InternalServerError),
+        ("anthropic-sdk-python", smock.anthropic, anthropic.DEFAULT_MAX_RETRIES, messages_create,
+         anthropic.RateLimitError, anthropic.OverloadedError),
+    ):
+        for model, error_class, requests, why in (
+            ("rate-limited", rate_limited, 1, 'x-should-retry: "false" stops a retry: 1 request'),
+            ("overloaded", overloaded, 3, "without x-should-retry, it is retried twice: 3 requests"),
+        ):
+            session = f"retries-{model}-{sdk}"
+            client = client_of(max_retries=default_retries, default_headers={"baggage": f"smock-session={session}"})
+            name = f"{model}: {sdk} with the default retries"
+            checks.raises(f"{name}: raises {error_class.__name__}", error_class,
+                          functools.partial(create, client, model), exact=True)
+            verdict = smock.verify(session, requests)
+            checks.check(f"{name}: {why} reached smock", verdict["ok"],
+                         f"the Journal holds {verdict['count']}; reason {verdict['reason']}")
+
+
 # The cases, in the order they run. Each calls the Stubs it names, and a
 # case whose SDK raises unexpectedly fails without stopping the others.
 CASES = [
-    chat_text, chat_tools, chat_call_only, chat_length,
-    responses_text, responses_tools, responses_incomplete,
+    chat_text, chat_tools, chat_call_only, chat_length, chat_error,
+    responses_text, responses_tools, responses_incomplete, responses_error,
     messages_text, messages_tools, messages_call_only, messages_stop_sequence, messages_refusal,
-    messages_broken_arguments,
+    messages_broken_arguments, messages_error,
+    error_replies, retries,
 ]
 
 

@@ -83,6 +83,26 @@ stubs:
         usage: { input: 31, output: 5 }
         stopReason: length
 
+  # Chat Completions: the docs' cut-short Stub
+  # (docs/definition-files.md#mid-stream-errors), whose stream a mid-stream
+  # error cuts after 5 code points of the text. A request that does not
+  # stream gets the whole text.
+  - id: chat-error
+    mock: llm
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { model: chat-error } }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+        error:
+          after: 5
+          type: server_error
+          message: The server had an error while processing your request. Sorry about that!
+
   # Responses: text only, with every id generated. The text is chat-text's,
   # cut the same way.
   - id: responses-text
@@ -141,6 +161,23 @@ stubs:
         text: The weather in Paris is
         usage: { input: 31, output: 5 }
         stopReason: max_output_tokens
+
+  # Responses: chat-error's Stub, with the code in place of the type.
+  - id: responses-error
+    mock: llm
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { model: responses-error } }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        text: Hello! How can I assist you today?
+        error:
+          after: 5
+          code: server_error
+          message: The server had an error while processing your request. Sorry about that!
 
   # Anthropic Messages: text only, with every id generated. The text is
   # chat-text's, cut the same way.
@@ -252,3 +289,57 @@ stubs:
           - name: get_weather
             id: toolu_sdk_broken
             arguments: not JSON
+
+  # Anthropic Messages: chat-error's Stub, with one of Anthropic's error
+  # types and its message.
+  - id: messages-error
+    mock: llm
+    request:
+      method: POST
+      path: /v1/messages
+      body: { json: { model: messages-error } }
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        text: Hello! How can I assist you today?
+        error:
+          after: 5
+          type: overloaded_error
+          message: Overloaded
+
+  # The docs' 429 (docs/definition-files.md#a-429-with-retry-after), in
+  # OpenAI's form, and the docs' 529 (#a-529-when-overloaded), in
+  # Anthropic's. Each response is the docs' as written, and changes when
+  # the docs' does. Each Stub answers its model on any path, so that both
+  # SDKs get both replies.
+  - id: rate-limited
+    mock: llm
+    request:
+      method: POST
+      body: { json: { model: rate-limited } }
+    response:
+      status: 429
+      headers:
+        Retry-After: "20"
+        x-request-id: req_5K5eWPUAGI1WXJRVsFgWLtIw
+        x-should-retry: "false"
+      json:
+        error:
+          message: Rate limit reached for requests.
+          type: rate_limit_error
+          param: null
+          code: slow_down
+
+  - id: overloaded
+    mock: llm
+    request:
+      method: POST
+      body: { json: { model: overloaded } }
+    response:
+      status: 529
+      headers: { request-id: req_5J4ymbACTcA49ramAi1T8pGa }
+      json:
+        type: error
+        error: { type: overloaded_error, message: Overloaded }
+        request_id: req_5J4ymbACTcA49ramAi1T8pGa
