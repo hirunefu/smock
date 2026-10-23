@@ -586,7 +586,7 @@
           "type": "string"
         },
         "usage": {
-          "description": "The token counts the reply reports, as declared: smock counts and estimates nothing. openai-chat gives them as prompt_tokens and completion_tokens, with total_tokens their sum, in the JSON reply, and in a stream only when the request sets stream_options.include_usage to true: then every chunk has usage: null, and a last chunk with no choice gives the usage before [DONE]. openai-responses gives them as input_tokens and output_tokens, with total_tokens their sum. anthropic-messages gives them as input_tokens and output_tokens, with no total and no cache counts.",
+          "description": "The token counts the reply reports, as declared: smock counts and estimates nothing. openai-chat gives them as prompt_tokens and completion_tokens, with total_tokens their sum, in the JSON reply, and in a stream only when the request sets stream_options.include_usage to true: then every chunk has usage: null, and a last chunk with no choice gives the usage before [DONE]. openai-responses gives them as input_tokens and output_tokens, with total_tokens their sum. anthropic-messages gives them as input_tokens and output_tokens, with no total and no cache counts, and its stream gives input_tokens in message_start, with output_tokens 0, and output_tokens in message_delta.",
           "type": "object",
           "properties": {
             "input": {
