@@ -230,7 +230,7 @@ fn File::read_response(
             }),
           ),
         )
-      LlmField(llm) => Llm(self.written_llm(llm))
+      LlmField(llm) => Llm(self.written_llm(stub_pointer, llm))
     }
     (ResponseHeaders::Written(written), body, serves_ranges)
   }
@@ -460,6 +460,7 @@ fn File::parse_templates(
               error_message: llm.error_message.map_or("", message => message.0),
             }),
             timing: llm.timing,
+            pointer: template_pointer(stub_pointer, llm.pointer),
           }),
         )
       } else {
@@ -717,8 +718,14 @@ fn File::read_llm_error(
 ///|
 /// The LLM reply that `llm` declares, its strings as written. Two of its
 /// tool calls with the same `id` are refused, since the call ids of a reply
-/// must differ.
-fn File::written_llm(self : File, llm : LlmDecl) -> LlmReply {
+/// must differ, and so is a reply whose JSON reply or stream takes more
+/// than `@llm.max_reply_bytes` once encoded, as `@llm.check_reply_size`
+/// finds. `stub_pointer` is the JSON Pointer of its Stub.
+fn File::written_llm(
+  self : File,
+  stub_pointer : String,
+  llm : LlmDecl,
+) -> LlmReply {
   let ids = []
   let tool_calls = []
   for call in llm.tool_calls {
@@ -745,10 +752,14 @@ fn File::written_llm(self : File, llm : LlmDecl) -> LlmReply {
     tool_calls=ReadOnlyArray::from_array(tool_calls),
     error_message?=llm.error_message.map(message => message.0),
   )
+  if @llm.check_reply_size(llm.declaration, strings) is Err(message) {
+    self.error(llm.pointer, message)
+  }
   {
     declaration: llm.declaration,
     strings: LlmStrings::Written(strings),
     timing: llm.timing,
+    pointer: template_pointer(stub_pointer, llm.pointer),
   }
 }
 
