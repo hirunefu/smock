@@ -1,0 +1,12 @@
+mocks:
+  - name: openai
+stubs:
+  - id: chat
+    mock: openai
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        toolCalls:
+          - { name: get_weather, arguments: { city: Paris }, id: call_1 }
+          - { name: get_weather, arguments: { city: Tokyo }, id: call_1 }

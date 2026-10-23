@@ -4,9 +4,13 @@
 
 ///|
 /// The `finish_reason` of the JSON reply and of the stream's closing chunk
-/// for an `openai-chat` declaration with `text` and the stop reason that
-/// `written` writes, or none.
-fn finish_reasons(written : String?, text? : String = "Hi") -> String {
+/// for an `openai-chat` declaration with `text`, `tool_calls` and the stop
+/// reason that `written` writes, or none.
+fn finish_reasons(
+  written : String?,
+  text? : String = "Hi",
+  tool_calls? : ReadOnlyArray[@llm.ToolCall] = [],
+) -> String {
   let stop_reason = written.map(word => {
     @llm.read_stop_reason(OpenaiChat, Json::string(word)).unwrap()
   })
@@ -16,7 +20,7 @@ fn finish_reasons(written : String?, text? : String = "Hi") -> String {
   for request in requests {
     let reply = @llm.reply(
       declaration,
-      @llm.Strings(text~),
+      @llm.Strings(text~, tool_calls~),
       request~,
       now=received,
       ids=@llm.ids_generator(7),

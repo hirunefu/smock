@@ -1,0 +1,28 @@
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { messages: { $last: { role: user } } } }
+    responses:
+      - status: 200
+        llm:
+          api: openai-chat
+          text: Let me check.
+          toolCalls:
+            - name: get_weather
+              arguments: { city: Paris, days: 3, units: { temperature: celsius } }
+            - name: get_time
+              arguments: '{"zone": "CET"}'
+              id: call_test_1
+      - status: 200
+        llm:
+          api: openai-chat
+          toolCalls:
+            - { name: broken, arguments: '{"city": "Par' }
+            - { name: no_arguments, arguments: {}, id: "" }
+      - status: 200
+        llm: { api: openai-chat, text: Hello., toolCalls: [] }

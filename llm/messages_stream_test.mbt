@@ -234,7 +234,7 @@ fn text_deltas(reply : @llm.Reply) -> String {
 ///|
 /// The text deltas of the stream of a declaration with the strings
 /// `strings` and the `chunk_size` given, as `text_deltas` shows them.
-fn deltas(strings : @llm.Strings, chunk_size? : Int) -> String {
+fn text_deltas_of(strings : @llm.Strings, chunk_size? : Int) -> String {
   text_deltas(messages_reply_to(strings, chunk_size?))
 }
 
@@ -242,15 +242,15 @@ fn deltas(strings : @llm.Strings, chunk_size? : Int) -> String {
 test "the text deltas carry the pieces: 4 code points by default, chunkSize of them, the text whole when the size is above its length, or the elements of chunks, an empty one included" {
   inspect(
     [
-      deltas(@llm.Strings(text="Hello, Claude")),
-      deltas(@llm.Strings(text="晴れです。"), chunk_size=1),
-      deltas(
+      text_deltas_of(@llm.Strings(text="Hello, Claude")),
+      text_deltas_of(@llm.Strings(text="晴れです。"), chunk_size=1),
+      text_deltas_of(
         @llm.Strings(text="Done 👍🏽 🇫🇷, 𝄞 and 𠀋"),
         chunk_size=3,
       ),
-      deltas(@llm.Strings(text="Hello, Claude"), chunk_size=1_000_000),
-      deltas(@llm.Strings(chunks=["Thumbs up: ", "", "👍", "🏽"])),
-      deltas(@llm.Strings(chunks=["", "Hi", ""]), chunk_size=1),
+      text_deltas_of(@llm.Strings(text="Hello, Claude"), chunk_size=1_000_000),
+      text_deltas_of(@llm.Strings(chunks=["Thumbs up: ", "", "👍", "🏽"])),
+      text_deltas_of(@llm.Strings(chunks=["", "Hi", ""]), chunk_size=1),
     ].join("\n"),
     content=(
       #|(first) "Hell" (interval) "o, C" (interval) "laud" (interval) "e"

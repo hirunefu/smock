@@ -1246,6 +1246,7 @@ The fields of `llm`:
 | `text` | the text of the reply | empty |
 | `chunks` | the text as a list of at least one piece, in place of `text` | — |
 | `chunkSize` | code points per piece of a stream, an integer from 1 to 1,000,000 | 4 |
+| `toolCalls` | a list of [tool calls](#tool-calls), each `{name, arguments, id}` | none |
 | `id` | the reply's id, sent as written | generated |
 | `model` | the reply's model | the request's |
 | `usage` | `{input, output}`, token counts, integers from 0 to 2^53-1 | both 0 |
@@ -1257,8 +1258,10 @@ The fields of `llm`:
   of its own does not change the reply. The preset neither sets nor checks
   `request.path`: the Stub's conditions choose it, as for any Stub.
 - An `openai-chat` reply is the assistant's message, with `text` as its
-  `content`, or `""` when the text is empty, and the
-  [stop reason](#usage-and-stop-reasons) as its `finish_reason`. Its fields
+  `content`, or `""` when the text is empty, then its
+  [tool calls](#tool-calls), and the [stop reason](#usage-and-stop-reasons)
+  as its `finish_reason`. With tool calls and empty text, `content` is
+  `null`. Its fields
   and their order follow the example of OpenAI's API reference, and so do
   its fixed values, such as `refusal: null` and `service_tier: "default"`.
   `usage` has the example's members, with the
@@ -1289,10 +1292,11 @@ seed gives and its time as `created`. A response gives at most one of
 `body`, `bodyFile`, `json`, `events` and `llm`. A missing or unknown `api`,
 an unknown field of `llm` or of its `usage`, a count that is not an integer
 from 0 to 2^53-1, a stop reason that is not a word of the API, the errors
-of [chunks](#chunks), a wait of `timing` that is not one distribution of
-the delay, and `llm` beside another body are reported with the JSON
-Pointer of the field, by `smock check`, at startup and on a reload, which
-keeps the set served, and as 400 `invalid_stub` for an Ephemeral Stub.
+of [chunks](#chunks) and of [tool calls](#tool-calls), a wait of `timing`
+that is not one distribution of the delay, and `llm` beside another body
+are reported with the JSON Pointer of the field, by `smock check`, at
+startup and on a reload, which keeps the set served, and as 400
+`invalid_stub` for an Ephemeral Stub.
 
 The wire forms follow the vendors' documents as they were read on
 2026-10-22 and 2026-10-23. When a vendor changes its documented form, a
@@ -1317,21 +1321,24 @@ Each one is one `data:` line of compact JSON, with no `event:` line, and
 every chunk carries the reply's id, `created` and model. In order:
 
 1. the opening chunk, whose `delta` gives `role: assistant` and an empty
-   `content`;
+   `content`, or a `null` one when [tool calls](#tool-calls) follow no
+   text;
 2. one chunk per piece of the text, whose `delta` gives the piece as
    `content`;
-3. the closing chunk, whose `delta` is empty and whose `finish_reason` is
+3. for each [tool call](#tool-calls), a chunk that opens it, then one
+   chunk per piece of its arguments;
+4. the closing chunk, whose `delta` is empty and whose `finish_reason` is
    the [stop reason](#usage-and-stop-reasons);
-4. when the request asks for usage, the
+5. when the request asks for usage, the
    [usage chunk](#usage-and-stop-reasons), with no choice;
-5. `data: [DONE]`.
+6. `data: [DONE]`.
 
 There is no `obfuscation` field, no `system_fingerprint` and no SSE comment
 line. The text is cut into pieces of 4 code points, the last one shorter,
 unless `chunkSize` or `chunks` says otherwise ([Chunks](#chunks)). The
 pieces join to exactly the text, and a piece never splits a code point, so
-every `data:` line is valid UTF-8. Empty text sends the opening and closing
-chunks only.
+every `data:` line is valid UTF-8. Empty text with no tool call sends the
+opening and closing chunks only.
 
 For the Stub above, a request for `gpt-6-astra` with `stream: true` gets
 this stream, which `smock render` shows with the same seed and time:
@@ -1456,11 +1463,13 @@ stubs:
 - **Where the waits go.** smock writes the head and every event before the
   first piece at once. It waits `first` before the first event that
   carries a piece, counted from the head, and `interval` before each later
-  one. The events that open or close the reply, or a block of an
-  `anthropic-messages` stream, follow the event before them at once. An
-  empty element of [`chunks`](#chunks) is a piece, so it waits as one. A
-  reply with no piece, such as one with empty text, waits `first` before
-  its closing chunk, or before `message_delta` for `anthropic-messages`.
+  one. The events that open or close the reply, a
+  [tool call](#tool-calls) or a block of an `anthropic-messages` stream
+  follow the event before them at once. A piece of a tool call's arguments
+  is a piece, and so is an empty element of [`chunks`](#chunks), so each
+  waits as one. A reply with no piece, such as one with empty text, waits
+  `first` before its closing chunk, or before `message_delta` for
+  `anthropic-messages`.
 - **Either may be left out**, for no wait there. Without `timing`, a stream
   has no wait at all.
 - **No `probability`.** Unlike a delay, a wait applies to every stream, so
@@ -1565,9 +1574,10 @@ data: [DONE]
 - Any word of the API may be written, whatever the reply holds. So a test
   can send `length` for a reply cut short, or `content_filter` for a
   filtered one.
-- Left out, smock derives it from the reply: `stop` for `openai-chat`,
-  `end_turn` for `anthropic-messages`. An `openai-responses` reply is then
-  `completed`.
+- Left out, smock derives it from the reply: for `openai-chat`,
+  `tool_calls` when the reply has [tool calls](#tool-calls) and `stop`
+  otherwise; `end_turn` for `anthropic-messages`. An `openai-responses`
+  reply is then `completed`.
 - A word that is not one of the API's, such as Anthropic's `end_turn` on
   `openai-chat`, or Chat's `length` on `openai-responses`, is a load error
   that lists the API's words. smock checks it when it loads the Stub, so a
@@ -1576,12 +1586,13 @@ data: [DONE]
 ### Ids, seeds and time
 
 smock generates ids for each reply: the reply's id, the id of each item
-the reply holds, and a request id, which it sends in a header. Each is the
-vendor's prefix and 24 characters from `A`-`Z`, `a`-`z` and `0`-`9`:
+the reply holds and of each [tool call](#tool-calls), and a request id,
+which it sends in a header. Each is the vendor's prefix and 24 characters
+from `A`-`Z`, `a`-`z` and `0`-`9`:
 
-| API | Reply's id | Items | Request-id header |
+| API | Reply's id | Items and tool calls | Request-id header |
 |---|---|---|---|
-| `openai-chat` | `chatcmpl-` | none | `x-request-id: req_…` |
+| `openai-chat` | `chatcmpl-` | tool call `call_` | `x-request-id: req_…` |
 | `openai-responses` | `resp_` | the message item, `msg_` | `x-request-id: req_…` |
 | `anthropic-messages` | `msg_` | none | `request-id: req_…` |
 
@@ -1600,11 +1611,12 @@ vendor's prefix and 24 characters from `A`-`Z`, `a`-`z` and `0`-`9`:
 - `id` fixes the reply's id. smock sends it exactly as written, with no
   prefix, in the JSON reply and in every chunk. Fixing it changes no other
   id: the ids draw in a fixed order of slots, the reply's first, then the
-  Responses message item's, and the request id's last. Every slot draws
-  whether or not the Stub fixes its id, or its API uses it. So adding `id`
-  to a Stub keeps the request ids of a recorded run, and a Stub that moves
-  from `openai-chat` to `openai-responses` keeps the 24 characters of its
-  reply's id and its request id.
+  Responses message item's, then two for each tool call, and the request
+  id's last. Every slot draws whether or not the Stub fixes its id, or its
+  API uses it. So adding `id` to a Stub keeps the request ids of a
+  recorded run, and a Stub that moves from `openai-chat` to
+  `openai-responses` keeps the 24 characters of its reply's id and its
+  request id.
 - The Responses message item's `msg_` id is always generated: no field
   fixes it.
 - `created`, and Responses' `created_at`, is the time smock received the
@@ -1649,6 +1661,158 @@ A request for `gpt-6-astra` gets a reply that begins
 `{"id":"chatcmpl-test-1","object":"chat.completion","created":…,"model":"gpt-6-astra-2026-10-01",`,
 with `x-request-id: req_test_1`. A request for another model does not
 match it.
+
+### Tool calls
+
+`toolCalls` declares the function tool calls of the reply, so that an
+agent's tool loop runs against smock. This Stub answers a conversation
+whose [last message](#operators-in-json-conditions) is the user's with
+text and a call of `get_weather`:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { messages: { $last: { role: user } } } }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: Let me check.
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+        usage: { input: 31, output: 18 }
+```
+
+Each tool call has these fields:
+
+| Field | Value | When left out |
+|---|---|---|
+| `name` | the function's name, non-empty text | required |
+| `arguments` | a JSON object, or a string sent as written | required |
+| `id` | the call id, sent as written | generated |
+
+- The text comes first, then each tool call in the order written.
+- An object in `arguments` is written as compact JSON, its members in the
+  order written and its numbers as a `json` body writes them. A string is
+  sent exactly as written, so a test can send
+  [arguments that are not valid JSON](#broken-arguments).
+- smock checks no `name` against a vendor's naming rule, and no
+  `arguments` against the request's `tools`.
+- With tool calls, empty text gives no content: `content` is `null` in the
+  JSON reply and in the stream's opening chunk, and no chunk carries
+  content, even when `chunks` gives empty pieces. So openai-python's
+  stream helper builds the same message from the stream as from the JSON
+  reply.
+- Left out, the [stop reason](#usage-and-stop-reasons) is `tool_calls`. A
+  written one is sent whatever the reply holds.
+- A missing `name` or `arguments`, an empty `name`, `arguments` that are
+  neither an object nor a string, an unknown field of a tool call, and two
+  tool calls of one `llm` with the same `id` are load errors.
+- Only `openai-chat` sends tool calls yet. An `openai-responses` or
+  `anthropic-messages` reply leaves them out, though they still draw their
+  ids' slots.
+
+A request for `gpt-6-astra` without `stream` gets this reply, which
+`smock render` shows with `--seed 7` and `--time 2026-10-23T00:00:00Z`.
+The message gives `tool_calls` after its content, each call's arguments
+as a JSON string:
+
+```json
+{"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"message":{"role":"assistant","content":"Let me check.","tool_calls":[{"id":"call_oLxN2ar43pJJV6rqKHXsG45M","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}],"refusal":null,"annotations":[]},"logprobs":null,"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":31,"completion_tokens":18,"total_tokens":49,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"service_tier":"default"}
+```
+
+In a [stream](#streams), the text's pieces come first. Then each tool
+call, counted from 0 as its `index`, opens with a chunk that gives its
+`index`, its call id, `type: function`, its name and empty arguments. One
+chunk follows per piece of its arguments, with the `index` and the piece
+alone. The arguments are cut as the text is, into pieces of `chunkSize`
+code points, 4 by default; `chunks` does not apply to them. Every
+tool-call chunk carries the integer `index`, so openai-python joins the
+pieces of each call. The same request with `stream: true` gets these
+events after the text's pieces:
+
+```text
+  … "Let ", "me c", "heck", "." …
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_oLxN2ar43pJJV6rqKHXsG45M","type":"function","function":{"name":"get_weather","arguments":""}}]},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"ci"}}]},"logprobs":null,"finish_reason":null}]}
+
+  … "ty\":", "\"Par" …
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"is\"}"}}]},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+
+```
+
+Call ids follow the rules of [Ids, seeds and time](#ids-seeds-and-time):
+
+- A tool call's call id is `call_` and 24 characters, the same in every
+  chunk of a stream, unless `id` fixes it. smock sends a fixed id exactly
+  as written, with no prefix.
+- Each tool call draws two slots of the ids' order, after the reply's and
+  before the request id's. `openai-chat` sends the second as the call id.
+  So adding a tool call changes the request id, and not the reply's id.
+- A fixed `id` still draws its slots, so fixing one call id changes no
+  other id.
+- The call ids of one reply must differ, so two tool calls of one `llm`
+  with the same `id` are a load error.
+
+When the agent sends the tool's result back, a second Stub answers it. A
+condition on the last message tells the turns apart, as the
+[`$last` examples](#operators-in-json-conditions) show for each API:
+
+```yaml
+- id: answer-weather
+  mock: openai
+  request:
+    method: POST
+    path: /v1/chat/completions
+    body: { json: { messages: { $last: { role: tool } } } }
+  response:
+    status: 200
+    llm: { api: openai-chat, text: It is 18°C in Paris. }
+```
+
+#### Broken arguments
+
+A model can send arguments that are not valid JSON, and an agent should
+survive them. Give `arguments` as a string to send it exactly as written:
+
+```yaml
+- id: broken-arguments
+  mock: openai
+  request:
+    method: POST
+    path: /v1/chat/completions
+    headers: { X-Test-Case: broken-arguments }
+  response:
+    status: 200
+    llm:
+      api: openai-chat
+      toolCalls:
+        - name: get_weather
+          arguments: '{"city": "Par'
+```
+
+The JSON reply's call has `"arguments":"{\"city\": \"Par"`, and a stream
+sends the same text in pieces. smock does not check it. Checked with
+openai-python 3.36.1: `chat.completions.create()` returns the arguments as
+the string they are, so the agent's own `json.loads` raises
+`JSONDecodeError`. `chat.completions.parse()` and the
+`chat.completions.stream()` helper parse the arguments of a strict
+function tool, such as one made with `openai.pydantic_function_tool`, and
+raise pydantic's `ValidationError`.
 
 ### OpenAI Responses
 

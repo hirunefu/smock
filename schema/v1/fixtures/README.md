@@ -28,6 +28,8 @@ disagree.
   beside another key: the Schema leaves the `json` value open, because any
   literal JSON is valid there. So does an `xml` condition with a path that
   does not compile: the Schema checks only that a path starts with `/`.
+  So do two tool calls of one `llm` with the same `id`: the Schema cannot
+  say that a member differs across the elements of a list.
   Data buckets break such rules too: a bucket that names a Mock no file
   declares, two buckets of one Mock with the same name, a `jsonFile` that
   is missing or does not hold JSON in UTF-8, a keyed bucket whose value is
