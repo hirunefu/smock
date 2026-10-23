@@ -1287,6 +1287,349 @@ The wire forms follow the vendors' documents as they were read on
 minor release may change what an existing `llm` Stub sends, with a
 CHANGELOG entry.
 
+### Paths and compatible endpoints
+
+The preset neither sets nor checks `request.path`. A Stub's conditions
+decide which requests it answers, as for any Stub, and smock checks no
+request against a vendor's schema. So `openai-chat` also stands in for
+the services that offer Chat Completions to OpenAI's SDKs at paths of
+their own. Give the Stub the service's path, and point the client's base
+URL at smock with the same path, such as
+`http://localhost:8080/v1beta/openai/` for Gemini:
+
+| Service | Its base URL | The Stub's path |
+|---|---|---|
+| OpenAI | `https://api.openai.com/v1` | `/v1/chat/completions` |
+| Gemini, OpenAI compatibility | `https://generativelanguage.googleapis.com/v1beta/openai/` | `/v1beta/openai/chat/completions` |
+| Anthropic, OpenAI SDK compatibility | `https://api.anthropic.com/v1/` | `/v1/chat/completions` |
+| Ollama, OpenAI compatibility | `http://localhost:11434/v1/` | `/v1/chat/completions` |
+
+Gemini's own `generateContent` and Ollama's own `/api/chat` have other
+wire forms, which `llm` does not write.
+
+Azure OpenAI puts the deployment's name in the path. For
+`model="my-gpt"`, openai-python's
+`AzureOpenAI(azure_endpoint="http://localhost:8080", api_version="2024-10-21", api_key="test")`
+sends `POST /openai/deployments/my-gpt/chat/completions?api-version=2024-10-21`.
+A path pattern answers every deployment. The query does not count, since
+the Stub lists no query parameter:
+
+```yaml
+mocks:
+  - name: azure
+stubs:
+  - id: azure-chat
+    mock: azure
+    request:
+      method: POST
+      path: { pattern: "/openai/deployments/[^/]+/chat/completions" }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+```
+
+The reply is in OpenAI's form. It has none of Azure's content-filter
+members, such as `prompt_filter_results` and `content_filter_results`.
+
+### Errors before the reply
+
+`llm` declares a reply that succeeds. An error that comes in place of the
+reply, such as a 429 or a 529, is an ordinary response with the vendor's
+error body. Each vendor has one shape:
+
+- OpenAI: `{"error": {"message", "type", "param", "code"}}`. All four
+  members are present, and `param` and `code` may be `null`. A 429 or a
+  503 may carry `Retry-After`, in seconds. Every reply carries an
+  `x-request-id` header.
+- Anthropic: `{"type": "error", "error": {"type", "message"},
+  "request_id"}`. Every reply carries a `request-id` header, with the same
+  id as `request_id`. Some 429s carry `retry-after`. The error's `type`
+  follows the status:
+
+  | Status | `error.type` |
+  |---|---|
+  | 400 | `invalid_request_error` |
+  | 401 | `authentication_error` |
+  | 402 | `billing_error` |
+  | 403 | `permission_error` |
+  | 404 | `not_found_error` |
+  | 409 | `conflict_error` |
+  | 413 | `request_too_large` |
+  | 429 | `rate_limit_error` |
+  | 500 | `api_error` |
+  | 504 | `timeout_error` |
+  | 529 | `overloaded_error` |
+
+smock adds no request-id header to an ordinary response, so the recipes
+below write one. Their messages and ids are examples. The SDKs choose the
+error they raise by the status, such as `RateLimitError` for a 429, and
+keep the body in it.
+
+#### Retries
+
+The official SDKs, openai-python and anthropic-sdk-python, retry a
+request that gets 408, 409, 429 or any 5xx, twice by default, so one call
+can make three requests. Before each retry they wait out the reply's
+`Retry-After`: openai-python up to 120 s, and it does not retry when asked
+to wait longer. Without one, they back off from about half a second. Both
+obey `x-should-retry`: with `false`, they do not retry, whatever the
+status. So that a test sees each error once and does not wait, either:
+
+- build the client with `max_retries=0`, such as
+  `OpenAI(base_url="http://localhost:8080/v1", api_key="test", max_retries=0)`
+  or `Anthropic(base_url="http://localhost:8080", api_key="test", max_retries=0)`;
+- or send `x-should-retry: "false"` in the Stub's headers. Quote it: a
+  header value is a string, and YAML reads a bare `false` as a boolean.
+
+Each retry is a request of its own: it matches a Stub, takes a draw from
+the Stub's random source, and gets its own Journal entry.
+
+#### A 401 without a key
+
+smock ignores `Authorization`, `x-api-key` and `anthropic-version`, as it
+ignores every header a Stub does not list, so any key works, such as
+`api_key="test"`. A test that needs a 401 adds an ordinary Stub with a
+`headers` condition, declared before the Stubs it guards:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: no-key
+    mock: openai
+    request:
+      headers: { Authorization: { $exists: false } }
+    response:
+      status: 401
+      headers: { x-request-id: req_eTuAaXsuWSSRENWrCE3JNEi7 }
+      json:
+        error:
+          message: Incorrect API key provided.
+          type: invalid_request_error
+          param: null
+          code: invalid_api_key
+  - id: hello
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+```
+
+Anthropic's API takes its key in `x-api-key` or in `Authorization`, so
+its Stub checks both:
+
+```yaml
+- id: no-key
+  mock: anthropic
+  request:
+    headers:
+      x-api-key: { $exists: false }
+      Authorization: { $exists: false }
+  response:
+    status: 401
+    headers: { request-id: req_KEdIon5S7matgpJr8lPWEQTb }
+    json:
+      type: error
+      error: { type: authentication_error, message: Invalid API key. }
+      request_id: req_KEdIon5S7matgpJr8lPWEQTb
+```
+
+To refuse every key but the test's own, write a condition such as
+`{ $not: "Bearer sk-test" }` in place of `{ $exists: false }`. Both SDKs
+raise `AuthenticationError` for a 401, and neither retries it
+([Retries](#retries)).
+
+#### A 429 with Retry-After
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: rate-limited
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 429
+      headers:
+        Retry-After: "20"
+        x-request-id: req_5K5eWPUAGI1WXJRVsFgWLtIw
+        x-should-retry: "false"
+      json:
+        error:
+          message: Rate limit reached for requests.
+          type: rate_limit_error
+          param: null
+          code: slow_down
+```
+
+Both SDKs retry a 429 twice by default, as they retry 408, 409 and every
+5xx, after waiting out its `Retry-After`, openai-python up to 120 s
+([Retries](#retries)). Both obey `x-should-retry: "false"`, so
+openai-python raises `RateLimitError` at once. Without it, the call would
+wait 20 s twice and raise only after the third 429. `max_retries=0` on the
+client does the same for every Stub. Anthropic's 429 has the `error.type`
+`rate_limit_error`.
+
+To rate-limit one call in ten, give the 429 beside an `llm` reply in
+[weighted responses](#several-responses):
+
+```yaml
+- id: chat
+  mock: openai
+  request: { method: POST, path: /v1/chat/completions }
+  responses:
+    - weight: 9
+      status: 200
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+    - weight: 1
+      status: 429
+      headers:
+        Retry-After: "1"
+        x-request-id: req_5K5eWPUAGI1WXJRVsFgWLtIw
+        x-should-retry: "false"
+      json:
+        error:
+          message: Rate limit reached for requests.
+          type: rate_limit_error
+          param: null
+          code: slow_down
+  fault: { seed: 7 }
+```
+
+With its retries on, an SDK would retry the 429 and most likely get the
+reply, so the code under test would not see it. `x-should-retry: "false"`
+keeps the 429 for the code under test, and `fault.seed` gives the 429 to
+the same calls on every run.
+
+#### A 529 when overloaded
+
+Anthropic answers 529 when its API is overloaded:
+
+```yaml
+mocks:
+  - name: anthropic
+stubs:
+  - id: overloaded
+    mock: anthropic
+    request: { method: POST, path: /v1/messages }
+    response:
+      status: 529
+      headers: { request-id: req_5J4ymbACTcA49ramAi1T8pGa }
+      json:
+        type: error
+        error: { type: overloaded_error, message: Overloaded }
+        request_id: req_5J4ymbACTcA49ramAi1T8pGa
+```
+
+A 529 is a 5xx, so both SDKs retry it twice by default, as they retry
+408, 409 and 429, after waiting out a `Retry-After`, openai-python up to
+120 s. Both obey `x-should-retry: "false"` in the Stub's headers
+([Retries](#retries)). With
+`Anthropic(base_url="http://localhost:8080", api_key="test", max_retries=0)`,
+anthropic-sdk-python raises `OverloadedError` at once. OpenAI's counterpart
+is a 503, with `type: service_unavailable_error` and
+`code: server_is_overloaded`, which may carry `Retry-After`. openai-python
+raises `InternalServerError` for it.
+
+### Model lists and other paths
+
+`llm` writes only the reply to a prompt. Ordinary `json` Stubs answer the
+rest of an API, such as its model list, `GET /v1/models`. In OpenAI's
+shape:
+
+```yaml
+- id: models
+  mock: openai
+  request: { method: GET, path: /v1/models }
+  response:
+    status: 200
+    json:
+      object: list
+      data:
+        - { id: gpt-6-astra, object: model, created: 1792713600, owned_by: system }
+```
+
+In Anthropic's shape:
+
+```yaml
+- id: models
+  mock: anthropic
+  request: { method: GET, path: /v1/models }
+  response:
+    status: 200
+    json:
+      data:
+        - { type: model, id: claude-test, display_name: Claude Test, created_at: "2026-10-01T00:00:00Z", lifecycle: active }
+      has_more: false
+      first_id: claude-test
+      last_id: claude-test
+```
+
+A request that no Stub matches gets smock's own `noMatch` reply, a 404 with
+`{"error":"no Stub matched"}`, and a [Near miss](#when-no-stub-matches)
+that names the closest Stub. A client that reads the vendor's error body
+needs a Stub that answers every other path of the Mock with it. That is an
+ordinary Stub with no conditions, not the
+[Default Mock](#hosts-and-the-default-mock), which answers the Hosts that
+no Mock lists. Leave out its `priority` and declare it after the Mock's
+other Stubs, so that it is tried last: a Stub without a priority is tried
+after every Stub with one, and among those in declaration order
+([Which Stub answers](#which-stub-answers)).
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: chat
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+  - id: other-paths
+    mock: openai
+    response:
+      status: 404
+      template: true
+      headers: { x-request-id: req_eTuAaXsuWSSRENWrCE3JNEi7 }
+      json:
+        error:
+          message: Invalid URL (${method} ${path})
+          type: invalid_request_error
+          param: null
+          code: null
+```
+
+openai-python raises `NotFoundError` for it, and does not retry it. For
+Anthropic, the body is
+`{"type":"error","error":{"type":"not_found_error","message":"Not found"},"request_id":"req_…"}`,
+with the same id in `request-id`.
+
+With such a Stub, every request of the Mock matches. None has a Near miss,
+and `GET /v1/journal/unmatched` lists none of them. The Journal names the
+Stub that answered each request, so a test finds stray calls by that
+Stub's id.
+
+### Prompts in the Journal
+
+An LLM request carries the whole conversation, and often the tools'
+schemas, so its body often passes 4 KiB. The
+[Journal](../README.md#the-journal) keeps the first 4 KiB of each body by
+default, and the entry's body then says `truncated: true`. A test that
+reads prompts from the Journal raises `--journal-body-limit`
+(`SMOCK_JOURNAL_BODY_LIMIT`), such as `--journal-body-limit 1048576`. Each
+entry then takes more of the Journal's byte bound. Conditions and
+templates always read the whole body.
+
 ## Templates
 
 With `template: true`, a response is rendered for each request: its body
@@ -1896,9 +2239,14 @@ response:
   events:
     - { event: price, id: "1", json: { symbol: "${query.symbol}", price: "${fake.decimal(90, 110, 2)}", at: "${now()}" } }
     - { delay: 500, event: price, id: "2", json: { symbol: "${query.symbol}", price: "${fake.decimal(90, 110, 2)}", at: "${now()}" } }
-    - { delay: 500, event: done, data: "[DONE]" }
+    - { delay: 500, data: "[DONE]" }
 fault: { seed: 7 }
 ```
+
+The last event is `data: [DONE]` alone, the frame that ends an OpenAI
+Chat Completions stream, which has no `event:` line. To stand in for an
+LLM API, an [LLM response](#llm-responses) writes the reply in the API's
+wire form, so no event needs writing by hand.
 
 ### Escaping and line breaks
 
