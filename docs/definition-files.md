@@ -3371,6 +3371,27 @@ error. A response that serves [byte ranges](#range-requests) answers the
 sample's `Range` header, so the rendering shows the 206 or the 416 a
 request would get.
 
+An [LLM response](#llm-responses) renders as a request gets it. A sample
+that gets a [stream](#streams), such as one whose body sets
+`stream: true` for `openai-chat`, shows the events, each with its
+[wait](#timing) as `delay`, and a null `body`. Any other sample shows the
+JSON body. The seed fixes the ids and the waits, and the reply's time,
+such as `created`, is the rendering's time. For the
+[`slow-hello` Stub](#timing), with `sample.json` holding
+
+```json
+{"method": "POST", "path": "/v1/chat/completions",
+ "body": "{\"model\": \"gpt-6-astra\", \"stream\": true, \"messages\": [{\"role\": \"user\", \"content\": \"Hi\"}]}"}
+```
+
+this command lists the waits of the events, from the opening chunk to
+`[DONE]`:
+
+```sh
+smock render --dir defs slow-hello --request sample.json --seed 7 | jq -c '[.response.events[].delay]'
+# [0,824,27,20,38,19,40,38,26,28,0,0]
+```
+
 A rendering reads and writes no live [Variables](#variables), so it stays
 the same on every run:
 
