@@ -76,16 +76,21 @@ of each GitHub release include its section
   `finish_reason` in the API's own word, checked at load, and is
   `tool_calls` with tool calls, or else `stop`, when left out. With
   `api: openai-responses`, it answers OpenAI Responses
-  requests with a Response object: the text in its message item, the
-  usage, a `resp_` id, `created_at` and `completed_at` the time the
-  request was received, and the settings the request gave, such as
-  `instructions` and `tools`, copied back. Its `stopReason` is an
-  incomplete reason, such as `max_output_tokens`, which makes the reply
-  `incomplete`. A Responses request with `stream: true` gets the Responses
-  events, each with an `event:` line and a `sequence_number` from 0: from
-  `response.created` through the message item's text deltas to
-  `response.completed`, or to `response.incomplete` with a stop reason,
-  and no `[DONE]`. With `api: anthropic-messages`, it answers Anthropic
+  requests with a Response object: the text in its message item, each
+  tool call in a `function_call` item after it, the usage, a `resp_` id,
+  `created_at` and `completed_at` the time the request was received, and
+  the settings the request gave, such as `instructions` and `tools`,
+  copied back. A function call item's id is `fc_` and 24 characters, and
+  its `call_id` is `call_` and the 24 characters a Chat reply gives the
+  call, or the one `id` fixes; with tool calls and empty text, there is
+  no message item. Its `stopReason` is an incomplete reason, such as
+  `max_output_tokens`, which makes the reply `incomplete`. A Responses
+  request with `stream: true` gets the Responses events, each with an
+  `event:` line and a `sequence_number` from 0: from `response.created`
+  through the message item's text deltas and each function call's
+  argument deltas to `response.completed`, or to `response.incomplete`
+  with a stop reason, and no `[DONE]`.
+  With `api: anthropic-messages`, it answers Anthropic
   Messages requests with one `message` JSON body, or with events each named
   by an `event:` line, as anthropic-sdk-python's `messages.stream()` reads
   them: `message_start`, the text block's start, a `text_delta` per piece
