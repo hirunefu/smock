@@ -6,10 +6,13 @@ anthropic-sdk-python as applications call the API. Then it checks what the
 SDK reads: the text, the tool calls and their parsed arguments, usage, stop
 reasons, ids and the request id, and that the reply the SDK's stream helper
 builds from a stream equals the one it parses from the JSON reply, apart
-from differences listed by name.
+from differences listed by name. It also checks what each SDK raises or
+yields on smock's mid-stream errors and on the docs' 429 and 529 replies.
 
 It uses only the SDKs and the standard library. Every client is built with
-max_retries=0, so that each call sends one request.
+max_retries=0, so that each call sends one request, but for the retry
+checks, whose clients keep the default retries and count the requests that
+reach smock in the Journal.
 
 It prints each check, and exits with status 1 when a check fails or an SDK
 raises where no check expects it to.

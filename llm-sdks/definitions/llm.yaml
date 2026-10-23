@@ -83,7 +83,8 @@ stubs:
         usage: { input: 31, output: 5 }
         stopReason: length
 
-  # Chat Completions: the docs' cut-short Stub, whose stream a mid-stream
+  # Chat Completions: the docs' cut-short Stub
+  # (docs/definition-files.md#mid-stream-errors), whose stream a mid-stream
   # error cuts after 5 code points of the text. A request that does not
   # stream gets the whole text.
   - id: chat-error
@@ -309,8 +310,9 @@ stubs:
 
   # The docs' 429 (docs/definition-files.md#a-429-with-retry-after), in
   # OpenAI's form, and the docs' 529 (#a-529-when-overloaded), in
-  # Anthropic's. Each response is the docs' as written. Each Stub answers
-  # its model on any path, so that both SDKs get both replies.
+  # Anthropic's. Each response is the docs' as written, and changes when
+  # the docs' does. Each Stub answers its model on any path, so that both
+  # SDKs get both replies.
   - id: rate-limited
     mock: llm
     request:
