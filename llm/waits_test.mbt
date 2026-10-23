@@ -70,3 +70,36 @@ test "a JSON reply has no event, and handing it no wait leaves it as it was" {
     ),
   )
 }
+
+///|
+test "handing an Anthropic Messages stream its waits leaves every event as it was, since none depends on them" {
+  let out = []
+  for text in ["Hello! How can I assist you today?", ""] {
+    let reply = @llm.reply(
+      @llm.Declaration(api=AnthropicMessages),
+      @llm.Strings(text~),
+      request=Some({ "model": "claude-test", "stream": true }),
+      now=received,
+      ids=@llm.ids_generator(7),
+    )
+    let before = shown_events(reply)
+    guard reply.body is Events(events) else { fail("not a stream") }
+    let waits = FixedArray::make(events.length(), 0)
+    for i, event in events {
+      waits[i] = match event.wait {
+        NoWait => 0
+        First => 400
+        Interval => 2147483647
+      }
+    }
+    reply.complete(waits)
+    out.push("\{text.escape()}: unchanged \{shown_events(reply) == before}")
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|"Hello! How can I assist you today?": unchanged true
+      #|"": unchanged true
+    ),
+  )
+}

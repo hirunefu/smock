@@ -404,13 +404,13 @@ pub enum WaitSlot {
 /// request whose body is the JSON `request`, or `None` when the body is
 /// not JSON, received at `now` (milliseconds since the Unix epoch): the
 /// stream when the body is a JSON object whose `stream` is exactly `true`,
-/// otherwise the JSON reply. An `openai-responses` or `anthropic-messages`
-/// declaration gives the JSON reply to both, since their streams are not
-/// written yet. A declared mid-stream error cuts an `openai-chat` stream;
-/// the JSON reply leaves it out. Its ids draw from `ids`, the request's ids
-/// generator, and the reply's id is the strings' `id` when given, as is
-/// each tool call's call id. Its model is the strings' `model` when given,
-/// otherwise the request's.
+/// otherwise the JSON reply. An `openai-responses` declaration gives the
+/// JSON reply to both, since its stream is not written yet. A declared
+/// mid-stream error cuts an `openai-chat` stream; the JSON reply leaves it
+/// out. Its ids draw from `ids`, the request's ids generator, and the
+/// reply's id is the strings' `id` when given, as is each tool call's call
+/// id. Its model is the strings' `model` when given, otherwise the
+/// request's.
 pub fn reply(
   declaration : Declaration,
   strings : Strings,
@@ -463,16 +463,22 @@ pub fn reply(
         request~,
         request_id=("x-request-id", "req_" + ids.request),
       )
-    // A streamed request gets the JSON reply too, for now.
-    AnthropicMessages =>
-      messages_reply(
-        declaration,
-        strings,
-        id=reply_id(strings, "msg_", ids),
-        model~,
-        request~,
-        request_id=("request-id", "req_" + ids.request),
-      )
+    AnthropicMessages => {
+      let id = reply_id(strings, "msg_", ids)
+      let request_id = ("request-id", "req_" + ids.request)
+      if asks_to_stream(request) {
+        messages_stream(
+          declaration,
+          strings,
+          id~,
+          model~,
+          request~,
+          request_id~,
+        )
+      } else {
+        messages_reply(declaration, strings, id~, model~, request~, request_id~)
+      }
+    }
   }
 }
 
@@ -491,11 +497,13 @@ fn reply_id(strings : Strings, prefix : String, ids : Ids) -> String {
 /// stream is sent: `waits[i]` milliseconds before the `i`-th event, 0 for
 /// an event that takes no wait, one for each event, or no element at all
 /// when no event waits. An event whose content depends on the waits is
-/// completed with them. No Chat Completions event does, so its stream is
-/// left as it is, and a JSON reply has no wait.
+/// completed with them. No Chat Completions or Anthropic Messages event
+/// does, so their streams are left as they are, and a JSON reply has no
+/// wait.
 pub fn Reply::complete(self : Reply, waits : FixedArray[Int]) -> Unit {
-  // Nothing to complete yet: only Chat Completions is written, and an API
-  // whose events depend on the waits completes them here.
+  // Nothing to complete yet: only Chat Completions and Messages streams are
+  // written, and an API whose events depend on the waits completes them
+  // here.
   ignore(self)
   ignore(waits)
 }
@@ -1134,6 +1142,124 @@ fn messages_stop_sequence(stop_reason : String, request : Json?) -> Json {
   } else {
     Json::null()
   }
+}
+
+///|
+/// The Messages stream of `declaration` with the strings `strings`, whose
+/// text is cut into pieces of the declaration's chunk size unless they give
+/// its pieces, the reply's id `id`, `model`, the request's JSON body
+/// `request` and the request-id header field `request_id`: events each
+/// named with an `event:` line equal to its `type`, and one `data:` line of
+/// compact JSON. `message_start` gives the message with no content, no stop
+/// reason and the input tokens; the text block follows at index 0, with one
+/// `text_delta` per piece, unless the text is empty; then `message_delta`
+/// gives the stop members and the output tokens, and `message_stop` ends
+/// the stream. There is no `ping` event.
+fn messages_stream(
+  declaration : Declaration,
+  strings : Strings,
+  id~ : String,
+  model~ : String,
+  request~ : Json?,
+  request_id~ : (String, String),
+) -> Reply {
+  // Empty text has no block, as in the JSON reply, even when `chunks`
+  // gives empty pieces, so that both give the same message.
+  let has_text = strings.text != ""
+  let pieces = if has_text {
+    strings.text_pieces(declaration.chunk_size)
+  } else {
+    no_pieces
+  }
+  let pace = Pace::new()
+  let events = Array(capacity=pieces.length() + 5)
+  let message : Json = {
+    "id": Json::string(id),
+    "type": "message",
+    "role": "assistant",
+    "content": [],
+    "model": Json::string(model),
+    "stop_reason": Json::null(),
+    "stop_sequence": Json::null(),
+    "usage": {
+      "input_tokens": count(declaration.usage.input),
+      "output_tokens": 0,
+    },
+  }
+  events.push({
+    wait: NoWait,
+    event: Some("message_start"),
+    data: "{\"type\":\"message_start\",\"message\":\{@template.compact_json(message)}}",
+  })
+  // The text block comes first, at index 0.
+  if has_text {
+    events.push({
+      wait: NoWait,
+      event: Some("content_block_start"),
+      data: content_block_start(0, "{\"type\":\"text\",\"text\":\"\"}"),
+    })
+    for piece in pieces {
+      let delta = "{\"type\":\"text_delta\",\"text\":\{@template.compact_json(Json::string(piece))}}"
+      events.push({
+        wait: pace.piece(),
+        event: Some("content_block_delta"),
+        data: content_block_delta(0, delta),
+      })
+    }
+    events.push({
+      wait: NoWait,
+      event: Some("content_block_stop"),
+      data: content_block_stop(0),
+    })
+  }
+  let stop_reason = messages_stop_reason(declaration)
+  let delta : Map[String, Json] = {
+    "stop_reason": Json::string(stop_reason),
+    "stop_sequence": messages_stop_sequence(stop_reason, request),
+  }
+  if stop_reason == "refusal" {
+    delta["stop_details"] = refusal_details
+  }
+  let message_delta : Json = {
+    "type": "message_delta",
+    "delta": Json::object(delta),
+    "usage": { "output_tokens": count(declaration.usage.output) },
+  }
+  events.push({
+    wait: pace.closing(),
+    event: Some("message_delta"),
+    data: @template.compact_json(message_delta),
+  })
+  events.push({
+    wait: NoWait,
+    event: Some("message_stop"),
+    data: "{\"type\":\"message_stop\"}",
+  })
+  { content_type: "text/event-stream", request_id, body: Events(events), }
+}
+
+///|
+/// The pieces of a stream that sends no text.
+let no_pieces : ArrayView[String] = [][:]
+
+///|
+/// The data of the `content_block_start` event of the block at `index`,
+/// whose opening content is `block`, given as compact JSON.
+fn content_block_start(index : Int, block : String) -> String {
+  "{\"type\":\"content_block_start\",\"index\":\{index},\"content_block\":\{block}}"
+}
+
+///|
+/// The data of a `content_block_delta` event of the block at `index`,
+/// whose delta is `delta`, given as compact JSON.
+fn content_block_delta(index : Int, delta : String) -> String {
+  "{\"type\":\"content_block_delta\",\"index\":\{index},\"delta\":\{delta}}"
+}
+
+///|
+/// The data of the `content_block_stop` event of the block at `index`.
+fn content_block_stop(index : Int) -> String {
+  "{\"type\":\"content_block_stop\",\"index\":\{index}}"
 }
 
 ///|

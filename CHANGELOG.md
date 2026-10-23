@@ -83,12 +83,17 @@ of each GitHub release include its section
   incomplete reason, such as `max_output_tokens`, which makes the reply
   `incomplete`. A Responses request with `stream: true` gets the JSON
   reply for now. With `api: anthropic-messages`, it answers Anthropic
-  Messages requests with one `message` JSON body: `text` in a text block,
-  or no block when it is empty, an id `msg_…`, usage as `input_tokens`
-  and `output_tokens`, and a `request-id: req_…` header in place of
-  `x-request-id`. Its `stopReason` is Anthropic's `stop_reason`, `end_turn`
-  when left out; with `stop_sequence`, the reply echoes the request's first
-  stop sequence, and a refusal carries `stop_details`. A Stub without a
+  Messages requests with one `message` JSON body, or with events each named
+  by an `event:` line, as anthropic-sdk-python's `messages.stream()` reads
+  them: `message_start`, the text block's start, a `text_delta` per piece
+  and its stop, then `message_delta` and `message_stop`, with no `ping`.
+  The reply has `text` in a text block, or no block when it is empty, an
+  id `msg_…`, usage as `input_tokens` and `output_tokens`, which a stream
+  gives in `message_start` and `message_delta`, and a `request-id: req_…`
+  header in place of `x-request-id`. Its `stopReason` is Anthropic's
+  `stop_reason`, `end_turn` when left out; with `stop_sequence`, the reply
+  echoes the request's first stop sequence, and a refusal carries
+  `stop_details`, in the JSON body and in `message_delta`. A Stub without a
   stop reason or an error moves between the APIs by changing `api` alone.
   `timing: { first, interval }` paces a stream: a wait before the first
   piece, counted from the head, and one before each later piece, each
