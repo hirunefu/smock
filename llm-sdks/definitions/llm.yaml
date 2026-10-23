@@ -97,3 +97,31 @@ stubs:
         api: anthropic-messages
         text: "Hi! こんにちは。 👋🏽 How can I help?"
         usage: { input: 23, output: 10 }
+
+  # Anthropic Messages: text and two tool calls, with every id, the model
+  # and the request id fixed, so that the message the stream helper builds
+  # can equal the JSON reply, ids included. The first call's arguments nest
+  # an object and hold CJK text and a number. The second's are a string
+  # that holds a JSON object, which the JSON reply sends as that object.
+  - id: messages-tools
+    mock: llm
+    request:
+      method: POST
+      path: /v1/messages
+      body: { json: { model: messages-tools } }
+    response:
+      status: 200
+      headers: { request-id: req_sdk_messages_tools }
+      llm:
+        api: anthropic-messages
+        id: msg_sdk_messages_tools
+        model: messages-tools-2026-10-23
+        text: Let me check both.
+        toolCalls:
+          - name: get_weather
+            id: toolu_sdk_weather
+            arguments: { city: 東京, days: 3, units: { temperature: celsius } }
+          - name: get_time
+            id: toolu_sdk_time
+            arguments: '{"timezone": "Asia/Tokyo"}'
+        usage: { input: 412, output: 87 }

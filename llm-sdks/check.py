@@ -67,6 +67,11 @@ CHAT_TOOLS_CALLS = [
 CHAT_CALL_ONLY_CALL = ("get_weather", {"city": "Paris"})
 CHAT_LENGTH_TEXT = "The weather in Paris is"
 MESSAGES_TEXT = "Hi! こんにちは。 👋🏽 How can I help?"
+MESSAGES_TOOLS_TEXT = "Let me check both."
+MESSAGES_TOOLS_CALLS = [
+    ("toolu_sdk_weather", "get_weather", {"city": "東京", "days": 3, "units": {"temperature": "celsius"}}),
+    ("toolu_sdk_time", "get_time", {"timezone": "Asia/Tokyo"}),
+]
 
 # The function tools an application gives the stream helper. With
 # "strict", the helper parses each call's arguments as JSON.
@@ -79,6 +84,14 @@ CHAT_TOOLS = [
             "parameters": {"type": "object", "properties": {}, "additionalProperties": True},
         },
     }
+    for name in ("get_weather", "get_time")
+]
+
+# The tools an application gives the Messages API. The Stubs do not read
+# them, and anthropic-sdk-python parses a tool_use block's input without
+# them.
+MESSAGES_TOOLS = [
+    {"name": name, "input_schema": {"type": "object", "properties": {}, "additionalProperties": True}}
     for name in ("get_weather", "get_time")
 ]
 
@@ -606,6 +619,33 @@ def text_deltas(events):
             if event.type == "content_block_delta" and event.delta.type == "text_delta"]
 
 
+def streamed_blocks(events):
+    """The blocks of a Messages stream, each built from its events as
+    anthropic-sdk-python's accumulator builds it: a text block as its type
+    and text, a tool_use block as its type, id, name and partial_json,
+    joined as text."""
+    built = {}
+    for event in events:
+        if event.type == "content_block_start":
+            block = event.content_block
+            built[event.index] = [block.type, block.text] if block.type == "text" else [block.type, block.id,
+                                                                                        block.name, ""]
+        elif event.type == "content_block_delta":
+            built[event.index][-1] += event.delta.text if event.delta.type == "text_delta" else event.delta.partial_json
+    return [tuple(block) for block in built.values()]
+
+
+def tool_use_starts(events):
+    """Each tool_use block of a Messages stream as it opens, and the
+    partial_json of its first delta."""
+    starts = {event.index: [event.content_block.to_dict()] for event in events
+              if event.type == "content_block_start" and event.content_block.type == "tool_use"}
+    for event in events:
+        if event.type == "content_block_delta" and len(starts.get(event.index, ())) == 1:
+            starts[event.index].append(event.delta.partial_json)
+    return [tuple(start) for start in starts.values()]
+
+
 def messages_text(checks, smock):
     """Anthropic Messages, text only, with generated ids: create() with and
     without stream, and the stream() helper."""
@@ -647,9 +687,50 @@ def messages_text(checks, smock):
                 {**MESSAGES_HELPER_DIFFERENCES, **MESSAGES_GENERATED_ID_DIFFERENCES})
 
 
+def messages_tools(checks, smock):
+    """Anthropic Messages, text and two tool calls, with fixed ids: create()
+    with and without stream, and the stream() helper."""
+    client = smock.anthropic()
+    expected = [("text", MESSAGES_TOOLS_TEXT),
+                *(("tool_use", call_id, call_name, arguments) for call_id, call_name, arguments in MESSAGES_TOOLS_CALLS)]
+    name = "messages-tools: create"
+    reply = messages_create(client, "messages-tools", tools=MESSAGES_TOOLS)
+    checks.equal(f"{name}: the text block, then a tool_use block per call with its input", blocks(reply), expected)
+    checks.equal(f"{name}: the stop reason", (reply.stop_reason, reply.stop_sequence, reply.stop_details),
+                 ("tool_use", None, None))
+    check_messages_usage(checks, name, reply.usage, 412, 87)
+    checks.equal(f"{name}: the fixed id", reply.id, "msg_sdk_messages_tools")
+    checks.equal(f"{name}: the fixed model", reply.model, "messages-tools-2026-10-23")
+    checks.equal(f"{name}: the Stub's request id", reply._request_id, "req_sdk_messages_tools")
+
+    name = "messages-tools: create(stream=True)"
+    request_id, events = messages_stream(client, "messages-tools", tools=MESSAGES_TOOLS)
+    delta = check_message_events(checks, name, events, "msg_sdk_messages_tools", "messages-tools-2026-10-23", 412, 3)
+    checks.equal(f"{name}: each tool_use block opens with an empty input, then an empty partial_json",
+                 tool_use_starts(events),
+                 [({"type": "tool_use", "id": call_id, "name": call_name, "input": {}}, "")
+                  for call_id, call_name, _ in MESSAGES_TOOLS_CALLS])
+    checks.equal(f"{name}: the blocks, each tool_use block's partial_json joined and parsed",
+                 [block if block[0] == "text" else (*block[:3], json.loads(block[3]))
+                  for block in streamed_blocks(events)], expected)
+    checks.equal(f"{name}: message_delta's stop reason and output tokens",
+                 (delta.delta.stop_reason, delta.delta.stop_sequence, delta.usage.output_tokens), ("tool_use", None, 87))
+    checks.equal(f"{name}: the Stub's request id", request_id, "req_sdk_messages_tools")
+
+    name = "messages-tools: stream()"
+    request_id, events, built = messages_helper(client, "messages-tools", tools=MESSAGES_TOOLS)
+    checks.equal(f"{name}: the input of each tool_use block as it stops",
+                 [(event.index, event.content_block.input) for event in events
+                  if event.type == "content_block_stop" and event.content_block.type == "tool_use"],
+                 [(index, arguments) for index, (_, _, arguments) in enumerate(MESSAGES_TOOLS_CALLS, start=1)])
+    checks.equal(f"{name}: the Stub's request id", request_id, "req_sdk_messages_tools")
+    checks.same(f"{name}: get_final_message() equals the JSON reply, apart from the listed differences",
+                reply.model_dump(), built.model_dump(), MESSAGES_HELPER_DIFFERENCES)
+
+
 # The cases, in the order they run. Each calls the Stubs it names, and a
 # case whose SDK raises unexpectedly fails without stopping the others.
-CASES = [chat_text, chat_tools, chat_call_only, chat_length, messages_text]
+CASES = [chat_text, chat_tools, chat_call_only, chat_length, messages_text, messages_tools]
 
 
 def main():
