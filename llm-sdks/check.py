@@ -87,6 +87,19 @@ MESSAGES_REFUSAL_TEXT = "I can't help with that."
 MESSAGES_BROKEN_TEXT = "Let me check."
 MESSAGES_BROKEN_CALL = ("toolu_sdk_broken", "get_weather", "not JSON")
 
+# The mid-stream errors: each API's error Stub is the docs' cut-short Stub
+# (docs/definition-files.md#mid-stream-errors), which cuts the stream after
+# ERROR_AFTER code points of its text. A request that does not stream gets
+# the whole text.
+ERROR_TEXT = "Hello! How can I assist you today?"
+ERROR_AFTER = 5
+CHAT_ERROR = {
+    "message": "The server had an error while processing your request. Sorry about that!",
+    "type": "server_error",
+    "param": None,
+    "code": None,
+}
+
 # The stop sequences an application gives the Messages API, and the stop
 # details of a refusal: its type, category and explanation.
 STOP_SEQUENCES = ["Step 2:", "END"]
@@ -322,21 +335,24 @@ class Checks:
         detail = "".join(traceback.format_exception(error))
         self.check(f"{name}: raised {type(error).__name__} unexpectedly", False, detail)
 
-    def raises(self, name, error_class, call, message=None):
+    def raises(self, name, error_class, call, message=None, exact=False):
         """Checks that a call raises error_class, as the vendor's reply
-        makes it, with the given message if one is given."""
+        makes it, with the given message if one is given, and that class
+        itself, not a subclass of it, if exact. Returns the error when the
+        check passes, and None otherwise."""
         try:
             call()
         except error_class as error:
-            if message is None or str(error) == message:
+            if (message is None or str(error) == message) and (not exact or type(error) is error_class):
                 self.check(name, True)
-            else:
-                self.raised(name, error)
-            return
+                return error
+            self.raised(name, error)
+            return None
         except Exception as error:
             self.raised(name, error)
-            return
+            return None
         self.check(name, False, f"it raised no {error_class.__name__}")
+        return None
 
 
 def differ(left, right, path=()):
@@ -361,6 +377,15 @@ def listed(path, difference):
 
 def shown(value):
     return "nothing" if value is MISSING else repr(value)
+
+
+def collect(stream, seen):
+    """Reads a stream, or a stream helper, as an application does, putting
+    each item it yields in seen as it comes, so that what came before an
+    error can be checked after the error is raised."""
+    with stream as opened:
+        for item in opened:
+            seen.append(item)
 
 
 def check_definitions(checks, binary):
@@ -595,6 +620,40 @@ def chat_length(checks, smock):
 
     checks.raises("chat-length: stream(): raises LengthFinishReasonError",
                   openai.LengthFinishReasonError, lambda: chat_helper(client, "chat-length"))
+
+
+def chat_error(checks, smock):
+    """Chat Completions, a stream cut by a mid-stream error: create() with
+    stream and the stream() helper raise APIError itself on the error
+    frame, after the text before it, and create() without stream gets the
+    whole reply."""
+    client = smock.openai()
+    name = "chat-error: create(stream=True)"
+    chunks = []
+    error = checks.raises(f"{name}: raises APIError on the error frame", openai.APIError,
+                          lambda: collect(chat_create(client, "chat-error", stream=True), chunks), exact=True)
+    checks.equal(f"{name}: the error's message", error and error.message, CHAT_ERROR["message"])
+    checks.equal(f"{name}: the error's type", error and error.type, CHAT_ERROR["type"])
+    checks.equal(f"{name}: the error's body, the error object", error and error.body, CHAT_ERROR)
+    check_chunks(checks, name, chunks, CHAT_ID, "chat-error")
+    checks.equal(f"{name}: the text before it", streamed_content(chunks), ERROR_TEXT[:ERROR_AFTER])
+    checks.equal(f"{name}: no stop reason before it", set(streamed_finish_reasons(chunks)), {None})
+
+    name = "chat-error: stream()"
+    events = []
+    error = checks.raises(f"{name}: raises APIError on the error frame", openai.APIError,
+                          lambda: collect(client.chat.completions.stream(model="chat-error", messages=MESSAGES),
+                                          events), exact=True)
+    checks.equal(f"{name}: the error's message", error and error.message, CHAT_ERROR["message"])
+    checks.equal(f"{name}: the content deltas before it, joined",
+                 "".join(event.delta for event in events if event.type == "content.delta"),
+                 ERROR_TEXT[:ERROR_AFTER])
+    checks.equal(f"{name}: no content.done", [event.type for event in events if event.type == "content.done"], [])
+
+    name = "chat-error: create"
+    reply = chat_create(client, "chat-error")
+    checks.equal(f"{name}: the whole text", reply.choices[0].message.content, ERROR_TEXT)
+    checks.equal(f"{name}: the stop reason", reply.choices[0].finish_reason, "stop")
 
 
 def responses_create(client, model, **options):
@@ -1204,7 +1263,7 @@ def messages_broken_arguments(checks, smock):
 # The cases, in the order they run. Each calls the Stubs it names, and a
 # case whose SDK raises unexpectedly fails without stopping the others.
 CASES = [
-    chat_text, chat_tools, chat_call_only, chat_length,
+    chat_text, chat_tools, chat_call_only, chat_length, chat_error,
     responses_text, responses_tools, responses_incomplete,
     messages_text, messages_tools, messages_call_only, messages_stop_sequence, messages_refusal,
     messages_broken_arguments,

@@ -83,6 +83,25 @@ stubs:
         usage: { input: 31, output: 5 }
         stopReason: length
 
+  # Chat Completions: the docs' cut-short Stub, whose stream a mid-stream
+  # error cuts after 5 code points of the text. A request that does not
+  # stream gets the whole text.
+  - id: chat-error
+    mock: llm
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { model: chat-error } }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+        error:
+          after: 5
+          type: server_error
+          message: The server had an error while processing your request. Sorry about that!
+
   # Responses: text only, with every id generated. The text is chat-text's,
   # cut the same way.
   - id: responses-text
