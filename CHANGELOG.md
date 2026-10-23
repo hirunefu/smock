@@ -113,8 +113,14 @@ of each GitHub release include its section
   call's `name`, `id` and `arguments` are templates: the text is rendered
   whole, then cut into pieces, what they insert is JSON-escaped on the
   wire, and a template that fails gives the 500 `template failed` and no
-  stream. It works with request conditions, `responses`, Faults,
-  Scenarios, Variables, Data buckets, Ephemeral Stubs and the Journal.
+  stream. The encoded reply, the JSON body or all the events, takes at
+  most 1 MiB, the bound of a rendered body: about 20,000 characters of
+  text in an OpenAI stream at 4 code points per piece. A reply as written
+  over it, as JSON or as a stream, is a load error, and one that a
+  template or a long request value pushes over it gets the 500
+  `template failed` and no stream. It works with request conditions,
+  `responses`, Faults, Scenarios, Variables, Data buckets, Ephemeral Stubs
+  and the Journal.
   `smock render` and the Admin render operation show the reply the
   sample's body asks for, the JSON body or a stream's events, each event
   with its wait, with the ids and the waits the seed fixes. See
