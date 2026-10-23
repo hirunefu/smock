@@ -534,7 +534,7 @@ test "left out, the stop reason of a reply with tool calls is derived as tool_ca
 test "tool calls draw their slots under every API, so the reply's id and the request id keep their characters when api changes" {
   let tool_calls : ReadOnlyArray[@llm.ToolCall] = [weather(), weather()]
   let lines = []
-  for api in [@llm.Api::OpenaiChat, AnthropicMessages] {
+  for api in [@llm.Api::OpenaiChat, OpenaiResponses, AnthropicMessages] {
     let reply = @llm.reply(
       @llm.Declaration(api~),
       @llm.Strings(text="Hi", tool_calls~),
@@ -550,14 +550,21 @@ test "tool calls draw their slots under every API, so the reply's id and the req
     lines.push(
       "\{api.name()}: \{id}, \{reply.request_id.0}: \{reply.request_id.1}",
     )
+    if body is { "output": [{ "id": String(message), .. }, ..], .. } {
+      lines.push("  message item: \{message}")
+    }
   }
-  lines.push("slots 0 and 6: \{slot_id(7, 0)}, \{slot_id(7, 6)}")
+  lines.push(
+    "slots 0, 1 and 6: \{slot_id(7, 0)}, \{slot_id(7, 1)}, \{slot_id(7, 6)}",
+  )
   inspect(
     lines.join("\n"),
     content=(
       #|openai-chat: chatcmpl-KCVauEuclT08Mg4CWd55sNbz, x-request-id: req_NCUifvyxkaNvRkMCKLDmHTwH
+      #|openai-responses: resp_KCVauEuclT08Mg4CWd55sNbz, x-request-id: req_NCUifvyxkaNvRkMCKLDmHTwH
+      #|  message item: msg_mGR88Teee4muTOOd2B3UzQJr
       #|anthropic-messages: msg_KCVauEuclT08Mg4CWd55sNbz, request-id: req_NCUifvyxkaNvRkMCKLDmHTwH
-      #|slots 0 and 6: KCVauEuclT08Mg4CWd55sNbz, NCUifvyxkaNvRkMCKLDmHTwH
+      #|slots 0, 1 and 6: KCVauEuclT08Mg4CWd55sNbz, mGR88Teee4muTOOd2B3UzQJr, NCUifvyxkaNvRkMCKLDmHTwH
     ),
   )
 }

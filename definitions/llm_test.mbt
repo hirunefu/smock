@@ -42,8 +42,8 @@ test "llm is a body kind of a response: api is required, and a response gives at
     ]),
     content=(
       #|a.json: /stubs/2/response/llm: needs "api"
-      #|a.json: /stubs/3/responses/1/llm/api: must be "openai-chat" or "anthropic-messages"
-      #|a.json: /stubs/4/response/llm/api: must be "openai-chat" or "anthropic-messages"
+      #|a.json: /stubs/3/responses/1/llm/api: must be "openai-chat", "openai-responses" or "anthropic-messages"
+      #|a.json: /stubs/4/response/llm/api: must be "openai-chat", "openai-responses" or "anthropic-messages"
       #|a.json: /stubs/5/response/llm/stream: is not a known field
       #|a.json: /stubs/6/response/llm/text: must be a string
       #|a.json: /stubs/7/response/llm: must be an object
@@ -102,7 +102,7 @@ test "usage gives two counts, integers from 0 to 2^53-1, and stopReason a word o
       #|a.json: /stubs/2/responses/0/llm/stopReason: must be a stop reason of openai-chat: "stop", "length", "tool_calls", "content_filter" or "function_call"
       #|a.json: /stubs/2/responses/1/llm/stopReason: must be a stop reason of openai-chat: "stop", "length", "tool_calls", "content_filter" or "function_call"
       #|a.json: /stubs/2/responses/2/llm/stopReason: must be a stop reason of openai-chat: "stop", "length", "tool_calls", "content_filter" or "function_call"
-      #|a.json: /stubs/2/responses/3/llm/api: must be "openai-chat" or "anthropic-messages"
+      #|a.json: /stubs/2/responses/3/llm/api: must be "openai-chat", "openai-responses" or "anthropic-messages"
       #|a.json: /stubs/2/responses/4/llm: needs "api"
     ),
   )
@@ -380,6 +380,79 @@ test "timing refuses probability, an unknown or a second distribution, a negativ
 }
 
 ///|
+test "openai-responses takes its incomplete reasons as stop reasons; a word of another API is refused at stopReason" {
+  inspect(
+    problems([
+      (
+        "a.json",
+        (
+          #|{ "mocks": [{ "name": "m" }],
+          #|  "stubs": [
+          #|    { "id": "ok", "mock": "m",
+          #|      "responses": [
+          #|        { "status": 200, "llm": { "api": "openai-responses", "text": "Hi",
+          #|          "usage": { "input": 37, "output": 11 }, "id": "resp_test_1", "model": "test-model" } },
+          #|        { "status": 200, "llm": { "api": "openai-responses", "stopReason": "max_output_tokens" } },
+          #|        { "status": 200, "llm": { "stopReason": "max_messages", "api": "openai-responses" } },
+          #|        { "status": 200, "llm": { "api": "openai-responses", "stopReason": "content_filter" } },
+          #|        { "status": 200, "llm": { "api": "openai-responses", "stopReason": "steered" } } ] },
+          #|    { "id": "chat-words", "mock": "m",
+          #|      "responses": [
+          #|        { "status": 200, "llm": { "api": "openai-responses", "text": "Hi", "stopReason": "stop" } },
+          #|        { "status": 200, "llm": { "stopReason": "length", "api": "openai-responses" } },
+          #|        { "status": 200, "llm": { "api": "openai-responses", "stopReason": "end_turn" } } ] },
+          #|    { "id": "responses-word-on-chat", "mock": "m",
+          #|      "response": { "status": 200,
+          #|        "llm": { "api": "openai-chat", "stopReason": "max_output_tokens" } } } ] }
+        ),
+      ),
+    ]),
+    content=(
+      #|a.json: /stubs/1/responses/0/llm/stopReason: must be a stop reason of openai-responses: "max_output_tokens", "max_messages", "content_filter" or "steered"
+      #|a.json: /stubs/1/responses/1/llm/stopReason: must be a stop reason of openai-responses: "max_output_tokens", "max_messages", "content_filter" or "steered"
+      #|a.json: /stubs/1/responses/2/llm/stopReason: must be a stop reason of openai-responses: "max_output_tokens", "max_messages", "content_filter" or "steered"
+      #|a.json: /stubs/2/response/llm/stopReason: must be a stop reason of openai-chat: "stop", "length", "tool_calls", "content_filter" or "function_call"
+    ),
+  )
+}
+
+///|
+test "a Stub without stopReason moves from openai-chat to openai-responses by changing api alone" {
+  let loaded = (api : String) => {
+    let file =
+      $|{ "mocks": [{ "name": "m" }],
+      $|  "stubs": [
+      $|    { "id": "s", "mock": "m",
+      $|      "response": { "status": 200, "llm": { "api": "\{api}", "text": "Hi",
+      $|        "usage": { "input": 31, "output": 9 }, "id": "fixed-1", "model": "test-model" } } } ] }
+    let set : @definitions.DefinitionSet = {
+      files: [("a.json", @utf8.encode(file))],
+      body_files: [],
+    }
+    guard @definitions.load(set) is Ok(snapshot) else { fail("not loaded") }
+    guard snapshot.mocks[0].stubs[0].serves is Ordinary(ordinary) else {
+      fail("not an ordinary Stub")
+    }
+    guard ordinary.responses[0].response.body is Llm(reply) else {
+      fail("not an LLM reply")
+    }
+    let { declaration, strings, .. } = reply
+    let stop_reason = match declaration.stop_reason {
+      Some(reason) => reason.word
+      None => "derived"
+    }
+    "\{declaration.api.name()}: input \{declaration.usage.input}, output \{declaration.usage.output}, stop reason \{stop_reason}, text \{strings.text}, id \{strings.id.unwrap_or("-")}, model \{strings.model.unwrap_or("-")}"
+  }
+  inspect(
+    [loaded("openai-chat"), loaded("openai-responses")].join("\n"),
+    content=(
+      #|openai-chat: input 31, output 9, stop reason derived, text Hi, id fixed-1, model test-model
+      #|openai-responses: input 31, output 9, stop reason derived, text Hi, id fixed-1, model test-model
+    ),
+  )
+}
+
+///|
 test "anthropic-messages takes Anthropic's stop reasons; a Chat word on it is a load error at stopReason, and changing api alone moves a Stub without one" {
   inspect(
     problems([
@@ -415,7 +488,7 @@ test "anthropic-messages takes Anthropic's stop reasons; a Chat word on it is a 
       #|a.json: /stubs/1/responses/1/llm/stopReason: must be a stop reason of anthropic-messages: "end_turn", "max_tokens", "stop_sequence", "tool_use", "pause_turn", "refusal" or "model_context_window_exceeded"
       #|a.json: /stubs/1/responses/2/llm/stopReason: must be a stop reason of anthropic-messages: "end_turn", "max_tokens", "stop_sequence", "tool_use", "pause_turn", "refusal" or "model_context_window_exceeded"
       #|a.json: /stubs/1/responses/3/llm/stopReason: must be a stop reason of openai-chat: "stop", "length", "tool_calls", "content_filter" or "function_call"
-      #|a.json: /stubs/1/responses/4/llm/api: must be "openai-chat" or "anthropic-messages"
+      #|a.json: /stubs/1/responses/4/llm/api: must be "openai-chat", "openai-responses" or "anthropic-messages"
     ),
   )
 }
