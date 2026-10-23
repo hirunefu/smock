@@ -136,6 +136,20 @@ pub fn reply(
 }
 
 ///|
+/// Hands the reply the waits the engine drew for its stream, before the
+/// stream is sent: `waits[i]` milliseconds before the `i`-th event, 0 for
+/// an event that takes no wait, one for each event, or no element at all
+/// when no event waits. An event whose content depends on the waits is
+/// completed with them. No Chat Completions event does, so its stream is
+/// left as it is, and a JSON reply has no wait.
+pub fn Reply::complete(self : Reply, waits : FixedArray[Int]) -> Unit {
+  // Nothing to complete yet: only Chat Completions is written, and an API
+  // whose events depend on the waits completes them here.
+  ignore(self)
+  ignore(waits)
+}
+
+///|
 /// Whether the request whose body is the JSON `request` asks for the
 /// stream: its body is a JSON object with `stream` exactly `true`. A body
 /// that is not JSON, a missing `stream`, `false` and the string `"true"`

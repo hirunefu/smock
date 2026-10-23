@@ -141,7 +141,11 @@ fn plan_response(
       set_content_type(headers, reply.content_type)
       let body : Body = match reply.body {
         Json(json) => Bytes(json)
-        Events(events) => Events(sse_events(events))
+        Events(events) => {
+          let waits = draw_waits(events, llm.timing, draw)
+          reply.complete(waits)
+          Events(sse_events(events, waits))
+        }
       }
       { status, headers, body, delay_ms: 0, fault: None, }
     }
@@ -149,16 +153,64 @@ fn plan_response(
 }
 
 ///|
+/// What the seed of the waits generator is XORed with, the request's one
+/// draw: a constant of its own, so that the waits draw another sequence
+/// than the pick, the Fault decisions, the helpers and the ids made from
+/// the same draw.
+let waits_mask : UInt64 = 0x589965CC75374CC3
+
+///|
+/// The waits of a stream none of whose events waits: none at all.
+let no_waits : FixedArray[Int] = []
+
+///|
+/// The waits of the events of an LLM reply's stream, in milliseconds, one
+/// per event in order, for a request whose one draw is `draw`. An event
+/// whose wait slot is `first` waits a wait drawn from `timing.first`, one
+/// whose slot is `interval` a wait drawn from `timing.interval`, and any
+/// other none. Each wait is drawn on its own, in order, with the delay
+/// Fault's sampler, from the request's waits generator, seeded with `draw`
+/// XOR `waits_mask`. A wait that `timing` leaves out is none and draws
+/// nothing. A reply without `timing` draws nothing at all, and its waits
+/// are `no_waits`.
+fn draw_waits(
+  events : Array[@llm.Event],
+  timing : @definitions.LlmTiming,
+  draw : UInt64,
+) -> FixedArray[Int] {
+  if timing.first is None && timing.interval is None {
+    return no_waits
+  }
+  let waits = FixedArray::make(events.length(), 0)
+  let generator = @prng.Generator(draw ^ waits_mask)
+  for i in 0..<events.length() {
+    let distribution = match events[i].wait {
+      NoWait => None
+      First => timing.first
+      Interval => timing.interval
+    }
+    if distribution is Some(distribution) {
+      waits[i] = sample(distribution, generator)
+    }
+  }
+  waits
+}
+
+///|
 /// The Server-Sent Events of an LLM reply's stream, in order, as an `events`
-/// response sends them: each one's type and data, with no ID and no wait.
+/// response sends them: each one's type and data, with no ID, after its
+/// wait in `waits`, in milliseconds, or at once when `waits` is empty.
 fn sse_events(
   events : Array[@llm.Event],
+  waits : FixedArray[Int],
 ) -> ReadOnlyArray[@definitions.SseEvent] {
+  let waited = waits.length() > 0
   let out = Array(capacity=events.length())
-  for event in events {
+  for i in 0..<events.length() {
+    let event = events[i]
     out.push(
       @definitions.SseEvent(
-        delay_ms=0,
+        delay_ms=if waited { waits[i] } else { 0 },
         event=event.event,
         id=None,
         data=event.data,

@@ -57,7 +57,10 @@ of each GitHub release include its section
   `chat.completion.chunk` events that carry the text in pieces of 4 code
   points and end with `data: [DONE]`: `text` as the assistant's content, an
   id that `fault.seed` and `--seed` replay, `created` the time the request
-  was received, and the request's `model`. It works with request
+  was received, and the request's `model`. `timing: { first, interval }`
+  paces a stream: a wait before the first piece, counted from the head, and
+  one before each later piece, each drawn from a distribution of the delay
+  Fault, which `fault.seed` and `--seed` replay. It works with request
   conditions, `responses`, Faults, Ephemeral Stubs, `smock render` and the
   Journal. See [LLM responses](docs/definition-files.md#llm-responses).
 

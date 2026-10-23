@@ -409,8 +409,8 @@ fn File::read_events(
 
 ///|
 /// Reads the `llm` of a response: `api`, which names the API whose wire
-/// form the reply takes, and `text`, empty when left out. It has none when
-/// `api` is missing or names no API.
+/// form the reply takes, `text`, empty when left out, and `timing`, no
+/// waits when left out. It has none when `api` is missing or names no API.
 fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
   guard json is Object(fields) else {
     self.error(pointer, "must be an object")
@@ -418,6 +418,7 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
   }
   let mut api = None
   let mut text = ""
+  let mut timing = { first: None, interval: None, }
   for key, value in fields {
     let field = child_pointer(pointer, key)
     match key {
@@ -427,10 +428,41 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
           Err(message) => self.error(field, message)
         }
       "text" => text = self.string(field, value).unwrap_or("")
+      "timing" => timing = self.read_llm_timing(field, value)
       _ => self.unknown_field(field)
     }
   }
   self.require(fields, pointer, "api")
   guard api is Some(api) else { return None }
-  Some({ declaration: @llm.Declaration(api~), strings: @llm.Strings(text~), })
+  Some({
+    declaration: @llm.Declaration(api~),
+    strings: @llm.Strings(text~),
+    timing,
+  })
+}
+
+///|
+/// Reads the `timing` of an LLM reply: `first` and `interval`, each one
+/// distribution of the delay Fault, without `probability`, and each none
+/// when left out.
+fn File::read_llm_timing(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> LlmTiming {
+  let mut first = None
+  let mut interval = None
+  guard json is Object(timing) else {
+    self.error(pointer, "must be an object")
+    return { first, interval, }
+  }
+  for key, value in timing {
+    let field = child_pointer(pointer, key)
+    match key {
+      "first" => first = self.read_wait(field, value)
+      "interval" => interval = self.read_wait(field, value)
+      _ => self.unknown_field(field)
+    }
+  }
+  { first, interval, }
 }

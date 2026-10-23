@@ -1244,6 +1244,7 @@ The fields of `llm`:
 |---|---|---|
 | `api` | `openai-chat`, OpenAI Chat Completions | required |
 | `text` | the text of the reply | empty |
+| `timing` | `{first, interval}`, the [waits of a stream](#timing), each a distribution of the [delay](#delays) | no waits |
 
 - `api` names the API whose wire form the reply takes. It is required, and
   smock never infers it from the request's path, so a proxy or a base path
@@ -1341,7 +1342,9 @@ data: [DONE]
 
 A stream travels as the events of an `events` response do:
 
-- smock sends the head and every event at once.
+- smock sends the head and the opening chunk at once, then each event
+  after the wait its [`timing`](#timing) gives. Without `timing`, every
+  event follows at once.
 - To an HTTP/1.1 client the stream is sent with chunked framing, so the
   connection carries the next request. An HTTP/1.0 client gets it
   unframed, and smock closes the connection to end it.
@@ -1354,6 +1357,62 @@ A stream travels as the events of an `events` response do:
   `reset` and `close` are unchanged.
 - The stream's [Journal](../README.md#the-journal) entry is committed
   before its last event, as for `events`.
+- A client that closes the connection mid-stream ends the stream: smock
+  notices when it next writes an event, and the Journal keeps the
+  request's entry. A [drain](../README.md#run) on SIGTERM waits for a
+  stream in progress, its waits included.
+
+### Timing
+
+`timing` paces a stream, to test time to first token or how a UI shows a
+slow reply. `first` is the wait before the first piece, and `interval` the
+wait before each later one. Each takes one distribution of the
+[delay](#delays) Fault, `fixed`, `uniform` or `lognormal`, in whole
+milliseconds. This Stub waits about 400 ms before the first piece, and 15
+to 40 ms before each later one:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: slow-hello
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+        timing:
+          first: { lognormal: { median: 400, sigma: 0.5 } }
+          interval: { uniform: { min: 15, max: 40 } }
+```
+
+- **Where the waits go.** smock writes the head and every event before the
+  first piece at once. It waits `first` before the first event that
+  carries a piece, counted from the head, and `interval` before each later
+  one. The events that open or close the reply follow the event before
+  them at once. A reply with no piece, such as one with empty text, waits
+  `first` before its closing chunk.
+- **Either may be left out**, for no wait there. Without `timing`, a stream
+  has no wait at all.
+- **No `probability`.** Unlike a delay, a wait applies to every stream, so
+  `probability` in `first` or `interval` is a load error, as is an unknown
+  distribution, a negative wait or an unknown member of `timing`.
+- **Draws.** Each wait is drawn on its own, in order, from the Stub's
+  random source: from a generator of its own, seeded with the one draw
+  every matched request takes XOR a fixed constant, which differs from the
+  ids' one. So [`fault.seed` and `--seed`](#seeds) replay a slow run
+  exactly, and adding `timing` changes no id, no Fault decision, no pick
+  among `responses` and no helper output.
+- **Only streams.** A JSON reply is written at once, whatever `timing`
+  gives. A [delay](#delays) Fault still holds back the status line of
+  either, before the stream's own waits.
+- **Render.** [`smock render`](#rendering-a-template) shows each event's
+  wait as its `delay`, drawn as for a request. With `--seed 7` and a
+  sample that sets `stream: true`, the Stub above waits 824 ms before
+  `"Hell"`, then 27, 20, 38, 19, 40, 38, 26 and 28 ms before the next
+  eight pieces. The opening chunk, the closing chunk and `[DONE]` wait 0.
 
 ### Paths and compatible endpoints
 
