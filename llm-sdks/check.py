@@ -75,11 +75,17 @@ MESSAGES_TOOLS_CALLS = [
 MESSAGES_CALL_ONLY_CALL = ("get_weather", {"city": "Paris"})
 MESSAGES_STOP_SEQUENCE_TEXT = "Step 1: open the box."
 MESSAGES_REFUSAL_TEXT = "I can't help with that."
+MESSAGES_BROKEN_TEXT = "Let me check."
+MESSAGES_BROKEN_CALL = ("toolu_sdk_broken", "get_weather", "not JSON")
 
 # The stop sequences an application gives the Messages API, and the stop
 # details of a refusal: its type, category and explanation.
 STOP_SEQUENCES = ["Step 2:", "END"]
 REFUSAL_DETAILS = ("refusal", None, None)
+
+# How the ValueError begins that anthropic-sdk-python's stream helper
+# raises on a tool_use block whose partial_json is not JSON.
+BROKEN_ARGUMENTS_ERROR = "Unable to parse tool parameter JSON from model."
 
 # The function tools an application gives the stream helper. With
 # "strict", the helper parses each call's arguments as JSON.
@@ -828,11 +834,46 @@ def messages_refusal(checks, smock):
                 {**MESSAGES_HELPER_DIFFERENCES, **MESSAGES_GENERATED_ID_DIFFERENCES})
 
 
+def messages_broken_arguments(checks, smock):
+    """Anthropic Messages, text, then a tool call whose arguments are not
+    JSON: create() with and without stream, which give them as written, and
+    the stream() helper, which raises ValueError on them mid-stream, as it
+    would on such a vendor stream."""
+    client = smock.anthropic()
+    call_id, call_name, arguments = MESSAGES_BROKEN_CALL
+    expected = [("text", MESSAGES_BROKEN_TEXT), ("tool_use", call_id, call_name, arguments)]
+    name = "messages-broken-arguments: create"
+    reply = messages_create(client, "messages-broken-arguments", tools=MESSAGES_TOOLS)
+    checks.equal(f"{name}: the tool_use block's input, the arguments as a string", blocks(reply), expected)
+    checks.equal(f"{name}: the stop reason", stop(reply), ("tool_use", None, None))
+
+    name = "messages-broken-arguments: create(stream=True)"
+    _, events = messages_stream(client, "messages-broken-arguments", tools=MESSAGES_TOOLS)
+    check_message_events(checks, name, events, MESSAGE_ID, "messages-broken-arguments", 0, 2)
+    checks.equal(f"{name}: the blocks, the tool_use block's partial_json joined as written",
+                 streamed_blocks(events), expected)
+
+    name = "messages-broken-arguments: stream()"
+    seen = []
+    try:
+        with client.messages.stream(model="messages-broken-arguments", max_tokens=MAX_TOKENS, messages=MESSAGES,
+                                    tools=MESSAGES_TOOLS) as stream:
+            seen.extend(stream)
+    except ValueError as error:
+        checks.check(f"{name}: raises ValueError on the arguments", str(error).startswith(BROKEN_ARGUMENTS_ERROR),
+                     f"{type(error).__name__}: {error}")
+        checks.equal(f"{name}: the text events before it, joined",
+                     "".join(event.text for event in seen if event.type == "text"), MESSAGES_BROKEN_TEXT)
+    else:
+        checks.check(f"{name}: raises ValueError on the arguments", False, "it raised no ValueError")
+
+
 # The cases, in the order they run. Each calls the Stubs it names, and a
 # case whose SDK raises unexpectedly fails without stopping the others.
 CASES = [
     chat_text, chat_tools, chat_call_only, chat_length,
     messages_text, messages_tools, messages_call_only, messages_stop_sequence, messages_refusal,
+    messages_broken_arguments,
 ]
 
 

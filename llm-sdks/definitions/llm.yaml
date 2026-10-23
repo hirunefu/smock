@@ -174,3 +174,22 @@ stubs:
         text: I can't help with that.
         usage: { input: 18, output: 7 }
         stopReason: refusal
+
+  # Anthropic Messages: text, then a tool call whose arguments are not
+  # JSON. The JSON reply sends them as a JSON string, and the stream as
+  # written, in partial_json pieces.
+  - id: messages-broken-arguments
+    mock: llm
+    request:
+      method: POST
+      path: /v1/messages
+      body: { json: { model: messages-broken-arguments } }
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        text: Let me check.
+        toolCalls:
+          - name: get_weather
+            id: toolu_sdk_broken
+            arguments: not JSON
