@@ -1,8 +1,14 @@
 ///|
 /// Encodes an HTTP/1.1 response: the status line, `headers` in the order
-/// given, a Connection field when the connection decision needs one, a
-/// Content-Length that `encode_response` sets from `body`, and then `body`.
+/// given, a Date field with `date` as its value, a Connection field when
+/// the connection decision needs one, a Content-Length that
+/// `encode_response` sets from `body`, and then `body`.
 ///
+/// - `date`, when given, is the value of the Date field, such as a
+///   `DateCache` gives it. A response whose `headers` give a Date field of
+///   their own, by a name in any case, carries that one alone, so that it
+///   never has two. Without `date`, the response has no Date field but the
+///   one `headers` may give.
 /// - `request` is the request the response answers, when one was parsed.
 ///   The connection closes after the response when `close` is true or when
 ///   `request` does not keep it open (`Request::keep_alive`); the response
@@ -39,6 +45,7 @@ pub fn encode_response(
   body : BytesView,
   request? : Request,
   close? : Bool = false,
+  date? : String,
 ) -> Bytes {
   // Every response goes through here, so it is written straight into one
   // array of its exact length, which becomes the Bytes without a copy.
@@ -46,9 +53,16 @@ pub fn encode_response(
   let connection = connection_field(keeps_open(request?, close~), request)
   let content = has_content(status)
   let with_body = writes_body(status, request)
+  let mut date = date
   let mut length = 9 + decimal_length(status) + 1 + reason.length() + 2
   for header in headers {
     length += utf8_length(header.0) + 2 + utf8_length(header.1) + 2
+    if date is Some(_) && is_name(header.0, "date") {
+      date = None
+    }
+  }
+  if date is Some(date) {
+    length += 6 + utf8_length(date) + 2
   }
   length += connection.length() + 2
   if content {
@@ -69,6 +83,11 @@ pub fn encode_response(
     at = write_utf8(out, at, header.1)
     at = write_ascii_bytes(out, at, b"\r\n")
   }
+  if date is Some(date) {
+    at = write_ascii_bytes(out, at, b"Date: ")
+    at = write_utf8(out, at, date)
+    at = write_ascii_bytes(out, at, b"\r\n")
+  }
   at = write_ascii_bytes(out, at, connection)
   if content {
     at = write_ascii_bytes(out, at, b"Content-Length: ")
@@ -80,6 +99,17 @@ pub fn encode_response(
     out.blit_from_bytesview(at, body)
   }
   out.unsafe_reinterpret_as_bytes()
+}
+
+///|
+/// Whether `headers` give a Date field, by a name in any case.
+fn gives_date(headers : ArrayView[(String, String)]) -> Bool {
+  for header in headers {
+    if is_name(header.0, "date") {
+      return true
+    }
+  }
+  false
 }
 
 ///|

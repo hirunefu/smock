@@ -140,6 +140,7 @@ async test "on SIGTERM, smock refuses new connections, closes idle ones at once,
               #|new TLS connection: refused
               #|HTTP/1.1 200 OK
               #|Smock-Mock: m; via=default
+              #|Date: <now>
               #|Connection: close
               #|Content-Length: 4
               #|
@@ -212,6 +213,7 @@ async test "a request still arriving when SIGTERM comes is answered once the res
               #|plain:
               #|HTTP/1.1 200 OK
               #|Smock-Mock: m; via=default
+              #|Date: <now>
               #|Connection: close
               #|Content-Length: 4
               #|
@@ -220,6 +222,7 @@ async test "a request still arriving when SIGTERM comes is answered once the res
               #|TLS:
               #|HTTP/1.1 200 OK
               #|Smock-Mock: m; via=default
+              #|Date: <now>
               #|Connection: close
               #|Content-Length: 4
               #|
@@ -287,6 +290,54 @@ async test "Server-Sent Event streams and delays still running when the drain ti
         #|{"level":"info","msg":"drain ended","connectionsCut":2}
       ),
     )
+  })
+}
+
+///|
+async test "a client that stops reading does not hold up the drain: with a longer write timeout, its connection is cut at the drain timeout, on the plain and the TLS port" {
+  with_definitions(big_files(), dir => {
+    with_certificates(certs => {
+      let stopped = with_smock(
+        [
+          "--dir",
+          dir,
+          "--port",
+          "0",
+          "--drain-timeout-ms",
+          "1000",
+          "--write-timeout-ms",
+          "30000",
+          ..certs.args(),
+        ],
+        smock => {
+          // Each asks for the large body and never reads, so smock's write
+          // waits on it until the drain timeout cuts it.
+          let stuck = []
+          for over in [Plain, Tls(certs)] {
+            let conn = smock.connect(over~)
+            conn.write("GET /big HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            stuck.push(conn)
+          }
+          defer stuck.each(conn => conn.close())
+          @async.sleep(settle_ms)
+          let start = @async.now()
+          smock.terminate()
+          let status = smock.exited()
+          let exited = @async.now() - start
+          inspect(
+            "exit status \{status}, once the drain timeout expired: \{exited >= 1000 && exited < 3000}",
+            content="exit status 0, once the drain timeout expired: true",
+          )
+        },
+      )
+      inspect(
+        drain_entries(stopped.logs),
+        content=(
+          #|{"level":"info","msg":"drain started","timeoutMs":1000}
+          #|{"level":"info","msg":"drain ended","connectionsCut":2}
+        ),
+      )
+    })
   })
 }
 

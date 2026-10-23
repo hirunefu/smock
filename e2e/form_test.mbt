@@ -40,12 +40,14 @@ async test "over HTTP, a form POST matches a Stub by its fields; one that fails 
         ].join("\n---\n"),
         content=(
           #|HTTP/1.1 204 No Content
+          #|Date: <now>
           #|
           #|
           #|---
           #|HTTP/1.1 404 Not Found
           #|Content-Type: application/json
           #|Smock-Near-Miss: login; failed=form:user%20name,form:remember
+          #|Date: <now>
           #|Content-Length: 27
           #|
           #|{"error":"no Stub matched"}
@@ -53,6 +55,7 @@ async test "over HTTP, a form POST matches a Stub by its fields; one that fails 
           #|HTTP/1.1 404 Not Found
           #|Content-Type: application/json
           #|Smock-Near-Miss: login; failed=form:user%20name,form:remember
+          #|Date: <now>
           #|Content-Length: 27
           #|
           #|{"error":"no Stub matched"}

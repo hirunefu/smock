@@ -26,13 +26,19 @@ REFERENCE = "## For reference: steps above the target rate"
 
 
 def step(profile="small", case="http-keep-alive", rate=1000, p99=10.0, p99_9=20.0, errors=0, late=False,
-         cpu_limit="250m", memory_limit="512Mi", smock_ready=True, requests=None):
+         cpu_limit="250m", memory_limit="512Mi", smock_ready=True, requests=None, others=None, wait=None):
     """One step of a summary: a case under a profile at a rate, with these
     latencies (ms), failed requests, whether the load generator fell
-    behind, and the requests it scheduled (20 seconds' worth unless
-    given)."""
+    behind, the requests it scheduled (20 seconds' worth unless given),
+    and, when given, what other tasks used of smock's CPUs (others) and
+    how long smock waited for a CPU (wait, s), both in the measured
+    window, which a run from before they were recorded does not have."""
     scheduled = rate * 20 if requests is None else requests
+    recorded = {} if others is None else {"other_tasks": others}
+    if wait is not None:
+        recorded["smock_cpu"] = {"scheduling_delay_s": 0.9, "window": {"wall_s": 20.0, "scheduling_delay_s": wait}}
     return {
+        **recorded,
         "id": f"{case}@{profile}@{rate}", "case": case, "profile": profile, "cpu_limit": cpu_limit,
         "memory_limit": memory_limit, "rate": rate, "achieved_rate": (scheduled - errors) / 20, "errors": errors,
         "latency_ms": {"p50": 1.0, "p90": 1.5, "p99": p99, "p99_9": p99_9, "max": 30.0},
@@ -42,6 +48,14 @@ def step(profile="small", case="http-keep-alive", rate=1000, p99=10.0, p99_9=20.
         "memory": {"peak_bytes": None, "oom_kills": 0},
         "smock_ready": smock_ready,
     }
+
+
+def other_tasks(share):
+    """What other tasks used of smock's two CPUs in a step's 20 s window, as
+    a local run records it: `share` of the CPUs' time, which disturbs smock
+    from 1%."""
+    return {"cpus": [4, 5], "window_s": 20.0, "cpu_s": round(share * 40, 4), "share": share,
+            "disturbed": share >= 0.01}
 
 
 def capacity(profile="small", rate=1000, case="http-keep-alive"):
@@ -152,6 +166,94 @@ class Regressions(Comparison):
         self.assertEqual(not_ready["Verdict"], "regression: smock was not ready in the newer run")
         self.assertEqual(not_ready["p99 ms"], "10.0 → -")
         self.assertIn("2 regressions", report)
+
+
+class Disturbed(Comparison):
+    """A step is disturbed when other tasks used at least 1% of smock's CPUs'
+    time in its measured window, in either run: its latencies may be the
+    machine's rather than smock's. The comparison names it, and a regression
+    there still fails it, labelled as disturbed."""
+
+    def test_a_regression_at_a_step_disturbed_in_the_newer_run_still_fails_and_says_it_was_disturbed(self):
+        older = self.summary([step(rate=1000, others=other_tasks(0.001)), step(rate=2000, others=other_tasks(0.001))])
+        newer = self.summary([step(rate=1000, p99=12.5, others=other_tasks(0.03)),
+                              step(rate=2000, p99=12.5, others=other_tasks(0.002))])
+        status, report = self.compare(older, newer)
+        self.assertEqual(status, 1, report)
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 1000)["Verdict"],
+                         "regression (disturbed: other tasks used 3.00% of smock's CPUs in the newer run)")
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 2000)["Verdict"], "regression")
+        self.assertIn("**Result:** 2 regressions (1 at a disturbed step), no target missed.", report)
+
+    def test_a_step_disturbed_in_either_run_or_both_is_named_whatever_its_verdict(self):
+        older = self.arm64_summary([step(rate=1000, others=other_tasks(0.021)),
+                                    step(rate=2000, others=other_tasks(0.06)),
+                                    step(rate=4000, others=other_tasks(0.0099))])
+        newer = self.arm64_summary([step(rate=1000, others=other_tasks(0.001)),
+                                    step(rate=2000, others=other_tasks(0.01)),
+                                    step(rate=4000, p99=12.5, others=other_tasks(0.03))])
+        # Above the target rate, at 4,000 requests/s, the step is for
+        # reference only.
+        status, report = self.compare(older, newer, profiles=[capacity(rate=2000)])
+        self.assertEqual(status, 0, report)
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 1000)["Verdict"],
+                         "ok (disturbed: other tasks used 2.10% of smock's CPUs in the older run)")
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 2000)["Verdict"],
+                         "ok (disturbed: other tasks used 6.00% of smock's CPUs in the older run and 1.00% in the "
+                         "newer)")
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 4000, heading=REFERENCE)["Verdict"],
+                         "worse (disturbed: other tasks used 3.00% of smock's CPUs in the newer run)")
+        self.assertIn("**Result:** No regression, no target missed.", report)
+
+    def test_a_disturbed_step_says_how_long_smock_waited_for_a_cpu_in_its_window_in_each_run(self):
+        # The quiet and the disturbed step of #58's check on one CPU.
+        older = self.summary([step(rate=1000, others=other_tasks(0.002), wait=0.046),
+                              step(rate=2000, others=other_tasks(0.002), wait=0.05)])
+        newer = self.summary([step(rate=1000, p99=12.5, others=other_tasks(0.0733), wait=0.313),
+                              step(rate=2000, others=other_tasks(0.002), wait=0.05)])
+        status, report = self.compare(older, newer)
+        self.assertEqual(status, 1, report)
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 1000)["Verdict"],
+                         "regression (disturbed: other tasks used 7.33% of smock's CPUs in the newer run; CPU wait "
+                         "0.046 s → 0.313 s)")
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 2000)["Verdict"], "ok")
+        self.assertIn("The verdict of a disturbed step also says how long smock waited for a CPU in its window in "
+                      "each run, where both recorded it (*CPU wait*, which includes the time the CPU limit held "
+                      "smock back).", report)
+        # A run from before the window's wait was recorded has none to show.
+        older = self.summary([step(rate=1000, others=other_tasks(0.002))])
+        status, report = self.compare(older, newer)
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 1000)["Verdict"],
+                         "regression (disturbed: other tasks used 7.33% of smock's CPUs in the newer run)")
+
+    def test_the_report_says_when_a_step_is_disturbed(self):
+        recorded = self.summary([step(others=other_tasks(0.001))])
+        _, report = self.compare(recorded, recorded)
+        self.assertIn("A step is disturbed when other tasks used at least 1% of smock's CPUs' time in its measured "
+                      "window, in either run: its latencies may then be the machine's rather than smock's. A "
+                      "regression there still counts; rerun its profile before looking for the cause in smock.",
+                      report)
+
+    def test_a_run_that_did_not_record_other_tasks_is_compared_as_before_and_said_not_to_have_them(self):
+        # The older run is from before other tasks were recorded.
+        older = self.summary([step(rate=1000), step(rate=2000)])
+        newer = self.summary([step(rate=1000, p99=12.5, others=other_tasks(0.03)),
+                              step(rate=2000, p99=12.5, others=other_tasks(0.001))])
+        status, report = self.compare(older, newer)
+        self.assertEqual(status, 1, report)
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 1000)["Verdict"],
+                         "regression (disturbed: other tasks used 3.00% of smock's CPUs in the newer run)")
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 2000)["Verdict"], "regression")
+        self.assertIn("What other tasks used of smock's CPUs was not recorded in the older run (a run from before "
+                      "it was, or on GKE): whether they disturbed its steps is not known.", report)
+        # A GKE run records none: no step is known to be disturbed.
+        gke = self.summary([{**step(rate=1000), "other_tasks": None}])
+        status, report = self.compare(gke, self.summary([{**step(rate=1000, p99=12.5), "other_tasks": None}]))
+        self.assertEqual(status, 1, report)
+        self.assertEqual(self.row(report, "small", "http-keep-alive", 1000)["Verdict"], "regression")
+        self.assertIn("What other tasks used of smock's CPUs was not recorded in either run (runs from before it "
+                      "was, or on GKE): whether they disturbed a step is not known.", report)
+        self.assertNotIn("A step is disturbed when", report)
 
 
 class CountedSteps(Comparison):

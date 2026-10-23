@@ -218,6 +218,7 @@ exits with status 2. `smock serve --help` lists the settings:
 | `--body-limit` | `SMOCK_BODY_LIMIT` | 10485760 bytes (10 MiB): longer bodies get 413 |
 | `--read-timeout-ms` | `SMOCK_READ_TIMEOUT_MS` | 30000: a request must arrive whole within 30 s of its first byte, or, when it was pipelined behind a response, of that response |
 | `--idle-timeout-ms` | `SMOCK_IDLE_TIMEOUT_MS` | 60000: a connection that waits 60 s for a request closes |
+| `--write-timeout-ms` | `SMOCK_WRITE_TIMEOUT_MS` | 30000: a connection closes when a write to it makes no progress for 30 s, as when the client stops reading |
 | `--drain-timeout-ms` | `SMOCK_DRAIN_TIMEOUT_MS` | 20000: how long smock drains after SIGTERM before it cuts what is still running |
 | `--seed` | `SMOCK_SEED` | none: smock picks the seed of its random generator, from 0 to 9007199254740991, and logs it ([Faults](docs/definition-files.md#seeds)) |
 | `--journal` | `SMOCK_JOURNAL` | `on`: requests are recorded in the [Journal](#the-journal); `off` records none |
@@ -227,8 +228,19 @@ exits with status 2. `smock serve --help` lists the settings:
 | `--state-max-bytes` | `SMOCK_STATE_MAX_BYTES` | an eighth of smock's memory limit (cgroup v2 `memory.max`), at least 1048576 bytes (1 MiB) and at most 67108864 (64 MiB); 64 MiB without a limit ([The state bound](docs/definition-files.md#the-state-bound)): the most bytes the per-Session state of the whole process takes; a request or an Admin API set whose writes would pass it gets 507 |
 
 A request over a limit gets its status with `Connection: close`, then the
-connection closes; a timeout closes the connection without a response.
-Neither is logged.
+connection closes; a timeout, read, idle or write, closes the connection
+without a response. None is logged.
+
+The write timeout runs only while a write waits on the client to take its
+bytes, on every port and for every write: a response, whole or in part,
+each event of a stream, a `100 Continue`, a rejection and an Admin API
+reply. It starts again each time the write goes on, so a client that reads
+slowly but steadily gets the whole response, however long it takes in all.
+A write goes on once the client has read enough to free room in the
+socket's send buffer: about a third of it, on Linux. On the TLS port, it
+goes on a whole TLS record, up to 16 KiB, at a time. smock's own waits,
+such as a delay or the time between the events of a stream, do not count.
+smock sends no `close_notify` on a TLS connection the write timeout closes.
 
 Known limitation: after answering a request with 400, 413, 431, 501 or 505,
 smock closes the connection without reading the rest of the request. A
@@ -524,6 +536,11 @@ describes Hosts and the Default Mock.
 A request that no Stub matches gets the Mock's no-match response, with a
 `Smock-Near-Miss` header naming the closest Stub and the conditions it
 failed, such as `Smock-Near-Miss: get-user; failed=method`.
+
+Every final response smock sends, on every port, carries a `Date` header
+with the current time, such as `Date: Thu, 22 Oct 2026 14:37:10 GMT`. A
+Stub that gives its own `Date` gets that one instead. The interim
+`100 Continue` carries none.
 
 `smock check defs` validates a definitions directory the way `smock serve`
 loads it: it prints every problem, one per line with the file and a JSON
@@ -987,9 +1004,14 @@ cosign verify ghcr.io/hirunefu/smock:<version> \
 The image of each architecture has an SPDX SBOM, attached as a signed
 attestation. It lists the packages of the distroless base and smock itself:
 the binary with the release's version, the commit and MoonBit toolchain it
-was built from, the MoonBit modules compiled into it, and its dynamic link
-to the base's OpenSSL. To verify the SBOM of the linux/arm64 image and save
-it as `smock.spdx.json` (use `amd64` for linux/amd64):
+was built from, the MoonBit modules compiled into it, the MoonBit native
+runtime, mimalloc and simdutf, which come with the toolchain and are linked
+into it, and its dynamic link to the base's OpenSSL. The runtime, mimalloc
+and simdutf have the licences that [NOTICE](NOTICE) gives them. The runtime
+has the toolchain's version and mimalloc the one NOTICE gives; simdutf's is
+`NOASSERTION`, since the toolchain does not record it. To verify the SBOM
+of the linux/arm64 image and save it as `smock.spdx.json` (use `amd64` for
+linux/amd64):
 
 ```sh
 digest=$(docker buildx imagetools inspect --raw ghcr.io/hirunefu/smock:<version> |
@@ -1004,7 +1026,25 @@ The same `cosign verify` flags verify that architecture's signature with
 `"ghcr.io/hirunefu/smock@$digest"`. The GitHub release also has the SBOMs as
 files, `smock-<version>-linux-<arch>.spdx.json`.
 `scripts/verify-image.sh ghcr.io/hirunefu/smock:<version>` runs all of these
-checks.
+checks. The SBOMs of 0.3.0 and earlier releases do not list the runtime,
+mimalloc and simdutf, so check an image of 0.3.0 or earlier with the script
+from its own tag, such as `git show v0.3.0:scripts/verify-image.sh`.
+
+### Verify the Helm chart
+
+The Helm chart is signed the same way, with cosign and without a key: the
+signature's certificate names the release workflow at the release's tag.
+Verify it with cosign 3 or later, naming the chart without `oci://`:
+
+```sh
+cosign verify ghcr.io/hirunefu/charts/smock:<version> \
+  --certificate-identity https://github.com/hirunefu/smock/.github/workflows/release.yml@refs/tags/v<version> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+The release workflow runs the same check with
+`scripts/verify-chart.sh ghcr.io/hirunefu/charts/smock:<version>`. The
+charts of 0.3.0 and earlier releases are not signed.
 
 ### Release binaries
 
@@ -1020,7 +1060,8 @@ was built with, which `smock --version` also prints.
 ### Making a release
 
 [docs/releasing.md](docs/releasing.md) describes how a release is made and
-published, for the maintainer.
+published, for the maintainer, and which dependencies Dependabot keeps up
+to date.
 
 ## Toolchain
 
@@ -1047,6 +1088,8 @@ scripts/check-openapi.sh       # the Admin API document is valid OpenAPI 3.1
 docker build --tag smock:dev .
 scripts/smoke-test-image.sh smock:dev 0.0.0-dev <commit> "moonc <version>"   # the container image
 scripts/check-release-workflow.sh    # the release workflow publishes only for tags (needs yq and jq)
+scripts/test-release-notes.sh        # the release notes, with CHANGELOG.md's links at the release's tag
+scripts/test-sbom.sh                 # the SBOM scripts, and the check that the SBOM and NOTICE agree (needs jq)
 scripts/check-benchmark-workflow.sh  # the benchmark workflow runs only by hand (needs yq and jq)
 scripts/check-ci-artifacts.sh        # CI keeps the release binary of each architecture (needs yq and jq)
 scripts/test-helm-chart.sh           # rendering tests of the Helm chart (needs helm, yq and jq)

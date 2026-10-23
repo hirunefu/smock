@@ -36,7 +36,8 @@ let faults : String =
 
 ///|
 /// Every byte smock sends on `conn` until it closes the connection with a
-/// FIN, with `\r\n` shown as `\n`. A reset fails the test.
+/// FIN, with `\r\n` shown as `\n` and the current Date masked
+/// (`mask_date`). A reset fails the test.
 async fn read_to_end(conn : Conn) -> String {
   let received = @buffer.Buffer()
   let result = @async.with_timeout_opt(patience_ms, () => {
@@ -45,7 +46,9 @@ async fn read_to_end(conn : Conn) -> String {
     }
   })
   guard result is Some(_) else { fail("the connection stayed open") }
-  @utf8.decode_lossy(received.to_bytes()).replace_all(old="\r\n", new="\n")
+  mask_date(
+    @utf8.decode_lossy(received.to_bytes()).replace_all(old="\r\n", new="\n"),
+  )
 }
 
 ///|
@@ -80,12 +83,14 @@ async test "a delay holds back the status line, while smock keeps answering othe
           #|---
           #|HTTP/1.1 200 OK
           #|Smock-Mock: m; via=default
+          #|Date: <now>
           #|Content-Length: 4
           #|
           #|fast
           #|---
           #|HTTP/1.1 200 OK
           #|Smock-Mock: m; via=default
+          #|Date: <now>
           #|Content-Length: 4
           #|
           #|slow
@@ -229,7 +234,10 @@ async test "a reset Fault with a probability resets only the requests its seeded
           match ending {
             "an RST" if received.length() == 0 => "reset"
             "a FIN" =>
-              @utf8.decode_lossy(received).replace_all(old="\r\n", new=" | ")
+              mask_date(@utf8.decode_lossy(received)).replace_all(
+                old="\r\n",
+                new=" | ",
+              )
             _ => "\{received.length()} bytes, then \{ending}"
           },
         )
@@ -239,14 +247,14 @@ async test "a reset Fault with a probability resets only the requests its seeded
       inspect(
         out.join("\n"),
         content=(
-          #|HTTP/1.1 200 OK | Smock-Mock: m; via=default | Connection: close | Content-Length: 8 |  | answered
+          #|HTTP/1.1 200 OK | Smock-Mock: m; via=default | Date: <now> | Connection: close | Content-Length: 8 |  | answered
           #|reset
           #|reset
-          #|HTTP/1.1 200 OK | Smock-Mock: m; via=default | Connection: close | Content-Length: 8 |  | answered
+          #|HTTP/1.1 200 OK | Smock-Mock: m; via=default | Date: <now> | Connection: close | Content-Length: 8 |  | answered
           #|reset
           #|reset
-          #|HTTP/1.1 200 OK | Smock-Mock: m; via=default | Connection: close | Content-Length: 8 |  | answered
-          #|HTTP/1.1 200 OK | Smock-Mock: m; via=default | Connection: close | Content-Length: 8 |  | answered
+          #|HTTP/1.1 200 OK | Smock-Mock: m; via=default | Date: <now> | Connection: close | Content-Length: 8 |  | answered
+          #|HTTP/1.1 200 OK | Smock-Mock: m; via=default | Date: <now> | Connection: close | Content-Length: 8 |  | answered
           #|reset
           #|reset
           #|reset
@@ -269,6 +277,7 @@ async test "a partial Fault sends the status line, the headers and the first hal
         #|HTTP/1.1 200 OK
         #|Content-Type: text/plain
         #|Smock-Mock: m; via=default
+        #|Date: <now>
         #|Content-Length: 10
         #|
         #|01234
@@ -298,6 +307,7 @@ async test "a partial Fault on Server-Sent Events sends the head and the first h
           #|HTTP/1.1 200 OK
           #|Content-Type: text/event-stream
           #|Smock-Mock: m; via=default
+          #|Date: <now>
           #|Transfer-Encoding: chunked
           #|
           #|b
@@ -340,17 +350,20 @@ async test "a partial Fault on a response without body bytes cuts its head short
         #|GET /empty:
         #|HTTP/1.1 200 OK
         #|Smock-Mock: m; via=default
+        #|Date: <now>
         #|Content-Length: 0
         #|---
         #|HEAD /text:
         #|HTTP/1.1 200 OK
         #|Smock-Mock: m; via=default
+        #|Date: <now>
         #|Content-Length: 10
         #|---
         #|HEAD /ticks:
         #|HTTP/1.1 200 OK
         #|Content-Type: text/event-stream
         #|Smock-Mock: m; via=default
+        #|Date: <now>
         #|Transfer-Encoding: chunked
         #|
       ),

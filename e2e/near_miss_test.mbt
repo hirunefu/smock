@@ -24,6 +24,7 @@ async test "an unmatched request gets the Smock-Near-Miss header over HTTP, and 
         ].join("\n---\n"),
         content=(
           #|HTTP/1.1 200 OK
+          #|Date: <now>
           #|Content-Length: 6
           #|
           #|a user
@@ -31,6 +32,7 @@ async test "an unmatched request gets the Smock-Near-Miss header over HTTP, and 
           #|HTTP/1.1 404 Not Found
           #|Content-Type: application/json
           #|Smock-Near-Miss: get-user; failed=method,header:x-api-key
+          #|Date: <now>
           #|Content-Length: 27
           #|
           #|{"error":"no Stub matched"}
@@ -38,6 +40,7 @@ async test "an unmatched request gets the Smock-Near-Miss header over HTTP, and 
           #|HTTP/1.1 404 Not Found
           #|Content-Type: application/json
           #|Smock-Near-Miss: create-user; failed=query:dry,body
+          #|Date: <now>
           #|Content-Length: 27
           #|
           #|{"error":"no Stub matched"}
@@ -65,6 +68,7 @@ async test "over HTTP, a second payment that only the Scenario state stops gets 
         ].join("\n---\n"),
         content=(
           #|HTTP/1.1 200 OK
+          #|Date: <now>
           #|Content-Length: 4
           #|
           #|paid
@@ -72,6 +76,7 @@ async test "over HTTP, a second payment that only the Scenario state stops gets 
           #|HTTP/1.1 404 Not Found
           #|Content-Type: application/json
           #|Smock-Near-Miss: pay; failed=scenario:check%20out
+          #|Date: <now>
           #|Content-Length: 27
           #|
           #|{"error":"no Stub matched"}

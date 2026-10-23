@@ -16,13 +16,14 @@ Pushing a tag `v<major>.<minor>.<patch>` (or
 building for its own architecture without emulation, it builds smock with
 the toolchain in `.moonbit-version`, builds the image and runs
 `scripts/smoke-test-image.sh` on it. Only then does it push, combine, sign
-and attest the image, verify it with `scripts/verify-image.sh`, push the
-Helm chart packaged by `scripts/package-helm-chart.sh`, and create the
-GitHub release with notes from `scripts/release-notes.sh`. It never runs
-on pull requests. Started by hand from the Actions tab, it builds and
-smoke-tests everything and keeps the binaries, images, chart and notes as
-workflow artifacts, but publishes nothing. `scripts/check-release-workflow.sh`,
-run in CI, checks those rules.
+and attest the image, verify it with `scripts/verify-image.sh`, push and
+sign the Helm chart packaged by `scripts/package-helm-chart.sh`, verify it
+with `scripts/verify-chart.sh`, and create the GitHub release with notes
+from `scripts/release-notes.sh`. It never runs on pull requests. Started
+by hand from the Actions tab, it builds and smoke-tests everything and
+keeps the binaries, images, chart and notes as workflow artifacts, but
+publishes nothing. `scripts/check-release-workflow.sh`, run in CI, checks
+those rules.
 
 The tag names the version. Keep the `version` in `moon.mod` the same.
 
@@ -100,7 +101,9 @@ version.
 In [CHANGELOG.md](../CHANGELOG.md), move the entries under
 `## [Unreleased]` to a new section `## [<version>] - <date>` below it,
 leave `## [Unreleased]` empty, and update the links at the end. The
-release notes include that section under "Changes".
+release notes include that section under "Changes", with each relative
+link to a file of the repository turned into a link to the file at the
+release's tag. Keep such links relative in CHANGELOG.md.
 `scripts/release-notes.sh` fails the release workflow, before anything is
 built, when a tag that is not a pre-release has no section of its own. A
 pre-release tag, such as `v<version>-rc.1`, takes its own section if there
@@ -109,10 +112,86 @@ is one, else the section of `<version>`, else `Unreleased`.
 When `.moonbit-version` or the imports in `moon.mod` changed since the
 last release, check that [NOTICE](../NOTICE) still names what the binary
 holds, with the right versions. The release workflow fails when NOTICE
-does not name the toolchain or a module of `moon.mod` with its version;
-the runtime, mimalloc and simdutf come with the toolchain and are checked
-by hand.
+does not name the toolchain or a module of `moon.mod` with its version.
+The runtime, mimalloc and simdutf come with the toolchain. The image's
+SBOM takes their licences and mimalloc's version from NOTICE, and CI fails
+when the SBOM and NOTICE disagree, or when NOTICE names another toolchain
+than `.moonbit-version` (`scripts/check-sbom-notice.sh`). Nothing reads
+mimalloc's version from the toolchain, so check it by hand after a
+toolchain update. mimalloc's `mi_version` returns it as one number, 217
+for 2.1.7, which this shows:
+
+```sh
+objdump -d --disassemble=mi_version ~/.moon/lib/libmoonbitrun.o
+```
 
 Then push the tag `v<version>`. A pre-release tag, such as
 `v<version>-rc.1`, tries the publishing path first. The packages stay
 public, so nothing else needs doing in their settings.
+
+## Dependency updates
+
+Dependabot (`.github/dependabot.yml`) looks for updates every Monday and
+proposes them as pull requests into `main`, one for each kind: one with
+every update of the GitHub Actions that the workflows and the composite
+actions under `.github/actions/` use, and one with the update of the
+image's distroless base in `Dockerfile`.
+
+- An action pinned by commit SHA, such as `sigstore/cosign-installer`,
+  stays pinned by SHA, and its `# v<version>` comment moves with it, so
+  the pull request names the version it moves to. An action pinned by its
+  major tag, such as `actions/checkout@v5`, moves to the next major tag
+  once there is one.
+- The base stays pinned by the digest of its multi-architecture index,
+  under its tag `nonroot`, and only the digest moves. Dependabot never
+  moves to another image, such as the base of the next Debian release:
+  make that change by hand.
+
+These pull requests run CI like any other. On both architectures it
+builds and tests smock, builds the image, smoke-tests it, makes its SBOM
+and installs the Helm chart on kind. Merge them into `main` when CI is
+green, without the runs of [Before merging into main](merging-into-main.md).
+A new base brings a new glibc and OpenSSL, which smock uses for TLS, into
+the next release's image. It changes neither the binary nor the local
+benchmark, which uses the host's libraries. Such updates are mostly
+security fixes, so they do not wait for a pre-merge run. The next
+pre-merge run on GKE builds smock's image on the new base, and so
+measures it.
+
+CI does not run every action. `sigstore/cosign-installer` and
+`actions/download-artifact` run only in the release workflow's
+publishing jobs, for a pushed tag: after either moved, make the next
+release a pre-release first. `actions/upload-pages-artifact` and
+`actions/deploy-pages` run when a Schema changes on `main`: after either
+moved, run `.github/workflows/schema-pages.yml` by hand, which publishes
+the same Schemas again.
+
+### What Dependabot does not cover
+
+- **The MoonBit toolchain** in `.moonbit-version`. The weekly Latest
+  MoonBit workflow (`.github/workflows/latest-toolchain.yml`) builds and
+  tests with the latest stable toolchain, and opens an issue when that
+  fails. The maintainer moves the pin by hand.
+- **The MoonBit modules** imported in `moon.mod`. The maintainer moves
+  them by hand, and checks NOTICE as
+  [Every release after](#every-release-after) says.
+- **The cosign and syft versions**, which the workflows pass to the
+  actions that install them: cosign's once, as `COSIGN_RELEASE` in
+  `release.yml`'s `env`, which the image's and the chart's jobs both
+  pass as `cosign-release`, and syft's as `syft-version` (`release.yml`
+  and `build-test.yml`). Dependabot moves the actions, not these inputs.
+  The maintainer moves them by hand: when Dependabot moves
+  `sigstore/cosign-installer` or `anchore/sbom-action`, check whether
+  cosign or syft has a newer release too.
+- **The load generator's image** of the GKE benchmark,
+  `bench/gke/generator.Dockerfile` (`python:3.13-slim`), on purpose. It
+  is not shipped, and a new base between two pre-merge runs on GKE would
+  be one more difference between runs that should compare. The
+  maintainer moves it by hand, knowing that the next comparison then
+  differs by it too.
+- **The tools that scripts install at pinned versions**: oha
+  (`scripts/install-oha.sh`, whose version the benchmark's plans name
+  too), helm, kubectl and kind (`scripts/install-kubernetes-tools.sh`),
+  kind's node image (`scripts/test-helm-chart-on-kind.sh`) and
+  check-jsonschema (`scripts/check-schema.sh`). The maintainer moves them
+  by hand.

@@ -218,6 +218,7 @@ async test "an Ephemeral Stub may give a header an array: it is added and listed
           #|Set-Cookie: a=1
           #|Set-Cookie: b=2
           #|Smock-Mock: users; via=default
+          #|Date: <now>
           #|Content-Length: 2
           #|
           #|ok

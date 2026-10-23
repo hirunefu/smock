@@ -880,7 +880,8 @@ of most unmatched requests. Declare it after the Mock's other Stubs
 ([Responses](#responses)), and cannot give `Content-Type` or
 `Smock-Near-Miss` either, as smock sets them on this response. smock sends
 the headers as written, never as templates, after `Content-Type` and
-before `Smock-Near-Miss` and `Smock-Mock`. A request for a Host that no
+before `Smock-Near-Miss` and `Smock-Mock`. A `Date` given here replaces
+the one smock sends, as a Stub's does. A request for a Host that no
 Mock answers gets none of them.
 
 ### Turning the Journal off for a Mock
@@ -922,6 +923,12 @@ ends a value. Write a value that has one, such as a cookie's `Expires`,
 in block style or in quotes. smock sets `Content-Length` from the body;
 `Content-Length`, `Transfer-Encoding` and `Connection` cannot be given,
 nor can `Smock-Mock`, which smock adds when the Default Mock answers.
+
+smock sends a `Date` header with the current time on every final
+response, such as `Date: Thu, 22 Oct 2026 14:37:10 GMT`, and none on an
+interim `100 Continue`. A Stub may give its own `Date`,
+in any case, such as a fixed one for testing a client's caching. smock
+then sends that one as written and adds none.
 
 The body is either inline, as text in UTF-8:
 

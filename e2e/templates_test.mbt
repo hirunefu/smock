@@ -159,6 +159,7 @@ async test "a templated stream reaches the client with a templated line break as
           #|Content-Type: text/event-stream
           #|Cache-Control: no-cache
           #|Smock-Mock: market; via=default
+          #|Date: <now>
           #|Transfer-Encoding: chunked
           #|event: price
           #|id: 1
@@ -170,6 +171,7 @@ async test "a templated stream reaches the client with a templated line break as
           #|Content-Type: text/html
           #|X-Name: <b>Ann</b>
           #|Smock-Mock: market; via=default
+          #|Date: <now>
           #|Content-Length: 37
           #|
           #|<p>Hello, &lt;b&gt;Ann&lt;/b&gt;</p>
@@ -177,6 +179,7 @@ async test "a templated stream reaches the client with a templated line break as
           #|500 Internal Server Error
           #|Content-Type: application/json
           #|Smock-Mock: market; via=default
+          #|Date: <now>
           #|Content-Length: 111
           #|
           #|{"error":"template failed","stub":"greeting","at":"/response/headers/X-Name","message":"query.name is missing"}

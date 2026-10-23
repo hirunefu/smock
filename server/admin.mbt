@@ -28,6 +28,9 @@ priv struct Admin {
   /// Where calls carry the calling Session, as requests to the Mocks
   /// carry theirs.
   sessions : SessionCarrier
+  /// The value of the Date field of every response the process writes, on
+  /// every port.
+  dates : @http1.DateCache
 }
 
 ///|
@@ -138,6 +141,7 @@ fn route(
 /// - `replica` is the replica's name, such as the Pod's hostname.
 /// - `replicas` is how many replicas the deployment runs.
 /// - `sessions` says where calls carry the calling Session.
+/// - `dates` gives the Date field of every response of the process.
 fn Admin::new(
   lifecycle : Lifecycle,
   build : @buildinfo.BuildInfo,
@@ -150,6 +154,7 @@ fn Admin::new(
   replica~ : String,
   replicas~ : Int,
   sessions~ : SessionCarrier,
+  dates~ : @http1.DateCache,
 ) -> Admin {
   let replica = @engine.header_safe(replica)
   {
@@ -164,6 +169,7 @@ fn Admin::new(
     replica,
     warnings: Json(@engine.admin_warnings(replicas~, replica~)),
     sessions,
+    dates,
   }
 }
 
@@ -174,9 +180,9 @@ async fn Admin::respond(self : Admin, request : @http1.Request) -> Bytes {
 }
 
 ///|
-/// `reply` encoded, with the replica's name in `Smock-Replica` first, as
-/// the answer to `request` when one was parsed. With `close`, it says
-/// `Connection: close`.
+/// `reply` encoded, with the replica's name in `Smock-Replica` first and
+/// the current Date, as the answer to `request` when one was parsed. With
+/// `close`, it says `Connection: close`.
 fn Admin::encode(
   self : Admin,
   reply : Reply,
@@ -189,6 +195,7 @@ fn Admin::encode(
     reply.body,
     request?,
     close~,
+    date=self.dates.at(@async.now()),
   )
 }
 

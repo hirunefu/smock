@@ -38,6 +38,7 @@ async test "over HTTP, an xml condition matches a SOAP request whatever its pref
         ].join("\n---\n"),
         content=(
           #|HTTP/1.1 200 OK
+          #|Date: <now>
           #|Content-Length: 7
           #|
           #|user 42
@@ -45,6 +46,7 @@ async test "over HTTP, an xml condition matches a SOAP request whatever its pref
           #|HTTP/1.1 404 Not Found
           #|Content-Type: application/json
           #|Smock-Near-Miss: get-user; failed=xml:%2FEnvelope%2FBody%2FGetUser%2Fid,xml:%2FEnvelope%2FBody%2FGetUser%2F%40lang
+          #|Date: <now>
           #|Content-Length: 27
           #|
           #|{"error":"no Stub matched"}

@@ -15,11 +15,22 @@ jobs:
       toolchain: pinned
 
   release-workflow:
-    name: Check that the release workflow publishes only for tags
+    name: Check the release workflow and test its release notes
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - run: scripts/check-release-workflow.sh
+      - run: scripts/test-release-notes.sh
+
+  # build-test.yml makes and checks the SBOM of the image it builds. This
+  # tests the scripts that do so on small SBOMs, also where the SBOM and
+  # NOTICE disagree.
+  sbom-scripts:
+    name: Test the SBOM scripts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - run: scripts/test-sbom.sh
 
   # The benchmark itself runs only by hand (benchmark.yml); this checks its
   # files. Its request mix and definitions are checked against smock by the

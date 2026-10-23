@@ -38,6 +38,7 @@ async test "a browser's cross-origin list and read of a CRUD Stub get the CORS h
           #|Access-Control-Allow-Origin: *
           #|Access-Control-Expose-Headers: X-Total-Count, X-Filtered-Count
           #|Smock-Mock: shop; via=default
+          #|Date: <now>
           #|Content-Length: 85
           #|
           #|[{"id":1001,"status":"paid","total":12.5},{"id":1002,"status":"pending","total":9.9}]
@@ -47,6 +48,7 @@ async test "a browser's cross-origin list and read of a CRUD Stub get the CORS h
           #|Access-Control-Allow-Origin: *
           #|Access-Control-Expose-Headers: X-Total-Count, X-Filtered-Count
           #|Smock-Mock: shop; via=default
+          #|Date: <now>
           #|Content-Length: 42
           #|
           #|{"id":1002,"status":"pending","total":9.9}
@@ -56,6 +58,7 @@ async test "a browser's cross-origin list and read of a CRUD Stub get the CORS h
           #|Access-Control-Allow-Origin: *
           #|Access-Control-Expose-Headers: X-Total-Count, X-Filtered-Count
           #|Smock-Mock: shop; via=default
+          #|Date: <now>
           #|Content-Length: 62
           #|
           #|{"error":"no item with this key","stub":"orders","key":"9999"}
@@ -167,6 +170,7 @@ async test "smock check warns about an override placed after a CRUD Stub and sti
           #|Content-Type: application/json
           #|Smock-Near-Miss: orders; failed=method
           #|Smock-Mock: shop; via=default
+          #|Date: <now>
           #|Content-Length: 27
           #|
           #|{"error":"no Stub matched"}
@@ -285,6 +289,7 @@ async test "the spec's example over real sockets: a Session creates an order, li
           #|Location: /api/v1/orders/1004
           #|Access-Control-Allow-Origin: *
           #|Smock-Mock: shop; via=default
+          #|Date: <now>
           #|Content-Length: 46
           #|
           #|{"customerId":42,"status":"pending","id":1004}
@@ -295,6 +300,7 @@ async test "the spec's example over real sockets: a Session creates an order, li
           #|X-Filtered-Count: 3
           #|Access-Control-Allow-Origin: *
           #|Smock-Mock: shop; via=default
+          #|Date: <now>
           #|Content-Length: 165
           #|
           #|[{"customerId":42,"status":"pending","id":1004},{"id":1003,"customerId":42,"status":"pending","total":30},{"id":1002,"customerId":42,"status":"pending","total":9.9}]
@@ -302,6 +308,7 @@ async test "the spec's example over real sockets: a Session creates an order, li
           #|HTTP/1.1 200 OK
           #|Content-Type: application/json
           #|Smock-Mock: shop; via=default
+          #|Date: <now>
           #|Content-Length: 79
           #|
           #|{"customerId":42,"status":"paid","id":1004,"paidAt":"<now()>"}
@@ -312,6 +319,7 @@ async test "the spec's example over real sockets: a Session creates an order, li
           #|X-Filtered-Count: 3
           #|Access-Control-Allow-Origin: *
           #|Smock-Mock: shop; via=default
+          #|Date: <now>
           #|Content-Length: 174
           #|
           #|[{"id":1001,"customerId":7,"status":"paid","total":12.5},{"id":1002,"customerId":42,"status":"pending","total":9.9},{"id":1003,"customerId":42,"status":"pending","total":30}]
