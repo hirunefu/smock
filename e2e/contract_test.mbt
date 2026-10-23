@@ -459,6 +459,19 @@ fn Contract::validate(
             "\{at}: \{describe(value)} matches a schema it must not",
           )
         }
+      // `then` applies where `if` holds, and `else` where it does not.
+      ("if", _) => {
+        let branch = if self.passes(sub(argument), value) {
+          "then"
+        } else {
+          "else"
+        }
+        if members.get(branch) is Some(schema) {
+          self.validate(sub(schema), value, at, problems)
+        }
+      }
+      // Applied by `if`; without one, they apply nowhere.
+      ("then" | "else", _) => ()
       ("minimum", Number(n, ..)) =>
         if value is Number(v, ..) && v < n {
           problems.push("\{at}: \{v} is below \{n}")
@@ -1038,6 +1051,42 @@ async test "the contract checker rejects responses that break the document" {
         headers: replica,
         body: (
           #|{"stubs":[{"id":"eph-1","mock":"users","session":"s","response":{"status":200,"headers":{"content-type":["text/plain"]}}}],"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a listed Ephemeral Stub with an llm reply",
+      "GET",
+      "/v1/mocks/users/stubs",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"stubs":[{"id":"eph-1","mock":"users","session":"s","responses":[{"status":200,"llm":{"api":"openai-chat","text":"Hi","stopReason":"length","timing":{"first":{"fixed":40}}}}]}],"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a listed Ephemeral Stub with an llm field the Schema does not list",
+      "GET",
+      "/v1/mocks/users/stubs",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"stubs":[{"id":"eph-1","mock":"users","session":"s","response":{"status":200,"llm":{"api":"openai-chat","stream":true}}}],"warnings":[]}
+        ),
+      },
+    ),
+    (
+      "a listed Ephemeral Stub with llm beside a body",
+      "GET",
+      "/v1/mocks/users/stubs",
+      {
+        status: 200,
+        headers: replica,
+        body: (
+          #|{"stubs":[{"id":"eph-1","mock":"users","session":"s","response":{"status":200,"body":"Hi","llm":{"api":"openai-chat"}}}],"warnings":[]}
         ),
       },
     ),
@@ -1754,6 +1803,9 @@ async test "the contract checker rejects responses that break the document" {
       #|a listed Ephemeral Stub with a header array: conforms
       #|a listed Ephemeral Stub with an empty header array: /stubs/0/response/headers/Set-Cookie: [] matches 0 of oneOf, not 1
       #|a listed Ephemeral Stub with an array for Content-Type: /stubs/0/response/headers/content-type: ["text/plain"] is not of type string
+      #|a listed Ephemeral Stub with an llm reply: conforms
+      #|a listed Ephemeral Stub with an llm field the Schema does not list: /stubs/0/response/llm/stream: no value is allowed here
+      #|a listed Ephemeral Stub with llm beside a body: /stubs/0/response/llm: no value is allowed here
       #|a deleted Ephemeral Stub with its Mock: /mock: no value is allowed here
       #|an unknown Ephemeral Stub: conforms
       #|a reset without the count of Journal entries: /removed: journalEntries is missing
@@ -1810,6 +1862,56 @@ async test "the contract checker rejects responses that break the document" {
       #|unmatched requests without more: : more is missing
       #|a Near miss with a condition the document does not list: /entries/0/nearMiss: {"stub":"get-user","stubSource":"file","failed":[{"condit... matches 0 of oneOf, not 1
       #|unmatched requests refused because the Journal is off: conforms
+    ),
+  )
+}
+
+///|
+test "the contract checker applies then where if holds and else where it does not, as the Schema narrows an llm's stop reason by its api" {
+  let checker = Contract::{ files: Map([]), }
+  let schema : Json = {
+    "type": "object",
+    "properties": {
+      "api": { "enum": ["openai-chat", "anthropic-messages"] },
+      "stopReason": { "enum": ["stop", "end_turn"] },
+    },
+    "allOf": [
+      {
+        "if": {
+          "properties": { "api": { "const": "openai-chat" } },
+          "required": ["api"],
+        },
+        "then": { "properties": { "stopReason": { "enum": ["stop"] } } },
+        "else": { "properties": { "stopReason": { "enum": ["end_turn"] } } },
+      },
+    ],
+  }
+  let values : Array[Json] = [
+    { "api": "openai-chat", "stopReason": "stop" },
+    { "api": "openai-chat", "stopReason": "end_turn" },
+    { "api": "anthropic-messages", "stopReason": "end_turn" },
+    { "api": "anthropic-messages", "stopReason": "stop" },
+    { "stopReason": "stop" },
+  ]
+  let out = []
+  for value in values {
+    let problems = []
+    checker.validate({ file: "llm.json", json: schema, }, value, "", problems)
+    let verdict = if problems.is_empty() {
+      "conforms"
+    } else {
+      problems.join("; ")
+    }
+    out.push("\{value.stringify()}: \{verdict}")
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|{"api":"openai-chat","stopReason":"stop"}: conforms
+      #|{"api":"openai-chat","stopReason":"end_turn"}: /stopReason: "end_turn" is not one of ["stop"]
+      #|{"api":"anthropic-messages","stopReason":"end_turn"}: conforms
+      #|{"api":"anthropic-messages","stopReason":"stop"}: /stopReason: "stop" is not one of ["end_turn"]
+      #|{"stopReason":"stop"}: /stopReason: "stop" is not one of ["end_turn"]
     ),
   )
 }

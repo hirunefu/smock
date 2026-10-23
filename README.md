@@ -584,9 +584,11 @@ Server-Sent Events, and the conditions the sample fails, with expected and
 actual values as in a Near miss (empty when it meets them all). The Stub is
 rendered even when the sample fails them, and a
 [templated](docs/definition-files.md#templates) response is rendered for the
-sample. `--time` (RFC 3339) and `--seed` fix the clock and the random source
-of the rendering; without a seed, it uses the Stub's `fault.seed`, or a
-fresh one. A Stub with
+sample. An [LLM response](docs/definition-files.md#llm-responses) shows the
+JSON body, or, for a sample whose body sets `stream: true`, the events,
+each with its wait. `--time` (RFC 3339) and `--seed` fix the clock and the
+random source of the rendering; without a seed, it uses the Stub's
+`fault.seed`, or a fresh one. A Stub with
 [`responses`](docs/definition-files.md#several-responses) renders the one
 the seed picks, and `--response <i>` renders the one at index `i`, from 0.
 The rendering shows the `time`, the `seed` and the `responseIndex` it used,

@@ -71,7 +71,10 @@ of each GitHub release include its section
   before the first piece, counted from the head, and one before each
   later piece, each drawn from a distribution of the delay Fault, which
   `fault.seed` and `--seed` replay. It works with request conditions,
-  `responses`, Faults, Ephemeral Stubs, `smock render` and the Journal.
+  `responses`, Faults, Ephemeral Stubs and the Journal. `smock render`
+  and the Admin render operation show the JSON body, or, for a sample
+  whose body sets `stream: true`, the events, each with its wait, with the
+  ids and the waits the seed fixes.
   See [LLM responses](docs/definition-files.md#llm-responses).
 
 ### Changed
