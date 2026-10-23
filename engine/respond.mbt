@@ -67,6 +67,8 @@ fn pick_response(ordinary : @definitions.Ordinary, draw : UInt64) -> Int? {
 ///   unless it gives its own, its time `now`, and its ids drawn from the
 ///   request's ids generator, made from `draw`. Its request-id header field
 ///   follows the response's, unless the response gives one of that name.
+///   A stream's events wait as its `timing` says, the waits drawn from the
+///   request's waits generator, made from `draw` too.
 ///
 /// Every template of the response renders in one rendering for the
 /// request: `context`, the one that the Stub's Variables left, or, without
