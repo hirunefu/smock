@@ -1134,12 +1134,13 @@ change, with the command that the failing test prints. The goldens in
 `engine/llm_golden_*_test.mbt` compare what `llm` Stubs send with the
 examples of the vendors' documents, through the comparison in
 `engine/llm_golden_test.mbt`. Each example is copied there with its source
-and the date it was read. OpenAI's come with their licence, MIT.
-Anthropic's documents grant none, so its examples are short excerpts, used
-as test data only. Each golden names the fields and events where smock
-differs on purpose; any other difference fails the test. Adding a fixture
-file under `schema/v1/fixtures/` adds it to the cross-check; the README
-there says which directory a fixture belongs in.
+and the date it was read. Those from OpenAI's OpenAPI document come with
+its licence, MIT. Anthropic's documents and OpenAI's guides grant none, so
+their examples are short excerpts, used as test data only. Each golden
+names the fields and events where smock differs on purpose; any other
+difference fails the test. Adding a fixture file under
+`schema/v1/fixtures/` adds it to the cross-check; the README there says
+which directory a fixture belongs in.
 
 CI runs all of these on linux/amd64 and linux/arm64
 (`.github/workflows/build-test.yml`), except the SDK job,
