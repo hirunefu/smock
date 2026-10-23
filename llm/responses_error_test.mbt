@@ -296,3 +296,220 @@ test "a cut stream that breaks a rule is caught: the check is not vacuous" {
     ),
   )
 }
+
+///|
+test "among explicit chunks an empty one counts 0 code points and is a delta of its own, and the cut is counted in code points, so it never splits one" {
+  let chunks : ReadOnlyArray[String] = ["", "Hel", "", "lo", "", "!"]
+  inspect(
+    [
+      cut_outline(
+        responses_cut(@llm.Strings(chunks~, error_message="Oops"), after=4),
+      ),
+      cut_outline(
+        responses_cut(
+          @llm.Strings(text="👍🏽🇫🇷𝄞", error_message="Oops"),
+          after=3,
+          chunk_size=2,
+        ),
+      ),
+      cut_outline(
+        responses_cut(
+          @llm.Strings(text="天気は晴れです。", error_message="Oops"),
+          after=4,
+          chunk_size=3,
+        ),
+      ),
+    ].join("\n---\n"),
+    content=(
+      #|(none) response.created #0
+      #|(none) response.in_progress #1
+      #|(none) response.output_item.added #2 @0 message
+      #|(none) response.content_part.added #3
+      #|(first) response.output_text.delta #4 ""
+      #|(interval) response.output_text.delta #5 "Hel"
+      #|(interval) response.output_text.delta #6 ""
+      #|(interval) response.output_text.delta #7 "l"
+      #|(interval) error #8 {"type":"error","code":"server_error","message":"Oops","param":null,"sequence_number":8}
+      #|---
+      #|(none) response.created #0
+      #|(none) response.in_progress #1
+      #|(none) response.output_item.added #2 @0 message
+      #|(none) response.content_part.added #3
+      #|(first) response.output_text.delta #4 "👍🏽"
+      #|(interval) response.output_text.delta #5 "🇫"
+      #|(interval) error #6 {"type":"error","code":"server_error","message":"Oops","param":null,"sequence_number":6}
+      #|---
+      #|(none) response.created #0
+      #|(none) response.in_progress #1
+      #|(none) response.output_item.added #2 @0 message
+      #|(none) response.content_part.added #3
+      #|(first) response.output_text.delta #4 "天気は"
+      #|(interval) response.output_text.delta #5 "晴"
+      #|(interval) error #6 {"type":"error","code":"server_error","message":"Oops","param":null,"sequence_number":6}
+    ),
+  )
+}
+
+///|
+test "past the end of the text, which only a templated text can be, the error follows the whole text: the message item as the stream without an error sends it, then every piece" {
+  inspect(
+    [
+      cut_outline(
+        responses_cut(@llm.Strings(text="Hi", error_message="Oops"), after=5),
+      ),
+      cut_outline(
+        responses_cut(@llm.Strings(text="", error_message="Oops"), after=5),
+      ),
+      cut_outline(
+        responses_cut(
+          @llm.Strings(chunks=["", ""], error_message="Oops"),
+          after=5,
+        ),
+      ),
+      cut_outline(
+        responses_cut(
+          @llm.Strings(tool_calls=[weather()], error_message="Oops"),
+          after=5,
+        ),
+      ),
+    ].join("\n---\n"),
+    content=(
+      #|(none) response.created #0
+      #|(none) response.in_progress #1
+      #|(none) response.output_item.added #2 @0 message
+      #|(none) response.content_part.added #3
+      #|(first) response.output_text.delta #4 "Hi"
+      #|(interval) error #5 {"type":"error","code":"server_error","message":"Oops","param":null,"sequence_number":5}
+      #|---
+      #|(none) response.created #0
+      #|(none) response.in_progress #1
+      #|(none) response.output_item.added #2 @0 message
+      #|(none) response.content_part.added #3
+      #|(first) error #4 {"type":"error","code":"server_error","message":"Oops","param":null,"sequence_number":4}
+      #|---
+      #|(none) response.created #0
+      #|(none) response.in_progress #1
+      #|(none) response.output_item.added #2 @0 message
+      #|(none) response.content_part.added #3
+      #|(first) response.output_text.delta #4 ""
+      #|(interval) response.output_text.delta #5 ""
+      #|(interval) error #6 {"type":"error","code":"server_error","message":"Oops","param":null,"sequence_number":6}
+      #|---
+      #|(none) response.created #0
+      #|(none) response.in_progress #1
+      #|(first) error #2 {"type":"error","code":"server_error","message":"Oops","param":null,"sequence_number":2}
+    ),
+  )
+}
+
+///|
+test "a request that does not stream gets the ordinary JSON reply, whole, with no error: the one it gets without an error" {
+  let strings = @llm.Strings(
+    text="Hello!",
+    tool_calls=[weather()],
+    error_message="Oops",
+  )
+  let request = Some(Json::object({ "model": "gpt-6-astra" }))
+  let without = @llm.reply(
+    @llm.Declaration(api=OpenaiResponses),
+    strings,
+    request~,
+    now=received,
+    ids=@llm.ids_generator(7),
+  )
+  let with_error = responses_cut(strings, after=2, request~)
+  inspect(
+    "the same as without an error: \{shown(with_error) == shown(without)}\n\{shown(with_error)}",
+    content=(
+      #|the same as without an error: true
+      #|Content-Type: application/json
+      #|x-request-id: req_lXej21FbJgs0WxlXP0AqXTyU
+      #|{"id":"resp_KCVauEuclT08Mg4CWd55sNbz","object":"response","access_programs":null,"created_at":1791815405,"status":"completed","completed_at":1791815405,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"gpt-6-astra","output":[{"id":"msg_mGR88Teee4muTOOd2B3UzQJr","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hello!","annotations":[],"logprobs":[]}]},{"type":"function_call","id":"fc_5DTBZPrxiMH6i7M92iahxjWk","call_id":"call_iHzkHTRdWXnW746KnN1UOBYQ","name":"get_weather","arguments":"{\"city\":\"Paris\"}","status":"completed"}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":0,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":0,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":0},"user":null,"metadata":{}}
+    ),
+  )
+}
+
+///|
+test "the code and the message are sent as written, JSON-escaped, with a null param" {
+  let reply = responses_cut(
+    @llm.Strings(text="Hi", error_message="Line 1\nsaid \"no\" é"),
+    after=0,
+    code="rate_limit_exceeded",
+  )
+  inspect(
+    event_data(reply, "error"),
+    content=(
+      #|{"type":"error","code":"rate_limit_exceeded","message":"Line 1\nsaid \"no\" é","param":null,"sequence_number":2}
+    ),
+  )
+}
+
+///|
+test "a written stop reason does not change the cut: neither response.completed nor response.incomplete is sent, and handing over the waits leaves every event as it was" {
+  let stop_reason = @llm.read_stop_reason(OpenaiResponses, "max_output_tokens").unwrap()
+  let reply = @llm.reply(
+    @llm.Declaration(
+      api=OpenaiResponses,
+      stop_reason~,
+      error=@llm.MidStreamError(after=5, kind="server_error"),
+    ),
+    @llm.Strings(text="The weather in Paris is", error_message="Oops"),
+    request=Some({ "model": "gpt-6-astra", "stream": true }),
+    now=received,
+    ids=@llm.ids_generator(7),
+  )
+  let before = shown(reply)
+  guard reply.body is Events(events) else { fail("not a stream") }
+  // As the engine draws them: none for an event without a slot, and the
+  // longest wait a Definition file gives for the others.
+  let waits = FixedArray::make(events.length(), 0)
+  for i, event in events {
+    if !(event.wait is NoWait) {
+      waits[i] = 2147483647
+    }
+  }
+  reply.complete(waits)
+  inspect(
+    "unchanged by the waits: \{shown(reply) == before}\n\{cut_outline(reply)}",
+    content=(
+      #|unchanged by the waits: true
+      #|(none) response.created #0
+      #|(none) response.in_progress #1
+      #|(none) response.output_item.added #2 @0 message
+      #|(none) response.content_part.added #3
+      #|(first) response.output_text.delta #4 "The "
+      #|(interval) response.output_text.delta #5 "w"
+      #|(interval) error #6 {"type":"error","code":"server_error","message":"Oops","param":null,"sequence_number":6}
+    ),
+  )
+}
+
+///|
+test "at load, the stream that the error cuts at 0 is short, so only the JSON reply can pass the bound" {
+  let size = (text : String, after : Int, chunk_size : Int) => {
+    match
+      @llm.check_reply_size(
+        @llm.Declaration(
+          api=OpenaiResponses,
+          chunk_size~,
+          error=@llm.MidStreamError(after~, kind="server_error"),
+        ),
+        @llm.Strings(text~, error_message="Oops"),
+      ) {
+      Ok(_) => "ok"
+      Err(message) => message
+    }
+  }
+  inspect(
+    [
+      "1 MiB, cut at 0: \{size(repeated("a", 1_048_576), 0, 4)}",
+      "6,000 characters in pieces of 1, cut at 10: \{size(repeated("a", 6_000), 10, 1)}",
+      "6,000 characters in pieces of 1, cut at 6,000: \{size(repeated("a", 6_000), 6_000, 1)}",
+    ].join("\n"),
+    content=(
+      #|1 MiB, cut at 0: the reply takes more than 1 MiB as a JSON body
+      #|6,000 characters in pieces of 1, cut at 10: ok
+      #|6,000 characters in pieces of 1, cut at 6,000: the reply takes more than 1 MiB as a stream
+    ),
+  )
+}
