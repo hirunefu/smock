@@ -705,8 +705,10 @@ test "the snapshot holds what a response sends as one kind, and its header value
       Template(Text(_)) => "a text template"
       Template(Json(_)) => "a JSON template"
       Template(Events(events)) => "\{events.length()} event templates"
-      Llm(reply) =>
-        "an LLM reply for \{reply.declaration.api.name()}, text [\{reply.strings.text}]"
+      Llm({ declaration, strings: Written(strings), .. }) =>
+        "an LLM reply for \{declaration.api.name()}, text [\{strings.text}]"
+      Llm({ declaration, strings: Templated(_), .. }) =>
+        "an LLM reply for \{declaration.api.name()}, its strings as templates"
     }
     out.push("\{i}: \{body}; \{headers}")
   }
@@ -724,7 +726,7 @@ test "the snapshot holds what a response sends as one kind, and its header value
       #|8: 2 event templates; headers as templates: []
       #|9: bytes [${path}]; headers as written: []
       #|10: an LLM reply for openai-chat, text [${path}]; headers as written: [X-A: 1]
-      #|11: an LLM reply for openai-chat, text []; headers as templates: [X-A]
+      #|11: an LLM reply for openai-chat, its strings as templates; headers as templates: [X-A]
     ),
   )
 }

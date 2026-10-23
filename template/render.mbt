@@ -3,8 +3,10 @@
 
 ///|
 /// A template could not be rendered for a request: a JSON Pointer to the
-/// field, within the Stub, and what went wrong.
-pub suberror RenderError {
+/// field, within the Stub, and what went wrong. A caller that checks a
+/// rule across rendered values, such as the call ids of an LLM reply that
+/// must differ, raises it too.
+pub(all) suberror RenderError {
   RenderError(at~ : String, message~ : String)
 } derive(Debug)
 

@@ -491,7 +491,7 @@
           "description": "The body as JSON: any JSON value, sent as compact JSON in UTF-8, with Content-Type: application/json unless headers gives a Content-Type. smock writes every number in its shortest form (9.90 is sent as 9.9); use body when the exact bytes matter. With template true, it is a structured template: a string that is exactly one ${expr} gives the value with its own type, an object with $each gives an array, and an object with $if gives its then or else."
         },
         "template": {
-          "description": "Whether the header values (except Content-Type, which cannot contain ${), the body (body, bodyFile or json) and the events are templates, rendered for each request. With template false, nothing is parsed or rendered: ${ is plain text and $each a plain key. Default false.",
+          "description": "Whether the header values (except Content-Type, which cannot contain ${), the body (body, bodyFile or json), the events and, in llm, the text, each chunk, id, model and each tool call's name, id and arguments are templates, rendered for each request. With template false, nothing is parsed or rendered: ${ is plain text and $each a plain key. Default false.",
           "type": "boolean",
           "default": false
         },
@@ -545,7 +545,7 @@
           "default": 4
         },
         "toolCalls": {
-          "description": "Function tool calls the reply makes, after its text, in the order written. With tool calls and an empty text, the reply has no content: openai-chat sends content: null. In a stream, each call's arguments are sent in pieces of chunkSize code points. Two calls with the same id are refused.",
+          "description": "Function tool calls the reply makes, after its text, in the order written: openai-responses sends each as a function_call item. With tool calls and an empty text, the reply has no content: openai-chat sends content: null, and openai-responses has no message item. In a stream, each call's arguments are sent in pieces of chunkSize code points. Two calls with the same id are refused; with template true, ids that insert a value are compared once rendered, and two that render the same give the 500 template failed.",
           "type": "array",
           "items": {
             "type": "object",
@@ -556,7 +556,7 @@
                 "minLength": 1
               },
               "arguments": {
-                "description": "The function's arguments, which openai-chat sends as a JSON string.",
+                "description": "The function's arguments, which openai-chat and openai-responses send as a JSON string.",
                 "anyOf": [
                   {
                     "description": "An object, written as compact JSON with its members in the order written.",
@@ -569,7 +569,7 @@
                 ]
               },
               "id": {
-                "description": "The call id, sent exactly as written (smock adds no prefix). Without it, the call id is call_ and 24 characters drawn from the Stub's random source, in the call's own slots, so fixing it changes no other generated id.",
+                "description": "The call id, sent exactly as written (smock adds no prefix): openai-responses sends it as the function_call item's call_id, and the item's own fc_ id is always generated. Without it, the call id is call_ and 24 characters drawn from the Stub's random source, in the call's own slots, so fixing it changes no other generated id.",
                 "type": "string"
               }
             },

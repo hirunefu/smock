@@ -480,6 +480,8 @@ pub fn reply(
           received=now,
           model~,
           request~,
+          functions=ids.functions,
+          calls=ids.calls,
           request_id~,
         )
       } else {
@@ -491,6 +493,8 @@ pub fn reply(
           created~,
           model~,
           request~,
+          functions=ids.functions,
+          calls=ids.calls,
           request_id~,
         )
       }
@@ -604,6 +608,9 @@ priv struct Ids {
   reply : String
   /// The Responses message item's id, without its prefix.
   message : String
+  /// Each tool call's Responses function call item id, without its prefix,
+  /// in the order written.
+  functions : FixedArray[String]
   /// Each tool call's call id, without its prefix, in the order written.
   calls : FixedArray[String]
   /// The request id of the request-id header, without its prefix.
@@ -611,7 +618,8 @@ priv struct Ids {
 }
 
 ///|
-/// The call ids of a reply with no tool call, shared by every such reply.
+/// The function call item ids and the call ids of a reply with no tool
+/// call, shared by every such reply.
 let no_calls : FixedArray[String] = []
 
 ///|
@@ -620,6 +628,11 @@ let no_calls : FixedArray[String] = []
 fn draw_ids(ids : @prng.Generator, tool_calls : Int) -> Ids {
   let reply = draw_id(ids)
   let message = draw_id(ids)
+  let functions = if tool_calls == 0 {
+    no_calls
+  } else {
+    FixedArray::make(tool_calls, "")
+  }
   let calls = if tool_calls == 0 {
     no_calls
   } else {
@@ -627,11 +640,11 @@ fn draw_ids(ids : @prng.Generator, tool_calls : Int) -> Ids {
   }
   for i in 0..<tool_calls {
     // The Responses function call's item id, then the call id.
-    ignore(draw_id(ids))
+    functions[i] = draw_id(ids)
     calls[i] = draw_id(ids)
   }
   let request = draw_id(ids)
-  { reply, message, calls, request, }
+  { reply, message, functions, calls, request, }
 }
 
 ///|
@@ -968,11 +981,15 @@ fn ChatChunks::usage_chunk(self : ChatChunks, usage : Usage) -> String {
 ///|
 /// The Responses reply of `declaration` with the strings `strings`, the
 /// reply's id `id`, the message item's id `message_id`, `created` (seconds
-/// since the Unix epoch), `model`, the request's JSON body `request` and
-/// the request-id header field `request_id`: one Response object, in the
-/// members and the order of the reference's examples, with the example's
-/// fixed values. A written stop reason is an incomplete reason, which makes
-/// the reply and its message item incomplete.
+/// since the Unix epoch), `model`, the request's JSON body `request`, the
+/// tool calls' drawn function call item ids `functions` and call ids
+/// `calls`, and the request-id header field `request_id`: one Response
+/// object, in the members and the order of the reference's examples, with
+/// the example's fixed values. Its output holds the message item, left out
+/// when tool calls follow empty text, then one `function_call` item per
+/// tool call. A written stop reason is an incomplete reason, which makes
+/// the reply and its message item incomplete; the function call items stay
+/// completed.
 fn responses_reply(
   declaration : Declaration,
   strings : Strings,
@@ -981,9 +998,28 @@ fn responses_reply(
   created~ : Int64,
   model~ : String,
   request~ : Json?,
+  functions~ : FixedArray[String],
+  calls~ : FixedArray[String],
   request_id~ : (String, String),
 ) -> Reply {
   let status = responses_status(declaration)
+  let tool_calls = strings.tool_calls
+  let output : Array[Json] = Array(capacity=tool_calls.length() + 1)
+  if strings.has_content() {
+    output.push(message_item(message_id, status, strings.text))
+  }
+  for k in 0..<tool_calls.length() {
+    let call = tool_calls[k]
+    output.push(
+      function_call_item(
+        call,
+        id="fc_" + functions[k],
+        call_id=call_id(call, "call_", calls[k]),
+        arguments=call.arguments,
+        status="completed",
+      ),
+    )
+  }
   let body = response_object(
     id~,
     created~,
@@ -997,7 +1033,7 @@ fn responses_reply(
       Json::number(created.to_double())
     },
     incomplete_details=incomplete_details(declaration),
-    output=[message_item(message_id, status, strings.text)],
+    output=Json::array(output),
     usage=responses_usage(declaration.usage),
   )
   {
@@ -1038,6 +1074,28 @@ fn message_item(id : String, status : String, text : String) -> Json {
     "status": Json::string(status),
     "role": "assistant",
     "content": [output_text_part(text)],
+  }
+}
+
+///|
+/// The Responses function call item of `call`, whose item id is `id`, call
+/// id `call_id` and status `status`, with `arguments`, its arguments' text
+/// so far, as a JSON string: the members and the order of the reference's
+/// "Functions" example.
+fn function_call_item(
+  call : ToolCall,
+  id~ : String,
+  call_id~ : String,
+  arguments~ : String,
+  status~ : String,
+) -> Json {
+  {
+    "type": "function_call",
+    "id": Json::string(id),
+    "call_id": Json::string(call_id),
+    "name": Json::string(call.name),
+    "arguments": Json::string(arguments),
+    "status": Json::string(status),
   }
 }
 
@@ -1124,17 +1182,23 @@ fn response_object(
 
 ///|
 /// The Responses stream of `declaration` with the strings `strings`, whose
-/// text is cut into pieces of the declaration's chunk size unless they give
-/// its pieces, the reply's id `id`, the message item's id `message_id`, the
-/// time `received` (milliseconds since the Unix epoch), `model`, the
-/// request's JSON body `request` and the request-id header field
-/// `request_id`. Each event has an `event:` line equal to its `type`, and
-/// one `data:` line of compact JSON whose `sequence_number` counts from 0,
-/// in the members and the order of the reference's stream example:
-/// `response.created` and `response.in_progress` give the Response object
-/// in progress; the message item is opened at `output_index` 0, then its
-/// `output_text` part, then one `response.output_text.delta` follows per
-/// piece, and the part and the item are closed; `response.completed`, or
+/// text and tool-call arguments are cut into pieces of the declaration's
+/// chunk size unless they give the text's pieces, the reply's id `id`, the
+/// message item's id `message_id`, the time `received` (milliseconds since
+/// the Unix epoch), `model`, the request's JSON body `request`, the tool
+/// calls' drawn function call item ids `functions` and call ids `calls`,
+/// and the request-id header field `request_id`. Each event has an
+/// `event:` line equal to its `type`, and one `data:` line of compact JSON
+/// whose `sequence_number` counts from 0, in the members and the order of
+/// the reference's stream example: `response.created` and
+/// `response.in_progress` give the Response object in progress; the
+/// message item is opened at `output_index` 0, then its `output_text` part,
+/// then one `response.output_text.delta` follows per piece, and the part
+/// and the item are closed, unless tool calls follow empty text: then there
+/// is no message item. Each tool call's `function_call` item follows at the
+/// next `output_index`, opened with empty arguments, then one
+/// `response.function_call_arguments.delta` per piece of its arguments,
+/// and its arguments and the item are closed. `response.completed`, or
 /// `response.incomplete` when a stop reason is written, gives the whole
 /// Response object. No `[DONE]` follows. The closing event's
 /// `completed_at` is the time received until `Reply::complete` adds the
@@ -1147,12 +1211,17 @@ fn responses_stream(
   received~ : Int64,
   model~ : String,
   request~ : Json?,
+  functions~ : FixedArray[String],
+  calls~ : FixedArray[String],
   request_id~ : (String, String),
 ) -> Reply {
   let created = received / 1000L
-  let pieces = strings.text_pieces(declaration.chunk_size)
+  let tool_calls = strings.tool_calls
+  let text_pieces = strings.text_pieces(declaration.chunk_size)
   let pace = Pace::new()
-  let out = ResponsesEvents::new(pieces.length() + 8)
+  let out = ResponsesEvents::new(
+    text_pieces.length() + 4 * tool_calls.length() + 8,
+  )
   // The Response in progress, the same in both opening events.
   let opening = response_object(
     id~,
@@ -1168,46 +1237,109 @@ fn responses_stream(
   let opening = "\"response\":\{@template.compact_json(Json::object(opening))}"
   out.push(NoWait, "response.created", opening)
   out.push(NoWait, "response.in_progress", opening)
-  // The message item, the reply's first, at output_index 0.
-  let item_id = @template.compact_json(Json::string(message_id))
-  out.push(
-    NoWait,
-    "response.output_item.added",
-    "\"output_index\":0,\"item\":{\"id\":\{item_id},\"type\":\"message\",\"status\":\"in_progress\",\"role\":\"assistant\",\"content\":[]}",
-  )
-  let part_of = "\"item_id\":\{item_id},\"output_index\":0,\"content_index\":0"
-  out.push(
-    NoWait,
-    "response.content_part.added",
-    "\{part_of},\"part\":\{@template.compact_json(output_text_part(""))}",
-  )
-  for piece in pieces {
+  let status = responses_status(declaration)
+  // The items the closing event's Response holds, in output_index order.
+  let output : Array[Json] = Array(capacity=tool_calls.length() + 1)
+  // The message item, the reply's first, at output_index 0, unless tool
+  // calls follow empty text.
+  if strings.has_content() {
+    let item_id = @template.compact_json(Json::string(message_id))
     out.push(
-      pace.piece(),
-      "response.output_text.delta",
-      "\{part_of},\"delta\":\{@template.compact_json(Json::string(piece))}",
+      NoWait,
+      "response.output_item.added",
+      "\"output_index\":0,\"item\":{\"id\":\{item_id},\"type\":\"message\",\"status\":\"in_progress\",\"role\":\"assistant\",\"content\":[]}",
+    )
+    let part_of = "\"item_id\":\{item_id},\"output_index\":0,\"content_index\":0"
+    out.push(
+      NoWait,
+      "response.content_part.added",
+      "\{part_of},\"part\":\{@template.compact_json(output_text_part(""))}",
+    )
+    for piece in text_pieces {
+      out.push(
+        pace.piece(),
+        "response.output_text.delta",
+        "\{part_of},\"delta\":\{@template.compact_json(Json::string(piece))}",
+        after=no_logprobs,
+      )
+    }
+    // A reply with no piece waits before its first closing event. With
+    // tool calls after it, the text is not empty, so it has a piece.
+    out.push(
+      pace.closing(),
+      "response.output_text.done",
+      "\{part_of},\"text\":\{@template.compact_json(Json::string(strings.text))}",
       after=no_logprobs,
     )
+    out.push(
+      pace.closing(),
+      "response.content_part.done",
+      "\{part_of},\"part\":\{@template.compact_json(output_text_part(strings.text))}",
+    )
+    let item = message_item(message_id, status, strings.text)
+    out.push(
+      pace.closing(),
+      "response.output_item.done",
+      "\"output_index\":0,\"item\":\{@template.compact_json(item)}",
+    )
+    output.push(item)
   }
-  // A reply with no piece waits before its first closing event.
-  out.push(
-    pace.closing(),
-    "response.output_text.done",
-    "\{part_of},\"text\":\{@template.compact_json(Json::string(strings.text))}",
-    after=no_logprobs,
-  )
-  out.push(
-    pace.closing(),
-    "response.content_part.done",
-    "\{part_of},\"part\":\{@template.compact_json(output_text_part(strings.text))}",
-  )
-  let status = responses_status(declaration)
-  let item = message_item(message_id, status, strings.text)
-  out.push(
-    pace.closing(),
-    "response.output_item.done",
-    "\"output_index\":0,\"item\":\{@template.compact_json(item)}",
-  )
+  for k in 0..<tool_calls.length() {
+    let call = tool_calls[k]
+    let output_index = output.length()
+    let item_id = "fc_" + functions[k]
+    let call_id = call_id(call, "call_", calls[k])
+    let added = function_call_item(
+      call,
+      id=item_id,
+      call_id~,
+      arguments="",
+      status="in_progress",
+    )
+    out.push(
+      NoWait,
+      "response.output_item.added",
+      "\"output_index\":\{output_index},\"item\":\{@template.compact_json(added)}",
+    )
+    let arguments_of = "\"item_id\":\{@template.compact_json(Json::string(item_id))},\"output_index\":\{output_index}"
+    for piece in pieces(call.arguments, declaration.chunk_size) {
+      out.push(
+        pace.piece(),
+        "response.function_call_arguments.delta",
+        "\{arguments_of},\"delta\":\{@template.compact_json(Json::string(piece))}",
+      )
+    }
+    // An earlier item's closing events follow at once, so that a reply
+    // waits only before its pieces; the last item's are the reply's first
+    // closing events, which a reply with no piece waits before.
+    let last = k == tool_calls.length() - 1
+    out.push(
+      if last {
+        pace.closing()
+      } else {
+        NoWait
+      },
+      "response.function_call_arguments.done",
+      "\{arguments_of},\"arguments\":\{@template.compact_json(Json::string(call.arguments))}",
+    )
+    let item = function_call_item(
+      call,
+      id=item_id,
+      call_id~,
+      arguments=call.arguments,
+      status="completed",
+    )
+    out.push(
+      if last {
+        pace.closing()
+      } else {
+        NoWait
+      },
+      "response.output_item.done",
+      "\"output_index\":\{output_index},\"item\":\{@template.compact_json(item)}",
+    )
+    output.push(item)
+  }
   // Until the waits are handed over, the Response completes when it is
   // received, as with no wait. An incomplete one never completes.
   let completes = declaration.stop_reason is None
@@ -1223,7 +1355,7 @@ fn responses_stream(
       Json::null()
     },
     incomplete_details=incomplete_details(declaration),
-    output=[item],
+    output=Json::array(output),
     usage=responses_usage(declaration.usage),
   )
   let sequence_number = out.next

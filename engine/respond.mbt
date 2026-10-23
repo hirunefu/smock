@@ -62,13 +62,16 @@ fn pick_response(ordinary : @definitions.Ordinary, draw : UInt64) -> Int? {
 ///   byte ranges, as the request's Range field asks;
 /// - Server-Sent Events as written are streamed as they are;
 /// - a body with `template` on is rendered;
-/// - an LLM reply is written in its API's wire form, with Content-Type the
-///   one that form takes, its model read from the request's JSON body
-///   unless it gives its own, its time `now`, and its ids drawn from the
-///   request's ids generator, made from `draw`. Its request-id header field
-///   follows the response's, unless the response gives one of that name.
-///   A stream's events wait as its `timing` says, the waits drawn from the
-///   request's waits generator, made from `draw` too.
+/// - an LLM reply is written in its API's wire form, from its strings as
+///   written or, with `template` on, rendered after the header values,
+///   with Content-Type the one that form takes, its model read from the
+///   request's JSON body unless it gives its own, its time `now`, and its
+///   ids drawn from the request's ids generator, made from `draw`. A tool
+///   call id that renders as an earlier one's is a render error. Its
+///   request-id header field follows the response's, unless the response
+///   gives one of that name. A stream's events wait as its `timing` says,
+///   the waits drawn from the request's waits generator, made from `draw`
+///   too.
 ///
 /// Every template of the response renders in one rendering for the
 /// request: `context`, the one that the Stub's Variables left, or, without
@@ -76,8 +79,9 @@ fn pick_response(ordinary : @definitions.Ordinary, draw : UInt64) -> Int? {
 /// `vars`, `data` and `copies` as `first_context` makes it, the first time
 /// a template needs it. A response as written makes none.
 ///
-/// Raises `RenderError` when a template cannot be rendered: the request
-/// then gets `template_failed`.
+/// Raises `RenderError` when a template cannot be rendered, or a rule
+/// across rendered values is broken: the request then gets
+/// `template_failed`.
 fn plan_response(
   response : @definitions.Response,
   incoming : Incoming,
@@ -139,9 +143,19 @@ fn plan_response(
       render_body(status, headers, template, rendering)
     }
     Llm(llm) => {
+      let strings = match llm.strings {
+        Written(strings) => strings
+        Templated(templates) => {
+          let rendering = match context {
+            Some(rendering) => rendering
+            None => first_context(incoming, now~, draw~, vars~, data~, copies~)
+          }
+          render_strings(templates, rendering)
+        }
+      }
       let reply = @llm.reply(
         llm.declaration,
-        llm.strings,
+        strings,
         request=incoming.body_json(),
         now~,
         ids=@llm.ids_generator(draw),
@@ -159,6 +173,80 @@ fn plan_response(
       { status, headers, body, delay_ms: 0, fault: None, }
     }
   }
+}
+
+///|
+/// Renders `templates`, the strings of an LLM reply with `template` on, in
+/// `context`, after the response's header values, in the order the
+/// helpers draw: `id`, `model`, the text or each chunk, then each tool
+/// call's `id`, `name` and `arguments`. Each chunk gives one piece; the
+/// text is cut into pieces after it is rendered.
+///
+/// Raises `RenderError` when a template cannot be rendered, or when a tool
+/// call's rendered id is an earlier call's, since the call ids of a reply
+/// must differ.
+fn render_strings(
+  templates : @definitions.LlmTemplates,
+  context : @template.Context,
+) -> @llm.Strings raise @template.RenderError {
+  let id = match templates.id {
+    Some(id) => Some(id.render(context))
+    None => None
+  }
+  let model = match templates.model {
+    Some(model) => Some(model.render(context))
+    None => None
+  }
+  let mut text = ""
+  let mut chunks = None
+  match templates.text {
+    Whole(whole) => text = whole.render(context)
+    Chunks(pieces) => {
+      let rendered = Array(capacity=pieces.length())
+      for i in 0..<pieces.length() {
+        rendered.push(pieces[i].render(context))
+      }
+      chunks = Some(ReadOnlyArray::from_array(rendered))
+    }
+  }
+  let calls = templates.tool_calls
+  let tool_calls : Array[@llm.ToolCall] = Array(capacity=calls.length())
+  for i in 0..<calls.length() {
+    let call = calls[i]
+    let call_id = match call.id {
+      Some(template) => {
+        let rendered = template.render(context)
+        for j in 0..<i {
+          if tool_calls[j].id is Some(earlier) &&
+            earlier == rendered &&
+            calls[j].id is Some(first) {
+            raise @template.RenderError(
+              at=template.pointer,
+              message="the tool call id \{rendered.escape()} is already used at \{first.pointer}",
+            )
+          }
+        }
+        Some(rendered)
+      }
+      None => None
+    }
+    let name = call.name.render(context)
+    let arguments = match call.arguments {
+      Text(arguments) => arguments.render(context)
+      Json(arguments) => @utf8.decode_lossy(arguments.render(context))
+    }
+    tool_calls.push(
+      @llm.ToolCall(name~, arguments=Json::string(arguments), id?=call_id),
+    )
+  }
+  @llm.Strings(
+    text~,
+    chunks?,
+    id?,
+    model?,
+    tool_calls=ReadOnlyArray::from_array(tool_calls),
+    error_message=templates.error_message,
+  )
 }
 
 ///|

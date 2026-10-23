@@ -244,13 +244,16 @@ test "the snapshot holds chunkSize, 4 when left out, and the chunks as written, 
   }
   let out = []
   for weighted in ordinary.responses {
-    guard weighted.response.body is Llm(reply) else { fail("not an LLM reply") }
-    let chunks = match reply.strings.chunks {
+    guard weighted.response.body
+      is Llm({ strings: Written(strings), .. } as reply) else {
+      fail("not an LLM reply as written")
+    }
+    let chunks = match strings.chunks {
       Some(chunks) => "[\{chunks.map(chunk => chunk.escape()).join(", ")}]"
       None => "none"
     }
     out.push(
-      "chunkSize \{reply.declaration.chunk_size}, text \{reply.strings.text.escape()}, chunks \{chunks}",
+      "chunkSize \{reply.declaration.chunk_size}, text \{strings.text.escape()}, chunks \{chunks}",
     )
   }
   inspect(
@@ -436,7 +439,9 @@ test "a Stub without stopReason moves from openai-chat to openai-responses by ch
     guard ordinary.responses[0].response.body is Llm(reply) else {
       fail("not an LLM reply")
     }
-    let { declaration, strings, .. } = reply
+    guard reply is { declaration, strings: Written(strings), .. } else {
+      fail("not as written")
+    }
     let stop_reason = match declaration.stop_reason {
       Some(reason) => reason.word
       None => "derived"
@@ -590,10 +595,11 @@ test "the snapshot holds each tool call in the order written, its arguments' obj
     guard snapshot.mocks[0].stubs[0].serves is Ordinary(ordinary) else {
       abort("not an ordinary Stub")
     }
-    guard ordinary.responses[0].response.body is Llm(reply) else {
-      abort("not an LLM reply")
+    guard ordinary.responses[0].response.body
+      is Llm({ strings: Written(strings), .. }) else {
+      abort("not an LLM reply as written")
     }
-    reply.strings.tool_calls
+    strings.tool_calls
     .iter()
     .map(call => {
       let id = match call.id {
@@ -749,12 +755,15 @@ test "the snapshot holds the error's after, 0 when left out, its type or code as
   }
   let out = []
   for weighted in ordinary.responses {
-    guard weighted.response.body is Llm(reply) else { fail("not an LLM reply") }
+    guard weighted.response.body
+      is Llm({ strings: Written(strings), .. } as reply) else {
+      fail("not an LLM reply as written")
+    }
     let error = match reply.declaration.error {
       Some(error) => "after \{error.after}, \{error.kind}"
       None => "no error"
     }
-    out.push("\{error}, message \{reply.strings.error_message.escape()}")
+    out.push("\{error}, message \{strings.error_message.escape()}")
   }
   inspect(
     out.join("\n"),
