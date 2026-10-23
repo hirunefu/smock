@@ -1,9 +1,9 @@
 // Seam 1 tests of LLM responses in the Anthropic Messages wire form: the
 // plan of a Stub whose `llm` names `anthropic-messages`, its JSON reply and
-// its stream with the stream's waits, its request-id header, its stop
-// members read with the request, a Stub that moves from `openai-chat` by
-// changing `api` alone, and a templated Stub's tool calls as `tool_use`
-// blocks.
+// its stream with the stream's waits, a mid-stream error's `error` event,
+// its request-id header, its stop members read with the request, a Stub
+// that moves from `openai-chat` by changing `api` alone, and a templated
+// Stub's tool calls as `tool_use` blocks.
 
 ///|
 /// A Mock `anthropic` with a Stub that answers Messages requests from an
@@ -157,6 +157,57 @@ test "with timing, the first text delta waits first and each later one interval;
     content=(
       #|0 message_start, 0 content_block_start, 400 "Hell", 30 "o, C", 30 "laud", 30 "e", 0 content_block_stop, 0 message_delta, 0 message_stop
       #|0 message_start, 400 message_delta, 0 message_stop
+    ),
+  )
+}
+
+///|
+test "a declared error ends the stream with event: error, which waits as a next piece would: first when no piece came before it, interval after one" {
+  let cut = (after : Int, timing : String) => {
+    let error = ", \"error\": { \"after\": \{after}, \"type\": \"overloaded_error\", \"message\": \"Overloaded\" }"
+    harness([messages_mock(fields=", \"text\": \"Hello!\"\{error}\{timing}")]).messages(
+      body=messages_body(extra=",\"stream\":true"),
+    )
+  }
+  inspect(
+    [
+      messages_waits(cut(0, fixed_timing)),
+      messages_waits(cut(6, fixed_timing)),
+      on_the_wire(cut(2, ""), "POST"),
+    ].join("\n"),
+    content=(
+      #|0 message_start, 400 error
+      #|0 message_start, 0 content_block_start, 400 "Hell", 30 "o!", 30 error
+      #|HTTP/1.1 200 OK
+      #|Content-Type: text/event-stream
+      #|anthropic-ratelimit-requests-remaining: 49
+      #|request-id: req_TZp9I060Mzd0w4SDwiWTe2c8
+      #|Date: Mon, 12 Oct 2026 14:30:05 GMT
+      #|Transfer-Encoding: chunked
+      #|
+      #|101
+      #|event: message_start
+      #|data: {"type":"message_start","message":{"id":"msg_oniRcSDFUU6bnxe66XwQR5pl","type":"message","role":"assistant","content":[],"model":"claude-test","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}}
+      #|
+      #|
+      #|75
+      #|event: content_block_start
+      #|data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+      #|
+      #|
+      #|75
+      #|event: content_block_delta
+      #|data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"He"}}
+      #|
+      #|
+      #|60
+      #|event: error
+      #|data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}
+      #|
+      #|
+      #|0
+      #|
+      #|
     ),
   )
 }
