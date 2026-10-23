@@ -420,6 +420,10 @@ priv struct MockPorts {
 /// connection with an RST, nor after a write timed out, since the client
 /// takes nothing more.
 ///
+/// Each request takes the steps every request to the Mocks takes
+/// (`MockPorts::decide`, `commit` and `done`), and this loop writes its
+/// response over HTTP/1.1, between them.
+///
 /// The engine's plan for a request may hold back the response by a delay:
 /// the status line is written once the delay is over, and meanwhile other
 /// connections are served as usual. A connection Fault in the plan ends the
@@ -462,15 +466,11 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
     self.settings,
     connection~,
     respond=(stream, request, stopwatch, now) => {
-      let engine_request = to_engine_request(request, headers.of(request))
-      let session = self.sessions.session_of(engine_request.headers)
-      let outcome = self.engine.handle(
-        engine_request,
-        session~,
+      let outcome = self.decide(
+        to_engine_request(request, headers.of(request)),
         now~,
-        rand=self.rand,
       )
-      defer self.traffic.record(outcome, stopwatch.seconds())
+      defer self.done(outcome, stopwatch)
       let plan = outcome.plan
       // Most responses are a body sent at once, without a delay or a Fault:
       // written here as `write_response` writes them, without the layers of
@@ -485,13 +485,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
           close~,
           date=self.dates.at(now),
         )
-        if outcome.journal is Some(entry) {
-          self.engine.commit(entry)
-        }
-        // Deferred after the count, so it runs before it.
-        defer (if outcome.journal is Some(entry) {
-          entry.finish(at=@async.now())
-        })
+        self.commit(outcome.journal)
         // Each write that returns has made progress, and gives the next
         // the whole write timeout from then.
         let watchdog = stream.watchdog
@@ -514,20 +508,15 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
         return @http1.keeps_open(request~, close~) &&
           !self.lifecycle.is_draining()
       }
+      // The entry is committed once, by whichever comes first: the
+      // response's last bytes, or the end of the request.
       let pending = Ref(outcome.journal)
       let commit = () => {
-        if pending.val is Some(entry) {
-          pending.val = None
-          self.engine.commit(entry)
-        }
+        self.commit(pending.val)
+        pending.val = None
       }
-      // Deferred after the count, so it runs before it.
-      defer {
-        commit()
-        if outcome.journal is Some(entry) {
-          entry.finish(at=@async.now())
-        }
-      }
+      // Deferred after the end of the steps, so it runs before it.
+      defer commit()
       if plan.delay_ms > 0 {
         @async.sleep(plan.delay_ms)
       }
@@ -564,7 +553,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
       keep_open && !self.lifecycle.is_draining()
     },
     reject=(stream, status, stopwatch) => {
-      defer self.traffic.record_rejected(stopwatch.seconds())
+      defer self.rejected(stopwatch)
       @io.Writer::write(
         stream,
         @http1.encode_response(
@@ -793,7 +782,7 @@ fn DecodedHeaders::of(
       out.push(self.decoded[i])
       continue
     }
-    let field = (header.name, @utf8.decode_lossy(header.value))
+    let field = (header.name, header_text(header.value))
     if i < self.fields.length() {
       self.fields[i] = header
       self.decoded[i] = field
@@ -807,10 +796,10 @@ fn DecodedHeaders::of(
 }
 
 ///|
-/// The header fields of `request`, with their values decoded as UTF-8 and
-/// invalid bytes replaced by U+FFFD.
+/// The header fields of `request`, with their values decoded as
+/// `header_text` decodes them.
 fn decoded_headers(request : @http1.Request) -> Array[(String, String)] {
-  request.headers.map(header => (header.name, @utf8.decode_lossy(header.value)))
+  request.headers.map(header => (header.name, header_text(header.value)))
 }
 
 ///|
