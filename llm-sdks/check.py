@@ -522,6 +522,14 @@ def messages_create(client, model, **options):
     return client.messages.create(model=model, max_tokens=MAX_TOKENS, messages=MESSAGES, **options)
 
 
+def messages_stream(client, model, **options):
+    """Reads a Messages stream as an application does with
+    create(stream=True), and returns the request id from its header and its
+    events."""
+    with messages_create(client, model, stream=True, **options) as stream:
+        return stream.response.headers.get("request-id"), list(stream)
+
+
 def check_messages_usage(checks, name, usage, input_tokens, output_tokens):
     checks.equal(f"{name}: usage", None if usage is None else (usage.input_tokens, usage.output_tokens),
                  (input_tokens, output_tokens))
@@ -532,6 +540,48 @@ def blocks(message):
     carries: the text, or the id, name and input of a tool use."""
     return [(block.type, block.text) if block.type == "text" else (block.type, block.id, block.name, block.input)
             for block in message.content]
+
+
+def check_message_events(checks, name, events, reply_id, model, input_tokens, block_count):
+    """Checks the frame of a Messages stream: message_start first, with the
+    message's id and model, no content, no stop reason and the input
+    tokens; message_delta and message_stop last; and between them each
+    block in turn, at indexes from 0, opened, given its deltas and stopped.
+    Returns the message_delta event."""
+    types = [event.type for event in events]
+    checks.equal(f"{name}: message_start first, message_delta and message_stop last",
+                 (types[:1], types[-2:]), (["message_start"], ["message_delta", "message_stop"]))
+    message = events[0].message
+    checks.id(f"{name}: the id", message.id, reply_id)
+    checks.equal(f"{name}: message_start's message",
+                 (message.type, message.role, message.model, message.content, message.stop_reason,
+                  message.stop_sequence, message.usage.input_tokens, message.usage.output_tokens),
+                 ("message", "assistant", model, [], None, None, input_tokens, 0))
+    within = [event for event in events if event.type.startswith("content_block_")]
+    checks.check(f"{name}: every content_block event carries an integer index",
+                 all(type(event.index) is int for event in within), repr([event.index for event in within]))
+    checks.equal(f"{name}: each block opened, given its deltas and stopped, in turn",
+                 block_outline(events[1:-2]),
+                 [f"{step} {index}" for index in range(block_count)
+                  for step in ("content_block_start", "content_block_delta", "content_block_stop")])
+    return events[-2]
+
+
+def block_outline(events):
+    """The events of a Messages stream, each content_block event with its
+    index, and each run of deltas of one block shown once."""
+    outline = []
+    for event in events:
+        step = f"{event.type} {event.index}" if event.type.startswith("content_block_") else event.type
+        if not (outline and outline[-1] == step and event.type == "content_block_delta"):
+            outline.append(step)
+    return outline
+
+
+def text_deltas(events):
+    """The text of each text delta of a Messages stream."""
+    return [event.delta.text for event in events
+            if event.type == "content_block_delta" and event.delta.type == "text_delta"]
 
 
 def messages_text(checks, smock):
@@ -548,6 +598,21 @@ def messages_text(checks, smock):
     checks.id(f"{name}: the id", reply.id, MESSAGE_ID)
     checks.equal(f"{name}: the model", reply.model, "messages-text")
     checks.id(f"{name}: the request id", reply._request_id, REQUEST_ID)
+
+    name = "messages-text: create(stream=True)"
+    request_id, events = messages_stream(client, "messages-text")
+    delta = check_message_events(checks, name, events, MESSAGE_ID, "messages-text", 23, 1)
+    checks.equal(f"{name}: the text block opens empty",
+                 [event.content_block.to_dict() for event in events if event.type == "content_block_start"],
+                 [{"type": "text", "text": ""}])
+    pieces = text_deltas(events)
+    checks.equal(f"{name}: the text", "".join(pieces), MESSAGES_TEXT)
+    checks.check(f"{name}: a piece ends between the code points of the emoji",
+                 any(piece.endswith("👋") for piece in pieces), repr(pieces))
+    checks.equal(f"{name}: message_delta's stop reason and output tokens",
+                 (delta.delta.stop_reason, delta.delta.stop_sequence, delta.delta.stop_details,
+                  delta.usage.output_tokens), ("end_turn", None, None, 10))
+    checks.id(f"{name}: the request id", request_id, REQUEST_ID)
 
 
 # The cases, in the order they run. Each calls the Stubs it names, and a
