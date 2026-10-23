@@ -64,6 +64,23 @@ CHAT_TOOLS_CALLS = [
 CHAT_CALL_ONLY_CALL = ("get_weather", {"city": "Paris"})
 CHAT_LENGTH_TEXT = "The weather in Paris is"
 RESPONSES_TEXT = "Hi! こんにちは。 👋🏽 How can I help?"
+RESPONSES_TOOLS_TEXT = "Let me look both up."
+RESPONSES_TOOLS_CALLS = [
+    ("call_sdk_forecast", "get_forecast", {"cities": ["Paris", "東京"], "days": 2, "hourly": False}),
+    ("call_sdk_alerts", "get_alerts", {"region": "関東", "severity": None}),
+]
+
+# The function tools an application gives the Responses API. With "strict",
+# the stream helper parses each call's arguments as JSON.
+RESPONSES_TOOLS = [
+    {
+        "type": "function",
+        "name": name,
+        "strict": True,
+        "parameters": {"type": "object", "properties": {}, "additionalProperties": True},
+    }
+    for name in ("get_forecast", "get_alerts")
+]
 
 # The function tools an application gives the stream helper. With
 # "strict", the helper parses each call's arguments as JSON.
@@ -105,6 +122,7 @@ RESPONSES_HELPER_DIFFERENCES = {
     "completed_at": "the time each of the two requests was received, which may be a second apart",
     "output.*.id": "the msg_ and fc_ ids of the items, which no field fixes, generated for each request",
     "output.*.content.*.parsed": "the helper's own member",
+    "output.*.parsed_arguments": "the helper's own member, checked on its own",
 }
 
 # The further difference of a Responses Stub whose id is generated.
@@ -622,6 +640,49 @@ def streamed_text(events):
     return "".join(event.delta for event in events if event.type == "response.output_text.delta")
 
 
+def function_calls(output):
+    """The function call items of a Response's output."""
+    return [item for item in output if item.type == "function_call"]
+
+
+def check_function_calls(checks, name, output, expected):
+    """Checks the function call items of a Response: each one's call id,
+    name and arguments, parsed, its fc_ id, distinct from the others', and
+    its status. Returns the items."""
+    calls = function_calls(output)
+    checks.equal(f"{name}: the function calls, their arguments parsed",
+                 [(call.call_id, call.name, json.loads(call.arguments)) for call in calls], expected)
+    checks.check(f"{name}: each function call item has an fc_ id of its own",
+                 all(FUNCTION_CALL_ID.fullmatch(call.id or "") for call in calls)
+                 and len({call.id for call in calls}) == len(calls),
+                 repr([call.id for call in calls]))
+    checks.equal(f"{name}: each function call item is completed", [call.status for call in calls],
+                 ["completed"] * len(calls))
+    return calls
+
+
+def check_streamed_calls(checks, name, items, expected):
+    """Checks the function call items of a Responses stream: the added
+    item, with empty arguments, then argument deltas that join to the done
+    event's arguments and the done item's, which parse to the expected
+    ones. Returns each call's joined arguments."""
+    calls = [item for item in items if item["added"].type == "function_call"]
+    checks.equal(f"{name}: each function call item is added in progress, with empty arguments",
+                 [(item["added"].status, item["added"].arguments) for item in calls],
+                 [("in_progress", "")] * len(calls))
+    joined = ["".join(event.delta for event in item["events"]
+                      if event.type == "response.function_call_arguments.delta") for item in calls]
+    checks.equal(f"{name}: the argument deltas join to the done event's arguments", joined,
+                 [next((event.arguments for event in item["events"]
+                        if event.type == "response.function_call_arguments.done"), None) for item in calls])
+    checks.equal(f"{name}: the argument deltas join to the done item's arguments", joined,
+                 [item["done"].arguments for item in calls])
+    checks.equal(f"{name}: the function calls, their arguments joined and parsed",
+                 [(item["done"].call_id, item["done"].name, json.loads(arguments))
+                  for item, arguments in zip(calls, joined, strict=True)], expected)
+    return joined
+
+
 def responses_text(checks, smock):
     """Responses, text only, with generated ids: create() with and without
     stream, and the stream() helper."""
@@ -676,9 +737,62 @@ def responses_text(checks, smock):
                 {**RESPONSES_HELPER_DIFFERENCES, **RESPONSES_GENERATED_ID_DIFFERENCES})
 
 
+def responses_tools(checks, smock):
+    """Responses, text and two tool calls, with the id, the model, the call
+    ids and the request id fixed: create() with and without stream, and
+    the stream() helper with function tools."""
+    client = smock.openai()
+    model = "responses-tools-2026-10-23"
+    tool_names = [tool["name"] for tool in RESPONSES_TOOLS]
+    name = "responses-tools: create"
+    reply = responses_create(client, "responses-tools", tools=RESPONSES_TOOLS)
+    checks.equal(f"{name}: the status", (reply.status, reply.incomplete_details), ("completed", None))
+    checks.equal(f"{name}: the text, as output_text joins it", reply.output_text, RESPONSES_TOOLS_TEXT)
+    checks.equal(f"{name}: the message item, then the function call items",
+                 [item.type for item in reply.output], ["message", "function_call", "function_call"])
+    calls = check_function_calls(checks, name, reply.output, RESPONSES_TOOLS_CALLS)
+    check_responses_usage(checks, name, reply.usage, 64, 29)
+    checks.equal(f"{name}: the fixed id", reply.id, "resp_sdk_responses_tools")
+    checks.equal(f"{name}: the fixed model", reply.model, model)
+    checks.equal(f"{name}: the tools, given back", [tool.name for tool in reply.tools], tool_names)
+    checks.equal(f"{name}: the Stub's request id", reply._request_id, "req_sdk_responses_tools")
+
+    name = "responses-tools: create(stream=True)"
+    request_id, events = responses_stream(client, "responses-tools", tools=RESPONSES_TOOLS)
+    closed = check_events(checks, name, events, "resp_sdk_responses_tools", model, "response.completed")
+    items = check_items(checks, name, events)
+    checks.equal(f"{name}: the items", [(item["added"].type, item["done"].status) for item in items],
+                 [("message", "completed"), ("function_call", "completed"), ("function_call", "completed")])
+    checks.equal(f"{name}: the text", streamed_text(events), RESPONSES_TOOLS_TEXT)
+    joined = check_streamed_calls(checks, name, items, RESPONSES_TOOLS_CALLS)
+    checks.equal(f"{name}: the arguments, joined as the JSON reply gives them", joined,
+                 [call.arguments for call in calls])
+    checks.equal(f"{name}: the closing event's items", closed and [item.type for item in closed.output],
+                 ["message", "function_call", "function_call"])
+    checks.equal(f"{name}: the Stub's request id", request_id, "req_sdk_responses_tools")
+
+    name = "responses-tools: stream()"
+    events, built = responses_helper(client, "responses-tools", tools=RESPONSES_TOOLS)
+    checks.equal(f"{name}: the text deltas, joined",
+                 "".join(event.delta for event in events if event.type == "response.output_text.delta"),
+                 RESPONSES_TOOLS_TEXT)
+    snapshots = {}
+    for event in events:
+        if event.type == "response.function_call_arguments.delta":
+            snapshots[event.output_index] = event.snapshot
+    checks.equal(f"{name}: the last argument delta's snapshot of each call", list(snapshots.values()),
+                 [call.arguments for call in calls])
+    checks.equal(f"{name}: the parsed arguments of the Response",
+                 [call.parsed_arguments for call in function_calls(built.output)],
+                 [arguments for _, _, arguments in RESPONSES_TOOLS_CALLS])
+    check_times(checks, name, built, reply)
+    checks.same(f"{name}: the Response equals the JSON reply, apart from the listed differences",
+                reply.model_dump(), built.model_dump(), RESPONSES_HELPER_DIFFERENCES)
+
+
 # The cases, in the order they run. Each calls the Stubs it names, and a
 # case whose SDK raises unexpectedly fails without stopping the others.
-CASES = [chat_text, chat_tools, chat_call_only, chat_length, responses_text]
+CASES = [chat_text, chat_tools, chat_call_only, chat_length, responses_text, responses_tools]
 
 
 def main():

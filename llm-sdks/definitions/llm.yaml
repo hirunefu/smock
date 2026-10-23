@@ -96,3 +96,30 @@ stubs:
         api: openai-responses
         text: "Hi! こんにちは。 👋🏽 How can I help?"
         usage: { input: 37, output: 11 }
+
+  # Responses: text and two tool calls, with the id, the model, the call
+  # ids and the request id fixed. The message item's msg_ id and each
+  # function call item's fc_ id are always generated. The arguments hold an
+  # array, a boolean, a null and CJK text.
+  - id: responses-tools
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { model: responses-tools } }
+    response:
+      status: 200
+      headers: { x-request-id: req_sdk_responses_tools }
+      llm:
+        api: openai-responses
+        id: resp_sdk_responses_tools
+        model: responses-tools-2026-10-23
+        text: Let me look both up.
+        toolCalls:
+          - name: get_forecast
+            id: call_sdk_forecast
+            arguments: { cities: [Paris, 東京], days: 2, hourly: false }
+          - name: get_alerts
+            id: call_sdk_alerts
+            arguments: { region: 関東, severity: null }
+        usage: { input: 64, output: 29 }
