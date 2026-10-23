@@ -599,7 +599,7 @@ fn compare_golden(
   }
   let verdict = if !comparison.problems.is_empty() {
     "not as listed"
-  } else if differs.is_empty() {
+  } else if differs.is_empty() && absent.is_empty() {
     "same"
   } else {
     "same but for the listed differences"
@@ -691,6 +691,41 @@ test "a gap matches any number of smock's events, none included, and events betw
       #|--
       #|not as listed
       #|event 2 is not in smock's stream after event 1
+    ),
+  )
+}
+
+///|
+test "an event listed as absent by its name is left out of the example, and must be in it" {
+  let h = harness([chat_streaming_stub])
+  h.now = 1_694_268_190_000L
+  let outcome = h.chat(body=hello_request(stream=true))
+  let with_ping = chat_chunk("{\"role\":\"assistant\",\"content\":\"\"}") +
+    "event: ping\ndata: {\"type\": \"ping\"}\n\n" +
+    ": omitted\n\n" +
+    chat_chunk("{}", finish="\"stop\"") +
+    "data: [DONE]\n\n"
+  inspect(
+    [
+      compare_golden(with_ping, outcome, absent=["ping"]),
+      compare_golden(with_ping, outcome),
+      compare_golden(two_gaps("Hello"), outcome, absent=["ping"]),
+    ].join("\n--\n"),
+    content=(
+      #|same but for the listed differences
+      #|listed: ping events: only in the example
+      #|--
+      #|not as listed
+      #|event 2 name: the example has "ping", smock none
+      #|event 2 /type: only in the example: "ping"
+      #|event 2 /id: only in smock's: "chatcmpl-123"
+      #|event 2 /object: only in smock's: "chat.completion.chunk"
+      #|event 2 /created: only in smock's: 1694268190
+      #|event 2 /model: only in smock's: "gpt-6-astra"
+      #|event 2 /choices: only in smock's: [{"index":0,"delta":{"content":"Hello"},"logprobs":null,"finish_reason":null}]
+      #|--
+      #|not as listed
+      #|listed but the same: ping events
     ),
   )
 }
