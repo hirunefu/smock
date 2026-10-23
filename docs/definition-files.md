@@ -1920,13 +1920,23 @@ The fields of `error`:
   event is sent. No `content_block_stop`, `tool_use` block,
   `message_delta` or `message_stop` follows
   ([Messages streams](#messages-streams)).
+- **Responses' form.** For `openai-responses`, the stream opens with
+  `response.created` and `response.in_progress`, and the error is an event
+  named `error`: `event: error`, then
+  `data: {"type":"error","code":…,"message":…,"param":null,"sequence_number":…}`,
+  whose `sequence_number` is one more than the event before it. When
+  `after` is above 0, the message item's `response.output_item.added` and
+  `response.content_part.added` and its `response.output_text.delta`
+  events come before it; at 0, no item is sent. No `.done` event, function
+  call item, `response.completed` or `response.incomplete` follows
+  ([The Responses stream](#the-responses-stream)).
 - **Counted in code points.** `after` counts code points of the text, not
   pieces, so the cut stays where it is when `chunkSize` or `chunks`
-  changes. `after: 0` sends the error right after Chat's opening chunk or
-  `message_start`. An empty element of [`chunks`](#chunks) counts 0 code
-  points: one before the cut is sent, and the text stops at the piece that
-  reaches `after`. An `after` past the end of a text as written is a load
-  error.
+  changes. `after: 0` sends the error right after Chat's opening chunk,
+  `response.in_progress` or `message_start`. An empty element of
+  [`chunks`](#chunks) counts 0 code points: one before the cut is sent,
+  and the text stops at the piece that reaches `after`. An `after` past
+  the end of a text as written is a load error.
 - **With templates.** With [`template: true`](#templates-in-llm-replies),
   `message` is a text template, such as `Overloaded: ${body.model}`,
   rendered for each request. `after`, `type` and `code` are never
@@ -1946,9 +1956,16 @@ The fields of `error`:
   `events`.
 - **What openai-python does.** It raises `APIError` on Chat's error frame,
   from `create(stream=True)` and from the `chat.completions.stream()`
-  helper, with the message, and the `error` object as its `body`. With
-  `max_retries` at its default it does not retry: the status was 200.
-  Checked with openai-python 3.36.1.
+  helper, with the message, and the `error` object as its `body`. It
+  raises nothing on the Responses `error` event:
+  `responses.create(stream=True)` and the `responses.stream()` helper
+  yield it, after the events before it, as a `ResponseErrorEvent` with its
+  `code`, `message` and `param`. So a client reads it from the stream, as
+  below. The stream then ends without `response.completed`, and the
+  helper's `get_final_response()` raises `RuntimeError`, as on an
+  [incomplete reply](#incomplete-replies). With `max_retries` at its
+  default it does not retry either: the status was 200. Checked with
+  openai-python 3.36.1, and the Responses `error` event with 3.37.0.
 - **What anthropic-sdk-python does.** It picks its error class by the
   HTTP status, which is 200 on a stream. So on any `event: error` it
   raises `APIStatusError` with `status_code` 200, never `OverloadedError`,
@@ -1966,9 +1983,6 @@ The fields of `error`:
   `not_found_error`, `conflict_error`, `request_too_large`,
   `rate_limit_error`, `api_error`, `timeout_error` and
   `overloaded_error`. An OpenAI `type` or `code` is any non-empty text.
-- **For now,** `openai-responses` does not cut its stream: an
-  `openai-responses` Stub reads and checks `error`, and sends its reply
-  whole.
 - `type` on `openai-responses` or `code` on another API, another
   Anthropic type, an empty `type`, `code` or `message`, an `after` that is
   not an integer from 0 or that passes the end of a text as written, and an
@@ -1988,6 +2002,27 @@ data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk"
 
 data: {"error":{"message":"The server had an error while processing your request. Sorry about that!","type":"server_error","param":null,"code":null}}
 
+```
+
+With `api: openai-responses`, `path: /v1/responses`, and
+`code: server_error` in place of `type`, a Responses request for
+`gpt-6-astra` with `stream: true` gets `response.created`,
+`response.in_progress`, the message item's two opening events and the
+deltas `"Hell"` and `"o"`, then this, with the same seed and time:
+
+```text
+event: error
+data: {"type":"error","code":"server_error","message":"The server had an error while processing your request. Sorry about that!","param":null,"sequence_number":6}
+
+```
+
+openai-python yields that event, so a client that streams looks for it:
+
+```python
+stream = client.responses.create(model="gpt-6-astra", input="Hello!", stream=True)
+for event in stream:
+    if event.type == "error":
+        print(event.code, event.message)
 ```
 
 ### Templates in LLM replies
@@ -2214,7 +2249,10 @@ and one `data:` line of compact JSON whose `sequence_number` counts from
 No `data: [DONE]` follows. The text is cut into pieces as for every API
 ([Chunks](#chunks)). Empty text with no tool call keeps the message item
 and its part, with no delta. With tool calls, empty text gives no message
-item, so steps 2 to 5 are left out. Every event carries the same `resp_`
+item, so steps 2 to 5 are left out. A
+[mid-stream error](#mid-stream-errors) ends the stream early with an
+`error` event, without the item's closing events, the function call items
+or `response.completed`. Every event carries the same `resp_`
 id, and the events of an item the same item id. The Response
 object of the last event is the JSON reply, but for its `completed_at`:
 the time smock received the request plus the stream's waits up to that

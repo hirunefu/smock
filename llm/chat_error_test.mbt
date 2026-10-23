@@ -323,33 +323,3 @@ test "the message and the type are sent as written, JSON-escaped" {
     ),
   )
 }
-
-///|
-test "for now, an openai-responses declaration with an error gives the reply it gives without one, streamed or not" {
-  let reply_of = (api : @llm.Api, error : @llm.MidStreamError?, stream : Bool) => {
-    shown(
-      @llm.reply(
-        @llm.Declaration(api~, error?),
-        @llm.Strings(text="Hello!", error_message="Overloaded"),
-        request=Some({ "model": "test-model", "stream": stream }),
-        now=received,
-        ids=@llm.ids_generator(7),
-      ),
-    )
-  }
-  let cut = @llm.MidStreamError(after=2, kind="overloaded_error")
-  let apis : Array[@llm.Api] = [OpenaiResponses]
-  inspect(
-    apis
-    .map(api => {
-      let same = [true, false].all(stream => {
-        reply_of(api, Some(cut), stream) == reply_of(api, None, stream)
-      })
-      "\{api.name()}: \{same}"
-    })
-    .join("\n"),
-    content=(
-      #|openai-responses: true
-    ),
-  )
-}

@@ -425,9 +425,8 @@ pub enum WaitSlot {
 /// request whose body is the JSON `request`, or `None` when the body is
 /// not JSON, received at `now` (milliseconds since the Unix epoch): the
 /// stream when the body is a JSON object whose `stream` is exactly `true`,
-/// otherwise the JSON reply. A declared mid-stream error cuts an
-/// `openai-chat` or `anthropic-messages` stream; the JSON reply leaves it
-/// out. Its ids draw from `ids`, the request's ids generator, and the
+/// otherwise the JSON reply. A declared mid-stream error cuts the stream;
+/// the JSON reply leaves it out. Its ids draw from `ids`, the request's ids generator, and the
 /// reply's id is the strings' `id` when given, as is each tool call's call
 /// id. Its model is the strings' `model` when given, otherwise the
 /// request's.
@@ -1351,7 +1350,11 @@ fn response_object(
 /// `response.incomplete` when a stop reason is written, gives the whole
 /// Response object. No `[DONE]` follows. The closing event's
 /// `completed_at` is the time received until `Reply::complete` adds the
-/// stream's waits.
+/// stream's waits. A declared mid-stream error cuts the text after its
+/// `after` code points, with no message item when it cuts at 0, and
+/// follows it as an `error` event with the message `strings.error_message`,
+/// in place of the item's closing events, the tool calls and every event
+/// after them, so the stream has no closing event.
 fn responses_stream(
   declaration : Declaration,
   strings : Strings,
@@ -1366,7 +1369,18 @@ fn responses_stream(
 ) -> Reply {
   let created = received / 1000L
   let tool_calls = strings.tool_calls
-  let text_pieces = strings.text_pieces(declaration.chunk_size)
+  // The message item, the reply's first, unless tool calls follow empty
+  // text, or a mid-stream error cuts the text at 0.
+  let has_message = match declaration.error {
+    Some(error) => strings.has_content() && error.after > 0
+    None => strings.has_content()
+  }
+  let text_pieces = match declaration.error {
+    _ if !has_message => no_pieces
+    Some(error) =>
+      pieces_before(strings.text_pieces(declaration.chunk_size), error.after)
+    None => strings.text_pieces(declaration.chunk_size)
+  }
   let pace = Pace::new()
   let out = ResponsesEvents::new(
     text_pieces.length() + 4 * tool_calls.length() + 8,
@@ -1389,9 +1403,9 @@ fn responses_stream(
   let status = responses_status(declaration)
   // The items the closing event's Response holds, in output_index order.
   let output : Array[Json] = Array(capacity=tool_calls.length() + 1)
-  // The message item, the reply's first, at output_index 0, unless tool
-  // calls follow empty text.
-  if strings.has_content() {
+  // What each event of the message item's text part gives first, its item
+  // id and indexes, once the item is opened at output_index 0.
+  let part_of = if has_message {
     let item_id = @template.compact_json(Json::string(message_id))
     out.push(
       NoWait,
@@ -1416,6 +1430,21 @@ fn responses_stream(
         after=no_logprobs,
       )
     }
+    part_of
+  } else {
+    ""
+  }
+  if declaration.error is Some(error) {
+    // The error takes the wait a next piece would, and ends the stream: it
+    // has no closing event, so its waits complete nothing.
+    out.push(
+      pace.piece(),
+      "error",
+      responses_error(error, strings.error_message),
+    )
+    return out.stream.reply(request_id)
+  }
+  if has_message {
     // Each closing event of the item carries the whole text.
     if out.stream.over() {
       return out.stream.reply(request_id)
@@ -1556,6 +1585,16 @@ fn responses_stream(
       None
     },
   )
+}
+
+///|
+/// The members of OpenAI Responses' `error` event for `error` with the
+/// message `message`, between its `type` and its `sequence_number`: the
+/// error's code, the message and a null `param`.
+fn responses_error(error : MidStreamError, message : String) -> String {
+  let code = @template.compact_json(Json::string(error.kind))
+  let message = @template.compact_json(Json::string(message))
+  "\"code\":\{code},\"message\":\{message},\"param\":null"
 }
 
 ///|
