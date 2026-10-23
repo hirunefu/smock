@@ -1299,7 +1299,8 @@ an unknown field of `llm` or of its `usage`, a count that is not an integer
 from 0 to 2^53-1, a stop reason that is not a word of the API, the errors
 of [chunks](#chunks), of [tool calls](#tool-calls) and of a
 [mid-stream error](#mid-stream-errors), a wait of `timing` that is not one
-distribution of the delay, and `llm` beside another body are reported with the JSON Pointer of the field, by `smock check`, at
+distribution of the delay, a reply as written over the
+[size bound](#the-size-bound), and `llm` beside another body are reported with the JSON Pointer of the field, by `smock check`, at
 startup and on a reload, which keeps the set served, and as 400
 `invalid_stub` for an Ephemeral Stub.
 
@@ -2057,6 +2058,38 @@ whose template fails makes three requests, with three Journal entries,
 and takes three draws from a seeded Stub's random source: the requests
 after it get other ids and waits than in a run without the failure. A
 test that expects the 500 builds its client with `max_retries=0`.
+
+### The size bound
+
+An LLM reply takes at most 1 MiB once encoded: its JSON body, or all the
+events of its stream, with their `event:` and `data:` lines and blank
+lines, in UTF-8. This is the bound of a
+[rendered body](#missing-values-and-render-errors), counted on its own:
+the strings that a template renders keep their own count.
+
+A stream carries much more than its text. Each piece goes in an event of
+its own, and every Chat chunk repeats the reply's id and model. At 4 code
+points per piece, a stream of ASCII text reaches 1 MiB at about 20,000
+characters for `openai-chat` and `openai-responses`, and at about 35,000
+for `anthropic-messages`. A larger `chunkSize` lets a stream carry more.
+The JSON reply carries the text once, so it holds almost 1 MiB of it.
+
+- A reply as written is encoded when the files are loaded, both as the
+  JSON reply and as the stream to a request whose body is
+  `{"stream":true,"stream_options":{"include_usage":true}}`, with no model
+  from the request. Either one over the bound is a load error at the
+  `llm` field, which `smock check` reports, such as
+  `/stubs/0/response/llm: the reply takes more than 1 MiB as a stream`.
+- A reply can still pass the bound for one request. A template can insert
+  a long value, and a long `model` from the request, or a setting that a
+  Responses object copies, such as `tools`, goes into the reply. A
+  Responses stream carries those settings three times. Such a request gets
+  the [500 `template failed`](#missing-values-and-render-errors), with
+  `at` at the `llm` field, and no stream:
+  `"at":"/response/llm","message":"the reply takes more than 1 MiB as a stream"`.
+  The SDKs [retry](#retries) it, as any 500.
+- smock stops encoding a reply as soon as it passes the bound, so a long
+  echo costs no more than a reply of 1 MiB.
 
 ### OpenAI Responses
 
@@ -4000,8 +4033,9 @@ text, a zero divisor, and a bound exceeded. `range` gives at most 1000
 values, one response runs at most 10,000 loop iterations in all, a
 helper's result takes at most 1 MiB, an arithmetic helper's numbers have
 at most 18 digits before the point and 18 after, and a rendered body, or
-all the events of a response together, takes at most 1 MiB. Bounds that
-literals give are checked when the files are loaded.
+all the events of a response together, takes at most 1 MiB. So does an
+[LLM reply](#the-size-bound) once encoded. Bounds that literals give are
+checked when the files are loaded.
 
 When a template cannot be rendered for a request, the client gets status
 500, `Content-Type: application/json` and

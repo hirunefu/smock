@@ -31,7 +31,8 @@ disagree.
   So do two tool calls of one `llm` with the same `id`: the Schema cannot
   say that a member differs across the elements of a list. So does an
   `llm` error whose `after` passes the end of the text, which the Schema
-  cannot count.
+  cannot count, and an `llm` as written whose JSON reply or stream takes
+  more than 1 MiB once encoded, which the Schema cannot measure.
   Data buckets break such rules too: a bucket that names a Mock no file
   declares, two buckets of one Mock with the same name, a `jsonFile` that
   is missing or does not hold JSON in UTF-8, a keyed bucket whose value is
