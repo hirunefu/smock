@@ -296,6 +296,9 @@ value in its place.
 - `{ "$includes": <condition> }` holds when the value is an array with at
   least one element that meets the condition, wherever it sits. It never
   holds for a value that is not an array.
+- `{ "$last": <condition> }` holds when the value is an array with at least
+  one element, and its last element meets the condition. It never holds
+  for an empty array or a value that is not an array.
 
 `<condition>` is any `json` condition: a value, an object of keys, a
 pattern or another operator.
@@ -327,6 +330,49 @@ that has a line whose `sku` starts with `A-`.
 - A body that does not parse as JSON never meets a `json` condition, so
   `{ "json": { "$not": … } }` fails on it too.
 
+`$last` matches the last message of a conversation, however long it is.
+An LLM client sends the whole conversation in each request, so a Stub can
+answer the turn after a tool call. Each API has its own form:
+
+```yaml
+stubs:
+  # OpenAI Chat Completions: the last message is a tool result.
+  - id: chat-after-tool
+    mock: llm
+    request:
+      path: /v1/chat/completions
+      body: { json: { messages: { $last: { role: tool } } } }
+    response: { status: 200 }
+  # Anthropic Messages: the last message is a user message that holds a
+  # tool result.
+  - id: messages-after-tool
+    mock: llm
+    request:
+      path: /v1/messages
+      body:
+        json:
+          messages:
+            $last: { role: user, content: { $includes: { type: tool_result } } }
+    response: { status: 200 }
+  # OpenAI Responses: the last input item is a tool result.
+  - id: responses-after-tool
+    mock: llm
+    request:
+      path: /v1/responses
+      body: { json: { input: { $last: { type: function_call_output } } } }
+    response: { status: 200 }
+```
+
+The Responses API also takes `input` as a string. A string is not an
+array, so it never meets `$last`.
+
+`$last` nests as the other operators do.
+`{ "$not": { "$last": { "role": "tool" } } }` holds when the last message
+is not a tool result, and also for an empty array, a value that is not an
+array and a missing key. `{ "$last": { "role": { "$not": "user" } } }`
+holds when the last element is an object whose `role` is missing or is
+not `user`.
+
 A key that starts with `$` is written `$$` and the rest, as in
 [response templates](#structured-templates): `{ "$$ref": "#/a" }` matches
 a body with the key `$ref`. A key that starts with one `$` and is not an
@@ -335,7 +381,7 @@ operator makes the definition set invalid, with a message that suggests
 not `true` or `false`:
 
 ```console
-orders.json: /stubs/0/request/body/json/schema/$ref: is not an operator: the operators here are "$not", "$exists" and "$includes"; write "$$ref" for the literal key "$ref"
+orders.json: /stubs/0/request/body/json/schema/$ref: is not an operator: the operators here are "$not", "$exists", "$includes" and "$last"; write "$$ref" for the literal key "$ref"
 orders.json: /stubs/1/request/body/json/tags/length: is not allowed beside "$includes": an operator is the only key of its object
 ```
 
@@ -349,7 +395,9 @@ for smock 0.1 now mean something else:
 
 Any other key that starts with `$` in a `json` condition is now an error,
 so a file with one fails to load rather than change its meaning: write
-the key with `$$`.
+the key with `$$`. This is why `$last`, added later, changed no file: a
+file with a lone `$last` key failed to load before, and `$$last` still
+means the key `$last`.
 
 ### Cookies
 
@@ -1513,6 +1561,7 @@ space before the name, a space after it) gets
 | Helper | Arguments | Output |
 |---|---|---|
 | `find(array, member, value)` | an array; a string; a string, a number, a boolean or null | The first element of `array` that is an object whose member `member` meets `value`. |
+| `last(array)` | an array | The last element of `array`, with its own type. |
 
 `value` is taken as text: a string as it is, a number as smock writes it
 in `json`, and `true`, `false` and `null` as those words. Unlike the
@@ -1541,6 +1590,46 @@ response:
 
 `?sku=42` with the body `{"items":[{"sku":7,"qty":3},{"sku":42,"qty":1}]}`
 gets `{"sku":42,"qty":1}`, and `?sku=5` gets `"no such item"`.
+
+`last` gives the last element of an array, and steps can follow it, as
+they follow any call. An empty array gives a missing value, so `??` gives
+a fallback. A value that is not an array is an error. Like `find`, `last`
+gives an element and builds nothing.
+
+```yaml
+response:
+  status: 200
+  template: true
+  json:
+    answer: It is ${last(body.messages).content ?? 'unknown'} in Paris.
+```
+
+The body
+`{"messages":[{"role":"user","content":"Weather?"},{"role":"tool","content":"18 °C"}]}`
+gets `{"answer":"It is 18 °C in Paris."}`, and `{"messages":[]}` gets
+`{"answer":"It is unknown in Paris."}`.
+
+A response reads the Data buckets after its own Stub's writes ([When data
+is written](#when-data-is-written)). So `last` answers the item that the
+Stub's `append` just added to a keyed bucket, its [new key](#new-keys)
+included:
+
+```yaml
+- id: add-order
+  mock: shop
+  request: { method: POST, path: /api/v1/orders }
+  dataWrites:
+    - { op: append, bucket: orders, value: "${body}" }
+  response:
+    status: 201
+    template: true
+    headers: { Location: "/api/v1/orders/${last(data.orders).id}" }
+    json: "${last(data.orders)}"
+```
+
+With the orders 1001 to 1003 keyed by `id`, `POST /api/v1/orders` with
+the body `{"status":"new"}` gets `Location: /api/v1/orders/1004` and
+`{"status":"new","id":1004}`. The next one in the same Session gets 1005.
 
 **Encodings.** Each argument may be any expression.
 
@@ -2458,6 +2547,7 @@ of a Stub of the bucket's Mock, the values of `variables` included.
 - [`find`](#helpers) picks an item by its key:
   `${find(data.orders, 'id', path[3]) ?? null}` answers the order of
   `/api/v1/orders/1002`, whose `id` is `1002` or `"1002"`.
+- [`last`](#helpers) reads the last item: `${last(data.orders).id}`.
 - The first step must name a bucket of the Stub's Mock. An unknown name,
   an index (`${data[0]}`) and `${data}` alone are errors when loading. A
   loop variable cannot be named `data`.
@@ -2587,10 +2677,10 @@ order has that key, and writes nothing.
 - `merge` without `key` cannot write to a keyed bucket, which holds an
   array. It is an error when loading.
 
-A Stub's response cannot read a key that its own `append` made, since a
-template has no index from the end of an array. A Stub that must answer
-the new item takes the key from the request, and puts it in the value.
-A [CRUD Stub](#crud-stubs) answers what it creates.
+A Stub's response reads the bucket after its own writes, so
+`${last(data.orders)}` answers the item that its `append` just added, new
+key included, as the [`last` example](#helpers) shows. A [CRUD
+Stub](#crud-stubs) answers what it creates.
 
 As for other writes, only a Session's first write to a bucket copies it,
 and the [state bound](#copies-and-the-state-bound) counts what each item

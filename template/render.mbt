@@ -321,6 +321,11 @@ fn Context::eval(
             Some(json) => present(json)
             None => Missing(text)
           }
+        Last =>
+          match last_value(values, at) {
+            Some(json) => present(json)
+            None => Missing(text)
+          }
       }
     }
   }

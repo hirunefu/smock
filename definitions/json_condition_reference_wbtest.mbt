@@ -27,6 +27,11 @@ fn reference_holds(actual : Json?, expected : Json) -> Bool {
       members.get("$includes") is Some(inner) =>
       actual is Some(Array(items)) &&
       items.iter().any(item => reference_holds(Some(item), inner))
+    (Object(members), _) if members.length() == 1 &&
+      members.get("$last") is Some(inner) =>
+      actual is Some(Array(items)) &&
+      items.last() is Some(item) &&
+      reference_holds(Some(item), inner)
     (Object(expected), Some(Object(actual))) =>
       expected
       .iter()
@@ -88,9 +93,9 @@ fn json_condition(value : Json) -> JsonCondition {
 /// by value but written apart, integers too large for a Double, strings,
 /// booleans, null, pattern objects and `$exists`. A `pattern` key gives
 /// literal objects that look like pattern objects, and pattern objects too
-/// when it is the only key and has a string. `$not` and `$includes` hold
-/// another such value, and the key `$$a` is the literal key `$a` in a
-/// condition. As a body, each is literal JSON.
+/// when it is the only key and has a string. `$not`, `$includes` and
+/// `$last` hold another such value, and the key `$$a` is the literal key
+/// `$a` in a condition. As a body, each is literal JSON.
 fn random_json(rand : @random.Rand, depth : Int) -> Json {
   let scalars : Array[String] = [
     "1", "1.0", "10e-1", "2", "-0", "0", "12345678901234567890", "12345678901234567891",
@@ -104,7 +109,7 @@ fn random_json(rand : @random.Rand, depth : Int) -> Json {
     }
   }
   if rand.int(limit=4) == 0 {
-    let operator = ["$not", "$includes"][rand.int(limit=2)]
+    let operator = ["$not", "$includes", "$last"][rand.int(limit=3)]
     return Json::object(Map([(operator, random_json(rand, depth - 1))]))
   }
   if rand.int(limit=2) == 0 {
@@ -155,8 +160,9 @@ test "a json condition matches the bodies it matched before conditions were read
 /// A body grown from the condition `json`: its value with members added to
 /// its objects, at any depth, and now and then a value changed. An operator
 /// gives a value that often meets it: an array that holds the value of
-/// `$includes` among others, and any value for `$not` and `$exists`, whose
-/// key is now and then left out. The key `$$a` gives the key `$a`.
+/// `$includes` among others, an array that ends with the value of `$last`,
+/// and any value for `$not` and `$exists`, whose key is now and then left
+/// out. The key `$$a` gives the key `$a`.
 fn grown(json : Json, rand : @random.Rand) -> Json {
   if rand.int(limit=10) == 0 {
     return random_json(rand, 2)
@@ -166,6 +172,12 @@ fn grown(json : Json, rand : @random.Rand) -> Json {
       members.get("$includes") is Some(inner) => {
       let items = Array::makei(rand.int(limit=3), _ => random_json(rand, 1))
       items.insert(rand.int(limit=items.length() + 1), grown(inner, rand))
+      Json::array(items)
+    }
+    Object(members) if members.length() == 1 &&
+      members.get("$last") is Some(inner) => {
+      let items = Array::makei(rand.int(limit=3), _ => random_json(rand, 1))
+      items.push(grown(inner, rand))
       Json::array(items)
     }
     Object(members) if members.length() == 1 &&

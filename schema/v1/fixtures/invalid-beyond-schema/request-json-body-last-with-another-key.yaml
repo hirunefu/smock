@@ -1,0 +1,14 @@
+mocks:
+  - name: llm
+stubs:
+  - id: chat-after-tool
+    mock: llm
+    request:
+      path: /v1/chat/completions
+      body:
+        json:
+          messages:
+            $last: { role: tool }
+            length: 3
+    response:
+      status: 200

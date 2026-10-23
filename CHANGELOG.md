@@ -32,6 +32,22 @@ of each GitHub release include its section
   A client that reads slowly but steadily still gets the whole response,
   and delays do not count. It is not logged, like the read and idle
   timeouts. See [Run](README.md#run).
+- A `json` condition can match the last element of an array with
+  `{ "$last": <condition> }`. It holds when the value is an array with at
+  least one element, and its last element meets the condition, so a Stub
+  can match the last message of a conversation, such as
+  `messages: { $last: { role: tool } }`. It nests with the other
+  operators. No file changes meaning: a lone `$last` key failed to load
+  before, and `$$last` still means the key `$last`. See
+  [Operators in json conditions](docs/definition-files.md#operators-in-json-conditions).
+- A template helper, `last(array)`, gives the last element of an array,
+  with its own type, and steps can follow it, so
+  `${last(body.messages).content}` quotes the last message of a
+  conversation. An empty array gives a missing value, so `??` applies.
+  Since a response reads the Data buckets after its own Stub's writes,
+  `${last(data.orders)}` answers the item that the Stub's `append` just
+  added, its new key included. See
+  [Helpers](docs/definition-files.md#helpers).
 - LLM API presets: a response can give `llm` in place of a body, an LLM
   response that smock writes in the wire form of an LLM API. With
   `api: openai-chat`, it answers OpenAI Chat Completions requests with one

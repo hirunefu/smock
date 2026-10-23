@@ -1174,6 +1174,10 @@ fn File::read_json_operator(
       self
       .read_json_condition_value(at, operand)
       .map(expected => Expected::Includes(expected))
+    "$last" =>
+      self
+      .read_json_condition_value(at, operand)
+      .map(expected => Expected::Last(expected))
     _ => self.read_exists(at, operand).map(present => Exists(present))
   }
 }
@@ -1272,7 +1276,7 @@ let value_operators : Array[String] = ["$not", "$exists"]
 /// The operators of a value in a `json` condition, in the order messages
 /// list them. One of them where it is not allowed is reported as allowed
 /// only in a `json` condition, not as unknown.
-let json_operators : Array[String] = ["$not", "$exists", "$includes"]
+let json_operators : Array[String] = ["$not", "$exists", "$includes", "$last"]
 
 ///|
 /// The key of `members`, an object in a value position, that makes it an
