@@ -18,6 +18,7 @@ test "a request whose JSON body has stream: true gets the reply as chat.completi
       #|200
       #|Content-Type: text/event-stream
       #|x-ratelimit-remaining-requests: 59
+      #|x-request-id: req_TZp9I060Mzd0w4SDwiWTe2c8
       #|after 0 ms: event -, id -, data "{\"id\":\"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl\",\"object\":\"chat.completion.chunk\",\"created\":1791815405,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"logprobs\":null,\"finish_reason\":null}]}"
       #|after 0 ms: event -, id -, data "{\"id\":\"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl\",\"object\":\"chat.completion.chunk\",\"created\":1791815405,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hell\"},\"logprobs\":null,\"finish_reason\":null}]}"
       #|after 0 ms: event -, id -, data "{\"id\":\"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl\",\"object\":\"chat.completion.chunk\",\"created\":1791815405,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"o! H\"},\"logprobs\":null,\"finish_reason\":null}]}"
@@ -72,6 +73,66 @@ test "any other request gets the JSON reply: stream false, the string \"true\", 
       #|missing: 200 application/json, a body with object "chat.completion"
       #|not JSON: 200 application/json, a body with object "chat.completion"
       #|empty: 200 application/json, a body with object "chat.completion"
+    ),
+  )
+}
+
+///|
+/// A Mock `openai` with a Stub whose LLM response declares usage and a
+/// stop reason, its own seed fixing its ids.
+let usage_mock : (String, String) = (
+  "openai.json",
+  (
+    #|{ "mocks": [{ "name": "openai", "hosts": ["api.openai.test"] }],
+    #|  "stubs": [{ "id": "chat", "mock": "openai",
+    #|    "request": { "method": "POST", "path": "/v1/chat/completions" },
+    #|    "response": { "status": 200,
+    #|      "llm": { "api": "openai-chat", "text": "Hi",
+    #|        "usage": { "input": 31, "output": 18 }, "stopReason": "length" } },
+    #|    "fault": { "seed": 7 } }] }
+  ),
+)
+
+///|
+test "a stream whose request sets stream_options.include_usage gets the Stub's usage in a last chunk before [DONE], and usage: null on every other chunk" {
+  let h = harness([usage_mock])
+  let body = "{\"model\":\"test-model\",\"stream\":true,\"stream_options\":{\"include_usage\":true}}"
+  inspect(
+    response(h.chat(body~)),
+    content=(
+      #|200
+      #|Content-Type: text/event-stream
+      #|x-request-id: req_TZp9I060Mzd0w4SDwiWTe2c8
+      #|after 0 ms: event -, id -, data "{\"id\":\"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl\",\"object\":\"chat.completion.chunk\",\"created\":1791815405,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}"
+      #|after 0 ms: event -, id -, data "{\"id\":\"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl\",\"object\":\"chat.completion.chunk\",\"created\":1791815405,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}"
+      #|after 0 ms: event -, id -, data "{\"id\":\"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl\",\"object\":\"chat.completion.chunk\",\"created\":1791815405,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{},\"logprobs\":null,\"finish_reason\":\"length\"}],\"usage\":null}"
+      #|after 0 ms: event -, id -, data "{\"id\":\"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl\",\"object\":\"chat.completion.chunk\",\"created\":1791815405,\"model\":\"test-model\",\"choices\":[],\"usage\":{\"prompt_tokens\":31,\"completion_tokens\":18,\"total_tokens\":49,\"prompt_tokens_details\":{\"cached_tokens\":0,\"audio_tokens\":0},\"completion_tokens_details\":{\"reasoning_tokens\":0,\"audio_tokens\":0,\"accepted_prediction_tokens\":0,\"rejected_prediction_tokens\":0}}}"
+      #|after 0 ms: event -, id -, data "[DONE]"
+      #|
+    ),
+  )
+}
+
+///|
+test "the JSON reply carries the Stub's usage and stop reason, and a stream that does not ask for usage has no usage member" {
+  let h = harness([usage_mock])
+  let json = h.chat()
+  let stream = h.chat(body=stream_body("true"))
+  guard stream.plan.body is Events(events) else { fail("not a stream") }
+  let finish_reason = match body_value(json) {
+    { "choices": [{ "finish_reason": String(reason), .. }], .. } => reason
+    _ => "none"
+  }
+  inspect(
+    [
+      "usage: \{body_member(json, "usage")}",
+      "finish_reason: \{finish_reason}",
+      "stream chunks with usage: \{events.filter(event => event.data.contains("usage")).length()} of \{events.length()} events",
+    ].join("\n"),
+    content=(
+      #|usage: {"prompt_tokens":31,"completion_tokens":18,"total_tokens":49,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}}
+      #|finish_reason: length
+      #|stream chunks with usage: 0 of 4 events
     ),
   )
 }
@@ -192,6 +253,7 @@ test "a reply to HEAD, or with status 204 or 304, is the head alone, for the str
       #|HEAD /v1/chat/completions, stream true:
       #|HTTP/1.1 200 OK
       #|Content-Type: text/event-stream
+      #|x-request-id: req_sJNCUcA0CWrNZKC6RTXrx2qy
       #|Date: Mon, 12 Oct 2026 14:30:05 GMT
       #|Transfer-Encoding: chunked
       #|
@@ -199,6 +261,7 @@ test "a reply to HEAD, or with status 204 or 304, is the head alone, for the str
       #|HEAD /v1/chat/completions, stream false:
       #|HTTP/1.1 200 OK
       #|Content-Type: application/json
+      #|x-request-id: req_fK1WtgcCBbTWteWM2iZw2jBF
       #|Date: Mon, 12 Oct 2026 14:30:05 GMT
       #|Content-Length: 536
       #|
@@ -206,24 +269,28 @@ test "a reply to HEAD, or with status 204 or 304, is the head alone, for the str
       #|POST /no-content, stream true:
       #|HTTP/1.1 204 No Content
       #|Content-Type: text/event-stream
+      #|x-request-id: req_lDj96YCg3g5sUx8DB3OXKUJ3
       #|Date: Mon, 12 Oct 2026 14:30:05 GMT
       #|
       #|--
       #|POST /no-content, stream false:
       #|HTTP/1.1 204 No Content
       #|Content-Type: application/json
+      #|x-request-id: req_a361XihHfVpqOR0DFxRb8HGj
       #|Date: Mon, 12 Oct 2026 14:30:05 GMT
       #|
       #|--
       #|POST /not-modified, stream true:
       #|HTTP/1.1 304 Not Modified
       #|Content-Type: text/event-stream
+      #|x-request-id: req_vGCkDAGSq05n3K1ld1QxhFIz
       #|Date: Mon, 12 Oct 2026 14:30:05 GMT
       #|
       #|--
       #|POST /not-modified, stream false:
       #|HTTP/1.1 304 Not Modified
       #|Content-Type: application/json
+      #|x-request-id: req_q4hAwFeEs9a2NKGhmyjNx29B
       #|Date: Mon, 12 Oct 2026 14:30:05 GMT
       #|
       #|
@@ -261,6 +328,10 @@ test "render shows the events for a sample whose body sets stream: true, through
       #|      {
       #|        "name": "Content-Type",
       #|        "value": "text/event-stream"
+      #|      },
+      #|      {
+      #|        "name": "x-request-id",
+      #|        "value": "req_TZp9I060Mzd0w4SDwiWTe2c8"
       #|      }
       #|    ],
       #|    "body": null,

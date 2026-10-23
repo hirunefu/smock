@@ -1244,6 +1244,10 @@ The fields of `llm`:
 |---|---|---|
 | `api` | `openai-chat`, OpenAI Chat Completions | required |
 | `text` | the text of the reply | empty |
+| `id` | the reply's id, sent as written | generated |
+| `model` | the reply's model | the request's |
+| `usage` | `{input, output}`, token counts, integers from 0 to 2^53-1 | both 0 |
+| `stopReason` | a stop reason of the API, such as `length` | derived |
 | `timing` | `{first, interval}`, the [waits of a stream](#timing), each a distribution of the [delay](#delays) | no waits |
 
 - `api` names the API whose wire form the reply takes. It is required, and
@@ -1251,26 +1255,21 @@ The fields of `llm`:
   of its own does not change the reply. The preset neither sets nor checks
   `request.path`: the Stub's conditions choose it, as for any Stub.
 - The reply is the assistant's message, with `text` as its `content`, or
-  `""` when the text is empty, and `finish_reason: "stop"`. Its fields and
-  their order follow the example of OpenAI's API reference, and so do its
-  fixed values, such as `refusal: null` and `service_tier: "default"`.
-  `usage` has the example's members, every count 0. There is no
-  `system_fingerprint`.
+  `""` when the text is empty, and the
+  [stop reason](#usage-and-stop-reasons) as its `finish_reason`. Its fields
+  and their order follow the example of OpenAI's API reference, and so do
+  its fixed values, such as `refusal: null` and `service_tier: "default"`.
+  `usage` has the example's members, with the
+  [declared counts](#usage-and-stop-reasons) and every other count 0. There
+  is no `system_fingerprint`.
 - smock sets `Content-Type: application/json`, or `text/event-stream` for
   a stream. A `Content-Type` the Stub gives is replaced, as for `events`.
+  smock also adds an `x-request-id` header, unless the Stub gives its own.
   Other headers, such as a rate-limit header, are sent as written.
-- The reply's `id` is `chatcmpl-` and 24 characters from `A`-`Z`, `a`-`z`
-  and `0`-`9`. It comes from the Stub's random source: from a generator of
-  its own, seeded with the one draw every matched request takes XOR a fixed
-  constant. So [`fault.seed` and `--seed`](#seeds) replay the ids, and an
-  `llm` response changes no Fault decision, no pick among `responses` and
-  no helper output.
-- `created` is the time smock received the request, in whole seconds since
-  the Unix epoch: the time `now()` reads.
-- `model` is the request's `model` when it is a string, and the empty
-  string otherwise, such as when the body is not JSON. `llm` adds no
-  condition on the model, so one Stub answers every model. A Stub for one
-  model adds `body: { json: { model: gpt-6-astra } }` to its request.
+- The reply's id is generated with the vendor's prefix, unless `id` fixes
+  it. `created` is the time smock received the request. `model` is the
+  Stub's `model`, or else the request's. [Ids, seeds and
+  time](#ids-seeds-and-time) says more.
 
 An LLM response is a response like any other. `status` is required, as
 always. `llm` may stand in `response` or in any element of
@@ -1278,13 +1277,15 @@ always. `llm` may stand in `response` or in any element of
 request in ten with an ordinary 429. Request conditions, Faults,
 Ephemeral Stubs, the Journal and [`smock render`](#rendering-a-template)
 work as for other responses: a rendering shows the JSON body, or the events
-for a sample whose body sets `stream: true`, with the ids its seed gives
-and its time as `created`. A response gives at most one of
+for a sample whose body sets `stream: true`, with the ids and the waits its
+seed gives and its time as `created`. A response gives at most one of
 `body`, `bodyFile`, `json`, `events` and `llm`. A missing or unknown `api`,
-an unknown field of `llm`, and `llm` beside another body are reported with
-the JSON Pointer of the field, by `smock check`, at startup and on a
-reload, which keeps the set served, and as 400 `invalid_stub` for an
-Ephemeral Stub.
+an unknown field of `llm` or of its `usage`, a count that is not an integer
+from 0 to 2^53-1, a stop reason that is not a word of the API, a wait of
+`timing` that is not one distribution of the delay, and `llm` beside
+another body are reported with the JSON Pointer of the field, by
+`smock check`, at startup and on a reload, which keeps the set served, and
+as 400 `invalid_stub` for an Ephemeral Stub.
 
 The wire forms follow the vendors' documents as they were read on
 2026-10-22 and 2026-10-23. When a vendor changes its documented form, a
@@ -1310,8 +1311,10 @@ every chunk carries the reply's id, `created` and model. In order:
 2. one chunk per piece of the text, whose `delta` gives the piece as
    `content`;
 3. the closing chunk, whose `delta` is empty and whose `finish_reason` is
-   `stop`;
-4. `data: [DONE]`.
+   the [stop reason](#usage-and-stop-reasons);
+4. when the request asks for usage, the
+   [usage chunk](#usage-and-stop-reasons), with no choice;
+5. `data: [DONE]`.
 
 There is no `obfuscation` field, no `system_fingerprint` and no SSE comment
 line. The text is cut into pieces of 4 code points, the last one shorter.
@@ -1414,6 +1417,149 @@ stubs:
   `"Hell"`, then 27, 20, 38, 19, 40, 38, 26 and 28 ms before the next
   eight pieces. The opening chunk, the closing chunk and `[DONE]` wait 0.
 
+### Usage and stop reasons
+
+`usage` declares the token counts the reply reports, and `stopReason` why
+the reply ended. This Stub stands for a reply cut short by the token limit:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: truncated
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: The weather in Paris is
+        usage: { input: 31, output: 5 }
+        stopReason: length
+```
+
+smock counts no tokens and estimates none: the reply reports the counts
+as written. Each one is an integer from 0 to 2^53-1, 9007199254740991, and
+0 when left out. An `openai-chat` reply gives `input` as `prompt_tokens`,
+`output` as `completion_tokens`, and their sum as `total_tokens`. The
+detail objects of OpenAI's example follow, every count in them 0. A request
+for `gpt-6-astra` without `stream` gets this reply, which `smock render`
+shows with `--seed 7` and `--time 2026-10-23T00:00:00Z`:
+
+```json
+{"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"message":{"role":"assistant","content":"The weather in Paris is","refusal":null,"annotations":[]},"logprobs":null,"finish_reason":"length"}],"usage":{"prompt_tokens":31,"completion_tokens":5,"total_tokens":36,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"service_tier":"default"}
+```
+
+The JSON reply always carries `usage`. A [stream](#streams) carries it
+only when the request asks for it, as the vendor's does:
+
+- When the request's body sets `stream_options.include_usage` to `true`,
+  every chunk carries `"usage":null`. After the closing chunk comes the
+  usage chunk, whose `choices` is empty and whose `usage` gives the counts,
+  then `data: [DONE]`. An SDK reads the counts from that last chunk.
+- Any other stream has no `usage` member and no usage chunk. That includes
+  `include_usage: false` and the string `"true"`.
+
+The same request with `stream: true` and
+`stream_options: { include_usage: true }` gets a stream that ends with
+these events:
+
+```text
+  … "The ", "weat", "her ", "in P", "aris" …
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"content":" is"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"length"}],"usage":null}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[],"usage":{"prompt_tokens":31,"completion_tokens":5,"total_tokens":36,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}}}
+
+data: [DONE]
+
+```
+
+`stopReason` is written in the word of the Stub's API. For `openai-chat`
+it is the `finish_reason`, one of `stop`, `length`, `tool_calls`,
+`content_filter` and `function_call`, which OpenAI deprecates:
+
+- It goes in the JSON reply's `finish_reason` and in the closing chunk's.
+- Any word of the API may be written, whatever the reply holds. So a test
+  can send `length` for a reply cut short, or `content_filter` for a
+  filtered one.
+- Left out, smock derives it from the reply: `stop`.
+- A word that is not one of the API's, such as Anthropic's `end_turn`, is
+  a load error that lists the API's words. smock checks it when it loads
+  the Stub, so a reply never carries a word its SDK does not know.
+
+### Ids, seeds and time
+
+smock generates two ids for each reply: the reply's id, and a request id,
+which it sends in a header. Each is the vendor's prefix and 24 characters
+from `A`-`Z`, `a`-`z` and `0`-`9`:
+
+| API | Reply's id | Request-id header |
+|---|---|---|
+| `openai-chat` | `chatcmpl-` | `x-request-id: req_…` |
+
+- One reply has one id: the JSON reply and every chunk of the stream carry
+  the same one.
+- The ids come from the Stub's random source: from a generator of their
+  own, seeded with the one draw every matched request takes XOR a fixed
+  constant. So [`fault.seed` and `--seed`](#seeds) replay them, and an
+  `llm` response changes no Fault decision, no pick among `responses` and
+  no helper output.
+- A seeded Stub's generator advances once per request the Stub matches,
+  whatever the Session. So the n-th request it matches gets the same ids
+  in every run. Which request is the n-th depends on the order the
+  requests arrive in, such as when tests run in parallel. A test that
+  must know an id in advance fixes it.
+- `id` fixes the reply's id. smock sends it exactly as written, with no
+  prefix, in the JSON reply and in every chunk. Fixing it changes no other
+  id: the ids draw in a fixed order of slots, the reply's first and the
+  request id's last, and every slot draws whether or not the Stub fixes
+  its id. So adding `id` to a Stub keeps the request ids of a recorded
+  run.
+- `created` is the time smock received the request, in whole seconds since
+  the Unix epoch: the time `now()` reads. In a rendering, it is the
+  rendering's time.
+- The reply's `model` is the Stub's `model` when given. Otherwise it is the
+  request's `model` when that is a string, and otherwise the empty string,
+  such as when the body is not JSON. `llm` adds no condition on the model,
+  so one Stub answers every model. A Stub that should answer one model
+  adds a body condition on it, as below.
+- smock adds the request-id header to the JSON reply and to the stream,
+  after the Stub's own header fields. openai-python reads it as the
+  reply's `_request_id`. A header the Stub gives under that name, in any
+  case, takes its place: smock then sends the Stub's field alone. The
+  request id still draws its slot, so no other id changes.
+
+This Stub answers only requests for `gpt-6-astra`, and fixes the reply's
+id, its model and its request id, so that a test can assert all three:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: astra
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { model: gpt-6-astra } }
+    response:
+      status: 200
+      headers: { x-request-id: req_test_1 }
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+        id: chatcmpl-test-1
+        model: gpt-6-astra-2026-10-01
+```
+
+A request for `gpt-6-astra` gets a reply that begins
+`{"id":"chatcmpl-test-1","object":"chat.completion","created":…,"model":"gpt-6-astra-2026-10-01",`,
+with `x-request-id: req_test_1`. A request for another model does not
+match it.
+
 ### Paths and compatible endpoints
 
 The preset neither sets nor checks `request.path`. A Stub's conditions
@@ -1489,10 +1635,10 @@ error body. Each vendor has one shape:
   | 504 | `timeout_error` |
   | 529 | `overloaded_error` |
 
-smock adds no request-id header to an ordinary response, so the recipes
-below write one. Their messages and ids are examples. The SDKs choose the
-error they raise by the status, such as `RateLimitError` for a 429, and
-keep the body in it.
+smock adds no request-id header to an ordinary response, only to an
+`llm` reply, so the recipes below write one. Their messages and ids are
+examples. The SDKs choose the error they raise by the status, such as
+`RateLimitError` for a 429, and keep the body in it.
 
 #### Retries
 
@@ -3949,8 +4095,10 @@ apply, and how long the delay is, and, for a Stub with
   advances once per request the Stub matches. An Ephemeral Stub with a seed
   gets its own generator when it is added, which a reload keeps. So the n-th
   request a seeded Stub matches gets the same Faults in every run, whatever
-  requests other Stubs get, and the same response among `responses`. The
-  generator is a fixed algorithm, the same on every platform.
+  requests other Stubs get, the same response among `responses`, the same
+  [ids in an LLM reply](#ids-seeds-and-time) and the same
+  [waits of an LLM stream](#timing). The generator is a fixed algorithm,
+  the same on every platform.
 - Stubs without a seed draw from the process generator, which they share.
   smock picks its seed at startup and logs it:
 

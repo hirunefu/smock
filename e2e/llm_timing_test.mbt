@@ -5,7 +5,7 @@
 ///|
 /// A Mock `openai` whose Stub `paced` streams `Hi there!` in three pieces,
 /// the first 400 ms after the head and each later one 300 ms after the one
-/// before. `/v1/ticks` streams 200 pieces, one every 50 ms, which would
+/// before, its seed fixing its request id. `/v1/ticks` streams 200 pieces, one every 50 ms, which would
 /// last 10 s, and `/hello` answers at once.
 let paced_openai : String =
   $|{ "mocks": [{ "name": "openai" }],
@@ -14,7 +14,8 @@ let paced_openai : String =
   $|      "request": { "method": "POST", "path": "/v1/chat/completions" },
   $|      "response": { "status": 200,
   $|        "llm": { "api": "openai-chat", "text": "Hi there!",
-  $|          "timing": { "first": { "fixed": 400 }, "interval": { "fixed": 300 } } } } },
+  $|          "timing": { "first": { "fixed": 400 }, "interval": { "fixed": 300 } } } },
+  $|      "fault": { "seed": 7 } },
   $|    { "id": "ticks", "mock": "openai",
   $|      "request": { "method": "POST", "path": "/v1/ticks" },
   $|      "response": { "status": 200,
@@ -91,6 +92,7 @@ async test "over a real socket, the head and the opening chunk arrive at once, t
           #|head before 400 ms:
           #|HTTP/1.1 200 OK
           #|Content-Type: text/event-stream
+          #|x-request-id: req_TZp9I060Mzd0w4SDwiWTe2c8
           #|Smock-Mock: openai; via=default
           #|Date: <now>
           #|Transfer-Encoding: chunked
