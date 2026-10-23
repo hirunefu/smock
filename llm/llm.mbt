@@ -362,6 +362,9 @@ pub struct Reply {
   /// What the waits of the stream complete, its closing event, or `None`
   /// when no event depends on them.
   priv closing : Closing?
+  /// Whether the reply takes more than `max_reply_bytes` once encoded. It
+  /// is then not to be sent: `check_size` says so.
+  priv over : Bool
 }
 
 ///|
@@ -564,6 +567,40 @@ pub fn Reply::complete(self : Reply, waits : FixedArray[Int]) -> Unit {
 }
 
 ///|
+/// The most bytes a reply takes once encoded: 1 MiB, the bound of a
+/// rendered body. It is counted apart from the rendered strings, which
+/// their rendering counts as a body.
+pub let max_reply_bytes : Int = @template.max_output
+
+///|
+/// Whether `self` takes at most `max_reply_bytes` bytes of UTF-8 once
+/// encoded: its JSON body, or every event of its stream as it is sent. A
+/// reply over the bound is not to be sent, and the message says which form
+/// passed it.
+pub fn Reply::check_size(self : Reply) -> Result[Unit, String] {
+  guard self.over else { return Ok(()) }
+  match self.body {
+    Json(_) => Err("the reply takes more than 1 MiB as a JSON body")
+    Events(_) => Err("the reply takes more than 1 MiB as a stream")
+  }
+}
+
+///|
+/// The JSON reply whose body is `body`, with the request-id header field
+/// `request_id`. Its bytes are counted first, without writing them, and a
+/// body that takes more than `max_reply_bytes` is not written.
+fn json_reply(body : Json, request_id : (String, String)) -> Reply {
+  let over = @template.compact_length(body) > max_reply_bytes.to_int64()
+  {
+    content_type: "application/json",
+    request_id,
+    body: Json(if over { b"" } else { @template.compact_json_bytes(body) }),
+    closing: None,
+    over,
+  }
+}
+
+///|
 /// Whether the request whose body is the JSON `request` asks for the
 /// stream: its body is a JSON object with `stream` exactly `true`. A body
 /// that is not JSON, a missing `stream`, `false` and the string `"true"`
@@ -723,12 +760,7 @@ fn chat_reply(
     "usage": chat_usage(declaration.usage),
     "service_tier": "default",
   }
-  {
-    content_type: "application/json",
-    request_id,
-    body: Json(@template.compact_json_bytes(body)),
-    closing: None,
-  }
+  json_reply(body, request_id)
 }
 
 ///|
@@ -835,6 +867,7 @@ fn chat_stream(
       request_id,
       body: Events(events),
       closing: None,
+      over: false,
     }
   }
   for k in 0..<tool_calls.length() {
@@ -882,6 +915,7 @@ fn chat_stream(
     request_id,
     body: Events(events),
     closing: None,
+    over: false,
   }
 }
 
@@ -1000,12 +1034,7 @@ fn responses_reply(
     output=[message_item(message_id, status, strings.text)],
     usage=responses_usage(declaration.usage),
   )
-  {
-    content_type: "application/json",
-    request_id,
-    body: Json(@template.compact_json_bytes(Json::object(body))),
-    closing: None,
-  }
+  json_reply(Json::object(body), request_id)
 }
 
 ///|
@@ -1245,6 +1274,7 @@ fn responses_stream(
     } else {
       None
     },
+    over: false,
   }
 }
 
@@ -1378,12 +1408,7 @@ fn messages_reply(
     body["stop_details"] = refusal_details
   }
   body["usage"] = messages_usage(declaration.usage)
-  {
-    content_type: "application/json",
-    request_id,
-    body: Json(@template.compact_json_bytes(Json::object(body))),
-    closing: None,
-  }
+  json_reply(Json::object(body), request_id)
 }
 
 ///|
@@ -1509,6 +1534,7 @@ fn messages_stream(
     request_id,
     body: Events(events),
     closing: None,
+    over: false,
   }
 }
 
