@@ -73,6 +73,13 @@ MESSAGES_TOOLS_CALLS = [
     ("toolu_sdk_time", "get_time", {"timezone": "Asia/Tokyo"}),
 ]
 MESSAGES_CALL_ONLY_CALL = ("get_weather", {"city": "Paris"})
+MESSAGES_STOP_SEQUENCE_TEXT = "Step 1: open the box."
+MESSAGES_REFUSAL_TEXT = "I can't help with that."
+
+# The stop sequences an application gives the Messages API, and the stop
+# details of a refusal: its type, category and explanation.
+STOP_SEQUENCES = ["Step 2:", "END"]
+REFUSAL_DETAILS = ("refusal", None, None)
 
 # The function tools an application gives the stream helper. With
 # "strict", the helper parses each call's arguments as JSON.
@@ -571,6 +578,15 @@ def check_messages_usage(checks, name, usage, input_tokens, output_tokens):
                  (input_tokens, output_tokens))
 
 
+def stop(message):
+    """The stop reason, stop sequence and stop details of a message, or of
+    a message_delta's delta, the details as their type, category and
+    explanation."""
+    details = message.stop_details
+    return (message.stop_reason, message.stop_sequence,
+            None if details is None else (details.type, details.category, details.explanation))
+
+
 def blocks(message):
     """The content blocks of a message, each as its type and what it
     carries: the text, or the id, name and input of a tool use."""
@@ -655,8 +671,7 @@ def messages_text(checks, smock):
     reply = messages_create(client, "messages-text")
     checks.equal(f"{name}: a message from the assistant", (reply.type, reply.role), ("message", "assistant"))
     checks.equal(f"{name}: one text block", blocks(reply), [("text", MESSAGES_TEXT)])
-    checks.equal(f"{name}: the stop reason", (reply.stop_reason, reply.stop_sequence, reply.stop_details),
-                 ("end_turn", None, None))
+    checks.equal(f"{name}: the stop reason", stop(reply), ("end_turn", None, None))
     check_messages_usage(checks, name, reply.usage, 23, 10)
     checks.id(f"{name}: the id", reply.id, MESSAGE_ID)
     checks.equal(f"{name}: the model", reply.model, "messages-text")
@@ -673,8 +688,7 @@ def messages_text(checks, smock):
     checks.check(f"{name}: a piece ends between the code points of the emoji",
                  any(piece.endswith("👋") for piece in pieces), repr(pieces))
     checks.equal(f"{name}: message_delta's stop reason and output tokens",
-                 (delta.delta.stop_reason, delta.delta.stop_sequence, delta.delta.stop_details,
-                  delta.usage.output_tokens), ("end_turn", None, None, 10))
+                 (stop(delta.delta), delta.usage.output_tokens), (("end_turn", None, None), 10))
     checks.id(f"{name}: the request id", request_id, REQUEST_ID)
 
     name = "messages-text: stream()"
@@ -697,8 +711,7 @@ def messages_tools(checks, smock):
     name = "messages-tools: create"
     reply = messages_create(client, "messages-tools", tools=MESSAGES_TOOLS)
     checks.equal(f"{name}: the text block, then a tool_use block per call with its input", blocks(reply), expected)
-    checks.equal(f"{name}: the stop reason", (reply.stop_reason, reply.stop_sequence, reply.stop_details),
-                 ("tool_use", None, None))
+    checks.equal(f"{name}: the stop reason", stop(reply), ("tool_use", None, None))
     check_messages_usage(checks, name, reply.usage, 412, 87)
     checks.equal(f"{name}: the fixed id", reply.id, "msg_sdk_messages_tools")
     checks.equal(f"{name}: the fixed model", reply.model, "messages-tools-2026-10-23")
@@ -715,7 +728,7 @@ def messages_tools(checks, smock):
                  [block if block[0] == "text" else (*block[:3], json.loads(block[3]))
                   for block in streamed_blocks(events)], expected)
     checks.equal(f"{name}: message_delta's stop reason and output tokens",
-                 (delta.delta.stop_reason, delta.delta.stop_sequence, delta.usage.output_tokens), ("tool_use", None, 87))
+                 (stop(delta.delta), delta.usage.output_tokens), (("tool_use", None, None), 87))
     checks.equal(f"{name}: the Stub's request id", request_id, "req_sdk_messages_tools")
 
     name = "messages-tools: stream()"
@@ -740,7 +753,7 @@ def messages_call_only(checks, smock):
                  [(block.type, block.name, block.input) for block in reply.content],
                  [("tool_use", call_name, arguments)])
     checks.id(f"{name}: the tool_use id", reply.content[0].id if reply.content else None, TOOL_USE_ID)
-    checks.equal(f"{name}: the stop reason", reply.stop_reason, "tool_use")
+    checks.equal(f"{name}: the stop reason", stop(reply), ("tool_use", None, None))
     check_messages_usage(checks, name, reply.usage, 40, 12)
     checks.id(f"{name}: the id", reply.id, MESSAGE_ID)
     checks.id(f"{name}: the request id", reply._request_id, REQUEST_ID)
@@ -757,9 +770,70 @@ def messages_call_only(checks, smock):
                 {**MESSAGES_HELPER_DIFFERENCES, **MESSAGES_GENERATED_ID_DIFFERENCES})
 
 
+def messages_stop_sequence(checks, smock):
+    """Anthropic Messages, a reply with the written stop reason
+    stop_sequence: create() with and without the request's stop_sequences
+    and stream, and the stream() helper."""
+    client = smock.anthropic()
+    name = "messages-stop-sequence: create"
+    reply = messages_create(client, "messages-stop-sequence", stop_sequences=STOP_SEQUENCES)
+    checks.equal(f"{name}: the text", blocks(reply), [("text", MESSAGES_STOP_SEQUENCE_TEXT)])
+    checks.equal(f"{name}: the stop reason, with the first stop sequence", stop(reply),
+                 ("stop_sequence", STOP_SEQUENCES[0], None))
+    check_messages_usage(checks, name, reply.usage, 28, 9)
+
+    name = "messages-stop-sequence: create without stop_sequences"
+    checks.equal(f"{name}: the stop reason, with no stop sequence",
+                 stop(messages_create(client, "messages-stop-sequence")), ("stop_sequence", None, None))
+
+    name = "messages-stop-sequence: create(stream=True)"
+    _, events = messages_stream(client, "messages-stop-sequence", stop_sequences=STOP_SEQUENCES)
+    delta = check_message_events(checks, name, events, MESSAGE_ID, "messages-stop-sequence", 28, 1)
+    checks.equal(f"{name}: the text", "".join(text_deltas(events)), MESSAGES_STOP_SEQUENCE_TEXT)
+    checks.equal(f"{name}: message_delta's stop reason and output tokens",
+                 (stop(delta.delta), delta.usage.output_tokens), (("stop_sequence", STOP_SEQUENCES[0], None), 9))
+
+    name = "messages-stop-sequence: stream()"
+    _, _, built = messages_helper(client, "messages-stop-sequence", stop_sequences=STOP_SEQUENCES)
+    checks.same(f"{name}: get_final_message() equals the JSON reply, apart from the listed differences",
+                reply.model_dump(), built.model_dump(),
+                {**MESSAGES_HELPER_DIFFERENCES, **MESSAGES_GENERATED_ID_DIFFERENCES})
+
+
+def messages_refusal(checks, smock):
+    """Anthropic Messages, a refusal after some text: create() with and
+    without stream, and the stream() helper, which takes stop_details from
+    message_delta."""
+    client = smock.anthropic()
+    name = "messages-refusal: create"
+    reply = messages_create(client, "messages-refusal")
+    checks.equal(f"{name}: the text", blocks(reply), [("text", MESSAGES_REFUSAL_TEXT)])
+    checks.equal(f"{name}: the stop reason, with stop_details", stop(reply), ("refusal", None, REFUSAL_DETAILS))
+    checks.equal(f"{name}: stop_details is a RefusalStopDetails", type(reply.stop_details),
+                 anthropic.types.RefusalStopDetails)
+    check_messages_usage(checks, name, reply.usage, 18, 7)
+
+    name = "messages-refusal: create(stream=True)"
+    _, events = messages_stream(client, "messages-refusal")
+    delta = check_message_events(checks, name, events, MESSAGE_ID, "messages-refusal", 18, 1)
+    checks.equal(f"{name}: the text", "".join(text_deltas(events)), MESSAGES_REFUSAL_TEXT)
+    checks.equal(f"{name}: message_delta's stop reason, with stop_details, and output tokens",
+                 (stop(delta.delta), delta.usage.output_tokens), (("refusal", None, REFUSAL_DETAILS), 7))
+
+    name = "messages-refusal: stream()"
+    _, _, built = messages_helper(client, "messages-refusal")
+    checks.equal(f"{name}: the stop reason, with stop_details", stop(built), ("refusal", None, REFUSAL_DETAILS))
+    checks.same(f"{name}: get_final_message() equals the JSON reply, apart from the listed differences",
+                reply.model_dump(), built.model_dump(),
+                {**MESSAGES_HELPER_DIFFERENCES, **MESSAGES_GENERATED_ID_DIFFERENCES})
+
+
 # The cases, in the order they run. Each calls the Stubs it names, and a
 # case whose SDK raises unexpectedly fails without stopping the others.
-CASES = [chat_text, chat_tools, chat_call_only, chat_length, messages_text, messages_tools, messages_call_only]
+CASES = [
+    chat_text, chat_tools, chat_call_only, chat_length,
+    messages_text, messages_tools, messages_call_only, messages_stop_sequence, messages_refusal,
+]
 
 
 def main():

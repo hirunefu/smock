@@ -142,3 +142,35 @@ stubs:
           - name: get_weather
             arguments: { city: Paris }
         usage: { input: 40, output: 12 }
+
+  # Anthropic Messages: a reply that stopped at a stop sequence. Its
+  # stop_sequence is the first of the request's stop_sequences.
+  - id: messages-stop-sequence
+    mock: llm
+    request:
+      method: POST
+      path: /v1/messages
+      body: { json: { model: messages-stop-sequence } }
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        text: "Step 1: open the box."
+        usage: { input: 28, output: 9 }
+        stopReason: stop_sequence
+
+  # Anthropic Messages: a refusal after some text. The reply carries
+  # stop_details.
+  - id: messages-refusal
+    mock: llm
+    request:
+      method: POST
+      path: /v1/messages
+      body: { json: { model: messages-refusal } }
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        text: I can't help with that.
+        usage: { input: 18, output: 7 }
+        stopReason: refusal
