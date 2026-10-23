@@ -306,3 +306,38 @@ stubs:
           after: 5
           type: overloaded_error
           message: Overloaded
+
+  # The docs' 429 (docs/definition-files.md#a-429-with-retry-after), in
+  # OpenAI's form, and the docs' 529 (#a-529-when-overloaded), in
+  # Anthropic's. Each response is the docs' as written. Each Stub answers
+  # its model on any path, so that both SDKs get both replies.
+  - id: rate-limited
+    mock: llm
+    request:
+      method: POST
+      body: { json: { model: rate-limited } }
+    response:
+      status: 429
+      headers:
+        Retry-After: "20"
+        x-request-id: req_5K5eWPUAGI1WXJRVsFgWLtIw
+        x-should-retry: "false"
+      json:
+        error:
+          message: Rate limit reached for requests.
+          type: rate_limit_error
+          param: null
+          code: slow_down
+
+  - id: overloaded
+    mock: llm
+    request:
+      method: POST
+      body: { json: { model: overloaded } }
+    response:
+      status: 529
+      headers: { request-id: req_5J4ymbACTcA49ramAi1T8pGa }
+      json:
+        type: error
+        error: { type: overloaded_error, message: Overloaded }
+        request_id: req_5J4ymbACTcA49ramAi1T8pGa

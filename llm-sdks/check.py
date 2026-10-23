@@ -107,6 +107,21 @@ RESPONSES_ERROR = {
 }
 MESSAGES_ERROR = {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}
 
+# The docs' 429 and 529 replies (docs/definition-files.md#a-429-with-retry-after
+# and #a-529-when-overloaded), OpenAI's and Anthropic's: their bodies, and the
+# request id each one's header carries.
+RATE_LIMITED_BODY = {
+    "error": {"message": "Rate limit reached for requests.", "type": "rate_limit_error", "param": None,
+              "code": "slow_down"},
+}
+RATE_LIMITED_REQUEST_ID = "req_5K5eWPUAGI1WXJRVsFgWLtIw"
+OVERLOADED_BODY = {
+    "type": "error",
+    "error": {"type": "overloaded_error", "message": "Overloaded"},
+    "request_id": "req_5J4ymbACTcA49ramAi1T8pGa",
+}
+OVERLOADED_REQUEST_ID = "req_5J4ymbACTcA49ramAi1T8pGa"
+
 # The stop sequences an application gives the Messages API, and the stop
 # details of a refusal: its type, category and explanation.
 STOP_SEQUENCES = ["Step 2:", "END"]
@@ -1349,6 +1364,40 @@ def messages_error(checks, smock):
     checks.equal(f"{name}: the stop reason", stop(reply), ("end_turn", None, None))
 
 
+def check_status_error(checks, name, error_class, call, status, body):
+    """Checks that a call raises error_class itself, the SDK's status error
+    for the reply's status, with that status and the body as the SDK keeps
+    it. Returns the error."""
+    error = checks.raises(f"{name}: raises {error_class.__name__}", error_class, call, exact=True)
+    checks.equal(f"{name}: the status", error and error.status_code, status)
+    checks.equal(f"{name}: the body", error and error.body, body)
+    return error
+
+
+def error_replies(checks, smock):
+    """The docs' 429 and 529 replies, through each SDK, with max_retries=0:
+    each SDK raises its status error for the status, whichever vendor's
+    body the reply has. openai-python keeps the body's error member, and
+    anthropic-sdk-python the whole body; each reads the request id from
+    its vendor's header."""
+    client = smock.openai()
+    error = check_status_error(checks, "rate-limited: openai-python", openai.RateLimitError,
+                               lambda: chat_create(client, "rate-limited"), 429, RATE_LIMITED_BODY["error"])
+    checks.equal("rate-limited: openai-python: the request id", error and error.request_id, RATE_LIMITED_REQUEST_ID)
+    check_status_error(checks, "overloaded: openai-python", openai.InternalServerError,
+                       lambda: chat_create(client, "overloaded"), 529, OVERLOADED_BODY["error"])
+
+    client = smock.anthropic()
+    check_status_error(checks, "rate-limited: anthropic-sdk-python", anthropic.RateLimitError,
+                       lambda: messages_create(client, "rate-limited"), 429, RATE_LIMITED_BODY)
+    error = check_status_error(checks, "overloaded: anthropic-sdk-python", anthropic.OverloadedError,
+                               lambda: messages_create(client, "overloaded"), 529, OVERLOADED_BODY)
+    checks.equal("overloaded: anthropic-sdk-python: the type, from the body", error and error.type,
+                 OVERLOADED_BODY["error"]["type"])
+    checks.equal("overloaded: anthropic-sdk-python: the request id", error and error.request_id,
+                 OVERLOADED_REQUEST_ID)
+
+
 # The cases, in the order they run. Each calls the Stubs it names, and a
 # case whose SDK raises unexpectedly fails without stopping the others.
 CASES = [
@@ -1356,6 +1405,7 @@ CASES = [
     responses_text, responses_tools, responses_incomplete, responses_error,
     messages_text, messages_tools, messages_call_only, messages_stop_sequence, messages_refusal,
     messages_broken_arguments, messages_error,
+    error_replies,
 ]
 
 
