@@ -1366,7 +1366,18 @@ fn responses_stream(
 ) -> Reply {
   let created = received / 1000L
   let tool_calls = strings.tool_calls
-  let text_pieces = strings.text_pieces(declaration.chunk_size)
+  // The message item, the reply's first, unless tool calls follow empty
+  // text, or a mid-stream error cuts the text at 0.
+  let has_message = match declaration.error {
+    Some(error) => strings.has_content() && error.after > 0
+    None => strings.has_content()
+  }
+  let text_pieces = match declaration.error {
+    _ if !has_message => no_pieces
+    Some(error) =>
+      pieces_before(strings.text_pieces(declaration.chunk_size), error.after)
+    None => strings.text_pieces(declaration.chunk_size)
+  }
   let pace = Pace::new()
   let out = ResponsesEvents::new(
     text_pieces.length() + 4 * tool_calls.length() + 8,
@@ -1386,20 +1397,12 @@ fn responses_stream(
   let opening = "\"response\":\{@template.compact_json(Json::object(opening))}"
   out.push(NoWait, "response.created", opening)
   out.push(NoWait, "response.in_progress", opening)
-  if declaration.error is Some(error) && error.after == 0 {
-    out.push(
-      pace.piece(),
-      "error",
-      responses_error(error, strings.error_message),
-    )
-    return out.stream.reply(request_id)
-  }
   let status = responses_status(declaration)
   // The items the closing event's Response holds, in output_index order.
   let output : Array[Json] = Array(capacity=tool_calls.length() + 1)
-  // The message item, the reply's first, at output_index 0, unless tool
-  // calls follow empty text.
-  if strings.has_content() {
+  // What each event of the message item's text part gives first, its item
+  // id and indexes, once the item is opened at output_index 0.
+  let part_of = if has_message {
     let item_id = @template.compact_json(Json::string(message_id))
     out.push(
       NoWait,
@@ -1424,6 +1427,21 @@ fn responses_stream(
         after=no_logprobs,
       )
     }
+    part_of
+  } else {
+    ""
+  }
+  if declaration.error is Some(error) {
+    // The error takes the wait a next piece would, and ends the stream: it
+    // has no closing event, so its waits complete nothing.
+    out.push(
+      pace.piece(),
+      "error",
+      responses_error(error, strings.error_message),
+    )
+    return out.stream.reply(request_id)
+  }
+  if has_message {
     // Each closing event of the item carries the whole text.
     if out.stream.over() {
       return out.stream.reply(request_id)
