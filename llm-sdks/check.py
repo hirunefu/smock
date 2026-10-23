@@ -101,6 +101,19 @@ GENERATED_ID_DIFFERENCES = {
     "choices.*.message.tool_calls.*.id": "generated for each request",
 }
 
+# Where the message anthropic-sdk-python's Messages stream helper builds
+# from a stream differs from the one it parses from the JSON reply, on
+# purpose. Nothing does: the helper takes every member from the events,
+# stop_details included.
+MESSAGES_HELPER_DIFFERENCES = {}
+
+# The differences of a Messages Stub whose ids are generated: each request
+# gets its own.
+MESSAGES_GENERATED_ID_DIFFERENCES = {
+    "id": "generated for each request",
+    "content.*.id": "generated for each request",
+}
+
 MISSING = object()
 
 
@@ -530,6 +543,15 @@ def messages_stream(client, model, **options):
         return stream.response.headers.get("request-id"), list(stream)
 
 
+def messages_helper(client, model, **options):
+    """Reads a Messages stream with the stream() helper, as an application
+    does, and returns the request id it reads from request-id, its events
+    and the message it builds."""
+    with client.messages.stream(model=model, max_tokens=MAX_TOKENS, messages=MESSAGES, **options) as stream:
+        events = list(stream)
+        return stream.request_id, events, stream.get_final_message()
+
+
 def check_messages_usage(checks, name, usage, input_tokens, output_tokens):
     checks.equal(f"{name}: usage", None if usage is None else (usage.input_tokens, usage.output_tokens),
                  (input_tokens, output_tokens))
@@ -613,6 +635,16 @@ def messages_text(checks, smock):
                  (delta.delta.stop_reason, delta.delta.stop_sequence, delta.delta.stop_details,
                   delta.usage.output_tokens), ("end_turn", None, None, 10))
     checks.id(f"{name}: the request id", request_id, REQUEST_ID)
+
+    name = "messages-text: stream()"
+    request_id, events, built = messages_helper(client, "messages-text")
+    checks.equal(f"{name}: the text events, joined",
+                 "".join(event.text for event in events if event.type == "text"), MESSAGES_TEXT)
+    checks.id(f"{name}: the id", built.id, MESSAGE_ID)
+    checks.id(f"{name}: the request id", request_id, REQUEST_ID)
+    checks.same(f"{name}: get_final_message() equals the JSON reply, apart from the listed differences",
+                reply.model_dump(), built.model_dump(),
+                {**MESSAGES_HELPER_DIFFERENCES, **MESSAGES_GENERATED_ID_DIFFERENCES})
 
 
 # The cases, in the order they run. Each calls the Stubs it names, and a
