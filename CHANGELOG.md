@@ -117,10 +117,14 @@ of each GitHub release include its section
   the time received. `error: { after, type, message }` cuts a stream with
   the API's own error after `after` code points of the text, in place of
   the rest, with no end marker: for `openai-chat`, a
-  `data: {"error": …}` frame, which openai-python raises as `APIError`. A
-  request that does not stream gets the ordinary reply. `openai-responses`
-  gives `code` in place of `type`, and `anthropic-messages` one of
-  Anthropic's error types; their streams do not send the error yet. With
+  `data: {"error": …}` frame, which openai-python raises as `APIError`;
+  for `anthropic-messages`, an `event: error` with no `content_block_stop`,
+  `message_delta` or `message_stop`, which anthropic-sdk-python raises as
+  `APIStatusError` with status 200 and the type in the body's
+  `error.type`, never `OverloadedError`. A request that does not stream
+  gets the ordinary reply. `openai-responses` gives `code` in place of
+  `type`, and its stream does not send the error yet; `anthropic-messages`
+  gives one of Anthropic's error types. With
   `template: true`, the text, each chunk, `id`, `model` and each tool
   call's `name`, `id` and `arguments` are templates: the text is rendered
   whole, then cut into pieces, what they insert is JSON-escaped on the
