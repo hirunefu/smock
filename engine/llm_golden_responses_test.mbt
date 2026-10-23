@@ -486,3 +486,156 @@ test "the Responses stream with a function call equals the function-calling guid
     ),
   )
 }
+
+///|
+/// The example of the `response.incomplete` event, lines 71628 to 71664 of
+/// openapi.yaml, copied unchanged: one event, printed as JSON without SSE
+/// framing, whose Response stopped at `max_output_tokens`.
+let responses_incomplete_example : String =
+  #|{
+  #|  "type": "response.incomplete",
+  #|  "response": {
+  #|    "id": "resp_123",
+  #|    "object": "response",
+  #|    "access_programs": null,
+  #|    "created_at": 1740855869,
+  #|    "status": "incomplete",
+  #|    "completed_at": null,
+  #|    "error": null,
+  #|    "incomplete_details": {
+  #|      "reason": "max_output_tokens"
+  #|    },
+  #|    "instructions": null,
+  #|    "max_output_tokens": null,
+  #|    "model": "gpt-6-astra",
+  #|    "output": [],
+  #|    "previous_response_id": null,
+  #|    "reasoning_effort": null,
+  #|    "store": false,
+  #|    "temperature": 1,
+  #|    "text": {
+  #|      "format": {
+  #|        "type": "text"
+  #|      }
+  #|    },
+  #|    "tool_choice": "auto",
+  #|    "tools": [],
+  #|    "top_p": 1,
+  #|    "truncation": "disabled",
+  #|    "usage": null,
+  #|    "user": null,
+  #|    "metadata": {},
+  #|    "parallel_tool_calls": true
+  #|  },
+  #|  "sequence_number": 1
+  #|}
+
+///|
+/// A Mock `openai` whose Stub `incomplete` declares the incomplete event's
+/// content: no text, its stop reason, its id and its model.
+let responses_incomplete_stub : (String, String) = openai_golden_mock(
+  (
+    #|  - id: incomplete
+    #|    mock: openai
+    #|    request: { method: POST, path: /v1/responses }
+    #|    response:
+    #|      status: 200
+    #|      llm:
+    #|        api: openai-responses
+    #|        id: resp_123
+    #|        model: gpt-6-astra
+    #|        stopReason: max_output_tokens
+  ),
+)
+
+///|
+/// The example shows the event alone, without SSE framing, so a gap before
+/// it stands for the events smock sends first, and it is compared without
+/// its name. The request asks for `store: false`, which smock copies, as
+/// the example shows it. The example's Response has no output and no
+/// usage, where smock's has the message item, incomplete, and the usage of
+/// every reply. It names the reasoning settings `reasoning_effort`, where
+/// smock writes `reasoning`, as the reference's other examples do; and it
+/// leaves out `service_tier`. Its `sequence_number` is that of a single
+/// event, not of a stream.
+test "the Responses stream with a stop reason ends with the reference's response.incomplete event, but for output, usage, the reasoning settings, service_tier and sequence_number" {
+  let h = harness([responses_incomplete_stub])
+  h.now = 1_740_855_869_000L
+  let outcome = h.responses(
+    "{\"model\":\"gpt-6-astra\",\"input\":\"Hello!\",\"store\":false,\"stream\":true}",
+  )
+  inspect(
+    compare_golden(
+      ": the events before it, which the example leaves out\n" +
+      responses_incomplete_example,
+      outcome,
+      differs=[
+        "/response/output", "/response/usage", "/response/reasoning_effort", "/response/reasoning",
+        "/response/service_tier", "/sequence_number",
+      ],
+      unframed=true,
+    ),
+    content=(
+      #|same but for the listed differences
+      #|listed: /response/output: values differ
+      #|listed: /response/usage: values differ
+      #|listed: /response/reasoning_effort: only in the example
+      #|listed: /response/reasoning: only in smock's
+      #|listed: /response/service_tier: only in smock's
+      #|listed: /sequence_number: values differ
+    ),
+  )
+}
+
+///|
+/// The example of the `error` event, lines 70955 to 70961 of openapi.yaml,
+/// copied unchanged: one event, printed as JSON without SSE framing.
+let responses_error_example : String =
+  #|{
+  #|  "type": "error",
+  #|  "code": "ERR_SOMETHING",
+  #|  "message": "Something went wrong",
+  #|  "param": null,
+  #|  "sequence_number": 1
+  #|}
+
+///|
+/// A Mock `openai` whose Stub `error` declares the error event's content:
+/// its code and its message, at once.
+let responses_error_stub : (String, String) = openai_golden_mock(
+  (
+    #|  - id: error
+    #|    mock: openai
+    #|    request: { method: POST, path: /v1/responses }
+    #|    response:
+    #|      status: 200
+    #|      llm:
+    #|        api: openai-responses
+    #|        error: { after: 0, code: ERR_SOMETHING, message: Something went wrong }
+  ),
+)
+
+///|
+/// The example shows the event alone, without SSE framing, so a gap before
+/// it stands for the events smock sends first, and it is compared without
+/// its name. Its `sequence_number` is that of a single event: smock's
+/// error comes after the Response's two opening events at least.
+test "the Responses mid-stream error equals the reference's error event, but for sequence_number" {
+  let h = harness([responses_error_stub])
+  let outcome = h.responses(
+    "{\"model\":\"gpt-6-astra\",\"input\":\"Hello!\",\"stream\":true}",
+  )
+  inspect(
+    compare_golden(
+      ": the events before the error, which the example leaves out\n" +
+      responses_error_example,
+      outcome,
+      differs=["/sequence_number"],
+      unframed=true,
+    ),
+    content=(
+      #|same but for the listed differences
+      #|listed: /sequence_number: values differ
+    ),
+  )
+}
