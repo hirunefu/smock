@@ -1386,6 +1386,14 @@ fn responses_stream(
   let opening = "\"response\":\{@template.compact_json(Json::object(opening))}"
   out.push(NoWait, "response.created", opening)
   out.push(NoWait, "response.in_progress", opening)
+  if declaration.error is Some(error) && error.after == 0 {
+    out.push(
+      pace.piece(),
+      "error",
+      responses_error(error, strings.error_message),
+    )
+    return out.stream.reply(request_id)
+  }
   let status = responses_status(declaration)
   // The items the closing event's Response holds, in output_index order.
   let output : Array[Json] = Array(capacity=tool_calls.length() + 1)
@@ -1556,6 +1564,16 @@ fn responses_stream(
       None
     },
   )
+}
+
+///|
+/// The members of OpenAI Responses' `error` event for `error` with the
+/// message `message`, between its `type` and its `sequence_number`: the
+/// error's code, the message and a null `param`.
+fn responses_error(error : MidStreamError, message : String) -> String {
+  let code = @template.compact_json(Json::string(error.kind))
+  let message = @template.compact_json(Json::string(message))
+  "\"code\":\{code},\"message\":\{message},\"param\":null"
 }
 
 ///|
