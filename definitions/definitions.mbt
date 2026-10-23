@@ -874,6 +874,9 @@ pub struct LlmReply {
   strings : LlmStrings
   /// The pacing of its stream, which the engine draws.
   timing : LlmTiming
+  /// The JSON Pointer of `llm` within the Stub, where a reply over the size
+  /// bound for a request is reported.
+  pointer : String
 } derive(Debug, Eq)
 
 ///|

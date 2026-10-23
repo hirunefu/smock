@@ -71,7 +71,8 @@ fn pick_response(ordinary : @definitions.Ordinary, draw : UInt64) -> Int? {
 ///   request-id header field follows the response's, unless the response
 ///   gives one of that name. A stream's events wait as its `timing` says,
 ///   the waits drawn from the request's waits generator, made from `draw`
-///   too.
+///   too. A reply that takes more than `@llm.max_reply_bytes` once encoded
+///   is a render error at the `llm` field, and its waits are not drawn.
 ///
 /// Every template of the response renders in one rendering for the
 /// request: `context`, the one that the Stub's Variables left, or, without
@@ -79,9 +80,9 @@ fn pick_response(ordinary : @definitions.Ordinary, draw : UInt64) -> Int? {
 /// `vars`, `data` and `copies` as `first_context` makes it, the first time
 /// a template needs it. A response as written makes none.
 ///
-/// Raises `RenderError` when a template cannot be rendered, or a rule
-/// across rendered values is broken: the request then gets
-/// `template_failed`.
+/// Raises `RenderError` when a template cannot be rendered, a rule across
+/// rendered values is broken, or an LLM reply is over the size bound: the
+/// request then gets `template_failed`.
 fn plan_response(
   response : @definitions.Response,
   incoming : Incoming,
@@ -160,6 +161,9 @@ fn plan_response(
         now~,
         ids=@llm.ids_generator(draw),
       )
+      if reply.check_size() is Err(message) {
+        raise @template.RenderError(at=llm.pointer, message~)
+      }
       set_content_type(headers, reply.content_type)
       add_unless_given(headers, reply.request_id)
       let body : Body = match reply.body {
