@@ -2,7 +2,8 @@
 # each push and pull request; latest-toolchain.yml runs it weekly with the
 # latest stable MoonBit. With the pinned toolchain, it keeps the release
 # binary of each architecture as a workflow artifact for 7 days,
-# smock-linux-amd64 and smock-linux-arm64.
+# smock-linux-amd64 and smock-linux-arm64; ci.yml's SDK job reads the amd64
+# one's LLM responses with the official SDKs.
 name: Build and test
 
 on:
@@ -130,9 +131,10 @@ jobs:
       # The release binary that scripts/build-release.sh made above and the
       # image packs, kept once every check passed, for a machine that cannot
       # build one of this architecture: the GKE benchmark of amd64 from an
-      # arm64 machine takes it (scripts/gke-bench.sh --arch amd64 --smock).
+      # arm64 machine takes it (scripts/gke-bench.sh --arch amd64 --smock),
+      # and so does ci.yml's SDK job, which builds nothing (llm-sdks/).
       # Its --version names this run's commit. scripts/check-ci-artifacts.sh
-      # checks this step.
+      # checks this step, and the SDK job.
       - name: Keep the release binary
         if: inputs.toolchain == 'pinned'
         uses: actions/upload-artifact@v7

@@ -14,6 +14,33 @@ jobs:
     with:
       toolchain: pinned
 
+  # The SDK job (llm-sdks/README.md): the official openai-python and
+  # anthropic-sdk-python, pinned with every package they need by version
+  # and hash, read the LLM responses of the amd64 release binary that
+  # build-test.yml keeps. It builds nothing. The weekly run with the latest
+  # toolchain (latest-toolchain.yml) does not run it.
+  llm-sdks:
+    name: Read LLM responses with the official SDKs
+    needs: build-test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: smock-linux-amd64
+          path: dist
+
+      # An artifact does not keep the file's mode.
+      - run: chmod +x dist/smock
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: llm-sdks/.python-version
+
+      - name: Read smock's LLM responses with the pinned SDKs
+        run: scripts/check-llm-sdks.sh dist/smock
+
   release-workflow:
     name: Check the release workflow and test its release notes
     runs-on: ubuntu-24.04
@@ -35,7 +62,8 @@ jobs:
   # The benchmark itself runs only by hand (benchmark.yml); this checks its
   # files. Its request mix and definitions are checked against smock by the
   # tests in e2e/bench_test.mbt. The GKE run of another architecture than
-  # its machine's takes the release binary that build-test.yml keeps.
+  # its machine's takes the release binary that build-test.yml keeps, as
+  # the SDK job above takes the amd64 one.
   benchmark-files:
     name: Check the benchmark workflow, definitions and kept binaries
     runs-on: ubuntu-24.04

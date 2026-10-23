@@ -1301,7 +1301,10 @@ startup and on a reload, which keeps the set served, and as 400
 The wire forms follow the vendors' documents as they were read on
 2026-10-22 and 2026-10-23. When a vendor changes its documented form, a
 minor release may change what an existing `llm` Stub sends, with a
-CHANGELOG entry.
+CHANGELOG entry. CI also reads smock's replies with the vendors' official
+Python SDKs, at pinned versions, as applications call them. A change that
+a newer version of an SDK brings to what an existing `llm` Stub sends
+ships the same way.
 
 ### Streams
 

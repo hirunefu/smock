@@ -1103,7 +1103,8 @@ scripts/check-release-workflow.sh    # the release workflow publishes only for t
 scripts/test-release-notes.sh        # the release notes, with CHANGELOG.md's links at the release's tag
 scripts/test-sbom.sh                 # the SBOM scripts, and the check that the SBOM and NOTICE agree (needs jq)
 scripts/check-benchmark-workflow.sh  # the benchmark workflow runs only by hand (needs yq and jq)
-scripts/check-ci-artifacts.sh        # CI keeps the release binary of each architecture (needs yq and jq)
+scripts/check-ci-artifacts.sh        # CI keeps the release binary of each architecture, and the SDK job takes it (needs yq and jq)
+scripts/check-llm-sdks.sh dist/smock # the official LLM SDKs, pinned by hash, read smock's LLM responses (needs python3 and PyPI)
 scripts/test-helm-chart.sh           # rendering tests of the Helm chart (needs helm, yq and jq)
 scripts/test-helm-chart-on-kind.sh smock:dev   # the chart on a kind cluster (needs kind, kubectl and helm)
 ```
@@ -1134,7 +1135,12 @@ file under `schema/v1/fixtures/` adds it to the cross-check; the README
 there says which directory a fixture belongs in.
 
 CI runs all of these on linux/amd64 and linux/arm64
-(`.github/workflows/build-test.yml`).
+(`.github/workflows/build-test.yml`), except the SDK job,
+`scripts/check-llm-sdks.sh`. It runs after them, on amd64 only, with the
+release binary built there, and reads smock's
+[LLM responses](docs/definition-files.md#llm-responses) with the
+vendors' official SDKs, as applications call them
+([llm-sdks/README.md](llm-sdks/README.md)).
 
 The native build links OpenSSL 3 (on Debian and Ubuntu, `libssl-dev`).
 `prebuild.py`, which `moon` runs with `python3` before every native build,
