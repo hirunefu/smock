@@ -205,6 +205,13 @@ test "a stream that passes the bound is cut short soon after, so a long text, lo
     request=streamed,
   )
   out.push("openai-responses, long arguments: \{cut_short(long_arguments)}")
+  let long_arguments = sized_reply(
+    @llm.Strings(tool_calls=[call]),
+    api=AnthropicMessages,
+    chunk_size=1,
+    request=streamed,
+  )
+  out.push("anthropic-messages, long arguments: \{cut_short(long_arguments)}")
   let long_model = sized_reply(
     @llm.Strings(text=repeated("a", 400), model=repeated("m", 10_000)),
     chunk_size=1,
@@ -219,6 +226,7 @@ test "a stream that passes the bound is cut short soon after, so a long text, lo
       #|anthropic-messages, a long text: the reply takes more than 1 MiB as a stream; cut short: true
       #|openai-chat, long arguments: the reply takes more than 1 MiB as a stream; cut short: true
       #|openai-responses, long arguments: the reply takes more than 1 MiB as a stream; cut short: true
+      #|anthropic-messages, long arguments: the reply takes more than 1 MiB as a stream; cut short: true
       #|openai-chat, a long model: the reply takes more than 1 MiB as a stream; cut short: true
     ),
   )
