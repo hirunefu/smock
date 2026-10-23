@@ -20,7 +20,7 @@ toolchain (`latest-toolchain.yml`) does not run it.
 
 | File | What it is |
 |---|---|
-| `definitions/llm.yaml` | The Definition file made for the job. Each Stub answers one model, named as its id. |
+| `definitions/llm.yaml` | The Definition file made for the job. Its one Mock answers both SDKs, and each Stub answers one model, named as its id. |
 | `check.py` | The script. It checks the Definition file with `smock check`, serves it, calls each Stub through an SDK and checks what the SDK reads. |
 | `requirements.in` | The SDKs, each pinned to one version. |
 | `requirements.txt` | The SDKs and every package they need, each pinned by version and by the hashes of its files. It is generated from `requirements.in`. |
@@ -42,11 +42,23 @@ client with `max_retries=0`, so that each call sends one request.
   parses them, usage, stop reasons, ids and the request id that the SDK
   reads from the `x-request-id` header, and what every chunk of a stream
   shares.
+- Anthropic Messages: `create` with and without `stream`, and the
+  `stream()` helper with `get_final_message()`. It checks the text, the
+  `tool_use` blocks and their `input` as the SDK parses it, usage, stop
+  reasons with `stop_sequence` and a refusal's `stop_details`, ids and the
+  request id that the SDK reads from the `request-id` header, and the
+  frame of a stream: `message_start` first, `message_delta` and
+  `message_stop` last, and each block opened, given its deltas and
+  stopped in turn, at integer indexes. For a tool call whose arguments
+  are not JSON, it checks that `create` gives them as written and that
+  the `stream()` helper raises `ValueError` on them mid-stream, as it
+  would on such a stream from the vendor.
 - The reply that the `stream()` helper builds from a stream equals the one
   the SDK parses from the JSON reply, apart from differences listed by
-  name, each with its reason, in `CHAT_HELPER_DIFFERENCES` (and, for a Stub
-  whose ids are generated, `GENERATED_ID_DIFFERENCES`). Any other
-  difference fails the check.
+  name, each with its reason, in `CHAT_HELPER_DIFFERENCES` and
+  `MESSAGES_HELPER_DIFFERENCES` (and, for a Stub whose ids are generated,
+  `GENERATED_ID_DIFFERENCES` and `MESSAGES_GENERATED_ID_DIFFERENCES`). Any
+  other difference fails the check.
 
 The job fails when a check fails, or when an SDK raises where no check
 expects it to. It prints every check, and smock's log when one fails.

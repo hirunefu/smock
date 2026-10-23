@@ -651,10 +651,11 @@ def streamed_blocks(events):
     for event in events:
         if event.type == "content_block_start":
             block = event.content_block
-            built[event.index] = [block.type, block.text] if block.type == "text" else [block.type, block.id,
-                                                                                        block.name, ""]
+            built[event.index] = [block.type, block.text] if block.type == "text" else \
+                [block.type, block.id, block.name, ""]
         elif event.type == "content_block_delta":
-            built[event.index][-1] += event.delta.text if event.delta.type == "text_delta" else event.delta.partial_json
+            delta = event.delta
+            built[event.index][-1] += delta.text if delta.type == "text_delta" else delta.partial_json
     return [tuple(block) for block in built.values()]
 
 
@@ -712,8 +713,7 @@ def messages_tools(checks, smock):
     """Anthropic Messages, text and two tool calls, with fixed ids: create()
     with and without stream, and the stream() helper."""
     client = smock.anthropic()
-    expected = [("text", MESSAGES_TOOLS_TEXT),
-                *(("tool_use", call_id, call_name, arguments) for call_id, call_name, arguments in MESSAGES_TOOLS_CALLS)]
+    expected = [("text", MESSAGES_TOOLS_TEXT), *(("tool_use", *call) for call in MESSAGES_TOOLS_CALLS)]
     name = "messages-tools: create"
     reply = messages_create(client, "messages-tools", tools=MESSAGES_TOOLS)
     checks.equal(f"{name}: the text block, then a tool_use block per call with its input", blocks(reply), expected)
@@ -725,7 +725,8 @@ def messages_tools(checks, smock):
 
     name = "messages-tools: create(stream=True)"
     request_id, events = messages_stream(client, "messages-tools", tools=MESSAGES_TOOLS)
-    delta = check_message_events(checks, name, events, "msg_sdk_messages_tools", "messages-tools-2026-10-23", 412, 3)
+    delta = check_message_events(checks, name, events, "msg_sdk_messages_tools", "messages-tools-2026-10-23",
+                                 412, 3)
     checks.equal(f"{name}: each tool_use block opens with an empty input, then an empty partial_json",
                  tool_use_starts(events),
                  [({"type": "tool_use", "id": call_id, "name": call_name, "input": {}}, "")
@@ -739,7 +740,7 @@ def messages_tools(checks, smock):
 
     name = "messages-tools: stream()"
     request_id, events, built = messages_helper(client, "messages-tools", tools=MESSAGES_TOOLS)
-    checks.equal(f"{name}: the input of each tool_use block as it stops",
+    checks.equal(f"{name}: the input of each tool_use block as it stops, after the text block",
                  [(event.index, event.content_block.input) for event in events
                   if event.type == "content_block_stop" and event.content_block.type == "tool_use"],
                  [(index, arguments) for index, (_, _, arguments) in enumerate(MESSAGES_TOOLS_CALLS, start=1)])
@@ -767,7 +768,8 @@ def messages_call_only(checks, smock):
     name = "messages-call-only: stream()"
     request_id, events, built = messages_helper(client, "messages-call-only", tools=MESSAGES_TOOLS)
     checks.equal(f"{name}: the input of the tool_use block as it stops, at index 0",
-                 [(event.index, event.content_block.input) for event in events if event.type == "content_block_stop"],
+                 [(event.index, event.content_block.input)
+                  for event in events if event.type == "content_block_stop"],
                  [(0, arguments)])
     checks.id(f"{name}: the tool_use id", built.content[0].id if built.content else None, TOOL_USE_ID)
     checks.id(f"{name}: the request id", request_id, REQUEST_ID)
@@ -797,7 +799,8 @@ def messages_stop_sequence(checks, smock):
     delta = check_message_events(checks, name, events, MESSAGE_ID, "messages-stop-sequence", 28, 1)
     checks.equal(f"{name}: the text", "".join(text_deltas(events)), MESSAGES_STOP_SEQUENCE_TEXT)
     checks.equal(f"{name}: message_delta's stop reason and output tokens",
-                 (stop(delta.delta), delta.usage.output_tokens), (("stop_sequence", STOP_SEQUENCES[0], None), 9))
+                 (stop(delta.delta), delta.usage.output_tokens),
+                 (("stop_sequence", STOP_SEQUENCES[0], None), 9))
 
     name = "messages-stop-sequence: stream()"
     _, _, built = messages_helper(client, "messages-stop-sequence", stop_sequences=STOP_SEQUENCES)
