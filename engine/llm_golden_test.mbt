@@ -86,6 +86,43 @@ fn golden_stream(text : String) -> Array[GoldenItem] {
 }
 
 ///|
+/// The events of `text` printed without SSE framing, as a document shows a
+/// stream's events: JSON values one after another, each on one line or
+/// over several, numbered from 1 and with no name. A run of comment lines,
+/// which start with `:`, is a gap. Lines that make no JSON value before a
+/// comment line or the end make one event, compared as text. Blank lines
+/// are skipped.
+fn golden_unframed(text : String) -> Array[GoldenItem] {
+  let items = []
+  let mut number = 0
+  // The lines of the value read so far.
+  let lines = []
+  let flush = () => {
+    if !lines.is_empty() {
+      number += 1
+      items.push(Event(golden_event(lines.join("\n"), number~)))
+      lines.clear()
+    }
+  }
+  for line in text.split("\n") {
+    let line = line.trim_end(chars="\r").to_owned()
+    if line.has_prefix(":") {
+      flush()
+      if !(items.last() is Some(Gap)) {
+        items.push(Gap)
+      }
+    } else if line.trim() != "" {
+      lines.push(line)
+      if golden_event(lines.join("\n")).data is Some(_) {
+        flush()
+      }
+    }
+  }
+  flush()
+  items
+}
+
+///|
 /// The events smock planned in `outcome`, written as the server writes
 /// them and read back as an example's are, or its JSON body as one event.
 /// Returns whether they are a stream, and the events.
@@ -485,6 +522,11 @@ fn pointer_token(key : String) -> String {
 /// deliberately never sends, such as Anthropic's `ping`. They are left out
 /// of the example before it is compared, and each must be in it at least
 /// once.
+///
+/// With `unframed`, `example` prints its events without SSE framing, as a
+/// document may show a stream: JSON values one after another, a comment
+/// line standing for events left out. They are compared with smock's
+/// events as a sequence of data alone, names not compared.
 fn compare_golden(
   example : String,
   outcome : @engine.Outcome,
@@ -492,13 +534,19 @@ fn compare_golden(
   unfixed? : Array[String] = [],
   fragments? : Array[String] = [],
   absent? : Array[String] = [],
+  unframed? : Bool = false,
 ) -> String {
   let comparison = Comparison::new(differs, unfixed)
   // The names of `absent` that the example has.
   let left_out = []
   let (streams, sent) = sent_events(outcome)
+  let sent = if unframed {
+    sent.map(event => { ..event, name: None, })
+  } else {
+    sent
+  }
   let sent = join_fragments(sent, fragments)
-  if example.trim_start().has_prefix("{") {
+  if !unframed && example.trim_start().has_prefix("{") {
     if streams {
       comparison.problems.push(
         "the example is a JSON body, smock sends a stream",
@@ -512,7 +560,12 @@ fn compare_golden(
     let segments = [[]]
     // The number of the example's events that are compared.
     let mut number = 0
-    for item in golden_stream(example) {
+    let items = if unframed {
+      golden_unframed(example)
+    } else {
+      golden_stream(example)
+    }
+    for item in items {
       match item {
         Event({ name: Some(name), .. }) if absent.contains(name) =>
           if !left_out.contains(name) {
@@ -726,6 +779,57 @@ test "an event listed as absent by its name is left out of the example, and must
       #|--
       #|not as listed
       #|listed but the same: ping events
+    ),
+  )
+}
+
+///|
+/// The basic stream's two deltas, printed without framing on one line and
+/// over several, match smock's. Printed as `data:` lines, they are framed
+/// and their names are compared. A value that never parses is compared as
+/// text.
+test "an example printed without SSE framing is read as JSON values one after another and compared by their data alone, a comment line being a gap" {
+  let h = harness([anthropic_basic_stream_stub])
+  let outcome = h.messages(
+    body="{\"model\":\"claude-opus-5-5\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}],\"max_tokens\":256,\"stream\":true}",
+  )
+  let deltas =
+    #|{"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello"}}
+    #|{
+    #|  "type": "content_block_delta",
+    #|  "index": 0,
+    #|  "delta": {"type": "text_delta", "text": "!"}
+    #|}
+  let framed =
+    #|data: {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello"}}
+    #|
+    #|data: {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "!"}}
+    #|
+  inspect(
+    [
+      compare_golden(
+        ": the opening events\n" + deltas + "\n: the closing events\n",
+        outcome,
+        unframed=true,
+      ),
+      compare_golden(
+        ": the opening events\n\n" + framed + "\n: the closing events\n",
+        outcome,
+      ),
+      compare_golden(
+        ": the opening events\n{\"type\": \"message_stop\"\n",
+        outcome,
+        unframed=true,
+      ),
+    ].join("\n--\n"),
+    content=(
+      #|same
+      #|--
+      #|not as listed
+      #|events 1 to 2 are not in smock's stream after event 0
+      #|--
+      #|not as listed
+      #|event 1 data: the example has "{\"type\": \"message_stop\"", smock "{\"type\":\"message_stop\"}"
     ),
   )
 }
