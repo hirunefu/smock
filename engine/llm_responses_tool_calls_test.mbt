@@ -177,3 +177,49 @@ test "the next turn, whose last input item is the function call's output, matche
     ),
   )
 }
+
+///|
+test "with template: true, each tool call's rendered id, name and arguments make its function_call item, and its fc_ id is still generated" {
+  let h = harness([
+    (
+      "openai.yaml",
+      (
+        #|mocks:
+        #|  - { name: openai, hosts: [api.openai.test] }
+        #|stubs:
+        #|  - id: echo
+        #|    mock: openai
+        #|    request: { method: POST, path: /v1/responses }
+        #|    response:
+        #|      status: 200
+        #|      template: true
+        #|      llm:
+        #|        api: openai-responses
+        #|        toolCalls:
+        #|          - id: call_${header.x-trace}
+        #|            name: ${body.tool}
+        #|            arguments: { city: "${body.city}" }
+        #|          - name: forecast
+        #|            arguments: '{"days": ${body.days}}'
+        #|    fault: { seed: 7 }
+      ),
+    ),
+  ])
+  let outcome = h.send(
+    "POST",
+    "/v1/responses",
+    headers=[
+      ("Host", "api.openai.test"),
+      ("Content-Type", "application/json"),
+      ("X-Trace", "t1"),
+    ],
+    body="{\"model\":\"gpt-6-astra\",\"tool\":\"search\",\"city\":\"Paris\",\"days\":3,\"input\":\"Hi\"}",
+  )
+  inspect(
+    output_items(outcome),
+    content=(
+      #|{"type":"function_call","id":"fc_TZp9I060Mzd0w4SDwiWTe2c8","call_id":"call_t1","name":"search","arguments":"{\"city\":\"Paris\"}","status":"completed"}
+      #|{"type":"function_call","id":"fc_r2yjBtWWwsQd6LgmRvpu3TbN","call_id":"call_YuIrSuD97ENe0H2Ksa1F74QQ","name":"forecast","arguments":"{\"days\": 3}","status":"completed"}
+    ),
+  )
+}
