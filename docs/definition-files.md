@@ -1899,20 +1899,30 @@ The fields of `error`:
 | `code` | in place of `type`, for `openai-responses` only: the error's code, non-empty text | required |
 | `message` | the error's message, non-empty text, a template with `template: true` | required |
 
-- **What is sent.** A request with `stream: true` gets the opening chunk,
-  then the text's pieces up to exactly `after` code points, the piece that
-  holds the cut ending there, then the error. The stream ends there. No
-  tool call, closing chunk, usage chunk or `[DONE]` follows, so the client
+- **What is sent.** A request with `stream: true` gets the reply's opening
+  events, then the text's pieces up to exactly `after` code points, the
+  piece that holds the cut ending there, then the error. The stream ends
+  there. No tool call, closing event or end marker follows, so the client
   sees an interrupted stream.
-- **Chat's form.** For `openai-chat`, the error is a `data:` line of its
-  own, in place of a chunk:
-  `{"error":{"message":…,"type":…,"param":null,"code":null}}`.
+- **Chat's form.** For `openai-chat`, the stream opens with the opening
+  chunk, and the error is a `data:` line of its own, in place of a chunk:
+  `{"error":{"message":…,"type":…,"param":null,"code":null}}`. No closing
+  chunk, usage chunk or `[DONE]` follows.
+- **Messages' form.** For `anthropic-messages`, the stream opens with
+  `message_start`, and the error is an event named `error`:
+  `event: error`, then `data: {"type":"error","error":{"type":…,"message":…}}`.
+  When `after` is above 0, the text block's `content_block_start` and its
+  `content_block_delta` events come before it; at 0, no `content_block_*`
+  event is sent. No `content_block_stop`, `tool_use` block,
+  `message_delta` or `message_stop` follows
+  ([Messages streams](#messages-streams)).
 - **Counted in code points.** `after` counts code points of the text, not
   pieces, so the cut stays where it is when `chunkSize` or `chunks`
-  changes. `after: 0` sends the error right after the opening chunk. An
-  empty element of [`chunks`](#chunks) counts 0 code points: one before
-  the cut is sent, and the text stops at the piece that reaches `after`.
-  An `after` past the end of a text as written is a load error.
+  changes. `after: 0` sends the error right after Chat's opening chunk or
+  `message_start`. An empty element of [`chunks`](#chunks) counts 0 code
+  points: one before the cut is sent, and the text stops at the piece that
+  reaches `after`. An `after` past the end of a text as written is a load
+  error.
 - **With templates.** With [`template: true`](#templates-in-llm-replies),
   `message` is a text template, such as `Overloaded: ${body.model}`,
   rendered for each request. `after`, `type` and `code` are never
@@ -1935,6 +1945,14 @@ The fields of `error`:
   helper, with the message, and the `error` object as its `body`. With
   `max_retries` at its default it does not retry: the status was 200.
   Checked with openai-python 3.36.1.
+- **What anthropic-sdk-python does.** It picks its error class by the
+  HTTP status, which is 200 on a stream. So on any `event: error` it
+  raises `APIStatusError` with `status_code` 200, never `OverloadedError`,
+  and the type is in the body's `error.type`: the exception's `body` is
+  the event's data. It raises from `messages.create(stream=True)` and from
+  the `messages.stream()` helper, after the events and the text before
+  the error. With `max_retries` at its default it does not retry. Checked
+  with anthropic-sdk-python 2.1.0.
 - **Per API.** `openai-chat` and `anthropic-messages` give `type`, and
   `openai-responses` gives `code`, as each API names it. So the other one
   is a load error that names the member to give, and a Stub that moves to
@@ -1944,9 +1962,9 @@ The fields of `error`:
   `not_found_error`, `conflict_error`, `request_too_large`,
   `rate_limit_error`, `api_error`, `timeout_error` and
   `overloaded_error`. An OpenAI `type` or `code` is any non-empty text.
-- **For now,** only `openai-chat` cuts its stream. An `openai-responses`
-  or `anthropic-messages` Stub reads and checks `error`, and sends its
-  reply whole.
+- **For now,** `openai-responses` does not cut its stream: an
+  `openai-responses` Stub reads and checks `error`, and sends its reply
+  whole.
 - `type` on `openai-responses` or `code` on another API, another
   Anthropic type, an empty `type`, `code` or `message`, an `after` that is
   not an integer from 0 or that passes the end of a text as written, and an
@@ -2517,13 +2535,15 @@ There is no `ping` event, no SSE comment line and no `data: [DONE]`. The
 text is cut into pieces as for every API ([Chunks](#chunks)). Empty text
 has no text block, even when `chunks` gives empty pieces: with no tool
 call, the stream is `message_start`, `message_delta` and `message_stop`,
-as the JSON reply's `content` is `[]`. [`timing`](#timing) waits before
-each text delta and each piece of a tool call's arguments, and a reply
-with no piece waits `first` before `message_delta`. From these events,
-`messages.stream()` in anthropic-sdk-python builds the message that the
-JSON reply gives, and `get_final_message()` returns it, as long as each
-tool call's arguments are a JSON object
-([Broken arguments](#broken-arguments)).
+as the JSON reply's `content` is `[]`. A
+[mid-stream error](#mid-stream-errors) ends the stream early with an
+`error` event, without `content_block_stop`, `message_delta` or
+`message_stop`. [`timing`](#timing) waits before each text delta and each
+piece of a tool call's arguments, and a reply with no piece waits `first`
+before `message_delta`. From these events, `messages.stream()` in
+anthropic-sdk-python builds the message that the JSON reply gives, and
+`get_final_message()` returns it, as long as each tool call's arguments
+are a JSON object ([Broken arguments](#broken-arguments)).
 
 For the `hello` Stub above, a request for `claude-test` with
 `stream: true` gets this stream, which `smock render` shows with the same

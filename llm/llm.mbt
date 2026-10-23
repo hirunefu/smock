@@ -426,10 +426,11 @@ pub enum WaitSlot {
 /// not JSON, received at `now` (milliseconds since the Unix epoch): the
 /// stream when the body is a JSON object whose `stream` is exactly `true`,
 /// otherwise the JSON reply. A declared mid-stream error cuts an
-/// `openai-chat` stream; the JSON reply leaves it out. Its ids draw from
-/// `ids`, the request's ids generator, and the reply's id is the strings'
-/// `id` when given, as is each tool call's call id. Its model is the
-/// strings' `model` when given, otherwise the request's.
+/// `openai-chat` or `anthropic-messages` stream; the JSON reply leaves it
+/// out. Its ids draw from `ids`, the request's ids generator, and the
+/// reply's id is the strings' `id` when given, as is each tool call's call
+/// id. Its model is the strings' `model` when given, otherwise the
+/// request's.
 pub fn reply(
   declaration : Declaration,
   strings : Strings,
@@ -1764,7 +1765,10 @@ fn messages_stop_sequence(stop_reason : String, request : Json?) -> Json {
 /// `input` and an empty `partial_json`, with one `input_json_delta` per
 /// piece of its arguments; then `message_delta` gives the stop members and
 /// the output tokens, and `message_stop` ends the stream. There is no
-/// `ping` event.
+/// `ping` event. A declared mid-stream error cuts the text after its
+/// `after` code points, with no text block when none is sent, and follows
+/// it as an `error` event with the message `strings.error_message`, in
+/// place of the block's stop, the tool calls and every event after them.
 fn messages_stream(
   declaration : Declaration,
   strings : Strings,
@@ -1775,12 +1779,17 @@ fn messages_stream(
   request_id~ : (String, String),
 ) -> Reply {
   // Empty text has no block, as in the JSON reply, even when `chunks`
-  // gives empty pieces, so that both give the same message.
-  let has_text = strings.text != ""
-  let text_pieces = if has_text {
-    strings.text_pieces(declaration.chunk_size)
-  } else {
-    no_pieces
+  // gives empty pieces, so that both give the same message. Nor has text
+  // that a mid-stream error cuts at 0.
+  let has_text = match declaration.error {
+    Some(error) => strings.text != "" && error.after > 0
+    None => strings.text != ""
+  }
+  let text_pieces = match declaration.error {
+    _ if !has_text => no_pieces
+    Some(error) =>
+      pieces_before(strings.text_pieces(declaration.chunk_size), error.after)
+    None => strings.text_pieces(declaration.chunk_size)
   }
   let tool_calls = strings.tool_calls
   let pace = Pace::new()
@@ -1822,6 +1831,17 @@ fn messages_stream(
         content_block_delta(0, delta),
       )
     }
+  }
+  if declaration.error is Some(error) {
+    // The error takes the wait a next piece would, and ends the stream.
+    out.push(
+      pace.piece(),
+      Some("error"),
+      messages_error(error, strings.error_message),
+    )
+    return out.reply(request_id)
+  }
+  if has_text {
     out.push(NoWait, Some("content_block_stop"), content_block_stop(0))
   }
   // Each tool call's block follows, at the next index.
@@ -1914,6 +1934,15 @@ fn content_block_delta(index : Int, delta : String) -> String {
 /// The data of the `content_block_stop` event of the block at `index`.
 fn content_block_stop(index : Int) -> String {
   "{\"type\":\"content_block_stop\",\"index\":\{index}}"
+}
+
+///|
+/// The data of Anthropic Messages' `error` event for `error` with the
+/// message `message`: an `error` object with its type and message.
+fn messages_error(error : MidStreamError, message : String) -> String {
+  let message = @template.compact_json(Json::string(message))
+  let kind = @template.compact_json(Json::string(error.kind))
+  "{\"type\":\"error\",\"error\":{\"type\":\{kind},\"message\":\{message}}}"
 }
 
 ///|

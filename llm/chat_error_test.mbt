@@ -325,7 +325,7 @@ test "the message and the type are sent as written, JSON-escaped" {
 }
 
 ///|
-test "for now, an openai-responses or anthropic-messages declaration with an error gives the reply it gives without one, streamed or not" {
+test "for now, an openai-responses declaration with an error gives the reply it gives without one, streamed or not" {
   let reply_of = (api : @llm.Api, error : @llm.MidStreamError?, stream : Bool) => {
     shown(
       @llm.reply(
@@ -338,7 +338,7 @@ test "for now, an openai-responses or anthropic-messages declaration with an err
     )
   }
   let cut = @llm.MidStreamError(after=2, kind="overloaded_error")
-  let apis : Array[@llm.Api] = [OpenaiResponses, AnthropicMessages]
+  let apis : Array[@llm.Api] = [OpenaiResponses]
   inspect(
     apis
     .map(api => {
@@ -350,7 +350,6 @@ test "for now, an openai-responses or anthropic-messages declaration with an err
     .join("\n"),
     content=(
       #|openai-responses: true
-      #|anthropic-messages: true
     ),
   )
 }

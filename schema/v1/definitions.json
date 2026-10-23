@@ -630,7 +630,7 @@
           "additionalProperties": false
         },
         "error": {
-          "description": "A mid-stream error: a streamed request gets the reply's opening events, the text up to after code points, then the API's own error in place of the rest, with no tool call, closing event or end marker. For openai-chat it is a data frame {\"error\":{\"message\",\"type\",\"param\":null,\"code\":null}}, which openai-python raises as APIError. Give type for openai-chat and anthropic-messages, and code for openai-responses. A request that does not stream gets the ordinary reply. Default: none.",
+          "description": "A mid-stream error: a streamed request gets the reply's opening events, the text up to after code points, then the API's own error in place of the rest, with no tool call, closing event or end marker. For openai-chat it is a data frame {\"error\":{\"message\",\"type\",\"param\":null,\"code\":null}}, which openai-python raises as APIError. For anthropic-messages it is an event: error with {\"type\":\"error\",\"error\":{\"type\",\"message\"}}, which anthropic-sdk-python raises as APIStatusError with status 200 and the type in the body's error.type. Give type for openai-chat and anthropic-messages, and code for openai-responses. A request that does not stream gets the ordinary reply. Default: none.",
           "type": "object",
           "properties": {
             "after": {
