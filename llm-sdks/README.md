@@ -34,7 +34,8 @@ package missing from the list fails the install.
 ## What it checks
 
 `check.py` uses only the SDKs and the standard library, and builds every
-client with `max_retries=0`, so that each call sends one request.
+client with `max_retries=0`, so that each call sends one request. Only the
+retry checks, below, keep the default retries.
 
 - Chat Completions: `create` with and without `stream`, a stream with
   `stream_options.include_usage`, and the `stream()` helper with function
@@ -70,6 +71,29 @@ client with `max_retries=0`, so that each call sends one request.
   `RESPONSES_GENERATED_ID_DIFFERENCES` and
   `MESSAGES_GENERATED_ID_DIFFERENCES`). Any other difference fails the
   check.
+- Mid-stream errors, with the docs'
+  [cut-short Stub](../docs/definition-files.md#mid-stream-errors) for each
+  API. openai-python raises `APIError` itself on Chat's error frame, with
+  the message and the error object as its body. It yields the Responses
+  `error` event as a `ResponseErrorEvent`, and raises nothing; the
+  helper's `get_final_response()` then raises `RuntimeError`.
+  anthropic-sdk-python raises `APIStatusError` itself, not
+  `OverloadedError`, with status 200 and the type in the body. Each comes
+  after the text before the cut, from `create(stream=True)` and from the
+  `stream()` helper, and `create` without `stream` gets the whole reply.
+- Error replies: the docs'
+  [429](../docs/definition-files.md#a-429-with-retry-after), in OpenAI's
+  form, and [529](../docs/definition-files.md#a-529-when-overloaded), in
+  Anthropic's, each response copied as written. Both SDKs get both, and
+  each raises its own status error for the status, which keeps the body:
+  `RateLimitError` for the 429, and `InternalServerError` from
+  openai-python or `OverloadedError` from anthropic-sdk-python for the
+  529.
+- Retries: with clients that keep the default retries, each call in a
+  [Session](../README.md#sessions-and-ephemeral-stubs) of its own, the
+  Journal holds one request of the 429, whose `x-should-retry` is
+  `"false"`, and three of the 529, which has none, as each SDK retries it
+  twice. So the SDKs do retry, and the header is what stops them.
 
 The job fails when a check fails, or when an SDK raises where no check
 expects it to. It prints every check, and smock's log when one fails.
