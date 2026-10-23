@@ -556,3 +556,31 @@ test "a Scenario moves on an llm Stub: its first turn asks for a tool, and the n
     ),
   )
 }
+
+///|
+test "a templated text is the text of an openai-responses and an anthropic-messages reply, and a Messages stream cuts it after rendering" {
+  let echo = (api : String, stream : Bool) => {
+    let fields = "text: \"Echo: ${last(body.messages).content}\""
+    let mock = echo_mock(fields).1.replace(old="openai-chat", new=api)
+    harness([("openai.yaml", mock)]).chat(body=said("a \"b\"", stream~))
+  }
+  let responses = match body_value(echo("openai-responses", false)) {
+    { "output": [{ "content": [{ "text": text, .. }], .. }], .. } =>
+      text.stringify()
+    other => other.stringify()
+  }
+  let messages = match body_value(echo("anthropic-messages", false)) {
+    { "content": [{ "text": text, .. }], .. } => text.stringify()
+    other => other.stringify()
+  }
+  inspect(
+    [responses, messages, messages_waits(echo("anthropic-messages", true))].join(
+      "\n",
+    ),
+    content=(
+      #|"Echo: a \"b\""
+      #|"Echo: a \"b\""
+      #|0 message_start, 0 content_block_start, 0 "Echo", 0 ": a ", 0 "\"b\"", 0 content_block_stop, 0 message_delta, 0 message_stop
+    ),
+  )
+}
