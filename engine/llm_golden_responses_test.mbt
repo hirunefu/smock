@@ -248,3 +248,168 @@ test "the Responses JSON reply equals the reference's Text input example, but fo
     ),
   )
 }
+
+///|
+/// The "Functions" example's response, lines 22727 to 22807 of
+/// openapi.yaml, copied unchanged: one Response object with a function
+/// call and no text.
+let responses_functions_example : String =
+  #|{
+  #|  "id": "resp_67ca09c5efe0819096d0511c92b8c890096610f474011cc0",
+  #|  "object": "response",
+  #|  "access_programs": null,
+  #|  "created_at": 1741294021,
+  #|  "status": "completed",
+  #|  "completed_at": 1741294022,
+  #|  "error": null,
+  #|  "incomplete_details": null,
+  #|  "instructions": null,
+  #|  "max_output_tokens": null,
+  #|  "model": "gpt-6-astra",
+  #|  "output": [
+  #|    {
+  #|      "type": "function_call",
+  #|      "id": "fc_67ca09c6bedc8190a7abfec07b1a1332096610f474011cc0",
+  #|      "call_id": "call_unLAR8MvFNptuiZK6K6HCy5k",
+  #|      "name": "get_current_weather",
+  #|      "arguments": "{\"location\":\"Boston, MA\",\"unit\":\"celsius\"}",
+  #|      "status": "completed"
+  #|    }
+  #|  ],
+  #|  "parallel_tool_calls": true,
+  #|  "previous_response_id": null,
+  #|  "reasoning": {
+  #|    "effort": null,
+  #|    "summary": null
+  #|  },
+  #|  "store": true,
+  #|  "temperature": 1.0,
+  #|  "text": {
+  #|    "format": {
+  #|      "type": "text"
+  #|    }
+  #|  },
+  #|  "tool_choice": "auto",
+  #|  "tools": [
+  #|    {
+  #|      "type": "function",
+  #|      "description": "Get the current weather in a given location",
+  #|      "name": "get_current_weather",
+  #|      "parameters": {
+  #|        "type": "object",
+  #|        "properties": {
+  #|          "location": {
+  #|            "type": "string",
+  #|            "description": "The city and state, e.g. San Francisco, CA"
+  #|          },
+  #|          "unit": {
+  #|            "type": "string",
+  #|            "enum": [
+  #|              "celsius",
+  #|              "fahrenheit"
+  #|            ]
+  #|          }
+  #|        },
+  #|        "required": [
+  #|          "location",
+  #|          "unit"
+  #|        ]
+  #|      },
+  #|      "strict": true
+  #|    }
+  #|  ],
+  #|  "top_p": 1.0,
+  #|  "truncation": "disabled",
+  #|  "usage": {
+  #|    "input_tokens": 291,
+  #|    "output_tokens": 23,
+  #|    "output_tokens_details": {
+  #|      "reasoning_tokens": 0
+  #|    },
+  #|    "total_tokens": 314,
+  #|    "input_tokens_details": {
+  #|      "cached_tokens": 0,
+  #|      "cache_write_tokens": 0
+  #|    }
+  #|  },
+  #|  "user": null,
+  #|  "metadata": {}
+  #|}
+
+///|
+/// A Mock `openai` whose Stub `functions` declares the "Functions"
+/// example's content: no text, its tool call with its call id and its
+/// arguments, its id, its model and its usage.
+let responses_functions_stub : (String, String) = openai_golden_mock(
+  (
+    #|  - id: functions
+    #|    mock: openai
+    #|    request: { method: POST, path: /v1/responses }
+    #|    response:
+    #|      status: 200
+    #|      llm:
+    #|        api: openai-responses
+    #|        id: resp_67ca09c5efe0819096d0511c92b8c890096610f474011cc0
+    #|        model: gpt-6-astra
+    #|        toolCalls:
+    #|          - id: call_unLAR8MvFNptuiZK6K6HCy5k
+    #|            name: get_current_weather
+    #|            arguments: { location: "Boston, MA", unit: celsius }
+    #|        usage: { input: 291, output: 23 }
+  ),
+)
+
+///|
+/// The request is the example's. The function call item's id is
+/// generated. smock completes the reply at once and writes `service_tier`,
+/// as with the Text input example. It copies `tools` as the request gives
+/// them, without interpreting them, where the API made the tool strict and
+/// shows `strict: true`.
+test "the Responses JSON reply with a function call equals the reference's Functions example, but for completed_at, service_tier and the tool's strict" {
+  let h = harness([responses_functions_stub])
+  h.now = 1_741_294_021_000L
+  let outcome = h.responses(
+    (
+      #|{
+      #|  "model": "gpt-6-astra",
+      #|  "input": "What is the weather like in Boston today?",
+      #|  "tools": [
+      #|    {
+      #|      "type": "function",
+      #|      "name": "get_current_weather",
+      #|      "description": "Get the current weather in a given location",
+      #|      "parameters": {
+      #|        "type": "object",
+      #|        "properties": {
+      #|          "location": {
+      #|            "type": "string",
+      #|            "description": "The city and state, e.g. San Francisco, CA"
+      #|          },
+      #|          "unit": {
+      #|            "type": "string",
+      #|            "enum": ["celsius", "fahrenheit"]
+      #|          }
+      #|        },
+      #|        "required": ["location", "unit"]
+      #|      }
+      #|    }
+      #|  ],
+      #|  "tool_choice": "auto"
+      #|}
+    ),
+  )
+  inspect(
+    compare_golden(
+      responses_functions_example,
+      outcome,
+      differs=["/completed_at", "/service_tier", "/tools/0/strict"],
+      unfixed=["fc_67ca09c6bedc8190a7abfec07b1a1332096610f474011cc0"],
+    ),
+    content=(
+      #|same but for the listed differences
+      #|listed: /completed_at: values differ
+      #|listed: /service_tier: only in smock's
+      #|listed: /tools/0/strict: only in the example
+    ),
+  )
+}
