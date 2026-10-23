@@ -97,26 +97,21 @@ MESSAGES_BROKEN_CALL = ("toolu_sdk_broken", "get_weather", "not JSON")
 # the whole text.
 ERROR_TEXT = "Hello! How can I assist you today?"
 ERROR_AFTER = 5
-CHAT_ERROR = {
-    "message": "The server had an error while processing your request. Sorry about that!",
-    "type": "server_error",
-    "param": None,
-    "code": None,
-}
-RESPONSES_ERROR = {
-    "type": "error",
-    "code": "server_error",
-    "message": "The server had an error while processing your request. Sorry about that!",
-    "param": None,
-}
+ERROR_MESSAGE = "The server had an error while processing your request. Sorry about that!"
+CHAT_ERROR = {"message": ERROR_MESSAGE, "type": "server_error", "param": None, "code": None}
+RESPONSES_ERROR = {"type": "error", "code": "server_error", "message": ERROR_MESSAGE, "param": None}
 MESSAGES_ERROR = {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}
 
 # The docs' 429 and 529 replies (docs/definition-files.md#a-429-with-retry-after
 # and #a-529-when-overloaded), OpenAI's and Anthropic's: their bodies, and the
 # request id each one's header carries.
 RATE_LIMITED_BODY = {
-    "error": {"message": "Rate limit reached for requests.", "type": "rate_limit_error", "param": None,
-              "code": "slow_down"},
+    "error": {
+        "message": "Rate limit reached for requests.",
+        "type": "rate_limit_error",
+        "param": None,
+        "code": "slow_down",
+    },
 }
 RATE_LIMITED_REQUEST_ID = "req_5K5eWPUAGI1WXJRVsFgWLtIw"
 OVERLOADED_BODY = {
