@@ -49,6 +49,9 @@ MESSAGES = [{"role": "user", "content": "Hello!"}]
 CHAT_ID = re.compile(r"chatcmpl-[A-Za-z0-9]{24}")
 CALL_ID = re.compile(r"call_[A-Za-z0-9]{24}")
 REQUEST_ID = re.compile(r"req_[A-Za-z0-9]{24}")
+RESPONSE_ID = re.compile(r"resp_[A-Za-z0-9]{24}")
+MESSAGE_ID = re.compile(r"msg_[A-Za-z0-9]{24}")
+FUNCTION_CALL_ID = re.compile(r"fc_[A-Za-z0-9]{24}")
 
 # What the Stubs of definitions/llm.yaml declare, as the checks expect to
 # read it. Each Stub answers the model named as its id.
@@ -60,6 +63,7 @@ CHAT_TOOLS_CALLS = [
 ]
 CHAT_CALL_ONLY_CALL = ("get_weather", {"city": "Paris"})
 CHAT_LENGTH_TEXT = "The weather in Paris is"
+RESPONSES_TEXT = "Hi! こんにちは。 👋🏽 How can I help?"
 
 # The function tools an application gives the stream helper. With
 # "strict", the helper parses each call's arguments as JSON.
@@ -504,9 +508,39 @@ def chat_length(checks, smock):
                   openai.LengthFinishReasonError, lambda: chat_helper(client, "chat-length"))
 
 
+def responses_create(client, model, **options):
+    return client.responses.create(model=model, input=MESSAGES, **options)
+
+
+def check_responses_usage(checks, name, usage, input_tokens, output_tokens):
+    checks.equal(f"{name}: usage", None if usage is None else
+                 (usage.input_tokens, usage.output_tokens, usage.total_tokens),
+                 (input_tokens, output_tokens, input_tokens + output_tokens))
+
+
+def responses_text(checks, smock):
+    """Responses, text only, with generated ids: create() with and without
+    stream, and the stream() helper."""
+    client = smock.openai()
+    name = "responses-text: create"
+    reply = responses_create(client, "responses-text")
+    checks.equal(f"{name}: the object", reply.object, "response")
+    checks.equal(f"{name}: the status", (reply.status, reply.incomplete_details), ("completed", None))
+    checks.equal(f"{name}: the text, as output_text joins it", reply.output_text, RESPONSES_TEXT)
+    checks.equal(f"{name}: one message item, completed",
+                 [(item.type, item.role, item.status, [part.type for part in item.content])
+                  for item in reply.output],
+                 [("message", "assistant", "completed", ["output_text"])])
+    check_responses_usage(checks, name, reply.usage, 37, 11)
+    checks.id(f"{name}: the id", reply.id, RESPONSE_ID)
+    checks.id(f"{name}: the message item's id", reply.output[0].id if reply.output else None, MESSAGE_ID)
+    checks.equal(f"{name}: the model", reply.model, "responses-text")
+    checks.id(f"{name}: the request id", reply._request_id, REQUEST_ID)
+
+
 # The cases, in the order they run. Each calls the Stubs it names, and a
 # case whose SDK raises unexpectedly fails without stopping the others.
-CASES = [chat_text, chat_tools, chat_call_only, chat_length]
+CASES = [chat_text, chat_tools, chat_call_only, chat_length, responses_text]
 
 
 def main():

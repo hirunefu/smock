@@ -81,3 +81,18 @@ stubs:
         text: The weather in Paris is
         usage: { input: 31, output: 5 }
         stopReason: length
+
+  # Responses: text only, with every id generated. The text is chat-text's,
+  # cut the same way.
+  - id: responses-text
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { model: responses-text } }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        text: "Hi! こんにちは。 👋🏽 How can I help?"
+        usage: { input: 37, output: 11 }
