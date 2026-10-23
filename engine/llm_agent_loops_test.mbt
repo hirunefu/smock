@@ -248,3 +248,68 @@ test "the docs' Messages loop: the question gets the tool_use block, and the nex
     ),
   )
 }
+
+///|
+/// The Responses loop of the docs: `ask-weather` calls `get_weather` on any
+/// turn but a function call's output, and `answer-weather` quotes the
+/// output.
+let loop_responses : (String, String) = (
+  "openai.yaml",
+  (
+    #|mocks:
+    #|  - name: openai
+    #|stubs:
+    #|  - id: ask-weather
+    #|    mock: openai
+    #|    request:
+    #|      method: POST
+    #|      path: /v1/responses
+    #|      body: { json: { input: { $not: { $last: { type: function_call_output } } } } }
+    #|    response:
+    #|      status: 200
+    #|      llm:
+    #|        api: openai-responses
+    #|        toolCalls:
+    #|          - name: get_weather
+    #|            arguments: { city: Paris }
+    #|  - id: answer-weather
+    #|    mock: openai
+    #|    request:
+    #|      method: POST
+    #|      path: /v1/responses
+    #|      body: { json: { input: { $last: { type: function_call_output } } } }
+    #|    response:
+    #|      status: 200
+    #|      template: true
+    #|      llm:
+    #|        api: openai-responses
+    #|        text: It is ${last(body.input).output} in Paris.
+  ),
+)
+
+///|
+test "the docs' Responses loop: the question, given as a string, gets the function_call item, and the next turn, which sends back the reply's output and the call's output, gets text that quotes it" {
+  let h = harness([loop_responses])
+  let first = h.responses(
+    wire({ "model": "gpt-6-astra", "input": "Weather in Paris?" }),
+  )
+  guard agent_reply(first)
+    is { "output": [{ "call_id": String(call_id), .. } as call], .. } else {
+    fail("not one function_call item")
+  }
+  let output : Json = {
+    "type": "function_call_output",
+    "call_id": call_id,
+    "output": "18°C",
+  }
+  let second = h.responses(
+    wire({ "model": "gpt-6-astra", "input": [weather_question, call, output] }),
+  )
+  inspect(
+    "\{turn_line(first)}\n\{turn_line(second)}",
+    content=(
+      #|ask-weather: "get_weather" {"city":"Paris"}
+      #|answer-weather: "It is 18°C in Paris."
+    ),
+  )
+}

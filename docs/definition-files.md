@@ -2733,6 +2733,59 @@ The first reply has no text, so its `tool_use` block is `content[0]`.
 The second request's last message is the user's, and holds the
 `tool_result` block, so `answer-weather` answers it.
 
+#### A Responses loop
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { input: { $not: { $last: { type: function_call_output } } } } }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+  - id: answer-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { input: { $last: { type: function_call_output } } } }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-responses
+        text: It is ${last(body.input).output} in Paris.
+```
+
+With openai-python, the agent sends the whole conversation as `input`
+items:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="test")
+first = client.responses.create(model="gpt-6-astra", input="Weather in Paris?")
+call = first.output[0]
+items = [{"role": "user", "content": "Weather in Paris?"}, *first.output]
+items.append({"type": "function_call_output", "call_id": call.call_id, "output": "18°C"})
+second = client.responses.create(model="gpt-6-astra", input=items)
+print(second.output_text)  # It is 18°C in Paris.
+```
+
+The first request gives `input` as a string, which `ask-weather` answers.
+The first reply has no text, so its function call item is `output[0]`.
+The second request's last item is the call's output, so `answer-weather`
+answers it.
+
 ### Paths and compatible endpoints
 
 The preset neither sets nor checks `request.path`. A Stub's conditions
