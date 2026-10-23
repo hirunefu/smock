@@ -512,10 +512,81 @@ def responses_create(client, model, **options):
     return client.responses.create(model=model, input=MESSAGES, **options)
 
 
+def responses_stream(client, model, **options):
+    """Reads a Responses stream as an application does with
+    create(stream=True), and returns the request id from its header and its
+    events."""
+    with client.responses.create(model=model, input=MESSAGES, stream=True, **options) as stream:
+        return stream.response.headers.get("x-request-id"), list(stream)
+
+
 def check_responses_usage(checks, name, usage, input_tokens, output_tokens):
     checks.equal(f"{name}: usage", None if usage is None else
                  (usage.input_tokens, usage.output_tokens, usage.total_tokens),
                  (input_tokens, output_tokens, input_tokens + output_tokens))
+
+
+# The events of a Responses stream that carry the whole Response object.
+LIFECYCLE_EVENTS = {"response.created", "response.in_progress", "response.completed", "response.incomplete"}
+
+
+def check_events(checks, name, events, reply_id, model, closing):
+    """Checks what every event of a Responses stream shares: sequence
+    numbers from 0 without a gap, the Response object's id and model, the
+    opening events, and the closing event, which is the last one and the
+    only one with usage. Returns the closing event's Response."""
+    checks.equal(f"{name}: the sequence numbers", [event.sequence_number for event in events],
+                 list(range(len(events))))
+    checks.equal(f"{name}: the opening events", [event.type for event in events[:2]],
+                 ["response.created", "response.in_progress"])
+    checks.equal(f"{name}: the closing event, last", [event.type for event in events[-1:]], [closing])
+    lifecycle = [event.response for event in events if event.type in LIFECYCLE_EVENTS]
+    checks.equal(f"{name}: one id across the events", len({response.id for response in lifecycle}), 1)
+    checks.id(f"{name}: the id", lifecycle[0].id if lifecycle else None, reply_id)
+    checks.equal(f"{name}: the model of every event", {response.model for response in lifecycle}, {model})
+    checks.equal(f"{name}: usage on the closing event only", [response.usage is None for response in lifecycle],
+                 [True] * (len(lifecycle) - 1) + [False])
+    return events[-1].response if events and events[-1].type == closing else None
+
+
+def items_of(events):
+    """The output items of a Responses stream, by their output index: each
+    item's added and done events, and the events between them that carry
+    its item id."""
+    items = {}
+    for event in events:
+        if event.type == "response.output_item.added":
+            items[event.output_index] = {"added": event.item, "done": None, "events": []}
+        elif event.type == "response.output_item.done":
+            items.setdefault(event.output_index, {"added": None, "done": None, "events": []})["done"] = event.item
+        elif hasattr(event, "item_id"):
+            items.setdefault(event.output_index, {"added": None, "done": None, "events": []})["events"].append(event)
+    return [items[index] for index in sorted(items)]
+
+
+def check_items(checks, name, events):
+    """Checks that every output item of a Responses stream is opened before
+    its content and done with the ids of its added event, and that its
+    content events carry its id. Returns the items."""
+    items = items_of(events)
+    checks.equal(f"{name}: the output indexes", [event.output_index for event in events
+                                                 if event.type == "response.output_item.added"],
+                 list(range(len(items))))
+    checks.check(f"{name}: each item is added, then done with the ids of its added event",
+                 all(item["added"] is not None and item["done"] is not None
+                     and (item["added"].id, getattr(item["added"], "call_id", None))
+                     == (item["done"].id, getattr(item["done"], "call_id", None)) for item in items),
+                 "\n".join(repr((item["added"], item["done"])) for item in items))
+    checks.check(f"{name}: the events of an item carry its id",
+                 all(event.item_id == item["added"].id for item in items for event in item["events"]),
+                 "\n".join(f"{event.type}: {event.item_id}" for item in items for event in item["events"]))
+    return items
+
+
+def streamed_text(events):
+    """The text of a Responses stream, joined from its deltas as an
+    application joins it."""
+    return "".join(event.delta for event in events if event.type == "response.output_text.delta")
 
 
 def responses_text(checks, smock):
@@ -536,6 +607,24 @@ def responses_text(checks, smock):
     checks.id(f"{name}: the message item's id", reply.output[0].id if reply.output else None, MESSAGE_ID)
     checks.equal(f"{name}: the model", reply.model, "responses-text")
     checks.id(f"{name}: the request id", reply._request_id, REQUEST_ID)
+
+    name = "responses-text: create(stream=True)"
+    request_id, events = responses_stream(client, "responses-text")
+    closed = check_events(checks, name, events, RESPONSE_ID, "responses-text", "response.completed")
+    items = check_items(checks, name, events)
+    checks.equal(f"{name}: the items", [(item["added"].type, item["done"].status) for item in items],
+                 [("message", "completed")])
+    checks.id(f"{name}: the message item's id", items[0]["added"].id if items else None, MESSAGE_ID)
+    checks.equal(f"{name}: the text", streamed_text(events), RESPONSES_TEXT)
+    checks.check(f"{name}: a piece ends between the code points of the emoji",
+                 any(event.delta.endswith("👋") for event in events if event.type == "response.output_text.delta"),
+                 repr([event.delta for event in events if event.type == "response.output_text.delta"]))
+    checks.equal(f"{name}: response.output_text.done",
+                 [event.text for event in events if event.type == "response.output_text.done"], [RESPONSES_TEXT])
+    checks.equal(f"{name}: the closing event's text", closed and closed.output_text, RESPONSES_TEXT)
+    checks.equal(f"{name}: the closing event's status", closed and closed.status, "completed")
+    check_responses_usage(checks, f"{name}: the closing event", closed and closed.usage, 37, 11)
+    checks.id(f"{name}: the request id", request_id, REQUEST_ID)
 
 
 # The cases, in the order they run. Each calls the Stubs it names, and a
