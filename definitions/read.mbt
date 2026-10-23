@@ -532,9 +532,8 @@ fn File::read_stub(self : File, pointer : String, json : Json) -> Stub? {
   let mut request = no_conditions()
   let mut response = Response::{
     status: 0,
-    headers: ReadOnlyArray::from_array([]),
+    headers: Written(ReadOnlyArray::from_array([])),
     body: Bytes(b""),
-    template: None,
     serves_ranges: false,
     reads_variables: false,
     reads_data: false,
