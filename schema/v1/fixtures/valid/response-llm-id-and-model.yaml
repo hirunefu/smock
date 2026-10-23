@@ -1,0 +1,23 @@
+mocks:
+  - name: openai
+stubs:
+  - id: astra
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { model: gpt-6-astra } }
+    response:
+      status: 200
+      headers: { X-Request-Id: req_test_1 }
+      llm:
+        api: openai-chat
+        text: Hello.
+        id: chatcmpl-test-1
+        model: gpt-6-astra-2026-10-01
+  - id: empty
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 200
+      llm: { api: openai-chat, id: "", model: "" }

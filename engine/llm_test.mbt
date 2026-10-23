@@ -98,6 +98,7 @@ test "an llm Stub answers with one chat.completion JSON body, as application/jso
       #|200
       #|Content-Type: application/json
       #|x-ratelimit-remaining-requests: 59
+      #|x-request-id: req_TZp9I060Mzd0w4SDwiWTe2c8
       #|{"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion","created":1791815405,"model":"test-model","choices":[{"index":0,"message":{"role":"assistant","content":"Hello! How can I assist you today?","refusal":null,"annotations":[]},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"service_tier":"default"}
     ),
   )
@@ -430,6 +431,10 @@ test "render shows an llm Stub's JSON reply through the path a request takes, wi
       #|      {
       #|        "name": "x-ratelimit-remaining-requests",
       #|        "value": "59"
+      #|      },
+      #|      {
+      #|        "name": "x-request-id",
+      #|        "value": "req_TZp9I060Mzd0w4SDwiWTe2c8"
       #|      }
       #|    ],
       #|    "body": {

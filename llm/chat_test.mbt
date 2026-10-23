@@ -8,21 +8,25 @@ let received : Int64 = 1_791_815_405_123L
 
 ///|
 /// The reply to a request whose body is `request`, for an `openai-chat`
-/// declaration with `text`, and ids drawn from the generator of the draw
-/// `draw`: the Content-Type smock sets, then the body.
+/// declaration with `text`, and the `id` and `model` given, and ids drawn
+/// from the generator of the draw `draw`: the Content-Type smock sets, the
+/// request-id header field it adds, then the body.
 fn chat(
   text : String,
   request? : Json? = Some({ "model": "test-model" }),
   draw? : UInt64 = 7,
+  id? : String,
+  model? : String,
 ) -> String {
   let reply = @llm.reply(
     @llm.Declaration(api=OpenaiChat),
-    @llm.Strings(text~),
+    @llm.Strings(text~, id?, model?),
     request~,
     now=received,
     ids=@llm.ids_generator(draw),
   )
-  "Content-Type: \{reply.content_type}\n\{json_text(reply)}"
+  let (name, value) = reply.request_id
+  "Content-Type: \{reply.content_type}\n\{name}: \{value}\n\{json_text(reply)}"
 }
 
 ///|
@@ -40,6 +44,7 @@ test "an openai-chat reply is one chat.completion body, with the text as the ass
     chat("Hello! How can I assist you today?"),
     content=(
       #|Content-Type: application/json
+      #|x-request-id: req_5DTBZPrxiMH6i7M92iahxjWk
       #|{"id":"chatcmpl-KCVauEuclT08Mg4CWd55sNbz","object":"chat.completion","created":1791815405,"model":"test-model","choices":[{"index":0,"message":{"role":"assistant","content":"Hello! How can I assist you today?","refusal":null,"annotations":[]},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"service_tier":"default"}
     ),
   )
@@ -132,11 +137,15 @@ test "the same draw gives the same id, and another draw another one" {
 
 ///|
 /// The reply's `model` and `created` for a request whose body is `request`,
-/// received at `now`.
-fn model_and_created(request : Json?, now? : Int64 = received) -> String {
+/// received at `now`, from a declaration with the `model` given.
+fn model_and_created(
+  request : Json?,
+  now? : Int64 = received,
+  model? : String,
+) -> String {
   let reply = @llm.reply(
     @llm.Declaration(api=OpenaiChat),
-    @llm.Strings(text=""),
+    @llm.Strings(text="", model?),
     request~,
     now~,
     ids=@llm.ids_generator(7),
@@ -166,6 +175,26 @@ test "the model is the request's model when it is a string, otherwise the empty 
       #|"created":1791815405,"model":""
       #|"created":1791815405,"model":""
       #|"created":1791815405,"model":""
+    ),
+  )
+}
+
+///|
+test "model fixes the reply's model, as written, whatever the request's model" {
+  inspect(
+    [
+      model_and_created(Some({ "model": "gpt-6-astra" }), model="test-model"),
+      model_and_created(Some({ "model": 4 }), model="test-model"),
+      model_and_created(None, model="test-model"),
+      model_and_created(Some({ "model": "gpt-6-astra" }), model=""),
+      model_and_created(None, model="a \"quoted\" model, 天気"),
+    ].join("\n"),
+    content=(
+      #|"created":1791815405,"model":"test-model"
+      #|"created":1791815405,"model":"test-model"
+      #|"created":1791815405,"model":"test-model"
+      #|"created":1791815405,"model":""
+      #|"created":1791815405,"model":"a \"quoted\" model, 天気"
     ),
   )
 }

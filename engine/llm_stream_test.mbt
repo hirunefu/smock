@@ -18,6 +18,7 @@ test "a request whose JSON body has stream: true gets the reply as chat.completi
       #|200
       #|Content-Type: text/event-stream
       #|x-ratelimit-remaining-requests: 59
+      #|x-request-id: req_TZp9I060Mzd0w4SDwiWTe2c8
       #|after 0 ms: event -, id -, data "{\"id\":\"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl\",\"object\":\"chat.completion.chunk\",\"created\":1791815405,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"logprobs\":null,\"finish_reason\":null}]}"
       #|after 0 ms: event -, id -, data "{\"id\":\"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl\",\"object\":\"chat.completion.chunk\",\"created\":1791815405,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hell\"},\"logprobs\":null,\"finish_reason\":null}]}"
       #|after 0 ms: event -, id -, data "{\"id\":\"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl\",\"object\":\"chat.completion.chunk\",\"created\":1791815405,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"o! H\"},\"logprobs\":null,\"finish_reason\":null}]}"
@@ -192,6 +193,7 @@ test "a reply to HEAD, or with status 204 or 304, is the head alone, for the str
       #|HEAD /v1/chat/completions, stream true:
       #|HTTP/1.1 200 OK
       #|Content-Type: text/event-stream
+      #|x-request-id: req_sJNCUcA0CWrNZKC6RTXrx2qy
       #|Date: Mon, 12 Oct 2026 14:30:05 GMT
       #|Transfer-Encoding: chunked
       #|
@@ -199,6 +201,7 @@ test "a reply to HEAD, or with status 204 or 304, is the head alone, for the str
       #|HEAD /v1/chat/completions, stream false:
       #|HTTP/1.1 200 OK
       #|Content-Type: application/json
+      #|x-request-id: req_fK1WtgcCBbTWteWM2iZw2jBF
       #|Date: Mon, 12 Oct 2026 14:30:05 GMT
       #|Content-Length: 536
       #|
@@ -206,24 +209,28 @@ test "a reply to HEAD, or with status 204 or 304, is the head alone, for the str
       #|POST /no-content, stream true:
       #|HTTP/1.1 204 No Content
       #|Content-Type: text/event-stream
+      #|x-request-id: req_lDj96YCg3g5sUx8DB3OXKUJ3
       #|Date: Mon, 12 Oct 2026 14:30:05 GMT
       #|
       #|--
       #|POST /no-content, stream false:
       #|HTTP/1.1 204 No Content
       #|Content-Type: application/json
+      #|x-request-id: req_a361XihHfVpqOR0DFxRb8HGj
       #|Date: Mon, 12 Oct 2026 14:30:05 GMT
       #|
       #|--
       #|POST /not-modified, stream true:
       #|HTTP/1.1 304 Not Modified
       #|Content-Type: text/event-stream
+      #|x-request-id: req_vGCkDAGSq05n3K1ld1QxhFIz
       #|Date: Mon, 12 Oct 2026 14:30:05 GMT
       #|
       #|--
       #|POST /not-modified, stream false:
       #|HTTP/1.1 304 Not Modified
       #|Content-Type: application/json
+      #|x-request-id: req_q4hAwFeEs9a2NKGhmyjNx29B
       #|Date: Mon, 12 Oct 2026 14:30:05 GMT
       #|
       #|
@@ -261,6 +268,10 @@ test "render shows the events for a sample whose body sets stream: true, through
       #|      {
       #|        "name": "Content-Type",
       #|        "value": "text/event-stream"
+      #|      },
+      #|      {
+      #|        "name": "x-request-id",
+      #|        "value": "req_TZp9I060Mzd0w4SDwiWTe2c8"
       #|      }
       #|    ],
       #|    "body": null,

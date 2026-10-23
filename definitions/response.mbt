@@ -409,7 +409,8 @@ fn File::read_events(
 
 ///|
 /// Reads the `llm` of a response: `api`, which names the API whose wire
-/// form the reply takes, and `text`, empty when left out. It has none when
+/// form the reply takes, `text`, empty when left out, and the reply's `id`
+/// and `model`, generated and the request's when left out. It has none when
 /// `api` is missing or names no API.
 fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
   guard json is Object(fields) else {
@@ -418,6 +419,8 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
   }
   let mut api = None
   let mut text = ""
+  let mut id = None
+  let mut model = None
   for key, value in fields {
     let field = child_pointer(pointer, key)
     match key {
@@ -427,10 +430,15 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
           Err(message) => self.error(field, message)
         }
       "text" => text = self.string(field, value).unwrap_or("")
+      "id" => id = self.string(field, value)
+      "model" => model = self.string(field, value)
       _ => self.unknown_field(field)
     }
   }
   self.require(fields, pointer, "api")
   guard api is Some(api) else { return None }
-  Some({ declaration: @llm.Declaration(api~), strings: @llm.Strings(text~), })
+  Some({
+    declaration: @llm.Declaration(api~),
+    strings: @llm.Strings(text~, id?, model?),
+  })
 }

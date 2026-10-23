@@ -49,12 +49,21 @@ pub fn Declaration::Declaration(api~ : Api) -> Declaration {
 pub struct Strings {
   /// The text of the reply: empty when left out.
   text : String
+  /// The reply's id, sent as written, or `None` for a generated one.
+  id : String?
+  /// The reply's model, or `None` for the request's.
+  model : String?
 } derive(Debug, Eq)
 
 ///|
-/// The strings of a reply whose text is `text`.
-pub fn Strings::Strings(text~ : String) -> Strings {
-  { text, }
+/// The strings of a reply whose text is `text`, whose id is `id` when given
+/// and whose model is `model` when given.
+pub fn Strings::Strings(
+  text~ : String,
+  id? : String,
+  model? : String,
+) -> Strings {
+  { text, id, model, }
 }
 
 ///|
@@ -65,6 +74,10 @@ pub struct Reply {
   /// `application/json` for the JSON reply, `text/event-stream` for the
   /// stream.
   content_type : String
+  /// The request-id header field smock adds, as its name, in lower case,
+  /// and its value, unless the Stub gives a field of that name: then the
+  /// Stub's field takes its place.
+  request_id : (String, String)
   /// The JSON reply, or the stream's events.
   body : ReplyBody
 }
@@ -113,7 +126,8 @@ pub enum WaitSlot {
 /// not JSON, received at `now` (milliseconds since the Unix epoch): the
 /// stream when the body is a JSON object whose `stream` is exactly `true`,
 /// otherwise the JSON reply. Its ids draw from `ids`, the request's ids
-/// generator.
+/// generator, and the reply's id is the strings' `id` when given. Its
+/// model is the strings' `model` when given, otherwise the request's.
 pub fn reply(
   declaration : Declaration,
   strings : Strings,
@@ -123,15 +137,31 @@ pub fn reply(
 ) -> Reply {
   let ids = draw_ids(ids)
   let created = now / 1000L
-  let model = request_model(request)
+  let model = match strings.model {
+    Some(model) => model
+    None => request_model(request)
+  }
   let streams = asks_to_stream(request)
   match declaration.api {
-    OpenaiChat =>
+    OpenaiChat => {
+      let id = reply_id(strings, "chatcmpl-", ids)
+      let request_id = ("x-request-id", "req_" + ids.request)
       if streams {
-        chat_stream(strings, ids~, created~, model~)
+        chat_stream(strings, id~, created~, model~, request_id~)
       } else {
-        chat_reply(strings, ids~, created~, model~)
+        chat_reply(strings, id~, created~, model~, request_id~)
       }
+    }
+  }
+}
+
+///|
+/// The reply's id: the strings' `id` as written when given, otherwise
+/// `prefix`, the API's, and the reply's slot of `ids`.
+fn reply_id(strings : Strings, prefix : String, ids : Ids) -> String {
+  match strings.id {
+    Some(id) => id
+    None => prefix + ids.reply
   }
 }
 
@@ -146,12 +176,15 @@ fn asks_to_stream(request : Json?) -> Bool {
 
 ///|
 /// The ids of one reply, each drawn in its slot of a fixed order: the
-/// reply's, then the Responses message item's. Every slot draws, whether
-/// or not the reply's API uses it, so that an id keeps its draws whatever
-/// the API.
+/// reply's, then the Responses message item's, then the request-id
+/// header's, last. Every slot draws, whether or not the reply's API uses
+/// it or the Stub fixes its id, so that fixing one id changes no other and
+/// an id keeps its draws whatever the API.
 priv struct Ids {
   /// The reply's id, without its prefix.
   reply : String
+  /// The request id of the request-id header, without its prefix.
+  request : String
 }
 
 ///|
@@ -160,7 +193,9 @@ fn draw_ids(ids : @prng.Generator) -> Ids {
   let reply = draw_id(ids)
   // The Responses message item's slot.
   ignore(draw_id(ids))
-  { reply, }
+  // The tool calls' slots go here, before the request-id header's.
+  let request = draw_id(ids)
+  { reply, request, }
 }
 
 ///|
@@ -199,14 +234,16 @@ fn request_model(request : Json?) -> String {
 
 ///|
 /// The Chat Completions reply with the strings `strings`, the reply's id
-/// from `ids`, `created` (seconds since the Unix epoch) and `model`: one
-/// `chat.completion` object, in the members and the order of the
-/// reference's example, with the example's fixed values.
+/// `id`, `created` (seconds since the Unix epoch), `model` and the
+/// request-id header field `request_id`: one `chat.completion` object, in
+/// the members and the order of the reference's example, with the
+/// example's fixed values.
 fn chat_reply(
   strings : Strings,
-  ids~ : Ids,
+  id~ : String,
   created~ : Int64,
   model~ : String,
+  request_id~ : (String, String),
 ) -> Reply {
   let message : Json = {
     "role": "assistant",
@@ -215,7 +252,7 @@ fn chat_reply(
     "annotations": [],
   }
   let body : Json = {
-    "id": Json::string("chatcmpl-" + ids.reply),
+    "id": Json::string(id),
     "object": "chat.completion",
     "created": Json::number(created.to_double()),
     "model": Json::string(model),
@@ -232,13 +269,15 @@ fn chat_reply(
   }
   {
     content_type: "application/json",
+    request_id,
     body: Json(@template.compact_json_bytes(body)),
   }
 }
 
 ///|
 /// The Chat Completions stream with the strings `strings`, the reply's id
-/// from `ids`, `created` (seconds since the Unix epoch) and `model`:
+/// `id`, `created` (seconds since the Unix epoch), `model` and the
+/// request-id header field `request_id`:
 /// `chat.completion.chunk` events with no `event:` line, each one `data:`
 /// line of compact JSON with the same id, `created` and model. The opening
 /// chunk gives the assistant's role and an empty content, one chunk follows
@@ -246,11 +285,12 @@ fn chat_reply(
 /// and `[DONE]` ends the stream.
 fn chat_stream(
   strings : Strings,
-  ids~ : Ids,
+  id~ : String,
   created~ : Int64,
   model~ : String,
+  request_id~ : (String, String),
 ) -> Reply {
-  let chunks = ChatChunks::new(id="chatcmpl-" + ids.reply, created~, model~)
+  let chunks = ChatChunks::new(id~, created~, model~)
   let pieces = pieces(strings.text, default_chunk_size)
   let pace = Pace::new()
   let events = Array(capacity=pieces.length() + 3)
@@ -273,7 +313,7 @@ fn chat_stream(
     data: chunks.chunk("{}", "\"stop\""),
   })
   events.push({ wait: NoWait, event: None, data: "[DONE]", })
-  { content_type: "text/event-stream", body: Events(events), }
+  { content_type: "text/event-stream", request_id, body: Events(events), }
 }
 
 ///|

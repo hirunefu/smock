@@ -56,10 +56,12 @@ of each GitHub release include its section
   Chat Completions requests with one `chat.completion` JSON body, or with
   `chat.completion.chunk` events that carry the text in pieces of 4 code
   points and end with `data: [DONE]`: `text` as the assistant's content, an
-  id that `fault.seed` and `--seed` replay, `created` the time the request
-  was received, and the request's `model`. It works with request
-  conditions, `responses`, Faults, Ephemeral Stubs, `smock render` and the
-  Journal. See [LLM responses](docs/definition-files.md#llm-responses).
+  id that `fault.seed` and `--seed` replay, or the one `id` fixes,
+  `created` the time the request was received, and the Stub's `model`, or
+  else the request's. smock adds an `x-request-id: req_…` header to the
+  reply, unless the Stub gives its own. It works with request conditions,
+  `responses`, Faults, Ephemeral Stubs, `smock render` and the Journal. See
+  [LLM responses](docs/definition-files.md#llm-responses).
 
 ### Changed
 

@@ -804,6 +804,8 @@ stubs:
               llm:
                 api: openai-chat
                 text: ""
+                id: string
+                model: string
             responses:
               - weight: 1
                 status: 200
@@ -821,6 +823,8 @@ stubs:
                 llm:
                   api: openai-chat
                   text: ""
+                  id: string
+                  model: string
             variables: {}
             dataWrites:
               - op: set
@@ -969,6 +973,8 @@ stubs:
             llm:
               api: openai-chat
               text: ""
+              id: string
+              model: string
           responses:
             - weight: 1
               status: 200
@@ -986,6 +992,8 @@ stubs:
               llm:
                 api: openai-chat
                 text: ""
+                id: string
+                model: string
           variables: {}
           dataWrites:
             - op: set

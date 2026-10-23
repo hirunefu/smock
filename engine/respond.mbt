@@ -63,9 +63,10 @@ fn pick_response(ordinary : @definitions.Ordinary, draw : UInt64) -> Int? {
 /// - Server-Sent Events as written are streamed as they are;
 /// - a body with `template` on is rendered;
 /// - an LLM reply is written in its API's wire form, with Content-Type the
-///   one that form takes, its model read from the request's JSON body, its
-///   time `now`, and its ids drawn from the request's ids generator, made
-///   from `draw`.
+///   one that form takes, its model read from the request's JSON body
+///   unless it gives its own, its time `now`, and its ids drawn from the
+///   request's ids generator, made from `draw`. Its request-id header field
+///   follows the response's, unless the response gives one of that name.
 ///
 /// Every template of the response renders in one rendering for the
 /// request: `context`, the one that the Stub's Variables left, or, without
@@ -87,9 +88,14 @@ fn plan_response(
 ) -> ResponsePlan raise @template.RenderError {
   let status = response.status
   let mut context = context
-  // Room for the fields that byte ranges add after the response's, and for
-  // the Smock-Mock field the Default Mock adds.
-  let room = if response.serves_ranges { 3 } else { 2 }
+  // Room for the fields that byte ranges add after the response's, or for
+  // the Content-Type and the request-id field of an LLM reply, and for the
+  // Smock-Mock field the Default Mock adds.
+  let room = if response.serves_ranges || response.body is Llm(_) {
+    3
+  } else {
+    2
+  }
   let headers = match response.headers {
     Written(fields) => {
       let headers = Array(capacity=fields.length() + room)
@@ -139,6 +145,7 @@ fn plan_response(
         ids=@llm.ids_generator(draw),
       )
       set_content_type(headers, reply.content_type)
+      add_unless_given(headers, reply.request_id)
       let body : Body = match reply.body {
         Json(json) => Bytes(json)
         Events(events) => Events(sse_events(events))
@@ -187,6 +194,22 @@ fn set_content_type(
   }
   headers.truncate(kept)
   headers.insert(0, ("Content-Type", media_type))
+}
+
+///|
+/// Adds `field`, whose name is in lower case, after the fields of
+/// `headers`, unless one of them has its name, in any case: a field the
+/// Stub gives then takes its place.
+fn add_unless_given(
+  headers : Array[(String, String)],
+  field : (String, String),
+) -> Unit {
+  for i in 0..<headers.length() {
+    if is_name(headers[i].0, field.0) {
+      return
+    }
+  }
+  headers.push(field)
 }
 
 ///|
