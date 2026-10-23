@@ -40,7 +40,7 @@ jobs:
     env:
       SMOCK_VERSION: 0.0.0-benchmark.${{ github.run_number }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # The runner check, OpenSSL (the benchmark also makes its TLS
       # certificate with the openssl command line tool), the pinned MoonBit
