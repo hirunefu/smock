@@ -519,15 +519,15 @@
       }
     },
     "llm": {
-      "description": "An LLM reply, declared by its content instead of a body: smock writes it in the wire form of the API that api names, as a stream of Server-Sent Events with Content-Type: text/event-stream when the request's JSON body has stream: true, and otherwise as one JSON body with Content-Type: application/json (a Content-Type in headers is replaced). smock adds an x-request-id header, unless headers give one of that name in any case; other headers are sent as written. The reply's id and the request id are generated from the Stub's random source, so fault.seed and --seed repeat them; the reply's model is model, or else the request's model when that is a string; its time is when smock received the request. See docs/definition-files.md, LLM responses.",
+      "description": "An LLM reply, declared by its content instead of a body: smock writes it in the wire form of the API that api names, as a stream of Server-Sent Events with Content-Type: text/event-stream when the request's JSON body has stream: true, and otherwise as one JSON body with Content-Type: application/json (a Content-Type in headers is replaced). smock adds an x-request-id header, or request-id for anthropic-messages, unless headers give one of that name in any case; other headers are sent as written. The reply's id and the request id are generated from the Stub's random source, so fault.seed and --seed repeat them; the reply's model is model, or else the request's model when that is a string; its time is when smock received the request. See docs/definition-files.md, LLM responses.",
       "type": "object",
       "properties": {
         "api": {
-          "description": "The LLM API whose wire form the reply takes: openai-chat, OpenAI Chat Completions. It is required and never inferred from the request's path.",
-          "enum": ["openai-chat"]
+          "description": "The LLM API whose wire form the reply takes: openai-chat, OpenAI Chat Completions, or anthropic-messages, Anthropic Messages. It is required and never inferred from the request's path.",
+          "enum": ["openai-chat", "anthropic-messages"]
         },
         "text": {
-          "description": "The text of the reply: the content of the assistant's message. A stream sends it in pieces of chunkSize code points. Default empty.",
+          "description": "The text of the reply: the content of the assistant's message, or for anthropic-messages its text block, which empty text leaves out. A stream sends it in pieces of chunkSize code points. Default empty.",
           "type": "string",
           "default": ""
         },
@@ -553,7 +553,7 @@
           "type": "string"
         },
         "usage": {
-          "description": "The token counts the reply reports, as declared: smock counts and estimates nothing. openai-chat gives them as prompt_tokens and completion_tokens, with total_tokens their sum, in the JSON reply, and in a stream only when the request sets stream_options.include_usage to true: then every chunk has usage: null, and a last chunk with no choice gives the usage before [DONE].",
+          "description": "The token counts the reply reports, as declared: smock counts and estimates nothing. openai-chat gives them as prompt_tokens and completion_tokens, with total_tokens their sum, in the JSON reply, and in a stream only when the request sets stream_options.include_usage to true: then every chunk has usage: null, and a last chunk with no choice gives the usage before [DONE]. anthropic-messages gives them as input_tokens and output_tokens, with no total and no cache counts.",
           "type": "object",
           "properties": {
             "input": {
@@ -574,8 +574,11 @@
           "additionalProperties": false
         },
         "stopReason": {
-          "description": "The stop reason, in the word of the API that api names, whatever the reply's content: for openai-chat, the finish_reason stop, length, tool_calls, content_filter or function_call (deprecated). Left out, it is derived: stop.",
-          "enum": ["stop", "length", "tool_calls", "content_filter", "function_call"]
+          "description": "The stop reason, in the word of the API that api names, whatever the reply's content: for openai-chat, the finish_reason stop, length, tool_calls, content_filter or function_call (deprecated); for anthropic-messages, the stop_reason end_turn, max_tokens, stop_sequence, tool_use, pause_turn, refusal or model_context_window_exceeded. With stop_sequence, the reply's stop_sequence is the first of the request's stop_sequences when that is a string, and otherwise null; a refusal carries stop_details. Left out, it is derived: stop for openai-chat, end_turn for anthropic-messages.",
+          "enum": [
+            "stop", "length", "tool_calls", "content_filter", "function_call",
+            "end_turn", "max_tokens", "stop_sequence", "tool_use", "pause_turn", "refusal", "model_context_window_exceeded"
+          ]
         },
         "timing": {
           "description": "The pacing of the stream. smock writes the head and the events before the first piece at once, waits first before the first event that carries a piece, counted from the head, and interval before each later one; other events follow the one before them at once. A reply with no piece waits first before its closing events. Each wait is drawn on its own from the Stub's random source, so fault.seed and --seed repeat them. A JSON reply is written at once. A delay Fault still holds back the status line, before these waits. Default: no waits.",
@@ -594,6 +597,38 @@
         }
       },
       "required": ["api"],
+      "allOf": [
+        {
+          "description": "openai-chat takes the stop reasons of Chat Completions only.",
+          "if": {
+            "properties": { "api": { "description": "OpenAI Chat Completions.", "const": "openai-chat" } },
+            "required": ["api"]
+          },
+          "then": {
+            "properties": {
+              "stopReason": {
+                "description": "A finish_reason of Chat Completions.",
+                "enum": ["stop", "length", "tool_calls", "content_filter", "function_call"]
+              }
+            }
+          }
+        },
+        {
+          "description": "anthropic-messages takes the stop reasons of Anthropic Messages only.",
+          "if": {
+            "properties": { "api": { "description": "Anthropic Messages.", "const": "anthropic-messages" } },
+            "required": ["api"]
+          },
+          "then": {
+            "properties": {
+              "stopReason": {
+                "description": "A stop_reason of Anthropic Messages.",
+                "enum": ["end_turn", "max_tokens", "stop_sequence", "tool_use", "pause_turn", "refusal", "model_context_window_exceeded"]
+              }
+            }
+          }
+        }
+      ],
       "dependentSchemas": {
         "chunks": {
           "properties": { "text": false }

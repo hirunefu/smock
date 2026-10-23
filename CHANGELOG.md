@@ -67,12 +67,20 @@ of each GitHub release include its section
   `stream_options.include_usage` gets `usage: null` on every chunk and a
   last usage chunk before `[DONE]`. `stopReason` writes the
   `finish_reason` in the API's own word, checked at load, and is `stop`
-  when left out. `timing: { first, interval }` paces a stream: a wait
-  before the first piece, counted from the head, and one before each
-  later piece, each drawn from a distribution of the delay Fault, which
-  `fault.seed` and `--seed` replay. It works with request conditions,
-  `responses`, Faults, Ephemeral Stubs, `smock render` and the Journal.
-  See [LLM responses](docs/definition-files.md#llm-responses).
+  when left out. With `api: anthropic-messages`, it answers Anthropic
+  Messages requests with one `message` JSON body: `text` in a text block,
+  or no block when it is empty, an id `msg_…`, usage as `input_tokens`
+  and `output_tokens`, and a `request-id: req_…` header in place of
+  `x-request-id`. Its `stopReason` is Anthropic's `stop_reason`, `end_turn`
+  when left out; with `stop_sequence`, the reply echoes the request's first
+  stop sequence, and a refusal carries `stop_details`. A Stub without a
+  stop reason moves between the two APIs by changing `api` alone.
+  `timing: { first, interval }` paces a stream: a wait before the first
+  piece, counted from the head, and one before each later piece, each
+  drawn from a distribution of the delay Fault, which `fault.seed` and
+  `--seed` replay. It works with request conditions, `responses`, Faults,
+  Ephemeral Stubs, `smock render` and the Journal. See
+  [LLM responses](docs/definition-files.md#llm-responses).
 
 ### Changed
 
