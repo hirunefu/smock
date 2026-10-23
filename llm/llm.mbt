@@ -79,14 +79,64 @@ pub fn read_stop_reason(api : Api, value : Json) -> Result[StopReason, String] {
   if value is String(word) && words.contains(word) {
     return Ok({ word, })
   }
-  let listed = StringBuilder()
+  Err("must be a stop reason of \{api.name()}: \{listed(words)}")
+}
+
+///|
+/// `words` as a load error lists them: each one quoted, separated by
+/// commas, the last one after "or".
+fn listed(words : ReadOnlyArray[String]) -> String {
+  let out = StringBuilder()
   for i, word in words {
     if i > 0 {
-      listed.write_string(if i == words.length() - 1 { " or " } else { ", " })
+      out.write_string(if i == words.length() - 1 { " or " } else { ", " })
     }
-    listed.write_string("\"\{word}\"")
+    out.write_string("\"\{word}\"")
   }
-  Err("must be a stop reason of \{api.name()}: \{listed}")
+  out.to_string()
+}
+
+///|
+/// The member of a mid-stream error that gives the vendor's kind of error:
+/// `type`, or `code` for `openai-responses`, whose error event names it so.
+pub fn error_kind_member(api : Api) -> String {
+  match api {
+    OpenaiChat | AnthropicMessages => "type"
+    OpenaiResponses => "code"
+  }
+}
+
+///|
+/// Anthropic's documented error types, in the order its reference lists
+/// them.
+let anthropic_error_types : ReadOnlyArray[String] = [
+  "invalid_request_error", "authentication_error", "billing_error", "permission_error",
+  "not_found_error", "conflict_error", "request_too_large", "rate_limit_error", "api_error",
+  "timeout_error", "overloaded_error",
+]
+
+///|
+/// The load check of a mid-stream error's `type`, or `code` for
+/// `openai-responses`, on a Stub of `api`: the kind that `value` writes, or
+/// the message of the load error. An OpenAI type or code is any non-empty
+/// string; an `anthropic-messages` type is one of Anthropic's documented
+/// error types, which the message lists.
+pub fn read_error_kind(api : Api, value : Json) -> Result[String, String] {
+  match api {
+    OpenaiChat | OpenaiResponses =>
+      match value {
+        String(kind) if kind != "" => Ok(kind)
+        _ => Err("must be a non-empty string")
+      }
+    AnthropicMessages =>
+      match value {
+        String(kind) if anthropic_error_types.contains(kind) => Ok(kind)
+        _ =>
+          Err(
+            "must be an error type of \{api.name()}: \{listed(anthropic_error_types)}",
+          )
+      }
+  }
 }
 
 ///|
@@ -104,21 +154,50 @@ pub struct Declaration {
   /// content. For `openai-responses` it is an incomplete reason, and `None`
   /// means the reply completed.
   stop_reason : StopReason?
+  /// The error that cuts the stream, or `None` for a stream that ends as
+  /// usual. Its message is among the strings.
+  error : MidStreamError?
 } derive(Debug, Eq)
 
 ///|
 /// A declaration for the API `api` whose pieces of text hold `chunk_size`
 /// code points, 4 by default, and whose reply reports the token counts
 /// `usage`, both 0 by default, and the stop reason `stop_reason`, derived
-/// when it is left out. The definitions check that `chunk_size` is from 1
-/// to `max_chunk_size`.
+/// when it is left out. Its stream is cut by `error` when given. The
+/// definitions check that `chunk_size` is from 1 to `max_chunk_size`.
 pub fn Declaration::Declaration(
   api~ : Api,
   chunk_size? : Int = default_chunk_size,
   usage? : Usage = Usage(input=0, output=0),
   stop_reason? : StopReason,
+  error? : MidStreamError,
 ) -> Declaration {
-  { api, chunk_size, usage, stop_reason, }
+  { api, chunk_size, usage, stop_reason, error, }
+}
+
+///|
+/// A mid-stream error as `error` declares it, apart from its message: the
+/// API's own error, which a stream sends after part of its text and in
+/// place of the rest of the reply. A request that does not stream gets the
+/// ordinary reply.
+pub struct MidStreamError {
+  /// `after`: how many code points of the text the stream sends before the
+  /// error, from 0.
+  after : Int
+  /// The error's `type`, or its `code` for `openai-responses`, sent as
+  /// written.
+  kind : String
+} derive(Debug, Eq)
+
+///|
+/// The error that follows `after` code points of the text, whose `type`, or
+/// `code` for `openai-responses`, is `kind`. The definitions check `kind`
+/// with `read_error_kind`, and that `after` is not past the text.
+pub fn MidStreamError::MidStreamError(
+  after~ : Int,
+  kind~ : String,
+) -> MidStreamError {
+  { after, kind, }
 }
 
 ///|
@@ -148,6 +227,24 @@ pub fn Usage::Usage(input~ : Int64, output~ : Int64) -> Usage {
 pub let max_token_count : Int64 = 9_007_199_254_740_991L
 
 ///|
+/// The load check of a mid-stream error's `after` on a reply whose text,
+/// as written, is `text`, the join of its chunks when it gives them: it may
+/// reach the end of the text, counted in code points, and not pass it. The
+/// message of the load error gives the text's length.
+pub fn check_error_after(after : Int, text : String) -> Result[Unit, String] {
+  let mut length = 0
+  for _ in text {
+    length += 1
+  }
+  if after > length {
+    let unit = if length == 1 { "code point" } else { "code points" }
+    Err("is past the end of the text, which has \{length} \{unit}")
+  } else {
+    Ok(())
+  }
+}
+
+///|
 /// The strings of a declaration, as written, or rendered for the request.
 pub struct Strings {
   /// The text of the reply: empty when left out, or the join of `chunks`.
@@ -163,25 +260,37 @@ pub struct Strings {
   /// The tool calls, after the text, in the order written: none when left
   /// out.
   tool_calls : ReadOnlyArray[ToolCall]
+  /// The message of the declaration's mid-stream error: empty when it
+  /// declares none.
+  error_message : String
 } derive(Debug, Eq)
 
 ///|
 /// The strings of a reply whose text is `text`, empty by default; or, with
 /// `chunks`, whose pieces are its elements and whose text is their join,
 /// in place of `text`. The definitions refuse `text` beside `chunks`. Its
-/// id is `id` when given and its model `model` when given, and its tool
-/// calls `tool_calls`, none by default.
+/// id is `id` when given and its model `model` when given, its tool calls
+/// `tool_calls`, none by default, and the message of its mid-stream error
+/// `error_message`, empty by default.
 pub fn Strings::Strings(
   text? : String = "",
   chunks? : ReadOnlyArray[String],
   id? : String,
   model? : String,
   tool_calls? : ReadOnlyArray[ToolCall] = [],
+  error_message? : String = "",
 ) -> Strings {
   match chunks {
     Some(chunks) =>
-      { text: chunks.join(""), chunks: Some(chunks), id, model, tool_calls, }
-    None => { text, chunks: None, id, model, tool_calls, }
+      {
+        text: chunks.join(""),
+        chunks: Some(chunks),
+        id,
+        model,
+        tool_calls,
+        error_message,
+      }
+    None => { text, chunks: None, id, model, tool_calls, error_message, }
   }
 }
 
@@ -313,10 +422,11 @@ pub enum WaitSlot {
 /// request whose body is the JSON `request`, or `None` when the body is
 /// not JSON, received at `now` (milliseconds since the Unix epoch): the
 /// stream when the body is a JSON object whose `stream` is exactly `true`,
-/// otherwise the JSON reply. Its ids draw from `ids`, the request's ids
-/// generator, and the reply's id is the strings' `id` when given, as is
-/// each tool call's call id. Its model is the strings' `model` when given,
-/// otherwise the request's.
+/// otherwise the JSON reply. A declared mid-stream error cuts an
+/// `openai-chat` stream; the JSON reply leaves it out. Its ids draw from
+/// `ids`, the request's ids generator, and the reply's id is the strings'
+/// `id` when given, as is each tool call's call id. Its model is the
+/// strings' `model` when given, otherwise the request's.
 pub fn reply(
   declaration : Declaration,
   strings : Strings,
@@ -672,7 +782,10 @@ fn chat_finish_reason(declaration : Declaration, strings : Strings) -> String {
 /// per piece of its arguments, with the index alone. The closing chunk
 /// gives the finish reason, and `[DONE]` ends the stream. With `usage`,
 /// every chunk carries `"usage":null`, and the usage chunk, with no
-/// choice, comes before `[DONE]`.
+/// choice, comes before `[DONE]`. A declared mid-stream error cuts the
+/// text after its `after` code points and follows it as an error data
+/// frame with the message `strings.error_message`, in place of the tool
+/// calls and every chunk after them, so the stream has no end marker.
 fn chat_stream(
   declaration : Declaration,
   strings : Strings,
@@ -686,7 +799,11 @@ fn chat_stream(
   let chunks = ChatChunks::new(id~, created~, model~, usage~)
   let tool_calls = strings.tool_calls
   let pace = Pace::new()
-  let text_pieces = strings.text_pieces(declaration.chunk_size)
+  let text_pieces = match declaration.error {
+    Some(error) =>
+      pieces_before(strings.text_pieces(declaration.chunk_size), error.after)
+    None => strings.text_pieces(declaration.chunk_size)
+  }
   let opening = if strings.has_content() {
     "{\"role\":\"assistant\",\"content\":\"\"}"
   } else {
@@ -705,6 +822,20 @@ fn chat_stream(
       event: None,
       data: chunks.chunk(delta, "null"),
     })
+  }
+  if declaration.error is Some(error) {
+    // The error takes the wait a next piece would.
+    events.push({
+      wait: pace.piece(),
+      event: None,
+      data: chat_error(error, strings.error_message),
+    })
+    return {
+      content_type: "text/event-stream",
+      request_id,
+      body: Events(events),
+      closing: None,
+    }
   }
   for k in 0..<tool_calls.length() {
     let call = tool_calls[k]
@@ -752,6 +883,16 @@ fn chat_stream(
     body: Events(events),
     closing: None,
   }
+}
+
+///|
+/// The data of Chat Completions' error frame for `error` with the message
+/// `message`: an `error` object, in place of a chunk, whose `param` and
+/// `code` are null.
+fn chat_error(error : MidStreamError, message : String) -> String {
+  let message = @template.compact_json(Json::string(message))
+  let kind = @template.compact_json(Json::string(error.kind))
+  "{\"error\":{\"message\":\{message},\"type\":\{kind},\"param\":null,\"code\":null}}"
 }
 
 ///|
@@ -1439,6 +1580,52 @@ fn pieces(text : String, size : Int) -> Array[String] {
     out.push(piece.to_string())
   }
   out
+}
+
+///|
+/// The pieces of `pieces` that a stream cut after `after` code points of
+/// its text sends: none when `after` is 0; otherwise those before the cut,
+/// an empty one included, and the piece that reaches the cut, ending there.
+/// The pieces after it are not sent, empty ones included. When the pieces
+/// hold fewer code points, all of them are sent.
+fn pieces_before(pieces : ArrayView[String], after : Int) -> ArrayView[String] {
+  if after == 0 {
+    return pieces[:0]
+  }
+  let mut left = after
+  for i in 0..<pieces.length() {
+    let piece = pieces[i]
+    let mut held = 0
+    for _ in piece {
+      held += 1
+    }
+    if held == left {
+      return pieces[:i + 1]
+    }
+    if held > left {
+      // The piece that holds the cut ends there.
+      let sent = pieces[:i].to_owned()
+      sent.push(first_code_points(piece, left))
+      return sent[:]
+    }
+    left -= held
+  }
+  pieces
+}
+
+///|
+/// The first `count` code points of `text`, which holds more.
+fn first_code_points(text : String, count : Int) -> String {
+  let out = StringBuilder()
+  let mut written = 0
+  for c in text {
+    if written == count {
+      break
+    }
+    out.write_char(c)
+    written += 1
+  }
+  out.to_string()
 }
 
 ///|

@@ -1252,6 +1252,7 @@ The fields of `llm`:
 | `usage` | `{input, output}`, token counts, integers from 0 to 2^53-1 | both 0 |
 | `stopReason` | a stop reason of the API, such as `length` | derived |
 | `timing` | `{first, interval}`, the [waits of a stream](#timing), each a distribution of the [delay](#delays) | no waits |
+| `error` | `{after, type, message}`, or `{after, code, message}` for `openai-responses`: a [mid-stream error](#mid-stream-errors) | none |
 
 - `api` names the API whose wire form the reply takes. It is required, and
   smock never infers it from the request's path, so a proxy or a base path
@@ -1292,9 +1293,9 @@ seed gives and its time as `created`. A response gives at most one of
 `body`, `bodyFile`, `json`, `events` and `llm`. A missing or unknown `api`,
 an unknown field of `llm` or of its `usage`, a count that is not an integer
 from 0 to 2^53-1, a stop reason that is not a word of the API, the errors
-of [chunks](#chunks) and of [tool calls](#tool-calls), a wait of `timing`
-that is not one distribution of the delay, and `llm` beside another body
-are reported with the JSON Pointer of the field, by `smock check`, at
+of [chunks](#chunks), of [tool calls](#tool-calls) and of a
+[mid-stream error](#mid-stream-errors), a wait of `timing` that is not one
+distribution of the delay, and `llm` beside another body are reported with the JSON Pointer of the field, by `smock check`, at
 startup and on a reload, which keeps the set served, and as 400
 `invalid_stub` for an Ephemeral Stub.
 
@@ -1337,7 +1338,8 @@ line. The text is cut into pieces of 4 code points, the last one shorter,
 unless `chunkSize` or `chunks` says otherwise ([Chunks](#chunks)). The
 pieces join to exactly the text, and a piece never splits a code point, so
 every `data:` line is valid UTF-8. Empty text with no tool call sends the
-opening and closing chunks only.
+opening and closing chunks only. A [mid-stream error](#mid-stream-errors)
+ends the stream early, without the closing chunk or `[DONE]`.
 
 For the Stub above, a request for `gpt-6-astra` with `stream: true` gets
 this stream, which `smock render` shows with the same seed and time:
@@ -1472,7 +1474,8 @@ stubs:
   is a piece, and so is an empty element of [`chunks`](#chunks), so each
   waits as one. A reply with no piece, such as one with empty text, waits
   `first` before its first closing event: Chat's closing chunk, Responses'
-  `response.output_text.done` or Messages' `message_delta`.
+  `response.output_text.done` or Messages' `message_delta`. A
+  [mid-stream error](#mid-stream-errors) waits as a next piece would.
 - **Responses' `completed_at`.** In an `openai-responses` stream, the
   `completed_at` of `response.completed` is the time smock received the
   request plus the stream's waits up to that event, in whole seconds, so a
@@ -1826,6 +1829,102 @@ the string they are, so the agent's own `json.loads` raises
 function tool, such as one made with `openai.pydantic_function_tool`, and
 raise pydantic's `ValidationError`.
 
+### Mid-stream errors
+
+`error` cuts a stream short with the API's own error, after part of the
+text, so a test can check how its client handles a model that fails
+mid-reply, such as an overloaded one. This Stub sends `Hello`, then an
+error:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: cut-short
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+        error:
+          after: 5
+          type: server_error
+          message: The server had an error while processing your request. Sorry about that!
+```
+
+The fields of `error`:
+
+| Field | Value | When left out |
+|---|---|---|
+| `after` | how many code points of the text come before the error, an integer from 0 | 0 |
+| `type` | the error's type: non-empty text, or for `anthropic-messages` one of Anthropic's error types | required |
+| `code` | in place of `type`, for `openai-responses` only: the error's code, non-empty text | required |
+| `message` | the error's message, non-empty text | required |
+
+- **What is sent.** A request with `stream: true` gets the opening chunk,
+  then the text's pieces up to exactly `after` code points, the piece that
+  holds the cut ending there, then the error. The stream ends there. No
+  tool call, closing chunk, usage chunk or `[DONE]` follows, so the client
+  sees an interrupted stream.
+- **Chat's form.** For `openai-chat`, the error is a `data:` line of its
+  own, in place of a chunk:
+  `{"error":{"message":…,"type":…,"param":null,"code":null}}`.
+- **Counted in code points.** `after` counts code points of the text, not
+  pieces, so the cut stays where it is when `chunkSize` or `chunks`
+  changes. `after: 0` sends the error right after the opening chunk. An
+  empty element of [`chunks`](#chunks) counts 0 code points: one before
+  the cut is sent, and the text stops at the piece that reaches `after`.
+  An `after` past the end of the text is a load error.
+- **Waits.** The error waits as a next piece would: `first` when no piece
+  came before it, and `interval` otherwise ([Timing](#timing)).
+- **Only streams.** A request that does not stream gets the ordinary
+  reply, whole, so one Stub serves both. smock keeps no table of statuses:
+  an error in place of the whole reply is an ordinary response
+  ([Errors before the reply](#errors-before-the-reply)).
+- **Status and Journal.** The status is the Stub's, 200 here, sent before
+  the stream starts. The [Journal](../README.md#the-journal) entry has
+  that status, and is committed before the last event, the error, as for
+  `events`.
+- **What openai-python does.** It raises `APIError` on Chat's error frame,
+  from `create(stream=True)` and from the `chat.completions.stream()`
+  helper, with the message, and the `error` object as its `body`. With
+  `max_retries` at its default it does not retry: the status was 200.
+  Checked with openai-python 3.36.1.
+- **Per API.** `openai-chat` and `anthropic-messages` give `type`, and
+  `openai-responses` gives `code`, as each API names it. So the other one
+  is a load error that names the member to give, and a Stub that moves to
+  another `api` renames it there. Anthropic's `type` is one of its
+  documented error types: `invalid_request_error`,
+  `authentication_error`, `billing_error`, `permission_error`,
+  `not_found_error`, `conflict_error`, `request_too_large`,
+  `rate_limit_error`, `api_error`, `timeout_error` and
+  `overloaded_error`. An OpenAI `type` or `code` is any non-empty text.
+- **For now,** only `openai-chat` cuts its stream. An `openai-responses`
+  or `anthropic-messages` Stub reads and checks `error`, and sends its
+  reply whole.
+- `type` on `openai-responses` or `code` on another API, another
+  Anthropic type, an empty `type`, `code` or `message`, an `after` that is
+  not an integer from 0 or that passes the end of the text, and an unknown
+  field of `error` are load errors.
+
+A request for `gpt-6-astra` with `stream: true` gets this stream, which
+[`smock render`](#rendering-a-template) shows with `--seed 7` and
+`--time 2026-10-23T00:00:00Z`. The second piece, `"o! H"` without the
+error, ends at the cut:
+
+```text
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"content":"Hell"},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"content":"o"},"logprobs":null,"finish_reason":null}]}
+
+data: {"error":{"message":"The server had an error while processing your request. Sorry about that!","type":"server_error","param":null,"code":null}}
+
+```
+
 ### OpenAI Responses
 
 `api: openai-responses` answers OpenAI's Responses API with a Response
@@ -2003,9 +2102,10 @@ with client.responses.stream(model="gpt-6-astra", input="Hello!") as stream:
 ```
 
 A Stub moves between `openai-chat` and `openai-responses` by changing `api`
-alone, unless it writes a stop reason that the other API does not have.
-Chat's `length` on `openai-responses` is a load error at `stopReason`, so
-rewrite or drop it. The reply's id keeps its 24 characters, with the
+alone, unless it writes a stop reason that the other API does not have, or
+a [mid-stream error](#mid-stream-errors). Chat's `length` on
+`openai-responses` is a load error at `stopReason`, so rewrite or drop it,
+and an error's `type` is a load error there, so rename it `code`. The reply's id keeps its 24 characters, with the
 other API's prefix, and the request id stays the same.
 
 ### Anthropic Messages
@@ -2091,7 +2191,8 @@ A Stub without `stopReason` moves between `openai-chat` and
 behind the other API's prefix: `chatcmpl-oniRcSDFUU6bnxe66XwQR5pl` becomes
 `msg_oniRcSDFUU6bnxe66XwQR5pl`, and the request id stays the same, in the
 other header. A written stop reason must be rewritten in the other API's
-word.
+word, and a [mid-stream error](#mid-stream-errors)'s `type` must be one of
+Anthropic's error types.
 
 #### Messages streams
 
@@ -2199,9 +2300,10 @@ members, such as `prompt_filter_results` and `content_filter_results`.
 
 ### Errors before the reply
 
-`llm` declares a reply that succeeds. An error that comes in place of the
-reply, such as a 429 or a 529, is an ordinary response with the vendor's
-error body. Each vendor has one shape:
+`llm` declares a reply that succeeds, or one that a
+[mid-stream error](#mid-stream-errors) cuts short. An error that comes in
+place of the reply, such as a 429 or a 529, is an ordinary response with
+the vendor's error body. Each vendor has one shape:
 
 - OpenAI: `{"error": {"message", "type", "param", "code"}}`. All four
   members are present, and `param` and `code` may be `null`. A 429 or a

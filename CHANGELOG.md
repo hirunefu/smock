@@ -97,16 +97,22 @@ of each GitHub release include its section
   `stop_reason`, `end_turn` when left out; with `stop_sequence`, the reply
   echoes the request's first stop sequence, and a refusal carries
   `stop_details`, in the JSON body and in `message_delta`. A Stub without a
-  stop reason moves between the APIs by changing `api` alone.
+  stop reason or an error moves between the APIs by changing `api` alone.
   `timing: { first, interval }` paces a stream: a wait before the first
   piece, counted from the head, and one before each later piece, each
   drawn from a distribution of the delay Fault, which `fault.seed` and
   `--seed` replay. A Responses stream's `completed_at` adds the waits to
-  the time received. It works with request conditions, `responses`,
-  Faults, Ephemeral Stubs and the Journal. `smock render` and the Admin
-  render operation show the reply the sample's body asks for, the JSON
-  body or a stream's events, each event with its wait, with the ids and
-  the waits the seed fixes. See
+  the time received. `error: { after, type, message }` cuts a stream with
+  the API's own error after `after` code points of the text, in place of
+  the rest, with no end marker: for `openai-chat`, a
+  `data: {"error": …}` frame, which openai-python raises as `APIError`. A
+  request that does not stream gets the ordinary reply. `openai-responses`
+  gives `code` in place of `type`, and `anthropic-messages` one of
+  Anthropic's error types; their streams do not send the error yet. It
+  works with request conditions, `responses`, Faults, Ephemeral Stubs and
+  the Journal. `smock render` and the Admin render operation show the
+  reply the sample's body asks for, the JSON body or a stream's events,
+  each event with its wait, with the ids and the waits the seed fixes. See
   [LLM responses](docs/definition-files.md#llm-responses).
 
 ### Changed

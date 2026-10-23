@@ -644,3 +644,125 @@ test "the snapshot holds each tool call in the order written, its arguments' obj
     ),
   )
 }
+
+///|
+test "error gives after, type and message, or code in place of type for openai-responses, each checked with its JSON Pointer" {
+  inspect(
+    problems([
+      (
+        "a.yaml",
+        (
+          #|mocks: [{ name: m }]
+          #|stubs:
+          #|  - id: ok
+          #|    mock: m
+          #|    responses:
+          #|      - { status: 200, llm: { api: openai-chat, text: Hello!,
+          #|          error: { after: 6, type: server_error, message: Overloaded } } }
+          #|      - { status: 200, llm: { error: { code: server_error, message: Overloaded },
+          #|          api: openai-responses } }
+          #|      - { status: 200, llm: { api: anthropic-messages, chunks: ["", Hi],
+          #|          error: { after: 2, type: overloaded_error, message: Overloaded } } }
+          #|      - { status: 200, llm: { api: openai-chat, toolCalls: [{ name: f, arguments: {} }],
+          #|          error: { after: 0, type: x, message: "." } } }
+          #|  - id: wrong-member
+          #|    mock: m
+          #|    responses:
+          #|      - { status: 200, llm: { api: openai-chat,
+          #|          error: { code: server_error, message: Overloaded } } }
+          #|      - { status: 200, llm: { api: openai-responses,
+          #|          error: { type: server_error, message: Overloaded } } }
+          #|      - { status: 200, llm: { api: anthropic-messages,
+          #|          error: { type: overloaded_error, code: overloaded_error, message: Overloaded } } }
+          #|  - id: values
+          #|    mock: m
+          #|    responses:
+          #|      - { status: 200, llm: { api: anthropic-messages,
+          #|          error: { type: server_error, message: Overloaded } } }
+          #|      - { status: 200, llm: { api: openai-chat, error: { type: "", message: "" } } }
+          #|      - { status: 200, llm: { api: openai-responses,
+          #|          error: { code: 529, message: [Overloaded], after: -1 } } }
+          #|      - { status: 200, llm: { api: openai-chat,
+          #|          error: { type: server_error, message: Overloaded, after: 1.5, status: 529 } } }
+          #|      - { status: 200, llm: { api: openai-chat, error: {} } }
+          #|      - { status: 200, llm: { api: openai-chat, error: server_error } }
+          #|  - id: past-the-text
+          #|    mock: m
+          #|    responses:
+          #|      - { status: 200, llm: { api: openai-chat, text: Hello!,
+          #|          error: { after: 7, type: server_error, message: Overloaded } } }
+          #|      - { status: 200, llm: { error: { after: 3, type: server_error, message: Overloaded },
+          #|          api: openai-chat, chunks: ["", Hi, ""] } }
+          #|      - { status: 200, llm: { api: openai-chat, toolCalls: [{ name: f, arguments: {} }],
+          #|          error: { after: 1, type: server_error, message: Overloaded } } }
+          #|  - id: no-api
+          #|    mock: m
+          #|    response: { status: 200, llm: { error: { code: x, message: Overloaded } } }
+        ),
+      ),
+    ]),
+    content=(
+      #|a.yaml: /stubs/1/responses/0/llm/error/code: is not a field of an openai-chat error; give "type" in its place
+      #|a.yaml: /stubs/1/responses/1/llm/error/type: is not a field of an openai-responses error; give "code" in its place
+      #|a.yaml: /stubs/1/responses/2/llm/error/code: is not a field of an anthropic-messages error; give "type" in its place
+      #|a.yaml: /stubs/2/responses/0/llm/error/type: must be an error type of anthropic-messages: "invalid_request_error", "authentication_error", "billing_error", "permission_error", "not_found_error", "conflict_error", "request_too_large", "rate_limit_error", "api_error", "timeout_error" or "overloaded_error"
+      #|a.yaml: /stubs/2/responses/1/llm/error/type: must be a non-empty string
+      #|a.yaml: /stubs/2/responses/1/llm/error/message: must be a non-empty string
+      #|a.yaml: /stubs/2/responses/2/llm/error/code: must be a non-empty string
+      #|a.yaml: /stubs/2/responses/2/llm/error/message: must be a non-empty string
+      #|a.yaml: /stubs/2/responses/2/llm/error/after: must be an integer from 0 to 2147483647
+      #|a.yaml: /stubs/2/responses/3/llm/error/after: must be an integer from 0 to 2147483647
+      #|a.yaml: /stubs/2/responses/3/llm/error/status: is not a known field
+      #|a.yaml: /stubs/2/responses/4/llm/error: needs "type"
+      #|a.yaml: /stubs/2/responses/4/llm/error: needs "message"
+      #|a.yaml: /stubs/2/responses/5/llm/error: must be an object
+      #|a.yaml: /stubs/3/responses/0/llm/error/after: is past the end of the text, which has 6 code points
+      #|a.yaml: /stubs/3/responses/1/llm/error/after: is past the end of the text, which has 2 code points
+      #|a.yaml: /stubs/3/responses/2/llm/error/after: is past the end of the text, which has 0 code points
+      #|a.yaml: /stubs/4/response/llm: needs "api"
+    ),
+  )
+}
+
+///|
+test "the snapshot holds the error's after, 0 when left out, its type or code as written, and its message among the strings" {
+  let file =
+    #|mocks: [{ name: m }]
+    #|stubs:
+    #|  - id: s
+    #|    mock: m
+    #|    responses:
+    #|      - { status: 200, llm: { api: openai-chat, text: Hello!,
+    #|          error: { after: 6, type: server_error, message: Overloaded } } }
+    #|      - { status: 200, llm: { api: openai-responses,
+    #|          error: { message: "Rate limit reached.", code: rate_limit_exceeded } } }
+    #|      - { status: 200, llm: { api: anthropic-messages, text: Hi,
+    #|          error: { type: overloaded_error, message: Overloaded, after: 1 } } }
+    #|      - { status: 200, llm: { api: openai-chat, text: Hello! } }
+  let set : @definitions.DefinitionSet = {
+    files: [("a.yaml", @utf8.encode(file))],
+    body_files: [],
+  }
+  guard @definitions.load(set) is Ok(snapshot) else { fail("not loaded") }
+  guard snapshot.mocks[0].stubs[0].serves is Ordinary(ordinary) else {
+    fail("not an ordinary Stub")
+  }
+  let out = []
+  for weighted in ordinary.responses {
+    guard weighted.response.body is Llm(reply) else { fail("not an LLM reply") }
+    let error = match reply.declaration.error {
+      Some(error) => "after \{error.after}, \{error.kind}"
+      None => "no error"
+    }
+    out.push("\{error}, message \{reply.strings.error_message.escape()}")
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|after 6, server_error, message "Overloaded"
+      #|after 0, rate_limit_exceeded, message "Rate limit reached."
+      #|after 1, overloaded_error, message "Overloaded"
+      #|no error, message ""
+    ),
+  )
+}
