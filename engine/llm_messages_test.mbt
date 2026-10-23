@@ -1,8 +1,9 @@
 // Seam 1 tests of LLM responses in the Anthropic Messages wire form: the
 // plan of a Stub whose `llm` names `anthropic-messages`, its JSON reply and
 // its stream with the stream's waits, its request-id header, its stop
-// members read with the request, and a Stub that moves from `openai-chat`
-// by changing `api` alone.
+// members read with the request, a Stub that moves from `openai-chat` by
+// changing `api` alone, and a templated Stub's tool calls as `tool_use`
+// blocks.
 
 ///|
 /// A Mock `anthropic` with a Stub that answers Messages requests from an
@@ -276,6 +277,99 @@ test "changing api alone moves a Stub without a stop reason from openai-chat to 
     problems.map(p => p.to_string()).join("\n"),
     content=(
       #|anthropic.json: /stubs/0/response/llm/stopReason: must be a stop reason of anthropic-messages: "end_turn", "max_tokens", "stop_sequence", "tool_use", "pause_turn", "refusal" or "model_context_window_exceeded"
+    ),
+  )
+}
+
+///|
+test "with template: true, each tool call's rendered id, name and arguments make its tool_use block, a string holding an object is sent as that object, and a generated id is toolu_ and the Chat call id's slot" {
+  let file = (
+    "anthropic.yaml",
+    (
+      #|mocks:
+      #|  - { name: anthropic, hosts: [api.anthropic.test] }
+      #|stubs:
+      #|  - id: echo
+      #|    mock: anthropic
+      #|    request: { method: POST, path: /v1/messages }
+      #|    response:
+      #|      status: 200
+      #|      template: true
+      #|      llm:
+      #|        api: anthropic-messages
+      #|        toolCalls:
+      #|          - id: toolu_${header.x-trace}
+      #|            name: ${body.tool}
+      #|            arguments: { city: "${body.city}" }
+      #|          - name: forecast
+      #|            arguments: '{"days": ${body.days}}'
+      #|    fault: { seed: 7 }
+    ),
+  )
+  // Each request is its Stub's first match, so both forms draw the same ids.
+  let send = (stream : String) => {
+    harness([file]).send(
+      "POST",
+      "/v1/messages",
+      headers=[
+        ("Host", "api.anthropic.test"),
+        ("Content-Type", "application/json"),
+        ("X-Trace", "t1"),
+      ],
+      body=messages_body(
+        extra=",\"tool\":\"search\",\"city\":\"Paris\",\"days\":3\{stream}",
+      ),
+    )
+  }
+  let lines = []
+  match body_value(send("")) {
+    { "content": Array(blocks), "stop_reason": stop_reason, .. } => {
+      for block in blocks {
+        lines.push(block.stringify())
+      }
+      lines.push("stop_reason: \{stop_reason.stringify()}")
+    }
+    other => lines.push(other.stringify())
+  }
+  // In the stream, each tool_use block's start and its joined partial_json.
+  guard send(",\"stream\":true").plan.body is Events(events) else {
+    fail("no events")
+  }
+  let mut joined = ""
+  for event in events {
+    let data = @json.parse(event.data) catch { _ => Json::null() }
+    match data {
+      {
+        "type": "content_block_start",
+        "index": index,
+        "content_block": block,
+        ..
+      } => lines.push("\{index.stringify()} \{block.stringify()}")
+      {
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": String(piece),
+          ..
+        },
+        ..
+      } => joined = joined + piece
+      { "type": "content_block_stop", .. } => {
+        lines.push("  " + joined)
+        joined = ""
+      }
+      _ => ()
+    }
+  }
+  inspect(
+    lines.join("\n"),
+    content=(
+      #|{"type":"tool_use","id":"toolu_t1","name":"search","input":{"city":"Paris"}}
+      #|{"type":"tool_use","id":"toolu_YuIrSuD97ENe0H2Ksa1F74QQ","name":"forecast","input":{"days":3}}
+      #|stop_reason: "tool_use"
+      #|0 {"type":"tool_use","id":"toolu_t1","name":"search","input":{}}
+      #|  {"city":"Paris"}
+      #|1 {"type":"tool_use","id":"toolu_YuIrSuD97ENe0H2Ksa1F74QQ","name":"forecast","input":{}}
+      #|  {"days": 3}
     ),
   )
 }

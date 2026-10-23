@@ -1272,7 +1272,8 @@ The fields of `llm`:
   message item and each tool call in a `function_call` item.
   [OpenAI Responses](#openai-responses) says more.
 - An `anthropic-messages` reply is a `message` object, with `text` in its
-  text block. [Anthropic Messages](#anthropic-messages) says more.
+  text block and each tool call in a `tool_use` block.
+  [Anthropic Messages](#anthropic-messages) says more.
 - smock sets `Content-Type: application/json`, or `text/event-stream` for
   a stream. A `Content-Type` the Stub gives is replaced, as for `events`.
   smock also adds an `x-request-id` header, or `request-id` for
@@ -1595,8 +1596,9 @@ data: [DONE]
   filtered one.
 - Left out, smock derives it from the reply: for `openai-chat`,
   `tool_calls` when the reply has [tool calls](#tool-calls) and `stop`
-  otherwise; `end_turn` for `anthropic-messages`. An `openai-responses`
-  reply is then `completed`.
+  otherwise; for `anthropic-messages`, `tool_use` when the reply has tool
+  calls and `end_turn` otherwise. An `openai-responses` reply is then
+  `completed`.
 - A word that is not one of the API's, such as Anthropic's `end_turn` on
   `openai-chat`, or Chat's `length` on `openai-responses`, is a load error
   that lists the API's words. smock checks it when it loads the Stub, so a
@@ -1613,7 +1615,7 @@ from `A`-`Z`, `a`-`z` and `0`-`9`:
 |---|---|---|---|
 | `openai-chat` | `chatcmpl-` | tool call `call_` | `x-request-id: req_…` |
 | `openai-responses` | `resp_` | message item `msg_`, function call `fc_`, its `call_id` `call_` | `x-request-id: req_…` |
-| `anthropic-messages` | `msg_` | none | `request-id: req_…` |
+| `anthropic-messages` | `msg_` | tool use `toolu_` | `request-id: req_…` |
 
 - One reply has one id: the JSON reply and every event of the stream carry
   the same one.
@@ -1728,18 +1730,19 @@ Each tool call has these fields:
   JSON reply and in the stream's opening chunk, and no chunk carries
   content, even when `chunks` gives empty pieces. So openai-python's
   stream helper builds the same message from the stream as from the JSON
-  reply. An `openai-responses` reply has no message item then.
-- Left out, the [stop reason](#usage-and-stop-reasons) is `tool_calls`. A
-  written one is sent whatever the reply holds.
+  reply. An `openai-responses` reply has no message item then, and an
+  `anthropic-messages` reply no text block.
+- Left out, the [stop reason](#usage-and-stop-reasons) is `tool_calls`, or
+  `tool_use` for `anthropic-messages`. A written one is sent whatever the
+  reply holds.
 - A missing `name` or `arguments`, an empty `name`, `arguments` that are
   neither an object nor a string, an unknown field of a tool call, and two
   tool calls of one `llm` with the same `id` are load errors. With
   [templates](#templates-in-llm-replies), ids that insert a value are
   compared after rendering.
 - `openai-responses` sends them as
-  [function call items](#function-call-items). `anthropic-messages` does
-  not send tool calls yet: its reply leaves them out, though they still
-  draw their ids' slots.
+  [function call items](#function-call-items), and `anthropic-messages` as
+  `tool_use` blocks ([Messages tool calls](#messages-tool-calls)).
 
 A request for `gpt-6-astra` without `stream` gets this reply, which
 `smock render` shows with `--seed 7` and `--time 2026-10-23T00:00:00Z`.
@@ -1779,15 +1782,17 @@ data: [DONE]
 
 Call ids follow the rules of [Ids, seeds and time](#ids-seeds-and-time):
 
-- A tool call's call id is `call_` and 24 characters, the same in every
-  chunk of a stream, unless `id` fixes it. smock sends a fixed id exactly
-  as written, with no prefix.
+- A tool call's call id is `call_` and 24 characters, or `toolu_` and 24
+  characters for `anthropic-messages`, the same in every event of a
+  stream, unless `id` fixes it. smock sends a fixed id exactly as written,
+  with no prefix.
 - Each tool call draws two slots of the ids' order, after the reply's and
   before the request id's. `openai-chat` sends the second as the call id.
   `openai-responses` sends the first as its function call item's `fc_` id
-  and the second as its `call_id`, so a Stub that moves between the two
-  APIs keeps its call ids. Adding a tool call changes the request id, and
-  not the reply's id.
+  and the second as its `call_id`. `anthropic-messages` sends the second
+  as the `tool_use` id. So a Stub that moves between the APIs keeps the 24
+  characters of each call id. Adding a tool call changes the request id,
+  and not the reply's id.
 - A fixed `id` still draws its slots, so fixing one call id changes no
   other id.
 - The call ids of one reply must differ, so two tool calls of one `llm`
@@ -1839,6 +1844,22 @@ the string they are, so the agent's own `json.loads` raises
 `chat.completions.stream()` helper parse the arguments of a strict
 function tool, such as one made with `openai.pydantic_function_tool`, and
 raise pydantic's `ValidationError`.
+
+Under `api: anthropic-messages`, the vendor's `input` is always an object,
+and smock sends a string that holds a JSON object as that object. Any
+other string, such as this one, is sent as a JSON string: the JSON reply's
+`tool_use` block has `"input":"{\"city\": \"Par"`. A stream sends the
+text as written, in `partial_json` pieces, so a client that reads the raw
+events sees it exactly. The vendor never sends such a stream. Checked with
+anthropic-sdk-python 2.1.0:
+
+- `messages.create()` returns the string as the block's `input`. With
+  `stream=True`, it yields the events with their pieces as written.
+- `messages.stream()` parses the pieces of each block as they arrive, as
+  partial JSON. On arguments that are not JSON, such as `not JSON`, it
+  raises `ValueError` mid-stream, as it would on such a vendor stream.
+- JSON cut short, such as the Stub's above, is no error to it: the block's
+  `input` is what has arrived whole, here `{}`.
 
 ### Mid-stream errors
 
@@ -2359,8 +2380,9 @@ one `message` body, such as this one, which `smock render` shows with
 ```
 
 - Its members and their order follow the replies in Anthropic's guide on
-  working with messages. `content` holds one text block, with the text.
-  Empty text gives an empty reply: `content` is `[]`, with no block.
+  working with messages. `content` holds the text block, with the text,
+  then a `tool_use` block per [tool call](#messages-tool-calls). Empty text
+  with no tool call gives an empty reply: `content` is `[]`, with no block.
 - `usage` gives `input` as `input_tokens` and `output` as
   `output_tokens`, with no total and no cache counts.
 - The reply's id is `msg_` and 24 characters, unless `id` fixes it. smock
@@ -2374,7 +2396,8 @@ one `message` body, such as this one, which `smock render` shows with
 
 `stopReason` takes Anthropic's words: `end_turn`, `max_tokens`,
 `stop_sequence`, `tool_use`, `pause_turn`, `refusal` and
-`model_context_window_exceeded`. Left out, it is `end_turn`. A word of
+`model_context_window_exceeded`. Left out, it is `tool_use` when the reply
+has [tool calls](#messages-tool-calls), and `end_turn` otherwise. A word of
 another API, such as `stop`, is a load error. Two words add a member:
 
 - With `stop_sequence`, the reply's `stop_sequence` is the first element
@@ -2409,10 +2432,11 @@ This Stub stands for a refusal, and the reply it gives:
 A Stub without `stopReason` moves between `openai-chat` and
 `anthropic-messages` by changing `api` alone. Its seed gives the same ids,
 behind the other API's prefix: `chatcmpl-oniRcSDFUU6bnxe66XwQR5pl` becomes
-`msg_oniRcSDFUU6bnxe66XwQR5pl`, and the request id stays the same, in the
-other header. A written stop reason must be rewritten in the other API's
-word, and a [mid-stream error](#mid-stream-errors)'s `type` must be one of
-Anthropic's error types.
+`msg_oniRcSDFUU6bnxe66XwQR5pl`, a call id `call_…` becomes `toolu_…`, and
+the request id stays the same, in the other header. A written stop reason
+must be rewritten in the other API's word, and a
+[mid-stream error](#mid-stream-errors)'s `type` must be one of Anthropic's
+error types.
 
 #### Messages streams
 
@@ -2428,19 +2452,27 @@ event has one. In order:
 2. for the text, a text block at `index` 0: `content_block_start`, with an
    empty text, then one `content_block_delta` per piece, whose
    `text_delta` gives the piece, then `content_block_stop`;
-3. `message_delta`, whose `delta` gives `stop_reason` and `stop_sequence`,
+3. for each [tool call](#messages-tool-calls), a `tool_use` block at the
+   next `index`: `content_block_start`, with the call id, the name and an
+   empty `input`, then a `content_block_delta` whose `input_json_delta`
+   gives an empty `partial_json`, one more per piece of the arguments,
+   then `content_block_stop`;
+4. `message_delta`, whose `delta` gives `stop_reason` and `stop_sequence`,
    and `stop_details` on a refusal, and whose `usage` gives the
    `output_tokens`;
-4. `message_stop`.
+5. `message_stop`.
 
 There is no `ping` event, no SSE comment line and no `data: [DONE]`. The
 text is cut into pieces as for every API ([Chunks](#chunks)). Empty text
-has no block, even when `chunks` gives empty pieces: the stream is
-`message_start`, `message_delta` and `message_stop`, as the JSON reply's
-`content` is `[]`. [`timing`](#timing) waits before each text delta, and
-an empty reply waits `first` before `message_delta`. From these events,
+has no text block, even when `chunks` gives empty pieces: with no tool
+call, the stream is `message_start`, `message_delta` and `message_stop`,
+as the JSON reply's `content` is `[]`. [`timing`](#timing) waits before
+each text delta and each piece of a tool call's arguments, and a reply
+with no piece waits `first` before `message_delta`. From these events,
 `messages.stream()` in anthropic-sdk-python builds the message that the
-JSON reply gives, and `get_final_message()` returns it.
+JSON reply gives, and `get_final_message()` returns it, as long as each
+tool call's arguments are a JSON object
+([Broken arguments](#broken-arguments)).
 
 For the `hello` Stub above, a request for `claude-test` with
 `stream: true` gets this stream, which `smock render` shows with the same
@@ -2464,6 +2496,89 @@ data: {"type":"content_block_stop","index":0}
 
 event: message_delta
 data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":6}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+```
+
+#### Messages tool calls
+
+An `anthropic-messages` reply sends each of its [tool calls](#tool-calls)
+as a `tool_use` block, after the text block, as the reply in Anthropic's
+guide on handling tool calls does. This Stub answers with text and a call
+of `get_weather`:
+
+```yaml
+- id: ask-weather
+  mock: anthropic
+  request:
+    method: POST
+    path: /v1/messages
+    headers: { X-Test-Case: ask-weather }
+  response:
+    status: 200
+    llm:
+      api: anthropic-messages
+      text: Let me check.
+      toolCalls:
+        - name: get_weather
+          arguments: { city: Paris }
+      usage: { input: 31, output: 18 }
+```
+
+A request for `claude-test` without `stream` gets this reply, which
+`smock render` shows with `--seed 7` and `--time 2026-10-23T00:00:00Z`:
+
+```json
+{"id":"msg_oniRcSDFUU6bnxe66XwQR5pl","type":"message","role":"assistant","content":[{"type":"text","text":"Let me check."},{"type":"tool_use","id":"toolu_oLxN2ar43pJJV6rqKHXsG45M","name":"get_weather","input":{"city":"Paris"}}],"model":"claude-test","stop_reason":"tool_use","stop_sequence":null,"usage":{"input_tokens":31,"output_tokens":18}}
+```
+
+- Each block is `{"type":"tool_use","id","name","input"}`, in the order
+  the calls are written.
+- Its id is `toolu_` and the 24 characters of the call id's slot, unless
+  the call's `id` fixes it. The same Stub under `openai-chat` sends
+  `call_oLxN2ar43pJJV6rqKHXsG45M`.
+- `input` is an object in every reply of the vendor. An object in
+  `arguments` is the `input`. A string that holds a JSON object, such as
+  `'{"city": "Paris"}'`, is sent as that object. Any other string is sent
+  as a JSON string ([Broken arguments](#broken-arguments)).
+- With tool calls, empty text has no text block, so the first `tool_use`
+  block is the first block.
+- Left out, the stop reason is `tool_use`.
+
+In a [stream](#messages-streams), each tool call is a block at the next
+`index`, after the text block. `content_block_start` gives the call id,
+the name and an empty `input`. A `content_block_delta` follows whose
+`input_json_delta` has an empty `partial_json`, as in Anthropic's
+examples, then one per piece of the arguments, then `content_block_stop`.
+The arguments' text is cut into pieces of `chunkSize` code points, as the
+text is; `chunks` does not apply to it. Each piece
+[waits](#timing) as a piece of the text does, and the empty first one
+does not. anthropic-sdk-python joins the pieces of each block and parses
+them into its `input`. The same request with `stream: true` gets these
+events after the text block:
+
+```text
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_oLxN2ar43pJJV6rqKHXsG45M","name":"get_weather","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"ci"}}
+
+  … "ty\":", "\"Par" …
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"is\"}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":18}}
 
 event: message_stop
 data: {"type":"message_stop"}

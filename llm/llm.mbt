@@ -509,10 +509,19 @@ pub fn reply(
           id~,
           model~,
           request~,
+          calls=ids.calls,
           request_id~,
         )
       } else {
-        messages_reply(declaration, strings, id~, model~, request~, request_id~)
+        messages_reply(
+          declaration,
+          strings,
+          id~,
+          model~,
+          request~,
+          calls=ids.calls,
+          request_id~,
+        )
       }
     }
   }
@@ -1478,25 +1487,38 @@ fn responses_usage(usage : Usage) -> Json {
 
 ///|
 /// The Messages reply of `declaration` with the strings `strings`, the
-/// reply's id `id`, `model`, the request's JSON body `request` and the
-/// request-id header field `request_id`: one `message` object, in the
-/// members and the order of the replies in Anthropic's guide on working
-/// with messages, the "Hello!" and the `max_tokens` one. Its content is the
-/// text block, or no block when the text is empty, as in the vendor's
-/// refusal. A refusal also carries `stop_details`.
+/// reply's id `id`, `model`, the request's JSON body `request`, the tool
+/// calls' drawn call ids `calls` and the request-id header field
+/// `request_id`: one `message` object, in the members and the order of the
+/// replies in Anthropic's guide on working with messages, the "Hello!" and
+/// the `max_tokens` one. Its content is the text block, unless the text is
+/// empty, then a `tool_use` block per tool call, as in the tool-use guide's
+/// reply; with neither it holds no block, as in the vendor's refusal. A
+/// refusal also carries `stop_details`.
 fn messages_reply(
   declaration : Declaration,
   strings : Strings,
   id~ : String,
   model~ : String,
   request~ : Json?,
+  calls~ : FixedArray[String],
   request_id~ : (String, String),
 ) -> Reply {
-  let content : Array[Json] = []
+  let tool_calls = strings.tool_calls
+  let content : Array[Json] = Array(capacity=tool_calls.length() + 1)
   if strings.text != "" {
     content.push({ "type": "text", "text": Json::string(strings.text) })
   }
-  let stop_reason = messages_stop_reason(declaration)
+  for k in 0..<tool_calls.length() {
+    let call = tool_calls[k]
+    content.push({
+      "type": "tool_use",
+      "id": Json::string(call_id(call, "toolu_", calls[k])),
+      "name": Json::string(call.name),
+      "input": tool_use_input(call),
+    })
+  }
+  let stop_reason = messages_stop_reason(declaration, strings)
   let body : Map[String, Json] = {
     "id": Json::string(id),
     "type": "message",
@@ -1519,13 +1541,33 @@ fn messages_reply(
 }
 
 ///|
-/// The stop reason of `declaration`'s Messages reply: the one written, or
-/// the one derived from the content when none is.
-fn messages_stop_reason(declaration : Declaration) -> String {
+/// The `input` of the `tool_use` block of `call`, which is always an object
+/// in the vendor's replies: its arguments as that object when they are one,
+/// as written or as a string that holds one, and otherwise the string they
+/// are, as a JSON string.
+fn tool_use_input(call : ToolCall) -> Json {
+  let parsed = @json.parse(call.arguments) catch { _ => Json::null() }
+  match parsed {
+    Object(_) => parsed
+    _ => Json::string(call.arguments)
+  }
+}
+
+///|
+/// The stop reason of `declaration`'s Messages reply with the strings
+/// `strings`: the one written, or the one derived from the content when
+/// none is.
+fn messages_stop_reason(declaration : Declaration, strings : Strings) -> String {
   match declaration.stop_reason {
     Some(reason) => reason.word
-    // Derived: a reply with no tool call ends its turn.
-    None => "end_turn"
+    // Derived: a reply with tool calls asks for them, any other ends its
+    // turn.
+    None =>
+      if strings.tool_calls.length() > 0 {
+        "tool_use"
+      } else {
+        "end_turn"
+      }
   }
 }
 
@@ -1547,33 +1589,41 @@ fn messages_stop_sequence(stop_reason : String, request : Json?) -> Json {
 
 ///|
 /// The Messages stream of `declaration` with the strings `strings`, whose
-/// text is cut into pieces of the declaration's chunk size unless they give
-/// its pieces, the reply's id `id`, `model`, the request's JSON body
-/// `request` and the request-id header field `request_id`: events each
+/// text and tool-call arguments are cut into pieces of the declaration's
+/// chunk size unless they give the text's pieces, the reply's id `id`,
+/// `model`, the request's JSON body `request`, the tool calls' drawn call
+/// ids `calls` and the request-id header field `request_id`: events each
 /// named with an `event:` line equal to its `type`, and one `data:` line of
 /// compact JSON. `message_start` gives the message with no content, no stop
 /// reason and the input tokens; the text block follows at index 0, with one
-/// `text_delta` per piece, unless the text is empty; then `message_delta`
-/// gives the stop members and the output tokens, and `message_stop` ends
-/// the stream. There is no `ping` event.
+/// `text_delta` per piece, unless the text is empty; each tool call's
+/// `tool_use` block follows at the next index, starting with an empty
+/// `input` and an empty `partial_json`, with one `input_json_delta` per
+/// piece of its arguments; then `message_delta` gives the stop members and
+/// the output tokens, and `message_stop` ends the stream. There is no
+/// `ping` event.
 fn messages_stream(
   declaration : Declaration,
   strings : Strings,
   id~ : String,
   model~ : String,
   request~ : Json?,
+  calls~ : FixedArray[String],
   request_id~ : (String, String),
 ) -> Reply {
   // Empty text has no block, as in the JSON reply, even when `chunks`
   // gives empty pieces, so that both give the same message.
   let has_text = strings.text != ""
-  let pieces = if has_text {
+  let text_pieces = if has_text {
     strings.text_pieces(declaration.chunk_size)
   } else {
     no_pieces
   }
+  let tool_calls = strings.tool_calls
   let pace = Pace::new()
-  let events = Array(capacity=pieces.length() + 5)
+  let events = Array(
+    capacity=text_pieces.length() + 4 * tool_calls.length() + 5,
+  )
   let message : Json = {
     "id": Json::string(id),
     "type": "message",
@@ -1599,7 +1649,7 @@ fn messages_stream(
       event: Some("content_block_start"),
       data: content_block_start(0, "{\"type\":\"text\",\"text\":\"\"}"),
     })
-    for piece in pieces {
+    for piece in text_pieces {
       let delta = "{\"type\":\"text_delta\",\"text\":\{@template.compact_json(Json::string(piece))}}"
       events.push({
         wait: pace.piece(),
@@ -1613,7 +1663,46 @@ fn messages_stream(
       data: content_block_stop(0),
     })
   }
-  let stop_reason = messages_stop_reason(declaration)
+  // Each tool call's block follows, at the next index.
+  let first_call = if has_text { 1 } else { 0 }
+  for k in 0..<tool_calls.length() {
+    let call = tool_calls[k]
+    let index = first_call + k
+    // The call id and the name as JSON strings.
+    let quoted_id = @template.compact_json(
+      Json::string(call_id(call, "toolu_", calls[k])),
+    )
+    let quoted_name = @template.compact_json(Json::string(call.name))
+    events.push({
+      wait: NoWait,
+      event: Some("content_block_start"),
+      data: content_block_start(
+        index,
+        "{\"type\":\"tool_use\",\"id\":\{quoted_id},\"name\":\{quoted_name},\"input\":{}}",
+      ),
+    })
+    // The empty first piece, as the vendor sends it, carries nothing, so it
+    // takes no wait.
+    events.push({
+      wait: NoWait,
+      event: Some("content_block_delta"),
+      data: content_block_delta(index, empty_json_delta),
+    })
+    for piece in pieces(call.arguments, declaration.chunk_size) {
+      let delta = "{\"type\":\"input_json_delta\",\"partial_json\":\{@template.compact_json(Json::string(piece))}}"
+      events.push({
+        wait: pace.piece(),
+        event: Some("content_block_delta"),
+        data: content_block_delta(index, delta),
+      })
+    }
+    events.push({
+      wait: NoWait,
+      event: Some("content_block_stop"),
+      data: content_block_stop(index),
+    })
+  }
+  let stop_reason = messages_stop_reason(declaration, strings)
   let delta : Map[String, Json] = {
     "stop_reason": Json::string(stop_reason),
     "stop_sequence": messages_stop_sequence(stop_reason, request),
@@ -1647,6 +1736,11 @@ fn messages_stream(
 ///|
 /// The pieces of a stream that sends no text.
 let no_pieces : ArrayView[String] = [][:]
+
+///|
+/// The delta that opens the arguments of a `tool_use` block: an empty
+/// `partial_json`.
+let empty_json_delta : String = "{\"type\":\"input_json_delta\",\"partial_json\":\"\"}"
 
 ///|
 /// The data of the `content_block_start` event of the block at `index`,

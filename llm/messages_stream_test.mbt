@@ -379,17 +379,23 @@ test "every event has an event line equal to its type and one line of compact JS
 /// The message that anthropic-sdk-python's `messages.stream()` builds from
 /// `reply`'s stream: the message of `message_start`, each block that
 /// `content_block_start` opens, its text deltas appended at their `index`,
-/// and the members of `message_delta`'s delta and its output tokens.
-fn accumulated(reply : @llm.Reply) -> Json {
+/// the `partial_json` pieces of a `tool_use` block joined and parsed into
+/// its `input` when they are not empty, and the members of
+/// `message_delta`'s delta and its output tokens. It fails where the SDK
+/// raises ValueError: on pieces that do not join to JSON.
+fn accumulated(reply : @llm.Reply) -> Json raise {
   let mut message : Map[String, Json] = Map([])
   let content : Array[Map[String, Json]] = []
+  let partial_json : Array[String] = []
   for event in stream_of(reply) {
     let data = @json.parse(event.data) catch { _ => Json::null() }
     match data {
       { "type": "message_start", "message": Object(start), .. } =>
         message = start
-      { "type": "content_block_start", "content_block": Object(block), .. } =>
+      { "type": "content_block_start", "content_block": Object(block), .. } => {
         content.push(block)
+        partial_json.push("")
+      }
       {
         "type": "content_block_delta",
         "index": Number(index, ..),
@@ -399,6 +405,29 @@ fn accumulated(reply : @llm.Reply) -> Json {
         let block = content[index.to_int()]
         guard block.get("text") is Some(String(text)) else { abort("no text") }
         block["text"] = Json::string(text + piece)
+      }
+      {
+        "type": "content_block_delta",
+        "index": Number(index, ..),
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": String(piece),
+          ..
+        },
+        ..
+      } => {
+        let i = index.to_int()
+        partial_json[i] = partial_json[i] + piece
+      }
+      // The SDK parses the pieces so far after each one, as partial JSON;
+      // once the block stops, they are whole.
+      { "type": "content_block_stop", "index": Number(index, ..), .. } => {
+        let i = index.to_int()
+        if partial_json[i] != "" {
+          content[i]["input"] = @json.parse(partial_json[i]) catch {
+            _ => fail("ValueError: \{partial_json[i]}")
+          }
+        }
       }
       { "type": "message_delta", "delta": Object(delta), "usage": usage, .. } => {
         for name, value in delta {
@@ -418,7 +447,7 @@ fn accumulated(reply : @llm.Reply) -> Json {
 }
 
 ///|
-test "the message the SDK builds from the stream equals the JSON reply to the same request without stream" {
+test "the message the SDK builds from the stream equals the JSON reply to the same request without stream, tool calls whose arguments are an object included" {
   let cases : Array[(@llm.Strings, String?, Json)] = [
     (@llm.Strings(text="Hello! How can I assist you today?"), None, {}),
     (@llm.Strings(), None, {}),
@@ -432,6 +461,30 @@ test "the message the SDK builds from the stream equals the JSON reply to the sa
       { "stop_sequences": ["4", "END"] },
     ),
     (@llm.Strings(text="The weather in Paris is"), Some("max_tokens"), {}),
+    (@llm.Strings(tool_calls=[weather()]), None, {}),
+    (
+      @llm.Strings(text="Let me check.", tool_calls=[
+        weather(id="toolu_test_1"),
+        @llm.ToolCall(name="search", arguments={
+          "query": "天気 \"Paris\"\n",
+          "limit": 10,
+          "ratio": Json::number(0.5),
+          "nested": { "z": [1, Json::null(), true], "a": {} },
+        }),
+        @llm.ToolCall(
+          name="as_string",
+          arguments="{ \"city\" : \"Paris\", \"days\": [1, 2.50] }",
+        ),
+        @llm.ToolCall(name="no_arguments", arguments={}),
+      ]),
+      None,
+      {},
+    ),
+    (
+      @llm.Strings(chunks=["", ""], tool_calls=[weather()]),
+      Some("max_tokens"),
+      {},
+    ),
   ]
   for i, case in cases {
     let (strings, stop_reason, extra) = case
