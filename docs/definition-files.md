@@ -2588,6 +2588,90 @@ data: {"type":"message_stop"}
 
 ```
 
+### Agent loops
+
+An agent sends the whole conversation in each request. When the model
+calls a tool, the agent runs the tool and sends the conversation again,
+with the tool's result as its last message. The model then answers with
+text, or calls another tool. Two Stubs follow this loop: the first calls
+the tool, and the second answers once the last message is the tool's
+result. A [`$last` condition](#operators-in-json-conditions) tells the
+two requests apart, and the second Stub quotes the result with
+[`last()`](#helpers), in a [template](#templates-in-llm-replies). Each
+API sends the result in its own form:
+
+| `api` | The last message is the tool's result when | The result in a template |
+|---|---|---|
+| `openai-chat` | `messages: { $last: { role: tool } }` | `last(body.messages).content` |
+| `anthropic-messages` | `messages: { $last: { role: user, content: { $includes: { type: tool_result } } } }` | `find(last(body.messages).content, 'type', 'tool_result').content` |
+| `openai-responses` | `input: { $last: { type: function_call_output } }` | `last(body.input).output` |
+
+- The first Stub takes the same condition under `$not`, so it answers
+  every other request to its path, and the two never both match.
+  `$last: { role: user }` would not do for every API: Anthropic sends a
+  tool's result in a user message, and a Responses request often gives
+  `input` as a string, which never meets `$last`.
+- A user message can hold text after its tool results, so the Messages
+  template finds the `tool_result` block rather than taking the last one.
+- The result is inserted as text when the agent sends it as a string, as
+  the vendors' examples do. A result sent as an array of content blocks is
+  an array, which a text template inserts only with `json(x)`; otherwise
+  the request gets the [500 `template failed`](#missing-values-and-render-errors).
+- smock checks no request against its `tools`, so the Stubs need none,
+  and neither do the sketches below.
+
+#### A Chat Completions loop
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { messages: { $not: { $last: { role: tool } } } } }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+  - id: answer-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { messages: { $last: { role: tool } } } }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-chat
+        text: It is ${last(body.messages).content} in Paris.
+```
+
+An agent built on openai-python runs the loop like this:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="test")
+messages = [{"role": "user", "content": "Weather in Paris?"}]
+first = client.chat.completions.create(model="gpt-6-astra", messages=messages)
+call = first.choices[0].message.tool_calls[0]
+messages.append(first.choices[0].message)
+messages.append({"role": "tool", "tool_call_id": call.id, "content": "18°C"})
+second = client.chat.completions.create(model="gpt-6-astra", messages=messages)
+print(second.choices[0].message.content)  # It is 18°C in Paris.
+```
+
+The second request's last message is
+`{"role":"tool","tool_call_id":"call_…","content":"18°C"}`, so
+`answer-weather` answers it, and quotes `18°C`.
+
 ### Paths and compatible endpoints
 
 The preset neither sets nor checks `request.path`. A Stub's conditions
