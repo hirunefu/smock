@@ -64,7 +64,7 @@ jobs:
       commit: ${{ steps.plan.outputs.commit }}
       toolchain: ${{ steps.plan.outputs.toolchain }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # A tag names the version. A run by hand on a branch gets a
       # development version.
@@ -140,7 +140,7 @@ jobs:
       TOOLCHAIN: ${{ needs.plan.outputs.toolchain }}
       ARCH: ${{ matrix.arch }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # The runner check, OpenSSL, MoonBit (the version in .moonbit-version)
       # and moon update.
@@ -189,7 +189,7 @@ jobs:
     env:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/download-artifact@v8
         with:
@@ -264,7 +264,7 @@ jobs:
     env:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install helm
         run: scripts/install-kubernetes-tools.sh "$RUNNER_TEMP/bin" helm
@@ -300,7 +300,7 @@ jobs:
     env:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install helm
         run: scripts/install-kubernetes-tools.sh "$RUNNER_TEMP/bin" helm
@@ -361,7 +361,7 @@ jobs:
       GH_REPO: ${{ github.repository }}
     steps:
       # For LICENSE and NOTICE, from the tagged commit.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 

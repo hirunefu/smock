@@ -41,7 +41,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # With the check-jsonschema version scripts/check-schema.sh pins.
       - name: Check that each Schema is a valid JSON Schema

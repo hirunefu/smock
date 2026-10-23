@@ -18,7 +18,7 @@ jobs:
     name: Check the release workflow and test its release notes
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: scripts/check-release-workflow.sh
       - run: scripts/test-release-notes.sh
 
@@ -29,7 +29,7 @@ jobs:
     name: Test the SBOM scripts
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: scripts/test-sbom.sh
 
   # The benchmark itself runs only by hand (benchmark.yml); this checks its
@@ -40,7 +40,7 @@ jobs:
     name: Check the benchmark workflow, definitions and kept binaries
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: scripts/check-benchmark-workflow.sh
       - run: scripts/check-ci-artifacts.sh
       - run: python3 bench/gen_definitions.py --check
@@ -51,7 +51,7 @@ jobs:
     name: Rendering tests of the Helm chart
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install helm
         run: scripts/install-kubernetes-tools.sh "$RUNNER_TEMP/bin" helm
