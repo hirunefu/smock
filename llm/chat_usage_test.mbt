@@ -87,6 +87,7 @@ test "a stream whose request sets stream_options.include_usage to true gets usag
     ),
     content=(
       #|Content-Type: text/event-stream
+      #|x-request-id: req_5DTBZPrxiMH6i7M92iahxjWk
       #|(none) data: {"id":"chatcmpl-KCVauEuclT08Mg4CWd55sNbz","object":"chat.completion.chunk","created":1791815405,"model":"test-model","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"usage":null}
       #|(first) data: {"id":"chatcmpl-KCVauEuclT08Mg4CWd55sNbz","object":"chat.completion.chunk","created":1791815405,"model":"test-model","choices":[{"index":0,"delta":{"content":"Hell"},"logprobs":null,"finish_reason":null}],"usage":null}
       #|(interval) data: {"id":"chatcmpl-KCVauEuclT08Mg4CWd55sNbz","object":"chat.completion.chunk","created":1791815405,"model":"test-model","choices":[{"index":0,"delta":{"content":"o!"},"logprobs":null,"finish_reason":null}],"usage":null}

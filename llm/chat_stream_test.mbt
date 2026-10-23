@@ -4,16 +4,18 @@
 
 ///|
 /// The reply to a request whose body is `request`, by default one that sets
-/// `stream: true`, for an `openai-chat` declaration with `text`, as `shown`
-/// shows it.
+/// `stream: true`, for an `openai-chat` declaration with `text` and the
+/// `id` and `model` given, as `shown` shows it.
 fn chat_stream(
   text : String,
   request? : Json? = Some({ "model": "test-model", "stream": true }),
+  id? : String,
+  model? : String,
 ) -> String {
   shown(
     @llm.reply(
       @llm.Declaration(api=OpenaiChat),
-      @llm.Strings(text~),
+      @llm.Strings(text~, id?, model?),
       request~,
       now=received,
       ids=@llm.ids_generator(7),
@@ -22,12 +24,13 @@ fn chat_stream(
 }
 
 ///|
-/// `reply` as these tests show it: the Content-Type smock sets, then the
-/// body, or each event on a line of its own, after its wait slot, with its
-/// `event:` line when it has one.
+/// `reply` as these tests show it: the Content-Type smock sets, the
+/// request-id header field it adds, then the body, or each event on a line
+/// of its own, after its wait slot, with its `event:` line when it has one.
 fn shown(reply : @llm.Reply) -> String {
   let out = StringBuilder()
   out.write_string("Content-Type: \{reply.content_type}\n")
+  out.write_string("\{reply.request_id.0}: \{reply.request_id.1}\n")
   match reply.body {
     Json(body) => out.write_string(@utf8.decode_lossy(body))
     Events(events) =>
@@ -58,6 +61,7 @@ test "a request with stream: true gets the text as chat.completion.chunk events:
     chat_stream("Hello! How can I assist you today?"),
     content=(
       #|Content-Type: text/event-stream
+      #|x-request-id: req_5DTBZPrxiMH6i7M92iahxjWk
       #|(none) data: {"id":"chatcmpl-KCVauEuclT08Mg4CWd55sNbz","object":"chat.completion.chunk","created":1791815405,"model":"test-model","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
       #|(first) data: {"id":"chatcmpl-KCVauEuclT08Mg4CWd55sNbz","object":"chat.completion.chunk","created":1791815405,"model":"test-model","choices":[{"index":0,"delta":{"content":"Hell"},"logprobs":null,"finish_reason":null}]}
       #|(interval) data: {"id":"chatcmpl-KCVauEuclT08Mg4CWd55sNbz","object":"chat.completion.chunk","created":1791815405,"model":"test-model","choices":[{"index":0,"delta":{"content":"o! H"},"logprobs":null,"finish_reason":null}]}
@@ -81,6 +85,7 @@ test "empty text sends the opening and closing chunks only, the closing one in t
     chat_stream(""),
     content=(
       #|Content-Type: text/event-stream
+      #|x-request-id: req_5DTBZPrxiMH6i7M92iahxjWk
       #|(none) data: {"id":"chatcmpl-KCVauEuclT08Mg4CWd55sNbz","object":"chat.completion.chunk","created":1791815405,"model":"test-model","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
       #|(first) data: {"id":"chatcmpl-KCVauEuclT08Mg4CWd55sNbz","object":"chat.completion.chunk","created":1791815405,"model":"test-model","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}]}
       #|(none) data: [DONE]
@@ -234,6 +239,26 @@ test "the first piece takes the first wait slot and each later one the interval;
       #|empty: none, first, none
       #|one piece: none, first, none, none
       #|three pieces: none, first, interval, interval, none, none
+    ),
+  )
+}
+
+///|
+test "model fixes the model of every chunk, whatever the request's model" {
+  inspect(
+    chat_stream(
+      "Hi",
+      request=Some({ "model": "gpt-6-astra", "stream": true }),
+      model="test-model",
+    ),
+    content=(
+      #|Content-Type: text/event-stream
+      #|x-request-id: req_5DTBZPrxiMH6i7M92iahxjWk
+      #|(none) data: {"id":"chatcmpl-KCVauEuclT08Mg4CWd55sNbz","object":"chat.completion.chunk","created":1791815405,"model":"test-model","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
+      #|(first) data: {"id":"chatcmpl-KCVauEuclT08Mg4CWd55sNbz","object":"chat.completion.chunk","created":1791815405,"model":"test-model","choices":[{"index":0,"delta":{"content":"Hi"},"logprobs":null,"finish_reason":null}]}
+      #|(none) data: {"id":"chatcmpl-KCVauEuclT08Mg4CWd55sNbz","object":"chat.completion.chunk","created":1791815405,"model":"test-model","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}]}
+      #|(none) data: [DONE]
+      #|
     ),
   )
 }

@@ -519,7 +519,7 @@
       }
     },
     "llm": {
-      "description": "An LLM reply, declared by its content instead of a body: smock writes it in the wire form of the API that api names, as one JSON body with Content-Type: application/json, or as Server-Sent Events with Content-Type: text/event-stream when the request's JSON body has stream: true (a Content-Type in headers is replaced). Other headers are sent as written. The reply's id is generated from the Stub's random source, so fault.seed and --seed repeat it; its model is the request's model when that is a string, and its time is when smock received the request. See docs/definition-files.md, LLM responses.",
+      "description": "An LLM reply, declared by its content instead of a body: smock writes it in the wire form of the API that api names, as a stream of Server-Sent Events with Content-Type: text/event-stream when the request's JSON body has stream: true, and otherwise as one JSON body with Content-Type: application/json (a Content-Type in headers is replaced). smock adds an x-request-id header, unless headers give one of that name in any case; other headers are sent as written. The reply's id and the request id are generated from the Stub's random source, so fault.seed and --seed repeat them; the reply's model is model, or else the request's model when that is a string; its time is when smock received the request. See docs/definition-files.md, LLM responses.",
       "type": "object",
       "properties": {
         "api": {
@@ -530,6 +530,14 @@
           "description": "The text of the reply: the content of the assistant's message. Default empty.",
           "type": "string",
           "default": ""
+        },
+        "id": {
+          "description": "The reply's id, sent exactly as written (smock adds no prefix), in the JSON reply and in every event of the stream. Without it, the id is the API's prefix, such as chatcmpl-, and 24 characters drawn from the Stub's random source. Fixing it changes no other generated id.",
+          "type": "string"
+        },
+        "model": {
+          "description": "The reply's model, sent as written. Without it, the model is the request's model when that is a string, and otherwise empty. It adds no condition on the request's model: a Stub for one model adds a body condition on it.",
+          "type": "string"
         },
         "usage": {
           "description": "The token counts the reply reports, as declared: smock counts and estimates nothing. openai-chat gives them as prompt_tokens and completion_tokens, with total_tokens their sum, in the JSON reply, and in a stream only when the request sets stream_options.include_usage to true: then every chunk has usage: null, and a last chunk with no choice gives the usage before [DONE].",

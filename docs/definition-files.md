@@ -1244,6 +1244,8 @@ The fields of `llm`:
 |---|---|---|
 | `api` | `openai-chat`, OpenAI Chat Completions | required |
 | `text` | the text of the reply | empty |
+| `id` | the reply's id, sent as written | generated |
+| `model` | the reply's model | the request's |
 | `usage` | `{input, output}`, token counts, integers from 0 to 2^53-1 | both 0 |
 | `stopReason` | a stop reason of the API, such as `length` | derived |
 
@@ -1261,19 +1263,12 @@ The fields of `llm`:
   is no `system_fingerprint`.
 - smock sets `Content-Type: application/json`, or `text/event-stream` for
   a stream. A `Content-Type` the Stub gives is replaced, as for `events`.
+  smock also adds an `x-request-id` header, unless the Stub gives its own.
   Other headers, such as a rate-limit header, are sent as written.
-- The reply's `id` is `chatcmpl-` and 24 characters from `A`-`Z`, `a`-`z`
-  and `0`-`9`. It comes from the Stub's random source: from a generator of
-  its own, seeded with the one draw every matched request takes XOR a fixed
-  constant. So [`fault.seed` and `--seed`](#seeds) replay the ids, and an
-  `llm` response changes no Fault decision, no pick among `responses` and
-  no helper output.
-- `created` is the time smock received the request, in whole seconds since
-  the Unix epoch: the time `now()` reads.
-- `model` is the request's `model` when it is a string, and the empty
-  string otherwise, such as when the body is not JSON. `llm` adds no
-  condition on the model, so one Stub answers every model. A Stub for one
-  model adds `body: { json: { model: gpt-6-astra } }` to its request.
+- The reply's id is generated with the vendor's prefix, unless `id` fixes
+  it. `created` is the time smock received the request. `model` is the
+  Stub's `model`, or else the request's. [Ids, seeds and
+  time](#ids-seeds-and-time) says more.
 
 An LLM response is a response like any other. `status` is required, as
 always. `llm` may stand in `response` or in any element of
@@ -1435,6 +1430,76 @@ it is the `finish_reason`, one of `stop`, `length`, `tool_calls`,
   a load error that lists the API's words. smock checks it when it loads
   the Stub, so a reply never carries a word its SDK does not know.
 
+### Ids, seeds and time
+
+smock generates two ids for each reply: the reply's id, and a request id,
+which it sends in a header. Each is the vendor's prefix and 24 characters
+from `A`-`Z`, `a`-`z` and `0`-`9`:
+
+| API | Reply's id | Request-id header |
+|---|---|---|
+| `openai-chat` | `chatcmpl-` | `x-request-id: req_…` |
+
+- One reply has one id: the JSON reply and every chunk of the stream carry
+  the same one.
+- The ids come from the Stub's random source: from a generator of their
+  own, seeded with the one draw every matched request takes XOR a fixed
+  constant. So [`fault.seed` and `--seed`](#seeds) replay them, and an
+  `llm` response changes no Fault decision, no pick among `responses` and
+  no helper output.
+- A seeded Stub's generator advances once per request the Stub matches,
+  whatever the Session. So the n-th request it matches gets the same ids
+  in every run. Which request is the n-th depends on the order the
+  requests arrive in, such as when tests run in parallel. A test that
+  must know an id in advance fixes it.
+- `id` fixes the reply's id. smock sends it exactly as written, with no
+  prefix, in the JSON reply and in every chunk. Fixing it changes no other
+  id: the ids draw in a fixed order of slots, the reply's first and the
+  request id's last, and every slot draws whether or not the Stub fixes
+  its id. So adding `id` to a Stub keeps the request ids of a recorded
+  run.
+- `created` is the time smock received the request, in whole seconds since
+  the Unix epoch: the time `now()` reads. In a rendering, it is the
+  rendering's time.
+- The reply's `model` is the Stub's `model` when given. Otherwise it is the
+  request's `model` when that is a string, and otherwise the empty string,
+  such as when the body is not JSON. `llm` adds no condition on the model,
+  so one Stub answers every model. A Stub that should answer one model
+  adds a body condition on it, as below.
+- smock adds the request-id header to the JSON reply and to the stream,
+  after the Stub's own header fields. openai-python reads it as the
+  reply's `_request_id`. A header the Stub gives under that name, in any
+  case, takes its place: smock then sends the Stub's field alone. The
+  request id still draws its slot, so no other id changes.
+
+This Stub answers only requests for `gpt-6-astra`, and fixes the reply's
+id, its model and its request id, so that a test can assert all three:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: astra
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { model: gpt-6-astra } }
+    response:
+      status: 200
+      headers: { x-request-id: req_test_1 }
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+        id: chatcmpl-test-1
+        model: gpt-6-astra-2026-10-01
+```
+
+A request for `gpt-6-astra` gets a reply that begins
+`{"id":"chatcmpl-test-1","object":"chat.completion","created":…,"model":"gpt-6-astra-2026-10-01",`,
+with `x-request-id: req_test_1`. A request for another model does not
+match it.
+
 ### Paths and compatible endpoints
 
 The preset neither sets nor checks `request.path`. A Stub's conditions
@@ -1510,10 +1575,10 @@ error body. Each vendor has one shape:
   | 504 | `timeout_error` |
   | 529 | `overloaded_error` |
 
-smock adds no request-id header to an ordinary response, so the recipes
-below write one. Their messages and ids are examples. The SDKs choose the
-error they raise by the status, such as `RateLimitError` for a 429, and
-keep the body in it.
+smock adds no request-id header to an ordinary response, only to an
+`llm` reply, so the recipes below write one. Their messages and ids are
+examples. The SDKs choose the error they raise by the status, such as
+`RateLimitError` for a 429, and keep the body in it.
 
 #### Retries
 
@@ -3970,8 +4035,9 @@ apply, and how long the delay is, and, for a Stub with
   advances once per request the Stub matches. An Ephemeral Stub with a seed
   gets its own generator when it is added, which a reload keeps. So the n-th
   request a seeded Stub matches gets the same Faults in every run, whatever
-  requests other Stubs get, and the same response among `responses`. The
-  generator is a fixed algorithm, the same on every platform.
+  requests other Stubs get, the same response among `responses`, and the
+  same [ids in an LLM reply](#ids-seeds-and-time). The generator is a fixed
+  algorithm, the same on every platform.
 - Stubs without a seed draw from the process generator, which they share.
   smock picks its seed at startup and logs it:
 

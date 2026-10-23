@@ -804,6 +804,8 @@ stubs:
               llm:
                 api: openai-chat
                 text: ""
+                id: string
+                model: string
                 usage:
                   input: 0
                   output: 0
@@ -825,6 +827,8 @@ stubs:
                 llm:
                   api: openai-chat
                   text: ""
+                  id: string
+                  model: string
                   usage:
                     input: 0
                     output: 0
@@ -977,6 +981,8 @@ stubs:
             llm:
               api: openai-chat
               text: ""
+              id: string
+              model: string
               usage:
                 input: 0
                 output: 0
@@ -998,6 +1004,8 @@ stubs:
               llm:
                 api: openai-chat
                 text: ""
+                id: string
+                model: string
                 usage:
                   input: 0
                   output: 0

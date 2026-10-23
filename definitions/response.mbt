@@ -409,7 +409,8 @@ fn File::read_events(
 
 ///|
 /// Reads the `llm` of a response: `api`, which names the API whose wire
-/// form the reply takes, `text`, empty when left out, `usage`, 0 tokens
+/// form the reply takes, `text`, empty when left out, the reply's `id` and
+/// `model`, generated and the request's when left out, `usage`, 0 tokens
 /// when left out, and `stopReason`, a word of that API, derived when left
 /// out. It has none when `api` is missing or names no API, and then the
 /// stop reason is not checked.
@@ -420,6 +421,8 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
   }
   let mut api = None
   let mut text = ""
+  let mut id = None
+  let mut model = None
   let mut usage = @llm.Usage(input=0, output=0)
   for key, value in fields {
     let field = child_pointer(pointer, key)
@@ -430,6 +433,8 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
           Err(message) => self.error(field, message)
         }
       "text" => text = self.string(field, value).unwrap_or("")
+      "id" => id = self.string(field, value)
+      "model" => model = self.string(field, value)
       "usage" => usage = self.read_usage(field, value)
       // Checked below, against the API, which may come after it.
       "stopReason" => ()
@@ -451,7 +456,7 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
   }
   Some({
     declaration: @llm.Declaration(api~, usage~, stop_reason?),
-    strings: @llm.Strings(text~),
+    strings: @llm.Strings(text~, id?, model?),
   })
 }
 

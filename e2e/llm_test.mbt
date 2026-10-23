@@ -58,6 +58,7 @@ async test "POST /v1/chat/completions to an llm Stub gets one chat.completion JS
           #|HTTP/1.1 200 OK
           #|Content-Type: application/json
           #|x-ratelimit-remaining-requests: 59
+          #|x-request-id: req_TZp9I060Mzd0w4SDwiWTe2c8
           #|Smock-Mock: openai; via=default
           #|Date: <now>
           #|Content-Length: 561
@@ -126,6 +127,7 @@ async test "stream: true over HTTP/1.1 gets the chunks as text/event-stream with
           #|HTTP/1.1 200 OK
           #|Content-Type: text/event-stream
           #|x-ratelimit-remaining-requests: 59
+          #|x-request-id: req_TZp9I060Mzd0w4SDwiWTe2c8
           #|Smock-Mock: openai; via=default
           #|Date: <now>
           #|Transfer-Encoding: chunked
@@ -164,6 +166,7 @@ async test "stream: true over HTTP/1.1 gets the chunks as text/event-stream with
           #|HTTP/1.1 200 OK
           #|Content-Type: application/json
           #|x-ratelimit-remaining-requests: 59
+          #|x-request-id: req_IazsHccliNw545TFSy204aSk
           #|Smock-Mock: openai; via=default
           #|Date: <now>
           #|Content-Length: 561
@@ -195,6 +198,7 @@ async test "stream: true over HTTP/1.0 gets the chunks unframed, and smock close
           #|HTTP/1.1 200 OK
           #|Content-Type: text/event-stream
           #|x-ratelimit-remaining-requests: 59
+          #|x-request-id: req_TZp9I060Mzd0w4SDwiWTe2c8
           #|Smock-Mock: openai; via=default
           #|Date: <now>
           #|Connection: close
@@ -255,6 +259,7 @@ async test "a partial Fault sends the first half of the stream's events, without
           #|HTTP/1.1 200 OK
           #|Content-Type: text/event-stream
           #|x-ratelimit-remaining-requests: 59
+          #|x-request-id: req_TZp9I060Mzd0w4SDwiWTe2c8
           #|Smock-Mock: openai; via=default
           #|Date: <now>
           #|Transfer-Encoding: chunked
@@ -277,6 +282,7 @@ async test "a partial Fault sends the first half of the stream's events, without
           #|HTTP/1.1 200 OK
           #|Content-Type: application/json
           #|x-ratelimit-remaining-requests: 59
+          #|x-request-id: req_IazsHccliNw545TFSy204aSk
           #|Smock-Mock: openai; via=default
           #|Date: <now>
           #|Content-Length: 561

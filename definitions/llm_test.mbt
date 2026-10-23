@@ -148,3 +148,36 @@ test "the declaration holds the usage, 0 for a count left out, and the stop reas
     ),
   )
 }
+
+///|
+test "id and model are text, the empty string included; any other value is refused" {
+  inspect(
+    problems([
+      (
+        "a.json",
+        (
+          #|{ "mocks": [{ "name": "m" }],
+          #|  "stubs": [
+          #|    { "id": "ok", "mock": "m",
+          #|      "response": { "status": 200,
+          #|        "llm": { "api": "openai-chat", "id": "chatcmpl-test-1", "model": "test-model" } } },
+          #|    { "id": "empty", "mock": "m",
+          #|      "response": { "status": 200, "llm": { "api": "openai-chat", "id": "", "model": "" } } },
+          #|    { "id": "id-not-text", "mock": "m",
+          #|      "response": { "status": 200, "llm": { "api": "openai-chat", "id": 1 } } },
+          #|    { "id": "model-not-text", "mock": "m",
+          #|      "responses": [{ "status": 200, "llm": { "api": "openai-chat", "model": null } }] },
+          #|    { "id": "both-not-text", "mock": "m",
+          #|      "response": { "status": 200,
+          #|        "llm": { "api": "openai-chat", "id": ["chatcmpl-test-1"], "model": { "name": "m" } } } } ] }
+        ),
+      ),
+    ]),
+    content=(
+      #|a.json: /stubs/2/response/llm/id: must be a string
+      #|a.json: /stubs/3/responses/0/llm/model: must be a string
+      #|a.json: /stubs/4/response/llm/id: must be a string
+      #|a.json: /stubs/4/response/llm/model: must be a string
+    ),
+  )
+}

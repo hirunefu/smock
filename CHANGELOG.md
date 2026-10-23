@@ -56,8 +56,10 @@ of each GitHub release include its section
   Chat Completions requests with one `chat.completion` JSON body, or with
   `chat.completion.chunk` events that carry the text in pieces of 4 code
   points and end with `data: [DONE]`: `text` as the assistant's content, an
-  id that `fault.seed` and `--seed` replay, `created` the time the request
-  was received, and the request's `model`. `usage: { input, output }`
+  id that `fault.seed` and `--seed` replay, or the one `id` fixes,
+  `created` the time the request was received, and the Stub's `model`, or
+  else the request's. smock adds an `x-request-id: req_…` header to the
+  reply, unless the Stub gives its own. `usage: { input, output }`
   declares the token counts, which the reply gives with their total, and a
   stream whose request sets `stream_options.include_usage` gets
   `usage: null` on every chunk and a last usage chunk before `[DONE]`.
