@@ -579,8 +579,11 @@ pub let max_reply_bytes : Int = @template.max_output
 ///|
 /// Whether `self` takes at most `max_reply_bytes` bytes of UTF-8 once
 /// encoded: its JSON body, or every event of its stream as it is sent. A
-/// reply over the bound is not to be sent, and the message says which form
-/// passed it.
+/// reply over the bound is not to be sent: its JSON body is not written,
+/// and its stream stops soon after the event that passed the bound. The
+/// message says which form passed it. The waits `complete` hands over
+/// change only a Responses stream's `completed_at`, whose whole seconds
+/// keep their 10 digits from 2001 to 2286, so they change no size.
 pub fn Reply::check_size(self : Reply) -> Result[Unit, String] {
   guard self.over else { return Ok(()) }
   match self.body {
