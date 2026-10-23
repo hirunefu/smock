@@ -480,14 +480,22 @@ fn pointer_token(key : String) -> String {
 /// smock's stream, is compared as one event whose fragment is their join,
 /// so their number does not count. An empty first piece is no fragment and
 /// is compared on its own.
+///
+/// `absent` holds the names of events that the example has and smock
+/// deliberately never sends, such as Anthropic's `ping`. They are left out
+/// of the example before it is compared, and each must be in it at least
+/// once.
 fn compare_golden(
   example : String,
   outcome : @engine.Outcome,
   differs? : Array[String] = [],
   unfixed? : Array[String] = [],
   fragments? : Array[String] = [],
+  absent? : Array[String] = [],
 ) -> String {
   let comparison = Comparison::new(differs, unfixed)
+  // The names of `absent` that the example has.
+  let left_out = []
   let (streams, sent) = sent_events(outcome)
   let sent = join_fragments(sent, fragments)
   if example.trim_start().has_prefix("{") {
@@ -502,11 +510,16 @@ fn compare_golden(
     comparison.problems.push("the example is a stream, smock sends a JSON body")
   } else {
     let segments = [[]]
+    // The number of the example's events that are compared.
     let mut number = 0
     for item in golden_stream(example) {
       match item {
+        Event({ name: Some(name), .. }) if absent.contains(name) =>
+          if !left_out.contains(name) {
+            left_out.push(name)
+          }
         Event(event) => {
-          number = event.number
+          number += 1
           segments[segments.length() - 1].push(event)
         }
         Gap => segments.push([])
@@ -570,6 +583,13 @@ fn compare_golden(
       Some([]) | None =>
         comparison.problems.push("listed but the same: \{pointer}")
       Some(kinds) => listed.push("listed: \{pointer}: \{kinds.join(", ")}")
+    }
+  }
+  for name in absent {
+    if left_out.contains(name) {
+      listed.push("listed: \{name} events: only in the example")
+    } else {
+      comparison.problems.push("listed but the same: \{name} events")
     }
   }
   for id in unfixed {
