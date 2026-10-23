@@ -22,7 +22,13 @@ spec:
       port: {{ .Values.service.plainPort }}
       targetPort: plain
       protocol: TCP
+      {{- with .Values.service.appProtocol.plain }}
+      appProtocol: {{ . | quote }}
+      {{- end }}
     - name: https
       port: {{ .Values.service.tlsPort }}
       targetPort: tls
       protocol: TCP
+      {{- with .Values.service.appProtocol.tls }}
+      appProtocol: {{ . | quote }}
+      {{- end }}

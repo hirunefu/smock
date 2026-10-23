@@ -37,6 +37,12 @@ of each GitHub release include its section
   `*` for OPTIONS, and `is_visible_ascii`, for characters from 0x21 to 0x7E
   alone. With `is_token`, `is_field_value` and `is_host_value`, they let
   another protocol, such as HTTP/2, refuse what HTTP/1.1 refuses.
+- The Helm chart's `service.appProtocol.plain` and `service.appProtocol.tls`
+  set the `appProtocol` of the traffic Service's plain and TLS ports, such
+  as `kubernetes.io/h2c` on the plain port for a gateway that speaks h2c to
+  smock. Both are empty by default, so no port has one: the plain port
+  serves both HTTP/1.1 and h2c. See
+  [Ports, Services and probes](charts/smock/README.md#ports-services-and-probes).
 
 ### Changed
 

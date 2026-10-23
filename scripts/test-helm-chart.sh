@@ -484,6 +484,52 @@ check ports "the probes call /startupz, /readyz and /livez on the admin port, wi
      {"path": "/readyz", "port": "admin"},
      {"path": "/livez", "port": "admin"}]'
 
+# The plain port serves HTTP/1.1 and h2c, so no single appProtocol describes
+# it, and no port has one by default. service.appProtocol.plain and
+# service.appProtocol.tls set it on their port of the traffic Service, for a
+# gateway that reads it, and change nothing else.
+check ports "no port of either Service has an appProtocol by default" \
+  '[service("smock") | .spec.ports[]] == [
+     {"name": "http", "port": 80, "targetPort": "plain", "protocol": "TCP"},
+     {"name": "https", "port": 443, "targetPort": "tls", "protocol": "TCP"}]
+   and [service("smock-admin") | .spec.ports[]] == [
+     {"name": "admin", "port": 9090, "targetPort": "admin", "protocol": "TCP"}]'
+
+render app-protocol-plain --values "$tmp/values-token.yaml" --set service.appProtocol.plain=kubernetes.io/h2c
+check app-protocol-plain "service.appProtocol.plain sets the appProtocol of the plain port, and of no other port" \
+  '[service("smock") | .spec.ports[]] == [
+     {"name": "http", "port": 80, "targetPort": "plain", "protocol": "TCP", "appProtocol": "kubernetes.io/h2c"},
+     {"name": "https", "port": 443, "targetPort": "tls", "protocol": "TCP"}]
+   and [service("smock-admin") | .spec.ports[] | has("appProtocol")] == [false]'
+render app-protocol-tls --values "$tmp/values-token.yaml" --set service.appProtocol.tls=https
+check app-protocol-tls "service.appProtocol.tls sets the appProtocol of the TLS port, and of no other port" \
+  '[service("smock") | .spec.ports[]] == [
+     {"name": "http", "port": 80, "targetPort": "plain", "protocol": "TCP"},
+     {"name": "https", "port": 443, "targetPort": "tls", "protocol": "TCP", "appProtocol": "https"}]
+   and [service("smock-admin") | .spec.ports[] | has("appProtocol")] == [false]'
+render app-protocol-both --values "$tmp/values-token.yaml" \
+  --set service.appProtocol.plain=kubernetes.io/h2c --set service.appProtocol.tls=https
+check app-protocol-both "both values set the appProtocol of their own port, and the admin port has none" \
+  '[service("smock") | .spec.ports[]] == [
+     {"name": "http", "port": 80, "targetPort": "plain", "protocol": "TCP", "appProtocol": "kubernetes.io/h2c"},
+     {"name": "https", "port": 443, "targetPort": "tls", "protocol": "TCP", "appProtocol": "https"}]
+   and [service("smock-admin") | .spec.ports[] | has("appProtocol")] == [false]'
+
+# same_but_app_protocol <name> <name>: the manifests rendered as the two
+# names are the same once the appProtocol of the traffic Service's ports is
+# left out, so the container ports, the probes and the admin Service match.
+same_but_app_protocol() {
+  without='[.[] | if .kind == "Service" and .metadata.name == "smock" then del(.spec.ports[].appProtocol) else . end]'
+  [ "$(jq -S "$without" "$tmp/$1.json")" = "$(jq -S "$without" "$tmp/$2.json")" ]
+}
+for name in app-protocol-plain app-protocol-tls app-protocol-both; do
+  if same_but_app_protocol ports "$name"; then
+    pass "$name: apart from the traffic Service's appProtocol, every manifest is as by default"
+  else
+    fail "$name: the appProtocol values change more than the traffic Service's ports"
+  fi
+done
+
 # --- Resources ---------------------------------------------------------------
 
 render defaults --values "$tmp/values-token.yaml"
