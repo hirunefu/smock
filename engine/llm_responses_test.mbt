@@ -59,7 +59,39 @@ test "an openai-responses Stub answers with the Response object, as application/
 }
 
 ///|
-test "a streamed request to an openai-responses Stub gets the JSON reply, for now, and the Stub's own x-request-id replaces smock's" {
+/// Each event of `outcome`'s plan, one per line: its wait, its type and
+/// `sequence_number`, with the piece a delta carries, or the status and
+/// `completed_at` of the Response a lifecycle event carries.
+fn responses_events(outcome : @engine.Outcome) -> String {
+  guard outcome.plan.body is Events(events) else { return "no events" }
+  let lines = []
+  for event in events {
+    let data = @json.parse(event.data) catch { _ => Json::null() }
+    let number = match data {
+      { "sequence_number": number, .. } => number.stringify()
+      _ => "-"
+    }
+    let carries = match data {
+      { "delta": String(piece), .. } => " \{piece.escape()}"
+      {
+        "response": {
+          "status": String(status),
+          "completed_at": completed_at,
+          ..
+        },
+        ..
+      } => " \{status} \{completed_at.stringify()}"
+      _ => ""
+    }
+    lines.push(
+      "\{event.delay_ms} \{event.event.unwrap_or("-")} #\{number}\{carries}",
+    )
+  }
+  lines.join("\n")
+}
+
+///|
+test "a streamed request to an openai-responses Stub gets the Responses events as text/event-stream, and the Stub's own x-request-id replaces smock's" {
   let h = harness([
     responses_mock(headers="{ \"X-Request-Id\": \"req_test_1\" }"),
   ])
@@ -68,11 +100,153 @@ test "a streamed request to an openai-responses Stub gets the JSON reply, for no
   )
   let headers = outcome.plan.headers.map(header => "\{header.0}: \{header.1}")
   inspect(
-    "\{headers.join("\n")}\n\{body_member(outcome, "object")} \{body_member(outcome, "status")}",
+    "\{headers.join("\n")}\n\{responses_events(outcome)}",
     content=(
-      #|Content-Type: application/json
+      #|Content-Type: text/event-stream
       #|X-Request-Id: req_test_1
-      #|"response" "completed"
+      #|0 response.created #0 in_progress null
+      #|0 response.in_progress #1 in_progress null
+      #|0 response.output_item.added #2
+      #|0 response.content_part.added #3
+      #|0 response.output_text.delta #4 "Hi t"
+      #|0 response.output_text.delta #5 "here"
+      #|0 response.output_text.delta #6 "!"
+      #|0 response.output_text.done #7
+      #|0 response.content_part.done #8
+      #|0 response.output_item.done #9
+      #|0 response.completed #10 completed 1791815405
+    ),
+  )
+}
+
+///|
+/// A Mock `openai` with a Stub that answers Responses requests from an LLM
+/// response whose text is `text` and whose `llm` has the members `fields`
+/// after `api` and `text`, given as JSON text, its own seed fixing its ids
+/// and waits.
+fn paced_responses(text : String, fields : String) -> (String, String) {
+  (
+    "openai.json",
+    (
+      $|{ "mocks": [{ "name": "openai", "hosts": ["api.openai.test"] }],
+      $|  "stubs": [{ "id": "responses", "mock": "openai",
+      $|    "request": { "method": "POST", "path": "/v1/responses" },
+      $|    "fault": { "seed": 7 },
+      $|    "response": { "status": 200,
+      $|      "llm": { "api": "openai-responses", "text": "\{text}"\{fields} } } }] }
+    ),
+  )
+}
+
+///|
+test "with fixed waits, the closing event's completed_at is the time received plus the waits, in whole seconds, crossing a second; created_at stays the time received" {
+  // The request is received at 1791815405.123 s.
+  let streamed = (text : String, fields : String) => {
+    let h = harness([paced_responses(text, fields)])
+    responses_events(h.responses("{\"input\":\"Hello!\",\"stream\":true}"))
+  }
+  inspect(
+    [
+      streamed(
+        "Hi there!", ", \"timing\": { \"first\": { \"fixed\": 400 }, \"interval\": { \"fixed\": 238 } }",
+      ),
+      streamed(
+        "Hi there!", ", \"timing\": { \"first\": { \"fixed\": 400 }, \"interval\": { \"fixed\": 239 } }",
+      ),
+      streamed("", ", \"timing\": { \"first\": { \"fixed\": 877 } }"),
+      streamed(
+        "Hi there!", ", \"timing\": { \"first\": { \"fixed\": 2000 } }, \"stopReason\": \"max_output_tokens\"",
+      ),
+    ].join("\n\n"),
+    content=(
+      #|0 response.created #0 in_progress null
+      #|0 response.in_progress #1 in_progress null
+      #|0 response.output_item.added #2
+      #|0 response.content_part.added #3
+      #|400 response.output_text.delta #4 "Hi t"
+      #|238 response.output_text.delta #5 "here"
+      #|238 response.output_text.delta #6 "!"
+      #|0 response.output_text.done #7
+      #|0 response.content_part.done #8
+      #|0 response.output_item.done #9
+      #|0 response.completed #10 completed 1791815405
+      #|
+      #|0 response.created #0 in_progress null
+      #|0 response.in_progress #1 in_progress null
+      #|0 response.output_item.added #2
+      #|0 response.content_part.added #3
+      #|400 response.output_text.delta #4 "Hi t"
+      #|239 response.output_text.delta #5 "here"
+      #|239 response.output_text.delta #6 "!"
+      #|0 response.output_text.done #7
+      #|0 response.content_part.done #8
+      #|0 response.output_item.done #9
+      #|0 response.completed #10 completed 1791815406
+      #|
+      #|0 response.created #0 in_progress null
+      #|0 response.in_progress #1 in_progress null
+      #|0 response.output_item.added #2
+      #|0 response.content_part.added #3
+      #|877 response.output_text.done #4
+      #|0 response.content_part.done #5
+      #|0 response.output_item.done #6
+      #|0 response.completed #7 completed 1791815406
+      #|
+      #|0 response.created #0 in_progress null
+      #|0 response.in_progress #1 in_progress null
+      #|0 response.output_item.added #2
+      #|0 response.content_part.added #3
+      #|2000 response.output_text.delta #4 "Hi t"
+      #|0 response.output_text.delta #5 "here"
+      #|0 response.output_text.delta #6 "!"
+      #|0 response.output_text.done #7
+      #|0 response.content_part.done #8
+      #|0 response.output_item.done #9
+      #|0 response.incomplete #10 incomplete null
+    ),
+  )
+}
+
+///|
+test "rendered with fixed waits, the Responses stream's completed_at follows the waits from the rendering's time" {
+  let h = harness([
+    paced_responses(
+      "Hi there!", ", \"timing\": { \"first\": { \"fixed\": 1500 }, \"interval\": { \"fixed\": 250 } }",
+    ),
+  ])
+  h.now = 1_792_713_600_500L
+  let sample : Json = {
+    "method": "POST",
+    "path": "/v1/responses",
+    "headers": { "Host": "api.openai.test" },
+    "body": "{\"input\":\"Hello!\",\"stream\":true}",
+  }
+  guard @json.parse(h.render("responses", sample))
+    is { "response": { "events": Array(events), .. }, .. } else {
+    fail("no events")
+  }
+  let delays = []
+  let mut closing = Json::null()
+  for event in events {
+    guard event is { "delay": delay, "data": String(data), .. } else {
+      fail("not an event")
+    }
+    delays.push(delay.stringify())
+    closing = @json.parse(data)
+  }
+  guard closing
+    is {
+      "type": String(kind),
+      "response": { "created_at": created_at, "completed_at": completed_at, .. },
+      ..
+    } else {
+    fail("no closing event")
+  }
+  inspect(
+    "delays \{delays.join(" ")}\n\{kind}: created_at \{created_at.stringify()}, completed_at \{completed_at.stringify()}",
+    content=(
+      #|delays 0 0 0 0 1500 250 250 0 0 0 0
+      #|response.completed: created_at 1792713600, completed_at 1792713602
     ),
   )
 }

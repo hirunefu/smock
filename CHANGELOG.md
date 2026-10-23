@@ -81,8 +81,11 @@ of each GitHub release include its section
   request was received, and the settings the request gave, such as
   `instructions` and `tools`, copied back. Its `stopReason` is an
   incomplete reason, such as `max_output_tokens`, which makes the reply
-  `incomplete`. A Responses request with `stream: true` gets the JSON
-  reply for now. With `api: anthropic-messages`, it answers Anthropic
+  `incomplete`. A Responses request with `stream: true` gets the Responses
+  events, each with an `event:` line and a `sequence_number` from 0: from
+  `response.created` through the message item's text deltas to
+  `response.completed`, or to `response.incomplete` with a stop reason,
+  and no `[DONE]`. With `api: anthropic-messages`, it answers Anthropic
   Messages requests with one `message` JSON body, or with events each named
   by an `event:` line, as anthropic-sdk-python's `messages.stream()` reads
   them: `message_start`, the text block's start, a `text_delta` per piece
@@ -98,11 +101,12 @@ of each GitHub release include its section
   `timing: { first, interval }` paces a stream: a wait before the first
   piece, counted from the head, and one before each later piece, each
   drawn from a distribution of the delay Fault, which `fault.seed` and
-  `--seed` replay. It works with request conditions, `responses`, Faults,
-  Ephemeral Stubs and the Journal. `smock render` and the Admin render
-  operation show the reply the sample's body asks for, the JSON body or a
-  stream's events, each event with its wait, with the ids and the waits
-  the seed fixes. See
+  `--seed` replay. A Responses stream's `completed_at` adds the waits to
+  the time received. It works with request conditions, `responses`,
+  Faults, Ephemeral Stubs and the Journal. `smock render` and the Admin
+  render operation show the reply the sample's body asks for, the JSON
+  body or a stream's events, each event with its wait, with the ids and
+  the waits the seed fixes. See
   [LLM responses](docs/definition-files.md#llm-responses).
 
 ### Changed

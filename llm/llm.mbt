@@ -250,6 +250,24 @@ pub struct Reply {
   request_id : (String, String)
   /// The JSON reply, or the stream's events.
   body : ReplyBody
+  /// What the waits of the stream complete, its closing event, or `None`
+  /// when no event depends on them.
+  priv closing : Closing?
+}
+
+///|
+/// The closing event of a Responses stream that completes, the stream's
+/// last, whose `completed_at` is the time received plus the stream's waits
+/// up to it. Until the waits are handed over, it gives the time received,
+/// as with no wait.
+priv struct Closing {
+  /// The time the request was received, in milliseconds since the Unix
+  /// epoch.
+  received : Int64
+  /// The Response object the closing event carries.
+  response : Map[String, Json]
+  /// The closing event's `sequence_number`.
+  sequence_number : Int
 }
 
 ///|
@@ -295,11 +313,10 @@ pub enum WaitSlot {
 /// request whose body is the JSON `request`, or `None` when the body is
 /// not JSON, received at `now` (milliseconds since the Unix epoch): the
 /// stream when the body is a JSON object whose `stream` is exactly `true`,
-/// otherwise the JSON reply. An `openai-responses` declaration gives the
-/// JSON reply to both, since its stream is not written yet. Its ids draw
-/// from `ids`, the request's ids generator, and the reply's id is the
-/// strings' `id` when given, as is each tool call's call id. Its model is
-/// the strings' `model` when given, otherwise the request's.
+/// otherwise the JSON reply. Its ids draw from `ids`, the request's ids
+/// generator, and the reply's id is the strings' `id` when given, as is
+/// each tool call's call id. Its model is the strings' `model` when given,
+/// otherwise the request's.
 pub fn reply(
   declaration : Declaration,
   strings : Strings,
@@ -340,18 +357,34 @@ pub fn reply(
         )
       }
     }
-    // A streamed request gets the JSON reply too, for now.
-    OpenaiResponses =>
-      responses_reply(
-        declaration,
-        strings,
-        id=reply_id(strings, "resp_", ids),
-        message_id="msg_" + ids.message,
-        created~,
-        model~,
-        request~,
-        request_id=("x-request-id", "req_" + ids.request),
-      )
+    OpenaiResponses => {
+      let id = reply_id(strings, "resp_", ids)
+      let message_id = "msg_" + ids.message
+      let request_id = ("x-request-id", "req_" + ids.request)
+      if asks_to_stream(request) {
+        responses_stream(
+          declaration,
+          strings,
+          id~,
+          message_id~,
+          received=now,
+          model~,
+          request~,
+          request_id~,
+        )
+      } else {
+        responses_reply(
+          declaration,
+          strings,
+          id~,
+          message_id~,
+          created~,
+          model~,
+          request~,
+          request_id~,
+        )
+      }
+    }
     AnthropicMessages => {
       let id = reply_id(strings, "msg_", ids)
       let request_id = ("request-id", "req_" + ids.request)
@@ -386,15 +419,38 @@ fn reply_id(strings : Strings, prefix : String, ids : Ids) -> String {
 /// stream is sent: `waits[i]` milliseconds before the `i`-th event, 0 for
 /// an event that takes no wait, one for each event, or no element at all
 /// when no event waits. An event whose content depends on the waits is
-/// completed with them. No Chat Completions or Anthropic Messages event
-/// does, so their streams are left as they are, and a JSON reply has no
-/// wait.
+/// completed with them: the `completed_at` of a Responses stream's
+/// `response.completed`, the time received plus the waits up to it, in
+/// whole seconds. No Chat Completions or Anthropic Messages event depends
+/// on them, nor does `response.incomplete`, whose `completed_at` is null,
+/// so those streams are left as they are, and a JSON reply has no wait.
 pub fn Reply::complete(self : Reply, waits : FixedArray[Int]) -> Unit {
-  // Nothing to complete yet: only Chat Completions and Messages streams are
-  // written, and an API whose events depend on the waits completes them
-  // here.
-  ignore(self)
-  ignore(waits)
+  guard self.closing is Some(closing) && self.body is Events(events) else {
+    return
+  }
+  // The closing event is the last, so every wait comes before it, its own
+  // included.
+  let mut waited = 0L
+  for i in 0..<waits.length() {
+    waited += waits[i].to_int64()
+  }
+  let completed_at = (closing.received + waited) / 1000L
+  // The event was written with the time received, as with no wait.
+  if completed_at == closing.received / 1000L {
+    return
+  }
+  closing.response["completed_at"] = Json::number(completed_at.to_double())
+  let last = events.length() - 1
+  events[last] = {
+    wait: events[last].wait,
+    event: events[last].event,
+    data: event_data(
+      "response.completed",
+      "\"response\":\{@template.compact_json(Json::object(closing.response))}",
+      closing.sequence_number,
+      "",
+    ),
+  }
 }
 
 ///|
@@ -561,6 +617,7 @@ fn chat_reply(
     content_type: "application/json",
     request_id,
     body: Json(@template.compact_json_bytes(body)),
+    closing: None,
   }
 }
 
@@ -689,7 +746,12 @@ fn chat_stream(
     })
   }
   events.push({ wait: NoWait, event: None, data: "[DONE]", })
-  { content_type: "text/event-stream", request_id, body: Events(events), }
+  {
+    content_type: "text/event-stream",
+    request_id,
+    body: Events(events),
+    closing: None,
+  }
 }
 
 ///|
@@ -780,26 +842,8 @@ fn responses_reply(
   request~ : Json?,
   request_id~ : (String, String),
 ) -> Reply {
-  let status = match declaration.stop_reason {
-    Some(_) => "incomplete"
-    None => "completed"
-  }
-  let message : Json = {
-    "id": Json::string(message_id),
-    "type": "message",
-    "status": Json::string(status),
-    "role": "assistant",
-    "content": [
-      {
-        "type": "output_text",
-        "text": Json::string(strings.text),
-        "annotations": [],
-        "logprobs": [],
-      },
-    ],
-  }
+  let status = responses_status(declaration)
   let body = response_object(
-    declaration,
     id~,
     created~,
     model~,
@@ -811,38 +855,85 @@ fn responses_reply(
     } else {
       Json::number(created.to_double())
     },
-    output=[message],
+    incomplete_details=incomplete_details(declaration),
+    output=[message_item(message_id, status, strings.text)],
     usage=responses_usage(declaration.usage),
   )
   {
     content_type: "application/json",
     request_id,
-    body: Json(@template.compact_json_bytes(body)),
+    body: Json(@template.compact_json_bytes(Json::object(body))),
+    closing: None,
   }
 }
 
 ///|
-/// The Response object of `declaration` whose id is `id`, `created_at`
-/// `created` (seconds since the Unix epoch) and model `model`, with the
-/// members `status`, `completed_at`, `output` and `usage` given, and the
-/// settings it copies from `request`, the request's JSON body. Its members
-/// and their order are the reference's examples', and the members the
-/// examples do not show, which the request may set, sit in the alphabetical
-/// order the examples keep. Each setting is copied as given, without being
-/// interpreted; one the request leaves out takes the example's value, or is
-/// left out when the examples do not show it. `service_tier` keeps the
-/// example's value, and `conversation` is not copied.
+/// The status `declaration`'s Response ends with: `incomplete` when it
+/// writes a stop reason, an incomplete reason, otherwise `completed`.
+fn responses_status(declaration : Declaration) -> String {
+  match declaration.stop_reason {
+    Some(_) => "incomplete"
+    None => "completed"
+  }
+}
+
+///|
+/// The `incomplete_details` of `declaration`'s Response once it ends: the
+/// incomplete reason written, or null for a Response that completed.
+fn incomplete_details(declaration : Declaration) -> Json {
+  match declaration.stop_reason {
+    Some(reason) => { "reason": Json::string(reason.word) }
+    None => Json::null()
+  }
+}
+
+///|
+/// The Responses message item whose id is `id` and status `status`, with
+/// `text` in its one `output_text` part.
+fn message_item(id : String, status : String, text : String) -> Json {
+  {
+    "id": Json::string(id),
+    "type": "message",
+    "status": Json::string(status),
+    "role": "assistant",
+    "content": [output_text_part(text)],
+  }
+}
+
+///|
+/// The `output_text` content part whose text is `text`.
+fn output_text_part(text : String) -> Json {
+  {
+    "type": "output_text",
+    "text": Json::string(text),
+    "annotations": [],
+    "logprobs": [],
+  }
+}
+
+///|
+/// The Response object whose id is `id`, `created_at` `created` (seconds
+/// since the Unix epoch) and model `model`, with the members `status`,
+/// `completed_at`, `incomplete_details`, `output` and `usage` given, and
+/// the settings it copies from `request`, the request's JSON body, as its
+/// members in order. Its members and their order are the reference's
+/// examples', and the members the examples do not show, which the request
+/// may set, sit in the alphabetical order the examples keep. Each setting
+/// is copied as given, without being interpreted; one the request leaves
+/// out takes the example's value, or is left out when the examples do not
+/// show it. `service_tier` keeps the example's value, and `conversation`
+/// is not copied.
 fn response_object(
-  declaration : Declaration,
   id~ : String,
   created~ : Int64,
   model~ : String,
   request~ : Json?,
   status~ : String,
   completed_at~ : Json,
+  incomplete_details~ : Json,
   output~ : Json,
   usage~ : Json,
-) -> Json {
+) -> Map[String, Json] {
   let given = match request {
     Some(Object(members)) => Some(members)
     _ => None
@@ -856,10 +947,7 @@ fn response_object(
   copy_given(object, given, "background")
   object["completed_at"] = completed_at
   object["error"] = Json::null()
-  object["incomplete_details"] = match declaration.stop_reason {
-    Some(reason) => { "reason": Json::string(reason.word) }
-    None => Json::null()
-  }
+  object["incomplete_details"] = incomplete_details
   object["instructions"] = copied(given, "instructions", Json::null())
   object["max_output_tokens"] = copied(given, "max_output_tokens", Json::null())
   copy_given(object, given, "max_tool_calls")
@@ -890,7 +978,187 @@ fn response_object(
   object["usage"] = usage
   object["user"] = copied(given, "user", Json::null())
   object["metadata"] = copied(given, "metadata", {})
-  Json::object(object)
+  object
+}
+
+///|
+/// The Responses stream of `declaration` with the strings `strings`, whose
+/// text is cut into pieces of the declaration's chunk size unless they give
+/// its pieces, the reply's id `id`, the message item's id `message_id`, the
+/// time `received` (milliseconds since the Unix epoch), `model`, the
+/// request's JSON body `request` and the request-id header field
+/// `request_id`. Each event has an `event:` line equal to its `type`, and
+/// one `data:` line of compact JSON whose `sequence_number` counts from 0,
+/// in the members and the order of the reference's stream example:
+/// `response.created` and `response.in_progress` give the Response object
+/// in progress; the message item is opened at `output_index` 0, then its
+/// `output_text` part, then one `response.output_text.delta` follows per
+/// piece, and the part and the item are closed; `response.completed`, or
+/// `response.incomplete` when a stop reason is written, gives the whole
+/// Response object. No `[DONE]` follows. The closing event's
+/// `completed_at` is the time received until `Reply::complete` adds the
+/// stream's waits.
+fn responses_stream(
+  declaration : Declaration,
+  strings : Strings,
+  id~ : String,
+  message_id~ : String,
+  received~ : Int64,
+  model~ : String,
+  request~ : Json?,
+  request_id~ : (String, String),
+) -> Reply {
+  let created = received / 1000L
+  let pieces = strings.text_pieces(declaration.chunk_size)
+  let pace = Pace::new()
+  let out = ResponsesEvents::new(pieces.length() + 8)
+  // The Response in progress, the same in both opening events.
+  let opening = response_object(
+    id~,
+    created~,
+    model~,
+    request~,
+    status="in_progress",
+    completed_at=Json::null(),
+    incomplete_details=Json::null(),
+    output=[],
+    usage=Json::null(),
+  )
+  let opening = "\"response\":\{@template.compact_json(Json::object(opening))}"
+  out.push(NoWait, "response.created", opening)
+  out.push(NoWait, "response.in_progress", opening)
+  // The message item, the reply's first, at output_index 0.
+  let item_id = @template.compact_json(Json::string(message_id))
+  out.push(
+    NoWait,
+    "response.output_item.added",
+    "\"output_index\":0,\"item\":{\"id\":\{item_id},\"type\":\"message\",\"status\":\"in_progress\",\"role\":\"assistant\",\"content\":[]}",
+  )
+  let part_of = "\"item_id\":\{item_id},\"output_index\":0,\"content_index\":0"
+  out.push(
+    NoWait,
+    "response.content_part.added",
+    "\{part_of},\"part\":\{@template.compact_json(output_text_part(""))}",
+  )
+  for piece in pieces {
+    out.push(
+      pace.piece(),
+      "response.output_text.delta",
+      "\{part_of},\"delta\":\{@template.compact_json(Json::string(piece))}",
+      after=no_logprobs,
+    )
+  }
+  // A reply with no piece waits before its first closing event.
+  out.push(
+    pace.closing(),
+    "response.output_text.done",
+    "\{part_of},\"text\":\{@template.compact_json(Json::string(strings.text))}",
+    after=no_logprobs,
+  )
+  out.push(
+    pace.closing(),
+    "response.content_part.done",
+    "\{part_of},\"part\":\{@template.compact_json(output_text_part(strings.text))}",
+  )
+  let status = responses_status(declaration)
+  let item = message_item(message_id, status, strings.text)
+  out.push(
+    pace.closing(),
+    "response.output_item.done",
+    "\"output_index\":0,\"item\":\{@template.compact_json(item)}",
+  )
+  // Until the waits are handed over, the Response completes when it is
+  // received, as with no wait. An incomplete one never completes.
+  let completes = declaration.stop_reason is None
+  let response = response_object(
+    id~,
+    created~,
+    model~,
+    request~,
+    status~,
+    completed_at=if completes {
+      Json::number(created.to_double())
+    } else {
+      Json::null()
+    },
+    incomplete_details=incomplete_details(declaration),
+    output=[item],
+    usage=responses_usage(declaration.usage),
+  )
+  let sequence_number = out.next
+  out.push(
+    pace.closing(),
+    if completes {
+      "response.completed"
+    } else {
+      "response.incomplete"
+    },
+    "\"response\":\{@template.compact_json(Json::object(response))}",
+  )
+  {
+    content_type: "text/event-stream",
+    request_id,
+    body: Events(out.events),
+    closing: if completes {
+      Some({ received, response, sequence_number, })
+    } else {
+      None
+    },
+  }
+}
+
+///|
+/// The members that end a text event of a Responses stream, after its
+/// `sequence_number`, as the reference's example places them: no log
+/// probabilities.
+let no_logprobs : String = ",\"logprobs\":[]"
+
+///|
+/// The events of one Responses stream, numbered as they are added.
+priv struct ResponsesEvents {
+  /// The events so far, in the order they are sent.
+  events : Array[Event]
+  /// The `sequence_number` of the next event.
+  mut next : Int
+}
+
+///|
+/// The events of a new stream, with room for `capacity` of them.
+fn ResponsesEvents::new(capacity : Int) -> ResponsesEvents {
+  { events: Array(capacity~), next: 0, }
+}
+
+///|
+/// Adds the event of type `kind` whose members after `type` and before
+/// `sequence_number` are `members`, and after it `after`, each given as
+/// compact JSON, with the wait slot `wait` and the next `sequence_number`.
+fn ResponsesEvents::push(
+  self : ResponsesEvents,
+  wait : WaitSlot,
+  kind : String,
+  members : String,
+  after? : String = "",
+) -> Unit {
+  let sequence_number = self.next
+  self.next += 1
+  self.events.push({
+    wait,
+    event: Some(kind),
+    data: event_data(kind, members, sequence_number, after),
+  })
+}
+
+///|
+/// The data of the Responses event of type `kind` whose members after
+/// `type` are `members`, then `sequence_number`, then `after`, each given
+/// as compact JSON.
+fn event_data(
+  kind : String,
+  members : String,
+  sequence_number : Int,
+  after : String,
+) -> String {
+  "{\"type\":\"\{kind}\",\{members},\"sequence_number\":\{sequence_number}\{after}}"
 }
 
 ///|
@@ -973,6 +1241,7 @@ fn messages_reply(
     content_type: "application/json",
     request_id,
     body: Json(@template.compact_json_bytes(Json::object(body))),
+    closing: None,
   }
 }
 
@@ -1094,7 +1363,12 @@ fn messages_stream(
     event: Some("message_stop"),
     data: "{\"type\":\"message_stop\"}",
   })
-  { content_type: "text/event-stream", request_id, body: Events(events), }
+  {
+    content_type: "text/event-stream",
+    request_id,
+    body: Events(events),
+    closing: None,
+  }
 }
 
 ///|
