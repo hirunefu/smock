@@ -603,3 +603,24 @@ test "with template: true, a declared error cuts the rendered text, follows the 
     ),
   )
 }
+
+///|
+test "with template: true, an after past the text as written is loaded, and the error follows the whole text when the rendered text is shorter than after" {
+  let h = harness([
+    echo_mock(
+      "text: \"${last(body.messages).content}\", error: { after: 40, type: server_error, message: Overloaded }",
+    ),
+  ])
+  inspect(
+    [
+      waits(h.chat(body=said("hi", stream=true))),
+      waits(h.chat(body=said("", stream=true))),
+      waits(h.chat(body=said("a".repeat(45), stream=true))),
+    ].join("\n"),
+    content=(
+      #|0 opening, 0 "hi", 0 {"error":{"message":"Overloaded","type":"server_error","param":null,"code":null}}
+      #|0 opening, 0 {"error":{"message":"Overloaded","type":"server_error","param":null,"code":null}}
+      #|0 opening, 0 "aaaa", 0 "aaaa", 0 "aaaa", 0 "aaaa", 0 "aaaa", 0 "aaaa", 0 "aaaa", 0 "aaaa", 0 "aaaa", 0 "aaaa", 0 {"error":{"message":"Overloaded","type":"server_error","param":null,"code":null}}
+    ),
+  )
+}

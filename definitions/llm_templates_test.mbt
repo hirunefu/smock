@@ -60,6 +60,39 @@ test "with template: true, the error's message is parsed at load, each problem a
 }
 
 ///|
+test "with template: true, an error's after past the text as written is no load error, since the text is known once rendered; with template off it is one" {
+  inspect(
+    problems([
+      templated_llm([
+        "text: Hi, error: { after: 10, type: server_error, message: Overloaded }",
+        "chunks: [Hi, \"${body.name}\"], error: { after: 10, type: server_error, message: Overloaded }",
+        "error: { after: 1, type: server_error, message: Overloaded }",
+      ]),
+      (
+        "b.yaml",
+        (
+          #|stubs:
+          #|  - id: plain
+          #|    mock: m
+          #|    response:
+          #|      status: 200
+          #|      llm: { api: openai-chat, text: Hi, error: { after: 10, type: server_error, message: Overloaded } }
+          #|  - id: template-last
+          #|    mock: m
+          #|    response:
+          #|      status: 200
+          #|      llm: { api: openai-chat, text: Hi, error: { after: 10, type: server_error, message: Overloaded } }
+          #|      template: true
+        ),
+      ),
+    ]),
+    content=(
+      #|b.yaml: /stubs/0/response/llm/error/after: is past the end of the text, which has 2 code points
+    ),
+  )
+}
+
+///|
 test "api, stopReason, usage, chunkSize and timing are never templates, and with template off nothing in llm is parsed" {
   inspect(
     problems([

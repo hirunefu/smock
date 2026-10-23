@@ -140,6 +140,9 @@ fn File::read_response(
       reads_data: false,
     }
   }
+  // An `llm` needs it before it is read below: its text is known only once
+  // rendered.
+  let templated = response.get("template") is Some(True)
   for key, value in response {
     let field = child_pointer(pointer, key)
     match key {
@@ -150,7 +153,7 @@ fn File::read_response(
       "json" => body = JsonBody(field, value)
       "events" => body = EventList(self.read_events(field, value))
       "llm" =>
-        body = match self.read_llm(field, value) {
+        body = match self.read_llm(field, value, templated~) {
           Some(reply) => LlmField(reply)
           None => NoBody
         }
@@ -552,9 +555,16 @@ fn File::read_events(
 /// derived when left out; `timing`, no waits when left out; and `error`, a
 /// mid-stream error, none when left out. It has none when `api` is missing
 /// or names no API, and then neither the stop reason nor the error is
-/// checked. The strings are kept with their JSON Pointers, since whether
-/// they are templates is known only once the response is read.
-fn File::read_llm(self : File, pointer : String, json : Json) -> LlmDecl? {
+/// checked. When `templated`, the response has `template` on, so the
+/// error's `after` is not checked against the text, which is known only
+/// once it is rendered. The strings are kept with their JSON Pointers, and
+/// are parsed as templates once the whole response is read.
+fn File::read_llm(
+  self : File,
+  pointer : String,
+  json : Json,
+  templated~ : Bool,
+) -> LlmDecl? {
   guard json is Object(fields) else {
     self.error(pointer, "must be an object")
     return None
@@ -617,9 +627,11 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmDecl? {
   let mut error_message = None
   if fields.get("error") is Some(value) {
     // The text as written: with `chunks`, their join, in place of `text`.
+    // A template's is known only once rendered.
     let whole = match chunks {
-      Some(chunks) => chunks.map(chunk => chunk.0).join("")
-      None => text.map_or("", text => text.0)
+      _ if templated => None
+      Some(chunks) => Some(chunks.map(chunk => chunk.0).join(""))
+      None => Some(text.map_or("", text => text.0))
     }
     let error_pointer = child_pointer(pointer, "error")
     if self.read_llm_error(api, error_pointer, value, whole)
@@ -649,19 +661,20 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmDecl? {
 
 ///|
 /// Reads the `error` of an `llm` whose API is `api` and whose text, as
-/// written, is `text`: `after`, the code points of the text before the
-/// error, from 0, by default 0, and not past the end of the text; `type`, or
-/// `code` for `openai-responses`, checked with the API's vocabulary; and
-/// `message`, non-empty text. The other one of `type` and `code` is
-/// refused with a message that names the member to give in its place, so
-/// that the load error points at the member to rewrite when `api` changes.
-/// It has none when a member is missing or refused.
+/// written, is `text`, or `None` when it is a template: `after`, the code
+/// points of the text before the error, from 0, by default 0, and not past
+/// the end of a text as written; `type`, or `code` for `openai-responses`,
+/// checked with the API's vocabulary; and `message`, non-empty as written.
+/// The other one of `type` and `code` is refused with a message that names
+/// the member to give in its place, so that the load error points at the
+/// member to rewrite when `api` changes. It has none when a member is
+/// missing or refused.
 fn File::read_llm_error(
   self : File,
   api : @llm.Api,
   pointer : String,
   json : Json,
-  text : String,
+  text : String?,
 ) -> (@llm.MidStreamError, String)? {
   guard json is Object(fields) else {
     self.error(pointer, "must be an object")
@@ -680,6 +693,7 @@ fn File::read_llm_error(
           .read_integer(field, value, min=0L, max=@int.MAX_VALUE.to_int64())
           .map(n => n.to_int())
         if after is Some(after) &&
+          text is Some(text) &&
           @llm.check_error_after(after, text) is Err(problem) {
           self.error(field, problem)
           valid = false
