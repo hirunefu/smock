@@ -872,6 +872,20 @@ pub struct LlmReply {
   declaration : @llm.Declaration
   /// Its strings, as written.
   strings : @llm.Strings
+  /// The pacing of its stream, which the engine draws.
+  timing : LlmTiming
+} derive(Debug, Eq)
+
+///|
+/// The pacing of an LLM reply's stream, `timing`: the distributions of the
+/// delay Fault that its waits are drawn from, in whole milliseconds. A wait
+/// left out is none. A JSON reply has no wait.
+pub struct LlmTiming {
+  /// The wait before the first event that carries a piece, counted from
+  /// the head, or before the closing events of a reply with no piece.
+  first : Distribution?
+  /// The wait before each later event that carries a piece.
+  interval : Distribution?
 } derive(Debug, Eq)
 
 ///|

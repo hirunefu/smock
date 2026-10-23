@@ -813,6 +813,23 @@ stubs:
                   input: 0
                   output: 0
                 stopReason: stop
+                timing:
+                  first:
+                    fixed: 0
+                    uniform:
+                      min: 0
+                      max: 0
+                    lognormal:
+                      median: 0
+                      sigma: 0
+                  interval:
+                    fixed: 0
+                    uniform:
+                      min: 0
+                      max: 0
+                    lognormal:
+                      median: 0
+                      sigma: 0
             responses:
               - weight: 1
                 status: 200
@@ -839,6 +856,23 @@ stubs:
                     input: 0
                     output: 0
                   stopReason: stop
+                  timing:
+                    first:
+                      fixed: 0
+                      uniform:
+                        min: 0
+                        max: 0
+                      lognormal:
+                        median: 0
+                        sigma: 0
+                    interval:
+                      fixed: 0
+                      uniform:
+                        min: 0
+                        max: 0
+                      lognormal:
+                        median: 0
+                        sigma: 0
             variables: {}
             dataWrites:
               - op: set
@@ -996,6 +1030,23 @@ stubs:
                 input: 0
                 output: 0
               stopReason: stop
+              timing:
+                first:
+                  fixed: 0
+                  uniform:
+                    min: 0
+                    max: 0
+                  lognormal:
+                    median: 0
+                    sigma: 0
+                interval:
+                  fixed: 0
+                  uniform:
+                    min: 0
+                    max: 0
+                  lognormal:
+                    median: 0
+                    sigma: 0
           responses:
             - weight: 1
               status: 200
@@ -1022,6 +1073,23 @@ stubs:
                   input: 0
                   output: 0
                 stopReason: stop
+                timing:
+                  first:
+                    fixed: 0
+                    uniform:
+                      min: 0
+                      max: 0
+                    lognormal:
+                      median: 0
+                      sigma: 0
+                  interval:
+                    fixed: 0
+                    uniform:
+                      min: 0
+                      max: 0
+                    lognormal:
+                      median: 0
+                      sigma: 0
           variables: {}
           dataWrites:
             - op: set
