@@ -364,7 +364,8 @@ stubs:
 ```
 
 The Responses API also takes `input` as a string. A string is not an
-array, so it never meets `$last`.
+array, so it never meets `$last`. [Agent loops](#agent-loops) shows each
+API's loop with LLM replies, and how the reply quotes the tool's result.
 
 `$last` nests as the other operators do.
 `{ "$not": { "$last": { "role": "tool" } } }` holds when the last message
@@ -1818,6 +1819,9 @@ condition on the last message tells the turns apart, as the
     llm: { api: openai-chat, text: It is 18°C in Paris. }
 ```
 
+[Agent loops](#agent-loops) shows the whole loop for each API, with a
+reply that quotes the tool's result.
+
 #### Broken arguments
 
 A model can send arguments that are not valid JSON, and an agent should
@@ -2010,6 +2014,8 @@ as `smock render` shows with `--seed 7`.
   Stub's [`variables`](#variables) and [`dataWrites`](#writing-buckets-datawrites)
   have written, so the reply reads what they just did. A Scenario moves on
   an `llm` Stub as on any other.
+  [Conversations of several turns](#conversations-of-several-turns) uses
+  both.
 - A syntax error is a load error at the field's JSON Pointer, such as
   `/stubs/0/response/llm/text`. Two tool calls whose ids insert nothing
   and are the same are a load error, as without templates. Ids that
@@ -2111,7 +2117,8 @@ sends `POST /v1/responses`, and gets this reply, which
   `access_programs: null` and `temperature: 1.0`.
 - smock keeps no Responses state. `previous_response_id` is only copied,
   and a request with `background: true` gets this same reply, not a queued
-  one.
+  one. [Responses follow-ups](#responses-follow-ups) shows how Stubs
+  answer a follow-up and `GET /v1/responses/{id}`.
 
 #### The Responses stream
 
@@ -2295,6 +2302,10 @@ answers it:
     status: 200
     llm: { api: openai-responses, text: It is 18°C in Paris. }
 ```
+
+[A Responses loop](#a-responses-loop) quotes the call's output in the
+reply, and [Responses follow-ups](#responses-follow-ups) answers a request
+that sends only that output.
 
 #### Incomplete replies
 
