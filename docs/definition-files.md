@@ -2904,6 +2904,83 @@ after the answer, matches no Stub, since `answer-weather` requires
 `Asked`. A Stub that requires `Answered` would answer the next turn, as
 [Conversations of several turns](#conversations-of-several-turns) shows.
 
+#### Conversations of several turns
+
+A conversation goes on after the answer. When the user asks again, the
+last message is the user's once more, as on the first turn, so the
+messages alone do not say which turn it is. A [Scenario](#scenarios)
+follows the turns, and a [Variable](#variables) counts them:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { messages: { $not: { $last: { role: tool } } } } }
+    scenario: { name: weather, requires: Started, moveTo: Asked }
+    variables: { turns: "${add(vars.turns ?? 0, 1)}" }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+  - id: answer-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { messages: { $last: { role: tool } } } }
+    scenario: { name: weather, requires: Asked, moveTo: Answered }
+    variables: { turns: "${add(vars.turns ?? 0, 1)}" }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-chat
+        text: It is ${last(body.messages).content} in Paris.
+  - id: next-question
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { messages: { $not: { $last: { role: tool } } } } }
+    scenario: { name: weather, requires: Answered }
+    variables: { turns: "${add(vars.turns ?? 0, 1)}" }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-chat
+        text: Turn ${vars.turns}. Ask me about another city.
+```
+
+The agent of [the Chat Completions loop](#a-chat-completions-loop) gets
+the tool call, then `It is 18°C in Paris.` When it then appends the
+answer and the user's next question, the third request gets
+`Turn 3. Ask me about another city.`
+
+- `ask-weather` and `next-question` have the same request conditions.
+  Their `requires` tell them apart, so neither shadows the other
+  ([Warnings](#a-stub-that-can-never-match)).
+- Each Stub adds one to `turns`, and the reply reads the new count, since
+  a response sees the Variables its Stub has just written. A test can
+  also read the count through the
+  [Admin API](#through-the-admin-api), or count the Journal's entries.
+- The state and the count belong to the
+  [Session](../README.md#sessions-and-ephemeral-stubs). Give each test
+  its own Session, or reset it, so that each conversation starts in
+  `Started` with no count. Requests without a Session share one state
+  and one count.
+- The same Stubs work for the other APIs with their own
+  [conditions](#agent-loops), and for Responses follow-ups with
+  `previous_response_id: { $exists: true }`.
+
 ### Paths and compatible endpoints
 
 The preset neither sets nor checks `request.path`. A Stub's conditions

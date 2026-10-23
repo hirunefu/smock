@@ -509,3 +509,110 @@ test "the docs' Responses follow-ups by a Scenario: a follow-up of the generated
     ),
   )
 }
+
+///|
+/// The conversation of several turns of the docs: the Scenario `weather`
+/// follows the question, the tool's result and the next question, and the
+/// Variable `turns` counts them.
+let weather_turns : (String, String) = (
+  "openai.yaml",
+  (
+    #|mocks:
+    #|  - name: openai
+    #|stubs:
+    #|  - id: ask-weather
+    #|    mock: openai
+    #|    request:
+    #|      method: POST
+    #|      path: /v1/chat/completions
+    #|      body: { json: { messages: { $not: { $last: { role: tool } } } } }
+    #|    scenario: { name: weather, requires: Started, moveTo: Asked }
+    #|    variables: { turns: "${add(vars.turns ?? 0, 1)}" }
+    #|    response:
+    #|      status: 200
+    #|      llm:
+    #|        api: openai-chat
+    #|        toolCalls:
+    #|          - name: get_weather
+    #|            arguments: { city: Paris }
+    #|  - id: answer-weather
+    #|    mock: openai
+    #|    request:
+    #|      method: POST
+    #|      path: /v1/chat/completions
+    #|      body: { json: { messages: { $last: { role: tool } } } }
+    #|    scenario: { name: weather, requires: Asked, moveTo: Answered }
+    #|    variables: { turns: "${add(vars.turns ?? 0, 1)}" }
+    #|    response:
+    #|      status: 200
+    #|      template: true
+    #|      llm:
+    #|        api: openai-chat
+    #|        text: It is ${last(body.messages).content} in Paris.
+    #|  - id: next-question
+    #|    mock: openai
+    #|    request:
+    #|      method: POST
+    #|      path: /v1/chat/completions
+    #|      body: { json: { messages: { $not: { $last: { role: tool } } } } }
+    #|    scenario: { name: weather, requires: Answered }
+    #|    variables: { turns: "${add(vars.turns ?? 0, 1)}" }
+    #|    response:
+    #|      status: 200
+    #|      template: true
+    #|      llm:
+    #|        api: openai-chat
+    #|        text: Turn ${vars.turns}. Ask me about another city.
+  ),
+)
+
+///|
+test "the docs' conversation of several turns: in one Session the Scenario follows the question, the tool's result and the next question, and turns counts them; another Session starts again" {
+  let h = harness([weather_turns])
+  let conversation = [weather_question]
+  let ask = fn(session : String, messages : Array[Json]) {
+    h.chat(
+      body=wire({ "model": "gpt-6-astra", "messages": Json::array(messages) }),
+      session~,
+    )
+  }
+  let lines = []
+  let first = ask("a", conversation)
+  guard agent_reply(first)
+    is {
+      "choices": [
+        {
+          "message": { "tool_calls": [{ "id": String(call_id), .. }], .. } as message,
+          ..
+        },
+      ],
+      ..
+    } else {
+    fail("no tool call")
+  }
+  lines.push("a: \{turn_line(first)}")
+  conversation.push(message)
+  conversation.push({
+    "role": "tool",
+    "tool_call_id": call_id,
+    "content": "18°C",
+  })
+  let second = ask("a", conversation)
+  lines.push("a: \{turn_line(second)}")
+  guard agent_reply(second) is { "choices": [{ "message": answer, .. }], .. } else {
+    fail("no answer")
+  }
+  conversation.push(answer)
+  conversation.push({ "role": "user", "content": "And in Rome?" })
+  lines.push("a: \{turn_line(ask("a", conversation))}")
+  lines.push("b: \{turn_line(ask("b", [weather_question]))}")
+  inspect(
+    lines.join("\n"),
+    content=(
+      #|a: ask-weather: "get_weather" {"city":"Paris"}
+      #|a: answer-weather: "It is 18°C in Paris."
+      #|a: next-question: "Turn 3. Ask me about another city."
+      #|b: ask-weather: "get_weather" {"city":"Paris"}
+    ),
+  )
+}
