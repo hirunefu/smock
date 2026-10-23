@@ -98,6 +98,20 @@ GENERATED_ID_DIFFERENCES = {
     "choices.*.message.tool_calls.*.id": "generated for each request",
 }
 
+# Where the Response openai-python's Responses stream helper builds from a
+# stream differs from the one it parses from the JSON reply, on purpose.
+RESPONSES_HELPER_DIFFERENCES = {
+    "created_at": "the time each of the two requests was received, which may be a second apart",
+    "completed_at": "the time each of the two requests was received, which may be a second apart",
+    "output.*.id": "the msg_ and fc_ ids of the items, which no field fixes, generated for each request",
+    "output.*.content.*.parsed": "the helper's own member",
+}
+
+# The further difference of a Responses Stub whose id is generated.
+RESPONSES_GENERATED_ID_DIFFERENCES = {
+    "id": "generated for each request",
+}
+
 MISSING = object()
 
 
@@ -520,6 +534,25 @@ def responses_stream(client, model, **options):
         return stream.response.headers.get("x-request-id"), list(stream)
 
 
+def responses_helper(client, model, **options):
+    """Reads a Responses stream with the stream() helper, as an application
+    does, and returns its events and the Response it builds."""
+    with client.responses.stream(model=model, input=MESSAGES, **options) as stream:
+        events = list(stream)
+        return events, stream.get_final_response()
+
+
+def check_times(checks, name, built, reply):
+    """Checks that a Response built from a stream has the JSON reply's
+    times, within a second, as two requests may be received a second
+    apart."""
+    for member in ("created_at", "completed_at"):
+        from_stream, from_json = getattr(built, member), getattr(reply, member)
+        checks.check(f"{name}: {member}, within a second of the JSON reply's",
+                     from_stream is not None and from_json is not None and abs(from_stream - from_json) <= 1,
+                     f"{from_stream} from the stream, {from_json} from the JSON reply")
+
+
 def check_responses_usage(checks, name, usage, input_tokens, output_tokens):
     checks.equal(f"{name}: usage", None if usage is None else
                  (usage.input_tokens, usage.output_tokens, usage.total_tokens),
@@ -625,6 +658,22 @@ def responses_text(checks, smock):
     checks.equal(f"{name}: the closing event's status", closed and closed.status, "completed")
     check_responses_usage(checks, f"{name}: the closing event", closed and closed.usage, 37, 11)
     checks.id(f"{name}: the request id", request_id, REQUEST_ID)
+
+    name = "responses-text: stream()"
+    events, built = responses_helper(client, "responses-text")
+    checks.equal(f"{name}: the text deltas, joined",
+                 "".join(event.delta for event in events if event.type == "response.output_text.delta"),
+                 RESPONSES_TEXT)
+    checks.equal(f"{name}: the last delta's snapshot",
+                 [event.snapshot for event in events if event.type == "response.output_text.delta"][-1:],
+                 [RESPONSES_TEXT])
+    checks.equal(f"{name}: the text of the Response", built.output_text, RESPONSES_TEXT)
+    checks.id(f"{name}: the id", built.id, RESPONSE_ID)
+    checks.id(f"{name}: the message item's id", built.output[0].id if built.output else None, MESSAGE_ID)
+    check_times(checks, name, built, reply)
+    checks.same(f"{name}: the Response equals the JSON reply, apart from the listed differences",
+                reply.model_dump(), built.model_dump(),
+                {**RESPONSES_HELPER_DIFFERENCES, **RESPONSES_GENERATED_ID_DIFFERENCES})
 
 
 # The cases, in the order they run. Each calls the Stubs it names, and a
