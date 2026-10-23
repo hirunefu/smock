@@ -411,9 +411,10 @@ fn File::read_events(
 /// Reads the `llm` of a response: `api`, which names the API whose wire
 /// form the reply takes; `text`, empty when left out, or `chunks`, its
 /// pieces, in its place; `chunkSize`, the code points of each piece cut
-/// from `text`; the reply's `id` and `model`, generated and the request's
-/// when left out; `usage`, 0 tokens when left out; and `stopReason`, a word
-/// of that API, derived when left out. It has none when `api` is missing or
+/// from `text` or from a tool call's arguments; `toolCalls`, none when left
+/// out; the reply's `id` and `model`, generated and the request's when left
+/// out; `usage`, 0 tokens when left out; and `stopReason`, a word of that
+/// API, derived when left out. It has none when `api` is missing or
 /// names no API, and then the stop reason is not checked.
 fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
   guard json is Object(fields) else {
@@ -424,6 +425,7 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
   let mut text = ""
   let mut chunks = None
   let mut chunk_size = None
+  let mut tool_calls = None
   let mut id = None
   let mut model = None
   let mut usage = @llm.Usage(input=0, output=0)
@@ -446,6 +448,7 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
             max=@llm.max_chunk_size.to_int64(),
           )
           .map(n => n.to_int())
+      "toolCalls" => tool_calls = Some(self.read_tool_calls(field, value))
       "id" => id = self.string(field, value)
       "model" => model = self.string(field, value)
       "usage" => usage = self.read_usage(field, value)
@@ -473,8 +476,66 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
   Some({
     declaration: @llm.Declaration(api~, chunk_size?, usage~, stop_reason?),
     // With `chunks`, the text is their join, in place of `text`.
-    strings: @llm.Strings(text~, chunks?, id?, model?),
+    strings: @llm.Strings(text~, chunks?, id?, model?, tool_calls?),
   })
+}
+
+///|
+/// Reads the `toolCalls` of an `llm`: a list of function tool calls, in the
+/// order the reply sends them. Each one needs `name`, a non-empty text that
+/// no vendor's naming rule checks, and `arguments`, a JSON object or a
+/// string, and may give `id`, its call id, as text. A call that lacks one
+/// of them is left out. Two calls of the list with the same `id` are
+/// refused, since the call ids of a reply must differ.
+fn File::read_tool_calls(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> ReadOnlyArray[@llm.ToolCall] {
+  let items = self.array(pointer, json)
+  let tool_calls = []
+  // Where each fixed id is given first.
+  let ids : Map[String, String] = Map([])
+  for i, item in items {
+    let call_pointer = child_pointer(pointer, i.to_string())
+    guard item is Object(fields) else {
+      self.error(call_pointer, "must be an object")
+      continue
+    }
+    let mut name = None
+    let mut arguments = None
+    let mut id = None
+    for key, value in fields {
+      let field = child_pointer(call_pointer, key)
+      match key {
+        "name" => name = self.name(field, value)
+        "arguments" =>
+          match value {
+            Object(_) | String(_) => arguments = Some(value)
+            _ => self.error(field, "must be an object or a string")
+          }
+        "id" => id = self.string(field, value)
+        _ => self.unknown_field(field)
+      }
+    }
+    self.require(fields, call_pointer, "name")
+    self.require(fields, call_pointer, "arguments")
+    if id is Some(id) {
+      let id_pointer = child_pointer(call_pointer, "id")
+      match ids.get(id) {
+        Some(earlier) =>
+          self.error(
+            id_pointer,
+            "the tool call id \{id.escape()} is already used at \{self.at(earlier)}",
+          )
+        None => ids[id] = id_pointer
+      }
+    }
+    if name is Some(name) && arguments is Some(arguments) {
+      tool_calls.push(@llm.ToolCall(name~, arguments~, id?))
+    }
+  }
+  ReadOnlyArray::from_array(tool_calls)
 }
 
 ///|

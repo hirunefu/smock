@@ -807,6 +807,10 @@ stubs:
                 chunks:
                   - string
                 chunkSize: 4
+                toolCalls:
+                  - name: string
+                    arguments: {}
+                    id: string
                 id: string
                 model: string
                 usage:
@@ -833,6 +837,10 @@ stubs:
                   chunks:
                     - string
                   chunkSize: 4
+                  toolCalls:
+                    - name: string
+                      arguments: {}
+                      id: string
                   id: string
                   model: string
                   usage:
@@ -990,6 +998,10 @@ stubs:
               chunks:
                 - string
               chunkSize: 4
+              toolCalls:
+                - name: string
+                  arguments: {}
+                  id: string
               id: string
               model: string
               usage:
@@ -1016,6 +1028,10 @@ stubs:
                 chunks:
                   - string
                 chunkSize: 4
+                toolCalls:
+                  - name: string
+                    arguments: {}
+                    id: string
                 id: string
                 model: string
                 usage:

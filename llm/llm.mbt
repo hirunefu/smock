@@ -139,30 +139,77 @@ pub struct Strings {
   id : String?
   /// The reply's model, or `None` for the request's.
   model : String?
+  /// The tool calls, after the text, in the order written: none when left
+  /// out.
+  tool_calls : ReadOnlyArray[ToolCall]
 } derive(Debug, Eq)
 
 ///|
 /// The strings of a reply whose text is `text`, empty by default; or, with
 /// `chunks`, whose pieces are its elements and whose text is their join,
 /// in place of `text`. The definitions refuse `text` beside `chunks`. Its
-/// id is `id` when given and its model `model` when given.
+/// id is `id` when given and its model `model` when given, and its tool
+/// calls `tool_calls`, none by default.
 pub fn Strings::Strings(
   text? : String = "",
   chunks? : ReadOnlyArray[String],
   id? : String,
   model? : String,
+  tool_calls? : ReadOnlyArray[ToolCall] = [],
 ) -> Strings {
   match chunks {
-    Some(chunks) => { text: chunks.join(""), chunks: Some(chunks), id, model, }
-    None => { text, chunks: None, id, model, }
+    Some(chunks) =>
+      { text: chunks.join(""), chunks: Some(chunks), id, model, tool_calls, }
+    None => { text, chunks: None, id, model, tool_calls, }
   }
 }
 
 ///|
+/// Whether the reply carries its text: always without tool calls, and with
+/// them only when the text is not empty. With tool calls, empty text gives
+/// no content, so no piece either, even when `chunks` gives empty ones.
+fn Strings::has_content(self : Strings) -> Bool {
+  self.tool_calls.length() == 0 || self.text != ""
+}
+
+///|
+/// A function tool call of a reply, as `toolCalls` declares it.
+pub struct ToolCall {
+  /// The function's name, sent as written. The definitions check that it
+  /// is not empty, and nothing checks it against a vendor's naming rule.
+  name : String
+  /// The arguments' JSON text, as the reply sends it: not always valid
+  /// JSON, since a string is sent as written.
+  arguments : String
+  /// The call id, sent as written, or `None` for a generated one.
+  id : String?
+} derive(Debug, Eq)
+
+///|
+/// The tool call of the function `name` with `arguments`, and the call id
+/// `id` when given. A string is sent as written, so arguments that are not
+/// valid JSON can be tested; any other value, an object as the definitions
+/// allow, as compact JSON, its members in the order written and its numbers
+/// as smock writes JSON.
+pub fn ToolCall::ToolCall(
+  name~ : String,
+  arguments~ : Json,
+  id? : String,
+) -> ToolCall {
+  let arguments = match arguments {
+    String(text) => text
+    value => @template.compact_json(value)
+  }
+  { name, arguments, id, }
+}
+
+///|
 /// The pieces of the text that a stream sends, in order: the elements of
-/// `chunks`, or the text cut into pieces of `size` code points.
+/// `chunks`, or the text cut into pieces of `size` code points; none when
+/// the reply carries no content.
 fn Strings::text_pieces(self : Strings, size : Int) -> ArrayView[String] {
   match self.chunks {
+    _ if !self.has_content() => [][:]
     Some(chunks) => chunks[:]
     None => pieces(self.text, size)[:]
   }
@@ -228,8 +275,9 @@ pub enum WaitSlot {
 /// not JSON, received at `now` (milliseconds since the Unix epoch): the
 /// stream when the body is a JSON object whose `stream` is exactly `true`,
 /// otherwise the JSON reply. Its ids draw from `ids`, the request's ids
-/// generator, and the reply's id is the strings' `id` when given. Its
-/// model is the strings' `model` when given, otherwise the request's.
+/// generator, and the reply's id is the strings' `id` when given, as is
+/// each tool call's call id. Its model is the strings' `model` when given,
+/// otherwise the request's.
 pub fn reply(
   declaration : Declaration,
   strings : Strings,
@@ -237,7 +285,7 @@ pub fn reply(
   now~ : Int64,
   ids~ : @prng.Generator,
 ) -> Reply {
-  let ids = draw_ids(ids)
+  let ids = draw_ids(ids, strings.tool_calls.length())
   let created = now / 1000L
   let model = match strings.model {
     Some(model) => model
@@ -256,10 +304,19 @@ pub fn reply(
           created~,
           model~,
           usage=asks_for_usage(request),
+          calls=ids.calls,
           request_id~,
         )
       } else {
-        chat_reply(declaration, strings, id~, created~, model~, request_id~)
+        chat_reply(
+          declaration,
+          strings,
+          id~,
+          created~,
+          model~,
+          calls=ids.calls,
+          request_id~,
+        )
       }
     }
   }
@@ -295,27 +352,54 @@ fn asks_for_usage(request : Json?) -> Bool {
 }
 
 ///|
+/// The call id of `call`: its `id` as written when given, otherwise
+/// `prefix`, the API's, and `drawn`, its call id's slot.
+fn call_id(call : ToolCall, prefix : String, drawn : String) -> String {
+  match call.id {
+    Some(id) => id
+    None => prefix + drawn
+  }
+}
+
+///|
 /// The ids of one reply, each drawn in its slot of a fixed order: the
-/// reply's, then the Responses message item's, then the request-id
-/// header's, last. Every slot draws, whether or not the reply's API uses
-/// it or the Stub fixes its id, so that fixing one id changes no other and
-/// an id keeps its draws whatever the API.
+/// reply's, then the Responses message item's, then two for each tool
+/// call, the Responses function call's item id and then its call id, and
+/// the request-id header's, last. Every slot draws, whether or not the
+/// reply's API uses it or the Stub fixes its id, so that fixing one id
+/// changes no other and an id keeps its draws whatever the API.
 priv struct Ids {
   /// The reply's id, without its prefix.
   reply : String
+  /// Each tool call's call id, without its prefix, in the order written.
+  calls : FixedArray[String]
   /// The request id of the request-id header, without its prefix.
   request : String
 }
 
 ///|
-/// Draws the ids of one reply from `ids`, slot by slot.
-fn draw_ids(ids : @prng.Generator) -> Ids {
+/// The call ids of a reply with no tool call, shared by every such reply.
+let no_calls : FixedArray[String] = []
+
+///|
+/// Draws the ids of one reply with `tool_calls` tool calls from `ids`, slot
+/// by slot.
+fn draw_ids(ids : @prng.Generator, tool_calls : Int) -> Ids {
   let reply = draw_id(ids)
   // The Responses message item's slot.
   ignore(draw_id(ids))
-  // The tool calls' slots go here, before the request-id header's.
+  let calls = if tool_calls == 0 {
+    no_calls
+  } else {
+    FixedArray::make(tool_calls, "")
+  }
+  for i in 0..<tool_calls {
+    // The Responses function call's item id, then the call id.
+    ignore(draw_id(ids))
+    calls[i] = draw_id(ids)
+  }
   let request = draw_id(ids)
-  { reply, request, }
+  { reply, calls, request, }
 }
 
 ///|
@@ -354,23 +438,42 @@ fn request_model(request : Json?) -> String {
 
 ///|
 /// The Chat Completions reply of `declaration` with the strings `strings`,
-/// the reply's id `id`, `created` (seconds since the Unix epoch), `model`
-/// and the request-id header field `request_id`: one `chat.completion`
-/// object, in the members and the order of the reference's example, with
-/// the example's fixed values.
+/// the reply's id `id`, `created` (seconds since the Unix epoch), `model`,
+/// the tool calls' drawn call ids `calls` and the request-id header field
+/// `request_id`: one `chat.completion` object, in the members and the
+/// order of the reference's example, with the example's fixed values. With
+/// tool calls, the message gives them after its content, as the reference's
+/// "Functions" example does, and its content is null when the text is
+/// empty.
 fn chat_reply(
   declaration : Declaration,
   strings : Strings,
   id~ : String,
   created~ : Int64,
   model~ : String,
+  calls~ : FixedArray[String],
   request_id~ : (String, String),
 ) -> Reply {
-  let message : Json = {
-    "role": "assistant",
-    "content": Json::string(strings.text),
-    "refusal": Json::null(),
-    "annotations": [],
+  let content = if strings.has_content() {
+    Json::string(strings.text)
+  } else {
+    Json::null()
+  }
+  let message : Json = if strings.tool_calls.length() == 0 {
+    {
+      "role": "assistant",
+      "content": content,
+      "refusal": Json::null(),
+      "annotations": [],
+    }
+  } else {
+    {
+      "role": "assistant",
+      "content": content,
+      "tool_calls": chat_tool_calls(strings.tool_calls, calls),
+      "refusal": Json::null(),
+      "annotations": [],
+    }
   }
   let body : Json = {
     "id": Json::string(id),
@@ -382,7 +485,7 @@ fn chat_reply(
         "index": 0,
         "message": message,
         "logprobs": Json::null(),
-        "finish_reason": Json::string(chat_finish_reason(declaration)),
+        "finish_reason": Json::string(chat_finish_reason(declaration, strings)),
       },
     ],
     "usage": chat_usage(declaration.usage),
@@ -396,30 +499,57 @@ fn chat_reply(
 }
 
 ///|
-/// The finish reason of `declaration`'s Chat Completions reply: the stop
-/// reason written, or the one derived from the content when none is. A
-/// word of the API needs no escaping in JSON.
-fn chat_finish_reason(declaration : Declaration) -> String {
+/// The `tool_calls` of a Chat Completions message: each of `tool_calls`,
+/// with its call id from `calls`, the drawn ones, and its arguments as a
+/// JSON string.
+fn chat_tool_calls(
+  tool_calls : ReadOnlyArray[ToolCall],
+  calls : FixedArray[String],
+) -> Json {
+  let out : Array[Json] = Array(capacity=tool_calls.length())
+  for i in 0..<tool_calls.length() {
+    let call = tool_calls[i]
+    out.push({
+      "id": Json::string(call_id(call, "call_", calls[i])),
+      "type": "function",
+      "function": {
+        "name": Json::string(call.name),
+        "arguments": Json::string(call.arguments),
+      },
+    })
+  }
+  Json::array(out)
+}
+
+///|
+/// The finish reason of `declaration`'s Chat Completions reply with the
+/// strings `strings`: the stop reason written, or the one derived from the
+/// content when none is. A word of the API needs no escaping in JSON.
+fn chat_finish_reason(declaration : Declaration, strings : Strings) -> String {
   match declaration.stop_reason {
     Some(reason) => reason.word
-    // Derived: a reply with no tool call stops.
-    None => "stop"
+    // Derived: a reply with tool calls asks for them, any other stops.
+    None => if strings.tool_calls.length() > 0 { "tool_calls" } else { "stop" }
   }
 }
 
 ///|
 /// The Chat Completions stream of `declaration` with the strings
-/// `strings`, whose text is cut into pieces of the declaration's chunk
-/// size unless they give its pieces, the reply's id `id`, `created`
-/// (seconds since the Unix epoch), `model` and the request-id header field
+/// `strings`, whose text and tool-call arguments are cut into pieces of the
+/// declaration's chunk size unless they give the text's pieces, the reply's
+/// id `id`, `created` (seconds since the Unix epoch), `model`, the tool
+/// calls' drawn call ids `calls` and the request-id header field
 /// `request_id`:
 /// `chat.completion.chunk` events with no `event:` line, each one `data:`
 /// line of compact JSON with the same id, `created` and model. The opening
-/// chunk gives the assistant's role and an empty content, one chunk follows
-/// per piece of the text, then the closing chunk gives the finish reason,
-/// and `[DONE]` ends the stream. With `usage`, every chunk carries
-/// `"usage":null`, and the usage chunk, with no choice, comes before
-/// `[DONE]`.
+/// chunk gives the assistant's role and an empty content, or a null one
+/// when tool calls follow no text, and one chunk follows per piece of the
+/// text. Each tool call `k` then opens with a chunk that gives its index
+/// `k`, call id, type and name, and empty arguments, and one chunk follows
+/// per piece of its arguments, with the index alone. The closing chunk
+/// gives the finish reason, and `[DONE]` ends the stream. With `usage`,
+/// every chunk carries `"usage":null`, and the usage chunk, with no
+/// choice, comes before `[DONE]`.
 fn chat_stream(
   declaration : Declaration,
   strings : Strings,
@@ -427,18 +557,25 @@ fn chat_stream(
   created~ : Int64,
   model~ : String,
   usage~ : Bool,
+  calls~ : FixedArray[String],
   request_id~ : (String, String),
 ) -> Reply {
   let chunks = ChatChunks::new(id~, created~, model~, usage~)
-  let pieces = strings.text_pieces(declaration.chunk_size)
+  let tool_calls = strings.tool_calls
   let pace = Pace::new()
-  let events = Array(capacity=pieces.length() + 4)
+  let text_pieces = strings.text_pieces(declaration.chunk_size)
+  let opening = if strings.has_content() {
+    "{\"role\":\"assistant\",\"content\":\"\"}"
+  } else {
+    "{\"role\":\"assistant\",\"content\":null}"
+  }
+  let events = Array(capacity=text_pieces.length() + tool_calls.length() + 4)
   events.push({
     wait: NoWait,
     event: None,
-    data: chunks.chunk("{\"role\":\"assistant\",\"content\":\"\"}", "null"),
+    data: chunks.chunk(opening, "null"),
   })
-  for piece in pieces {
+  for piece in text_pieces {
     let delta = "{\"content\":\{@template.compact_json(Json::string(piece))}}"
     events.push({
       wait: pace.piece(),
@@ -446,10 +583,37 @@ fn chat_stream(
       data: chunks.chunk(delta, "null"),
     })
   }
+  for k in 0..<tool_calls.length() {
+    let call = tool_calls[k]
+    // The call id and the name as JSON strings.
+    let quoted_id = @template.compact_json(
+      Json::string(call_id(call, "call_", calls[k])),
+    )
+    let quoted_name = @template.compact_json(Json::string(call.name))
+    events.push({
+      wait: NoWait,
+      event: None,
+      data: chunks.chunk(
+        "{\"tool_calls\":[{\"index\":\{k},\"id\":\{quoted_id},\"type\":\"function\",\"function\":{\"name\":\{quoted_name},\"arguments\":\"\"}}]}",
+        "null",
+      ),
+    })
+    for piece in pieces(call.arguments, declaration.chunk_size) {
+      let piece = @template.compact_json(Json::string(piece))
+      events.push({
+        wait: pace.piece(),
+        event: None,
+        data: chunks.chunk(
+          "{\"tool_calls\":[{\"index\":\{k},\"function\":{\"arguments\":\{piece}}}]}",
+          "null",
+        ),
+      })
+    }
+  }
   events.push({
     wait: pace.closing(),
     event: None,
-    data: chunks.chunk("{}", "\"\{chat_finish_reason(declaration)}\""),
+    data: chunks.chunk("{}", "\"\{chat_finish_reason(declaration, strings)}\""),
   })
   if usage {
     events.push({

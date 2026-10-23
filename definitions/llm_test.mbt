@@ -263,3 +263,155 @@ test "the snapshot holds chunkSize, 4 when left out, and the chunks as written, 
     ),
   )
 }
+
+///|
+test "toolCalls is a list of calls, each with a non-empty name and arguments that are an object or a string, and an id that is text; two calls with one id are refused" {
+  inspect(
+    problems([
+      (
+        "a.yaml",
+        (
+          #|mocks: [{ name: m }]
+          #|stubs:
+          #|  - id: ok
+          #|    mock: m
+          #|    response:
+          #|      status: 200
+          #|      llm:
+          #|        api: openai-chat
+          #|        toolCalls:
+          #|          - { name: get_weather, arguments: { city: Paris } }
+          #|          - { name: broken, arguments: '{"city": "Par', id: call_1 }
+          #|          - { name: "名前 with spaces/and.dots", arguments: "", id: "" }
+          #|          - { name: get_weather, arguments: {}, id: call_2 }
+          #|  - { id: none, mock: m, response: { status: 200, llm: { api: openai-chat, toolCalls: [] } } }
+          #|  - id: missing
+          #|    mock: m
+          #|    response:
+          #|      status: 200
+          #|      llm: { api: openai-chat, toolCalls: [{ id: call_1 }, { name: f }, { arguments: {} }] }
+          #|  - id: wrong-kinds
+          #|    mock: m
+          #|    responses:
+          #|      - status: 200
+          #|        llm:
+          #|          api: openai-chat
+          #|          toolCalls:
+          #|            - { name: "", arguments: 1 }
+          #|            - { name: 1, arguments: [1], id: 2 }
+          #|            - { name: f, arguments: null, id: null }
+          #|            - { name: f, arguments: true, type: function }
+          #|            - f
+          #|  - { id: not-a-list, mock: m, response: { status: 200, llm: { api: openai-chat, toolCalls: { name: f, arguments: {} } } } }
+          #|  - id: same-id
+          #|    mock: m
+          #|    response:
+          #|      status: 200
+          #|      llm:
+          #|        api: openai-chat
+          #|        toolCalls:
+          #|          - { name: f, arguments: {}, id: call_1 }
+          #|          - { name: g, arguments: {} }
+          #|          - { name: h, arguments: {}, id: call_1 }
+          #|          - { name: i, arguments: {}, id: call_1 }
+          #|          - { name: j, arguments: {}, id: "" }
+          #|          - { name: k, arguments: {}, id: "" }
+          #|  - id: same-id-in-two-replies
+          #|    mock: m
+          #|    responses:
+          #|      - { status: 200, llm: { api: openai-chat, toolCalls: [{ name: f, arguments: {}, id: call_1 }] } }
+          #|      - { status: 200, llm: { api: openai-chat, toolCalls: [{ name: f, arguments: {}, id: call_1 }] } }
+        ),
+      ),
+    ]),
+    content=(
+      #|a.yaml: /stubs/2/response/llm/toolCalls/0: needs "name"
+      #|a.yaml: /stubs/2/response/llm/toolCalls/0: needs "arguments"
+      #|a.yaml: /stubs/2/response/llm/toolCalls/1: needs "arguments"
+      #|a.yaml: /stubs/2/response/llm/toolCalls/2: needs "name"
+      #|a.yaml: /stubs/3/responses/0/llm/toolCalls/0/name: must be a non-empty string
+      #|a.yaml: /stubs/3/responses/0/llm/toolCalls/0/arguments: must be an object or a string
+      #|a.yaml: /stubs/3/responses/0/llm/toolCalls/1/name: must be a non-empty string
+      #|a.yaml: /stubs/3/responses/0/llm/toolCalls/1/arguments: must be an object or a string
+      #|a.yaml: /stubs/3/responses/0/llm/toolCalls/1/id: must be a string
+      #|a.yaml: /stubs/3/responses/0/llm/toolCalls/2/arguments: must be an object or a string
+      #|a.yaml: /stubs/3/responses/0/llm/toolCalls/2/id: must be a string
+      #|a.yaml: /stubs/3/responses/0/llm/toolCalls/3/arguments: must be an object or a string
+      #|a.yaml: /stubs/3/responses/0/llm/toolCalls/3/type: is not a known field
+      #|a.yaml: /stubs/3/responses/0/llm/toolCalls/4: must be an object
+      #|a.yaml: /stubs/4/response/llm/toolCalls: must be an array
+      #|a.yaml: /stubs/5/response/llm/toolCalls/2/id: the tool call id "call_1" is already used at a.yaml: /stubs/5/response/llm/toolCalls/0/id
+      #|a.yaml: /stubs/5/response/llm/toolCalls/3/id: the tool call id "call_1" is already used at a.yaml: /stubs/5/response/llm/toolCalls/0/id
+      #|a.yaml: /stubs/5/response/llm/toolCalls/5/id: the tool call id "" is already used at a.yaml: /stubs/5/response/llm/toolCalls/4/id
+    ),
+  )
+}
+
+///|
+test "the snapshot holds each tool call in the order written, its arguments' object as compact JSON with members in the order written, and a string as written" {
+  let reply_of = (name : String, file : String) => {
+    let set : @definitions.DefinitionSet = {
+      files: [(name, @utf8.encode(file))],
+      body_files: [],
+    }
+    let snapshot = match @definitions.load(set) {
+      Ok(snapshot) => snapshot
+      Err(diagnostics) => return diagnostics.map(d => d.to_string()).join("\n")
+    }
+    guard snapshot.mocks[0].stubs[0].serves is Ordinary(ordinary) else {
+      abort("not an ordinary Stub")
+    }
+    guard ordinary.responses[0].response.body is Llm(reply) else {
+      abort("not an LLM reply")
+    }
+    reply.strings.tool_calls
+    .iter()
+    .map(call => {
+      let id = match call.id {
+        Some(id) => id.escape()
+        None => "generated"
+      }
+      "\{call.name.escape()}, id \{id}: \{call.arguments.escape()}"
+    })
+    .collect()
+    .join("\n")
+  }
+  inspect(
+    [
+      reply_of(
+        "a.json",
+        (
+          #|{ "mocks": [{ "name": "m" }],
+          #|  "stubs": [{ "id": "s", "mock": "m", "response": { "status": 200,
+          #|    "llm": { "api": "openai-chat", "toolCalls": [
+          #|      { "name": "f", "arguments": { "z": 1.50, "a": [1e3, -0, 12345678901234567890, "é\n"], "m": {} } },
+          #|      { "id": "call_1", "name": "g", "arguments": "{ \"z\": 1.50 }" } ] } } }] }
+        ),
+      ),
+      reply_of(
+        "a.yaml",
+        (
+          #|mocks: [{ name: m }]
+          #|stubs:
+          #|  - id: s
+          #|    mock: m
+          #|    response:
+          #|      status: 200
+          #|      llm:
+          #|        api: openai-chat
+          #|        toolCalls:
+          #|          - name: f
+          #|            arguments: { z: 1.50, a: [1e3, 12, true, null], s: "é\n" }
+          #|          - { name: g, arguments: "not JSON", id: "" }
+        ),
+      ),
+    ].join("\n---\n"),
+    content=(
+      #|"f", id generated: "{\"z\":1.5,\"a\":[1000,0,12345678901234567890,\"é\\n\"],\"m\":{}}"
+      #|"g", id "call_1": "{ \"z\": 1.50 }"
+      #|---
+      #|"f", id generated: "{\"z\":1.5,\"a\":[1000,12,true,null],\"s\":\"é\\n\"}"
+      #|"g", id "": "not JSON"
+    ),
+  )
+}
