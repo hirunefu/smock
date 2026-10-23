@@ -1,0 +1,9 @@
+mocks:
+  - name: openai
+stubs:
+  - id: one-code-point-at-a-time
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 200
+      llm: { api: openai-chat, text: 天気は晴れです。, chunkSize: 1 }

@@ -36,25 +36,59 @@ pub fn read_api(value : Json) -> Result[Api, String] {
 /// added.
 pub struct Declaration {
   api : Api
+  /// `chunkSize`: the code points each piece of the text holds in a
+  /// stream, the last piece shorter, from 1 to `max_chunk_size`.
+  chunk_size : Int
 } derive(Debug, Eq)
 
 ///|
-/// A declaration for the API `api`.
-pub fn Declaration::Declaration(api~ : Api) -> Declaration {
-  { api, }
+/// A declaration for the API `api` whose pieces of text hold `chunk_size`
+/// code points, 4 by default. The definitions check that it is from 1 to
+/// `max_chunk_size`.
+pub fn Declaration::Declaration(
+  api~ : Api,
+  chunk_size? : Int = default_chunk_size,
+) -> Declaration {
+  { api, chunk_size, }
 }
+
+///|
+/// The largest `chunkSize`.
+pub let max_chunk_size : Int = 1_000_000
 
 ///|
 /// The strings of a declaration, as written, or rendered for the request.
 pub struct Strings {
-  /// The text of the reply: empty when left out.
+  /// The text of the reply: empty when left out, or the join of `chunks`.
   text : String
+  /// The pieces `chunks` gives, which a stream sends as they are, each one
+  /// on its own, an empty one included; or `None` for `text`, which a
+  /// stream cuts into pieces of the declaration's chunk size.
+  chunks : ReadOnlyArray[String]?
 } derive(Debug, Eq)
 
 ///|
-/// The strings of a reply whose text is `text`.
-pub fn Strings::Strings(text~ : String) -> Strings {
-  { text, }
+/// The strings of a reply whose text is `text`, empty by default; or, with
+/// `chunks`, whose pieces are its elements and whose text is their join,
+/// in place of `text`. The definitions refuse `text` beside `chunks`.
+pub fn Strings::Strings(
+  text? : String = "",
+  chunks? : ReadOnlyArray[String],
+) -> Strings {
+  match chunks {
+    Some(chunks) => { text: chunks.join(""), chunks: Some(chunks), }
+    None => { text, chunks: None, }
+  }
+}
+
+///|
+/// The pieces of the text that a stream sends, in order: the elements of
+/// `chunks`, or the text cut into pieces of `size` code points.
+fn Strings::text_pieces(self : Strings, size : Int) -> ArrayView[String] {
+  match self.chunks {
+    Some(chunks) => chunks[:]
+    None => pieces(self.text, size)[:]
+  }
 }
 
 ///|
@@ -128,7 +162,13 @@ pub fn reply(
   match declaration.api {
     OpenaiChat =>
       if streams {
-        chat_stream(strings, ids~, created~, model~)
+        chat_stream(
+          strings,
+          chunk_size=declaration.chunk_size,
+          ids~,
+          created~,
+          model~,
+        )
       } else {
         chat_reply(strings, ids~, created~, model~)
       }
@@ -237,8 +277,10 @@ fn chat_reply(
 }
 
 ///|
-/// The Chat Completions stream with the strings `strings`, the reply's id
-/// from `ids`, `created` (seconds since the Unix epoch) and `model`:
+/// The Chat Completions stream with the strings `strings`, whose text is
+/// cut into pieces of `chunk_size` code points unless they give its
+/// pieces, the reply's id from `ids`, `created` (seconds since the Unix
+/// epoch) and `model`:
 /// `chat.completion.chunk` events with no `event:` line, each one `data:`
 /// line of compact JSON with the same id, `created` and model. The opening
 /// chunk gives the assistant's role and an empty content, one chunk follows
@@ -246,12 +288,13 @@ fn chat_reply(
 /// and `[DONE]` ends the stream.
 fn chat_stream(
   strings : Strings,
+  chunk_size~ : Int,
   ids~ : Ids,
   created~ : Int64,
   model~ : String,
 ) -> Reply {
   let chunks = ChatChunks::new(id="chatcmpl-" + ids.reply, created~, model~)
-  let pieces = pieces(strings.text, default_chunk_size)
+  let pieces = strings.text_pieces(chunk_size)
   let pace = Pace::new()
   let events = Array(capacity=pieces.length() + 3)
   events.push({
@@ -335,7 +378,10 @@ let default_chunk_size : Int = 4
 /// to valid UTF-8 on its own. Empty text has no piece.
 fn pieces(text : String, size : Int) -> Array[String] {
   let out = []
-  let piece = StringBuilder(size_hint=size)
+  // A piece holds no more than the text, whatever the size.
+  let piece = StringBuilder(
+    size_hint=if size < text.length() { size } else { text.length() },
+  )
   let mut count = 0
   for c in text {
     piece.write_char(c)

@@ -1244,6 +1244,8 @@ The fields of `llm`:
 |---|---|---|
 | `api` | `openai-chat`, OpenAI Chat Completions | required |
 | `text` | the text of the reply | empty |
+| `chunks` | the text as a list of at least one piece, in place of `text` | — |
+| `chunkSize` | code points per piece of a stream, an integer from 1 to 1,000,000 | 4 |
 
 - `api` names the API whose wire form the reply takes. It is required, and
   smock never infers it from the request's path, so a proxy or a base path
@@ -1280,10 +1282,10 @@ work as for other responses: a rendering shows the JSON body, or the events
 for a sample whose body sets `stream: true`, with the ids its seed gives
 and its time as `created`. A response gives at most one of
 `body`, `bodyFile`, `json`, `events` and `llm`. A missing or unknown `api`,
-an unknown field of `llm`, and `llm` beside another body are reported with
-the JSON Pointer of the field, by `smock check`, at startup and on a
-reload, which keeps the set served, and as 400 `invalid_stub` for an
-Ephemeral Stub.
+an unknown field of `llm`, `llm` beside another body, and the errors of
+[chunks](#chunks) are reported with the JSON Pointer of the field, by
+`smock check`, at startup and on a reload, which keeps the set served, and
+as 400 `invalid_stub` for an Ephemeral Stub.
 
 The wire forms follow the vendors' documents as they were read on
 2026-10-22 and 2026-10-23. When a vendor changes its documented form, a
@@ -1313,11 +1315,11 @@ every chunk carries the reply's id, `created` and model. In order:
 4. `data: [DONE]`.
 
 There is no `obfuscation` field, no `system_fingerprint` and no SSE comment
-line. The text is cut into pieces of 4 code points, the last one shorter.
-The pieces join to exactly the text, and a piece never splits a code point,
-so every `data:` line is valid UTF-8. A piece may split a character made of
-several code points, such as a flag. Empty text sends the opening and
-closing chunks only.
+line. The text is cut into pieces of 4 code points, the last one shorter,
+unless `chunkSize` or `chunks` says otherwise ([Chunks](#chunks)). The
+pieces join to exactly the text, and a piece never splits a code point, so
+every `data:` line is valid UTF-8. Empty text sends the opening and closing
+chunks only.
 
 For the Stub above, a request for `gpt-6-astra` with `stream: true` gets
 this stream, which `smock render` shows with the same seed and time:
@@ -1354,6 +1356,58 @@ A stream travels as the events of an `events` response do:
   `reset` and `close` are unchanged.
 - The stream's [Journal](../README.md#the-journal) entry is committed
   before its last event, as for `events`.
+
+### Chunks
+
+A stream sends the text in pieces, one chunk each. Two fields choose the
+pieces, so a test can stream one code point at a time, or place a split
+exactly where its parser might fail:
+
+- `chunkSize` sets how many code points each piece holds: an integer from
+  1 to 1,000,000, 4 by default. The last piece is shorter, and a size
+  above the text's length sends the text as one piece.
+- `chunks` gives the pieces themselves, in place of `text`: a list of at
+  least one text. Each element is one piece, sent as its own chunk even
+  when it is empty. The text is their join, which the JSON reply carries.
+  `chunkSize` does not apply to `chunks`.
+
+```yaml
+- id: one-at-a-time
+  mock: openai
+  request:
+    method: POST
+    path: /v1/chat/completions
+    headers: { X-Test-Case: one-at-a-time }
+  response:
+    status: 200
+    llm: { api: openai-chat, text: 晴れです。, chunkSize: 1 }
+- id: split-emoji
+  mock: openai
+  request:
+    method: POST
+    path: /v1/chat/completions
+    headers: { X-Test-Case: split-emoji }
+  response:
+    status: 200
+    llm:
+      api: openai-chat
+      chunks: ["Thumbs up: ", "", "👍", "🏽"]
+```
+
+The first Stub streams the content pieces `"晴"`, `"れ"`, `"で"`, `"す"`
+and `"。"`. The second streams `"Thumbs up: "`, `""`, `"👍"` and `"🏽"`,
+and its JSON reply's content is `"Thumbs up: 👍🏽"`.
+
+- A piece never splits a code point, so every `data:` line is valid UTF-8,
+  whatever the size. Pieces are counted in code points, not in characters
+  as they show, so a piece may split a character made of several code
+  points, such as a flag or an emoji with a skin tone. With `chunks`, a
+  split can go between any two code points.
+- An empty element of `chunks` is a piece like any other: it is sent as a
+  chunk whose content is `""`.
+- `text` beside `chunks`, an empty `chunks`, an element that is not a
+  string, and a `chunkSize` that is not an integer from 1 to 1,000,000 are
+  load errors.
 
 ### Paths and compatible endpoints
 

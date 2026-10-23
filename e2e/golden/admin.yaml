@@ -804,6 +804,9 @@ stubs:
               llm:
                 api: openai-chat
                 text: ""
+                chunks:
+                  - string
+                chunkSize: 4
             responses:
               - weight: 1
                 status: 200
@@ -821,6 +824,9 @@ stubs:
                 llm:
                   api: openai-chat
                   text: ""
+                  chunks:
+                    - string
+                  chunkSize: 4
             variables: {}
             dataWrites:
               - op: set
@@ -969,6 +975,9 @@ stubs:
             llm:
               api: openai-chat
               text: ""
+              chunks:
+                - string
+              chunkSize: 4
           responses:
             - weight: 1
               status: 200
@@ -986,6 +995,9 @@ stubs:
               llm:
                 api: openai-chat
                 text: ""
+                chunks:
+                  - string
+                chunkSize: 4
           variables: {}
           dataWrites:
             - op: set

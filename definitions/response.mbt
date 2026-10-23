@@ -409,8 +409,9 @@ fn File::read_events(
 
 ///|
 /// Reads the `llm` of a response: `api`, which names the API whose wire
-/// form the reply takes, and `text`, empty when left out. It has none when
-/// `api` is missing or names no API.
+/// form the reply takes; `text`, empty when left out, or `chunks`, its
+/// pieces, in its place; and `chunkSize`, the code points of each piece
+/// cut from `text`. It has none when `api` is missing or names no API.
 fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
   guard json is Object(fields) else {
     self.error(pointer, "must be an object")
@@ -418,6 +419,8 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
   }
   let mut api = None
   let mut text = ""
+  let mut chunks = None
+  let mut chunk_size = None
   for key, value in fields {
     let field = child_pointer(pointer, key)
     match key {
@@ -427,10 +430,50 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
           Err(message) => self.error(field, message)
         }
       "text" => text = self.string(field, value).unwrap_or("")
+      "chunks" => chunks = Some(self.read_chunks(field, value))
+      "chunkSize" =>
+        chunk_size = self
+          .read_integer(
+            field,
+            value,
+            min=1L,
+            max=@llm.max_chunk_size.to_int64(),
+          )
+          .map(n => n.to_int())
       _ => self.unknown_field(field)
     }
   }
   self.require(fields, pointer, "api")
+  if fields.contains("text") && fields.contains("chunks") {
+    self.error(pointer, "has \"text\" and \"chunks\"; give at most one of them")
+  }
   guard api is Some(api) else { return None }
-  Some({ declaration: @llm.Declaration(api~), strings: @llm.Strings(text~), })
+  Some({
+    declaration: @llm.Declaration(api~, chunk_size?),
+    strings: match chunks {
+      Some(chunks) => @llm.Strings(chunks~)
+      None => @llm.Strings(text~)
+    },
+  })
+}
+
+///|
+/// Reads the `chunks` of an `llm`: a list of at least one text, each one
+/// piece of the reply's text, an empty one included.
+fn File::read_chunks(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> ReadOnlyArray[String] {
+  let items = self.array(pointer, json)
+  if json is Array([]) {
+    self.error(pointer, "must not be an empty array")
+  }
+  let chunks = []
+  for i, item in items {
+    chunks.push(
+      self.string(child_pointer(pointer, i.to_string()), item).unwrap_or(""),
+    )
+  }
+  ReadOnlyArray::from_array(chunks)
 }
