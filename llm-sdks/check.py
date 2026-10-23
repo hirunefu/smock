@@ -99,6 +99,12 @@ CHAT_ERROR = {
     "param": None,
     "code": None,
 }
+RESPONSES_ERROR = {
+    "type": "error",
+    "code": "server_error",
+    "message": "The server had an error while processing your request. Sorry about that!",
+    "param": None,
+}
 
 # The stop sequences an application gives the Messages API, and the stop
 # details of a refusal: its type, category and explanation.
@@ -947,6 +953,48 @@ def responses_incomplete(checks, smock):
                       message="Didn't receive a `response.completed` event.")
 
 
+def check_error_event(checks, name, events):
+    """Checks that a Responses stream that an error cuts ends with the
+    error, yielded as a ResponseErrorEvent with the error's members and the
+    next sequence number, after the opening events, the message item's
+    opening events and the deltas of the text before the cut."""
+    last = events[-1] if events else None
+    checks.equal(f"{name}: the last event is a ResponseErrorEvent", type(last),
+                 openai.types.responses.ResponseErrorEvent)
+    checks.equal(f"{name}: the error event", last and last.model_dump(),
+                 {**RESPONSES_ERROR, "sequence_number": len(events) - 1})
+    checks.equal(f"{name}: the sequence numbers", [event.sequence_number for event in events],
+                 list(range(len(events))))
+    checks.equal(f"{name}: the events before it, each kind once",
+                 list(dict.fromkeys(event.type for event in events[:-1])),
+                 ["response.created", "response.in_progress", "response.output_item.added",
+                  "response.content_part.added", "response.output_text.delta"])
+    checks.equal(f"{name}: the text before it", streamed_text(events), ERROR_TEXT[:ERROR_AFTER])
+
+
+def responses_error(checks, smock):
+    """Responses, a stream cut by a mid-stream error: create() with stream
+    and the stream() helper yield the error event and raise nothing, the
+    helper's get_final_response() then raises RuntimeError, and create()
+    without stream gets the whole reply."""
+    client = smock.openai()
+    name = "responses-error: create(stream=True)"
+    _, events = responses_stream(client, "responses-error")
+    check_error_event(checks, name, events)
+
+    name = "responses-error: stream()"
+    with client.responses.stream(model="responses-error", input=MESSAGES) as stream:
+        events = list(stream)
+        check_error_event(checks, name, events)
+        checks.raises(f"{name}: get_final_response() raises RuntimeError", RuntimeError, stream.get_final_response,
+                      message="Didn't receive a `response.completed` event.")
+
+    name = "responses-error: create"
+    reply = responses_create(client, "responses-error")
+    checks.equal(f"{name}: the status", (reply.status, reply.incomplete_details), ("completed", None))
+    checks.equal(f"{name}: the whole text, as output_text joins it", reply.output_text, ERROR_TEXT)
+
+
 def messages_create(client, model, **options):
     return client.messages.create(model=model, max_tokens=MAX_TOKENS, messages=MESSAGES, **options)
 
@@ -1264,7 +1312,7 @@ def messages_broken_arguments(checks, smock):
 # case whose SDK raises unexpectedly fails without stopping the others.
 CASES = [
     chat_text, chat_tools, chat_call_only, chat_length, chat_error,
-    responses_text, responses_tools, responses_incomplete,
+    responses_text, responses_tools, responses_incomplete, responses_error,
     messages_text, messages_tools, messages_call_only, messages_stop_sequence, messages_refusal,
     messages_broken_arguments,
 ]

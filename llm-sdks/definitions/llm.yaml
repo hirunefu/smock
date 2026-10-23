@@ -161,6 +161,23 @@ stubs:
         usage: { input: 31, output: 5 }
         stopReason: max_output_tokens
 
+  # Responses: chat-error's Stub, with the code in place of the type.
+  - id: responses-error
+    mock: llm
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { model: responses-error } }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        text: Hello! How can I assist you today?
+        error:
+          after: 5
+          code: server_error
+          message: The server had an error while processing your request. Sorry about that!
+
   # Anthropic Messages: text only, with every id generated. The text is
   # chat-text's, cut the same way.
   - id: messages-text
