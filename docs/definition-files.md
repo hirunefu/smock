@@ -2786,6 +2786,124 @@ The first reply has no text, so its function call item is `output[0]`.
 The second request's last item is the call's output, so `answer-weather`
 answers it.
 
+#### Responses follow-ups
+
+A Responses request can name an earlier Response with
+`previous_response_id`, and send only the new items. The vendor then
+reads the earlier turns from its store. smock keeps no Responses state:
+it only copies `previous_response_id` into the reply. A follow-up is an
+ordinary request, so a body condition on `previous_response_id` answers
+it. When the first reply's `id` is fixed, the follow-up can name it:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { previous_response_id: { $exists: false } } }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        id: resp_weather
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+  - id: answer-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { previous_response_id: resp_weather } }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-responses
+        text: It is ${last(body.input).output} in Paris.
+  - id: get-weather
+    mock: openai
+    request: { method: GET, path: /v1/responses/resp_weather }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        id: resp_weather
+        model: gpt-6-astra
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+```
+
+```python
+first = client.responses.create(model="gpt-6-astra", input="Weather in Paris?")
+call = first.output[0]
+second = client.responses.create(
+    model="gpt-6-astra",
+    previous_response_id=first.id,
+    input=[{"type": "function_call_output", "call_id": call.call_id, "output": "18°C"}],
+)
+print(second.output_text)  # It is 18°C in Paris.
+print(second.previous_response_id)  # resp_weather
+print(client.responses.retrieve(first.id).output[0].name)  # get_weather
+```
+
+- The follow-up sends only the call's output, so its last item is that
+  output, and the template quotes it as in the loop above.
+- A follow-up of another id matches no Stub, and gets the Mock's
+  [`noMatch` reply](#when-no-stub-matches).
+- `client.responses.retrieve()` sends `GET /v1/responses/{id}`. smock
+  does not store the first reply, so an ordinary Stub answers it. This one
+  gives the same `id` and tool call. A GET has no body, so it gets the JSON
+  reply, and its Stub gives `model`, which no request names. Its
+  `created_at` and the ids it does not fix are new.
+
+When the first reply's id is generated, a follow-up cannot name it. Then
+`previous_response_id: { $exists: true }` answers any follow-up, and a
+[Scenario](#scenarios) tells which turn it follows:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { previous_response_id: { $exists: false } } }
+    scenario: { name: weather, moveTo: Asked }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+  - id: answer-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { previous_response_id: { $exists: true } } }
+    scenario: { name: weather, requires: Asked, moveTo: Answered }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-responses
+        text: It is ${last(body.input).output} in Paris.
+```
+
+The same agent gets the same answer. A follow-up before the question, or
+after the answer, matches no Stub, since `answer-weather` requires
+`Asked`. A Stub that requires `Answered` would answer the next turn, as
+[Conversations of several turns](#conversations-of-several-turns) shows.
+
 ### Paths and compatible endpoints
 
 The preset neither sets nor checks `request.path`. A Stub's conditions
