@@ -17,7 +17,8 @@ priv enum ByteRange {
 }
 
 ///|
-/// The plan of `response`, a response that serves byte ranges, for
+/// The plan of a response that serves byte ranges, `status` with the
+/// header fields `headers` and the bytes of its body file `bytes`, for
 /// `request`:
 ///
 /// - a GET for one satisfiable byte range gets 206, `Content-Range` and
@@ -28,21 +29,16 @@ priv enum ByteRange {
 ///   with 200.
 ///
 /// The 200 and the 206 carry `Accept-Ranges: bytes`, and every one keeps
-/// the response's headers before the fields it adds. A request with any
-/// other method gets the response as written.
+/// the response's headers before the fields it adds, for which `headers`
+/// has room. A request with any other method gets the response as written.
 fn range_response(
-  response : @definitions.Response,
+  status : Int,
+  headers : Array[(String, String)],
+  bytes : Bytes,
   request : Request,
 ) -> ResponsePlan {
-  guard response.body is Bytes(bytes) && request.meth is ("GET" | "HEAD") else {
-    return stub_response(response)
-  }
-  let given = response.headers
-  // Room for Content-Range, Accept-Ranges and the Smock-Mock field the
-  // Default Mock adds.
-  let headers = Array(capacity=given.length() + 3)
-  for i in 0..<given.length() {
-    headers.push(given[i])
+  guard request.meth is ("GET" | "HEAD") else {
+    return { status, headers, body: Bytes(bytes), delay_ms: 0, fault: None, }
   }
   // RFC 9110 defines range handling for GET only, so a HEAD ignores
   // Range. An empty body has no range to send.
@@ -52,7 +48,8 @@ fn range_response(
   } else {
     Whole
   }
-  let mut status = 200
+  // A response that serves byte ranges has status 200.
+  let mut status = status
   let mut body : BytesView = bytes
   match range {
     Whole => headers.push(("Accept-Ranges", "bytes"))

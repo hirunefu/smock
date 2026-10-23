@@ -98,9 +98,8 @@ fn File::read_response(
     self.error(pointer, "must be an object")
     return {
       status,
-      headers: ReadOnlyArray::from_array([]),
+      headers: Written(ReadOnlyArray::from_array([])),
       body: Bytes(b""),
-      template: None,
       serves_ranges: false,
       reads_variables: false,
       reads_data: false,
@@ -140,75 +139,80 @@ fn File::read_response(
     !headers.iter().any(header => header.0.to_lower() == "content-type") {
     headers.push(("Content-Type", "application/json", pointer))
   }
-  let static_headers = ReadOnlyArray::from_iter(
-    headers.iter().map(header => (header.0, header.1)),
-  )
-  if template {
-    let template = self.parse_templates(stub_pointer, headers, body, buckets~)
-    return {
-      status,
-      headers: static_headers,
-      body: Bytes(b""),
-      template,
-      serves_ranges: false,
-      reads_variables: template is Some(template) && template.reads_variables(),
-      reads_data: template is Some(template) && template.reads_data(),
+  let (headers, body, serves_ranges) = if template {
+    // Templates that fail to parse are reported, and the set is not loaded,
+    // so the response they leave is never sent.
+    match self.parse_templates(stub_pointer, headers, body, buckets~) {
+      Some((headers, body)) => (Templated(headers), Template(body), false)
+      None => (Written(ReadOnlyArray::from_array([])), Bytes(b""), false)
     }
-  }
-  // A 200 from a body file, without templates, serves byte ranges, unless
-  // its headers give Content-Range or Accept-Ranges themselves.
-  let serves_ranges = status == 200 &&
-    body is File(_, _) &&
-    !headers
-    .iter()
-    .any(header => header.0.to_lower() is ("content-range" | "accept-ranges"))
-  let body : ResponseBody = match body {
-    NoBody => Bytes(b"")
-    Inline(_, text) => Bytes(@utf8.encode(text))
-    File(_, bytes) => Bytes(bytes)
-    JsonBody(_, value) => Bytes(@template.compact_json_bytes(value))
-    EventList(events) =>
-      Events(
-        ReadOnlyArray::from_iter(
-          events
-          .iter()
-          .map(event => SseEvent::{
-            delay_ms: event.delay_ms,
-            event: event.event.map(field => field.0),
-            id: event.id.map(field => field.0),
-            data: match event.data {
-              NoData => ""
-              Data(_, data) => data
-              JsonData(_, value) => @template.compact_json(value)
-            },
-          }),
-        ),
-      )
+  } else {
+    let written = ReadOnlyArray::from_iter(
+      headers.iter().map(header => (header.0, header.1)),
+    )
+    // A 200 from a body file, without templates, serves byte ranges, unless
+    // its headers give Content-Range or Accept-Ranges themselves.
+    let from_file = match body {
+      File(_, _) => true
+      NoBody | Inline(_, _) | JsonBody(_, _) | EventList(_) => false
+    }
+    let serves_ranges = status == 200 &&
+      from_file &&
+      !headers
+      .iter()
+      .any(header => header.0.to_lower() is ("content-range" | "accept-ranges"))
+    let body : ResponseBody = match body {
+      NoBody => Bytes(b"")
+      Inline(_, text) => Bytes(@utf8.encode(text))
+      File(_, bytes) => Bytes(bytes)
+      JsonBody(_, value) => Bytes(@template.compact_json_bytes(value))
+      EventList(events) =>
+        Events(
+          ReadOnlyArray::from_iter(
+            events
+            .iter()
+            .map(event => SseEvent::{
+              delay_ms: event.delay_ms,
+              event: event.event.map(field => field.0),
+              id: event.id.map(field => field.0),
+              data: match event.data {
+                NoData => ""
+                Data(_, data) => data
+                JsonData(_, value) => @template.compact_json(value)
+              },
+            }),
+          ),
+        )
+    }
+    (Written(written), body, serves_ranges)
   }
   {
     status,
-    headers: static_headers,
+    headers,
     body,
-    template: None,
     serves_ranges,
-    reads_variables: false,
-    reads_data: false,
+    reads_variables: headers.reads(@template.Text::reads_vars) ||
+    body.reads(@template.Text::reads_vars, @template.Structured::reads_vars),
+    reads_data: headers.reads(@template.Text::reads_data) ||
+    body.reads(@template.Text::reads_data, @template.Structured::reads_data),
   }
 }
 
 ///|
 /// Parses the templates of a response with `template` on, from its header
 /// fields as (name, value, JSON Pointer) and its body, and reports every
-/// problem in them. `stub_pointer` is the JSON Pointer of the Stub: a
-/// template's own pointer is within the Stub. The templates may read the
-/// Data buckets `buckets`.
+/// problem in them. Returns the header fields, their values text
+/// templates, and the body's templates, or `None` when one of them has a
+/// problem. `stub_pointer` is the JSON Pointer of the Stub: a template's own
+/// pointer is within the Stub. The templates may read the Data buckets
+/// `buckets`.
 fn File::parse_templates(
   self : File,
   stub_pointer : String,
   headers : Array[(String, String, String)],
   body : BodyField,
   buckets~ : @template.Buckets,
-) -> ResponseTemplate? {
+) -> (ReadOnlyArray[(String, @template.Text)], BodyTemplate)? {
   let mut ok = true
   let report = (problem : @template.Problem) => {
     self.report_template_problem(stub_pointer, problem)
@@ -322,7 +326,7 @@ fn File::parse_templates(
     }
   }
   guard ok && body is Some(body) else { return None }
-  Some({ headers: ReadOnlyArray::from_array(header_templates), body, })
+  Some((ReadOnlyArray::from_array(header_templates), body))
 }
 
 ///|
