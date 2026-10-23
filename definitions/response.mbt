@@ -414,8 +414,9 @@ fn File::read_events(
 /// from `text` or from a tool call's arguments; `toolCalls`, none when left
 /// out; the reply's `id` and `model`, generated and the request's when left
 /// out; `usage`, 0 tokens when left out; `stopReason`, a word of that API,
-/// derived when left out; and `timing`, no waits when left out. It has none
-/// when `api` is missing or names no API, and then the stop reason is not
+/// derived when left out; `timing`, no waits when left out; and `error`, a
+/// mid-stream error, none when left out. It has none when `api` is missing
+/// or names no API, and then neither the stop reason nor the error is
 /// checked.
 fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
   guard json is Object(fields) else {
@@ -454,8 +455,8 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
       "id" => id = self.string(field, value)
       "model" => model = self.string(field, value)
       "usage" => usage = self.read_usage(field, value)
-      // Checked below, against the API, which may come after it.
-      "stopReason" => ()
+      // Checked below, against the API, which may come after them.
+      "stopReason" | "error" => ()
       "timing" => timing = self.read_llm_timing(field, value)
       _ => self.unknown_field(field)
     }
@@ -476,12 +477,109 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
       }
     None => None
   }
-  Some({
-    declaration: @llm.Declaration(api~, chunk_size?, usage~, stop_reason?),
+  let mut error = None
+  let mut error_message = ""
+  if fields.get("error") is Some(value) {
     // With `chunks`, the text is their join, in place of `text`.
-    strings: @llm.Strings(text~, chunks?, id?, model?, tool_calls?),
+    let whole = match chunks {
+      Some(chunks) => chunks.join("")
+      None => text
+    }
+    if self.read_llm_error(api, child_pointer(pointer, "error"), value, whole)
+      is Some((declared, message)) {
+      error = Some(declared)
+      error_message = message
+    }
+  }
+  Some({
+    declaration: @llm.Declaration(
+      api~,
+      chunk_size?,
+      usage~,
+      stop_reason?,
+      error?,
+    ),
+    // With `chunks`, the text is their join, in place of `text`.
+    strings: @llm.Strings(
+      text~,
+      chunks?,
+      id?,
+      model?,
+      tool_calls?,
+      error_message~,
+    ),
     timing,
   })
+}
+
+///|
+/// Reads the `error` of an `llm` whose API is `api` and whose text, as
+/// written, is `text`: `after`, the code points of the text before the
+/// error, from 0, by default 0, and not past the end of the text; `type`, or
+/// `code` for `openai-responses`, checked with the API's vocabulary; and
+/// `message`, non-empty text. The other one of `type` and `code` is
+/// refused with a message that names the member to give in its place, so
+/// that the load error points at the member to rewrite when `api` changes.
+/// It has none when a member is missing or refused.
+fn File::read_llm_error(
+  self : File,
+  api : @llm.Api,
+  pointer : String,
+  json : Json,
+  text : String,
+) -> (@llm.MidStreamError, String)? {
+  guard json is Object(fields) else {
+    self.error(pointer, "must be an object")
+    return None
+  }
+  let kind_member = @llm.error_kind_member(api)
+  let mut after = Some(0)
+  let mut kind = None
+  let mut message = None
+  let mut valid = true
+  for key, value in fields {
+    let field = child_pointer(pointer, key)
+    match key {
+      "after" => {
+        after = self
+          .read_integer(field, value, min=0L, max=@int.MAX_VALUE.to_int64())
+          .map(n => n.to_int())
+        if after is Some(after) &&
+          @llm.check_error_after(after, text) is Err(problem) {
+          self.error(field, problem)
+          valid = false
+        }
+      }
+      "type" | "code" if key == kind_member =>
+        match @llm.read_error_kind(api, value) {
+          Ok(written) => kind = Some(written)
+          Err(problem) => self.error(field, problem)
+        }
+      "type" | "code" => {
+        self.error(
+          field,
+          "is not a field of an \{api.name()} error; give \"\{kind_member}\" in its place",
+        )
+        valid = false
+      }
+      "message" => message = self.name(field, value)
+      _ => {
+        self.unknown_field(field)
+        valid = false
+      }
+    }
+  }
+  // A member given under the other name is reported above, with the one
+  // to give.
+  if !fields.contains("type") && !fields.contains("code") {
+    self.require(fields, pointer, kind_member)
+  }
+  self.require(fields, pointer, "message")
+  match (after, kind, message) {
+    (Some(after), Some(kind), Some(message)) if valid =>
+      Some((@llm.MidStreamError(after~, kind~), message))
+    _ => None
+  }
 }
 
 ///|

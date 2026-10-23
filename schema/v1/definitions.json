@@ -607,7 +607,7 @@
           "additionalProperties": false
         },
         "stopReason": {
-          "description": "The stop reason, in the word of the API that api names, whatever the reply's content. For openai-chat, the finish_reason stop, length, tool_calls, content_filter or function_call (deprecated); left out, it is derived: tool_calls when toolCalls gives a call, and stop otherwise. For openai-responses, an incomplete reason, max_output_tokens, max_messages, content_filter or steered, which makes the reply incomplete; left out, the reply is completed. For anthropic-messages, the stop_reason end_turn, max_tokens, stop_sequence, tool_use, pause_turn, refusal or model_context_window_exceeded; with stop_sequence, the reply's stop_sequence is the first of the request's stop_sequences when that is a string, and otherwise null, and a refusal carries stop_details; left out, it is derived: end_turn.",
+          "description": "The stop reason, in the word of the API that api names, whatever the reply's content. For openai-chat, the finish_reason stop, length, tool_calls, content_filter or function_call (deprecated); left out, it is derived: tool_calls when toolCalls gives a call, and stop otherwise. For openai-responses, an incomplete reason, max_output_tokens, max_messages, content_filter or steered, which makes the reply incomplete and ends a stream with response.incomplete; left out, the reply is completed. For anthropic-messages, the stop_reason end_turn, max_tokens, stop_sequence, tool_use, pause_turn, refusal or model_context_window_exceeded; with stop_sequence, the reply's stop_sequence is the first of the request's stop_sequences when that is a string, and otherwise null, and a refusal carries stop_details; left out, it is derived: end_turn.",
           "enum": [
             "stop", "length", "tool_calls", "content_filter", "function_call",
             "max_output_tokens", "max_messages", "steered",
@@ -615,7 +615,7 @@
           ]
         },
         "timing": {
-          "description": "The pacing of the stream. smock writes the head and the events before the first piece at once, waits first before the first event that carries a piece, counted from the head, and interval before each later one; other events follow the one before them at once. A reply with no piece waits first before its closing events. Each wait is drawn on its own from the Stub's random source, so fault.seed and --seed repeat them. A JSON reply is written at once. A delay Fault still holds back the status line, before these waits. Default: no waits.",
+          "description": "The pacing of the stream. smock writes the head and the events before the first piece at once, waits first before the first event that carries a piece, counted from the head, and interval before each later one; other events follow the one before them at once. A reply with no piece waits first before its closing events. Each wait is drawn on its own from the Stub's random source, so fault.seed and --seed repeat them. In an openai-responses stream, the completed_at of response.completed is the time received plus these waits. A JSON reply is written at once. A delay Fault still holds back the status line, before these waits. Default: no waits.",
           "type": "object",
           "properties": {
             "first": {
@@ -628,12 +628,42 @@
             }
           },
           "additionalProperties": false
+        },
+        "error": {
+          "description": "A mid-stream error: a streamed request gets the reply's opening events, the text up to after code points, then the API's own error in place of the rest, with no tool call, closing event or end marker. For openai-chat it is a data frame {\"error\":{\"message\",\"type\",\"param\":null,\"code\":null}}, which openai-python raises as APIError. Give type for openai-chat and anthropic-messages, and code for openai-responses. A request that does not stream gets the ordinary reply. Default: none.",
+          "type": "object",
+          "properties": {
+            "after": {
+              "description": "How many code points of the text the stream sends before the error, counted in code points so that the cut stays put when the pieces change: the piece that holds the cut ends there, and an empty element of chunks counts 0. It may not pass the end of the text. Default 0.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647,
+              "default": 0
+            },
+            "type": {
+              "description": "The error's type, sent as written: for openai-chat any non-empty string, such as server_error; for anthropic-messages one of Anthropic's documented error types. Not for openai-responses, which gives code.",
+              "type": "string",
+              "minLength": 1
+            },
+            "code": {
+              "description": "The error's code, for openai-responses only, sent as written: any non-empty string, such as server_error.",
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "description": "The error's message, sent as written.",
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["message"],
+          "additionalProperties": false
         }
       },
       "required": ["api"],
       "allOf": [
         {
-          "description": "openai-chat takes the stop reasons of Chat Completions only.",
+          "description": "openai-chat takes the stop reasons of Chat Completions only, and an error with type.",
           "if": {
             "properties": { "api": { "description": "OpenAI Chat Completions.", "const": "openai-chat" } },
             "required": ["api"]
@@ -643,12 +673,17 @@
               "stopReason": {
                 "description": "A finish_reason of Chat Completions.",
                 "enum": ["stop", "length", "tool_calls", "content_filter", "function_call"]
+              },
+              "error": {
+                "description": "A Chat Completions error gives type, not code.",
+                "properties": { "code": false },
+                "required": ["type"]
               }
             }
           }
         },
         {
-          "description": "openai-responses takes the incomplete reasons of OpenAI Responses only.",
+          "description": "openai-responses takes the incomplete reasons of OpenAI Responses only, and an error with code.",
           "if": {
             "properties": { "api": { "description": "OpenAI Responses.", "const": "openai-responses" } },
             "required": ["api"]
@@ -658,12 +693,17 @@
               "stopReason": {
                 "description": "An incomplete reason of OpenAI Responses.",
                 "enum": ["max_output_tokens", "max_messages", "content_filter", "steered"]
+              },
+              "error": {
+                "description": "A Responses error gives code, not type.",
+                "properties": { "type": false },
+                "required": ["code"]
               }
             }
           }
         },
         {
-          "description": "anthropic-messages takes the stop reasons of Anthropic Messages only.",
+          "description": "anthropic-messages takes the stop reasons of Anthropic Messages only, and an error with one of its documented error types.",
           "if": {
             "properties": { "api": { "description": "Anthropic Messages.", "const": "anthropic-messages" } },
             "required": ["api"]
@@ -673,6 +713,17 @@
               "stopReason": {
                 "description": "A stop_reason of Anthropic Messages.",
                 "enum": ["end_turn", "max_tokens", "stop_sequence", "tool_use", "pause_turn", "refusal", "model_context_window_exceeded"]
+              },
+              "error": {
+                "description": "An Anthropic Messages error gives type, not code.",
+                "properties": {
+                  "type": {
+                    "description": "One of Anthropic's documented error types.",
+                    "enum": ["invalid_request_error", "authentication_error", "billing_error", "permission_error", "not_found_error", "conflict_error", "request_too_large", "rate_limit_error", "api_error", "timeout_error", "overloaded_error"]
+                  },
+                  "code": false
+                },
+                "required": ["type"]
               }
             }
           }

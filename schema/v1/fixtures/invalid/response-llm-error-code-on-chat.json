@@ -1,0 +1,13 @@
+{
+  "mocks": [{ "name": "openai" }],
+  "stubs": [
+    {
+      "id": "chat",
+      "mock": "openai",
+      "response": {
+        "status": 200,
+        "llm": { "api": "openai-chat", "text": "Hello.", "error": { "code": "server_error", "message": "Overloaded" } }
+      }
+    }
+  ]
+}
