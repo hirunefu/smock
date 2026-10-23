@@ -77,6 +77,65 @@ test "any other request gets the JSON reply: stream false, the string \"true\", 
 }
 
 ///|
+/// A Mock `openai` with a Stub whose LLM response declares usage and a
+/// stop reason, its own seed fixing its ids.
+let usage_mock : (String, String) = (
+  "openai.json",
+  (
+    #|{ "mocks": [{ "name": "openai", "hosts": ["api.openai.test"] }],
+    #|  "stubs": [{ "id": "chat", "mock": "openai",
+    #|    "request": { "method": "POST", "path": "/v1/chat/completions" },
+    #|    "response": { "status": 200,
+    #|      "llm": { "api": "openai-chat", "text": "Hi",
+    #|        "usage": { "input": 31, "output": 18 }, "stopReason": "length" } },
+    #|    "fault": { "seed": 7 } }] }
+  ),
+)
+
+///|
+test "a stream whose request sets stream_options.include_usage gets the Stub's usage in a last chunk before [DONE], and usage: null on every other chunk" {
+  let h = harness([usage_mock])
+  let body = "{\"model\":\"test-model\",\"stream\":true,\"stream_options\":{\"include_usage\":true}}"
+  inspect(
+    response(h.chat(body~)),
+    content=(
+      #|200
+      #|Content-Type: text/event-stream
+      #|after 0 ms: event -, id -, data "{\"id\":\"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl\",\"object\":\"chat.completion.chunk\",\"created\":1791815405,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}"
+      #|after 0 ms: event -, id -, data "{\"id\":\"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl\",\"object\":\"chat.completion.chunk\",\"created\":1791815405,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}"
+      #|after 0 ms: event -, id -, data "{\"id\":\"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl\",\"object\":\"chat.completion.chunk\",\"created\":1791815405,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{},\"logprobs\":null,\"finish_reason\":\"length\"}],\"usage\":null}"
+      #|after 0 ms: event -, id -, data "{\"id\":\"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl\",\"object\":\"chat.completion.chunk\",\"created\":1791815405,\"model\":\"test-model\",\"choices\":[],\"usage\":{\"prompt_tokens\":31,\"completion_tokens\":18,\"total_tokens\":49,\"prompt_tokens_details\":{\"cached_tokens\":0,\"audio_tokens\":0},\"completion_tokens_details\":{\"reasoning_tokens\":0,\"audio_tokens\":0,\"accepted_prediction_tokens\":0,\"rejected_prediction_tokens\":0}}}"
+      #|after 0 ms: event -, id -, data "[DONE]"
+      #|
+    ),
+  )
+}
+
+///|
+test "the JSON reply carries the Stub's usage and stop reason, and a stream that does not ask for usage has no usage member" {
+  let h = harness([usage_mock])
+  let json = h.chat()
+  let stream = h.chat(body=stream_body("true"))
+  guard stream.plan.body is Events(events) else { fail("not a stream") }
+  let finish_reason = match body_value(json) {
+    { "choices": [{ "finish_reason": String(reason), .. }], .. } => reason
+    _ => "none"
+  }
+  inspect(
+    [
+      "usage: \{body_member(json, "usage")}",
+      "finish_reason: \{finish_reason}",
+      "stream chunks with usage: \{events.filter(event => event.data.contains("usage")).length()} of \{events.length()} events",
+    ].join("\n"),
+    content=(
+      #|usage: {"prompt_tokens":31,"completion_tokens":18,"total_tokens":49,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}}
+      #|finish_reason: length
+      #|stream chunks with usage: 0 of 4 events
+    ),
+  )
+}
+
+///|
 test "with a partial Fault and a delay, the engine plans every event, or the whole JSON body, with the Fault and the delay" {
   let h = harness([
     (

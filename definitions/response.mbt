@@ -409,8 +409,10 @@ fn File::read_events(
 
 ///|
 /// Reads the `llm` of a response: `api`, which names the API whose wire
-/// form the reply takes, and `text`, empty when left out. It has none when
-/// `api` is missing or names no API.
+/// form the reply takes, `text`, empty when left out, `usage`, 0 tokens
+/// when left out, and `stopReason`, a word of that API, derived when left
+/// out. It has none when `api` is missing or names no API, and then the
+/// stop reason is not checked.
 fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
   guard json is Object(fields) else {
     self.error(pointer, "must be an object")
@@ -418,6 +420,7 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
   }
   let mut api = None
   let mut text = ""
+  let mut usage = @llm.Usage(input=0, output=0)
   for key, value in fields {
     let field = child_pointer(pointer, key)
     match key {
@@ -427,10 +430,57 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
           Err(message) => self.error(field, message)
         }
       "text" => text = self.string(field, value).unwrap_or("")
+      "usage" => usage = self.read_usage(field, value)
+      // Checked below, against the API, which may come after it.
+      "stopReason" => ()
       _ => self.unknown_field(field)
     }
   }
   self.require(fields, pointer, "api")
   guard api is Some(api) else { return None }
-  Some({ declaration: @llm.Declaration(api~), strings: @llm.Strings(text~), })
+  let stop_reason = match fields.get("stopReason") {
+    Some(value) =>
+      match @llm.read_stop_reason(api, value) {
+        Ok(reason) => Some(reason)
+        Err(message) => {
+          self.error(child_pointer(pointer, "stopReason"), message)
+          None
+        }
+      }
+    None => None
+  }
+  Some({
+    declaration: @llm.Declaration(api~, usage~, stop_reason?),
+    strings: @llm.Strings(text~),
+  })
+}
+
+///|
+/// Reads the `usage` of an `llm`: `input` and `output`, each a token count
+/// from 0 to `@llm.max_token_count`, 0 when left out or not one.
+fn File::read_usage(self : File, pointer : String, json : Json) -> @llm.Usage {
+  guard json is Object(fields) else {
+    self.error(pointer, "must be an object")
+    return @llm.Usage(input=0, output=0)
+  }
+  let mut input = 0L
+  let mut output = 0L
+  for key, value in fields {
+    let field = child_pointer(pointer, key)
+    match key {
+      "input" => input = self.read_token_count(field, value)
+      "output" => output = self.read_token_count(field, value)
+      _ => self.unknown_field(field)
+    }
+  }
+  @llm.Usage(input~, output~)
+}
+
+///|
+/// Reads a token count: an integer from 0 to `@llm.max_token_count`, or 0
+/// when it is not one.
+fn File::read_token_count(self : File, pointer : String, json : Json) -> Int64 {
+  self
+  .read_integer(pointer, json, min=0L, max=@llm.max_token_count)
+  .unwrap_or(0L)
 }
