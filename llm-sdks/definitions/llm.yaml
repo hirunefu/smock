@@ -2,15 +2,16 @@
 # calls each Stub through an official SDK, as applications call the API, and
 # checks what the SDK reads against what the Stub declares. Each Stub
 # answers one model, so the script picks a Stub by the model it asks for.
+# One Mock answers both vendors' SDKs, which tell their APIs apart by path.
 mocks:
-  - name: openai
+  - name: llm
 stubs:
   # Chat Completions: text only, with every id generated. In pieces of 4
   # code points, the text is "Hi! ", "こんにち", "は。 👋", "🏽 Ho" and so
   # on: one ends inside a Japanese word, and one between the two code
   # points of the emoji.
   - id: chat-text
-    mock: openai
+    mock: llm
     request:
       method: POST
       path: /v1/chat/completions
@@ -27,7 +28,7 @@ stubs:
   # ids included. The arguments nest an object and hold CJK text and a
   # number.
   - id: chat-tools
-    mock: openai
+    mock: llm
     request:
       method: POST
       path: /v1/chat/completions
@@ -52,7 +53,7 @@ stubs:
   # Chat Completions: one tool call and no text, so that content is null,
   # with every id generated.
   - id: chat-call-only
-    mock: openai
+    mock: llm
     request:
       method: POST
       path: /v1/chat/completions
@@ -69,7 +70,7 @@ stubs:
   # Chat Completions: a reply cut at the token limit, with a written stop
   # reason.
   - id: chat-length
-    mock: openai
+    mock: llm
     request:
       method: POST
       path: /v1/chat/completions
@@ -81,3 +82,18 @@ stubs:
         text: The weather in Paris is
         usage: { input: 31, output: 5 }
         stopReason: length
+
+  # Anthropic Messages: text only, with every id generated. The text is
+  # chat-text's, cut the same way.
+  - id: messages-text
+    mock: llm
+    request:
+      method: POST
+      path: /v1/messages
+      body: { json: { model: messages-text } }
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        text: "Hi! こんにちは。 👋🏽 How can I help?"
+        usage: { input: 23, output: 10 }

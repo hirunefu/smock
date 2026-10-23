@@ -1,11 +1,12 @@
 """The SDK job: reads smock's LLM responses with the official SDKs.
 
 It checks llm-sdks/definitions/ with `smock check`, serves it with the given
-smock binary, and calls each Stub through openai-python as applications call
-the API. Then it checks what the SDK reads: the text, the tool calls and
-their parsed arguments, usage, stop reasons, ids and the request id, and
-that the reply the SDK's stream helper builds from a stream equals the one
-it parses from the JSON reply, apart from differences listed by name.
+smock binary, and calls each Stub through openai-python or
+anthropic-sdk-python as applications call the API. Then it checks what the
+SDK reads: the text, the tool calls and their parsed arguments, usage, stop
+reasons, ids and the request id, and that the reply the SDK's stream helper
+builds from a stream equals the one it parses from the JSON reply, apart
+from differences listed by name.
 
 It uses only the SDKs and the standard library. Every client is built with
 max_retries=0, so that each call sends one request.
@@ -31,6 +32,7 @@ import traceback
 import urllib.request
 from pathlib import Path
 
+import anthropic
 import openai
 
 DEFINITIONS = Path(__file__).resolve().parent / "definitions"
@@ -41,14 +43,18 @@ START_TIMEOUT_S = 30
 STOP_TIMEOUT_S = 10
 CALL_TIMEOUT_S = 30
 
-# The conversation every call sends. The Stubs do not read it.
+# The conversation every call sends, and the max_tokens that the Messages
+# API requires. The Stubs do not read them.
 MESSAGES = [{"role": "user", "content": "Hello!"}]
+MAX_TOKENS = 1024
 
 # Generated ids: the vendor's prefix and 24 characters from A-Z, a-z and
 # 0-9.
 CHAT_ID = re.compile(r"chatcmpl-[A-Za-z0-9]{24}")
 CALL_ID = re.compile(r"call_[A-Za-z0-9]{24}")
 REQUEST_ID = re.compile(r"req_[A-Za-z0-9]{24}")
+MESSAGE_ID = re.compile(r"msg_[A-Za-z0-9]{24}")
+TOOL_USE_ID = re.compile(r"toolu_[A-Za-z0-9]{24}")
 
 # What the Stubs of definitions/llm.yaml declare, as the checks expect to
 # read it. Each Stub answers the model named as its id.
@@ -60,6 +66,7 @@ CHAT_TOOLS_CALLS = [
 ]
 CHAT_CALL_ONLY_CALL = ("get_weather", {"city": "Paris"})
 CHAT_LENGTH_TEXT = "The weather in Paris is"
+MESSAGES_TEXT = "Hi! こんにちは。 👋🏽 How can I help?"
 
 # The function tools an application gives the stream helper. With
 # "strict", the helper parses each call's arguments as JSON.
@@ -187,6 +194,13 @@ class Smock:
         the options say otherwise."""
         options = {"max_retries": 0, "timeout": CALL_TIMEOUT_S, **options}
         return openai.OpenAI(base_url=f"{self.url}/v1", api_key="test", **options)
+
+    def anthropic(self, **options):
+        """An anthropic-sdk-python client of this smock, with max_retries=0
+        unless the options say otherwise. Its base URL has no /v1, which
+        the SDK adds."""
+        options = {"max_retries": 0, "timeout": CALL_TIMEOUT_S, **options}
+        return anthropic.Anthropic(base_url=self.url, api_key="test", **options)
 
 
 class Checks:
@@ -504,9 +518,41 @@ def chat_length(checks, smock):
                   openai.LengthFinishReasonError, lambda: chat_helper(client, "chat-length"))
 
 
+def messages_create(client, model, **options):
+    return client.messages.create(model=model, max_tokens=MAX_TOKENS, messages=MESSAGES, **options)
+
+
+def check_messages_usage(checks, name, usage, input_tokens, output_tokens):
+    checks.equal(f"{name}: usage", None if usage is None else (usage.input_tokens, usage.output_tokens),
+                 (input_tokens, output_tokens))
+
+
+def blocks(message):
+    """The content blocks of a message, each as its type and what it
+    carries: the text, or the id, name and input of a tool use."""
+    return [(block.type, block.text) if block.type == "text" else (block.type, block.id, block.name, block.input)
+            for block in message.content]
+
+
+def messages_text(checks, smock):
+    """Anthropic Messages, text only, with generated ids: create() with and
+    without stream, and the stream() helper."""
+    client = smock.anthropic()
+    name = "messages-text: create"
+    reply = messages_create(client, "messages-text")
+    checks.equal(f"{name}: a message from the assistant", (reply.type, reply.role), ("message", "assistant"))
+    checks.equal(f"{name}: one text block", blocks(reply), [("text", MESSAGES_TEXT)])
+    checks.equal(f"{name}: the stop reason", (reply.stop_reason, reply.stop_sequence, reply.stop_details),
+                 ("end_turn", None, None))
+    check_messages_usage(checks, name, reply.usage, 23, 10)
+    checks.id(f"{name}: the id", reply.id, MESSAGE_ID)
+    checks.equal(f"{name}: the model", reply.model, "messages-text")
+    checks.id(f"{name}: the request id", reply._request_id, REQUEST_ID)
+
+
 # The cases, in the order they run. Each calls the Stubs it names, and a
 # case whose SDK raises unexpectedly fails without stopping the others.
-CASES = [chat_text, chat_tools, chat_call_only, chat_length]
+CASES = [chat_text, chat_tools, chat_call_only, chat_length, messages_text]
 
 
 def main():
@@ -515,7 +561,8 @@ def main():
         return 2
     binary = sys.argv[1]
     version = subprocess.run([binary, "--version"], capture_output=True, text=True).stdout.strip()
-    print(f"{version}; openai-python {openai.__version__}; Python {sys.version.split()[0]}", flush=True)
+    print(f"{version}; openai-python {openai.__version__}; anthropic-sdk-python {anthropic.__version__}; "
+          f"Python {sys.version.split()[0]}", flush=True)
     checks = Checks()
     check_definitions(checks, binary)
     with Smock(binary) as smock:
