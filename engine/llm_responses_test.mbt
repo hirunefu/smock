@@ -1,6 +1,7 @@
 // Seam 1 tests of OpenAI Responses replies: the plan of a Stub whose `llm`
 // names `openai-responses`, with its headers, ids and the settings it
-// copies from the request.
+// copies from the request, its stream with the stream's waits, and a
+// mid-stream error's `error` event.
 
 ///|
 /// A Mock `openai` with a Stub that answers Responses requests from an LLM
@@ -247,6 +248,65 @@ test "rendered with fixed waits, the Responses stream's completed_at follows the
     content=(
       #|delays 0 0 0 0 1500 250 250 0 0 0 0
       #|response.completed: created_at 1792713600, completed_at 1792713602
+    ),
+  )
+}
+
+///|
+test "a declared error ends the Responses stream with event: error, numbered next, which waits as a next piece would: first when no piece came before it, interval after one" {
+  let cut = (after : Int, timing : String) => {
+    let error = ", \"error\": { \"after\": \{after}, \"code\": \"server_error\", \"message\": \"Something went wrong\" }"
+    harness([paced_responses("Hi there!", error + timing)]).responses(
+      "{\"input\":\"Hello!\",\"stream\":true}",
+    )
+  }
+  // The head on the wire, then the last chunk before the end of the
+  // chunked stream: the error's.
+  let wire = on_the_wire(cut(2, ""), "POST").split("\n").collect()
+  let head_end = wire.search("").unwrap()
+  let error_at = wire.search("event: error").unwrap()
+  let shown = []
+  for i, line in wire {
+    if i <= head_end || i >= error_at - 1 {
+      shown.push(line.to_owned())
+    } else if i == head_end + 1 {
+      shown.push("…")
+    }
+  }
+  inspect(
+    [
+      responses_events(cut(0, fixed_timing)),
+      responses_events(cut(6, fixed_timing)),
+      shown.join("\n"),
+    ].join("\n---\n"),
+    content=(
+      #|0 response.created #0 in_progress null
+      #|0 response.in_progress #1 in_progress null
+      #|400 error #2
+      #|---
+      #|0 response.created #0 in_progress null
+      #|0 response.in_progress #1 in_progress null
+      #|0 response.output_item.added #2
+      #|0 response.content_part.added #3
+      #|400 response.output_text.delta #4 "Hi t"
+      #|30 response.output_text.delta #5 "he"
+      #|30 error #6
+      #|---
+      #|HTTP/1.1 200 OK
+      #|Content-Type: text/event-stream
+      #|x-request-id: req_TZp9I060Mzd0w4SDwiWTe2c8
+      #|Date: Mon, 12 Oct 2026 14:30:05 GMT
+      #|Transfer-Encoding: chunked
+      #|
+      #|…
+      #|7d
+      #|event: error
+      #|data: {"type":"error","code":"server_error","message":"Something went wrong","param":null,"sequence_number":5}
+      #|
+      #|
+      #|0
+      #|
+      #|
     ),
   )
 }

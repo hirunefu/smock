@@ -425,9 +425,8 @@ pub enum WaitSlot {
 /// request whose body is the JSON `request`, or `None` when the body is
 /// not JSON, received at `now` (milliseconds since the Unix epoch): the
 /// stream when the body is a JSON object whose `stream` is exactly `true`,
-/// otherwise the JSON reply. A declared mid-stream error cuts an
-/// `openai-chat` or `anthropic-messages` stream; the JSON reply leaves it
-/// out. Its ids draw from `ids`, the request's ids generator, and the
+/// otherwise the JSON reply. A declared mid-stream error cuts the stream;
+/// the JSON reply leaves it out. Its ids draw from `ids`, the request's ids generator, and the
 /// reply's id is the strings' `id` when given, as is each tool call's call
 /// id. Its model is the strings' `model` when given, otherwise the
 /// request's.
@@ -1351,7 +1350,11 @@ fn response_object(
 /// `response.incomplete` when a stop reason is written, gives the whole
 /// Response object. No `[DONE]` follows. The closing event's
 /// `completed_at` is the time received until `Reply::complete` adds the
-/// stream's waits.
+/// stream's waits. A declared mid-stream error cuts the text after its
+/// `after` code points, with no message item when it cuts at 0, and
+/// follows it as an `error` event with the message `strings.error_message`,
+/// in place of the item's closing events, the tool calls and every event
+/// after them, so the stream has no closing event.
 fn responses_stream(
   declaration : Declaration,
   strings : Strings,
