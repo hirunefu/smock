@@ -39,6 +39,10 @@ of each GitHub release include its section
   each SBOM, so it refuses the images of 0.3.0 and earlier. Check one of
   those with the script from its own tag, such as
   `git show v0.3.0:scripts/verify-image.sh`.
+- smock is built with the MoonBit toolchain moonc v0.10.17+d971670cd, up
+  from v0.10.14+7d59c7ec9, which `smock --version`, the startup log entry,
+  `smock_build_info` and the Admin API status operation name. NOTICE
+  follows its core library. mimalloc is still 2.1.7.
 
 ### Fixed
 
