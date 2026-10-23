@@ -2159,8 +2159,9 @@ data: {"type":"response.output_item.done","output_index":1,"item":{"type":"funct
 
 Checked with openai-python 3.36.1: `client.responses.create()` gives each
 call as a `ResponseFunctionToolCall` in `response.output`, and the
-`client.responses.stream(...)` helper's `get_final_response()` gives the
-same items. When the agent sends the call's output back, a second Stub
+`client.responses.stream(...)` helper's `get_final_response()` builds the
+same items from the stream. When the agent sends the call's output back, a
+second Stub
 answers it:
 
 ```yaml
