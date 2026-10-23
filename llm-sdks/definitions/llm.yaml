@@ -288,3 +288,21 @@ stubs:
           - name: get_weather
             id: toolu_sdk_broken
             arguments: not JSON
+
+  # Anthropic Messages: chat-error's Stub, with one of Anthropic's error
+  # types and its message.
+  - id: messages-error
+    mock: llm
+    request:
+      method: POST
+      path: /v1/messages
+      body: { json: { model: messages-error } }
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        text: Hello! How can I assist you today?
+        error:
+          after: 5
+          type: overloaded_error
+          message: Overloaded

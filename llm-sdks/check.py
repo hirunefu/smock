@@ -105,6 +105,7 @@ RESPONSES_ERROR = {
     "message": "The server had an error while processing your request. Sorry about that!",
     "param": None,
 }
+MESSAGES_ERROR = {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}
 
 # The stop sequences an application gives the Messages API, and the stop
 # details of a refusal: its type, category and explanation.
@@ -1308,13 +1309,53 @@ def messages_broken_arguments(checks, smock):
         checks.check(f"{name}: raises ValueError on the arguments", False, "it raised no ValueError")
 
 
+def check_status_200_error(checks, name, error):
+    """Checks the APIStatusError that anthropic-sdk-python raises on an
+    error event: the stream's status, 200, the event's data as its body,
+    the error's type read from it, and the request id."""
+    checks.equal(f"{name}: the status, the stream's", error and error.status_code, 200)
+    checks.equal(f"{name}: the body, the error event's data", error and error.body, MESSAGES_ERROR)
+    checks.equal(f"{name}: the type, from the body", error and error.type, MESSAGES_ERROR["error"]["type"])
+    checks.id(f"{name}: the request id", error and error.request_id, REQUEST_ID)
+
+
+def messages_error(checks, smock):
+    """Anthropic Messages, a stream cut by a mid-stream error: create()
+    with stream and the stream() helper raise APIStatusError itself, with
+    status 200 and the type in the body, after the text before the cut, and
+    create() without stream gets the whole reply."""
+    client = smock.anthropic()
+    name = "messages-error: create(stream=True)"
+    events = []
+    error = checks.raises(f"{name}: raises APIStatusError on the error event", anthropic.APIStatusError,
+                          lambda: collect(messages_create(client, "messages-error", stream=True), events), exact=True)
+    check_status_200_error(checks, name, error)
+    checks.equal(f"{name}: the events before it, each kind once", list(dict.fromkeys(event.type for event in events)),
+                 ["message_start", "content_block_start", "content_block_delta"])
+    checks.equal(f"{name}: the text before it", "".join(text_deltas(events)), ERROR_TEXT[:ERROR_AFTER])
+
+    name = "messages-error: stream()"
+    events = []
+    error = checks.raises(f"{name}: raises APIStatusError on the error event", anthropic.APIStatusError,
+                          lambda: collect(client.messages.stream(model="messages-error", max_tokens=MAX_TOKENS,
+                                                                 messages=MESSAGES), events), exact=True)
+    check_status_200_error(checks, name, error)
+    checks.equal(f"{name}: the text events before it, joined",
+                 "".join(event.text for event in events if event.type == "text"), ERROR_TEXT[:ERROR_AFTER])
+
+    name = "messages-error: create"
+    reply = messages_create(client, "messages-error")
+    checks.equal(f"{name}: the whole text", blocks(reply), [("text", ERROR_TEXT)])
+    checks.equal(f"{name}: the stop reason", stop(reply), ("end_turn", None, None))
+
+
 # The cases, in the order they run. Each calls the Stubs it names, and a
 # case whose SDK raises unexpectedly fails without stopping the others.
 CASES = [
     chat_text, chat_tools, chat_call_only, chat_length, chat_error,
     responses_text, responses_tools, responses_incomplete, responses_error,
     messages_text, messages_tools, messages_call_only, messages_stop_sequence, messages_refusal,
-    messages_broken_arguments,
+    messages_broken_arguments, messages_error,
 ]
 
 
