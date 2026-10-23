@@ -514,8 +514,8 @@ async test "bench/in the CRUD variant, each request of its mix gets its status f
         json_inspect(
           {
             "dataWritten": Json::object(journal),
-            "copies": copies.to_json(),
-            "ordersInTheCopy": orders.length().to_json(),
+            "copies": Json(copies),
+            "ordersInTheCopy": Json(orders.length()),
             "updated": Json::array(updated),
           },
           content={

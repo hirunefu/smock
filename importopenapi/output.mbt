@@ -49,9 +49,9 @@ fn Conversion::file(self : Conversion, imported : Array[Imported]) -> Outcome {
 /// The Mock the file declares: its name, then its Hosts, when it has any,
 /// and nothing else.
 fn Conversion::mock(self : Conversion) -> Json {
-  let mock : Map[String, Json] = { "name": self.options.mock.to_json() }
+  let mock : Map[String, Json] = { "name": Json(self.options.mock) }
   if !self.options.hosts.is_empty() {
-    mock["hosts"] = self.options.hosts.to_json()
+    mock["hosts"] = Json(self.options.hosts)
   }
   Json::object(mock)
 }
@@ -195,28 +195,28 @@ fn base_name(path : String) -> String {
 /// or `body`).
 fn Stub::to_json(self : Stub, mock : String) -> Json {
   let path : Json = match self.path {
-    Exact(path) => path.to_json()
-    Pattern(pattern) => { "pattern": pattern.to_json() }
+    Exact(path) => Json(path)
+    Pattern(pattern) => { "pattern": Json(pattern) }
   }
   let request : Map[String, Json] = { "method": self.meth, "path": path }
   if self.selected || self.named {
     let headers : Map[String, Json] = Map([])
     if self.selected {
-      headers["Smock-Status"] = self.response.to_json()
+      headers["Smock-Status"] = Json(self.response)
     }
     if self.named && self.example is Some(example) {
-      headers["Smock-Example"] = example.to_json()
+      headers["Smock-Example"] = Json(example)
     }
     request["headers"] = Json::object(headers)
   }
-  let response : Map[String, Json] = { "status": self.status.to_json() }
+  let response : Map[String, Json] = { "status": Json(self.status) }
   if self.payload.content_type is Some(_) || !self.headers.is_empty() {
     let headers : Map[String, Json] = Map([])
     if self.payload.content_type is Some(content_type) {
-      headers["Content-Type"] = content_type.to_json()
+      headers["Content-Type"] = Json(content_type)
     }
     for header in self.headers {
-      headers[header.0] = header.1.to_json()
+      headers[header.0] = Json(header.1)
     }
     response["headers"] = Json::object(headers)
   }
