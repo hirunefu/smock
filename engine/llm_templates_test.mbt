@@ -1,8 +1,8 @@
 // Seam 1 tests of templates in LLM responses: with `template: true`, the
-// text, each element of `chunks`, `id`, `model` and each tool call's `id`,
-// `name` and `arguments` are rendered for each request, then the reply is
-// cut into pieces; a template that fails gives the 500 `template failed`
-// and no stream.
+// text, each element of `chunks`, `id`, `model`, each tool call's `id`,
+// `name` and `arguments` and the mid-stream error's `message` are rendered
+// for each request, then the reply is cut into pieces; a template that
+// fails gives the 500 `template failed` and no stream.
 
 ///|
 /// A Mock `openai` whose Stub `echo` answers Chat Completions requests with
@@ -586,7 +586,7 @@ test "a templated text is the text of an openai-responses and an anthropic-messa
 }
 
 ///|
-test "with template: true, a declared error cuts the rendered text, follows the whole text when it renders shorter, and sends its message as written" {
+test "with template: true, a declared error cuts the rendered text, follows the whole text when it renders shorter, and renders its message" {
   let h = harness([
     echo_mock(
       "text: \"Echo: ${last(body.messages).content}\", error: { after: 10, type: server_error, message: \"Overloaded ${body.model}\" }",
@@ -598,8 +598,110 @@ test "with template: true, a declared error cuts the rendered text, follows the 
       waits(h.chat(body=said("hi", stream=true))),
     ].join("\n"),
     content=(
-      #|0 opening, 0 "Echo", 0 ": hi", 0 " t", 0 {"error":{"message":"Overloaded ${body.model}","type":"server_error","param":null,"code":null}}
-      #|0 opening, 0 "Echo", 0 ": hi", 0 {"error":{"message":"Overloaded ${body.model}","type":"server_error","param":null,"code":null}}
+      #|0 opening, 0 "Echo", 0 ": hi", 0 " t", 0 {"error":{"message":"Overloaded test-model","type":"server_error","param":null,"code":null}}
+      #|0 opening, 0 "Echo", 0 ": hi", 0 {"error":{"message":"Overloaded test-model","type":"server_error","param":null,"code":null}}
+    ),
+  )
+}
+
+///|
+test "with template: true, an after past the text as written is loaded, and the error follows the whole text when the rendered text is shorter than after" {
+  let h = harness([
+    echo_mock(
+      "text: \"${last(body.messages).content}\", error: { after: 40, type: server_error, message: Overloaded }",
+    ),
+  ])
+  inspect(
+    [
+      waits(h.chat(body=said("hi", stream=true))),
+      waits(h.chat(body=said("", stream=true))),
+      waits(h.chat(body=said("a".repeat(45), stream=true))),
+    ].join("\n"),
+    content=(
+      #|0 opening, 0 "hi", 0 {"error":{"message":"Overloaded","type":"server_error","param":null,"code":null}}
+      #|0 opening, 0 {"error":{"message":"Overloaded","type":"server_error","param":null,"code":null}}
+      #|0 opening, 0 "aaaa", 0 "aaaa", 0 "aaaa", 0 "aaaa", 0 "aaaa", 0 "aaaa", 0 "aaaa", 0 "aaaa", 0 "aaaa", 0 "aaaa", 0 {"error":{"message":"Overloaded","type":"server_error","param":null,"code":null}}
+    ),
+  )
+}
+
+///|
+test "the error's message renders last, after each tool call's id, name and arguments, so adding an error changes no earlier helper output" {
+  let draw = "${fake.int(1, 999999)}"
+  let stream = harness([
+    drawing_mock(
+      "llm: { api: openai-chat, id: \"\{draw}\", model: \"\{draw}\", chunks: [\"\{draw} \", \"\{draw}\"], toolCalls: [{ id: \"\{draw}\", name: \"\{draw}\", arguments: \"\{draw}\" }, { id: \"\{draw}\", name: \"\{draw}\", arguments: { k: \"\{draw}\" } }], error: { after: 100, type: server_error, message: \"\{draw}\" } }",
+    ),
+  ]).chat(body=stream_body("true"))
+  guard stream.plan.body is Events(events) else {
+    fail("not a stream: \{body_text(stream)}")
+  }
+  let from_stream = [
+    stream.plan.headers
+    .iter()
+    .find_first(field => field.0 == "X-Draw")
+    .map_or("-", field => field.1),
+  ]
+  for i, event in events {
+    match @json.parse(event.data) {
+      { "id": String(id), "model": String(model), .. } if i == 0 => {
+        from_stream.push(id)
+        from_stream.push(model)
+      }
+      { "choices": [{ "delta": { "content": String(piece), .. }, .. }], .. } =>
+        from_stream.push(piece.escape())
+      { "error": { "message": String(message), .. }, .. } =>
+        from_stream.push("error \{message}")
+      _ => ()
+    }
+  }
+  let json = harness([
+    drawing_mock(
+      "json: \"\{draw} \{draw} \{draw} \{draw} \{draw} \{draw} \{draw} \{draw} \{draw} \{draw} \{draw}\"",
+    ),
+  ]).chat()
+  // The header, id, model and chunks draw what they draw without an error,
+  // as the test above shows, and the message draws what the eleventh value
+  // of a json body draws, after the header's.
+  inspect(
+    from_stream.join(" "),
+    content=(
+      #|55064 531001 185415 "287175 " "754583" error 593941
+    ),
+  )
+  inspect(
+    reply_text(json),
+    content="531001 185415 287175 754583 305739 835530 906526 329600 535814 508409 593941",
+  )
+}
+
+///|
+test "a message template that fails gives the 500 template failed at the message, with no stream, and to a request that does not stream too" {
+  let h = harness([
+    echo_mock(
+      "text: Hi, error: { after: 1, type: server_error, message: \"Overloaded ${body.reason}\" }",
+    ),
+  ])
+  let failed = (stream : Bool) => {
+    let outcome = h.chat(body=said("Hi", stream~))
+    let journaled = match outcome.journal {
+      Some({ template_error: Some(error), .. }) =>
+        "journal: \{error.at}: \{error.message}"
+      _ => "journal: no template error"
+    }
+    "\{response(outcome)}\n\{journaled}"
+  }
+  inspect(
+    [failed(true), failed(false)].join("\n"),
+    content=(
+      #|500
+      #|Content-Type: application/json
+      #|{"error":"template failed","stub":"echo","at":"/response/llm/error/message","message":"body.reason is missing"}
+      #|journal: /response/llm/error/message: body.reason is missing
+      #|500
+      #|Content-Type: application/json
+      #|{"error":"template failed","stub":"echo","at":"/response/llm/error/message","message":"body.reason is missing"}
+      #|journal: /response/llm/error/message: body.reason is missing
     ),
   )
 }

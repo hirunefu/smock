@@ -36,3 +36,25 @@ test "an llm as written whose JSON reply or stream passes 1 MiB is a load error 
     ),
   )
 }
+
+///|
+test "a declared error ends the stream early, so the JSON reply as written can pass 1 MiB alone and be the load error, and a long stream cut early loads" {
+  let text = (length : Int) => Json::string("a".repeat(length)).stringify()
+  let error = (after : Int) => {
+    "\"error\": { \"after\": \{after}, \"type\": \"server_error\", \"message\": \"Overloaded\" }"
+  }
+  inspect(
+    problems([
+      (
+        "a.json",
+        stubs_answering([
+          "{ \"status\": 200, \"llm\": { \"api\": \"openai-chat\", \"text\": \{text(1_048_576)}, \{error(0)} } }",
+          "{ \"status\": 200, \"llm\": { \"api\": \"openai-chat\", \"text\": \{text(6_000)}, \"chunkSize\": 1, \{error(10)} } }",
+        ]),
+      ),
+    ]),
+    content=(
+      #|a.json: /stubs/0/responses/1/llm: the reply takes more than 1 MiB as a JSON body
+    ),
+  )
+}

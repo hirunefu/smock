@@ -182,9 +182,10 @@ fn plan_response(
 ///|
 /// Renders `templates`, the strings of an LLM reply with `template` on, in
 /// `context`, after the response's header values, in the order the
-/// helpers draw: `id`, `model`, the text or each chunk, then each tool
-/// call's `id`, `name` and `arguments`. Each chunk gives one piece; the
-/// text is cut into pieces after it is rendered.
+/// helpers draw: `id`, `model`, the text or each chunk, each tool call's
+/// `id`, `name` and `arguments`, then the mid-stream error's `message`.
+/// Each chunk gives one piece; the text is cut into pieces after it is
+/// rendered, and a message that renders empty is sent empty.
 ///
 /// Raises `RenderError` when a template cannot be rendered, or when a tool
 /// call's rendered id is an earlier call's, since the call ids of a reply
@@ -243,13 +244,17 @@ fn render_strings(
       @llm.ToolCall(name~, arguments=Json::string(arguments), id?=call_id),
     )
   }
+  let error_message = match templates.error_message {
+    Some(message) => Some(message.render(context))
+    None => None
+  }
   @llm.Strings(
     text~,
     chunks?,
     id?,
     model?,
     tool_calls=ReadOnlyArray::from_array(tool_calls),
-    error_message=templates.error_message,
+    error_message?,
   )
 }
 

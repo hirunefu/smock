@@ -124,10 +124,11 @@ of each GitHub release include its section
   `error.type`, never `OverloadedError`. A request that does not stream
   gets the ordinary reply. `openai-responses` gives `code` in place of
   `type`, and its stream does not send the error yet; `anthropic-messages`
-  gives one of Anthropic's error types. With
-  `template: true`, the text, each chunk, `id`, `model` and each tool
-  call's `name`, `id` and `arguments` are templates: the text is rendered
-  whole, then cut into pieces, what they insert is JSON-escaped on the
+  gives one of Anthropic's error types. With `template: true`, the text,
+  each chunk, `id`, `model`, each tool call's `name`, `id` and
+  `arguments`, and the error's `message` are templates: the text is
+  rendered whole, then cut into pieces, an error's `after` past it puts
+  the error after the whole text, what they insert is JSON-escaped on the
   wire, and a template that fails gives the 500 `template failed` and no
   stream. The encoded reply, the JSON body or all the events, takes at
   most 1 MiB, the bound of a rendered body: about 20,000 characters of

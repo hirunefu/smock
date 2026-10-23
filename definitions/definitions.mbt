@@ -894,8 +894,9 @@ pub enum LlmStrings {
 ///|
 /// The templates of an LLM reply with `template` on, in the order they
 /// render, so that helpers draw in that order: `id`, `model`, the text or
-/// each chunk, then each tool call's `id`, `name` and `arguments`. They
-/// escape nothing: the reply's JSON escapes what they give.
+/// each chunk, each tool call's `id`, `name` and `arguments`, then the
+/// mid-stream error's `message`. They escape nothing: the reply's JSON
+/// escapes what they give.
 pub struct LlmTemplates {
   /// `id`, a text template, or `None` for a generated id.
   id : @template.Text?
@@ -905,9 +906,9 @@ pub struct LlmTemplates {
   text : LlmText
   /// The tool calls, in the order written.
   tool_calls : ReadOnlyArray[ToolCallTemplate]
-  /// The message of a mid-stream `error`, as written, never a template, or
-  /// empty when there is none.
-  error_message : String
+  /// The message of a mid-stream `error`, a text template, or `None` when
+  /// there is none.
+  error_message : @template.Text?
 } derive(Debug, Eq)
 
 ///|
@@ -977,6 +978,9 @@ fn LlmStrings::reads(
     if arguments {
       return true
     }
+  }
+  if templates.error_message is Some(message) && text(message) {
+    return true
   }
   false
 }

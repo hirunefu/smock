@@ -74,3 +74,27 @@ test "a long model from the request, in every chunk of a Chat stream, pushes an 
     ),
   )
 }
+
+///|
+test "a rendered error message that pushes the stream over 1 MiB gets the 500 template failed at the llm field and no stream; the JSON reply, which leaves the error out, is sent" {
+  let h = harness([
+    echo_mock(
+      "text: Hi, error: { after: 2, type: server_error, message: \"${last(body.messages).content}\" }",
+    ),
+  ])
+  // 600,000 quotes render as 600,000 bytes, under the bound of the
+  // rendered output, and take twice as many in the error frame's JSON.
+  let quotes = "\"".repeat(600_000)
+  inspect(
+    [
+      bounded(h.chat(body=said(quotes, stream=true))),
+      bounded(h.chat(body=said(quotes))),
+      bounded(h.chat(body=said("\"".repeat(1_000), stream=true))),
+    ].join("\n"),
+    content=(
+      #|500 {"error":"template failed","stub":"echo","at":"/response/llm","message":"the reply takes more than 1 MiB as a stream"}; journal: /response/llm: the reply takes more than 1 MiB as a stream
+      #|200 JSON
+      #|200 stream
+    ),
+  )
+}

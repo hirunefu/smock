@@ -41,6 +41,58 @@ test "with template: true, text, each chunk, id, model and each tool call's name
 }
 
 ///|
+test "with template: true, the error's message is parsed at load, each problem at its JSON Pointer; after, type and code are never templates" {
+  inspect(
+    problems([
+      templated_llm([
+        "text: Hi, error: { type: server_error, message: \"Overloaded ${\" }", "text: Hi, error: { type: server_error, message: \"${unknown()}\" }",
+        "text: Hi, error: { type: server_error, message: \"Overloaded ${body.model}\" }",
+        "text: Hi, error: { after: \"${body.n}\", type: server_error, message: Overloaded }",
+        "text: Hi, error: { type: \"${body.type}\", message: Overloaded }",
+      ]),
+    ]),
+    content=(
+      #|a.yaml: /stubs/0/response/llm/error/message: template: column 12: the ${ is not closed
+      #|a.yaml: /stubs/1/response/llm/error/message: template: column 3: unknown helper "unknown": not one of the helpers smock has
+      #|a.yaml: /stubs/3/response/llm/error/after: must be an integer from 0 to 2147483647
+    ),
+  )
+}
+
+///|
+test "with template: true, an error's after past the text as written is no load error, since the text is known once rendered; with template off it is one" {
+  inspect(
+    problems([
+      templated_llm([
+        "text: Hi, error: { after: 10, type: server_error, message: Overloaded }",
+        "chunks: [Hi, \"${body.name}\"], error: { after: 10, type: server_error, message: Overloaded }",
+        "error: { after: 1, type: server_error, message: Overloaded }",
+      ]),
+      (
+        "b.yaml",
+        (
+          #|stubs:
+          #|  - id: plain
+          #|    mock: m
+          #|    response:
+          #|      status: 200
+          #|      llm: { api: openai-chat, text: Hi, error: { after: 10, type: server_error, message: Overloaded } }
+          #|  - id: template-last
+          #|    mock: m
+          #|    response:
+          #|      status: 200
+          #|      llm: { api: openai-chat, text: Hi, error: { after: 10, type: server_error, message: Overloaded } }
+          #|      template: true
+        ),
+      ),
+    ]),
+    content=(
+      #|b.yaml: /stubs/0/response/llm/error/after: is past the end of the text, which has 2 code points
+    ),
+  )
+}
+
+///|
 test "api, stopReason, usage, chunkSize and timing are never templates, and with template off nothing in llm is parsed" {
   inspect(
     problems([
@@ -93,7 +145,8 @@ test "an llm response reads Variables and Data buckets when one of its templates
     "text: \"${path}\", id: \"$${vars.x} $${data.d}\"", "text: \"${vars.x}\"", "chunks: [a, \"${data.d}\"]",
     "id: \"${vars.x}\"", "model: \"${data.d}\"", "toolCalls: [{ name: \"${vars.x}\", arguments: {} }]",
     "toolCalls: [{ name: f, arguments: {}, id: \"${data.d}\" }]", "toolCalls: [{ name: f, arguments: \"${vars.x}\" }]",
-    "toolCalls: [{ name: f, arguments: { a: \"${data.d}\" } }]",
+    "toolCalls: [{ name: f, arguments: { a: \"${data.d}\" } }]", "error: { type: server_error, message: \"${vars.x}\" }",
+    "error: { type: server_error, message: \"${data.d}\" }",
   ]
   let (name, file) = templated_llm(fields)
   let set : @definitions.DefinitionSet = {
@@ -139,6 +192,8 @@ test "an llm response reads Variables and Data buckets when one of its templates
       #|s6: vars false, data true
       #|s7: vars true, data false
       #|s8: vars false, data true
+      #|s9: vars true, data false
+      #|s10: vars false, data true
       #|plain: vars false, data false
     ),
   )
