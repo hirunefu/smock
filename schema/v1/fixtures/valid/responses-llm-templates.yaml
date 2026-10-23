@@ -1,0 +1,29 @@
+mocks:
+  - name: openai
+stubs:
+  - id: echo
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    responses:
+      - status: 200
+        template: true
+        headers: { x-request-id: "req_${header.x-trace ?? 'none'}" }
+        llm:
+          api: openai-chat
+          id: chatcmpl-${fake.hex(8)}
+          model: ${body.model ?? 'test-model'}-echo
+          text: 'You said: ${last(body.messages).content}'
+          toolCalls:
+            - name: ${body.tool ?? 'search'}
+              arguments: { query: "${last(body.messages).content}", limit: "${body.limit ?? 5}" }
+              id: call_${body.id}
+            - name: log
+              arguments: '{"messages":${json(body.messages)}}'
+              id: call_${body.id}
+      - status: 200
+        template: true
+        llm:
+          api: openai-chat
+          chunks: ["${last(body.messages).role}: ", "${last(body.messages).content}", ""]
+          usage: { input: 3, output: 2 }
+          stopReason: length

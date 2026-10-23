@@ -1286,9 +1286,10 @@ The fields of `llm`:
 An LLM response is a response like any other. `status` is required, as
 always. `llm` may stand in `response` or in any element of
 [`responses`](#several-responses), so weighted responses can answer one
-request in ten with an ordinary 429. Request conditions, Faults,
-Ephemeral Stubs, the Journal and [`smock render`](#rendering-a-template)
-work as for other responses: a rendering shows the JSON body, or the events
+request in ten with an ordinary 429. Request conditions,
+[templates](#templates-in-llm-replies), Faults, Ephemeral Stubs, the
+Journal and [`smock render`](#rendering-a-template) work as for other
+responses: a rendering shows the JSON body, or the events
 for a sample whose body sets `stream: true`, with the ids and the waits its
 seed gives and its time as `created`. A response gives at most one of
 `body`, `bodyFile`, `json`, `events` and `llm`. A missing or unknown `api`,
@@ -1732,7 +1733,9 @@ Each tool call has these fields:
   written one is sent whatever the reply holds.
 - A missing `name` or `arguments`, an empty `name`, `arguments` that are
   neither an object nor a string, an unknown field of a tool call, and two
-  tool calls of one `llm` with the same `id` are load errors.
+  tool calls of one `llm` with the same `id` are load errors. With
+  [templates](#templates-in-llm-replies), ids that insert a value are
+  compared after rendering.
 - `openai-responses` sends them as
   [function call items](#function-call-items). `anthropic-messages` does
   not send tool calls yet: its reply leaves them out, though they still
@@ -1788,7 +1791,8 @@ Call ids follow the rules of [Ids, seeds and time](#ids-seeds-and-time):
 - A fixed `id` still draws its slots, so fixing one call id changes no
   other id.
 - The call ids of one reply must differ, so two tool calls of one `llm`
-  with the same `id` are a load error.
+  with the same `id` are a load error. Templated ids that render the same
+  give the [template error](#templates-in-llm-replies) 500.
 
 When the agent sends the tool's result back, a second Stub answers it. A
 condition on the last message tells the turns apart, as the
@@ -1931,6 +1935,98 @@ data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk"
 data: {"error":{"message":"The server had an error while processing your request. Sorry about that!","type":"server_error","param":null,"code":null}}
 
 ```
+
+### Templates in LLM replies
+
+With [`template: true`](#templates), an LLM reply is rendered for each
+request, so it can echo the request, or read a [Variable](#variables) or
+a [Data bucket](#data-buckets). This Stub echoes the user's last message:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: echo
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-chat
+        text: 'You said: ${last(body.messages).content}'
+```
+
+A request whose last message is `Say "hi"`, a line break and `then stop`
+gets a reply whose message has
+`"content":"You said: Say \"hi\"\nthen stop"`. With `stream: true`, the
+pieces are `You `, `said`, `: Sa`, `y \"h`, `i\"\nt`, `hen ` and `stop`,
+as `smock render` shows with `--seed 7`.
+
+- `text`, each element of `chunks`, `id`, `model`, and each tool call's
+  `name`, `id` and string `arguments` are text templates. An object
+  `arguments` is a [structured template](#structured-templates), whose
+  members keep the types of what they insert. `api`, `stopReason`,
+  `usage`, `chunkSize`, `timing` and `error` are never templates. Header
+  values are templates, as in any response.
+- smock renders the text whole for each request, then cuts it into
+  pieces, so echoed text is cut like any other. Each element of `chunks`
+  is rendered on its own and stays one piece. A tool call's arguments are
+  rendered, then cut.
+- These templates escape nothing. smock writes what they give into the
+  JSON it builds, so a quote or a line break from the request is
+  JSON-escaped on the wire, whatever the Stub's `Content-Type`. An object
+  or an array in a text template needs `json(x)`, as in any text template.
+- Helpers, such as `fake.uuid()`, draw in render order: the header values,
+  then `id`, `model`, the text or each chunk in order, then each tool
+  call's `id`, `name` and `arguments`. So [`fault.seed`](#seeds) replays
+  them. The generated ids draw from a generator of their own, so a helper
+  changes none of them.
+- The templates read `vars` and `data` as any response's do: after the
+  Stub's [`variables`](#variables) and [`dataWrites`](#writing-buckets-datawrites)
+  have written, so the reply reads what they just did. A Scenario moves on
+  an `llm` Stub as on any other.
+- A syntax error is a load error at the field's JSON Pointer, such as
+  `/stubs/0/response/llm/text`. Two tool calls whose ids insert nothing
+  and are the same are a load error, as without templates. Ids that
+  insert a value are compared after rendering.
+
+This Stub's calls take the user's last message and the whole
+conversation:
+
+```yaml
+- id: search
+  mock: openai
+  request: { method: POST, path: /v1/chat/completions }
+  response:
+    status: 200
+    template: true
+    llm:
+      api: openai-chat
+      toolCalls:
+        - name: search
+          arguments: { query: "${last(body.messages).content}", limit: "${body.limit ?? 5}" }
+        - name: log
+          arguments: '{"messages":${json(body.messages)}}'
+```
+
+For the request above, the first call's arguments are
+`{"query":"Say \"hi\"\nthen stop","limit":5}`, and the second's
+`{"messages":[{"role":"user","content":"Say \"hi\"\nthen stop"}]}`.
+
+A template that fails to render, such as one that inserts a missing
+value, gives the usual [500 `template failed`](#missing-values-and-render-errors),
+with `at` under the `llm` field, such as
+`"at":"/response/llm/text","message":"body.messages is missing"`. Two tool
+call ids that render the same give it too. A streamed request gets the
+500, not a stream, since smock renders the whole reply before it sends
+the head.
+
+The SDKs [retry](#retries) a 500 twice by default. So one call to a Stub
+whose template fails makes three requests, with three Journal entries,
+and takes three draws from a seeded Stub's random source: the requests
+after it get other ids and waits than in a run without the failure. A
+test that expects the 500 builds its client with `max_retries=0`.
 
 ### OpenAI Responses
 
@@ -2758,6 +2854,9 @@ What is a template with `template: true`:
 - Header values are text templates, each value of an array on its own,
   except `Content-Type`, which must not contain `${`. An array's length is
   fixed: a template cannot add or drop a field.
+- In `llm`, the text, each chunk, `id`, `model` and each tool call's
+  `name`, `id` and `arguments` are templates, as
+  [Templates in LLM replies](#templates-in-llm-replies) says.
 - `status` and an event's `delay` are never templated.
 
 With `template` off, nothing is parsed or rendered: `${` is plain text and

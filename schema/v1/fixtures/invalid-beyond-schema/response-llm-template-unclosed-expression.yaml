@@ -1,0 +1,12 @@
+mocks:
+  - name: openai
+stubs:
+  - id: echo
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-chat
+        text: 'You said: ${last(body.messages).content'
