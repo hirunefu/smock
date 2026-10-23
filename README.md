@@ -642,7 +642,7 @@ for Mockoon and Prism users.
 how Stubs match requests (method, path, query parameters, headers, cookies
 and body, exactly, by RE2 pattern, as JSON, by form field or by paths into
 XML, negated or by presence with `$not` and `$exists`, and by array element
-with `$includes`), the order they are tried in (priority, then file-name
+with `$includes` and `$last`), the order they are tried in (priority, then file-name
 order), what a Mock answers when nothing matches, responses with inline
 bodies, body files that serve byte ranges, JSON or Server-Sent Events,
 several responses picked at random by weight (`responses`), response

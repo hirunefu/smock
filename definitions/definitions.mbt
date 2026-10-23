@@ -544,8 +544,9 @@ pub enum BodyCondition {
 ///|
 /// A `json` condition on the request body: a JSON value the body must
 /// contain, in which an object whose only member is `pattern`, with a
-/// string, is a pattern, an object whose only key is `$not`, `$exists` or
-/// `$includes` is an operator, and a key `$$name` is the key `$name`.
+/// string, is a pattern, an object whose only key is `$not`, `$exists`,
+/// `$includes` or `$last` is an operator, and a key `$$name` is the key
+/// `$name`.
 /// `File::read_json_condition` reads one. The value is the condition's own
 /// copy, as written, which nothing outside can change, so the snapshot
 /// stays as it was loaded.
@@ -576,6 +577,9 @@ priv enum Expected {
   /// `$includes`: the value is an array with an element that meets the
   /// condition.
   Includes(Expected)
+  /// `$last`: the value is an array with at least one element, and its
+  /// last element meets the condition.
+  Last(Expected)
 }
 
 ///|
@@ -588,8 +592,9 @@ priv enum Expected {
 ///
 /// An operator is about the value in its place: `$not` holds when the
 /// value does not contain its condition, `$exists` when the value is
-/// present or missing, as it says, and `$includes` when the value is an
-/// array with an element that contains its condition. A missing key meets
+/// present or missing, as it says, `$includes` when the value is an array
+/// with an element that contains its condition, and `$last` when the value
+/// is an array whose last element contains it. A missing key meets
 /// only `$exists: false` and `$not` of a condition that it does not meet,
 /// and `actual` itself is always present.
 pub fn JsonCondition::matches(self : JsonCondition, actual : Json) -> Bool {
@@ -621,6 +626,8 @@ fn contains(actual : Json, expected : Expected) -> Bool {
       }
       false
     }
+    (Last(inner), Array(actual)) =>
+      actual.length() > 0 && contains(actual[actual.length() - 1], inner)
     (Array(expected), Array(actual)) => {
       if expected.length() != actual.length() {
         return false

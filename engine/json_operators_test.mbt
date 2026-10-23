@@ -1,6 +1,6 @@
 // Seam 1 tests of the operators inside a `json` body condition: `$not`,
-// `$exists` and `$includes` at any value position, and `$$name` for a
-// literal key that starts with `$`.
+// `$exists`, `$includes` and `$last` at any value position, and `$$name`
+// for a literal key that starts with `$`.
 
 ///|
 test "$not in a json condition holds when the inner condition does not, so a missing key meets it" {
@@ -424,10 +424,298 @@ test "an Ephemeral Stub may use json operators, and a malformed one is rejected 
     ]),
     content=(
       #|eph-1
-      #|/request/body/json/a/$nto: is not an operator: the operators here are "$not", "$exists" and "$includes"; write "$$nto" for the literal key "$nto"
+      #|/request/body/json/a/$nto: is not an operator: the operators here are "$not", "$exists", "$includes" and "$last"; write "$$nto" for the literal key "$nto"
       #|/request/body/json/b/c: is not allowed beside "$not": an operator is the only key of its object
       #|POST / "{\"tags\":[\"urgent\"],\"$ref\":null}" -> eph-1
       #|POST / "{\"tags\":[\"urgent\"]}" -> none
+    ),
+  )
+}
+
+///|
+test "$last holds when the value is a non-empty array whose last element meets the condition, so each API's tool result can be matched" {
+  let h = stubs([
+    (
+      #|{ "id": "chat-tool", "mock": "m",
+      #|  "request": { "path": "/v1/chat/completions",
+      #|    "body": { "json": { "messages": { "$last": { "role": "tool" } } } } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "messages-tool", "mock": "m",
+      #|  "request": { "path": "/v1/messages",
+      #|    "body": { "json": { "messages": { "$last": { "role": "user",
+      #|      "content": { "$includes": { "type": "tool_result" } } } } } } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "responses-tool", "mock": "m",
+      #|  "request": { "path": "/v1/responses",
+      #|    "body": { "json": { "input": { "$last": { "type": "function_call_output" } } } } },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  inspect(
+    winners(h, [
+      (
+        "POST",
+        "/v1/chat/completions",
+        [],
+        "{\"messages\":[{\"role\":\"user\",\"content\":\"Weather?\"},{\"role\":\"assistant\",\"tool_calls\":[]},{\"role\":\"tool\",\"content\":\"18C\"}]}",
+      ),
+      (
+        "POST",
+        "/v1/chat/completions",
+        [],
+        "{\"messages\":[{\"role\":\"tool\",\"content\":\"18C\"},{\"role\":\"user\",\"content\":\"Thanks\"}]}",
+      ),
+      ("POST", "/v1/chat/completions", [], "{\"messages\":[]}"),
+      ("POST", "/v1/chat/completions", [], "{\"messages\":{\"role\":\"tool\"}}"),
+      ("POST", "/v1/chat/completions", [], "{\"model\":\"m\"}"),
+      (
+        "POST",
+        "/v1/messages",
+        [],
+        "{\"messages\":[{\"role\":\"user\",\"content\":\"Weather?\"},{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t1\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\"}]}]}",
+      ),
+      (
+        "POST",
+        "/v1/messages",
+        [],
+        "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\"}]},{\"role\":\"user\",\"content\":\"Thanks\"}]}",
+      ),
+      (
+        "POST",
+        "/v1/responses",
+        [],
+        "{\"input\":[{\"type\":\"function_call\",\"call_id\":\"c1\"},{\"type\":\"function_call_output\",\"call_id\":\"c1\"}]}",
+      ),
+      (
+        "POST",
+        "/v1/responses",
+        [],
+        "{\"input\":[{\"type\":\"function_call_output\"},{\"role\":\"user\",\"content\":\"Thanks\"}]}",
+      ),
+      ("POST", "/v1/responses", [], "{\"input\":\"function_call_output\"}"),
+      ("POST", "/v1/responses", [], "{\"input\":[]}"),
+    ]),
+    content=(
+      #|POST /v1/chat/completions "{\"messages\":[{\"role\":\"user\",\"content\":\"Weather?\"},{\"role\":\"assistant\",\"tool_calls\":[]},{\"role\":\"tool\",\"content\":\"18C\"}]}" -> chat-tool
+      #|POST /v1/chat/completions "{\"messages\":[{\"role\":\"tool\",\"content\":\"18C\"},{\"role\":\"user\",\"content\":\"Thanks\"}]}" -> none
+      #|POST /v1/chat/completions "{\"messages\":[]}" -> none
+      #|POST /v1/chat/completions "{\"messages\":{\"role\":\"tool\"}}" -> none
+      #|POST /v1/chat/completions "{\"model\":\"m\"}" -> none
+      #|POST /v1/messages "{\"messages\":[{\"role\":\"user\",\"content\":\"Weather?\"},{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t1\"}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\"}]}]}" -> messages-tool
+      #|POST /v1/messages "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\"}]},{\"role\":\"user\",\"content\":\"Thanks\"}]}" -> none
+      #|POST /v1/responses "{\"input\":[{\"type\":\"function_call\",\"call_id\":\"c1\"},{\"type\":\"function_call_output\",\"call_id\":\"c1\"}]}" -> responses-tool
+      #|POST /v1/responses "{\"input\":[{\"type\":\"function_call_output\"},{\"role\":\"user\",\"content\":\"Thanks\"}]}" -> none
+      #|POST /v1/responses "{\"input\":\"function_call_output\"}" -> none
+      #|POST /v1/responses "{\"input\":[]}" -> none
+    ),
+  )
+}
+
+///|
+test "$last nests with $not and $includes on either side, and $$last matches the literal key $last" {
+  let h = stubs([
+    (
+      #|{ "id": "last-not-tool", "mock": "m", "request": { "path": "/a",
+      #|    "body": { "json": { "messages": { "$not": { "$last": { "role": "tool" } } } } } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "last-not-user", "mock": "m", "request": { "path": "/b",
+      #|    "body": { "json": { "messages": { "$last": { "role": { "$not": "user" } } } } } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "a-turn-ends-with-a-tool", "mock": "m", "request": { "path": "/c",
+      #|    "body": { "json": { "turns": { "$includes": { "$last": { "role": "tool" } } } } } },
+      #|  "response": { "status": 200 } }
+    ),
+    (
+      #|{ "id": "literal", "mock": "m", "request": { "path": "/d",
+      #|    "body": { "json": { "$$last": { "role": "tool" } } } },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  inspect(
+    winners(h, [
+      (
+        "POST",
+        "/a",
+        [],
+        "{\"messages\":[{\"role\":\"tool\"},{\"role\":\"user\"}]}",
+      ),
+      (
+        "POST",
+        "/a",
+        [],
+        "{\"messages\":[{\"role\":\"user\"},{\"role\":\"tool\"}]}",
+      ),
+      ("POST", "/a", [], "{\"messages\":[]}"),
+      ("POST", "/a", [], "{}"),
+      (
+        "POST",
+        "/b",
+        [],
+        "{\"messages\":[{\"role\":\"user\"},{\"role\":\"tool\"}]}",
+      ),
+      (
+        "POST",
+        "/b",
+        [],
+        "{\"messages\":[{\"role\":\"tool\"},{\"role\":\"user\"}]}",
+      ),
+      ("POST", "/b", [], "{\"messages\":[{\"content\":\"x\"}]}"),
+      ("POST", "/b", [], "{\"messages\":[]}"),
+      (
+        "POST",
+        "/c",
+        [],
+        "{\"turns\":[[{\"role\":\"user\"}],[{\"role\":\"user\"},{\"role\":\"tool\"}]]}",
+      ),
+      (
+        "POST",
+        "/c",
+        [],
+        "{\"turns\":[[{\"role\":\"tool\"},{\"role\":\"user\"}],[]]}",
+      ),
+      ("POST", "/d", [], "{\"$last\":{\"role\":\"tool\"}}"),
+      ("POST", "/d", [], "{\"$$last\":{\"role\":\"tool\"}}"),
+      ("POST", "/d", [], "[{\"role\":\"tool\"}]"),
+    ]),
+    content=(
+      #|POST /a "{\"messages\":[{\"role\":\"tool\"},{\"role\":\"user\"}]}" -> last-not-tool
+      #|POST /a "{\"messages\":[{\"role\":\"user\"},{\"role\":\"tool\"}]}" -> none
+      #|POST /a "{\"messages\":[]}" -> last-not-tool
+      #|POST /a "{}" -> last-not-tool
+      #|POST /b "{\"messages\":[{\"role\":\"user\"},{\"role\":\"tool\"}]}" -> last-not-user
+      #|POST /b "{\"messages\":[{\"role\":\"tool\"},{\"role\":\"user\"}]}" -> none
+      #|POST /b "{\"messages\":[{\"content\":\"x\"}]}" -> last-not-user
+      #|POST /b "{\"messages\":[]}" -> none
+      #|POST /c "{\"turns\":[[{\"role\":\"user\"}],[{\"role\":\"user\"},{\"role\":\"tool\"}]]}" -> a-turn-ends-with-a-tool
+      #|POST /c "{\"turns\":[[{\"role\":\"tool\"},{\"role\":\"user\"}],[]]}" -> none
+      #|POST /d "{\"$last\":{\"role\":\"tool\"}}" -> literal
+      #|POST /d "{\"$$last\":{\"role\":\"tool\"}}" -> none
+      #|POST /d "[{\"role\":\"tool\"}]" -> none
+    ),
+  )
+}
+
+///|
+test "a failed $last counts as body in the Near miss, and the Near miss, render and the Journal show it as the Stub writes it" {
+  let h = stubs([
+    (
+      #|{ "id": "after-tool", "mock": "m",
+      #|  "request": { "method": "POST", "path": "/v1/chat/completions",
+      #|    "body": { "json": { "messages": { "$last": { "role": "tool" } } } } },
+      #|  "response": { "status": 200 } }
+    ),
+  ])
+  let body = "{\"messages\":[{\"role\":\"tool\"},{\"role\":\"user\"}]}"
+  inspect(
+    near_misses(h, [("POST", "/v1/chat/completions", [], body)]),
+    content=(
+      #|POST /v1/chat/completions "{\"messages\":[{\"role\":\"tool\"},{\"role\":\"user\"}]}" -> after-tool; failed=body
+    ),
+  )
+  json_inspect(explanation(h, "POST", "/v1/chat/completions", body~), content={
+    "stub": "after-tool",
+    "stubSource": "file",
+    "failed": [
+      {
+        "condition": "body",
+        "expected": { "json": { "messages": { "$last": { "role": "tool" } } } },
+        "actual": ["{\"messages\":[{\"role\":\"tool\"},{\"role\":\"user\"}]}"],
+      },
+    ],
+  })
+  inspect(
+    h.failed("after-tool", {
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "body": "{\"messages\":[]}",
+    }),
+    content=(
+      #|body: expected {"json":{"messages":{"$last":{"role":"tool"}}}}, actual ["{\"messages\":[]}"]
+    ),
+  )
+  let _ = h.record("POST", "/v1/chat/completions", body~, session="s")
+  json_inspect(h.answered(Some("s")), content={
+    "host": null,
+    "mock": "m",
+    "viaDefault": true,
+    "stub": null,
+    "nearMiss": {
+      "stub": "after-tool",
+      "stubSource": "file",
+      "failed": [
+        {
+          "condition": "body",
+          "expected": {
+            "json": { "messages": { "$last": { "role": "tool" } } },
+          },
+          "actual": ["{\"messages\":[{\"role\":\"tool\"},{\"role\":\"user\"}]}"],
+        },
+      ],
+    },
+    "status": 404,
+    "fault": null,
+  })
+}
+
+///|
+test "an Ephemeral Stub may use $last, and one with $last beside another key is rejected with the message a Definition file gets" {
+  let h = stubs([])
+  let added = h.add(
+    "m",
+    None,
+    (
+      #|{ "request": { "body": { "json": { "messages": { "$last": { "role": "tool" } } } } },
+      #|  "response": { "status": 200 } }
+    ),
+  )
+  let rejected = try
+    h.engine.add_ephemeral_stub(
+      mock="m",
+      session=None,
+      @json.parse(
+        (
+          #|{ "request": { "body": { "json": { "messages": { "$last": { "role": "tool" },
+          #|    "length": 2 } } } },
+          #|  "response": { "status": 200 } }
+        ),
+      ),
+    )
+  catch {
+    @engine.InvalidStub(problems) =>
+      problems.map(problem => problem.to_string())
+    error => fail(@debug.to_string(error))
+  } noraise {
+    stub => [stub.id]
+  }
+  inspect(
+    "\{added}\n\{rejected.join("\n")}\n" +
+    winners(h, [
+      (
+        "POST",
+        "/",
+        [],
+        "{\"messages\":[{\"role\":\"user\"},{\"role\":\"tool\"}]}",
+      ),
+      (
+        "POST",
+        "/",
+        [],
+        "{\"messages\":[{\"role\":\"tool\"},{\"role\":\"user\"}]}",
+      ),
+    ]),
+    content=(
+      #|eph-1
+      #|/request/body/json/messages/length: is not allowed beside "$last": an operator is the only key of its object
+      #|POST / "{\"messages\":[{\"role\":\"user\"},{\"role\":\"tool\"}]}" -> eph-1
+      #|POST / "{\"messages\":[{\"role\":\"tool\"},{\"role\":\"user\"}]}" -> none
     ),
   )
 }
