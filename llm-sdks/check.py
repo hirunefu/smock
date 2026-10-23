@@ -72,6 +72,7 @@ MESSAGES_TOOLS_CALLS = [
     ("toolu_sdk_weather", "get_weather", {"city": "東京", "days": 3, "units": {"temperature": "celsius"}}),
     ("toolu_sdk_time", "get_time", {"timezone": "Asia/Tokyo"}),
 ]
+MESSAGES_CALL_ONLY_CALL = ("get_weather", {"city": "Paris"})
 
 # The function tools an application gives the stream helper. With
 # "strict", the helper parses each call's arguments as JSON.
@@ -728,9 +729,37 @@ def messages_tools(checks, smock):
                 reply.model_dump(), built.model_dump(), MESSAGES_HELPER_DIFFERENCES)
 
 
+def messages_call_only(checks, smock):
+    """Anthropic Messages, one tool call and no text, with generated ids:
+    create() and the stream() helper."""
+    client = smock.anthropic()
+    call_name, arguments = MESSAGES_CALL_ONLY_CALL
+    name = "messages-call-only: create"
+    reply = messages_create(client, "messages-call-only", tools=MESSAGES_TOOLS)
+    checks.equal(f"{name}: one tool_use block, with its input",
+                 [(block.type, block.name, block.input) for block in reply.content],
+                 [("tool_use", call_name, arguments)])
+    checks.id(f"{name}: the tool_use id", reply.content[0].id if reply.content else None, TOOL_USE_ID)
+    checks.equal(f"{name}: the stop reason", reply.stop_reason, "tool_use")
+    check_messages_usage(checks, name, reply.usage, 40, 12)
+    checks.id(f"{name}: the id", reply.id, MESSAGE_ID)
+    checks.id(f"{name}: the request id", reply._request_id, REQUEST_ID)
+
+    name = "messages-call-only: stream()"
+    request_id, events, built = messages_helper(client, "messages-call-only", tools=MESSAGES_TOOLS)
+    checks.equal(f"{name}: the input of the tool_use block as it stops, at index 0",
+                 [(event.index, event.content_block.input) for event in events if event.type == "content_block_stop"],
+                 [(0, arguments)])
+    checks.id(f"{name}: the tool_use id", built.content[0].id if built.content else None, TOOL_USE_ID)
+    checks.id(f"{name}: the request id", request_id, REQUEST_ID)
+    checks.same(f"{name}: get_final_message() equals the JSON reply, apart from the listed differences",
+                reply.model_dump(), built.model_dump(),
+                {**MESSAGES_HELPER_DIFFERENCES, **MESSAGES_GENERATED_ID_DIFFERENCES})
+
+
 # The cases, in the order they run. Each calls the Stubs it names, and a
 # case whose SDK raises unexpectedly fails without stopping the others.
-CASES = [chat_text, chat_tools, chat_call_only, chat_length, messages_text, messages_tools]
+CASES = [chat_text, chat_tools, chat_call_only, chat_length, messages_text, messages_tools, messages_call_only]
 
 
 def main():

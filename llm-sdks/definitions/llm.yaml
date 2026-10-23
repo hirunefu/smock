@@ -125,3 +125,20 @@ stubs:
             id: toolu_sdk_time
             arguments: '{"timezone": "Asia/Tokyo"}'
         usage: { input: 412, output: 87 }
+
+  # Anthropic Messages: one tool call and no text, so that the tool_use
+  # block is the only block, with every id generated.
+  - id: messages-call-only
+    mock: llm
+    request:
+      method: POST
+      path: /v1/messages
+      body: { json: { model: messages-call-only } }
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+        usage: { input: 40, output: 12 }
