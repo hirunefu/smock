@@ -123,3 +123,20 @@ stubs:
             id: call_sdk_alerts
             arguments: { region: 関東, severity: null }
         usage: { input: 64, output: 29 }
+
+  # Responses: a reply cut at the token limit. The written stop reason
+  # makes the reply incomplete, and its stream ends with
+  # response.incomplete instead of response.completed.
+  - id: responses-incomplete
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { model: responses-incomplete } }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        text: The weather in Paris is
+        usage: { input: 31, output: 5 }
+        stopReason: max_output_tokens

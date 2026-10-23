@@ -64,6 +64,7 @@ CHAT_TOOLS_CALLS = [
 CHAT_CALL_ONLY_CALL = ("get_weather", {"city": "Paris"})
 CHAT_LENGTH_TEXT = "The weather in Paris is"
 RESPONSES_TEXT = "Hi! こんにちは。 👋🏽 How can I help?"
+RESPONSES_INCOMPLETE_TEXT = "The weather in Paris is"
 RESPONSES_TOOLS_TEXT = "Let me look both up."
 RESPONSES_TOOLS_CALLS = [
     ("call_sdk_forecast", "get_forecast", {"cities": ["Paris", "東京"], "days": 2, "hourly": False}),
@@ -268,13 +269,16 @@ class Checks:
         detail = "".join(traceback.format_exception(error))
         self.check(f"{name}: raised {type(error).__name__} unexpectedly", False, detail)
 
-    def raises(self, name, error_class, call):
+    def raises(self, name, error_class, call, message=None):
         """Checks that a call raises error_class, as the vendor's reply
-        makes it."""
+        makes it, with the given message if one is given."""
         try:
             call()
-        except error_class:
-            self.check(name, True)
+        except error_class as error:
+            if message is None or str(error) == message:
+                self.check(name, True)
+            else:
+                self.raised(name, error)
             return
         except Exception as error:
             self.raised(name, error)
@@ -790,9 +794,50 @@ def responses_tools(checks, smock):
                 reply.model_dump(), built.model_dump(), RESPONSES_HELPER_DIFFERENCES)
 
 
+def responses_incomplete(checks, smock):
+    """Responses, a reply cut at the token limit, with the written stop
+    reason max_output_tokens: create() with and without stream, and the
+    stream() helper, whose get_final_response() raises on it as it does on
+    the vendor's."""
+    client = smock.openai()
+    name = "responses-incomplete: create"
+    reply = responses_create(client, "responses-incomplete")
+    checks.equal(f"{name}: the status", reply.status, "incomplete")
+    checks.equal(f"{name}: the incomplete reason", reply.incomplete_details and reply.incomplete_details.reason,
+                 "max_output_tokens")
+    checks.equal(f"{name}: no completed_at", reply.completed_at, None)
+    checks.equal(f"{name}: the text, as output_text joins it", reply.output_text, RESPONSES_INCOMPLETE_TEXT)
+    checks.equal(f"{name}: the message item, incomplete", [(item.type, item.status) for item in reply.output],
+                 [("message", "incomplete")])
+    check_responses_usage(checks, name, reply.usage, 31, 5)
+
+    name = "responses-incomplete: create(stream=True)"
+    _, events = responses_stream(client, "responses-incomplete")
+    closed = check_events(checks, name, events, RESPONSE_ID, "responses-incomplete", "response.incomplete")
+    checks.equal(f"{name}: the text", streamed_text(events), RESPONSES_INCOMPLETE_TEXT)
+    checks.equal(f"{name}: the closing event's status and incomplete reason",
+                 closed and (closed.status, closed.incomplete_details and closed.incomplete_details.reason),
+                 ("incomplete", "max_output_tokens"))
+    checks.equal(f"{name}: the closing event's message item, incomplete",
+                 closed and [(item.type, item.status) for item in closed.output], [("message", "incomplete")])
+
+    name = "responses-incomplete: stream()"
+    with client.responses.stream(model="responses-incomplete", input=MESSAGES) as stream:
+        events = list(stream)
+        checks.equal(f"{name}: the last event", [event.type for event in events[-1:]], ["response.incomplete"])
+        closed = events[-1].response if events else None
+        checks.equal(f"{name}: the incomplete reason the last event carries",
+                     closed and closed.incomplete_details and closed.incomplete_details.reason,
+                     "max_output_tokens")
+        checks.equal(f"{name}: the text of the Response the last event carries", closed and closed.output_text,
+                     RESPONSES_INCOMPLETE_TEXT)
+        checks.raises(f"{name}: get_final_response() raises RuntimeError", RuntimeError, stream.get_final_response,
+                      message="Didn't receive a `response.completed` event.")
+
+
 # The cases, in the order they run. Each calls the Stubs it names, and a
 # case whose SDK raises unexpectedly fails without stopping the others.
-CASES = [chat_text, chat_tools, chat_call_only, chat_length, responses_text, responses_tools]
+CASES = [chat_text, chat_tools, chat_call_only, chat_length, responses_text, responses_tools, responses_incomplete]
 
 
 def main():
