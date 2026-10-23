@@ -102,16 +102,19 @@ fn wire_bytes(reply : @llm.Reply) -> Int {
 /// The strings of one piece, whose stream, the reply of a declaration of
 /// `api` to a request whose body is `request`, by default one that sets
 /// `stream: true`, takes exactly `bytes` bytes on the wire. The piece is
-/// text of two-byte characters and ASCII. The model takes the bytes the
-/// text cannot, since a Responses stream carries the text five times and
-/// the model three.
+/// text of two-byte characters and ASCII. The model, the request's when it
+/// takes no byte, takes the bytes the text cannot, since a Responses stream
+/// carries the text five times and the model three.
 fn strings_of_bytes(
   api : @llm.Api,
   bytes : Int,
   request? : Json = { "stream": true },
 ) -> @llm.Strings {
   let strings = (text : Int, model : Int) => {
-    @llm.Strings(chunks=[text_of_bytes(text)], model=repeated("m", model))
+    @llm.Strings(
+      chunks=[text_of_bytes(text)],
+      model?=if model > 0 { Some(repeated("m", model)) } else { None },
+    )
   }
   let size = (text : Int, model : Int) => {
     wire_bytes(sized_reply(strings(text, model), api~, request=Some(request)))
@@ -209,6 +212,71 @@ test "a stream that passes the bound is cut short soon after, so a long text, lo
       #|anthropic-messages, a long text: the reply takes more than 1 MiB as a stream; cut short: true
       #|openai-chat, long arguments: the reply takes more than 1 MiB as a stream; cut short: true
       #|openai-chat, a long model: the reply takes more than 1 MiB as a stream; cut short: true
+    ),
+  )
+}
+
+///|
+/// What the load check says of `strings` on a declaration of `api`, by
+/// default `openai-chat`, with the chunk size `chunk_size`: `ok`, or the
+/// message.
+fn at_load(
+  strings : @llm.Strings,
+  api? : @llm.Api = OpenaiChat,
+  chunk_size? : Int,
+) -> String {
+  match @llm.check_reply_size(@llm.Declaration(api~, chunk_size?), strings) {
+    Ok(_) => "ok"
+    Err(message) => message
+  }
+}
+
+///|
+test "at load, a reply as written is encoded as the JSON reply and as a stream, and either one over the bound is a load error" {
+  let short = @llm.Strings(text=repeated("a", 6_000))
+  inspect(
+    [
+      "6,000 characters: \{at_load(short)}",
+      "6,000 characters in pieces of 1: \{at_load(short, chunk_size=1)}",
+      "1 MiB: \{at_load(@llm.Strings(text=repeated("a", 1_048_576)))}",
+    ].join("\n"),
+    content=(
+      #|6,000 characters: ok
+      #|6,000 characters in pieces of 1: the reply takes more than 1 MiB as a stream
+      #|1 MiB: the reply takes more than 1 MiB as a JSON body and as a stream
+    ),
+  )
+}
+
+///|
+test "at load, the stream is the one a request with stream and stream_options.include_usage true gets, with no model of its own" {
+  let with_usage : Json = {
+    "stream": true,
+    "stream_options": { "include_usage": true },
+  }
+  let at_bound = strings_of_bytes(OpenaiChat, 1_048_576, request=with_usage)
+  let over = strings_of_bytes(OpenaiChat, 1_048_577, request=with_usage)
+  let without_usage = sized_reply(over, request=Some({ "stream": true }))
+  let with_model = sized_reply(
+    at_bound,
+    request=Some({
+      "model": "m",
+      "stream": true,
+      "stream_options": { "include_usage": true },
+    }),
+  )
+  inspect(
+    [
+      "at the bound: \{at_load(at_bound)}",
+      "one byte over: \{at_load(over)}",
+      "the same strings, without the usage chunk: \{verdict(without_usage)}",
+      "the strings at the bound, to a request that gives a model: \{verdict(with_model)}",
+    ].join("\n"),
+    content=(
+      #|at the bound: ok
+      #|one byte over: the reply takes more than 1 MiB as a stream
+      #|the same strings, without the usage chunk: ok
+      #|the strings at the bound, to a request that gives a model: the reply takes more than 1 MiB as a stream
     ),
   )
 }

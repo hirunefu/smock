@@ -586,6 +586,52 @@ pub fn Reply::check_size(self : Reply) -> Result[Unit, String] {
 }
 
 ///|
+/// The time a load check encodes a reply at, 2026-10-23T00:00:00Z, in
+/// milliseconds since the Unix epoch. Every time from 2001 to 2286 has as
+/// many digits of whole seconds, so a reply takes as many bytes whenever
+/// it is sent.
+let load_time : Int64 = 1_792_713_600_000L
+
+///|
+/// The body of the request a load check streams a reply to: it sets
+/// `stream` and `stream_options.include_usage`, so that a Chat Completions
+/// stream carries its usage chunk, and gives no model.
+let load_stream_request : Json = {
+  "stream": true,
+  "stream_options": { "include_usage": true },
+}
+
+///|
+/// The load check of the size of the reply that `declaration` gives with
+/// its strings as written, `strings`: `Reply::check_size` of its JSON
+/// reply, to a request whose body is not JSON, and of its stream, to one
+/// whose body is `load_stream_request`. Neither request gives a model or a
+/// setting a Responses object copies, and every id takes as many bytes
+/// whatever is drawn. The message of the load error says which of the two
+/// forms passes the bound, or that both do.
+pub fn check_reply_size(
+  declaration : Declaration,
+  strings : Strings,
+) -> Result[Unit, String] {
+  let ids = ids_generator(0)
+  let json = reply(declaration, strings, request=None, now=load_time, ids~)
+  let stream = reply(
+    declaration,
+    strings,
+    request=Some(load_stream_request),
+    now=load_time,
+    ids~,
+  )
+  match (json.over, stream.over) {
+    (false, false) => Ok(())
+    (true, false) => Err("the reply takes more than 1 MiB as a JSON body")
+    (false, true) => Err("the reply takes more than 1 MiB as a stream")
+    (true, true) =>
+      Err("the reply takes more than 1 MiB as a JSON body and as a stream")
+  }
+}
+
+///|
 /// The JSON reply whose body is `body`, with the request-id header field
 /// `request_id`. Its bytes are counted first, without writing them, and a
 /// body that takes more than `max_reply_bytes` is not written.
