@@ -32,6 +32,14 @@ of each GitHub release include its section
   A client that reads slowly but steadily still gets the whole response,
   and delays do not count. It is not logged, like the read and idle
   timeouts. See [Run](README.md#run).
+- A template helper, `last(array)`, gives the last element of an array,
+  with its own type, and steps can follow it, so
+  `${last(body.messages).content}` quotes the last message of a
+  conversation. An empty array gives a missing value, so `??` applies.
+  Since a response reads the Data buckets after its own Stub's writes,
+  `${last(data.orders)}` answers the item that the Stub's `append` just
+  added, its new key included. See
+  [Helpers](docs/definition-files.md#helpers).
 
 ### Changed
 
