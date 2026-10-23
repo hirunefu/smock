@@ -412,9 +412,10 @@ fn File::read_events(
 /// form the reply takes; `text`, empty when left out, or `chunks`, its
 /// pieces, in its place; `chunkSize`, the code points of each piece cut
 /// from `text`; the reply's `id` and `model`, generated and the request's
-/// when left out; `usage`, 0 tokens when left out; and `stopReason`, a word
-/// of that API, derived when left out. It has none when `api` is missing or
-/// names no API, and then the stop reason is not checked.
+/// when left out; `usage`, 0 tokens when left out; `stopReason`, a word of
+/// that API, derived when left out; and `timing`, no waits when left out.
+/// It has none when `api` is missing or names no API, and then the stop
+/// reason is not checked.
 fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
   guard json is Object(fields) else {
     self.error(pointer, "must be an object")
@@ -427,6 +428,7 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
   let mut id = None
   let mut model = None
   let mut usage = @llm.Usage(input=0, output=0)
+  let mut timing = { first: None, interval: None, }
   for key, value in fields {
     let field = child_pointer(pointer, key)
     match key {
@@ -451,6 +453,7 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
       "usage" => usage = self.read_usage(field, value)
       // Checked below, against the API, which may come after it.
       "stopReason" => ()
+      "timing" => timing = self.read_llm_timing(field, value)
       _ => self.unknown_field(field)
     }
   }
@@ -474,6 +477,7 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
     declaration: @llm.Declaration(api~, chunk_size?, usage~, stop_reason?),
     // With `chunks`, the text is their join, in place of `text`.
     strings: @llm.Strings(text~, chunks?, id?, model?),
+    timing,
   })
 }
 
@@ -526,4 +530,30 @@ fn File::read_chunks(
     )
   }
   ReadOnlyArray::from_array(chunks)
+}
+
+///|
+/// Reads the `timing` of an LLM reply: `first` and `interval`, each one
+/// distribution of the delay Fault, without `probability`, and each none
+/// when left out.
+fn File::read_llm_timing(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> LlmTiming {
+  let mut first = None
+  let mut interval = None
+  guard json is Object(timing) else {
+    self.error(pointer, "must be an object")
+    return { first, interval, }
+  }
+  for key, value in timing {
+    let field = child_pointer(pointer, key)
+    match key {
+      "first" => first = self.read_wait(field, value)
+      "interval" => interval = self.read_wait(field, value)
+      _ => self.unknown_field(field)
+    }
+  }
+  { first, interval, }
 }

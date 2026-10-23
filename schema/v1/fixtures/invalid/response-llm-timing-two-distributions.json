@@ -1,0 +1,10 @@
+{
+  "mocks": [{ "name": "openai" }],
+  "stubs": [
+    {
+      "id": "chat",
+      "mock": "openai",
+      "response": { "status": 200, "llm": { "api": "openai-chat", "text": "Hello.", "timing": { "interval": { "fixed": 30, "uniform": { "min": 15, "max": 40 } } } } }
+    }
+  ]
+}

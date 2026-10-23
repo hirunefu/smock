@@ -18,8 +18,8 @@ disagree.
   after normalisation, more than one Mock marked `default`, or a Stub that
   names a Mock no file declares.
   Files that are invalid only because of an RE2 pattern, a missing body
-  file, a uniform delay whose `min` exceeds its `max`, or a Host that no
-  request can carry (such as `:8080`, which normalises to no name, or
+  file, a uniform delay or wait whose `min` exceeds its `max`, or a Host
+  that no request can carry (such as `:8080`, which normalises to no name, or
   `users:http`) belong here too, as do a response's or a `noMatch`'s
   `headers` that give two names that differ only in case, and JSON files
   that repeat a key in one object, which a JSON Schema validator reads as

@@ -576,6 +576,21 @@
         "stopReason": {
           "description": "The stop reason, in the word of the API that api names, whatever the reply's content: for openai-chat, the finish_reason stop, length, tool_calls, content_filter or function_call (deprecated). Left out, it is derived: stop.",
           "enum": ["stop", "length", "tool_calls", "content_filter", "function_call"]
+        },
+        "timing": {
+          "description": "The pacing of the stream. smock writes the head and the events before the first piece at once, waits first before the first event that carries a piece, counted from the head, and interval before each later one; other events follow the one before them at once. A reply with no piece waits first before its closing events. Each wait is drawn on its own from the Stub's random source, so fault.seed and --seed repeat them. A JSON reply is written at once. A delay Fault still holds back the status line, before these waits. Default: no waits.",
+          "type": "object",
+          "properties": {
+            "first": {
+              "description": "The wait before the first piece, counted from the head. Default: none.",
+              "$ref": "#/$defs/wait"
+            },
+            "interval": {
+              "description": "The wait before each later piece. Default: none.",
+              "$ref": "#/$defs/wait"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "required": ["api"],
@@ -584,6 +599,24 @@
           "properties": { "text": false }
         }
       },
+      "additionalProperties": false
+    },
+    "wait": {
+      "description": "A wait of an LLM stream, drawn from one distribution of the delay Fault: give exactly one of fixed, uniform and lognormal. It takes no probability, since every stream waits.",
+      "type": "object",
+      "properties": {
+        "fixed": {
+          "description": "Always this many milliseconds.",
+          "$ref": "#/$defs/milliseconds"
+        },
+        "uniform": { "$ref": "#/$defs/uniform" },
+        "lognormal": { "$ref": "#/$defs/lognormal" }
+      },
+      "oneOf": [
+        { "required": ["fixed"] },
+        { "required": ["uniform"] },
+        { "required": ["lognormal"] }
+      ],
       "additionalProperties": false
     },
     "event": {
@@ -642,39 +675,8 @@
           "description": "Always this many milliseconds.",
           "$ref": "#/$defs/milliseconds"
         },
-        "uniform": {
-          "description": "A number of milliseconds drawn uniformly from min to max. min must not exceed max.",
-          "type": "object",
-          "properties": {
-            "min": {
-              "description": "The shortest delay, in milliseconds.",
-              "$ref": "#/$defs/milliseconds"
-            },
-            "max": {
-              "description": "The longest delay, in milliseconds.",
-              "$ref": "#/$defs/milliseconds"
-            }
-          },
-          "required": ["min", "max"],
-          "additionalProperties": false
-        },
-        "lognormal": {
-          "description": "A number of milliseconds drawn from a log-normal distribution, for a long tail of slow responses.",
-          "type": "object",
-          "properties": {
-            "median": {
-              "description": "The median delay, in milliseconds.",
-              "$ref": "#/$defs/milliseconds"
-            },
-            "sigma": {
-              "description": "The standard deviation of the delay's natural logarithm. The larger it is, the longer the tail.",
-              "type": "number",
-              "minimum": 0
-            }
-          },
-          "required": ["median", "sigma"],
-          "additionalProperties": false
-        },
+        "uniform": { "$ref": "#/$defs/uniform" },
+        "lognormal": { "$ref": "#/$defs/lognormal" },
         "probability": { "$ref": "#/$defs/probability" }
       },
       "oneOf": [
@@ -682,6 +684,39 @@
         { "required": ["uniform"] },
         { "required": ["lognormal"] }
       ],
+      "additionalProperties": false
+    },
+    "uniform": {
+      "description": "A number of milliseconds drawn uniformly from min to max. min must not exceed max.",
+      "type": "object",
+      "properties": {
+        "min": {
+          "description": "The shortest delay or wait, in milliseconds.",
+          "$ref": "#/$defs/milliseconds"
+        },
+        "max": {
+          "description": "The longest delay or wait, in milliseconds.",
+          "$ref": "#/$defs/milliseconds"
+        }
+      },
+      "required": ["min", "max"],
+      "additionalProperties": false
+    },
+    "lognormal": {
+      "description": "A number of milliseconds drawn from a log-normal distribution, for a long tail of slow responses.",
+      "type": "object",
+      "properties": {
+        "median": {
+          "description": "The median delay or wait, in milliseconds.",
+          "$ref": "#/$defs/milliseconds"
+        },
+        "sigma": {
+          "description": "The standard deviation of the natural logarithm of the delay or wait. The larger it is, the longer the tail.",
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": ["median", "sigma"],
       "additionalProperties": false
     },
     "connectionFault": {
