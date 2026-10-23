@@ -1269,7 +1269,8 @@ The fields of `llm`:
   [declared counts](#usage-and-stop-reasons) and every other count 0. There
   is no `system_fingerprint`.
 - An `openai-responses` reply is a Response object, with `text` in its
-  message item. [OpenAI Responses](#openai-responses) says more.
+  message item and each tool call in a `function_call` item.
+  [OpenAI Responses](#openai-responses) says more.
 - An `anthropic-messages` reply is a `message` object, with `text` in its
   text block. [Anthropic Messages](#anthropic-messages) says more.
 - smock sets `Content-Type: application/json`, or `text/event-stream` for
@@ -1475,7 +1476,9 @@ stubs:
   is a piece, and so is an empty element of [`chunks`](#chunks), so each
   waits as one. A reply with no piece, such as one with empty text, waits
   `first` before its first closing event: Chat's closing chunk, Responses'
-  `response.output_text.done` or Messages' `message_delta`. A
+  `response.output_text.done`, or the last function call's
+  `response.function_call_arguments.done` when there is no message item,
+  or Messages' `message_delta`. A
   [mid-stream error](#mid-stream-errors) waits as a next piece would.
 - **Responses' `completed_at`.** In an `openai-responses` stream, the
   `completed_at` of `response.completed` is the time smock received the
@@ -1609,7 +1612,7 @@ from `A`-`Z`, `a`-`z` and `0`-`9`:
 | API | Reply's id | Items and tool calls | Request-id header |
 |---|---|---|---|
 | `openai-chat` | `chatcmpl-` | tool call `call_` | `x-request-id: req_…` |
-| `openai-responses` | `resp_` | the message item, `msg_` | `x-request-id: req_…` |
+| `openai-responses` | `resp_` | message item `msg_`, function call `fc_`, its `call_id` `call_` | `x-request-id: req_…` |
 | `anthropic-messages` | `msg_` | none | `request-id: req_…` |
 
 - One reply has one id: the JSON reply and every event of the stream carry
@@ -1633,8 +1636,8 @@ from `A`-`Z`, `a`-`z` and `0`-`9`:
   request ids of a recorded run, and a Stub that moves from `openai-chat`
   to `openai-responses` keeps the 24 characters of its reply's id and its
   request id.
-- The Responses message item's `msg_` id is always generated: no field
-  fixes it.
+- The Responses message item's `msg_` id and a function call item's `fc_`
+  id are always generated: no field fixes them.
 - `created`, and Responses' `created_at`, is the time smock received the
   request, in whole seconds since the Unix epoch: the time `now()` reads.
   In a rendering, it is the rendering's time.
@@ -1725,7 +1728,7 @@ Each tool call has these fields:
   JSON reply and in the stream's opening chunk, and no chunk carries
   content, even when `chunks` gives empty pieces. So openai-python's
   stream helper builds the same message from the stream as from the JSON
-  reply.
+  reply. An `openai-responses` reply has no message item then.
 - Left out, the [stop reason](#usage-and-stop-reasons) is `tool_calls`. A
   written one is sent whatever the reply holds.
 - A missing `name` or `arguments`, an empty `name`, `arguments` that are
@@ -1733,9 +1736,10 @@ Each tool call has these fields:
   tool calls of one `llm` with the same `id` are load errors. With
   [templates](#templates-in-llm-replies), ids that insert a value are
   compared after rendering.
-- Only `openai-chat` sends tool calls yet. An `openai-responses` or
-  `anthropic-messages` reply leaves them out, though they still draw their
-  ids' slots.
+- `openai-responses` sends them as
+  [function call items](#function-call-items). `anthropic-messages` does
+  not send tool calls yet: its reply leaves them out, though they still
+  draw their ids' slots.
 
 A request for `gpt-6-astra` without `stream` gets this reply, which
 `smock render` shows with `--seed 7` and `--time 2026-10-23T00:00:00Z`.
@@ -1780,7 +1784,10 @@ Call ids follow the rules of [Ids, seeds and time](#ids-seeds-and-time):
   as written, with no prefix.
 - Each tool call draws two slots of the ids' order, after the reply's and
   before the request id's. `openai-chat` sends the second as the call id.
-  So adding a tool call changes the request id, and not the reply's id.
+  `openai-responses` sends the first as its function call item's `fc_` id
+  and the second as its `call_id`, so a Stub that moves between the two
+  APIs keeps its call ids. Adding a tool call changes the request id, and
+  not the reply's id.
 - A fixed `id` still draws its slots, so fixing one call id changes no
   other id.
 - The call ids of one reply must differ, so two tool calls of one `llm`
@@ -2052,9 +2059,11 @@ sends `POST /v1/responses`, and gets this reply, which
 {"id":"resp_oniRcSDFUU6bnxe66XwQR5pl","object":"response","access_programs":null,"created_at":1792713600,"status":"completed","completed_at":1792713600,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"model":"gpt-6-astra","output":[{"id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hi there! How can I assist you today?","annotations":[],"logprobs":[]}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":37,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":11,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":48},"user":null,"metadata":{}}
 ```
 
-- `output` holds one message item, with `text` as its `output_text`, or
+- `output` holds the message item, with `text` as its `output_text`, or
   `""` when the text is empty. Its id is `msg_` and 24 generated
-  characters.
+  characters. Each [tool call](#function-call-items) follows it as a
+  `function_call` item. With tool calls and empty text, there is no
+  message item.
 - `usage` gives the [declared counts](#usage-and-stop-reasons) as
   `input_tokens` and `output_tokens`, with `total_tokens` their sum.
 - `created_at` and `completed_at` are the time smock received the
@@ -2099,13 +2108,17 @@ and one `data:` line of compact JSON whose `sequence_number` counts from
 5. `response.output_text.done` with the whole `text`, then
    `response.content_part.done` with the whole part and
    `response.output_item.done` with the whole item;
-6. `response.completed` with the whole Response object, or
+6. for each [tool call](#function-call-items), its `function_call` item
+   at the next `output_index`: added, its arguments in pieces, then done;
+7. `response.completed` with the whole Response object, or
    `response.incomplete` when the Stub writes a stop reason
    ([Incomplete replies](#incomplete-replies)).
 
 No `data: [DONE]` follows. The text is cut into pieces as for every API
-([Chunks](#chunks)). Empty text keeps the message item and its part, with
-no delta. Every event carries the same `resp_` and `msg_` ids. The Response
+([Chunks](#chunks)). Empty text with no tool call keeps the message item
+and its part, with no delta. With tool calls, empty text gives no message
+item, so steps 2 to 5 are left out. Every event carries the same `resp_`
+id, and the events of an item the same item id. The Response
 object of the last event is the JSON reply, but for its `completed_at`:
 the time smock received the request plus the stream's waits up to that
 event, in whole seconds ([Timing](#timing)). Without `timing`, that is the
@@ -2149,6 +2162,116 @@ openai-python reads it with `client.responses.create(..., stream=True)`,
 which yields each event, or with the `client.responses.stream(...)` helper,
 whose `get_final_response()` gives the Response that the JSON reply gives.
 
+#### Function call items
+
+An `openai-responses` reply sends each [tool call](#tool-calls) as a
+`function_call` item, after its message item. This Stub answers the first
+turn of an agent loop, told apart by the
+[last item of `input`](#operators-in-json-conditions):
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { input: { $last: { role: user } } } }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        text: Let me check.
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+        usage: { input: 31, output: 18 }
+```
+
+`client.responses.create(model="gpt-6-astra", input=[{"role": "user", "content": "Weather in Paris?"}])`
+gets this reply, which `smock render` shows with `--seed 7` and
+`--time 2026-10-23T00:00:00Z`:
+
+```json
+{"id":"resp_oniRcSDFUU6bnxe66XwQR5pl","object":"response","access_programs":null,"created_at":1792713600,"status":"completed","completed_at":1792713600,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"gpt-6-astra","output":[{"id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Let me check.","annotations":[],"logprobs":[]}]},{"type":"function_call","id":"fc_TZp9I060Mzd0w4SDwiWTe2c8","call_id":"call_oLxN2ar43pJJV6rqKHXsG45M","name":"get_weather","arguments":"{\"city\":\"Paris\"}","status":"completed"}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":31,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":18,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":49},"user":null,"metadata":{}}
+```
+
+- `output` holds the message item, then one item per tool call, in the
+  order written, with the members of the "Functions" example of OpenAI's
+  API reference: `type: function_call`, `id`, `call_id`, `name`,
+  `arguments` and `status: completed`. `arguments` is a JSON string, as
+  for `openai-chat`.
+- With tool calls and empty text, there is no message item: `output`
+  holds the function call items alone, and a stream sends no text event,
+  even when `chunks` gives empty pieces. Empty text without tool calls
+  keeps the message item.
+- An item's `id` is `fc_` and 24 generated characters: no field fixes it.
+  Its `call_id` is `call_` and 24 characters, the same ones an
+  `openai-chat` reply gives the call, or the tool call's `id` as written.
+  [Ids, seeds and time](#ids-seeds-and-time) says more.
+- A written stop reason makes the reply [incomplete](#incomplete-replies),
+  and its message item with it. The function call items stay
+  `completed`.
+
+In a stream, each tool call's item follows the message item, at the next
+`output_index`:
+
+1. `response.output_item.added`, with the item, `arguments: ""` and
+   `status: "in_progress"`;
+2. one `response.function_call_arguments.delta` per piece of the
+   arguments, with `item_id`, `output_index` and the piece as `delta`;
+3. `response.function_call_arguments.done`, with the whole `arguments`;
+4. `response.output_item.done`, with the whole item, whose `id` and
+   `call_id` are those of its `added`.
+
+The arguments are cut as the text is, into pieces of `chunkSize` code
+points, 4 by default; `chunks` does not apply to them. Each piece waits as
+a piece of the text does ([Timing](#timing)). The closing event's Response
+holds every item, as the JSON reply does. For the Stub above, the same
+request with `stream: true` gets these events after the message item's:
+
+```text
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"fc_TZp9I060Mzd0w4SDwiWTe2c8","call_id":"call_oLxN2ar43pJJV6rqKHXsG45M","name":"get_weather","arguments":"","status":"in_progress"},"sequence_number":11}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_TZp9I060Mzd0w4SDwiWTe2c8","output_index":1,"delta":"{\"ci","sequence_number":12}
+
+  … "ty\":", "\"Par" …
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_TZp9I060Mzd0w4SDwiWTe2c8","output_index":1,"delta":"is\"}","sequence_number":15}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","item_id":"fc_TZp9I060Mzd0w4SDwiWTe2c8","output_index":1,"arguments":"{\"city\":\"Paris\"}","sequence_number":16}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","id":"fc_TZp9I060Mzd0w4SDwiWTe2c8","call_id":"call_oLxN2ar43pJJV6rqKHXsG45M","name":"get_weather","arguments":"{\"city\":\"Paris\"}","status":"completed"},"sequence_number":17}
+
+  … response.completed, whose output holds both items …
+```
+
+Checked with openai-python 3.36.1: `client.responses.create()` gives each
+call as a `ResponseFunctionToolCall` in `response.output`, and the
+`client.responses.stream(...)` helper's `get_final_response()` builds the
+same items from the stream. When the agent sends the call's output back, a
+second Stub
+answers it:
+
+```yaml
+- id: answer-weather
+  mock: openai
+  request:
+    method: POST
+    path: /v1/responses
+    body: { json: { input: { $last: { type: function_call_output } } } }
+  response:
+    status: 200
+    llm: { api: openai-responses, text: It is 18°C in Paris. }
+```
+
 #### Incomplete replies
 
 The Responses API has no stop word. For `openai-responses`, `stopReason`
@@ -2156,7 +2279,8 @@ is an incomplete reason instead: `max_output_tokens`, `max_messages`,
 `content_filter` or `steered`. A reply that writes one is incomplete. Its
 `status` is `incomplete`, `incomplete_details` gives the reason,
 `completed_at` is `null`, and its message item's `status` is `incomplete`
-too. Left out, the reply is `completed`. The vendor sends `steered` only
+too. A [function call item](#function-call-items) stays `completed`. Left
+out, the reply is `completed`. The vendor sends `steered` only
 after a steer over its WebSocket mode, which smock does not serve, and
 smock accepts it as any word of the API. This Stub stands for a reply cut
 short by the token limit:
