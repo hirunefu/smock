@@ -71,18 +71,6 @@ RESPONSES_TOOLS_CALLS = [
     ("call_sdk_alerts", "get_alerts", {"region": "関東", "severity": None}),
 ]
 
-# The function tools an application gives the Responses API. With "strict",
-# the stream helper parses each call's arguments as JSON.
-RESPONSES_TOOLS = [
-    {
-        "type": "function",
-        "name": name,
-        "strict": True,
-        "parameters": {"type": "object", "properties": {}, "additionalProperties": True},
-    }
-    for name in ("get_forecast", "get_alerts")
-]
-
 # The function tools an application gives the stream helper. With
 # "strict", the helper parses each call's arguments as JSON.
 CHAT_TOOLS = [
@@ -95,6 +83,18 @@ CHAT_TOOLS = [
         },
     }
     for name in ("get_weather", "get_time")
+]
+
+# The function tools an application gives the Responses API. With "strict",
+# the stream helper parses each call's arguments as JSON.
+RESPONSES_TOOLS = [
+    {
+        "type": "function",
+        "name": name,
+        "strict": True,
+        "parameters": {"type": "object", "properties": {}, "additionalProperties": True},
+    }
+    for name in ("get_forecast", "get_alerts")
 ]
 
 # Where the reply openai-python's Chat stream helper builds from a stream
