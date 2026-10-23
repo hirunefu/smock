@@ -1307,8 +1307,7 @@ other request gets the JSON reply: a body that is not JSON, no `stream`,
 `stream: false`, or the string `"true"`. So one Stub serves both kinds of
 call, and an SDK reads the reply with the parser it chose for its own
 request. Only an `llm` response reads the request body for this; other
-Stubs pay nothing. smock does not stream `openai-responses` replies yet: a
-request to one with `stream: true` gets the JSON reply. An
+Stubs pay nothing. An
 `anthropic-messages` reply has no stream yet: a request with
 `stream: true` gets its JSON reply.
 
@@ -1353,11 +1352,15 @@ data: [DONE]
 
 ```
 
+An `openai-responses` stream is a series of named events instead, each
+with an `event:` line and a `sequence_number`, and no `[DONE]`:
+[The Responses stream](#the-responses-stream) lists them.
+
 A stream travels as the events of an `events` response do:
 
-- smock sends the head and the opening chunk at once, then each event
-  after the wait its [`timing`](#timing) gives. Without `timing`, every
-  event follows at once.
+- smock sends the head and the events before the first piece at once, then
+  each event after the wait its [`timing`](#timing) gives. Without
+  `timing`, every event follows at once.
 - To an HTTP/1.1 client the stream is sent with chunked framing, so the
   connection carries the next request. An HTTP/1.0 client gets it
   unframed, and smock closes the connection to end it.
@@ -1456,10 +1459,17 @@ stubs:
 - **Where the waits go.** smock writes the head and every event before the
   first piece at once. It waits `first` before the first event that
   carries a piece, counted from the head, and `interval` before each later
-  one. The events that open or close the reply follow the event before
-  them at once. An empty element of [`chunks`](#chunks) is a piece, so it
-  waits as one. A reply with no piece, such as one with empty text, waits
-  `first` before its closing chunk.
+  one. The events that open or close the reply, an item or a part follow
+  the event before them at once. An empty element of [`chunks`](#chunks)
+  is a piece, so it waits as one. A reply with no piece, such as one with
+  empty text, waits `first` before its first closing event: Chat's closing
+  chunk, or Responses' `response.output_text.done`.
+- **Responses' `completed_at`.** In an `openai-responses` stream, the
+  `completed_at` of `response.completed` is the time smock received the
+  request plus the stream's waits up to that event, in whole seconds, so a
+  slow stream completes later than it was created. `created_at` stays the
+  time received. A JSON reply has no wait, so its `completed_at` is the
+  time received.
 - **Either may be left out**, for no wait there. Without `timing`, a stream
   has no wait at all.
 - **No `probability`.** Unlike a delay, a wait applies to every stream, so
@@ -1479,6 +1489,9 @@ stubs:
   sample that sets `stream: true`, the Stub above waits 824 ms before
   `"Hell"`, then 27, 20, 38, 19, 40, 38, 26 and 28 ms before the next
   eight pieces. The opening chunk, the closing chunk and `[DONE]` wait 0.
+  The same Stub with `api: openai-responses` waits the same 1060 ms in
+  all, so with `--time 2026-10-23T00:00:00Z` its `response.completed`
+  gives `completed_at` 1792713601, one second after its `created_at`.
 
 ### Usage and stop reasons
 
@@ -1580,7 +1593,7 @@ vendor's prefix and 24 characters from `A`-`Z`, `a`-`z` and `0`-`9`:
 | `openai-responses` | `resp_` | the message item, `msg_` | `x-request-id: req_…` |
 | `anthropic-messages` | `msg_` | none | `request-id: req_…` |
 
-- One reply has one id: the JSON reply and every chunk of the stream carry
+- One reply has one id: the JSON reply and every event of the stream carry
   the same one.
 - The ids come from the Stub's random source: from a generator of their
   own, seeded with the one draw every matched request takes XOR a fixed
@@ -1593,13 +1606,13 @@ vendor's prefix and 24 characters from `A`-`Z`, `a`-`z` and `0`-`9`:
   requests arrive in, such as when tests run in parallel. A test that
   must know an id in advance fixes it.
 - `id` fixes the reply's id. smock sends it exactly as written, with no
-  prefix, in the JSON reply and in every chunk. Fixing it changes no other
-  id: the ids draw in a fixed order of slots, the reply's first, then the
-  Responses message item's, and the request id's last. Every slot draws
-  whether or not the Stub fixes its id, or its API uses it. So adding `id`
-  to a Stub keeps the request ids of a recorded run, and a Stub that moves
-  from `openai-chat` to `openai-responses` keeps the 24 characters of its
-  reply's id and its request id.
+  prefix, in the JSON reply and in every event of the stream. Fixing it
+  changes no other id: the ids draw in a fixed order of slots, the reply's
+  first, then the Responses message item's, and the request id's last.
+  Every slot draws whether or not the Stub fixes its id, or its API uses
+  it. So adding `id` to a Stub keeps the request ids of a recorded run,
+  and a Stub that moves from `openai-chat` to `openai-responses` keeps the
+  24 characters of its reply's id and its request id.
 - The Responses message item's `msg_` id is always generated: no field
   fixes it.
 - `created`, and Responses' `created_at`, is the time smock received the
@@ -1682,7 +1695,8 @@ sends `POST /v1/responses`, and gets this reply, which
 - `usage` gives the [declared counts](#usage-and-stop-reasons) as
   `input_tokens` and `output_tokens`, with `total_tokens` their sum.
 - `created_at` and `completed_at` are the time smock received the
-  request, in whole seconds.
+  request, in whole seconds. A [stream](#the-responses-stream)'s
+  `completed_at` adds its waits.
 - The Response object gives back the settings the request gave, copied as
   given: smock does not interpret them. They are `instructions`,
   `previous_response_id`,
@@ -1702,8 +1716,75 @@ sends `POST /v1/responses`, and gets this reply, which
 - smock keeps no Responses state. `previous_response_id` is only copied,
   and a request with `background: true` gets this same reply, not a queued
   one.
-- smock does not stream `openai-responses` replies yet. A request with
-  `stream: true` gets the JSON reply.
+
+#### The Responses stream
+
+A request with `stream: true` gets the reply as a stream of named events,
+as OpenAI streams it. Each event has an `event:` line equal to its `type`,
+and one `data:` line of compact JSON whose `sequence_number` counts from
+0, one more each time. In order:
+
+1. `response.created`, then `response.in_progress`, each with the Response
+   object in progress: `status: "in_progress"`, `output: []`,
+   `usage: null` and `completed_at: null`;
+2. `response.output_item.added`, which opens the message item at
+   `output_index` 0, with `status: "in_progress"` and no content;
+3. `response.content_part.added`, which opens its `output_text` part,
+   still empty;
+4. one `response.output_text.delta` per piece of the text, whose `delta`
+   is the piece;
+5. `response.output_text.done` with the whole `text`, then
+   `response.content_part.done` with the whole part and
+   `response.output_item.done` with the whole item;
+6. `response.completed` with the whole Response object, or
+   `response.incomplete` when the Stub writes a stop reason
+   ([Incomplete replies](#incomplete-replies)).
+
+No `data: [DONE]` follows. The text is cut into pieces as for every API
+([Chunks](#chunks)). Empty text keeps the message item and its part, with
+no delta. Every event carries the same `resp_` and `msg_` ids. The Response
+object of the last event is the JSON reply, but for its `completed_at`:
+the time smock received the request plus the stream's waits up to that
+event, in whole seconds ([Timing](#timing)). Without `timing`, that is the
+time received.
+
+For the `hello` Stub above, the same request with `stream: true` gets this
+stream, which `smock render` shows with the same seed and time:
+
+```text
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_oniRcSDFUU6bnxe66XwQR5pl","object":"response","access_programs":null,"created_at":1792713600,"status":"in_progress","completed_at":null,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"model":"gpt-6-astra","output":[],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+  … response.in_progress, with the same Response object …
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","type":"message","status":"in_progress","role":"assistant","content":[]},"sequence_number":2}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","item_id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[],"logprobs":[]},"sequence_number":3}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","output_index":0,"content_index":0,"delta":"Hi t","sequence_number":4,"logprobs":[]}
+
+  … "here", "! Ho", "w ca", "n I ", "assi", "st y", "ou t", "oday", "?" …
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","item_id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","output_index":0,"content_index":0,"text":"Hi there! How can I assist you today?","sequence_number":14,"logprobs":[]}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","item_id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","output_index":0,"content_index":0,"part":{"type":"output_text","text":"Hi there! How can I assist you today?","annotations":[],"logprobs":[]},"sequence_number":15}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hi there! How can I assist you today?","annotations":[],"logprobs":[]}]},"sequence_number":16}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_oniRcSDFUU6bnxe66XwQR5pl","object":"response","access_programs":null,"created_at":1792713600,"status":"completed","completed_at":1792713600,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"model":"gpt-6-astra","output":[{"id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hi there! How can I assist you today?","annotations":[],"logprobs":[]}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":37,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":11,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":48},"user":null,"metadata":{}},"sequence_number":17}
+
+```
+
+openai-python reads it with `client.responses.create(..., stream=True)`,
+which yields each event, or with the `client.responses.stream(...)` helper,
+whose `get_final_response()` gives the Response that the JSON reply gives.
 
 #### Incomplete replies
 
@@ -1737,6 +1818,20 @@ The same request gets this reply:
 
 ```json
 {"id":"resp_oniRcSDFUU6bnxe66XwQR5pl","object":"response","access_programs":null,"created_at":1792713600,"status":"incomplete","completed_at":null,"error":null,"incomplete_details":{"reason":"max_output_tokens"},"instructions":"You are a helpful assistant.","max_output_tokens":null,"model":"gpt-6-astra","output":[{"id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","type":"message","status":"incomplete","role":"assistant","content":[{"type":"output_text","text":"The weather in Paris is","annotations":[],"logprobs":[]}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":31,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":36},"user":null,"metadata":{}}
+```
+
+A stream of an incomplete reply ends with `response.incomplete`, whose
+Response object is the JSON reply above, `completed_at` null included.
+openai-python's `client.responses.stream(...)` helper raises
+`RuntimeError` in `get_final_response()` when the stream ends without
+`response.completed`, as it does with OpenAI's own incomplete streams. So a
+client reads the `response.incomplete` event instead:
+
+```python
+with client.responses.stream(model="gpt-6-astra", input="Hello!") as stream:
+    for event in stream:
+        if event.type == "response.incomplete":
+            reason = event.response.incomplete_details.reason
 ```
 
 A Stub moves between `openai-chat` and `openai-responses` by changing `api`

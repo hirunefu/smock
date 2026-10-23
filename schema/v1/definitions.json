@@ -574,7 +574,7 @@
           "additionalProperties": false
         },
         "stopReason": {
-          "description": "The stop reason, in the word of the API that api names, whatever the reply's content. For openai-chat, the finish_reason stop, length, tool_calls, content_filter or function_call (deprecated); left out, it is derived: stop. For openai-responses, an incomplete reason, max_output_tokens, max_messages, content_filter or steered, which makes the reply incomplete; left out, the reply is completed. For anthropic-messages, the stop_reason end_turn, max_tokens, stop_sequence, tool_use, pause_turn, refusal or model_context_window_exceeded; with stop_sequence, the reply's stop_sequence is the first of the request's stop_sequences when that is a string, and otherwise null, and a refusal carries stop_details; left out, it is derived: end_turn.",
+          "description": "The stop reason, in the word of the API that api names, whatever the reply's content. For openai-chat, the finish_reason stop, length, tool_calls, content_filter or function_call (deprecated); left out, it is derived: stop. For openai-responses, an incomplete reason, max_output_tokens, max_messages, content_filter or steered, which makes the reply incomplete and ends a stream with response.incomplete; left out, the reply is completed. For anthropic-messages, the stop_reason end_turn, max_tokens, stop_sequence, tool_use, pause_turn, refusal or model_context_window_exceeded; with stop_sequence, the reply's stop_sequence is the first of the request's stop_sequences when that is a string, and otherwise null, and a refusal carries stop_details; left out, it is derived: end_turn.",
           "enum": [
             "stop", "length", "tool_calls", "content_filter", "function_call",
             "max_output_tokens", "max_messages", "steered",
@@ -582,7 +582,7 @@
           ]
         },
         "timing": {
-          "description": "The pacing of the stream. smock writes the head and the events before the first piece at once, waits first before the first event that carries a piece, counted from the head, and interval before each later one; other events follow the one before them at once. A reply with no piece waits first before its closing events. Each wait is drawn on its own from the Stub's random source, so fault.seed and --seed repeat them. A JSON reply is written at once. A delay Fault still holds back the status line, before these waits. Default: no waits.",
+          "description": "The pacing of the stream. smock writes the head and the events before the first piece at once, waits first before the first event that carries a piece, counted from the head, and interval before each later one; other events follow the one before them at once. A reply with no piece waits first before its closing events. Each wait is drawn on its own from the Stub's random source, so fault.seed and --seed repeat them. In an openai-responses stream, the completed_at of response.completed is the time received plus these waits. A JSON reply is written at once. A delay Fault still holds back the status line, before these waits. Default: no waits.",
           "type": "object",
           "properties": {
             "first": {
