@@ -20,6 +20,7 @@ scripts/check-llm-sdks.sh installs the pinned SDKs and runs it, as CI does.
 llm-sdks/README.md says more.
 """
 
+import functools
 import json
 import os
 import re
@@ -312,6 +313,17 @@ class Smock:
         the SDK adds."""
         options = {"max_retries": 0, "timeout": CALL_TIMEOUT_S, **options}
         return anthropic.Anthropic(base_url=self.url, api_key="test", **options)
+
+    def verify(self, session, exactly):
+        """Verifies through the Admin API, as a test does, that exactly that
+        many requests of the Session reached smock. Returns the verdict,
+        with its ok and its count."""
+        request = urllib.request.Request(
+            f"{self.admin_url}/v1/journal/verify", data=json.dumps({"exactly": exactly}).encode(),
+            headers={"Authorization": f"Bearer {self.admin_token}", "baggage": f"smock-session={session}",
+                     "Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=CALL_TIMEOUT_S) as response:
+            return json.load(response)
 
 
 class Checks:
@@ -1398,6 +1410,32 @@ def error_replies(checks, smock):
                  OVERLOADED_REQUEST_ID)
 
 
+def retries(checks, smock):
+    """Retries, through clients that keep the default retries, each call in
+    a Session of its own: the docs' 429, whose x-should-retry is "false",
+    is not retried, so one request reaches smock, while the docs' 529,
+    which has no x-should-retry, is retried twice, as the SDKs retry every
+    5xx by default, so three requests reach smock."""
+    for sdk, client_of, default_retries, create, rate_limited, overloaded in (
+        ("openai-python", smock.openai, openai.DEFAULT_MAX_RETRIES, chat_create,
+         openai.RateLimitError, openai.InternalServerError),
+        ("anthropic-sdk-python", smock.anthropic, anthropic.DEFAULT_MAX_RETRIES, messages_create,
+         anthropic.RateLimitError, anthropic.OverloadedError),
+    ):
+        for model, error_class, requests, why in (
+            ("rate-limited", rate_limited, 1, 'x-should-retry: "false" stops a retry: 1 request'),
+            ("overloaded", overloaded, 3, "without x-should-retry, it is retried twice: 3 requests"),
+        ):
+            session = f"retries-{model}-{sdk}"
+            client = client_of(max_retries=default_retries, default_headers={"baggage": f"smock-session={session}"})
+            name = f"{model}: {sdk} with the default retries"
+            checks.raises(f"{name}: raises {error_class.__name__}", error_class,
+                          functools.partial(create, client, model), exact=True)
+            verdict = smock.verify(session, requests)
+            checks.check(f"{name}: {why} reached smock", verdict["ok"],
+                         f"the Journal holds {verdict['count']}; reason {verdict['reason']}")
+
+
 # The cases, in the order they run. Each calls the Stubs it names, and a
 # case whose SDK raises unexpectedly fails without stopping the others.
 CASES = [
@@ -1405,7 +1443,7 @@ CASES = [
     responses_text, responses_tools, responses_incomplete, responses_error,
     messages_text, messages_tools, messages_call_only, messages_stop_sequence, messages_refusal,
     messages_broken_arguments, messages_error,
-    error_replies,
+    error_replies, retries,
 ]
 
 
