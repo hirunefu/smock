@@ -5,8 +5,8 @@ async fn Smock::send(
   self : Smock,
   meth : String,
   target : String,
-  headers? : Array[(String, String)] = [],
-  body? : String = "",
+  headers~ : Array[(String, String)] = [],
+  body~ : String = "",
 ) -> String {
   let conn = self.connect()
   defer conn.close()

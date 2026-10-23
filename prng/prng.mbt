@@ -77,6 +77,6 @@ pub fn Generator::split(self : Generator) -> Generator {
 }
 
 ///|
-fn rotl(x : UInt64, k : Int) -> UInt64 {
+fn rotl(x : UInt64, k : Int32) -> UInt64 {
   (x << k) | (x >> (64 - k))
 }

@@ -166,7 +166,7 @@ test "each reset scope drops the copies in it and counts them: a Session's in ev
 fn Harness::reload_data(
   self : Harness,
   files : Array[(String, String)],
-  body_files? : Array[(String, Bytes)] = [two_orders],
+  body_files~ : Array[(String, Bytes)] = [two_orders],
 ) -> String {
   let result = self.reload(files, body_files~)
   "\{@debug.to_string(result.result)}, \{result.data_buckets_reset} copies dropped; \{self.engine.state_stats().bytes} bytes"

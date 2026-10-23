@@ -15,7 +15,7 @@ priv struct Stub {
   path : PathCondition
   /// The key of the response it answers, as the document writes it.
   response : String
-  status : Int
+  status : Int32
   /// Whether a request selects it with the header `Smock-Status:
   /// <response>`, as for every response but the main one.
   selected : Bool

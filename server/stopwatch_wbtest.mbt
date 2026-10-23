@@ -1,6 +1,6 @@
 ///|
 /// The resident memory of this process, in KiB, as /proc gives it.
-async fn resident_kib() -> Int {
+async fn resident_kib() -> Int32 {
   let status = @fs.read_file("/proc/self/status").text()
   for line in status.split("\n") {
     if line.has_prefix("VmRSS:") {

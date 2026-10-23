@@ -171,7 +171,7 @@ fn parse_after(text : String) -> Int64? {
 ///|
 /// The limit `text` gives: a decimal integer from 1 to 10,000, without a
 /// sign, prefix or separator. `None` when it is not one.
-fn parse_limit(text : String) -> Int? {
+fn parse_limit(text : String) -> Int32? {
   if text == "" ||
     text.length() > 5 ||
     !text.iter().all(c => c >= '0' && c <= '9') {

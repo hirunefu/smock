@@ -14,9 +14,9 @@ pub(all) struct ServeSettings {
   /// The definitions directory, or `None` for no Definition files.
   dir : String?
   /// The plain port. 0 asks the system for a free port.
-  port : Int
+  port : Int32
   /// The TLS port. 0 asks the system for a free port.
-  tls_port : Int
+  tls_port : Int32
   /// The certificate and key files for the TLS port, or `None` when none
   /// are configured: smock then generates a self-signed certificate. It is
   /// the default certificate: a handshake gets it unless its SNI chooses one
@@ -27,7 +27,7 @@ pub(all) struct ServeSettings {
   tls_mock_certs : Map[String, TlsFiles]
   /// The admin port, where the Admin API, the probes and the metrics are
   /// served. 0 asks the system for a free port.
-  admin_port : Int
+  admin_port : Int32
   /// Whether the Admin API needs a bearer token.
   admin_auth : Bool
   /// The file that holds the Admin API token, if one is set. Without it, the
@@ -35,7 +35,7 @@ pub(all) struct ServeSettings {
   admin_token_file : String?
   /// How many replicas the deployment runs, as the Admin API's replica
   /// warning tells it.
-  replicas : Int
+  replicas : Int32
   /// The request header that carries the Session, as W3C Baggage. Header
   /// names are compared case-insensitively.
   session_header : String
@@ -49,37 +49,37 @@ pub(all) struct ServeSettings {
   template_env : Array[String]
   /// The most bytes a request head may take: its request line and header
   /// fields.
-  header_size_limit : Int
+  header_size_limit : Int32
   /// The most header fields a request may have.
-  header_count_limit : Int
+  header_count_limit : Int32
   /// The longest request body, in bytes.
-  body_limit : Int
+  body_limit : Int32
   /// How long, in milliseconds, a request may take to arrive, from its first
   /// byte to its last.
-  read_timeout_ms : Int
+  read_timeout_ms : Int32
   /// How long, in milliseconds, a connection may wait for its next request.
-  idle_timeout_ms : Int
+  idle_timeout_ms : Int32
   /// How long, in milliseconds, a write to a client may make no progress:
   /// a write that waits on the client that long ends the connection.
-  write_timeout_ms : Int
+  write_timeout_ms : Int32
   /// How long, in milliseconds, smock may drain after SIGTERM before it
   /// cuts the responses, Server-Sent Event streams and delays still in
   /// progress and exits.
-  drain_timeout_ms : Int
+  drain_timeout_ms : Int32
   /// The seed of the process generator, from 0 to 2^53 - 1, or `None` for
   /// one that smock picks at startup.
   seed : UInt64?
   /// Whether smock records requests in the Journal.
   journal : Bool
   /// The most entries the Journal holds.
-  journal_max_entries : Int
+  journal_max_entries : Int32
   /// The most bytes the Journal's entries take, as they count them, when
   /// `--journal-max-bytes` or `SMOCK_JOURNAL_MAX_BYTES` sets it. `None`
   /// leaves it to the memory limit, which `smock serve` reads at startup
   /// (`ByteBound::journal`).
   journal_max_bytes : ByteBound?
   /// The most bytes of a request body a Journal entry keeps.
-  journal_body_limit : Int
+  journal_body_limit : Int32
   /// The most bytes the per-Session state of the whole process takes, as
   /// it counts them, when `--state-max-bytes` or `SMOCK_STATE_MAX_BYTES`
   /// sets it. `None` leaves it to the memory limit, which `smock serve`
@@ -140,7 +140,7 @@ pub(all) struct RenderSettings {
   seed : UInt64?
   /// The index of the response to render among the Stub's `responses`,
   /// or `None` for the one the seed picks.
-  response_index : Int?
+  response_index : Int32?
 } derive(Debug)
 
 ///|
@@ -774,7 +774,7 @@ pub fn parse_seed(text : String) -> UInt64? {
 /// from 0 to one less than the most responses a Stub has, without a sign,
 /// prefix or separator. `None` when it is not one. Whether the Stub has a
 /// response at that index is the rendering's to say.
-pub fn parse_response_index(text : String) -> Int? {
+pub fn parse_response_index(text : String) -> Int32? {
   // Two digits hold every index below max_responses (100).
   match decimal(text, max_digits=2) {
     Some(n) if n < @definitions.max_responses.to_uint64() => Some(n.to_int())
@@ -809,7 +809,7 @@ pub fn random_seed() -> UInt64 {
 /// The number `text` writes in at most `max_digits` decimal digits, without
 /// a sign, prefix or separator, or `None` when it is not one. A UInt64
 /// holds every number of up to 19 digits.
-fn decimal(text : String, max_digits~ : Int) -> UInt64? {
+fn decimal(text : String, max_digits~ : Int32) -> UInt64? {
   if text == "" ||
     text.length() > max_digits ||
     !text.iter().all(c => c >= '0' && c <= '9') {
@@ -824,15 +824,15 @@ fn decimal(text : String, max_digits~ : Int) -> UInt64? {
 
 ///|
 /// The largest size limit: 1 GiB. A request is held in memory whole.
-let max_size : Int = 1024 * 1024 * 1024
+let max_size : Int32 = 1024 * 1024 * 1024
 
 ///|
 /// The most replicas a deployment can declare.
-let max_replicas : Int = 10000
+let max_replicas : Int32 = 10000
 
 ///|
 /// The longest timeout, in milliseconds: the largest `Int`, about 24 days.
-let max_duration_ms : Int = 0x7fffffff
+let max_duration_ms : Int32 = 0x7fffffff
 
 ///|
 /// Reads and checks the settings from the parsed `check` subcommand.
@@ -1232,7 +1232,7 @@ fn token_value(
 fn file_value(
   matches : @argparse.Matches,
   name : String,
-  invalid_value? : (String, String, String) -> InvalidSetting = invalid,
+  invalid_value~ : (String, String, String) -> InvalidSetting = invalid,
 ) -> String? raise InvalidSetting {
   match value(matches, name) {
     Some("") => raise invalid_value(name, "", "must not be empty")
@@ -1244,9 +1244,9 @@ fn file_value(
 fn int_value(
   matches : @argparse.Matches,
   name : String,
-  min~ : Int,
-  max~ : Int,
-) -> Int raise InvalidSetting {
+  min~ : Int32,
+  max~ : Int32,
+) -> Int32 raise InvalidSetting {
   let text = value(matches, name).unwrap_or("")
   // Ten digits hold every Int.
   match decimal(text, max_digits=10).map(n => n.reinterpret_as_int64()) {
@@ -1262,7 +1262,7 @@ fn int_value(
 fn on_off_value(
   matches : @argparse.Matches,
   name : String,
-  invalid_value? : (String, String, String) -> InvalidSetting = invalid,
+  invalid_value~ : (String, String, String) -> InvalidSetting = invalid,
 ) -> Bool raise InvalidSetting {
   match value(matches, name) {
     Some("on") => true

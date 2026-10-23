@@ -13,7 +13,7 @@
 /// file, and the refusal comes at once. The documents that references name
 /// are known only once read, so an output that is one of them is refused
 /// just before writing.
-async fn import_openapi(settings : @settings.ImportOpenapiSettings) -> Int {
+async fn import_openapi(settings : @settings.ImportOpenapiSettings) -> Int32 {
   let (inside, document_dir) = real_directories(settings)
   let name = settings.document_name_under(
     ref_dir=inside.to_option(),
@@ -146,7 +146,7 @@ async fn converted(
   converter : @importopenapi.Converter,
   options : @importopenapi.Options,
   inside~ : Result[String, String],
-  room~ : Int,
+  room~ : Int32,
 ) -> (@importopenapi.Outcome, Array[String]) {
   let read_paths = []
   let mut conversion = converter.convert()
@@ -179,7 +179,7 @@ async fn converted(
 async fn read_referenced(
   path : String,
   inside : Result[String, String],
-  limit~ : Int,
+  limit~ : Int32,
 ) -> Result[(Bytes, String), @importopenapi.Unreadable] {
   let inside = match inside {
     Ok(inside) => inside
@@ -227,7 +227,7 @@ fn print_problem(file : String, message : String) -> Unit {
 ///|
 /// Prints the one problem that stopped the import, about `file`, and the
 /// summary line, and returns the exit status 1.
-fn nothing_written(file : String, message : String) -> Int {
+fn nothing_written(file : String, message : String) -> Int32 {
   print_problem(file, message)
   print_nothing_written(1)
   1
@@ -236,7 +236,7 @@ fn nothing_written(file : String, message : String) -> Int {
 ///|
 /// Prints the summary line of an import that wrote nothing, for `errors`
 /// errors.
-fn print_nothing_written(errors : Int) -> Unit {
+fn print_nothing_written(errors : Int32) -> Unit {
   println("nothing written: \{errors} errors")
 }
 
@@ -244,7 +244,7 @@ fn print_nothing_written(errors : Int) -> Unit {
 /// The bytes of the document at `path`, at most `limit` of them, or why it
 /// cannot be read, such as `no such file`. It mirrors `server`'s
 /// `read_file`, with a limit.
-async fn read_document(path : String, limit~ : Int) -> Result[Bytes, String] {
+async fn read_document(path : String, limit~ : Int32) -> Result[Bytes, String] {
   if is_directory(path) {
     return Err("is a directory")
   }
@@ -259,7 +259,7 @@ async fn read_document(path : String, limit~ : Int) -> Result[Bytes, String] {
 /// The first `limit` bytes of the file at `path`, or all of it when it is
 /// shorter, so that a document larger than the converter reads is never
 /// read whole.
-async fn read_at_most(path : String, limit : Int) -> Bytes {
+async fn read_at_most(path : String, limit : Int32) -> Bytes {
   let file = @fs.open(path, mode=ReadOnly)
   defer file.close()
   let buffer = @buffer.Buffer()
@@ -352,7 +352,7 @@ async fn same_file(a : String, b : String) -> Bool {
 ///|
 /// The most temporary files `write_atomically` tries before it gives up:
 /// each is a new file, and one that exists is never touched.
-let max_temporary_files : Int = 100
+let max_temporary_files : Int32 = 100
 
 ///|
 /// Writes `bytes` to `path`, or says why it cannot. The bytes go to a

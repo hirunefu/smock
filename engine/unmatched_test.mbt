@@ -27,7 +27,7 @@ let unmatched_orders : String =
 fn Harness::unmatched(
   self : Harness,
   session : String?,
-  limit? : Int,
+  limit? : Int32,
 ) -> Json raise {
   let page = self.engine.unmatched(session~, limit?) catch {
     err => return Json::string("refused: \{@debug.to_string(err)}")
@@ -160,7 +160,7 @@ test "the unmatched requests are the calling Session's entries that no Stub answ
 fn Harness::unmatched_listed(
   self : Harness,
   session : String?,
-  limit? : Int,
+  limit? : Int32,
 ) -> String raise {
   match self.unmatched(session, limit?) {
     Object({ "entries": Array(entries), "more": more, "evicted": evicted, .. }) => {

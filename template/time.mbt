@@ -18,7 +18,7 @@ priv enum TimeHelper {
   NowFormatted(Array[DatePart])
   /// `dateFormat(date, format, offset?)`: the format, read, and the offset
   /// in minutes.
-  DateFormatted(Array[DatePart], Int)
+  DateFormatted(Array[DatePart], Int32)
   /// `dateTimeShift(date, duration)`: the duration, read.
   DateShifted(Shift)
 }
@@ -120,7 +120,7 @@ fn Context::time(
 ///|
 /// Argument `k`, counted from 0, which must be a date format: a string
 /// literal, read.
-fn CallSite::format(self : CallSite, k : Int) -> Array[DatePart] raise Syntax {
+fn CallSite::format(self : CallSite, k : Int32) -> Array[DatePart] raise Syntax {
   let (at, arg) = self.args[k]
   let wanted = "\{self.name}(): argument \{k + 1} must be a format, a string literal such as 'yyyy-MM-dd'"
   match arg {
@@ -137,7 +137,7 @@ fn CallSite::format(self : CallSite, k : Int) -> Array[DatePart] raise Syntax {
 ///|
 /// Argument `k`, counted from 0, which must be an offset: a string
 /// literal, read as minutes.
-fn CallSite::offset(self : CallSite, k : Int) -> Int raise Syntax {
+fn CallSite::offset(self : CallSite, k : Int32) -> Int32 raise Syntax {
   let (at, arg) = self.args[k]
   let wanted = "\{self.name}(): argument \{k + 1} must be an offset, a string literal: 'Z', or '+HH:MM' or '-HH:MM' with HH up to 23 and MM up to 59"
   match arg {
@@ -150,7 +150,7 @@ fn CallSite::offset(self : CallSite, k : Int) -> Int raise Syntax {
 ///|
 /// Argument `k`, counted from 0, which must be an ISO 8601 duration: a
 /// string literal, read.
-fn CallSite::shift(self : CallSite, k : Int) -> Shift raise Syntax {
+fn CallSite::shift(self : CallSite, k : Int32) -> Shift raise Syntax {
   let (at, arg) = self.args[k]
   let wanted = "\{self.name}(): argument \{k + 1} must be a duration, a string literal such as 'P1M', '-P2D' or 'PT90M'"
   match arg {

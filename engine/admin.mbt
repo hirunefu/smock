@@ -68,7 +68,7 @@ pub(all) struct AdminWarning {
 /// copies of Data buckets and Journal and that the response comes from
 /// `replica` alone.
 pub fn admin_warnings(
-  replicas~ : Int,
+  replicas~ : Int32,
   replica~ : String,
 ) -> Array[AdminWarning] {
   if replicas <= 1 {

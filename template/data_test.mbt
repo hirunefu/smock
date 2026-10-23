@@ -38,7 +38,7 @@ let orders_request : @template.Input = {
 /// per line, or the render error.
 fn with_data(
   source : String,
-  buckets? : @template.Buckets = shop_buckets,
+  buckets~ : @template.Buckets = shop_buckets,
   data? : Map[String, Json],
   copies? : Map[String, Json],
 ) -> String {

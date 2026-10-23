@@ -17,8 +17,8 @@ let orders_json : String =
 /// list items, and `GET /orders`, which answers the orders.
 fn orders_harness(
   stubs : String,
-  buckets? : String = "",
-  state_max_bytes? : Int = @engine.default_state_max_bytes,
+  buckets~ : String = "",
+  state_max_bytes~ : Int32 = @engine.default_state_max_bytes,
 ) -> Harness {
   harness(
     [

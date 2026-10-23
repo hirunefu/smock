@@ -12,29 +12,29 @@ priv enum DatePart {
   /// text.
   Written(String)
   /// `yyyy` or `yy`: the calendar year, in that many digits.
-  CalendarYear(Int)
+  CalendarYear(Int32)
   /// `M` or `MM`: the month's number, with a leading zero for `MM`;
   /// `MMM` or `MMMM`: its name, short or long.
-  MonthOfYear(Int)
+  MonthOfYear(Int32)
   /// `d` or `dd`: the day of the month.
-  DayOfMonth(Int)
+  DayOfMonth(Int32)
   /// `H` or `HH`: the hour from 0 to 23.
-  Hour(Int)
+  Hour(Int32)
   /// `h` or `hh`: the hour from 1 to 12.
-  Hour12(Int)
+  Hour12(Int32)
   /// `a`: `AM` or `PM`.
   DayPeriod
   /// `m` or `mm`: the minute.
-  MinuteOfHour(Int)
+  MinuteOfHour(Int32)
   /// `s` or `ss`: the second.
-  SecondOfMinute(Int)
+  SecondOfMinute(Int32)
   /// `S`, `SS` or `SSS`: tenths, hundredths or milliseconds of the second.
-  Fraction(Int)
+  Fraction(Int32)
   /// `EEE` or `EEEE`: the day of the week, short or long.
-  Weekday(Int)
+  Weekday(Int32)
   /// `X`, `XX` or `XXX` (true): the offset, `Z` when it is zero; `x`, `xx`
   /// or `xxx` (false): the offset, `+00` forms when it is zero.
-  Offset(Bool, Int)
+  Offset(Bool, Int32)
   /// `t`: seconds since the Unix epoch.
   EpochSeconds
   /// `T`: milliseconds since the Unix epoch.
@@ -179,7 +179,7 @@ fn date_of(json : Json) -> Int64? {
 /// The offset `text` gives, in minutes: `Z`, or `+HH:MM` or `-HH:MM` with
 /// `HH` up to 23 and `MM` up to 59, as RFC 3339 writes one. `None` for
 /// anything else: there are no zone names.
-fn offset_of(text : String) -> Int? {
+fn offset_of(text : String) -> Int32? {
   if text == "Z" {
     return Some(0)
   }
@@ -199,8 +199,8 @@ fn offset_of(text : String) -> Int? {
 
 ///|
 /// The number the two digits of `c` from `i` write, if they are digits.
-fn two_digits(c : Array[Char], i : Int) -> Int? {
-  guard c[i] is ('0'..='9') && c[i + 1] is ('0'..='9') else { return None }
+fn two_digits(c : Array[Char], i : Int32) -> Int32? {
+  guard c[i] is ('0'..<='9') && c[i + 1] is ('0'..<='9') else { return None }
   Some((c[i].to_int() - '0'.to_int()) * 10 + (c[i + 1].to_int() - '0'.to_int()))
 }
 
@@ -238,7 +238,7 @@ fn shift_of(text : String) -> Result[Shift, String?] {
     }
     let start = i
     let mut amount = 0L
-    while i < c.length() && c[i] is ('0'..='9') {
+    while i < c.length() && c[i] is ('0'..<='9') {
       amount = amount * 10L + (c[i].to_int() - '0'.to_int()).to_int64()
       i += 1
       if i - start > 9 {
@@ -369,18 +369,18 @@ let weekday_names : Array[String] = [
 ///|
 /// The fields of an instant on the calendar.
 priv struct Civil {
-  year : Int
+  year : Int32
   /// From 1 to 12.
-  month : Int
+  month : Int32
   /// From 1 to 31.
-  day : Int
+  day : Int32
   /// From 0, Sunday, to 6, Saturday.
-  weekday : Int
+  weekday : Int32
   /// From 0 to 23.
-  hour : Int
-  minute : Int
-  second : Int
-  milli : Int
+  hour : Int32
+  minute : Int32
+  second : Int32
+  milli : Int32
 }
 
 ///|
@@ -410,7 +410,7 @@ fn civil(ms : Int64) -> Civil {
 fn written_date(
   parts : Array[DatePart],
   ms : Int64,
-  offset : Int,
+  offset : Int32,
   name : String,
   at : String,
 ) -> String raise RenderError {
@@ -466,7 +466,7 @@ fn written_date(
 /// The offset `offset`, in minutes, as the token `X` (`zulu`) or `x`
 /// written `width` times writes it: `Z` for zero with `X`; otherwise
 /// `+09` (`+0530` when the minutes are not zero), `+0900` or `+09:00`.
-fn written_offset(offset : Int, zulu : Bool, width : Int) -> String {
+fn written_offset(offset : Int32, zulu : Bool, width : Int32) -> String {
   if offset == 0 && zulu {
     return "Z"
   }
@@ -482,7 +482,7 @@ fn written_offset(offset : Int, zulu : Bool, width : Int) -> String {
 
 ///|
 /// `n`, which is not negative, written with at least `digits` digits.
-fn zero_padded(n : Int, digits : Int) -> String {
+fn zero_padded(n : Int32, digits : Int32) -> String {
   let text = n.to_string()
   if text.length() >= digits {
     return text

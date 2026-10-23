@@ -446,7 +446,7 @@ test "a json condition with patterns shadows only one written the same way, patt
 ///|
 /// A Stub of the Mock `mock` with `fields` added, such as `"priority": 1`,
 /// that matches `GET /a`.
-fn get_a(id : String, mock? : String = "m", fields? : String = "") -> String {
+fn get_a(id : String, mock~ : String = "m", fields~ : String = "") -> String {
   let fields = if fields == "" { "" } else { ", \{fields}" }
   (
     $|{ "id": "\{id}", "mock": "\{mock}"\{fields},

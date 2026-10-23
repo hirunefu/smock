@@ -9,8 +9,8 @@
 /// does.
 fn import_to(
   document : String,
-  output? : String = "defs/petstore.yaml",
-  mock? : String = "petstore",
+  output~ : String = "defs/petstore.yaml",
+  mock~ : String = "petstore",
   base_path? : String,
 ) -> String {
   let options = @importopenapi.Options(
@@ -141,7 +141,7 @@ test "the extension of --output picks the format: .yaml and .yml write the same 
 ///|
 /// The first lines of the YAML file that converting a document of OpenAPI
 /// `openapi`, with `info` as JSON text, gives, up to `version: 1`.
-fn header_of(info : String, openapi? : String = "3.1.0") -> String raise {
+fn header_of(info : String, openapi~ : String = "3.1.0") -> String raise {
   let info = if info == "" { "" } else { "\"info\": \{info}, " }
   let text = file_text(
     "{ \"openapi\": \"\{openapi}\", \{info}\"paths\": { \"/a\": { \"get\": {} } } }",

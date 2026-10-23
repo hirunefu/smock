@@ -8,24 +8,24 @@
 /// The parser before the allocation-free head scan.
 priv struct RefParser {
   mut buf : FixedArray[Byte]
-  mut start : Int
-  mut end : Int
-  mut scanned : Int
+  mut start : Int32
+  mut end : Int32
+  mut scanned : Int32
   mut scan : RefHeadScan
-  mut fields : Int
+  mut fields : Int32
   mut head : RefHead?
   chunks : Chunks
-  mut invalid : Int?
-  header_size_limit : Int
-  header_count_limit : Int
-  body_limit : Int
+  mut invalid : Int32?
+  header_size_limit : Int32
+  header_count_limit : Int32
+  body_limit : Int32
 }
 
 ///|
 fn RefParser::new(
-  header_size_limit~ : Int,
-  header_count_limit~ : Int,
-  body_limit~ : Int,
+  header_size_limit~ : Int32,
+  header_count_limit~ : Int32,
+  body_limit~ : Int32,
 ) -> RefParser {
   let body_limit = if body_limit < 0 {
     0
@@ -162,15 +162,15 @@ priv struct RefHead {
 
 ///|
 priv enum RefFraming {
-  RefLength(Int)
+  RefLength(Int32)
   RefChunked
 }
 
 ///|
 priv enum RefHeadEnd {
-  RefEnded(Int)
+  RefEnded(Int32)
   RefPartial
-  RefRejected(Int)
+  RefRejected(Int32)
 }
 
 ///|
@@ -202,9 +202,9 @@ fn RefParser::scan_head(self : RefParser) -> RefHeadEnd {
 priv enum RefHeadScan {
   EmptyLineLf
   EmptyLine
-  Method(Int)
-  Target(Int)
-  Version(Int)
+  Method(Int32)
+  Target(Int32)
+  Version(Int32)
   VersionLf
   Fields(RefSection)
   Broken
@@ -305,10 +305,10 @@ fn RefSection::after(self : RefSection, c : Byte) -> RefSection {
 ///|
 fn ref_parse_head(
   buf : FixedArray[Byte],
-  start : Int,
-  end : Int,
-  body_limit : Int,
-) -> Result[RefHead, Int] {
+  start : Int32,
+  end : Int32,
+  body_limit : Int32,
+) -> Result[RefHead, Int32] {
   let lines = ref_split_lines(buf, start, end)
   let (meth, target, version) = match ref_parse_request_line(buf, lines[0]) {
     Ok(line) => line
@@ -393,9 +393,9 @@ fn ref_list_elements(value : Bytes) -> Iter[StringView] {
 ///|
 fn ref_split_lines(
   buf : FixedArray[Byte],
-  start : Int,
-  end : Int,
-) -> Array[(Int, Int)] {
+  start : Int32,
+  end : Int32,
+) -> Array[(Int32, Int32)] {
   let lines = []
   let mut line_start = start
   for i in start..<(end - 2) {
@@ -410,8 +410,8 @@ fn ref_split_lines(
 ///|
 fn ref_parse_request_line(
   buf : FixedArray[Byte],
-  line : (Int, Int),
-) -> Result[(String, String, Version), Int] {
+  line : (Int32, Int32),
+) -> Result[(String, String, Version), Int32] {
   let (start, end) = line
   let mut space = start
   while buf[space] != b' ' {
@@ -431,7 +431,7 @@ fn ref_parse_request_line(
 }
 
 ///|
-fn ref_parse_field(buf : FixedArray[Byte], line : (Int, Int)) -> Header {
+fn ref_parse_field(buf : FixedArray[Byte], line : (Int32, Int32)) -> Header {
   let (start, end) = line
   let mut colon = start
   while buf[colon] != b':' {
@@ -452,7 +452,7 @@ fn ref_parse_field(buf : FixedArray[Byte], line : (Int, Int)) -> Header {
 }
 
 ///|
-fn ref_ascii(buf : FixedArray[Byte], start : Int, end : Int) -> String {
+fn ref_ascii(buf : FixedArray[Byte], start : Int32, end : Int32) -> String {
   let out = StringBuilder()
   for i in start..<end {
     out.write_char(buf[i].to_char())

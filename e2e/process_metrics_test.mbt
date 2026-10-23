@@ -8,7 +8,7 @@
 /// The CPU time process `pid` has used, user and system, in clock ticks of
 /// 1/100 s: fields 14 and 15 of /proc/<pid>/stat, counted from field 3,
 /// the first after the command name in parentheses.
-async fn cpu_ticks(pid : Int) -> Int {
+async fn cpu_ticks(pid : Int32) -> Int32 {
   let text = @fs.read_file("/proc/\{pid}/stat").text()
   guard text.rev_find(")") is Some(end) else { fail("no ) in \{text}") }
   let fields = text[end + 2:].split(" ").collect()
@@ -18,7 +18,7 @@ async fn cpu_ticks(pid : Int) -> Int {
 ///|
 /// The resident set size of process `pid`, in bytes: VmRSS of
 /// /proc/<pid>/status, in KiB.
-async fn resident_set(pid : Int) -> Double {
+async fn resident_set(pid : Int32) -> Double {
   for line in @fs.read_file("/proc/\{pid}/status").text().split("\n") {
     if line.strip_prefix("VmRSS:") is Some(rest) &&
       rest.trim().strip_suffix(" kB") is Some(kib) {
@@ -31,7 +31,7 @@ async fn resident_set(pid : Int) -> Double {
 ///|
 /// The directory of the cgroup v2 of process `pid`, from the `0::` line of
 /// /proc/<pid>/cgroup.
-async fn cgroup_of(pid : Int) -> String {
+async fn cgroup_of(pid : Int32) -> String {
   for line in @fs.read_file("/proc/\{pid}/cgroup").text().split("\n") {
     if line.strip_prefix("0::") is Some(path) {
       return if path == "/" {
@@ -153,7 +153,7 @@ async test "process metrics: smock's CPU time and RSS as /proc has them when /me
 ///|
 /// How long the main thread of process `pid` waited for a CPU, in
 /// nanoseconds: run_delay, the second field of /proc/<pid>/schedstat.
-async fn run_delay_ns(pid : Int) -> Double {
+async fn run_delay_ns(pid : Int32) -> Double {
   let text = @fs.read_file("/proc/\{pid}/schedstat").text()
   let fields = text.trim(chars="\n").split(" ").collect()
   guard fields.length() >= 2 else { fail("no run_delay in \{text}") }
@@ -164,7 +164,7 @@ async fn run_delay_ns(pid : Int) -> Double {
 /// How many times the kernel took the CPU from the main thread of process
 /// `pid` while it could still run: nonvoluntary_ctxt_switches of
 /// /proc/<pid>/status.
-async fn involuntary_switches(pid : Int) -> Double {
+async fn involuntary_switches(pid : Int32) -> Double {
   for line in @fs.read_file("/proc/\{pid}/status").text().split("\n") {
     if line.strip_prefix("nonvoluntary_ctxt_switches:") is Some(rest) {
       return @string.parse_double(rest.trim())

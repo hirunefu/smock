@@ -87,7 +87,7 @@ let month_names : FixedArray[String] = [
 ///|
 /// Writes `n`, which is not negative, in decimal with zeros before it up to
 /// `width` digits.
-fn write_padded(out : StringBuilder, n : Int64, width : Int) -> Unit {
+fn write_padded(out : StringBuilder, n : Int64, width : Int32) -> Unit {
   let digits = n.to_string()
   for _ in digits.length()..<width {
     out.write_char('0')

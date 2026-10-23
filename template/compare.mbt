@@ -38,7 +38,7 @@ pub fn compare_numbers(
   a_text : String?,
   b : Double,
   b_text : String?,
-) -> Int {
+) -> Int32 {
   match (a_text, b_text) {
     (Some(a_text), Some(b_text)) =>
       ExactNumber::parse(a_text).compare(ExactNumber::parse(b_text))
@@ -51,7 +51,7 @@ pub fn compare_numbers(
 /// the power of ten of the first of them.
 priv struct ExactNumber {
   /// -1, 0 or 1.
-  sign : Int
+  sign : Int32
   /// The significant digits, without leading or trailing zeros: none for
   /// zero.
   digits : String
@@ -96,7 +96,7 @@ fn ExactNumber::parse(text : String) -> ExactNumber {
 ///|
 /// How two exact numbers order: by sign, then by the power of ten of
 /// their first digit, then digit by digit.
-fn ExactNumber::compare(self : ExactNumber, other : ExactNumber) -> Int {
+fn ExactNumber::compare(self : ExactNumber, other : ExactNumber) -> Int32 {
   if self.sign != other.sign || self.sign == 0 {
     return self.sign.compare(other.sign)
   }
@@ -160,7 +160,7 @@ priv struct NumberParts {
   digits : String
   /// The power of ten of the last significant digit, less the exponent:
   /// the trailing zeros dropped, less the digits after the point.
-  shift : Int
+  shift : Int32
   /// Whether the exponent is written with `-`.
   exponent_negative : Bool
   /// The exponent's digits, without leading zeros: empty when it has none,

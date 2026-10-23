@@ -44,7 +44,7 @@ let orders_file : (String, Bytes) = (
 
 ///|
 /// A harness that serves `shop_data`.
-fn data_harness(state_max_bytes? : Int) -> Harness {
+fn data_harness(state_max_bytes? : Int32) -> Harness {
   harness([shop_data], body_files=[orders_file], state_max_bytes?)
 }
 
@@ -86,7 +86,7 @@ fn Harness::set_data(
   session : String?,
   bucket : String,
   value : String,
-  mock? : String = "shop",
+  mock~ : String = "shop",
 ) -> String {
   let bucket = self.engine.set_data(
     mock~,
@@ -107,7 +107,7 @@ fn Harness::drop_data(
   self : Harness,
   session : String?,
   bucket : String,
-  mock? : String = "shop",
+  mock~ : String = "shop",
 ) -> String {
   let result = self.engine.drop_data(mock~, session~, bucket~) catch {
     err => return data_error(err)
@@ -158,7 +158,7 @@ test "set gives the calling Session its own copy, which its requests read; anoth
 fn Harness::list_data(
   self : Harness,
   session : String?,
-  mock? : String = "shop",
+  mock~ : String = "shop",
 ) -> String {
   let buckets = self.engine.list_data(mock~, session~) catch {
     err => return data_error(err)
@@ -173,7 +173,7 @@ fn Harness::read_data(
   self : Harness,
   session : String?,
   bucket : String,
-  mock? : String = "shop",
+  mock~ : String = "shop",
 ) -> String {
   let bucket = self.engine.read_data(mock~, session~, bucket~) catch {
     err => return data_error(err)

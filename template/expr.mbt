@@ -65,7 +65,7 @@ priv enum Step {
   /// `.name` or `['name']`: a member of an object.
   Name(String)
   /// `[n]`: an element of an array, or a segment of the path.
-  Index(Int)
+  Index(Int32)
 }
 
 ///|
@@ -110,7 +110,7 @@ priv struct Cond {
 /// A problem found while parsing: the index of the character it is at, in
 /// the template's text, and what it is.
 priv suberror Syntax {
-  Syntax(Int, String)
+  Syntax(Int32, String)
 }
 
 ///|
@@ -157,13 +157,13 @@ priv struct Scope {
 /// Parses expressions in `chars`, from `i` on.
 priv struct Parser {
   chars : Array[Char]
-  mut i : Int
+  mut i : Int32
   /// What the expressions can name.
   scope : Scope
 }
 
 ///|
-fn Parser::peek(self : Parser, offset? : Int = 0) -> Char? {
+fn Parser::peek(self : Parser, offset~ : Int32 = 0) -> Char? {
   let at = self.i + offset
   if at < self.chars.length() {
     Some(self.chars[at])
@@ -244,7 +244,7 @@ fn Parser::name(self : Parser) -> String {
 ///|
 /// Parses `expr`. With `exact`, its number literals keep the digits their
 /// floats would lose, as `value` says.
-fn Parser::expr(self : Parser, exact? : Bool = false) -> Expr raise Syntax {
+fn Parser::expr(self : Parser, exact~ : Bool = false) -> Expr raise Syntax {
   let first = self.value(exact~)
   let alternatives = [first]
   for ;; {
@@ -300,7 +300,7 @@ fn Parser::literal_only(self : Parser, operator : String) -> Json raise Syntax {
 /// Parses `value`. With `exact`, as for the arguments of an arithmetic
 /// helper, a number literal keeps its text when its float would lose
 /// digits (`exact_literal`).
-fn Parser::value(self : Parser, exact? : Bool = false) -> Expr raise Syntax {
+fn Parser::value(self : Parser, exact~ : Bool = false) -> Expr raise Syntax {
   self.skip_space()
   let start = self.i
   match self.peek() {
@@ -405,7 +405,7 @@ fn Parser::number(self : Parser) -> Json raise Syntax {
 ///|
 /// Parses what starts with a name: `true`, `false`, `null`, a reference or
 /// a call.
-fn Parser::named(self : Parser, start : Int) -> Expr raise Syntax {
+fn Parser::named(self : Parser, start : Int32) -> Expr raise Syntax {
   let first = self.name()
   match first {
     "true" => return Literal(Json::boolean(true))
@@ -498,7 +498,7 @@ fn Parser::steps(self : Parser) -> Array[Step] raise Syntax {
 fn Parser::reference(
   self : Parser,
   root : String,
-  start : Int,
+  start : Int32,
 ) -> Expr raise Syntax {
   let steps = self.steps()
   let text = String::from_array(self.chars[start:self.i])
@@ -625,8 +625,8 @@ fn root_word(root : Root) -> String {
 /// it is in a text template.
 priv struct CallSite {
   name : String
-  start : Int
-  args : Array[(Int, Expr)]
+  start : Int32
+  args : Array[(Int32, Expr)]
   text : Bool
 }
 
@@ -642,8 +642,12 @@ let families : Array[(CallSite) -> Helper? raise Syntax] = [
 ///|
 /// Parses the arguments of a call of `name` and checks them: `start` is
 /// where the call starts, and `i` is just after its `(`.
-fn Parser::call(self : Parser, name : String, start : Int) -> Expr raise Syntax {
-  let args : Array[(Int, Expr)] = []
+fn Parser::call(
+  self : Parser,
+  name : String,
+  start : Int32,
+) -> Expr raise Syntax {
+  let args : Array[(Int32, Expr)] = []
   self.skip_space()
   if !self.eat(")") {
     for ;; {
@@ -695,7 +699,7 @@ fn literals(expr : Expr) -> Array[Json] {
 
 ///|
 /// Raises a problem unless the call has `expected` arguments.
-fn CallSite::count(self : CallSite, expected : Int) -> Unit raise Syntax {
+fn CallSite::count(self : CallSite, expected : Int32) -> Unit raise Syntax {
   if self.args.length() != expected {
     let what = match expected {
       0 => "no arguments"
@@ -715,7 +719,7 @@ fn CallSite::count(self : CallSite, expected : Int) -> Unit raise Syntax {
 /// whose fraction its float can lose.
 fn CallSite::integer(
   self : CallSite,
-  k : Int,
+  k : Int32,
   min : Int64,
   max : Int64,
 ) -> Int64 raise Syntax {

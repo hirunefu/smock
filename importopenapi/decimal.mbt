@@ -7,11 +7,11 @@
 
 ///|
 /// The most digits a bound has before its point, and after it.
-let max_places : Int = 18
+let max_places : Int32 = 18
 
 ///|
 /// The places a number keeps after its point.
-let places : Int = max_places + 1
+let places : Int32 = max_places + 1
 
 ///|
 /// 10^19, the number 1 in units of 10^-19.
@@ -143,7 +143,7 @@ fn Decimal::to_json(self : Decimal) -> Json {
 
 ///|
 /// Compares two numbers.
-fn Decimal::compare(self : Decimal, other : Decimal) -> Int {
+fn Decimal::compare(self : Decimal, other : Decimal) -> Int32 {
   self.units.compare(other.units)
 }
 
@@ -155,7 +155,7 @@ fn Decimal::zero() -> Decimal {
 
 ///|
 /// The number plus `n`.
-fn Decimal::plus(self : Decimal, n : Int) -> Decimal {
+fn Decimal::plus(self : Decimal, n : Int32) -> Decimal {
   { units: self.units + @bigint.BigInt::from_int(n) * one_unit, }
 }
 

@@ -152,8 +152,8 @@ pub fn Text::parse(
   source : String,
   pointer~ : String,
   kind~ : TextKind,
-  env? : Env = no_env,
-  buckets? : Buckets = no_buckets,
+  env~ : Env = no_env,
+  buckets~ : Buckets = no_buckets,
 ) -> Result[Text, Problem] {
   let chars = source.iter().collect()
   let scope = {
@@ -184,7 +184,7 @@ pub fn Text::parse(
 ///|
 /// Where the character at `at` is in `chars`: `line L, column C: ` when the
 /// text has several lines, otherwise `column C: `.
-fn position(chars : Array[Char], at : Int) -> String {
+fn position(chars : Array[Char], at : Int32) -> String {
   let mut line = 1
   let mut column = 1
   let mut lines = 1
@@ -402,7 +402,7 @@ fn markup_escaped(s : String) -> String {
 
 ///|
 /// The length of `s` in UTF-8, in bytes.
-fn utf8_length(s : StringView) -> Int {
+fn utf8_length(s : StringView) -> Int32 {
   let mut n = 0
   for c in s {
     n += char_utf8_length(c)
@@ -412,7 +412,7 @@ fn utf8_length(s : StringView) -> Int {
 
 ///|
 /// The length of `c` in UTF-8, in bytes.
-fn char_utf8_length(c : Char) -> Int {
+fn char_utf8_length(c : Char) -> Int32 {
   let code = c.to_int()
   if code < 0x80 {
     1

@@ -11,14 +11,14 @@ priv enum Mode {
 /// position each thread started at. A sparse set keyed by instruction index,
 /// so each instruction holds at most one thread.
 priv struct Threads {
-  dense : FixedArray[Int]
-  sparse : FixedArray[Int]
-  starts : FixedArray[Int]
-  mut size : Int
+  dense : FixedArray[Int32]
+  sparse : FixedArray[Int32]
+  starts : FixedArray[Int32]
+  mut size : Int32
 }
 
 ///|
-fn Threads::Threads(n : Int) -> Threads {
+fn Threads::Threads(n : Int32) -> Threads {
   {
     dense: FixedArray::make(n, 0),
     sparse: FixedArray::make(n, 0),
@@ -28,13 +28,13 @@ fn Threads::Threads(n : Int) -> Threads {
 }
 
 ///|
-fn Threads::contains(self : Threads, pc : Int) -> Bool {
+fn Threads::contains(self : Threads, pc : Int32) -> Bool {
   let i = self.sparse[pc]
   i < self.size && self.dense[i] == pc
 }
 
 ///|
-fn Threads::insert(self : Threads, pc : Int, start : Int) -> Unit {
+fn Threads::insert(self : Threads, pc : Int32, start : Int32) -> Unit {
   self.sparse[pc] = self.size
   self.dense[self.size] = pc
   self.starts[self.size] = start
@@ -51,17 +51,17 @@ fn run(
   insts : FixedArray[Inst],
   input : BytesView,
   mode : Mode,
-) -> (Match?, Int) {
+) -> (Match?, Int32) {
   let n = insts.length()
   let len = input.length()
   let mut clist = Threads(n)
   let mut nlist = Threads(n)
-  let stack : Array[Int] = []
+  let stack : Array[Int32] = []
   let mut steps = 0
   let mut matched : Match? = None
   // Adds the thread at `pc` and every thread reachable from it without
   // consuming input, in priority order.
-  fn add(list : Threads, pc : Int, start : Int, at : Int) {
+  fn add(list : Threads, pc : Int32, start : Int32, at : Int32) {
     stack.push(pc)
     while stack.pop() is Some(pc) {
       if list.contains(pc) {
@@ -131,7 +131,7 @@ fn run(
 
 ///|
 /// Reports whether `a` holds at byte offset `at` of `input`.
-fn holds(a : Assertion, input : BytesView, at : Int) -> Bool {
+fn holds(a : Assertion, input : BytesView, at : Int32) -> Bool {
   match a {
     BeginText => at == 0
     EndText => at == input.length()
@@ -146,7 +146,7 @@ fn holds(a : Assertion, input : BytesView, at : Int) -> Bool {
 /// Reports whether the byte at `i` is an ASCII word character, `[0-9A-Za-z_]`.
 /// Bytes outside the input are not. No byte of a multi-byte UTF-8 sequence
 /// is, so this is the same as asking about the code point.
-fn is_word_byte(input : BytesView, i : Int) -> Bool {
+fn is_word_byte(input : BytesView, i : Int32) -> Bool {
   if i < 0 || i >= input.length() {
     return false
   }

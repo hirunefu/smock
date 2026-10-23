@@ -6,14 +6,14 @@
 /// that character is the line's indentation.
 priv struct Parser {
   chars : Array[Char]
-  mut pos : Int
+  mut pos : Int32
   /// Where the line `pos` is on starts.
-  mut line_start : Int
+  mut line_start : Int32
   /// The JSON Pointer of the deepest node reached so far, which syntax
   /// errors name.
   mut reached : String
   /// How many collections enclose the parser's position.
-  mut depth : Int
+  mut depth : Int32
   /// Whether the text is read as OpenAPI reads YAML (see `parse`), rather
   /// than in the safe subset.
   openapi : Bool
@@ -22,7 +22,7 @@ priv struct Parser {
 ///|
 /// How deeply collections may nest: as deeply as `@json.parse` allows by
 /// default, so that every accepted document has a JSON equivalent.
-const MAX_DEPTH : Int = 1024
+const MAX_DEPTH : Int32 = 1024
 
 ///|
 /// Enters a collection. Its parser leaves it with `self.depth -= 1`.
@@ -101,7 +101,7 @@ fn Parser::check_characters(self : Parser) -> Unit raise ParseError {
 }
 
 ///|
-fn Parser::peek(self : Parser, offset? : Int = 0) -> Char {
+fn Parser::peek(self : Parser, offset~ : Int32 = 0) -> Char {
   let i = self.pos + offset
   if i < self.chars.length() {
     self.chars[i]
@@ -119,7 +119,7 @@ fn Parser::bump(self : Parser) -> Unit {
 }
 
 ///|
-fn Parser::column(self : Parser) -> Int {
+fn Parser::column(self : Parser) -> Int32 {
   self.pos - self.line_start
 }
 
@@ -244,9 +244,9 @@ fn Parser::at_marker(self : Parser, c : Char) -> Bool {
 /// block collection.
 fn Parser::block_node(
   self : Parser,
-  parent : Int,
+  parent : Int32,
   pointer : String,
-  inline? : Bool = false,
+  inline~ : Bool = false,
 ) -> Json raise ParseError {
   self.reached = pointer
   let column = self.column()
@@ -392,7 +392,7 @@ priv struct Scalar {
 /// collection (`flow`), flow indicators also end a plain scalar.
 fn Parser::scalar(
   self : Parser,
-  parent : Int,
+  parent : Int32,
   flow~ : Bool,
 ) -> Scalar raise ParseError {
   if self.peek() is ('"' | '\'') {
@@ -423,7 +423,7 @@ fn Parser::scalar_value(
 /// Scans a quoted scalar from its opening quote.
 fn Parser::quoted(
   self : Parser,
-  parent : Int,
+  parent : Int32,
 ) -> (String, Bool) raise ParseError {
   let quote = self.peek()
   let double = quote == '"'
@@ -498,9 +498,9 @@ fn Parser::quoted(
 /// lines were skipped.
 fn Parser::next_quoted_line(
   self : Parser,
-  parent : Int,
+  parent : Int32,
   what : String,
-) -> Int raise ParseError {
+) -> Int32 raise ParseError {
   let mut empty = 0
   for ;; {
     match self.next_line(parent) {
@@ -528,7 +528,7 @@ priv enum NextLine {
 ///|
 /// Moves from a line break to the next line, past its leading white space,
 /// and says what is there. Indentation counts spaces only.
-fn Parser::next_line(self : Parser, parent : Int) -> NextLine {
+fn Parser::next_line(self : Parser, parent : Int32) -> NextLine {
   self.bump()
   let mut spaces = 0
   while self.peek() == ' ' {
@@ -550,7 +550,7 @@ fn Parser::next_line(self : Parser, parent : Int) -> NextLine {
 
 ///|
 /// Whether a `---` or `...` document marker starts at `i`.
-fn Parser::document_marker_at(self : Parser, i : Int) -> Bool {
+fn Parser::document_marker_at(self : Parser, i : Int32) -> Bool {
   let chars = self.chars
   i + 3 <= chars.length() &&
   (chars[i] == '-' || chars[i] == '.') &&
@@ -622,14 +622,14 @@ fn Parser::escape(self : Parser, out : StringBuilder) -> Unit raise ParseError {
 
 ///|
 /// Reads `n` hexadecimal digits.
-fn Parser::hex(self : Parser, n : Int) -> Int raise ParseError {
+fn Parser::hex(self : Parser, n : Int32) -> Int32 raise ParseError {
   let mut value = 0
   for _ in 0..<n {
     let c = self.peek()
     let digit = match c {
-      '0'..='9' => c.to_int() - '0'.to_int()
-      'a'..='f' => c.to_int() - 'a'.to_int() + 10
-      'A'..='F' => c.to_int() - 'A'.to_int() + 10
+      '0'..<='9' => c.to_int() - '0'.to_int()
+      'a'..<='f' => c.to_int() - 'a'.to_int() + 10
+      'A'..<='F' => c.to_int() - 'A'.to_int() + 10
       _ => self.fail("invalid escape: expected a hexadecimal digit")
     }
     value = value * 16 + digit
@@ -670,21 +670,21 @@ fn Parser::chomping(self : Parser) -> Chomping {
 ///|
 /// Parses a `|` (literal) or `>` (folded) block scalar from its header.
 /// Its lines must be indented more than `parent`.
-fn Parser::block_scalar(self : Parser, parent : Int) -> Json raise ParseError {
+fn Parser::block_scalar(self : Parser, parent : Int32) -> Json raise ParseError {
   let folded = self.peek() == '>'
   self.bump()
   let mut chomping = self.chomping()
   // The indentation of the content: `parent` plus the indentation
   // indicator, or else that of its first line, once it is seen.
   let mut indent = -1
-  if self.openapi && self.peek() is ('1'..='9') {
+  if self.openapi && self.peek() is ('1'..<='9') {
     indent = parent + (self.peek().to_int() - '0'.to_int())
     self.bump()
     // The chomping indicator may come before or after it.
     if chomping is Clip {
       chomping = self.chomping()
     }
-  } else if !self.openapi && self.peek() is ('0'..='9') {
+  } else if !self.openapi && self.peek() is ('0'..<='9') {
     self.fail("block scalar indentation indicators are not supported")
   }
   if !is_blank_or_eof(self.peek()) {
@@ -802,7 +802,7 @@ fn Parser::at_sequence_item(self : Parser) -> Bool {
 /// Parses a block sequence whose `-` indicators are at `column`.
 fn Parser::block_sequence(
   self : Parser,
-  column : Int,
+  column : Int32,
   pointer : String,
 ) -> Json raise ParseError {
   self.enter()
@@ -835,7 +835,7 @@ fn Parser::block_sequence(
 /// continues the collection at `column`.
 fn Parser::continues_block(
   self : Parser,
-  column : Int,
+  column : Int32,
 ) -> Bool raise ParseError {
   if self.at_eof() ||
     self.column() < column ||
@@ -854,7 +854,7 @@ fn Parser::continues_block(
 /// after its first key.
 fn Parser::block_mapping(
   self : Parser,
-  column : Int,
+  column : Int32,
   pointer : String,
   first_key : Scalar,
 ) -> Json raise ParseError {
@@ -889,7 +889,7 @@ fn Parser::block_mapping(
 /// Parses the value after the ':' of a key of a block mapping at `column`.
 fn Parser::mapping_value(
   self : Parser,
-  column : Int,
+  column : Int32,
   pointer : String,
 ) -> Json raise ParseError {
   self.skip_space()
@@ -913,7 +913,7 @@ fn Parser::mapping_value(
 /// Scans a plain scalar. It continues on following lines indented more
 /// than `parent`, folded: one line break becomes a space, each empty line a
 /// `\n`. Returns its text and whether it spans lines.
-fn Parser::plain(self : Parser, parent : Int, flow~ : Bool) -> (String, Bool) {
+fn Parser::plain(self : Parser, parent : Int32, flow~ : Bool) -> (String, Bool) {
   let out = StringBuilder()
   let mut multiline = false
   self.plain_line(out, flow~)
@@ -987,7 +987,7 @@ fn Parser::plain_line(self : Parser, out : StringBuilder, flow~ : Bool) -> Unit 
 
 ///|
 /// Whether a ':' followed by the character at `i` ends a plain scalar.
-fn Parser::colon_ends_plain(self : Parser, i : Int, flow~ : Bool) -> Bool {
+fn Parser::colon_ends_plain(self : Parser, i : Int32, flow~ : Bool) -> Bool {
   i >= self.chars.length() ||
   is_blank_or_eof(self.chars[i]) ||
   (flow && is_flow_indicator(self.chars[i]))
@@ -1003,7 +1003,7 @@ fn is_flow_indicator(c : Char) -> Bool {
 /// `parent` is the indentation of the enclosing block collection.
 fn Parser::flow_node(
   self : Parser,
-  parent : Int,
+  parent : Int32,
   pointer : String,
 ) -> Json raise ParseError {
   self.reached = pointer
@@ -1020,7 +1020,7 @@ fn Parser::flow_node(
 /// start by closing a collection.
 fn Parser::skip_flow_space(
   self : Parser,
-  parent : Int,
+  parent : Int32,
   what : String,
 ) -> Unit raise ParseError {
   for ;; {
@@ -1044,7 +1044,7 @@ fn Parser::skip_flow_space(
 /// Parses a flow sequence from its `[`.
 fn Parser::flow_sequence(
   self : Parser,
-  parent : Int,
+  parent : Int32,
   pointer : String,
 ) -> Json raise ParseError {
   let what = "flow sequence"
@@ -1081,7 +1081,7 @@ fn Parser::flow_sequence(
 /// Parses a flow mapping from its `{`.
 fn Parser::flow_mapping(
   self : Parser,
-  parent : Int,
+  parent : Int32,
   pointer : String,
 ) -> Json raise ParseError {
   let what = "flow mapping"

@@ -179,8 +179,8 @@ test "set refuses a value above 1 MiB of compact JSON, the bound a Stub's write 
   // A string of n characters takes n + 2 bytes of compact JSON, and an
   // array of one such string n + 4.
   let mib = 1024 * 1024
-  let string = (bytes : Int) => "\"\{"a".repeat(bytes - 2)}\""
-  let array = (bytes : Int) => "[ \"\{"a".repeat(bytes - 4)}\" ]"
+  let string = (bytes : Int32) => "\"\{"a".repeat(bytes - 2)}\""
+  let array = (bytes : Int32) => "[ \"\{"a".repeat(bytes - 4)}\" ]"
   let h = harness([who_logged_in])
   let tight = harness([who_logged_in], state_max_bytes=1000)
   let out = []

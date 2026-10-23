@@ -48,8 +48,8 @@ fn is_certificate_entry(line : String) -> Bool {
 /// shows them.
 async fn Smock::certificate_entries(
   self : Smock,
-  count : Int,
-  within? : Int = reload_patience_ms,
+  count : Int32,
+  within~ : Int32 = reload_patience_ms,
 ) -> String {
   let logged = @async.with_timeout_opt(within, () => {
     for ;; {

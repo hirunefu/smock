@@ -40,11 +40,11 @@
 /// }
 /// ```
 pub fn encode_response(
-  status : Int,
+  status : Int32,
   headers : ArrayView[(String, String)],
   body : BytesView,
   request? : Request,
-  close? : Bool = false,
+  close~ : Bool = false,
   date? : String,
 ) -> Bytes {
   // Every response goes through here, so it is written straight into one
@@ -127,7 +127,7 @@ fn connection_field(keep_open : Bool, request : Request?) -> Bytes {
 
 ///|
 /// The number of characters of `n` in decimal, its sign included.
-fn decimal_length(n : Int) -> Int {
+fn decimal_length(n : Int32) -> Int32 {
   if n < 0 {
     return n.to_string().length()
   }
@@ -142,7 +142,7 @@ fn decimal_length(n : Int) -> Int {
 
 ///|
 /// Writes `n` in decimal at `at` in `out`, and returns the index after it.
-fn write_decimal(out : FixedArray[Byte], at : Int, n : Int) -> Int {
+fn write_decimal(out : FixedArray[Byte], at : Int32, n : Int32) -> Int32 {
   if n < 0 {
     return write_utf8(out, at, n.to_string())
   }
@@ -159,14 +159,18 @@ fn write_decimal(out : FixedArray[Byte], at : Int, n : Int) -> Int {
 
 ///|
 /// Writes `bytes` at `at` in `out`, and returns the index after them.
-fn write_ascii_bytes(out : FixedArray[Byte], at : Int, bytes : Bytes) -> Int {
+fn write_ascii_bytes(
+  out : FixedArray[Byte],
+  at : Int32,
+  bytes : Bytes,
+) -> Int32 {
   out.blit_from_bytes(at, bytes, 0, bytes.length())
   at + bytes.length()
 }
 
 ///|
 /// The length of `s` in UTF-8, as `write_utf8` writes it.
-fn utf8_length(s : String) -> Int {
+fn utf8_length(s : String) -> Int32 {
   let n = s.length()
   let mut length = 0
   let mut i = 0
@@ -189,7 +193,7 @@ fn utf8_length(s : String) -> Int {
 
 ///|
 /// Whether a surrogate pair starts at index `i` of `s`.
-fn is_pair(s : String, i : Int) -> Bool {
+fn is_pair(s : String, i : Int32) -> Bool {
   let u = s[i].to_int()
   u >= 0xD800 &&
   u <= 0xDBFF &&
@@ -202,7 +206,7 @@ fn is_pair(s : String, i : Int) -> Bool {
 /// Writes `s` as UTF-8 at `at` in `out`, and returns the index after it. A
 /// surrogate that is not part of a pair is written as the three bytes of
 /// its code unit, as `@buffer.Buffer::write_string_utf8` writes it.
-fn write_utf8(out : FixedArray[Byte], at : Int, s : String) -> Int {
+fn write_utf8(out : FixedArray[Byte], at : Int32, s : String) -> Int32 {
   let n = s.length()
   let mut at = at
   let mut i = 0
@@ -250,7 +254,7 @@ fn write_utf8(out : FixedArray[Byte], at : Int, s : String) -> Int {
 ///   inspect(@http1.keeps_open(request~, close=true), content="false")
 /// }
 /// ```
-pub fn keeps_open(request? : Request, close? : Bool = false) -> Bool {
+pub fn keeps_open(request? : Request, close~ : Bool = false) -> Bool {
   !close && !(request is Some({ keep_alive: false, .. }))
 }
 
@@ -270,14 +274,14 @@ fn write_connection(
 ///|
 /// Whether a response with `status` has content: one with status 1xx, 204
 /// or 304 has none (RFC 9110, sections 15.2, 15.3.5 and 15.4.5).
-fn has_content(status : Int) -> Bool {
-  !(status is (100..=199 | 204 | 304))
+fn has_content(status : Int32) -> Bool {
+  !(status is (100..<=199 | 204 | 304))
 }
 
 ///|
 /// Whether a response with `status` to `request` carries its body: it has
 /// content, and it does not answer HEAD (RFC 9110, section 9.3.2).
-fn writes_body(status : Int, request : Request?) -> Bool {
+fn writes_body(status : Int32, request : Request?) -> Bool {
   has_content(status) && !(request is Some({ meth: "HEAD", .. }))
 }
 
@@ -318,7 +322,7 @@ pub fn is_field_value(s : StringView) -> Bool {
 /// ending with CRLF. Names and values are written as UTF-8.
 fn write_status_and_headers(
   out : @buffer.Buffer,
-  status : Int,
+  status : Int32,
   headers : ArrayView[(String, String)],
 ) -> Unit {
   out.write_string_utf8("HTTP/1.1 \{status} \{reason_phrase(status)}\r\n")
@@ -334,7 +338,7 @@ fn write_status_and_headers(
 ///|
 /// The reason phrase RFC 9110 gives `status`, or `""` for a status it does
 /// not name.
-fn reason_phrase(status : Int) -> String {
+fn reason_phrase(status : Int32) -> String {
   match status {
     100 => "Continue"
     101 => "Switching Protocols"

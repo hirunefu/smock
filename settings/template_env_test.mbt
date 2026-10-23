@@ -7,7 +7,7 @@
 fn listed(
   command : String,
   argv : Array[String],
-  env? : Map[String, String] = {},
+  env~ : Map[String, String] = {},
 ) -> String raise {
   let names = match command {
     "serve" => {
