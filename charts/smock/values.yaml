@@ -116,6 +116,13 @@ service:
   plainPort: 80
   tlsPort: 443
   annotations: {}
+  # The appProtocol of each port, for a gateway or load balancer that reads
+  # it to choose the protocol it speaks to smock, such as kubernetes.io/h2c
+  # on the plain port. Empty: none. The plain port serves both HTTP/1.1 and
+  # h2c, so no single value describes it by default.
+  appProtocol:
+    plain: ""
+    tls: ""
 
 # The admin Service: the Admin API, the probes and the metrics.
 adminService:

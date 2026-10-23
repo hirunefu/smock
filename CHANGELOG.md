@@ -32,6 +32,12 @@ of each GitHub release include its section
   A client that reads slowly but steadily still gets the whole response,
   and delays do not count. It is not logged, like the read and idle
   timeouts. See [Run](README.md#run).
+- The Helm chart's `service.appProtocol.plain` and `service.appProtocol.tls`
+  set the `appProtocol` of the traffic Service's plain and TLS ports, such
+  as `kubernetes.io/h2c` on the plain port for a gateway that speaks h2c to
+  smock. Both are empty by default, so no port has one: the plain port
+  serves both HTTP/1.1 and h2c. See
+  [Ports, Services and probes](charts/smock/README.md#ports-services-and-probes).
 
 ### Changed
 

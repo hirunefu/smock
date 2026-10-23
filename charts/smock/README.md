@@ -199,6 +199,24 @@ callers reach the Mocks, and only tests and monitoring reach the Admin API
 and `/metrics`. The startup, readiness and liveness probes call `/startupz`,
 `/readyz` and `/livez` on the admin port, which need no token.
 
+No port has an `appProtocol` by default. The plain port serves both
+HTTP/1.1 and h2c (HTTP/2 without TLS), so no single value describes it. Some
+gateways and load balancers read a Service port's `appProtocol` to choose
+the protocol they speak to the Pods. For them, `service.appProtocol.plain`
+and `service.appProtocol.tls` set it on the traffic Service's plain and TLS
+ports. For a gateway that speaks h2c to smock, set `kubernetes.io/h2c` on
+the plain port:
+
+```sh
+helm install smock oci://ghcr.io/hirunefu/charts/smock --version <version> \
+  --namespace mocks \
+  --set adminAuth.tokenSecret.name=smock-admin-token \
+  --set service.appProtocol.plain=kubernetes.io/h2c
+```
+
+For the TLS port, use the value your gateway documents. The admin Service,
+the container ports and the probes stay as they are.
+
 ## Security
 
 The Pod and each container meet the Restricted Pod Security Standard in
@@ -446,6 +464,8 @@ among them, and names the value to use instead.
 | `service.plainPort` | `80` | The traffic Service's plain port. |
 | `service.tlsPort` | `443` | The traffic Service's TLS port. |
 | `service.annotations` | `{}` | Annotations of the traffic Service. |
+| `service.appProtocol.plain` | `""` | The `appProtocol` of the traffic Service's plain port, such as `kubernetes.io/h2c` for a gateway that speaks h2c to smock. Empty: none. |
+| `service.appProtocol.tls` | `""` | The `appProtocol` of the traffic Service's TLS port. Empty: none. |
 | `adminService.type` | `"ClusterIP"` | The admin Service type. |
 | `adminService.port` | `9090` | The admin Service's port. |
 | `adminService.annotations` | `{}` | Annotations of the admin Service. |
