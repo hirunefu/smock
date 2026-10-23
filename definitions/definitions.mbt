@@ -852,12 +852,26 @@ pub enum ResponseBody {
   /// request, parsed when the definition set was loaded or the Stub was
   /// added.
   Template(BodyTemplate)
+  /// `llm`: an LLM reply, written in its API's wire form for each request.
+  Llm(LlmReply)
+} derive(Debug, Eq)
+
+///|
+/// What a response's `llm` declares: an LLM reply by its content, which the
+/// engine writes in the wire form of its API for each request.
+pub struct LlmReply {
+  /// The declaration, checked when the definition set was loaded or the
+  /// Stub was added.
+  declaration : @llm.Declaration
+  /// Its strings, as written.
+  strings : @llm.Strings
 } derive(Debug, Eq)
 
 ///|
 /// Whether one of the body's templates reads something: the body, or a
 /// field of an event, for which `text` or `json` holds, by its kind. A body
-/// as written has none.
+/// as written has none, and neither has an LLM reply, whose strings are as
+/// written.
 fn ResponseBody::reads(
   self : ResponseBody,
   text : (@template.Text) -> Bool,
@@ -866,6 +880,7 @@ fn ResponseBody::reads(
   match self {
     Bytes(_) => false
     Events(_) => false
+    Llm(_) => false
     Template(Text(body)) => text(body)
     Template(Json(body)) => json(body)
     Template(Events(events)) => {

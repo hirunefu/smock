@@ -1,0 +1,18 @@
+mocks:
+  - name: openai
+stubs:
+  - id: chat
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    responses:
+      - weight: 1
+        status: 429
+        headers: { Retry-After: "1", x-should-retry: "false" }
+        json: { error: { message: Rate limit reached, type: requests, param: null, code: rate_limit_exceeded } }
+      - weight: 9
+        status: 200
+        llm: { api: openai-chat, text: Hello. }
+      - status: 200
+        template: true
+        headers: { X-Trace: "${fake.uuid()}" }
+        llm: { api: openai-chat }

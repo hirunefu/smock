@@ -574,12 +574,12 @@ test "a response gives at most one of body, bodyFile, json and events" {
       body_files=[("x.json", b"x")],
     ),
     content=(
-      #|a.json: /stubs/0/response: has "body" and "bodyFile"; give at most one of "body", "bodyFile", "json" and "events"
-      #|a.json: /stubs/1/response: has "bodyFile" and "events"; give at most one of "body", "bodyFile", "json" and "events"
-      #|a.json: /stubs/2/response: has "body" and "events"; give at most one of "body", "bodyFile", "json" and "events"
-      #|a.json: /stubs/3/response: has "body" and "json"; give at most one of "body", "bodyFile", "json" and "events"
-      #|a.json: /stubs/4/response: has "bodyFile" and "json"; give at most one of "body", "bodyFile", "json" and "events"
-      #|a.json: /stubs/5/response: has "json" and "events"; give at most one of "body", "bodyFile", "json" and "events"
+      #|a.json: /stubs/0/response: has "body" and "bodyFile"; give at most one of "body", "bodyFile", "json", "events" and "llm"
+      #|a.json: /stubs/1/response: has "bodyFile" and "events"; give at most one of "body", "bodyFile", "json", "events" and "llm"
+      #|a.json: /stubs/2/response: has "body" and "events"; give at most one of "body", "bodyFile", "json", "events" and "llm"
+      #|a.json: /stubs/3/response: has "body" and "json"; give at most one of "body", "bodyFile", "json", "events" and "llm"
+      #|a.json: /stubs/4/response: has "bodyFile" and "json"; give at most one of "body", "bodyFile", "json", "events" and "llm"
+      #|a.json: /stubs/5/response: has "json" and "events"; give at most one of "body", "bodyFile", "json", "events" and "llm"
     ),
   )
 }
@@ -677,7 +677,11 @@ test "the snapshot holds what a response sends as one kind, and its header value
     #|        { "status": 200, "template": true, "json": { "a": "${method}" } },
     #|        { "status": 200, "template": true,
     #|          "events": [{ "data": "${method}" }, { "json": ["${path}"] }] },
-    #|        { "status": 200, "template": false, "body": "${path}" } ] } ] }
+    #|        { "status": 200, "template": false, "body": "${path}" },
+    #|        { "status": 200, "headers": { "X-A": "1" },
+    #|          "llm": { "api": "openai-chat", "text": "${path}" } },
+    #|        { "status": 200, "template": true, "headers": { "X-A": "${method}" },
+    #|          "llm": { "api": "openai-chat" } } ] } ] }
   let set : @definitions.DefinitionSet = {
     files: [("a.json", @utf8.encode(file))],
     body_files: [("t.txt", b"${method}")],
@@ -701,6 +705,8 @@ test "the snapshot holds what a response sends as one kind, and its header value
       Template(Text(_)) => "a text template"
       Template(Json(_)) => "a JSON template"
       Template(Events(events)) => "\{events.length()} event templates"
+      Llm(reply) =>
+        "an LLM reply for \{reply.declaration.api.name()}, text [\{reply.strings.text}]"
     }
     out.push("\{i}: \{body}; \{headers}")
   }
@@ -717,6 +723,8 @@ test "the snapshot holds what a response sends as one kind, and its header value
       #|7: a JSON template; headers as templates: [Content-Type]
       #|8: 2 event templates; headers as templates: []
       #|9: bytes [${path}]; headers as written: []
+      #|10: an LLM reply for openai-chat, text [${path}]; headers as written: [X-A: 1]
+      #|11: an LLM reply for openai-chat, text []; headers as templates: [X-A]
     ),
   )
 }
@@ -763,7 +771,7 @@ test "a Stub gives exactly one of response and responses, 1 to 100 responses, ea
       #|a.json: /stubs/7/responses/0: must be an object
       #|a.json: /stubs/7/responses/1: needs "status"
       #|a.json: /stubs/7/responses/2/wieght: is not a known field
-      #|a.json: /stubs/7/responses/3: has "body" and "json"; give at most one of "body", "bodyFile", "json" and "events"
+      #|a.json: /stubs/7/responses/3: has "body" and "json"; give at most one of "body", "bodyFile", "json", "events" and "llm"
     ),
   )
 }
