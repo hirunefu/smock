@@ -462,3 +462,33 @@ test "the same declaration answers under both OpenAI APIs, with the same 24 char
     ),
   )
 }
+
+///|
+test "with chunks, the message item's text is their join, and chunkSize changes nothing in the JSON reply" {
+  let text = (strings : @llm.Strings, chunk_size : Int) => {
+    let reply = @llm.reply(
+      @llm.Declaration(api=OpenaiResponses, chunk_size~),
+      strings,
+      request=Some({ "stream": true }),
+      now=received,
+      ids=@llm.ids_generator(7),
+    )
+    guard @json.parse(response_member(reply, "output"))
+      is [{ "content": [{ "text": text, .. }], .. }] else {
+      fail("no text")
+    }
+    text.stringify()
+  }
+  inspect(
+    [
+      text(@llm.Strings(chunks=["Thumbs up: ", "", "👍", "🏽"]), 4),
+      text(@llm.Strings(chunks=[""]), 4),
+      text(@llm.Strings(text="Hello there"), 1),
+    ].join("\n"),
+    content=(
+      #|"Thumbs up: 👍🏽"
+      #|""
+      #|"Hello there"
+    ),
+  )
+}
