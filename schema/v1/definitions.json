@@ -491,7 +491,7 @@
           "description": "The body as JSON: any JSON value, sent as compact JSON in UTF-8, with Content-Type: application/json unless headers gives a Content-Type. smock writes every number in its shortest form (9.90 is sent as 9.9); use body when the exact bytes matter. With template true, it is a structured template: a string that is exactly one ${expr} gives the value with its own type, an object with $each gives an array, and an object with $if gives its then or else."
         },
         "template": {
-          "description": "Whether the header values (except Content-Type, which cannot contain ${), the body (body, bodyFile or json), the events and, in llm, the text, each chunk, id, model and each tool call's name, id and arguments are templates, rendered for each request. With template false, nothing is parsed or rendered: ${ is plain text and $each a plain key. Default false.",
+          "description": "Whether the header values (except Content-Type, which cannot contain ${), the body (body, bodyFile or json), the events and, in llm, the text, each chunk, id, model, each tool call's name, id and arguments, and the error's message are templates, rendered for each request. With template false, nothing is parsed or rendered: ${ is plain text and $each a plain key. Default false.",
           "type": "boolean",
           "default": false
         },
@@ -634,7 +634,7 @@
           "type": "object",
           "properties": {
             "after": {
-              "description": "How many code points of the text the stream sends before the error, counted in code points so that the cut stays put when the pieces change: the piece that holds the cut ends there, and an empty element of chunks counts 0. It may not pass the end of the text. Default 0.",
+              "description": "How many code points of the text the stream sends before the error, counted in code points so that the cut stays put when the pieces change: the piece that holds the cut ends there, and an empty element of chunks counts 0. It may not pass the end of a text as written; past the end of a templated text, the error follows the whole text. Default 0.",
               "type": "integer",
               "minimum": 0,
               "maximum": 2147483647,
@@ -651,7 +651,7 @@
               "minLength": 1
             },
             "message": {
-              "description": "The error's message, sent as written.",
+              "description": "The error's message, sent as written, or with template true a text template rendered for each request.",
               "type": "string",
               "minLength": 1
             }

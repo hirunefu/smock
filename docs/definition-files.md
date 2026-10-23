@@ -1897,7 +1897,7 @@ The fields of `error`:
 | `after` | how many code points of the text come before the error, an integer from 0 | 0 |
 | `type` | the error's type: non-empty text, or for `anthropic-messages` one of Anthropic's error types | required |
 | `code` | in place of `type`, for `openai-responses` only: the error's code, non-empty text | required |
-| `message` | the error's message, non-empty text | required |
+| `message` | the error's message, non-empty text, a template with `template: true` | required |
 
 - **What is sent.** A request with `stream: true` gets the opening chunk,
   then the text's pieces up to exactly `after` code points, the piece that
@@ -1912,7 +1912,14 @@ The fields of `error`:
   changes. `after: 0` sends the error right after the opening chunk. An
   empty element of [`chunks`](#chunks) counts 0 code points: one before
   the cut is sent, and the text stops at the piece that reaches `after`.
-  An `after` past the end of the text is a load error.
+  An `after` past the end of a text as written is a load error.
+- **With templates.** With [`template: true`](#templates-in-llm-replies),
+  `message` is a text template, such as `Overloaded: ${body.model}`,
+  rendered for each request. `after`, `type` and `code` are never
+  templates. A templated text is known only once it is rendered, so an
+  `after` past its end is no load error: when the rendered text is
+  shorter than `after`, the error follows the whole text. A message that
+  renders empty is sent empty.
 - **Waits.** The error waits as a next piece would: `first` when no piece
   came before it, and `interval` otherwise ([Timing](#timing)).
 - **Only streams.** A request that does not stream gets the ordinary
@@ -1942,8 +1949,8 @@ The fields of `error`:
   reply whole.
 - `type` on `openai-responses` or `code` on another API, another
   Anthropic type, an empty `type`, `code` or `message`, an `after` that is
-  not an integer from 0 or that passes the end of the text, and an unknown
-  field of `error` are load errors.
+  not an integer from 0 or that passes the end of a text as written, and an
+  unknown field of `error` are load errors.
 
 A request for `gpt-6-astra` with `stream: true` gets this stream, which
 [`smock render`](#rendering-a-template) shows with `--seed 7` and
@@ -1988,12 +1995,14 @@ gets a reply whose message has
 pieces are `You `, `said`, `: Sa`, `y \"h`, `i\"\nt`, `hen ` and `stop`,
 as `smock render` shows with `--seed 7`.
 
-- `text`, each element of `chunks`, `id`, `model`, and each tool call's
-  `name`, `id` and string `arguments` are text templates. An object
+- `text`, each element of `chunks`, `id`, `model`, each tool call's
+  `name`, `id` and string `arguments`, and the
+  [error's](#mid-stream-errors) `message` are text templates. An object
   `arguments` is a [structured template](#structured-templates), whose
   members keep the types of what they insert. `api`, `stopReason`,
-  `usage`, `chunkSize`, `timing` and `error` are never templates. Header
-  values are templates, as in any response.
+  `usage`, `chunkSize`, `timing`, and the error's `after`, `type` and
+  `code` are never templates. Header values are templates, as in any
+  response.
 - smock renders the text whole for each request, then cuts it into
   pieces, so echoed text is cut like any other. Each element of `chunks`
   is rendered on its own and stays one piece. A tool call's arguments are
@@ -2003,10 +2012,11 @@ as `smock render` shows with `--seed 7`.
   JSON-escaped on the wire, whatever the Stub's `Content-Type`. An object
   or an array in a text template needs `json(x)`, as in any text template.
 - Helpers, such as `fake.uuid()`, draw in render order: the header values,
-  then `id`, `model`, the text or each chunk in order, then each tool
-  call's `id`, `name` and `arguments`. So [`fault.seed`](#seeds) replays
-  them. The generated ids draw from a generator of their own, so a helper
-  changes none of them.
+  then `id`, `model`, the text or each chunk in order, each tool call's
+  `id`, `name` and `arguments`, then the error's `message`. So
+  [`fault.seed`](#seeds) replays them, and adding an error changes nothing
+  drawn before it. The generated ids draw from a generator of their own,
+  so a helper changes none of them.
 - The templates read `vars` and `data` as any response's do: after the
   Stub's [`variables`](#variables) and [`dataWrites`](#writing-buckets-datawrites)
   have written, so the reply reads what they just did. A Scenario moves on
@@ -2045,7 +2055,8 @@ with `at` under the `llm` field, such as
 `"at":"/response/llm/text","message":"body.messages is missing"`. Two tool
 call ids that render the same give it too. A streamed request gets the
 500, not a stream, since smock renders the whole reply before it sends
-the head.
+the head. Every template renders for every request, so an error's
+`message` that fails gives the 500 to a request that does not stream too.
 
 The SDKs [retry](#retries) a 500 twice by default. So one call to a Stub
 whose template fails makes three requests, with three Journal entries,
@@ -2074,10 +2085,14 @@ The JSON reply carries the text once, so it holds almost 1 MiB of it.
   from the request. Either one over the bound is a load error at the
   `llm` field, which `smock check` reports, such as
   `/stubs/0/response/llm: the reply takes more than 1 MiB as a stream`.
+  A [mid-stream error](#mid-stream-errors) ends the stream early, so then
+  the JSON reply can be the larger: a long text cut early loads, unless
+  its JSON reply alone passes the bound.
 - A reply can still pass the bound for one request. A template can insert
-  a long value, and a long `model` from the request, or a setting that a
-  Responses object copies, such as `tools`, goes into the reply. A
-  Responses stream carries those settings three times. Such a request gets
+  a long value, in the text or in an error's `message`, and a long `model`
+  from the request, or a setting that a Responses object copies, such as
+  `tools`, goes into the reply. A Responses stream carries those settings
+  three times. Such a request gets
   the [500 `template failed`](#missing-values-and-render-errors), with
   `at` at the `llm` field, and no stream:
   `"at":"/response/llm","message":"the reply takes more than 1 MiB as a stream"`.
