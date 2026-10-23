@@ -480,14 +480,22 @@ fn pointer_token(key : String) -> String {
 /// smock's stream, is compared as one event whose fragment is their join,
 /// so their number does not count. An empty first piece is no fragment and
 /// is compared on its own.
+///
+/// `absent` holds the names of events that the example has and smock
+/// deliberately never sends, such as Anthropic's `ping`. They are left out
+/// of the example before it is compared, and each must be in it at least
+/// once.
 fn compare_golden(
   example : String,
   outcome : @engine.Outcome,
   differs? : Array[String] = [],
   unfixed? : Array[String] = [],
   fragments? : Array[String] = [],
+  absent? : Array[String] = [],
 ) -> String {
   let comparison = Comparison::new(differs, unfixed)
+  // The names of `absent` that the example has.
+  let left_out = []
   let (streams, sent) = sent_events(outcome)
   let sent = join_fragments(sent, fragments)
   if example.trim_start().has_prefix("{") {
@@ -502,11 +510,16 @@ fn compare_golden(
     comparison.problems.push("the example is a stream, smock sends a JSON body")
   } else {
     let segments = [[]]
+    // The number of the example's events that are compared.
     let mut number = 0
     for item in golden_stream(example) {
       match item {
+        Event({ name: Some(name), .. }) if absent.contains(name) =>
+          if !left_out.contains(name) {
+            left_out.push(name)
+          }
         Event(event) => {
-          number = event.number
+          number += 1
           segments[segments.length() - 1].push(event)
         }
         Gap => segments.push([])
@@ -572,6 +585,13 @@ fn compare_golden(
       Some(kinds) => listed.push("listed: \{pointer}: \{kinds.join(", ")}")
     }
   }
+  for name in absent {
+    if left_out.contains(name) {
+      listed.push("listed: \{name} events: only in the example")
+    } else {
+      comparison.problems.push("listed but the same: \{name} events")
+    }
+  }
   for id in unfixed {
     if !comparison.ids.contains(id) {
       comparison.problems.push("unfixed but not compared: \{id.escape()}")
@@ -579,7 +599,7 @@ fn compare_golden(
   }
   let verdict = if !comparison.problems.is_empty() {
     "not as listed"
-  } else if differs.is_empty() {
+  } else if differs.is_empty() && absent.is_empty() {
     "same"
   } else {
     "same but for the listed differences"
@@ -671,6 +691,41 @@ test "a gap matches any number of smock's events, none included, and events betw
       #|--
       #|not as listed
       #|event 2 is not in smock's stream after event 1
+    ),
+  )
+}
+
+///|
+test "an event listed as absent by its name is left out of the example, and must be in it" {
+  let h = harness([chat_streaming_stub])
+  h.now = 1_694_268_190_000L
+  let outcome = h.chat(body=hello_request(stream=true))
+  let with_ping = chat_chunk("{\"role\":\"assistant\",\"content\":\"\"}") +
+    "event: ping\ndata: {\"type\": \"ping\"}\n\n" +
+    ": omitted\n\n" +
+    chat_chunk("{}", finish="\"stop\"") +
+    "data: [DONE]\n\n"
+  inspect(
+    [
+      compare_golden(with_ping, outcome, absent=["ping"]),
+      compare_golden(with_ping, outcome),
+      compare_golden(two_gaps("Hello"), outcome, absent=["ping"]),
+    ].join("\n--\n"),
+    content=(
+      #|same but for the listed differences
+      #|listed: ping events: only in the example
+      #|--
+      #|not as listed
+      #|event 2 name: the example has "ping", smock none
+      #|event 2 /type: only in the example: "ping"
+      #|event 2 /id: only in smock's: "chatcmpl-123"
+      #|event 2 /object: only in smock's: "chat.completion.chunk"
+      #|event 2 /created: only in smock's: 1694268190
+      #|event 2 /model: only in smock's: "gpt-6-astra"
+      #|event 2 /choices: only in smock's: [{"index":0,"delta":{"content":"Hello"},"logprobs":null,"finish_reason":null}]
+      #|--
+      #|not as listed
+      #|listed but the same: ping events
     ),
   )
 }

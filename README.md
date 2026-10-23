@@ -1132,9 +1132,11 @@ result with its committed golden file. A change to what the import writes,
 or to one of these documents, regenerates the golden file in the same
 change, with the command that the failing test prints. The goldens in
 `engine/llm_golden_*_test.mbt` compare what `llm` Stubs send with the
-examples of the vendors' documents, copied there with their source, the
-date they were read and their licence, through the comparison in
-`engine/llm_golden_test.mbt`. Each golden names the fields where smock
+examples of the vendors' documents, through the comparison in
+`engine/llm_golden_test.mbt`. Each example is copied there with its source
+and the date it was read. OpenAI's come with their licence, MIT.
+Anthropic's documents grant none, so its examples are short excerpts, used
+as test data only. Each golden names the fields and events where smock
 differs on purpose; any other difference fails the test. Adding a fixture
 file under `schema/v1/fixtures/` adds it to the cross-check; the README
 there says which directory a fixture belongs in.
