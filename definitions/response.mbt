@@ -445,10 +445,12 @@ fn File::parse_templates(
       }
       // Templated ids are compared when they are rendered.
       self.check_tool_call_ids(literal_ids)
+      let error_message = optional(llm.error_message)
       if id is Some(id) &&
         model is Some(model) &&
         reply_text is Some(reply_text) &&
-        tool_calls.length() == llm.tool_calls.length() {
+        tool_calls.length() == llm.tool_calls.length() &&
+        error_message is Some(error_message) {
         Some(
           Llm({
             declaration: llm.declaration,
@@ -457,7 +459,7 @@ fn File::parse_templates(
               model,
               text: reply_text,
               tool_calls: ReadOnlyArray::from_array(tool_calls),
-              error_message: llm.error_message.map_or("", message => message.0),
+              error_message,
             }),
             timing: llm.timing,
             pointer: template_pointer(stub_pointer, llm.pointer),

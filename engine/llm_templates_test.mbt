@@ -1,8 +1,8 @@
 // Seam 1 tests of templates in LLM responses: with `template: true`, the
-// text, each element of `chunks`, `id`, `model` and each tool call's `id`,
-// `name` and `arguments` are rendered for each request, then the reply is
-// cut into pieces; a template that fails gives the 500 `template failed`
-// and no stream.
+// text, each element of `chunks`, `id`, `model`, each tool call's `id`,
+// `name` and `arguments` and the mid-stream error's `message` are rendered
+// for each request, then the reply is cut into pieces; a template that
+// fails gives the 500 `template failed` and no stream.
 
 ///|
 /// A Mock `openai` whose Stub `echo` answers Chat Completions requests with
@@ -586,7 +586,7 @@ test "a templated text is the text of an openai-responses and an anthropic-messa
 }
 
 ///|
-test "with template: true, a declared error cuts the rendered text, follows the whole text when it renders shorter, and sends its message as written" {
+test "with template: true, a declared error cuts the rendered text, follows the whole text when it renders shorter, and renders its message" {
   let h = harness([
     echo_mock(
       "text: \"Echo: ${last(body.messages).content}\", error: { after: 10, type: server_error, message: \"Overloaded ${body.model}\" }",
@@ -598,8 +598,8 @@ test "with template: true, a declared error cuts the rendered text, follows the 
       waits(h.chat(body=said("hi", stream=true))),
     ].join("\n"),
     content=(
-      #|0 opening, 0 "Echo", 0 ": hi", 0 " t", 0 {"error":{"message":"Overloaded ${body.model}","type":"server_error","param":null,"code":null}}
-      #|0 opening, 0 "Echo", 0 ": hi", 0 {"error":{"message":"Overloaded ${body.model}","type":"server_error","param":null,"code":null}}
+      #|0 opening, 0 "Echo", 0 ": hi", 0 " t", 0 {"error":{"message":"Overloaded test-model","type":"server_error","param":null,"code":null}}
+      #|0 opening, 0 "Echo", 0 ": hi", 0 {"error":{"message":"Overloaded test-model","type":"server_error","param":null,"code":null}}
     ),
   )
 }

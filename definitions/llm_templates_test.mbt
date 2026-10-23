@@ -41,6 +41,25 @@ test "with template: true, text, each chunk, id, model and each tool call's name
 }
 
 ///|
+test "with template: true, the error's message is parsed at load, each problem at its JSON Pointer; after, type and code are never templates" {
+  inspect(
+    problems([
+      templated_llm([
+        "text: Hi, error: { type: server_error, message: \"Overloaded ${\" }", "text: Hi, error: { type: server_error, message: \"${unknown()}\" }",
+        "text: Hi, error: { type: server_error, message: \"Overloaded ${body.model}\" }",
+        "text: Hi, error: { after: \"${body.n}\", type: server_error, message: Overloaded }",
+        "text: Hi, error: { type: \"${body.type}\", message: Overloaded }",
+      ]),
+    ]),
+    content=(
+      #|a.yaml: /stubs/0/response/llm/error/message: template: column 12: the ${ is not closed
+      #|a.yaml: /stubs/1/response/llm/error/message: template: column 3: unknown helper "unknown": not one of the helpers smock has
+      #|a.yaml: /stubs/3/response/llm/error/after: must be an integer from 0 to 2147483647
+    ),
+  )
+}
+
+///|
 test "api, stopReason, usage, chunkSize and timing are never templates, and with template off nothing in llm is parsed" {
   inspect(
     problems([
