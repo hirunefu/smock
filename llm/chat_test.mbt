@@ -22,7 +22,16 @@ fn chat(
     now=received,
     ids=@llm.ids_generator(draw),
   )
-  "Content-Type: \{reply.content_type}\n\{@utf8.decode_lossy(reply.body)}"
+  "Content-Type: \{reply.content_type}\n\{json_text(reply)}"
+}
+
+///|
+/// The JSON reply of `reply` as text, or `(events)` for the stream.
+fn json_text(reply : @llm.Reply) -> String {
+  match reply.body {
+    Json(body) => @utf8.decode_lossy(body)
+    Events(_) => "(events)"
+  }
 }
 
 ///|
@@ -47,7 +56,7 @@ fn content(text : String) -> String {
     now=received,
     ids=@llm.ids_generator(7),
   )
-  let body = @utf8.decode_lossy(reply.body)
+  let body = json_text(reply)
   let start = body.find("\"content\":").unwrap() + "\"content\":".length()
   let end = body.find(",\"refusal\"").unwrap()
   body[start:end].to_owned()
@@ -83,7 +92,7 @@ fn reply_id(draw : UInt64) -> String {
     now=received,
     ids=@llm.ids_generator(draw),
   )
-  let body = @utf8.decode_lossy(reply.body)
+  let body = json_text(reply)
   let start = "{\"id\":\"".length()
   body[start:body.find("\",\"object\"").unwrap()].to_owned()
 }
@@ -132,7 +141,7 @@ fn model_and_created(request : Json?, now? : Int64 = received) -> String {
     now~,
     ids=@llm.ids_generator(7),
   )
-  let body = @utf8.decode_lossy(reply.body)
+  let body = json_text(reply)
   let start = body.find(",\"created\"").unwrap() + 1
   body[start:body.find(",\"choices\"").unwrap()].to_owned()
 }
