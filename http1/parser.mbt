@@ -376,7 +376,7 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
           scan = Broken
         }
       Target =>
-        if c > b' ' && c < b'\x7f' {
+        if is_visible_byte(c) {
           count += 1
         } else if c == b' ' && count > 0 {
           scan = Version
@@ -463,7 +463,7 @@ fn Parser::scan_head(self : Parser) -> HeadEnd {
       while at + 8 <= stop && is_visible(bytes.unsafe_read_uint64_le(at)) {
         at += 8
       }
-      while at < stop && buf[at] > b' ' && buf[at] < b'\x7f' {
+      while at < stop && is_visible_byte(buf[at]) {
         at += 1
       }
       count += at - from
@@ -586,8 +586,15 @@ fn has_control(word : UInt64) -> Bool {
 }
 
 ///|
+/// Whether `c` is a visible ASCII character, 0x21 to 0x7e, as each byte of
+/// a request target is (`is_visible_ascii`).
+fn is_visible_byte(c : Byte) -> Bool {
+  c > b' ' && c < b'\x7f'
+}
+
+///|
 /// Whether each of the eight bytes of `word` is a visible ASCII character,
-/// 0x21 to 0x7e, as a request target is made of.
+/// as `is_visible_byte` says.
 fn is_visible(word : UInt64) -> Bool {
   let below = (word - ONES * 0x21) & word.lnot()
   // A byte of 0x7f or more sets its high bit in word + 1 or in word.
