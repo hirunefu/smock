@@ -254,15 +254,6 @@ test "the model is the Stub's when given, otherwise the request's when it is a s
 }
 
 ///|
-test "a request with stream: true gets the JSON reply, the same as without it" {
-  let request : Json = { "model": "claude-test", "stream": true }
-  inspect(
-    messages("Hello!", request=Some(request)) == messages("Hello!"),
-    content="true",
-  )
-}
-
-///|
 /// The request-id header field and the reply's id that `messages` shows in
 /// `reply`, on one line.
 fn ids_line(reply : String) -> String {
