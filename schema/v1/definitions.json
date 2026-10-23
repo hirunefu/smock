@@ -538,11 +538,44 @@
           "minItems": 1
         },
         "chunkSize": {
-          "description": "How many code points each piece of text holds in a stream, the last piece shorter. A piece never splits a code point, but may split a character made of several, such as a flag. It does not apply to chunks. Default 4.",
+          "description": "How many code points each piece of text, and of each tool call's arguments, holds in a stream, the last piece shorter. A piece never splits a code point, but may split a character made of several, such as a flag. It does not apply to chunks. Default 4.",
           "type": "integer",
           "minimum": 1,
           "maximum": 1000000,
           "default": 4
+        },
+        "toolCalls": {
+          "description": "Function tool calls the reply makes, after its text, in the order written. With tool calls and an empty text, the reply has no content: openai-chat sends content: null. In a stream, each call's arguments are sent in pieces of chunkSize code points. Two calls with the same id are refused.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "description": "The function's name, sent as written. It is not checked against a vendor's naming rule.",
+                "type": "string",
+                "minLength": 1
+              },
+              "arguments": {
+                "description": "The function's arguments, which openai-chat sends as a JSON string.",
+                "anyOf": [
+                  {
+                    "description": "An object, written as compact JSON with its members in the order written.",
+                    "type": "object"
+                  },
+                  {
+                    "description": "The arguments' text, sent exactly as written, so arguments that are not valid JSON can be tested.",
+                    "type": "string"
+                  }
+                ]
+              },
+              "id": {
+                "description": "The call id, sent exactly as written (smock adds no prefix). Without it, the call id is call_ and 24 characters drawn from the Stub's random source, in the call's own slots, so fixing it changes no other generated id.",
+                "type": "string"
+              }
+            },
+            "required": ["name", "arguments"],
+            "additionalProperties": false
+          }
         },
         "id": {
           "description": "The reply's id, sent exactly as written (smock adds no prefix), in the JSON reply and in every event of the stream. Without it, the id is the API's prefix, chatcmpl-, resp_ or msg_, and 24 characters drawn from the Stub's random source. Fixing it changes no other generated id.",
@@ -574,7 +607,7 @@
           "additionalProperties": false
         },
         "stopReason": {
-          "description": "The stop reason, in the word of the API that api names, whatever the reply's content. For openai-chat, the finish_reason stop, length, tool_calls, content_filter or function_call (deprecated); left out, it is derived: stop. For openai-responses, an incomplete reason, max_output_tokens, max_messages, content_filter or steered, which makes the reply incomplete and ends a stream with response.incomplete; left out, the reply is completed. For anthropic-messages, the stop_reason end_turn, max_tokens, stop_sequence, tool_use, pause_turn, refusal or model_context_window_exceeded; with stop_sequence, the reply's stop_sequence is the first of the request's stop_sequences when that is a string, and otherwise null, and a refusal carries stop_details; left out, it is derived: end_turn.",
+          "description": "The stop reason, in the word of the API that api names, whatever the reply's content. For openai-chat, the finish_reason stop, length, tool_calls, content_filter or function_call (deprecated); left out, it is derived: tool_calls when toolCalls gives a call, and stop otherwise. For openai-responses, an incomplete reason, max_output_tokens, max_messages, content_filter or steered, which makes the reply incomplete and ends a stream with response.incomplete; left out, the reply is completed. For anthropic-messages, the stop_reason end_turn, max_tokens, stop_sequence, tool_use, pause_turn, refusal or model_context_window_exceeded; with stop_sequence, the reply's stop_sequence is the first of the request's stop_sequences when that is a string, and otherwise null, and a refusal carries stop_details; left out, it is derived: end_turn.",
           "enum": [
             "stop", "length", "tool_calls", "content_filter", "function_call",
             "max_output_tokens", "max_messages", "steered",

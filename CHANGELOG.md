@@ -60,14 +60,22 @@ of each GitHub release include its section
   time the request was received, and the Stub's `model`, or else the
   request's. A piece holds 4 code points, or `chunkSize` of them, and
   never splits one; or `chunks` gives the pieces themselves in place of
-  `text`, an empty one included. smock adds an `x-request-id: req_…`
+  `text`, an empty one included. `toolCalls: [{ name, arguments, id }]`
+  declares function tool calls, after the text: the JSON reply gives them
+  in `message.tool_calls`, with `content: null` when the text is empty,
+  and a stream opens each one with its integer `index`, call id and name,
+  then sends its arguments in pieces of the same size. `arguments` is an
+  object, written as compact JSON, or a string sent as written, so broken
+  arguments can be tested; a call id is `call_` and 24 characters, or the
+  one `id` fixes. smock adds an `x-request-id: req_…`
   header to the reply, unless the Stub gives its own.
   `usage: { input, output }` declares the token counts, which the reply
   gives with their total, and a stream whose request sets
   `stream_options.include_usage` gets `usage: null` on every chunk and a
   last usage chunk before `[DONE]`. `stopReason` writes the
-  `finish_reason` in the API's own word, checked at load, and is `stop`
-  when left out. With `api: openai-responses`, it answers OpenAI Responses
+  `finish_reason` in the API's own word, checked at load, and is
+  `tool_calls` with tool calls, or else `stop`, when left out. With
+  `api: openai-responses`, it answers OpenAI Responses
   requests with a Response object: the text in its message item, the
   usage, a `resp_` id, `created_at` and `completed_at` the time the
   request was received, and the settings the request gave, such as
@@ -89,8 +97,11 @@ of each GitHub release include its section
   piece, counted from the head, and one before each later piece, each
   drawn from a distribution of the delay Fault, which `fault.seed` and
   `--seed` replay. A Responses stream's `completed_at` adds the waits to
-  the time received. It works with request conditions, `responses`, Faults,
-  Ephemeral Stubs, `smock render` and the Journal. See
+  the time received. It works with request conditions, `responses`,
+  Faults, Ephemeral Stubs and the Journal. `smock render` and the Admin
+  render operation show the reply the sample's body asks for, the JSON
+  body or a stream's events, each event with its wait, with the ids and
+  the waits the seed fixes. See
   [LLM responses](docs/definition-files.md#llm-responses).
 
 ### Changed
