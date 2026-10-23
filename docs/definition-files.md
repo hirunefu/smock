@@ -364,7 +364,8 @@ stubs:
 ```
 
 The Responses API also takes `input` as a string. A string is not an
-array, so it never meets `$last`.
+array, so it never meets `$last`. [Agent loops](#agent-loops) shows each
+API's loop with LLM replies, and how the reply quotes the tool's result.
 
 `$last` nests as the other operators do.
 `{ "$not": { "$last": { "role": "tool" } } }` holds when the last message
@@ -1819,6 +1820,9 @@ condition on the last message tells the turns apart, as the
     llm: { api: openai-chat, text: It is 18°C in Paris. }
 ```
 
+[Agent loops](#agent-loops) shows the whole loop for each API, with a
+reply that quotes the tool's result.
+
 #### Broken arguments
 
 A model can send arguments that are not valid JSON, and an agent should
@@ -2028,6 +2032,8 @@ as `smock render` shows with `--seed 7`.
   Stub's [`variables`](#variables) and [`dataWrites`](#writing-buckets-datawrites)
   have written, so the reply reads what they just did. A Scenario moves on
   an `llm` Stub as on any other.
+  [Conversations of several turns](#conversations-of-several-turns) uses
+  both.
 - A syntax error is a load error at the field's JSON Pointer, such as
   `/stubs/0/response/llm/text`. Two tool calls whose ids insert nothing
   and are the same are a load error, as without templates. Ids that
@@ -2161,7 +2167,8 @@ sends `POST /v1/responses`, and gets this reply, which
   `access_programs: null` and `temperature: 1.0`.
 - smock keeps no Responses state. `previous_response_id` is only copied,
   and a request with `background: true` gets this same reply, not a queued
-  one.
+  one. [Responses follow-ups](#responses-follow-ups) shows how Stubs
+  answer a follow-up and `GET /v1/responses/{id}`.
 
 #### The Responses stream
 
@@ -2345,6 +2352,10 @@ answers it:
     status: 200
     llm: { api: openai-responses, text: It is 18°C in Paris. }
 ```
+
+[A Responses loop](#a-responses-loop) quotes the call's output in the
+reply, and [Responses follow-ups](#responses-follow-ups) answers a request
+that sends only that output.
 
 #### Incomplete replies
 
@@ -2639,6 +2650,400 @@ event: message_stop
 data: {"type":"message_stop"}
 
 ```
+
+### Agent loops
+
+An agent sends the whole conversation in each request. When the model
+calls a tool, the agent runs the tool and sends the conversation again,
+with the tool's result as its last message. The model then answers with
+text, or calls another tool. Two Stubs follow this loop: the first calls
+the tool, and the second answers once the last message is the tool's
+result. A [`$last` condition](#operators-in-json-conditions) tells the
+two requests apart, and the second Stub quotes the result with
+[`last()`](#helpers), in a [template](#templates-in-llm-replies). Each
+API sends the result in its own form:
+
+| `api` | The last message is the tool's result when | The result in a template |
+|---|---|---|
+| `openai-chat` | `messages: { $last: { role: tool } }` | `last(body.messages).content` |
+| `anthropic-messages` | `messages: { $last: { role: user, content: { $includes: { type: tool_result } } } }` | `find(last(body.messages).content, 'type', 'tool_result').content` |
+| `openai-responses` | `input: { $last: { type: function_call_output } }` | `last(body.input).output` |
+
+- The first Stub takes the same condition under `$not`, so it answers
+  every other request to its path, and the two never both match.
+  `$last: { role: user }` would not do for every API: Anthropic sends a
+  tool's result in a user message, and a Responses request often gives
+  `input` as a string, which never meets `$last`.
+- A user message can hold text after its tool results, so the Messages
+  template finds the `tool_result` block rather than taking the last one.
+- The result is inserted as text when the agent sends it as a string, as
+  the vendors' examples do. A result sent as an array of content blocks is
+  an array, which a text template inserts only with `json(x)`; otherwise
+  the request gets the [500 `template failed`](#missing-values-and-render-errors).
+- smock checks no request against its `tools`, so the Stubs need none,
+  and neither do the sketches below. The sketches were checked with
+  openai-python 3.37.0 and anthropic-sdk-python 2.1.0.
+
+#### A Chat Completions loop
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { messages: { $not: { $last: { role: tool } } } } }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+  - id: answer-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { messages: { $last: { role: tool } } } }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-chat
+        text: It is ${last(body.messages).content} in Paris.
+```
+
+An agent built on openai-python runs the loop like this:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="test")
+messages = [{"role": "user", "content": "Weather in Paris?"}]
+first = client.chat.completions.create(model="gpt-6-astra", messages=messages)
+call = first.choices[0].message.tool_calls[0]
+messages.append(first.choices[0].message)
+messages.append({"role": "tool", "tool_call_id": call.id, "content": "18°C"})
+second = client.chat.completions.create(model="gpt-6-astra", messages=messages)
+print(second.choices[0].message.content)  # It is 18°C in Paris.
+```
+
+The second request's last message is
+`{"role":"tool","tool_call_id":"call_…","content":"18°C"}`, so
+`answer-weather` answers it, and quotes `18°C`.
+
+#### A Messages loop
+
+```yaml
+mocks:
+  - name: anthropic
+stubs:
+  - id: ask-weather
+    mock: anthropic
+    request:
+      method: POST
+      path: /v1/messages
+      body:
+        json:
+          messages:
+            $not:
+              $last: { role: user, content: { $includes: { type: tool_result } } }
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+  - id: answer-weather
+    mock: anthropic
+    request:
+      method: POST
+      path: /v1/messages
+      body:
+        json:
+          messages:
+            $last: { role: user, content: { $includes: { type: tool_result } } }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: anthropic-messages
+        text: "It is ${find(last(body.messages).content, 'type', 'tool_result').content} in Paris."
+```
+
+With anthropic-sdk-python:
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(base_url="http://localhost:8080", api_key="test")
+messages = [{"role": "user", "content": "Weather in Paris?"}]
+first = client.messages.create(model="claude-test", max_tokens=1024, messages=messages)
+call = first.content[0]
+messages.append({"role": "assistant", "content": first.content})
+messages.append({"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": call.id, "content": "18°C"},
+]})
+second = client.messages.create(model="claude-test", max_tokens=1024, messages=messages)
+print(second.content[0].text)  # It is 18°C in Paris.
+```
+
+The first reply has no text, so its `tool_use` block is `content[0]`.
+The second request's last message is the user's, and holds the
+`tool_result` block, so `answer-weather` answers it.
+
+#### A Responses loop
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { input: { $not: { $last: { type: function_call_output } } } } }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+  - id: answer-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { input: { $last: { type: function_call_output } } } }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-responses
+        text: It is ${last(body.input).output} in Paris.
+```
+
+With openai-python, the agent sends the whole conversation as `input`
+items:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="test")
+first = client.responses.create(model="gpt-6-astra", input="Weather in Paris?")
+call = first.output[0]
+items = [{"role": "user", "content": "Weather in Paris?"}, *first.output]
+items.append({"type": "function_call_output", "call_id": call.call_id, "output": "18°C"})
+second = client.responses.create(model="gpt-6-astra", input=items)
+print(second.output_text)  # It is 18°C in Paris.
+```
+
+The first request gives `input` as a string, which `ask-weather` answers.
+The first reply has no text, so its function call item is `output[0]`.
+The second request's last item is the call's output, so `answer-weather`
+answers it.
+
+#### Responses follow-ups
+
+A Responses request can name an earlier Response with
+`previous_response_id`, and send only the new items. The vendor then
+reads the earlier turns from its store. smock keeps no Responses state:
+it only copies `previous_response_id` into the reply. A follow-up is an
+ordinary request, so a body condition on `previous_response_id` answers
+it. When the first reply's `id` is fixed, the follow-up can name it:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { previous_response_id: { $exists: false } } }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        id: resp_weather
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+  - id: answer-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { previous_response_id: resp_weather } }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-responses
+        text: It is ${last(body.input).output} in Paris.
+  - id: get-weather
+    mock: openai
+    request: { method: GET, path: /v1/responses/resp_weather }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        id: resp_weather
+        model: gpt-6-astra
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+```
+
+```python
+first = client.responses.create(model="gpt-6-astra", input="Weather in Paris?")
+call = first.output[0]
+second = client.responses.create(
+    model="gpt-6-astra",
+    previous_response_id=first.id,
+    input=[{"type": "function_call_output", "call_id": call.call_id, "output": "18°C"}],
+)
+print(second.output_text)  # It is 18°C in Paris.
+print(second.previous_response_id)  # resp_weather
+print(client.responses.retrieve(first.id).output[0].name)  # get_weather
+```
+
+- The follow-up sends only the call's output, so its last item is that
+  output, and the template quotes it as in the loop above.
+- A follow-up of another id matches no Stub, and gets the Mock's
+  [`noMatch` reply](#when-no-stub-matches).
+- `client.responses.retrieve()` sends `GET /v1/responses/{id}`. smock
+  does not store the first reply, so an ordinary Stub answers it. This one
+  gives the same `id` and tool call. A GET has no body, so it gets the JSON
+  reply, and its Stub gives `model`, which no request names. Its
+  `created_at` and the ids it does not fix are new.
+
+When the first reply's id is generated, a follow-up cannot name it. Then
+`previous_response_id: { $exists: true }` answers any follow-up, and a
+[Scenario](#scenarios) tells which turn it follows:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { previous_response_id: { $exists: false } } }
+    scenario: { name: weather, moveTo: Asked }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+  - id: answer-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/responses
+      body: { json: { previous_response_id: { $exists: true } } }
+    scenario: { name: weather, requires: Asked, moveTo: Answered }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-responses
+        text: It is ${last(body.input).output} in Paris.
+```
+
+The same agent gets the same answer. A follow-up before the question, or
+after the answer, matches no Stub, since `answer-weather` requires
+`Asked`. A Stub that requires `Answered` would answer the next turn, as
+[Conversations of several turns](#conversations-of-several-turns) shows.
+
+#### Conversations of several turns
+
+A conversation goes on after the answer. When the user asks again, the
+last message is the user's once more, as on the first turn, so the
+messages alone do not say which turn it is. A [Scenario](#scenarios)
+follows the turns, and a [Variable](#variables) counts them:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: ask-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { messages: { $not: { $last: { role: tool } } } } }
+    scenario: { name: weather, requires: Started, moveTo: Asked }
+    variables: { turns: "${add(vars.turns ?? 0, 1)}" }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+  - id: answer-weather
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { messages: { $last: { role: tool } } } }
+    scenario: { name: weather, requires: Asked, moveTo: Answered }
+    variables: { turns: "${add(vars.turns ?? 0, 1)}" }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-chat
+        text: It is ${last(body.messages).content} in Paris.
+  - id: next-question
+    mock: openai
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body: { json: { messages: { $not: { $last: { role: tool } } } } }
+    scenario: { name: weather, requires: Answered }
+    variables: { turns: "${add(vars.turns ?? 0, 1)}" }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: openai-chat
+        text: Turn ${vars.turns}. Ask me about another city.
+```
+
+The agent of [the Chat Completions loop](#a-chat-completions-loop) gets
+the tool call, then `It is 18°C in Paris.` When it then appends the
+answer and the user's next question, the third request gets
+`Turn 3. Ask me about another city.`
+
+- `ask-weather` and `next-question` have the same request conditions.
+  Their `requires` tell them apart, so neither shadows the other
+  ([Warnings](#a-stub-that-can-never-match)).
+- Each Stub adds one to `turns`, and the reply reads the new count, since
+  a response sees the Variables its Stub has just written. A test can
+  also read the count through the
+  [Admin API](#through-the-admin-api), or count the Journal's entries.
+- The state and the count belong to the
+  [Session](../README.md#sessions-and-ephemeral-stubs). Give each test
+  its own Session, or reset it, so that each conversation starts in
+  `Started` with no count. Requests without a Session share one state
+  and one count.
+- The same Stubs work for the other APIs with their own
+  [conditions](#agent-loops), and for Responses follow-ups with
+  `previous_response_id: { $exists: true }`.
 
 ### Paths and compatible endpoints
 
