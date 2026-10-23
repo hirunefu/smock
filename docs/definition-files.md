@@ -1145,8 +1145,9 @@ sends `{"id":1,"price":9.9}`. smock writes every number itself, in the
 shortest form that reads back as the same 64-bit float: `9.90` is sent as
 `9.9` and `1e3` as `1000`, and an integer beyond 2^53 keeps its digits. When
 the exact bytes matter, use `body`. A response gives at most one of `body`,
-`bodyFile`, `json` and `events`, and an event gives exactly one of `data`
-and `json`, which is sent as one `data:` line of compact JSON.
+`bodyFile`, `json`, `events` and [`llm`](#llm-responses), and an event
+gives exactly one of `data` and `json`, which is sent as one `data:` line
+of compact JSON.
 
 ### Several responses
 
@@ -1167,7 +1168,7 @@ Stub answers about one request in ten with a 503:
 - A Stub gives exactly one of `response` and `responses`.
 - `responses` holds 1 to 100 responses, in the order written. Each is a
   response as `response` gives it, with its own status, headers, body,
-  body file, `json` or events, and `template`, plus `weight`.
+  body file, `json`, events or `llm`, and `template`, plus `weight`.
 - `weight` is an integer from 1 to 1,000,000, by default 1. A response is
   picked with the probability of its weight over the sum of the weights:
   9 and 1 give the 200 to nine requests in ten.
@@ -1201,6 +1202,90 @@ to render or [the state bound](#the-state-bound) refused its writes.
 `smock render` and the Admin render operation show the index the seed
 picks, and `--response <i>` (the Admin API's `response=<i>`) renders the
 response at index `i` ([Rendering a template](#rendering-a-template)).
+
+## LLM responses
+
+A response can give `llm` in place of a body, to stand in for an LLM API
+in tests of code that calls one, such as an agent or a chat feature. It
+declares the reply by what it says, and smock writes it in that API's wire
+form, so an official SDK reads it as it reads the vendor's reply. This Stub
+answers OpenAI Chat Completions requests:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: hello
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+```
+
+An SDK reaches it through its base URL, such as
+`OpenAI(base_url="http://localhost:8080/v1", api_key="test")` in
+openai-python, which sends `POST /v1/chat/completions`. A request for
+`gpt-6-astra` gets one `chat.completion` body, such as this one, which
+[`smock render`](#rendering-a-template) shows with `--seed 7` and
+`--time 2026-10-23T00:00:00Z`:
+
+```json
+{"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"message":{"role":"assistant","content":"Hello! How can I assist you today?","refusal":null,"annotations":[]},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"service_tier":"default"}
+```
+
+The fields of `llm`:
+
+| Field | Value | When left out |
+|---|---|---|
+| `api` | `openai-chat`, OpenAI Chat Completions | required |
+| `text` | the text of the reply | empty |
+
+- `api` names the API whose wire form the reply takes. It is required, and
+  smock never infers it from the request's path, so a proxy or a base path
+  of its own does not change the reply. The preset neither sets nor checks
+  `request.path`: the Stub's conditions choose it, as for any Stub.
+- The reply is the assistant's message, with `text` as its `content`, or
+  `""` when the text is empty, and `finish_reason: "stop"`. Its fields and
+  their order follow the example of OpenAI's API reference, and so do its
+  fixed values, such as `refusal: null` and `service_tier: "default"`.
+  `usage` has the example's members, every count 0. There is no
+  `system_fingerprint`.
+- smock sets `Content-Type: application/json`. A `Content-Type` the Stub
+  gives is replaced, as for `events`. Other headers, such as a rate-limit
+  header, are sent as written.
+- The reply's `id` is `chatcmpl-` and 24 characters from `A`-`Z`, `a`-`z`
+  and `0`-`9`. It comes from the Stub's random source: from a generator of
+  its own, seeded with the one draw every matched request takes XOR a fixed
+  constant. So [`fault.seed` and `--seed`](#seeds) replay the ids, and an
+  `llm` response changes no Fault decision, no pick among `responses` and
+  no helper output.
+- `created` is the time smock received the request, in whole seconds since
+  the Unix epoch: the time `now()` reads.
+- `model` is the request's `model` when it is a string, and the empty
+  string otherwise, such as when the body is not JSON. `llm` adds no
+  condition on the model, so one Stub answers every model. A Stub for one
+  model adds `body: { json: { model: gpt-6-astra } }` to its request.
+
+An LLM response is a response like any other. `status` is required, as
+always. `llm` may stand in `response` or in any element of
+[`responses`](#several-responses), so weighted responses can answer one
+request in ten with an ordinary 429. Request conditions, Faults,
+Ephemeral Stubs, the Journal and [`smock render`](#rendering-a-template)
+work as for other responses: a rendering shows the JSON body, with the ids
+its seed gives and its time as `created`. A response gives at most one of
+`body`, `bodyFile`, `json`, `events` and `llm`. A missing or unknown `api`,
+an unknown field of `llm`, and `llm` beside another body are reported with
+the JSON Pointer of the field, by `smock check`, at startup and on a
+reload, which keeps the set served, and as 400 `invalid_stub` for an
+Ephemeral Stub.
+
+The wire forms follow the vendors' documents as they were read on
+2026-10-22 and 2026-10-23. When a vendor changes its documented form, a
+minor release may change what an existing `llm` Stub sends, with a
+CHANGELOG entry.
 
 ## Templates
 

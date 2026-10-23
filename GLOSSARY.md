@@ -42,6 +42,10 @@ _Avoid_: dataset, collection, data store, table, fixture
 A Stub that serves a keyed Data bucket as a REST resource: it lists and creates items at its path, and reads, replaces, updates and deletes one item at the path plus its key.
 _Avoid_: CRUD route, resource route
 
+**LLM response**:
+A response that declares an LLM reply by its content, which smock writes in one LLM API's wire form, as JSON or as a stream.
+_Avoid_: completion, fixture
+
 **Upstream**:
 The real service a Mock impersonates. Forwarding the requests a Mock does not match to its Upstream, and recording the exchanges as Definition files, are not implemented.
 _Avoid_: Backend, origin, target

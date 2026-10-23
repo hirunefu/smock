@@ -1,8 +1,8 @@
 // Reading a Stub's response: its status, its headers, and a body given
-// inline, from a body file, as JSON or as Server-Sent Events. With
-// `template` on, the header values, the body and the events are templates,
-// parsed here, when the definition set is loaded or the Stub is added, and
-// rendered for each request by the engine.
+// inline, from a body file, as JSON, as Server-Sent Events or as an LLM
+// reply. With `template` on, the header values, the body and the events
+// are templates, parsed here, when the definition set is loaded or the Stub
+// is added, and rendered for each request by the engine.
 
 ///|
 /// The body of a response, as written: which field gives it, its JSON
@@ -13,6 +13,7 @@ priv enum BodyField {
   File(String, Bytes)
   JsonBody(String, Json)
   EventList(Array[EventDecl])
+  LlmField(LlmReply)
 }
 
 ///|
@@ -114,6 +115,11 @@ fn File::read_response(
       "bodyFile" => body = File(field, self.read_body_file(field, value))
       "json" => body = JsonBody(field, value)
       "events" => body = EventList(self.read_events(field, value))
+      "llm" =>
+        body = match self.read_llm(field, value) {
+          Some(reply) => LlmField(reply)
+          None => NoBody
+        }
       "template" =>
         match value {
           True => template = true
@@ -124,14 +130,14 @@ fn File::read_response(
     }
   }
   self.require(response, pointer, "status")
-  let bodies = ["body", "bodyFile", "json", "events"].filter(key => {
+  let bodies = ["body", "bodyFile", "json", "events", "llm"].filter(key => {
     response.contains(key)
   })
   if bodies.length() > 1 {
     let given = bodies.map(key => "\"\{key}\"").join(" and ")
     self.error(
       pointer,
-      "has \{given}; give at most one of \"body\", \"bodyFile\", \"json\" and \"events\"",
+      "has \{given}; give at most one of \"body\", \"bodyFile\", \"json\", \"events\" and \"llm\"",
     )
   }
   // A JSON body is sent as JSON unless the Stub says otherwise.
@@ -143,7 +149,7 @@ fn File::read_response(
     // Templates that fail to parse are reported, and the set is not loaded,
     // so the response they leave is never sent.
     match self.parse_templates(stub_pointer, headers, body, buckets~) {
-      Some((headers, body)) => (Templated(headers), Template(body), false)
+      Some((headers, body)) => (Templated(headers), body, false)
       None => (Written(ReadOnlyArray::from_array([])), Bytes(b""), false)
     }
   } else {
@@ -154,7 +160,8 @@ fn File::read_response(
     // its headers give Content-Range or Accept-Ranges themselves.
     let from_file = match body {
       File(_, _) => true
-      NoBody | Inline(_, _) | JsonBody(_, _) | EventList(_) => false
+      NoBody | Inline(_, _) | JsonBody(_, _) | EventList(_) | LlmField(_) =>
+        false
     }
     let serves_ranges = status == 200 &&
       from_file &&
@@ -183,6 +190,7 @@ fn File::read_response(
             }),
           ),
         )
+      LlmField(reply) => Llm(reply)
     }
     (Written(written), body, serves_ranges)
   }
@@ -202,17 +210,17 @@ fn File::read_response(
 /// Parses the templates of a response with `template` on, from its header
 /// fields as (name, value, JSON Pointer) and its body, and reports every
 /// problem in them. Returns the header fields, their values text
-/// templates, and the body's templates, or `None` when one of them has a
-/// problem. `stub_pointer` is the JSON Pointer of the Stub: a template's own
-/// pointer is within the Stub. The templates may read the Data buckets
-/// `buckets`.
+/// templates, and the body: its templates, or an LLM reply as written, or
+/// `None` when one of them has a problem. `stub_pointer` is the JSON
+/// Pointer of the Stub: a template's own pointer is within the Stub. The
+/// templates may read the Data buckets `buckets`.
 fn File::parse_templates(
   self : File,
   stub_pointer : String,
   headers : Array[(String, String, String)],
   body : BodyField,
   buckets~ : @template.Buckets,
-) -> (ReadOnlyArray[(String, @template.Text)], BodyTemplate)? {
+) -> (ReadOnlyArray[(String, @template.Text)], ResponseBody)? {
   let mut ok = true
   let report = (problem : @template.Problem) => {
     self.report_template_problem(stub_pointer, problem)
@@ -269,12 +277,14 @@ fn File::parse_templates(
   }
   let escaping = @template.escaping_for(content_type)
   let empty = (pointer : String) => {
-    text("", pointer, Body(escaping)).map(text => BodyTemplate::Text(text))
+    text("", pointer, Body(escaping)).map(text => {
+      ResponseBody::Template(Text(text))
+    })
   }
-  let body = match body {
+  let body : ResponseBody? = match body {
     NoBody => empty(child_pointer(stub_pointer, "response"))
     Inline(pointer, source) =>
-      text(source, pointer, Body(escaping)).map(text => BodyTemplate::Text(text))
+      text(source, pointer, Body(escaping)).map(text => Template(Text(text)))
     File(pointer, bytes) =>
       try @utf8.decode(bytes) catch {
         _ => {
@@ -285,12 +295,10 @@ fn File::parse_templates(
         }
       } noraise {
         source =>
-          text(source, pointer, Body(escaping)).map(text => {
-            BodyTemplate::Text(text)
-          })
+          text(source, pointer, Body(escaping)).map(text => Template(Text(text)))
       }
     JsonBody(pointer, value) =>
-      structured(value, pointer).map(json => BodyTemplate::Json(json))
+      structured(value, pointer).map(json => Template(Json(json)))
     EventList(events) => {
       let templates = []
       for event in events {
@@ -322,8 +330,10 @@ fn File::parse_templates(
           })
         }
       }
-      Some(BodyTemplate::Events(ReadOnlyArray::from_array(templates)))
+      Some(Template(Events(ReadOnlyArray::from_array(templates))))
     }
+    // The strings of an LLM reply are as written.
+    LlmField(reply) => Some(Llm(reply))
   }
   guard ok && body is Some(body) else { return None }
   Some((ReadOnlyArray::from_array(header_templates), body))
@@ -395,4 +405,32 @@ fn File::read_events(
     events.push(EventDecl::{ delay_ms, event: event_type, id, data, })
   }
   events
+}
+
+///|
+/// Reads the `llm` of a response: `api`, which names the API whose wire
+/// form the reply takes, and `text`, empty when left out. It has none when
+/// `api` is missing or names no API.
+fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
+  guard json is Object(fields) else {
+    self.error(pointer, "must be an object")
+    return None
+  }
+  let mut api = None
+  let mut text = ""
+  for key, value in fields {
+    let field = child_pointer(pointer, key)
+    match key {
+      "api" =>
+        match @llm.read_api(value) {
+          Ok(named) => api = Some(named)
+          Err(message) => self.error(field, message)
+        }
+      "text" => text = self.string(field, value).unwrap_or("")
+      _ => self.unknown_field(field)
+    }
+  }
+  self.require(fields, pointer, "api")
+  guard api is Some(api) else { return None }
+  Some({ declaration: @llm.Declaration(api~), strings: @llm.Strings(text~), })
 }

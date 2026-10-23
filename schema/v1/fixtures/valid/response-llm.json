@@ -1,0 +1,16 @@
+{
+  "mocks": [{ "name": "openai" }],
+  "stubs": [
+    {
+      "id": "chat",
+      "mock": "openai",
+      "request": { "method": "POST", "path": "/v1/chat/completions" },
+      "response": {
+        "status": 200,
+        "headers": { "x-ratelimit-remaining-requests": "59" },
+        "llm": { "api": "openai-chat", "text": "Hello! How can I assist you today?" }
+      },
+      "fault": { "seed": 7 }
+    }
+  ]
+}

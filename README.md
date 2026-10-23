@@ -11,6 +11,8 @@ Mockoon environments, routes, rules, helpers and data buckets onto Mocks,
 Stubs, templates and Data buckets.
 [docs/importing-openapi.md](docs/importing-openapi.md) turns an OpenAPI
 document into a Definition file.
+[LLM responses](docs/definition-files.md#llm-responses) stand in for an LLM
+API, such as OpenAI Chat Completions, in tests of code that calls one.
 
 ## Layout
 
@@ -75,6 +77,12 @@ Packages of `smock/smock`:
   and writes the file. Before it returns a file, it loads it with
   `definitions`, as `smock check` would. Its parts, one file each, are
   listed in `importopenapi/import.mbt`.
+- `llm`: LLM responses. It writes a reply declared by its content in one
+  LLM API's wire form, from the declaration's strings, the request's JSON
+  body, the time and the ids generator, and returns the headers smock sets
+  with the body. It also holds each API's vocabulary and the load checks
+  that `definitions` uses. It imports neither `definitions` nor `engine`,
+  and draws no wait.
 - `prng`: the seeded pseudo-random generator that Fault decisions and
   template helpers draw from. Its sequence for a seed is fixed, the same on
   every target.
@@ -134,8 +142,8 @@ Packages of `smock/smock`:
 
 A package that does I/O or uses FFI declares `supported_targets = "native"`.
 Every other package also builds for `wasm-gc`, and CI tests it there. The
-packages that decide a response, `definitions`, `engine` and `template`,
-the ones they import, `prng`, `cookies`, `unicode` and `log`, and the
+packages that decide a response, `definitions`, `engine`, `template` and
+`llm`, the ones they import, `prng`, `cookies`, `unicode` and `log`, and the
 OpenAPI converter, `importopenapi`, must stay that way:
 `scripts/check-no-io.sh` fails if one of them leaves out `wasm-gc`, reads
 the environment, binds C or imports a package that does I/O.
@@ -645,6 +653,7 @@ XML, negated or by presence with `$not` and `$exists`, and by array element
 with `$includes` and `$last`), the order they are tried in (priority, then file-name
 order), what a Mock answers when nothing matches, responses with inline
 bodies, body files that serve byte ranges, JSON or Server-Sent Events,
+LLM responses in an LLM API's wire form,
 several responses picked at random by weight (`responses`), response
 templates and their helpers (fake data, time and dates, conversions,
 strings, encodings, JWTs and arithmetic), Variables that keep a value from

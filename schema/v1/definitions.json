@@ -440,7 +440,7 @@
       "additionalProperties": false
     },
     "response": {
-      "description": "The response to return when the Stub matches. Its body is given inline (body), read from a body file (bodyFile), given as JSON (json), or streamed as Server-Sent Events (events). Give at most one of them; without any, the body is empty. With template true, the header values, the body and the events are templates, parsed when the definitions are loaded and rendered for each request: see docs/definition-files.md, Templates.",
+      "description": "The response to return when the Stub matches. Its body is given inline (body), read from a body file (bodyFile), given as JSON (json), streamed as Server-Sent Events (events), or declared as an LLM reply (llm). Give at most one of them; without any, the body is empty. With template true, the header values, the body and the events are templates, parsed when the definitions are loaded and rendered for each request: see docs/definition-files.md, Templates.",
       "$ref": "#/$defs/responseFields",
       "unevaluatedProperties": false
     },
@@ -459,7 +459,7 @@
       "unevaluatedProperties": false
     },
     "responseFields": {
-      "description": "The fields of a response: its status, its headers, its body and whether it is a template. This definition does not close itself to other properties so that weightedResponse can add weight; response and weightedResponse each close it with unevaluatedProperties: false.",
+      "description": "The fields of a response: its status, its headers, its body or LLM reply, and whether it is a template. This definition does not close itself to other properties so that weightedResponse can add weight; response and weightedResponse each close it with unevaluatedProperties: false.",
       "type": "object",
       "properties": {
         "status": {
@@ -499,20 +499,41 @@
           "description": "Server-Sent Events to stream instead of a body. smock sends the status and the headers at once, always with Content-Type: text/event-stream (a Content-Type in headers is replaced), then writes each event after its delay, and closes the stream after the last one.",
           "type": "array",
           "items": { "$ref": "#/$defs/event" }
-        }
+        },
+        "llm": { "$ref": "#/$defs/llm" }
       },
       "required": ["status"],
       "dependentSchemas": {
         "body": {
-          "properties": { "bodyFile": false, "json": false, "events": false }
+          "properties": { "bodyFile": false, "json": false, "events": false, "llm": false }
         },
         "bodyFile": {
-          "properties": { "json": false, "events": false }
+          "properties": { "json": false, "events": false, "llm": false }
         },
         "json": {
-          "properties": { "events": false }
+          "properties": { "events": false, "llm": false }
+        },
+        "events": {
+          "properties": { "llm": false }
         }
       }
+    },
+    "llm": {
+      "description": "An LLM reply, declared by its content instead of a body: smock writes it in the wire form of the API that api names, as one JSON body with Content-Type: application/json (a Content-Type in headers is replaced). Other headers are sent as written. The reply's id is generated from the Stub's random source, so fault.seed and --seed repeat it; its model is the request's model when that is a string, and its time is when smock received the request. See docs/definition-files.md, LLM responses.",
+      "type": "object",
+      "properties": {
+        "api": {
+          "description": "The LLM API whose wire form the reply takes: openai-chat, OpenAI Chat Completions. It is required and never inferred from the request's path.",
+          "enum": ["openai-chat"]
+        },
+        "text": {
+          "description": "The text of the reply: the content of the assistant's message. Default empty.",
+          "type": "string",
+          "default": ""
+        }
+      },
+      "required": ["api"],
+      "additionalProperties": false
     },
     "event": {
       "description": "One Server-Sent Event. Give exactly one of data and json.",

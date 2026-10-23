@@ -61,7 +61,11 @@ fn pick_response(ordinary : @definitions.Ordinary, draw : UInt64) -> Int? {
 /// - bytes as written are sent as they are, or, when the response serves
 ///   byte ranges, as the request's Range field asks;
 /// - Server-Sent Events as written are streamed as they are;
-/// - a body with `template` on is rendered.
+/// - a body with `template` on is rendered;
+/// - an LLM reply is written in its API's wire form, with Content-Type the
+///   one that form takes, its model read from the request's JSON body, its
+///   time `now`, and its ids drawn from the request's ids generator, made
+///   from `draw`.
 ///
 /// Every template of the response renders in one rendering for the
 /// request: `context`, the one that the Stub's Variables left, or, without
@@ -125,6 +129,17 @@ fn plan_response(
         None => first_context(incoming, now~, draw~, vars~, data~, copies~)
       }
       render_body(status, headers, template, rendering)
+    }
+    Llm(llm) => {
+      let reply = @llm.reply(
+        llm.declaration,
+        llm.strings,
+        request=incoming.body_json(),
+        now~,
+        ids=@llm.ids_generator(draw),
+      )
+      set_content_type(headers, reply.content_type)
+      { status, headers, body: Bytes(reply.body), delay_ms: 0, fault: None, }
     }
   }
 }

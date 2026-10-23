@@ -48,6 +48,14 @@ of each GitHub release include its section
   `${last(data.orders)}` answers the item that the Stub's `append` just
   added, its new key included. See
   [Helpers](docs/definition-files.md#helpers).
+- LLM API presets: a response can give `llm` in place of a body, an LLM
+  response that smock writes in the wire form of an LLM API. With
+  `api: openai-chat`, it answers OpenAI Chat Completions requests with one
+  `chat.completion` JSON body: `text` as the assistant's content, an id
+  that `fault.seed` and `--seed` replay, `created` the time the request was
+  received, and the request's `model`. It works with request conditions,
+  `responses`, Faults, Ephemeral Stubs, `smock render` and the Journal. See
+  [LLM responses](docs/definition-files.md#llm-responses).
 
 ### Changed
 

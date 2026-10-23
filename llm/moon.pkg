@@ -1,0 +1,9 @@
+import {
+  "smock/smock/prng",
+  "smock/smock/template",
+}
+
+import {
+  "moonbitlang/core/debug",
+  "moonbitlang/core/encoding/utf8",
+} for "test"
