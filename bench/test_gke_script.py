@@ -73,7 +73,7 @@ def elf_executable(arch, text):
 
 
 def smock_version(commit=HEAD):
-    return f"smock 0.0.0-dev (commit {commit}, moonc v0.10.14+7d59c7ec9)\n"
+    return f"smock 0.0.0-dev (commit {commit}, moonc v0.10.17+d971670cd)\n"
 
 # A project that does not exist: the fakes accept any.
 PROJECT = "fake-project-123456"
