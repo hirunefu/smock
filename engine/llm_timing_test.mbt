@@ -304,3 +304,30 @@ test "render shows each event with the wait that the first request of the Stub's
     ),
   )
 }
+
+///|
+test "each element of chunks waits as a piece, an empty one included, and so does each piece that chunkSize cuts" {
+  let timing = ", \"timing\": { \"first\": { \"fixed\": 400 }, \"interval\": { \"fixed\": 30 } }"
+  let chunks = harness([
+    (
+      "openai.json",
+      paced_mock().1.replace(
+        old="\"text\": \"Hello! How can I assist you today?\"",
+        new="\"chunks\": [\"Hi\", \"\", \"!\"]\{timing}",
+      ),
+    ),
+  ])
+  let sized = harness([
+    paced_mock(text="Hello!", fields=", \"chunkSize\": 2\{timing}"),
+  ])
+  inspect(
+    [
+      "chunks: \{waits(chunks.chat(body=stream_body("true")))}",
+      "chunkSize 2: \{waits(sized.chat(body=stream_body("true")))}",
+    ].join("\n"),
+    content=(
+      #|chunks: 0 opening, 400 "Hi", 30 "", 30 "!", 0 closing, 0 [DONE]
+      #|chunkSize 2: 0 opening, 400 "He", 30 "ll", 30 "o!", 0 closing, 0 [DONE]
+    ),
+  )
+}

@@ -409,11 +409,13 @@ fn File::read_events(
 
 ///|
 /// Reads the `llm` of a response: `api`, which names the API whose wire
-/// form the reply takes, `text`, empty when left out, the reply's `id` and
-/// `model`, generated and the request's when left out, `usage`, 0 tokens
-/// when left out, `stopReason`, a word of that API, derived when left out,
-/// and `timing`, no waits when left out. It has none when `api` is missing
-/// or names no API, and then the stop reason is not checked.
+/// form the reply takes; `text`, empty when left out, or `chunks`, its
+/// pieces, in its place; `chunkSize`, the code points of each piece cut
+/// from `text`; the reply's `id` and `model`, generated and the request's
+/// when left out; `usage`, 0 tokens when left out; `stopReason`, a word of
+/// that API, derived when left out; and `timing`, no waits when left out.
+/// It has none when `api` is missing or names no API, and then the stop
+/// reason is not checked.
 fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
   guard json is Object(fields) else {
     self.error(pointer, "must be an object")
@@ -421,6 +423,8 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
   }
   let mut api = None
   let mut text = ""
+  let mut chunks = None
+  let mut chunk_size = None
   let mut id = None
   let mut model = None
   let mut usage = @llm.Usage(input=0, output=0)
@@ -434,6 +438,16 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
           Err(message) => self.error(field, message)
         }
       "text" => text = self.string(field, value).unwrap_or("")
+      "chunks" => chunks = Some(self.read_chunks(field, value))
+      "chunkSize" =>
+        chunk_size = self
+          .read_integer(
+            field,
+            value,
+            min=1L,
+            max=@llm.max_chunk_size.to_int64(),
+          )
+          .map(n => n.to_int())
       "id" => id = self.string(field, value)
       "model" => model = self.string(field, value)
       "usage" => usage = self.read_usage(field, value)
@@ -444,6 +458,9 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
     }
   }
   self.require(fields, pointer, "api")
+  if fields.contains("text") && fields.contains("chunks") {
+    self.error(pointer, "has \"text\" and \"chunks\"; give at most one of them")
+  }
   guard api is Some(api) else { return None }
   let stop_reason = match fields.get("stopReason") {
     Some(value) =>
@@ -457,8 +474,9 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
     None => None
   }
   Some({
-    declaration: @llm.Declaration(api~, usage~, stop_reason?),
-    strings: @llm.Strings(text~, id?, model?),
+    declaration: @llm.Declaration(api~, chunk_size?, usage~, stop_reason?),
+    // With `chunks`, the text is their join, in place of `text`.
+    strings: @llm.Strings(text~, chunks?, id?, model?),
     timing,
   })
 }
@@ -491,6 +509,27 @@ fn File::read_token_count(self : File, pointer : String, json : Json) -> Int64 {
   self
   .read_integer(pointer, json, min=0L, max=@llm.max_token_count)
   .unwrap_or(0L)
+}
+
+///|
+/// Reads the `chunks` of an `llm`: a list of at least one text, each one
+/// piece of the reply's text, an empty one included.
+fn File::read_chunks(
+  self : File,
+  pointer : String,
+  json : Json,
+) -> ReadOnlyArray[String] {
+  let items = self.array(pointer, json)
+  if json is Array([]) {
+    self.error(pointer, "must not be an empty array")
+  }
+  let chunks = []
+  for i, item in items {
+    chunks.push(
+      self.string(child_pointer(pointer, i.to_string()), item).unwrap_or(""),
+    )
+  }
+  ReadOnlyArray::from_array(chunks)
 }
 
 ///|
