@@ -296,6 +296,9 @@ value in its place.
 - `{ "$includes": <condition> }` holds when the value is an array with at
   least one element that meets the condition, wherever it sits. It never
   holds for a value that is not an array.
+- `{ "$last": <condition> }` holds when the value is an array with at least
+  one element, and its last element meets the condition. It never holds
+  for an empty array or a value that is not an array.
 
 `<condition>` is any `json` condition: a value, an object of keys, a
 pattern or another operator.
@@ -327,6 +330,49 @@ that has a line whose `sku` starts with `A-`.
 - A body that does not parse as JSON never meets a `json` condition, so
   `{ "json": { "$not": … } }` fails on it too.
 
+`$last` matches the last message of a conversation, however long it is.
+An LLM client sends the whole conversation in each request, so a Stub can
+answer the turn after a tool call. Each API has its own form:
+
+```yaml
+stubs:
+  # OpenAI Chat Completions: the last message is a tool result.
+  - id: chat-after-tool
+    mock: llm
+    request:
+      path: /v1/chat/completions
+      body: { json: { messages: { $last: { role: tool } } } }
+    response: { status: 200 }
+  # Anthropic Messages: the last message is a user message that holds a
+  # tool result.
+  - id: messages-after-tool
+    mock: llm
+    request:
+      path: /v1/messages
+      body:
+        json:
+          messages:
+            $last: { role: user, content: { $includes: { type: tool_result } } }
+    response: { status: 200 }
+  # OpenAI Responses: the last input item is a tool result.
+  - id: responses-after-tool
+    mock: llm
+    request:
+      path: /v1/responses
+      body: { json: { input: { $last: { type: function_call_output } } } }
+    response: { status: 200 }
+```
+
+The Responses API also takes `input` as a string. A string is not an
+array, so it never meets `$last`.
+
+`$last` nests as the other operators do.
+`{ "$not": { "$last": { "role": "tool" } } }` holds when the last message
+is not a tool result, and also for an empty array, a value that is not an
+array and a missing key. `{ "$last": { "role": { "$not": "user" } } }`
+holds when the last element is an object whose `role` is missing or is
+not `user`.
+
 A key that starts with `$` is written `$$` and the rest, as in
 [response templates](#structured-templates): `{ "$$ref": "#/a" }` matches
 a body with the key `$ref`. A key that starts with one `$` and is not an
@@ -335,7 +381,7 @@ operator makes the definition set invalid, with a message that suggests
 not `true` or `false`:
 
 ```console
-orders.json: /stubs/0/request/body/json/schema/$ref: is not an operator: the operators here are "$not", "$exists" and "$includes"; write "$$ref" for the literal key "$ref"
+orders.json: /stubs/0/request/body/json/schema/$ref: is not an operator: the operators here are "$not", "$exists", "$includes" and "$last"; write "$$ref" for the literal key "$ref"
 orders.json: /stubs/1/request/body/json/tags/length: is not allowed beside "$includes": an operator is the only key of its object
 ```
 
@@ -349,7 +395,9 @@ for smock 0.1 now mean something else:
 
 Any other key that starts with `$` in a `json` condition is now an error,
 so a file with one fails to load rather than change its meaning: write
-the key with `$$`.
+the key with `$$`. This is why `$last`, added later, changed no file: a
+file with a lone `$last` key failed to load before, and `$$last` still
+means the key `$last`.
 
 ### Cookies
 

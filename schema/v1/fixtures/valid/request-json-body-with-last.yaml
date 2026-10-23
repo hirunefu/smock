@@ -1,0 +1,49 @@
+mocks:
+  - name: llm
+stubs:
+  - id: chat-after-tool
+    mock: llm
+    request:
+      method: POST
+      path: /v1/chat/completions
+      body:
+        json:
+          messages: { $last: { role: tool } }
+    response:
+      status: 200
+  - id: messages-after-tool
+    mock: llm
+    request:
+      method: POST
+      path: /v1/messages
+      body:
+        json:
+          messages:
+            $last:
+              role: user
+              content: { $includes: { type: tool_result } }
+    response:
+      status: 200
+  - id: responses-after-tool
+    mock: llm
+    request:
+      method: POST
+      path: /v1/responses
+      body:
+        json:
+          input: { $last: { type: function_call_output } }
+    response:
+      status: 200
+  - id: nested
+    mock: llm
+    request:
+      path: /nested
+      body:
+        json:
+          a: { $not: { $last: { role: tool } } }
+          b: { $last: { role: { $not: user } } }
+          c: { $includes: { $last: { pattern: "A-.*" } } }
+          d: [{ $last: { $exists: true } }]
+          $$last: { role: tool }
+    response:
+      status: 200
