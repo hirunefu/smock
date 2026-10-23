@@ -67,14 +67,21 @@ of each GitHub release include its section
   `stream_options.include_usage` gets `usage: null` on every chunk and a
   last usage chunk before `[DONE]`. `stopReason` writes the
   `finish_reason` in the API's own word, checked at load, and is `stop`
-  when left out. With `api: anthropic-messages`, it answers Anthropic
+  when left out. With `api: openai-responses`, it answers OpenAI Responses
+  requests with a Response object: the text in its message item, the
+  usage, a `resp_` id, `created_at` and `completed_at` the time the
+  request was received, and the settings the request gave, such as
+  `instructions` and `tools`, copied back. Its `stopReason` is an
+  incomplete reason, such as `max_output_tokens`, which makes the reply
+  `incomplete`. A Responses request with `stream: true` gets the JSON
+  reply for now. With `api: anthropic-messages`, it answers Anthropic
   Messages requests with one `message` JSON body: `text` in a text block,
   or no block when it is empty, an id `msg_…`, usage as `input_tokens`
   and `output_tokens`, and a `request-id: req_…` header in place of
   `x-request-id`. Its `stopReason` is Anthropic's `stop_reason`, `end_turn`
   when left out; with `stop_sequence`, the reply echoes the request's first
   stop sequence, and a refusal carries `stop_details`. A Stub without a
-  stop reason moves between the two APIs by changing `api` alone.
+  stop reason moves between the APIs by changing `api` alone.
   `timing: { first, interval }` paces a stream: a wait before the first
   piece, counted from the head, and one before each later piece, each
   drawn from a distribution of the delay Fault, which `fault.seed` and
