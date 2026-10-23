@@ -1314,8 +1314,8 @@ call, and an SDK reads the reply with the parser it chose for its own
 request. Only an `llm` response reads the request body for this; other
 Stubs pay nothing. smock does not stream `openai-responses` replies yet: a
 request to one with `stream: true` gets the JSON reply. An
-`anthropic-messages` reply has no stream yet: a request with
-`stream: true` gets its JSON reply.
+`anthropic-messages` stream is a series of named events, which
+[Messages streams](#messages-streams) lists.
 
 An `openai-chat` stream is a series of `chat.completion.chunk` objects.
 Each one is one `data:` line of compact JSON, with no `event:` line, and
@@ -1363,9 +1363,9 @@ data: [DONE]
 
 A stream travels as the events of an `events` response do:
 
-- smock sends the head and the opening chunk at once, then each event
-  after the wait its [`timing`](#timing) gives. Without `timing`, every
-  event follows at once.
+- smock sends the head and every event before the first piece at once,
+  then each later event after the wait its [`timing`](#timing) gives.
+  Without `timing`, every event follows at once.
 - To an HTTP/1.1 client the stream is sent with chunked framing, so the
   connection carries the next request. An HTTP/1.0 client gets it
   unframed, and smock closes the connection to end it.
@@ -1464,11 +1464,13 @@ stubs:
 - **Where the waits go.** smock writes the head and every event before the
   first piece at once. It waits `first` before the first event that
   carries a piece, counted from the head, and `interval` before each later
-  one. The events that open or close the reply or a
-  [tool call](#tool-calls) follow the event before them at once. A piece
-  of a tool call's arguments is a piece, and so is an empty element of
-  [`chunks`](#chunks), so each waits as one. A reply with no piece, such
-  as one with empty text, waits `first` before its closing chunk.
+  one. The events that open or close the reply, a
+  [tool call](#tool-calls) or a block of an `anthropic-messages` stream
+  follow the event before them at once. A piece of a tool call's arguments
+  is a piece, and so is an empty element of [`chunks`](#chunks), so each
+  waits as one. A reply with no piece, such as one with empty text, waits
+  `first` before its closing chunk, or before `message_delta` for
+  `anthropic-messages`.
 - **Either may be left out**, for no wait there. Without `timing`, a stream
   has no wait at all.
 - **No `probability`.** Unlike a delay, a wait applies to every stream, so
@@ -1515,7 +1517,9 @@ as written. Each one is an integer from 0 to 2^53-1, 9007199254740991, and
 0 when left out. An [`openai-responses`](#openai-responses) reply gives
 them as `input_tokens` and `output_tokens`, with `total_tokens` their sum.
 An `anthropic-messages` reply gives them as `input_tokens` and
-`output_tokens`, with no total and no cache counts. An `openai-chat` reply
+`output_tokens`, with no total and no cache counts. Its stream gives
+`input_tokens` in `message_start`, with `output_tokens` 0, and
+`output_tokens` in `message_delta`. An `openai-chat` reply
 gives `input` as `prompt_tokens`, `output` as `completion_tokens`, and
 their sum as `total_tokens`. The detail objects of OpenAI's example
 follow, every count in them 0. A request
@@ -1526,8 +1530,8 @@ shows with `--seed 7` and `--time 2026-10-23T00:00:00Z`:
 {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"message":{"role":"assistant","content":"The weather in Paris is","refusal":null,"annotations":[]},"logprobs":null,"finish_reason":"length"}],"usage":{"prompt_tokens":31,"completion_tokens":5,"total_tokens":36,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"service_tier":"default"}
 ```
 
-The JSON reply always carries `usage`. A [stream](#streams) carries it
-only when the request asks for it, as the vendor's does:
+The JSON reply always carries `usage`. An `openai-chat` [stream](#streams)
+carries it only when the request asks for it, as the vendor's does:
 
 - When the request's body sets `stream_options.include_usage` to `true`,
   every chunk carries `"usage":null`. After the closing chunk comes the
@@ -1564,8 +1568,10 @@ data: [DONE]
   `steered`, which makes the reply [incomplete](#incomplete-replies).
 - For `anthropic-messages` it is the `stop_reason`, one of `end_turn`,
   `max_tokens`, `stop_sequence`, `tool_use`, `pause_turn`, `refusal` and
-  `model_context_window_exceeded`. `stop_sequence` and `refusal` each add a
-  member to the reply ([Anthropic Messages](#anthropic-messages)).
+  `model_context_window_exceeded`. It goes in the JSON reply's
+  `stop_reason` and in the stream's `message_delta`. `stop_sequence` and
+  `refusal` each add a member to both
+  ([Anthropic Messages](#anthropic-messages)).
 - Any word of the API may be written, whatever the reply holds. So a test
   can send `length` for a reply cut short, or `content_filter` for a
   filtered one.
@@ -2043,8 +2049,8 @@ one `message` body, such as this one, which `smock render` shows with
   adds a `request-id: req_…` header, not `x-request-id`, unless the Stub
   gives its own `request-id`. [Ids, seeds and time](#ids-seeds-and-time)
   says more.
-- There is no stream yet: a request with `stream: true` gets the JSON
-  reply too.
+- A request with `stream: true` gets the reply as named events
+  ([Messages streams](#messages-streams)).
 - Ollama's Anthropic compatibility offers the same path, so the Stub
   stands in for it too.
 
@@ -2060,7 +2066,8 @@ another API, such as `stop`, is a load error. Two words add a member:
   have matched.
 - With `refusal`, the reply also carries
   `"stop_details":{"type":"refusal","category":null,"explanation":null}`,
-  after `stop_sequence`. Any other stop reason leaves `stop_details` out.
+  after `stop_sequence`, and so does the stream's `message_delta`. Any
+  other stop reason leaves `stop_details` out.
   A refusal with empty text has no block, as the vendor's has none.
 
 This Stub stands for a refusal, and the reply it gives:
@@ -2087,6 +2094,62 @@ behind the other API's prefix: `chatcmpl-oniRcSDFUU6bnxe66XwQR5pl` becomes
 `msg_oniRcSDFUU6bnxe66XwQR5pl`, and the request id stays the same, in the
 other header. A written stop reason must be rewritten in the other API's
 word.
+
+#### Messages streams
+
+A request with `stream: true` gets the reply as Anthropic streams it: a
+series of named events. Each event is an `event:` line that names it, then
+one `data:` line of compact JSON whose `type` is the same name.
+anthropic-sdk-python skips an event that has no `event:` line, so every
+event has one. In order:
+
+1. `message_start`, with the message: its id and model, no content yet,
+   `stop_reason` and `stop_sequence` null, and `usage` with the
+   `input_tokens`, and `output_tokens` 0;
+2. for the text, a text block at `index` 0: `content_block_start`, with an
+   empty text, then one `content_block_delta` per piece, whose
+   `text_delta` gives the piece, then `content_block_stop`;
+3. `message_delta`, whose `delta` gives `stop_reason` and `stop_sequence`,
+   and `stop_details` on a refusal, and whose `usage` gives the
+   `output_tokens`;
+4. `message_stop`.
+
+There is no `ping` event, no SSE comment line and no `data: [DONE]`. The
+text is cut into pieces as for every API ([Chunks](#chunks)). Empty text
+has no block, even when `chunks` gives empty pieces: the stream is
+`message_start`, `message_delta` and `message_stop`, as the JSON reply's
+`content` is `[]`. [`timing`](#timing) waits before each text delta, and
+an empty reply waits `first` before `message_delta`. From these events,
+`messages.stream()` in anthropic-sdk-python builds the message that the
+JSON reply gives, and `get_final_message()` returns it.
+
+For the `hello` Stub above, a request for `claude-test` with
+`stream: true` gets this stream, which `smock render` shows with the same
+seed and time:
+
+```text
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_oniRcSDFUU6bnxe66XwQR5pl","type":"message","role":"assistant","content":[],"model":"claude-test","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":12,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hell"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"o!"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":6}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+```
 
 ### Paths and compatible endpoints
 

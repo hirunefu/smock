@@ -1,7 +1,8 @@
 // Seam 1 tests of LLM responses in the Anthropic Messages wire form: the
-// plan of a Stub whose `llm` names `anthropic-messages`, its request-id
-// header, its stop members read with the request, and a Stub that moves
-// from `openai-chat` by changing `api` alone.
+// plan of a Stub whose `llm` names `anthropic-messages`, its JSON reply and
+// its stream with the stream's waits, its request-id header, its stop
+// members read with the request, and a Stub that moves from `openai-chat`
+// by changing `api` alone.
 
 ///|
 /// A Mock `anthropic` with a Stub that answers Messages requests from an
@@ -68,16 +69,93 @@ test "an anthropic-messages Stub answers with one message JSON body, as applicat
 }
 
 ///|
-test "a request with stream: true gets the same JSON reply" {
+test "a request with stream: true gets the reply as events named with event: lines, as text/event-stream in place of the Stub's Content-Type, then request-id after the Stub's fields" {
   let h = harness([messages_mock()])
   inspect(
-    response(h.messages(body=messages_body(extra=",\"stream\":true"))),
+    on_the_wire(
+      h.messages(body=messages_body(extra=",\"stream\":true")),
+      "POST",
+    ),
     content=(
-      #|200
-      #|Content-Type: application/json
+      #|HTTP/1.1 200 OK
+      #|Content-Type: text/event-stream
       #|anthropic-ratelimit-requests-remaining: 49
       #|request-id: req_TZp9I060Mzd0w4SDwiWTe2c8
-      #|{"id":"msg_oniRcSDFUU6bnxe66XwQR5pl","type":"message","role":"assistant","content":[{"type":"text","text":"Hello!"}],"model":"claude-test","stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":12,"output_tokens":6}}
+      #|Date: Mon, 12 Oct 2026 14:30:05 GMT
+      #|Transfer-Encoding: chunked
+      #|
+      #|102
+      #|event: message_start
+      #|data: {"type":"message_start","message":{"id":"msg_oniRcSDFUU6bnxe66XwQR5pl","type":"message","role":"assistant","content":[],"model":"claude-test","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":12,"output_tokens":0}}}
+      #|
+      #|
+      #|75
+      #|event: content_block_start
+      #|data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+      #|
+      #|
+      #|77
+      #|event: content_block_delta
+      #|data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hell"}}
+      #|
+      #|
+      #|75
+      #|event: content_block_delta
+      #|data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"o!"}}
+      #|
+      #|
+      #|49
+      #|event: content_block_stop
+      #|data: {"type":"content_block_stop","index":0}
+      #|
+      #|
+      #|89
+      #|event: message_delta
+      #|data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":6}}
+      #|
+      #|
+      #|33
+      #|event: message_stop
+      #|data: {"type":"message_stop"}
+      #|
+      #|
+      #|0
+      #|
+      #|
+    ),
+  )
+}
+
+///|
+/// The waits of the events of `outcome`'s plan, in milliseconds, each with
+/// its event's name, and the text of a text delta.
+fn messages_waits(outcome : @engine.Outcome) -> String {
+  guard outcome.plan.body is Events(events) else { return "no events" }
+  let out = []
+  for event in events {
+    let data = @json.parse(event.data) catch { _ => Json::null() }
+    let carries = match data {
+      { "delta": { "type": "text_delta", "text": String(piece), .. }, .. } =>
+        piece.escape()
+      _ => event.event.unwrap_or("-")
+    }
+    out.push("\{event.delay_ms} \{carries}")
+  }
+  out.join(", ")
+}
+
+///|
+test "with timing, the first text delta waits first and each later one interval; the other events follow at once, and an empty reply waits first before message_delta" {
+  let timing = ", \"timing\": { \"first\": { \"fixed\": 400 }, \"interval\": { \"fixed\": 30 } }"
+  let paced = (text : String) => {
+    let h = harness([messages_mock(fields=", \"text\": \"\{text}\"\{timing}")])
+    messages_waits(h.messages(body=messages_body(extra=",\"stream\":true")))
+  }
+  inspect(
+    [paced("Hello, Claude"), paced("")].join("\n"),
+    content=(
+      #|0 message_start, 0 content_block_start, 400 "Hell", 30 "o, C", 30 "laud", 30 "e", 0 content_block_stop, 0 message_delta, 0 message_stop
+      #|0 message_start, 400 message_delta, 0 message_stop
     ),
   )
 }
