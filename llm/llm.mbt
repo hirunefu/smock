@@ -83,6 +83,9 @@ pub fn read_stop_reason(api : Api, value : Json) -> Result[StopReason, String] {
 /// added.
 pub struct Declaration {
   api : Api
+  /// `chunkSize`: the code points each piece of the text holds in a
+  /// stream, the last piece shorter, from 1 to `max_chunk_size`.
+  chunk_size : Int
   /// The token counts the reply reports.
   usage : Usage
   /// The stop reason as written, or `None` to derive it from the reply's
@@ -92,16 +95,23 @@ pub struct Declaration {
 } derive(Debug, Eq)
 
 ///|
-/// A declaration for the API `api`, whose reply reports the token counts
+/// A declaration for the API `api` whose pieces of text hold `chunk_size`
+/// code points, 4 by default, and whose reply reports the token counts
 /// `usage`, both 0 by default, and the stop reason `stop_reason`, derived
-/// when it is left out.
+/// when it is left out. The definitions check that `chunk_size` is from 1
+/// to `max_chunk_size`.
 pub fn Declaration::Declaration(
   api~ : Api,
+  chunk_size? : Int = default_chunk_size,
   usage? : Usage = Usage(input=0, output=0),
   stop_reason? : StopReason,
 ) -> Declaration {
-  { api, usage, stop_reason, }
+  { api, chunk_size, usage, stop_reason, }
 }
+
+///|
+/// The largest `chunkSize`.
+pub let max_chunk_size : Int = 1_000_000
 
 ///|
 /// The token counts a reply reports, as declared: smock counts and
@@ -128,8 +138,12 @@ pub let max_token_count : Int64 = 9_007_199_254_740_991L
 ///|
 /// The strings of a declaration, as written, or rendered for the request.
 pub struct Strings {
-  /// The text of the reply: empty when left out.
+  /// The text of the reply: empty when left out, or the join of `chunks`.
   text : String
+  /// The pieces `chunks` gives, which a stream sends as they are, each one
+  /// on its own, an empty one included; or `None` for `text`, which a
+  /// stream cuts into pieces of the declaration's chunk size.
+  chunks : ReadOnlyArray[String]?
   /// The reply's id, sent as written, or `None` for a generated one.
   id : String?
   /// The reply's model, or `None` for the request's.
@@ -137,14 +151,30 @@ pub struct Strings {
 } derive(Debug, Eq)
 
 ///|
-/// The strings of a reply whose text is `text`, whose id is `id` when given
-/// and whose model is `model` when given.
+/// The strings of a reply whose text is `text`, empty by default; or, with
+/// `chunks`, whose pieces are its elements and whose text is their join,
+/// in place of `text`. The definitions refuse `text` beside `chunks`. Its
+/// id is `id` when given and its model `model` when given.
 pub fn Strings::Strings(
-  text~ : String,
+  text? : String = "",
+  chunks? : ReadOnlyArray[String],
   id? : String,
   model? : String,
 ) -> Strings {
-  { text, id, model, }
+  match chunks {
+    Some(chunks) => { text: chunks.join(""), chunks: Some(chunks), id, model, }
+    None => { text, chunks: None, id, model, }
+  }
+}
+
+///|
+/// The pieces of the text that a stream sends, in order: the elements of
+/// `chunks`, or the text cut into pieces of `size` code points.
+fn Strings::text_pieces(self : Strings, size : Int) -> ArrayView[String] {
+  match self.chunks {
+    Some(chunks) => chunks[:]
+    None => pieces(self.text, size)[:]
+  }
 }
 
 ///|
@@ -402,8 +432,10 @@ fn chat_finish_reason(declaration : Declaration) -> String {
 
 ///|
 /// The Chat Completions stream of `declaration` with the strings
-/// `strings`, the reply's id `id`, `created` (seconds since the Unix
-/// epoch), `model` and the request-id header field `request_id`:
+/// `strings`, whose text is cut into pieces of the declaration's chunk
+/// size unless they give its pieces, the reply's id `id`, `created`
+/// (seconds since the Unix epoch), `model` and the request-id header field
+/// `request_id`:
 /// `chat.completion.chunk` events with no `event:` line, each one `data:`
 /// line of compact JSON with the same id, `created` and model. The opening
 /// chunk gives the assistant's role and an empty content, one chunk follows
@@ -421,7 +453,7 @@ fn chat_stream(
   request_id~ : (String, String),
 ) -> Reply {
   let chunks = ChatChunks::new(id~, created~, model~, usage~)
-  let pieces = pieces(strings.text, default_chunk_size)
+  let pieces = strings.text_pieces(declaration.chunk_size)
   let pace = Pace::new()
   let events = Array(capacity=pieces.length() + 4)
   events.push({
@@ -706,7 +738,10 @@ let default_chunk_size : Int = 4
 /// to valid UTF-8 on its own. Empty text has no piece.
 fn pieces(text : String, size : Int) -> Array[String] {
   let out = []
-  let piece = StringBuilder(size_hint=size)
+  // A piece holds no more than the text, whatever the size.
+  let piece = StringBuilder(
+    size_hint=if size < text.length() { size } else { text.length() },
+  )
   let mut count = 0
   for c in text {
     piece.write_char(c)

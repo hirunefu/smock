@@ -527,9 +527,22 @@
           "enum": ["openai-chat", "openai-responses"]
         },
         "text": {
-          "description": "The text of the reply: the content of the assistant's message, or the text of the Response's message item. Default empty.",
+          "description": "The text of the reply: the content of the assistant's message, or the text of the Response's message item. A stream sends it in pieces of chunkSize code points. Default empty.",
           "type": "string",
           "default": ""
+        },
+        "chunks": {
+          "description": "The text of the reply given as its pieces, in place of text: a stream sends each element as one piece, an empty one included, and the text is their join, which the JSON reply carries.",
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "chunkSize": {
+          "description": "How many code points each piece of text holds in a stream, the last piece shorter. A piece never splits a code point, but may split a character made of several, such as a flag. It does not apply to chunks. Default 4.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000,
+          "default": 4
         },
         "id": {
           "description": "The reply's id, sent exactly as written (smock adds no prefix), in the JSON reply and in every event of the stream. Without it, the id is the API's prefix, chatcmpl- or resp_, and 24 characters drawn from the Stub's random source. Fixing it changes no other generated id.",
@@ -569,6 +582,11 @@
         }
       },
       "required": ["api"],
+      "dependentSchemas": {
+        "chunks": {
+          "properties": { "text": false }
+        }
+      },
       "additionalProperties": false,
       "allOf": [
         {

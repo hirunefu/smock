@@ -804,6 +804,9 @@ stubs:
               llm:
                 api: openai-chat
                 text: ""
+                chunks:
+                  - string
+                chunkSize: 4
                 id: string
                 model: string
                 usage:
@@ -827,6 +830,9 @@ stubs:
                 llm:
                   api: openai-chat
                   text: ""
+                  chunks:
+                    - string
+                  chunkSize: 4
                   id: string
                   model: string
                   usage:
@@ -981,6 +987,9 @@ stubs:
             llm:
               api: openai-chat
               text: ""
+              chunks:
+                - string
+              chunkSize: 4
               id: string
               model: string
               usage:
@@ -1004,6 +1013,9 @@ stubs:
               llm:
                 api: openai-chat
                 text: ""
+                chunks:
+                  - string
+                chunkSize: 4
                 id: string
                 model: string
                 usage:
