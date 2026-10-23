@@ -4,20 +4,28 @@
 
 ///|
 /// The reply to a request whose body is `request`, by default one that sets
-/// `stream: true`, for an `openai-chat` declaration with `text`: the
-/// Content-Type smock sets, then the body, or each event on a line of its
-/// own, after its wait slot, with its `event:` line when it has one.
+/// `stream: true`, for an `openai-chat` declaration with `text`, as `shown`
+/// shows it.
 fn chat_stream(
   text : String,
   request? : Json? = Some({ "model": "test-model", "stream": true }),
 ) -> String {
-  let reply = @llm.reply(
-    @llm.Declaration(api=OpenaiChat),
-    @llm.Strings(text~),
-    request~,
-    now=received,
-    ids=@llm.ids_generator(7),
+  shown(
+    @llm.reply(
+      @llm.Declaration(api=OpenaiChat),
+      @llm.Strings(text~),
+      request~,
+      now=received,
+      ids=@llm.ids_generator(7),
+    ),
   )
+}
+
+///|
+/// `reply` as these tests show it: the Content-Type smock sets, then the
+/// body, or each event on a line of its own, after its wait slot, with its
+/// `event:` line when it has one.
+fn shown(reply : @llm.Reply) -> String {
   let out = StringBuilder()
   out.write_string("Content-Type: \{reply.content_type}\n")
   match reply.body {

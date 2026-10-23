@@ -57,9 +57,14 @@ of each GitHub release include its section
   `chat.completion.chunk` events that carry the text in pieces of 4 code
   points and end with `data: [DONE]`: `text` as the assistant's content, an
   id that `fault.seed` and `--seed` replay, `created` the time the request
-  was received, and the request's `model`. It works with request
-  conditions, `responses`, Faults, Ephemeral Stubs, `smock render` and the
-  Journal. See [LLM responses](docs/definition-files.md#llm-responses).
+  was received, and the request's `model`. `usage: { input, output }`
+  declares the token counts, which the reply gives with their total, and a
+  stream whose request sets `stream_options.include_usage` gets
+  `usage: null` on every chunk and a last usage chunk before `[DONE]`.
+  `stopReason` writes the `finish_reason` in the API's own word, checked at
+  load, and is `stop` when left out. It works with request conditions,
+  `responses`, Faults, Ephemeral Stubs, `smock render` and the Journal. See
+  [LLM responses](docs/definition-files.md#llm-responses).
 
 ### Changed
 

@@ -31,18 +31,90 @@ pub fn read_api(value : Json) -> Result[Api, String] {
 }
 
 ///|
+/// A stop reason as `stopReason` writes it: a word of the Stub's API,
+/// checked when the definitions are loaded or the Stub is added. Only
+/// `read_stop_reason` makes one.
+pub struct StopReason {
+  /// The word, as the API writes it.
+  word : String
+} derive(Debug, Eq)
+
+///|
+/// The stop reasons of `api`, in the order its reference lists them. Any of
+/// them may be written, whatever the reply's content.
+fn stop_reasons(api : Api) -> ReadOnlyArray[String] {
+  match api {
+    // `function_call` is deprecated, and still a word of the API.
+    OpenaiChat =>
+      ["stop", "length", "tool_calls", "content_filter", "function_call"]
+  }
+}
+
+///|
+/// The load check of `stopReason` on a Stub of `api`: the stop reason that
+/// `value` writes, or the message of the load error when it is not a word
+/// of the API, which names the API and lists its words.
+pub fn read_stop_reason(api : Api, value : Json) -> Result[StopReason, String] {
+  let words = stop_reasons(api)
+  if value is String(word) && words.contains(word) {
+    return Ok({ word, })
+  }
+  let listed = StringBuilder()
+  for i, word in words {
+    if i > 0 {
+      listed.write_string(if i == words.length() - 1 { " or " } else { ", " })
+    }
+    listed.write_string("\"\{word}\"")
+  }
+  Err("must be a stop reason of \{api.name()}: \{listed}")
+}
+
+///|
 /// What an `llm` field declares, apart from its strings: the parts that are
 /// never templates, checked when the definitions are loaded or the Stub is
 /// added.
 pub struct Declaration {
   api : Api
+  /// The token counts the reply reports.
+  usage : Usage
+  /// The stop reason as written, or `None` to derive it from the reply's
+  /// content.
+  stop_reason : StopReason?
 } derive(Debug, Eq)
 
 ///|
-/// A declaration for the API `api`.
-pub fn Declaration::Declaration(api~ : Api) -> Declaration {
-  { api, }
+/// A declaration for the API `api`, whose reply reports the token counts
+/// `usage`, both 0 by default, and the stop reason `stop_reason`, derived
+/// when it is left out.
+pub fn Declaration::Declaration(
+  api~ : Api,
+  usage? : Usage = Usage(input=0, output=0),
+  stop_reason? : StopReason,
+) -> Declaration {
+  { api, usage, stop_reason, }
 }
+
+///|
+/// The token counts a reply reports, as declared: smock counts and
+/// estimates nothing. Each API places them in its own members, with their
+/// total where it gives one.
+pub struct Usage {
+  /// The tokens of the prompt.
+  input : Int64
+  /// The tokens of the reply.
+  output : Int64
+} derive(Debug, Eq)
+
+///|
+/// The usage of `input` tokens in the prompt and `output` in the reply.
+pub fn Usage::Usage(input~ : Int64, output~ : Int64) -> Usage {
+  { input, output, }
+}
+
+///|
+/// The largest token count a usage can declare, 2^53 - 1: up to it, a JSON
+/// number holds every integer exactly.
+pub let max_token_count : Int64 = 9_007_199_254_740_991L
 
 ///|
 /// The strings of a declaration, as written, or rendered for the request.
@@ -128,9 +200,16 @@ pub fn reply(
   match declaration.api {
     OpenaiChat =>
       if streams {
-        chat_stream(strings, ids~, created~, model~)
+        chat_stream(
+          declaration,
+          strings,
+          ids~,
+          created~,
+          model~,
+          usage=asks_for_usage(request),
+        )
       } else {
-        chat_reply(strings, ids~, created~, model~)
+        chat_reply(declaration, strings, ids~, created~, model~)
       }
   }
 }
@@ -142,6 +221,16 @@ pub fn reply(
 /// ask for the JSON reply.
 fn asks_to_stream(request : Json?) -> Bool {
   request is Some(Object(members)) && members.get("stream") is Some(True)
+}
+
+///|
+/// Whether the streamed request whose body is the JSON `request` asks for
+/// Chat Completions' usage chunk: its `stream_options.include_usage` is
+/// exactly `true`.
+fn asks_for_usage(request : Json?) -> Bool {
+  request is Some(Object(members)) &&
+  members.get("stream_options") is Some(Object(options)) &&
+  options.get("include_usage") is Some(True)
 }
 
 ///|
@@ -198,11 +287,12 @@ fn request_model(request : Json?) -> String {
 }
 
 ///|
-/// The Chat Completions reply with the strings `strings`, the reply's id
-/// from `ids`, `created` (seconds since the Unix epoch) and `model`: one
-/// `chat.completion` object, in the members and the order of the
-/// reference's example, with the example's fixed values.
+/// The Chat Completions reply of `declaration` with the strings `strings`,
+/// the reply's id from `ids`, `created` (seconds since the Unix epoch) and
+/// `model`: one `chat.completion` object, in the members and the order of
+/// the reference's example, with the example's fixed values.
 fn chat_reply(
+  declaration : Declaration,
   strings : Strings,
   ids~ : Ids,
   created~ : Int64,
@@ -224,10 +314,10 @@ fn chat_reply(
         "index": 0,
         "message": message,
         "logprobs": Json::null(),
-        "finish_reason": "stop",
+        "finish_reason": Json::string(chat_finish_reason(declaration)),
       },
     ],
-    "usage": chat_usage(input=0, output=0),
+    "usage": chat_usage(declaration.usage),
     "service_tier": "default",
   }
   {
@@ -237,23 +327,44 @@ fn chat_reply(
 }
 
 ///|
-/// The Chat Completions stream with the strings `strings`, the reply's id
-/// from `ids`, `created` (seconds since the Unix epoch) and `model`:
-/// `chat.completion.chunk` events with no `event:` line, each one `data:`
-/// line of compact JSON with the same id, `created` and model. The opening
-/// chunk gives the assistant's role and an empty content, one chunk follows
-/// per piece of the text, then the closing chunk gives the finish reason,
-/// and `[DONE]` ends the stream.
+/// The finish reason of `declaration`'s Chat Completions reply: the stop
+/// reason written, or the one derived from the content when none is. A
+/// word of the API needs no escaping in JSON.
+fn chat_finish_reason(declaration : Declaration) -> String {
+  match declaration.stop_reason {
+    Some(reason) => reason.word
+    // Derived: a reply with no tool call stops.
+    None => "stop"
+  }
+}
+
+///|
+/// The Chat Completions stream of `declaration` with the strings
+/// `strings`, the reply's id from `ids`, `created` (seconds since the Unix
+/// epoch) and `model`: `chat.completion.chunk` events with no `event:`
+/// line, each one `data:` line of compact JSON with the same id, `created`
+/// and model. The opening chunk gives the assistant's role and an empty
+/// content, one chunk follows per piece of the text, then the closing chunk
+/// gives the finish reason, and `[DONE]` ends the stream. With `usage`,
+/// every chunk carries `"usage":null`, and the usage chunk, with no choice,
+/// comes before `[DONE]`.
 fn chat_stream(
+  declaration : Declaration,
   strings : Strings,
   ids~ : Ids,
   created~ : Int64,
   model~ : String,
+  usage~ : Bool,
 ) -> Reply {
-  let chunks = ChatChunks::new(id="chatcmpl-" + ids.reply, created~, model~)
+  let chunks = ChatChunks::new(
+    id="chatcmpl-" + ids.reply,
+    created~,
+    model~,
+    usage~,
+  )
   let pieces = pieces(strings.text, default_chunk_size)
   let pace = Pace::new()
-  let events = Array(capacity=pieces.length() + 3)
+  let events = Array(capacity=pieces.length() + 4)
   events.push({
     wait: NoWait,
     event: None,
@@ -270,8 +381,15 @@ fn chat_stream(
   events.push({
     wait: pace.closing(),
     event: None,
-    data: chunks.chunk("{}", "\"stop\""),
+    data: chunks.chunk("{}", "\"\{chat_finish_reason(declaration)}\""),
   })
+  if usage {
+    events.push({
+      wait: NoWait,
+      event: None,
+      data: chunks.usage_chunk(declaration.usage),
+    })
+  }
   events.push({ wait: NoWait, event: None, data: "[DONE]", })
   { content_type: "text/event-stream", body: Events(events), }
 }
@@ -280,24 +398,33 @@ fn chat_stream(
 /// The chunks of one Chat Completions stream, which share their id,
 /// `created` and model.
 priv struct ChatChunks {
-  /// The compact JSON every chunk begins with, up to its delta: the id,
-  /// `object`, `created`, the model and the choice's `index`.
+  /// The compact JSON every chunk begins with, up to its choices: the id,
+  /// `object`, `created` and the model.
   head : String
+  /// The compact JSON every chunk with a choice ends with, after the
+  /// choice: `]}`, or `],"usage":null}` when the request asked for usage.
+  tail : String
 }
 
 ///|
 /// The chunks of the stream whose id is `id`, `created` (seconds since the
-/// Unix epoch) and `model`.
+/// Unix epoch) and `model`, each with `"usage":null` when `usage` is true.
 fn ChatChunks::new(
   id~ : String,
   created~ : Int64,
   model~ : String,
+  usage~ : Bool,
 ) -> ChatChunks {
   let created = @template.compact_json(Json::number(created.to_double()))
   let id = @template.compact_json(Json::string(id))
   let model = @template.compact_json(Json::string(model))
   {
-    head: "{\"id\":\{id},\"object\":\"chat.completion.chunk\",\"created\":\{created},\"model\":\{model},\"choices\":[{\"index\":0,\"delta\":",
+    head: "{\"id\":\{id},\"object\":\"chat.completion.chunk\",\"created\":\{created},\"model\":\{model},\"choices\":[",
+    tail: if usage {
+      "],\"usage\":null}"
+    } else {
+      "]}"
+    },
   }
 }
 
@@ -309,20 +436,32 @@ fn ChatChunks::chunk(
   delta : String,
   finish_reason : String,
 ) -> String {
-  let tail = ",\"logprobs\":null,\"finish_reason\":"
+  let choice = "{\"index\":0,\"delta\":"
+  let middle = ",\"logprobs\":null,\"finish_reason\":"
   let out = StringBuilder(
     size_hint=self.head.length() +
+      choice.length() +
       delta.length() +
-      tail.length() +
+      middle.length() +
       finish_reason.length() +
-      3,
+      1 +
+      self.tail.length(),
   )
   out.write_string(self.head)
+  out.write_string(choice)
   out.write_string(delta)
-  out.write_string(tail)
+  out.write_string(middle)
   out.write_string(finish_reason)
-  out.write_string("}]}")
+  out.write_char('}')
+  out.write_string(self.tail)
   out.to_string()
+}
+
+///|
+/// The usage chunk, which ends a stream whose request asked for usage: no
+/// choice, and the usage member of `usage`.
+fn ChatChunks::usage_chunk(self : ChatChunks, usage : Usage) -> String {
+  "\{self.head}],\"usage\":\{@template.compact_json(chat_usage(usage))}}"
 }
 
 ///|
@@ -392,13 +531,13 @@ fn Pace::closing(self : Pace) -> WaitSlot {
 }
 
 ///|
-/// Chat Completions' usage of `input` and `output` tokens, with the detail
-/// objects of the reference's example, their counts 0.
-fn chat_usage(input~ : Int64, output~ : Int64) -> Json {
+/// Chat Completions' usage member for `usage`: its counts and their total,
+/// with the detail objects of the reference's example, their counts 0.
+fn chat_usage(usage : Usage) -> Json {
   {
-    "prompt_tokens": Json::number(input.to_double()),
-    "completion_tokens": Json::number(output.to_double()),
-    "total_tokens": Json::number((input + output).to_double()),
+    "prompt_tokens": count(usage.input),
+    "completion_tokens": count(usage.output),
+    "total_tokens": count(usage.input + usage.output),
     "prompt_tokens_details": { "cached_tokens": 0, "audio_tokens": 0 },
     "completion_tokens_details": {
       "reasoning_tokens": 0,
@@ -407,6 +546,13 @@ fn chat_usage(input~ : Int64, output~ : Int64) -> Json {
       "rejected_prediction_tokens": 0,
     },
   }
+}
+
+///|
+/// The token count `n` as a JSON number, written as its integer text, so
+/// that a total above 2^53 is written exactly.
+fn count(n : Int64) -> Json {
+  Json::number(n.to_double(), repr=n.to_string())
 }
 
 ///|

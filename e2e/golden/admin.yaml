@@ -804,6 +804,10 @@ stubs:
               llm:
                 api: openai-chat
                 text: ""
+                usage:
+                  input: 0
+                  output: 0
+                stopReason: stop
             responses:
               - weight: 1
                 status: 200
@@ -821,6 +825,10 @@ stubs:
                 llm:
                   api: openai-chat
                   text: ""
+                  usage:
+                    input: 0
+                    output: 0
+                  stopReason: stop
             variables: {}
             dataWrites:
               - op: set
@@ -969,6 +977,10 @@ stubs:
             llm:
               api: openai-chat
               text: ""
+              usage:
+                input: 0
+                output: 0
+              stopReason: stop
           responses:
             - weight: 1
               status: 200
@@ -986,6 +998,10 @@ stubs:
               llm:
                 api: openai-chat
                 text: ""
+                usage:
+                  input: 0
+                  output: 0
+                stopReason: stop
           variables: {}
           dataWrites:
             - op: set
