@@ -293,8 +293,17 @@ fn writes_body(status : Int, request : Request?) -> Bool {
 /// }
 /// ```
 pub fn is_token(s : StringView) -> Bool {
-  !s.is_empty() &&
-  s.iter().all(c => c.is_ascii() && is_tchar(c.to_int().to_byte()))
+  if s.is_empty() {
+    return false
+  }
+  for i in 0..<s.length() {
+    // Each code unit of a character beyond ASCII is 0x80 or above.
+    let c = s[i]
+    if c >= 0x80 || !is_tchar(c.to_byte()) {
+      return false
+    }
+  }
+  true
 }
 
 ///|
@@ -310,7 +319,14 @@ pub fn is_token(s : StringView) -> Bool {
 /// }
 /// ```
 pub fn is_field_value(s : StringView) -> Bool {
-  s.iter().all(c => !c.is_ascii() || is_field_value_byte(c.to_int().to_byte()))
+  for i in 0..<s.length() {
+    // Each code unit of a character beyond ASCII is 0x80 or above.
+    let c = s[i]
+    if c < 0x80 && !is_field_value_byte(c.to_byte()) {
+      return false
+    }
+  }
+  true
 }
 
 ///|

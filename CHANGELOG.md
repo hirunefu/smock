@@ -32,6 +32,11 @@ of each GitHub release include its section
   A client that reads slowly but steadily still gets the whole response,
   and delays do not count. It is not logged, like the read and idle
   timeouts. See [Run](README.md#run).
+- The `smock/http1` module makes public two checks of a request target that
+  its parser makes: `is_origin_or_asterisk_form`, for a path and query, or
+  `*` for OPTIONS, and `is_visible_ascii`, for characters from 0x21 to 0x7E
+  alone. With `is_token`, `is_field_value` and `is_host_value`, they let
+  another protocol, such as HTTP/2, refuse what HTTP/1.1 refuses.
 
 ### Changed
 
