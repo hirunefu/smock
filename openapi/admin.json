@@ -2627,7 +2627,7 @@
             }
           },
           "body": {
-            "description": "The body, or null when the Stub streams Server-Sent Events.",
+            "description": "The body, or null when the Stub streams Server-Sent Events. For an `llm` response, the sample's body decides: one that sets `stream: true` gets the events.",
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Body"

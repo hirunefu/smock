@@ -1227,9 +1227,11 @@ stubs:
 
 An SDK reaches it through its base URL, such as
 `OpenAI(base_url="http://localhost:8080/v1", api_key="test")` in
-openai-python, which sends `POST /v1/chat/completions`. A request for
-`gpt-6-astra` gets one `chat.completion` body, such as this one, which
-[`smock render`](#rendering-a-template) shows with `--seed 7` and
+openai-python, which sends `POST /v1/chat/completions`. The request
+decides the form of the reply: with `stream: true` it gets a
+[stream](#streams), and otherwise one JSON body. A request for
+`gpt-6-astra` without `stream` gets one `chat.completion` body, such as this
+one, which [`smock render`](#rendering-a-template) shows with `--seed 7` and
 `--time 2026-10-23T00:00:00Z`:
 
 ```json
@@ -1253,9 +1255,9 @@ The fields of `llm`:
   fixed values, such as `refusal: null` and `service_tier: "default"`.
   `usage` has the example's members, every count 0. There is no
   `system_fingerprint`.
-- smock sets `Content-Type: application/json`. A `Content-Type` the Stub
-  gives is replaced, as for `events`. Other headers, such as a rate-limit
-  header, are sent as written.
+- smock sets `Content-Type: application/json`, or `text/event-stream` for
+  a stream. A `Content-Type` the Stub gives is replaced, as for `events`.
+  Other headers, such as a rate-limit header, are sent as written.
 - The reply's `id` is `chatcmpl-` and 24 characters from `A`-`Z`, `a`-`z`
   and `0`-`9`. It comes from the Stub's random source: from a generator of
   its own, seeded with the one draw every matched request takes XOR a fixed
@@ -1274,8 +1276,9 @@ always. `llm` may stand in `response` or in any element of
 [`responses`](#several-responses), so weighted responses can answer one
 request in ten with an ordinary 429. Request conditions, Faults,
 Ephemeral Stubs, the Journal and [`smock render`](#rendering-a-template)
-work as for other responses: a rendering shows the JSON body, with the ids
-its seed gives and its time as `created`. A response gives at most one of
+work as for other responses: a rendering shows the JSON body, or the events
+for a sample whose body sets `stream: true`, with the ids its seed gives
+and its time as `created`. A response gives at most one of
 `body`, `bodyFile`, `json`, `events` and `llm`. A missing or unknown `api`,
 an unknown field of `llm`, and `llm` beside another body are reported with
 the JSON Pointer of the field, by `smock check`, at startup and on a
@@ -1286,6 +1289,71 @@ The wire forms follow the vendors' documents as they were read on
 2026-10-22 and 2026-10-23. When a vendor changes its documented form, a
 minor release may change what an existing `llm` Stub sends, with a
 CHANGELOG entry.
+
+### Streams
+
+A request whose body is a JSON object with `stream: true` gets the reply as
+[Server-Sent Events](#server-sent-events), as the vendor streams it. Any
+other request gets the JSON reply: a body that is not JSON, no `stream`,
+`stream: false`, or the string `"true"`. So one Stub serves both kinds of
+call, and an SDK reads the reply with the parser it chose for its own
+request. Only an `llm` response reads the request body for this; other
+Stubs pay nothing.
+
+An `openai-chat` stream is a series of `chat.completion.chunk` objects.
+Each one is one `data:` line of compact JSON, with no `event:` line, and
+every chunk carries the reply's id, `created` and model. In order:
+
+1. the opening chunk, whose `delta` gives `role: assistant` and an empty
+   `content`;
+2. one chunk per piece of the text, whose `delta` gives the piece as
+   `content`;
+3. the closing chunk, whose `delta` is empty and whose `finish_reason` is
+   `stop`;
+4. `data: [DONE]`.
+
+There is no `obfuscation` field, no `system_fingerprint` and no SSE comment
+line. The text is cut into pieces of 4 code points, the last one shorter.
+The pieces join to exactly the text, and a piece never splits a code point,
+so every `data:` line is valid UTF-8. A piece may split a character made of
+several code points, such as a flag. Empty text sends the opening and
+closing chunks only.
+
+For the Stub above, a request for `gpt-6-astra` with `stream: true` gets
+this stream, which `smock render` shows with the same seed and time:
+
+```text
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"content":"Hell"},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"content":"o! H"},"logprobs":null,"finish_reason":null}]}
+
+  … "ow c", "an I", " ass", "ist ", "you ", "toda" …
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"content":"y?"},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}]}
+
+data: [DONE]
+
+```
+
+A stream travels as the events of an `events` response do:
+
+- smock sends the head and every event at once.
+- To an HTTP/1.1 client the stream is sent with chunked framing, so the
+  connection carries the next request. An HTTP/1.0 client gets it
+  unframed, and smock closes the connection to end it.
+- A reply to `HEAD`, or with status 204 or 304, is the status and the
+  headers alone, for the stream as for the JSON reply.
+- smock plans the whole JSON body, or every event, before it applies
+  [Faults](#faults). A delay holds back the status line of either. A
+  `partial` Fault sends the first half of the events, rounded down, and
+  does not end the stream; for the JSON reply, it sends half the body.
+  `reset` and `close` are unchanged.
+- The stream's [Journal](../README.md#the-journal) entry is committed
+  before its last event, as for `events`.
 
 ## Templates
 

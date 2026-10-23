@@ -139,9 +139,33 @@ fn plan_response(
         ids=@llm.ids_generator(draw),
       )
       set_content_type(headers, reply.content_type)
-      { status, headers, body: Bytes(reply.body), delay_ms: 0, fault: None, }
+      let body : Body = match reply.body {
+        Json(json) => Bytes(json)
+        Events(events) => Events(sse_events(events))
+      }
+      { status, headers, body, delay_ms: 0, fault: None, }
     }
   }
+}
+
+///|
+/// The Server-Sent Events of an LLM reply's stream, in order, as an `events`
+/// response sends them: each one's type and data, with no ID and no wait.
+fn sse_events(
+  events : Array[@llm.Event],
+) -> ReadOnlyArray[@definitions.SseEvent] {
+  let out = Array(capacity=events.length())
+  for event in events {
+    out.push(
+      @definitions.SseEvent(
+        delay_ms=0,
+        event=event.event,
+        id=None,
+        data=event.data,
+      ),
+    )
+  }
+  ReadOnlyArray::from_array(out)
 }
 
 ///|
