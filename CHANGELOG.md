@@ -94,15 +94,22 @@ of each GitHub release include its section
   Messages requests with one `message` JSON body, or with events each named
   by an `event:` line, as anthropic-sdk-python's `messages.stream()` reads
   them: `message_start`, the text block's start, a `text_delta` per piece
-  and its stop, then `message_delta` and `message_stop`, with no `ping`.
-  The reply has `text` in a text block, or no block when it is empty, an
-  id `msg_…`, usage as `input_tokens` and `output_tokens`, which a stream
-  gives in `message_start` and `message_delta`, and a `request-id: req_…`
-  header in place of `x-request-id`. Its `stopReason` is Anthropic's
-  `stop_reason`, `end_turn` when left out; with `stop_sequence`, the reply
-  echoes the request's first stop sequence, and a refusal carries
-  `stop_details`, in the JSON body and in `message_delta`. A Stub without a
-  stop reason or an error moves between the APIs by changing `api` alone.
+  and its stop, a block per tool call, then `message_delta` and
+  `message_stop`, with no `ping`. The reply has `text` in a text block, or
+  no block when it is empty, then each tool call in a `tool_use` block
+  with a `toolu_` id, or the one `id` fixes. Its `input` is the
+  arguments' object, or a string that holds one as that object, and any
+  other string as a JSON string; a stream starts the block with
+  `input: {}` and an empty `partial_json`, then sends the arguments' text
+  as written in `input_json_delta` pieces. The reply has an id `msg_…`,
+  usage as `input_tokens` and `output_tokens`, which a stream gives in
+  `message_start` and `message_delta`, and a `request-id: req_…` header in
+  place of `x-request-id`. Its `stopReason` is Anthropic's `stop_reason`,
+  `tool_use` with tool calls, or else `end_turn`, when left out; with
+  `stop_sequence`, the reply echoes the request's first stop sequence, and
+  a refusal carries `stop_details`, in the JSON body and in
+  `message_delta`. A Stub without a stop reason or an error moves between
+  the APIs by changing `api` alone.
   `timing: { first, interval }` paces a stream: a wait before the first
   piece, counted from the head, and one before each later piece, each
   drawn from a distribution of the delay Fault, which `fault.seed` and
