@@ -157,3 +157,58 @@ test "a stream of exactly 1 MiB is within the bound, and one byte more is over i
     ),
   )
 }
+
+///|
+/// What becomes of `reply`, a stream over the bound, as the test shows it:
+/// its verdict, and whether it was cut short once it passed 1 MiB, so that
+/// it passes the bound by less than its largest event.
+fn cut_short(reply : @llm.Reply) -> String {
+  guard reply.body is Events(events) else { return "not a stream" }
+  let mut largest = 0
+  for event in events {
+    let bytes = @utf8.encode(event.data).length() + 64
+    if bytes > largest {
+      largest = bytes
+    }
+  }
+  let past = wire_bytes(reply) - 1_048_576
+  "\{verdict(reply)}; cut short: \{past > 0 && past <= largest}"
+}
+
+///|
+test "a stream that passes the bound is cut short soon after, so a long text, long arguments or a long model is never encoded whole" {
+  let streamed : Json? = Some({ "stream": true })
+  // Each one would take 2 MiB or more as a whole stream.
+  let long_text = @llm.Strings(text=repeated("a", 20_000))
+  let out = []
+  for api in [@llm.Api::OpenaiChat, OpenaiResponses, AnthropicMessages] {
+    let reply = sized_reply(long_text, api~, chunk_size=1, request=streamed)
+    out.push("\{api.name()}, a long text: \{cut_short(reply)}")
+  }
+  let call = @llm.ToolCall(
+    name="f",
+    arguments=Json::string(repeated("a", 20_000)),
+  )
+  let long_arguments = sized_reply(
+    @llm.Strings(tool_calls=[call]),
+    chunk_size=1,
+    request=streamed,
+  )
+  out.push("openai-chat, long arguments: \{cut_short(long_arguments)}")
+  let long_model = sized_reply(
+    @llm.Strings(text=repeated("a", 400), model=repeated("m", 10_000)),
+    chunk_size=1,
+    request=streamed,
+  )
+  out.push("openai-chat, a long model: \{cut_short(long_model)}")
+  inspect(
+    out.join("\n"),
+    content=(
+      #|openai-chat, a long text: the reply takes more than 1 MiB as a stream; cut short: true
+      #|openai-responses, a long text: the reply takes more than 1 MiB as a stream; cut short: true
+      #|anthropic-messages, a long text: the reply takes more than 1 MiB as a stream; cut short: true
+      #|openai-chat, long arguments: the reply takes more than 1 MiB as a stream; cut short: true
+      #|openai-chat, a long model: the reply takes more than 1 MiB as a stream; cut short: true
+    ),
+  )
+}

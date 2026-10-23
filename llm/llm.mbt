@@ -923,6 +923,10 @@ fn chat_stream(
   let out = Stream::new(text_pieces.length() + tool_calls.length() + 4)
   out.push(NoWait, None, chunks.chunk(opening, "null"))
   for piece in text_pieces {
+    // A stream over the bound is not sent, so it stops here.
+    if out.over() {
+      return out.reply(request_id)
+    }
     let delta = "{\"content\":\{@template.compact_json(Json::string(piece))}}"
     out.push(pace.piece(), None, chunks.chunk(delta, "null"))
   }
@@ -932,6 +936,9 @@ fn chat_stream(
     return out.reply(request_id)
   }
   for k in 0..<tool_calls.length() {
+    if out.over() {
+      return out.reply(request_id)
+    }
     let call = tool_calls[k]
     // The call id and the name as JSON strings.
     let quoted_id = @template.compact_json(
@@ -947,6 +954,9 @@ fn chat_stream(
       ),
     )
     for piece in pieces(call.arguments, declaration.chunk_size) {
+      if out.over() {
+        return out.reply(request_id)
+      }
       let piece = @template.compact_json(Json::string(piece))
       out.push(
         pace.piece(),
@@ -1262,12 +1272,20 @@ fn responses_stream(
     "\{part_of},\"part\":\{@template.compact_json(output_text_part(""))}",
   )
   for piece in pieces {
+    // A stream over the bound is not sent, so it stops here.
+    if out.stream.over() {
+      return out.stream.reply(request_id)
+    }
     out.push(
       pace.piece(),
       "response.output_text.delta",
       "\{part_of},\"delta\":\{@template.compact_json(Json::string(piece))}",
       after=no_logprobs,
     )
+  }
+  // Each closing event carries the whole text.
+  if out.stream.over() {
+    return out.stream.reply(request_id)
   }
   // A reply with no piece waits before its first closing event.
   out.push(
@@ -1276,11 +1294,17 @@ fn responses_stream(
     "\{part_of},\"text\":\{@template.compact_json(Json::string(strings.text))}",
     after=no_logprobs,
   )
+  if out.stream.over() {
+    return out.stream.reply(request_id)
+  }
   out.push(
     pace.closing(),
     "response.content_part.done",
     "\{part_of},\"part\":\{@template.compact_json(output_text_part(strings.text))}",
   )
+  if out.stream.over() {
+    return out.stream.reply(request_id)
+  }
   let status = responses_status(declaration)
   let item = message_item(message_id, status, strings.text)
   out.push(
@@ -1288,6 +1312,9 @@ fn responses_stream(
     "response.output_item.done",
     "\"output_index\":0,\"item\":\{@template.compact_json(item)}",
   )
+  if out.stream.over() {
+    return out.stream.reply(request_id)
+  }
   // Until the waits are handed over, the Response completes when it is
   // received, as with no wait. An incomplete one never completes.
   let completes = declaration.stop_reason is None
@@ -1541,6 +1568,10 @@ fn messages_stream(
       content_block_start(0, "{\"type\":\"text\",\"text\":\"\"}"),
     )
     for piece in pieces {
+      // A stream over the bound is not sent, so it stops here.
+      if out.over() {
+        return out.reply(request_id)
+      }
       let delta = "{\"type\":\"text_delta\",\"text\":\{@template.compact_json(Json::string(piece))}}"
       out.push(
         pace.piece(),
