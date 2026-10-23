@@ -1,0 +1,11 @@
+mocks:
+  - name: openai
+stubs:
+  - id: split-where-the-parser-might-fail
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    responses:
+      - status: 200
+        llm: { api: openai-chat, chunks: ["Hel", "", "lo 👍", "🏽"] }
+      - status: 200
+        llm: { api: openai-chat, chunks: [""], chunkSize: 2 }
