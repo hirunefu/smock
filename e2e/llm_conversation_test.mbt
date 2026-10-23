@@ -163,7 +163,10 @@ async fn read_chat_stream(
       break
     }
   }
-  guard conn.read_until("\r\n0\r\n\r\n") is Some(_) else {
+  let last = @async.with_timeout_opt(patience_ms, () => {
+    conn.read_until("\r\n0\r\n\r\n")
+  })
+  guard last is Some(Some(_)) else {
     fail("the stream did not end with the last chunk")
   }
 }
@@ -225,7 +228,7 @@ async fn converse(smock : Smock) -> String {
   ask_chat(conn, weather_tool_result(call_id))
   out.push("the tool's result, streamed: \{status_line(read_head(conn))}")
   let joined = StringBuilder()
-  read_chat_stream(conn, head_at, (line, json, _) => {
+  read_chat_stream(conn, @async.now(), (line, json, _) => {
     out.push("  \{chunk_carries(line)}")
     if json
       is { "choices": [{ "delta": { "content": String(piece), .. }, .. }], .. } {
