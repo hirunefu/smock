@@ -155,3 +155,96 @@ test "the docs' Chat Completions loop: the question gets the tool call, and the 
     ),
   )
 }
+
+///|
+/// The Messages loop of the docs: `ask-weather` calls `get_weather` on any
+/// turn but a tool result, and `answer-weather` quotes the result of the
+/// tool_result block of the last message.
+let loop_messages : (String, String) = (
+  "anthropic.yaml",
+  (
+    #|mocks:
+    #|  - name: anthropic
+    #|stubs:
+    #|  - id: ask-weather
+    #|    mock: anthropic
+    #|    request:
+    #|      method: POST
+    #|      path: /v1/messages
+    #|      body:
+    #|        json:
+    #|          messages:
+    #|            $not:
+    #|              $last: { role: user, content: { $includes: { type: tool_result } } }
+    #|    response:
+    #|      status: 200
+    #|      llm:
+    #|        api: anthropic-messages
+    #|        toolCalls:
+    #|          - name: get_weather
+    #|            arguments: { city: Paris }
+    #|  - id: answer-weather
+    #|    mock: anthropic
+    #|    request:
+    #|      method: POST
+    #|      path: /v1/messages
+    #|      body:
+    #|        json:
+    #|          messages:
+    #|            $last: { role: user, content: { $includes: { type: tool_result } } }
+    #|    response:
+    #|      status: 200
+    #|      template: true
+    #|      llm:
+    #|        api: anthropic-messages
+    #|        text: "It is ${find(last(body.messages).content, 'type', 'tool_result').content} in Paris."
+  ),
+)
+
+///|
+test "the docs' Messages loop: the question gets the tool_use block, and the next turn, whose last user message holds the tool_result, gets text that quotes it, with or without text after it" {
+  let h = harness([loop_messages])
+  let first = h.messages(
+    body=wire({
+      "model": "claude-test",
+      "max_tokens": 1024,
+      "messages": [weather_question],
+    }),
+  )
+  guard agent_reply(first)
+    is { "content": [{ "id": String(id), .. }] as content, .. } else {
+    fail("no tool_use block")
+  }
+  let assistant : Json = { "role": "assistant", "content": content }
+  let result : Json = {
+    "type": "tool_result",
+    "tool_use_id": id,
+    "content": "18°C",
+  }
+  let then : Json = { "type": "text", "text": "Thanks." }
+  let next_turn = fn(blocks : Array[Json]) {
+    h.messages(
+      body=wire({
+        "model": "claude-test",
+        "max_tokens": 1024,
+        "messages": [
+          weather_question,
+          assistant,
+          { "role": "user", "content": Json::array(blocks) },
+        ],
+      }),
+    )
+  }
+  inspect(
+    [
+      turn_line(first),
+      turn_line(next_turn([result])),
+      turn_line(next_turn([result, then])),
+    ].join("\n"),
+    content=(
+      #|ask-weather: "get_weather" {"city":"Paris"}
+      #|answer-weather: "It is 18°C in Paris."
+      #|answer-weather: "It is 18°C in Paris."
+    ),
+  )
+}

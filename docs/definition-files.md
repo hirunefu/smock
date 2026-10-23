@@ -2672,6 +2672,67 @@ The second request's last message is
 `{"role":"tool","tool_call_id":"call_…","content":"18°C"}`, so
 `answer-weather` answers it, and quotes `18°C`.
 
+#### A Messages loop
+
+```yaml
+mocks:
+  - name: anthropic
+stubs:
+  - id: ask-weather
+    mock: anthropic
+    request:
+      method: POST
+      path: /v1/messages
+      body:
+        json:
+          messages:
+            $not:
+              $last: { role: user, content: { $includes: { type: tool_result } } }
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        toolCalls:
+          - name: get_weather
+            arguments: { city: Paris }
+  - id: answer-weather
+    mock: anthropic
+    request:
+      method: POST
+      path: /v1/messages
+      body:
+        json:
+          messages:
+            $last: { role: user, content: { $includes: { type: tool_result } } }
+    response:
+      status: 200
+      template: true
+      llm:
+        api: anthropic-messages
+        text: "It is ${find(last(body.messages).content, 'type', 'tool_result').content} in Paris."
+```
+
+With anthropic-sdk-python:
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(base_url="http://localhost:8080", api_key="test")
+messages = [{"role": "user", "content": "Weather in Paris?"}]
+first = client.messages.create(model="claude-test", max_tokens=1024, messages=messages)
+call = first.content[0]
+messages.append({"role": "assistant", "content": first.content})
+messages.append({"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": call.id, "content": "18°C"},
+]})
+second = client.messages.create(model="claude-test", max_tokens=1024, messages=messages)
+print(second.content[0].text)  # It is 18°C in Paris.
+```
+
+The first reply has no text, so its `tool_use` block is `content[0]`.
+The second request's last message is the user's, and holds the
+`tool_result` block, so `answer-weather` answers it.
+
 ### Paths and compatible endpoints
 
 The preset neither sets nor checks `request.path`. A Stub's conditions
