@@ -12,7 +12,8 @@ Stubs, templates and Data buckets.
 [docs/importing-openapi.md](docs/importing-openapi.md) turns an OpenAPI
 document into a Definition file.
 [LLM responses](docs/definition-files.md#llm-responses) stand in for an LLM
-API, such as OpenAI Chat Completions, in tests of code that calls one.
+API, such as OpenAI Chat Completions or OpenAI Responses, in tests of code
+that calls one.
 
 ## Layout
 
@@ -585,7 +586,7 @@ actual values as in a Near miss (empty when it meets them all). The Stub is
 rendered even when the sample fails them, and a
 [templated](docs/definition-files.md#templates) response is rendered for the
 sample. An [LLM response](docs/definition-files.md#llm-responses) shows the
-JSON body, or, for a sample whose body sets `stream: true`, the events,
+reply the sample's body asks for: the JSON body, or a stream's events,
 each with its wait. `--time` (RFC 3339) and `--seed` fix the clock and the
 random source of the rendering; without a seed, it uses the Stub's
 `fault.seed`, or a fresh one. A Stub with

@@ -1,0 +1,9 @@
+mocks:
+  - name: anthropic
+stubs:
+  - id: messages
+    mock: anthropic
+    request: { method: POST, path: /v1/messages }
+    response:
+      status: 200
+      llm: { api: anthropic-messages, text: Hello!, stopReason: stop }

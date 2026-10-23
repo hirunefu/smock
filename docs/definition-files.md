@@ -1242,7 +1242,7 @@ The fields of `llm`:
 
 | Field | Value | When left out |
 |---|---|---|
-| `api` | `openai-chat`, OpenAI Chat Completions | required |
+| `api` | `openai-chat`, OpenAI Chat Completions; `openai-responses`, [OpenAI Responses](#openai-responses); or `anthropic-messages`, [Anthropic Messages](#anthropic-messages) | required |
 | `text` | the text of the reply | empty |
 | `chunks` | the text as a list of at least one piece, in place of `text` | — |
 | `chunkSize` | code points per piece of a stream, an integer from 1 to 1,000,000 | 4 |
@@ -1256,22 +1256,27 @@ The fields of `llm`:
   smock never infers it from the request's path, so a proxy or a base path
   of its own does not change the reply. The preset neither sets nor checks
   `request.path`: the Stub's conditions choose it, as for any Stub.
-- The reply is the assistant's message, with `text` as its `content`, or
-  `""` when the text is empty, and the
+- An `openai-chat` reply is the assistant's message, with `text` as its
+  `content`, or `""` when the text is empty, and the
   [stop reason](#usage-and-stop-reasons) as its `finish_reason`. Its fields
   and their order follow the example of OpenAI's API reference, and so do
   its fixed values, such as `refusal: null` and `service_tier: "default"`.
   `usage` has the example's members, with the
   [declared counts](#usage-and-stop-reasons) and every other count 0. There
   is no `system_fingerprint`.
+- An `openai-responses` reply is a Response object, with `text` in its
+  message item. [OpenAI Responses](#openai-responses) says more.
+- An `anthropic-messages` reply is a `message` object, with `text` in its
+  text block. [Anthropic Messages](#anthropic-messages) says more.
 - smock sets `Content-Type: application/json`, or `text/event-stream` for
   a stream. A `Content-Type` the Stub gives is replaced, as for `events`.
-  smock also adds an `x-request-id` header, unless the Stub gives its own.
+  smock also adds an `x-request-id` header, or `request-id` for
+  `anthropic-messages`, unless the Stub gives its own.
   Other headers, such as a rate-limit header, are sent as written.
 - The reply's id is generated with the vendor's prefix, unless `id` fixes
-  it. `created` is the time smock received the request. `model` is the
-  Stub's `model`, or else the request's. [Ids, seeds and
-  time](#ids-seeds-and-time) says more.
+  it. `created`, or Responses' `created_at`, is the time smock received the
+  request. `model` is the Stub's `model`, or else the request's. [Ids,
+  seeds and time](#ids-seeds-and-time) says more.
 
 An LLM response is a response like any other. `status` is required, as
 always. `llm` may stand in `response` or in any element of
@@ -1302,7 +1307,10 @@ other request gets the JSON reply: a body that is not JSON, no `stream`,
 `stream: false`, or the string `"true"`. So one Stub serves both kinds of
 call, and an SDK reads the reply with the parser it chose for its own
 request. Only an `llm` response reads the request body for this; other
-Stubs pay nothing.
+Stubs pay nothing. smock does not stream `openai-responses` replies yet: a
+request to one with `stream: true` gets the JSON reply. An
+`anthropic-messages` reply has no stream yet: a request with
+`stream: true` gets its JSON reply.
 
 An `openai-chat` stream is a series of `chat.completion.chunk` objects.
 Each one is one `data:` line of compact JSON, with no `event:` line, and
@@ -1495,9 +1503,13 @@ stubs:
 
 smock counts no tokens and estimates none: the reply reports the counts
 as written. Each one is an integer from 0 to 2^53-1, 9007199254740991, and
-0 when left out. An `openai-chat` reply gives `input` as `prompt_tokens`,
-`output` as `completion_tokens`, and their sum as `total_tokens`. The
-detail objects of OpenAI's example follow, every count in them 0. A request
+0 when left out. An [`openai-responses`](#openai-responses) reply gives
+them as `input_tokens` and `output_tokens`, with `total_tokens` their sum.
+An `anthropic-messages` reply gives them as `input_tokens` and
+`output_tokens`, with no total and no cache counts. An `openai-chat` reply
+gives `input` as `prompt_tokens`, `output` as `completion_tokens`, and
+their sum as `total_tokens`. The detail objects of OpenAI's example
+follow, every count in them 0. A request
 for `gpt-6-astra` without `stream` gets this reply, which `smock render`
 shows with `--seed 7` and `--time 2026-10-23T00:00:00Z`:
 
@@ -1532,28 +1544,41 @@ data: [DONE]
 
 ```
 
-`stopReason` is written in the word of the Stub's API. For `openai-chat`
-it is the `finish_reason`, one of `stop`, `length`, `tool_calls`,
-`content_filter` and `function_call`, which OpenAI deprecates:
+`stopReason` is written in the word of the Stub's API:
 
-- It goes in the JSON reply's `finish_reason` and in the closing chunk's.
+- For `openai-chat` it is the `finish_reason`, one of `stop`, `length`,
+  `tool_calls`, `content_filter` and `function_call`, which OpenAI
+  deprecates. It goes in the JSON reply's `finish_reason` and in the
+  closing chunk's.
+- For `openai-responses`, which has no stop word, it is an incomplete
+  reason, one of `max_output_tokens`, `max_messages`, `content_filter` and
+  `steered`, which makes the reply [incomplete](#incomplete-replies).
+- For `anthropic-messages` it is the `stop_reason`, one of `end_turn`,
+  `max_tokens`, `stop_sequence`, `tool_use`, `pause_turn`, `refusal` and
+  `model_context_window_exceeded`. `stop_sequence` and `refusal` each add a
+  member to the reply ([Anthropic Messages](#anthropic-messages)).
 - Any word of the API may be written, whatever the reply holds. So a test
   can send `length` for a reply cut short, or `content_filter` for a
   filtered one.
-- Left out, smock derives it from the reply: `stop`.
-- A word that is not one of the API's, such as Anthropic's `end_turn`, is
-  a load error that lists the API's words. smock checks it when it loads
-  the Stub, so a reply never carries a word its SDK does not know.
+- Left out, smock derives it from the reply: `stop` for `openai-chat`,
+  `end_turn` for `anthropic-messages`. An `openai-responses` reply is then
+  `completed`.
+- A word that is not one of the API's, such as Anthropic's `end_turn` on
+  `openai-chat`, or Chat's `length` on `openai-responses`, is a load error
+  that lists the API's words. smock checks it when it loads the Stub, so a
+  reply never carries a word its SDK does not know.
 
 ### Ids, seeds and time
 
-smock generates two ids for each reply: the reply's id, and a request id,
-which it sends in a header. Each is the vendor's prefix and 24 characters
-from `A`-`Z`, `a`-`z` and `0`-`9`:
+smock generates ids for each reply: the reply's id, the id of each item
+the reply holds, and a request id, which it sends in a header. Each is the
+vendor's prefix and 24 characters from `A`-`Z`, `a`-`z` and `0`-`9`:
 
-| API | Reply's id | Request-id header |
-|---|---|---|
-| `openai-chat` | `chatcmpl-` | `x-request-id: req_…` |
+| API | Reply's id | Items | Request-id header |
+|---|---|---|---|
+| `openai-chat` | `chatcmpl-` | none | `x-request-id: req_…` |
+| `openai-responses` | `resp_` | the message item, `msg_` | `x-request-id: req_…` |
+| `anthropic-messages` | `msg_` | none | `request-id: req_…` |
 
 - One reply has one id: the JSON reply and every chunk of the stream carry
   the same one.
@@ -1569,23 +1594,28 @@ from `A`-`Z`, `a`-`z` and `0`-`9`:
   must know an id in advance fixes it.
 - `id` fixes the reply's id. smock sends it exactly as written, with no
   prefix, in the JSON reply and in every chunk. Fixing it changes no other
-  id: the ids draw in a fixed order of slots, the reply's first and the
-  request id's last, and every slot draws whether or not the Stub fixes
-  its id. So adding `id` to a Stub keeps the request ids of a recorded
-  run.
-- `created` is the time smock received the request, in whole seconds since
-  the Unix epoch: the time `now()` reads. In a rendering, it is the
-  rendering's time.
+  id: the ids draw in a fixed order of slots, the reply's first, then the
+  Responses message item's, and the request id's last. Every slot draws
+  whether or not the Stub fixes its id, or its API uses it. So adding `id`
+  to a Stub keeps the request ids of a recorded run, and a Stub that moves
+  from `openai-chat` to `openai-responses` keeps the 24 characters of its
+  reply's id and its request id.
+- The Responses message item's `msg_` id is always generated: no field
+  fixes it.
+- `created`, and Responses' `created_at`, is the time smock received the
+  request, in whole seconds since the Unix epoch: the time `now()` reads.
+  In a rendering, it is the rendering's time.
 - The reply's `model` is the Stub's `model` when given. Otherwise it is the
   request's `model` when that is a string, and otherwise the empty string,
   such as when the body is not JSON. `llm` adds no condition on the model,
   so one Stub answers every model. A Stub that should answer one model
   adds a body condition on it, as below.
 - smock adds the request-id header to the JSON reply and to the stream,
-  after the Stub's own header fields. openai-python reads it as the
-  reply's `_request_id`. A header the Stub gives under that name, in any
-  case, takes its place: smock then sends the Stub's field alone. The
-  request id still draws its slot, so no other id changes.
+  after the Stub's own header fields. openai-python and
+  anthropic-sdk-python each read it as the reply's `_request_id`. A header
+  the Stub gives under that name, in any case, takes its place: smock then
+  sends the Stub's field alone. The request id still draws its slot, so no
+  other id changes.
 
 This Stub answers only requests for `gpt-6-astra`, and fixes the reply's
 id, its model and its request id, so that a test can assert all three:
@@ -1615,6 +1645,190 @@ A request for `gpt-6-astra` gets a reply that begins
 with `x-request-id: req_test_1`. A request for another model does not
 match it.
 
+### OpenAI Responses
+
+`api: openai-responses` answers OpenAI's Responses API with a Response
+object. This Stub answers it at its path, `/v1/responses`:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: hello
+    mock: openai
+    request: { method: POST, path: /v1/responses }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        text: Hi there! How can I assist you today?
+        usage: { input: 37, output: 11 }
+```
+
+openai-python reaches it through the same base URL as Chat Completions,
+`OpenAI(base_url="http://localhost:8080/v1", api_key="test")`. Then
+`client.responses.create(model="gpt-6-astra", instructions="You are a helpful assistant.", input="Hello!")`
+sends `POST /v1/responses`, and gets this reply, which
+[`smock render`](#rendering-a-template) shows with `--seed 7` and
+`--time 2026-10-23T00:00:00Z`:
+
+```json
+{"id":"resp_oniRcSDFUU6bnxe66XwQR5pl","object":"response","access_programs":null,"created_at":1792713600,"status":"completed","completed_at":1792713600,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"model":"gpt-6-astra","output":[{"id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hi there! How can I assist you today?","annotations":[],"logprobs":[]}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":37,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":11,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":48},"user":null,"metadata":{}}
+```
+
+- `output` holds one message item, with `text` as its `output_text`, or
+  `""` when the text is empty. Its id is `msg_` and 24 generated
+  characters.
+- `usage` gives the [declared counts](#usage-and-stop-reasons) as
+  `input_tokens` and `output_tokens`, with `total_tokens` their sum.
+- `created_at` and `completed_at` are the time smock received the
+  request, in whole seconds.
+- The Response object gives back the settings the request gave, copied as
+  given: smock does not interpret them. They are `instructions`,
+  `previous_response_id`,
+  `tools`, `tool_choice`, `temperature`, `top_p`, `max_output_tokens`,
+  `parallel_tool_calls`, `metadata`, `store`, `text`, `truncation`,
+  `reasoning`, `user`, `safety_identifier`, `prompt_cache_key`,
+  `top_logprobs`, `max_tool_calls` and `background`.
+- A setting the request leaves out takes the value of OpenAI's examples,
+  such as `tools: []` and `store: true`. The examples do not show the last
+  five, so smock leaves them out too.
+- `model` is the Stub's, or else the request's, as for every API.
+  `service_tier` is always `default`, the examples' tier, and
+  `conversation` is not copied.
+- The other members, their order and their fixed values follow the
+  examples of OpenAI's API reference, such as `error: null`,
+  `access_programs: null` and `temperature: 1.0`.
+- smock keeps no Responses state. `previous_response_id` is only copied,
+  and a request with `background: true` gets this same reply, not a queued
+  one.
+- smock does not stream `openai-responses` replies yet. A request with
+  `stream: true` gets the JSON reply.
+
+#### Incomplete replies
+
+The Responses API has no stop word. For `openai-responses`, `stopReason`
+is an incomplete reason instead: `max_output_tokens`, `max_messages`,
+`content_filter` or `steered`. A reply that writes one is incomplete. Its
+`status` is `incomplete`, `incomplete_details` gives the reason,
+`completed_at` is `null`, and its message item's `status` is `incomplete`
+too. Left out, the reply is `completed`. The vendor sends `steered` only
+after a steer over its WebSocket mode, which smock does not serve, and
+smock accepts it as any word of the API. This Stub stands for a reply cut
+short by the token limit:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: truncated
+    mock: openai
+    request: { method: POST, path: /v1/responses }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        text: The weather in Paris is
+        usage: { input: 31, output: 5 }
+        stopReason: max_output_tokens
+```
+
+The same request gets this reply:
+
+```json
+{"id":"resp_oniRcSDFUU6bnxe66XwQR5pl","object":"response","access_programs":null,"created_at":1792713600,"status":"incomplete","completed_at":null,"error":null,"incomplete_details":{"reason":"max_output_tokens"},"instructions":"You are a helpful assistant.","max_output_tokens":null,"model":"gpt-6-astra","output":[{"id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","type":"message","status":"incomplete","role":"assistant","content":[{"type":"output_text","text":"The weather in Paris is","annotations":[],"logprobs":[]}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":31,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":36},"user":null,"metadata":{}}
+```
+
+A Stub moves between `openai-chat` and `openai-responses` by changing `api`
+alone, unless it writes a stop reason that the other API does not have.
+Chat's `length` on `openai-responses` is a load error at `stopReason`, so
+rewrite or drop it. The reply's id keeps its 24 characters, with the
+other API's prefix, and the request id stays the same.
+
+### Anthropic Messages
+
+With `api: anthropic-messages`, the reply takes the form of Anthropic's
+Messages API. This Stub answers its path, `POST /v1/messages`:
+
+```yaml
+mocks:
+  - name: anthropic
+stubs:
+  - id: hello
+    mock: anthropic
+    request: { method: POST, path: /v1/messages }
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        text: Hello!
+        usage: { input: 12, output: 6 }
+```
+
+anthropic-sdk-python reaches it with
+`Anthropic(base_url="http://localhost:8080", api_key="test")`. The base
+URL has no `/v1`, since the SDK adds it. A request for `claude-test` gets
+one `message` body, such as this one, which `smock render` shows with
+`--seed 7` and `--time 2026-10-23T00:00:00Z`:
+
+```json
+{"id":"msg_oniRcSDFUU6bnxe66XwQR5pl","type":"message","role":"assistant","content":[{"type":"text","text":"Hello!"}],"model":"claude-test","stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":12,"output_tokens":6}}
+```
+
+- Its members and their order follow the replies in Anthropic's guide on
+  working with messages. `content` holds one text block, with the text.
+  Empty text gives an empty reply: `content` is `[]`, with no block.
+- `usage` gives `input` as `input_tokens` and `output` as
+  `output_tokens`, with no total and no cache counts.
+- The reply's id is `msg_` and 24 characters, unless `id` fixes it. smock
+  adds a `request-id: req_…` header, not `x-request-id`, unless the Stub
+  gives its own `request-id`. [Ids, seeds and time](#ids-seeds-and-time)
+  says more.
+- There is no stream yet: a request with `stream: true` gets the JSON
+  reply too.
+- Ollama's Anthropic compatibility offers the same path, so the Stub
+  stands in for it too.
+
+`stopReason` takes Anthropic's words: `end_turn`, `max_tokens`,
+`stop_sequence`, `tool_use`, `pause_turn`, `refusal` and
+`model_context_window_exceeded`. Left out, it is `end_turn`. A word of
+another API, such as `stop`, is a load error. Two words add a member:
+
+- With `stop_sequence`, the reply's `stop_sequence` is the first element
+  of the request's `stop_sequences`, when that is a string. Otherwise it
+  is `null`, as it is with every other stop reason. smock does not search
+  the text for the sequences, so it gives the first one, whichever would
+  have matched.
+- With `refusal`, the reply also carries
+  `"stop_details":{"type":"refusal","category":null,"explanation":null}`,
+  after `stop_sequence`. Any other stop reason leaves `stop_details` out.
+  A refusal with empty text has no block, as the vendor's has none.
+
+This Stub stands for a refusal, and the reply it gives:
+
+```yaml
+- id: refused
+  mock: anthropic
+  request:
+    method: POST
+    path: /v1/messages
+    headers: { X-Test-Case: refused }
+  response:
+    status: 200
+    llm: { api: anthropic-messages, stopReason: refusal }
+```
+
+```json
+{"id":"msg_oniRcSDFUU6bnxe66XwQR5pl","type":"message","role":"assistant","content":[],"model":"claude-test","stop_reason":"refusal","stop_sequence":null,"stop_details":{"type":"refusal","category":null,"explanation":null},"usage":{"input_tokens":0,"output_tokens":0}}
+```
+
+A Stub without `stopReason` moves between `openai-chat` and
+`anthropic-messages` by changing `api` alone. Its seed gives the same ids,
+behind the other API's prefix: `chatcmpl-oniRcSDFUU6bnxe66XwQR5pl` becomes
+`msg_oniRcSDFUU6bnxe66XwQR5pl`, and the request id stays the same, in the
+other header. A written stop reason must be rewritten in the other API's
+word.
+
 ### Paths and compatible endpoints
 
 The preset neither sets nor checks `request.path`. A Stub's conditions
@@ -1633,7 +1847,9 @@ URL at smock with the same path, such as
 | Ollama, OpenAI compatibility | `http://localhost:11434/v1/` | `/v1/chat/completions` |
 
 Gemini's own `generateContent` and Ollama's own `/api/chat` have other
-wire forms, which `llm` does not write.
+wire forms, which `llm` does not write. `openai-responses` stands in the
+same way for the Responses API, at `/v1/responses` under OpenAI's base URL,
+or under Ollama's, whose OpenAI compatibility serves it too.
 
 Azure OpenAI puts the deployment's name in the path. For
 `model="my-gpt"`, openai-python's
@@ -2993,10 +3209,11 @@ sample's `Range` header, so the rendering shows the 206 or the 416 a
 request would get.
 
 An [LLM response](#llm-responses) renders as a request gets it. A sample
-whose body sets `stream: true` shows the [stream](#streams)'s events,
-each with its [wait](#timing) as `delay`, and a null `body`. Any other
-sample shows the JSON body. The seed fixes the reply's id, the request id
-and the waits, and `created` is the rendering's time. For the
+that gets a [stream](#streams), such as one whose body sets
+`stream: true` for `openai-chat`, shows the events, each with its
+[wait](#timing) as `delay`, and a null `body`. Any other sample shows the
+JSON body. The seed fixes the ids and the waits, and the reply's time,
+such as `created`, is the rendering's time. For the
 [`slow-hello` Stub](#timing), with `sample.json` holding
 
 ```json
