@@ -1648,9 +1648,18 @@ fn messages_usage(usage : Usage) -> Json {
 let default_chunk_size : Int = 4
 
 ///|
+/// The most pieces a stream cuts from one text or one tool call's
+/// arguments: one more than fit within `max_reply_bytes`, since every event
+/// that carries a piece takes more than 64 bytes as it is sent. A stream
+/// that sends that many is over the bound, and so is one cut after them,
+/// so the rest of a longer text is never cut.
+let max_pieces : Int = max_reply_bytes / 64 + 1
+
+///|
 /// `text` cut into pieces of `size` code points, the last one shorter. They
 /// join to exactly `text` and never split a code point, so each one encodes
-/// to valid UTF-8 on its own. Empty text has no piece.
+/// to valid UTF-8 on its own. Empty text has no piece. Only the first
+/// `max_pieces` pieces of a longer text are cut.
 fn pieces(text : String, size : Int) -> Array[String] {
   let out = []
   // A piece holds no more than the text, whatever the size.
@@ -1663,6 +1672,9 @@ fn pieces(text : String, size : Int) -> Array[String] {
     count += 1
     if count == size {
       out.push(piece.to_string())
+      if out.length() == max_pieces {
+        return out
+      }
       piece.reset()
       count = 0
     }
