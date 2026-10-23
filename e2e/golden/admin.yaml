@@ -834,6 +834,11 @@ stubs:
                     lognormal:
                       median: 0
                       sigma: 0
+                error:
+                  after: 0
+                  type: string
+                  code: string
+                  message: string
             responses:
               - weight: 1
                 status: 200
@@ -881,6 +886,11 @@ stubs:
                       lognormal:
                         median: 0
                         sigma: 0
+                  error:
+                    after: 0
+                    type: string
+                    code: string
+                    message: string
             variables: {}
             dataWrites:
               - op: set
@@ -1059,6 +1069,11 @@ stubs:
                   lognormal:
                     median: 0
                     sigma: 0
+              error:
+                after: 0
+                type: string
+                code: string
+                message: string
           responses:
             - weight: 1
               status: 200
@@ -1106,6 +1121,11 @@ stubs:
                     lognormal:
                       median: 0
                       sigma: 0
+                error:
+                  after: 0
+                  type: string
+                  code: string
+                  message: string
           variables: {}
           dataWrites:
             - op: set
