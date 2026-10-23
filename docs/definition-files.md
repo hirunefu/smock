@@ -2629,7 +2629,8 @@ API sends the result in its own form:
   an array, which a text template inserts only with `json(x)`; otherwise
   the request gets the [500 `template failed`](#missing-values-and-render-errors).
 - smock checks no request against its `tools`, so the Stubs need none,
-  and neither do the sketches below.
+  and neither do the sketches below. The sketches were checked with
+  openai-python 3.37.0 and anthropic-sdk-python 2.1.0.
 
 #### A Chat Completions loop
 
