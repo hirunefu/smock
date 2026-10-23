@@ -63,6 +63,12 @@ of each GitHub release include its section
   each SBOM, so it refuses the images of 0.3.0 and earlier. Check one of
   those with the script from its own tag, such as
   `git show v0.3.0:scripts/verify-image.sh`.
+- The docs' templated Server-Sent Events example now ends with
+  `data: [DONE]` alone, without `event: done`. OpenAI's `[DONE]` frame has
+  no `event:` line, and a stream written by hand could copy the old one.
+  The example points to
+  [LLM responses](docs/definition-files.md#llm-responses), which write an
+  LLM API's reply in its wire form.
 
 ### Fixed
 

@@ -1896,9 +1896,14 @@ response:
   events:
     - { event: price, id: "1", json: { symbol: "${query.symbol}", price: "${fake.decimal(90, 110, 2)}", at: "${now()}" } }
     - { delay: 500, event: price, id: "2", json: { symbol: "${query.symbol}", price: "${fake.decimal(90, 110, 2)}", at: "${now()}" } }
-    - { delay: 500, event: done, data: "[DONE]" }
+    - { delay: 500, data: "[DONE]" }
 fault: { seed: 7 }
 ```
+
+The last event is `data: [DONE]` alone, the frame that ends an OpenAI
+Chat Completions stream, which has no `event:` line. To stand in for an
+LLM API, an [LLM response](#llm-responses) writes the reply in the API's
+wire form, so no event needs writing by hand.
 
 ### Escaping and line breaks
 
