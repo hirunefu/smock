@@ -1252,6 +1252,7 @@ The fields of `llm`:
 | `usage` | `{input, output}`, token counts, integers from 0 to 2^53-1 | both 0 |
 | `stopReason` | a stop reason of the API, such as `length` | derived |
 | `timing` | `{first, interval}`, the [waits of a stream](#timing), each a distribution of the [delay](#delays) | no waits |
+| `error` | `{after, type, message}`, or `{after, code, message}` for `openai-responses`: a [mid-stream error](#mid-stream-errors) | none |
 
 - `api` names the API whose wire form the reply takes. It is required, and
   smock never infers it from the request's path, so a proxy or a base path
@@ -1293,9 +1294,9 @@ seed gives and its time as `created`. A response gives at most one of
 `body`, `bodyFile`, `json`, `events` and `llm`. A missing or unknown `api`,
 an unknown field of `llm` or of its `usage`, a count that is not an integer
 from 0 to 2^53-1, a stop reason that is not a word of the API, the errors
-of [chunks](#chunks) and of [tool calls](#tool-calls), a wait of `timing`
-that is not one distribution of the delay, and `llm` beside another body
-are reported with the JSON Pointer of the field, by `smock check`, at
+of [chunks](#chunks), of [tool calls](#tool-calls) and of a
+[mid-stream error](#mid-stream-errors), a wait of `timing` that is not one
+distribution of the delay, and `llm` beside another body are reported with the JSON Pointer of the field, by `smock check`, at
 startup and on a reload, which keeps the set served, and as 400
 `invalid_stub` for an Ephemeral Stub.
 
@@ -1312,8 +1313,7 @@ other request gets the JSON reply: a body that is not JSON, no `stream`,
 `stream: false`, or the string `"true"`. So one Stub serves both kinds of
 call, and an SDK reads the reply with the parser it chose for its own
 request. Only an `llm` response reads the request body for this; other
-Stubs pay nothing. smock does not stream `openai-responses` replies yet: a
-request to one with `stream: true` gets the JSON reply. An
+Stubs pay nothing. An
 `anthropic-messages` stream is a series of named events, which
 [Messages streams](#messages-streams) lists.
 
@@ -1339,7 +1339,8 @@ line. The text is cut into pieces of 4 code points, the last one shorter,
 unless `chunkSize` or `chunks` says otherwise ([Chunks](#chunks)). The
 pieces join to exactly the text, and a piece never splits a code point, so
 every `data:` line is valid UTF-8. Empty text with no tool call sends the
-opening and closing chunks only.
+opening and closing chunks only. A [mid-stream error](#mid-stream-errors)
+ends the stream early, without the closing chunk or `[DONE]`.
 
 For the Stub above, a request for `gpt-6-astra` with `stream: true` gets
 this stream, which `smock render` shows with the same seed and time:
@@ -1360,6 +1361,10 @@ data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk"
 data: [DONE]
 
 ```
+
+An `openai-responses` stream is a series of named events instead, each
+with an `event:` line and a `sequence_number`, and no `[DONE]`:
+[The Responses stream](#the-responses-stream) lists them.
 
 A stream travels as the events of an `events` response do:
 
@@ -1464,13 +1469,20 @@ stubs:
 - **Where the waits go.** smock writes the head and every event before the
   first piece at once. It waits `first` before the first event that
   carries a piece, counted from the head, and `interval` before each later
-  one. The events that open or close the reply, a
+  one. The events that open or close the reply, an item, a part, a
   [tool call](#tool-calls) or a block of an `anthropic-messages` stream
   follow the event before them at once. A piece of a tool call's arguments
   is a piece, and so is an empty element of [`chunks`](#chunks), so each
   waits as one. A reply with no piece, such as one with empty text, waits
-  `first` before its closing chunk, or before `message_delta` for
-  `anthropic-messages`.
+  `first` before its first closing event: Chat's closing chunk, Responses'
+  `response.output_text.done` or Messages' `message_delta`. A
+  [mid-stream error](#mid-stream-errors) waits as a next piece would.
+- **Responses' `completed_at`.** In an `openai-responses` stream, the
+  `completed_at` of `response.completed` is the time smock received the
+  request plus the stream's waits up to that event, in whole seconds, so a
+  slow stream completes later than it was created. `created_at` stays the
+  time received. A JSON reply has no wait, so its `completed_at` is the
+  time received.
 - **Either may be left out**, for no wait there. Without `timing`, a stream
   has no wait at all.
 - **No `probability`.** Unlike a delay, a wait applies to every stream, so
@@ -1490,6 +1502,9 @@ stubs:
   sample that sets `stream: true`, the Stub above waits 824 ms before
   `"Hell"`, then 27, 20, 38, 19, 40, 38, 26 and 28 ms before the next
   eight pieces. The opening chunk, the closing chunk and `[DONE]` wait 0.
+  The same Stub with `api: openai-responses` waits the same 1060 ms in
+  all, so with `--time 2026-10-23T00:00:00Z` its `response.completed`
+  gives `completed_at` 1792713601, one second after its `created_at`.
 
 ### Usage and stop reasons
 
@@ -1598,7 +1613,7 @@ from `A`-`Z`, `a`-`z` and `0`-`9`:
 | `openai-responses` | `resp_` | the message item, `msg_` | `x-request-id: req_…` |
 | `anthropic-messages` | `msg_` | tool use `toolu_` | `request-id: req_…` |
 
-- One reply has one id: the JSON reply and every chunk of the stream carry
+- One reply has one id: the JSON reply and every event of the stream carry
   the same one.
 - The ids come from the Stub's random source: from a generator of their
   own, seeded with the one draw every matched request takes XOR a fixed
@@ -1611,13 +1626,13 @@ from `A`-`Z`, `a`-`z` and `0`-`9`:
   requests arrive in, such as when tests run in parallel. A test that
   must know an id in advance fixes it.
 - `id` fixes the reply's id. smock sends it exactly as written, with no
-  prefix, in the JSON reply and in every chunk. Fixing it changes no other
-  id: the ids draw in a fixed order of slots, the reply's first, then the
-  Responses message item's, then two for each tool call, and the request
-  id's last. Every slot draws whether or not the Stub fixes its id, or its
-  API uses it. So adding `id` to a Stub keeps the request ids of a
-  recorded run, and a Stub that moves from `openai-chat` to
-  `openai-responses` keeps the 24 characters of its reply's id and its
+  prefix, in the JSON reply and in every event of the stream. Fixing it
+  changes no other id: the ids draw in a fixed order of slots, the reply's
+  first, then the Responses message item's, then two for each tool call,
+  and the request id's last. Every slot draws whether or not the Stub
+  fixes its id, or its API uses it. So adding `id` to a Stub keeps the
+  request ids of a recorded run, and a Stub that moves from `openai-chat`
+  to `openai-responses` keeps the 24 characters of its reply's id and its
   request id.
 - The Responses message item's `msg_` id is always generated: no field
   fixes it.
@@ -1837,6 +1852,102 @@ anthropic-sdk-python 2.1.0:
 - JSON cut short, such as the Stub's above, is no error to it: the block's
   `input` is what has arrived whole, here `{}`.
 
+### Mid-stream errors
+
+`error` cuts a stream short with the API's own error, after part of the
+text, so a test can check how its client handles a model that fails
+mid-reply, such as an overloaded one. This Stub sends `Hello`, then an
+error:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: cut-short
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+        error:
+          after: 5
+          type: server_error
+          message: The server had an error while processing your request. Sorry about that!
+```
+
+The fields of `error`:
+
+| Field | Value | When left out |
+|---|---|---|
+| `after` | how many code points of the text come before the error, an integer from 0 | 0 |
+| `type` | the error's type: non-empty text, or for `anthropic-messages` one of Anthropic's error types | required |
+| `code` | in place of `type`, for `openai-responses` only: the error's code, non-empty text | required |
+| `message` | the error's message, non-empty text | required |
+
+- **What is sent.** A request with `stream: true` gets the opening chunk,
+  then the text's pieces up to exactly `after` code points, the piece that
+  holds the cut ending there, then the error. The stream ends there. No
+  tool call, closing chunk, usage chunk or `[DONE]` follows, so the client
+  sees an interrupted stream.
+- **Chat's form.** For `openai-chat`, the error is a `data:` line of its
+  own, in place of a chunk:
+  `{"error":{"message":…,"type":…,"param":null,"code":null}}`.
+- **Counted in code points.** `after` counts code points of the text, not
+  pieces, so the cut stays where it is when `chunkSize` or `chunks`
+  changes. `after: 0` sends the error right after the opening chunk. An
+  empty element of [`chunks`](#chunks) counts 0 code points: one before
+  the cut is sent, and the text stops at the piece that reaches `after`.
+  An `after` past the end of the text is a load error.
+- **Waits.** The error waits as a next piece would: `first` when no piece
+  came before it, and `interval` otherwise ([Timing](#timing)).
+- **Only streams.** A request that does not stream gets the ordinary
+  reply, whole, so one Stub serves both. smock keeps no table of statuses:
+  an error in place of the whole reply is an ordinary response
+  ([Errors before the reply](#errors-before-the-reply)).
+- **Status and Journal.** The status is the Stub's, 200 here, sent before
+  the stream starts. The [Journal](../README.md#the-journal) entry has
+  that status, and is committed before the last event, the error, as for
+  `events`.
+- **What openai-python does.** It raises `APIError` on Chat's error frame,
+  from `create(stream=True)` and from the `chat.completions.stream()`
+  helper, with the message, and the `error` object as its `body`. With
+  `max_retries` at its default it does not retry: the status was 200.
+  Checked with openai-python 3.36.1.
+- **Per API.** `openai-chat` and `anthropic-messages` give `type`, and
+  `openai-responses` gives `code`, as each API names it. So the other one
+  is a load error that names the member to give, and a Stub that moves to
+  another `api` renames it there. Anthropic's `type` is one of its
+  documented error types: `invalid_request_error`,
+  `authentication_error`, `billing_error`, `permission_error`,
+  `not_found_error`, `conflict_error`, `request_too_large`,
+  `rate_limit_error`, `api_error`, `timeout_error` and
+  `overloaded_error`. An OpenAI `type` or `code` is any non-empty text.
+- **For now,** only `openai-chat` cuts its stream. An `openai-responses`
+  or `anthropic-messages` Stub reads and checks `error`, and sends its
+  reply whole.
+- `type` on `openai-responses` or `code` on another API, another
+  Anthropic type, an empty `type`, `code` or `message`, an `after` that is
+  not an integer from 0 or that passes the end of the text, and an unknown
+  field of `error` are load errors.
+
+A request for `gpt-6-astra` with `stream: true` gets this stream, which
+[`smock render`](#rendering-a-template) shows with `--seed 7` and
+`--time 2026-10-23T00:00:00Z`. The second piece, `"o! H"` without the
+error, ends at the cut:
+
+```text
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"content":"Hell"},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-oniRcSDFUU6bnxe66XwQR5pl","object":"chat.completion.chunk","created":1792713600,"model":"gpt-6-astra","choices":[{"index":0,"delta":{"content":"o"},"logprobs":null,"finish_reason":null}]}
+
+data: {"error":{"message":"The server had an error while processing your request. Sorry about that!","type":"server_error","param":null,"code":null}}
+
+```
+
 ### OpenAI Responses
 
 `api: openai-responses` answers OpenAI's Responses API with a Response
@@ -1874,7 +1985,8 @@ sends `POST /v1/responses`, and gets this reply, which
 - `usage` gives the [declared counts](#usage-and-stop-reasons) as
   `input_tokens` and `output_tokens`, with `total_tokens` their sum.
 - `created_at` and `completed_at` are the time smock received the
-  request, in whole seconds.
+  request, in whole seconds. A [stream](#the-responses-stream)'s
+  `completed_at` adds its waits.
 - The Response object gives back the settings the request gave, copied as
   given: smock does not interpret them. They are `instructions`,
   `previous_response_id`,
@@ -1894,8 +2006,75 @@ sends `POST /v1/responses`, and gets this reply, which
 - smock keeps no Responses state. `previous_response_id` is only copied,
   and a request with `background: true` gets this same reply, not a queued
   one.
-- smock does not stream `openai-responses` replies yet. A request with
-  `stream: true` gets the JSON reply.
+
+#### The Responses stream
+
+A request with `stream: true` gets the reply as a stream of named events,
+as OpenAI streams it. Each event has an `event:` line equal to its `type`,
+and one `data:` line of compact JSON whose `sequence_number` counts from
+0, one more each time. In order:
+
+1. `response.created`, then `response.in_progress`, each with the Response
+   object in progress: `status: "in_progress"`, `output: []`,
+   `usage: null` and `completed_at: null`;
+2. `response.output_item.added`, which opens the message item at
+   `output_index` 0, with `status: "in_progress"` and no content;
+3. `response.content_part.added`, which opens its `output_text` part,
+   still empty;
+4. one `response.output_text.delta` per piece of the text, whose `delta`
+   is the piece;
+5. `response.output_text.done` with the whole `text`, then
+   `response.content_part.done` with the whole part and
+   `response.output_item.done` with the whole item;
+6. `response.completed` with the whole Response object, or
+   `response.incomplete` when the Stub writes a stop reason
+   ([Incomplete replies](#incomplete-replies)).
+
+No `data: [DONE]` follows. The text is cut into pieces as for every API
+([Chunks](#chunks)). Empty text keeps the message item and its part, with
+no delta. Every event carries the same `resp_` and `msg_` ids. The Response
+object of the last event is the JSON reply, but for its `completed_at`:
+the time smock received the request plus the stream's waits up to that
+event, in whole seconds ([Timing](#timing)). Without `timing`, that is the
+time received.
+
+For the `hello` Stub above, the same request with `stream: true` gets this
+stream, which `smock render` shows with the same seed and time:
+
+```text
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_oniRcSDFUU6bnxe66XwQR5pl","object":"response","access_programs":null,"created_at":1792713600,"status":"in_progress","completed_at":null,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"model":"gpt-6-astra","output":[],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+  … response.in_progress, with the same Response object …
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","type":"message","status":"in_progress","role":"assistant","content":[]},"sequence_number":2}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","item_id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[],"logprobs":[]},"sequence_number":3}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","output_index":0,"content_index":0,"delta":"Hi t","sequence_number":4,"logprobs":[]}
+
+  … "here", "! Ho", "w ca", "n I ", "assi", "st y", "ou t", "oday", "?" …
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","item_id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","output_index":0,"content_index":0,"text":"Hi there! How can I assist you today?","sequence_number":14,"logprobs":[]}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","item_id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","output_index":0,"content_index":0,"part":{"type":"output_text","text":"Hi there! How can I assist you today?","annotations":[],"logprobs":[]},"sequence_number":15}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hi there! How can I assist you today?","annotations":[],"logprobs":[]}]},"sequence_number":16}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_oniRcSDFUU6bnxe66XwQR5pl","object":"response","access_programs":null,"created_at":1792713600,"status":"completed","completed_at":1792713600,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"model":"gpt-6-astra","output":[{"id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hi there! How can I assist you today?","annotations":[],"logprobs":[]}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":37,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":11,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":48},"user":null,"metadata":{}},"sequence_number":17}
+
+```
+
+openai-python reads it with `client.responses.create(..., stream=True)`,
+which yields each event, or with the `client.responses.stream(...)` helper,
+whose `get_final_response()` gives the Response that the JSON reply gives.
 
 #### Incomplete replies
 
@@ -1931,10 +2110,25 @@ The same request gets this reply:
 {"id":"resp_oniRcSDFUU6bnxe66XwQR5pl","object":"response","access_programs":null,"created_at":1792713600,"status":"incomplete","completed_at":null,"error":null,"incomplete_details":{"reason":"max_output_tokens"},"instructions":"You are a helpful assistant.","max_output_tokens":null,"model":"gpt-6-astra","output":[{"id":"msg_VV1jhq1oCsnGeHaAUIiFpgab","type":"message","status":"incomplete","role":"assistant","content":[{"type":"output_text","text":"The weather in Paris is","annotations":[],"logprobs":[]}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":31,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":36},"user":null,"metadata":{}}
 ```
 
+A stream of an incomplete reply ends with `response.incomplete`, whose
+Response object is the JSON reply above, `completed_at` null included.
+openai-python's `client.responses.stream(...)` helper raises
+`RuntimeError` in `get_final_response()` when the stream ends without
+`response.completed`, as it does with OpenAI's own incomplete streams. So a
+client reads the `response.incomplete` event instead:
+
+```python
+with client.responses.stream(model="gpt-6-astra", input="Hello!") as stream:
+    for event in stream:
+        if event.type == "response.incomplete":
+            reason = event.response.incomplete_details.reason
+```
+
 A Stub moves between `openai-chat` and `openai-responses` by changing `api`
-alone, unless it writes a stop reason that the other API does not have.
-Chat's `length` on `openai-responses` is a load error at `stopReason`, so
-rewrite or drop it. The reply's id keeps its 24 characters, with the
+alone, unless it writes a stop reason that the other API does not have, or
+a [mid-stream error](#mid-stream-errors). Chat's `length` on
+`openai-responses` is a load error at `stopReason`, so rewrite or drop it,
+and an error's `type` is a load error there, so rename it `code`. The reply's id keeps its 24 characters, with the
 other API's prefix, and the request id stays the same.
 
 ### Anthropic Messages
@@ -2021,8 +2215,10 @@ A Stub without `stopReason` moves between `openai-chat` and
 `anthropic-messages` by changing `api` alone. Its seed gives the same ids,
 behind the other API's prefix: `chatcmpl-oniRcSDFUU6bnxe66XwQR5pl` becomes
 `msg_oniRcSDFUU6bnxe66XwQR5pl`, a call id `call_…` becomes `toolu_…`, and
-the request id stays the same, in the other header. A written stop reason must be rewritten in the other API's
-word.
+the request id stays the same, in the other header. A written stop reason
+must be rewritten in the other API's word, and a
+[mid-stream error](#mid-stream-errors)'s `type` must be one of Anthropic's
+error types.
 
 #### Messages streams
 
@@ -2221,9 +2417,10 @@ members, such as `prompt_filter_results` and `content_filter_results`.
 
 ### Errors before the reply
 
-`llm` declares a reply that succeeds. An error that comes in place of the
-reply, such as a 429 or a 529, is an ordinary response with the vendor's
-error body. Each vendor has one shape:
+`llm` declares a reply that succeeds, or one that a
+[mid-stream error](#mid-stream-errors) cuts short. An error that comes in
+place of the reply, such as a 429 or a 529, is an ordinary response with
+the vendor's error body. Each vendor has one shape:
 
 - OpenAI: `{"error": {"message", "type", "param", "code"}}`. All four
   members are present, and `param` and `code` may be `null`. A 429 or a

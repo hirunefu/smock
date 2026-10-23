@@ -154,3 +154,133 @@ test "an anthropic-messages stop reason is a word of Anthropic Messages; a Chat 
     ),
   )
 }
+
+///|
+test "an error gives its type for openai-chat and anthropic-messages, and its code for openai-responses" {
+  let apis : Array[@llm.Api] = [OpenaiChat, OpenaiResponses, AnthropicMessages]
+  inspect(
+    apis.map(api => "\{api.name()}: \{@llm.error_kind_member(api)}").join("\n"),
+    content=(
+      #|openai-chat: type
+      #|openai-responses: code
+      #|anthropic-messages: type
+    ),
+  )
+}
+
+///|
+test "an OpenAI error's type or code is any non-empty string; anything else is refused" {
+  let read = (api : @llm.Api, value : Json) => {
+    match @llm.read_error_kind(api, value) {
+      Ok(kind) => "\{api.name()} \{value.stringify()}: \{kind}"
+      Err(message) => "\{api.name()} \{value.stringify()}: \{message}"
+    }
+  }
+  inspect(
+    [
+      read(OpenaiChat, "server_error"),
+      read(OpenaiChat, "overloaded_error"),
+      read(OpenaiChat, "x"),
+      read(OpenaiChat, ""),
+      read(OpenaiChat, 1),
+      read(OpenaiChat, Json::null()),
+      read(OpenaiResponses, "server_error"),
+      read(OpenaiResponses, "rate_limit_exceeded"),
+      read(OpenaiResponses, ""),
+      read(OpenaiResponses, ["server_error"]),
+    ].join("\n"),
+    content=(
+      #|openai-chat "server_error": server_error
+      #|openai-chat "overloaded_error": overloaded_error
+      #|openai-chat "x": x
+      #|openai-chat "": must be a non-empty string
+      #|openai-chat 1: must be a non-empty string
+      #|openai-chat null: must be a non-empty string
+      #|openai-responses "server_error": server_error
+      #|openai-responses "rate_limit_exceeded": rate_limit_exceeded
+      #|openai-responses "": must be a non-empty string
+      #|openai-responses ["server_error"]: must be a non-empty string
+    ),
+  )
+}
+
+///|
+test "an anthropic-messages error's type is one of Anthropic's documented error types; any other value is refused with the list" {
+  let read = (value : Json) => {
+    match @llm.read_error_kind(AnthropicMessages, value) {
+      Ok(kind) => "\{value.stringify()}: \{kind}"
+      Err(message) => "\{value.stringify()}: \{message}"
+    }
+  }
+  inspect(
+    [
+      read("invalid_request_error"),
+      read("authentication_error"),
+      read("billing_error"),
+      read("permission_error"),
+      read("not_found_error"),
+      read("conflict_error"),
+      read("request_too_large"),
+      read("rate_limit_error"),
+      read("api_error"),
+      read("timeout_error"),
+      read("overloaded_error"),
+      read("server_error"),
+      read("Overloaded_Error"),
+      read(""),
+      read(529),
+    ].join("\n"),
+    content=(
+      #|"invalid_request_error": invalid_request_error
+      #|"authentication_error": authentication_error
+      #|"billing_error": billing_error
+      #|"permission_error": permission_error
+      #|"not_found_error": not_found_error
+      #|"conflict_error": conflict_error
+      #|"request_too_large": request_too_large
+      #|"rate_limit_error": rate_limit_error
+      #|"api_error": api_error
+      #|"timeout_error": timeout_error
+      #|"overloaded_error": overloaded_error
+      #|"server_error": must be an error type of anthropic-messages: "invalid_request_error", "authentication_error", "billing_error", "permission_error", "not_found_error", "conflict_error", "request_too_large", "rate_limit_error", "api_error", "timeout_error" or "overloaded_error"
+      #|"Overloaded_Error": must be an error type of anthropic-messages: "invalid_request_error", "authentication_error", "billing_error", "permission_error", "not_found_error", "conflict_error", "request_too_large", "rate_limit_error", "api_error", "timeout_error" or "overloaded_error"
+      #|"": must be an error type of anthropic-messages: "invalid_request_error", "authentication_error", "billing_error", "permission_error", "not_found_error", "conflict_error", "request_too_large", "rate_limit_error", "api_error", "timeout_error" or "overloaded_error"
+      #|529: must be an error type of anthropic-messages: "invalid_request_error", "authentication_error", "billing_error", "permission_error", "not_found_error", "conflict_error", "request_too_large", "rate_limit_error", "api_error", "timeout_error" or "overloaded_error"
+    ),
+  )
+}
+
+///|
+test "an error's after may reach the end of the text, counted in code points, and not pass it" {
+  let check = (after : Int, strings : @llm.Strings) => {
+    match @llm.check_error_after(after, strings.text) {
+      Ok(_) => "\{after}: ok"
+      Err(message) => "\{after}: \{message}"
+    }
+  }
+  let text = @llm.Strings(text="👍🏽 Hi")
+  let chunks = @llm.Strings(chunks=["", "Hel", "", "lo"])
+  let empty = @llm.Strings(tool_calls=[@llm.ToolCall(name="f", arguments={})])
+  inspect(
+    [
+      check(0, text),
+      check(5, text),
+      check(6, text),
+      check(5, chunks),
+      check(6, chunks),
+      check(0, empty),
+      check(1, empty),
+      check(2, @llm.Strings(text="a")),
+    ].join("\n"),
+    content=(
+      #|0: ok
+      #|5: ok
+      #|6: is past the end of the text, which has 5 code points
+      #|5: ok
+      #|6: is past the end of the text, which has 5 code points
+      #|0: ok
+      #|1: is past the end of the text, which has 0 code points
+      #|2: is past the end of the text, which has 1 code point
+    ),
+  )
+}

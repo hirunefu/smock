@@ -297,10 +297,24 @@ test "a body that is not a JSON object copies nothing: every setting takes the e
 }
 
 ///|
-test "background: true and stream: true get the ordinary JSON reply" {
+test "background: true gets the ordinary reply, not a queued one: the JSON reply, or with stream: true the stream, which copies it" {
   let shown = (request : Json) => {
     let reply = responses_reply("Hi", request=Some(request))
-    "\{reply.content_type}: status \{response_member(reply, "status")}, background \{response_member(reply, "background")}"
+    match reply.body {
+      Json(_) =>
+        "\{reply.content_type}: status \{response_member(reply, "status")}, background \{response_member(reply, "background")}"
+      Events(events) => {
+        guard @json.parse(events[events.length() - 1].data)
+          is { "response": { "status": status, .. } as response, .. } else {
+          fail("no closing event")
+        }
+        let background = match response {
+          { "background": background, .. } => background.stringify()
+          _ => "-"
+        }
+        "\{reply.content_type}: \{events[0].event.unwrap_or("-")} first, status \{status.stringify()}, background \{background}"
+      }
+    }
   }
   inspect(
     [
@@ -310,8 +324,8 @@ test "background: true and stream: true get the ordinary JSON reply" {
     ].join("\n"),
     content=(
       #|application/json: status "completed", background true
-      #|application/json: status "completed", background -
-      #|application/json: status "completed", background true
+      #|text/event-stream: response.created first, status "completed", background -
+      #|text/event-stream: response.created first, status "completed", background true
     ),
   )
 }
@@ -469,7 +483,7 @@ test "with chunks, the message item's text is their join, and chunkSize changes 
     let reply = @llm.reply(
       @llm.Declaration(api=OpenaiResponses, chunk_size~),
       strings,
-      request=Some({ "stream": true }),
+      request=Some({ "model": "gpt-6-astra" }),
       now=received,
       ids=@llm.ids_generator(7),
     )

@@ -1,0 +1,44 @@
+mocks:
+  - name: llm
+stubs:
+  - id: chat
+    mock: llm
+    request: { method: POST, path: /v1/chat/completions }
+    responses:
+      - status: 200
+        llm:
+          api: openai-chat
+          text: Hello! How can I assist you today?
+          error: { after: 6, type: server_error, message: The server had an error. }
+      - status: 200
+        llm:
+          api: openai-chat
+          chunks: ["", Hel, "", lo]
+          toolCalls: [{ name: get_weather, arguments: { city: Paris } }]
+          error: { after: 5, type: server_error, message: Overloaded }
+      - status: 200
+        llm:
+          api: openai-chat
+          error: { type: x, message: "." }
+  - id: responses
+    mock: llm
+    request: { method: POST, path: /v1/responses }
+    response:
+      status: 200
+      llm:
+        api: openai-responses
+        text: Hello!
+        error: { after: 0, code: server_error, message: The server had an error. }
+  - id: messages
+    mock: llm
+    request: { method: POST, path: /v1/messages }
+    responses:
+      - status: 200
+        llm:
+          api: anthropic-messages
+          text: Hello!
+          error: { after: 6, type: overloaded_error, message: Overloaded }
+      - status: 200
+        llm:
+          api: anthropic-messages
+          error: { type: rate_limit_error, message: Rate limited }

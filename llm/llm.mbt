@@ -79,14 +79,64 @@ pub fn read_stop_reason(api : Api, value : Json) -> Result[StopReason, String] {
   if value is String(word) && words.contains(word) {
     return Ok({ word, })
   }
-  let listed = StringBuilder()
+  Err("must be a stop reason of \{api.name()}: \{listed(words)}")
+}
+
+///|
+/// `words` as a load error lists them: each one quoted, separated by
+/// commas, the last one after "or".
+fn listed(words : ReadOnlyArray[String]) -> String {
+  let out = StringBuilder()
   for i, word in words {
     if i > 0 {
-      listed.write_string(if i == words.length() - 1 { " or " } else { ", " })
+      out.write_string(if i == words.length() - 1 { " or " } else { ", " })
     }
-    listed.write_string("\"\{word}\"")
+    out.write_string("\"\{word}\"")
   }
-  Err("must be a stop reason of \{api.name()}: \{listed}")
+  out.to_string()
+}
+
+///|
+/// The member of a mid-stream error that gives the vendor's kind of error:
+/// `type`, or `code` for `openai-responses`, whose error event names it so.
+pub fn error_kind_member(api : Api) -> String {
+  match api {
+    OpenaiChat | AnthropicMessages => "type"
+    OpenaiResponses => "code"
+  }
+}
+
+///|
+/// Anthropic's documented error types, in the order its reference lists
+/// them.
+let anthropic_error_types : ReadOnlyArray[String] = [
+  "invalid_request_error", "authentication_error", "billing_error", "permission_error",
+  "not_found_error", "conflict_error", "request_too_large", "rate_limit_error", "api_error",
+  "timeout_error", "overloaded_error",
+]
+
+///|
+/// The load check of a mid-stream error's `type`, or `code` for
+/// `openai-responses`, on a Stub of `api`: the kind that `value` writes, or
+/// the message of the load error. An OpenAI type or code is any non-empty
+/// string; an `anthropic-messages` type is one of Anthropic's documented
+/// error types, which the message lists.
+pub fn read_error_kind(api : Api, value : Json) -> Result[String, String] {
+  match api {
+    OpenaiChat | OpenaiResponses =>
+      match value {
+        String(kind) if kind != "" => Ok(kind)
+        _ => Err("must be a non-empty string")
+      }
+    AnthropicMessages =>
+      match value {
+        String(kind) if anthropic_error_types.contains(kind) => Ok(kind)
+        _ =>
+          Err(
+            "must be an error type of \{api.name()}: \{listed(anthropic_error_types)}",
+          )
+      }
+  }
 }
 
 ///|
@@ -104,21 +154,50 @@ pub struct Declaration {
   /// content. For `openai-responses` it is an incomplete reason, and `None`
   /// means the reply completed.
   stop_reason : StopReason?
+  /// The error that cuts the stream, or `None` for a stream that ends as
+  /// usual. Its message is among the strings.
+  error : MidStreamError?
 } derive(Debug, Eq)
 
 ///|
 /// A declaration for the API `api` whose pieces of text hold `chunk_size`
 /// code points, 4 by default, and whose reply reports the token counts
 /// `usage`, both 0 by default, and the stop reason `stop_reason`, derived
-/// when it is left out. The definitions check that `chunk_size` is from 1
-/// to `max_chunk_size`.
+/// when it is left out. Its stream is cut by `error` when given. The
+/// definitions check that `chunk_size` is from 1 to `max_chunk_size`.
 pub fn Declaration::Declaration(
   api~ : Api,
   chunk_size? : Int = default_chunk_size,
   usage? : Usage = Usage(input=0, output=0),
   stop_reason? : StopReason,
+  error? : MidStreamError,
 ) -> Declaration {
-  { api, chunk_size, usage, stop_reason, }
+  { api, chunk_size, usage, stop_reason, error, }
+}
+
+///|
+/// A mid-stream error as `error` declares it, apart from its message: the
+/// API's own error, which a stream sends after part of its text and in
+/// place of the rest of the reply. A request that does not stream gets the
+/// ordinary reply.
+pub struct MidStreamError {
+  /// `after`: how many code points of the text the stream sends before the
+  /// error, from 0.
+  after : Int
+  /// The error's `type`, or its `code` for `openai-responses`, sent as
+  /// written.
+  kind : String
+} derive(Debug, Eq)
+
+///|
+/// The error that follows `after` code points of the text, whose `type`, or
+/// `code` for `openai-responses`, is `kind`. The definitions check `kind`
+/// with `read_error_kind`, and that `after` is not past the text.
+pub fn MidStreamError::MidStreamError(
+  after~ : Int,
+  kind~ : String,
+) -> MidStreamError {
+  { after, kind, }
 }
 
 ///|
@@ -148,6 +227,24 @@ pub fn Usage::Usage(input~ : Int64, output~ : Int64) -> Usage {
 pub let max_token_count : Int64 = 9_007_199_254_740_991L
 
 ///|
+/// The load check of a mid-stream error's `after` on a reply whose text,
+/// as written, is `text`, the join of its chunks when it gives them: it may
+/// reach the end of the text, counted in code points, and not pass it. The
+/// message of the load error gives the text's length.
+pub fn check_error_after(after : Int, text : String) -> Result[Unit, String] {
+  let mut length = 0
+  for _ in text {
+    length += 1
+  }
+  if after > length {
+    let unit = if length == 1 { "code point" } else { "code points" }
+    Err("is past the end of the text, which has \{length} \{unit}")
+  } else {
+    Ok(())
+  }
+}
+
+///|
 /// The strings of a declaration, as written, or rendered for the request.
 pub struct Strings {
   /// The text of the reply: empty when left out, or the join of `chunks`.
@@ -163,25 +260,37 @@ pub struct Strings {
   /// The tool calls, after the text, in the order written: none when left
   /// out.
   tool_calls : ReadOnlyArray[ToolCall]
+  /// The message of the declaration's mid-stream error: empty when it
+  /// declares none.
+  error_message : String
 } derive(Debug, Eq)
 
 ///|
 /// The strings of a reply whose text is `text`, empty by default; or, with
 /// `chunks`, whose pieces are its elements and whose text is their join,
 /// in place of `text`. The definitions refuse `text` beside `chunks`. Its
-/// id is `id` when given and its model `model` when given, and its tool
-/// calls `tool_calls`, none by default.
+/// id is `id` when given and its model `model` when given, its tool calls
+/// `tool_calls`, none by default, and the message of its mid-stream error
+/// `error_message`, empty by default.
 pub fn Strings::Strings(
   text? : String = "",
   chunks? : ReadOnlyArray[String],
   id? : String,
   model? : String,
   tool_calls? : ReadOnlyArray[ToolCall] = [],
+  error_message? : String = "",
 ) -> Strings {
   match chunks {
     Some(chunks) =>
-      { text: chunks.join(""), chunks: Some(chunks), id, model, tool_calls, }
-    None => { text, chunks: None, id, model, tool_calls, }
+      {
+        text: chunks.join(""),
+        chunks: Some(chunks),
+        id,
+        model,
+        tool_calls,
+        error_message,
+      }
+    None => { text, chunks: None, id, model, tool_calls, error_message, }
   }
 }
 
@@ -250,6 +359,24 @@ pub struct Reply {
   request_id : (String, String)
   /// The JSON reply, or the stream's events.
   body : ReplyBody
+  /// What the waits of the stream complete, its closing event, or `None`
+  /// when no event depends on them.
+  priv closing : Closing?
+}
+
+///|
+/// The closing event of a Responses stream that completes, the stream's
+/// last, whose `completed_at` is the time received plus the stream's waits
+/// up to it. Until the waits are handed over, it gives the time received,
+/// as with no wait.
+priv struct Closing {
+  /// The time the request was received, in milliseconds since the Unix
+  /// epoch.
+  received : Int64
+  /// The Response object the closing event carries.
+  response : Map[String, Json]
+  /// The closing event's `sequence_number`.
+  sequence_number : Int
 }
 
 ///|
@@ -295,11 +422,11 @@ pub enum WaitSlot {
 /// request whose body is the JSON `request`, or `None` when the body is
 /// not JSON, received at `now` (milliseconds since the Unix epoch): the
 /// stream when the body is a JSON object whose `stream` is exactly `true`,
-/// otherwise the JSON reply. An `openai-responses` declaration gives the
-/// JSON reply to both, since its stream is not written yet. Its ids draw
-/// from `ids`, the request's ids generator, and the reply's id is the
-/// strings' `id` when given, as is each tool call's call id. Its model is
-/// the strings' `model` when given, otherwise the request's.
+/// otherwise the JSON reply. A declared mid-stream error cuts an
+/// `openai-chat` stream; the JSON reply leaves it out. Its ids draw from
+/// `ids`, the request's ids generator, and the reply's id is the strings'
+/// `id` when given, as is each tool call's call id. Its model is the
+/// strings' `model` when given, otherwise the request's.
 pub fn reply(
   declaration : Declaration,
   strings : Strings,
@@ -340,18 +467,34 @@ pub fn reply(
         )
       }
     }
-    // A streamed request gets the JSON reply too, for now.
-    OpenaiResponses =>
-      responses_reply(
-        declaration,
-        strings,
-        id=reply_id(strings, "resp_", ids),
-        message_id="msg_" + ids.message,
-        created~,
-        model~,
-        request~,
-        request_id=("x-request-id", "req_" + ids.request),
-      )
+    OpenaiResponses => {
+      let id = reply_id(strings, "resp_", ids)
+      let message_id = "msg_" + ids.message
+      let request_id = ("x-request-id", "req_" + ids.request)
+      if asks_to_stream(request) {
+        responses_stream(
+          declaration,
+          strings,
+          id~,
+          message_id~,
+          received=now,
+          model~,
+          request~,
+          request_id~,
+        )
+      } else {
+        responses_reply(
+          declaration,
+          strings,
+          id~,
+          message_id~,
+          created~,
+          model~,
+          request~,
+          request_id~,
+        )
+      }
+    }
     AnthropicMessages => {
       let id = reply_id(strings, "msg_", ids)
       let request_id = ("request-id", "req_" + ids.request)
@@ -395,15 +538,38 @@ fn reply_id(strings : Strings, prefix : String, ids : Ids) -> String {
 /// stream is sent: `waits[i]` milliseconds before the `i`-th event, 0 for
 /// an event that takes no wait, one for each event, or no element at all
 /// when no event waits. An event whose content depends on the waits is
-/// completed with them. No Chat Completions or Anthropic Messages event
-/// does, so their streams are left as they are, and a JSON reply has no
-/// wait.
+/// completed with them: the `completed_at` of a Responses stream's
+/// `response.completed`, the time received plus the waits up to it, in
+/// whole seconds. No Chat Completions or Anthropic Messages event depends
+/// on them, nor does `response.incomplete`, whose `completed_at` is null,
+/// so those streams are left as they are, and a JSON reply has no wait.
 pub fn Reply::complete(self : Reply, waits : FixedArray[Int]) -> Unit {
-  // Nothing to complete yet: only Chat Completions and Messages streams are
-  // written, and an API whose events depend on the waits completes them
-  // here.
-  ignore(self)
-  ignore(waits)
+  guard self.closing is Some(closing) && self.body is Events(events) else {
+    return
+  }
+  // The closing event is the last, so every wait comes before it, its own
+  // included.
+  let mut waited = 0L
+  for i in 0..<waits.length() {
+    waited += waits[i].to_int64()
+  }
+  let completed_at = (closing.received + waited) / 1000L
+  // The event was written with the time received, as with no wait.
+  if completed_at == closing.received / 1000L {
+    return
+  }
+  closing.response["completed_at"] = Json::number(completed_at.to_double())
+  let last = events.length() - 1
+  events[last] = {
+    wait: events[last].wait,
+    event: events[last].event,
+    data: event_data(
+      "response.completed",
+      "\"response\":\{@template.compact_json(Json::object(closing.response))}",
+      closing.sequence_number,
+      "",
+    ),
+  }
 }
 
 ///|
@@ -570,6 +736,7 @@ fn chat_reply(
     content_type: "application/json",
     request_id,
     body: Json(@template.compact_json_bytes(body)),
+    closing: None,
   }
 }
 
@@ -624,7 +791,10 @@ fn chat_finish_reason(declaration : Declaration, strings : Strings) -> String {
 /// per piece of its arguments, with the index alone. The closing chunk
 /// gives the finish reason, and `[DONE]` ends the stream. With `usage`,
 /// every chunk carries `"usage":null`, and the usage chunk, with no
-/// choice, comes before `[DONE]`.
+/// choice, comes before `[DONE]`. A declared mid-stream error cuts the
+/// text after its `after` code points and follows it as an error data
+/// frame with the message `strings.error_message`, in place of the tool
+/// calls and every chunk after them, so the stream has no end marker.
 fn chat_stream(
   declaration : Declaration,
   strings : Strings,
@@ -638,7 +808,11 @@ fn chat_stream(
   let chunks = ChatChunks::new(id~, created~, model~, usage~)
   let tool_calls = strings.tool_calls
   let pace = Pace::new()
-  let text_pieces = strings.text_pieces(declaration.chunk_size)
+  let text_pieces = match declaration.error {
+    Some(error) =>
+      pieces_before(strings.text_pieces(declaration.chunk_size), error.after)
+    None => strings.text_pieces(declaration.chunk_size)
+  }
   let opening = if strings.has_content() {
     "{\"role\":\"assistant\",\"content\":\"\"}"
   } else {
@@ -657,6 +831,20 @@ fn chat_stream(
       event: None,
       data: chunks.chunk(delta, "null"),
     })
+  }
+  if declaration.error is Some(error) {
+    // The error takes the wait a next piece would.
+    events.push({
+      wait: pace.piece(),
+      event: None,
+      data: chat_error(error, strings.error_message),
+    })
+    return {
+      content_type: "text/event-stream",
+      request_id,
+      body: Events(events),
+      closing: None,
+    }
   }
   for k in 0..<tool_calls.length() {
     let call = tool_calls[k]
@@ -698,7 +886,22 @@ fn chat_stream(
     })
   }
   events.push({ wait: NoWait, event: None, data: "[DONE]", })
-  { content_type: "text/event-stream", request_id, body: Events(events), }
+  {
+    content_type: "text/event-stream",
+    request_id,
+    body: Events(events),
+    closing: None,
+  }
+}
+
+///|
+/// The data of Chat Completions' error frame for `error` with the message
+/// `message`: an `error` object, in place of a chunk, whose `param` and
+/// `code` are null.
+fn chat_error(error : MidStreamError, message : String) -> String {
+  let message = @template.compact_json(Json::string(message))
+  let kind = @template.compact_json(Json::string(error.kind))
+  "{\"error\":{\"message\":\{message},\"type\":\{kind},\"param\":null,\"code\":null}}"
 }
 
 ///|
@@ -789,26 +992,8 @@ fn responses_reply(
   request~ : Json?,
   request_id~ : (String, String),
 ) -> Reply {
-  let status = match declaration.stop_reason {
-    Some(_) => "incomplete"
-    None => "completed"
-  }
-  let message : Json = {
-    "id": Json::string(message_id),
-    "type": "message",
-    "status": Json::string(status),
-    "role": "assistant",
-    "content": [
-      {
-        "type": "output_text",
-        "text": Json::string(strings.text),
-        "annotations": [],
-        "logprobs": [],
-      },
-    ],
-  }
+  let status = responses_status(declaration)
   let body = response_object(
-    declaration,
     id~,
     created~,
     model~,
@@ -820,38 +1005,85 @@ fn responses_reply(
     } else {
       Json::number(created.to_double())
     },
-    output=[message],
+    incomplete_details=incomplete_details(declaration),
+    output=[message_item(message_id, status, strings.text)],
     usage=responses_usage(declaration.usage),
   )
   {
     content_type: "application/json",
     request_id,
-    body: Json(@template.compact_json_bytes(body)),
+    body: Json(@template.compact_json_bytes(Json::object(body))),
+    closing: None,
   }
 }
 
 ///|
-/// The Response object of `declaration` whose id is `id`, `created_at`
-/// `created` (seconds since the Unix epoch) and model `model`, with the
-/// members `status`, `completed_at`, `output` and `usage` given, and the
-/// settings it copies from `request`, the request's JSON body. Its members
-/// and their order are the reference's examples', and the members the
-/// examples do not show, which the request may set, sit in the alphabetical
-/// order the examples keep. Each setting is copied as given, without being
-/// interpreted; one the request leaves out takes the example's value, or is
-/// left out when the examples do not show it. `service_tier` keeps the
-/// example's value, and `conversation` is not copied.
+/// The status `declaration`'s Response ends with: `incomplete` when it
+/// writes a stop reason, an incomplete reason, otherwise `completed`.
+fn responses_status(declaration : Declaration) -> String {
+  match declaration.stop_reason {
+    Some(_) => "incomplete"
+    None => "completed"
+  }
+}
+
+///|
+/// The `incomplete_details` of `declaration`'s Response once it ends: the
+/// incomplete reason written, or null for a Response that completed.
+fn incomplete_details(declaration : Declaration) -> Json {
+  match declaration.stop_reason {
+    Some(reason) => { "reason": Json::string(reason.word) }
+    None => Json::null()
+  }
+}
+
+///|
+/// The Responses message item whose id is `id` and status `status`, with
+/// `text` in its one `output_text` part.
+fn message_item(id : String, status : String, text : String) -> Json {
+  {
+    "id": Json::string(id),
+    "type": "message",
+    "status": Json::string(status),
+    "role": "assistant",
+    "content": [output_text_part(text)],
+  }
+}
+
+///|
+/// The `output_text` content part whose text is `text`.
+fn output_text_part(text : String) -> Json {
+  {
+    "type": "output_text",
+    "text": Json::string(text),
+    "annotations": [],
+    "logprobs": [],
+  }
+}
+
+///|
+/// The Response object whose id is `id`, `created_at` `created` (seconds
+/// since the Unix epoch) and model `model`, with the members `status`,
+/// `completed_at`, `incomplete_details`, `output` and `usage` given, and
+/// the settings it copies from `request`, the request's JSON body, as its
+/// members in order. Its members and their order are the reference's
+/// examples', and the members the examples do not show, which the request
+/// may set, sit in the alphabetical order the examples keep. Each setting
+/// is copied as given, without being interpreted; one the request leaves
+/// out takes the example's value, or is left out when the examples do not
+/// show it. `service_tier` keeps the example's value, and `conversation`
+/// is not copied.
 fn response_object(
-  declaration : Declaration,
   id~ : String,
   created~ : Int64,
   model~ : String,
   request~ : Json?,
   status~ : String,
   completed_at~ : Json,
+  incomplete_details~ : Json,
   output~ : Json,
   usage~ : Json,
-) -> Json {
+) -> Map[String, Json] {
   let given = match request {
     Some(Object(members)) => Some(members)
     _ => None
@@ -865,10 +1097,7 @@ fn response_object(
   copy_given(object, given, "background")
   object["completed_at"] = completed_at
   object["error"] = Json::null()
-  object["incomplete_details"] = match declaration.stop_reason {
-    Some(reason) => { "reason": Json::string(reason.word) }
-    None => Json::null()
-  }
+  object["incomplete_details"] = incomplete_details
   object["instructions"] = copied(given, "instructions", Json::null())
   object["max_output_tokens"] = copied(given, "max_output_tokens", Json::null())
   copy_given(object, given, "max_tool_calls")
@@ -899,7 +1128,187 @@ fn response_object(
   object["usage"] = usage
   object["user"] = copied(given, "user", Json::null())
   object["metadata"] = copied(given, "metadata", {})
-  Json::object(object)
+  object
+}
+
+///|
+/// The Responses stream of `declaration` with the strings `strings`, whose
+/// text is cut into pieces of the declaration's chunk size unless they give
+/// its pieces, the reply's id `id`, the message item's id `message_id`, the
+/// time `received` (milliseconds since the Unix epoch), `model`, the
+/// request's JSON body `request` and the request-id header field
+/// `request_id`. Each event has an `event:` line equal to its `type`, and
+/// one `data:` line of compact JSON whose `sequence_number` counts from 0,
+/// in the members and the order of the reference's stream example:
+/// `response.created` and `response.in_progress` give the Response object
+/// in progress; the message item is opened at `output_index` 0, then its
+/// `output_text` part, then one `response.output_text.delta` follows per
+/// piece, and the part and the item are closed; `response.completed`, or
+/// `response.incomplete` when a stop reason is written, gives the whole
+/// Response object. No `[DONE]` follows. The closing event's
+/// `completed_at` is the time received until `Reply::complete` adds the
+/// stream's waits.
+fn responses_stream(
+  declaration : Declaration,
+  strings : Strings,
+  id~ : String,
+  message_id~ : String,
+  received~ : Int64,
+  model~ : String,
+  request~ : Json?,
+  request_id~ : (String, String),
+) -> Reply {
+  let created = received / 1000L
+  let pieces = strings.text_pieces(declaration.chunk_size)
+  let pace = Pace::new()
+  let out = ResponsesEvents::new(pieces.length() + 8)
+  // The Response in progress, the same in both opening events.
+  let opening = response_object(
+    id~,
+    created~,
+    model~,
+    request~,
+    status="in_progress",
+    completed_at=Json::null(),
+    incomplete_details=Json::null(),
+    output=[],
+    usage=Json::null(),
+  )
+  let opening = "\"response\":\{@template.compact_json(Json::object(opening))}"
+  out.push(NoWait, "response.created", opening)
+  out.push(NoWait, "response.in_progress", opening)
+  // The message item, the reply's first, at output_index 0.
+  let item_id = @template.compact_json(Json::string(message_id))
+  out.push(
+    NoWait,
+    "response.output_item.added",
+    "\"output_index\":0,\"item\":{\"id\":\{item_id},\"type\":\"message\",\"status\":\"in_progress\",\"role\":\"assistant\",\"content\":[]}",
+  )
+  let part_of = "\"item_id\":\{item_id},\"output_index\":0,\"content_index\":0"
+  out.push(
+    NoWait,
+    "response.content_part.added",
+    "\{part_of},\"part\":\{@template.compact_json(output_text_part(""))}",
+  )
+  for piece in pieces {
+    out.push(
+      pace.piece(),
+      "response.output_text.delta",
+      "\{part_of},\"delta\":\{@template.compact_json(Json::string(piece))}",
+      after=no_logprobs,
+    )
+  }
+  // A reply with no piece waits before its first closing event.
+  out.push(
+    pace.closing(),
+    "response.output_text.done",
+    "\{part_of},\"text\":\{@template.compact_json(Json::string(strings.text))}",
+    after=no_logprobs,
+  )
+  out.push(
+    pace.closing(),
+    "response.content_part.done",
+    "\{part_of},\"part\":\{@template.compact_json(output_text_part(strings.text))}",
+  )
+  let status = responses_status(declaration)
+  let item = message_item(message_id, status, strings.text)
+  out.push(
+    pace.closing(),
+    "response.output_item.done",
+    "\"output_index\":0,\"item\":\{@template.compact_json(item)}",
+  )
+  // Until the waits are handed over, the Response completes when it is
+  // received, as with no wait. An incomplete one never completes.
+  let completes = declaration.stop_reason is None
+  let response = response_object(
+    id~,
+    created~,
+    model~,
+    request~,
+    status~,
+    completed_at=if completes {
+      Json::number(created.to_double())
+    } else {
+      Json::null()
+    },
+    incomplete_details=incomplete_details(declaration),
+    output=[item],
+    usage=responses_usage(declaration.usage),
+  )
+  let sequence_number = out.next
+  out.push(
+    pace.closing(),
+    if completes {
+      "response.completed"
+    } else {
+      "response.incomplete"
+    },
+    "\"response\":\{@template.compact_json(Json::object(response))}",
+  )
+  {
+    content_type: "text/event-stream",
+    request_id,
+    body: Events(out.events),
+    closing: if completes {
+      Some({ received, response, sequence_number, })
+    } else {
+      None
+    },
+  }
+}
+
+///|
+/// The members that end a text event of a Responses stream, after its
+/// `sequence_number`, as the reference's example places them: no log
+/// probabilities.
+let no_logprobs : String = ",\"logprobs\":[]"
+
+///|
+/// The events of one Responses stream, numbered as they are added.
+priv struct ResponsesEvents {
+  /// The events so far, in the order they are sent.
+  events : Array[Event]
+  /// The `sequence_number` of the next event.
+  mut next : Int
+}
+
+///|
+/// The events of a new stream, with room for `capacity` of them.
+fn ResponsesEvents::new(capacity : Int) -> ResponsesEvents {
+  { events: Array(capacity~), next: 0, }
+}
+
+///|
+/// Adds the event of type `kind` whose members after `type` and before
+/// `sequence_number` are `members`, and after it `after`, each given as
+/// compact JSON, with the wait slot `wait` and the next `sequence_number`.
+fn ResponsesEvents::push(
+  self : ResponsesEvents,
+  wait : WaitSlot,
+  kind : String,
+  members : String,
+  after? : String = "",
+) -> Unit {
+  let sequence_number = self.next
+  self.next += 1
+  self.events.push({
+    wait,
+    event: Some(kind),
+    data: event_data(kind, members, sequence_number, after),
+  })
+}
+
+///|
+/// The data of the Responses event of type `kind` whose members after
+/// `type` are `members`, then `sequence_number`, then `after`, each given
+/// as compact JSON.
+fn event_data(
+  kind : String,
+  members : String,
+  sequence_number : Int,
+  after : String,
+) -> String {
+  "{\"type\":\"\{kind}\",\{members},\"sequence_number\":\{sequence_number}\{after}}"
 }
 
 ///|
@@ -995,6 +1404,7 @@ fn messages_reply(
     content_type: "application/json",
     request_id,
     body: Json(@template.compact_json_bytes(Json::object(body))),
+    closing: None,
   }
 }
 
@@ -1183,7 +1593,12 @@ fn messages_stream(
     event: Some("message_stop"),
     data: "{\"type\":\"message_stop\"}",
   })
-  { content_type: "text/event-stream", request_id, body: Events(events), }
+  {
+    content_type: "text/event-stream",
+    request_id,
+    body: Events(events),
+    closing: None,
+  }
 }
 
 ///|
@@ -1259,6 +1674,52 @@ fn pieces(text : String, size : Int) -> Array[String] {
     out.push(piece.to_string())
   }
   out
+}
+
+///|
+/// The pieces of `pieces` that a stream cut after `after` code points of
+/// its text sends: none when `after` is 0; otherwise those before the cut,
+/// an empty one included, and the piece that reaches the cut, ending there.
+/// The pieces after it are not sent, empty ones included. When the pieces
+/// hold fewer code points, all of them are sent.
+fn pieces_before(pieces : ArrayView[String], after : Int) -> ArrayView[String] {
+  if after == 0 {
+    return pieces[:0]
+  }
+  let mut left = after
+  for i in 0..<pieces.length() {
+    let piece = pieces[i]
+    let mut held = 0
+    for _ in piece {
+      held += 1
+    }
+    if held == left {
+      return pieces[:i + 1]
+    }
+    if held > left {
+      // The piece that holds the cut ends there.
+      let sent = pieces[:i].to_owned()
+      sent.push(first_code_points(piece, left))
+      return sent[:]
+    }
+    left -= held
+  }
+  pieces
+}
+
+///|
+/// The first `count` code points of `text`, which holds more.
+fn first_code_points(text : String, count : Int) -> String {
+  let out = StringBuilder()
+  let mut written = 0
+  for c in text {
+    if written == count {
+      break
+    }
+    out.write_char(c)
+    written += 1
+  }
+  out.to_string()
 }
 
 ///|
