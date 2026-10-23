@@ -108,11 +108,16 @@ of each GitHub release include its section
   `data: {"error": …}` frame, which openai-python raises as `APIError`. A
   request that does not stream gets the ordinary reply. `openai-responses`
   gives `code` in place of `type`, and `anthropic-messages` one of
-  Anthropic's error types; their streams do not send the error yet. It
-  works with request conditions, `responses`, Faults, Ephemeral Stubs and
-  the Journal. `smock render` and the Admin render operation show the
-  reply the sample's body asks for, the JSON body or a stream's events,
-  each event with its wait, with the ids and the waits the seed fixes. See
+  Anthropic's error types; their streams do not send the error yet. With
+  `template: true`, the text, each chunk, `id`, `model` and each tool
+  call's `name`, `id` and `arguments` are templates: the text is rendered
+  whole, then cut into pieces, what they insert is JSON-escaped on the
+  wire, and a template that fails gives the 500 `template failed` and no
+  stream. It works with request conditions, `responses`, Faults,
+  Scenarios, Variables, Data buckets, Ephemeral Stubs and the Journal.
+  `smock render` and the Admin render operation show the reply the
+  sample's body asks for, the JSON body or a stream's events, each event
+  with its wait, with the ids and the waits the seed fixes. See
   [LLM responses](docs/definition-files.md#llm-responses).
 
 ### Changed

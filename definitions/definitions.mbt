@@ -870,11 +870,113 @@ pub struct LlmReply {
   /// The declaration, checked when the definition set was loaded or the
   /// Stub was added.
   declaration : @llm.Declaration
-  /// Its strings, as written.
-  strings : @llm.Strings
+  /// Its strings, as written or rendered for each request.
+  strings : LlmStrings
   /// The pacing of its stream, which the engine draws.
   timing : LlmTiming
 } derive(Debug, Eq)
+
+///|
+/// The strings of an LLM reply: its text or chunks, its `id` and `model`,
+/// and its tool calls' ids, names and arguments.
+pub enum LlmStrings {
+  /// As written.
+  Written(@llm.Strings)
+  /// With `template` on: templates, parsed when the definition set was
+  /// loaded or the Stub was added, and rendered for each request after the
+  /// header values, before the reply is cut into pieces.
+  Templated(LlmTemplates)
+} derive(Debug, Eq)
+
+///|
+/// The templates of an LLM reply with `template` on, in the order they
+/// render, so that helpers draw in that order: `id`, `model`, the text or
+/// each chunk, then each tool call's `id`, `name` and `arguments`. They
+/// escape nothing: the reply's JSON escapes what they give.
+pub struct LlmTemplates {
+  /// `id`, a text template, or `None` for a generated id.
+  id : @template.Text?
+  /// `model`, a text template, or `None` for the request's model.
+  model : @template.Text?
+  /// The text, or each element of `chunks`.
+  text : LlmText
+  /// The tool calls, in the order written.
+  tool_calls : ReadOnlyArray[ToolCallTemplate]
+  /// The message of a mid-stream `error`, as written, never a template, or
+  /// empty when there is none.
+  error_message : String
+} derive(Debug, Eq)
+
+///|
+/// The text of an LLM reply with `template` on.
+pub enum LlmText {
+  /// `text`, rendered whole, then cut into pieces. Left out, it is empty.
+  Whole(@template.Text)
+  /// The elements of `chunks`, each rendered on its own, each one piece.
+  Chunks(ReadOnlyArray[@template.Text])
+} derive(Debug, Eq)
+
+///|
+/// A tool call of an LLM reply with `template` on.
+pub struct ToolCallTemplate {
+  /// The call id, a text template, or `None` for a generated one.
+  id : @template.Text?
+  /// The function's name, a text template.
+  name : @template.Text
+  /// The arguments.
+  arguments : ArgumentsTemplate
+} derive(Debug, Eq)
+
+///|
+/// The arguments of a tool call with `template` on.
+pub enum ArgumentsTemplate {
+  /// A string: a text template, whose output is the arguments' text.
+  Text(@template.Text)
+  /// An object: a structured template, written as compact JSON.
+  Json(@template.Structured)
+} derive(Debug, Eq)
+
+///|
+/// Whether one of the templates of the strings is one for which `text` or
+/// `json` holds, by its kind. Strings as written have none.
+fn LlmStrings::reads(
+  self : LlmStrings,
+  text : (@template.Text) -> Bool,
+  json : (@template.Structured) -> Bool,
+) -> Bool {
+  guard self is Templated(templates) else { return false }
+  if templates.id is Some(id) && text(id) {
+    return true
+  }
+  if templates.model is Some(model) && text(model) {
+    return true
+  }
+  match templates.text {
+    Whole(whole) => if text(whole) { return true }
+    Chunks(chunks) =>
+      for chunk in chunks {
+        if text(chunk) {
+          return true
+        }
+      }
+  }
+  for call in templates.tool_calls {
+    if call.id is Some(id) && text(id) {
+      return true
+    }
+    if text(call.name) {
+      return true
+    }
+    let arguments = match call.arguments {
+      Text(arguments) => text(arguments)
+      Json(arguments) => json(arguments)
+    }
+    if arguments {
+      return true
+    }
+  }
+  false
+}
 
 ///|
 /// The pacing of an LLM reply's stream, `timing`: the distributions of the
@@ -890,9 +992,8 @@ pub struct LlmTiming {
 
 ///|
 /// Whether one of the body's templates reads something: the body, or a
-/// field of an event, for which `text` or `json` holds, by its kind. A body
-/// as written has none, and neither has an LLM reply, whose strings are as
-/// written.
+/// field of an event, or of an LLM reply's strings, for which `text` or
+/// `json` holds, by its kind. A body as written has none.
 fn ResponseBody::reads(
   self : ResponseBody,
   text : (@template.Text) -> Bool,
@@ -901,7 +1002,7 @@ fn ResponseBody::reads(
   match self {
     Bytes(_) => false
     Events(_) => false
-    Llm(_) => false
+    Llm(reply) => reply.strings.reads(text, json)
     Template(Text(body)) => text(body)
     Template(Json(body)) => json(body)
     Template(Events(events)) => {
