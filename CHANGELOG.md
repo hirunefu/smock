@@ -93,8 +93,13 @@ of each GitHub release include its section
   `timing: { first, interval }` paces a stream: a wait before the first
   piece, counted from the head, and one before each later piece, each
   drawn from a distribution of the delay Fault, which `fault.seed` and
-  `--seed` replay. It works with request conditions, `responses`, Faults,
-  Ephemeral Stubs and the Journal. `smock render` and the Admin render
+  `--seed` replay. With `template: true`, the text, each chunk, `id`,
+  `model` and each tool call's `name`, `id` and `arguments` are templates:
+  the text is rendered whole, then cut into pieces, what they insert is
+  JSON-escaped on the wire, and a template that fails gives the 500
+  `template failed` and no stream. It works with request conditions,
+  `responses`, Faults, Scenarios, Variables, Data buckets, Ephemeral Stubs
+  and the Journal. `smock render` and the Admin render
   operation show the reply the sample's body asks for, the JSON body or a
   stream's events, each event with its wait, with the ids and the waits
   the seed fixes. See

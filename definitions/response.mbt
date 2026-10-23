@@ -1,8 +1,9 @@
 // Reading a Stub's response: its status, its headers, and a body given
 // inline, from a body file, as JSON, as Server-Sent Events or as an LLM
-// reply. With `template` on, the header values, the body and the events
-// are templates, parsed here, when the definition set is loaded or the Stub
-// is added, and rendered for each request by the engine.
+// reply. With `template` on, the header values, the body, the events and
+// an LLM reply's strings are templates, parsed here, when the definition
+// set is loaded or the Stub is added, and rendered for each request by the
+// engine.
 
 ///|
 /// The body of a response, as written: which field gives it, its JSON
@@ -13,7 +14,7 @@ priv enum BodyField {
   File(String, Bytes)
   JsonBody(String, Json)
   EventList(Array[EventDecl])
-  LlmField(LlmReply)
+  LlmField(LlmDecl)
 }
 
 ///|
@@ -33,6 +34,37 @@ priv enum EventValue {
   NoData
   Data(String, String)
   JsonData(String, Json)
+}
+
+///|
+/// An `llm` as written: its declaration and timing, which are never
+/// templates, and its strings, each with its JSON Pointer, which make the
+/// reply's strings as written or are parsed as its templates.
+priv struct LlmDecl {
+  declaration : @llm.Declaration
+  timing : LlmTiming
+  /// The JSON Pointer of `llm`.
+  pointer : String
+  /// `text` and its JSON Pointer, when given.
+  text : (String, String)?
+  /// Each element of `chunks` and its JSON Pointer, when given.
+  chunks : Array[(String, String)]?
+  /// `id` and its JSON Pointer, when given.
+  id : (String, String)?
+  /// `model` and its JSON Pointer, when given.
+  model : (String, String)?
+  /// The tool calls that give both a name and arguments, in the order
+  /// written.
+  tool_calls : Array[ToolCallDecl]
+}
+
+///|
+/// A tool call as written: each field with its JSON Pointer.
+priv struct ToolCallDecl {
+  name : (String, String)
+  /// An object or a string.
+  arguments : (Json, String)
+  id : (String, String)?
 }
 
 ///|
@@ -149,8 +181,14 @@ fn File::read_response(
     // Templates that fail to parse are reported, and the set is not loaded,
     // so the response they leave is never sent.
     match self.parse_templates(stub_pointer, headers, body, buckets~) {
-      Some((headers, body)) => (Templated(headers), body, false)
-      None => (Written(ReadOnlyArray::from_array([])), Bytes(b""), false)
+      Some((headers, body)) =>
+        (ResponseHeaders::Templated(headers), body, false)
+      None =>
+        (
+          ResponseHeaders::Written(ReadOnlyArray::from_array([])),
+          Bytes(b""),
+          false,
+        )
     }
   } else {
     let written = ReadOnlyArray::from_iter(
@@ -190,9 +228,9 @@ fn File::read_response(
             }),
           ),
         )
-      LlmField(reply) => Llm(reply)
+      LlmField(llm) => Llm(self.written_llm(llm))
     }
-    (Written(written), body, serves_ranges)
+    (ResponseHeaders::Written(written), body, serves_ranges)
   }
   {
     status,
@@ -210,10 +248,10 @@ fn File::read_response(
 /// Parses the templates of a response with `template` on, from its header
 /// fields as (name, value, JSON Pointer) and its body, and reports every
 /// problem in them. Returns the header fields, their values text
-/// templates, and the body: its templates, or an LLM reply as written, or
-/// `None` when one of them has a problem. `stub_pointer` is the JSON
-/// Pointer of the Stub: a template's own pointer is within the Stub. The
-/// templates may read the Data buckets `buckets`.
+/// templates, and the body: its templates, or an LLM reply with its
+/// templates, or `None` when one of them has a problem. `stub_pointer` is
+/// the JSON Pointer of the Stub: a template's own pointer is within the
+/// Stub. The templates may read the Data buckets `buckets`.
 fn File::parse_templates(
   self : File,
   stub_pointer : String,
@@ -332,8 +370,99 @@ fn File::parse_templates(
       }
       Some(Template(Events(ReadOnlyArray::from_array(templates))))
     }
-    // The strings of an LLM reply are as written.
-    LlmField(reply) => Some(Llm(reply))
+    LlmField(llm) => {
+      // Never escaped: smock writes what they give into the JSON it builds.
+      let kind = @template.TextKind::Body(Plain)
+      // `Some(None)` for a field left out, `None` for one with a problem.
+      let optional = (field : (String, String)?) => {
+        match field {
+          None => Some(None)
+          Some((source, pointer)) =>
+            text(source, pointer, kind).map(text => Some(text))
+        }
+      }
+      // Each field is parsed, so that every problem is reported.
+      let id = optional(llm.id)
+      let model = optional(llm.model)
+      let reply_text = match (llm.chunks, llm.text) {
+        (Some(chunks), _) => {
+          let parsed = []
+          for chunk in chunks {
+            if text(chunk.0, chunk.1, kind) is Some(chunk) {
+              parsed.push(chunk)
+            }
+          }
+          if parsed.length() == chunks.length() {
+            Some(LlmText::Chunks(ReadOnlyArray::from_array(parsed)))
+          } else {
+            None
+          }
+        }
+        (None, Some((source, pointer))) =>
+          text(source, pointer, kind).map(text => LlmText::Whole(text))
+        (None, None) =>
+          text("", child_pointer(llm.pointer, "text"), kind).map(text => {
+            LlmText::Whole(text)
+          })
+      }
+      let tool_calls = []
+      // The call ids with no expression, which are checked as written.
+      let literal_ids = []
+      for call in llm.tool_calls {
+        let id = optional(call.id)
+        if id is Some(Some(id)) &&
+          id.literal() is Some(value) &&
+          call.id is Some((_, pointer)) {
+          literal_ids.push((value, pointer))
+        }
+        let name = text(call.name.0, call.name.1, kind)
+        let arguments = match call.arguments {
+          (String(source), pointer) =>
+            text(source, pointer, kind).map(text => {
+              ArgumentsTemplate::Text(text)
+            })
+          (value, pointer) =>
+            match
+              @template.Structured::parse(
+                value,
+                pointer=template_pointer(stub_pointer, pointer),
+                env=self.env,
+                buckets~,
+                role="a tool call's arguments",
+              ) {
+              Ok(template) => Some(ArgumentsTemplate::Json(template))
+              Err(problems) => {
+                problems.each(report)
+                None
+              }
+            }
+        }
+        if id is Some(id) && name is Some(name) && arguments is Some(arguments) {
+          tool_calls.push(ToolCallTemplate::{ id, name, arguments, })
+        }
+      }
+      // Templated ids are compared when they are rendered.
+      self.check_tool_call_ids(literal_ids)
+      if id is Some(id) &&
+        model is Some(model) &&
+        reply_text is Some(reply_text) &&
+        tool_calls.length() == llm.tool_calls.length() {
+        Some(
+          Llm({
+            declaration: llm.declaration,
+            strings: LlmStrings::Templated({
+              id,
+              model,
+              text: reply_text,
+              tool_calls: ReadOnlyArray::from_array(tool_calls),
+            }),
+            timing: llm.timing,
+          }),
+        )
+      } else {
+        None
+      }
+    }
   }
   guard ok && body is Some(body) else { return None }
   Some((ReadOnlyArray::from_array(header_templates), body))
@@ -416,17 +545,18 @@ fn File::read_events(
 /// out; `usage`, 0 tokens when left out; `stopReason`, a word of that API,
 /// derived when left out; and `timing`, no waits when left out. It has none
 /// when `api` is missing or names no API, and then the stop reason is not
-/// checked.
-fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
+/// checked. The strings are kept with their JSON Pointers, since whether
+/// they are templates is known only once the response is read.
+fn File::read_llm(self : File, pointer : String, json : Json) -> LlmDecl? {
   guard json is Object(fields) else {
     self.error(pointer, "must be an object")
     return None
   }
   let mut api = None
-  let mut text = ""
+  let mut text = None
   let mut chunks = None
   let mut chunk_size = None
-  let mut tool_calls = None
+  let mut tool_calls = []
   let mut id = None
   let mut model = None
   let mut usage = @llm.Usage(input=0, output=0)
@@ -439,7 +569,7 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
           Ok(named) => api = Some(named)
           Err(message) => self.error(field, message)
         }
-      "text" => text = self.string(field, value).unwrap_or("")
+      "text" => text = Some((self.string(field, value).unwrap_or(""), field))
       "chunks" => chunks = Some(self.read_chunks(field, value))
       "chunkSize" =>
         chunk_size = self
@@ -450,9 +580,9 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
             max=@llm.max_chunk_size.to_int64(),
           )
           .map(n => n.to_int())
-      "toolCalls" => tool_calls = Some(self.read_tool_calls(field, value))
-      "id" => id = self.string(field, value)
-      "model" => model = self.string(field, value)
+      "toolCalls" => tool_calls = self.read_tool_calls(field, value)
+      "id" => id = self.string(field, value).map(id => (id, field))
+      "model" => model = self.string(field, value).map(model => (model, field))
       "usage" => usage = self.read_usage(field, value)
       // Checked below, against the API, which may come after it.
       "stopReason" => ()
@@ -478,10 +608,74 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
   }
   Some({
     declaration: @llm.Declaration(api~, chunk_size?, usage~, stop_reason?),
-    // With `chunks`, the text is their join, in place of `text`.
-    strings: @llm.Strings(text~, chunks?, id?, model?, tool_calls?),
     timing,
+    pointer,
+    text,
+    chunks,
+    id,
+    model,
+    tool_calls,
   })
+}
+
+///|
+/// The LLM reply that `llm` declares, its strings as written. Two of its
+/// tool calls with the same `id` are refused, since the call ids of a reply
+/// must differ.
+fn File::written_llm(self : File, llm : LlmDecl) -> LlmReply {
+  let ids = []
+  let tool_calls = []
+  for call in llm.tool_calls {
+    if call.id is Some(id) {
+      ids.push(id)
+    }
+    tool_calls.push(
+      @llm.ToolCall(
+        name=call.name.0,
+        arguments=call.arguments.0,
+        id?=call.id.map(id => id.0),
+      ),
+    )
+  }
+  self.check_tool_call_ids(ids)
+  // With `chunks`, the text is their join, in place of `text`.
+  let strings = @llm.Strings(
+    text=llm.text.map_or("", text => text.0),
+    chunks?=llm.chunks.map(chunks => {
+      ReadOnlyArray::from_iter(chunks.iter().map(chunk => chunk.0))
+    }),
+    id?=llm.id.map(id => id.0),
+    model?=llm.model.map(model => model.0),
+    tool_calls=ReadOnlyArray::from_array(tool_calls),
+  )
+  {
+    declaration: llm.declaration,
+    strings: LlmStrings::Written(strings),
+    timing: llm.timing,
+  }
+}
+
+///|
+/// Reports each tool call id of `ids`, given as (id, JSON Pointer) in the
+/// order written, that an earlier one of them has: the call ids of a reply
+/// must differ.
+fn File::check_tool_call_ids(
+  self : File,
+  ids : Array[(String, String)],
+) -> Unit {
+  // Where each id is given first.
+  let first : Map[String, String] = Map([])
+  for entry in ids {
+    let (id, pointer) = entry
+    match first.get(id) {
+      Some(earlier) =>
+        self.error(
+          pointer,
+          "the tool call id \{id.escape()} is already used at \{self.at(earlier)}",
+        )
+      None => first[id] = pointer
+    }
+  }
 }
 
 ///|
@@ -489,17 +683,16 @@ fn File::read_llm(self : File, pointer : String, json : Json) -> LlmReply? {
 /// order the reply sends them. Each one needs `name`, a non-empty text that
 /// no vendor's naming rule checks, and `arguments`, a JSON object or a
 /// string, and may give `id`, its call id, as text. A call that lacks one
-/// of them is left out. Two calls of the list with the same `id` are
-/// refused, since the call ids of a reply must differ.
+/// of them is left out. Whether two of them have the same `id` is checked
+/// once the response is read, since a templated id is compared when it is
+/// rendered.
 fn File::read_tool_calls(
   self : File,
   pointer : String,
   json : Json,
-) -> ReadOnlyArray[@llm.ToolCall] {
+) -> Array[ToolCallDecl] {
   let items = self.array(pointer, json)
   let tool_calls = []
-  // Where each fixed id is given first.
-  let ids : Map[String, String] = Map([])
   for i, item in items {
     let call_pointer = child_pointer(pointer, i.to_string())
     guard item is Object(fields) else {
@@ -512,34 +705,23 @@ fn File::read_tool_calls(
     for key, value in fields {
       let field = child_pointer(call_pointer, key)
       match key {
-        "name" => name = self.name(field, value)
+        "name" => name = self.name(field, value).map(name => (name, field))
         "arguments" =>
           match value {
-            Object(_) | String(_) => arguments = Some(value)
+            Object(_) | String(_) => arguments = Some((value, field))
             _ => self.error(field, "must be an object or a string")
           }
-        "id" => id = self.string(field, value)
+        "id" => id = self.string(field, value).map(id => (id, field))
         _ => self.unknown_field(field)
       }
     }
     self.require(fields, call_pointer, "name")
     self.require(fields, call_pointer, "arguments")
-    if id is Some(id) {
-      let id_pointer = child_pointer(call_pointer, "id")
-      match ids.get(id) {
-        Some(earlier) =>
-          self.error(
-            id_pointer,
-            "the tool call id \{id.escape()} is already used at \{self.at(earlier)}",
-          )
-        None => ids[id] = id_pointer
-      }
-    }
     if name is Some(name) && arguments is Some(arguments) {
-      tool_calls.push(@llm.ToolCall(name~, arguments~, id?))
+      tool_calls.push(ToolCallDecl::{ name, arguments, id, })
     }
   }
-  ReadOnlyArray::from_array(tool_calls)
+  tool_calls
 }
 
 ///|
@@ -574,23 +756,23 @@ fn File::read_token_count(self : File, pointer : String, json : Json) -> Int64 {
 
 ///|
 /// Reads the `chunks` of an `llm`: a list of at least one text, each one
-/// piece of the reply's text, an empty one included.
+/// piece of the reply's text, an empty one included. Each comes with its
+/// JSON Pointer.
 fn File::read_chunks(
   self : File,
   pointer : String,
   json : Json,
-) -> ReadOnlyArray[String] {
+) -> Array[(String, String)] {
   let items = self.array(pointer, json)
   if json is Array([]) {
     self.error(pointer, "must not be an empty array")
   }
   let chunks = []
   for i, item in items {
-    chunks.push(
-      self.string(child_pointer(pointer, i.to_string()), item).unwrap_or(""),
-    )
+    let field = child_pointer(pointer, i.to_string())
+    chunks.push((self.string(field, item).unwrap_or(""), field))
   }
-  ReadOnlyArray::from_array(chunks)
+  chunks
 }
 
 ///|
