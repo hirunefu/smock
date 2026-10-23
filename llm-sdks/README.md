@@ -42,11 +42,21 @@ client with `max_retries=0`, so that each call sends one request.
   parses them, usage, stop reasons, ids and the request id that the SDK
   reads from the `x-request-id` header, and what every chunk of a stream
   shares.
+- Responses: `create` with and without `stream`, and the `stream()` helper
+  with text and with two tool calls, given function tools. It checks the
+  text, the function call items and their arguments as the SDK parses
+  them, usage, ids and the request id, and what every event of a stream
+  shares: sequence numbers from 0, one id, and each item added before its
+  content and done with the ids of its added event. For a Stub with a stop
+  reason, it checks the incomplete reason, and that the helper's
+  `get_final_response()` raises `RuntimeError`, since the stream ends with
+  `response.incomplete`, as the vendor's does.
 - The reply that the `stream()` helper builds from a stream equals the one
   the SDK parses from the JSON reply, apart from differences listed by
-  name, each with its reason, in `CHAT_HELPER_DIFFERENCES` (and, for a Stub
-  whose ids are generated, `GENERATED_ID_DIFFERENCES`). Any other
-  difference fails the check.
+  name, each with its reason, in `CHAT_HELPER_DIFFERENCES` and
+  `RESPONSES_HELPER_DIFFERENCES` (and, for a Stub whose ids are generated,
+  `GENERATED_ID_DIFFERENCES` and `RESPONSES_GENERATED_ID_DIFFERENCES`).
+  Any other difference fails the check.
 
 The job fails when a check fails, or when an SDK raises where no check
 expects it to. It prints every check, and smock's log when one fails.
