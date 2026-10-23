@@ -127,3 +127,68 @@ test "the next turn, whose last message is the tool's result, matches the Stub t
     ),
   )
 }
+
+///|
+test "with timing, each piece of a tool call's arguments waits as a piece of the text does, and the event that opens the call waits for none" {
+  let h = harness([
+    paced_mock(
+      text="Hi",
+      fields=", \"toolCalls\": [{ \"name\": \"get_weather\", \"arguments\": { \"city\": \"Paris\" } }], \"timing\": { \"first\": { \"fixed\": 400 }, \"interval\": { \"fixed\": 30 } }",
+    ),
+  ])
+  let outcome = h.chat(body=stream_body("true"))
+  guard outcome.plan.body is Events(events) else { fail("the JSON reply") }
+  let lines = []
+  for event in events {
+    let data = @json.parse(event.data) catch { _ => Json::null() }
+    let carries = match data {
+      { "choices": [{ "delta": { "role": _, .. }, .. }], .. } => "opening"
+      { "choices": [{ "delta": { "content": String(piece), .. }, .. }], .. } =>
+        "text \{piece.escape()}"
+      {
+        "choices": [
+          {
+            "delta": { "tool_calls": [{ "id": _, "index": index, .. }], .. },
+            ..
+          },
+        ],
+        ..
+      } => "call \{index.stringify()} opens"
+      {
+        "choices": [
+          {
+            "delta": {
+              "tool_calls": [
+                {
+                  "index": index,
+                  "function": { "arguments": String(piece), .. },
+                  ..
+                },
+              ],
+              ..
+            },
+            ..
+          },
+        ],
+        ..
+      } => "call \{index.stringify()} arguments \{piece.escape()}"
+      { "choices": [{ "finish_reason": String(_), .. }], .. } => "closing"
+      _ => event.data
+    }
+    lines.push("\{event.delay_ms} ms: \{carries}")
+  }
+  inspect(
+    lines.join("\n"),
+    content=(
+      #|0 ms: opening
+      #|400 ms: text "Hi"
+      #|0 ms: call 0 opens
+      #|30 ms: call 0 arguments "{\"ci"
+      #|30 ms: call 0 arguments "ty\":"
+      #|30 ms: call 0 arguments "\"Par"
+      #|30 ms: call 0 arguments "is\"}"
+      #|0 ms: closing
+      #|0 ms: [DONE]
+    ),
+  )
+}

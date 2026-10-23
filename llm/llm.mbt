@@ -10,6 +10,8 @@
 pub(all) enum Api {
   /// OpenAI Chat Completions: `openai-chat`.
   OpenaiChat
+  /// Anthropic Messages: `anthropic-messages`.
+  AnthropicMessages
 } derive(Debug, Eq)
 
 ///|
@@ -17,6 +19,7 @@ pub(all) enum Api {
 pub fn Api::name(self : Api) -> String {
   match self {
     OpenaiChat => "openai-chat"
+    AnthropicMessages => "anthropic-messages"
   }
 }
 
@@ -26,7 +29,8 @@ pub fn Api::name(self : Api) -> String {
 pub fn read_api(value : Json) -> Result[Api, String] {
   match value {
     String("openai-chat") => Ok(OpenaiChat)
-    _ => Err("must be \"openai-chat\"")
+    String("anthropic-messages") => Ok(AnthropicMessages)
+    _ => Err("must be \"openai-chat\" or \"anthropic-messages\"")
   }
 }
 
@@ -47,6 +51,11 @@ fn stop_reasons(api : Api) -> ReadOnlyArray[String] {
     // `function_call` is deprecated, and still a word of the API.
     OpenaiChat =>
       ["stop", "length", "tool_calls", "content_filter", "function_call"]
+    AnthropicMessages =>
+      [
+        "end_turn", "max_tokens", "stop_sequence", "tool_use", "pause_turn", "refusal",
+        "model_context_window_exceeded",
+      ]
   }
 }
 
@@ -274,10 +283,11 @@ pub enum WaitSlot {
 /// request whose body is the JSON `request`, or `None` when the body is
 /// not JSON, received at `now` (milliseconds since the Unix epoch): the
 /// stream when the body is a JSON object whose `stream` is exactly `true`,
-/// otherwise the JSON reply. Its ids draw from `ids`, the request's ids
-/// generator, and the reply's id is the strings' `id` when given, as is
-/// each tool call's call id. Its model is the strings' `model` when given,
-/// otherwise the request's.
+/// otherwise the JSON reply. An `anthropic-messages` declaration gives the
+/// JSON reply to both, since its stream is not written yet. Its ids draw
+/// from `ids`, the request's ids generator, and the reply's id is the
+/// strings' `id` when given, as is each tool call's call id. Its model is
+/// the strings' `model` when given, otherwise the request's.
 pub fn reply(
   declaration : Declaration,
   strings : Strings,
@@ -291,12 +301,11 @@ pub fn reply(
     Some(model) => model
     None => request_model(request)
   }
-  let streams = asks_to_stream(request)
   match declaration.api {
     OpenaiChat => {
       let id = reply_id(strings, "chatcmpl-", ids)
       let request_id = ("x-request-id", "req_" + ids.request)
-      if streams {
+      if asks_to_stream(request) {
         chat_stream(
           declaration,
           strings,
@@ -319,6 +328,16 @@ pub fn reply(
         )
       }
     }
+    // A streamed request gets the JSON reply too, for now.
+    AnthropicMessages =>
+      messages_reply(
+        declaration,
+        strings,
+        id=reply_id(strings, "msg_", ids),
+        model~,
+        request~,
+        request_id=("request-id", "req_" + ids.request),
+      )
   }
 }
 
@@ -330,6 +349,20 @@ fn reply_id(strings : Strings, prefix : String, ids : Ids) -> String {
     Some(id) => id
     None => prefix + ids.reply
   }
+}
+
+///|
+/// Hands the reply the waits the engine drew for its stream, before the
+/// stream is sent: `waits[i]` milliseconds before the `i`-th event, 0 for
+/// an event that takes no wait, one for each event, or no element at all
+/// when no event waits. An event whose content depends on the waits is
+/// completed with them. No Chat Completions event does, so its stream is
+/// left as it is, and a JSON reply has no wait.
+pub fn Reply::complete(self : Reply, waits : FixedArray[Int]) -> Unit {
+  // Nothing to complete yet: only Chat Completions is written, and an API
+  // whose events depend on the waits completes them here.
+  ignore(self)
+  ignore(waits)
 }
 
 ///|
@@ -694,6 +727,90 @@ fn ChatChunks::chunk(
 /// choice, and the usage member of `usage`.
 fn ChatChunks::usage_chunk(self : ChatChunks, usage : Usage) -> String {
   "\{self.head}],\"usage\":\{@template.compact_json(chat_usage(usage))}}"
+}
+
+///|
+/// The Messages reply of `declaration` with the strings `strings`, the
+/// reply's id `id`, `model`, the request's JSON body `request` and the
+/// request-id header field `request_id`: one `message` object, in the
+/// members and the order of the replies in Anthropic's guide on working
+/// with messages, the "Hello!" and the `max_tokens` one. Its content is the
+/// text block, or no block when the text is empty, as in the vendor's
+/// refusal. A refusal also carries `stop_details`.
+fn messages_reply(
+  declaration : Declaration,
+  strings : Strings,
+  id~ : String,
+  model~ : String,
+  request~ : Json?,
+  request_id~ : (String, String),
+) -> Reply {
+  let content : Array[Json] = []
+  if strings.text != "" {
+    content.push({ "type": "text", "text": Json::string(strings.text) })
+  }
+  let stop_reason = messages_stop_reason(declaration)
+  let body : Map[String, Json] = {
+    "id": Json::string(id),
+    "type": "message",
+    "role": "assistant",
+    "content": Json::array(content),
+    "model": Json::string(model),
+    "stop_reason": Json::string(stop_reason),
+    "stop_sequence": messages_stop_sequence(stop_reason, request),
+  }
+  if stop_reason == "refusal" {
+    body["stop_details"] = refusal_details
+  }
+  body["usage"] = messages_usage(declaration.usage)
+  {
+    content_type: "application/json",
+    request_id,
+    body: Json(@template.compact_json_bytes(Json::object(body))),
+  }
+}
+
+///|
+/// The stop reason of `declaration`'s Messages reply: the one written, or
+/// the one derived from the content when none is.
+fn messages_stop_reason(declaration : Declaration) -> String {
+  match declaration.stop_reason {
+    Some(reason) => reason.word
+    // Derived: a reply with no tool call ends its turn.
+    None => "end_turn"
+  }
+}
+
+///|
+/// The `stop_sequence` of a Messages reply whose stop reason is
+/// `stop_reason`, to a request whose body is the JSON `request`: with the
+/// stop reason `stop_sequence`, the first of the request's
+/// `stop_sequences` when that is a string, otherwise null. smock does not
+/// choose which of them matched.
+fn messages_stop_sequence(stop_reason : String, request : Json?) -> Json {
+  if stop_reason == "stop_sequence" &&
+    request is Some(Object(members)) &&
+    members.get("stop_sequences") is Some(Array([String(first), ..])) {
+    Json::string(first)
+  } else {
+    Json::null()
+  }
+}
+
+///|
+/// The `stop_details` of a refusal, whose `category` and `explanation`
+/// take their documented value null.
+let refusal_details : Json = {
+  "type": "refusal",
+  "category": Json::null(),
+  "explanation": Json::null(),
+}
+
+///|
+/// Messages' usage member for `usage`: its two counts, with no cache
+/// counts, as the replies of the guide on working with messages give it.
+fn messages_usage(usage : Usage) -> Json {
+  { "input_tokens": count(usage.input), "output_tokens": count(usage.output) }
 }
 
 ///|

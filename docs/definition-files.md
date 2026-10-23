@@ -1242,7 +1242,7 @@ The fields of `llm`:
 
 | Field | Value | When left out |
 |---|---|---|
-| `api` | `openai-chat`, OpenAI Chat Completions | required |
+| `api` | `openai-chat`, OpenAI Chat Completions, or `anthropic-messages`, [Anthropic Messages](#anthropic-messages) | required |
 | `text` | the text of the reply | empty |
 | `chunks` | the text as a list of at least one piece, in place of `text` | — |
 | `chunkSize` | code points per piece of a stream, an integer from 1 to 1,000,000 | 4 |
@@ -1251,23 +1251,27 @@ The fields of `llm`:
 | `model` | the reply's model | the request's |
 | `usage` | `{input, output}`, token counts, integers from 0 to 2^53-1 | both 0 |
 | `stopReason` | a stop reason of the API, such as `length` | derived |
+| `timing` | `{first, interval}`, the [waits of a stream](#timing), each a distribution of the [delay](#delays) | no waits |
 
 - `api` names the API whose wire form the reply takes. It is required, and
   smock never infers it from the request's path, so a proxy or a base path
   of its own does not change the reply. The preset neither sets nor checks
   `request.path`: the Stub's conditions choose it, as for any Stub.
-- The reply is the assistant's message, with `text` as its `content`, or
-  `""` when the text is empty, then its [tool calls](#tool-calls), and the
-  [stop reason](#usage-and-stop-reasons) as its `finish_reason`. With tool
-  calls and empty text, `content` is `null`. Its fields
+- An `openai-chat` reply is the assistant's message, with `text` as its
+  `content`, or `""` when the text is empty, then its
+  [tool calls](#tool-calls), and the [stop reason](#usage-and-stop-reasons)
+  as its `finish_reason`. With tool calls and empty text, `content` is
+  `null`. Its fields
   and their order follow the example of OpenAI's API reference, and so do
   its fixed values, such as `refusal: null` and `service_tier: "default"`.
   `usage` has the example's members, with the
   [declared counts](#usage-and-stop-reasons) and every other count 0. There
-  is no `system_fingerprint`.
+  is no `system_fingerprint`. An `anthropic-messages` reply has
+  [its own form](#anthropic-messages).
 - smock sets `Content-Type: application/json`, or `text/event-stream` for
   a stream. A `Content-Type` the Stub gives is replaced, as for `events`.
-  smock also adds an `x-request-id` header, unless the Stub gives its own.
+  smock also adds an `x-request-id` header, or `request-id` for
+  `anthropic-messages`, unless the Stub gives its own.
   Other headers, such as a rate-limit header, are sent as written.
 - The reply's id is generated with the vendor's prefix, unless `id` fixes
   it. `created` is the time smock received the request. `model` is the
@@ -1280,16 +1284,16 @@ always. `llm` may stand in `response` or in any element of
 request in ten with an ordinary 429. Request conditions, Faults,
 Ephemeral Stubs, the Journal and [`smock render`](#rendering-a-template)
 work as for other responses: a rendering shows the JSON body, or the events
-for a sample whose body sets `stream: true`, with the ids its seed gives
-and its time as `created`. A response gives at most one of
+for a sample whose body sets `stream: true`, with the ids and the waits its
+seed gives and its time as `created`. A response gives at most one of
 `body`, `bodyFile`, `json`, `events` and `llm`. A missing or unknown `api`,
 an unknown field of `llm` or of its `usage`, a count that is not an integer
 from 0 to 2^53-1, a stop reason that is not a word of the API, the errors
-of [chunks](#chunks) and of [tool calls](#tool-calls), and `llm` beside
-another body are reported with the
-JSON Pointer of the field, by `smock check`, at startup and on a reload,
-which keeps the set served, and as 400 `invalid_stub` for an Ephemeral
-Stub.
+of [chunks](#chunks) and of [tool calls](#tool-calls), a wait of `timing`
+that is not one distribution of the delay, and `llm` beside another body
+are reported with the JSON Pointer of the field, by `smock check`, at
+startup and on a reload, which keeps the set served, and as 400
+`invalid_stub` for an Ephemeral Stub.
 
 The wire forms follow the vendors' documents as they were read on
 2026-10-22 and 2026-10-23. When a vendor changes its documented form, a
@@ -1304,7 +1308,8 @@ other request gets the JSON reply: a body that is not JSON, no `stream`,
 `stream: false`, or the string `"true"`. So one Stub serves both kinds of
 call, and an SDK reads the reply with the parser it chose for its own
 request. Only an `llm` response reads the request body for this; other
-Stubs pay nothing.
+Stubs pay nothing. An `anthropic-messages` reply has no stream yet: a
+request with `stream: true` gets its JSON reply.
 
 An `openai-chat` stream is a series of `chat.completion.chunk` objects.
 Each one is one `data:` line of compact JSON, with no `event:` line, and
@@ -1352,7 +1357,9 @@ data: [DONE]
 
 A stream travels as the events of an `events` response do:
 
-- smock sends the head and every event at once.
+- smock sends the head and the opening chunk at once, then each event
+  after the wait its [`timing`](#timing) gives. Without `timing`, every
+  event follows at once.
 - To an HTTP/1.1 client the stream is sent with chunked framing, so the
   connection carries the next request. An HTTP/1.0 client gets it
   unframed, and smock closes the connection to end it.
@@ -1365,6 +1372,10 @@ A stream travels as the events of an `events` response do:
   `reset` and `close` are unchanged.
 - The stream's [Journal](../README.md#the-journal) entry is committed
   before its last event, as for `events`.
+- A client that closes the connection mid-stream ends the stream: smock
+  notices when it next writes an event, and the Journal keeps the
+  request's entry. A [drain](../README.md#run) on SIGTERM waits for a
+  stream in progress, its waits included.
 
 ### Chunks
 
@@ -1418,6 +1429,60 @@ and its JSON reply's content is `"Thumbs up: 👍🏽"`.
   string, and a `chunkSize` that is not an integer from 1 to 1,000,000 are
   load errors.
 
+### Timing
+
+`timing` paces a stream, to test time to first token or how a UI shows a
+slow reply. `first` is the wait before the first piece, and `interval` the
+wait before each later one. Each takes one distribution of the
+[delay](#delays) Fault, `fixed`, `uniform` or `lognormal`, in whole
+milliseconds. This Stub waits about 400 ms before the first piece, and 15
+to 40 ms before each later one:
+
+```yaml
+mocks:
+  - name: openai
+stubs:
+  - id: slow-hello
+    mock: openai
+    request: { method: POST, path: /v1/chat/completions }
+    response:
+      status: 200
+      llm:
+        api: openai-chat
+        text: Hello! How can I assist you today?
+        timing:
+          first: { lognormal: { median: 400, sigma: 0.5 } }
+          interval: { uniform: { min: 15, max: 40 } }
+```
+
+- **Where the waits go.** smock writes the head and every event before the
+  first piece at once. It waits `first` before the first event that
+  carries a piece, counted from the head, and `interval` before each later
+  one. The events that open or close the reply or a
+  [tool call](#tool-calls) follow the event before them at once. A piece
+  of a tool call's arguments is a piece, and so is an empty element of
+  [`chunks`](#chunks), so each waits as one. A reply with no piece, such
+  as one with empty text, waits `first` before its closing chunk.
+- **Either may be left out**, for no wait there. Without `timing`, a stream
+  has no wait at all.
+- **No `probability`.** Unlike a delay, a wait applies to every stream, so
+  `probability` in `first` or `interval` is a load error, as is an unknown
+  distribution, a negative wait or an unknown member of `timing`.
+- **Draws.** Each wait is drawn on its own, in order, from the Stub's
+  random source: from a generator of its own, seeded with the one draw
+  every matched request takes XOR a fixed constant, which differs from the
+  ids' one. So [`fault.seed` and `--seed`](#seeds) replay a slow run
+  exactly, and adding `timing` changes no id, no Fault decision, no pick
+  among `responses` and no helper output.
+- **Only streams.** A JSON reply is written at once, whatever `timing`
+  gives. A [delay](#delays) Fault still holds back the status line of
+  either, before the stream's own waits.
+- **Render.** [`smock render`](#rendering-a-template) shows each event's
+  wait as its `delay`, drawn as for a request. With `--seed 7` and a
+  sample that sets `stream: true`, the Stub above waits 824 ms before
+  `"Hell"`, then 27, 20, 38, 19, 40, 38, 26 and 28 ms before the next
+  eight pieces. The opening chunk, the closing chunk and `[DONE]` wait 0.
+
 ### Usage and stop reasons
 
 `usage` declares the token counts the reply reports, and `stopReason` why
@@ -1441,9 +1506,11 @@ stubs:
 
 smock counts no tokens and estimates none: the reply reports the counts
 as written. Each one is an integer from 0 to 2^53-1, 9007199254740991, and
-0 when left out. An `openai-chat` reply gives `input` as `prompt_tokens`,
-`output` as `completion_tokens`, and their sum as `total_tokens`. The
-detail objects of OpenAI's example follow, every count in them 0. A request
+0 when left out. An `anthropic-messages` reply gives them as
+`input_tokens` and `output_tokens`, with no total and no cache counts. An
+`openai-chat` reply gives `input` as `prompt_tokens`, `output` as
+`completion_tokens`, and their sum as `total_tokens`. The detail objects
+of OpenAI's example follow, every count in them 0. A request
 for `gpt-6-astra` without `stream` gets this reply, which `smock render`
 shows with `--seed 7` and `--time 2026-10-23T00:00:00Z`:
 
@@ -1478,16 +1545,22 @@ data: [DONE]
 
 ```
 
-`stopReason` is written in the word of the Stub's API. For `openai-chat`
-it is the `finish_reason`, one of `stop`, `length`, `tool_calls`,
-`content_filter` and `function_call`, which OpenAI deprecates:
+`stopReason` is written in the word of the Stub's API:
 
-- It goes in the JSON reply's `finish_reason` and in the closing chunk's.
+- For `openai-chat` it is the `finish_reason`, one of `stop`, `length`,
+  `tool_calls`, `content_filter` and `function_call`, which OpenAI
+  deprecates. It goes in the JSON reply's `finish_reason` and in the
+  closing chunk's.
+- For `anthropic-messages` it is the `stop_reason`, one of `end_turn`,
+  `max_tokens`, `stop_sequence`, `tool_use`, `pause_turn`, `refusal` and
+  `model_context_window_exceeded`. `stop_sequence` and `refusal` each add a
+  member to the reply ([Anthropic Messages](#anthropic-messages)).
 - Any word of the API may be written, whatever the reply holds. So a test
   can send `length` for a reply cut short, or `content_filter` for a
   filtered one.
-- Left out, smock derives it from the reply: `tool_calls` when the reply
-  has [tool calls](#tool-calls), and `stop` otherwise.
+- Left out, smock derives it from the reply: for `openai-chat`,
+  `tool_calls` when the reply has [tool calls](#tool-calls) and `stop`
+  otherwise; `end_turn` for `anthropic-messages`.
 - A word that is not one of the API's, such as Anthropic's `end_turn`, is
   a load error that lists the API's words. smock checks it when it loads
   the Stub, so a reply never carries a word its SDK does not know.
@@ -1499,9 +1572,10 @@ smock generates the ids of each reply: the reply's id, a call id for each
 Each is the vendor's prefix and 24 characters from `A`-`Z`, `a`-`z` and
 `0`-`9`:
 
-| API | Reply's id | Tool call | Request-id header |
+| API | Reply's id | Items and tool calls | Request-id header |
 |---|---|---|---|
-| `openai-chat` | `chatcmpl-` | `call_` | `x-request-id: req_…` |
+| `openai-chat` | `chatcmpl-` | tool call `call_` | `x-request-id: req_…` |
+| `anthropic-messages` | `msg_` | — | `request-id: req_…` |
 
 - One reply has one id: the JSON reply and every chunk of the stream carry
   the same one.
@@ -1530,10 +1604,11 @@ Each is the vendor's prefix and 24 characters from `A`-`Z`, `a`-`z` and
   so one Stub answers every model. A Stub that should answer one model
   adds a body condition on it, as below.
 - smock adds the request-id header to the JSON reply and to the stream,
-  after the Stub's own header fields. openai-python reads it as the
-  reply's `_request_id`. A header the Stub gives under that name, in any
-  case, takes its place: smock then sends the Stub's field alone. The
-  request id still draws its slot, so no other id changes.
+  after the Stub's own header fields. openai-python and
+  anthropic-sdk-python each read it as the reply's `_request_id`. A header
+  the Stub gives under that name, in any case, takes its place: smock then
+  sends the Stub's field alone. The request id still draws its slot, so no
+  other id changes.
 
 This Stub answers only requests for `gpt-6-astra`, and fixes the reply's
 id, its model and its request id, so that a test can assert all three:
@@ -1616,6 +1691,8 @@ Each tool call has these fields:
 - A missing `name` or `arguments`, an empty `name`, `arguments` that are
   neither an object nor a string, an unknown field of a tool call, and two
   tool calls of one `llm` with the same `id` are load errors.
+- Only `openai-chat` sends tool calls yet. An `anthropic-messages` reply
+  leaves them out, though they still draw their ids' slots.
 
 A request for `gpt-6-astra` without `stream` gets this reply, which
 `smock render` shows with `--seed 7` and `--time 2026-10-23T00:00:00Z`.
@@ -1711,6 +1788,90 @@ the string they are, so the agent's own `json.loads` raises
 `chat.completions.stream()` helper parse the arguments of a strict
 function tool, such as one made with `openai.pydantic_function_tool`, and
 raise pydantic's `ValidationError`.
+
+### Anthropic Messages
+
+With `api: anthropic-messages`, the reply takes the form of Anthropic's
+Messages API. This Stub answers its path, `POST /v1/messages`:
+
+```yaml
+mocks:
+  - name: anthropic
+stubs:
+  - id: hello
+    mock: anthropic
+    request: { method: POST, path: /v1/messages }
+    response:
+      status: 200
+      llm:
+        api: anthropic-messages
+        text: Hello!
+        usage: { input: 12, output: 6 }
+```
+
+anthropic-sdk-python reaches it with
+`Anthropic(base_url="http://localhost:8080", api_key="test")`. The base
+URL has no `/v1`, since the SDK adds it. A request for `claude-test` gets
+one `message` body, such as this one, which `smock render` shows with
+`--seed 7` and `--time 2026-10-23T00:00:00Z`:
+
+```json
+{"id":"msg_oniRcSDFUU6bnxe66XwQR5pl","type":"message","role":"assistant","content":[{"type":"text","text":"Hello!"}],"model":"claude-test","stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":12,"output_tokens":6}}
+```
+
+- Its members and their order follow the replies in Anthropic's guide on
+  working with messages. `content` holds one text block, with the text.
+  Empty text gives an empty reply: `content` is `[]`, with no block.
+- `usage` gives `input` as `input_tokens` and `output` as
+  `output_tokens`, with no total and no cache counts.
+- The reply's id is `msg_` and 24 characters, unless `id` fixes it. smock
+  adds a `request-id: req_…` header, not `x-request-id`, unless the Stub
+  gives its own `request-id`. [Ids, seeds and time](#ids-seeds-and-time)
+  says more.
+- There is no stream yet: a request with `stream: true` gets the JSON
+  reply too.
+- Ollama's Anthropic compatibility offers the same path, so the Stub
+  stands in for it too.
+
+`stopReason` takes Anthropic's words: `end_turn`, `max_tokens`,
+`stop_sequence`, `tool_use`, `pause_turn`, `refusal` and
+`model_context_window_exceeded`. Left out, it is `end_turn`. A word of
+another API, such as `stop`, is a load error. Two words add a member:
+
+- With `stop_sequence`, the reply's `stop_sequence` is the first element
+  of the request's `stop_sequences`, when that is a string. Otherwise it
+  is `null`, as it is with every other stop reason. smock does not search
+  the text for the sequences, so it gives the first one, whichever would
+  have matched.
+- With `refusal`, the reply also carries
+  `"stop_details":{"type":"refusal","category":null,"explanation":null}`,
+  after `stop_sequence`. Any other stop reason leaves `stop_details` out.
+  A refusal with empty text has no block, as the vendor's has none.
+
+This Stub stands for a refusal, and the reply it gives:
+
+```yaml
+- id: refused
+  mock: anthropic
+  request:
+    method: POST
+    path: /v1/messages
+    headers: { X-Test-Case: refused }
+  response:
+    status: 200
+    llm: { api: anthropic-messages, stopReason: refusal }
+```
+
+```json
+{"id":"msg_oniRcSDFUU6bnxe66XwQR5pl","type":"message","role":"assistant","content":[],"model":"claude-test","stop_reason":"refusal","stop_sequence":null,"stop_details":{"type":"refusal","category":null,"explanation":null},"usage":{"input_tokens":0,"output_tokens":0}}
+```
+
+A Stub without `stopReason` moves between `openai-chat` and
+`anthropic-messages` by changing `api` alone. Its seed gives the same ids,
+behind the other API's prefix: `chatcmpl-oniRcSDFUU6bnxe66XwQR5pl` becomes
+`msg_oniRcSDFUU6bnxe66XwQR5pl`, and the request id stays the same, in the
+other header. A written stop reason must be rewritten in the other API's
+word.
 
 ### Paths and compatible endpoints
 
@@ -4247,9 +4408,10 @@ apply, and how long the delay is, and, for a Stub with
   advances once per request the Stub matches. An Ephemeral Stub with a seed
   gets its own generator when it is added, which a reload keeps. So the n-th
   request a seeded Stub matches gets the same Faults in every run, whatever
-  requests other Stubs get, the same response among `responses`, and the
-  same [ids in an LLM reply](#ids-seeds-and-time). The generator is a fixed
-  algorithm, the same on every platform.
+  requests other Stubs get, the same response among `responses`, the same
+  [ids in an LLM reply](#ids-seeds-and-time) and the same
+  [waits of an LLM stream](#timing). The generator is a fixed algorithm,
+  the same on every platform.
 - Stubs without a seed draw from the process generator, which they share.
   smock picks its seed at startup and logs it:
 
