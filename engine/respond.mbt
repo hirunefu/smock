@@ -55,12 +55,19 @@ fn pick_response(ordinary : @definitions.Ordinary, draw : UInt64) -> Int? {
 ///|
 /// Step 5 of the match decision, rendering and planning: the plan of
 /// `response`, one of a Stub's responses, for the request `incoming`,
-/// without Faults. A response as written gets its plan as written, or,
-/// when it serves byte ranges, the one that answers the request's Range
-/// field. A response with `template` on is rendered in `context`, the
-/// rendering for the request that the Stub's Variables left, or, without
-/// one, in the request's first rendering, made here from `now`, `draw`,
-/// `vars`, `data` and `copies` as `first_context` makes it.
+/// without Faults. Its header values, as written or rendered, come first,
+/// then its body, planned by its kind:
+///
+/// - bytes as written are sent as they are, or, when the response serves
+///   byte ranges, as the request's Range field asks;
+/// - Server-Sent Events as written are streamed as they are;
+/// - a body with `template` on is rendered.
+///
+/// Every template of the response renders in one rendering for the
+/// request: `context`, the one that the Stub's Variables left, or, without
+/// one, the request's first rendering, made here from `now`, `draw`,
+/// `vars`, `data` and `copies` as `first_context` makes it, the first time
+/// a template needs it. A response as written makes none.
 ///
 /// Raises `RenderError` when a template cannot be rendered: the request
 /// then gets `template_failed`.
@@ -74,17 +81,73 @@ fn plan_response(
   data~ : Map[String, Json],
   copies~ : Map[String, Json]?,
 ) -> ResponsePlan raise @template.RenderError {
-  match response.template {
-    None if response.serves_ranges => range_response(response, incoming.request)
-    None => stub_response(response)
-    Some(template) => {
-      let context = match context {
-        Some(context) => context
+  let status = response.status
+  let mut context = context
+  // Room for the fields that byte ranges add after the response's, and for
+  // the Smock-Mock field the Default Mock adds.
+  let room = if response.serves_ranges { 3 } else { 2 }
+  let headers = match response.headers {
+    Written(fields) => {
+      let headers = Array(capacity=fields.length() + room)
+      for i in 0..<fields.length() {
+        headers.push(fields[i])
+      }
+      headers
+    }
+    Templated(fields) => {
+      let rendering = match context {
+        Some(rendering) => rendering
         None => first_context(incoming, now~, draw~, vars~, data~, copies~)
       }
-      render_template(response.status, template, context)
+      context = Some(rendering)
+      let headers = Array(capacity=fields.length() + room)
+      for i in 0..<fields.length() {
+        let field = fields[i]
+        headers.push((field.0, field.1.render(rendering)))
+      }
+      headers
     }
   }
+  match response.body {
+    Bytes(bytes) =>
+      if response.serves_ranges {
+        range_response(status, headers, bytes, incoming.request)
+      } else {
+        { status, headers, body: Bytes(bytes), delay_ms: 0, fault: None, }
+      }
+    Events(events) => {
+      set_content_type(headers, "text/event-stream")
+      { status, headers, body: Events(events), delay_ms: 0, fault: None, }
+    }
+    Template(template) => {
+      let rendering = match context {
+        Some(rendering) => rendering
+        None => first_context(incoming, now~, draw~, vars~, data~, copies~)
+      }
+      render_body(status, headers, template, rendering)
+    }
+  }
+}
+
+///|
+/// Gives `headers` the Content-Type `media_type`, which a kind of body sets
+/// whatever the Stub gives: it comes first, in place of every Content-Type
+/// field, and the other fields follow in order. It needs room for one field
+/// more only when `headers` has no Content-Type.
+fn set_content_type(
+  headers : Array[(String, String)],
+  media_type : String,
+) -> Unit {
+  let mut kept = 0
+  for i in 0..<headers.length() {
+    let field = headers[i]
+    if field.0.to_lower() != "content-type" {
+      headers[kept] = field
+      kept += 1
+    }
+  }
+  headers.truncate(kept)
+  headers.insert(0, ("Content-Type", media_type))
 }
 
 ///|
@@ -125,18 +188,17 @@ fn template_input(incoming : Incoming) -> @template.Input {
 }
 
 ///|
-/// Renders `template`: header values in the order written, then the body or
-/// the events in order.
-fn render_template(
+/// Renders `template`, the body of a response with `template` on, in
+/// `context`, after the response's header values: the body, or the events
+/// in order. The plan is `status` with the header fields `headers`, and
+/// Server-Sent Events are always sent as text/event-stream.
+fn render_body(
   status : Int,
-  template : @definitions.ResponseTemplate,
+  headers : Array[(String, String)],
+  template : @definitions.BodyTemplate,
   context : @template.Context,
 ) -> ResponsePlan raise @template.RenderError {
-  let headers = []
-  for header in template.headers {
-    headers.push((header.0, header.1.render(context)))
-  }
-  let body : Body = match template.body {
+  let body : Body = match template {
     Text(text) => Bytes(@utf8.encode(text.render(context)))
     Json(json) => Bytes(json.render(context))
     Events(events) => {
@@ -164,17 +226,9 @@ fn render_template(
           ),
         )
       }
+      set_content_type(headers, "text/event-stream")
       Events(ReadOnlyArray::from_array(rendered))
     }
-  }
-  let headers = match body {
-    // Server-Sent Events are always sent as text/event-stream.
-    Events(_) =>
-      [
-        ("Content-Type", "text/event-stream"),
-        ..headers.filter(header => header.0.to_lower() != "content-type"),
-      ]
-    Bytes(_) => headers
   }
   { status, headers, body, delay_ms: 0, fault: None, }
 }
