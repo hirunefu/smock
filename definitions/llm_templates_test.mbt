@@ -145,7 +145,8 @@ test "an llm response reads Variables and Data buckets when one of its templates
     "text: \"${path}\", id: \"$${vars.x} $${data.d}\"", "text: \"${vars.x}\"", "chunks: [a, \"${data.d}\"]",
     "id: \"${vars.x}\"", "model: \"${data.d}\"", "toolCalls: [{ name: \"${vars.x}\", arguments: {} }]",
     "toolCalls: [{ name: f, arguments: {}, id: \"${data.d}\" }]", "toolCalls: [{ name: f, arguments: \"${vars.x}\" }]",
-    "toolCalls: [{ name: f, arguments: { a: \"${data.d}\" } }]",
+    "toolCalls: [{ name: f, arguments: { a: \"${data.d}\" } }]", "error: { type: server_error, message: \"${vars.x}\" }",
+    "error: { type: server_error, message: \"${data.d}\" }",
   ]
   let (name, file) = templated_llm(fields)
   let set : @definitions.DefinitionSet = {
@@ -191,6 +192,8 @@ test "an llm response reads Variables and Data buckets when one of its templates
       #|s6: vars false, data true
       #|s7: vars true, data false
       #|s8: vars false, data true
+      #|s9: vars true, data false
+      #|s10: vars false, data true
       #|plain: vars false, data false
     ),
   )
