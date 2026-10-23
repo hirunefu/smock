@@ -12,7 +12,8 @@ Stubs, templates and Data buckets.
 [docs/importing-openapi.md](docs/importing-openapi.md) turns an OpenAPI
 document into a Definition file.
 [LLM responses](docs/definition-files.md#llm-responses) stand in for an LLM
-API, such as OpenAI Chat Completions, in tests of code that calls one.
+API, such as OpenAI Chat Completions or OpenAI Responses, in tests of code
+that calls one.
 
 ## Layout
 

@@ -394,7 +394,7 @@ test "an Ephemeral Stub whose llm breaks the rules is refused with the problems 
     content=(
       #|/responses/0/llm/stream: is not a known field
       #|/responses/0/llm: needs "api"
-      #|/responses/1/llm/api: must be "openai-chat"
+      #|/responses/1/llm/api: must be "openai-chat" or "openai-responses"
       #|/responses/1: has "body" and "llm"; give at most one of "body", "bodyFile", "json", "events" and "llm"
     ),
   )
@@ -491,7 +491,7 @@ test "a reload with an llm that breaks the rules keeps the current set serving" 
     ),
     content=(
       #|Failed at 1791815460000: <digest> -> <digest>
-      #|openai.json: /stubs/0/response/llm/api: must be "openai-chat"
+      #|openai.json: /stubs/0/response/llm/api: must be "openai-chat" or "openai-responses"
     ),
   )
   inspect(reply_content(h.chat()), content="Hello! How can I assist you today?")

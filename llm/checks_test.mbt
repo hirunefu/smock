@@ -20,11 +20,11 @@ test "api names one API; any other value is refused with the names it can take" 
     ].join("\n"),
     content=(
       #|openai-chat: OpenaiChat
-      #|must be "openai-chat"
-      #|must be "openai-chat"
-      #|must be "openai-chat"
-      #|must be "openai-chat"
-      #|must be "openai-chat"
+      #|must be "openai-chat" or "openai-responses"
+      #|openai-responses: OpenaiResponses
+      #|must be "openai-chat" or "openai-responses"
+      #|must be "openai-chat" or "openai-responses"
+      #|must be "openai-chat" or "openai-responses"
     ),
   )
 }
@@ -65,6 +65,46 @@ test "a stop reason is a word of the Stub's API; any other value is refused with
       #|"": must be a stop reason of openai-chat: "stop", "length", "tool_calls", "content_filter" or "function_call"
       #|1: must be a stop reason of openai-chat: "stop", "length", "tool_calls", "content_filter" or "function_call"
       #|null: must be a stop reason of openai-chat: "stop", "length", "tool_calls", "content_filter" or "function_call"
+    ),
+  )
+}
+
+///|
+test "a stop reason of openai-responses is one of its incomplete reasons; a Chat or Anthropic word is refused" {
+  let read = (value : Json) => {
+    match @llm.read_stop_reason(OpenaiResponses, value) {
+      Ok(reason) => "\{value.stringify()}: \{reason.word}"
+      Err(message) => "\{value.stringify()}: \{message}"
+    }
+  }
+  inspect(
+    [
+      read("max_output_tokens"),
+      read("max_messages"),
+      read("content_filter"),
+      read("steered"),
+      read("stop"),
+      read("length"),
+      read("tool_calls"),
+      read("end_turn"),
+      read("max_tokens"),
+      read("incomplete"),
+      read("Max_Output_Tokens"),
+      read(Json::null()),
+    ].join("\n"),
+    content=(
+      #|"max_output_tokens": max_output_tokens
+      #|"max_messages": max_messages
+      #|"content_filter": content_filter
+      #|"steered": steered
+      #|"stop": must be a stop reason of openai-responses: "max_output_tokens", "max_messages", "content_filter" or "steered"
+      #|"length": must be a stop reason of openai-responses: "max_output_tokens", "max_messages", "content_filter" or "steered"
+      #|"tool_calls": must be a stop reason of openai-responses: "max_output_tokens", "max_messages", "content_filter" or "steered"
+      #|"end_turn": must be a stop reason of openai-responses: "max_output_tokens", "max_messages", "content_filter" or "steered"
+      #|"max_tokens": must be a stop reason of openai-responses: "max_output_tokens", "max_messages", "content_filter" or "steered"
+      #|"incomplete": must be a stop reason of openai-responses: "max_output_tokens", "max_messages", "content_filter" or "steered"
+      #|"Max_Output_Tokens": must be a stop reason of openai-responses: "max_output_tokens", "max_messages", "content_filter" or "steered"
+      #|null: must be a stop reason of openai-responses: "max_output_tokens", "max_messages", "content_filter" or "steered"
     ),
   )
 }

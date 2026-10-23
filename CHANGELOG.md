@@ -64,7 +64,14 @@ of each GitHub release include its section
   stream whose request sets `stream_options.include_usage` gets
   `usage: null` on every chunk and a last usage chunk before `[DONE]`.
   `stopReason` writes the `finish_reason` in the API's own word, checked at
-  load, and is `stop` when left out. It works with request conditions,
+  load, and is `stop` when left out. With `api: openai-responses`, it
+  answers OpenAI Responses requests with a Response object: the text in its
+  message item, the usage, a `resp_` id, `created_at` and `completed_at`
+  the time the request was received, and the settings the request gave,
+  such as `instructions` and `tools`, copied back. Its `stopReason` is an
+  incomplete reason, such as `max_output_tokens`, which makes the reply
+  `incomplete`. A Responses request with `stream: true` gets the JSON reply
+  for now. It works with request conditions,
   `responses`, Faults, Ephemeral Stubs, `smock render` and the Journal. See
   [LLM responses](docs/definition-files.md#llm-responses).
 

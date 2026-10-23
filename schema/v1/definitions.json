@@ -523,16 +523,16 @@
       "type": "object",
       "properties": {
         "api": {
-          "description": "The LLM API whose wire form the reply takes: openai-chat, OpenAI Chat Completions. It is required and never inferred from the request's path.",
-          "enum": ["openai-chat"]
+          "description": "The LLM API whose wire form the reply takes: openai-chat, OpenAI Chat Completions, or openai-responses, OpenAI Responses. It is required and never inferred from the request's path.",
+          "enum": ["openai-chat", "openai-responses"]
         },
         "text": {
-          "description": "The text of the reply: the content of the assistant's message. Default empty.",
+          "description": "The text of the reply: the content of the assistant's message, or the text of the Response's message item. Default empty.",
           "type": "string",
           "default": ""
         },
         "id": {
-          "description": "The reply's id, sent exactly as written (smock adds no prefix), in the JSON reply and in every event of the stream. Without it, the id is the API's prefix, such as chatcmpl-, and 24 characters drawn from the Stub's random source. Fixing it changes no other generated id.",
+          "description": "The reply's id, sent exactly as written (smock adds no prefix), in the JSON reply and in every event of the stream. Without it, the id is the API's prefix, chatcmpl- or resp_, and 24 characters drawn from the Stub's random source. Fixing it changes no other generated id.",
           "type": "string"
         },
         "model": {
@@ -540,7 +540,7 @@
           "type": "string"
         },
         "usage": {
-          "description": "The token counts the reply reports, as declared: smock counts and estimates nothing. openai-chat gives them as prompt_tokens and completion_tokens, with total_tokens their sum, in the JSON reply, and in a stream only when the request sets stream_options.include_usage to true: then every chunk has usage: null, and a last chunk with no choice gives the usage before [DONE].",
+          "description": "The token counts the reply reports, as declared: smock counts and estimates nothing. openai-chat gives them as prompt_tokens and completion_tokens, with total_tokens their sum, in the JSON reply, and in a stream only when the request sets stream_options.include_usage to true: then every chunk has usage: null, and a last chunk with no choice gives the usage before [DONE]. openai-responses gives them as input_tokens and output_tokens, with total_tokens their sum.",
           "type": "object",
           "properties": {
             "input": {
@@ -561,12 +561,45 @@
           "additionalProperties": false
         },
         "stopReason": {
-          "description": "The stop reason, in the word of the API that api names, whatever the reply's content: for openai-chat, the finish_reason stop, length, tool_calls, content_filter or function_call (deprecated). Left out, it is derived: stop.",
-          "enum": ["stop", "length", "tool_calls", "content_filter", "function_call"]
+          "description": "The stop reason, in the word of the API that api names, whatever the reply's content. For openai-chat, the finish_reason stop, length, tool_calls, content_filter or function_call (deprecated); left out, it is derived: stop. For openai-responses, an incomplete reason, max_output_tokens, max_messages, content_filter or steered, which makes the reply incomplete; left out, the reply is completed.",
+          "enum": [
+            "stop", "length", "tool_calls", "content_filter", "function_call",
+            "max_output_tokens", "max_messages", "steered"
+          ]
         }
       },
       "required": ["api"],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "api": { "description": "An openai-chat reply.", "const": "openai-chat" } },
+            "required": ["api"]
+          },
+          "then": {
+            "properties": {
+              "stopReason": {
+                "description": "A finish_reason of openai-chat.",
+                "enum": ["stop", "length", "tool_calls", "content_filter", "function_call"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "api": { "description": "An openai-responses reply.", "const": "openai-responses" } },
+            "required": ["api"]
+          },
+          "then": {
+            "properties": {
+              "stopReason": {
+                "description": "An incomplete reason of openai-responses.",
+                "enum": ["max_output_tokens", "max_messages", "content_filter", "steered"]
+              }
+            }
+          }
+        }
+      ]
     },
     "event": {
       "description": "One Server-Sent Event. Give exactly one of data and json.",

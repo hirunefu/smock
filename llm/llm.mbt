@@ -10,6 +10,8 @@
 pub(all) enum Api {
   /// OpenAI Chat Completions: `openai-chat`.
   OpenaiChat
+  /// OpenAI Responses: `openai-responses`.
+  OpenaiResponses
 } derive(Debug, Eq)
 
 ///|
@@ -17,6 +19,7 @@ pub(all) enum Api {
 pub fn Api::name(self : Api) -> String {
   match self {
     OpenaiChat => "openai-chat"
+    OpenaiResponses => "openai-responses"
   }
 }
 
@@ -26,7 +29,8 @@ pub fn Api::name(self : Api) -> String {
 pub fn read_api(value : Json) -> Result[Api, String] {
   match value {
     String("openai-chat") => Ok(OpenaiChat)
-    _ => Err("must be \"openai-chat\"")
+    String("openai-responses") => Ok(OpenaiResponses)
+    _ => Err("must be \"openai-chat\" or \"openai-responses\"")
   }
 }
 
@@ -47,6 +51,10 @@ fn stop_reasons(api : Api) -> ReadOnlyArray[String] {
     // `function_call` is deprecated, and still a word of the API.
     OpenaiChat =>
       ["stop", "length", "tool_calls", "content_filter", "function_call"]
+    // Responses has no stop word: its words are the incomplete reasons,
+    // and a reply that gives one is incomplete.
+    OpenaiResponses =>
+      ["max_output_tokens", "max_messages", "content_filter", "steered"]
   }
 }
 
@@ -78,7 +86,8 @@ pub struct Declaration {
   /// The token counts the reply reports.
   usage : Usage
   /// The stop reason as written, or `None` to derive it from the reply's
-  /// content.
+  /// content. For `openai-responses` it is an incomplete reason, and `None`
+  /// means the reply completed.
   stop_reason : StopReason?
 } derive(Debug, Eq)
 
@@ -197,9 +206,11 @@ pub enum WaitSlot {
 /// request whose body is the JSON `request`, or `None` when the body is
 /// not JSON, received at `now` (milliseconds since the Unix epoch): the
 /// stream when the body is a JSON object whose `stream` is exactly `true`,
-/// otherwise the JSON reply. Its ids draw from `ids`, the request's ids
-/// generator, and the reply's id is the strings' `id` when given. Its
-/// model is the strings' `model` when given, otherwise the request's.
+/// otherwise the JSON reply. An `openai-responses` declaration gives the
+/// JSON reply to both, since its stream is not written yet. Its ids draw
+/// from `ids`, the request's ids generator, and the reply's id is the
+/// strings' `id` when given. Its model is the strings' `model` when given,
+/// otherwise the request's.
 pub fn reply(
   declaration : Declaration,
   strings : Strings,
@@ -213,12 +224,11 @@ pub fn reply(
     Some(model) => model
     None => request_model(request)
   }
-  let streams = asks_to_stream(request)
   match declaration.api {
     OpenaiChat => {
       let id = reply_id(strings, "chatcmpl-", ids)
       let request_id = ("x-request-id", "req_" + ids.request)
-      if streams {
+      if asks_to_stream(request) {
         chat_stream(
           declaration,
           strings,
@@ -232,6 +242,18 @@ pub fn reply(
         chat_reply(declaration, strings, id~, created~, model~, request_id~)
       }
     }
+    // A streamed request gets the JSON reply too, for now.
+    OpenaiResponses =>
+      responses_reply(
+        declaration,
+        strings,
+        id=reply_id(strings, "resp_", ids),
+        message_id="msg_" + ids.message,
+        created~,
+        model~,
+        request~,
+        request_id=("x-request-id", "req_" + ids.request),
+      )
   }
 }
 
@@ -273,6 +295,8 @@ fn asks_for_usage(request : Json?) -> Bool {
 priv struct Ids {
   /// The reply's id, without its prefix.
   reply : String
+  /// The Responses message item's id, without its prefix.
+  message : String
   /// The request id of the request-id header, without its prefix.
   request : String
 }
@@ -281,11 +305,10 @@ priv struct Ids {
 /// Draws the ids of one reply from `ids`, slot by slot.
 fn draw_ids(ids : @prng.Generator) -> Ids {
   let reply = draw_id(ids)
-  // The Responses message item's slot.
-  ignore(draw_id(ids))
+  let message = draw_id(ids)
   // The tool calls' slots go here, before the request-id header's.
   let request = draw_id(ids)
-  { reply, request, }
+  { reply, message, request, }
 }
 
 ///|
@@ -498,6 +521,179 @@ fn ChatChunks::chunk(
 /// choice, and the usage member of `usage`.
 fn ChatChunks::usage_chunk(self : ChatChunks, usage : Usage) -> String {
   "\{self.head}],\"usage\":\{@template.compact_json(chat_usage(usage))}}"
+}
+
+///|
+/// The Responses reply of `declaration` with the strings `strings`, the
+/// reply's id `id`, the message item's id `message_id`, `created` (seconds
+/// since the Unix epoch), `model`, the request's JSON body `request` and
+/// the request-id header field `request_id`: one Response object, in the
+/// members and the order of the reference's examples, with the example's
+/// fixed values. A written stop reason is an incomplete reason, which makes
+/// the reply and its message item incomplete.
+fn responses_reply(
+  declaration : Declaration,
+  strings : Strings,
+  id~ : String,
+  message_id~ : String,
+  created~ : Int64,
+  model~ : String,
+  request~ : Json?,
+  request_id~ : (String, String),
+) -> Reply {
+  let status = match declaration.stop_reason {
+    Some(_) => "incomplete"
+    None => "completed"
+  }
+  let message : Json = {
+    "id": Json::string(message_id),
+    "type": "message",
+    "status": Json::string(status),
+    "role": "assistant",
+    "content": [
+      {
+        "type": "output_text",
+        "text": Json::string(strings.text),
+        "annotations": [],
+        "logprobs": [],
+      },
+    ],
+  }
+  let body = response_object(
+    declaration,
+    id~,
+    created~,
+    model~,
+    request~,
+    status~,
+    // An incomplete Response never completed.
+    completed_at=if declaration.stop_reason is Some(_) {
+      Json::null()
+    } else {
+      Json::number(created.to_double())
+    },
+    output=[message],
+    usage=responses_usage(declaration.usage),
+  )
+  {
+    content_type: "application/json",
+    request_id,
+    body: Json(@template.compact_json_bytes(body)),
+  }
+}
+
+///|
+/// The Response object of `declaration` whose id is `id`, `created_at`
+/// `created` (seconds since the Unix epoch) and model `model`, with the
+/// members `status`, `completed_at`, `output` and `usage` given, and the
+/// settings it copies from `request`, the request's JSON body. Its members
+/// and their order are the reference's examples', and the members the
+/// examples do not show, which the request may set, sit in the alphabetical
+/// order the examples keep. Each setting is copied as given, without being
+/// interpreted; one the request leaves out takes the example's value, or is
+/// left out when the examples do not show it. `service_tier` keeps the
+/// example's value, and `conversation` is not copied.
+fn response_object(
+  declaration : Declaration,
+  id~ : String,
+  created~ : Int64,
+  model~ : String,
+  request~ : Json?,
+  status~ : String,
+  completed_at~ : Json,
+  output~ : Json,
+  usage~ : Json,
+) -> Json {
+  let given = match request {
+    Some(Object(members)) => Some(members)
+    _ => None
+  }
+  let object : Map[String, Json] = Map([], capacity=40)
+  object["id"] = Json::string(id)
+  object["object"] = "response"
+  object["access_programs"] = Json::null()
+  object["created_at"] = Json::number(created.to_double())
+  object["status"] = Json::string(status)
+  copy_given(object, given, "background")
+  object["completed_at"] = completed_at
+  object["error"] = Json::null()
+  object["incomplete_details"] = match declaration.stop_reason {
+    Some(reason) => { "reason": Json::string(reason.word) }
+    None => Json::null()
+  }
+  object["instructions"] = copied(given, "instructions", Json::null())
+  object["max_output_tokens"] = copied(given, "max_output_tokens", Json::null())
+  copy_given(object, given, "max_tool_calls")
+  object["model"] = Json::string(model)
+  object["output"] = output
+  object["parallel_tool_calls"] = copied(given, "parallel_tool_calls", true)
+  object["previous_response_id"] = copied(
+    given,
+    "previous_response_id",
+    Json::null(),
+  )
+  copy_given(object, given, "prompt_cache_key")
+  object["reasoning"] = copied(given, "reasoning", {
+    "effort": Json::null(),
+    "summary": Json::null(),
+  })
+  copy_given(object, given, "safety_identifier")
+  // The tier that served the reply, which the request does not decide.
+  object["service_tier"] = "default"
+  object["store"] = copied(given, "store", true)
+  object["temperature"] = copied(given, "temperature", example_one)
+  object["text"] = copied(given, "text", { "format": { "type": "text" } })
+  object["tool_choice"] = copied(given, "tool_choice", "auto")
+  object["tools"] = copied(given, "tools", [])
+  copy_given(object, given, "top_logprobs")
+  object["top_p"] = copied(given, "top_p", example_one)
+  object["truncation"] = copied(given, "truncation", "disabled")
+  object["usage"] = usage
+  object["user"] = copied(given, "user", Json::null())
+  object["metadata"] = copied(given, "metadata", {})
+  Json::object(object)
+}
+
+///|
+/// The number 1 as the reference's examples write `temperature` and
+/// `top_p`: `1.0`.
+let example_one : Json = Json::number(1.0, repr="1.0")
+
+///|
+/// The member `name` of the request's members `given`, as given, or
+/// `example`, the example's value, when the request does not give it.
+fn copied(given : Map[String, Json]?, name : String, example : Json) -> Json {
+  if given is Some(members) && members.get(name) is Some(value) {
+    value
+  } else {
+    example
+  }
+}
+
+///|
+/// Copies the member `name` of the request's members `given` into `object`,
+/// as given, when the request gives it.
+fn copy_given(
+  object : Map[String, Json],
+  given : Map[String, Json]?,
+  name : String,
+) -> Unit {
+  if given is Some(members) && members.get(name) is Some(value) {
+    object[name] = value
+  }
+}
+
+///|
+/// The Responses usage member for `usage`: its counts and their total, with
+/// the detail objects of the reference's example, their counts 0.
+fn responses_usage(usage : Usage) -> Json {
+  {
+    "input_tokens": count(usage.input),
+    "input_tokens_details": { "cached_tokens": 0, "cache_write_tokens": 0 },
+    "output_tokens": count(usage.output),
+    "output_tokens_details": { "reasoning_tokens": 0 },
+    "total_tokens": count(usage.input + usage.output),
+  }
 }
 
 ///|
