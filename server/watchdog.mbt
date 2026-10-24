@@ -31,7 +31,9 @@
 /// deadline is then the earliest of the connection's own deadlines, kept
 /// whether or not a read waits, and when it comes, `expired` does what it
 /// calls for, such as resetting a stream, and gives the next. One that has
-/// passed already ends the group, as a read past its deadline does.
+/// passed already ends the group, as a read past its deadline does, and
+/// `expired` can end it as a write that timed out does
+/// (`time_out_writing`).
 priv struct Watchdog {
   /// The task group the connection is served in.
   group : @async.TaskGroup[Unit]
@@ -106,6 +108,16 @@ fn Watchdog::read_by(self : Watchdog, deadline : Int64, now : Int64) -> Unit {
 fn Watchdog::writing(self : Watchdog, now : Int64) -> Unit {
   self.write_deadline = now + self.write_timeout
   self.start(now)
+}
+
+///|
+/// A wait of the connection's that counts as a write, though no write
+/// waits on the socket, has waited the write timeout by `now`, as an HTTP/2
+/// response body that waits for the client to widen its connection window:
+/// called from `expired`, it has the sleeper end the group as for a write
+/// that timed out, so that nothing more is written to the client.
+fn Watchdog::time_out_writing(self : Watchdog, now : Int64) -> Unit {
+  self.write_deadline = now
 }
 
 ///|

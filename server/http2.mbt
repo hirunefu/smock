@@ -24,7 +24,8 @@
 //   resume as the client widens them (`H2Connection::write_slowly`,
 //   http2_windows.mbt), and the streams of Server-Sent Events
 //   (`H2Connection::start_events`, http2_events.mbt);
-// - the deadlines of the connection and of its streams, which the
+// - the deadlines of the connection and of its streams, with the write
+//   timeout of the bodies that wait for the client's windows, which the
 //   connection's one watchdog keeps (`H2Connection::expire`);
 // - the drain on SIGTERM, with its two GOAWAYs (`H2Connection::start_drain`).
 //
@@ -33,9 +34,7 @@
 // in an interim way, so that a client's run ends rather than hangs:
 //
 // - a Fault ends its stream with RST_STREAM INTERNAL_ERROR, its Journal
-//   entry committed as the engine made it;
-// - no timeout applies while a body waits for the client to widen a
-//   window.
+//   entry committed as the engine made it.
 
 ///|
 /// The settings smock advertises on every HTTP/2 connection of a process
@@ -138,6 +137,8 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
       waiting: Map([]),
       blocked: Map([]),
       claimed: 0,
+      window_deadline: forever,
+      initial_window: 65535,
       group,
       watchdog,
       idle_timeout,
@@ -219,6 +220,13 @@ priv struct H2Connection {
   /// `blocked`, whose tasks have not run yet, are to send, so that no other
   /// stream takes them meanwhile.
   mut claimed : Int32
+  /// While a slow write waits for the client to widen the connection
+  /// window, when the write timeout closes the connection; `forever` while
+  /// none waits for it (`watch_windows`).
+  mut window_deadline : Int64
+  /// The initial window of the client's streams, as its SETTINGS last set
+  /// it: 65,535 octets until they set it.
+  mut initial_window : Int32
   /// The task group the connection is served in, where the tasks of
   /// waiting streams run. They end with the connection.
   group : @async.TaskGroup[Unit]
@@ -467,8 +475,8 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
       }
       // A window the client widened, of a stream or of the connection, or
       // every stream's, by a SETTINGS frame that raised the initial window.
-      WindowUpdated(stream~, ..) => self.widened(stream)
-      Settings(_) => self.widened(0)
+      WindowUpdated(stream~, ..) => self.window_updated(stream)
+      Settings(settings) => self.settings_received(settings)
       // A reset from the client, or one moonhttp sent for the client's
       // frames.
       Reset(stream~, remote~, ..) => {
@@ -568,6 +576,7 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::read_more(
     self.discard(stream)
     return false
   }
+  self.watch_windows(self.now)
   if idle && self.became_idle {
     self.idle_deadline = self.now + self.idle_timeout
     self.watchdog.read_by(self.idle_deadline, self.now)
@@ -625,11 +634,18 @@ async fn[S : @io.Reader] H2Connection::discard(
 ///   open no stream, such as PING, SETTINGS and WINDOW_UPDATE, do not
 ///   restart it, and a field block that has begun holds it off. Past it,
 ///   the connection gets GOAWAY with NO_ERROR and closes.
+/// - The write timeout of the slow writes runs while they wait for the
+///   client to widen a window (`watch_windows`). Past it for the
+///   connection window, the connection closes with no GOAWAY, as for a
+///   write that timed out. Past it for a stream's own window while the
+///   connection window is open, smock resets that stream with CANCEL, and
+///   the other streams go on; while the connection window is at zero too,
+///   the stream's verdict waits for the connection's deadline.
 /// - While smock drains, the final GOAWAY goes out a second after the first
 ///   at the latest, when the client has not acknowledged the PING after
 ///   the first by then (`start_drain`).
 ///
-/// Neither timeout is logged.
+/// None is logged.
 fn[S : @io.Writer + ReadOutput] H2Connection::expire(
   self : H2Connection,
   now : Int64,
@@ -637,6 +653,11 @@ fn[S : @io.Writer + ReadOutput] H2Connection::expire(
 ) -> Int64 {
   if self.closing {
     return self.close_at
+  }
+  self.watch_windows(now)
+  if self.window_deadline <= now {
+    self.watchdog.time_out_writing(now)
+    return forever
   }
   if self.idle_until() <= now || self.block_deadline() <= now {
     self.go_away(out)
@@ -656,6 +677,18 @@ fn[S : @io.Writer + ReadOutput] H2Connection::expire(
       late.push(stream)
     }
   }
+  // While the connection window is at zero too, the connection's deadline
+  // decides first.
+  let open = self.conn.window(0) > 0
+  for stream, wait in self.blocked {
+    if wait.deadline <= now {
+      if open {
+        late.push(stream)
+      } else {
+        wait.deadline = self.window_deadline
+      }
+    }
+  }
   for stream in late {
     self.reset(stream, @http2.error_cancel)
   }
@@ -670,8 +703,9 @@ fn[S : @io.Writer + ReadOutput] H2Connection::expire(
 
 ///|
 /// The earliest deadline of the connection: the idle deadline, that of
-/// each request in progress, that of a field block still open, and that of
-/// the drain's final GOAWAY.
+/// each request in progress, that of a field block still open, those of
+/// the slow writes that wait for window, and that of the drain's final
+/// GOAWAY.
 fn H2Connection::next_deadline(self : H2Connection) -> Int64 {
   let mut next = self.idle_until()
   for _, request in self.requests {
@@ -682,6 +716,14 @@ fn H2Connection::next_deadline(self : H2Connection) -> Int64 {
   let block = self.block_deadline()
   if block < next {
     next = block
+  }
+  if self.window_deadline < next {
+    next = self.window_deadline
+  }
+  for _, wait in self.blocked {
+    if wait.deadline < next {
+      next = wait.deadline
+    }
   }
   if self.final_at < next {
     next = self.final_at
@@ -975,12 +1017,13 @@ fn[S : @io.Writer + ReadOutput] H2Connection::answered(
   out : WatchedStream[S],
 ) -> Unit {
   self.end_stream()
+  let now = @async.now()
+  self.watch_windows(now)
   guard self.became_idle && self.reading && self.idle() else { return }
   if self.drain is Told {
     self.close_after_goaway(out)
     return
   }
-  let now = @async.now()
   self.became_idle = false
   self.idle_deadline = now + self.idle_timeout
   self.watchdog.read_by(self.idle_deadline, now)
