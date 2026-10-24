@@ -193,9 +193,9 @@ async fn[S : @io.Writer] H2Connection::trickle(
       self.streams.ended_by_smock(stream)
       return
     }
-    if n > 0 {
-      // The windows may widen while the writer writes.
-      let _ = self.writer.write(out)
+    // What is queued, the HEADERS included, goes out before the task waits;
+    // the windows may widen while the writer writes.
+    if self.writer.write(out) || n > 0 {
       continue
     }
     wait.rest = rest.length()

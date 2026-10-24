@@ -325,3 +325,139 @@ async test "h2c: two bodies larger than the windows, on one connection, both arr
     })
   })
 }
+
+///|
+/// A predicate on frames that holds once `octets` of DATA on `stream` have
+/// come, counting from when it is made.
+fn data_seen(stream : Int32, octets : Int32) -> (@http2.Frame) -> Bool {
+  let mut seen = 0
+  frame => {
+    if frame is Data(stream_id~, data~, ..) && stream_id == stream {
+      seen += data.length()
+    }
+    seen >= octets
+  }
+}
+
+///|
+/// A predicate on frames that holds once each of `streams` has ended,
+/// counting from when it is made.
+fn all_ended(streams : Array[Int32]) -> (@http2.Frame) -> Bool {
+  let left = streams.copy()
+  frame => {
+    for i, stream in left {
+      if ends_stream(frame, stream) {
+        left.remove(i) |> ignore
+        break
+      }
+    }
+    left.is_empty()
+  }
+}
+
+///|
+async test "h2c: streams waiting on the connection window get it in the order they became ready: after a connection WINDOW_UPDATE, the stream that waited first sends its DATA first, one that has sent waits behind the others, and a new response waits behind them all" {
+  with_definitions(flow_definitions(), dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2(settings=false)
+      defer raw.close()
+      let out = []
+      // Wide stream windows, so that only the connection window of 65,535
+      // octets holds the bodies back. Stream 3 takes all of it at once and
+      // waits for more; stream 1, after its delay, finds none, and waits
+      // behind it.
+      raw.send([
+        Settings(
+          params=[(@http2.settings_initial_window_size, 1_000_000)],
+          ack=false,
+        ),
+        raw.get(1, "/slow-big"),
+        raw.get(3, "/big"),
+      ])
+      out.push(raw.runs_until(frame => frame is Headers(stream_id=1, ..)))
+      out.push("--- the connection window widened by 500")
+      raw.send([WindowUpdate(stream_id=0, increment=500)])
+      out.push(raw.runs_until(data_seen(3, 500)))
+      // Stream 3 now waits behind stream 1, which gets the next 500 octets,
+      // though stream 5's short body, which comes with them, would fit.
+      out.push("--- the connection window widened by 500, and stream 5 opened")
+      raw.send([WindowUpdate(stream_id=0, increment=500), raw.get(5, "/item")])
+      out.push(raw.runs_until(data_seen(1, 500)))
+      out.push("--- the connection window widened by 250000")
+      raw.send([WindowUpdate(stream_id=0, increment=250_000)])
+      let rest = raw.runs_until(all_ended([1, 3, 5])).split("\n").collect()
+      // Stream 3 waited first; streams 1 and 5 began to wait again at about
+      // the same time.
+      out.push(rest[0].to_string())
+      let after = rest[1:].iter().map(line => line.to_string()).collect()
+      after.sort()
+      out.append(after)
+      inspect(
+        out.join("\n"),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|HEADERS 3 END_HEADERS [:status: 200, accept-ranges: bytes, date: <now>, content-length: 150000]
+          #|DATA 3: 4 frames, 65535 octets
+          #|HEADERS 1 END_HEADERS [:status: 200, accept-ranges: bytes, date: <now>, content-length: 150000]
+          #|--- the connection window widened by 500
+          #|DATA 3: 1 frames, 500 octets
+          #|--- the connection window widened by 500, and stream 5 opened
+          #|HEADERS 5 END_HEADERS [:status: 200, date: <now>, content-length: 5]
+          #|DATA 1: 1 frames, 500 octets
+          #|--- the connection window widened by 250000
+          #|DATA 3 END_STREAM: 6 frames, 83965 octets
+          #|DATA 5 END_STREAM: 1 frames, 5 octets
+          #|DATA 1 END_STREAM: 10 frames, 149500 octets
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "h2c: a fast stream is answered at once while a large body on the same connection waits for window" {
+  with_definitions(flow_definitions(), dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2(settings=false)
+      defer raw.close()
+      let out = []
+      // Stream windows of 1,000 octets: stream 1's body waits for its own
+      // window, while stream 3's short body fits at once.
+      raw.send([
+        Settings(
+          params=[(@http2.settings_initial_window_size, 1000)],
+          ack=false,
+        ),
+        raw.get(1, "/big"),
+        raw.get(3, "/item"),
+        fence,
+      ])
+      out.push(raw.frames_until_ping_ack())
+      out.push("--- both windows widened")
+      raw.send([
+        WindowUpdate(stream_id=0, increment=100_000),
+        WindowUpdate(stream_id=1, increment=149_000),
+      ])
+      out.push(raw.runs_until(frame => ends_stream(frame, 1)))
+      out.push("---")
+      out.append(smock.journal_once(2, within=1000))
+      inspect(
+        out.join("\n"),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_HEADERS [:status: 200, accept-ranges: bytes, date: <now>, content-length: 150000]
+          #|DATA 1 1000 octets
+          #|HEADERS 3 END_HEADERS [:status: 200, date: <now>, content-length: 5]
+          #|DATA 3 END_STREAM 5 octets
+          #|--- both windows widened
+          #|DATA 1 END_STREAM: 10 frames, 149000 octets
+          #|---
+          #|/item: stub "item", status 200
+          #|/big: stub "big", status 200
+        ),
+      )
+    })
+  })
+}
