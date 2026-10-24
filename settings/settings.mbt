@@ -326,7 +326,7 @@ let serve_settings : Array[Setting] = [
   },
   {
     name: "read-timeout-ms",
-    about: "How long a request may take to arrive, in milliseconds, from its first byte to its last. Then the connection closes.",
+    about: "How long a request may take to arrive, in milliseconds, from its first byte to its last. Then the connection closes; over HTTP/2, a request that does not arrive in time resets its stream instead.",
     default: Some("30000"),
   },
   {

@@ -175,6 +175,36 @@ defaults, against 10 MiB for an HTTP/1.1 connection. For a small Pod, lower
 either flag, such as `--http2-max-concurrent-streams 10` or a smaller
 `--body-limit`.
 
+### Timeouts
+
+Over HTTP/2, the read and idle timeouts work per stream and per connection.
+
+- `--read-timeout-ms` applies to each stream alone, from the first frame of
+  its request to its end. A stream whose request has not all arrived by
+  then gets RST_STREAM `CANCEL`, and the connection's other streams go on.
+  Its request never reaches the Mocks, so it has no Journal entry. A header
+  block still open by then holds up the whole connection, since no other
+  frame may come between its frames, so the connection gets GOAWAY
+  `NO_ERROR` and closes instead.
+- `--idle-timeout-ms` applies to a connection with no stream in progress.
+  PING, SETTINGS and WINDOW_UPDATE frames do not restart it, and a header
+  block that has begun holds it off. A new stream restarts it, and it runs
+  again from the response that ends the last stream in progress. Past it,
+  the connection gets GOAWAY `NO_ERROR` and closes. It also bounds the wait
+  for a connection's first octet, as over HTTP/1.1, and the rest of the
+  preface has the read timeout from that octet.
+- smock's own waits, such as a delay, count toward neither.
+- `--write-timeout-ms` closes a connection that takes nothing of what smock
+  writes for that long, without GOAWAY, as over HTTP/1.1.
+
+After a GOAWAY with `NO_ERROR`, smock reads what the client still sends and
+discards it, until the client closes the connection, or for one second at
+most, and then closes. Closing a connection with unread input would make
+the kernel send a reset, which can discard the GOAWAY before the client
+reads it.
+
+No timeout is logged, and none has a metric.
+
 ### Defences
 
 smock bounds what a client can make one connection cost. Each bound is per
