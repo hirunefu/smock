@@ -136,6 +136,15 @@ verification and the unmatched requests count both.
 The request metrics count HTTP/2 requests with the same `mock` and `stub`
 labels as HTTP/1.1 ones.
 
+## Defences
+
+smock bounds what a client can make one connection cost. Each bound is per
+connection.
+
+| Pattern | Bound | Past it |
+|---|---|---|
+| Header fields with empty names (CVE-2019-9516) | moonhttp refuses an empty field name. | RST_STREAM `PROTOCOL_ERROR` on that stream. |
+
 ## Connection errors
 
 Some errors end the whole connection, not just one stream. smock then
@@ -155,15 +164,6 @@ opens a new connection for the rest.
   on one it reset before those end the connection.
 - The other connection errors of RFC 9113, such as a frame that does not
   decode, get the code it gives them.
-
-## Defences
-
-smock bounds the patterns that are known to abuse HTTP/2. Each bound holds
-per connection.
-
-| Pattern | Bound | Past it |
-|---|---|---|
-| Header fields with empty names (CVE-2019-9516) | moonhttp refuses an empty field name. | RST_STREAM `PROTOCOL_ERROR` on that stream. |
 
 ## Where HTTP/2 comes from
 
