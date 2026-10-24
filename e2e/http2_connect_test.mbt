@@ -8,7 +8,7 @@
 ///|
 /// A Mock for the Host `proxy.example.com`, with a Stub that answers a
 /// CONNECT to its port 443 with 200, a header and a body, and the Default
-/// Mock, with a Stub for `POST /echo` that echoes the body's length.
+/// Mock, with a Stub for `POST /upload`.
 let tunnels : String =
   #|{ "mocks": [{ "name": "proxy", "hosts": ["proxy.example.com"] },
   #|            { "name": "fallback", "default": true }],
@@ -18,10 +18,9 @@ let tunnels : String =
   #|        "path": { "pattern": "proxy\\.example\\.com:443" } },
   #|      "response": { "status": 200, "headers": { "X-Tunnel": "none" },
   #|        "body": "no tunnel opens" } },
-  #|    { "id": "echo", "mock": "fallback",
-  #|      "request": { "method": "POST", "path": "/echo" },
-  #|      "response": { "status": 200, "template": true,
-  #|        "body": "${body.length} octets" } } ] }
+  #|    { "id": "upload", "mock": "fallback",
+  #|      "request": { "method": "POST", "path": "/upload" },
+  #|      "response": { "status": 201, "body": "stored" } } ] }
 
 ///|
 /// The fields of a CONNECT to `authority`: `:method` and `:authority`
@@ -137,6 +136,87 @@ async test "h2c: a CONNECT reaches its Stub when its HEADERS arrive, even when t
           #|HTTP/2 CONNECT "proxy.example.com:443" host="proxy.example.com" mock="proxy" stub="tunnel" status=200 body=0 octets
           #|HTTP/2 CONNECT "proxy.example.com:443" host="proxy.example.com" mock="proxy" stub="tunnel" status=200 body=0 octets
           #|HTTP/1.1 CONNECT "proxy.example.com:443" host="proxy.example.com" mock="proxy" stub="tunnel" status=200 body=0 octets
+        ),
+      )
+    })
+  })
+}
+
+///|
+async test "h2c: DATA sent on a CONNECT's stream after its HEADERS is discarded and acknowledged, so the connection's window reopens, and a request on another stream is answered after it" {
+  with_definitions([("tunnels.json", tunnels)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      let out = []
+      raw.send([
+        headers_frame(
+          1,
+          raw.block(connect_fields("proxy.example.com:443")),
+          end_stream=false,
+        ),
+      ])
+      out.push("The CONNECT:")
+      out.push(raw.frames_until_stream_ends(1))
+      // The whole of the connection's window, in frames of the largest size
+      // smock allows.
+      let frames : Array[@http2.Frame] = []
+      let mut left = 65535
+      while left > 0 {
+        let size = if left < 16384 { left } else { 16384 }
+        frames.push(
+          Data(
+            stream_id=1,
+            data=Bytes::make(size, b'x'),
+            end_stream=false,
+            padding=0,
+          ),
+        )
+        left -= size
+      }
+      frames.push(Ping(payload=b"\x00\x00\x00\x00\x00\x00\x00\x01", ack=false))
+      raw.send(frames)
+      out.push("65,535 octets of DATA on its stream:")
+      out.push(raw.frames_until_ping_ack())
+      // Past the connection's window, unless smock has reopened it.
+      raw.send([
+        headers_frame(
+          3,
+          raw.block(request_fields("POST", "/upload", "localhost")),
+          end_stream=false,
+        ),
+        Data(stream_id=3, data=b"abcdef", end_stream=true, padding=0),
+      ])
+      out.push("A request with a body on another stream:")
+      out.push(raw.frames_until_stream_ends(3))
+      raw.send([
+        Data(stream_id=1, data=b"", end_stream=true, padding=0),
+        Ping(payload=b"\x00\x00\x00\x00\x00\x00\x00\x02", ack=false),
+      ])
+      out.push("The end of the CONNECT's stream:")
+      out.push(raw.frames_until_ping_ack())
+      out.push("Journal:")
+      out.push(connect_journal(smock))
+      inspect(
+        out.join("\n"),
+        content=(
+          #|The CONNECT:
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_STREAM END_HEADERS [:status: 200, x-tunnel: none, date: <now>]
+          #|65,535 octets of DATA on its stream:
+          #|WINDOW_UPDATE 0 +32768
+          #|WINDOW_UPDATE 1 +32768
+          #|WINDOW_UPDATE 0 +32767
+          #|WINDOW_UPDATE 1 +32767
+          #|A request with a body on another stream:
+          #|HEADERS 3 END_HEADERS [:status: 201, smock-mock: fallback; via=default, date: <now>, content-length: 6]
+          #|DATA 3 END_STREAM 6 octets
+          #|The end of the CONNECT's stream:
+          #|
+          #|Journal:
+          #|HTTP/2 CONNECT "proxy.example.com:443" host="proxy.example.com" mock="proxy" stub="tunnel" status=200 body=0 octets
+          #|HTTP/2 POST "/upload" host="localhost" mock="fallback" stub="upload" status=201 body=6 octets
         ),
       )
     })
