@@ -35,7 +35,7 @@ pub fn TlsError::message(self : TlsError) -> String {
 /// What reading plaintext from a Connection gave.
 pub(all) enum ReadResult {
   /// This many bytes were read into the buffer.
-  Data(Int)
+  Data(Int32)
   /// Nothing can be read until more bytes from the peer are received.
   NeedInput
   /// The peer closed the TLS connection with a close_notify alert.
@@ -62,11 +62,11 @@ extern "C" fn ctx_is_null_ffi(ctx : Ctx) -> Bool = "smock_openssl_ctx_is_null"
 
 ///|
 #borrow(ctx, pem)
-extern "C" fn ctx_use_chain_ffi(ctx : Ctx, pem : Bytes) -> Int = "smock_openssl_ctx_use_chain"
+extern "C" fn ctx_use_chain_ffi(ctx : Ctx, pem : Bytes) -> Int32 = "smock_openssl_ctx_use_chain"
 
 ///|
 #borrow(ctx, pem)
-extern "C" fn ctx_use_key_ffi(ctx : Ctx, pem : Bytes) -> Int = "smock_openssl_ctx_use_key"
+extern "C" fn ctx_use_key_ffi(ctx : Ctx, pem : Bytes) -> Int32 = "smock_openssl_ctx_use_key"
 
 ///|
 #borrow(ctx)
@@ -89,9 +89,9 @@ extern "C" fn ssl_is_null_ffi(ssl : Ssl) -> Bool = "smock_openssl_ssl_is_null"
 extern "C" fn ssl_receive_ffi(
   ssl : Ssl,
   data : Bytes,
-  offset : Int,
-  length : Int,
-) -> Int = "smock_openssl_ssl_receive"
+  offset : Int32,
+  length : Int32,
+) -> Int32 = "smock_openssl_ssl_receive"
 
 ///|
 #borrow(ssl)
@@ -99,25 +99,25 @@ extern "C" fn ssl_take_output_ffi(ssl : Ssl) -> Bytes = "smock_openssl_ssl_take_
 
 ///|
 #borrow(ssl)
-extern "C" fn ssl_handshake_ffi(ssl : Ssl) -> Int = "smock_openssl_ssl_handshake"
+extern "C" fn ssl_handshake_ffi(ssl : Ssl) -> Int32 = "smock_openssl_ssl_handshake"
 
 ///|
 #borrow(ssl, buf)
 extern "C" fn ssl_read_ffi(
   ssl : Ssl,
   buf : FixedArray[Byte],
-  offset : Int,
-  length : Int,
-) -> Int = "smock_openssl_ssl_read"
+  offset : Int32,
+  length : Int32,
+) -> Int32 = "smock_openssl_ssl_read"
 
 ///|
 #borrow(ssl, data)
 extern "C" fn ssl_write_ffi(
   ssl : Ssl,
   data : Bytes,
-  offset : Int,
-  length : Int,
-) -> Int = "smock_openssl_ssl_write"
+  offset : Int32,
+  length : Int32,
+) -> Int32 = "smock_openssl_ssl_write"
 
 ///|
 #borrow(ssl)
@@ -129,7 +129,7 @@ priv type Generated
 
 ///|
 #borrow(names)
-extern "C" fn self_signed_new_ffi(names : Bytes, days : Int) -> Generated = "smock_openssl_self_signed_new"
+extern "C" fn self_signed_new_ffi(names : Bytes, days : Int32) -> Generated = "smock_openssl_self_signed_new"
 
 ///|
 #borrow(generated)
@@ -329,8 +329,8 @@ pub fn Connection::handshake(self : Connection) -> Bool raise TlsError {
 pub fn Connection::read(
   self : Connection,
   buf : FixedArray[Byte],
-  offset~ : Int,
-  max_len~ : Int,
+  offset~ : Int32,
+  max_len~ : Int32,
 ) -> ReadResult raise TlsError {
   if max_len <= 0 {
     return Data(0)
@@ -396,7 +396,7 @@ pub struct SelfSigned {
 /// number, so no two share a fingerprint.
 pub fn SelfSigned::generate(
   names : Array[String],
-  days~ : Int,
+  days~ : Int32,
 ) -> SelfSigned raise TlsError {
   if names.is_empty() {
     raise Failed("a self-signed certificate needs at least one name")

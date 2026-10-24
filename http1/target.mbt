@@ -150,7 +150,7 @@ fn is_ipv6(s : StringView) -> Bool {
 /// hexadecimal digits separated by `:`, and, with `ipv4_last`, an IPv4
 /// address in place of the last one, which stands for two. An empty `s`
 /// stands for none.
-fn ipv6_groups(s : StringView, ipv4_last~ : Bool) -> Int? {
+fn ipv6_groups(s : StringView, ipv4_last~ : Bool) -> Int32? {
   if s.is_empty() {
     return Some(0)
   }
@@ -161,7 +161,7 @@ fn ipv6_groups(s : StringView, ipv4_last~ : Bool) -> Int? {
       guard is_ipv4(part) else { return None }
       groups += 2
     } else {
-      guard part.length() is (1..=4) &&
+      guard part.length() is (1..<=4) &&
         part.iter().all(c => c.is_ascii_hexdigit()) else {
         return None
       }
@@ -180,7 +180,7 @@ fn is_ipv4(s : StringView) -> Bool {
   octets
   .iter()
   .all(octet => {
-    octet.length() is (1..=3) &&
+    octet.length() is (1..<=3) &&
     octet.iter().all(c => c.is_ascii_digit()) &&
     !(octet.length() > 1 && octet.has_prefix("0")) &&
     octet.iter().fold(init=0, (n, c) => n * 10 + (c.to_int() - '0'.to_int())) <=

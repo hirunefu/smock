@@ -124,7 +124,7 @@ pub impl Show for ParseError with fn output(self, logger) {
 /// ```
 pub fn parse(
   text : StringView,
-  openapi? : Bool = false,
+  openapi~ : Bool = false,
 ) -> Json raise ParseError {
   Parser(text, openapi~).document()
 }
@@ -228,8 +228,8 @@ pub impl Show for WriteError with fn output(self, logger) {
 /// ```
 pub fn write(
   value : Json,
-  comment? : Array[String] = [],
-  item_comments? : Map[String, Array[String]] = {},
+  comment~ : Array[String] = [],
+  item_comments~ : Map[String, Array[String]] = {},
 ) -> Bytes raise WriteError {
   Writer(item_comments).document(value, comment)
 }

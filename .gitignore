@@ -2,6 +2,8 @@ _build/
 .mooncakes/
 target/
 dist/
+# Written by every successful moon check, as by moon info
+pkg.generated.mbti
 # Written at build time by buildinfo/gen_build_info.sh
 buildinfo/build_info.mbt
 # Written by bench/bench.py run

@@ -3,7 +3,7 @@
 priv struct Writer {
   out : @buffer.Buffer
   /// How many collections enclose the writer's position.
-  mut depth : Int
+  mut depth : Int32
   /// The comments to write before items of sequences, by JSON Pointer.
   item_comments : Map[String, Array[String]]
   /// Every pointer in `item_comments`, and every pointer that encloses one.
@@ -87,7 +87,7 @@ fn Writer::member_pointer(
 ///|
 /// The pointer to item `i` of the sequence at `pointer`, as
 /// `member_pointer` gives it.
-fn Writer::item_pointer(self : Writer, pointer : String?, i : Int) -> String? {
+fn Writer::item_pointer(self : Writer, pointer : String?, i : Int32) -> String? {
   guard pointer is Some(_) else { None }
   self.member_pointer(pointer, i.to_string())
 }
@@ -103,7 +103,11 @@ fn Writer::item_comment(self : Writer, pointer : String?) -> Array[String]? {
 /// Writes `lines` as comment lines indented by `indent` spaces. Characters
 /// that are not printable become spaces, and trailing spaces are dropped, so
 /// that each line stays one comment line.
-fn Writer::comment(self : Writer, lines : Array[String], indent : Int) -> Unit {
+fn Writer::comment(
+  self : Writer,
+  lines : Array[String],
+  indent : Int32,
+) -> Unit {
   for line in lines {
     let text = StringBuilder()
     for c in line {
@@ -148,7 +152,7 @@ fn Writer::root(
 fn Writer::mapping(
   self : Writer,
   members : Map[String, Json],
-  indent : Int,
+  indent : Int32,
   inline~ : Bool,
   pointer : String?,
 ) -> Unit raise WriteError {
@@ -171,7 +175,7 @@ fn Writer::pair(
   self : Writer,
   key : String,
   value : Json,
-  indent : Int,
+  indent : Int32,
   inline~ : Bool,
   pointer : String?,
 ) -> Unit raise WriteError {
@@ -205,7 +209,7 @@ fn Writer::pair(
 fn Writer::sequence(
   self : Writer,
   items : Array[Json],
-  indent : Int,
+  indent : Int32,
   inline~ : Bool,
   pointer : String?,
 ) -> Unit raise WriteError {
@@ -226,7 +230,7 @@ fn Writer::sequence(
 fn Writer::item(
   self : Writer,
   item : Json,
-  indent : Int,
+  indent : Int32,
   inline~ : Bool,
   pointer : String?,
 ) -> Unit raise WriteError {
@@ -268,7 +272,7 @@ fn within(segment : String, error : WriteError) -> WriteError {
 
 ///|
 /// Writes `spaces` spaces.
-fn Writer::indent(self : Writer, spaces : Int) -> Unit {
+fn Writer::indent(self : Writer, spaces : Int32) -> Unit {
   for _ in 0..<spaces {
     self.out.write_byte(b' ')
   }
@@ -382,7 +386,7 @@ fn Writer::string(
 
 ///|
 /// Writes `code` as `digits` upper-case hexadecimal digits.
-fn Writer::hex(self : Writer, code : Int, digits : Int) -> Unit {
+fn Writer::hex(self : Writer, code : Int32, digits : Int32) -> Unit {
   for i = digits - 1; i >= 0; i = i - 1 {
     let digit = (code >> (i * 4)) & 0xF
     self.out.write_byte(
@@ -460,7 +464,7 @@ fn is_plain_safe(s : String, key~ : Bool, column_zero~ : Bool) -> Bool {
 ///|
 /// The UTF-16 code unit at `i` of `s` written plain, or what follows it:
 /// `:` after a key, a line break after a value.
-fn following(s : String, i : Int, key~ : Bool) -> UInt16 {
+fn following(s : String, i : Int32, key~ : Bool) -> UInt16 {
   if i < s.length() {
     s.unsafe_get(i)
   } else if key {
@@ -480,7 +484,7 @@ fn is_blank_unit(unit : UInt16) -> Bool {
 /// Whether a character is written as itself, in a plain or quoted scalar:
 /// not a control character, a line break that YAML 1.1 reads, a byte order
 /// mark, a noncharacter the parser rejects, or half of a surrogate pair.
-fn is_printable(code : Int) -> Bool {
+fn is_printable(code : Int32) -> Bool {
   !(code < 0x20 ||
   (code >= 0x7F && code <= 0x9F) ||
   code == 0x2028 ||
@@ -494,13 +498,13 @@ fn is_printable(code : Int) -> Bool {
 ///|
 /// Whether `code` is the first half of a UTF-16 surrogate pair, U+D800 to
 /// U+DBFF.
-fn is_high_surrogate(code : Int) -> Bool {
+fn is_high_surrogate(code : Int32) -> Bool {
   code >= 0xD800 && code <= 0xDBFF
 }
 
 ///|
 /// Whether `code` is the second half of a UTF-16 surrogate pair, U+DC00 to
 /// U+DFFF.
-fn is_low_surrogate(code : Int) -> Bool {
+fn is_low_surrogate(code : Int32) -> Bool {
   code >= 0xDC00 && code <= 0xDFFF
 }

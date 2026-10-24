@@ -2,7 +2,7 @@
 /// Ends the process with `code`, through `moonbitlang/x`'s supported exit:
 /// neither core nor `moonbitlang/async` exposes one with a status. Usage
 /// errors, including invalid settings, exit with 2.
-fn exit(code : Int) -> Unit {
+fn exit(code : Int32) -> Unit {
   @sys.exit(code)
 }
 
@@ -94,7 +94,7 @@ async fn main {
 /// names a Data bucket the Stub's Mock does not declare or breaks a keyed
 /// bucket's rules, or when the sample fits no operation of a CRUD Stub.
 /// Every problem goes to stderr.
-async fn render(settings : @settings.RenderSettings) -> Int {
+async fn render(settings : @settings.RenderSettings) -> Int32 {
   let snapshot = match
     load_definitions(
       settings.dir,
@@ -162,7 +162,7 @@ async fn render(settings : @settings.RenderSettings) -> Int {
 /// A missing directory is an empty definition set, which is valid, as for
 /// `smock serve`. Since a mistyped path then passes too, `check` says on
 /// stderr that the directory does not exist.
-async fn check(settings : @settings.CheckSettings) -> Int {
+async fn check(settings : @settings.CheckSettings) -> Int32 {
   let dir = settings.dir
   // When the directory cannot be looked at, loading it reports why.
   if !(@fs.exists(dir) catch { _ => true }) {

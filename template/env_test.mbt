@@ -24,7 +24,7 @@ let plain_request : @template.Input = {
 ///|
 /// Parses `source` as a text body template with the variables `env`, and
 /// renders it, or gives the problem or the render error.
-fn render_text(source : String, env? : @template.Env = env) -> String {
+fn render_text(source : String, env~ : @template.Env = env) -> String {
   match
     @template.Text::parse(
       source,

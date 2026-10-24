@@ -49,7 +49,7 @@ fn Harness::verdicts(
   self : Harness,
   session : String?,
   checks : Array[String],
-  filter? : String = "{}",
+  filter~ : String = "{}",
 ) -> String raise {
   checks
   .map(check => {

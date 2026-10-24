@@ -13,17 +13,17 @@
 
 ///|
 /// The bound on per-Session state an engine has by default: 64 MiB.
-pub let default_state_max_bytes : Int = 64 * 1024 * 1024
+pub let default_state_max_bytes : Int32 = 64 * 1024 * 1024
 
 ///|
 /// The count of per-Session state against its bound, and the writes the
 /// bound refused. Every store of per-Session state shares the engine's one.
 priv struct StateBound {
   /// The most bytes the count may hold.
-  max_bytes : Int
+  max_bytes : Int32
   /// The bytes the count holds now. It never passes `max_bytes`, since a
   /// write that would take it there is refused.
-  mut bytes : Int
+  mut bytes : Int32
   /// The writes the bound refused, since the process started: a request's
   /// or an Admin API set's.
   mut refused : Int64
@@ -31,7 +31,7 @@ priv struct StateBound {
 
 ///|
 /// A bound of `max_bytes`, with nothing counted.
-fn StateBound::new(max_bytes : Int) -> StateBound {
+fn StateBound::new(max_bytes : Int32) -> StateBound {
   { max_bytes, bytes: 0, refused: 0L, }
 }
 
@@ -62,7 +62,7 @@ fn StateBound::refuse(self : StateBound, more : Int64) -> String {
 /// What the bound on per-Session state counts, and what it refused.
 pub(all) struct StateStats {
   /// The bytes the count holds now.
-  bytes : Int
+  bytes : Int32
   /// The writes the bound refused since the process started, whatever
   /// resets came since: each refused request once, and each refused Admin
   /// API set once.

@@ -13,7 +13,7 @@ fn faults_file(stubs : Array[String]) -> (String, String) {
 ///|
 /// A Stub of Mock `m` that answers `GET path` with 200 and `body`, and
 /// injects `fault`, given as a JSON object.
-fn fault_stub(path : String, fault : String, body? : String = "ok") -> String {
+fn fault_stub(path : String, fault : String, body~ : String = "ok") -> String {
   "{ \"id\": \"\{path[1:]}\", \"mock\": \"m\", \"request\": { \"path\": \"\{path}\" }, \"response\": { \"status\": 200, \"body\": \"\{body}\" }, \"fault\": \{fault} }"
 }
 
@@ -29,7 +29,7 @@ fn decision(outcome : @engine.Outcome) -> String {
 
 ///|
 /// The decisions for `n` requests for `GET path`, in order.
-fn decisions(h : Harness, path : String, n : Int) -> Array[String] {
+fn decisions(h : Harness, path : String, n : Int32) -> Array[String] {
   Array::makei(n, _ => decision(h.send("GET", path)))
 }
 
@@ -85,7 +85,7 @@ test "a fixed delay applies to every matched request, before a normal response" 
 ///|
 /// How many of `n` requests for `GET path` get a delay, and how many a
 /// connection Fault.
-fn shares(h : Harness, path : String, n : Int) -> (Int, Int) {
+fn shares(h : Harness, path : String, n : Int32) -> (Int32, Int32) {
   let mut delayed = 0
   let mut failed = 0
   for _ in 0..<n {
@@ -103,7 +103,7 @@ fn shares(h : Harness, path : String, n : Int) -> (Int, Int) {
 ///|
 /// Whether `count` of `n` draws is a plausible outcome for probability `p`:
 /// within five standard deviations of `n * p`.
-fn plausible(count : Int, n : Int, p : Double) -> Bool {
+fn plausible(count : Int32, n : Int32, p : Double) -> Bool {
   let mean = n.to_double() * p
   let sd = (mean * (1.0 - p)).sqrt()
   (count.to_double() - mean).abs() <= 5.0 * sd
@@ -162,7 +162,7 @@ test "a delay or a connection Fault with a probability applies to that share of 
 
 ///|
 /// The delays of `n` requests for `GET path`.
-fn delays(h : Harness, path : String, n : Int) -> Array[Int] {
+fn delays(h : Harness, path : String, n : Int32) -> Array[Int32] {
   Array::makei(n, _ => h.send("GET", path).plan.delay_ms)
 }
 
@@ -338,7 +338,7 @@ test "a seeded reset Fault with a probability resets the same requests in every 
   // which requests the seeded Stub resets.
   let first = harness([file], process_seed=1)
   let second = harness([file], process_seed=2)
-  let run = (h : Harness, other : Int) => {
+  let run = (h : Harness, other : Int32) => {
     Array::makei(12, i => {
       let _ = decisions(h, "/other", other * (i % 3))
       reset_or_response(h.send("GET", "/flaky"))
@@ -409,7 +409,7 @@ test "an events Stub with Faults plans its events with the delay and the connect
 ///|
 /// A Stub at `path` whose every Fault decision is random: a uniform delay
 /// with probability 0.5, and a close with probability 0.5.
-fn coin_flips(path : String, seed? : Int) -> String {
+fn coin_flips(path : String, seed? : Int32) -> String {
   let seed = match seed {
     Some(seed) => ", \"seed\": \{seed}"
     None => ""

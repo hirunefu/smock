@@ -20,9 +20,9 @@ let list_pets : String =
 /// `petstore` with the Hosts `hosts`, declaring the Mock or not, and renders
 /// what came out, as `import_json` does.
 fn import_mock(
-  output? : String = "defs/petstore.yaml",
-  hosts? : Array[String] = [],
-  declare_mock? : Bool = true,
+  output~ : String = "defs/petstore.yaml",
+  hosts~ : Array[String] = [],
+  declare_mock~ : Bool = true,
 ) -> String {
   let options = @importopenapi.Options(
     root="petstore.json",

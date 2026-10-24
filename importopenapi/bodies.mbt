@@ -72,7 +72,7 @@ priv enum Value {
 
 ///|
 /// The largest body an example gives: 1 MiB of compact JSON, or of text.
-let max_example_bytes : Int = 1024 * 1024
+let max_example_bytes : Int32 = 1024 * 1024
 
 ///|
 /// Reads the response `json` at `pointer`, one the operation answers with
@@ -82,7 +82,7 @@ fn Conversion::response_parts(
   self : Conversion,
   pointer : Place,
   json : Json,
-  status~ : Int,
+  status~ : Int32,
   meth~ : String,
 ) -> Answers {
   guard self.followed_object(pointer, json) is Some((pointer, response)) else {
@@ -115,7 +115,7 @@ fn Conversion::content(
   self : Conversion,
   pointer : Place,
   content : Map[String, Json],
-  status~ : Int,
+  status~ : Int32,
   meth~ : String,
 ) -> Answers {
   guard media_type_of(content) is Some(chosen) else { return no_answers() }
@@ -391,7 +391,7 @@ fn kind_of(json : Json) -> String {
 ///|
 /// The length of `body` as smock sends it, in bytes: the compact JSON of a
 /// `json` body, or the text of a `body`, in UTF-8.
-fn body_bytes(body : Body) -> Int {
+fn body_bytes(body : Body) -> Int32 {
   match body {
     Empty => 0
     JsonValue(json) => @template.compact_json_bytes(json).length()
@@ -401,7 +401,7 @@ fn body_bytes(body : Body) -> Int {
 
 ///|
 /// The length of `s` in UTF-8, in bytes.
-fn utf8_length(s : String) -> Int {
+fn utf8_length(s : String) -> Int32 {
   let mut n = 0
   for c in s {
     n += char_bytes(c)
@@ -411,7 +411,7 @@ fn utf8_length(s : String) -> Int {
 
 ///|
 /// The length of `c` in UTF-8, in bytes.
-fn char_bytes(c : Char) -> Int {
+fn char_bytes(c : Char) -> Int32 {
   let code = c.to_int()
   if code < 0x80 {
     1

@@ -37,7 +37,7 @@ priv struct MixRequest {
   headers : Array[(String, String)]
   body : String?
   session : String
-  status : Int
+  status : Int32
   mock : String
   stub : String
   via_default : Bool
@@ -48,7 +48,7 @@ priv struct MixRequest {
 
 ///|
 /// Reads the request mix `file`, by default the benchmark's.
-async fn read_mix(file? : String = "bench/requests.json") -> Array[MixRequest] {
+async fn read_mix(file~ : String = "bench/requests.json") -> Array[MixRequest] {
   guard @fs.read_file(file).json()
     is Object({ "requests": Array(requests), .. }) else {
     fail("\{file} has no requests array")
@@ -514,8 +514,8 @@ async test "bench/in the CRUD variant, each request of its mix gets its status f
         json_inspect(
           {
             "dataWritten": Json::object(journal),
-            "copies": copies.to_json(),
-            "ordersInTheCopy": orders.length().to_json(),
+            "copies": Json(copies),
+            "ordersInTheCopy": Json(orders.length()),
             "updated": Json::array(updated),
           },
           content={

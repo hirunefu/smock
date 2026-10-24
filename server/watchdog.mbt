@@ -45,7 +45,7 @@ priv struct Watchdog {
   mut wakes_at : Int64
   /// The current sleeper, by its number: a sleeper that a newer one
   /// replaced does nothing more.
-  mut sleeper : (Int, @async.Task[Unit])?
+  mut sleeper : (Int32, @async.Task[Unit])?
   /// Whether a write that timed out ended the group: the client then takes
   /// nothing more, and nothing more can be written to it.
   mut write_timed_out : Bool
@@ -60,7 +60,7 @@ let forever : Int64 = 0x7fffffffffffffffL
 /// after `write_timeout` milliseconds without progress.
 fn Watchdog::new(
   group : @async.TaskGroup[Unit],
-  write_timeout~ : Int,
+  write_timeout~ : Int32,
 ) -> Watchdog {
   {
     group,
@@ -135,7 +135,7 @@ fn Watchdog::wake_up(self : Watchdog, now : Int64) -> Int64 {
 /// The sleeper numbered `number`, until a newer one replaces it: it sleeps
 /// until its wake-up, then ends the group when the wait in progress is past
 /// its deadline, and otherwise sleeps again.
-async fn Watchdog::run_sleeper(self : Watchdog, number : Int) -> Unit {
+async fn Watchdog::run_sleeper(self : Watchdog, number : Int32) -> Unit {
   while self.sleeper is Some((current, _)) && current == number {
     let now = @async.now()
     if now >= self.wakes_at {

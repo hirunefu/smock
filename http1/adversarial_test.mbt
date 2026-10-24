@@ -165,7 +165,7 @@ fn garbage(rand : @random.Rand, shaped~ : Bool) -> Bytes {
 test "random garbage is parsed the same way however it is split, and never crashes the parser" {
   let rand = @random.Rand::chacha8(seed=b"smock http1 garbage, any splits.")
   let differ = []
-  let endings : Map[String, Int] = Map([])
+  let endings : Map[String, Int32] = Map([])
   for round in 0..<2000 {
     let stream = garbage(rand, shaped=round % 4 != 0)
     let whole = outcome([stream[:]])

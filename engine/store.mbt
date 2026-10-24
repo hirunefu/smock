@@ -329,7 +329,7 @@ fn SessionStore::drop_copy(
 fn SessionStore::drop_copies_where(
   self : SessionStore,
   drop : (String, String) -> Bool,
-) -> Int {
+) -> Int32 {
   let dropped : Array[(String, String?, String)] = []
   for mock, by_session in self.copies {
     let judged : Map[String, Bool] = Map([])
@@ -359,9 +359,9 @@ fn SessionStore::drop_copies_where(
 /// What `SessionStore::remove_where` cleared.
 priv struct Cleared {
   /// How many Variables, each of one Mock, Session and name.
-  variables : Int
+  variables : Int32
   /// How many copies of Data buckets, each of one Mock, Session and bucket.
-  copies : Int
+  copies : Int32
 }
 
 ///|

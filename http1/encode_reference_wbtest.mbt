@@ -5,11 +5,11 @@
 
 ///|
 fn reference_encode_response(
-  status : Int,
+  status : Int32,
   headers : ArrayView[(String, String)],
   body : BytesView,
   request? : Request,
-  close? : Bool = false,
+  close~ : Bool = false,
 ) -> Bytes {
   let out = @buffer.Buffer(size_hint=128 + body.length())
   out.write_string_utf8("HTTP/1.1 \{status} \{reason_phrase(status)}\r\n")
@@ -26,7 +26,7 @@ fn reference_encode_response(
   } else if request is Some({ version: Http10, .. }) {
     out.write_bytes(b"Connection: keep-alive\r\n")
   }
-  let content = !(status is (100..=199 | 204 | 304))
+  let content = !(status is (100..<=199 | 204 | 304))
   if content {
     out.write_string_utf8("Content-Length: \{body.length()}\r\n")
   }

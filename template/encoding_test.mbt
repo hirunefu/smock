@@ -216,7 +216,7 @@ test "urlDecode decodes percent-escapes in either case and keeps + as it is; a m
 
 ///|
 /// A request whose body is `s` repeated `n` times.
-fn repeated(s : String, n : Int) -> @template.Input {
+fn repeated(s : String, n : Int32) -> @template.Input {
   { ..request, body: @utf8.encode(s.repeat(n)), }
 }
 

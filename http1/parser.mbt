@@ -28,21 +28,21 @@
 pub struct Parser {
   /// Bytes fed and not consumed yet are `buf[start:end]`.
   priv mut buf : FixedArray[Byte]
-  priv mut start : Int
-  priv mut end : Int
+  priv mut start : Int32
+  priv mut end : Int32
   /// How many bytes after `start` the head scan has looked at, and where in
   /// the head they leave it, so the scan resumes there: the part of the
   /// head, how many bytes of the method, the target or the version it has
   /// seen, and where in the header section it is.
-  priv mut scanned : Int
+  priv mut scanned : Int32
   priv mut scan : HeadScan
-  priv mut scan_count : Int
+  priv mut scan_count : Int32
   priv mut section : Section
   /// Where each line of the head being scanned ends, as the index of its
   /// CR counted from `start`: the request line, then each field line.
-  priv line_ends : Array[Int]
+  priv line_ends : Array[Int32]
   /// How many header fields the head scan has seen begin.
-  priv mut fields : Int
+  priv mut fields : Int32
   /// The head of the next request, once parsed. Its bytes are consumed.
   priv mut head : Head?
   /// The head parsed last. A client tends to send the same method, target
@@ -52,13 +52,13 @@ pub struct Parser {
   /// How far the chunked body of the next request is decoded.
   priv chunks : Chunks
   /// The status of the error that stopped the parser.
-  priv mut invalid : Int?
+  priv mut invalid : Int32?
   /// The most bytes a request head may take.
-  priv header_size_limit : Int
+  priv header_size_limit : Int32
   /// The most header fields a request may have.
-  priv header_count_limit : Int
+  priv header_count_limit : Int32
   /// The longest body a request may have, in bytes.
-  priv body_limit : Int
+  priv body_limit : Int32
 }
 
 ///|
@@ -95,7 +95,7 @@ pub(all) enum Parsed {
   /// - 505 for an HTTP major version other than 1.
   ///
   /// Bytes that cannot begin a request head get 400 as soon as they arrive.
-  Invalid(status~ : Int)
+  Invalid(status~ : Int32)
 } derive(Debug)
 
 ///|
@@ -150,9 +150,9 @@ pub(all) struct Request {
 ///
 /// The defaults are 16 KiB, 100 header fields and 10 MiB.
 pub fn Parser::Parser(
-  header_size_limit? : Int = 16 * 1024,
-  header_count_limit? : Int = 100,
-  body_limit? : Int = 10 * 1024 * 1024,
+  header_size_limit~ : Int32 = 16 * 1024,
+  header_count_limit~ : Int32 = 100,
+  body_limit~ : Int32 = 10 * 1024 * 1024,
 ) -> Parser {
   let body_limit = if body_limit < 0 {
     0
@@ -318,7 +318,7 @@ priv struct Head {
 /// How the body of a request is framed.
 priv enum Framing {
   /// The body is that many bytes long.
-  Length(Int)
+  Length(Int32)
   /// The body is chunked (RFC 9112, section 7.1).
   Chunked
 }
@@ -327,11 +327,11 @@ priv enum Framing {
 /// How far a scan of the head of the next request got.
 priv enum HeadEnd {
   /// The head ends just before this index.
-  Ended(Int)
+  Ended(Int32)
   /// The end of the head has not arrived.
   Partial
   /// The head gets this error status.
-  Rejected(Int)
+  Rejected(Int32)
 }
 
 ///|
@@ -604,11 +604,11 @@ fn is_visible(word : UInt64) -> Bool {
 /// fields.
 fn parse_head(
   buf : FixedArray[Byte],
-  start : Int,
-  line_ends : Array[Int],
-  body_limit : Int,
+  start : Int32,
+  line_ends : Array[Int32],
+  body_limit : Int32,
   previous : Head?,
-) -> Result[Head, Int] {
+) -> Result[Head, Int32] {
   let (meth, target, version) = match
     parse_request_line(buf, start, start + line_ends[0], previous) {
     Ok(line) => line
@@ -705,7 +705,7 @@ fn parse_head(
 /// Checks the transfer codings that the Transfer-Encoding fields `values`
 /// list: only `chunked` is implemented, so any other coding gets 501, and
 /// `chunked` must be listed exactly once, or the request gets 400.
-fn check_transfer_codings(values : Array[Bytes]) -> Result[Unit, Int] {
+fn check_transfer_codings(values : Array[Bytes]) -> Result[Unit, Int32] {
   let mut chunked = 0
   for value in values {
     for coding in list_elements(value) {
@@ -731,7 +731,7 @@ fn check_transfer_codings(values : Array[Bytes]) -> Result[Unit, Int] {
 /// digits, or the request gets 400. Lengths that disagree get 400 as well;
 /// the same length repeated is not a conflict (RFC 9110, section 8.6). A
 /// length over `limit` gets 413.
-fn content_length(values : Array[Bytes], limit : Int) -> Result[Int, Int] {
+fn content_length(values : Array[Bytes], limit : Int32) -> Result[Int32, Int32] {
   // Lengths are compared as digits without leading zeros, so that lengths
   // too large to hold still compare.
   let mut digits : String? = None
@@ -775,10 +775,10 @@ fn list_elements(value : Bytes) -> Iter[StringView] {
 /// request target, or in a form its method does not take, gets 400.
 fn parse_request_line(
   buf : FixedArray[Byte],
-  start : Int,
-  end : Int,
+  start : Int32,
+  end : Int32,
   previous : Head?,
-) -> Result[(String, String, Version), Int] {
+) -> Result[(String, String, Version), Int32] {
   // The method holds no space, and the version is the last 8 bytes,
   // `HTTP/D.D`.
   let mut space = start
@@ -815,8 +815,8 @@ fn is_digit(c : Byte) -> Bool {
 /// has its name, when that is the same.
 fn parse_field(
   buf : FixedArray[Byte],
-  start : Int,
-  end : Int,
+  start : Int32,
+  end : Int32,
   previous : Header?,
 ) -> Header {
   let mut colon = start
@@ -872,7 +872,7 @@ fn is_ows(c : Byte) -> Bool {
 ///|
 /// `buf[start:end]`, which holds only ASCII, as a string. ASCII is UTF-8, so
 /// it is decoded as UTF-8, all at once.
-fn ascii(buf : FixedArray[Byte], start : Int, end : Int) -> String {
+fn ascii(buf : FixedArray[Byte], start : Int32, end : Int32) -> String {
   @utf8.decode_lossy(buf.unsafe_reinterpret_as_bytes()[start:end])
 }
 
@@ -881,8 +881,8 @@ fn ascii(buf : FixedArray[Byte], start : Int, end : Int) -> String {
 /// it is that text, so that text sent again shares one string.
 fn ascii_reusing(
   buf : FixedArray[Byte],
-  start : Int,
-  end : Int,
+  start : Int32,
+  end : Int32,
   same : String,
 ) -> String {
   if same.length() == end - start {

@@ -692,7 +692,7 @@ fn message(text : String) -> String {
 ///|
 test "nesting as deep as the JSON parser allows gives a value; deeper nesting gives an error" {
   // The JSON parser allows 1024 nested collections.
-  let flow = (depth : Int) => "[".repeat(depth) + "]".repeat(depth)
+  let flow = (depth : Int32) => "[".repeat(depth) + "]".repeat(depth)
   assert_eq(@yaml.parse(flow(1024)), @json.parse(flow(1024)))
   inspect(message(flow(1025)), content="nesting is deeper than 1024 levels")
   inspect(
@@ -704,7 +704,7 @@ test "nesting as deep as the JSON parser allows gives a value; deeper nesting gi
     content="nesting is deeper than 1024 levels",
   )
   // Compact sequences: `- - - x`.
-  let compact = (depth : Int) => "- ".repeat(depth) + "x"
+  let compact = (depth : Int32) => "- ".repeat(depth) + "x"
   guard @yaml.parse(compact(1024)) is Array(_) else { fail("not an array") }
   inspect(message(compact(1025)), content="nesting is deeper than 1024 levels")
   inspect(
@@ -712,7 +712,7 @@ test "nesting as deep as the JSON parser allows gives a value; deeper nesting gi
     content="nesting is deeper than 1024 levels",
   )
   // Mappings nested by indentation.
-  let indented = (depth : Int) => {
+  let indented = (depth : Int32) => {
     let lines = []
     for i in 0..<depth {
       lines.push(" ".repeat(i) + "a:")

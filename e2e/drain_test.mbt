@@ -32,11 +32,11 @@ let drain_defs : String = {
 ///|
 /// How long a test waits after sending a request before it sends SIGTERM,
 /// so that smock has received the request by then.
-let settle_ms : Int = 300
+let settle_ms : Int32 = 300
 
 ///|
 /// Whether a new connection to `port` is accepted or refused.
-async fn connection_to(port : Int) -> String {
+async fn connection_to(port : Int32) -> String {
   try @socket.Tcp::connect(@socket.Addr::parse("127.0.0.1:\{port}")) catch {
     err =>
       if err.to_string().contains("Connection refused") {

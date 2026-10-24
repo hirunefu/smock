@@ -1,7 +1,7 @@
 ///|
 /// The largest file the converter writes: 64 MiB. smock serve holds the
 /// whole definition set in memory.
-let max_file_bytes : Int = 64 * 1024 * 1024
+let max_file_bytes : Int32 = 64 * 1024 * 1024
 
 ///|
 /// The Definition file of the imported operations, unless a problem so far
@@ -49,9 +49,9 @@ fn Conversion::file(self : Conversion, imported : Array[Imported]) -> Outcome {
 /// The Mock the file declares: its name, then its Hosts, when it has any,
 /// and nothing else.
 fn Conversion::mock(self : Conversion) -> Json {
-  let mock : Map[String, Json] = { "name": self.options.mock.to_json() }
+  let mock : Map[String, Json] = { "name": Json(self.options.mock) }
   if !self.options.hosts.is_empty() {
-    mock["hosts"] = self.options.hosts.to_json()
+    mock["hosts"] = Json(self.options.hosts)
   }
   Json::object(mock)
 }
@@ -195,28 +195,28 @@ fn base_name(path : String) -> String {
 /// or `body`).
 fn Stub::to_json(self : Stub, mock : String) -> Json {
   let path : Json = match self.path {
-    Exact(path) => path.to_json()
-    Pattern(pattern) => { "pattern": pattern.to_json() }
+    Exact(path) => Json(path)
+    Pattern(pattern) => { "pattern": Json(pattern) }
   }
   let request : Map[String, Json] = { "method": self.meth, "path": path }
   if self.selected || self.named {
     let headers : Map[String, Json] = Map([])
     if self.selected {
-      headers["Smock-Status"] = self.response.to_json()
+      headers["Smock-Status"] = Json(self.response)
     }
     if self.named && self.example is Some(example) {
-      headers["Smock-Example"] = example.to_json()
+      headers["Smock-Example"] = Json(example)
     }
     request["headers"] = Json::object(headers)
   }
-  let response : Map[String, Json] = { "status": self.status.to_json() }
+  let response : Map[String, Json] = { "status": Json(self.status) }
   if self.payload.content_type is Some(_) || !self.headers.is_empty() {
     let headers : Map[String, Json] = Map([])
     if self.payload.content_type is Some(content_type) {
-      headers["Content-Type"] = content_type.to_json()
+      headers["Content-Type"] = Json(content_type)
     }
     for header in self.headers {
-      headers[header.0] = header.1.to_json()
+      headers[header.0] = Json(header.1)
     }
     response["headers"] = Json::object(headers)
   }
@@ -245,7 +245,7 @@ fn Stub::to_json(self : Stub, mock : String) -> Json {
 fn Conversion::checked(
   self : Conversion,
   bytes : Bytes,
-  max_bytes~ : Int,
+  max_bytes~ : Int32,
 ) -> Bool {
   let output = self.options.output
   if bytes.length() > max_bytes {
@@ -287,7 +287,7 @@ fn Conversion::stand_in(self : Conversion) -> (String, Bytes) {
 ///|
 /// `bytes` as a size: in MiB when it is a whole number of them, such as
 /// `64 MiB`, else in bytes.
-fn size_text(bytes : Int) -> String {
+fn size_text(bytes : Int32) -> String {
   let mib = 1024 * 1024
   if bytes >= mib && bytes % mib == 0 {
     "\{bytes / mib} MiB"

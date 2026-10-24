@@ -3,8 +3,8 @@
 /// `error <pointer>: <message>`.
 fn written(
   value : Json,
-  comment? : Array[String] = [],
-  item_comments? : Map[String, Array[String]] = {},
+  comment~ : Array[String] = [],
+  item_comments~ : Map[String, Array[String]] = {},
 ) -> String {
   try @yaml.write(value, comment~, item_comments~) catch {
     @yaml.WriteError(pointer~, message~) => "error \{pointer}: \{message}"
@@ -415,7 +415,7 @@ test "a string with an unpaired surrogate is an error at its pointer" {
 
 ///|
 /// `depth` arrays, or objects with the key `a`, nested around `inner`.
-fn nested(depth : Int, inner : Json, objects? : Bool = false) -> Json {
+fn nested(depth : Int32, inner : Json, objects~ : Bool = false) -> Json {
   let mut tree = inner
   for _ in 0..<depth {
     tree = if objects {
@@ -438,7 +438,7 @@ test "a tree nested deeper than the parser accepts is an error, never written" {
     let tree = nested(1024, Json::string("x"), objects~)
     assert_eq(@yaml.parse(written(tree)), tree)
   }
-  let segments = (segment : String, n : Int) => "/\{segment}".repeat(n)
+  let segments = (segment : String, n : Int32) => "/\{segment}".repeat(n)
   inspect(
     written(nested(1025, Json::null())) ==
     "error \{segments("0", 1024)}: nesting is deeper than 1024 levels",
@@ -627,7 +627,7 @@ test "a comment for a pointer that names no sequence item is an error" {
 /// null, and empty and nested collections.
 fn random_tree(
   rand : @random.Rand,
-  depth : Int,
+  depth : Int32,
   strings : Array[String],
 ) -> Json {
   let numbers = [

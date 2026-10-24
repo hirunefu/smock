@@ -132,7 +132,7 @@ fn is_reset(err : @os_error.OSError) -> Bool {
 /// How smock ends `conn`, waiting at most `within` milliseconds: how many
 /// bytes it sends first, then whether an RST (a connection-reset error) or
 /// a FIN (a clean end of stream) ends the connection, or it stays open.
-async fn how_it_ends(conn : Conn, within? : Int = patience_ms) -> String {
+async fn how_it_ends(conn : Conn, within~ : Int32 = patience_ms) -> String {
   let (received, ending) = sent_until_end(conn, within~)
   "\{received.length()} bytes, then \{ending}"
 }
@@ -141,7 +141,7 @@ async fn how_it_ends(conn : Conn, within? : Int = patience_ms) -> String {
 /// Every byte smock sends on `conn` until the connection ends, waiting at
 /// most `within` milliseconds, and how it ends: `an RST`, `a FIN`, or
 /// `nothing yet: it is still open`.
-async fn sent_until_end(conn : Conn, within~ : Int) -> (Bytes, String) {
+async fn sent_until_end(conn : Conn, within~ : Int32) -> (Bytes, String) {
   let received = @buffer.Buffer()
   let ending = @async.with_timeout_opt(within, () => {
     for ;; {
@@ -398,7 +398,7 @@ async test "a real HTTP client sees a partial response cut short" {
 /// Sends `GET /coin` `n` times, each on its own connection, and returns
 /// what happened to each in turn: `-` for a closed connection, `+` for a
 /// response.
-async fn coin_flips(smock : Smock, n : Int) -> String {
+async fn coin_flips(smock : Smock, n : Int32) -> String {
   let out = StringBuilder()
   for _ in 0..<n {
     let conn = smock.connect()

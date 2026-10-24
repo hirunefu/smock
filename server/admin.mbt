@@ -36,7 +36,7 @@ priv struct Admin {
 ///|
 /// A response, before it is encoded.
 priv struct Reply {
-  status : Int
+  status : Int32
   headers : Array[(String, String)]
   body : Bytes
 }
@@ -123,8 +123,8 @@ fn route(
   path : String,
   meth : String,
   answer : (Admin, Call) -> Reply,
-  open? : Bool = false,
-  takes_body? : Bool = false,
+  open~ : Bool = false,
+  takes_body~ : Bool = false,
   refresh? : async (Admin) -> Unit,
 ) -> Route {
   { path, meth, open, takes_body, answer, refresh, }
@@ -152,7 +152,7 @@ fn Admin::new(
   logger~ : @log.Logger,
   token~ : String?,
   replica~ : String,
-  replicas~ : Int,
+  replicas~ : Int32,
   sessions~ : SessionCarrier,
   dates~ : @http1.DateCache,
 ) -> Admin {
@@ -187,7 +187,7 @@ fn Admin::encode(
   self : Admin,
   reply : Reply,
   request? : @http1.Request,
-  close? : Bool = false,
+  close~ : Bool = false,
 ) -> Bytes {
   @http1.encode_response(
     reply.status,
@@ -202,7 +202,7 @@ fn Admin::encode(
 ///|
 /// The encoded response, with `Connection: close`, to bytes that are not a
 /// valid request or are over a limit, with the status the codec chose.
-fn Admin::reject(self : Admin, status : Int) -> Bytes {
+fn Admin::reject(self : Admin, status : Int32) -> Bytes {
   let (code, message) = match status {
     413 =>
       ("content_too_large", "the body is over the body limit (--body-limit)")
@@ -225,7 +225,7 @@ fn Admin::reject(self : Admin, status : Int) -> Bytes {
 /// An error reply, in the form `{error, message, warnings}`.
 fn Admin::error(
   self : Admin,
-  status : Int,
+  status : Int32,
   code : String,
   message : String,
 ) -> Reply {
@@ -397,7 +397,7 @@ fn same_token(token : Bytes, given : BytesView) -> Bool {
 
 ///|
 /// A JSON reply: `body` with the `warnings` member added.
-fn Admin::json(self : Admin, status : Int, body : Map[String, Json]) -> Reply {
+fn Admin::json(self : Admin, status : Int32, body : Map[String, Json]) -> Reply {
   body["warnings"] = self.warnings
   {
     status,

@@ -54,7 +54,7 @@ pub fn is_white_space(c : Char) -> Bool {
 ///|
 /// What `runs`, a mapping as data.mbt writes it, maps `c` to: `c` itself
 /// when no run maps it.
-fn mapped(runs : FixedArray[(Int, Int, Int, Int)], c : Char) -> Char {
+fn mapped(runs : FixedArray[(Int32, Int32, Int32, Int32)], c : Char) -> Char {
   let code = c.to_int()
   // The number of runs that start at or before `code`; the last of them is
   // the only one that may map it.

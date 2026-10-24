@@ -195,7 +195,7 @@ fn matched_path(key : String, prefix~ : String) -> Path {
 ///|
 /// The kind of a segment that holds literal text or not, and `parameters`
 /// parameters.
-fn segment(literal : Bool, parameters : Int) -> Segment {
+fn segment(literal : Bool, parameters : Int32) -> Segment {
   match parameters {
     0 => Literal
     1 if !literal => Parameter
@@ -208,7 +208,7 @@ fn segment(literal : Bool, parameters : Int) -> Segment {
 /// stands for itself. `/` is not: a pattern writes it as it is.
 fn is_ascii_punctuation(c : Char) -> Bool {
   match c {
-    '!'..='.' | ':'..='@' | '['..='`' | '{'..='~' => true
+    '!'..<='.' | ':'..<='@' | '['..<='`' | '{'..<='~' => true
     _ => false
   }
 }
@@ -219,7 +219,7 @@ fn is_ascii_punctuation(c : Char) -> Bool {
 /// one, then one parameter. When one path's kinds are a prefix of the
 /// other's, the shorter path comes first. So an exact path comes before
 /// every pattern that matches it.
-fn compare_specificity(a : Array[Segment], b : Array[Segment]) -> Int {
+fn compare_specificity(a : Array[Segment], b : Array[Segment]) -> Int32 {
   let shorter = if a.length() < b.length() { a.length() } else { b.length() }
   for i in 0..<shorter {
     let order = Compare::compare(a[i], b[i])

@@ -297,9 +297,9 @@ priv enum Undo {
   Element(Array[Json])
   /// The element at an index of an array was replaced: put back the one
   /// before.
-  Replaced(Array[Json], Int, Json)
+  Replaced(Array[Json], Int32, Json)
   /// The element at an index of an array was removed: insert it back.
-  Removed(Array[Json], Int, Json)
+  Removed(Array[Json], Int32, Json)
 }
 
 ///|
@@ -358,7 +358,7 @@ fn WorkingCopies::reach(
   self : WorkingCopies,
   name : String,
   initial : Json,
-) -> Int {
+) -> Int32 {
   for i in 0..<self.reached.length() {
     if self.reached[i].name == name {
       return i
@@ -403,7 +403,7 @@ fn WorkingCopies::reach(
 /// applied.
 fn WorkingCopies::apply(
   self : WorkingCopies,
-  index : Int,
+  index : Int32,
   write : @definitions.DataWrite,
   key : String?,
   value : Json,
@@ -522,7 +522,7 @@ fn WorkingCopies::apply_whole(
 /// `except`, if any, is left as it is. The bucket's count follows.
 fn WorkingCopies::merge_members(
   self : WorkingCopies,
-  i : Int,
+  i : Int32,
   object : Map[String, Json],
   members : Map[String, Json],
   except~ : String?,
@@ -553,7 +553,7 @@ fn WorkingCopies::merge_members(
 /// which is ready to change in place. The bucket's count follows.
 fn WorkingCopies::push_element(
   self : WorkingCopies,
-  i : Int,
+  i : Int32,
   array : Array[Json],
   element : Json,
 ) -> Unit {
@@ -577,7 +577,7 @@ fn apply_failed(at : String, message : String) -> WriteFailure {
 /// and its copy counted, since the definition set's never changes. The
 /// copy is deep, so that no change to it, at any depth, reaches the initial
 /// value.
-fn WorkingCopies::own(self : WorkingCopies, i : Int, bucket : String) -> Json {
+fn WorkingCopies::own(self : WorkingCopies, i : Int32, bucket : String) -> Json {
   if self.reached[i].source is Initial {
     self.reached[i].value = deep_copy(self.reached[i].value)
     self.reached[i].source = Own

@@ -16,7 +16,7 @@ async fn Smock::metrics(self : Smock) -> (String, Array[Sample]) {
 async fn Smock::metric(
   self : Smock,
   prefix : String,
-  help? : Bool = false,
+  help~ : Bool = false,
 ) -> String {
   metric_lines(self.admin("GET", "/metrics").body, prefix, help~).join("\n")
 }

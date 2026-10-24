@@ -15,7 +15,7 @@ pub fn current() -> BuildInfo {
 
 ///|
 /// The line `smock --version` prints, such as
-/// `smock 1.2.3 (commit 0123456789ab, moonc v0.10.14+7d59c7ec9)`.
+/// `smock 1.2.3 (commit 0123456789ab, moonc v0.10.17+d971670cd)`.
 pub fn BuildInfo::version_line(self : BuildInfo) -> String {
   "smock \{self.version} (commit \{self.commit}, \{self.toolchain})"
 }
@@ -26,7 +26,7 @@ pub fn BuildInfo::version_line(self : BuildInfo) -> String {
 pub fn BuildInfo::log_startup(
   self : BuildInfo,
   logger : @log.Logger,
-  fields? : Map[String, Json] = {},
+  fields~ : Map[String, Json] = {},
 ) -> Unit {
   let entry : Map[String, Json] = {
     "version": Json::string(self.version),

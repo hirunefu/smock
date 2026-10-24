@@ -407,7 +407,7 @@ fn location(crud : @definitions.Crud, key : String) -> String {
 /// `headers`, then the Stub's `crud.headers`.
 fn crud_plan(
   crud : @definitions.Crud,
-  status : Int,
+  status : Int32,
   body : Bytes,
   headers : Array[(String, String)],
 ) -> ResponsePlan {
@@ -430,7 +430,7 @@ fn crud_plan(
 /// "<id>", ...}`, and the Stub's `crud.headers`.
 fn crud_failed(
   crud : @definitions.Crud,
-  status : Int,
+  status : Int32,
   body : Json,
 ) -> ResponsePlan {
   crud_plan(crud, status, @template.compact_json_bytes(body), [])

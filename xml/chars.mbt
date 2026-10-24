@@ -7,7 +7,7 @@
 /// The result is packed, rather than a tuple, and the bytes are checked
 /// with plain functions, rather than a local closure, so that decoding
 /// allocates nothing: it runs for every character of a request body.
-fn decode(input : BytesView, pos : Int) -> Int {
+fn decode(input : BytesView, pos : Int32) -> Int32 {
   let b0 = input[pos].to_int()
   if b0 < 0x80 {
     return packed(b0, 1)
@@ -43,7 +43,7 @@ fn decode(input : BytesView, pos : Int) -> Int {
 ///|
 /// The payload bits of the continuation byte at `i` of `input`, or -1 when
 /// there is none or it is not between `lo` and `hi`.
-fn continuation(input : BytesView, i : Int, lo : Int, hi : Int) -> Int {
+fn continuation(input : BytesView, i : Int32, lo : Int32, hi : Int32) -> Int32 {
   if i >= input.length() {
     return -1
   }
@@ -58,68 +58,69 @@ fn continuation(input : BytesView, i : Int, lo : Int, hi : Int) -> Int {
 ///|
 /// A code point and its length in UTF-8, 1 to 4, packed as `decode`
 /// returns them.
-fn packed(code_point : Int, length : Int) -> Int {
+fn packed(code_point : Int32, length : Int32) -> Int32 {
   (code_point << 3) | length
 }
 
 ///|
 /// The code point of a character `decode` returned.
-fn code_point(decoded : Int) -> Int {
+fn code_point(decoded : Int32) -> Int32 {
   decoded >> 3
 }
 
 ///|
 /// The length in bytes of a character `decode` returned.
-fn byte_length(decoded : Int) -> Int {
+fn byte_length(decoded : Int32) -> Int32 {
   decoded & 7
 }
 
 ///|
 /// Whether `c` is a character XML allows (XML 1.0 §2.2 [2]).
-fn is_char(c : Int) -> Bool {
-  c is (0x9 | 0xA | 0xD | 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF)
+fn is_char(c : Int32) -> Bool {
+  c
+  is (0x9 | 0xA | 0xD | 0x20..<=0xD7FF | 0xE000..<=0xFFFD | 0x10000..<=0x10FFFF)
 }
 
 ///|
 /// Whether `c` is XML whitespace (XML 1.0 §2.3 [3]): space, tab, line feed
 /// or carriage return.
-fn is_space(c : Int) -> Bool {
+fn is_space(c : Int32) -> Bool {
   c is (0x20 | 0x9 | 0xA | 0xD)
 }
 
 ///|
 /// Whether `c` may start a name (XML 1.0 §2.3 [4]).
-fn is_name_start(c : Int) -> Bool {
+fn is_name_start(c : Int32) -> Bool {
   c
   is (':'
-  | 'A'..='Z'
+  | 'A'..<='Z'
   | '_'
-  | 'a'..='z'
-  | 0xC0..=0xD6
-  | 0xD8..=0xF6
-  | 0xF8..=0x2FF
-  | 0x370..=0x37D
-  | 0x37F..=0x1FFF
-  | 0x200C..=0x200D
-  | 0x2070..=0x218F
-  | 0x2C00..=0x2FEF
-  | 0x3001..=0xD7FF
-  | 0xF900..=0xFDCF
-  | 0xFDF0..=0xFFFD
-  | 0x10000..=0xEFFFF)
+  | 'a'..<='z'
+  | 0xC0..<=0xD6
+  | 0xD8..<=0xF6
+  | 0xF8..<=0x2FF
+  | 0x370..<=0x37D
+  | 0x37F..<=0x1FFF
+  | 0x200C..<=0x200D
+  | 0x2070..<=0x218F
+  | 0x2C00..<=0x2FEF
+  | 0x3001..<=0xD7FF
+  | 0xF900..<=0xFDCF
+  | 0xFDF0..<=0xFFFD
+  | 0x10000..<=0xEFFFF)
 }
 
 ///|
 /// Whether `c` may continue a name (XML 1.0 §2.3 [4a]).
-fn is_name_char(c : Int) -> Bool {
+fn is_name_char(c : Int32) -> Bool {
   is_name_start(c) ||
-  c is ('-' | '.' | '0'..='9' | 0xB7 | 0x300..=0x36F | 0x203F..=0x2040)
+  c is ('-' | '.' | '0'..<='9' | 0xB7 | 0x300..<=0x36F | 0x203F..<=0x2040)
 }
 
 ///|
 /// The character that the predefined entity `name` stands for (XML 1.0
 /// §4.6), or -1 when it is none of them.
-fn predefined_entity(name : BytesView) -> Int {
+fn predefined_entity(name : BytesView) -> Int32 {
   match name {
     [b'l', b't'] => '<'
     [b'g', b't'] => '>'
@@ -133,7 +134,7 @@ fn predefined_entity(name : BytesView) -> Int {
 ///|
 /// The index of the first colon of `input` from byte `start` to byte `end`,
 /// or -1.
-fn find_colon(input : BytesView, start : Int, end : Int) -> Int {
+fn find_colon(input : BytesView, start : Int32, end : Int32) -> Int32 {
   for i in start..<end {
     if input[i] == b':' {
       return i
@@ -146,7 +147,7 @@ fn find_colon(input : BytesView, start : Int, end : Int) -> Int {
 /// Where the local name of the qualified name of `input` from byte `start`
 /// to byte `end` starts: after its colon, if it has one (Namespaces in XML
 /// 1.0 §4).
-fn local_start(input : BytesView, start : Int, end : Int) -> Int {
+fn local_start(input : BytesView, start : Int32, end : Int32) -> Int32 {
   let colon = find_colon(input, start, end)
   if colon < 0 {
     start

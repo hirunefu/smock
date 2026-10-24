@@ -6,7 +6,7 @@
 ///|
 /// What the body template `source` renders for `input`, or its problem or
 /// render error, on one line.
-fn rendered(source : String, input? : @template.Input = request) -> String {
+fn rendered(source : String, input~ : @template.Input = request) -> String {
   match
     @template.Text::parse(source, pointer="/response/body", kind=Body(Plain)) {
     Ok(text) =>
@@ -26,7 +26,7 @@ fn rendered(source : String, input? : @template.Input = request) -> String {
 ///|
 /// What the `json` template `source`, given as JSON, renders for `input`,
 /// or its problems or render error, on one line.
-fn rendered_json(source : String, input? : @template.Input = request) -> String {
+fn rendered_json(source : String, input~ : @template.Input = request) -> String {
   let source = @json.parse(source) catch { _ => abort("not JSON: \{source}") }
   match @template.Structured::parse(source, pointer="/response/json") {
     Ok(structured) => {
@@ -131,7 +131,7 @@ test "a bound of range may be any expression giving an integer, checked when ren
 
 ///|
 /// A request whose body is `n` bytes of `x`.
-fn of_size(n : Int) -> @template.Input {
+fn of_size(n : Int32) -> @template.Input {
   { ..request, body: @utf8.encode("x".repeat(n)), }
 }
 
@@ -176,7 +176,7 @@ test "a helper whose result takes more than 1 MiB of UTF-8 is a render error" {
 
 ///|
 /// A request whose body is the integer `n` digits long, 1 then 0s.
-fn of_digits(n : Int) -> @template.Input {
+fn of_digits(n : Int32) -> @template.Input {
   { ..request, body: @utf8.encode("1" + "0".repeat(n - 1)), }
 }
 

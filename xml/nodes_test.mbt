@@ -165,12 +165,12 @@ test "value_is compares an attribute's normalised value, which is not trimmed" {
 /// A small deterministic random number generator for the property test:
 /// xorshift32, from a non-zero seed.
 struct Random {
-  mut state : UInt
+  mut state : UInt32
 }
 
 ///|
 /// A number from 0 to `limit` - 1.
-fn Random::below(self : Random, limit : Int) -> Int {
+fn Random::below(self : Random, limit : Int32) -> Int32 {
   let mut x = self.state
   x = x ^ (x << 13)
   x = x ^ (x >> 17)
@@ -195,7 +195,7 @@ let attribute_pieces : Array[String] = [
 
 ///|
 /// A random element named `a`, `b` or `p:a`, `depth` levels deep at most.
-fn random_element(random : Random, depth : Int, out : StringBuilder) -> Unit {
+fn random_element(random : Random, depth : Int32, out : StringBuilder) -> Unit {
   let name = ["a", "b", "p:a"][random.below(3)]
   out.write_string("<\{name}")
   for attribute in attribute_pieces {

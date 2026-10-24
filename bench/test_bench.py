@@ -455,7 +455,7 @@ def scrape(start=1791993354.147, cpu=0.03, rss=17727488, requests=(1,), cgroup=T
     delay and involuntary context switches and the node's steal time, and,
     with `cgroup`, its cgroup's (with `cfs`, the CFS counts)."""
     lines = ['# HELP smock_build_info The smock build.', '# TYPE smock_build_info gauge',
-             'smock_build_info{version="0.0.0-dev",commit="bce2d12a78d7",toolchain="moonc v0.10.14"} 1',
+             'smock_build_info{version="0.0.0-dev",commit="bce2d12a78d7",toolchain="moonc v0.10.17"} 1',
              '# HELP smock_requests_total Requests.', '# TYPE smock_requests_total counter',
              *(f'smock_requests_total{{mock="catalog",stub="item {i}"}} {count}' for i, count in enumerate(requests)),
              'smock_journal_entries 1', f'process_start_time_seconds {start}', f'process_cpu_seconds_total {cpu}',
@@ -728,7 +728,7 @@ def summary_conditions():
     """What conditions.json has, as summary_markdown reads it, of a run on
     arm64 under one profile, small."""
     return {"started_at": "2026-10-23T09:00:00+00:00",
-            "smock": {"version": "0.3.0", "commit": "842c571d9a0e", "toolchain": "moonc v0.10.14"},
+            "smock": {"version": "0.3.0", "commit": "842c571d9a0e", "toolchain": "moonc v0.10.17"},
             "definitions": {"directory": "bench/definitions", "digest": "48f7ce9715f0"},
             "request_mix": {"file": "bench/requests.json"}, "plan": {"file": "bench/plan-autopilot.json"},
             "targets": {"file": "bench/targets.json"},

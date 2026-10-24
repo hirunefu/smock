@@ -37,7 +37,7 @@ fn urlencoded(input : BytesView) -> Array[(String, String)] {
 /// starts, in order: the fields are the pieces between `&`, empty pieces
 /// skipped. A field's name runs to its first `=`, as `name_end` finds it,
 /// and its value from there to the field's end, as `piece_end` finds it.
-fn field_starts(input : BytesView) -> FixedArray[Int] {
+fn field_starts(input : BytesView) -> FixedArray[Int32] {
   // Counted first, so that the array takes no more room than it needs.
   let mut count = 0
   let mut start = 0
@@ -65,7 +65,7 @@ fn field_starts(input : BytesView) -> FixedArray[Int] {
 ///|
 /// The end of the piece of `input` that starts at `start`: the index of the
 /// next `&`, or the length of `input`.
-fn piece_end(input : BytesView, start : Int) -> Int {
+fn piece_end(input : BytesView, start : Int32) -> Int32 {
   let mut end = start
   while end < input.length() && input[end] != b'&' {
     end += 1
@@ -76,7 +76,7 @@ fn piece_end(input : BytesView, start : Int) -> Int {
 ///|
 /// The end of the name of the piece `input[start:end]`: the index of its
 /// first `=`, or `end`.
-fn name_end(input : BytesView, start : Int, end : Int) -> Int {
+fn name_end(input : BytesView, start : Int32, end : Int32) -> Int32 {
   let mut equals = start
   while equals < end && input[equals] != b'=' {
     equals += 1
@@ -87,7 +87,7 @@ fn name_end(input : BytesView, start : Int, end : Int) -> Int {
 ///|
 /// The value of the piece of `input` whose name ends at `equals` and that
 /// ends at `end`: the bytes after the `=`, none without one.
-fn field_value(input : BytesView, equals : Int, end : Int) -> BytesView {
+fn field_value(input : BytesView, equals : Int32, end : Int32) -> BytesView {
   if equals < end {
     input[equals + 1:end]
   } else {
@@ -133,7 +133,7 @@ fn form_decode(bytes : BytesView) -> String {
 fn form_utf8(bytes : BytesView) -> BytesView {
   let mut plain = true
   for i in 0..<bytes.length() {
-    if bytes[i] is (b'+' | b'%' | b'\x80'..=b'\xFF') {
+    if bytes[i] is (b'+' | b'%' | b'\x80'..<=b'\xFF') {
       plain = false
       break
     }
@@ -192,7 +192,7 @@ fn form_text_is(bytes : BytesView, text : String) -> Bool {
 ///
 /// The result is packed, rather than a tuple, so that decoding allocates
 /// nothing.
-fn form_char(bytes : BytesView, i : Int) -> Int64 {
+fn form_char(bytes : BytesView, i : Int32) -> Int64 {
   let first = form_byte(bytes, i)
   let b0 = byte_of(first)
   let mut next = i + length_of(first)
@@ -202,9 +202,9 @@ fn form_char(bytes : BytesView, i : Int) -> Int64 {
   // How many continuation bytes follow, and the range the first of them
   // must be in; the others are from 0x80 to 0xBF.
   let count = match b0 {
-    0xC2..=0xDF => 1
-    0xE0..=0xEF => 2
-    0xF0..=0xF4 => 3
+    0xC2..<=0xDF => 1
+    0xE0..<=0xEF => 2
+    0xF0..<=0xF4 => 3
     _ => return packed_char(0xFFFD, next)
   }
   let lo = match b0 {
@@ -237,19 +237,19 @@ fn form_char(bytes : BytesView, i : Int) -> Int64 {
 
 ///|
 /// A character and the index after it, packed as `form_char` returns them.
-fn packed_char(code_point : Int, next : Int) -> Int64 {
+fn packed_char(code_point : Int32, next : Int32) -> Int64 {
   (code_point.to_int64() << 32) | next.to_int64()
 }
 
 ///|
 /// The code point of a character `form_char` returned.
-fn char_of(c : Int64) -> Int {
+fn char_of(c : Int64) -> Int32 {
   (c >> 32).to_int()
 }
 
 ///|
 /// The index after a character `form_char` returned.
-fn next_of(c : Int64) -> Int {
+fn next_of(c : Int64) -> Int32 {
   (c & 0xFFFFFFFFL).to_int()
 }
 
@@ -259,7 +259,7 @@ fn next_of(c : Int64) -> Int {
 /// packed as `byte_of` and `length_of` read them: `+` is a space, `%` and
 /// two hexadecimal digits are the byte they write, and any other byte, a
 /// `%` that starts no escape included, is itself.
-fn form_byte(bytes : BytesView, i : Int) -> Int {
+fn form_byte(bytes : BytesView, i : Int32) -> Int32 {
   let byte = bytes[i]
   if byte == b'+' {
     return packed_byte(' '.to_int(), 1)
@@ -276,29 +276,29 @@ fn form_byte(bytes : BytesView, i : Int) -> Int {
 
 ///|
 /// A byte and its length, packed as `form_byte` returns them.
-fn packed_byte(byte : Int, length : Int) -> Int {
+fn packed_byte(byte : Int32, length : Int32) -> Int32 {
   byte | (length << 8)
 }
 
 ///|
 /// The byte of what `form_byte` returned.
-fn byte_of(unit : Int) -> Int {
+fn byte_of(unit : Int32) -> Int32 {
   unit & 0xFF
 }
 
 ///|
 /// The length of what `form_byte` returned.
-fn length_of(unit : Int) -> Int {
+fn length_of(unit : Int32) -> Int32 {
   unit >> 8
 }
 
 ///|
 /// The value of `byte` as a hexadecimal digit, in either case, or -1.
-fn hex_digit(byte : Byte) -> Int {
+fn hex_digit(byte : Byte) -> Int32 {
   match byte {
-    b'0'..=b'9' => byte.to_int() - '0'.to_int()
-    b'a'..=b'f' => byte.to_int() - 'a'.to_int() + 10
-    b'A'..=b'F' => byte.to_int() - 'A'.to_int() + 10
+    b'0'..<=b'9' => byte.to_int() - '0'.to_int()
+    b'a'..<=b'f' => byte.to_int() - 'a'.to_int() + 10
+    b'A'..<=b'F' => byte.to_int() - 'A'.to_int() + 10
     _ => -1
   }
 }

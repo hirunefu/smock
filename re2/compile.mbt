@@ -2,15 +2,15 @@
 /// One instruction of a compiled program.
 priv enum Inst {
   /// Consumes the code point.
-  Char(Int)
+  Char(Int32)
   /// Consumes a code point of the set.
   Class(CharSet)
   /// Continues only where the assertion holds.
   Assert(Assertion)
   /// Continues at both, preferring the first.
-  Split(Int, Int)
+  Split(Int32, Int32)
   /// Continues at the instruction.
-  Jmp(Int)
+  Jmp(Int32)
   /// The pattern matched.
   Match
 }
@@ -18,7 +18,7 @@ priv enum Inst {
 ///|
 /// The most instructions a compiled program may have. Like RE2's memory
 /// budget, it bounds the time and memory that compiling and matching take.
-const MAX_PROGRAM_SIZE : Int = 100000
+const MAX_PROGRAM_SIZE : Int32 = 100000
 
 ///|
 /// Builds a program, one instruction at a time.
@@ -37,7 +37,7 @@ fn compile_node(node : Node) -> FixedArray[Inst] raise CompileError {
 
 ///|
 /// Appends `inst` and returns its index.
-fn Compiler::push(self : Compiler, inst : Inst) -> Int raise CompileError {
+fn Compiler::push(self : Compiler, inst : Inst) -> Int32 raise CompileError {
   if self.insts.length() >= MAX_PROGRAM_SIZE {
     fail_at(
       0,
@@ -51,7 +51,7 @@ fn Compiler::push(self : Compiler, inst : Inst) -> Int raise CompileError {
 ///|
 /// Appends a placeholder instruction, to be patched once its targets are
 /// known, and returns its index.
-fn Compiler::placeholder(self : Compiler) -> Int raise CompileError {
+fn Compiler::placeholder(self : Compiler) -> Int32 raise CompileError {
   self.push(Match)
 }
 
@@ -60,8 +60,8 @@ fn Compiler::placeholder(self : Compiler) -> Int raise CompileError {
 /// next instruction when greedy and `other` when lazy.
 fn Compiler::patch_split(
   self : Compiler,
-  at : Int,
-  other : Int,
+  at : Int32,
+  other : Int32,
   greedy : Bool,
 ) -> Unit {
   self.insts[at] = if greedy {
@@ -142,8 +142,8 @@ fn Compiler::emit_repeat(
   self : Compiler,
   sub : Node,
   sub_nullable : Bool,
-  min : Int,
-  max : Int?,
+  min : Int32,
+  max : Int32?,
   greedy : Bool,
 ) -> Unit raise CompileError {
   guard max is Some(max) else {

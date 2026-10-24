@@ -14,7 +14,7 @@ fn samples(registry : @metrics.Registry) -> String {
 ///|
 /// A line of /proc/<pid>/stat as Linux writes it, with `utime` and `stime`
 /// clock ticks of CPU time.
-fn proc_stat(utime : Int, stime : Int) -> String {
+fn proc_stat(utime : Int32, stime : Int32) -> String {
   "4242 (smock) S 1 4242 4242 0 -1 4194304 92 0 0 0 \{utime} \{stime} 0 0 20 0 1 0 37096714 6946816 99 18446744073709551615\n"
 }
 

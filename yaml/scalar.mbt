@@ -66,7 +66,7 @@ fn resolve_core(text : String) -> Result[Json, String] {
     _ => ()
   }
   // Every number starts with a digit, a sign or a point.
-  if !(text.get_char(0) is Some('0'..='9' | '+' | '-' | '.')) {
+  if !(text.get_char(0) is Some('0'..<='9' | '+' | '-' | '.')) {
     return Ok(Json::string(text))
   }
   if core_decimal(text) is Some(json) {
@@ -89,9 +89,9 @@ fn resolve_core(text : String) -> Result[Json, String] {
   let mut value = 0L
   for c in text[2:] {
     let digit = match c {
-      '0'..='9' => c.to_int() - '0'.to_int()
-      'a'..='f' => c.to_int() - 'a'.to_int() + 10
-      'A'..='F' => c.to_int() - 'A'.to_int() + 10
+      '0'..<='9' => c.to_int() - '0'.to_int()
+      'a'..<='f' => c.to_int() - 'a'.to_int() + 10
+      'A'..<='F' => c.to_int() - 'A'.to_int() + 10
       _ => radix
     }
     if digit >= radix {
@@ -289,7 +289,7 @@ fn is_timestamp(text : String) -> Bool {
 /// A cursor over the characters of a scalar, for matching its syntax.
 priv struct Scan {
   chars : Array[Char]
-  mut i : Int
+  mut i : Int32
 }
 
 ///|
@@ -329,7 +329,7 @@ fn Scan::str(self : Scan, s : String) -> Bool {
 
 ///|
 /// Consumes the characters that satisfy `pred` and returns how many.
-fn Scan::run(self : Scan, pred : (Char) -> Bool) -> Int {
+fn Scan::run(self : Scan, pred : (Char) -> Bool) -> Int32 {
   let start = self.i
   while self.one(pred) {
 
@@ -356,7 +356,7 @@ fn Scan::optional_sign(self : Scan) -> Bool {
 
 ///|
 /// Consumes `min` to `max` decimal digits.
-fn Scan::digits(self : Scan, min : Int, max : Int) -> Bool {
+fn Scan::digits(self : Scan, min : Int32, max : Int32) -> Bool {
   let start = self.i
   while self.i - start < max && self.one(is_digit) {
 
@@ -375,7 +375,7 @@ fn Scan::sexagesimal(self : Scan) -> Bool {
   let mut groups = 0
   while self.char(':') {
     let start = self.i
-    if !(self.one(c => c is ('0'..='5')) && self.one(is_digit)) {
+    if !(self.one(c => c is ('0'..<='5')) && self.one(is_digit)) {
       self.i = start
       if !self.one(is_digit) {
         return false
@@ -393,12 +393,12 @@ fn Scan::done(self : Scan) -> Bool {
 
 ///|
 fn is_digit(c : Char) -> Bool {
-  c is ('0'..='9')
+  c is ('0'..<='9')
 }
 
 ///|
 fn is_nonzero_digit(c : Char) -> Bool {
-  c is ('1'..='9')
+  c is ('1'..<='9')
 }
 
 ///|
@@ -408,12 +408,12 @@ fn is_digit_or_underscore(c : Char) -> Bool {
 
 ///|
 fn is_octal_digit(c : Char) -> Bool {
-  c is ('0'..='7')
+  c is ('0'..<='7')
 }
 
 ///|
 fn is_hex_digit(c : Char) -> Bool {
-  c is ('0'..='9' | 'a'..='f' | 'A'..='F')
+  c is ('0'..<='9' | 'a'..<='f' | 'A'..<='F')
 }
 
 ///|

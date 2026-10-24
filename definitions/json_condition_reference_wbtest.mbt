@@ -91,7 +91,7 @@ fn json_condition(value : Json) -> JsonCondition {
 /// when it is the only key and has a string. `$not` and `$includes` hold
 /// another such value, and the key `$$a` is the literal key `$a` in a
 /// condition. As a body, each is literal JSON.
-fn random_json(rand : @random.Rand, depth : Int) -> Json {
+fn random_json(rand : @random.Rand, depth : Int32) -> Json {
   let scalars : Array[String] = [
     "1", "1.0", "10e-1", "2", "-0", "0", "12345678901234567890", "12345678901234567891",
     "1.2345678901234567890e19", "1e400", "\"a\"", "\"b\"", "\"1\"", "true", "false",

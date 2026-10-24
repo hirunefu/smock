@@ -15,12 +15,12 @@ async fn Smock::status(self : Smock) -> Map[String, Json] {
 /// How long a test waits for a reload after changing a file: well below
 /// the 10 s poll interval, so that a reload in time comes from watching
 /// the files, not from polling them.
-let reload_patience_ms : Int = 5000
+let reload_patience_ms : Int32 = 5000
 
 ///|
 /// How long a test waits for the next poll to find a change: the 10 s poll
 /// interval, and some.
-let poll_patience_ms : Int = 15_000
+let poll_patience_ms : Int32 = 15_000
 
 ///|
 /// Waits until status shows another last reload than `before` does, at
@@ -28,7 +28,7 @@ let poll_patience_ms : Int = 15_000
 async fn Smock::reloaded(
   self : Smock,
   before : Map[String, Json],
-  within? : Int = reload_patience_ms,
+  within~ : Int32 = reload_patience_ms,
 ) -> Map[String, Json] {
   let previous = before.get("lastReload")
   let status = @async.with_timeout_opt(within, () => {
@@ -340,7 +340,7 @@ async test "a reload by editing a file keeps a state whose name still exists, se
 
 ///|
 /// How many bytes of `bytes` are not `byte`.
-fn count_other(bytes : BytesView, byte : Byte) -> Int {
+fn count_other(bytes : BytesView, byte : Byte) -> Int32 {
   let mut n = 0
   for b in bytes {
     if b != byte {
