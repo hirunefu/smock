@@ -418,7 +418,12 @@ connection.
   a time, gets its whole response, however long it takes in all. A
   WINDOW_UPDATE for one stream does not start the connection's write
   timeout again, nor does a SETTINGS frame, since neither lets smock send
-  while the connection window is at zero.
+  while the connection window is at zero. A client that stops widening a
+  window for longer than the write timeout, as one that pauses to limit
+  its download rate may, is cut, even where an HTTP/1.1 client pausing as
+  long would not be, since the socket's buffers can take what smock writes
+  meanwhile. Keep `--write-timeout-ms` above the longest pause your
+  clients make.
 - smock's own waits, such as a delay, count toward none of them.
 
 After a GOAWAY with `NO_ERROR`, smock reads what the client still sends and
