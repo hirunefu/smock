@@ -338,7 +338,7 @@ fn set_content_type(
   let mut kept = 0
   for i in 0..<headers.length() {
     let field = headers[i]
-    if field.0.to_lower() != "content-type" {
+    if !is_name(field.0, "content-type") {
       headers[kept] = field
       kept += 1
     }
