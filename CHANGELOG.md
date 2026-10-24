@@ -59,6 +59,15 @@ of each GitHub release include its section
 - The `smock/http1` module makes public `field_octets`: the octets
   `encode_response` writes for a field name or value, so that another
   protocol, such as HTTP/2, can send the same ones.
+- moonbitstack/moonhttp 0.14.0 (Apache-2.0) and the modules it imports are
+  named in NOTICE and the image's SBOM
+  ([ADR 0005](docs/adr/0005-http2-comes-from-moonhttp.md)). smock is
+  compiled from moonhttp and moonvar. The build also resolves moondate,
+  mooncrypt and moonbase, but compiles nothing from them, so NOTICE says
+  so and the SBOM gives them `DEPENDS_ON`, not `STATIC_LINK`. The SBOM
+  lists every module the build resolves, with the licence of its own module
+  file, and CI fails on every push when NOTICE leaves out such a module or
+  gives it another version.
 
 ### Changed
 
@@ -73,6 +82,9 @@ of each GitHub release include its section
 - The HTTP/2 preface on the plain port now starts HTTP/2, instead of
   getting 505. The Journal's `version` and the Admin API's
   `RecordedRequest.version` can be `HTTP/2`.
+- `scripts/verify-image.sh` also requires moonhttp, and every other module
+  that NOTICE names, in each SBOM. It reads NOTICE, so check an image with
+  the script and NOTICE of the image's own tag.
 
 ### Fixed
 
