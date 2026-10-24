@@ -441,8 +441,8 @@ async fn[S : @io.Reader] H2Connection::discard(
 ///   connection gets GOAWAY with NO_ERROR and closes instead.
 /// - The idle timeout runs while no stream is in progress; frames that
 ///   open no stream, such as PING, SETTINGS and WINDOW_UPDATE, do not
-///   restart it. Past it, the connection gets GOAWAY with NO_ERROR and
-///   closes.
+///   restart it, and a field block that has begun holds it off. Past it,
+///   the connection gets GOAWAY with NO_ERROR and closes.
 ///
 /// Neither is logged.
 fn[S : @io.Writer] H2Connection::expire(
@@ -453,7 +453,7 @@ fn[S : @io.Writer] H2Connection::expire(
   if self.closing {
     return self.close_at
   }
-  if self.idle_deadline <= now || self.block_deadline() <= now {
+  if self.idle_until() <= now || self.block_deadline() <= now {
     self.go_away(out)
     return forever
   }
@@ -479,7 +479,7 @@ fn[S : @io.Writer] H2Connection::expire(
 /// The earliest deadline of the connection: the idle deadline, that of
 /// each request in progress, and that of a field block still open.
 fn H2Connection::next_deadline(self : H2Connection) -> Int64 {
-  let mut next = self.idle_deadline
+  let mut next = self.idle_until()
   for _, request in self.requests {
     if request.deadline < next {
       next = request.deadline
@@ -490,6 +490,18 @@ fn H2Connection::next_deadline(self : H2Connection) -> Int64 {
     next = block
   }
   next
+}
+
+///|
+/// When the idle timeout ends the connection: its idle deadline, unless a
+/// field block has begun, which holds it off, as the first byte of a
+/// request does over HTTP/1.1; `forever` then.
+fn H2Connection::idle_until(self : H2Connection) -> Int64 {
+  if self.streams.in_block {
+    forever
+  } else {
+    self.idle_deadline
+  }
 }
 
 ///|

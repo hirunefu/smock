@@ -341,3 +341,92 @@ async test "h2c: a new stream restarts the idle timeout: a request still arrivin
     )
   })
 }
+
+///|
+async test "h2c: a field block that has begun holds off the idle timeout, so a read timeout longer than it gives the block the whole read timeout to arrive" {
+  with_definitions([("m.json", slow_uploads)], dir => {
+    let _ = with_smock(
+      [
+        "--dir", dir, "--port", "0", "--read-timeout-ms", "1500", "--idle-timeout-ms",
+        "300",
+      ],
+      smock => {
+        let raw = smock.raw_h2()
+        defer raw.close()
+        let block = raw.block(request_fields("GET", "/fast", "localhost"))
+        let half = block.length() / 2
+        raw.send([
+          Headers(
+            stream_id=1,
+            fragment=block[:half].to_owned(),
+            end_stream=true,
+            end_headers=false,
+            priority=None,
+            padding=0,
+          ),
+        ])
+        @async.sleep(800)
+        raw.send([
+          Continuation(
+            stream_id=1,
+            fragment=block[half:].to_owned(),
+            end_headers=true,
+          ),
+        ])
+        inspect(
+          raw.frames_until_stream_ends(1),
+          content=(
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+            #|SETTINGS ACK
+            #|HEADERS 1 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
+            #|DATA 1 END_STREAM 4 octets
+
+          ),
+        )
+      },
+    )
+  })
+}
+
+///|
+async test "h2c: smock's own waits do not count: neither timeout runs while a delayed response waits, and the idle timeout runs from that response" {
+  with_definitions([("m.json", delays)], dir => {
+    let _ = with_smock(
+      [
+        "--dir", dir, "--port", "0", "--read-timeout-ms", "300", "--idle-timeout-ms",
+        "500",
+      ],
+      smock => {
+        let start = @async.now()
+        let raw = smock.raw_h2()
+        defer raw.close()
+        raw.send([
+          headers_frame(
+            1,
+            raw.block(request_fields("GET", "/slow", "localhost")),
+          ),
+        ])
+        let answered = raw.frames_until_stream_ends(1)
+        let answered_ms = @async.now() - start
+        let goaway = raw.frames_until(start, is_goaway)
+        inspect(
+          [
+            answered,
+            "---",
+            ..goaway.shown,
+            "answered after the delay: \{answered_ms >= 1000}, GOAWAY about 500 ms after it: \{goaway.end_ms - answered_ms >= 400 && goaway.end_ms - answered_ms < 1500}",
+          ].join("\n"),
+          content=(
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+            #|SETTINGS ACK
+            #|HEADERS 1 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
+            #|DATA 1 END_STREAM 4 octets
+            #|---
+            #|GOAWAY last=1 NO_ERROR
+            #|answered after the delay: true, GOAWAY about 500 ms after it: true
+          ),
+        )
+      },
+    )
+  })
+}
