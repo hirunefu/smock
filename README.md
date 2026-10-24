@@ -13,6 +13,9 @@ reads it. The guides for people who use smock:
 - [docs/definition-files.md](docs/definition-files.md) describes the
   format of Definition files: how Stubs match requests, what they
   answer, templates, Variables, Data buckets, CRUD Stubs and Faults.
+- [docs/http2.md](docs/http2.md) says how a client reaches smock over
+  HTTP/2, starting with h2c on the plain port, and what a Stub and the
+  Journal see of an HTTP/2 request.
 - [docs/importing-openapi.md](docs/importing-openapi.md) turns an OpenAPI
   document into a Definition file.
 - [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) maps
@@ -1010,7 +1013,10 @@ Packages of `smock/smock`:
 - `defdir`: reads the definitions directory and loads it, for
   `smock serve`, `smock check` and `smock render`, and takes the stamp of
   it that a poll compares (native).
-- `server`: the listeners, the connection loop and the Admin API (native).
+- `server`: the listeners, the HTTP/1.1 and HTTP/2 connection loops and
+  the Admin API (native). HTTP/2's framing, header compression and
+  connection state come from the `http2` package of moonbitstack/moonhttp
+  ([ADR 0005](docs/adr/0005-http2-comes-from-moonhttp.md)).
   On the TLS port the same loop reads and writes through a TLS stream; on
   the admin port it answers the Admin API. It reloads rotated certificates,
   and reads the SNI name from the ClientHello before OpenSSL sees it, so that
