@@ -16,7 +16,10 @@
 /// for another to write but the reader, before the connection ends.
 ///
 /// A write that fails ends the connection, so a writer never stays busy on
-/// a connection that goes on.
+/// a connection that goes on. A task cancelled while it writes, as a
+/// stream's task is when the stream is reset, leaves the rest of what it
+/// took from the `Conn` to the next write, so that every frame still goes
+/// out whole.
 priv struct H2Writer {
   conn : @http2.Conn
   /// Whether a task is writing.
@@ -24,6 +27,11 @@ priv struct H2Writer {
   /// Whether a task asked the writer to write while another was writing,
   /// so that the one writing takes what the `Conn` queued once more.
   mut more : Bool
+  /// What the writer last took from the `Conn`, while it is not all
+  /// written.
+  mut taken : Bytes
+  /// How much of `taken` is written.
+  mut written : Int32
   /// Signalled when a task stops writing.
   done : @async.CondVar
 }
@@ -31,14 +39,21 @@ priv struct H2Writer {
 ///|
 /// The writer of what `conn` queues.
 fn H2Writer::new(conn : @http2.Conn) -> H2Writer {
-  { conn, busy: false, more: false, done: @async.CondVar::Cond(), }
+  {
+    conn,
+    busy: false,
+    more: false,
+    taken: b"",
+    written: 0,
+    done: @async.CondVar::Cond(),
+  }
 }
 
 ///|
-/// Writes to `out` what the `Conn` has queued, and returns whether there
-/// was anything to write. While another task is writing, it leaves what is
-/// queued to that task, which writes it before it stops, and returns
-/// false.
+/// Writes to `out` what the `Conn` has queued, after what a write that was
+/// cancelled left, and returns whether there was anything to write. While
+/// another task is writing, it leaves what is queued to that task, which
+/// writes it before it stops, and returns false.
 async fn[S : @io.Writer] H2Writer::write(
   self : H2Writer,
   out : WatchedStream[S],
@@ -47,21 +62,38 @@ async fn[S : @io.Writer] H2Writer::write(
     self.more = true
     return false
   }
-  let queued = self.conn.take()
-  if queued.length() == 0 {
-    return false
-  }
-  self.busy = true
-  @io.Writer::write(out, queued)
-  while self.more {
-    self.more = false
-    let queued = self.conn.take()
-    if queued.length() > 0 {
-      @io.Writer::write(out, queued)
+  if self.written < self.taken.length() {
+    // What the `Conn` queued since then goes out after it.
+    self.more = true
+  } else {
+    self.taken = self.conn.take()
+    self.written = 0
+    if self.taken.length() == 0 {
+      return false
     }
   }
-  self.busy = false
-  self.done.broadcast()
+  self.busy = true
+  defer {
+    self.busy = false
+    out.watchdog.stop_writing()
+    self.done.broadcast()
+  }
+  for ;; {
+    while self.written < self.taken.length() {
+      self.written += @io.Writer::write_once(
+        out,
+        self.taken,
+        offset=self.written,
+        len=self.taken.length() - self.written,
+      )
+    }
+    guard self.more else { break }
+    self.more = false
+    self.taken = self.conn.take()
+    self.written = 0
+  }
+  self.taken = b""
+  self.written = 0
   true
 }
 
