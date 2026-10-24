@@ -1082,7 +1082,10 @@ data: line 2
   off, the stream keeps its connection, and a [drain](../README.md#run) on
   SIGTERM waits for it as for any stream in progress. smock does not watch
   the connection meanwhile, since a client may close its sending side once
-  its request is sent and still read the stream.
+  its request is sent and still read the stream. A client that keeps the
+  connection open but stops reading is cut by the
+  [write timeout](../README.md#run): when the write of an event makes no
+  progress for `--write-timeout-ms`, smock closes the connection.
 
 ### JSON bodies
 
