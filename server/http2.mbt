@@ -38,8 +38,8 @@
 /// with the settings `settings`: RFC 9113's defaults for the header table
 /// (4,096 octets), the initial window (65,535 octets), the frame size
 /// (16,384 octets) and extended CONNECT (off), with at most
-/// `--http2-max-concurrent-streams` concurrent streams, and moonhttp's own
-/// bound on a header list, 64 KiB.
+/// `--http2-max-concurrent-streams` concurrent streams, and a header list
+/// of at most `header_list_bound`.
 ///
 /// The `Conn` holds the client to these from the first stream, before the
 /// client acknowledges them: moonhttp applies the limits that protect this
@@ -50,9 +50,24 @@ fn h2_settings(settings : @settings.ServeSettings) -> @http2.Settings {
     max_concurrent_streams=Some(settings.http2_max_concurrent_streams),
     initial_window_size=65535,
     max_frame_size~,
-    max_header_list_size=Some(65536),
+    max_header_list_size=Some(header_list_bound(settings.header_size_limit)),
     enable_connect_protocol=false,
   )
+}
+
+///|
+/// moonhttp's bound on a header list, for the header size limit `limit`:
+/// twice it, at most 2^31-1 octets. smock advertises it as
+/// SETTINGS_MAX_HEADER_LIST_SIZE, and the `Conn` enforces it: a decoded
+/// list past it, counted as RFC 7541, section 4.1, counts it, gets
+/// RST_STREAM ENHANCE_YOUR_CALM, and a header block past it as received
+/// ends the connection with GOAWAY ENHANCE_YOUR_CALM.
+fn header_list_bound(limit : Int32) -> Int32 {
+  if limit >= 0x4000_0000 {
+    0x7FFF_FFFF
+  } else {
+    limit * 2
+  }
 }
 
 ///|

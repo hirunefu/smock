@@ -223,7 +223,7 @@ async test "h2c: a field block still open at the read timeout, after HEADERS and
             "then: \{after.shown.length()} frames, \{after.how}, about a second after the GOAWAY: \{after.end_ms - goaway.end_ms >= 800 && after.end_ms - goaway.end_ms < 2000}",
           ].join("\n"),
           content=(
-            #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
             #|SETTINGS ACK
             #|HEADERS 1 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
             #|DATA 1 END_STREAM 4 octets
@@ -327,7 +327,7 @@ async test "h2c: a new stream restarts the idle timeout: a request still arrivin
             "then \{after.how}",
           ].join("\n"),
           content=(
-            #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
             #|SETTINGS ACK
             #|HEADERS 1 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 8]
             #|DATA 1 END_STREAM 8 octets
@@ -376,7 +376,7 @@ async test "h2c: a field block that has begun holds off the idle timeout, so a r
         inspect(
           raw.frames_until_stream_ends(1),
           content=(
-            #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
             #|SETTINGS ACK
             #|HEADERS 1 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
             #|DATA 1 END_STREAM 4 octets
@@ -416,7 +416,7 @@ async test "h2c: smock's own waits do not count: neither timeout runs while a de
             "answered after the delay: \{answered_ms >= 1000}, GOAWAY about 500 ms after it: \{goaway.end_ms - answered_ms >= 400 && goaway.end_ms - answered_ms < 1500}",
           ].join("\n"),
           content=(
-            #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+            #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
             #|SETTINGS ACK
             #|HEADERS 1 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
             #|DATA 1 END_STREAM 4 octets

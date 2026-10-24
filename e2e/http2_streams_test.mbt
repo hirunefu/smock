@@ -184,7 +184,7 @@ async test "h2c: a stream reset during its delay, by the client or by smock for 
           #|/slow: stub "slow", status 200
           #|/slow: stub "slow", status 200
           #|---
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|RST_STREAM 3 PROTOCOL_ERROR
           #|HEADERS 5 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
@@ -429,7 +429,7 @@ async test "h2c: a delayed response is framed as one answered at once: to HEAD, 
       inspect(
         raw.frames_until_end_of(1),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 1 END_STREAM END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
         ),
