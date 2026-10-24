@@ -4,161 +4,31 @@ smock is a mock server for HTTP/1.1, HTTPS and Server-Sent Events. It stands in
 for the services a system depends on, on Kubernetes and on developers'
 machines. It is written in MoonBit ([ADR 0001](docs/adr/0001-moonbit-with-c-only-for-tls.md)).
 The domain terms are defined in [GLOSSARY.md](GLOSSARY.md).
-[docs/getting-started-on-gke.md](docs/getting-started-on-gke.md) takes a
-first-time reader to smock answering requests on GKE Autopilot.
-[docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) maps
-Mockoon environments, routes, rules, helpers and data buckets onto Mocks,
-Stubs, templates and Data buckets.
-[docs/importing-openapi.md](docs/importing-openapi.md) turns an OpenAPI
-document into a Definition file.
 
-## Layout
+## Documentation
 
-The repository is a MoonBit workspace (`moon.work`) of five modules:
+[docs/README.md](docs/README.md) lists every document, grouped by who
+reads it. The guides for people who use smock:
 
-| Directory | Module | What it is |
-|---|---|---|
-| `.` | `smock/smock` | smock itself. Its parts are packages of this module. |
-| `http1/` | `smock/http1` | The HTTP/1.1 codec. |
-| `re2/` | `smock/re2` | RE2-syntax regular expressions. |
-| `xml/` | `smock/xml` | An XML parser that refuses DTDs, with simple paths that select values (documented in `xml/README.mbt.md`). |
-| `yaml/` | `smock/yaml` | Safe-subset YAML: `parse` turns a document into the tree `@json.parse` gives for the equivalent JSON, and `write` turns a tree into a document, with comments, that `parse` reads back as the same tree. `parse` also has a YAML 1.2 mode for OpenAPI documents, which Definition files never use (documented in `yaml/yaml.mbt`). |
+- [docs/definition-files.md](docs/definition-files.md) describes the
+  format of Definition files: how Stubs match requests, what they
+  answer, templates, Variables, Data buckets, CRUD Stubs and Faults.
+- [docs/importing-openapi.md](docs/importing-openapi.md) turns an OpenAPI
+  document into a Definition file.
+- [docs/migrating-from-mockoon.md](docs/migrating-from-mockoon.md) maps
+  Mockoon environments, routes, rules, helpers and data buckets onto
+  Mocks, Stubs, templates and Data buckets.
+- [docs/getting-started-on-gke.md](docs/getting-started-on-gke.md) takes
+  a first-time reader to smock answering requests on GKE Autopilot.
+- [charts/smock/README.md](charts/smock/README.md) describes the Helm
+  chart and lists every value with its default.
 
-The four protocol modules do no I/O and do not depend on smock, so they can
-be published on mooncakes on their own. `scripts/check-no-io.sh` checks
-that.
-
-Packages of `smock/smock`:
-
-- `cmd/smock`: the `smock` binary. It ends with a status through
-  `moonbitlang/x`'s `@sys.exit`, since neither core nor
-  `moonbitlang/async` exposes one; smock itself binds no C for it.
-- `settings`: the settings of `smock serve`, each a flag with a matching
-  `SMOCK_<NAME>` environment variable, and the arguments of `smock check`,
-  `smock render` and `smock import-openapi`; also the rule that derives the
-  Journal's byte bound from a memory limit, which `server` reads from the
-  cgroup at startup.
-- `definitions`: reads a definition set, given as (name, bytes) pairs of
-  JSON and YAML files, into an immutable snapshot, or into diagnostics
-  (file, JSON Pointer, message). Its validation is written by hand and
-  follows the JSON Schema. The snapshot holds each Mock's Stubs in matching
-  order and their match index, which finds the Stubs a request can match
-  by its method and exact path, and each response's templates, parsed.
-- `engine`: decides the response to each request from the snapshot,
-  including its Faults, and renders a named Stub's response for a sample
-  request, for `smock render` and the Admin render operation. It also holds
-  the Ephemeral Stubs, the Scenario state, the Variables and the copies of
-  Data buckets per Mock and Session, and the Journal, with its bound,
-  eviction counts and query filter, applies the Admin API operations on
-  them (verification and the unmatched requests included), and reads the Session a request carries in its W3C Baggage header. `Engine(snapshot, match_index=false)` tries every Stub in
-  matching order instead of using the index; tests check the index against
-  it.
-- `template`: response templates: text templates (`${ expr }` in a body,
-  a body file, a header value or an event field) and structured templates
-  (`json` with `$each` and `$if`), the expression grammar, the helpers by
-  family (fake data with its word and name lists, time and dates,
-  conversions, strings, encodings, JWTs, and arithmetic in exact decimal
-  with integers only), and escaping by media type. It parses a template
-  once, with the values of the environment variables `--template-env`
-  lists, which its caller reads, and renders it for a request, the time,
-  one 64-bit draw and the Variables and Data buckets it reads, and writes
-  JSON with smock's own number form, compact for responses and indented
-  for the files `smock import-openapi` writes. It renders the values of a
-  Stub's `variables` as JSON too.
-- `importopenapi`: converts an OpenAPI document into a Definition file,
-  for `smock import-openapi`. It takes the documents as (name, bytes)
-  pairs and returns the names of the documents it still needs, or the
-  file's bytes with the warnings, or the errors, each with a JSON Pointer
-  into a document. The output's name picks YAML, written with
-  `smock/yaml` and with comments that map Stubs back to the document, or
-  JSON. `cmd/smock` reads the documents it asks for, under `--ref-dir`,
-  and writes the file. Before it returns a file, it loads it with
-  `definitions`, as `smock check` would. Its parts, one file each, are
-  listed in `importopenapi/import.mbt`.
-- `prng`: the seeded pseudo-random generator that Fault decisions and
-  template helpers draw from. Its sequence for a seed is fixed, the same on
-  every target.
-- `cookies`: reads the cookies of a request from its `Cookie` fields, for
-  cookie conditions, the Near miss and the `cookie` root of templates, so
-  that all of them read cookies by the same rules.
-- `unicode`: simple case mapping and the White_Space property, for the
-  template helpers `uppercase`, `lowercase` and `trim`, from the data of
-  one pinned Unicode version (18.0.0). `scripts/gen-unicode-data.py`
-  generated the data from the Unicode Character Database; it changes only
-  with a new format version.
-- `defdir`: reads the definitions directory and loads it, for
-  `smock serve`, `smock check` and `smock render`, and takes the stamp of
-  it that a poll compares (native).
-- `server`: the listeners, the connection loop and the Admin API (native).
-  On the TLS port the same loop reads and writes through a TLS stream; on
-  the admin port it answers the Admin API. It reloads rotated certificates,
-  and reads the SNI name from the ClientHello before OpenSSL sees it, so that
-  the name chooses the certificate without a C callback. Its one C
-  function, in `server/reset.c`, sets `SO_LINGER` so that the reset Fault
-  ends a connection with an RST, the exception ADR 0001 makes for it.
-- `watch`: watches a directory, with the async runtime's file watcher
-  (inotify) and polling in case an event is missed, so that `server` can
-  reload the definitions directory and the certificate directories
-  (native). Its `Schedule`, which coalesces a burst of events into one
-  check and keeps the poll interval, does no I/O and reads no clock. A poll
-  reads nothing unless the `Stamp` of what the caller reads (the names it
-  lists, and where the files it reads really are and their times) may have
-  changed since the last one.
-- `metrics`: the metrics registry: counters, gauges and histograms with
-  fixed label names, rendered in the Prometheus text format. Features
-  register their metrics in the one registry `smock serve` keeps.
-- `usage`: understands what Linux says a process and its cgroup use, and
-  how long the process waited for a CPU, in `/proc/self/stat`,
-  `/proc/self/status`, `/proc/self/schedstat` and a cgroup v2's `cpu.stat`
-  and `memory.peak`, for the process and cgroup metrics; the machine's
-  steal time in `/proc/stat`; and where `/proc/self/cgroup` puts the
-  process's cgroup, for those and for the memory limit the Journal's bound
-  follows. It does no I/O: `server` reads the files and hands it their
-  text.
-- `openssl`: smock's own bindings to OpenSSL, the one C library ADR 0001
-  allows (native). A TLS connection there does no I/O: it takes the bytes
-  that arrive from the peer and hands out the bytes to send, and `server`
-  carries them over the socket. It also generates self-signed certificates
-  in memory. Its C is `openssl/openssl.c`. The client side
-  (`openssl/client.mbt`) is there for the bindings' own tests, which run a
-  client and a server in memory under the sanitizers.
-- `testcerts`: a test PKI (a root CA, an intermediate CA, RSA and ECDSA
-  leaf chains for `localhost` and `127.0.0.1`, and ECDSA leaf chains for
-  `users.example.com` and `orders.example.com`, each leaf with its own fixed
-  expiry), used only by tests. `scripts/gen-test-certificates.sh`
-  regenerates it.
-- `log`: the JSON logger, one object per line, and the RFC 3339 times it
-  writes, which the Admin API and the CLI also read.
-- `buildinfo`: the version, commit and toolchain the binary was built with.
-- `e2e`: tests that run the `smock` binary as a black box (native).
-
-A package that does I/O or uses FFI declares `supported_targets = "native"`.
-Every other package also builds for `wasm-gc`, and CI tests it there. The
-packages that decide a response, `definitions`, `engine` and `template`,
-the ones they import, `prng`, `cookies`, `unicode` and `log`, and the
-OpenAPI converter, `importopenapi`, must stay that way:
-`scripts/check-no-io.sh` fails if one of them leaves out `wasm-gc`, reads
-the environment, binds C or imports a package that does I/O.
-
-`openapi/admin.json` is the OpenAPI 3.1 document of the Admin API, the
-contract for it as the JSON Schema is for Definition files; a client can be
-generated from it in any language.
-
-`Dockerfile` packs the release binary into the container image, and
-`.github/workflows/release.yml` publishes the image and the release binaries
-(see [Container image and release binaries](#container-image-and-release-binaries)).
-`charts/smock/` is the Helm chart, which the release workflow publishes too
-(see [Helm chart](#helm-chart)).
-
-`schema/v1/definitions.json` is the JSON Schema of Definition files, the
-contract for their format. `.github/workflows/schema-pages.yml` publishes it
-on GitHub Pages, and `schema/v1/fixtures/` holds the Definition files that
-CI checks with both the Schema and smock.
-
-`bench/` is the release benchmark, and `.github/workflows/benchmark.yml`
-runs it when started by hand; `scripts/gke-bench.sh` runs it on GKE
-Autopilot before an integration branch is merged into `main` (see
-[Benchmark](#benchmark)).
+Below, [Run](#run) says how to run smock and lists its settings.
+[Sessions and Ephemeral Stubs](#sessions-and-ephemeral-stubs) and
+[The Journal](#the-journal) say how tests use smock, and
+[Container image and release binaries](#container-image-and-release-binaries)
+what each release publishes. The sections for contributors, from
+[Layout](#layout) to [Benchmark](#benchmark), come last.
 
 ## Run
 
@@ -1062,6 +932,154 @@ was built with, which `smock --version` also prints.
 [docs/releasing.md](docs/releasing.md) describes how a release is made and
 published, for the maintainer, and which dependencies Dependabot keeps up
 to date.
+
+## Layout
+
+The repository is a MoonBit workspace (`moon.work`) of five modules:
+
+| Directory | Module | What it is |
+|---|---|---|
+| `.` | `smock/smock` | smock itself. Its parts are packages of this module. |
+| `http1/` | `smock/http1` | The HTTP/1.1 codec. |
+| `re2/` | `smock/re2` | RE2-syntax regular expressions. |
+| `xml/` | `smock/xml` | An XML parser that refuses DTDs, with simple paths that select values (documented in `xml/README.mbt.md`). |
+| `yaml/` | `smock/yaml` | Safe-subset YAML: `parse` turns a document into the tree `@json.parse` gives for the equivalent JSON, and `write` turns a tree into a document, with comments, that `parse` reads back as the same tree. `parse` also has a YAML 1.2 mode for OpenAPI documents, which Definition files never use (documented in `yaml/yaml.mbt`). |
+
+The four protocol modules do no I/O and do not depend on smock, so they can
+be published on mooncakes on their own. `scripts/check-no-io.sh` checks
+that.
+
+Packages of `smock/smock`:
+
+- `cmd/smock`: the `smock` binary. It ends with a status through
+  `moonbitlang/x`'s `@sys.exit`, since neither core nor
+  `moonbitlang/async` exposes one; smock itself binds no C for it.
+- `settings`: the settings of `smock serve`, each a flag with a matching
+  `SMOCK_<NAME>` environment variable, and the arguments of `smock check`,
+  `smock render` and `smock import-openapi`; also the rule that derives the
+  Journal's byte bound from a memory limit, which `server` reads from the
+  cgroup at startup.
+- `definitions`: reads a definition set, given as (name, bytes) pairs of
+  JSON and YAML files, into an immutable snapshot, or into diagnostics
+  (file, JSON Pointer, message). Its validation is written by hand and
+  follows the JSON Schema. The snapshot holds each Mock's Stubs in matching
+  order and their match index, which finds the Stubs a request can match
+  by its method and exact path, and each response's templates, parsed.
+- `engine`: decides the response to each request from the snapshot,
+  including its Faults, and renders a named Stub's response for a sample
+  request, for `smock render` and the Admin render operation. It also holds
+  the Ephemeral Stubs, the Scenario state, the Variables and the copies of
+  Data buckets per Mock and Session, and the Journal, with its bound,
+  eviction counts and query filter, applies the Admin API operations on
+  them (verification and the unmatched requests included), and reads the Session a request carries in its W3C Baggage header. `Engine(snapshot, match_index=false)` tries every Stub in
+  matching order instead of using the index; tests check the index against
+  it.
+- `template`: response templates: text templates (`${ expr }` in a body,
+  a body file, a header value or an event field) and structured templates
+  (`json` with `$each` and `$if`), the expression grammar, the helpers by
+  family (fake data with its word and name lists, time and dates,
+  conversions, strings, encodings, JWTs, and arithmetic in exact decimal
+  with integers only), and escaping by media type. It parses a template
+  once, with the values of the environment variables `--template-env`
+  lists, which its caller reads, and renders it for a request, the time,
+  one 64-bit draw and the Variables and Data buckets it reads, and writes
+  JSON with smock's own number form, compact for responses and indented
+  for the files `smock import-openapi` writes. It renders the values of a
+  Stub's `variables` as JSON too.
+- `importopenapi`: converts an OpenAPI document into a Definition file,
+  for `smock import-openapi`. It takes the documents as (name, bytes)
+  pairs and returns the names of the documents it still needs, or the
+  file's bytes with the warnings, or the errors, each with a JSON Pointer
+  into a document. The output's name picks YAML, written with
+  `smock/yaml` and with comments that map Stubs back to the document, or
+  JSON. `cmd/smock` reads the documents it asks for, under `--ref-dir`,
+  and writes the file. Before it returns a file, it loads it with
+  `definitions`, as `smock check` would. Its parts, one file each, are
+  listed in `importopenapi/import.mbt`.
+- `prng`: the seeded pseudo-random generator that Fault decisions and
+  template helpers draw from. Its sequence for a seed is fixed, the same on
+  every target.
+- `cookies`: reads the cookies of a request from its `Cookie` fields, for
+  cookie conditions, the Near miss and the `cookie` root of templates, so
+  that all of them read cookies by the same rules.
+- `unicode`: simple case mapping and the White_Space property, for the
+  template helpers `uppercase`, `lowercase` and `trim`, from the data of
+  one pinned Unicode version (18.0.0). `scripts/gen-unicode-data.py`
+  generated the data from the Unicode Character Database; it changes only
+  with a new format version.
+- `defdir`: reads the definitions directory and loads it, for
+  `smock serve`, `smock check` and `smock render`, and takes the stamp of
+  it that a poll compares (native).
+- `server`: the listeners, the connection loop and the Admin API (native).
+  On the TLS port the same loop reads and writes through a TLS stream; on
+  the admin port it answers the Admin API. It reloads rotated certificates,
+  and reads the SNI name from the ClientHello before OpenSSL sees it, so that
+  the name chooses the certificate without a C callback. Its one C
+  function, in `server/reset.c`, sets `SO_LINGER` so that the reset Fault
+  ends a connection with an RST, the exception ADR 0001 makes for it.
+- `watch`: watches a directory, with the async runtime's file watcher
+  (inotify) and polling in case an event is missed, so that `server` can
+  reload the definitions directory and the certificate directories
+  (native). Its `Schedule`, which coalesces a burst of events into one
+  check and keeps the poll interval, does no I/O and reads no clock. A poll
+  reads nothing unless the `Stamp` of what the caller reads (the names it
+  lists, and where the files it reads really are and their times) may have
+  changed since the last one.
+- `metrics`: the metrics registry: counters, gauges and histograms with
+  fixed label names, rendered in the Prometheus text format. Features
+  register their metrics in the one registry `smock serve` keeps.
+- `usage`: understands what Linux says a process and its cgroup use, and
+  how long the process waited for a CPU, in `/proc/self/stat`,
+  `/proc/self/status`, `/proc/self/schedstat` and a cgroup v2's `cpu.stat`
+  and `memory.peak`, for the process and cgroup metrics; the machine's
+  steal time in `/proc/stat`; and where `/proc/self/cgroup` puts the
+  process's cgroup, for those and for the memory limit the Journal's bound
+  follows. It does no I/O: `server` reads the files and hands it their
+  text.
+- `openssl`: smock's own bindings to OpenSSL, the one C library ADR 0001
+  allows (native). A TLS connection there does no I/O: it takes the bytes
+  that arrive from the peer and hands out the bytes to send, and `server`
+  carries them over the socket. It also generates self-signed certificates
+  in memory. Its C is `openssl/openssl.c`. The client side
+  (`openssl/client.mbt`) is there for the bindings' own tests, which run a
+  client and a server in memory under the sanitizers.
+- `testcerts`: a test PKI (a root CA, an intermediate CA, RSA and ECDSA
+  leaf chains for `localhost` and `127.0.0.1`, and ECDSA leaf chains for
+  `users.example.com` and `orders.example.com`, each leaf with its own fixed
+  expiry), used only by tests. `scripts/gen-test-certificates.sh`
+  regenerates it.
+- `log`: the JSON logger, one object per line, and the RFC 3339 times it
+  writes, which the Admin API and the CLI also read.
+- `buildinfo`: the version, commit and toolchain the binary was built with.
+- `e2e`: tests that run the `smock` binary as a black box (native).
+
+A package that does I/O or uses FFI declares `supported_targets = "native"`.
+Every other package also builds for `wasm-gc`, and CI tests it there. The
+packages that decide a response, `definitions`, `engine` and `template`,
+the ones they import, `prng`, `cookies`, `unicode` and `log`, and the
+OpenAPI converter, `importopenapi`, must stay that way:
+`scripts/check-no-io.sh` fails if one of them leaves out `wasm-gc`, reads
+the environment, binds C or imports a package that does I/O.
+
+`openapi/admin.json` is the OpenAPI 3.1 document of the Admin API, the
+contract for it as the JSON Schema is for Definition files; a client can be
+generated from it in any language.
+
+`Dockerfile` packs the release binary into the container image, and
+`.github/workflows/release.yml` publishes the image and the release binaries
+(see [Container image and release binaries](#container-image-and-release-binaries)).
+`charts/smock/` is the Helm chart, which the release workflow publishes too
+(see [Helm chart](#helm-chart)).
+
+`schema/v1/definitions.json` is the JSON Schema of Definition files, the
+contract for their format. `.github/workflows/schema-pages.yml` publishes it
+on GitHub Pages, and `schema/v1/fixtures/` holds the Definition files that
+CI checks with both the Schema and smock.
+
+`bench/` is the release benchmark, and `.github/workflows/benchmark.yml`
+runs it when started by hand; `scripts/gke-bench.sh` runs it on GKE
+Autopilot before an integration branch is merged into `main` (see
+[Benchmark](#benchmark)).
 
 ## Toolchain
 
