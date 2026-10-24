@@ -1,9 +1,17 @@
 ///|
 /// The protocols the TLS port accepts by ALPN, for every certificate, in
-/// order of preference: HTTP/2, then HTTP/1.1. The protocol selected
+/// order of preference, as `--tls-http2` (`http2`) sets them: HTTP/2, then
+/// HTTP/1.1, or HTTP/1.1 alone when it is off. The protocol selected
 /// decides how a connection is served: `h2` is HTTP/2, and `http/1.1`, or
-/// no ALPN, is HTTP/1.1 (`TlsStream::is_http2`).
-let alpn : Array[String] = ["h2", "http/1.1"]
+/// no ALPN, is HTTP/1.1 (`TlsStream::is_http2`). Over a TLS 1.2 suite that
+/// RFC 9113 prohibits, the bindings' ALPN callback skips `h2`.
+fn tls_alpn(http2 : Bool) -> Array[String] {
+  if http2 {
+    ["h2", "http/1.1"]
+  } else {
+    ["http/1.1"]
+  }
+}
 
 ///|
 /// Reads the certificate and key files: their bytes, or what keeps them
@@ -24,11 +32,13 @@ async fn read_pair(
 
 ///|
 /// Loads a certificate chain and its key, as read from their files, for
-/// the TLS port. Returns what is wrong with them otherwise, as one sentence
-/// that names the file at fault.
+/// the TLS port, accepting the protocols `alpn` (`tls_alpn`). Returns what
+/// is wrong with them otherwise, as one sentence that names the file at
+/// fault.
 fn load_pair(
   cert : Bytes,
   key : Bytes,
+  alpn~ : Array[String],
 ) -> Result[@openssl.ServerConfig, String] {
   try
     @openssl.ServerConfig(certificate_chain=cert, private_key=key, alpn~)

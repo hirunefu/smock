@@ -1,8 +1,9 @@
 // The mapping from an HTTP/2 stream onto the engine's request: a stream's
-// request reaches the engine once it has ended, as one request with the
-// version `HTTP/2`, and `:authority` as the engine's authority input. Its
-// field section is mapped when it arrives, on the stream's `Request` event,
-// so that what is checked and counted there is what the engine will see.
+// request reaches the engine once it has ended, or a CONNECT once its
+// HEADERS have arrived, as one request with the version `HTTP/2`, and
+// `:authority` as the engine's authority input. Its field section is mapped
+// when it arrives, on the stream's `Request` event, so that what is checked
+// and counted there is what the engine will see.
 
 ///|
 /// A request arriving on one HTTP/2 stream, from its HEADERS until the
@@ -12,7 +13,8 @@
 priv struct H2Request {
   /// `:method`.
   meth : String
-  /// `:path`, the target as sent, or empty without one.
+  /// `:path`, the target as sent, or `:authority` for a CONNECT, which has
+  /// no `:path`.
   target : String
   /// `:authority`, or `None` without one. When given, it is the Host,
   /// ahead of any `host` field; without it, the engine reads the Host from
@@ -42,7 +44,7 @@ priv struct H2Request {
 /// A request that begins with the field section `fields`, as moonhttp
 /// decoded and checked it: the pseudo-header fields first, then the regular
 /// fields, in order, and that must have arrived by `deadline`. `:scheme` is
-/// not passed on.
+/// not passed on. A CONNECT's target is its `:authority`.
 fn H2Request::new(
   fields : Array[@header.Header],
   deadline~ : Int64,
@@ -101,6 +103,11 @@ fn H2Request::new(
   if cookies is Some(joined) {
     headers[cookie] = ("cookie", joined.to_string())
   }
+  // Only a CONNECT has no `:path`, as moonhttp sees to: its target is
+  // `:authority`, as an HTTP/1.1 CONNECT's target is in authority-form.
+  if target == "" && authority is Some(authority) {
+    target = authority
+  }
   {
     meth,
     target,
@@ -158,8 +165,10 @@ fn is_list_over(fields : Array[@header.Header], limit : Int32) -> Bool {
 ///
 /// - the method is not a token;
 /// - `:path` is not an origin-form target, or `*` for OPTIONS, or holds an
-///   octet outside 0x21 to 0x7E. A CONNECT has no `:path`, as moonhttp
-///   sees to, so it has none to check;
+///   octet outside 0x21 to 0x7E;
+/// - for a CONNECT, which has no `:path`, as moonhttp sees to, its target,
+///   `:authority`, is not in authority-form, a host and a port, as an
+///   HTTP/1.1 CONNECT's target must be (RFC 9113, section 8.5);
 /// - `:authority` is not a valid Host value;
 /// - a field name is not a token, or a field value holds a control
 ///   character other than tab, or DEL;
@@ -175,8 +184,11 @@ fn H2Request::is_malformed(self : H2Request) -> Bool {
   if !@http1.is_token(meth) {
     return true
   }
-  if meth != "CONNECT" &&
-    !(@http1.is_origin_or_asterisk_form(self.target, meth~) &&
+  if meth == "CONNECT" {
+    if !@http1.is_authority_form(self.target) {
+      return true
+    }
+  } else if !(@http1.is_origin_or_asterisk_form(self.target, meth~) &&
     @http1.is_visible_ascii(self.target)) {
     return true
   }
@@ -229,9 +241,10 @@ fn H2Request::receive(self : H2Request, data : Bytes) -> Unit {
 }
 
 ///|
-/// The engine's view of the request, once it has ended: `:method` is the
-/// method, `:path` the target as sent, the version `HTTP/2`, and the
-/// headers the regular fields; pseudo-header fields are not among them.
+/// The engine's view of the request, once it has ended, or for a CONNECT
+/// once its HEADERS have arrived: `:method` is the method, `:path` the
+/// target as sent (`:authority` for a CONNECT), the version `HTTP/2`, and
+/// the headers the regular fields; pseudo-header fields are not among them.
 /// `authority` goes to the engine beside it.
 fn H2Request::to_engine(self : H2Request) -> @engine.Request {
   let body = match self.parts {

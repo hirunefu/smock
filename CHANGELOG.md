@@ -32,9 +32,10 @@ of each GitHub release include its section
   A client that reads slowly but steadily still gets the whole response,
   and delays do not count. It is not logged, like the read and idle
   timeouts. See [Run](README.md#run).
-- The `smock/http1` module makes public two checks of a request target that
-  its parser makes: `is_origin_or_asterisk_form`, for a path and query, or
-  `*` for OPTIONS, and `is_visible_ascii`, for characters from 0x21 to 0x7E
+- The `smock/http1` module makes public three checks of a request target
+  that its parser makes: `is_origin_or_asterisk_form`, for a path and query,
+  or `*` for OPTIONS, `is_authority_form`, for a host and a port, the target
+  of a CONNECT, and `is_visible_ascii`, for characters from 0x21 to 0x7E
   alone. With `is_token`, `is_field_value` and `is_host_value`, they let
   another protocol, such as HTTP/2, refuse what HTTP/1.1 refuses.
 - The Helm chart's `service.appProtocol.plain` and `service.appProtocol.tls`
@@ -62,8 +63,10 @@ of each GitHub release include its section
   connection whose connection window stays at zero, and resets with
   `CANCEL` a stream whose own window does. `--body-limit` applies to each stream
   too: a body over it gets 413 on that stream alone, and
-  `expect: 100-continue` gets `100 Continue`, as over HTTP/1.1. See
-  [docs/http2.md](docs/http2.md).
+  `expect: 100-continue` gets `100 Continue`, as over HTTP/1.1. A CONNECT
+  reaches the Mocks as soon as its HEADERS arrive, with `:authority` as its
+  target, and smock opens no tunnel: a 2xx to it ends the stream with no
+  body. See [docs/http2.md](docs/http2.md).
 - Over HTTP/2, a Stub's response follows HTTP/2's rules: header names in
   lower case, spaces and tabs around a value trimmed, and `Keep-Alive`,
   `Upgrade`, `Proxy-Connection` and `TE` left out. HEAD, 204 and 304 are
@@ -96,11 +99,19 @@ of each GitHub release include its section
   with any certificate: the certificate files, the self-signed certificate
   or a Mock's own. SNI still only chooses the certificate, and each
   stream's Mock comes from its own `:authority`, so one connection can
-  carry streams for several Mock Hosts. See
+  carry streams for several Mock Hosts. Over TLS 1.2, ALPN leaves `h2` out
+  when the suite is one RFC 9113 prohibits, such as a CBC suite: a client
+  that also offers `http/1.1` gets HTTP/1.1, so a strict client does not
+  fail the connection. See
   [h2 on the TLS port](docs/http2.md#h2-on-the-tls-port).
 - Each `listening` log entry names the protocols its port serves, as
   `protocols`: `["http/1.1", "h2c"]` on the plain port, `["h2", "http/1.1"]`
-  on the TLS port and `["http/1.1"]` on the admin port.
+  on the TLS port (`["http/1.1"]` with `--tls-http2 off`) and
+  `["http/1.1"]` on the admin port.
+- `--tls-http2` (`SMOCK_TLS_HTTP2`), `on` by default: `off` takes `h2` out
+  of the TLS port's ALPN, for every certificate, so that it offers
+  `http/1.1` alone, as before HTTP/2. The plain port still serves h2c. See
+  [Turning h2 off](docs/http2.md#turning-h2-off).
 
 ### Changed
 
@@ -109,7 +120,8 @@ of each GitHub release include its section
   offers `h2`, then `http/1.1`, where it offered `http/1.1` alone. A client
   that offers only `h2`, such as oha with `--http2`, now completes the
   handshake instead of failing it. A client that offers only `http/1.1`, or
-  no ALPN, still gets HTTP/1.1.
+  no ALPN, still gets HTTP/1.1. `--tls-http2 off` restores the old
+  behaviour.
 - `scripts/verify-image.sh` requires the runtime, mimalloc and simdutf in
   each SBOM, so it refuses the images of 0.3.0 and earlier. Check one of
   those with the script from its own tag, such as

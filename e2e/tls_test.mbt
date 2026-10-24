@@ -244,7 +244,9 @@ async test "the TLS settings can come from SMOCK_ environment variables, and the
 /// exit status and, for each group of prefixes in `show`, the first line it
 /// printed that starts with one of them. By default these are what ALPN
 /// selected, the certificate verification result and the response's status
-/// line. The request goes through a file in `certs.dir`.
+/// line. The request goes through a file in `certs.dir`. The output is read
+/// as UTF-8 with any other octets replaced: over `h2`, s_client prints the
+/// server's frames, whose SETTINGS values need not be UTF-8.
 async fn Smock::s_client(
   self : Smock,
   certs : Certificates,
@@ -277,8 +279,7 @@ async fn Smock::s_client(
   guard result is Some((status, stdout, _)) else {
     fail("openssl s_client did not exit in time")
   }
-  let lines = stdout
-    .text()
+  let lines = @utf8.decode_lossy(stdout.binary())
     .split("\n")
     .map(line => line.trim_end(chars="\r"))
     .collect()
@@ -295,12 +296,19 @@ async fn Smock::s_client(
 }
 
 ///|
-/// Opens a TLS connection that offers `offer` by ALPN, then sends
-/// `GET /users/1` over the protocol ALPN selected: HTTP/2 for `h2`, else
-/// HTTP/1.1. Returns the protocol selected and the response's status line,
-/// or why the handshake failed.
-async fn Smock::alpn_offer(self : Smock, offer : Array[String]) -> String {
-  let tls = self.tls(alpn=offer) catch {
+/// Opens a TLS connection to `server_name`, trusting only the PEM
+/// certificates in `trusted`, that offers `offer` by ALPN, then sends
+/// `GET path` for that Host over the protocol ALPN selected: HTTP/2 for
+/// `h2`, else HTTP/1.1. Returns the protocol selected and the response's
+/// status line, or why the handshake failed.
+async fn Smock::alpn_offer(
+  self : Smock,
+  offer : Array[String],
+  server_name~ : String = "localhost",
+  trusted~ : String = @testcerts.root_ca,
+  path~ : String = "/users/1",
+) -> String {
+  let tls = self.tls(alpn=offer, server_name~, trusted~) catch {
     @openssl.Failed(reason) => return "handshake failed: \{reason}"
     err => raise err
   }
@@ -308,10 +316,14 @@ async fn Smock::alpn_offer(self : Smock, offer : Array[String]) -> String {
   let status = if protocol == "h2" {
     let client = H2Client::over(Encrypted(tls))
     defer client.close()
-    "HTTP/2 \{client.request("GET", "/users/1", authority="localhost").status}"
+    "HTTP/2 \{client.request("GET", path, authority=server_name).status}"
   } else {
     defer tls.close()
-    tls.write(@utf8.encode(get_user))
+    tls.write(
+      @utf8.encode(
+        "GET \{path} HTTP/1.1\r\nHost: \{server_name}\r\nConnection: close\r\n\r\n",
+      ),
+    )
     status_line(@utf8.decode_lossy(tls.read_all()))
     .trim_end(chars="\r")
     .to_owned()
@@ -346,6 +358,79 @@ async test "ALPN: a client offering h2 and http/1.1, or h2 alone, gets h2 and is
           ),
         )
       })
+    })
+  })
+}
+
+///|
+async test "with --tls-http2 off, or SMOCK_TLS_HTTP2=off, ALPN offers http/1.1 alone: h2 and http/1.1 get HTTP/1.1, h2 alone fails the handshake, the TLS port's listening entry names http/1.1 alone, and the plain port still serves h2c" {
+  with_definitions([("users.json", users)], dir => {
+    with_certificates(certs => {
+      let out = []
+      let runs : Array[(String, Array[String], Map[String, String])] = [
+        ("--tls-http2 off", ["--tls-http2", "off"], Map([])),
+        ("SMOCK_TLS_HTTP2=off", [], { "SMOCK_TLS_HTTP2": "off" }),
+        (
+          "--tls-http2 on over SMOCK_TLS_HTTP2=off",
+          ["--tls-http2", "on"],
+          { "SMOCK_TLS_HTTP2": "off" },
+        ),
+      ]
+      for run in runs {
+        let (label, args, env) = run
+        out.push("\{label}:")
+        let stopped = with_smock(
+          ["--dir", dir, "--port", "0", ..args, ..certs.args()],
+          env~,
+          smock => {
+            let offers = [["h2", "http/1.1"], ["h2"], ["http/1.1"], []]
+            for offer in offers {
+              out.push(
+                "offers [\{offer.join(", ")}]: \{smock.alpn_offer(offer)}",
+              )
+            }
+            let client = smock.h2c()
+            defer client.close()
+            let response = client.request(
+              "GET",
+              "/users/1",
+              authority="localhost",
+            )
+            out.push("h2c on the plain port: HTTP/2 \{response.status}")
+          },
+        )
+        out.push(
+          log_entries(
+            stopped.logs.filter(line => line.contains("\"listener\":\"tls\"")),
+          ),
+        )
+      }
+      inspect(
+        out.join("\n"),
+        content=(
+          #|--tls-http2 off:
+          #|offers [h2, http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK
+          #|offers [h2]: handshake failed: tlsv1 alert no application protocol
+          #|offers [http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK
+          #|offers []: ALPN none, HTTP/1.1 200 OK
+          #|h2c on the plain port: HTTP/2 200
+          #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","protocols":["http/1.1"],"certFile":"*/rsa-chain.pem","keyFile":"*/rsa-key.pem"}
+          #|SMOCK_TLS_HTTP2=off:
+          #|offers [h2, http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK
+          #|offers [h2]: handshake failed: tlsv1 alert no application protocol
+          #|offers [http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK
+          #|offers []: ALPN none, HTTP/1.1 200 OK
+          #|h2c on the plain port: HTTP/2 200
+          #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","protocols":["http/1.1"],"certFile":"*/rsa-chain.pem","keyFile":"*/rsa-key.pem"}
+          #|--tls-http2 on over SMOCK_TLS_HTTP2=off:
+          #|offers [h2, http/1.1]: ALPN h2, HTTP/2 200
+          #|offers [h2]: ALPN h2, HTTP/2 200
+          #|offers [http/1.1]: ALPN http/1.1, HTTP/1.1 200 OK
+          #|offers []: ALPN none, HTTP/1.1 200 OK
+          #|h2c on the plain port: HTTP/2 200
+          #|{"level":"info","msg":"listening","listener":"tls","address":"0.0.0.0:*","protocols":["h2","http/1.1"],"certFile":"*/rsa-chain.pem","keyFile":"*/rsa-key.pem"}
+        ),
+      )
     })
   })
 }

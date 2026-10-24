@@ -59,7 +59,8 @@ SMOCK_ADMIN_TOKEN=change-me _build/native/debug/build/smock/smock/cmd/smock/smoc
 definitions directory, then listens on the plain port and on the TLS port.
 Each port's `listening` log entry names the protocols it serves:
 `["http/1.1", "h2c"]` on the plain port, `["h2", "http/1.1"]` on the TLS
-port and `["http/1.1"]` on the admin port.
+port (`["http/1.1"]` with `--tls-http2 off`) and `["http/1.1"]` on the
+admin port.
 It watches the directory and swaps in the new definition set when the files
 change, ConfigMap updates included; an invalid set is reported and the
 current one keeps serving
@@ -80,6 +81,7 @@ exits with status 2. `smock serve --help` lists the settings:
 | `--tls-cert-file` | `SMOCK_TLS_CERT_FILE` | none: a generated self-signed certificate |
 | `--tls-key-file` | `SMOCK_TLS_KEY_FILE` | none: a generated self-signed certificate |
 | `--tls-mock-certs` | `SMOCK_TLS_MOCK_CERTS` | none: no Mock has a certificate of its own (see below) |
+| `--tls-http2` | `SMOCK_TLS_HTTP2` | `on`: ALPN on the TLS port offers `h2`, then `http/1.1`; `off` offers `http/1.1` alone ([h2 on the TLS port](docs/http2.md#h2-on-the-tls-port)) |
 | `--admin-port` | `SMOCK_ADMIN_PORT` | 9090 (0 picks a free port) |
 | `--admin-auth` | `SMOCK_ADMIN_AUTH` | `on`: the Admin API needs a bearer token; `off` for local use |
 | `--admin-token-file` | `SMOCK_ADMIN_TOKEN_FILE` | none: the token comes from `SMOCK_ADMIN_TOKEN` |
@@ -193,7 +195,10 @@ smock serve --dir defs --tls-cert-file /etc/smock/tls/tls.crt --tls-key-file /et
 - ALPN offers `h2`, then `http/1.1`, for every certificate. A client that
   offers `h2` gets HTTP/2, and one that offers only `http/1.1`, or no ALPN,
   gets HTTP/1.1 ([h2 on the TLS port](docs/http2.md#h2-on-the-tls-port)).
-  TLS 1.2 and 1.3 are accepted.
+  `--tls-http2 off` offers `http/1.1` alone.
+  TLS 1.2 and 1.3 are accepted. Over TLS 1.2, `h2` is left out when the
+  suite is one HTTP/2 prohibits, such as a CBC suite
+  ([TLS 1.2](docs/http2.md#tls-12)).
 - The Host header, or `:authority` over HTTP/2, chooses the Mock, as on the
   plain port; SNI does not.
 - The `listening` log entry of the TLS port names the certificate and key
@@ -1086,11 +1091,14 @@ Packages of `smock/smock`:
   allows (native). A TLS connection there does no I/O: it takes the bytes
   that arrive from the peer and hands out the bytes to send, and `server`
   carries them over the socket. It also generates self-signed certificates
-  in memory. Its C is `openssl/openssl.c`. The client side
+  in memory. Its C is `openssl/openssl.c`. Its ALPN callback picks the
+  server's first protocol that the client offers, and leaves `h2` out over
+  a TLS 1.2 suite that HTTP/2 prohibits. The client side
   (`openssl/client.mbt`) offers ALPN: the e2e tests speak HTTP/2 over the
   TLS port with it, and the bindings' own tests run a client and a server
-  in memory under the sanitizers. That file also tells which protocol ALPN
-  selected, which `server` asks of each TLS connection.
+  in memory under the sanitizers, some with the client held to TLS 1.2 and
+  chosen suites. That file also tells which protocol ALPN selected, which
+  `server` asks of each TLS connection.
 - `testcerts`: a test PKI (a root CA, an intermediate CA, RSA and ECDSA
   leaf chains for `localhost` and `127.0.0.1`, and ECDSA leaf chains for
   `users.example.com` and `orders.example.com`, each leaf with its own fixed

@@ -87,15 +87,16 @@ fn header_list_bound(limit : Int32) -> Int32 {
 /// One task reads, a frame at a time, hands each frame to the connection's
 /// `Conn`, and handles the events it produced, in order; before it reads
 /// again, it writes what the `Conn` queued. A stream's request reaches the
-/// engine when the client ends the stream, and its response is queued
-/// while that event is handled, unless it waits: a response with a delay
-/// is queued by a task of its own, once the delay is over, and a body
-/// larger than the client's windows goes out from a task of its own as the
-/// client widens them, so that the other streams are answered meanwhile. A
-/// stream the client resets before it ends never reaches the engine, nor
-/// does one whose header list is over the header limits, which gets 431
-/// instead, or whose request HTTP/1.1's rules refuse, which gets 400, or
-/// whose body is over `--body-limit`, which gets 413.
+/// engine when the client ends the stream, or a CONNECT's when its HEADERS
+/// arrive, and its response is queued while that event is handled, unless
+/// it waits: a response with a delay is queued by a task of its own, once
+/// the delay is over, and a body larger than the client's windows goes out
+/// from a task of its own as the client widens them, so that the other
+/// streams are answered meanwhile. A stream the client resets before it
+/// ends never reaches the engine, nor does one whose header list is over
+/// the header limits, which gets 431 instead, or whose request HTTP/1.1's
+/// rules refuse, which gets 400, or whose body is over `--body-limit`,
+/// which gets 413.
 async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
   self : MockPorts,
   stream : S,
@@ -129,6 +130,7 @@ async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
       refused: 0,
       refused_status: 0,
       continuing: 0,
+      connect: 0,
       waiting: Map([]),
       blocked: Map([]),
       claimed: 0,
@@ -187,6 +189,12 @@ priv struct H2Connection {
   /// `100 Continue`, or 0. It gets it once the frame's events are all taken,
   /// unless that frame ended the stream, since then no body is to come.
   mut continuing : Int32
+  /// The stream whose CONNECT, begun by the frame being handled, goes to
+  /// the engine once that frame's events are all taken, or 0: a CONNECT
+  /// does not wait for its stream to end. When the frame also ends the
+  /// stream, its `End` answers it, and when it resets the stream, it never
+  /// reaches the engine.
+  mut connect : Int32
   /// The tasks of the streams whose response waits, by stream: from the end
   /// of the request until the response is queued in full, its body
   /// included, or the stream is reset. A task then lives on only to write
@@ -349,6 +357,19 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
           self.continuing = 0
           self.send_continue(stream)
         }
+        // The CONNECT this frame began is answered now that its events
+        // brought no reset. HEADERS that also ended its stream answered it
+        // on its `End`, and a reset dropped it: either way it is no longer
+        // among the requests.
+        if self.connect != 0 {
+          let stream = self.connect
+          self.connect = 0
+          if self.requests.get(stream) is Some(request) {
+            self.requests.remove(stream)
+            self.respond(stream, request, out)
+            self.end_stream()
+          }
+        }
         // A new stream whose field block brought no `Request` event was
         // refused by moonhttp, which reports nothing for it.
         self.streams.settle()
@@ -397,8 +418,15 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
         // The watchdog has had its deadline since its HEADERS came.
         self.idle_deadline = forever
         self.requests[stream] = request
+        // A CONNECT goes to the engine when its HEADERS arrive, as soon as
+        // it is known that they brought no reset (RFC 9113, section 8.5).
+        if request.meth == "CONNECT" {
+          self.connect = stream
+        }
       }
       Data(stream~, data~) => {
+        // DATA on a stream whose request has gone to the engine, as a
+        // CONNECT's has once its HEADERS arrived, is discarded.
         if self.requests.get(stream) is Some(request) {
           // A body that passes the limit is refused before it is kept.
           if data.length() > self.ports.settings.body_limit - request.received() {
@@ -748,8 +776,9 @@ fn[S : @io.Writer + ReadOutput] H2Connection::respond(
     now=self.now,
   )
   let head = incoming.meth == "HEAD"
+  let connect = incoming.meth == "CONNECT"
   if outcome.plan.delay_ms > 0 {
-    self.wait(stream, outcome, head~, out)
+    self.wait(stream, outcome, head~, connect~, out)
     return
   }
   let rest = self.queue(
@@ -757,6 +786,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::respond(
     outcome.plan,
     outcome.journal,
     head~,
+    connect~,
     now=self.now,
   )
   if rest.length() > 0 {
@@ -768,9 +798,10 @@ fn[S : @io.Writer + ReadOutput] H2Connection::respond(
 
 ///|
 /// Answers `stream`, whose request the engine decided `outcome` for, and
-/// was a HEAD when `head` is true, in a task of its own: once the plan's
-/// delay is over, the task queues the response and writes it to `out`,
-/// while the connection's other streams are answered meanwhile.
+/// was a HEAD when `head` is true, or a CONNECT when `connect` is true, in a
+/// task of its own: once the plan's delay is over, the task queues the
+/// response and writes it to `out`, while the connection's other streams
+/// are answered meanwhile.
 ///
 /// The task ends with its stream, however the stream ends: when its
 /// response is queued and written, when a reset cancels it
@@ -785,6 +816,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
   stream : Int32,
   outcome : @engine.Outcome,
   head~ : Bool,
+  connect~ : Bool,
   out : WatchedStream[S],
 ) -> Unit {
   // The read that brought the request in full.
@@ -804,6 +836,7 @@ fn[S : @io.Writer + ReadOutput] H2Connection::wait(
       outcome.plan,
       outcome.journal,
       head~,
+      connect~,
       now=@async.now(),
     )
     if rest.length() > 0 {
@@ -839,11 +872,12 @@ async fn H2Connection::answered(self : H2Connection) -> Unit {
 
 ///|
 /// Queues on `stream`, at `now`, the response `plan` describes to a request
-/// that was a HEAD when `head` is true, and commits the Journal entry
-/// `entry` just before the frame that ends the stream. A response whose
-/// body fits the stream's windows is queued whole: its HEADERS, then its
-/// body as DATA, which ends the stream. A response to HEAD, and one whose
-/// status has no content, sends no DATA: its HEADERS end the stream.
+/// that was a HEAD when `head` is true, or a CONNECT when `connect` is
+/// true, and commits the Journal entry `entry` just before the frame that
+/// ends the stream. A response whose body fits the stream's windows is
+/// queued whole: its HEADERS, then its body as DATA, which ends the stream.
+/// A response to HEAD, and one that has no content, such as a 2xx to a
+/// CONNECT, sends no DATA: its HEADERS end the stream.
 ///
 /// A body that does not fit gets its HEADERS and as much of the body as the
 /// windows allow; `queue` then returns the rest, which the caller sends in
@@ -863,6 +897,7 @@ fn H2Connection::queue(
   plan : @engine.ResponsePlan,
   entry : @engine.JournalEntry?,
   head~ : Bool,
+  connect~ : Bool,
   now~ : Int64,
 ) -> BytesView {
   let ports = self.ports
@@ -870,13 +905,19 @@ fn H2Connection::queue(
     self.reset_after(stream, entry)
     return b""
   }
-  // HEAD gets the length of the body without the body, as on HTTP/1.1.
-  let sent = if has_content(plan.status) && !head { body } else { body[0:0] }
+  // HEAD gets the length of the body without the body, as on HTTP/1.1. A
+  // 2xx to a CONNECT gets neither: smock opens no tunnel.
+  let sent = if has_content(plan.status, connect~) && !head {
+    body
+  } else {
+    body[0:0]
+  }
   let fields = response_fields(
     plan.status,
     plan.headers,
     body.length(),
     date=ports.dates.at(now),
+    connect~,
   )
   if sent.length() == 0 {
     ports.commit(entry)
