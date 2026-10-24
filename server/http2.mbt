@@ -8,6 +8,9 @@
 // - the frame reader (`FrameReader`, http2_frames.mbt), with
 //   `H2Connection::judge`, where each frame is judged before it reaches
 //   the `Conn`;
+// - the record of the client's streams (`StreamRecord`, http2_streams.mbt),
+//   which the judge holds HEADERS frames against, and which every
+//   RST_STREAM smock sends goes into, through `H2Connection::reset`;
 // - the mapping from a stream onto the engine's request (`H2Request`,
 //   http2_requests.mbt);
 // - the response encoding (`response_fields`, http2_responses.mbt);
@@ -213,6 +216,8 @@ async fn H2Connection::hand(self : H2Connection, octets : BytesView) -> Bool {
     let event = self.conn.next() catch { _ => return false }
     match event {
       NeedData | Closed => {
+        // A new stream whose field block brought no `Request` event was
+        // refused by moonhttp, which reports nothing for it.
         self.streams.settle()
         return true
       }

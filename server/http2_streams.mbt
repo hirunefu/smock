@@ -58,6 +58,8 @@ priv struct StreamRecord {
   /// Whether smock, not moonhttp, reset each stream in `resets`, at the
   /// same index.
   by_smock : Array[Bool]
+  /// Once `resets` is full, the index of its oldest ID, which the next
+  /// reset stream replaces.
   mut oldest : Int32
   /// A new stream whose field block has had no `Request` event yet, or 0.
   mut opening : Int32

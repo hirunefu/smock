@@ -50,6 +50,26 @@ so an HTTP/1.1 request and an HTTP/2 request for the same call read alike.
 The request metrics count HTTP/2 requests with the same `mock` and `stub`
 labels as HTTP/1.1 ones.
 
+## Connection errors
+
+Some errors end the whole connection, not just one stream. smock then
+sends GOAWAY with the error code RFC 9113 gives, and closes the
+connection. The streams answered before it stay answered, and the client
+opens a new connection for the rest.
+
+- A frame larger than 16,384 octets, the frame size smock advertises,
+  gets `FRAME_SIZE_ERROR`.
+- HEADERS on a stream ID that the client has already used get
+  `PROTOCOL_ERROR` (RFC 9113, section 5.1.1). That covers a stream that
+  has ended, one the client reset, and an ID the client skipped when it
+  opened a higher one. Trailers on a stream still open are not affected.
+- HEADERS on a stream that smock reset are ignored instead, since the
+  client may have sent them before it learnt of the reset (section 5.1).
+  smock remembers the last 256 streams it reset on a connection. HEADERS
+  on one it reset before those end the connection.
+- The other connection errors of RFC 9113, such as a frame that does not
+  decode, get the code it gives them.
+
 ## Where HTTP/2 comes from
 
 smock's HTTP/2 framing, header compression and connection state come from
