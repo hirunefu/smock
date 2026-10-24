@@ -76,3 +76,121 @@ async test "h2c: a delayed stream does not hold a fast one on the same connectio
     })
   })
 }
+
+///|
+/// The HEADERS frame of a GET of `path` on `stream`, which ends the stream.
+fn RawH2::get(self : RawH2, stream : Int32, path : String) -> @http2.Frame {
+  Headers(
+    stream_id=stream,
+    fragment=self.block([
+      (":method", "GET"),
+      (":scheme", "http"),
+      (":path", path),
+      (":authority", "localhost"),
+    ]),
+    end_stream=true,
+    end_headers=true,
+    priority=None,
+    padding=0,
+  )
+}
+
+///|
+/// Reads frames until one ends `stream`, and shows each as `render_frame`
+/// does, one per line.
+async fn RawH2::frames_until_end_of(self : RawH2, stream : Int32) -> String {
+  let out = []
+  for ;; {
+    guard self.read_frame() is Some(frame) else {
+      out.push("closed")
+      break
+    }
+    out.push(self.render_frame(frame))
+    match frame {
+      Data(stream_id~, end_stream=true, ..)
+      | Headers(stream_id~, end_stream=true, ..)
+      | RstStream(stream_id~, ..) if stream_id == stream => break
+      _ => ()
+    }
+  }
+  out.join("\n")
+}
+
+///|
+/// The Journal's entries, each shown as its target, its Stub and its
+/// status, once there are `count` of them, or as they are after `within`
+/// milliseconds.
+async fn Smock::journal_once(
+  self : Smock,
+  count : Int32,
+  within~ : Int32,
+) -> Array[String] {
+  let start = @async.now()
+  for ;; {
+    let (_, journal) = self.journal()
+    guard journal is Object({ "entries": Array(entries), .. }) else {
+      fail("no entries: \{journal.stringify()}")
+    }
+    if entries.length() >= count || @async.now() - start >= within.to_int64() {
+      return entries.map(entry => {
+        guard entry
+          is Object(
+            {
+              "request": Object({ "target": String(target), .. }),
+              "stub": stub,
+              "status": status,
+              ..
+            }
+          ) else {
+          return entry.stringify()
+        }
+        "\{target}: stub \{stub.stringify()}, status \{status.stringify()}"
+      })
+    }
+    @async.sleep(20)
+  }
+}
+
+///|
+async test "h2c: a stream reset during its delay, by the client or by smock for the client's frames, ends its task at once: its entry is committed then, and no response is written" {
+  with_definitions([("m.json", delays)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      let start = @async.now()
+      raw.send([raw.get(1, "/slow"), raw.get(3, "/slow")])
+      @async.sleep(200)
+      // The client resets stream 1; a WINDOW_UPDATE of 0 on stream 3 is a
+      // stream error, for which moonhttp resets it.
+      raw.send([
+        RstStream(stream_id=1, error_code=@http2.error_cancel),
+        WindowUpdate(stream_id=3, increment=0),
+      ])
+      let entries = smock.journal_once(2, within=600)
+      let committed_ms = @async.now() - start
+      // Past the delays, a fast stream is answered, and nothing came on the
+      // reset streams.
+      @async.sleep((1300L - (@async.now() - start)).to_int())
+      raw.send([raw.get(5, "/fast")])
+      inspect(
+        [
+          "both committed before the delay was over: \{entries.length() == 2 && committed_ms < 1000}",
+          ..entries,
+          "---",
+          raw.frames_until_end_of(5),
+        ].join("\n"),
+        content=(
+          #|both committed before the delay was over: true
+          #|/slow: stub "slow", status 200
+          #|/slow: stub "slow", status 200
+          #|---
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|RST_STREAM 3 PROTOCOL_ERROR
+          #|HEADERS 5 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
+          #|DATA 5 END_STREAM 4 octets
+        ),
+      )
+    })
+  })
+}
