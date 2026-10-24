@@ -172,7 +172,7 @@ test "an error gives its type for openai-chat and anthropic-messages, and its co
 test "an OpenAI error's type or code is any non-empty string; anything else is refused" {
   let read = (api : @llm.Api, value : Json) => {
     match @llm.read_error_kind(api, value) {
-      Ok(kind) => "\{api.name()} \{value.stringify()}: \{kind}"
+      Ok(kind) => "\{api.name()} \{value.stringify()}: \{kind.text}"
       Err(message) => "\{api.name()} \{value.stringify()}: \{message}"
     }
   }
@@ -208,7 +208,7 @@ test "an OpenAI error's type or code is any non-empty string; anything else is r
 test "an anthropic-messages error's type is one of Anthropic's documented error types; any other value is refused with the list" {
   let read = (value : Json) => {
     match @llm.read_error_kind(AnthropicMessages, value) {
-      Ok(kind) => "\{value.stringify()}: \{kind}"
+      Ok(kind) => "\{value.stringify()}: \{kind.text}"
       Err(message) => "\{value.stringify()}: \{message}"
     }
   }

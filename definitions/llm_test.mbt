@@ -760,7 +760,7 @@ test "the snapshot holds the error's after, 0 when left out, its type or code as
       fail("not an LLM reply as written")
     }
     let error = match reply.declaration.error {
-      Some(error) => "after \{error.after}, \{error.kind}"
+      Some(error) => "after \{error.after}, \{error.kind.text}"
       None => "no error"
     }
     out.push("\{error}, message \{strings.error_message.escape()}")

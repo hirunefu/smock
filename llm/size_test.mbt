@@ -296,3 +296,65 @@ test "at load, the stream is the one a request with stream and stream_options.in
     ),
   )
 }
+
+///|
+/// The bytes the first two events of `events` take on the wire, counted as
+/// `wire_bytes` counts them.
+fn first_two_bytes(events : Array[@llm.Event]) -> Int32 {
+  let mut bytes = 0
+  for event in events[:2] {
+    let name = event.event.unwrap_or("")
+    bytes += @utf8.encode("event: \{name}\ndata: \{event.data}\n\n").length()
+  }
+  bytes
+}
+
+///|
+/// What becomes of `reply`, a stream, as the test of copied settings shows
+/// it: its verdict, how many events it wrote, the type of the last, and the
+/// bytes its first two take on the wire when it wrote them.
+fn copied_outline(reply : @llm.Reply) -> String {
+  guard reply.body is Events(events) else { return "not a stream" }
+  let last = match events.last() {
+    Some({ event: Some(name), .. }) => name
+    _ => "none"
+  }
+  let opening = if events.length() >= 2 {
+    "; the first two: \{first_two_bytes(events)} bytes"
+  } else {
+    ""
+  }
+  "\{verdict(reply)}; \{events.length()} events, the last \{last}\{opening}"
+}
+
+///|
+test "a Responses stream counts the request's settings it copies before it writes them: opening events that would pass the bound are not written, nor is a closing event that would" {
+  let strings = @llm.Strings(text="Hi")
+  let copying = (instructions : String) => {
+    sized_reply(
+      strings,
+      api=OpenaiResponses,
+      request=Some({
+        "model": "gpt-6-astra",
+        "stream": true,
+        "instructions": Json::string(instructions),
+      }),
+    )
+  }
+  // Each character of the instructions takes one byte in each opening
+  // event, and the two take an even number of bytes without them.
+  guard copying("").body is Events(events) else { abort("not a stream") }
+  let at_bound = repeated("a", (1_048_576 - first_two_bytes(events)) / 2)
+  inspect(
+    [
+      "opening events of exactly 1 MiB: \{copied_outline(copying(at_bound))}",
+      "one character more: \{copied_outline(copying(at_bound + "a"))}",
+      "a third of 1 MiB, copied three times: \{copied_outline(copying(repeated("a", 350_000)))}",
+    ].join("\n"),
+    content=(
+      #|opening events of exactly 1 MiB: the reply takes more than 1 MiB as a stream; 4 events, the last response.content_part.added; the first two: 1048576 bytes
+      #|one character more: the reply takes more than 1 MiB as a stream; 0 events, the last none
+      #|a third of 1 MiB, copied three times: the reply takes more than 1 MiB as a stream; 8 events, the last response.output_item.done; the first two: 701308 bytes
+    ),
+  )
+}

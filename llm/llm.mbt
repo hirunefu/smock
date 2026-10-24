@@ -27,18 +27,25 @@ pub fn Api::name(self : Api) -> String {
 }
 
 ///|
+/// Every API, in the order the load error of `api` lists their names.
+let apis : ReadOnlyArray[Api] = [OpenaiChat, OpenaiResponses, AnthropicMessages]
+
+///|
 /// The load check of `api`: the API that `value` names, or the message of
 /// the load error when it names none, which lists the names it can take.
 pub fn read_api(value : Json) -> Result[Api, String] {
-  match value {
-    String("openai-chat") => Ok(OpenaiChat)
-    String("openai-responses") => Ok(OpenaiResponses)
-    String("anthropic-messages") => Ok(AnthropicMessages)
-    _ =>
-      Err(
-        "must be \"openai-chat\", \"openai-responses\" or \"anthropic-messages\"",
-      )
+  if value is String(name) {
+    for api in apis {
+      if api.name() == name {
+        return Ok(api)
+      }
+    }
   }
+  let names = Array(capacity=apis.length())
+  for api in apis {
+    names.push(api.name())
+  }
+  Err("must be \{listed(ReadOnlyArray::from_array(names))}")
 }
 
 ///|
@@ -116,21 +123,30 @@ let anthropic_error_types : ReadOnlyArray[String] = [
 ]
 
 ///|
+/// The kind of a mid-stream error as its `type`, or `code` for
+/// `openai-responses`, writes it: checked when the definitions are loaded
+/// or the Stub is added. Only `read_error_kind` makes one.
+pub struct ErrorKind {
+  /// The type or code, as written.
+  text : String
+} derive(Debug, Eq)
+
+///|
 /// The load check of a mid-stream error's `type`, or `code` for
 /// `openai-responses`, on a Stub of `api`: the kind that `value` writes, or
 /// the message of the load error. An OpenAI type or code is any non-empty
 /// string; an `anthropic-messages` type is one of Anthropic's documented
 /// error types, which the message lists.
-pub fn read_error_kind(api : Api, value : Json) -> Result[String, String] {
+pub fn read_error_kind(api : Api, value : Json) -> Result[ErrorKind, String] {
   match api {
     OpenaiChat | OpenaiResponses =>
       match value {
-        String(kind) if kind != "" => Ok(kind)
+        String(text) if text != "" => Ok({ text, })
         _ => Err("must be a non-empty string")
       }
     AnthropicMessages =>
       match value {
-        String(kind) if anthropic_error_types.contains(kind) => Ok(kind)
+        String(text) if anthropic_error_types.contains(text) => Ok({ text, })
         _ =>
           Err(
             "must be an error type of \{api.name()}: \{listed(anthropic_error_types)}",
@@ -186,16 +202,16 @@ pub struct MidStreamError {
   after : Int32
   /// The error's `type`, or its `code` for `openai-responses`, sent as
   /// written.
-  kind : String
+  kind : ErrorKind
 } derive(Debug, Eq)
 
 ///|
 /// The error that follows `after` code points of the text, whose `type`, or
-/// `code` for `openai-responses`, is `kind`. The definitions check `kind`
-/// with `read_error_kind`, and that `after` is not past the text.
+/// `code` for `openai-responses`, is `kind`, which `read_error_kind`
+/// checked. The definitions check that `after` is not past the text.
 pub fn MidStreamError::MidStreamError(
   after~ : Int32,
-  kind~ : String,
+  kind~ : ErrorKind,
 ) -> MidStreamError {
   { after, kind, }
 }
@@ -311,6 +327,10 @@ pub struct ToolCall {
   /// The arguments' JSON text, as the reply sends it: not always valid
   /// JSON, since a string is sent as written.
   arguments : String
+  /// The arguments as written when they are an object, which a Messages
+  /// reply sends as its `input` without reading `arguments` back; or `None`
+  /// when they are given as a string, which may hold an object.
+  priv object : Json?
   /// The call id, sent as written, or `None` for a generated one.
   id : String?
 } derive(Debug, Eq)
@@ -326,11 +346,30 @@ pub fn ToolCall::ToolCall(
   arguments~ : Json,
   id? : String,
 ) -> ToolCall {
-  let arguments = match arguments {
-    String(text) => text
-    value => @template.compact_json(value)
+  match arguments {
+    String(text) => ToolCall::from_text(name~, arguments=text, id?)
+    Object(_) =>
+      {
+        name,
+        arguments: @template.compact_json(arguments),
+        object: Some(arguments),
+        id,
+      }
+    value =>
+      { name, arguments: @template.compact_json(value), object: None, id, }
   }
-  { name, arguments, id, }
+}
+
+///|
+/// The tool call of the function `name` whose arguments are the string
+/// `arguments`, sent as written, and the call id `id` when given: the
+/// arguments a template renders, or a string the definitions give.
+pub fn ToolCall::from_text(
+  name~ : String,
+  arguments~ : String,
+  id? : String,
+) -> ToolCall {
+  { name, arguments, object: None, id, }
 }
 
 ///|
@@ -342,6 +381,36 @@ fn Strings::text_pieces(self : Strings, size : Int32) -> ArrayView[String] {
     _ if !self.has_content() => [][:]
     Some(chunks) => chunks[:]
     None => pieces(self.text, size)[:]
+  }
+}
+
+///|
+/// Whether a stream of `self` sends any of its text: always without a
+/// mid-stream error, and with one only when it cuts the text after more
+/// than 0 code points.
+fn Declaration::sends_text(self : Declaration) -> Bool {
+  match self.error {
+    Some(error) => error.after > 0
+    None => true
+  }
+}
+
+///|
+/// The pieces of the text that a stream of `declaration` sends, in order:
+/// those of `text_pieces` at the declaration's chunk size, up to the cut
+/// of its mid-stream error when it declares one. None when the error cuts
+/// the text at 0, or when the reply carries no content.
+fn Strings::sent_pieces(
+  self : Strings,
+  declaration : Declaration,
+) -> ArrayView[String] {
+  if !declaration.sends_text() {
+    return no_pieces
+  }
+  let pieces = self.text_pieces(declaration.chunk_size)
+  match declaration.error {
+    Some(error) => pieces_before(pieces, error.after)
+    None => pieces
   }
 }
 
@@ -437,7 +506,7 @@ pub fn reply(
   now~ : Int64,
   ids~ : @prng.Generator,
 ) -> Reply {
-  let ids = draw_ids(ids, strings.tool_calls.length())
+  let ids = draw_ids(ids, declaration.api, strings)
   let created = now / 1000L
   let model = match strings.model {
     Some(model) => model
@@ -446,7 +515,7 @@ pub fn reply(
   match declaration.api {
     OpenaiChat => {
       let id = reply_id(strings, "chatcmpl-", ids)
-      let request_id = ("x-request-id", "req_" + ids.request)
+      let request_id = ids.request_id("x-request-id")
       if asks_to_stream(request) {
         chat_stream(
           declaration,
@@ -473,7 +542,7 @@ pub fn reply(
     OpenaiResponses => {
       let id = reply_id(strings, "resp_", ids)
       let message_id = "msg_" + ids.message
-      let request_id = ("x-request-id", "req_" + ids.request)
+      let request_id = ids.request_id("x-request-id")
       if asks_to_stream(request) {
         responses_stream(
           declaration,
@@ -504,7 +573,7 @@ pub fn reply(
     }
     AnthropicMessages => {
       let id = reply_id(strings, "msg_", ids)
-      let request_id = ("request-id", "req_" + ids.request)
+      let request_id = ids.request_id("request-id")
       if asks_to_stream(request) {
         messages_stream(
           declaration,
@@ -596,10 +665,23 @@ pub let max_reply_bytes : Int32 = @template.max_output
 pub fn Reply::check_size(self : Reply) -> Result[Unit, String] {
   guard self.over else { return Ok(()) }
   match self.body {
-    Json(_) => Err("the reply takes more than 1 MiB as a JSON body")
-    Events(_) => Err("the reply takes more than 1 MiB as a stream")
+    Json(_) => Err(json_over)
+    Events(_) => Err(stream_over)
   }
 }
+
+///|
+/// The message of a JSON reply over `max_reply_bytes`.
+let json_over : String = "the reply takes more than 1 MiB as a JSON body"
+
+///|
+/// The message of a stream over `max_reply_bytes`.
+let stream_over : String = "the reply takes more than 1 MiB as a stream"
+
+///|
+/// The message of the load check when both forms of a reply are over
+/// `max_reply_bytes`.
+let both_over : String = "the reply takes more than 1 MiB as a JSON body and as a stream"
 
 ///|
 /// The time a load check encodes a reply at, 2026-10-23T00:00:00Z, in
@@ -640,10 +722,9 @@ pub fn check_reply_size(
   )
   match (json.over, stream.over) {
     (false, false) => Ok(())
-    (true, false) => Err("the reply takes more than 1 MiB as a JSON body")
-    (false, true) => Err("the reply takes more than 1 MiB as a stream")
-    (true, true) =>
-      Err("the reply takes more than 1 MiB as a JSON body and as a stream")
+    (true, false) => Err(json_over)
+    (false, true) => Err(stream_over)
+    (true, true) => Err(both_over)
   }
 }
 
@@ -706,6 +787,19 @@ fn Stream::over(self : Stream) -> Bool {
 }
 
 ///|
+/// Whether events that take `bytes` bytes more as they are sent, counted
+/// before they are written, would take the stream past `max_reply_bytes`.
+/// When they would, the stream is over, as if they had been added, and they
+/// are not to be written: the count is only compared with the bound.
+fn Stream::passes(self : Stream, bytes : Int64) -> Bool {
+  if self.bytes.to_int64() + bytes <= max_reply_bytes.to_int64() {
+    return false
+  }
+  self.bytes = max_reply_bytes + 1
+  true
+}
+
+///|
 /// The reply of the stream, with the request-id header field `request_id`
 /// and the closing event `closing` its waits complete, none by default.
 fn Stream::reply(
@@ -739,6 +833,13 @@ fn utf8_length(text : String) -> Int32 {
     }
   }
   length
+}
+
+///|
+/// `text` as a JSON string, as compact JSON writes it: in quotes, with
+/// quotes, backslashes and control characters escaped.
+fn quoted(text : String) -> String {
+  @template.compact_json(Json::string(text))
 }
 
 ///|
@@ -776,7 +877,8 @@ fn call_id(call : ToolCall, prefix : String, drawn : String) -> String {
 /// call, the Responses function call's item id and then its call id, and
 /// the request-id header's, last. Every slot draws, whether or not the
 /// reply's API uses it or the Stub fixes its id, so that fixing one id
-/// changes no other and an id keeps its draws whatever the API.
+/// changes no other and an id keeps its draws whatever the API. The id of
+/// a slot that is not sent is not written out: it is empty.
 priv struct Ids {
   /// The reply's id, without its prefix.
   reply : String
@@ -792,32 +894,47 @@ priv struct Ids {
 }
 
 ///|
+/// The request-id header field named `name`, the API's, in lower case:
+/// `req_` and the request id's slot of `self`.
+fn Ids::request_id(self : Ids, name : String) -> (String, String) {
+  (name, "req_" + self.request)
+}
+
+///|
 /// The function call item ids and the call ids of a reply with no tool
 /// call, shared by every such reply.
 let no_calls : FixedArray[String] = []
 
 ///|
-/// Draws the ids of one reply with `tool_calls` tool calls from `ids`, slot
-/// by slot.
-fn draw_ids(ids : @prng.Generator, tool_calls : Int32) -> Ids {
-  let reply = draw_id(ids)
-  let message = draw_id(ids)
-  let functions = if tool_calls == 0 {
+/// Draws the ids of one reply of `api` with the strings `strings` from
+/// `ids`, slot by slot. Only the ids the reply sends are written out: the
+/// reply's unless the strings fix it, the message item's and the function
+/// call item ids for `openai-responses` alone, each call id the strings do
+/// not fix, and the request id. The others take their draws all the same.
+fn draw_ids(ids : @prng.Generator, api : Api, strings : Strings) -> Ids {
+  let responses = api is OpenaiResponses
+  let tool_calls = strings.tool_calls
+  let reply = draw_id(ids, sent=strings.id is None)
+  let message = draw_id(ids, sent=responses && strings.has_content())
+  let functions = if tool_calls.length() == 0 || !responses {
     no_calls
   } else {
-    FixedArray::make(tool_calls, "")
+    FixedArray::make(tool_calls.length(), "")
   }
-  let calls = if tool_calls == 0 {
+  let calls = if tool_calls.length() == 0 {
     no_calls
   } else {
-    FixedArray::make(tool_calls, "")
+    FixedArray::make(tool_calls.length(), "")
   }
-  for i in 0..<tool_calls {
+  for i in 0..<tool_calls.length() {
     // The Responses function call's item id, then the call id.
-    functions[i] = draw_id(ids)
-    calls[i] = draw_id(ids)
+    let function = draw_id(ids, sent=responses)
+    if responses {
+      functions[i] = function
+    }
+    calls[i] = draw_id(ids, sent=tool_calls[i].id is None)
   }
-  let request = draw_id(ids)
+  let request = draw_id(ids, sent=true)
   { reply, message, functions, calls, request, }
 }
 
@@ -831,12 +948,19 @@ let id_length : Int32 = 24
 
 ///|
 /// One id without its prefix: `id_length` characters, each drawn from
-/// `ids` with every one of `id_alphabet` equally likely.
-fn draw_id(ids : @prng.Generator) -> String {
+/// `ids` with every one of `id_alphabet` equally likely. An id that is not
+/// `sent` takes the same draws, and is the empty string.
+fn draw_id(ids : @prng.Generator, sent~ : Bool) -> String {
+  let alphabet = id_alphabet.length().to_uint64()
+  if !sent {
+    for _ in 0..<id_length {
+      let _ = ids.below(alphabet)
+    }
+    return ""
+  }
   let out = StringBuilder(size_hint=id_length)
   for _ in 0..<id_length {
-    let i = ids.below(id_alphabet.length().to_uint64()).to_int()
-    out.write_char(id_alphabet[i])
+    out.write_char(id_alphabet[ids.below(alphabet).to_int()])
   }
   out.to_string()
 }
@@ -981,11 +1105,7 @@ fn chat_stream(
   let chunks = ChatChunks::new(id~, created~, model~, usage~)
   let tool_calls = strings.tool_calls
   let pace = Pace::new()
-  let text_pieces = match declaration.error {
-    Some(error) =>
-      pieces_before(strings.text_pieces(declaration.chunk_size), error.after)
-    None => strings.text_pieces(declaration.chunk_size)
-  }
+  let text_pieces = strings.sent_pieces(declaration)
   let opening = if strings.has_content() {
     "{\"role\":\"assistant\",\"content\":\"\"}"
   } else {
@@ -998,7 +1118,7 @@ fn chat_stream(
     if out.over() {
       return out.reply(request_id)
     }
-    let delta = "{\"content\":\{@template.compact_json(Json::string(piece))}}"
+    let delta = "{\"content\":\{quoted(piece)}}"
     out.push(pace.piece(), None, chunks.chunk(delta, "null"))
   }
   if declaration.error is Some(error) {
@@ -1011,16 +1131,12 @@ fn chat_stream(
       return out.reply(request_id)
     }
     let call = tool_calls[k]
-    // The call id and the name as JSON strings.
-    let quoted_id = @template.compact_json(
-      Json::string(call_id(call, "call_", calls[k])),
-    )
-    let quoted_name = @template.compact_json(Json::string(call.name))
+    let id = call_id(call, "call_", calls[k])
     out.push(
       NoWait,
       None,
       chunks.chunk(
-        "{\"tool_calls\":[{\"index\":\{k},\"id\":\{quoted_id},\"type\":\"function\",\"function\":{\"name\":\{quoted_name},\"arguments\":\"\"}}]}",
+        "{\"tool_calls\":[{\"index\":\{k},\"id\":\{quoted(id)},\"type\":\"function\",\"function\":{\"name\":\{quoted(call.name)},\"arguments\":\"\"}}]}",
         "null",
       ),
     )
@@ -1028,12 +1144,11 @@ fn chat_stream(
       if out.over() {
         return out.reply(request_id)
       }
-      let piece = @template.compact_json(Json::string(piece))
       out.push(
         pace.piece(),
         None,
         chunks.chunk(
-          "{\"tool_calls\":[{\"index\":\{k},\"function\":{\"arguments\":\{piece}}}]}",
+          "{\"tool_calls\":[{\"index\":\{k},\"function\":{\"arguments\":\{quoted(piece)}}}]}",
           "null",
         ),
       )
@@ -1056,9 +1171,7 @@ fn chat_stream(
 /// `message`: an `error` object, in place of a chunk, whose `param` and
 /// `code` are null.
 fn chat_error(error : MidStreamError, message : String) -> String {
-  let message = @template.compact_json(Json::string(message))
-  let kind = @template.compact_json(Json::string(error.kind))
-  "{\"error\":{\"message\":\{message},\"type\":\{kind},\"param\":null,\"code\":null}}"
+  "{\"error\":{\"message\":\{quoted(message)},\"type\":\{quoted(error.kind.text)},\"param\":null,\"code\":null}}"
 }
 
 ///|
@@ -1083,8 +1196,8 @@ fn ChatChunks::new(
   usage~ : Bool,
 ) -> ChatChunks {
   let created = @template.compact_json(Json::number(created.to_double()))
-  let id = @template.compact_json(Json::string(id))
-  let model = @template.compact_json(Json::string(model))
+  let id = quoted(id)
+  let model = quoted(model)
   {
     head: "{\"id\":\{id},\"object\":\"chat.completion.chunk\",\"created\":\{created},\"model\":\{model},\"choices\":[",
     tail: if usage {
@@ -1371,16 +1484,8 @@ fn responses_stream(
   let tool_calls = strings.tool_calls
   // The message item, the reply's first, unless tool calls follow empty
   // text, or a mid-stream error cuts the text at 0.
-  let has_message = match declaration.error {
-    Some(error) => strings.has_content() && error.after > 0
-    None => strings.has_content()
-  }
-  let text_pieces = match declaration.error {
-    _ if !has_message => no_pieces
-    Some(error) =>
-      pieces_before(strings.text_pieces(declaration.chunk_size), error.after)
-    None => strings.text_pieces(declaration.chunk_size)
-  }
+  let has_message = strings.has_content() && declaration.sends_text()
+  let text_pieces = strings.sent_pieces(declaration)
   let pace = Pace::new()
   let out = ResponsesEvents::new(
     text_pieces.length() + 4 * tool_calls.length() + 8,
@@ -1397,6 +1502,16 @@ fn responses_stream(
     output=[],
     usage=Json::null(),
   )
+  // Both opening events copy the settings the request gives, which may be
+  // large, so their bytes are counted before the object is written once:
+  // a stream they would take past the bound stops before them.
+  let length = @template.compact_length(Json::object(opening))
+  if out.passes(
+      out.response_bytes("response.created", length) +
+      out.response_bytes("response.in_progress", length, ahead=1),
+    ) {
+    return out.reply(request_id)
+  }
   let opening = "\"response\":\{@template.compact_json(Json::object(opening))}"
   out.push(NoWait, "response.created", opening)
   out.push(NoWait, "response.in_progress", opening)
@@ -1406,7 +1521,7 @@ fn responses_stream(
   // What each event of the message item's text part gives first, its item
   // id and indexes, once the item is opened at output_index 0.
   let part_of = if has_message {
-    let item_id = @template.compact_json(Json::string(message_id))
+    let item_id = quoted(message_id)
     out.push(
       NoWait,
       "response.output_item.added",
@@ -1420,13 +1535,13 @@ fn responses_stream(
     )
     for piece in text_pieces {
       // A stream over the bound is not sent, so it stops here.
-      if out.stream.over() {
-        return out.stream.reply(request_id)
+      if out.over() {
+        return out.reply(request_id)
       }
       out.push(
         pace.piece(),
         "response.output_text.delta",
-        "\{part_of},\"delta\":\{@template.compact_json(Json::string(piece))}",
+        "\{part_of},\"delta\":\{quoted(piece)}",
         after=no_logprobs,
       )
     }
@@ -1442,31 +1557,31 @@ fn responses_stream(
       "error",
       responses_error(error, strings.error_message),
     )
-    return out.stream.reply(request_id)
+    return out.reply(request_id)
   }
   if has_message {
     // Each closing event of the item carries the whole text.
-    if out.stream.over() {
-      return out.stream.reply(request_id)
+    if out.over() {
+      return out.reply(request_id)
     }
     // A reply with no piece waits before its first closing event. With
     // tool calls after it, the text is not empty, so it has a piece.
     out.push(
       pace.closing(),
       "response.output_text.done",
-      "\{part_of},\"text\":\{@template.compact_json(Json::string(strings.text))}",
+      "\{part_of},\"text\":\{quoted(strings.text)}",
       after=no_logprobs,
     )
-    if out.stream.over() {
-      return out.stream.reply(request_id)
+    if out.over() {
+      return out.reply(request_id)
     }
     out.push(
       pace.closing(),
       "response.content_part.done",
       "\{part_of},\"part\":\{@template.compact_json(output_text_part(strings.text))}",
     )
-    if out.stream.over() {
-      return out.stream.reply(request_id)
+    if out.over() {
+      return out.reply(request_id)
     }
     let item = message_item(message_id, status, strings.text)
     out.push(
@@ -1477,8 +1592,8 @@ fn responses_stream(
     output.push(item)
   }
   for k in 0..<tool_calls.length() {
-    if out.stream.over() {
-      return out.stream.reply(request_id)
+    if out.over() {
+      return out.reply(request_id)
     }
     let call = tool_calls[k]
     let output_index = output.length()
@@ -1496,15 +1611,15 @@ fn responses_stream(
       "response.output_item.added",
       "\"output_index\":\{output_index},\"item\":\{@template.compact_json(added)}",
     )
-    let arguments_of = "\"item_id\":\{@template.compact_json(Json::string(item_id))},\"output_index\":\{output_index}"
+    let arguments_of = "\"item_id\":\{quoted(item_id)},\"output_index\":\{output_index}"
     for piece in pieces(call.arguments, declaration.chunk_size) {
-      if out.stream.over() {
-        return out.stream.reply(request_id)
+      if out.over() {
+        return out.reply(request_id)
       }
       out.push(
         pace.piece(),
         "response.function_call_arguments.delta",
-        "\{arguments_of},\"delta\":\{@template.compact_json(Json::string(piece))}",
+        "\{arguments_of},\"delta\":\{quoted(piece)}",
       )
     }
     // An earlier item's closing events follow at once, so that a reply
@@ -1512,8 +1627,8 @@ fn responses_stream(
     // closing events, which a reply with no piece waits before.
     let last = k == tool_calls.length() - 1
     // Each closing event of the item carries the whole arguments.
-    if out.stream.over() {
-      return out.stream.reply(request_id)
+    if out.over() {
+      return out.reply(request_id)
     }
     out.push(
       if last {
@@ -1522,10 +1637,10 @@ fn responses_stream(
         NoWait
       },
       "response.function_call_arguments.done",
-      "\{arguments_of},\"arguments\":\{@template.compact_json(Json::string(call.arguments))}",
+      "\{arguments_of},\"arguments\":\{quoted(call.arguments)}",
     )
-    if out.stream.over() {
-      return out.stream.reply(request_id)
+    if out.over() {
+      return out.reply(request_id)
     }
     let item = function_call_item(
       call,
@@ -1546,8 +1661,8 @@ fn responses_stream(
     output.push(item)
   }
   // The closing event carries the whole text and every item.
-  if out.stream.over() {
-    return out.stream.reply(request_id)
+  if out.over() {
+    return out.reply(request_id)
   }
   // Until the waits are handed over, the Response completes when it is
   // received, as with no wait. An incomplete one never completes.
@@ -1567,17 +1682,25 @@ fn responses_stream(
     output=Json::array(output),
     usage=responses_usage(declaration.usage),
   )
+  let kind = if completes {
+    "response.completed"
+  } else {
+    "response.incomplete"
+  }
+  // It copies the request's settings too, so its bytes are counted before
+  // it is written.
+  if out.passes(
+      out.response_bytes(kind, @template.compact_length(Json::object(response))),
+    ) {
+    return out.reply(request_id)
+  }
   let sequence_number = out.next
   out.push(
     pace.closing(),
-    if completes {
-      "response.completed"
-    } else {
-      "response.incomplete"
-    },
+    kind,
     "\"response\":\{@template.compact_json(Json::object(response))}",
   )
-  out.stream.reply(
+  out.reply(
     request_id,
     closing=if completes {
       Some({ received, response, sequence_number, })
@@ -1592,9 +1715,7 @@ fn responses_stream(
 /// message `message`, between its `type` and its `sequence_number`: the
 /// error's code, the message and a null `param`.
 fn responses_error(error : MidStreamError, message : String) -> String {
-  let code = @template.compact_json(Json::string(error.kind))
-  let message = @template.compact_json(Json::string(message))
-  "\"code\":\{code},\"message\":\{message},\"param\":null"
+  "\"code\":\{quoted(error.kind.text)},\"message\":\{quoted(message)},\"param\":null"
 }
 
 ///|
@@ -1616,6 +1737,49 @@ priv struct ResponsesEvents {
 /// The events of a new stream, with room for `capacity` of them.
 fn ResponsesEvents::new(capacity : Int32) -> ResponsesEvents {
   { stream: Stream::new(capacity), next: 0, }
+}
+
+///|
+/// Whether the events so far take more than `max_reply_bytes`.
+fn ResponsesEvents::over(self : ResponsesEvents) -> Bool {
+  self.stream.over()
+}
+
+///|
+/// The reply of the stream, with the request-id header field `request_id`
+/// and the closing event `closing` its waits complete, none by default.
+fn ResponsesEvents::reply(
+  self : ResponsesEvents,
+  request_id : (String, String),
+  closing~ : Closing? = None,
+) -> Reply {
+  self.stream.reply(request_id, closing~)
+}
+
+///|
+/// Whether events that take `bytes` bytes more, counted before they are
+/// written, would take the stream past `max_reply_bytes`, as
+/// `Stream::passes` says.
+fn ResponsesEvents::passes(self : ResponsesEvents, bytes : Int64) -> Bool {
+  self.stream.passes(bytes)
+}
+
+///|
+/// The bytes that the event of type `kind` takes as it is sent when its
+/// one member between `type` and `sequence_number` is `response`, a
+/// Response object of `length` bytes of compact JSON, and its
+/// `sequence_number` is that of the event `ahead` after the next one:
+/// counted without writing the object.
+fn ResponsesEvents::response_bytes(
+  self : ResponsesEvents,
+  kind : String,
+  length : Int64,
+  ahead~ : Int32 = 0,
+) -> Int64 {
+  let frame = event_data(kind, "\"response\":", self.next + ahead, "")
+  // `event: `, the type and its line feed; `data: `, its line feed and the
+  // blank line.
+  (16 + kind.length() + utf8_length(frame)).to_int64() + length
 }
 
 ///|
@@ -1736,9 +1900,7 @@ fn messages_reply(
     "stop_reason": Json::string(stop_reason),
     "stop_sequence": messages_stop_sequence(stop_reason, request),
   }
-  if stop_reason == "refusal" {
-    body["stop_details"] = refusal_details
-  }
+  add_stop_details(body, stop_reason)
   body["usage"] = messages_usage(declaration.usage)
   json_reply(Json::object(body), request_id)
 }
@@ -1747,8 +1909,11 @@ fn messages_reply(
 /// The `input` of the `tool_use` block of `call`, which is always an object
 /// in the vendor's replies: its arguments as that object when they are one,
 /// as written or as a string that holds one, and otherwise the string they
-/// are, as a JSON string.
+/// are, as a JSON string. Only a string is read.
 fn tool_use_input(call : ToolCall) -> Json {
+  if call.object is Some(object) {
+    return object
+  }
   let parsed = @json.parse(call.arguments) catch { _ => Json::null() }
   match parsed {
     Object(_) => parsed
@@ -1820,15 +1985,11 @@ fn messages_stream(
   // Empty text has no block, as in the JSON reply, even when `chunks`
   // gives empty pieces, so that both give the same message. Nor has text
   // that a mid-stream error cuts at 0.
-  let has_text = match declaration.error {
-    Some(error) => strings.text != "" && error.after > 0
-    None => strings.text != ""
-  }
-  let text_pieces = match declaration.error {
-    _ if !has_text => no_pieces
-    Some(error) =>
-      pieces_before(strings.text_pieces(declaration.chunk_size), error.after)
-    None => strings.text_pieces(declaration.chunk_size)
+  let has_text = strings.text != "" && declaration.sends_text()
+  let text_pieces = if has_text {
+    strings.sent_pieces(declaration)
+  } else {
+    no_pieces
   }
   let tool_calls = strings.tool_calls
   let pace = Pace::new()
@@ -1863,7 +2024,7 @@ fn messages_stream(
       if out.over() {
         return out.reply(request_id)
       }
-      let delta = "{\"type\":\"text_delta\",\"text\":\{@template.compact_json(Json::string(piece))}}"
+      let delta = "{\"type\":\"text_delta\",\"text\":\{quoted(piece)}}"
       out.push(
         pace.piece(),
         Some("content_block_delta"),
@@ -1891,17 +2052,13 @@ fn messages_stream(
     }
     let call = tool_calls[k]
     let index = first_call + k
-    // The call id and the name as JSON strings.
-    let quoted_id = @template.compact_json(
-      Json::string(call_id(call, "toolu_", calls[k])),
-    )
-    let quoted_name = @template.compact_json(Json::string(call.name))
+    let id = call_id(call, "toolu_", calls[k])
     out.push(
       NoWait,
       Some("content_block_start"),
       content_block_start(
         index,
-        "{\"type\":\"tool_use\",\"id\":\{quoted_id},\"name\":\{quoted_name},\"input\":{}}",
+        "{\"type\":\"tool_use\",\"id\":\{quoted(id)},\"name\":\{quoted(call.name)},\"input\":{}}",
       ),
     )
     // The empty first piece, as the vendor sends it, carries nothing, so it
@@ -1915,7 +2072,7 @@ fn messages_stream(
       if out.over() {
         return out.reply(request_id)
       }
-      let delta = "{\"type\":\"input_json_delta\",\"partial_json\":\{@template.compact_json(Json::string(piece))}}"
+      let delta = "{\"type\":\"input_json_delta\",\"partial_json\":\{quoted(piece)}}"
       out.push(
         pace.piece(),
         Some("content_block_delta"),
@@ -1929,9 +2086,7 @@ fn messages_stream(
     "stop_reason": Json::string(stop_reason),
     "stop_sequence": messages_stop_sequence(stop_reason, request),
   }
-  if stop_reason == "refusal" {
-    delta["stop_details"] = refusal_details
-  }
+  add_stop_details(delta, stop_reason)
   let message_delta : Json = {
     "type": "message_delta",
     "delta": Json::object(delta),
@@ -1979,9 +2134,7 @@ fn content_block_stop(index : Int32) -> String {
 /// The data of Anthropic Messages' `error` event for `error` with the
 /// message `message`: an `error` object with its type and message.
 fn messages_error(error : MidStreamError, message : String) -> String {
-  let message = @template.compact_json(Json::string(message))
-  let kind = @template.compact_json(Json::string(error.kind))
-  "{\"type\":\"error\",\"error\":{\"type\":\{kind},\"message\":\{message}}}"
+  "{\"type\":\"error\",\"error\":{\"type\":\{quoted(error.kind.text)},\"message\":\{quoted(message)}}}"
 }
 
 ///|
@@ -1991,6 +2144,16 @@ let refusal_details : Json = {
   "type": "refusal",
   "category": Json::null(),
   "explanation": Json::null(),
+}
+
+///|
+/// Adds `stop_details` to `members`, the stop members of a Messages reply
+/// or of its `message_delta`, after the ones it has, when the stop reason
+/// `stop_reason` is a refusal. No other stop reason carries it.
+fn add_stop_details(members : Map[String, Json], stop_reason : String) -> Unit {
+  if stop_reason == "refusal" {
+    members["stop_details"] = refusal_details
+  }
 }
 
 ///|

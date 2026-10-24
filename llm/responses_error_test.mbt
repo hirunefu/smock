@@ -21,7 +21,10 @@ fn responses_cut(
     @llm.Declaration(
       api=OpenaiResponses,
       chunk_size?,
-      error=@llm.MidStreamError(after~, kind=code),
+      error=@llm.MidStreamError(
+        after~,
+        kind=@llm.read_error_kind(OpenaiResponses, Json::string(code)).unwrap(),
+      ),
     ),
     strings,
     request~,
@@ -451,7 +454,7 @@ test "a written stop reason does not change the cut: neither response.completed 
     @llm.Declaration(
       api=OpenaiResponses,
       stop_reason~,
-      error=@llm.MidStreamError(after=5, kind="server_error"),
+      error=@llm.MidStreamError(after=5, kind=server_error),
     ),
     @llm.Strings(text="The weather in Paris is", error_message="Oops"),
     request=Some({ "model": "gpt-6-astra", "stream": true }),
@@ -492,7 +495,7 @@ test "at load, the stream that the error cuts at 0 is short, so only the JSON re
         @llm.Declaration(
           api=OpenaiResponses,
           chunk_size~,
-          error=@llm.MidStreamError(after~, kind="server_error"),
+          error=@llm.MidStreamError(after~, kind=server_error),
         ),
         @llm.Strings(text~, error_message="Oops"),
       ) {

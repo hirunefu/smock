@@ -1367,15 +1367,22 @@ Journal and [`smock render`](#rendering-a-template) work as for other
 responses: a rendering shows the JSON body, or the events
 for a sample whose body sets `stream: true`, with the ids and the waits its
 seed gives and its time as `created`. A response gives at most one of
-`body`, `bodyFile`, `json`, `events` and `llm`. A missing or unknown `api`,
-an unknown field of `llm` or of its `usage`, a count that is not an integer
-from 0 to 2^53-1, a stop reason that is not a word of the API, the errors
-of [chunks](#chunks), of [tool calls](#tool-calls) and of a
-[mid-stream error](#mid-stream-errors), a wait of `timing` that is not one
-distribution of the delay, a reply as written over the
-[size bound](#the-size-bound), and `llm` beside another body are reported with the JSON Pointer of the field, by `smock check`, at
-startup and on a reload, which keeps the set served, and as 400
-`invalid_stub` for an Ephemeral Stub.
+`body`, `bodyFile`, `json`, `events` and `llm`.
+
+These are reported with the field's JSON Pointer:
+
+- a missing or unknown `api`;
+- an unknown field of `llm` or of its `usage`;
+- a count that is not an integer from 0 to 2^53-1;
+- a stop reason that is not a word of the API;
+- the errors of [chunks](#chunks), of [tool calls](#tool-calls) and of a
+  [mid-stream error](#mid-stream-errors);
+- a wait of `timing` that is not one distribution of the delay;
+- a reply as written over the [size bound](#the-size-bound);
+- `llm` beside another body.
+
+`smock check` reports them, and so do startup and a reload, which keeps the
+set served. An Ephemeral Stub with one of them gets 400 `invalid_stub`.
 
 The wire forms follow the vendors' documents as they were read on
 2026-10-22 and 2026-10-23. When a vendor changes its documented form, a

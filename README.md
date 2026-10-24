@@ -4,9 +4,9 @@ smock is a mock server for HTTP/1.1, HTTPS and Server-Sent Events. It stands in
 for the services a system depends on, on Kubernetes and on developers'
 machines. It is written in MoonBit ([ADR 0001](docs/adr/0001-moonbit-with-c-only-for-tls.md)).
 The domain terms are defined in [GLOSSARY.md](GLOSSARY.md).
-[LLM responses](docs/definition-files.md#llm-responses) stand in for an LLM
-API, such as OpenAI Chat Completions or OpenAI Responses, in tests of code
-that calls one.
+[LLM responses](docs/definition-files.md#llm-responses) stand in for the
+OpenAI Chat Completions, OpenAI Responses and Anthropic Messages APIs in
+tests of code that calls one.
 
 ## Documentation
 

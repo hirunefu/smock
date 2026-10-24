@@ -58,6 +58,24 @@ test "copied tools that push a Responses stream over 1 MiB, three copies of them
 }
 
 ///|
+test "instructions that take a Responses stream's two opening events over 1 MiB get the 500 too; the JSON reply, with one copy, is sent" {
+  let h = harness([responses_mock()])
+  let body = (stream : Bool) => {
+    let instructions = Json::string("i".repeat(600_000)).stringify()
+    "{\"model\":\"gpt-6-astra\",\"input\":\"Hi\",\"stream\":\{stream},\"instructions\":\{instructions}}"
+  }
+  inspect(
+    [bounded(h.responses(body(true))), bounded(h.responses(body(false)))].join(
+      "\n",
+    ),
+    content=(
+      #|500 {"error":"template failed","stub":"responses","at":"/response/llm","message":"the reply takes more than 1 MiB as a stream"}; journal: /response/llm: the reply takes more than 1 MiB as a stream
+      #|200 JSON
+    ),
+  )
+}
+
+///|
 test "a long model from the request, in every chunk of a Chat stream, pushes an untemplated reply over 1 MiB and gets the 500" {
   let h = harness([chat_mock])
   let model = "m".repeat(100_000)

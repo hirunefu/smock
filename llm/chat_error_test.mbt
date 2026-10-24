@@ -4,6 +4,14 @@
 // stream. They run on native and on wasm-gc with the same output.
 
 ///|
+/// The OpenAI error type, and Responses code, `server_error`, as the load
+/// check reads it.
+let server_error : @llm.ErrorKind = @llm.read_error_kind(
+  OpenaiChat,
+  "server_error",
+).unwrap()
+
+///|
 /// The reply to a request whose body is `request`, by default one that
 /// sets `stream: true`, for an `openai-chat` declaration whose mid-stream
 /// error comes after `after` code points, with the type `kind` and the
@@ -20,7 +28,10 @@ fn chat_cut(
       @llm.Declaration(
         api=OpenaiChat,
         chunk_size?,
-        error=@llm.MidStreamError(after~, kind~),
+        error=@llm.MidStreamError(
+          after~,
+          kind=@llm.read_error_kind(OpenaiChat, Json::string(kind)).unwrap(),
+        ),
       ),
       strings,
       request~,
@@ -85,7 +96,7 @@ fn cut_events(
     @llm.Declaration(
       api=OpenaiChat,
       chunk_size?,
-      error=@llm.MidStreamError(after~, kind="server_error"),
+      error=@llm.MidStreamError(after~, kind=server_error),
     ),
     strings,
     request~,

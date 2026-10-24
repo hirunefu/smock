@@ -149,3 +149,87 @@ test "the same draw gives the same request id, the JSON reply as the stream, and
     ),
   )
 }
+
+///|
+/// Every id that the JSON reply of `api` with the strings `strings` sends,
+/// its ids drawn from the generator of the draw `draw`: each `id` and
+/// `call_id` member of the body, in the order written, then the request-id
+/// header field's value.
+fn sent_ids(api : @llm.Api, strings : @llm.Strings, draw : UInt64) -> String {
+  let reply = @llm.reply(
+    @llm.Declaration(api~),
+    strings,
+    request=Some({ "model": "test-model" }),
+    now=received,
+    ids=@llm.ids_generator(draw),
+  )
+  guard reply.body is Json(body) else { abort("not a JSON reply") }
+  let ids = []
+  fn walk(value : Json) -> Unit {
+    match value {
+      Object(members) =>
+        for name, value in members {
+          match (name, value) {
+            ("id" | "call_id", String(id)) => ids.push(id)
+            _ => walk(value)
+          }
+        }
+      Array(items) =>
+        for item in items {
+          walk(item)
+        }
+      _ => ()
+    }
+  }
+  walk(@json.parse(@utf8.decode_lossy(body)) catch { _ => abort("not JSON") })
+  ids.push(reply.request_id.1)
+  "\{api.name()}: \{ids.join(" ")}"
+}
+
+///|
+test "a draw gives the ids it gave before, in every API, whichever of them the Stub fixes" {
+  let generated = @llm.Strings(text="Hi", tool_calls=[
+    @llm.ToolCall(name="get_weather", arguments={ "city": "Paris" }),
+    @llm.ToolCall(name="get_time", arguments={ "zone": "CET" }),
+  ])
+  // The reply's id and the first call id fixed, the second call id drawn.
+  let fixed = @llm.Strings(text="Hi", id="fixed-reply", tool_calls=[
+    @llm.ToolCall(
+      name="get_weather",
+      arguments={ "city": "Paris" },
+      id="fixed-call",
+    ),
+    @llm.ToolCall(name="get_time", arguments={ "zone": "CET" }),
+  ])
+  let out = []
+  for draw in [7UL, 8UL] {
+    for api in [@llm.Api::OpenaiChat, OpenaiResponses, AnthropicMessages] {
+      out.push("\{draw} " + sent_ids(api, @llm.Strings(text="Hi"), draw))
+      out.push("\{draw} " + sent_ids(api, generated, draw))
+      out.push("\{draw} " + sent_ids(api, fixed, draw))
+    }
+  }
+  inspect(
+    out.join("\n"),
+    content=(
+      #|7 openai-chat: chatcmpl-KCVauEuclT08Mg4CWd55sNbz req_5DTBZPrxiMH6i7M92iahxjWk
+      #|7 openai-chat: chatcmpl-KCVauEuclT08Mg4CWd55sNbz call_iHzkHTRdWXnW746KnN1UOBYQ call_DbhbAGir3qs3o77JKr2BTN9j req_NCUifvyxkaNvRkMCKLDmHTwH
+      #|7 openai-chat: fixed-reply fixed-call call_DbhbAGir3qs3o77JKr2BTN9j req_NCUifvyxkaNvRkMCKLDmHTwH
+      #|7 openai-responses: resp_KCVauEuclT08Mg4CWd55sNbz msg_mGR88Teee4muTOOd2B3UzQJr req_5DTBZPrxiMH6i7M92iahxjWk
+      #|7 openai-responses: resp_KCVauEuclT08Mg4CWd55sNbz msg_mGR88Teee4muTOOd2B3UzQJr fc_5DTBZPrxiMH6i7M92iahxjWk call_iHzkHTRdWXnW746KnN1UOBYQ fc_lXej21FbJgs0WxlXP0AqXTyU call_DbhbAGir3qs3o77JKr2BTN9j req_NCUifvyxkaNvRkMCKLDmHTwH
+      #|7 openai-responses: fixed-reply msg_mGR88Teee4muTOOd2B3UzQJr fc_5DTBZPrxiMH6i7M92iahxjWk fixed-call fc_lXej21FbJgs0WxlXP0AqXTyU call_DbhbAGir3qs3o77JKr2BTN9j req_NCUifvyxkaNvRkMCKLDmHTwH
+      #|7 anthropic-messages: msg_KCVauEuclT08Mg4CWd55sNbz req_5DTBZPrxiMH6i7M92iahxjWk
+      #|7 anthropic-messages: msg_KCVauEuclT08Mg4CWd55sNbz toolu_iHzkHTRdWXnW746KnN1UOBYQ toolu_DbhbAGir3qs3o77JKr2BTN9j req_NCUifvyxkaNvRkMCKLDmHTwH
+      #|7 anthropic-messages: fixed-reply fixed-call toolu_DbhbAGir3qs3o77JKr2BTN9j req_NCUifvyxkaNvRkMCKLDmHTwH
+      #|8 openai-chat: chatcmpl-u76DvnZi1R3iOEH1RcaznueA req_23m4SYY5j0dNweGBYvVJCktv
+      #|8 openai-chat: chatcmpl-u76DvnZi1R3iOEH1RcaznueA call_Y376OSzBExz1JNJ5fBisMjGP call_YLZT0RFhIo3nY9SvaPEmLt5x req_aFOL2IlCyImvKeo5k0jD62Cy
+      #|8 openai-chat: fixed-reply fixed-call call_YLZT0RFhIo3nY9SvaPEmLt5x req_aFOL2IlCyImvKeo5k0jD62Cy
+      #|8 openai-responses: resp_u76DvnZi1R3iOEH1RcaznueA msg_TnKujUj5UEKdZwNgEFMFG6p9 req_23m4SYY5j0dNweGBYvVJCktv
+      #|8 openai-responses: resp_u76DvnZi1R3iOEH1RcaznueA msg_TnKujUj5UEKdZwNgEFMFG6p9 fc_23m4SYY5j0dNweGBYvVJCktv call_Y376OSzBExz1JNJ5fBisMjGP fc_9T6PinRrV374i9VQ2iAFrfid call_YLZT0RFhIo3nY9SvaPEmLt5x req_aFOL2IlCyImvKeo5k0jD62Cy
+      #|8 openai-responses: fixed-reply msg_TnKujUj5UEKdZwNgEFMFG6p9 fc_23m4SYY5j0dNweGBYvVJCktv fixed-call fc_9T6PinRrV374i9VQ2iAFrfid call_YLZT0RFhIo3nY9SvaPEmLt5x req_aFOL2IlCyImvKeo5k0jD62Cy
+      #|8 anthropic-messages: msg_u76DvnZi1R3iOEH1RcaznueA req_23m4SYY5j0dNweGBYvVJCktv
+      #|8 anthropic-messages: msg_u76DvnZi1R3iOEH1RcaznueA toolu_Y376OSzBExz1JNJ5fBisMjGP toolu_YLZT0RFhIo3nY9SvaPEmLt5x req_aFOL2IlCyImvKeo5k0jD62Cy
+      #|8 anthropic-messages: fixed-reply fixed-call toolu_YLZT0RFhIo3nY9SvaPEmLt5x req_aFOL2IlCyImvKeo5k0jD62Cy
+    ),
+  )
+}
