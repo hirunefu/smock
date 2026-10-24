@@ -5,10 +5,11 @@
 
 ///|
 /// The header fields of the HTTP/2 response with the status `status`, the
-/// header fields `headers` and a body of `length` octets: `:status`, then
-/// each of `headers` with its name in lower case and its value trimmed of
-/// spaces and tabs, then `date` with the value `date`, unless `headers`
-/// give one, and `content-length`, unless the status has no content.
+/// header fields `headers` and a body of `length` octets, to a CONNECT when
+/// `connect` is true: `:status`, then each of `headers` with its name in
+/// lower case and its value trimmed of spaces and tabs, then `date` with
+/// the value `date`, unless `headers` give one, and `content-length`,
+/// unless the response has no content (`has_content`).
 ///
 /// Names and values are the octets the HTTP/1.1 encoder writes. The fields
 /// HTTP/2 forbids in a response (RFC 9113, section 8.2.2) are left out:
@@ -19,6 +20,7 @@ fn response_fields(
   headers : ArrayView[(String, String)],
   length : Int32,
   date~ : String,
+  connect~ : Bool = false,
 ) -> Array[@header.Header] {
   let fields = Array(capacity=headers.length() + 3)
   fields.push(@header.Header::{ name: b":status", value: decimal(status), })
@@ -36,18 +38,20 @@ fn response_fields(
   if !has_date {
     fields.push({ name: b"date", value: @http1.field_octets(date), })
   }
-  if has_content(status) {
+  if has_content(status, connect~) {
     fields.push({ name: b"content-length", value: decimal(length), })
   }
   fields
 }
 
 ///|
-/// Whether a response with `status` has content: one with status 1xx, 204
-/// or 304 has none, so it has neither `content-length` nor DATA, as on
-/// HTTP/1.1 (RFC 9110, sections 8.6, 15.2, 15.3.5 and 15.4.5).
-fn has_content(status : Int32) -> Bool {
-  !(status is (100..<=199 | 204 | 304))
+/// Whether a response with `status`, to a CONNECT when `connect` is true,
+/// has content: one with status 1xx, 204 or 304 has none, so it has neither
+/// `content-length` nor DATA, as on HTTP/1.1 (RFC 9110, sections 8.6, 15.2,
+/// 15.3.5 and 15.4.5). Nor has a 2xx to a CONNECT, after which the stream
+/// would carry a tunnel (RFC 9110, section 9.3.6), which smock never opens.
+fn has_content(status : Int32, connect~ : Bool = false) -> Bool {
+  !(status is (100..<=199 | 204 | 304) || (connect && status is (200..<=299)))
 }
 
 ///|
