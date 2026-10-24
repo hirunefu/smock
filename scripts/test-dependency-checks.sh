@@ -36,6 +36,22 @@ moonhttp=moonbitstack/moonhttp
 named=$(sed -n 's|.*"moonbitstack/moonhttp@\([^"]*\)".*|\1|p' moon.mod)
 earlier=0.13.0
 
+# The modules the C check scans, as the build resolves them, which the copy
+# takes from .mooncakes/.
+resolved=$(scripts/resolved-modules.sh)
+scanned=$(printf '%s\n' "$resolved" | grep -v '^moonbitlang/')
+for module in $scanned; do
+  if [ ! -d ".mooncakes/${module%@*}" ]; then
+    echo "test-dependency-checks: .mooncakes/ has no ${module%@*}; run moon check first" >&2
+    exit 2
+  fi
+done
+
+# version <name>: the version of a module the build resolves.
+version() {
+  printf '%s\n' "$resolved" | sed -n "s|^$1@||p"
+}
+
 # fresh: makes $copy, a copy of what the checks read.
 fresh() {
   rm -rf "$copy"
@@ -45,6 +61,10 @@ fresh() {
   for manifest in $(git ls-files 'moon.mod' '*/moon.mod'); do
     mkdir -p "$copy/$(dirname "$manifest")"
     cp "$manifest" "$copy/$manifest"
+  done
+  for module in $scanned; do
+    mkdir -p "$copy/.mooncakes/${module%/*}"
+    cp -R ".mooncakes/${module%@*}" "$copy/.mooncakes/${module%@*}"
   done
   git -C "$copy" init -q
 }
@@ -114,6 +134,77 @@ fresh
 edit moon.mod "\|\"$moonhttp@$named\"|d"
 fails check-moonhttp-pin.sh "moon.mod does not import moonhttp" \
   "moon.mod does not import $moonhttp"
+
+# The C check's scan of the resolved dependencies: moonhttp and the modules
+# it imports (moonvar, moondate, mooncrypt and moonbase as of 0.14.0).
+
+moonvar=moonbitstack/moonvar
+moonbase=moonbitstack/moonbase
+mooncrypt=moonbitstack/mooncrypt
+moondate=moonbitstack/moondate
+
+fresh
+passes check-no-c.sh "smock and the modules it resolves outside moonbitlang have no C" \
+  "$moonhttp@$named"
+
+fresh
+printf 'int varint(void) { return 0; }\n' >"$copy/.mooncakes/$moonvar/varint.c"
+fails check-no-c.sh "a module that moonhttp imports has a C source" \
+  "$moonvar@$(version $moonvar) has C source varint.c"
+
+fresh
+printf '\nextern "C" fn probe() -> Int = "probe"\n' >"$copy/.mooncakes/$moonhttp/http2/probe.mbt"
+fails check-no-c.sh "moonhttp declares a C function" \
+  "$moonhttp@$named binds C functions (extern \"C\") in http2/probe.mbt"
+
+fresh
+printf '\noptions(\n  "native-stub": [ "stub.c" ],\n)\n' >>"$copy/.mooncakes/$moonbase/moon.pkg"
+fails check-no-c.sh "a module that moonhttp imports declares a native stub" \
+  "$moonbase@$(version $moonbase) declares a native stub in moon.pkg"
+
+fresh
+printf '\noptions(\n  link: { native: { "cc-link-flags": "-lz" } },\n)\n' >>"$copy/.mooncakes/$moondate/moon.pkg"
+fails check-no-c.sh "a module that moonhttp imports sets a link flag" \
+  "$moondate@$(version $moondate) sets a C compiler or link flag in moon.pkg"
+
+fresh
+printf '\noptions(\n  "--moonbit-unstable-prebuild": "prebuild.py",\n)\n' >>"$copy/.mooncakes/$mooncrypt/moon.mod"
+fails check-no-c.sh "a module that moonhttp imports runs a prebuild script, which can add link flags" \
+  "$mooncrypt@$(version $mooncrypt) runs a prebuild script in moon.mod"
+
+fresh
+printf '\n// No "native-stub": here, nor "cc-flags": or a prebuild.\n' >>"$copy/.mooncakes/$moonbase/moon.pkg"
+printf '///| Calls no extern "C" function.\nfn note() -> Unit { () }\n' >"$copy/.mooncakes/$moonbase/note.mbt"
+passes check-no-c.sh "a comment that names C is not C" \
+  "no C beyond what ADR 0001 allows"
+
+# moonbitlang/async has C of its own, which ADR 0001 covers.
+fresh
+mkdir -p "$copy/.mooncakes/moonbitlang/async/src"
+printf 'int event_loop(void) { return 0; }\n' >"$copy/.mooncakes/moonbitlang/async/src/event_loop.c"
+passes check-no-c.sh "the moonbitlang modules stay outside the scan" \
+  "no C beyond what ADR 0001 allows"
+
+# A module that only a new module of the workspace imports: moon resolves
+# it, so the scan covers it, as it covers one that a moonhttp upgrade adds.
+added=moonbitstack/moonurl
+fresh
+member extra "$added@0.2.0"
+fails check-no-c.sh "a module the build newly resolves must be downloaded to be scanned" \
+  "$added@0.2.0 is not in .mooncakes/"
+
+fresh
+member extra "$added@0.2.0"
+mkdir -p "$copy/.mooncakes/$added"
+printf 'name = "%s"\n\nversion = "0.2.0"\n' "$added" >"$copy/.mooncakes/$added/moon.mod"
+printf 'int url(void) { return 0; }\n' >"$copy/.mooncakes/$added/url.c"
+fails check-no-c.sh "a module the build newly resolves is scanned" \
+  "$added@0.2.0 has C source url.c"
+
+fresh
+edit ".mooncakes/$moonvar/moon.mod" 's/^version = ".*"/version = "0.0.1"/'
+fails check-no-c.sh "the module in .mooncakes/ is not the version the build resolves" \
+  ".mooncakes/$moonvar holds version 0.0.1, but the build resolves $(version $moonvar)"
 
 echo
 echo "test-dependency-checks: $passed passed, $failed failed"
