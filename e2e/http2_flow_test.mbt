@@ -516,7 +516,7 @@ async test "h2c: a stream reset while its body waits for window ends its slow wr
 }
 
 ///|
-async test "h2c: a stream reset while its task writes part of its body to a client that does not read leaves every frame whole: the rest of what was written goes out, then the next stream's response" {
+async test "h2c: a stream reset while its task writes part of its body to a client that does not read leaves every frame whole: the write goes out in full, then the next stream's response, and the task ends with its entry committed" {
   // A body of 9,000,000 octets, of which the client grants about 8,000,000
   // at once: more than the socket takes while the client does not read, so
   // the stream's task is still writing when the reset comes.
@@ -560,6 +560,10 @@ async test "h2c: a stream reset while its task writes part of its body to a clie
         "--- the connection window widened by 8000000, then stream 1 reset and stream 3 sent",
       )
       out.push(raw.runs_until(frame => ends_stream(frame, 3)))
+      // Stream 1's task ended once its write was done, and committed its
+      // entry then.
+      out.push("---")
+      out.append(smock.journal_once(2, within=1000))
       inspect(
         out.join("\n"),
         content=(
@@ -571,6 +575,9 @@ async test "h2c: a stream reset while its task writes part of its body to a clie
           #|DATA 1: 485 frames, 7934465 octets
           #|HEADERS 3 END_HEADERS [:status: 200, date: <now>, content-length: 5]
           #|DATA 3 END_STREAM: 1 frames, 5 octets
+          #|---
+          #|/item: stub "item", status 200
+          #|/huge: stub "huge", status 200
         ),
       )
     })

@@ -363,12 +363,16 @@ fn[S : @io.Writer] H2Connection::hand(
 /// Ends the wait of `stream`, reset while its response waits in a task, if
 /// it does: the task is cancelled at once, and commits the stream's Journal
 /// entry as it ends. Every reset of a waiting stream ends its wait here,
-/// whether it waits for its delay or for a window.
+/// whether it waits for its delay or for a window. A task that is writing
+/// part of its body is not cut off in the middle of a frame: it ends once
+/// that write is done, when it finds its stream no longer waiting
+/// (`trickle`).
 fn H2Connection::stop_waiting(self : H2Connection, stream : Int32) -> Unit {
   if self.waiting.get(stream) is Some(task) {
     self.waiting.remove(stream)
-    task.cancel()
-    self.writer.abandon(stream)
+    if !self.writer.writes_for(stream) {
+      task.cancel()
+    }
     self.unblock(stream)
     self.end_stream()
   }
@@ -400,13 +404,7 @@ async fn[S : @io.Reader + @io.Writer] H2Connection::read_more(
   stream : S,
   out : WatchedStream[S],
 ) -> Bool {
-  if self.writer.abandoned {
-    // A stream's task was cancelled while it wrote: the reader waits for
-    // it to stop, then writes what it left.
-    self.writer.abandoned = false
-    self.writer.write_last(out)
-    self.now = @async.now()
-  } else if self.writer.write(out) {
+  if self.writer.write(out) {
     self.now = @async.now()
   }
   let idle = self.idle()

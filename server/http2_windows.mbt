@@ -150,6 +150,10 @@ fn[S : @io.Writer] H2Connection::write_slowly(
 /// stream's window, the connection's, or every stream's with SETTINGS
 /// (`widened`). So a client that grants window a few octets at a time gets
 /// one small DATA frame for each grant, and its whole response in the end.
+///
+/// A reset of the stream cancels the task at once while it waits. While it
+/// writes, the reset leaves it be (`H2Writer::write_for`), and it ends as
+/// soon as the write is done.
 async fn[S : @io.Writer] H2Connection::trickle(
   self : H2Connection,
   stream : Int32,
@@ -195,7 +199,10 @@ async fn[S : @io.Writer] H2Connection::trickle(
     }
     // What is queued, the HEADERS included, goes out before the task waits;
     // the windows may widen while the writer writes.
-    if self.writer.write_for(out, stream) || n > 0 {
+    let wrote = self.writer.write_for(out, stream)
+    // A reset while the task wrote did not cancel it: it ends now.
+    guard self.waiting.contains(stream) else { return }
+    if wrote || n > 0 {
       continue
     }
     wait.rest = rest.length()
