@@ -112,6 +112,16 @@ says unlisted-failure "    GOAWAY Frame (Error Code: PROTOCOL_ERROR)"
 says unlisted-failure "    Error: unexpected EOF"
 says unlisted-failure "h2spec plain: 1 case failed or was skipped without being listed in plain.txt"
 
+# A case listed with the issue that fixes it may fail, and the run lists it
+# with its issue and reason.
+report pass pass fail pass
+list "http2/3.5/2  #150  The TLS port does not serve HTTP/2 yet."
+verdict listed-failure
+exits listed-failure 0
+says listed-failure "h2spec plain: listed in plain.txt, with the reason:"
+says listed-failure "  http2/3.5/2 failed, as listed until #150: The TLS port does not serve HTTP/2 yet."
+says listed-failure "h2spec plain: every case passed or is listed"
+
 echo
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]
