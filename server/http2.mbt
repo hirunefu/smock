@@ -170,7 +170,7 @@ priv struct H2Connection {
   /// Whether the reader waits for more from the client.
   mut reading : Bool
   /// Whether smock has queued a GOAWAY with NO_ERROR, and closes the
-  /// connection (`go_away`).
+  /// connection (`close_after_goaway`).
   mut closing : Bool
   /// Once that GOAWAY is written, when the connection closes if the client
   /// has not closed it first; `forever` before.
@@ -416,7 +416,7 @@ let closing_ms : Int64 = 1000
 ///|
 /// Reads and discards what the client sends after a GOAWAY with NO_ERROR,
 /// until it closes the connection; the watchdog closes it first after
-/// `closing_ms` (`go_away`).
+/// `closing_ms` (`close_after_goaway`).
 async fn[S : @io.Reader] H2Connection::discard(
   self : H2Connection,
   stream : S,
@@ -431,8 +431,10 @@ async fn[S : @io.Reader] H2Connection::discard(
 /// Called by the connection's watchdog at `now`, when the earliest
 /// deadline it was given has come, or one before it that no longer
 /// counts; returns the next, or one that has passed to end the
-/// connection. A stream's queued frames, and its GOAWAY, are written to
-/// `out` by a task that writes and ends.
+/// connection. What it queues, RST_STREAM frames or a GOAWAY, is written
+/// to `out` by a task that writes it and ends, so that the watchdog never
+/// waits on the client itself. While smock closes the connection after a
+/// GOAWAY, the time it closes is the only deadline.
 ///
 /// - The read timeout of each stream runs from the read that brought the
 ///   first frame of its request to its end. Past it, smock resets the
@@ -517,22 +519,33 @@ fn H2Connection::block_deadline(self : H2Connection) -> Int64 {
 }
 
 ///|
-/// Queues a GOAWAY with NO_ERROR, then closes the connection once the
-/// client has read it. A task writes it to `out`; from then on, smock reads
-/// and discards what the client sends (`discard`), until the client closes
-/// the connection, or for `closing_ms` at most after the GOAWAY is written.
-/// Closing a socket with unread input makes the kernel send a reset, which
-/// can discard the GOAWAY before the client reads it. moonbitlang/async
-/// offers no half-close, so smock does not shut down its sending side
-/// first.
+/// Queues a GOAWAY with NO_ERROR, naming the highest stream the client has
+/// opened, then closes the connection once the client has read it
+/// (`close_after_goaway`).
 fn[S : @io.Writer] H2Connection::go_away(
   self : H2Connection,
   out : WatchedStream[S],
 ) -> Unit {
-  self.closing = true
   self.conn.goaway() catch {
     _ => ()
   }
+  self.close_after_goaway(out)
+}
+
+///|
+/// Closes the connection, after the GOAWAY with NO_ERROR the `Conn` has
+/// queued, once the client has read it. A task writes it to `out`; from
+/// then on, smock reads and discards what the client sends (`discard`),
+/// until the client closes the connection, or for `closing_ms` at most
+/// after the GOAWAY is written. Closing a socket with unread input makes
+/// the kernel send a reset, which can discard the GOAWAY before the client
+/// reads it. moonbitlang/async offers no half-close, so smock does not shut
+/// down its sending side first.
+fn[S : @io.Writer] H2Connection::close_after_goaway(
+  self : H2Connection,
+  out : WatchedStream[S],
+) -> Unit {
+  self.closing = true
   self.group.spawn_bg(no_wait=true, () => {
     self.writer.write_last(out)
     let now = @async.now()
