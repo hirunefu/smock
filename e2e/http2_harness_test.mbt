@@ -274,13 +274,7 @@ fn H2Response::render(self : H2Response) -> String {
   let out = StringBuilder()
   out.write_string("\{self.status}\n")
   for header in self.headers {
-    let value = if header.0 == "date" &&
-      mask_date("Date: \{header.1}") == "Date: <now>" {
-      "<now>"
-    } else {
-      header.1
-    }
-    out.write_string("\{header.0}: \{value}\n")
+    out.write_string("\{shown_field(header.0, header.1)}\n")
   }
   out.write_string("\n")
   out.write_string(@utf8.decode_lossy(self.body))
@@ -288,6 +282,17 @@ fn H2Response::render(self : H2Response) -> String {
     out.write_string("\n(\{self.ended})")
   }
   out.to_string()
+}
+
+///|
+/// A field received from smock as a test shows it, `name: value`, with a
+/// `date` that is the current time shown as `<now>` (`mask_date`).
+fn shown_field(name : String, value : String) -> String {
+  if name == "date" && mask_date("Date: \{value}") == "Date: <now>" {
+    "date: <now>"
+  } else {
+    "\{name}: \{value}"
+  }
 }
 
 ///|
@@ -435,7 +440,7 @@ fn RawH2::render_frame(self : RawH2, frame : @http2.Frame) -> String {
       let fields = self.fields(fragment) catch {
         err => [("undecodable", err.to_string())]
       }
-      let shown = fields.map(field => "\{field.0}: \{field.1}").join(", ")
+      let shown = fields.map(field => shown_field(field.0, field.1)).join(", ")
       "HEADERS \{stream_id}\{flag(end_stream, " END_STREAM")}\{flag(end_headers, " END_HEADERS")} [\{shown}]"
     }
     Priority(stream_id~, ..) => "PRIORITY \{stream_id}"

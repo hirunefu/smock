@@ -265,16 +265,32 @@ async test "h2c: a stream the client resets after HEADERS and part of its body n
 }
 
 ///|
-async test "h2c: a frame larger than the 16,384 octets smock advertises ends the connection with GOAWAY FRAME_SIZE_ERROR" {
+async test "h2c: a frame larger than the 16,384 octets smock advertises ends the connection with GOAWAY FRAME_SIZE_ERROR, after the streams before it are answered" {
   with_definitions(two_mocks(default=false), dir => {
     let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
       let raw = smock.raw_h2()
       defer raw.close()
+      let request = raw.block([
+        (":method", "GET"),
+        (":scheme", "http"),
+        (":path", "/x"),
+        (":authority", "orders.example.com"),
+      ])
+      raw.send([
+        Headers(
+          stream_id=1,
+          fragment=request,
+          end_stream=true,
+          end_headers=true,
+          priority=None,
+          padding=0,
+        ),
+      ])
       let head : @http2.FrameHeader = {
         length: 16385,
         ftype: @http2.frame_headers,
         flags: @http2.flag_end_headers,
-        stream_id: 1,
+        stream_id: 3,
       }
       raw.send_bytes(head.encode())
       inspect(
@@ -282,7 +298,9 @@ async test "h2c: a frame larger than the 16,384 octets smock advertises ends the
         content=(
           #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
           #|SETTINGS ACK
-          #|GOAWAY last=0 FRAME_SIZE_ERROR
+          #|HEADERS 1 END_HEADERS [:status: 200, date: <now>, content-length: 11]
+          #|DATA 1 END_STREAM 11 octets
+          #|GOAWAY last=1 FRAME_SIZE_ERROR
           #|closed
         ),
       )
