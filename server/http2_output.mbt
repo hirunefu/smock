@@ -16,14 +16,19 @@
 /// for another to write but the reader, before the connection ends.
 ///
 /// A write that fails ends the connection, so a writer never stays busy on
-/// a connection that goes on. A task cancelled while it writes, as a
-/// stream's task is when the stream is reset, leaves the rest of what it
-/// took from the `Conn` to the next write, so that every frame still goes
-/// out whole.
+/// a connection that goes on. A stream's task cancelled while it writes, as
+/// when the client resets the stream, leaves the rest of what it took from
+/// the `Conn` to the reader, which writes it before it reads again
+/// (`H2Writer::abandon`), so that every frame still goes out whole.
 priv struct H2Writer {
   conn : @http2.Conn
   /// Whether a task is writing.
   mut busy : Bool
+  /// While a task writes, the stream it writes for, or 0 for the reader.
+  mut writing_for : Int32
+  /// Whether the task writing is cancelled, so that the reader writes what
+  /// it leaves.
+  mut abandoned : Bool
   /// Whether a task asked the writer to write while another was writing,
   /// so that the one writing takes what the `Conn` queued once more.
   mut more : Bool
@@ -42,6 +47,8 @@ fn H2Writer::new(conn : @http2.Conn) -> H2Writer {
   {
     conn,
     busy: false,
+    writing_for: 0,
+    abandoned: false,
     more: false,
     taken: b"",
     written: 0,
@@ -51,12 +58,14 @@ fn H2Writer::new(conn : @http2.Conn) -> H2Writer {
 
 ///|
 /// Writes to `out` what the `Conn` has queued, after what a write that was
-/// cancelled left, and returns whether there was anything to write. While
-/// another task is writing, it leaves what is queued to that task, which
-/// writes it before it stops, and returns false.
+/// cancelled left, and returns whether there was anything to write: for
+/// the reader, or with `stream`, for the task of that stream. While another
+/// task is writing, it leaves what is queued to that task, which writes it
+/// before it stops, and returns false.
 async fn[S : @io.Writer] H2Writer::write(
   self : H2Writer,
   out : WatchedStream[S],
+  stream~ : Int32 = 0,
 ) -> Bool {
   if self.busy {
     self.more = true
@@ -73,6 +82,7 @@ async fn[S : @io.Writer] H2Writer::write(
     }
   }
   self.busy = true
+  self.writing_for = stream
   defer {
     self.busy = false
     out.watchdog.stop_writing()
@@ -98,9 +108,21 @@ async fn[S : @io.Writer] H2Writer::write(
 }
 
 ///|
+/// The task of `stream` is cancelled. If it is writing, it stops before the
+/// frames it took are all written, and the reader writes the rest, before
+/// it reads again, instead of leaving them to the next write
+/// (`H2Connection::read_more`).
+fn H2Writer::abandon(self : H2Writer, stream : Int32) -> Unit {
+  if self.busy && self.writing_for == stream {
+    self.abandoned = true
+  }
+}
+
+///|
 /// Waits until no other task is writing, then writes to `out` what the
 /// `Conn` has queued: the last frames of a connection that ends, such as
-/// its GOAWAY, which would be lost if it ended while another task wrote.
+/// its GOAWAY, which would be lost if it ended while another task wrote,
+/// and what a task cancelled while it wrote left.
 async fn[S : @io.Writer] H2Writer::write_last(
   self : H2Writer,
   out : WatchedStream[S],

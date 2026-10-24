@@ -338,6 +338,7 @@ fn H2Connection::stop_waiting(self : H2Connection, stream : Int32) -> Unit {
   if self.waiting.get(stream) is Some(task) {
     self.waiting.remove(stream)
     task.cancel()
+    self.writer.abandon(stream)
     self.unblock(stream)
     self.end_stream()
   }
@@ -369,7 +370,13 @@ async fn[S : @io.Reader + @io.Writer] H2Connection::read_more(
   stream : S,
   out : WatchedStream[S],
 ) -> Bool {
-  if self.writer.write(out) {
+  if self.writer.abandoned {
+    // A stream's task was cancelled while it wrote: the reader waits for
+    // it to stop, then writes what it left.
+    self.writer.abandoned = false
+    self.writer.write_last(out)
+    self.now = @async.now()
+  } else if self.writer.write(out) {
     self.now = @async.now()
   }
   let idle = self.idle()

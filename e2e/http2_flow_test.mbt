@@ -514,3 +514,65 @@ async test "h2c: a stream reset while its body waits for window ends its slow wr
     })
   })
 }
+
+///|
+async test "h2c: a stream reset while its task writes part of its body to a client that does not read leaves every frame whole: the rest of what was written goes out, then the next stream's response" {
+  // A body of 9,000,000 octets, of which the client grants about 8,000,000
+  // at once: more than the socket takes while the client does not read, so
+  // the stream's task is still writing when the reset comes.
+  let definitions = [
+    (
+      "m.json",
+      (
+        #|{ "mocks": [{ "name": "m", "hosts": ["localhost"] }],
+        #|  "stubs": [
+        #|    { "id": "huge", "mock": "m", "request": { "path": "/huge" },
+        #|      "response": { "status": 200, "bodyFile": "huge.txt" } },
+        #|    { "id": "item", "mock": "m", "request": { "path": "/item" },
+        #|      "response": { "status": 200, "body": "hello" } } ] }
+      ),
+    ),
+    ("files/huge.txt", "x".repeat(9_000_000)),
+  ]
+  with_definitions(definitions, dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2(settings=false)
+      defer raw.close()
+      // A wide stream window: the connection window of 65,535 octets goes
+      // at once, and the task waits for more.
+      raw.send([
+        Settings(
+          params=[(@http2.settings_initial_window_size, 8_000_000)],
+          ack=false,
+        ),
+        raw.get(1, "/huge"),
+      ])
+      let out = [raw.runs_until(data_seen(1, 65535))]
+      // A WINDOW_UPDATE owes no reply, so the reader has nothing to write,
+      // and the woken task writes its DATA itself.
+      raw.send([WindowUpdate(stream_id=0, increment=8_000_000)])
+      @async.sleep(300)
+      raw.send([
+        RstStream(stream_id=1, error_code=@http2.error_cancel),
+        raw.get(3, "/item"),
+      ])
+      out.push(
+        "--- the connection window widened by 8000000, then stream 1 reset and stream 3 sent",
+      )
+      out.push(raw.runs_until(frame => ends_stream(frame, 3)))
+      inspect(
+        out.join("\n"),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_HEADERS [:status: 200, accept-ranges: bytes, date: <now>, content-length: 9000000]
+          #|DATA 1: 4 frames, 65535 octets
+          #|--- the connection window widened by 8000000, then stream 1 reset and stream 3 sent
+          #|DATA 1: 485 frames, 7934465 octets
+          #|HEADERS 3 END_HEADERS [:status: 200, date: <now>, content-length: 5]
+          #|DATA 3 END_STREAM: 1 frames, 5 octets
+        ),
+      )
+    })
+  })
+}
