@@ -878,6 +878,90 @@ class Cases(unittest.TestCase):
         self.assertGreaterEqual(rss["samples"][-1][0], 3)
 
 
+def option_value(command, option):
+    """The value that follows `option` in a command line, or None when the
+    option is not there."""
+    return command[command.index(option) + 1] if option in command else None
+
+
+class Protocols(unittest.TestCase):
+    """A case's protocol says how oha sends its requests: `http` and `h2c`
+    to smock's plain port, `https` and `h2` over TLS to its TLS port, and
+    `h2c` and `h2` over HTTP/2, one request at a time on each connection.
+    Whether a case uses TLS alone decides its port, the URL's scheme, oha's
+    --insecure and the port --connect-to redirects."""
+
+    REQUEST = {"name": "get-order", "method": "POST", "host": "orders.bench.internal", "target": "/orders?page=2",
+               "headers": [["Accept", "application/json"], ["baggage", "smock-session=bench-get-order"]],
+               "body": '{"id": 7}'}
+
+    def command(self, protocol, connection="keep-alive"):
+        """The oha command line of a step of a case over `protocol`, sent to
+        smock at 10.0.0.7, on the port of the protocol's kind."""
+        spec = {"protocol": protocol, "connection": connection, "ramp_s": 2, "duration_s": 20, "tail_s": 3}
+        port = {"plain": "8080", "tls": "8443"}[harness.traffic_port(protocol)]
+        return harness.oha_command("oha", spec, self.REQUEST, "120.000000", 7, Path("/r/oha.json"),
+                                   Path("/r/oha.sqlite"), "10.0.0.7", port)
+
+    def test_tls_alone_decides_the_port_the_scheme_insecure_and_the_connect_to_port_and_http2_adds_http2_and_p(self):
+        shown = {}
+        for protocol in ("http", "https", "h2c", "h2"):
+            command = self.command(protocol)
+            shown[protocol] = {
+                "port": harness.traffic_port(protocol),
+                "url": command[-1],
+                "insecure": "--insecure" in command,
+                "connect_to": option_value(command, "--connect-to"),
+                "http2": "--http2" in command,
+                "p": option_value(command, "-p"),
+            }
+        self.assertEqual(shown, {
+            "http": {"port": "plain", "url": "http://orders.bench.internal/orders?page=2", "insecure": False,
+                     "connect_to": "orders.bench.internal:80:10.0.0.7:8080", "http2": False, "p": None},
+            "https": {"port": "tls", "url": "https://orders.bench.internal/orders?page=2", "insecure": True,
+                      "connect_to": "orders.bench.internal:443:10.0.0.7:8443", "http2": False, "p": None},
+            "h2c": {"port": "plain", "url": "http://orders.bench.internal/orders?page=2", "insecure": False,
+                    "connect_to": "orders.bench.internal:80:10.0.0.7:8080", "http2": True, "p": "1"},
+            "h2": {"port": "tls", "url": "https://orders.bench.internal/orders?page=2", "insecure": True,
+                   "connect_to": "orders.bench.internal:443:10.0.0.7:8443", "http2": True, "p": "1"},
+        })
+
+    def test_every_protocol_sends_the_request_of_the_mix_at_its_rate_over_its_connections(self):
+        for protocol in ("http", "https", "h2c", "h2"):
+            command = self.command(protocol)
+            self.assertEqual(command[:21], [
+                "oha", "--no-tui", "--output-format", "json", "-o", "/r/oha.json", "--db-url", "/r/oha.sqlite",
+                "-z", "25000ms", "-q", "120.000000", "--latency-correction", "-w", "-c", "7", "--worker-threads",
+                "1", "-t", "30s", "--disable-compression"], protocol)
+            self.assertEqual(option_value(command, "-m"), "POST", protocol)
+            self.assertEqual([command[i + 1] for i, arg in enumerate(command) if arg == "-H"],
+                             ["Accept: application/json", "baggage: smock-session=bench-get-order"], protocol)
+            self.assertEqual(option_value(command, "-d"), '{"id": 7}', protocol)
+            self.assertNotIn("--disable-keepalive", command, protocol)
+        # A new connection for each request, over HTTP/1.1.
+        for protocol in ("http", "https"):
+            self.assertIn("--disable-keepalive", self.command(protocol, "new-per-request"), protocol)
+
+    def test_an_unknown_protocol_or_a_new_connection_per_request_over_http2_is_refused_before_anything_starts(self):
+        # oha's --disable-keepalive does not work with HTTP/2.
+        for change, problem in (({"protocol": "h3"}, "case http-keep-alive has the protocol h3, which the harness "
+                                                     "does not know: http, https, h2c or h2"),
+                                ({"protocol": "h2c", "connection": "new-per-request"},
+                                 "case http-keep-alive opens a new connection per request over HTTP/2 (h2c), which "
+                                 "oha cannot do: give it keep-alive connections")):
+            plan = read(BENCH, "plan.json")
+            plan["cases"] = [{**plan["cases"][0], **change}]
+            out = Path(tempfile.mkdtemp(prefix="smock-bench-test-"))
+            self.addCleanup(shutil.rmtree, out, ignore_errors=True)
+            (out / "plan.json").write_text(json.dumps(plan))
+            result = subprocess.run([sys.executable, str(BENCH / "bench.py"), "run", "--smock", str(out / "no-smock"),
+                                     "--plan", str(out / "plan.json"), "--out", str(out / "results")],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn(f"bench: {harness.shown_path(out / 'plan.json')}: {problem}", result.stderr)
+            self.assertFalse((out / "results").exists())
+
+
 class IdleRss(unittest.TestCase):
     """Idle RSS is measured after startup with the benchmark's definitions,
     under the profiles the plan names for it: in bench/plan.json, a 1-CPU
