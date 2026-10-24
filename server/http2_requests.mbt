@@ -26,6 +26,9 @@ priv struct H2Request {
   /// The body length its `content-length` declares, or -1 without one. Of
   /// several, the largest, so that none over `--body-limit` passes.
   declared : Int64
+  /// Whether it asks for `100 Continue` (`expect: 100-continue`) and has a
+  /// body to send: not with a `content-length` of 0, as on HTTP/1.1.
+  continues : Bool
   /// Its body: the first DATA received, until a second comes.
   mut body : Bytes
   /// Its body, once a second DATA has come.
@@ -46,6 +49,7 @@ fn H2Request::new(fields : Array[@header.Header]) -> H2Request {
   let mut cookie = -1
   let mut cookies : StringBuilder? = None
   let mut declared = -1L
+  let mut expects = false
   for field in fields {
     let name = field.name
     if name.length() > 0 && name[0] == b':' {
@@ -75,19 +79,31 @@ fn H2Request::new(fields : Array[@header.Header]) -> H2Request {
         joined.write_string(value)
       }
     } else {
+      let value = header_text(field.value)
       if name == b"content-length" {
         let length = declared_length(field.value)
         if length > declared {
           declared = length
         }
+      } else if name == b"expect" && @http1.expects_continue(value) {
+        expects = true
       }
-      headers.push((header_text(name), header_text(field.value)))
+      headers.push((header_text(name), value))
     }
   }
   if cookies is Some(joined) {
     headers[cookie] = ("cookie", joined.to_string())
   }
-  { meth, target, authority, headers, declared, body: b"", parts: None, }
+  {
+    meth,
+    target,
+    authority,
+    headers,
+    declared,
+    continues: expects && declared != 0L,
+    body: b"",
+    parts: None,
+  }
 }
 
 ///|

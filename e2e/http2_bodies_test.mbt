@@ -320,3 +320,106 @@ async test "h2c: on one connection, several uploads past --body-limit and one st
     })
   })
 }
+
+///|
+async test "h2c: a request whose HEADERS ask for 100-continue and do not end the stream gets 100, or 413 when its content-length is over --body-limit, and one that has no body to send gets its response alone" {
+  with_definitions([("files.json", uploads)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0", "--body-limit", "10"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      let out = [raw.acknowledge_settings()]
+      let ping = @http2.Frame::Ping(
+        payload=b"\x00\x00\x00\x00\x00\x00\x00\x01",
+        ack=false,
+      )
+      let expect = [("expect", "100-continue")]
+      raw.send([
+        headers_frame(
+          1,
+          raw.block(upload_fields(6, more=expect)),
+          end_stream=false,
+        ),
+        ping,
+      ])
+      out.push("A body of 6 octets declared:")
+      out.push(raw.frames_until_ping_ack())
+      raw.send([Data(stream_id=1, data=b"abcdef", end_stream=true, padding=0)])
+      out.push("Then the body:")
+      out.push(raw.frames_until_stream_ends(1))
+      raw.send([
+        headers_frame(
+          3,
+          raw.block(upload_fields(11, more=expect)),
+          end_stream=false,
+        ),
+        ping,
+      ])
+      out.push("A body of 11 octets declared:")
+      out.push(raw.frames_until_ping_ack())
+      let unknown = request_fields("POST", "/upload", "localhost")
+      unknown.append(expect)
+      raw.send([headers_frame(5, raw.block(unknown), end_stream=false), ping])
+      out.push("A body of no declared length:")
+      out.push(raw.frames_until_ping_ack())
+      raw.send([
+        Data(stream_id=5, data=b"0123456789a", end_stream=false, padding=0),
+        ping,
+      ])
+      out.push("Then a body of 11 octets:")
+      out.push(raw.frames_until_ping_ack())
+      raw.send([headers_frame(7, raw.block(upload_fields(0, more=expect)))])
+      out.push("HEADERS that end the stream:")
+      out.push(raw.frames_until_stream_ends(7))
+      raw.send([
+        headers_frame(
+          9,
+          raw.block(upload_fields(0, more=expect)),
+          end_stream=false,
+        ),
+        ping,
+      ])
+      out.push(
+        "A body of 0 octets declared, which gets no 100, as on HTTP/1.1:",
+      )
+      let frames = raw.frames_until_ping_ack()
+      out.push(if frames.is_empty() { "(no frame)" } else { frames })
+      raw.send([Data(stream_id=9, data=b"", end_stream=true, padding=0)])
+      out.push("Then the end of the stream:")
+      out.push(raw.frames_until_stream_ends(9))
+      out.push("Journal:")
+      out.push(uploads_journaled(smock))
+      inspect(
+        out.join("\n"),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|A body of 6 octets declared:
+          #|SETTINGS ACK
+          #|HEADERS 1 END_HEADERS [:status: 100]
+          #|Then the body:
+          #|HEADERS 1 END_HEADERS [:status: 201, smock-mock: files; via=default, date: <now>, content-length: 6]
+          #|DATA 1 END_STREAM 6 octets
+          #|A body of 11 octets declared:
+          #|HEADERS 3 END_STREAM END_HEADERS [:status: 413, date: <now>, content-length: 0]
+          #|RST_STREAM 3 NO_ERROR
+          #|A body of no declared length:
+          #|HEADERS 5 END_HEADERS [:status: 100]
+          #|Then a body of 11 octets:
+          #|HEADERS 5 END_STREAM END_HEADERS [:status: 413, date: <now>, content-length: 0]
+          #|RST_STREAM 5 NO_ERROR
+          #|HEADERS that end the stream:
+          #|HEADERS 7 END_HEADERS [:status: 201, smock-mock: files; via=default, date: <now>, content-length: 6]
+          #|DATA 7 END_STREAM 6 octets
+          #|A body of 0 octets declared, which gets no 100, as on HTTP/1.1:
+          #|(no frame)
+          #|Then the end of the stream:
+          #|HEADERS 9 END_HEADERS [:status: 201, smock-mock: files; via=default, date: <now>, content-length: 6]
+          #|DATA 9 END_STREAM 6 octets
+          #|Journal:
+          #|POST /upload abcdef 201
+          #|POST /upload  201
+          #|POST /upload  201
+        ),
+      )
+    })
+  })
+}

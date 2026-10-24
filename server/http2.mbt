@@ -101,6 +101,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve_http2(
       streams: StreamRecord::new(),
       refused: 0,
       refused_status: 0,
+      continuing: 0,
       waiting: Map([]),
       group,
       watchdog,
@@ -145,6 +146,10 @@ priv struct H2Connection {
   mut refused : Int32
   /// The status `refused` gets.
   mut refused_status : Int32
+  /// The stream whose request, begun by the frame being handled, asks for
+  /// `100 Continue`, or 0. It gets it once the frame's events are all taken,
+  /// unless that frame ended the stream, since then no body is to come.
+  mut continuing : Int32
   /// The tasks of the streams whose response waits, by stream: from the end
   /// of the request until the response is queued, or the stream is reset.
   /// A task then lives on only to write what it queued, so each task is
@@ -268,6 +273,11 @@ fn[S : @io.Writer] H2Connection::hand(
           self.refused = 0
           self.refuse(stream, self.refused_status, ended=false)
         }
+        if self.continuing != 0 {
+          let stream = self.continuing
+          self.continuing = 0
+          self.send_continue(stream)
+        }
         // A new stream whose field block brought no `Request` event was
         // refused by moonhttp, which reports nothing for it.
         self.streams.settle()
@@ -295,6 +305,9 @@ fn[S : @io.Writer] H2Connection::hand(
           self.refused_status = 413
           continue
         }
+        if request.continues {
+          self.continuing = stream
+        }
         if self.requests.is_empty() {
           self.read_deadline = self.read_at + self.read_timeout
         }
@@ -319,6 +332,9 @@ fn[S : @io.Writer] H2Connection::hand(
       }
       End(stream~) => {
         self.streams.ended_by_client(stream)
+        if stream == self.continuing {
+          self.continuing = 0
+        }
         if stream == self.refused {
           self.refused = 0
           self.refuse(stream, self.refused_status, ended=true)
@@ -343,6 +359,9 @@ fn[S : @io.Writer] H2Connection::hand(
         // do not match: the stream ends with that bare RST_STREAM.
         if stream == self.refused {
           self.refused = 0
+        }
+        if stream == self.continuing {
+          self.continuing = 0
         }
         if self.requests.contains(stream) {
           self.requests.remove(stream)
@@ -622,6 +641,18 @@ fn H2Connection::refuse(
   }
   self.ports.rejected(self.last_read)
   self.end_stream()
+}
+
+///|
+/// Tells the client to send the body of the request on `stream`, which asks
+/// for it and has not ended: `100 Continue`, with no `date`, as on HTTP/1.1
+/// (RFC 9110, section 6.6.1). An informational response does not end the
+/// stream.
+fn H2Connection::send_continue(self : H2Connection, stream : Int32) -> Unit {
+  self.conn.headers(stream, [{ name: b":status", value: b"100", }]) catch {
+    // The stream is open, so moonhttp takes it.
+    _ => ()
+  }
 }
 
 ///|
