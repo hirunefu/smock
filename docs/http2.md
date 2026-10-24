@@ -256,6 +256,9 @@ window, they get it in the order they began to wait, and a stream that has
 sent what it was given waits behind the others. Priority signals are
 accepted and ignored.
 
+A client that keeps a window at zero does not hold a body for good: the
+write timeout runs while the body waits ([Timeouts](#timeouts)).
+
 A stream that the client resets during its delay, or while its body waits
 for window, stops waiting at once, and gets no more of its response. So do
 a stream that smock resets because a frame the client sent on it breaks the
@@ -437,7 +440,8 @@ to, stays within twice the limit.
 
 ### Timeouts
 
-Over HTTP/2, the read and idle timeouts work per stream and per connection.
+Over HTTP/2, the read, idle and write timeouts work per stream and per
+connection.
 
 - `--read-timeout-ms` applies to each stream alone, from the first frame of
   its request to its end. A stream whose request has not all arrived by
@@ -455,9 +459,33 @@ Over HTTP/2, the read and idle timeouts work per stream and per connection.
   rest of the preface has the read timeout from that octet. On the TLS
   port, where ALPN has already chosen HTTP/2, the idle timeout bounds the
   whole preface.
-- smock's own waits, such as a delay, count toward neither.
 - `--write-timeout-ms` closes a connection that takes nothing of what smock
-  writes for that long, without GOAWAY, as over HTTP/1.1.
+  writes for that long, without GOAWAY, as over HTTP/1.1. It also runs
+  while a response body waits for the client to widen a flow-control
+  window, so that a client cannot hold the body for good by keeping its
+  windows at zero:
+  - While a body waits for the connection window, the write timeout runs
+    for the connection. A WINDOW_UPDATE for the connection starts it again.
+    Past it, the connection closes, without GOAWAY, as when the client
+    takes nothing.
+  - While a body waits for its stream's own window, and the connection
+    window is open, the write timeout runs for that stream alone. A
+    WINDOW_UPDATE for the stream, or a SETTINGS frame that raises the
+    initial window, starts it again. Past it, the stream gets RST_STREAM
+    `CANCEL`, and the connection's other streams go on. Its request is in
+    the Journal, as a request whose client goes away is.
+
+  So a client that widens its windows slowly but steadily, a few octets at
+  a time, gets its whole response, however long it takes in all. A
+  WINDOW_UPDATE for one stream does not start the connection's write
+  timeout again, nor does a SETTINGS frame, since neither lets smock send
+  while the connection window is at zero. A client that stops widening a
+  window for longer than the write timeout, as one that pauses to limit
+  its download rate may, is cut, even where an HTTP/1.1 client pausing as
+  long would not be, since the socket's buffers can take what smock writes
+  meanwhile. Keep `--write-timeout-ms` above the longest pause your
+  clients make.
+- smock's own waits, such as a delay, count toward none of them.
 
 After a GOAWAY with `NO_ERROR`, smock reads what the client still sends and
 discards it, until the client closes the connection, or for one second at
@@ -475,7 +503,8 @@ connection.
 | Pattern | Bound | Past it |
 |---|---|---|
 | Too many streams at once | `--http2-max-concurrent-streams` | RST_STREAM `REFUSED_STREAM` on the new stream. |
-| Data Dribble (CVE-2019-9511): windows opened a few octets at a time | The concurrent-streams limit and the size of the responses, not time. A client that grants window an octet at a time gets its whole response, as a slow reader does over HTTP/1.1. | Nothing: smock sends one small DATA frame for each window update. |
+| A client that stops reading or keeps its windows at zero (CVE-2019-9517) | `--write-timeout-ms`: a write that makes no progress, or a body that waits for a window, for that long ([Timeouts](#timeouts)). | The connection closes, without GOAWAY. A stream whose own window alone stays at zero gets RST_STREAM `CANCEL`, and the connection goes on. |
+| Data Dribble (CVE-2019-9511): windows opened a few octets at a time | The concurrent-streams limit and the size of the responses, not time. Each window update lets smock send, which starts the write timeout again, so a client that grants window an octet at a time gets its whole response, as a slow reader does over HTTP/1.1. | Nothing: smock sends one small DATA frame for each window update. |
 | Header fields with empty names (CVE-2019-9516) | moonhttp refuses an empty field name. | RST_STREAM `PROTOCOL_ERROR` on that stream. |
 | Request bodies | `--body-limit` per stream, under the concurrent-streams limit. | 413, then RST_STREAM `NO_ERROR` on that stream ([Request bodies](#request-bodies)). |
 

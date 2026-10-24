@@ -59,7 +59,9 @@ of each GitHub release include its section
   resets only a stream whose request is late, with `CANCEL`; an idle
   connection gets GOAWAY before it closes. A body larger than the client's
   flow-control windows goes out as the client widens them, so a client with
-  small windows still gets all of it. `--body-limit` applies to each stream
+  small windows still gets all of it, while the write timeout closes a
+  connection whose connection window stays at zero, and resets with
+  `CANCEL` a stream whose own window does. `--body-limit` applies to each stream
   too: a body over it gets 413 on that stream alone, and
   `expect: 100-continue` gets `100 Continue`, as over HTTP/1.1. A CONNECT
   reaches the Mocks as soon as its HEADERS arrive, with `:authority` as its
