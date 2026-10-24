@@ -60,24 +60,58 @@ fn defence_entries(logs : Array[String]) -> String {
 }
 
 ///|
+/// Sends `n` PINGs on `raw` in one write, and reads smock's answers until
+/// it has acknowledged them all, or sent a GOAWAY.
+async fn RawH2::pings(self : RawH2, n : Int32) -> Frames {
+  self.send(times(ping, n))
+  let mut acks = 0
+  self.frames_until(@async.now(), frame => {
+    if frame is Ping(ack=true, ..) {
+      acks += 1
+    }
+    acks == n || is_goaway(frame)
+  })
+}
+
+///|
+/// Opens a connection, sends the frames `setup` makes, and reads smock's
+/// answers until `ready` holds for one; then sends the frames `flood`
+/// makes, in one write, and shows, after `label`, what smock sends until
+/// it ends the connection, then what a fresh connection gets. The client's
+/// SETTINGS is one frame that does no work, so a flood that comes to 100
+/// more passes the bound with its last frame. With `tls`, both connections
+/// go to the TLS port.
+async fn Smock::flood(
+  self : Smock,
+  label : String,
+  setup~ : (RawH2) -> Array[@http2.Frame] = _ => [],
+  ready~ : (@http2.Frame) -> Bool = frame => frame is Settings(ack=true, ..),
+  tls~ : Bool = false,
+  flood : (RawH2) -> Array[@http2.Frame],
+) -> String {
+  let raw = self.raw_h2(tls~)
+  defer raw.close()
+  raw.send(setup(raw))
+  let before = raw.frames_until(@async.now(), frame => {
+    ready(frame) || is_goaway(frame)
+  })
+  raw.send(flood(raw))
+  [
+    "\{label}:",
+    runs(before.shown),
+    "flood:",
+    raw.runs_until_closed(),
+    self.fresh(tls~),
+  ].join("\n")
+}
+
+///|
 async test "h2c: 100 frames that do no work in one second, the client's SETTINGS and 99 PINGs, are answered, and one more PING gets GOAWAY ENHANCE_YOUR_CALM, after which the connection closes, smock logs one line, and a fresh connection is served" {
   with_definitions([("faults.json", faults)], dir => {
     let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
       let raw = smock.raw_h2()
       defer raw.close()
-      raw.send(times(ping, 99))
-      let answered = raw.frames_until(
-        @async.now(),
-        {
-          let mut acks = 0
-          frame => {
-            if frame is Ping(ack=true, ..) {
-              acks += 1
-            }
-            acks == 99 || is_goaway(frame)
-          }
-        },
-      )
+      let answered = raw.pings(99)
       raw.send([ping])
       inspect(
         [
@@ -107,6 +141,41 @@ async test "h2c: 100 frames that do no work in one second, the client's SETTINGS
 }
 
 ///|
+async test "h2c: frames that do no work, no more than 100 in any one second, are never cut, however many come in all: three rounds of 60 PINGs, 1.1 seconds apart, are answered, and so is a request after them" {
+  with_definitions([("faults.json", faults)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      let out = []
+      for round in 1..<=3 {
+        if round > 1 {
+          @async.sleep(1100)
+        }
+        out.push("round \{round}:")
+        out.push(runs(raw.pings(60).shown))
+      }
+      raw.send([raw.get(1, "/fast")])
+      out.push(raw.frames_until_stream_ends(1))
+      inspect(
+        out.join("\n"),
+        content=(
+          #|round 1:
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+          #|SETTINGS ACK
+          #|PING ACK x60
+          #|round 2:
+          #|PING ACK x60
+          #|round 3:
+          #|PING ACK x60
+          #|HEADERS 1 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
+          #|DATA 1 END_STREAM 4 octets
+        ),
+      )
+    })
+  })
+}
+
+///|
 async test "h2c: a client that sends a PING after each DATA frame it receives is not cut, at over 100 PINGs a second, while a body streams to it, since smock sent DATA since its last PING; the same PINGs with no traffic are cut" {
   with_definitions(flow_definitions(), dir => {
     let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
@@ -122,9 +191,10 @@ async test "h2c: a client that sends a PING after each DATA frame it receives is
         WindowUpdate(stream_id=0, increment=1_000_000),
         raw.get(1, "/big"),
       ])
+      // When each PING went out.
       let sent_at = []
       let shown = []
-      // The stream, frame count and octets of the DATA frames so far.
+      // The DATA frames of stream 1 so far, and their octets.
       let mut frames = 0
       let mut octets = 0
       for ;; {
@@ -202,38 +272,6 @@ async test "h2c: a client that sends a PING after each DATA frame it receives is
       ),
     )
   })
-}
-
-///|
-/// Opens a connection, sends the frames `setup` makes, and reads smock's
-/// answers until `ready` holds for one; then sends the frames `flood`
-/// makes, in one write, and shows, after `label`, what smock sends until
-/// it ends the connection, then what a fresh connection gets. The client's
-/// SETTINGS is one frame that does no work, so a flood that comes to 100
-/// more passes the bound with its last frame. With `tls`, both connections
-/// go to the TLS port.
-async fn Smock::flood(
-  self : Smock,
-  label : String,
-  setup~ : (RawH2) -> Array[@http2.Frame] = _ => [],
-  ready~ : (@http2.Frame) -> Bool = frame => frame is Settings(ack=true, ..),
-  tls~ : Bool = false,
-  flood : (RawH2) -> Array[@http2.Frame],
-) -> String {
-  let raw = self.raw_h2(tls~)
-  defer raw.close()
-  raw.send(setup(raw))
-  let before = raw.frames_until(@async.now(), frame => {
-    ready(frame) || is_goaway(frame)
-  })
-  raw.send(flood(raw))
-  [
-    "\{label}:",
-    runs(before.shown),
-    "flood:",
-    raw.runs_until_closed(),
-    self.fresh(tls~),
-  ].join("\n")
 }
 
 ///|
