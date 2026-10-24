@@ -104,3 +104,101 @@ async test "h2c: 100 frames that do no work in one second, the client's SETTINGS
     )
   })
 }
+
+///|
+async test "h2c: a client that sends a PING after each DATA frame it receives is not cut, at over 100 PINGs a second, while a body streams to it, since smock sent DATA since its last PING; the same PINGs with no traffic are cut" {
+  with_definitions(flow_definitions(), dir => {
+    let stopped = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2(settings=false)
+      defer raw.close()
+      // Windows of 1,000 octets on each stream, and a connection window
+      // wide enough for the whole body: one DATA frame for each grant.
+      raw.send([
+        Settings(
+          params=[(@http2.settings_initial_window_size, 1000)],
+          ack=false,
+        ),
+        WindowUpdate(stream_id=0, increment=1_000_000),
+        raw.get(1, "/big"),
+      ])
+      let sent_at = []
+      let shown = []
+      // The stream, frame count and octets of the DATA frames so far.
+      let mut frames = 0
+      let mut octets = 0
+      for ;; {
+        guard raw.read_frame() is Some(frame) else {
+          shown.push("closed")
+          break
+        }
+        match frame {
+          Data(stream_id=1, data~, end_stream~, ..) => {
+            frames += 1
+            octets += data.length()
+            if end_stream {
+              shown.push(
+                "DATA 1 END_STREAM: \{frames} frames, \{octets} octets",
+              )
+              break
+            }
+            sent_at.push(@async.now())
+            raw.send([ping, WindowUpdate(stream_id=1, increment=data.length())])
+          }
+          Ping(ack=true, ..) => ()
+          _ => shown.push(raw.render_frame(frame))
+        }
+      }
+      // Whether 101 PINGs went out within one second.
+      let mut fast = false
+      for i = 0; i + 100 < sent_at.length(); i = i + 1 {
+        if sent_at[i + 100] - sent_at[i] < 1000 {
+          fast = true
+        }
+      }
+      raw.send([raw.get(3, "/item")])
+      shown.push(raw.frames_until_stream_ends(3))
+      shown.push(
+        "\{sent_at.length()} PINGs, over 100 within one second: \{fast}",
+      )
+      // One PING at a time, each after the acknowledgement of the last,
+      // with nothing else.
+      let idle = smock.raw_h2()
+      defer idle.close()
+      let mut pings = 0
+      let alone = for ;; {
+        idle.send([ping])
+        pings += 1
+        let frames = idle.frames_until(@async.now(), frame => {
+          frame is Ping(ack=true, ..)
+        })
+        if frames.how != "open" || pings == 150 {
+          break frames
+        }
+      }
+      shown.push("with no traffic, after \{pings} PINGs:")
+      shown.push(runs(alone.shown))
+      shown.push("then \{alone.how}")
+      inspect(
+        shown.join("\n"),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_HEADERS [:status: 200, accept-ranges: bytes, date: <now>, content-length: 150000]
+          #|DATA 1 END_STREAM: 150 frames, 150000 octets
+          #|HEADERS 3 END_HEADERS [:status: 200, date: <now>, content-length: 5]
+          #|DATA 3 END_STREAM 5 octets
+          #|149 PINGs, over 100 within one second: true
+          #|with no traffic, after 100 PINGs:
+          #|GOAWAY last=0 ENHANCE_YOUR_CALM
+          #|then a FIN
+        ),
+      )
+    })
+    inspect(
+      defence_entries(stopped.logs),
+      content=(
+        #|{"level":"warn","msg":"HTTP/2 connection closed by a defence","pattern":"frames that do no work","frame":"PING"}
+      ),
+    )
+  })
+}

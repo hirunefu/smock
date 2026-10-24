@@ -50,15 +50,23 @@ fn NoWorkFrames::count(self : NoWorkFrames, at : Int64) -> Bool {
 
 ///|
 /// What kind of frame that does no work the frame whose header is `head`
-/// is, as the log names it, or `None` for a frame that does some work. A
-/// PING that asks for an acknowledgement does no work.
+/// is, as the log names it, or `None` for a frame that does some work:
+///
+/// - a PING that asks for an acknowledgement, when smock has sent no
+///   HEADERS or DATA since the client's last PING. gRPC counts PINGs so,
+///   so that a client that sends one after each DATA frame it receives, to
+///   estimate its bandwidth, does no harm while answers stream to it.
 fn H2Connection::no_work(
-  _self : H2Connection,
+  self : H2Connection,
   head : @http2.FrameHeader,
   _frame : BytesView,
 ) -> String? {
   let ack = (head.flags & @http2.flag_ack) != 0
   if head.ftype == @http2.frame_ping && !ack {
+    if self.writer.responded {
+      self.writer.responded = false
+      return None
+    }
     return Some("PING")
   }
   if head.ftype == @http2.frame_settings && !ack {
