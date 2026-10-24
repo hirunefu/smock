@@ -27,7 +27,9 @@ preface sent there gets `505 HTTP Version Not Supported`.
 
 On the TLS port, ALPN chooses the protocol. smock offers `h2`, then
 `http/1.1`, with every certificate: the certificate files, the self-signed
-certificate and a Mock's own.
+certificate and a Mock's own. `--tls-http2 off` offers `http/1.1` alone
+([Turning h2 off](#turning-h2-off)), and over TLS 1.2 `h2` needs a suite
+that HTTP/2 allows ([TLS 1.2](#tls-12)).
 
 - A client that offers `h2` gets HTTP/2, whether it also offers `http/1.1`
   or not. So a client that offers only `h2`, as some load generators do,
@@ -57,7 +59,53 @@ Request`.
 
 Each port's `listening` log entry names the protocols it serves:
 `["http/1.1", "h2c"]` on the plain port, `["h2", "http/1.1"]` on the TLS
-port and `["http/1.1"]` on the admin port.
+port (`["http/1.1"]` with `--tls-http2 off`) and `["http/1.1"]` on the
+admin port.
+
+### Turning h2 off
+
+`--tls-http2 off` (`SMOCK_TLS_HTTP2=off`) takes `h2` out of the TLS port's
+ALPN, for every certificate, after reloads too. The TLS port then offers
+`http/1.1` alone, as smock did before it served HTTP/2:
+
+- A client that offers `h2` and `http/1.1` gets HTTP/1.1.
+- A client that offers only `h2` fails the handshake, with the
+  `no_application_protocol` alert.
+- The TLS port's `listening` log entry names `["http/1.1"]`.
+
+```sh
+smock serve --dir defs --tls-http2 off
+```
+
+The flag is `on` by default. It does not change the plain port, which
+still serves h2c to a client that sends the preface.
+
+### TLS 1.2
+
+The TLS port accepts TLS 1.2 and 1.3. Over TLS 1.3, HTTP/2 may use any
+suite. Over TLS 1.2, RFC 9113 prohibits most suites (its Appendix A): every
+suite without an ephemeral key exchange, such as `AES128-GCM-SHA256`, and
+every suite without an AEAD cipher, such as the CBC suites. A strict client
+fails a connection that negotiated `h2` over one of them. So on a TLS 1.2
+connection whose suite is prohibited, smock leaves `h2` out of ALPN:
+
+- A client that also offers `http/1.1` gets HTTP/1.1, as RFC 9113, section
+  9.2.2, suggests.
+- A client that offers only `h2` fails the handshake, with the
+  `no_application_protocol` alert.
+
+So over TLS 1.2, `h2` needs ECDHE or DHE with an AEAD cipher. smock sets
+no DH parameters, so in practice it is ECDHE with AES-GCM or
+ChaCha20-Poly1305. smock does not change which suites the TLS port
+accepts: OpenSSL chooses the suite as before, and ALPN follows it.
+
+The RFC's mandatory TLS 1.2 suite, TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+with the P-256 curve, needs an RSA certificate. smock's self-signed
+certificate is ECDSA P-256, so with it, HTTP/2 over TLS 1.2 uses ECDHE-ECDSA
+suites, such as TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256. A client that
+offers only the mandatory suite over TLS 1.2 needs certificate files with an
+RSA key (`--tls-cert-file` and `--tls-key-file`). TLS 1.3 suites do not
+depend on the key's type.
 
 ## What a Stub sees
 
