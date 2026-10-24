@@ -54,6 +54,10 @@ pub(all) struct ServeSettings {
   header_count_limit : Int32
   /// The longest request body, in bytes.
   body_limit : Int32
+  /// The most streams an HTTP/2 connection may have in progress at once,
+  /// from 1 to 1000: smock advertises it as SETTINGS_MAX_CONCURRENT_STREAMS
+  /// and refuses a stream past it.
+  http2_max_concurrent_streams : Int32
   /// How long, in milliseconds, a request may take to arrive, from its first
   /// byte to its last.
   read_timeout_ms : Int32
@@ -314,6 +318,11 @@ let serve_settings : Array[Setting] = [
     name: "body-limit",
     about: "The longest request body, in bytes. Longer bodies get 413.",
     default: Some("10485760"),
+  },
+  {
+    name: "http2-max-concurrent-streams",
+    about: "The most streams an HTTP/2 connection may have in progress at once, from 1 to \{max_http2_streams}. A stream past it is refused with REFUSED_STREAM.",
+    default: Some("100"),
   },
   {
     name: "read-timeout-ms",
@@ -637,6 +646,12 @@ pub fn ServeSettings::from_matches(
       max=max_size,
     ),
     body_limit: int_value(matches, "body-limit", min=0, max=max_size),
+    http2_max_concurrent_streams: int_value(
+      matches,
+      "http2-max-concurrent-streams",
+      min=1,
+      max=max_http2_streams,
+    ),
     read_timeout_ms: int_value(
       matches,
       "read-timeout-ms",
@@ -819,6 +834,11 @@ fn decimal(text : String, max_digits~ : Int32) -> UInt64? {
 ///|
 /// The largest size limit: 1 GiB. A request is held in memory whole.
 let max_size : Int32 = 1024 * 1024 * 1024
+
+///|
+/// The most concurrent streams an HTTP/2 connection can be allowed. Each
+/// may hold a request body of up to the body limit.
+let max_http2_streams : Int32 = 1000
 
 ///|
 /// The most replicas a deployment can declare.

@@ -61,6 +61,13 @@ of each GitHub release include its section
 - The `smock/http1` module makes public `field_octets`: the octets
   `encode_response` writes for a field name or value, so that another
   protocol, such as HTTP/2, can send the same ones.
+- `--http2-max-concurrent-streams` (`SMOCK_HTTP2_MAX_CONCURRENT_STREAMS`),
+  100 by default, from 1 to 1000: the most streams an HTTP/2 connection may
+  have in progress at once. smock advertises it in its SETTINGS and holds
+  the client to it from the first stream; a stream past it gets
+  RST_STREAM `REFUSED_STREAM` and never reaches the Mocks. With the body
+  limit, it bounds the request bodies one connection holds. See
+  [Limits and timeouts](docs/http2.md#limits-and-timeouts).
 - moonbitstack/moonhttp 0.14.0 (Apache-2.0) and the modules it imports are
   named in NOTICE and the image's SBOM
   ([ADR 0005](docs/adr/0005-http2-comes-from-moonhttp.md)). smock is
