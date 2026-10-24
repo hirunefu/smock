@@ -161,8 +161,10 @@ priv struct H2Connection {
   /// are all taken.
   mut malformed : Int32
   /// The stream whose CONNECT, begun by the frame being handled, goes to
-  /// the engine once that frame's events are all taken, unless they reset
-  /// the stream first; or 0. A CONNECT does not wait for its stream to end.
+  /// the engine once that frame's events are all taken, or 0: a CONNECT
+  /// does not wait for its stream to end. When the frame also ends the
+  /// stream, its `End` answers it, and when it resets the stream, it never
+  /// reaches the engine.
   mut connect : Int32
   /// The tasks of the streams whose response waits, by stream: from the end
   /// of the request until the response is queued in full, its body
@@ -314,8 +316,10 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
           self.malformed = 0
           self.refuse(stream, ended=false)
         }
-        // Once HEADERS that ended the stream have answered a CONNECT, or a
-        // reset has ended it, it is no longer among the requests.
+        // The CONNECT this frame began is answered now that its events
+        // brought no reset. HEADERS that also ended its stream answered it
+        // on its `End`, and a reset dropped it: either way it is no longer
+        // among the requests.
         if self.connect != 0 {
           let stream = self.connect
           self.connect = 0
