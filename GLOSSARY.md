@@ -19,7 +19,7 @@ A pairing of request conditions with the response to return when a request meets
 _Avoid_: Mapping, Expectation, Rule, Mock (for this concept)
 
 **Definition file**:
-A version-controlled file that declares Mocks and their Stubs; together, the definition files are the source of truth for what smock serves.
+A version-controlled file that declares Mocks and their Stubs; together, the Definition files are the source of truth for what smock serves.
 _Avoid_: Config, mapping file, ConfigMap (for the file itself)
 
 **Ephemeral Stub**:
