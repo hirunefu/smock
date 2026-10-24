@@ -1748,6 +1748,8 @@ def architecture_targets(path, architecture, entries):
         if load and (cases is None or not isinstance(entry.get("rate"), (int, float))):
             raise BenchError(f"{where}: {name}: {load[0]} holds at a load: give the case and the rate (or cases, a "
                              "list of them, in place of case)")
+        # The limits at a load for each case in turn, then those at idle,
+        # each with the case it holds for.
         held = [(key, case) for case in (cases if load else []) for key in load]
         held += [(key, None) for key in limits if key not in load]
         for key, case in held:
