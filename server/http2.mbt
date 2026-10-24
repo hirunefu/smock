@@ -798,13 +798,16 @@ let final_goaway_ms : Int64 = 1000
 /// and when a connection's loop starts while smock drains.
 ///
 /// A task writes the first GOAWAY and its PING (`drain_frames`) as soon as
-/// no other task writes. When the client acknowledges the PING, or a
-/// second after they are written (`final_goaway_ms`), the final GOAWAY
-/// follows (`final_goaway`). Streams up to the stream it names finish, and
-/// once none is in progress, the connection closes, as after any GOAWAY
-/// with NO_ERROR (`close_after_goaway`). So does a connection that had no
-/// stream in progress when the drain started. Event streams go on until
-/// they end, or until the drain timeout cuts the connection.
+/// no other task writes: after the `Conn`'s SETTINGS, which must come first
+/// (RFC 9113, section 3.4), and which the reader takes for its first write
+/// before any other task of the connection runs. When the client
+/// acknowledges the PING, or a second after they are written
+/// (`final_goaway_ms`), the final GOAWAY follows (`final_goaway`). Streams
+/// up to the stream it names finish, and once none is in progress, the
+/// connection closes, as after any GOAWAY with NO_ERROR
+/// (`close_after_goaway`). So does a connection that had no stream in
+/// progress when the drain started. Event streams go on until they end, or
+/// until the drain timeout cuts the connection.
 fn[S : @io.Writer + ReadOutput] H2Connection::start_drain(
   self : H2Connection,
   out : WatchedStream[S],
@@ -820,9 +823,13 @@ fn[S : @io.Writer + ReadOutput] H2Connection::start_drain(
       return
     }
     self.writer.write_first(out, drain_frames)
-    let now = @async.now()
-    self.final_at = now + final_goaway_ms
-    self.watchdog.read_by(self.final_at, now)
+    // The client may have acknowledged the PING while the writer went on
+    // with what the `Conn` queued.
+    if self.drain is Warned {
+      let now = @async.now()
+      self.final_at = now + final_goaway_ms
+      self.watchdog.read_by(self.final_at, now)
+    }
   })
 }
 
