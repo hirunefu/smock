@@ -1246,13 +1246,16 @@ class AutopilotProfiles(unittest.TestCase):
             self.assertGreaterEqual(case["rates"]["autopilot-burst-min"][-1], 4000)
         # Each target of each architecture is measured by a full run: its
         # profile has its limits, and its case climbs through its rate
-        # under it.
+        # under it, for each case an entry names, the HTTP/2 ones included.
+        held = set()
         for target in [t for targets in harness.read_targets(BENCH / "targets.json").values() for t in targets]:
             profile = profiles[target["profile"]]
             self.assertEqual((profile["cpu_limit"], profile["memory_limit"]),
                              (target["cpu_limit"], target["memory_limit"]), target["id"])
             if target["rate"] is not None:
                 self.assertIn(target["rate"], cases[target["case"]]["rates"][target["profile"]], target["id"])
+                held.add(target["case"])
+        self.assertEqual(held, {"http-keep-alive", "h2c-keep-alive", "h2-keep-alive"})
 
     def test_the_plans_description_names_the_target_rates_of_each_architecture(self):
         # Such as "5,000 under 250m" for autopilot-min's target on arm64,
@@ -1361,15 +1364,20 @@ class TargetsFile(unittest.TestCase):
                                t["rate"], t["metric"], t["max"], t["unit"]) for t in targets[architecture]}
             expected = {}
             for profile, (cpu, memory, rate, p99, p99_9) in load.items():
-                at_load = (architecture, profile, cpu, memory, "http-keep-alive", rate)
-                expected |= {
-                    f"{profile}/http-keep-alive/p99": (*at_load, "p99", p99, "ms"),
-                    f"{profile}/http-keep-alive/p99_9": (*at_load, "p99_9", p99_9, "ms"),
-                    f"{profile}/http-keep-alive/peak_memory": (*at_load, "peak_memory", 32, "MiB"),
-                    f"{profile}/idle_rss": (architecture, profile, cpu, memory, None, None, "idle_rss", 20, "MiB"),
-                }
-                if profile == "autopilot-burst-min":
-                    expected[f"{profile}/http-keep-alive/oom_kills"] = (*at_load, "oom_kills", 0, "OOM kills")
+                # http-keep-alive's targets hold for its HTTP/2 twins too,
+                # h2 over TLS included, which https-keep-alive is not held
+                # to.
+                for name in KEEP_ALIVE_CASES:
+                    at_load = (architecture, profile, cpu, memory, name, rate)
+                    expected |= {
+                        f"{profile}/{name}/p99": (*at_load, "p99", p99, "ms"),
+                        f"{profile}/{name}/p99_9": (*at_load, "p99_9", p99_9, "ms"),
+                        f"{profile}/{name}/peak_memory": (*at_load, "peak_memory", 32, "MiB"),
+                    }
+                    if profile == "autopilot-burst-min":
+                        expected[f"{profile}/{name}/oom_kills"] = (*at_load, "oom_kills", 0, "OOM kills")
+                expected[f"{profile}/idle_rss"] = (architecture, profile, cpu, memory, None, None, "idle_rss", 20,
+                                                   "MiB")
             self.assertEqual(shown, expected, architecture)
 
     def test_each_set_says_where_it_comes_from_and_that_it_is_provisional(self):
@@ -1411,6 +1419,13 @@ class TargetsFile(unittest.TestCase):
 # 250m and 512Mi, http-keep-alive at 1,000 requests/s.
 SMALL = {"profile": "small", "cpu_limit": "250m", "memory_limit": "512Mi", "case": "http-keep-alive", "rate": 1000,
          "at_most": {"p99_ms": 3, "p99_9_ms": 10, "oom_kills": 0, "peak_memory_mib": 32, "idle_rss_mib": 20}}
+
+# The keep-alive cases of bench/plan-autopilot.json that the targets of
+# http-keep-alive hold for: it and its HTTP/2 twins.
+KEEP_ALIVE_CASES = ["http-keep-alive", "h2c-keep-alive", "h2-keep-alive"]
+
+# SMALL, naming the three keep-alive cases in place of http-keep-alive.
+SEVERAL = {**{key: value for key, value in SMALL.items() if key != "case"}, "cases": KEEP_ALIVE_CASES}
 
 
 def idle_measured(profile="small", cpu_limit="250m", memory_limit="512Mi", rss_kib=16 * 1024, oom_killed=False):
@@ -1606,14 +1621,6 @@ class TargetVerdicts(unittest.TestCase):
         verdict, measured, reason = empty["small/http-keep-alive/p99"]
         self.assertEqual((verdict, measured), ("not measured", None))
         self.assertIn("no latencies", reason)
-
-
-# The keep-alive cases of bench/plan-autopilot.json that the targets of
-# http-keep-alive hold for: it and its HTTP/2 twins.
-KEEP_ALIVE_CASES = ["http-keep-alive", "h2c-keep-alive", "h2-keep-alive"]
-
-# SMALL, naming the three keep-alive cases in place of http-keep-alive.
-SEVERAL = {**{key: value for key, value in SMALL.items() if key != "case"}, "cases": KEEP_ALIVE_CASES}
 
 
 class TargetsForSeveralCases(unittest.TestCase):
