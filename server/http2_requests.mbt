@@ -23,6 +23,9 @@ priv struct H2Request {
   /// values joined with `; `, in their order, at the place of the first
   /// (RFC 9113, section 8.2.3), as one Cookie line is over HTTP/1.1.
   headers : Array[(String, String)]
+  /// The body length its `content-length` declares, or -1 without one. Of
+  /// several, the largest, so that none over `--body-limit` passes.
+  declared : Int64
   /// Its body: the first DATA received, until a second comes.
   mut body : Bytes
   /// Its body, once a second DATA has come.
@@ -42,6 +45,7 @@ fn H2Request::new(fields : Array[@header.Header]) -> H2Request {
   // second has come, the values joined so far.
   let mut cookie = -1
   let mut cookies : StringBuilder? = None
+  let mut declared = -1L
   for field in fields {
     let name = field.name
     if name.length() > 0 && name[0] == b':' {
@@ -71,13 +75,39 @@ fn H2Request::new(fields : Array[@header.Header]) -> H2Request {
         joined.write_string(value)
       }
     } else {
+      if name == b"content-length" {
+        let length = declared_length(field.value)
+        if length > declared {
+          declared = length
+        }
+      }
       headers.push((header_text(name), header_text(field.value)))
     }
   }
   if cookies is Some(joined) {
     headers[cookie] = ("cookie", joined.to_string())
   }
-  { meth, target, authority, headers, body: b"", parts: None, }
+  { meth, target, authority, headers, declared, body: b"", parts: None, }
+}
+
+///|
+/// A body length longer than any `--body-limit`.
+let too_long : Int64 = 0x1_0000_0000L
+
+///|
+/// The body length the `content-length` value `value` declares, `too_long`
+/// for one longer than that. moonhttp has checked that `value` is digits
+/// alone. smock reads them itself rather than take moonhttp's number, so
+/// that a length too large for 32 bits cannot pass for a short one.
+fn declared_length(value : Bytes) -> Int64 {
+  let mut length = 0L
+  for i in 0..<value.length() {
+    length = length * 10L + (value[i].to_int() - 0x30).to_int64()
+    if length >= too_long {
+      return too_long
+    }
+  }
+  length
 }
 
 ///|
