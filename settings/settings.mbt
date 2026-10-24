@@ -48,9 +48,12 @@ pub(all) struct ServeSettings {
   /// lists them: each name once, in the order given.
   template_env : Array[String]
   /// The most bytes a request head may take: its request line and header
-  /// fields.
+  /// fields. Over HTTP/2, the most octets of a header list, counted as RFC
+  /// 7541, section 4.1, counts it; twice it is moonhttp's bound, which
+  /// smock advertises as SETTINGS_MAX_HEADER_LIST_SIZE.
   header_size_limit : Int32
-  /// The most header fields a request may have.
+  /// The most header fields a request may have. Over HTTP/2, they are the
+  /// regular fields, with several `cookie` fields counted as one.
   header_count_limit : Int32
   /// The longest request body, in bytes.
   body_limit : Int32
@@ -306,7 +309,7 @@ let serve_settings : Array[Setting] = [
   template_env_setting,
   {
     name: "header-size-limit",
-    about: "The most bytes a request head (request line and header fields) may take. Larger heads get 431.",
+    about: "The most bytes a request head (request line and header fields) may take. Larger heads get 431. Over HTTP/2, a header list is counted as RFC 7541 counts it, each field with 32 octets more, and a larger one gets 431 on its stream; a header block over twice the limit closes the connection.",
     default: Some("16384"),
   },
   {

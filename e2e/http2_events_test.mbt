@@ -80,7 +80,7 @@ async test "h2c: an events Stub sends HEADERS with text/event-stream and no cont
       inspect(
         [frames, "---", ..entries].join("\n"),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|before 400 ms: HEADERS 1 END_HEADERS [:status: 200, content-type: text/event-stream, cache-control: no-cache, date: <now>]
           #|DATA 1 at 400 ms: "data: first\n\n"
@@ -326,7 +326,7 @@ async test "h2c: an event stream that the client resets, or that moonhttp resets
           ..entries,
         ].join("\n"),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 1 END_HEADERS [:status: 200, content-type: text/event-stream, date: <now>]
           #|HEADERS 3 END_HEADERS [:status: 200, content-type: text/event-stream, date: <now>]
@@ -389,7 +389,7 @@ async test "h2c: an event larger than the client's frame size goes out in severa
       inspect(
         out.join("\n"),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 1 END_HEADERS [:status: 200, content-type: text/event-stream, date: <now>]
           #|DATA 1 16384 octets

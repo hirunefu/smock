@@ -135,6 +135,23 @@ fn declared_length(value : Bytes) -> Int64 {
 }
 
 ///|
+/// Whether the field section `fields`, as moonhttp decoded it, is larger
+/// than `limit` octets, counted as RFC 7541, section 4.1, counts a header
+/// list, and as moonhttp counts it against its own bound: each field's name
+/// and value as received plus 32 octets, pseudo-header fields and every
+/// `cookie` field included. It stops at the first field past `limit`.
+fn is_list_over(fields : Array[@header.Header], limit : Int32) -> Bool {
+  let mut size = 0
+  for field in fields {
+    size += field.cost()
+    if size > limit {
+      return true
+    }
+  }
+  false
+}
+
+///|
 /// Whether HTTP/1.1's rules refuse the request, so that its stream gets 400
 /// as a malformed request (RFC 9113, section 8.1.1), checked with the
 /// HTTP/1.1 codec's own checks:

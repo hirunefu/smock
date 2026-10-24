@@ -194,7 +194,7 @@ async test "h2c: a 400 sent while the request still arrives is followed by RST_S
         out.join("\n"),
         content=(
           #|A request whose HEADERS do not end the stream:
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 1 END_STREAM END_HEADERS [:status: 400, date: <now>, content-length: 0]
           #|RST_STREAM 1 PROTOCOL_ERROR
@@ -259,7 +259,7 @@ async test "h2c: a stream refused with 400 counts as rejected traffic, with mock
       inspect(
         out.join("\n"),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 1 END_STREAM END_HEADERS [:status: 400, date: <now>, content-length: 0]
           #|RST_STREAM 3 PROTOCOL_ERROR
@@ -346,7 +346,7 @@ async test "h2c: a stream that breaks one of RFC 9113's field rules h2spec does 
       inspect(
         out.join("\n"),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|a field name with a space: RST_STREAM PROTOCOL_ERROR
           #|a field name with a control octet: RST_STREAM PROTOCOL_ERROR
@@ -384,7 +384,7 @@ async test "h2c: a CONNECT, which has no :path, is not refused for want of one" 
       inspect(
         raw.frames_until_stream_ends(1),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 1 END_HEADERS [:status: 404, content-type: application/json, smock-near-miss: upload; failed=method,path, smock-mock: files; via=default, date: <now>, content-length: 27]
           #|DATA 1 END_STREAM 27 octets

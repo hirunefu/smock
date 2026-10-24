@@ -117,7 +117,7 @@ async test "h2c: HEADERS on a stream ID already used, whose stream smock did not
         out.join("\n"),
         content=(
           #|A stream that ended with its response (http2/5.1/12):
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 1 END_HEADERS [:status: 200, date: <now>, content-length: 11]
           #|DATA 1 END_STREAM 11 octets
@@ -125,7 +125,7 @@ async test "h2c: HEADERS on a stream ID already used, whose stream smock did not
           #|closed
           #|then a fresh connection: 200 end
           #|A stream ID below the highest seen, never opened (http2/5.1.1/2):
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 5 END_HEADERS [:status: 200, date: <now>, content-length: 11]
           #|DATA 5 END_STREAM 11 octets
@@ -133,7 +133,7 @@ async test "h2c: HEADERS on a stream ID already used, whose stream smock did not
           #|closed
           #|then a fresh connection: 200 end
           #|A stream whose field block came in HEADERS and CONTINUATION:
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 1 END_HEADERS [:status: 200, date: <now>, content-length: 11]
           #|DATA 1 END_STREAM 11 octets
@@ -141,7 +141,7 @@ async test "h2c: HEADERS on a stream ID already used, whose stream smock did not
           #|closed
           #|then a fresh connection: 200 end
           #|A stream the client reset:
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|GOAWAY last=1 PROTOCOL_ERROR
           #|closed
@@ -175,7 +175,7 @@ async test "h2c: HEADERS on a stream that moonhttp refused at open, or reset aft
       inspect(
         raw.frames_until_stream_ends(5),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|RST_STREAM 1 PROTOCOL_ERROR
           #|RST_STREAM 3 PROTOCOL_ERROR
@@ -203,7 +203,7 @@ async test "h2c: HEADERS on a stream still open are its trailers, and the stream
       inspect(
         raw.frames_until_stream_ends(3),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 1 END_HEADERS [:status: 201, smock-mock: files; via=default, date: <now>, content-length: 6]
           #|DATA 1 END_STREAM 6 octets
@@ -232,7 +232,7 @@ async test "h2c: HEADERS on a stream that a reset Fault ended are ignored, and t
       inspect(
         raw.frames_until_stream_ends(3),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|RST_STREAM 1 INTERNAL_ERROR
           #|HEADERS 3 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
@@ -274,7 +274,7 @@ async test "h2c: smock remembers the last 256 streams it reset: HEADERS on the o
       inspect(
         out.join("\n"),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 515 END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
           #|DATA 515 END_STREAM 4 octets

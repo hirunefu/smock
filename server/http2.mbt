@@ -13,9 +13,9 @@
 //   open against `--http2-max-concurrent-streams`, and which every
 //   RST_STREAM smock sends goes into, through `H2Connection::reset`;
 // - the mapping from a stream onto the engine's request (`H2Request`,
-//   http2_requests.mbt), with the checks of HTTP/1.1's rules and of
-//   `--body-limit`, which refuse a stream with 400 or 413
-//   (`H2Connection::refuse`);
+//   http2_requests.mbt), with the header limits, which refuse a stream
+//   with 431, and the checks of HTTP/1.1's rules and of `--body-limit`,
+//   which refuse it with 400 or 413 (`H2Connection::refuse`);
 // - the response encoding (`response_fields`, http2_responses.mbt);
 // - the writing of what the `Conn` queues, through the connection's one
 //   writer (`H2Writer`, http2_output.mbt);
@@ -36,16 +36,15 @@
 // - no timeout applies while a body waits for the client to widen a
 //   window;
 // - for the drain, the connection is idle while no stream is in progress,
-//   and while smock drains, it closes, without GOAWAY, as soon as none is;
-// - no header limit applies beyond moonhttp's own.
+//   and while smock drains, it closes, without GOAWAY, as soon as none is.
 
 ///|
 /// The settings smock advertises on every HTTP/2 connection of a process
 /// with the settings `settings`: RFC 9113's defaults for the header table
 /// (4,096 octets), the initial window (65,535 octets), the frame size
 /// (16,384 octets) and extended CONNECT (off), with at most
-/// `--http2-max-concurrent-streams` concurrent streams, and moonhttp's own
-/// bound on a header list, 64 KiB.
+/// `--http2-max-concurrent-streams` concurrent streams, and a header list
+/// of at most `header_list_bound`.
 ///
 /// The `Conn` holds the client to these from the first stream, before the
 /// client acknowledges them: moonhttp applies the limits that protect this
@@ -56,9 +55,24 @@ fn h2_settings(settings : @settings.ServeSettings) -> @http2.Settings {
     max_concurrent_streams=Some(settings.http2_max_concurrent_streams),
     initial_window_size=65535,
     max_frame_size~,
-    max_header_list_size=Some(65536),
+    max_header_list_size=Some(header_list_bound(settings.header_size_limit)),
     enable_connect_protocol=false,
   )
+}
+
+///|
+/// moonhttp's bound on a header list, for the header size limit `limit`:
+/// twice it, at most 2^31-1 octets. smock advertises it as
+/// SETTINGS_MAX_HEADER_LIST_SIZE, and the `Conn` enforces it: a decoded
+/// list past it, counted as RFC 7541, section 4.1, counts it, gets
+/// RST_STREAM ENHANCE_YOUR_CALM, and a header block past it as received
+/// ends the connection with GOAWAY ENHANCE_YOUR_CALM.
+fn header_list_bound(limit : Int32) -> Int32 {
+  if limit >= 0x4000_0000 {
+    0x7FFF_FFFF
+  } else {
+    limit * 2
+  }
 }
 
 ///|
@@ -81,8 +95,9 @@ fn h2_settings(settings : @settings.ServeSettings) -> @http2.Settings {
 /// widens them, and so do the events of a stream of Server-Sent Events,
 /// each after its delay, so that the other streams are answered meanwhile. A
 /// stream the client resets before it ends never reaches the engine, nor
-/// does one whose request HTTP/1.1's rules refuse, which gets 400 instead,
-/// or whose body is over `--body-limit`, which gets 413.
+/// does one whose header list is over the header limits, which gets 431
+/// instead, or whose request HTTP/1.1's rules refuse, which gets 400, or
+/// whose body is over `--body-limit`, which gets 413.
 async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
   self : MockPorts,
   stream : S,
@@ -160,10 +175,11 @@ priv struct H2Connection {
   streams : StreamRecord
   /// The stream whose request smock refuses with `refused_status` for the
   /// frame being handled, or 0: 400 for a request HTTP/1.1's rules refuse,
-  /// 413 for a body over `--body-limit`. It gets that status once it is
-  /// known whether that frame ended the stream: on its `End` event, or else
-  /// once the frame's events are all taken. One frame brings at most one
-  /// such stream.
+  /// 413 for a body over `--body-limit`, 431 for a header list over
+  /// `--header-size-limit` or with more fields than `--header-count-limit`.
+  /// It gets that status once it is known whether that frame ended the
+  /// stream: on its `End` event, or else once the frame's events are all
+  /// taken. One frame brings at most one such stream.
   mut refused : Int32
   /// The status `refused` gets.
   mut refused_status : Int32
@@ -341,10 +357,22 @@ fn[S : @io.Writer + ReadOutput] H2Connection::hand(
           self.reset(stream, @http2.error_refused_stream)
           continue
         }
+        // Counted as received, before the fields are mapped.
+        if is_list_over(fields, self.ports.settings.header_size_limit) {
+          self.refused = stream
+          self.refused_status = 431
+          continue
+        }
         let request = H2Request::new(
           fields,
           deadline=self.header_at + self.read_timeout,
         )
+        // Cookies are joined by now, so they count as one field.
+        if request.headers.length() > self.ports.settings.header_count_limit {
+          self.refused = stream
+          self.refused_status = 431
+          continue
+        }
         if request.is_malformed() {
           self.refused = stream
           self.refused_status = 400
@@ -863,12 +891,14 @@ fn H2Connection::queue(
 /// Answers `stream`, whose request smock refuses, with `status` and no
 /// body, as HTTP/1.1 answers such a request, and counts it as rejected
 /// traffic: 400 for a request HTTP/1.1's rules refuse, 413 for a body over
-/// `--body-limit`. The request never reaches the engine, so it has no
-/// Journal entry. A request that has not `ended` is then reset, so that the
-/// client stops sending it: with PROTOCOL_ERROR after a 400, as a malformed
-/// request (RFC 9113, section 8.1.1), and with NO_ERROR after a 413 (section
-/// 8.1). One that has ended gets its status alone. No `connection` field is
-/// sent: the response ends only its stream.
+/// `--body-limit`, 431 for a header list over `--header-size-limit` or with
+/// more fields than `--header-count-limit`. The request never reaches the
+/// engine, so it has no Journal entry. A request that has not `ended` is
+/// then reset, so that the client stops sending it: with PROTOCOL_ERROR
+/// after a 400, as a malformed request (RFC 9113, section 8.1.1), and with
+/// NO_ERROR after a 413 or a 431 (section 8.1). One that has ended gets its
+/// status alone. No `connection` field is sent: the response ends only its
+/// stream.
 fn H2Connection::refuse(
   self : H2Connection,
   stream : Int32,
