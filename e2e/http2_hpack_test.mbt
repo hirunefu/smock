@@ -337,6 +337,91 @@ async test "h2c: an HPACK bomb, a block that names a large table entry over and 
 }
 
 ///|
+/// HEADERS on `stream` that end it, with the header block `block` split
+/// into frames of at most 16,384 octets, the frame size smock advertises:
+/// the HEADERS frame, then CONTINUATION frames, the last of which ends the
+/// block.
+fn hpack_block_frames(stream : Int32, block : Bytes) -> Array[@http2.Frame] {
+  let frames = []
+  let mut at = 0
+  while at < block.length() {
+    let end = if block.length() - at > 16384 {
+      at + 16384
+    } else {
+      block.length()
+    }
+    let fragment = block[at:end].to_owned()
+    let end_headers = end == block.length()
+    frames.push(
+      if at == 0 {
+        @http2.Frame::Headers(
+          stream_id=stream,
+          fragment~,
+          end_stream=true,
+          end_headers~,
+          priority=None,
+          padding=0,
+        )
+      } else {
+        Continuation(stream_id=stream, fragment~, end_headers~)
+      },
+    )
+    at = end
+  }
+  frames
+}
+
+///|
+async test "h2c: an HPACK bomb that decodes to more than 2^31 octets, under a --header-size-limit large enough to let its block through, still gets 431 from smock's own check, although moonhttp 0.14.0's count of the list wraps past its bound" {
+  with_definitions([("files.json", hello_and_echo)], dir => {
+    let args = ["--dir", dir, "--port", "0", "--header-size-limit", "300000"]
+    let _ = with_smock(args, smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      let hello = request_fields("GET", "/hello", "localhost")
+      let bomb = ("x-bomb", String::make(3900, 'b'))
+      raw.send([headers_frame(1, raw.block([..hello, bomb]))])
+      let out = []
+      // The entry is the newest in the table, index 62 (0xBE as an indexed
+      // field), and each copy counts 3,938 octets. 560,000 copies count
+      // 2,205,280,000, past 2^31-1: moonhttp counts the list in 32 bits, so
+      // its count wraps negative, and it keeps the fields after the wrap and
+      // raises nothing. smock's own count stops at the first field past
+      // --header-size-limit. A moonhttp that counts in 64 bits resets
+      // stream 5 as it resets stream 3.
+      for i, copies in [500000, 560000] {
+        let stream = 2 * i + 3
+        let block = raw.block(hello) + Bytes::make(copies, b'\xbe')
+        raw.send(hpack_block_frames(stream, block))
+        let size = list_size(hello).to_int64() + copies.to_int64() * 3938L
+        out.push(
+          "Stream \{stream}: a block of \{block.length()} octets, under the bound of 600,000, a list of \{size}",
+        )
+        out.push(raw.frames_until_stream_ends(stream))
+      }
+      let client = smock.h2c()
+      defer client.close()
+      let response = client.request("GET", "/hello", authority="localhost")
+      out.push("A fresh connection: \{response.line()}")
+      inspect(
+        out.join("\n"),
+        content=(
+          #|Stream 3: a block of 500004 octets, under the bound of 600,000, a list of 1969000179
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=600000]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_HEADERS [:status: 200, smock-mock: files; via=default, date: <now>, content-length: 2]
+          #|DATA 1 END_STREAM 2 octets
+          #|RST_STREAM 3 ENHANCE_YOUR_CALM
+          #|Stream 5: a block of 560004 octets, under the bound of 600,000, a list of 2205280179
+          #|HEADERS 5 END_STREAM END_HEADERS [:status: 431, date: <now>, content-length: 0]
+          #|A fresh connection: 200 [smock-mock: files; via=default, date: <now>, content-length: 2] 2 octets, end
+        ),
+      )
+    })
+  })
+}
+
+///|
 /// The header block of `GET /hello` to `localhost` with no field added to
 /// the dynamic table: indexes of the static table and literals without
 /// indexing (RFC 7541, sections 6.1 and 6.2.2), so that octets after it
