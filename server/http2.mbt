@@ -73,12 +73,15 @@ fn h2_settings(settings : @settings.ServeSettings) -> @http2.Settings {
 /// other streams are answered meanwhile. A stream the client resets before
 /// it ends never reaches the engine, nor does one whose request HTTP/1.1's
 /// rules refuse, which gets 400 instead.
-async fn[S : @io.Reader + @io.Writer] MockPorts::serve_http2(
+async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve_http2(
   self : MockPorts,
   stream : S,
   connection : Connection,
   read : Bytes,
 ) -> Bool {
+  // Its streams' tasks write while it reads, so every write goes through
+  // its writer, even what a read writes.
+  ReadOutput::hold_read_output(stream)
   let mut writable = true
   @async.with_task_group(group => {
     let watchdog = Watchdog::new(
@@ -178,7 +181,7 @@ priv struct H2Connection {
 /// hands each to the `Conn` and handles its events, until the connection
 /// ends. A frame larger than smock advertises, or a connection error the
 /// `Conn` raises, ends it with GOAWAY.
-async fn[S : @io.Reader + @io.Writer] H2Connection::serve(
+async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::serve(
   self : H2Connection,
   stream : S,
   out : WatchedStream[S],
@@ -244,7 +247,7 @@ fn H2Connection::judge(
 /// the events they produce, in order, until the `Conn` needs more. Returns
 /// false when they break the connection: the `Conn` has then queued its
 /// GOAWAY, and the connection ends. A stream's task writes to `out`.
-fn[S : @io.Writer] H2Connection::hand(
+fn[S : @io.Writer + ReadOutput] H2Connection::hand(
   self : H2Connection,
   octets : BytesView,
   out : WatchedStream[S],
@@ -373,7 +376,7 @@ fn H2Connection::idle(self : H2Connection) -> Bool {
 /// returns whether the connection goes on: not once the client has closed
 /// it, its timeout has passed, or smock drains and no stream is in
 /// progress.
-async fn[S : @io.Reader + @io.Writer] H2Connection::read_more(
+async fn[S : @io.Reader + @io.Writer + ReadOutput] H2Connection::read_more(
   self : H2Connection,
   stream : S,
   out : WatchedStream[S],
@@ -422,7 +425,7 @@ async fn[S : @io.Reader + @io.Writer] H2Connection::read_more(
 /// steps every request to the Mocks takes. A response with no delay is
 /// queued at once, while the event is handled, with no task. One with a
 /// delay waits in a task of its own (`wait`), which writes to `out`.
-fn[S : @io.Writer] H2Connection::respond(
+fn[S : @io.Writer + ReadOutput] H2Connection::respond(
   self : H2Connection,
   stream : Int32,
   request : H2Request,
@@ -456,7 +459,7 @@ fn[S : @io.Writer] H2Connection::respond(
 /// frames or from smock (`reset`), or when the connection ends. Until the response is queued, the
 /// Journal entry is committed when the task ends, as for a client that goes
 /// away, and the request is counted then.
-fn[S : @io.Writer] H2Connection::wait(
+fn[S : @io.Writer + ReadOutput] H2Connection::wait(
   self : H2Connection,
   stream : Int32,
   outcome : @engine.Outcome,

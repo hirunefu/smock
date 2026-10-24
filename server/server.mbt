@@ -322,7 +322,11 @@ async fn run(
                 TlsStream::accept(conn, name => certificates.select(name))
               })
               guard stream is Some(Some(stream)) else { return }
-              let writable = ports.serve(stream, conn, connection, h2c=false)
+              let writable = if stream.is_http2() {
+                ports.serve_http2(stream, connection, b"")
+              } else {
+                ports.serve(stream, conn, connection, h2c=false)
+              }
               // A reset sends no close_notify: the RST alone ends the
               // connection. Nor does a connection whose client takes nothing
               // more, as after a write timed out: the write would wait.
@@ -458,7 +462,7 @@ priv struct MockPorts {
 ///
 /// While smock drains, a response says `Connection: close`, and the
 /// connection closes after it.
-async fn[S : @io.Reader + @io.Writer] MockPorts::serve(
+async fn[S : @io.Reader + @io.Writer + ReadOutput] MockPorts::serve(
   self : MockPorts,
   stream : S,
   tcp : @socket.Tcp,
