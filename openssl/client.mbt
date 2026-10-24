@@ -17,6 +17,10 @@ extern "C" fn ssl_set_server_name_ffi(ssl : Ssl, name : Bytes) -> Bool = "smock_
 extern "C" fn ssl_alpn_ffi(ssl : Ssl) -> Bytes = "smock_openssl_ssl_alpn"
 
 ///|
+#borrow(ssl)
+extern "C" fn ssl_update_keys_ffi(ssl : Ssl) -> Bool = "smock_openssl_ssl_update_keys"
+
+///|
 /// What a TLS client trusts and offers.
 pub struct ClientConfig {
   priv ctx : Ctx
@@ -70,5 +74,16 @@ pub fn Connection::alpn_protocol(self : Connection) -> String? {
     None
   } else {
     Some(@utf8.decode_lossy(protocol))
+  }
+}
+
+///|
+/// Updates the keys this side sends with, and asks the peer to update the
+/// keys it sends with too, by a TLS 1.3 KeyUpdate message; send
+/// `take_output` afterwards. The peer's KeyUpdate comes back as output of
+/// one of its reads, which this side's next read takes in.
+pub fn Connection::update_keys(self : Connection) -> Unit raise TlsError {
+  if !ssl_update_keys_ffi(self.ssl) {
+    raise Failed("cannot update the keys: \{take_error()}")
   }
 }
