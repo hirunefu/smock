@@ -1616,9 +1616,11 @@ requests, as below.
 
 `smock render` shows, without a server, what one Stub answers to a
 sample request, and which of the Stub's conditions the sample fails. The
-sample is JSON, `{method, path, query, headers, body}`, with the path and
-the query values decoded and the cookies in `headers.Cookie`, and
-`--seed` makes the fake data repeatable:
+sample is JSON,
+`{method, path, query, headers, body, session, vars, data}`, every
+member optional, with the path and the query values decoded and the
+cookies in `headers.Cookie`, and `--seed` makes the fake data
+repeatable:
 
 ```sh
 echo '{"method":"GET","path":"/api/v1/users/42","query":{"lang":"ja"}}' >sample.json

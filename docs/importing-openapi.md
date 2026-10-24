@@ -309,7 +309,7 @@ Stub for each response it answers, and for each further named example
 | `security`, `links`, descriptions, tags and `x-` extensions | Nothing, and no warning. |
 | A `$ref` to a Path Item, a Response, a Header, an Example or, as 3.2 allows, a Media Type, in the same document or in another file under `--ref-dir` | Followed, as if the part it names were written in place (see [References and bundling](#references-and-bundling)). In 3.0 and 3.1, which allow no reference in place of a Media Type, a `$ref` in a media type is ignored, with a warning, and the rest of it is read as written. |
 | A `$ref` in a schema | Followed too, into other files as well. A recursive schema gives a finite sample ([Schema references and recursion](#schema-references-and-recursion)). |
-| Fields beside a Path Item's `$ref` | Ignored, with a warning, since OpenAPI leaves their meaning undefined. |
+| Fields beside a Path Item's `$ref` | Ignored, with a warning, except `x-` extensions, since OpenAPI leaves their meaning undefined. |
 
 A Stub matches on its method and its path. The Stub of a response other
 than the main one matches on `Smock-Status` too, and the Stub of a further
