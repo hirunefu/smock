@@ -189,15 +189,17 @@ async test "h2c: a close Fault sends GOAWAY NO_ERROR naming the highest stream t
       ])
       @async.sleep(100)
       let start = @async.now()
-      raw.send([Data(stream_id=3, data=b"de", end_stream=true, padding=0)])
-      let goaway = raw.frames_until(start, is_goaway)
-      // The rest of the upload, and a PING, as a client might send before
-      // it reads the GOAWAY: neither is answered, and the delayed stream's
-      // response, due before the connection closes, does not come.
+      // The end of the upload comes in the same read as the end of the
+      // Fault's request, after it: it goes no further.
       raw.send([
+        Data(stream_id=3, data=b"de", end_stream=true, padding=0),
         Data(stream_id=7, data=b" more", end_stream=true, padding=0),
-        Ping(payload=b"\x00\x00\x00\x00\x00\x00\x00\x01", ack=false),
       ])
+      let goaway = raw.frames_until(start, is_goaway)
+      // A PING, as a client might send before it reads the GOAWAY, is not
+      // answered, and the delayed stream's response, due before the
+      // connection closes, does not come.
+      raw.send([Ping(payload=b"\x00\x00\x00\x00\x00\x00\x00\x01", ack=false)])
       let after = raw.frames_until(start, _ => false)
       // smock carries on with other connections.
       let fresh = smock.h2c()
