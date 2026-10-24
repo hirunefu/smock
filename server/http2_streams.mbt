@@ -147,6 +147,14 @@ fn StreamRecord::opened(self : StreamRecord, id : Int32) -> Unit {
 }
 
 ///|
+/// How many streams are open: begun with a `Request` event, and neither
+/// reset nor ended by both sides. These are the streams that count toward
+/// the concurrent-streams limit (RFC 9113, section 5.1.2).
+fn StreamRecord::open_count(self : StreamRecord) -> Int32 {
+  self.open.length()
+}
+
+///|
 /// The `Conn` has taken a frame and given all its events. A field block for
 /// a new stream that has completed with no `Request` event is a stream that
 /// moonhttp refused at open, which it reports with no event.
