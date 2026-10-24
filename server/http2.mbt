@@ -223,18 +223,27 @@ async fn H2Connection::hand(self : H2Connection, octets : BytesView) -> Bool {
         if self.requests.get(stream) is Some(request) {
           self.requests.remove(stream)
           self.respond(stream, request)
-          self.became_idle = self.requests.is_empty()
+          self.end_stream()
         }
       Reset(stream~, ..) =>
         if self.requests.contains(stream) {
           self.requests.remove(stream)
-          self.became_idle = self.requests.is_empty()
+          self.end_stream()
         }
       // Trailers are ignored. The `Conn` has acknowledged SETTINGS and
       // answered PING itself, and window updates and the client's GOAWAY
       // ask nothing of a stream that is answered at once.
       _ => ()
     }
+  }
+}
+
+///|
+/// A stream is no longer in progress. Once none is, the idle timeout runs
+/// again, from when what was queued is written.
+fn H2Connection::end_stream(self : H2Connection) -> Unit {
+  if self.requests.is_empty() {
+    self.became_idle = true
   }
 }
 

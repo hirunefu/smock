@@ -766,7 +766,8 @@ priv struct ConnectionLoop {
   mut read_deadline : Int64?
   /// When the bytes not yet parsed began to count against the read timeout:
   /// when they were read, or, for bytes read before a response, when it was
-  /// written, since nothing is read while a response is written.
+  /// written, since nothing is read while a response is written. The bytes
+  /// of the preface check (`read_preface`) count from the first of them.
   mut read_since : Int64
   /// Started at the last read, which brought the last byte of every request
   /// the parser holds complete.

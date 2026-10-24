@@ -1,8 +1,9 @@
 // The timeouts of a connection's waits on its client, kept by one
 // `Watchdog` per connection, which runs one sleeper task at a time. Nothing
-// here knows HTTP: the HTTP/1.1 connection loop (`serve_connection`) gives
-// the watchdog the deadline of each read, and its writes go through a
-// `WatchedStream`, which gives each write the write timeout.
+// here knows HTTP: the HTTP/1.1 and HTTP/2 connection loops
+// (`serve_connection`, `MockPorts::serve_http2`) give the watchdog the
+// deadline of each read, and their writes go through a `WatchedStream`,
+// which gives each write the write timeout.
 
 ///|
 /// What a connection waits on its client for.

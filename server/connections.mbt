@@ -6,7 +6,8 @@
 priv struct Connection {
   /// Whether it waits for its next request and has received nothing of
   /// it: from when it opens, through a TLS handshake, until the first byte
-  /// of a request, and again after each response.
+  /// of a request, and again after each response. An HTTP/2 connection is
+  /// idle while it waits with no stream in progress.
   mut idle : Bool
   /// The task that serves it.
   mut task : @async.Task[Unit]?
