@@ -51,7 +51,9 @@ of each GitHub release include its section
   a request of its own, with the Host from `:authority`, else from the
   `host` field, and its Session from its own `baggage`. Several `cookie`
   fields are joined into one, so conditions see what an HTTP/1.1 client's
-  one Cookie line gives. See [docs/http2.md](docs/http2.md).
+  one Cookie line gives. A Stub's delay delays only its own stream, while
+  the connection's other streams are answered. See
+  [docs/http2.md](docs/http2.md).
 
 ### Changed
 
