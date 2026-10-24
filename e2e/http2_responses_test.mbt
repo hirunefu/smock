@@ -437,3 +437,29 @@ async test "h2c: templates, a body file and weighted responses give the statuses
     ),
   )
 }
+
+///|
+async test "h2c: a Stub that gives its own Date sends that one alone, as over HTTP/1.1" {
+  let defs =
+    #|{ "mocks": [{ "name": "cache", "hosts": ["localhost"] }],
+    #|  "stubs": [{ "id": "dated", "mock": "cache",
+    #|    "request": { "method": "GET", "path": "/dated" },
+    #|    "response": { "status": 200,
+    #|      "headers": { "DATE": "Thu, 01 Jan 2026 00:00:00 GMT" }, "body": "old" } }] }
+  with_definitions([("cache.json", defs)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let client = smock.h2c()
+      defer client.close()
+      inspect(
+        client.request("GET", "/dated", authority="localhost").render(),
+        content=(
+          #|200
+          #|date: Thu, 01 Jan 2026 00:00:00 GMT
+          #|content-length: 3
+          #|
+          #|old
+        ),
+      )
+    })
+  })
+}
