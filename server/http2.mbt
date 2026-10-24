@@ -306,7 +306,7 @@ async fn H2Connection::respond(
   let ports = self.ports
   let outcome = ports.decide(
     request.to_engine(),
-    authority?=request.authority(),
+    authority?=request.authority,
     now=self.now,
   )
   defer ports.done(outcome, self.last_read)
