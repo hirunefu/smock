@@ -9,7 +9,8 @@
 //   `H2Connection::judge`, where each frame is judged before it reaches
 //   the `Conn`;
 // - the record of the client's streams (`StreamRecord`, http2_streams.mbt),
-//   which the judge holds HEADERS frames against, and which every
+//   which the judge holds HEADERS frames against, which counts the streams
+//   open against `--http2-max-concurrent-streams`, and which every
 //   RST_STREAM smock sends goes into, through `H2Connection::reset`;
 // - the mapping from a stream onto the engine's request (`H2Request`,
 //   http2_requests.mbt), with the checks of HTTP/1.1's rules, which refuse
@@ -36,19 +37,26 @@
 // - no body or header limit applies beyond moonhttp's own.
 
 ///|
-/// The settings smock advertises on every HTTP/2 connection: RFC 9113's
-/// defaults for the header table (4,096 octets), the initial window (65,535
-/// octets), the frame size (16,384 octets) and extended CONNECT (off), with
-/// at most 100 concurrent streams, and moonhttp's own bound on a header
-/// list, 64 KiB.
-let h2_settings : @http2.Settings = @http2.Settings::new(
-  header_table_size=4096,
-  max_concurrent_streams=Some(100),
-  initial_window_size=65535,
-  max_frame_size~,
-  max_header_list_size=Some(65536),
-  enable_connect_protocol=false,
-)
+/// The settings smock advertises on every HTTP/2 connection of a process
+/// with the settings `settings`: RFC 9113's defaults for the header table
+/// (4,096 octets), the initial window (65,535 octets), the frame size
+/// (16,384 octets) and extended CONNECT (off), with at most
+/// `--http2-max-concurrent-streams` concurrent streams, and moonhttp's own
+/// bound on a header list, 64 KiB.
+///
+/// The `Conn` holds the client to these from the first stream, before the
+/// client acknowledges them: moonhttp applies the limits that protect this
+/// side as soon as it sends them.
+fn h2_settings(settings : @settings.ServeSettings) -> @http2.Settings {
+  @http2.Settings::new(
+    header_table_size=4096,
+    max_concurrent_streams=Some(settings.http2_max_concurrent_streams),
+    initial_window_size=65535,
+    max_frame_size~,
+    max_header_list_size=Some(65536),
+    enable_connect_protocol=false,
+  )
+}
 
 ///|
 /// Serves one HTTP/2 connection, `stream`, whose client has sent the octets
@@ -83,7 +91,7 @@ async fn[S : @io.Reader + @io.Writer] MockPorts::serve_http2(
     }
     let now = @async.now()
     let idle_timeout = self.settings.idle_timeout_ms.to_int64()
-    let conn = @http2.Conn::new(Server, settings=h2_settings)
+    let conn = @http2.Conn::new(Server, settings=h2_settings(self.settings))
     let h2 : H2Connection = {
       ports: self,
       conn,
@@ -262,6 +270,14 @@ fn[S : @io.Writer] H2Connection::hand(
       }
       Request(stream~, fields~) => {
         self.streams.opened(stream)
+        // moonhttp refuses a stream past the limit before it reports one,
+        // since smock advertised the limit; this holds the bound whatever
+        // a version of moonhttp enforces.
+        if self.streams.open_count() >
+          self.ports.settings.http2_max_concurrent_streams {
+          self.reset(stream, @http2.error_refused_stream)
+          continue
+        }
         let request = H2Request::new(fields)
         if request.is_malformed() {
           self.malformed = stream
