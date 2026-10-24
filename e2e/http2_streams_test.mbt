@@ -404,3 +404,36 @@ async test "h2c: 100 delayed streams whose responses are queued at once, while t
     })
   })
 }
+
+///|
+async test "h2c: a delayed response is framed as one answered at once: to HEAD, its HEADERS carry the length of the body and end the stream" {
+  with_definitions([("m.json", delays)], dir => {
+    let _ = with_smock(["--dir", dir, "--port", "0"], smock => {
+      let raw = smock.raw_h2()
+      defer raw.close()
+      raw.send([
+        Headers(
+          stream_id=1,
+          fragment=raw.block([
+            (":method", "HEAD"),
+            (":scheme", "http"),
+            (":path", "/slow"),
+            (":authority", "localhost"),
+          ]),
+          end_stream=true,
+          end_headers=true,
+          priority=None,
+          padding=0,
+        ),
+      ])
+      inspect(
+        raw.frames_until_end_of(1),
+        content=(
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS ACK
+          #|HEADERS 1 END_STREAM END_HEADERS [:status: 200, smock-mock: m; via=default, date: <now>, content-length: 4]
+        ),
+      )
+    })
+  })
+}
