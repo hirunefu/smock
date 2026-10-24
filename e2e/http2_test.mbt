@@ -296,7 +296,7 @@ async test "h2c: a frame larger than the 16,384 octets smock advertises ends the
       inspect(
         raw.frames_until_end(),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 1 END_HEADERS [:status: 200, date: <now>, content-length: 11]
           #|DATA 1 END_STREAM 11 octets

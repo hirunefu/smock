@@ -82,7 +82,7 @@ async test "h2c: a content-length over --body-limit gets 413 at once, then RST_S
       inspect(
         out.join("\n"),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|Uploads of 11 and 3 octets declared:
           #|SETTINGS ACK
           #|HEADERS 1 END_STREAM END_HEADERS [:status: 413, date: <now>, content-length: 0]
@@ -148,7 +148,7 @@ async test "h2c: a body that passes --body-limit gets 413, then RST_STREAM NO_ER
       inspect(
         out.join("\n"),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|Two uploads with no content-length, the first past the limit by its second DATA:
           #|SETTINGS ACK
           #|HEADERS 1 END_STREAM END_HEADERS [:status: 413, date: <now>, content-length: 0]
@@ -309,7 +309,7 @@ async test "h2c: on one connection, several uploads past --body-limit and one st
       inspect(
         up.frames.join("\n"),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 1 END_STREAM END_HEADERS [:status: 413, date: <now>, content-length: 0]
           #|RST_STREAM 1 NO_ERROR
@@ -402,7 +402,7 @@ async test "h2c: a request whose HEADERS ask for 100-continue and do not end the
       inspect(
         out.join("\n"),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|A body of 6 octets declared:
           #|SETTINGS ACK
           #|HEADERS 1 END_HEADERS [:status: 100]

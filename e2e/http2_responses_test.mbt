@@ -126,7 +126,7 @@ async test "h2c: HEAD gets the headers with the length and no DATA, even for a b
       inspect(
         raw.frames_until_ping_ack(),
         content=(
-          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=65536]
+          #|SETTINGS [MAX_CONCURRENT_STREAMS=100, MAX_HEADER_LIST_SIZE=32768]
           #|SETTINGS ACK
           #|HEADERS 1 END_STREAM END_HEADERS [:status: 200, date: <now>, content-length: 5]
           #|HEADERS 3 END_HEADERS [:status: 200, date: <now>, content-length: 5]
